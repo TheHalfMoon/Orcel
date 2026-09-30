@@ -33,6 +33,30 @@ function replaceAllLiteral(relativePath, before, after) {
   if (output !== input) fs.writeFileSync(file, output);
 }
 
+function replaceLiteralInTree(dir, before, after) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (
+      entry.name === ".git" ||
+      entry.name === ".kaf-migration" ||
+      entry.name === "node_modules" ||
+      entry.name === "dist"
+    ) {
+      continue;
+    }
+    const file = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      replaceLiteralInTree(file, before, after);
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    const buffer = fs.readFileSync(file);
+    if (buffer.subarray(0, Math.min(buffer.length, 8192)).includes(0)) continue;
+    const input = buffer.toString("utf8");
+    if (!input.includes(before)) continue;
+    fs.writeFileSync(file, input.split(before).join(after));
+  }
+}
+
 const oldConsole = path.join(
   root,
   "apps/frameworks/sveltekit/src/lib/EveAgentConsole.svelte",
@@ -84,6 +108,16 @@ ensureReplacement(
   "if (/eve/i.test(dependencyName) && !internalPackageNames.has(dependencyName)) {",
   "if (evePackageToken.test(dependencyName) && !internalPackageNames.has(dependencyName)) {",
 );
+ensureReplacement(
+  ".kaf-migration/bootstrap.mjs",
+  "const protectedLiterals = [...externalEvePackages].sort((a, b) => b.length - a.length);",
+  "const externalProviderApiLiterals = [\"@vercel/connect/eve\"];\nconst protectedLiterals = [...new Set([...externalEvePackages, ...externalProviderApiLiterals])].sort(\n  (a, b) => b.length - a.length,\n);",
+);
+
+// @vercel/connect exposes this external compatibility API under the literal
+// subpath "eve". Renaming it to "kaf" breaks package resolution, so preserve
+// the upstream provider API while Kaf's own imports continue to use "kaf/*".
+replaceLiteralInTree(root, "@vercel/connect/kaf", "@vercel/connect/eve");
 
 const changelogPath = path.join(root, "packages/kaf/CHANGELOG.md");
 const changelog = fs.readFileSync(changelogPath, "utf8");
