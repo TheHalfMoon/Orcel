@@ -43,7 +43,7 @@ const internalPackageNames = new Set(
   manifests.map((manifest) => manifest.name).filter((name) => typeof name === "string"),
 );
 const dependencyFields = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
-const evePackageToken = /(^|[\/_\-.])eve($|[_.-])/i;
+const evePackageToken = /(^|[/_\-.])eve($|[_.-])/i;
 const externalEvePackages = new Set();
 for (const manifest of manifests) {
   for (const field of dependencyFields) {

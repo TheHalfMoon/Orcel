@@ -49,6 +49,7 @@ const dependencyFields = [
   "optionalDependencies",
 ];
 const evePackageToken = /(^|[\/_\-.])eve($|[_.-])/i;
+const evePackageToken = /(^|[\/_\-.])eve($|[_.-])/i;
 const externalEvePackages = new Set();
 walkPackageJsonFiles(upstream, (file) => {
   const manifest = JSON.parse(fs.readFileSync(file, "utf8"));
