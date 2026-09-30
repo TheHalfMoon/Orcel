@@ -1,0 +1,140 @@
+name: Repair Kaf migration residuals
+
+on:
+  push:
+    branches:
+      - repair/release-safety
+    paths:
+      - .github/workflows/repair-kaf-migration.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repair branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies from lockfile
+        run: pnpm install --frozen-lockfile
+
+      - name: Repair Kaf-owned migration residuals
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -f apps/frameworks/sveltekit/src/lib/EveAgentConsole.svelte
+          test ! -e apps/frameworks/sveltekit/src/lib/KafAgentConsole.svelte
+          git mv \
+            apps/frameworks/sveltekit/src/lib/EveAgentConsole.svelte \
+            apps/frameworks/sveltekit/src/lib/KafAgentConsole.svelte
+
+          python - <<'PY'
+          from pathlib import Path
+
+          auth = Path('packages/kaf/src/execution/tool-auth.integration.test.ts')
+          text = auth.read_text()
+          old = 'kaf%3Ainbox%3Av1%3Aeve%3Asession%3Asession_auth%3Ainbox'
+          new = 'kaf%3Ainbox%3Av1%3Akaf%3Asession%3Asession_auth%3Ainbox'
+          if text.count(old) != 1:
+              raise SystemExit(f'expected exactly one stale callback assertion, found {text.count(old)}')
+          auth.write_text(text.replace(old, new))
+
+          bootstrap = Path('.kaf-migration/bootstrap.mjs')
+          source = bootstrap.read_text()
+          old_block = '''function identityName(name) {
+            return renameInternalScope(name)
+              .replace(/(^|[-_.])EVE(?=$|[-_.])/g, "$1KAF")
+              .replace(/(^|[-_.])Eve(?=$|[-_.])/g, "$1Kaf")
+              .replace(/(^|[-_.])eve(?=$|[-_.])/g, "$1kaf");
+          }'''
+          new_block = '''function identityName(name) {
+            return renameInternalScope(name)
+              .replace(/^EVE(?=[A-Z0-9])/g, "KAF")
+              .replace(/^Eve(?=[A-Z0-9])/g, "Kaf")
+              .replace(/^eve(?=[A-Z0-9])/g, "kaf")
+              .replace(/(^|[-_.])EVE(?=$|[-_.])/g, "$1KAF")
+              .replace(/(^|[-_.])Eve(?=$|[-_.])/g, "$1Kaf")
+              .replace(/(^|[-_.])eve(?=$|[-_.])/g, "$1kaf");
+          }'''
+          if old_block not in source:
+              raise SystemExit('expected identityName block not found')
+          bootstrap.write_text(source.replace(old_block, new_block))
+          PY
+
+      - name: Regenerate extension capability contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          for capability in \
+            extension tool dynamicTool channel schedule subagent connection hook \
+            skill dynamicSkill instructions dynamicInstructions config state
+          do
+            pnpm update:extension-contracts --update "$capability"
+          done
+
+      - name: Format and verify repaired migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm fmt
+          pnpm lint
+          pnpm check:deps
+          pnpm guard:fixtures
+          pnpm guard:invariants
+
+      - name: Record repair commit
+        id: record
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --stat
+          test -n "$(git diff --cached --name-only)"
+          git commit --no-verify -m "fix: close Kaf migration identity residuals"
+          REPAIR_COMMIT="$(git rev-parse HEAD)"
+          REPAIR_TREE="$(git rev-parse HEAD^{tree})"
+          printf '%s\n' "$REPAIR_COMMIT" > "$RUNNER_TEMP/repair-commit-sha.txt"
+          printf '%s\n' "$REPAIR_TREE" > "$RUNNER_TEMP/repair-tree-sha.txt"
+          git bundle create "$RUNNER_TEMP/kaf-migration-repair.bundle" HEAD "^${GITHUB_SHA}"
+          echo "commit=$REPAIR_COMMIT" >> "$GITHUB_OUTPUT"
+          echo "tree=$REPAIR_TREE" >> "$GITHUB_OUTPUT"
+
+      - name: Preserve repair evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: kaf-migration-repair-${{ steps.record.outputs.commit }}
+          path: |
+            ${{ runner.temp }}/repair-commit-sha.txt
+            ${{ runner.temp }}/repair-tree-sha.txt
+            ${{ runner.temp }}/kaf-migration-repair.bundle
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Attempt fast-forward transfer
+        continue-on-error: true
+        shell: bash
+        run: git push origin "HEAD:refs/heads/repair/release-safety"
+
+      - name: Report repair commit
+        shell: bash
+        run: |
+          echo "REPAIR_COMMIT=${{ steps.record.outputs.commit }}"
+          echo "REPAIR_TREE=${{ steps.record.outputs.tree }}"
