@@ -19,6 +19,7 @@ concurrency:
 env:
   UPSTREAM_REPOSITORY: https://github.com/vercel/eve.git
   UPSTREAM_SHA: 9c36b7c280fda89ae678cabfd8d906f4bde2216f
+  GENERATED_BRANCH: generated/eve-full-import-9c36b7c
 
 jobs:
   bootstrap:
@@ -62,6 +63,7 @@ jobs:
           grep -F "$UPSTREAM_SHA" UPSTREAM.md
 
       - name: Record imported tree
+        id: record
         shell: bash
         run: |
           set -euo pipefail
@@ -74,4 +76,38 @@ jobs:
             exit 1
           fi
           git commit --no-verify -m "feat: import and rename full Eve codebase to Kaf [skip ci]"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+          IMPORT_COMMIT="$(git rev-parse HEAD)"
+          IMPORT_TREE="$(git rev-parse HEAD^{tree})"
+          printf '%s\n' "$IMPORT_COMMIT" > "$RUNNER_TEMP/import-commit-sha.txt"
+          printf '%s\n' "$IMPORT_TREE" > "$RUNNER_TEMP/import-tree-sha.txt"
+          git bundle create "$RUNNER_TEMP/kaf-full-import.bundle" HEAD "^${GITHUB_SHA}"
+          echo "commit=$IMPORT_COMMIT" >> "$GITHUB_OUTPUT"
+          echo "tree=$IMPORT_TREE" >> "$GITHUB_OUTPUT"
+          echo "IMPORT_COMMIT=$IMPORT_COMMIT"
+          echo "IMPORT_TREE=$IMPORT_TREE"
+
+      - name: Preserve import commit evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: kaf-full-import-${{ steps.record.outputs.commit }}
+          path: |
+            ${{ runner.temp }}/import-commit-sha.txt
+            ${{ runner.temp }}/import-tree-sha.txt
+            ${{ runner.temp }}/kaf-full-import.bundle
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Attempt generated-branch transfer
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          git push origin "HEAD:refs/heads/${GENERATED_BRANCH}"
+
+      - name: Report generated commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "IMPORT_COMMIT=${{ steps.record.outputs.commit }}"
+          echo "IMPORT_TREE=${{ steps.record.outputs.tree }}"
+          echo "GENERATED_BRANCH=${GENERATED_BRANCH}"
