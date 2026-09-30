@@ -2,7 +2,7 @@
   "kind": "kaf-extension-capability-contract",
   "capability": "channel",
   "epoch": 38,
-  "sha256": "3eeee88e4d716b44f4f42f0f04b8f07c0596e0644761436db4a48af6b5877ea7",
+  "sha256": "f33764759cb42ce24777cba453faf3c38587bc2a584f716556d039b1b370f29c",
   "exports": [
     "DELETE",
     "GET",

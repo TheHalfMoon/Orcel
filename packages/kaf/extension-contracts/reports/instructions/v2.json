@@ -2,6 +2,6 @@
   "kind": "kaf-extension-capability-contract",
   "capability": "instructions",
   "epoch": 2,
-  "sha256": "728eaa32a37e3db26eedae69df79b2f165e4ff0151bfd3fcee2de9039d9c74b3",
+  "sha256": "6c3150bacdbaf555c6a01ac9b3d9994bd61ec755997560d5f1e30a24fd91b3c7",
   "exports": ["defineInstructions"]
 }

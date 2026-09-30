@@ -2,6 +2,6 @@
   "kind": "kaf-extension-capability-contract",
   "capability": "skill",
   "epoch": 2,
-  "sha256": "d2de71a9816d0789bb7f3260f11eb380a11f034fe4e75a1ddac060007ec0e399",
+  "sha256": "0bad11d2d4bb63c6f40758c667d3db6c3f5deb0fd3e782f7a52293edc238480e",
   "exports": ["NamedSkillDefinition", "defineSkill"]
 }

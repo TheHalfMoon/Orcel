@@ -91,6 +91,10 @@ function renameInternalScope(name) {
 
 function identityName(name) {
   return renameInternalScope(name)
+    .replace(/^EVE(?=[A-Z0-9])/g, "KAF")
+    .replace(/^Eve(?=[A-Z0-9])/g, "Kaf")
+    .replace(/^eve(?=[A-Z0-9])/g, "kaf")
+    .replace(/(?<=[a-z0-9_])Eve(?=[A-Z0-9_]|$)/g, "Kaf")
     .replace(/(^|[-_.])EVE(?=$|[-_.])/g, "$1KAF")
     .replace(/(^|[-_.])Eve(?=$|[-_.])/g, "$1Kaf")
     .replace(/(^|[-_.])eve(?=$|[-_.])/g, "$1kaf");

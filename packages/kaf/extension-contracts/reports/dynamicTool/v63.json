@@ -2,7 +2,7 @@
   "kind": "kaf-extension-capability-contract",
   "capability": "dynamicTool",
   "epoch": 63,
-  "sha256": "cd0ca2a79713f488db211064372a59d4121121f7659b67f86b47b0db7bd426d8",
+  "sha256": "e23db116a2074509d033787f21fc1360886d656b22684c584b0e120831199851",
   "exports": [
     "DynamicToolEntry",
     "DynamicToolEvents",

@@ -2,7 +2,7 @@
   "kind": "kaf-extension-capability-contract",
   "capability": "connection",
   "epoch": 33,
-  "sha256": "7d887bec62c02319218333e6cefd7416b9783ecde6066ef754dc4429fb7dadfc",
+  "sha256": "54f3290326c7386da97c4d516c70b2d519da5683846cb0b03e47090adbb97bfe",
   "exports": [
     "ConnectionAuthorizationFailedError",
     "ConnectionAuthorizationRequiredError",

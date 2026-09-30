@@ -2,6 +2,6 @@
   "kind": "kaf-extension-capability-contract",
   "capability": "dynamicSkill",
   "epoch": 26,
-  "sha256": "e3587d51ea75e4a5d0ec74f9eb97daab0e63e332b3b5e3d20283ad6461dca89a",
+  "sha256": "31fb234f85168e865f547912d001c98235a31a416803fcdb37e7be641ad13dc6",
   "exports": ["defineDynamic"]
 }

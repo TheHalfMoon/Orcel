@@ -2,7 +2,7 @@
   "kind": "kaf-extension-capability-contract",
   "capability": "subagent",
   "epoch": 24,
-  "sha256": "c4f6404acc676d9f79cc74c79846109bdcfbb68a1b9bb8dc95134ed1e1a3f72c",
+  "sha256": "2752b620323a405dad467c250ee4999039d33c5074c71de1af1a4ac75b39d086",
   "exports": [
     "AgentCompactionDefinition",
     "AgentDefinition",
