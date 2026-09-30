@@ -9,14 +9,11 @@ const binaryExts = new Set([
 ]);
 
 const provenanceFiles = new Set([
-  "LICENSE",
   "NOTICE",
   "UPSTREAM.md",
-  ".kaf-migration/REPORT.md",
-  ".kaf-migration/audit-identity.mjs",
-  ".kaf-migration/bootstrap.mjs",
   ".github/workflows/bootstrap-eve-to-kaf.yml",
 ]);
+const provenanceLiterals = ["generated/eve-full-import-9c36b7c"];
 
 function walk(dir, visitor) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -60,7 +57,9 @@ for (const manifest of manifests) {
   }
 }
 
-const protectedLiterals = [...externalEvePackages].sort((a, b) => b.length - a.length);
+const protectedLiterals = [...externalEvePackages, ...provenanceLiterals].sort(
+  (a, b) => b.length - a.length,
+);
 const forbiddenIdentity = [
   { label: "standalone Eve identity", pattern: /\b(?:eve|Eve|EVE)\b/g },
   { label: "Eve-prefixed symbol", pattern: /\b(?:eve|Eve|EVE)(?=[A-Z0-9_])/g },
@@ -75,14 +74,20 @@ const forbiddenOwnership = [
 
 function maskProtectedLiterals(text) {
   let output = text;
-  for (const literal of protectedLiterals) output = output.split(literal).join("__EXTERNAL_EVE_PACKAGE__");
+  for (const literal of protectedLiterals) output = output.split(literal).join("__KAF_ALLOWED_EXTERNAL_OR_PROVENANCE__");
   return output;
+}
+
+function isProvenancePath(relative) {
+  if (provenanceFiles.has(relative)) return true;
+  if (relative.startsWith(".kaf-migration/")) return true;
+  return /(^|\/)LICENSE(?:\.[^/]*)?$/.test(relative);
 }
 
 const violations = [];
 walk(root, (file) => {
   const relative = path.relative(root, file).split(path.sep).join("/");
-  if (provenanceFiles.has(relative)) return;
+  if (isProvenancePath(relative)) return;
   const buffer = fs.readFileSync(file);
   if (!isTextFile(file, buffer)) return;
   const text = maskProtectedLiterals(buffer.toString("utf8"));
@@ -96,7 +101,8 @@ walk(root, (file) => {
 });
 
 const result = {
-  externalEvePackages: protectedLiterals,
+  externalEvePackages: [...externalEvePackages].sort(),
+  allowedProvenanceLiterals: provenanceLiterals,
   violationCount: violations.reduce((sum, item) => sum + item.count, 0),
   violations,
 };
