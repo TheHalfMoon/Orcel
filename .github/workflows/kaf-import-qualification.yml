@@ -1,6 +1,9 @@
 name: Kaf Import Qualification
 
 on:
+  push:
+    branches:
+      - generated/eve-full-import-9c36b7c
   pull_request:
     branches: [main]
   workflow_dispatch:
