@@ -8,7 +8,8 @@ This record qualifies the full-tree migration from the pinned upstream donor rev
 - Regenerated Kaf import commit: `b2cf19bdf5fca7020c38ba94d43fd89b7fe02d30`
 - Regenerated Kaf import tree: `a92ba1502a5011cf48ac4f9b38a821a19b8d08d0`
 - Regeneration workflow run: `36768732850`
-- Default-branch qualification workflow registration merge: `ac837752bac4a0c8b1a975e196e4bbb51380785d`
+- Qualification workflow registered on `main`: `ac837752bac4a0c8b1a975e196e4bbb51380785d`
+- PR #1 qualification base: `main@ac837752bac4a0c8b1a975e196e4bbb51380785d`
 
 This file is a qualification ledger, not a completion claim.
 
