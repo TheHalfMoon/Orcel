@@ -1,0 +1,77 @@
+name: Bootstrap full Eve-to-Kaf migration
+
+on:
+  push:
+    branches:
+      - codex/eve-to-kaf-full-migration
+    paths:
+      - .github/workflows/bootstrap-eve-to-kaf.yml
+      - .kaf-migration/bootstrap.mjs
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: kaf-full-bootstrap
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPOSITORY: https://github.com/vercel/eve.git
+  UPSTREAM_SHA: 9c36b7c280fda89ae678cabfd8d906f4bde2216f
+
+jobs:
+  bootstrap:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Kaf migration branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Fetch exact Eve upstream revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/eve-upstream"
+          git init "$RUNNER_TEMP/eve-upstream"
+          git -C "$RUNNER_TEMP/eve-upstream" remote add origin "$UPSTREAM_REPOSITORY"
+          git -C "$RUNNER_TEMP/eve-upstream" fetch --depth=1 origin "$UPSTREAM_SHA"
+          git -C "$RUNNER_TEMP/eve-upstream" checkout --detach FETCH_HEAD
+          test "$(git -C "$RUNNER_TEMP/eve-upstream" rev-parse HEAD)" = "$UPSTREAM_SHA"
+
+      - name: Import the complete repository and rename project identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          node .kaf-migration/bootstrap.mjs "$RUNNER_TEMP/eve-upstream"
+
+      - name: Verify legal provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmp LICENSE "$RUNNER_TEMP/eve-upstream/LICENSE"
+          grep -F "Copyright 2026 Vercel, Inc. and contributors" NOTICE
+          grep -F "Copyright 2026 TheHalfMoon and contributors" NOTICE
+          grep -F "$UPSTREAM_SHA" UPSTREAM.md
+
+      - name: Record imported tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --stat
+          if git diff --cached --quiet; then
+            echo "No migration changes were produced."
+            exit 1
+          fi
+          git commit -m "feat: import and rename full Eve codebase to Kaf [skip ci]"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
