@@ -1,4 +1,4 @@
-name: Bootstrap full Eve-to-Kaf migration
+name: Bootstrap full Eve-to-Kaf migration (Kaf)
 
 on:
   push:
