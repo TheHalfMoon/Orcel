@@ -169,7 +169,10 @@ transformTree(root);
   const docsCheckerPath = path.join(root, "scripts/check-docs.mjs");
   let docsChecker = fs.readFileSync(docsCheckerPath, "utf8");
   docsChecker = docsChecker
-    .replaceAll("https://github.com/TheHalfMoon/kaf\\${sourceUrl}", "https://kaf.invalid\\${sourceUrl}")
+    .replaceAll(
+      "https://github.com/TheHalfMoon/kaf" + "$" + "{sourceUrl}",
+      "https://kaf.invalid" + "$" + "{sourceUrl}",
+    )
     .replaceAll(
       "https://github.com/TheHalfMoon/kaf/docs/channels/overview",
       "https://kaf.invalid/docs/channels/overview",
