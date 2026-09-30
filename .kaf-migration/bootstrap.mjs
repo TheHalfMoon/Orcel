@@ -49,7 +49,6 @@ const dependencyFields = [
   "optionalDependencies",
 ];
 const evePackageToken = /(^|[\/_\-.])eve($|[_.-])/i;
-const evePackageToken = /(^|[\/_\-.])eve($|[_.-])/i;
 const externalEvePackages = new Set();
 walkPackageJsonFiles(upstream, (file) => {
   const manifest = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -118,6 +117,8 @@ const binaryExts = new Set([
   ".woff", ".woff2", ".ttf", ".eot", ".wasm", ".mp3", ".mp4", ".mov", ".webm", ".lockb",
 ]);
 
+// External provider API coordinates are not project branding. Preserve the
+// exact upstream literal when it is part of a third-party package API.
 const externalProviderApiLiterals = ["@vercel/connect/eve"];
 const protectedLiterals = [...new Set([...externalEvePackages, ...externalProviderApiLiterals])].sort(
   (a, b) => b.length - a.length,
@@ -250,11 +251,11 @@ const report = [
   `- Files copied: ${totalFiles}`,
   `- Text files inspected: ${textFiles}`,
   `- Text files transformed: ${transformedFiles}`,
-  `- External Eve package coordinates preserved: ${protectedLiterals.length}`,
+  `- External Eve package/provider API literals preserved: ${protectedLiterals.length}`,
   `- Stale project-owned package-scope paths: ${staleInternalScopePaths.length}`,
   `- Residual project-identity hits outside LICENSE/NOTICE: ${residuals.reduce((n, item) => n + item.count, 0)}`,
   "",
-  "## Preserved external package coordinates",
+  "## Preserved external package/provider API literals",
   "",
   protectedLiterals.length ? protectedLiterals.map((item) => `- \`${item}\``).join("\n") : "None.",
   "",
@@ -266,10 +267,9 @@ const report = [
   "",
   "Project-owned eve identity is renamed to Kaf. Project-owned GitHub URLs are redirected to TheHalfMoon/kaf.",
   "Project-owned package scopes are discovered from upstream workspace manifests and renamed consistently in both text and paths.",
-  "Actual external package coordinates are discovered from the pinned upstream dependency manifests and preserved automatically.",
+  "Actual external package coordinates and provider API literals are preserved when they are not owned by Kaf.",
   "Actual `@vercel/*` dependencies and Vercel provider/service names remain intact because renaming them would break runtime behavior.",
   "Apache-2.0 LICENSE is copied byte-for-byte from upstream; upstream NOTICE is retained verbatim beneath Kaf attribution.",
-  "Third-party package coordinates are preserved when they are not owned by Kaf.",
   "",
 ].join("\n");
 fs.mkdirSync(path.join(root, ".kaf-migration"), { recursive: true });
@@ -279,7 +279,7 @@ console.log(JSON.stringify({
   totalFiles,
   textFiles,
   transformedFiles,
-  protectedExternalPackages: protectedLiterals.length,
+  protectedExternalLiterals: protectedLiterals.length,
   staleInternalScopePaths: staleInternalScopePaths.length,
   residualFiles: residuals.length,
 }, null, 2));
