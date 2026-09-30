@@ -15,5 +15,6 @@ Generic identity migration is followed by narrowly scoped semantic adaptations w
 
 - Documentation link validation uses a neutral URL origin (`https://kaf.invalid`) only for URL resolution so route checks remain independent of repository hosting paths.
 - The Kaf Slack template uses `@vercel/connect` core token retrieval with Kaf channel/auth exports instead of the Eve-specific `@vercel/connect/eve` adapter, which imports the external `eve` runtime package.
+- The deterministic parity-repair workflow regenerates the derived web scaffold before linting and qualification so generated setup artifacts stay synchronized with their canonical registry sources.
 
 These adaptations preserve optional Vercel Connect interoperability without introducing a runtime dependency on the Eve package or rewriting legitimate third-party provider identities.
