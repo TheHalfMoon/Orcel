@@ -98,21 +98,31 @@ const newIdentityName = `function identityName(name) {
 }`;
 ensureReplacement(".kaf-migration/bootstrap.mjs", oldIdentityName, newIdentityName);
 
-ensureReplacement(
-  ".kaf-migration/bootstrap.mjs",
-  "const externalEvePackages = new Set();",
-  "const evePackageToken = /(^|[\\/_\\-.])eve($|[_.-])/i;\nconst externalEvePackages = new Set();",
-);
-ensureReplacement(
-  ".kaf-migration/bootstrap.mjs",
-  "if (/eve/i.test(dependencyName) && !internalPackageNames.has(dependencyName)) {",
-  "if (evePackageToken.test(dependencyName) && !internalPackageNames.has(dependencyName)) {",
-);
-ensureReplacement(
-  ".kaf-migration/bootstrap.mjs",
-  "const protectedLiterals = [...externalEvePackages].sort((a, b) => b.length - a.length);",
-  "const externalProviderApiLiterals = [\"@vercel/connect/eve\"];\nconst protectedLiterals = [...new Set([...externalEvePackages, ...externalProviderApiLiterals])].sort(\n  (a, b) => b.length - a.length,\n);",
-);
+const bootstrapPath = path.join(root, ".kaf-migration/bootstrap.mjs");
+let bootstrapText = fs.readFileSync(bootstrapPath, "utf8");
+if (!bootstrapText.includes("const evePackageToken =")) {
+  ensureReplacement(
+    ".kaf-migration/bootstrap.mjs",
+    "const externalEvePackages = new Set();",
+    "const evePackageToken = /(^|[\\/_\\-.])eve($|[_.-])/i;\nconst externalEvePackages = new Set();",
+  );
+  bootstrapText = fs.readFileSync(bootstrapPath, "utf8");
+}
+if (!bootstrapText.includes("if (evePackageToken.test(dependencyName)")) {
+  ensureReplacement(
+    ".kaf-migration/bootstrap.mjs",
+    "if (/eve/i.test(dependencyName) && !internalPackageNames.has(dependencyName)) {",
+    "if (evePackageToken.test(dependencyName) && !internalPackageNames.has(dependencyName)) {",
+  );
+  bootstrapText = fs.readFileSync(bootstrapPath, "utf8");
+}
+if (!bootstrapText.includes("const externalProviderApiLiterals =")) {
+  ensureReplacement(
+    ".kaf-migration/bootstrap.mjs",
+    "const protectedLiterals = [...externalEvePackages].sort((a, b) => b.length - a.length);",
+    "const externalProviderApiLiterals = [\"@vercel/connect/eve\"];\nconst protectedLiterals = [...new Set([...externalEvePackages, ...externalProviderApiLiterals])].sort(\n  (a, b) => b.length - a.length,\n);",
+  );
+}
 
 // @vercel/connect exposes this external compatibility API under the literal
 // subpath "eve". Renaming it to "kaf" breaks package resolution, so preserve
