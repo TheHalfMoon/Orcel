@@ -12,6 +12,8 @@ on:
 
 permissions:
   contents: write
+  issues: write
+  pull-requests: write
 
 concurrency:
   group: kaf-parity-repair
@@ -43,6 +45,9 @@ jobs:
       - name: Apply deterministic identity repairs
         run: node .kaf-migration/repair-parity.mjs
 
+      - name: Normalize lint fixes
+        run: pnpm lint
+
       - name: Audit Kaf project identity
         run: node .kaf-migration/audit-identity.mjs
 
@@ -64,6 +69,32 @@ jobs:
 
       - name: Verify authorization integration regression
         run: pnpm --filter kaf exec vitest run --config vitest.integration.config.ts src/execution/tool-auth.integration.test.ts
+
+      - name: Diagnose template compatibility
+        id: templates
+        shell: bash
+        run: |
+          set +e
+          pnpm check:templates > "$RUNNER_TEMP/kaf-template-compatibility.log" 2>&1
+          status=$?
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Kaf template compatibility diagnostic"
+            echo
+            echo "Head: \`$(git rev-parse HEAD)\`"
+            echo
+            echo '```text'
+            tail -n 260 "$RUNNER_TEMP/kaf-template-compatibility.log"
+            echo '```'
+          } > "$RUNNER_TEMP/kaf-template-comment.md"
+          exit 0
+
+      - name: Post template diagnostic to PR
+        if: steps.templates.outputs.status != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: gh pr comment 1 --body-file "$RUNNER_TEMP/kaf-template-comment.md"
 
       - name: Verify patch integrity
         shell: bash
