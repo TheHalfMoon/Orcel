@@ -1,0 +1,50 @@
+{
+  "name": "kaf-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Monorepo for Kaf, a filesystem-first framework and agent operating layer for durable AI agents.",
+  "homepage": "https://github.com/TheHalfMoon/kaf",
+  "type": "module",
+  "scripts": {
+    "benchmark": "pnpm --filter @kaf-internal/benchmarks benchmark",
+    "benchmark:publish": "node apps/benchmarks/publish.mjs",
+    "build": "turbo run build --filter='./packages/*'",
+    "changeset": "changeset",
+    "check:deps": "syncpack lint",
+    "check:templates": "node ./scripts/check-template-compatibility.mjs",
+    "dev": "node ./scripts/dev.mjs",
+    "docs:check": "node ./scripts/check-docs.mjs && node ./scripts/check-doc-snippets.mjs && node ./scripts/check-doc-mdx.mjs",
+    "fix:deps": "syncpack fix-mismatches && syncpack format",
+    "fmt": "oxfmt",
+    "guard:fixtures": "node ./scripts/guard-test-fixtures.mjs",
+    "guard:invariants": "node ./scripts/guard-invariants.mjs",
+    "lint": "oxlint --fix",
+    "prepare": "node ./scripts/install-git-hooks.mjs",
+    "release": "pnpm build && node ./scripts/assert-changeset-publish-packages.mjs && changeset publish",
+    "test": "pnpm test:unit && pnpm test:integration",
+    "test:e2e": "turbo run test:e2e --concurrency=1",
+    "test:framework-fixtures": "pnpm --filter kaf run test:framework-fixtures",
+    "test:integration": "turbo run test:integration --filter=kaf && turbo run test:integration --filter=\"!kaf\"",
+    "test:scenario": "turbo run test:scenario",
+    "test:tui": "pnpm --filter kaf run test:tui",
+    "test:unit": "turbo run test:unit",
+    "typecheck": "turbo run typecheck",
+    "update:extension-contracts": "node ./scripts/extension-capability-contracts.mjs",
+    "version-packages": "changeset version && node ./scripts/materialize-registry-release-requirements.mjs"
+  },
+  "devDependencies": {
+    "@changesets/cli": "3.0.1",
+    "@microsoft/api-extractor": "7.59.0",
+    "@types/node": "catalog:",
+    "gray-matter": "4.0.3",
+    "oxfmt": "0.66.0",
+    "oxlint": "1.81.0",
+    "syncpack": "15.3.3",
+    "turbo": "2.10.12",
+    "typescript": "catalog:"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@12.7.0"
+}
