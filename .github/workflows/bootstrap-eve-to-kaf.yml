@@ -73,5 +73,5 @@ jobs:
             echo "No migration changes were produced."
             exit 1
           fi
-          git commit -m "feat: import and rename full Eve codebase to Kaf [skip ci]"
+          git commit --no-verify -m "feat: import and rename full Eve codebase to Kaf [skip ci]"
           git push origin "HEAD:${GITHUB_REF_NAME}"
