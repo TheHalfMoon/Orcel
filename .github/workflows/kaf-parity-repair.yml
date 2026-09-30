@@ -49,7 +49,12 @@ jobs:
             extension tool dynamicTool channel schedule subagent connection hook \
             skill dynamicSkill instructions dynamicInstructions config state
           do
-            pnpm update:extension-contracts --update "$contract"
+            # Kaf deliberately adopts Eve's structural API compatibility lineage under
+            # the Kaf namespace. Historical source worktrees predate the rename, so
+            # automatic history replay cannot resolve Kaf package paths. --retain is
+            # an explicit migration decision; the closing invariant guard compiles
+            # the retained fixtures against the current Kaf runtime.
+            pnpm update:extension-contracts --update "$contract" --retain
           done
 
       - name: Verify invariant guard
