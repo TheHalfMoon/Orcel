@@ -8,6 +8,7 @@ This record qualifies the full-tree migration from the pinned upstream donor rev
 - Regenerated Kaf import commit: `b2cf19bdf5fca7020c38ba94d43fd89b7fe02d30`
 - Regenerated Kaf import tree: `a92ba1502a5011cf48ac4f9b38a821a19b8d08d0`
 - Regeneration workflow run: `36768732850`
+- Default-branch qualification workflow registration merge: `ac837752bac4a0c8b1a975e196e4bbb51380785d`
 
 This file is a qualification ledger, not a completion claim.
 
@@ -56,5 +57,7 @@ The migration remains **NOT QUALIFIED** until all applicable gates below pass on
 - residual identity audit;
 - Jev independent review;
 - Alibaba Open Code Review qualification.
+
+The default branch now contains a dedicated zero-cost qualification workflow for the non-secret local gates. It deliberately does not invoke paid APIs, deployment credentials, or secret-backed external services.
 
 Cubic, CodeRabbit, Qodo, and similar services are not accepted as qualification evidence for Kaf.
