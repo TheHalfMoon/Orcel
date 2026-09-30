@@ -45,6 +45,9 @@ jobs:
       - name: Apply deterministic identity repairs
         run: node .kaf-migration/repair-parity.mjs
 
+      - name: Regenerate derived web scaffold
+        run: pnpm --filter kaf generate:web-template
+
       - name: Diagnose and apply lint fixes
         id: lint
         shell: bash
