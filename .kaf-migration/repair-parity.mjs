@@ -9,7 +9,15 @@ function ensureReplacement(relativePath, before, after) {
   const beforeCount = input.split(before).length - 1;
   const afterCount = input.split(after).length - 1;
 
-  if (beforeCount === 0 && afterCount > 0) return false;
+  if (afterCount > 0) {
+    const embeddedBeforeCount = after.includes(before) ? afterCount : 0;
+    const staleBeforeCount = beforeCount - embeddedBeforeCount;
+    if (staleBeforeCount === 0) return false;
+    throw new Error(
+      `${relativePath}: replacement is already present but ${staleBeforeCount} stale repair target(s) remain.`,
+    );
+  }
+
   if (beforeCount !== 1) {
     throw new Error(`${relativePath}: expected exactly one repair target, found ${beforeCount}.`);
   }
