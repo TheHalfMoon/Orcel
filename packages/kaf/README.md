@@ -1,6 +1,6 @@
 # kaf
 
-kaf is a filesystem-first framework for durable backend agents on Vercel.
+Kaf is a filesystem-first framework for durable backend AI agents that run anywhere.
 
 You author an agent as a directory on disk. The directory is the contract — markdown for the parts a human should read like a spec, TypeScript for the parts that benefit from real types and runtime behavior.
 
@@ -8,7 +8,7 @@ The framework is called kaf. The published npm package is `kaf`. The CLI binary 
 
 ## Preview Terms and Safeguards
 
-kaf is currently a preview and subject to the Vercel beta terms; the framework, APIs, documentation, and behavior may change before general availability.
+Kaf is under active development; the framework, APIs, documentation, and behavior may change before the first stable release.
 
 As the deployer, it is your responsibility to ensure your agent complies with applicable laws.
 
@@ -133,7 +133,7 @@ project or deploy the agent.
 
 CLI commands:
 
-- `kaf` (including `npx kaf`) — initialize the current directory, or start development in an kaf project
+- `kaf` (including `npx kaf`) — initialize the current directory, or start development in a Kaf project
 - `kaf init <name>` — create a new agent
 - `kaf info` — discovery results and compiled artifacts
 - `kaf build` — compile `.kaf/` and build the host output
@@ -165,7 +165,7 @@ By runtime concern: [Sessions and Streaming](https://github.com/TheHalfMoon/kaf/
 
 ## Architecture (Internals)
 
-You do not need this section to author an kaf agent — it documents the public HTTP protocol contracts so kaf composes predictably with other systems.
+You do not need this section to author a Kaf agent — it documents the public HTTP protocol contracts so kaf composes predictably with other systems.
 
 kaf's internal split is:
 

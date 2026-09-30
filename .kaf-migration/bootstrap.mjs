@@ -48,6 +48,7 @@ const dependencyFields = [
   "peerDependencies",
   "optionalDependencies",
 ];
+const evePackageToken = /(^|[\/_\-.])eve($|[_.-])/i;
 const externalEvePackages = new Set();
 walkPackageJsonFiles(upstream, (file) => {
   const manifest = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -55,7 +56,7 @@ walkPackageJsonFiles(upstream, (file) => {
     const dependencies = manifest[field];
     if (!dependencies || typeof dependencies !== "object") continue;
     for (const dependencyName of Object.keys(dependencies)) {
-      if (/eve/i.test(dependencyName) && !internalPackageNames.has(dependencyName)) {
+      if (evePackageToken.test(dependencyName) && !internalPackageNames.has(dependencyName)) {
         externalEvePackages.add(dependencyName);
       }
     }

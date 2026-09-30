@@ -93,10 +93,10 @@
 
 ### Patch Changes
 
-- 055f1d1: `kaf build` and `withEve` during `next build` now build mounted, source-backed workspace extensions before compiling the agent, as `kaf dev` already does. Production builds no longer fail when a package manager skips the extension's `prepare` script, such as on a no-op install with a restored `node_modules` cache. An extension whose distribution is already current is not rebuilt, and a failed extension build names the package and the command to run.
+- 055f1d1: `kaf build` and `withKaf` during `next build` now build mounted, source-backed workspace extensions before compiling the agent, as `kaf dev` already does. Production builds no longer fail when a package manager skips the extension's `prepare` script, such as on a no-op install with a restored `node_modules` cache. An extension whose distribution is already current is not rebuilt, and a failed extension build names the package and the command to run.
 - faacecf: Follow a delegated child's activity from a client with `session.streamSubagent(called, options?)`. Pass a `subagent.called` event from that session. The client reads its `childStreamPath` with the session's host and credentials, so a remote child streams through the parent deployment's proxy route, and the child's cursor stays separate from the parent's. Eval sessions expose the same method with the eval client's credentials.
 - a490d88: `kafChannel({ trustedForwarders })` now receives what the forwarder asserts as a second argument. `assertion.principal` holds the stamped `current` and `initiator` contexts the forwarder asserts, so a receiver can limit a trusted forwarder to the identities it may speak for instead of accepting any principal it asserts.
-- 6e568dc: Allow Web Chat to scaffold as a peer application for standalone agents and agent workspaces, with explicit Next.js or Vercel services hosting. `withEve()` from `kaf/next` can discover either project layout from an explicit `kafRoot`, so the peer application does not need to repeat agent paths.
+- 6e568dc: Allow Web Chat to scaffold as a peer application for standalone agents and agent workspaces, with explicit Next.js or Vercel services hosting. `withKaf()` from `kaf/next` can discover either project layout from an explicit `kafRoot`, so the peer application does not need to repeat agent paths.
 - d8ddf0d: Add bounded, conversation-scoped trace analysis to self-modification, with filtered search, compact timelines, and batched span payload inspection.
 - d6fc658: Keep a delegated agent task open when its model turn yields while background work started in that turn is still running. Deliver the final result after that work finishes, including usage accumulated across the yielded turns, instead of reporting the interim reply as completion.
   
@@ -356,7 +356,7 @@
 - f21e63f: Declare `.vercel/output` for generated kaf services so Vercel consumes the Build Output API directory that their build commands produce instead of looking for the framework preset's `.output` default.
 - 7b17b27: Model login shares resolved credentials with the running agent, avoids rebuilds for account, team, and key changes, and refreshes agent information without delaying chat. Clear status messages show when to finish browser sign-in and what kaf is waiting for, without flashing indicators for quick steps.
 - e1ae8eb: Flush the final activity snapshot when an activity stream closes during the render debounce window.
-- f21e63f: Make `withEve` discover a containing workspace when Vercel evaluates `vercel.ts` from its temporary `.vercel` directory.
+- f21e63f: Make `withKaf` discover a containing workspace when Vercel evaluates `vercel.ts` from its temporary `.vercel` directory.
 - fe6451c: Keep automatic prompt caching enabled when local model authentication resolves an AI Gateway model to a provider object. Anthropic models retain cache reuse after signing in through `kaf dev`.
 - 032860c: Bound negotiated session stream responses with renewable leases so abandoned serverless invocations release their durable stream readers. The kaf client renews these responses from its cursor without exposing transport heartbeats or lease records as session events; tail-relative reads and streams with reconnection disabled remain unleased.
 - 7b17b27: Fix a local workflow health-check failure after model or source changes. Capability probes no longer look up a run before it exists, avoiding a spurious queue error and startup delay.
@@ -416,7 +416,7 @@
 - bef74fe: Add `protocolVersionDiscovery` to MCP client connections. Set it to `false` to use the initialization handshake for servers that reject modern discovery, while keeping discovery enabled by default.
 - dafa558: Scheduled runs that start background work now stay open and silent until the result is available, then deliver the final response once.
 - 7ad2740: Allow the self-modification agent arguments to set the reasoning effort used by its subagent.
-- 0f79075: Make `withEve()` discover project-level `agents/` workspace members, mounting each named agent through a Next.js app without repeating the agent map in `next.config.ts`. Workspace peers declared with `defineWorkspaceAgent()` route through the named Next.js mount automatically.
+- 0f79075: Make `withKaf()` discover project-level `agents/` workspace members, mounting each named agent through a Next.js app without repeating the agent map in `next.config.ts`. Workspace peers declared with `defineWorkspaceAgent()` route through the named Next.js mount automatically.
 - 09425a0: Move the self-modification registry item to `kaf/self-modification`, remove its experimental label and separate production address, and run its production setup flow when added directly.
 - 638aed5: Background task activity now uses a tool's per-call label when one is provided, while retaining the tool or subagent name for execution identity.
 
@@ -436,7 +436,7 @@
 
 - da8f4fd: Use an installed Codex CLI's app-server for ChatGPT subscription credentials, while retaining kaf's direct sign-in and owned credential store as a fallback only when the `codex` binary is not found. Codex login output remains inside the model setup panel instead of writing directly over the TUI.
 - 3576e0a: Classify known `kaf init` target and workspace-input failures into bounded telemetry categories. Telemetry continues to exclude target paths, directory contents, and error messages.
-- 7829116: Add `withEve` from `kaf/vercel` for composing native workspace agents with authored services in `vercel.ts`. Vercel resolves the generated agent services and transport routes before independently building each service.
+- 7829116: Add `withKaf` from `kaf/vercel` for composing native workspace agents with authored services in `vercel.ts`. Vercel resolves the generated agent services and transport routes before independently building each service.
 - 2d0bad9: Expose the effective model ID to model, subagent, tool, skill, and instruction resolvers through `ctx.model?.id`.
 - 7fa514b: Add a self-modification option to the interactive `kaf init` flow. Selecting it scaffolds the self-modification subagent and continues to `kaf dev` without offering an external coding-agent handoff.
 - a34ecf0: Preserve remote subagent caller spans across platform HTTP ingress so schema v4 `agent.dispatch` links target the dispatching `agent.action` rather than the request span. Remote dispatch now records the prior kaf parent in W3C `tracestate` while retaining standard `traceparent` transport correlation.
@@ -583,7 +583,7 @@
 - 0b980ab: Upgrade Nitro to 3.0.260903-beta for upstream fixes and dependency updates.
 - c48969f: Persist the receiving session's inbox address and wire version with local subagent input requests. Replies can resume the original child directly without reading hook metadata, including after the child's continuation address changes.
 - 09cb57e: Failed session and task callback attempts now emit error-level logs with HTTP status or transport failure, a token-redacted destination, and available call, task, and session identifiers. Workflow retries are unchanged; best-effort activity failures keep their single warning.
-- 468f1b2: Reject `kaf add channel/web` before it writes files when the selected agent belongs to a top-level `agents/` workspace. The error directs users to configure a root Next.js app with `withEve({ agents })` instead.
+- 468f1b2: Reject `kaf add channel/web` before it writes files when the selected agent belongs to a top-level `agents/` workspace. The error directs users to configure a root Next.js app with `withKaf({ agents })` instead.
 
 ## 0.52.0
 
@@ -717,7 +717,7 @@
 ### Patch Changes
 
 - b0799b3: Preserve built-in tool behavior through compiled and runtime descriptors, so authored replacements, delegation, task controls, request input, and provider tools use the selected source instead of name-based runtime inference. Replacing bundled artifacts now invalidates resolved-agent caches so redeploys expose newly compiled skills consistently.
-- b9eb1b2: Keep `kaf/next` from claiming a host application's Workflow world, so `withEve` can coexist with `withWorkflow` in one Next.js app.
+- b9eb1b2: Keep `kaf/next` from claiming a host application's Workflow world, so `withKaf` can coexist with `withWorkflow` in one Next.js app.
 - 0a1ad48: Resume sessions with dynamic tools persisted by older kaf versions without crashing during callback restoration.
 - aafcb34: Keep `clientContext` scoped to its model call so earlier client context no longer accumulates in later session turns.
 - f2c96a1: Spans held for a parent that never ends are no longer lost or buffered without bound: kaf's span-filtering processor now drains them to destinations on `forceFlush` and `shutdown`, and caps how many a stuck parent can hold.
@@ -1487,7 +1487,7 @@
 ### Patch Changes
 
 - 1e35a26: Bound the zero-config local trace store so `.kaf/traces` no longer grows without limit. `kaf dev` now sweeps it when a session finishes and at startup, keeping open sessions, the twenty newest traces, and anything from the last seven days before evicting oldest-first above 512 MB. Tune it with `KAF_TRACES_MAX_AGE_MS`, `KAF_TRACES_MAX_TOTAL_BYTES`, and `KAF_TRACES_RETAIN_COUNT`, or set `KAF_TRACES=off` to turn local tracing off entirely.
-- 1c0347f: Expose schedules from generated `withEve` services to Vercel's project-level Cron Jobs. Single and named agents now register routable jobs without requiring duplicate `vercel.json` entries.
+- 1c0347f: Expose schedules from generated `withKaf` services to Vercel's project-level Cron Jobs. Single and named agents now register routable jobs without requiring duplicate `vercel.json` entries.
 - 0755e97: Resolve package-owned runtime files from the installed kaf package when generated host bundles execute outside its package root, including on Windows.
 - 4deab71: Keep traced external dependencies resolvable from queue-triggered Vercel workflow functions, including dependency graphs that contain multiple versions of the same package.
 - cf40283: Development runtime snapshots no longer copy legacy root-level `.workflow-data` directories. Projects with large local workflow histories avoid redundant multi-gigabyte snapshot copies and related disk-space failures.
@@ -1548,7 +1548,7 @@
 ### Patch Changes
 
 - 5d961f3: Request Vercel CLI's maximum 100-team page instead of following its broken default pagination path.
-- 04d5814: `kaf dev` no longer fails at boot with `UNRESOLVED_IMPORT` when a mounted extension (or any dependency) resolves through a `node_modules` above the app root — npm/yarn workspace hoisting, intermediate monorepo levels, and bare `withEve` agent directories whose host app owns the install now materialize in the dev-runtime snapshot.
+- 04d5814: `kaf dev` no longer fails at boot with `UNRESOLVED_IMPORT` when a mounted extension (or any dependency) resolves through a `node_modules` above the app root — npm/yarn workspace hoisting, intermediate monorepo levels, and bare `withKaf` agent directories whose host app owns the install now materialize in the dev-runtime snapshot.
 - bbba073: The dev TUI supports queueing, steering, and cooperative turn cancellation. Pressing Enter while a turn is running queues the message (up to 5) in a pinned panel directly above the input — one line per message — and the queue coalesces into the next turn's message when the turn ends. Esc steers: it pops the oldest queued message, cancels the running turn cooperatively (`turn.cancelled` → `session.waiting`, keeping the session's context), and submits the popped message as the replacement turn. With nothing queued, Esc twice cancels the turn. Cancellation requests retry while the turn is live, so an Esc that lands in the turn-dispatch window (before the server has armed the turn's cancel hook) is no longer silently lost. Cancelling a turn mid-delegation settles its subagent sections and stops their child streams, so stale subagent output cannot paint into the steered turn. Messages still queued when a turn is interrupted or fails restore into the next prompt's input, and a turn cancelled from outside the prompt (a stale cancel or another client's `/cancel`) restores its submitted message the same way. On exit, the parting line names the server session id (`☰kaf  v0.27.0 · session ses_…`) so the conversation can be found again.
 - dfd360f: Custom channel routes can now call `reset()` and `ClientSession` can reset the session that owns a stable continuation token. The next `send()` starts a fresh workflow session and lazily initializes a new session-scoped sandbox instead of reusing prior history or workspace state, and the `kaf dev` TUI's `/new` performs that durable reset before clearing its transcript.
 
@@ -1707,7 +1707,7 @@
 - 02698fd: Fix Vercel deploys for the Next.js web channel. `kaf` no longer scaffolds a
   `vercel.json` `experimentalServices` block, which the Vercel platform now
   rejects (it requires the `services` key and a stricter schema). For Next.js the
-  block was also redundant — `withEve()` generates the kaf service and
+  block was also redundant — `withKaf()` generates the kaf service and
   `/kaf/v1/*` routes into the Build Output at build time — so the scaffold now
   writes a minimal `vercel.json`.
 - e45a066: `kaf link` now lets you create a Vercel project or link an existing one, matching the project setup available through `/model` usage.
@@ -1717,7 +1717,7 @@
 - 887908c: Bundle authored modules in each development generation as one shared graph, avoiding repeated parsing and emission of dependencies for every tool.
 - 376a82f: Report the root-only `agent` action alongside other framework tools in agent info, including whether it is active, disabled, or replaced.
 - 4f2863d: Update the bundled Workflow runtime dependencies to their latest 5.0 beta releases.
-- d9d3226: Fix `withEve` producing a broken Vercel build command in npm workspaces, where the `kaf` module is located in the workspace root.
+- d9d3226: Fix `withKaf` producing a broken Vercel build command in npm workspaces, where the `kaf` module is located in the workspace root.
 
 ## 0.24.4
 
@@ -1807,7 +1807,7 @@
 
 - b5aedaf: The shared integrations catalog gains 33 curated MCP connections from the Vercel Connect preset directory (Airtable, Stripe, Sentry, Supabase, Zapier, and more) for the docs integrations gallery, and the connection scaffolder now skips gallery-only catalog entries, so the `kaf connections add` picker is unchanged.
 - edc93cc: Keep the mounted extensions guide out of the docs sidebar for now. The page stays at `/docs/extensions`, but the feature isn't surfaced in the nav while its API stabilizes.
-- f00f084: Add named multi-agent routing to `withEve` and `useKafAgent`. Next.js apps can now configure multiple kaf roots with `agents`, then target one from the frontend with `useKafAgent({ agent: "name" })`.
+- f00f084: Add named multi-agent routing to `withKaf` and `useKafAgent`. Next.js apps can now configure multiple kaf roots with `agents`, then target one from the frontend with `useKafAgent({ agent: "name" })`.
 - f83d47d: `defineRemoteAgent` now accepts a function for `url`, resolved at runtime instead of baked at compile time. Return a `string` (or `Promise<string>`) from `() => process.env.MY_SERVICE_URL` to target an endpoint supplied by a runtime env var, known only once the deployment runs.
 
 ## 0.22.3
@@ -1844,7 +1844,7 @@
 - 4da4d86: Fixed Anthropic prompt caching placing the final cache breakpoint one message too early. Fresh tool results were billed as uncached input every turn and only entered the cache on the following request, capping the effective cache hit rate near 50%; the breakpoint now sits on the last message of each request, so agentic tool loops get near-full prefix hits.
 - 4446f96: Update the vendored Workflow SDK packages to the latest 5.0 beta releases. kaf now delegates world target selection and construction to the upstream SDK instead of maintaining parallel factory and compatibility logic, and no longer disables stable Workflow Turbo mode.
 - 3da5def: Retry transient provider overload errors delivered inside model streams. Classified transient failures get at most three fresh model-call attempts, while other recoverable task-mode errors fall back to Workflow's durable step retries without multiplying retry budgets.
-- 2afed3b: Update `withEve()` to generate Vercel Build Output service routes for kaf instead of the legacy Next.js rewrite setup. The generated output now uses the stable `services` field and service routes, including in hosted Vercel builds where no local `.vercel/project.json` exists, so Vercel builds the kaf service without Next.js rewrites.
+- 2afed3b: Update `withKaf()` to generate Vercel Build Output service routes for kaf instead of the legacy Next.js rewrite setup. The generated output now uses the stable `services` field and service routes, including in hosted Vercel builds where no local `.vercel/project.json` exists, so Vercel builds the kaf service without Next.js rewrites.
 - 3983d36: The Slack channel's default typing indicator for `actions.requested` now shows the action's contents instead of a generic `Running <tool>...` label: the tool name plus its most telling argument (`grep useKafAgent`, `read_file agent/agent.ts`), the subagent or remote-agent name for dispatched calls, and `+N more` for batches. The label helpers are exported from `kaf/channels/slack` as `describeActionRequest` and `describeActionRequests` for use in custom handlers.
 - 15309f3: New projects created with `kaf init` now use stable TypeScript 7.0.2 instead of the release candidate.
 
@@ -2276,7 +2276,7 @@
 
 ### Minor Changes
 
-- 31fb09f: Remove the `withEve` Vercel output opt-out option. Next.js projects now skip generated Vercel Build Output writes when no linked Vercel project or existing output context is detected.
+- 31fb09f: Remove the `withKaf` Vercel output opt-out option. Next.js projects now skip generated Vercel Build Output writes when no linked Vercel project or existing output context is detected.
 
 ### Patch Changes
 
