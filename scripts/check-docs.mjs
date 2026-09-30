@@ -226,7 +226,7 @@ function checkLinks(rootDir) {
       if (!isRel && !isSite) continue; // external, mailto, #anchor, bare /kaf/* runtime route, etc.
       target = target.split("#")[0].split("?")[0];
       if (!target) continue; // pure in-page anchor
-      const resolvedUrl = new URL(target, `https://github.com/TheHalfMoon/kaf${sourceUrl}`).pathname
+      const resolvedUrl = new URL(target, `https://kaf.invalid${sourceUrl}`).pathname
         .replace(/\/$/, "")
         .replace(/\.mdx?$/, "");
       if (resolvedUrl === "/docs") continue; // docs root / index
@@ -307,7 +307,7 @@ function checkChannelHubLinks(rootDir) {
   while ((match = linkRe.exec(source)) !== null) {
     const target = match[1].trim().split("#")[0].split("?")[0];
     if (!target || (!target.startsWith("./") && !target.startsWith("/docs/"))) continue;
-    linkedRoutes.add(new URL(target, "https://github.com/TheHalfMoon/kaf/docs/channels/overview").pathname);
+    linkedRoutes.add(new URL(target, "https://kaf.invalid/docs/channels/overview").pathname);
   }
 
   const meta = loadMetaJson(resolve(rootDir, "channels"));
