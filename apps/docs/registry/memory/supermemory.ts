@@ -1,4 +1,4 @@
-import supermemory from "@supermemory/kaf";
+import supermemory from "@supermemory/eve";
 import { defineMemory } from "kaf/memory";
 import { byPrincipal } from "kaf/memory/scope";
 

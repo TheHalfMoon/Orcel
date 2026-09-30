@@ -64,11 +64,11 @@ for (const item of items) {
     }
   } else if (slug === "upstash-agentkit") {
     if (
-      !item.dependencies?.includes("@upstash/agentkit-kaf") ||
+      !item.dependencies?.includes("@upstash/agentkit-eve") ||
       !item.dependencies.includes("@upstash/redis")
     ) {
       throw new Error(
-        'Registry item "memory/upstash-agentkit" must depend on @upstash/agentkit-kaf and @upstash/redis.',
+        'Registry item "memory/upstash-agentkit" must depend on @upstash/agentkit-eve and @upstash/redis.',
       );
     }
     if (
@@ -92,8 +92,8 @@ for (const item of items) {
       );
     }
   } else if (slug === "supermemory") {
-    if (!item.dependencies?.includes("@supermemory/kaf")) {
-      throw new Error('Registry item "memory/supermemory" must depend on @supermemory/kaf.');
+    if (!item.dependencies?.includes("@supermemory/eve")) {
+      throw new Error('Registry item "memory/supermemory" must depend on @supermemory/eve.');
     }
     if (!("SUPERMEMORY_API_KEY" in (item.envVars ?? {}))) {
       throw new Error(

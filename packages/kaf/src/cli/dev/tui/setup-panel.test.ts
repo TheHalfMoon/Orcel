@@ -317,7 +317,7 @@ describe("renderSelectQuestion", () => {
         description: "Add browser automation tools backed by agent-browser to an kaf agent.",
         metadata: [
           { label: "Source", value: "Official kaf registry" },
-          { label: "Packages", value: "@agent-browser/kaf" },
+          { label: "Packages", value: "@agent-browser/eve" },
         ],
         options: [
           { value: "add", label: "Add to project" },
@@ -338,7 +338,7 @@ describe("renderSelectQuestion", () => {
       "  extension/agent-browser",
       "  Add browser automation tools backed by agent-browser to an kaf agent.",
       "  Source: Official kaf registry",
-      "  Packages: @agent-browser/kaf",
+      "  Packages: @agent-browser/eve",
       "",
       "     Add to project",
       "     Back",

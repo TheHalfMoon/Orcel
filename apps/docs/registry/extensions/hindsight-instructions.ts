@@ -1,3 +1,3 @@
-import { hindsightMemory } from "@vectorize-io/hindsight-kaf";
+import { hindsightMemory } from "@vectorize-io/hindsight-eve";
 
 export default hindsightMemory();

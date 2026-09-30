@@ -1,3 +1,3 @@
-import githubTools from "@github-tools/kaf-extension";
+import githubTools from "@github-tools/eve-extension";
 
 export default githubTools({});

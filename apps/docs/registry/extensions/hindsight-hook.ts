@@ -1,3 +1,3 @@
-import { hindsightRetainHook } from "@vectorize-io/hindsight-kaf";
+import { hindsightRetainHook } from "@vectorize-io/hindsight-eve";
 
 export default hindsightRetainHook();

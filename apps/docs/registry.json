@@ -85,7 +85,7 @@
       "type": "registry:item",
       "title": "agent-browser",
       "description": "Add browser automation tools backed by agent-browser to an kaf agent.",
-      "dependencies": ["@agent-browser/kaf"],
+      "dependencies": ["@agent-browser/eve"],
       "files": [
         {
           "path": "registry/extensions/agent-browser.ts",
@@ -99,7 +99,7 @@
       "type": "registry:item",
       "title": "Browserbase",
       "description": "Search, fetch, and automate the web with Browserbase and Stagehand.",
-      "dependencies": ["@browserbasehq/kaf"],
+      "dependencies": ["@browserbasehq/eve"],
       "envVars": {
         "BROWSERBASE_API_KEY": ""
       },
@@ -116,7 +116,7 @@
       "type": "registry:item",
       "title": "BlitzReels",
       "description": "Turn long videos into short clips, generate media, repair edits, and export.",
-      "dependencies": ["@blitzreels/kaf"],
+      "dependencies": ["@blitzreels/eve"],
       "envVars": {
         "BLITZREELS_API_KEY": ""
       },
@@ -133,7 +133,7 @@
       "type": "registry:item",
       "title": "GitHub Tools",
       "description": "Add scoped GitHub tools with Vercel Connect authentication and approval rules.",
-      "dependencies": ["@github-tools/kaf-extension", "@vercel/connect"],
+      "dependencies": ["@github-tools/eve-extension", "@vercel/connect"],
       "envVars": {
         "GITHUB_TOKEN": ""
       },
@@ -150,7 +150,7 @@
       "type": "registry:item",
       "title": "Jetty",
       "description": "Grade agent turns, compare experiments, and store durable evaluation trajectories.",
-      "dependencies": ["@jetty/kaf"],
+      "dependencies": ["@jetty/eve"],
       "envVars": {
         "JETTY_API_TOKEN": "",
         "JETTY_COLLECTION": ""
@@ -192,7 +192,7 @@
       "type": "registry:item",
       "title": "KERNEL",
       "description": "Let your kaf agent use the Internet with KERNEL browser infrastructure, observability, and stealth.",
-      "dependencies": ["@onkernel/kaf-extension"],
+      "dependencies": ["@onkernel/eve-extension"],
       "envVars": {
         "KERNEL_API_KEY": ""
       },
@@ -233,7 +233,7 @@
       "type": "registry:item",
       "title": "Supermemory",
       "description": "Give your agents long-term memory, user profiles, and SuperRAG across conversations and context.",
-      "dependencies": ["@supermemory/kaf"],
+      "dependencies": ["@supermemory/eve"],
       "envVars": {
         "SUPERMEMORY_API_KEY": ""
       },
@@ -255,7 +255,7 @@
       "type": "registry:item",
       "title": "Upstash AgentKit",
       "description": "Give your agents ranked recall and automatic capture on Upstash Redis, or a Redis backend for file memory.",
-      "dependencies": ["@upstash/agentkit-kaf", "@upstash/redis"],
+      "dependencies": ["@upstash/agentkit-eve", "@upstash/redis"],
       "envVars": {
         "UPSTASH_REDIS_REST_URL": "",
         "UPSTASH_REDIS_REST_TOKEN": ""
@@ -301,7 +301,7 @@
       "type": "registry:item",
       "title": "Hindsight",
       "description": "Recall relevant context before every turn and retain each exchange automatically.",
-      "dependencies": ["@vectorize-io/hindsight-kaf"],
+      "dependencies": ["@vectorize-io/hindsight-eve"],
       "envVars": {
         "HINDSIGHT_API_KEY": "",
         "HINDSIGHT_API_URL": "",
@@ -1716,7 +1716,7 @@
       "type": "registry:item",
       "title": "Blooio",
       "description": "Send and receive iMessage, RCS, and SMS through Blooio, with reactions, typing indicators, read receipts, polls, groups, capability checks, and history.",
-      "dependencies": ["kaf-channel-blooio"],
+      "dependencies": ["eve-channel-blooio"],
       "envVars": {
         "BLOOIO_API_KEY": "",
         "BLOOIO_WEBHOOK_SECRET": ""

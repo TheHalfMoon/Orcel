@@ -1,3 +1,3 @@
-import browser from "@agent-browser/kaf";
+import browser from "@agent-browser/eve";
 
 export default browser({});

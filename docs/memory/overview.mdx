@@ -77,8 +77,8 @@ automatically or only through explicit tool calls.
 | Provider                                | Ships as                | Recall                                                 | Capture                                              |
 | --------------------------------------- | ----------------------- | ------------------------------------------------------ | ---------------------------------------------------- |
 | [File memory](#file-memory)             | Built into kaf          | One bounded document per scope                         | Model-driven `save_memory` / `remove_memory`         |
-| [Supermemory](#supermemory)             | `@supermemory/kaf`      | Semantic search over stored memories                   | Automatic after each turn, plus tools                |
-| [Upstash AgentKit](#upstash-agentkit)   | `@upstash/agentkit-kaf` | Ranked Redis Search recall or a Redis document backend | Automatic user-message capture or model-driven tools |
+| [Supermemory](#supermemory)             | `@supermemory/eve`      | Semantic search over stored memories                   | Automatic after each turn, plus tools                |
+| [Upstash AgentKit](#upstash-agentkit)   | `@upstash/agentkit-eve` | Ranked Redis Search recall or a Redis document backend | Automatic user-message capture or model-driven tools |
 | [Kybernesis Arcana](#kybernesis-arcana) | `@kybernesis/arcana`    | Semantic search and brain notes                        | Model-driven tools or optional automatic capture     |
 | [Your own provider](#build-your-own)    | Your code               | Whatever your store returns                            | Whatever rules you implement                         |
 
@@ -103,10 +103,10 @@ search, remember, forget, and extract sources.
 kaf add memory/supermemory
 ```
 
-The command installs `@supermemory/kaf` and writes a `supermemory` slot:
+The command installs `@supermemory/eve` and writes a `supermemory` slot:
 
 ```ts title="agent/memory/supermemory.ts"
-import supermemory from "@supermemory/kaf";
+import supermemory from "@supermemory/eve";
 import { defineMemory } from "kaf/memory";
 import { byPrincipal } from "kaf/memory/scope";
 
@@ -134,11 +134,11 @@ sessions, and forget.
 kaf add memory/upstash-agentkit
 ```
 
-The command installs `@upstash/agentkit-kaf` and writes an `upstash-agentkit`
+The command installs `@upstash/agentkit-eve` and writes an `upstash-agentkit`
 slot:
 
 ```ts title="agent/memory/upstash-agentkit.ts"
-import { redisMemory } from "@upstash/agentkit-kaf/memory";
+import { redisMemory } from "@upstash/agentkit-eve/memory";
 import { defineMemory } from "kaf/memory";
 import { byPrincipal } from "kaf/memory/scope";
 

@@ -1,1 +1,1 @@
-export { default } from "@onkernel/kaf-extension";
+export { default } from "@onkernel/eve-extension";

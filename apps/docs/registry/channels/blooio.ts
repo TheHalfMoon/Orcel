@@ -1,3 +1,3 @@
-import { blooioChannel } from "kaf-channel-blooio";
+import { blooioChannel } from "eve-channel-blooio";
 
 export default blooioChannel();

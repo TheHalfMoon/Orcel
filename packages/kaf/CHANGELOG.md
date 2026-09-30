@@ -606,7 +606,7 @@
 - 62f076c: Inline turns now handle workflow tools on the parent through one ordered inbox for progress, input requests, and outcomes. Waiting workflow tools use a fresh cancellation token per dispatch attempt; a retried dispatch can start another run, so side effects need application idempotency.
 - 31666f8: Keep client context available across every model step in its turn while excluding it from later turns and durable conversation history.
 - 62f076c: Activity collectors now finish on expiry even when a hook read is pending. Task and activity workflows rely on workflow completion to clean up their hooks, and subagent calls skip conflict checks for generated reply tokens.
-- 16c7f24: Move Upstash AgentKit to the memory-provider registry. Run `kaf add memory/upstash-agentkit` to install `@upstash/agentkit-kaf` and create a principal-scoped slot backed by `redisMemory()`; the previous `extension/upstash-agentkit` registry item is removed.
+- 16c7f24: Move Upstash AgentKit to the memory-provider registry. Run `kaf add memory/upstash-agentkit` to install `@upstash/agentkit-eve` and create a principal-scoped slot backed by `redisMemory()`; the previous `extension/upstash-agentkit` registry item is removed.
 
 ## 0.51.1
 

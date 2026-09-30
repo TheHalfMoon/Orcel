@@ -37,7 +37,7 @@
     },
     {
       "label": "Blooio is an externally published integration",
-      "dependencies": ["kaf-channel-blooio"],
+      "dependencies": ["eve-channel-blooio"],
       "packages": ["kaf-docs"],
       "dependencyTypes": ["dev"],
       "isIgnored": true

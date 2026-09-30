@@ -1,4 +1,4 @@
-import { redisMemory } from "@upstash/agentkit-kaf/memory";
+import { redisMemory } from "@upstash/agentkit-eve/memory";
 import { defineMemory } from "kaf/memory";
 import { byPrincipal } from "kaf/memory/scope";
 

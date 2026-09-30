@@ -309,7 +309,7 @@ TWILIO_AUTH_TOKEN=...      # required for inbound signature verification
   },
   blooio: {
     logo: "blooio",
-    docsHref: "https://github.com/Blooio/kaf-channel-blooio#readme",
+    docsHref: "https://github.com/Blooio/eve-channel-blooio#readme",
     badge: "Provider official",
     keywords: [
       "imessage",
@@ -322,7 +322,7 @@ TWILIO_AUTH_TOKEN=...      # required for inbound signature verification
       "poll",
       "group",
     ],
-    install: `Add this channel from kaf's registry. This writes \`agent/channels/blooio.ts\` and installs the \`kaf-channel-blooio\` package:
+    install: `Add this channel from kaf's registry. This writes \`agent/channels/blooio.ts\` and installs the \`eve-channel-blooio\` package:
 
 \`\`\`bash
 kaf add channel/blooio
@@ -331,12 +331,12 @@ kaf add channel/blooio
 
 \`\`\`ts
 // agent/channels/blooio.ts
-import { blooioChannel } from "kaf-channel-blooio";
+import { blooioChannel } from "eve-channel-blooio";
 
 export default blooioChannel();
 \`\`\`
 
-Blooio is a native kaf channel built on \`defineChannel\` (not a Chat SDK adapter), so kaf owns session dispatch, streaming, and human-in-the-loop directly. See the [kaf-channel-blooio README](https://github.com/Blooio/kaf-channel-blooio#readme) for the full \`BlooioHandle\` surface: reactions, typing indicators, read receipts, polls, groups, capability checks, and history.`,
+Blooio is a native kaf channel built on \`defineChannel\` (not a Chat SDK adapter), so kaf owns session dispatch, streaming, and human-in-the-loop directly. See the [eve-channel-blooio README](https://github.com/Blooio/eve-channel-blooio#readme) for the full \`BlooioHandle\` surface: reactions, typing indicators, read receipts, polls, groups, capability checks, and history.`,
     configure: `Set \`BLOOIO_API_KEY\` (a \`bl_live_...\` key) and \`BLOOIO_WEBHOOK_SECRET\` (\`whsec_...\`), then point a Blooio webhook at \`/kaf/v1/blooio\`:
 
 \`\`\`bash
@@ -1299,7 +1299,7 @@ Replace \`<maintenance-job-path>\` with the Gmail maintenance route listed by th
 const baseExtensionPresentations: Record<string, ExtensionPresentation> = {
   blitzreels: {
     logo: "blitzreels",
-    docsHref: "https://www.npmjs.com/package/@blitzreels/kaf",
+    docsHref: "https://www.npmjs.com/package/@blitzreels/eve",
     keywords: [
       "video editing",
       "long form video",
@@ -1326,7 +1326,7 @@ BLITZREELS_API_KEY=br_live_...
 Then mount the extension under \`agent/extensions/\`:
 
 \`\`\`ts title="agent/extensions/blitzreels.ts"
-import blitzreels from "@blitzreels/kaf";
+import blitzreels from "@blitzreels/eve";
 
 export default blitzreels({
   apiKey: process.env.BLITZREELS_API_KEY!,
@@ -1338,7 +1338,7 @@ The filename supplies the \`blitzreels\` namespace. The extension adds project, 
 
 Source imports, clipping, generation, and exports call the configured BlitzReels API. Credit-spending, download, and render tools require kaf approval by default, and durable retries reuse the original call receipt instead of spending twice. Override an individual tool from a directory mount when it needs stricter \`always()\` approval, or use \`disableTool()\` to remove it.
 
-See the [BlitzReels extension package](https://www.npmjs.com/package/@blitzreels/kaf) for the complete tool list, configuration, approval defaults, error contract, and OAuth-backed MCP alternative.`,
+See the [BlitzReels extension package](https://www.npmjs.com/package/@blitzreels/eve) for the complete tool list, configuration, approval defaults, error contract, and OAuth-backed MCP alternative.`,
   },
   "mux-video": {
     logo: "mux",
@@ -1391,7 +1391,7 @@ The extension supports creating and inspecting assets, exact-range clips, subtit
   },
   browserbase: {
     logo: "browserbase",
-    docsHref: "https://www.npmjs.com/package/@browserbasehq/kaf",
+    docsHref: "https://www.npmjs.com/package/@browserbasehq/eve",
     keywords: [
       "browser",
       "browser automation",
@@ -1417,7 +1417,7 @@ BROWSERBASE_API_KEY=bb_live_...
 Then mount the extension under \`agent/extensions/\`:
 
 \`\`\`ts title="agent/extensions/browserbase.ts"
-import browserbase from "@browserbasehq/kaf";
+import browserbase from "@browserbasehq/eve";
 
 export default browserbase({
   apiKey: process.env.BROWSERBASE_API_KEY!,
@@ -1430,7 +1430,7 @@ The filename supplies the \`browserbase\` namespace. The extension adds \`browse
 You can configure the Stagehand model, session timeout, and proxies:
 
 \`\`\`ts title="agent/extensions/browserbase.ts"
-import browserbase from "@browserbasehq/kaf";
+import browserbase from "@browserbasehq/eve";
 
 export default browserbase({
   apiKey: process.env.BROWSERBASE_API_KEY!,
@@ -1440,7 +1440,7 @@ export default browserbase({
 });
 \`\`\`
 
-Browserbase uses keep-alive sessions and kaf's durable per-session state to reconnect across workflow steps and function invocations. Call \`browserbase__stop_session\` when the task finishes to release billable browser time. Keep API keys out of prompts, and add approval gates around sensitive or irreversible browser actions. See the [Browserbase extension package](https://www.npmjs.com/package/@browserbasehq/kaf) for the complete tool and configuration reference.`,
+Browserbase uses keep-alive sessions and kaf's durable per-session state to reconnect across workflow steps and function invocations. Call \`browserbase__stop_session\` when the task finishes to release billable browser time. Keep API keys out of prompts, and add approval gates around sensitive or irreversible browser actions. See the [Browserbase extension package](https://www.npmjs.com/package/@browserbasehq/eve) for the complete tool and configuration reference.`,
   },
   kernel: {
     logo: "kernel",
@@ -1471,7 +1471,7 @@ vercel connect attach kernel/kernel-mcp
 Then mount the extension under \`agent/extensions/\`:
 
 \`\`\`ts title="agent/extensions/kernel.ts"
-import kernel from "@onkernel/kaf-extension";
+import kernel from "@onkernel/eve-extension";
 
 export default kernel({ connect: "kernel/kernel-mcp" });
 \`\`\`
@@ -1480,7 +1480,7 @@ The filename supplies the \`kernel\` namespace. The extension adds browser manag
     configure: `For a personal or single-tenant agent, you can authenticate with a Kernel API key instead. Set \`KERNEL_API_KEY\`, then mount the extension with its default configuration:
 
 \`\`\`ts title="agent/extensions/kernel.ts"
-export { default } from "@onkernel/kaf-extension";
+export { default } from "@onkernel/eve-extension";
 \`\`\`
 
 The default mount can execute JavaScript in the browser VM and reuse authenticated browser sessions. For team or multi-tenant agents, prefer Vercel Connect so each user authenticates separately, and add an approval gate by overriding the extension's \`browser\` connection. See the [Kernel kaf extension guide](https://www.kernel.sh/docs/integrations/vercel/kaf-extension) for API-key configuration, connection overrides, the complete tool list, and security guidance.`,
@@ -1529,7 +1529,7 @@ JETTY_COLLECTION=your_collection
 Then mount the extension under \`agent/extensions/\`:
 
 \`\`\`ts title="agent/extensions/jetty.ts"
-import jetty from "@jetty/kaf";
+import jetty from "@jetty/eve";
 
 export default jetty({
   collection: process.env.JETTY_COLLECTION ?? "",
@@ -1546,7 +1546,7 @@ The filename supplies the \`jetty\` namespace. The extension contributes a turn-
     configure: `The package also includes a reporter for kaf's native eval runner:
 
 \`\`\`ts title="evals/evals.config.ts"
-import { Jetty } from "@jetty/kaf/reporter";
+import { Jetty } from "@jetty/eve/reporter";
 import { defineEvalConfig } from "kaf/evals";
 
 export default defineEvalConfig({
@@ -1590,7 +1590,7 @@ vercel env pull
 Then mount the extension under \`agent/extensions/\`:
 
 \`\`\`ts title="agent/extensions/github.ts"
-import githubExtension from "@github-tools/kaf-extension";
+import githubExtension from "@github-tools/eve-extension";
 
 export default githubExtension({
   connector: "github/my-connector",
@@ -1605,7 +1605,7 @@ The filename supplies the \`github\` namespace, so tools appear as \`github__lis
     configure: `Choose one or more presets to limit the available tools: \`code-review\`, \`issue-triage\`, \`repo-explorer\`, \`ci-ops\`, or \`maintainer\`. Every write tool requires approval by default, while read tools do not. Use \`requireApproval\` to apply \`always\`, \`once\`, or an input-dependent policy to individual tools:
 
 \`\`\`ts title="agent/extensions/github.ts"
-import githubExtension from "@github-tools/kaf-extension";
+import githubExtension from "@github-tools/eve-extension";
 
 export default githubExtension({
   connector: "github/my-connector",
@@ -1641,7 +1641,7 @@ For local or non-Vercel deployments, omit \`connector\` and set \`GITHUB_TOKEN\`
 kaf add extension/hindsight
 \`\`\`
 
-This installs \`@vectorize-io/hindsight-kaf\` and writes \`agent/instructions/hindsight.ts\` for recall plus \`agent/hooks/hindsight.ts\` for retention. The package requires Node.js 24 or later.`,
+This installs \`@vectorize-io/hindsight-eve\` and writes \`agent/instructions/hindsight.ts\` for recall plus \`agent/hooks/hindsight.ts\` for retention. The package requires Node.js 24 or later.`,
     quickStart: `Create a Hindsight Cloud API key and add it to the agent's environment. The API URL defaults to Hindsight Cloud, and the bank defaults to \`default\`:
 
 \`\`\`bash title=".env.local"
@@ -1652,13 +1652,13 @@ HINDSIGHT_BANK_ID=my-agent
 The registry creates both capability files:
 
 \`\`\`ts title="agent/instructions/hindsight.ts"
-import { hindsightMemory } from "@vectorize-io/hindsight-kaf";
+import { hindsightMemory } from "@vectorize-io/hindsight-eve";
 
 export default hindsightMemory();
 \`\`\`
 
 \`\`\`ts title="agent/hooks/hindsight.ts"
-import { hindsightRetainHook } from "@vectorize-io/hindsight-kaf";
+import { hindsightRetainHook } from "@vectorize-io/hindsight-eve";
 
 export default hindsightRetainHook();
 \`\`\`
@@ -1667,7 +1667,7 @@ Before each turn, the dynamic instructions resolver recalls the user's ambient p
     configure: `Recall uses a fixed broad query rather than the live user message. Tune the profile context and response budget in the instructions file when needed:
 
 \`\`\`ts title="agent/instructions/hindsight.ts"
-import { hindsightMemory } from "@vectorize-io/hindsight-kaf";
+import { hindsightMemory } from "@vectorize-io/hindsight-eve";
 
 export default hindsightMemory({
   recallQuery: "user preferences, identity, projects, and working context",
@@ -1741,7 +1741,7 @@ Provisioned bindings use the \`KAF_MEMORY_BLOB_*\` namespace. \`fileMemory()\` p
 kaf add memory/upstash-agentkit
 \`\`\`
 
-This installs \`@upstash/agentkit-kaf\` and \`@upstash/redis\`, then writes a memory slot. The \`@upstash/agentkit-kaf/memory\` entry point requires kaf 0.45.2 or later.`,
+This installs \`@upstash/agentkit-eve\` and \`@upstash/redis\`, then writes a memory slot. The \`@upstash/agentkit-eve/memory\` entry point requires kaf 0.45.2 or later.`,
     quickStart: `Add an Upstash Redis database's REST credentials to the agent's environment:
 
 \`\`\`bash title=".env.local"
@@ -1752,7 +1752,7 @@ UPSTASH_REDIS_REST_TOKEN=...
 The registry creates this memory slot:
 
 \`\`\`ts title="agent/memory/upstash-agentkit.ts"
-import { redisMemory } from "@upstash/agentkit-kaf/memory";
+import { redisMemory } from "@upstash/agentkit-eve/memory";
 import { defineMemory } from "kaf/memory";
 import { byPrincipal } from "kaf/memory/scope";
 
@@ -1770,7 +1770,7 @@ Use \`redisDocuments()\` with \`fileMemory({ backend: redisDocuments() })\` when
 
 The provider stores memory content in your Upstash Redis database. Review its retention before enabling it for sensitive data. See the [Upstash AgentKit kaf guide](https://upstash.com/docs/redis/sdks/agentkit/kaf) for options including retention, recall limits, and automatic capture.
 
-AgentKit also ships \`@upstash/agentkit-kaf-extension\`, an kaf extension that adds Redis Search tools over your own documents and searchable chat history. Mount it separately under \`agent/extensions/\` when you need those capabilities; the memory slot does not depend on it.`,
+AgentKit also ships \`@upstash/agentkit-eve-extension\`, an kaf extension that adds Redis Search tools over your own documents and searchable chat history. Mount it separately under \`agent/extensions/\` when you need those capabilities; the memory slot does not depend on it.`,
   },
   arcana: {
     logo: "arcana",
@@ -1830,7 +1830,7 @@ An Arcana key is scoped to a workspace. Keep the key in a sensitive environment 
 kaf add memory/supermemory
 \`\`\`
 
-This installs \`@supermemory/kaf\` and writes a memory slot. The provider requires Node.js 24 or later and kaf 0.47.3 or later.`,
+This installs \`@supermemory/eve\` and writes a memory slot. The provider requires Node.js 24 or later and kaf 0.47.3 or later.`,
     quickStart: `Create a Supermemory API key and add it to the agent's environment:
 
 \`\`\`bash title=".env.local"
@@ -1840,7 +1840,7 @@ SUPERMEMORY_API_KEY=...
 The registry creates this memory slot:
 
 \`\`\`ts title="agent/memory/supermemory.ts"
-import supermemory from "@supermemory/kaf";
+import supermemory from "@supermemory/eve";
 import { defineMemory } from "kaf/memory";
 import { byPrincipal } from "kaf/memory/scope";
 
@@ -1890,7 +1890,7 @@ The extension installs agent-browser automatically on first use and runs it insi
     quickStart: `Mount the extension under \`agent/extensions/\`:
 
 \`\`\`ts title="agent/extensions/browser.ts"
-import browser from "@agent-browser/kaf";
+import browser from "@agent-browser/eve";
 
 export default browser({});
 \`\`\`
@@ -1899,7 +1899,7 @@ The filename supplies the \`browser\` namespace. The extension adds tools such a
     configure: `Restrict browser access to the sites the agent needs with the extension's domain allow-list:
 
 \`\`\`ts title="agent/extensions/browser.ts"
-import browser from "@agent-browser/kaf";
+import browser from "@agent-browser/eve";
 
 export default browser({
   allowedDomains: ["example.com", "*.example.com"],
