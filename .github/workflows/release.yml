@@ -1,37 +1,29 @@
-name: Release
+name: Release Readiness
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
-# Queue runs instead of cancelling: aborting a run mid-`changeset publish`
-# can leave npm with only some of the packages published.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+# Kaf intentionally does not auto-publish from main during the initial migration.
+# The upstream release workflow targeted Vercel-owned registries and package
+# identities. Publication must stay disabled until Kaf's package namespace,
+# first-version policy, and registry ownership are explicitly qualified.
 
-env:
-  GHCR_IMAGE: ghcr.io/vercel/kaf
-  VCR_IMAGE: vcr.vercel.com/vercel/kaf/base
+permissions:
+  contents: read
+
+concurrency:
+  group: release-readiness-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  release:
+  dry-run:
+    name: package-and-image-dry-run
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      packages: write
-      pull-requests: write
-      id-token: write
-
+    timeout-minutes: 45
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Full history: `changeset version` runs `git fetch --deepen` loops on
-          # shallow clones (to find the commit that added each changeset), and those
-          # in-flight packfiles crash the github-api commit (isomorphic-git
-          # "Could not read packfile .tmp-*-pack-*").
           fetch-depth: 0
           persist-credentials: false
 
@@ -42,148 +34,36 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
-          cache: "pnpm"
+          cache: pnpm
 
-      - name: Install dependencies
+      - name: Install dependencies from lockfile
         run: pnpm install --frozen-lockfile
 
-      - name: Prepare image tags
-        if: github.ref == 'refs/heads/main'
-        id: image-tags
+      - name: Build workspace packages
+        run: pnpm build
+
+      - name: Dry-run npm package assembly
+        shell: bash
         run: |
           set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/kaf-package"
+          pnpm --filter kaf pack --pack-destination "$RUNNER_TEMP/kaf-package"
+          ls -lah "$RUNNER_TEMP/kaf-package"
 
-          version="$(jq -er '.version | select(type == "string" and length > 0)' packages/kaf/package.json)"
-          echo "version=${version}" >>"$GITHUB_OUTPUT"
-          echo "ghcr-tag=${GHCR_IMAGE}:${version}" >>"$GITHUB_OUTPUT"
-          echo "vcr-tag=${VCR_IMAGE}:${version}" >>"$GITHUB_OUTPUT"
-
-      - name: Set up QEMU
-        if: github.ref == 'refs/heads/main'
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
-
-      - name: Set up Docker Buildx
-        if: github.ref == 'refs/heads/main'
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-
-      - name: Log in to Vercel Container Registry
-        if: github.ref == 'refs/heads/main'
-        # Public workflows cannot resolve the upstream action while its repository is private.
-        uses: ./.github/actions/vcr-login
-        with:
-          team: ${{ secrets.VCR_TEAM_ID }}
-
-      - name: Log in to GitHub Container Registry
-        if: github.ref == 'refs/heads/main'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Check whether the VCR image version is already published
-        if: github.ref == 'refs/heads/main'
-        id: vcr-image
-        env:
-          IMAGE_TAG: ${{ steps.image-tags.outputs.vcr-tag }}
+      - name: Build Kaf sandbox image without publishing
+        shell: bash
         run: |
           set -euo pipefail
+          docker build \
+            --file packages/kaf/Dockerfile \
+            --tag kaf:release-readiness \
+            packages/kaf
 
-          if inspect_output="$(docker buildx imagetools inspect --raw "$IMAGE_TAG" 2>&1)"; then
-            echo "publish=false" >>"$GITHUB_OUTPUT"
-            echo "$IMAGE_TAG is already published; skipping the image build."
-          elif grep -Eq ': not found|manifest unknown' <<<"$inspect_output"; then
-            echo "publish=true" >>"$GITHUB_OUTPUT"
-          else
-            echo "$inspect_output" >&2
-            exit 1
-          fi
-
-      - name: Check whether the GHCR image version is already published
-        if: github.ref == 'refs/heads/main'
-        id: ghcr-image
-        env:
-          IMAGE_TAG: ${{ steps.image-tags.outputs.ghcr-tag }}
+      - name: Confirm publication boundary
+        shell: bash
         run: |
-          set -euo pipefail
-
-          if inspect_output="$(docker buildx imagetools inspect --raw "$IMAGE_TAG" 2>&1)"; then
-            echo "publish=false" >>"$GITHUB_OUTPUT"
-            echo "$IMAGE_TAG is already published; skipping the image build."
-          elif grep -Eq ': not found|manifest unknown' <<<"$inspect_output"; then
-            echo "publish=true" >>"$GITHUB_OUTPUT"
-          else
-            echo "$inspect_output" >&2
-            exit 1
-          fi
-
-      - name: Publish kaf image to Vercel Container Registry
-        if: github.ref == 'refs/heads/main' && steps.vcr-image.outputs.publish == 'true'
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: ./packages/kaf
-          file: ./packages/kaf/Dockerfile
-          platforms: linux/amd64
-          provenance: false
-          tags: |
-            ${{ steps.image-tags.outputs.vcr-tag }}
-            ${{ env.VCR_IMAGE }}:latest
-          labels: |
-            org.opencontainers.image.title=kaf Sandbox
-            org.opencontainers.image.description=Sandbox base image for kaf agents.
-            org.opencontainers.image.source=https://github.com/TheHalfMoon/kaf
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ steps.image-tags.outputs.version }}
-          outputs: type=image,push=true,oci-mediatypes=true,compression=zstd,compression-level=3,force-compression=true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Publish kaf image to GitHub Container Registry
-        if: github.ref == 'refs/heads/main' && steps.ghcr-image.outputs.publish == 'true'
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: ./packages/kaf
-          file: ./packages/kaf/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          provenance: false
-          tags: |
-            ${{ steps.image-tags.outputs.ghcr-tag }}
-            ${{ env.GHCR_IMAGE }}:latest
-          labels: |
-            org.opencontainers.image.title=kaf Sandbox
-            org.opencontainers.image.description=Sandbox base image for kaf agents.
-            org.opencontainers.image.source=https://github.com/TheHalfMoon/kaf
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ steps.image-tags.outputs.version }}
-          outputs: type=image,push=true,oci-mediatypes=true,compression=zstd,compression-level=3,force-compression=true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      # `commitMode: github-api` commits through @changesets/ghcommit, which
-      # reads the repo with isomorphic-git. Unlike git itself, isomorphic-git
-      # tries to parse every *.pack file in .git/objects/pack — including
-      # stale temp packfiles left behind when a fetch is interrupted or
-      # retried during checkout — and fails with "Could not read packfile
-      # at … .tmp-<pid>-pack-<sha>.pack". Drop any temp packs first.
-      - name: Remove stale git temp packfiles
-        run: rm -f .git/objects/pack/.tmp-* .git/objects/pack/tmp_*
-
-      - name: Create release pull request or publish
-        id: changesets
-        uses: changesets/action@8488615a623b1b9c987934bb89eae8af6a946ac1 # v2.1.1
-        with:
-          version-script: pnpm version-packages
-          publish-script: pnpm release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Mark kaf as the latest GitHub release
-        if: steps.changesets.outputs.published == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PUBLISHED_PACKAGES: ${{ steps.changesets.outputs.published-packages }}
-        run: |
-          version="$(jq -r '.[] | select(.name == "kaf") | .version' <<< "$PUBLISHED_PACKAGES")"
-          if [[ -n "$version" ]]; then
-            gh release edit "kaf@$version" --latest
-          fi
+          cat <<'EOF'
+          Release readiness completed without publishing.
+          No npm package, GitHub Container Registry image, Vercel Container
+          Registry image, or GitHub release was created by this workflow.
+          EOF
