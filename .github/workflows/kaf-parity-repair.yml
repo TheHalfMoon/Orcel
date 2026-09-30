@@ -1,0 +1,90 @@
+name: Repair Kaf import parity
+
+on:
+  push:
+    branches:
+      - generated/eve-full-import-9c36b7c
+    paths:
+      - .github/workflows/kaf-parity-repair.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: kaf-parity-repair
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install exact dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply deterministic identity repairs
+        run: node .kaf-migration/repair-parity.mjs
+
+      - name: Regenerate extension contract epochs
+        shell: bash
+        run: |
+          set -euo pipefail
+          for contract in \
+            extension tool dynamicTool channel schedule subagent connection hook \
+            skill dynamicSkill instructions dynamicInstructions config state
+          do
+            pnpm update:extension-contracts --update "$contract"
+          done
+
+      - name: Verify invariant guard
+        run: pnpm guard:invariants
+
+      - name: Verify framework fixtures
+        run: pnpm test:framework-fixtures
+
+      - name: Verify authorization integration regression
+        run: pnpm --filter kaf exec vitest run --config vitest.integration.config.ts src/execution/tool-auth.integration.test.ts
+
+      - name: Verify patch integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git status --short
+
+      - name: Record qualified repair commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No repair changes were produced."
+            exit 1
+          fi
+          git commit --no-verify -m "fix: repair Kaf parity after identity migration [skip ci]"
+          echo "REPAIR_COMMIT=$(git rev-parse HEAD)"
+          echo "REPAIR_TREE=$(git rev-parse HEAD^{tree})"
+
+      - name: Push repair to PR branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git push origin "HEAD:${GITHUB_REF_NAME}"
