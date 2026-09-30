@@ -14,6 +14,7 @@ const provenanceFiles = new Set([
   ".github/workflows/bootstrap-eve-to-kaf.yml",
 ]);
 const provenanceLiterals = ["generated/eve-full-import-9c36b7c"];
+const externalProviderApiLiterals = ["@vercel/connect/eve"];
 
 function walk(dir, visitor) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -57,9 +58,11 @@ for (const manifest of manifests) {
   }
 }
 
-const protectedLiterals = [...externalEvePackages, ...provenanceLiterals].sort(
-  (a, b) => b.length - a.length,
-);
+const protectedLiterals = [
+  ...externalEvePackages,
+  ...externalProviderApiLiterals,
+  ...provenanceLiterals,
+].sort((a, b) => b.length - a.length);
 const forbiddenIdentity = [
   { label: "standalone Eve identity", pattern: /\b(?:eve|Eve|EVE)\b/g },
   { label: "Eve-prefixed symbol", pattern: /\b(?:eve|Eve|EVE)(?=[A-Z0-9_])/g },
@@ -74,7 +77,9 @@ const forbiddenOwnership = [
 
 function maskProtectedLiterals(text) {
   let output = text;
-  for (const literal of protectedLiterals) output = output.split(literal).join("__KAF_ALLOWED_EXTERNAL_OR_PROVENANCE__");
+  for (const literal of protectedLiterals) {
+    output = output.split(literal).join("__KAF_ALLOWED_EXTERNAL_OR_PROVENANCE__");
+  }
   return output;
 }
 
@@ -102,6 +107,7 @@ walk(root, (file) => {
 
 const result = {
   externalEvePackages: [...externalEvePackages].sort(),
+  allowedExternalProviderApiLiterals: externalProviderApiLiterals,
   allowedProvenanceLiterals: provenanceLiterals,
   violationCount: violations.reduce((sum, item) => sum + item.count, 0),
   violations,
@@ -113,4 +119,6 @@ if (violations.length) {
   process.exit(1);
 }
 
-console.log("[kaf:identity-audit] ok — Kaf project identity is clean outside explicit provenance and external package coordinates.");
+console.log(
+  "[kaf:identity-audit] ok — Kaf project identity is clean outside explicit provenance and external package/provider API coordinates.",
+);
