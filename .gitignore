@@ -1,0 +1,73 @@
+# Node and JS/TS builds
+node_modules/
+dist/
+/build/
+coverage/
+.turbo/
+.next/
+.vercel/
+.swc/
+*.tsbuildinfo
+
+# Dependency/tooling caches
+.pnpm-store/
+.bun/
+.npm/
+
+# Test artifacts
+.kaf-bench-runner/
+benchmark-results/
+.vitest/
+apps/benchmarks/experiments/
+apps/benchmarks/results/
+apps/benchmarks/evals/*/PROMPT.md
+apps/benchmarks/evals/*/package.json
+apps/benchmarks/evals/*/.kaf-authoring-bootstrap.json
+.extension-contracts-cache/
+packages/kaf/.workflow-vitest/
+packages/kaf/.generated/
+packages/kaf/src/extensions/code/extension/
+packages/kaf/src/computer-use/extension/
+playwright-report/
+test-results/
+
+# Package lifecycle artifacts (copied from the repo root at prepack)
+packages/kaf/docs/
+packages/kaf/LICENSE
+packages/kaf/NOTICE
+packages/kaf-buzz-acp-adapter/LICENSE
+packages/kaf-buzz-acp-adapter/NOTICE
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+bun-error.log*
+
+# Environment files
+.env
+.env.*
+
+# OS files
+*.tgz
+.DS_Store
+Thumbs.db
+
+# IDE/editor
+.codex/
+.githooks/
+.vscode/
+.idea/
+
+# Vercel/Temp build output
+.output/
+.kaf/
+
+# Geist
+.source
+
+# Vercel
+.vercel
+.env*.local
+.env*

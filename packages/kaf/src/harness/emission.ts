@@ -1,0 +1,700 @@
+import type {
+  ModelMessage,
+  TextStreamPart,
+  ToolSet,
+  TypedToolCall,
+  TypedToolError,
+  TypedToolResult,
+} from "ai";
+
+type ToolResponsePart = Extract<ModelMessage, { role: "tool" }>["content"][number];
+type InlineToolResultPart = Extract<ToolResponsePart, { type: "tool-result" }>;
+
+import type {
+  AssistantStepFinishReason,
+  RuntimeIdentity,
+  RuntimeTraceContext,
+} from "#protocol/message.js";
+import {
+  createActionsRequestedEvent,
+  createActionInputAppendedEvent,
+  createActionPartialEvent,
+  createActionResultEvent,
+  createMessageAppendedEvent,
+  createMessageCompletedEvent,
+  createMessageReceivedEvent,
+  createReasoningAppendedEvent,
+  createReasoningCompletedEvent,
+  createSessionFailedEvent,
+  createSessionStartedEvent,
+  createSessionWaitingEvent,
+  createStepFailedEvent,
+  createStepStartedEvent,
+  createTurnCompletedEvent,
+  createTurnFailedEvent,
+  createTurnStartedEvent,
+} from "#protocol/message.js";
+import type { JsonObject } from "#shared/json.js";
+import {
+  createRuntimeToolResultFromStepResult,
+  createRuntimeToolResultFromToolError,
+  createToolResultMessagePartFromToolError,
+} from "#harness/action-result-helpers.js";
+import {
+  createInvalidToolCallInputError,
+  isInvalidToolCall,
+  resolveProviderToolCallRequest,
+} from "#harness/tool-call-input-errors.js";
+import type { RuntimeToolResultActionResult } from "#shared/action-types.js";
+import {
+  collectActionPresentation,
+  createPresentedRuntimeActionRequestFromToolCall,
+  type RuntimeActionRequestProjection,
+} from "#harness/action-presentation.js";
+import { projectResultPresentation, projectDeltaPresentation } from "#harness/tool-presentation.js";
+import { createProviderStreamActionBatch } from "#harness/stream-actions.js";
+import { normalizeModelStreamError } from "#harness/model-call-error.js";
+import { createOrderedStreamEmitter } from "#harness/ordered-stream-emitter.js";
+import { interruptStreamOnFailure } from "#harness/interruptible-stream.js";
+import { isInlineAuthorizationToolResult } from "#harness/inline-tool-authorization.js";
+import type { HarnessEmissionState } from "#harness/emission-state.js";
+import type { HarnessEmitFn, HarnessToolMap, StepInput } from "#harness/types.js";
+import { normalizeAssistantStepFinishReason } from "#harness/finish-reason.js";
+
+export {
+  getHarnessEmissionState,
+  isHarnessBetweenTurns,
+  setHarnessEmissionState,
+} from "#harness/emission-state.js";
+export type { HarnessEmissionState } from "#harness/emission-state.js";
+
+/**
+ * Emits `session.started` (once), `turn.started`, and `message.received` at the
+ * beginning of a new turn. Returns updated emission state.
+ */
+export async function emitTurnPreamble(
+  emitFn: HarnessEmitFn,
+  input: StepInput,
+  state: HarnessEmissionState,
+  messages: readonly ModelMessage[],
+  runtimeIdentity?: RuntimeIdentity,
+  traceContext?: RuntimeTraceContext,
+): Promise<HarnessEmissionState> {
+  // Steering re-enters an open turn: keep its id and step index and skip the
+  // `turn.started` it already emitted.
+  const steering = state.turnId !== "";
+  const turnId = steering ? state.turnId : `turn_${state.sequence}`;
+
+  if (!state.sessionStarted) {
+    await emitFn(createSessionStartedEvent({ runtime: runtimeIdentity, trace: traceContext }));
+  }
+
+  if (!steering) {
+    await emitFn(
+      createTurnStartedEvent({ sequence: state.sequence, trace: traceContext, turnId }),
+      messages,
+    );
+  }
+
+  if (input.message !== undefined) {
+    await emitFn(
+      createMessageReceivedEvent({
+        message: input.message,
+        sequence: state.sequence,
+        turnId,
+      }),
+    );
+  }
+
+  const nextState: HarnessEmissionState = {
+    sessionStarted: true,
+    sequence: state.sequence,
+    stepIndex: steering ? state.stepIndex : 0,
+    turnId,
+  };
+  return steering && state.assistantOutputStarted
+    ? { ...nextState, assistantOutputStarted: true }
+    : nextState;
+}
+
+/**
+ * Emits `step.started` for one model call.
+ */
+export async function emitStepStarted(
+  emitFn: HarnessEmitFn,
+  state: HarnessEmissionState,
+  modelId: string,
+  messages?: readonly import("ai").ModelMessage[],
+): Promise<void> {
+  await emitFn(
+    createStepStartedEvent({
+      modelId,
+      sequence: state.sequence,
+      stepIndex: state.stepIndex,
+      turnId: state.turnId,
+    }),
+    messages,
+  );
+}
+
+interface FailedStepPayload {
+  readonly code: string;
+  readonly details?: JsonObject;
+  readonly message: string;
+}
+
+/**
+ * Emits the shared head of both failure cascades: `step.failed` →
+ * `turn.failed`. Both terminal and recoverable paths diverge only on
+ * the third event (`session.failed` vs. `session.waiting`).
+ */
+async function emitStepAndTurnFailed(
+  emitFn: HarnessEmitFn,
+  state: HarnessEmissionState,
+  input: FailedStepPayload,
+): Promise<void> {
+  await emitFn(
+    createStepFailedEvent({
+      ...input,
+      sequence: state.sequence,
+      stepIndex: state.stepIndex,
+      turnId: state.turnId,
+    }),
+  );
+  await emitFn(
+    createTurnFailedEvent({
+      ...input,
+      sequence: state.sequence,
+      turnId: state.turnId,
+    }),
+  );
+}
+
+/**
+ * Emits the full terminal failure cascade: `step.failed` →
+ * `turn.failed` → `session.failed`.
+ *
+ * Use this when the session cannot be salvaged (structural config
+ * error, auth misconfig, non-recoverable provider response). The
+ * `session.failed` tail tells adapters the session is dead and no
+ * further follow-up is possible on the same continuation token.
+ */
+export async function emitFailedStep(
+  emitFn: HarnessEmitFn,
+  state: HarnessEmissionState,
+  input: FailedStepPayload & { readonly sessionId: string },
+): Promise<void> {
+  await emitStepAndTurnFailed(emitFn, state, input);
+  await emitFn(createSessionFailedEvent(input));
+}
+
+/**
+ * Emits the recoverable failure cascade: `step.failed` →
+ * `turn.failed` → `session.waiting`.
+ */
+export async function emitRecoverableFailedTurn(
+  emitFn: HarnessEmitFn,
+  state: HarnessEmissionState,
+  input: FailedStepPayload & { readonly continuationToken: string },
+): Promise<HarnessEmissionState> {
+  await emitStepAndTurnFailed(emitFn, state, input);
+  await emitFn(createSessionWaitingEvent());
+
+  return {
+    sessionStarted: state.sessionStarted,
+    sequence: state.sequence + 1,
+    stepIndex: 0,
+    turnId: "",
+  };
+}
+
+/**
+ * Returns updated emission state for the next step in the current turn.
+ */
+export function advanceStep(state: HarnessEmissionState): HarnessEmissionState {
+  return {
+    ...state,
+    stepIndex: state.stepIndex + 1,
+  };
+}
+
+/**
+ * Emits `turn.completed` and `session.waiting`.
+ * Returns updated emission state with an incremented sequence.
+ */
+export async function emitTurnEpilogue(
+  emitFn: HarnessEmitFn,
+  state: HarnessEmissionState,
+  messages: readonly ModelMessage[],
+): Promise<HarnessEmissionState> {
+  await emitFn(
+    createTurnCompletedEvent({
+      sequence: state.sequence,
+      turnId: state.turnId,
+    }),
+    messages,
+  );
+  await emitFn(createSessionWaitingEvent());
+
+  return {
+    sessionStarted: state.sessionStarted,
+    sequence: state.sequence + 1,
+    stepIndex: 0,
+    turnId: "",
+  };
+}
+
+/**
+ * Result of consuming one step's `fullStream`.
+ *
+ * Inline results avoid duplicate post-step events. Approval-resume
+ * authorization results also route back to the park detector.
+ */
+interface EmittedStreamContent {
+  readonly emittedActionCallIds: ReadonlySet<string>;
+  readonly handledInlineToolResultCallIds: ReadonlySet<string>;
+  readonly invalidInputToolCallIds: ReadonlySet<string>;
+  readonly inlineAuthorizationResults: readonly TypedToolResult<ToolSet>[];
+  readonly trailingInlineToolResultParts: readonly InlineToolResultPart[];
+}
+
+interface StreamActionEmissionOptions {
+  readonly excludedActionToolNames: ReadonlySet<string>;
+  /**
+   * A child's or schedule's turn is held while its tasks work, so a text step
+   * can't end it: the step reports `"tool-calls"` and channels don't post it
+   * as the reply.
+   */
+  readonly hidesHeldText?: boolean;
+  readonly tools: HarnessToolMap;
+}
+
+/**
+ * Consumes the AI SDK `fullStream` and emits real-time text and reasoning
+ * events.
+ *
+ * Emits local tool events in source order. Provider calls that arrive in one
+ * stream batch into one request event before their first result. A result
+ * without a streamed call resumes a call from an earlier step.
+ */
+export async function emitStreamContent(
+  emitFn: HarnessEmitFn,
+  state: HarnessEmissionState,
+  fullStream: AsyncIterable<TextStreamPart<ToolSet>>,
+  options?: StreamActionEmissionOptions,
+): Promise<EmittedStreamContent> {
+  const orderedEmitter = createOrderedStreamEmitter(emitFn);
+  const providerActionBatch = createProviderStreamActionBatch({
+    emitFn: orderedEmitter.emit,
+    state,
+  });
+  try {
+    return await consumeStreamContent(
+      orderedEmitter.emit,
+      state,
+      interruptStreamOnFailure(fullStream, orderedEmitter.failureSignal),
+      providerActionBatch,
+      options,
+    );
+  } finally {
+    try {
+      await providerActionBatch.cancel();
+    } finally {
+      await orderedEmitter.closeAndDrain();
+    }
+  }
+}
+
+/** A hidden held turn's text step isn't its reply, so it reports `"tool-calls"` as channels expect. */
+function reportedFinishReason(
+  finishReason: AssistantStepFinishReason,
+  hidesHeldText: boolean,
+): AssistantStepFinishReason {
+  if (hidesHeldText && finishReason === "stop") return "tool-calls";
+  return finishReason;
+}
+
+async function consumeStreamContent(
+  emitFn: HarnessEmitFn,
+  state: HarnessEmissionState,
+  fullStream: AsyncIterable<TextStreamPart<ToolSet>>,
+  providerActionBatch: ReturnType<typeof createProviderStreamActionBatch>,
+  options?: StreamActionEmissionOptions,
+): Promise<EmittedStreamContent> {
+  let currentReasoning = "";
+  let currentMessage = "";
+  let finishReason: AssistantStepFinishReason = "stop";
+  let streamError: Error | undefined;
+  const toolCallIdsSeenInStream = new Set<string>();
+  const emittedActionCallIds = new Set<string>();
+  const emittedActionResultCallIds = new Set<string>();
+  const providerToolCallIdsSeen = new Set<string>();
+  const handledInlineToolResultCallIds = new Set<string>();
+  const invalidInputToolCallIds = new Set<string>();
+  const inlineAuthorizationResults: TypedToolResult<ToolSet>[] = [];
+  const trailingInlineToolResultParts: InlineToolResultPart[] = [];
+  const actionInputs = new Map<string, JsonObject>();
+  const streamingActionInputs = new Map<string, { toolName: string }>();
+
+  const flushCurrentMessage = async (): Promise<void> => {
+    if (currentMessage.length === 0) {
+      return;
+    }
+    await emitFn(
+      createMessageCompletedEvent({
+        finishReason: "tool-calls",
+        message: currentMessage,
+        sequence: state.sequence,
+        stepIndex: state.stepIndex,
+        turnId: state.turnId,
+      }),
+    );
+    currentMessage = "";
+  };
+
+  const emitActionInput = async (
+    callId: string,
+    toolName: string,
+    inputTextDelta: string,
+  ): Promise<void> =>
+    emitFn(
+      createActionInputAppendedEvent({
+        callId,
+        inputTextDelta,
+        sequence: state.sequence,
+        stepIndex: state.stepIndex,
+        toolName,
+        turnId: state.turnId,
+      }),
+    );
+
+  const emitActionRequest = async (projection: RuntimeActionRequestProjection): Promise<void> => {
+    const { action } = projection;
+    if (emittedActionCallIds.has(action.callId)) {
+      return;
+    }
+
+    if (currentMessage.trim().length > 0) {
+      await flushCurrentMessage();
+    }
+
+    emittedActionCallIds.add(action.callId);
+    actionInputs.set(action.callId, action.input);
+    await emitFn(
+      createActionsRequestedEvent({
+        actions: [action],
+        presentation: collectActionPresentation([projection]),
+        sequence: state.sequence,
+        stepIndex: state.stepIndex,
+        turnId: state.turnId,
+      }),
+    );
+  };
+
+  const collectProviderToolCall = async (toolCall: {
+    readonly input?: unknown;
+    readonly toolCallId: string;
+    readonly toolName: string;
+  }): Promise<void> => {
+    if (providerToolCallIdsSeen.has(toolCall.toolCallId)) {
+      return;
+    }
+    providerToolCallIdsSeen.add(toolCall.toolCallId);
+    if (emittedActionCallIds.has(toolCall.toolCallId)) {
+      return;
+    }
+    emittedActionCallIds.add(toolCall.toolCallId);
+
+    if (currentMessage.trim().length > 0) {
+      await flushCurrentMessage();
+    }
+
+    const resolved = resolveProviderToolCallRequest(toolCall, options?.tools ?? new Map());
+    if (resolved.toolError !== undefined) {
+      invalidInputToolCallIds.add(toolCall.toolCallId);
+      await emitActionResult(createRuntimeToolResultFromToolError(resolved.toolError));
+      handledInlineToolResultCallIds.add(toolCall.toolCallId);
+      trailingInlineToolResultParts.push(
+        createToolResultMessagePartFromToolError(resolved.toolError),
+      );
+      return;
+    }
+
+    actionInputs.set(resolved.request.action.callId, resolved.request.action.input);
+    providerActionBatch.observe(resolved.request);
+  };
+
+  const emitActionResult = async (result: RuntimeToolResultActionResult): Promise<void> => {
+    if (emittedActionResultCallIds.has(result.callId)) {
+      return;
+    }
+    emittedActionResultCallIds.add(result.callId);
+    const resultPresentation =
+      result.isError === true
+        ? undefined
+        : projectResultPresentation(
+            options?.tools.get(result.toolName),
+            result.callId,
+            actionInputs.get(result.callId),
+            result.output,
+          );
+    await emitFn(
+      createActionResultEvent({
+        presentation: resultPresentation,
+        result,
+        sequence: state.sequence,
+        stepIndex: state.stepIndex,
+        turnId: state.turnId,
+      }),
+    );
+  };
+
+  const emitActionPartial = async (result: RuntimeToolResultActionResult): Promise<void> => {
+    const deltaPresentation = projectDeltaPresentation(
+      options?.tools.get(result.toolName),
+      result.callId,
+      actionInputs.get(result.callId),
+      result.output,
+    );
+    await emitFn(
+      createActionPartialEvent({
+        presentation: deltaPresentation,
+        result,
+        sequence: state.sequence,
+        stepIndex: state.stepIndex,
+        turnId: state.turnId,
+      }),
+    );
+  };
+
+  const emitToolCall = async (toolCall: TypedToolCall<ToolSet>): Promise<void> => {
+    if (isInvalidToolCall(toolCall)) {
+      invalidInputToolCallIds.add(toolCall.toolCallId);
+      return;
+    }
+    if (options === undefined || options.excludedActionToolNames.has(toolCall.toolName)) {
+      return;
+    }
+
+    try {
+      await emitActionRequest(
+        createPresentedRuntimeActionRequestFromToolCall({
+          toolCall,
+          tools: options.tools,
+        }),
+      );
+    } catch (error) {
+      if (error instanceof TypeError) {
+        const toolError = createInvalidToolCallInputError({ error, toolCall });
+        invalidInputToolCallIds.add(toolCall.toolCallId);
+        if (currentMessage.trim().length > 0) {
+          await flushCurrentMessage();
+        }
+        await emitActionResult(createRuntimeToolResultFromToolError(toolError));
+        handledInlineToolResultCallIds.add(toolCall.toolCallId);
+        trailingInlineToolResultParts.push(createToolResultMessagePartFromToolError(toolError));
+        return;
+      }
+      throw error;
+    }
+  };
+
+  for await (const part of fullStream) {
+    if (streamError !== undefined) {
+      continue;
+    }
+
+    switch (part.type) {
+      case "reasoning-delta":
+        await providerActionBatch.flush();
+        currentReasoning += part.text;
+        await emitFn(
+          createReasoningAppendedEvent({
+            reasoningDelta: part.text,
+            sequence: state.sequence,
+            stepIndex: state.stepIndex,
+            turnId: state.turnId,
+          }),
+        );
+        break;
+      case "text-delta":
+        await providerActionBatch.flush();
+        // Flush accumulated reasoning before text begins.
+        if (currentReasoning.trim().length > 0) {
+          await emitFn(
+            createReasoningCompletedEvent({
+              reasoning: currentReasoning,
+              sequence: state.sequence,
+              stepIndex: state.stepIndex,
+              turnId: state.turnId,
+            }),
+          );
+          currentReasoning = "";
+        }
+        currentMessage += part.text;
+        await emitFn(
+          createMessageAppendedEvent({
+            messageDelta: part.text,
+            sequence: state.sequence,
+            stepIndex: state.stepIndex,
+            turnId: state.turnId,
+          }),
+        );
+        break;
+      case "tool-input-start": {
+        if (
+          options === undefined ||
+          part.providerExecuted === true ||
+          options.excludedActionToolNames.has(part.toolName)
+        ) {
+          streamingActionInputs.delete(part.id);
+          break;
+        }
+        await providerActionBatch.flush();
+        if (currentMessage.trim().length > 0) {
+          await flushCurrentMessage();
+        }
+        streamingActionInputs.set(part.id, { toolName: part.toolName });
+        break;
+      }
+      case "tool-input-delta": {
+        const input = streamingActionInputs.get(part.id);
+        if (input === undefined) {
+          break;
+        }
+        await providerActionBatch.flush();
+        await emitActionInput(part.id, input.toolName, part.delta);
+        break;
+      }
+      case "tool-input-end":
+        streamingActionInputs.delete(part.id);
+        break;
+      case "tool-call": {
+        const toolCall = part as TypedToolCall<ToolSet>;
+        streamingActionInputs.delete(toolCall.toolCallId);
+        toolCallIdsSeenInStream.add(toolCall.toolCallId);
+        if (toolCall.providerExecuted === true) {
+          await collectProviderToolCall(toolCall);
+        } else {
+          await providerActionBatch.flush();
+          await emitToolCall(toolCall);
+        }
+        break;
+      }
+      case "tool-result": {
+        const inlineToolResult = part as TypedToolResult<ToolSet>;
+        if (inlineToolResult.preliminary === true) {
+          if (inlineToolResult.providerExecuted !== true) {
+            await emitActionPartial(createRuntimeToolResultFromStepResult(inlineToolResult));
+          }
+          break;
+        }
+        if (inlineToolResult.providerExecuted === true) {
+          await collectProviderToolCall({
+            input: "input" in inlineToolResult ? inlineToolResult.input : undefined,
+            toolCallId: inlineToolResult.toolCallId,
+            toolName: inlineToolResult.toolName,
+          });
+          await providerActionBatch.flush();
+          await emitActionResult(createRuntimeToolResultFromStepResult(inlineToolResult));
+          // Provider results already live in the assistant response. Do not
+          // add a local tool message.
+          break;
+        }
+
+        if (toolCallIdsSeenInStream.has(part.toolCallId)) {
+          if (isInlineAuthorizationToolResult(inlineToolResult)) {
+            break;
+          }
+          if (emittedActionCallIds.has(part.toolCallId)) {
+            await emitActionResult(createRuntimeToolResultFromStepResult(inlineToolResult));
+            handledInlineToolResultCallIds.add(part.toolCallId);
+          }
+          break;
+        }
+
+        // An approved tool can resume with its result but no matching call in
+        // this step. Emit it before the message that consumes it.
+        await providerActionBatch.flush();
+        await flushCurrentMessage();
+        if (isInlineAuthorizationToolResult(inlineToolResult)) {
+          // Keep authorization output for the park detector instead of
+          // emitting a normal tool result.
+          handledInlineToolResultCallIds.add(part.toolCallId);
+          inlineAuthorizationResults.push(inlineToolResult);
+          break;
+        }
+        await emitActionResult(createRuntimeToolResultFromStepResult(inlineToolResult));
+        handledInlineToolResultCallIds.add(part.toolCallId);
+        break;
+      }
+      case "tool-error": {
+        const toolError = part as TypedToolError<ToolSet>;
+        if (toolError.providerExecuted === true) {
+          await collectProviderToolCall(toolError);
+          await providerActionBatch.flush();
+          await emitActionResult(createRuntimeToolResultFromToolError(toolError));
+        } else if (emittedActionCallIds.has(toolError.toolCallId)) {
+          await emitActionResult(createRuntimeToolResultFromToolError(toolError));
+          handledInlineToolResultCallIds.add(toolError.toolCallId);
+          trailingInlineToolResultParts.push(createToolResultMessagePartFromToolError(toolError));
+        }
+        break;
+      }
+      case "finish-step":
+        finishReason = normalizeAssistantStepFinishReason(part.finishReason);
+        await providerActionBatch.flush();
+        break;
+      case "error":
+        // `part.error` is typed as `unknown` — AI SDK providers emit
+        // whatever the upstream service threw. Coerce through `toError`
+        // so plain-object shapes (structured-clone survivors, typed
+        // gateway payloads) keep their `message`, `name`, `stack`, and
+        // `cause` instead of degrading to `new Error("[object Object]")`.
+        streamError = normalizeModelStreamError(part.error);
+        break;
+      case "abort":
+        // The SDK does not resolve step results for aborted in-flight steps.
+        throw new DOMException(part.reason ?? "The model stream was aborted.", "AbortError");
+      default:
+        break;
+    }
+  }
+
+  await providerActionBatch.flush();
+
+  if (streamError !== undefined) {
+    throw streamError;
+  }
+
+  if (currentReasoning.trim().length > 0) {
+    await emitFn(
+      createReasoningCompletedEvent({
+        reasoning: currentReasoning,
+        sequence: state.sequence,
+        stepIndex: state.stepIndex,
+        turnId: state.turnId,
+      }),
+    );
+  }
+
+  if (finishReason !== "content-filter" && currentMessage.trim().length > 0) {
+    await emitFn(
+      createMessageCompletedEvent({
+        finishReason: reportedFinishReason(finishReason, options?.hidesHeldText === true),
+        message: currentMessage,
+        sequence: state.sequence,
+        stepIndex: state.stepIndex,
+        turnId: state.turnId,
+      }),
+    );
+  }
+
+  return {
+    emittedActionCallIds,
+    handledInlineToolResultCallIds,
+    invalidInputToolCallIds,
+    inlineAuthorizationResults,
+    trailingInlineToolResultParts,
+  };
+}

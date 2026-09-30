@@ -1,0 +1,13 @@
+node_modules
+.env*
+.kaf
+.vercel
+.next
+.output
+.nitro
+dist
+.DS_Store
+*.tsbuildinfo
+.env*.local
+/agent/extensions/self-modification/
+/.kaf-self-modification-eval.lock/

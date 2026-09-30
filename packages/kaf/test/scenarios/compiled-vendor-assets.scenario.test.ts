@@ -1,0 +1,356 @@
+import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import { readdir, readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { promisify } from "node:util";
+
+import { describe, expect, it } from "vitest";
+
+const KAF_PACKAGE_ROOT = fileURLToPath(new URL("../../", import.meta.url));
+const KAF_CATALOG_ROOT = join(KAF_PACKAGE_ROOT, "..", "kaf-catalog");
+const KAF_CATALOG_FINGERPRINT_FILES = [
+  "../../tsconfig.json",
+  "package.json",
+  "src/index.ts",
+  "tsconfig.build.json",
+  "tsconfig.json",
+] as const;
+const COMPILED_VENDOR_ROOT = join(KAF_PACKAGE_ROOT, ".generated", "compiled");
+const execFileAsync = promisify(execFile);
+const require = createRequire(import.meta.url);
+const VERCEL_BLOB_DIST_ROOT = dirname(require.resolve("@vercel/blob"));
+const VERCEL_SANDBOX_DIST_ROOT = join(
+  dirname(require.resolve("@vercel/sandbox/package.json")),
+  "dist",
+);
+
+function containsSourceMapComment(source: string): boolean {
+  return /(?:^|\n)\s*\/\/# sourceMappingURL=/u.test(source);
+}
+
+function rewriteDeclarationImports(
+  source: string,
+  rewrites: Readonly<Record<string, string>>,
+): string {
+  let rewritten = source;
+  for (const [moduleName, replacement] of Object.entries(rewrites)) {
+    rewritten = rewritten
+      .replaceAll(`from '${moduleName}'`, `from '${replacement}'`)
+      .replaceAll(`from "${moduleName}"`, `from "${replacement}"`)
+      .replaceAll(`import '${moduleName}'`, `import '${replacement}'`)
+      .replaceAll(`import "${moduleName}"`, `import "${replacement}"`);
+  }
+  return rewritten;
+}
+
+describe("compiled vendor assets", () => {
+  it("leaves Zod's process-global configuration to the app", async () => {
+    // Every Zod copy in a process shares `globalThis.__zod_globalConfig`, so a
+    // vendored side effect there would rewrite the app's own schemas too.
+    const zodUrl = pathToFileURL(join(COMPILED_VENDOR_ROOT, "zod", "index.js")).href;
+    const { z } = await import(zodUrl);
+    const schema = z.object({ id: z.string() });
+
+    expect(schema.parse({ id: "agent" })).toEqual({ id: "agent" });
+    expect(
+      (globalThis as { __zod_globalConfig?: { postProcessor?: unknown } }).__zod_globalConfig
+        ?.postProcessor,
+    ).toBeUndefined();
+    expect(schema._zod.bag.validator).toBeUndefined();
+  });
+
+  it("stamps the compiler versions that drive vendored output", async () => {
+    const stamp = JSON.parse(
+      await readFile(join(COMPILED_VENDOR_ROOT, ".vendor-stamp.json"), "utf8"),
+    ) as { toolVersions?: { rolldown?: string; typescript?: string } };
+    const nitroRequire = createRequire(require.resolve("nitro/package.json"));
+    const rolldownPackage = nitroRequire("rolldown/package.json") as { version: string };
+    const typescriptPackage = require("typescript/package.json") as { version: string };
+
+    expect(stamp.toolVersions?.rolldown).toBe(rolldownPackage.version);
+    expect(stamp.toolVersions?.typescript).toBe(typescriptPackage.version);
+  });
+
+  it("copies generated catalog declarations and fingerprints their sources", async () => {
+    const sourceHash = createHash("sha256");
+    for (const file of KAF_CATALOG_FINGERPRINT_FILES) {
+      sourceHash.update(file);
+      sourceHash.update("\0");
+      sourceHash.update(await readFile(join(KAF_CATALOG_ROOT, file), "utf8"));
+      sourceHash.update("\0");
+    }
+
+    const stamp = JSON.parse(
+      await readFile(join(COMPILED_VENDOR_ROOT, ".vendor-stamp.json"), "utf8"),
+    ) as { moduleFingerprints?: Record<string, string> };
+    const [catalogDeclaration, vendoredDeclaration] = await Promise.all([
+      readFile(join(KAF_CATALOG_ROOT, "dist", "src", "index.d.ts"), "utf8"),
+      readFile(join(COMPILED_VENDOR_ROOT, "@kaf", "catalog", "index.d.ts"), "utf8"),
+    ]);
+
+    expect(stamp.moduleFingerprints?.["@kaf/catalog"]).toBe(sourceHash.digest("hex"));
+    expect(vendoredDeclaration.trimEnd()).toBe(
+      catalogDeclaration.replace(/\n?\/\/# sourceMappingURL=.*$/u, "").trimEnd(),
+    );
+  });
+
+  it("shares the OpenTelemetry provider registered through @vercel/otel", async () => {
+    const apiUrl = pathToFileURL(
+      join(COMPILED_VENDOR_ROOT, "@opentelemetry", "api", "index.js"),
+    ).href;
+    const vercelOtelUrl = pathToFileURL(
+      join(COMPILED_VENDOR_ROOT, "@vercel", "otel", "index.js"),
+    ).href;
+    const { stdout } = await execFileAsync(process.execPath, [
+      "--input-type=module",
+      "--eval",
+      [
+        'import { createRequire } from "node:module";',
+        `import { ROOT_CONTEXT, context, trace } from ${JSON.stringify(apiUrl)};`,
+        `import { registerOTel } from ${JSON.stringify(vercelOtelUrl)};`,
+        "const require = createRequire(import.meta.url);",
+        'const authoredApi = require("@opentelemetry/api");',
+        "const endedSpans = [];",
+        "const spanProcessor = {",
+        "  forceFlush: async () => {},",
+        "  onEnd: (span) => endedSpans.push(span),",
+        "  onStart: () => {},",
+        "  shutdown: async () => {},",
+        "};",
+        'const earlyTracer = trace.getTracer("early");',
+        'const before = earlyTracer.startSpan("before").isRecording();',
+        "registerOTel({",
+        "  autoDetectResources: false,",
+        "  instrumentations: [],",
+        '  serviceName: "kaf-vendored-opentelemetry-test",',
+        "  spanProcessors: [spanProcessor],",
+        "});",
+        'const earlySpan = earlyTracer.startSpan("early-after-registration");',
+        'const lateSpan = trace.getTracer("late").startSpan("late-after-registration");',
+        "const earlyAfter = earlySpan.isRecording();",
+        "const lateAfter = lateSpan.isRecording();",
+        "earlySpan.end();",
+        "lateSpan.end();",
+        'const parent = trace.getTracer("vendored").startSpan("vendored-parent");',
+        "await context.with(trace.setSpan(ROOT_CONTEXT, parent), async () => {",
+        "  await Promise.resolve();",
+        '  authoredApi.trace.getTracer("authored").startSpan("authored-child").end();',
+        "});",
+        "parent.end();",
+        'const child = endedSpans.find((span) => span.name === "authored-child");',
+        "process.stdout.write(JSON.stringify({",
+        "  before,",
+        "  childParentSpanId: child?.parentSpanContext?.spanId,",
+        "  childParentTraceId: child?.parentSpanContext?.traceId,",
+        "  earlyAfter,",
+        "  lateAfter,",
+        "  parentSpanId: parent.spanContext().spanId,",
+        "  parentTraceId: parent.spanContext().traceId,",
+        "}));",
+      ].join("\n"),
+    ]);
+
+    const result = JSON.parse(stdout) as {
+      readonly before: boolean;
+      readonly childParentSpanId: string;
+      readonly childParentTraceId: string;
+      readonly earlyAfter: boolean;
+      readonly lateAfter: boolean;
+      readonly parentSpanId: string;
+      readonly parentTraceId: string;
+    };
+    expect(result).toMatchObject({ before: false, earlyAfter: true, lateAfter: true });
+    expect(result.childParentTraceId).toBe(result.parentTraceId);
+    expect(result.childParentSpanId).toBe(result.parentSpanId);
+  });
+
+  it("does not generate source maps for vendored packages", async () => {
+    const entries = await readdir(COMPILED_VENDOR_ROOT, {
+      recursive: true,
+    });
+    const sourceMapFiles = entries.filter((entry) => entry.endsWith(".map"));
+    const javaScriptFiles = entries.filter((entry) => entry.endsWith(".js"));
+    const javaScriptSources = await Promise.all(
+      javaScriptFiles.map((entry) => readFile(join(COMPILED_VENDOR_ROOT, entry), "utf8")),
+    );
+
+    expect(sourceMapFiles).toEqual([]);
+    expect(javaScriptSources.some(containsSourceMapComment)).toBe(false);
+  });
+
+  it("copies the complete @vercel/blob declaration tree", async () => {
+    const upstreamDeclarations = (await readdir(VERCEL_BLOB_DIST_ROOT, { recursive: true }))
+      .filter((entry) => entry.endsWith(".d.ts"))
+      .sort();
+    const vendoredDeclarations = (
+      await readdir(join(COMPILED_VENDOR_ROOT, "@vercel/blob"), { recursive: true })
+    )
+      .filter((entry) => entry.endsWith(".d.ts"))
+      .sort();
+
+    expect(vendoredDeclarations).toEqual(upstreamDeclarations);
+    await Promise.all(
+      upstreamDeclarations.map(async (declaration) => {
+        const [upstreamSource, vendoredSource] = await Promise.all([
+          readFile(join(VERCEL_BLOB_DIST_ROOT, declaration), "utf8"),
+          readFile(join(COMPILED_VENDOR_ROOT, "@vercel/blob", declaration), "utf8"),
+        ]);
+        expect(vendoredSource).toBe(upstreamSource);
+      }),
+    );
+  });
+
+  it("copies @workflow/core declaration files from the installed package", async () => {
+    const [indexDts, createHookDts, workflowDts, workflowIndexDts, runtimeRunDts] =
+      await Promise.all([
+        readFile(join(COMPILED_VENDOR_ROOT, "@workflow/core/index.d.ts"), "utf8"),
+        readFile(join(COMPILED_VENDOR_ROOT, "@workflow/core/create-hook.d.ts"), "utf8"),
+        readFile(join(COMPILED_VENDOR_ROOT, "@workflow/core/workflow.d.ts"), "utf8"),
+        readFile(join(COMPILED_VENDOR_ROOT, "@workflow/core/workflow/index.d.ts"), "utf8"),
+        readFile(join(COMPILED_VENDOR_ROOT, "@workflow/core/runtime/run.d.ts"), "utf8"),
+      ]);
+
+    expect(indexDts).toContain("Core utilities intended for import by user");
+    expect(indexDts).toContain("from '#compiled/@workflow/errors/index.js'");
+    expect(createHookDts).toContain("Creates a {@link Hook}");
+    expect(workflowDts).toBe(`export * from "./workflow/index.js";\n`);
+    expect(workflowIndexDts).toContain("from '#compiled/@workflow/errors/index.js'");
+    expect(runtimeRunDts).toContain("from '../_workflow-serde.js'");
+  });
+
+  it("vendors the Workflow world targets selected by generated Nitro plugins", async () => {
+    const [localWorld, vercelWorld] = await Promise.all([
+      readFile(join(COMPILED_VENDOR_ROOT, "@workflow/world-local/index.js"), "utf8"),
+      readFile(join(COMPILED_VENDOR_ROOT, "@workflow/world-vercel/index.js"), "utf8"),
+    ]);
+
+    expect(localWorld).toContain("createWorld");
+    expect(vercelWorld).toContain("createWorld");
+  });
+
+  it("copies the complete stable @vercel/sandbox declaration tree", async () => {
+    const [upstreamEntries, vendoredEntries] = await Promise.all([
+      readdir(VERCEL_SANDBOX_DIST_ROOT, { recursive: true }),
+      readdir(join(COMPILED_VENDOR_ROOT, "@vercel/sandbox"), { recursive: true }),
+    ]);
+    const upstreamDeclarations = upstreamEntries.filter((entry) => entry.endsWith(".d.ts")).sort();
+    const generatedStubNames = new Set(["_async-retry.d.ts", "_workflow-serde.d.ts"]);
+    const vendoredDeclarations = vendoredEntries
+      .filter((entry) => entry.endsWith(".d.ts") && !generatedStubNames.has(entry))
+      .sort();
+
+    expect(vendoredDeclarations).toEqual(upstreamDeclarations);
+
+    const [upstreamIndex, vendoredIndex, vendoredSandbox, vendoredBaseClient] = await Promise.all([
+      readFile(join(VERCEL_SANDBOX_DIST_ROOT, "index.d.ts"), "utf8"),
+      readFile(join(COMPILED_VENDOR_ROOT, "@vercel/sandbox/index.d.ts"), "utf8"),
+      readFile(join(COMPILED_VENDOR_ROOT, "@vercel/sandbox/sandbox.d.ts"), "utf8"),
+      readFile(join(COMPILED_VENDOR_ROOT, "@vercel/sandbox/api-client/base-client.d.ts"), "utf8"),
+    ]);
+
+    expect(vendoredIndex).toBe(upstreamIndex);
+    expect(vendoredSandbox).toContain('from "./_workflow-serde.js"');
+    expect(vendoredBaseClient).toContain('from "../_async-retry.js"');
+    expect(vendoredBaseClient).toContain('import "#compiled/zod/index.js"');
+    expect(vendoredEntries.filter((entry) => entry.endsWith(".js"))).toEqual(["index.js"]);
+  });
+
+  it("copies AI SDK declarations from the installed packages without authored stubs", async () => {
+    const packages = [
+      {
+        name: "@ai-sdk/anthropic",
+        rewrites: {
+          "@ai-sdk/provider": "#compiled/@ai-sdk/provider/index.js",
+          "@ai-sdk/provider-utils": "#compiled/@ai-sdk/provider-utils/index.js",
+          "zod/v4": "#compiled/zod/index.js",
+        },
+      },
+      {
+        name: "@ai-sdk/google",
+        rewrites: {
+          "@ai-sdk/provider": "#compiled/@ai-sdk/provider/index.js",
+          "@ai-sdk/provider-utils": "#compiled/@ai-sdk/provider-utils/index.js",
+          "zod/v4": "#compiled/zod/index.js",
+        },
+      },
+      {
+        name: "@ai-sdk/mcp",
+        rewrites: {
+          "@ai-sdk/provider": "#compiled/@ai-sdk/provider/index.js",
+          "@ai-sdk/provider-utils": "#compiled/@ai-sdk/provider-utils/index.js",
+          "zod/v4": "#compiled/zod/index.js",
+        },
+      },
+      {
+        name: "@ai-sdk/openai",
+        rewrites: {
+          "@ai-sdk/provider": "#compiled/@ai-sdk/provider/index.js",
+          "@ai-sdk/provider-utils": "#compiled/@ai-sdk/provider-utils/index.js",
+          "zod/v4": "#compiled/zod/index.js",
+        },
+      },
+      {
+        name: "@ai-sdk/otel",
+        rewrites: {
+          "@ai-sdk/provider": "#compiled/@ai-sdk/provider/index.js",
+          "@ai-sdk/provider-utils": "#compiled/@ai-sdk/provider-utils/index.js",
+          "@opentelemetry/api": "#compiled/@opentelemetry/api/index.js",
+        },
+      },
+      {
+        name: "@ai-sdk/provider",
+        rewrites: {
+          "json-schema": "#compiled/json-schema/index.js",
+        },
+      },
+      {
+        name: "@ai-sdk/provider-utils",
+        rewrites: {
+          "@ai-sdk/provider": "#compiled/@ai-sdk/provider/index.js",
+          "@standard-schema/spec": "#compiled/@standard-schema/spec/index.js",
+          "@workflow/serde": "#compiled/@workflow/serde/index.js",
+          "eventsource-parser/stream": "#compiled/eventsource-parser/stream/index.js",
+          "zod/v3": "#compiled/zod/index.js",
+          "zod/v4": "#compiled/zod/index.js",
+        },
+      },
+    ] as const;
+
+    for (const packageDefinition of packages) {
+      const upstreamRoot = dirname(require.resolve(`${packageDefinition.name}/package.json`));
+      const [upstream, vendored] = await Promise.all([
+        readFile(join(upstreamRoot, "dist/index.d.ts"), "utf8"),
+        readFile(join(COMPILED_VENDOR_ROOT, packageDefinition.name, "index.d.ts"), "utf8"),
+      ]);
+
+      expect(vendored).toBe(rewriteDeclarationImports(upstream, packageDefinition.rewrites));
+    }
+  });
+
+  it("copies AI SDK declaration dependencies from their installed packages", async () => {
+    const jsonSchemaRoot = dirname(require.resolve("@types/json-schema/package.json"));
+    const serdeRoot = dirname(dirname(require.resolve("@workflow/serde")));
+    const eventSourceParserRoot = dirname(require.resolve("eventsource-parser/package.json"));
+    const comparisons = [
+      [join(jsonSchemaRoot, "index.d.ts"), join(COMPILED_VENDOR_ROOT, "json-schema/index.d.ts")],
+      [
+        join(serdeRoot, "dist/index.d.ts"),
+        join(COMPILED_VENDOR_ROOT, "@workflow/serde/index.d.ts"),
+      ],
+      [
+        join(eventSourceParserRoot, "dist/stream.d.ts"),
+        join(COMPILED_VENDOR_ROOT, "eventsource-parser/stream/index.d.ts"),
+      ],
+    ] as const;
+
+    for (const [upstreamPath, vendoredPath] of comparisons) {
+      const [upstream, vendored] = await Promise.all([
+        readFile(upstreamPath, "utf8"),
+        readFile(vendoredPath, "utf8"),
+      ]);
+      expect(vendored).toBe(upstream);
+    }
+  });
+});

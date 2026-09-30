@@ -1,0 +1,8 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "ignorePatterns": [
+    "packages/kaf/CHANGELOG.md",
+    "apps/docs/registry.json",
+    "packages/kaf/src/setup/scaffold/create/web-template.ts"
+  ]
+}

@@ -1,0 +1,2748 @@
+import {
+  type ConnectionIdentity,
+  type IntegrationEntry,
+  channelEntries,
+  connectionEntries,
+  connectionProtocols as protocolsForIdentity,
+  extensionEntries,
+  instrumentationEntries,
+  memoryEntries,
+} from "@kaf/catalog";
+import type { LogoKey } from "./logos";
+
+/**
+ * The docs integration gallery layers presentation (logo, keywords, setup
+ * markdown, auth modes) on top of the shared identity catalog
+ * (`@kaf/catalog`). Identity — slug, name, kind, tagline, and a
+ * connection's transport + model-facing description — comes from the catalog
+ * and is never re-declared here; this module owns only the docs-facing overlay,
+ * keyed by slug.
+ */
+
+export type IntegrationType = "channel" | "connection" | "extension" | "instrumentation" | "memory";
+
+/** Wire protocol and transport identity types are owned by the shared catalog. */
+export type { ConnectionProtocol, McpTransport, OpenApiTransport } from "@kaf/catalog";
+import type { ConnectionProtocol } from "@kaf/catalog";
+
+/**
+ * How a connection authenticates. A mode uses either Vercel Connect (`user`,
+ * `app`, or `jwtBearer`) or a server-side API key.
+ */
+export type AuthMode = "user" | "app" | "jwtBearer" | "apiKey";
+
+interface ApiKeySpec {
+  /** Server-side environment variable containing the API key. */
+  env: string;
+  /** Header used to send the API key. */
+  header: string;
+}
+
+interface ConnectorSpec {
+  /** Vercel Connect connector UID; defaults to the integration slug. */
+  uid?: string;
+  /** Service passed to `vercel connect create`; defaults to the connector UID. */
+  service?: string;
+  /** Optional `--name` value passed to `vercel connect create`. */
+  name?: string;
+}
+
+interface ConnectionSetupSpec {
+  /** Supported auth modes in display order; the first is the default. */
+  authModes: AuthMode[];
+  /** API-key wiring when `authModes` includes `apiKey`. */
+  apiKey?: ApiKeySpec;
+  /** Auth-mode-specific connector references and creation arguments. */
+  connectors?: Partial<Record<Exclude<AuthMode, "apiKey">, ConnectorSpec>>;
+  /** Optional provider-specific configure guidance, rendered as markdown. */
+  configureNote?: string;
+  /** Auth-mode-specific configure guidance, rendered as markdown. */
+  configureNotes?: Partial<Record<AuthMode, string>>;
+}
+
+/**
+ * Structured description of a connection consumed by the detail page to
+ * generate Install, Quick start, and Configure content. Transport (`mcp`,
+ * `openapi`) and `description` are filled from the shared catalog identity;
+ * Auth modes, connectors, and configure notes are the docs-only overlay.
+ */
+export interface ConnectionSpec extends ConnectionSetupSpec {
+  /** Model-facing description; defaults to the integration tagline. */
+  description?: string;
+  mcp?: ConnectionIdentity["mcp"];
+  openapi?: ConnectionIdentity["openapi"];
+}
+
+/** A guide, package, or reference linked from an integration's Related resources section. */
+export interface RelatedResource {
+  title: string;
+  description: string;
+  href: string;
+}
+
+export interface Integration {
+  /** URL slug and lookup key, derived once and reused everywhere. */
+  slug: string;
+  name: string;
+  type: IntegrationType;
+  /** Protocol badges shown on the gallery card (connections only). */
+  protocols?: ConnectionProtocol[];
+  /** One-line summary shown on the gallery card. */
+  tagline: string;
+  /** Brand logo key from `lib/integrations/logos`. */
+  logo: LogoKey;
+  /** Optional pill (e.g. "Chat SDK") shown next to the type label. */
+  badge?: string;
+  /** Canonical reference doc for deeper details. */
+  docsHref: string;
+  /** Searchable keywords beyond the name. */
+  keywords?: string[];
+  /**
+   * Channels and extensions author their setup as markdown. Connections normally
+   * generate it from `connection`, but may override Quick start and Configure.
+   */
+  install?: string;
+  quickStart?: string;
+  configure?: string;
+  /** Structured connection spec; present only for `type: "connection"`. */
+  connection?: ConnectionSpec;
+  /** Guides and references shown after Configure; omitted when empty. */
+  relatedResources?: RelatedResource[];
+}
+
+/** Shared by the GitHub, Linear, and GitHub Tools integrations Foreman builds on. */
+const softwareFactoryGuide: RelatedResource = {
+  title: "Build a software factory with kaf",
+  description:
+    "Deploy Foreman, an kaf agent system that turns GitHub issues or Linear tickets into reviewed draft pull requests while leaving merge decisions to humans.",
+  href: "https://vercel.com/kb/guide/kaf-software-factory",
+};
+
+/** Shared by the Slack, GitHub, Datadog, and Vercel integrations the incident response agent uses. */
+const incidentResponseGuide: RelatedResource = {
+  title: "Build an incident response SRE agent with kaf",
+  description:
+    "Deploy a Slack-based investigation agent that connects to Datadog, GitHub, and Vercel, tests root-cause hypotheses, and posts evidence-linked findings in threads.",
+  href: "https://vercel.com/kb/guide/kaf-incident-sre-agent",
+};
+
+/** Shared by the Slack and Notion integrations the marketing team template publishes through. */
+const marketingTeamGuide: RelatedResource = {
+  title: "Run a marketing team from Slack with kaf",
+  description:
+    "Deploy a Slack-facing lead agent that routes requests to marketing specialists who publish to Notion, Typefully, and Resend, with approval gates on irreversible actions.",
+  href: "https://vercel.com/kb/guide/marketing-team-kaf",
+};
+
+/** Docs presentation overlay shared by every integration kind. */
+interface Presentation {
+  logo: LogoKey;
+  docsHref: string;
+  keywords?: string[];
+  /** Optional gallery pill (e.g. "Chat SDK") shown next to the type label. */
+  badge?: string;
+  /** Guides and references shown after Configure. */
+  relatedResources?: RelatedResource[];
+}
+
+/** Channel overlay: presentation plus hand-authored setup markdown. */
+interface ChannelPresentation extends Presentation {
+  install: string;
+  quickStart: string;
+  configure: string;
+}
+
+/** Extension and memory overlays with hand-authored package setup. */
+interface PackagePresentation extends Presentation {
+  install: string;
+  quickStart: string;
+  configure: string;
+}
+
+type ExtensionPresentation = PackagePresentation;
+type MemoryPresentation = PackagePresentation;
+
+/** Connection overlay: presentation plus Connect auth/config details. */
+interface ConnectionPresentation extends Omit<Presentation, "badge">, ConnectionSetupSpec {
+  quickStart?: string;
+  configure?: string;
+}
+
+const channelPresentations: Record<string, ChannelPresentation> = {
+  slack: {
+    logo: "slack",
+    docsHref: "/docs/channels/slack",
+    keywords: ["chat", "messaging", "bot", "webhook"],
+    install: `The kaf CLI scaffolds the channel for you. \`kaf add channel/slack\` writes \`agent/channels/slack.ts\`, adds \`@vercel/connect\`, and runs the Connect setup flow:
+
+\`\`\`bash
+kaf add channel/slack
+\`\`\`
+
+To wire it up by hand instead, install the framework and the Connect SDK. Slack channels use [Vercel Connect](https://vercel.com/docs/connect) for both the outbound bot token and inbound webhook verification:
+
+\`\`\`bash
+npm install kaf@latest @vercel/connect
+\`\`\``,
+    quickStart: `Create \`agent/channels/slack.ts\`. The channel name is derived from the filename, so no \`name\` field is needed:
+
+\`\`\`ts
+// agent/channels/slack.ts
+import { slackChannel } from "kaf/channels/slack";
+import { connectSlackCredentials } from "@vercel/connect/kaf";
+
+export default slackChannel({
+  credentials: connectSlackCredentials("slack/my-agent"),
+});
+\`\`\`
+
+Link the project and pull OIDC env vars so Connect can authenticate locally:
+
+\`\`\`bash
+vercel link
+vercel env pull
+\`\`\``,
+    configure: `Create a Slack Connect client and copy its UID (for example \`slack/my-agent\`), then attach this project as the webhook trigger destination at the route kaf serves (\`/kaf/v1/slack\`):
+
+\`\`\`bash
+vercel connect create slack --triggers
+\`\`\`
+
+The channel handles mentions, DMs, typing indicators, delivery, and human-in-the-loop consent with sensible defaults. See the [Slack channel docs](/docs/channels/slack) for customizing each behavior.`,
+    relatedResources: [marketingTeamGuide, incidentResponseGuide],
+  },
+  discord: {
+    logo: "discord",
+    docsHref: "/docs/channels/discord",
+    keywords: ["chat", "messaging", "bot", "guild"],
+    install: `Add this channel from kaf's registry. This writes \`agent/channels/discord.ts\`:
+
+\`\`\`bash
+kaf add channel/discord
+\`\`\``,
+    quickStart: `Create \`agent/channels/discord.ts\`:
+
+\`\`\`ts
+// agent/channels/discord.ts
+import { discordChannel } from "kaf/channels/discord";
+
+export default discordChannel({
+  credentials: {
+    botToken: () => process.env.DISCORD_BOT_TOKEN!,
+    publicKey: () => process.env.DISCORD_PUBLIC_KEY!,
+  },
+});
+\`\`\``,
+    configure: `Create a Discord application, add a bot, and set the interactions endpoint URL to the route kaf serves (\`/kaf/v1/discord\`). Provide the bot token and public key through environment variables. See the [Discord channel docs](/docs/channels/discord) for intents and slash-command setup.`,
+  },
+  teams: {
+    logo: "teams",
+    docsHref: "/docs/channels/teams",
+    keywords: ["chat", "messaging", "bot", "microsoft"],
+    install: `Add this channel from kaf's registry. This writes \`agent/channels/teams.ts\`:
+
+\`\`\`bash
+kaf add channel/teams
+\`\`\``,
+    quickStart: `Create \`agent/channels/teams.ts\`:
+
+\`\`\`ts
+// agent/channels/teams.ts
+import { teamsChannel } from "kaf/channels/teams";
+
+export default teamsChannel({
+  credentials: {
+    appId: () => process.env.TEAMS_APP_ID!,
+    appPassword: () => process.env.TEAMS_APP_PASSWORD!,
+  },
+});
+\`\`\``,
+    configure: `Register an Azure Bot, configure the messaging endpoint to kaf's route (\`/kaf/v1/teams\`), and supply the app ID and password via environment variables. See the [Teams channel docs](/docs/channels/teams) for the full provisioning checklist.`,
+  },
+  telegram: {
+    logo: "telegram",
+    docsHref: "/docs/channels/telegram",
+    keywords: ["chat", "messaging", "bot"],
+    install: `Add this channel from kaf's registry. This writes \`agent/channels/telegram.ts\`:
+
+\`\`\`bash
+kaf add channel/telegram
+\`\`\``,
+    quickStart: `Create \`agent/channels/telegram.ts\`:
+
+\`\`\`ts
+// agent/channels/telegram.ts
+import { telegramChannel } from "kaf/channels/telegram";
+
+export default telegramChannel({
+  credentials: { botToken: () => process.env.TELEGRAM_BOT_TOKEN! },
+});
+\`\`\``,
+    configure: `Create a bot with [@BotFather](https://t.me/botfather), then register the webhook to point at kaf's route (\`/kaf/v1/telegram\`). Store the bot token in an environment variable. See the [Telegram channel docs](/docs/channels/telegram) for group privacy and command setup.`,
+  },
+  twilio: {
+    logo: "twilio",
+    docsHref: "/docs/channels/twilio",
+    keywords: ["sms", "voice", "calls", "phone", "transcription"],
+    install: `Add this channel from kaf's registry. This writes \`agent/channels/twilio.ts\`:
+
+\`\`\`bash
+kaf add channel/twilio
+\`\`\``,
+    quickStart: `Create \`agent/channels/twilio.ts\`. \`allowFrom\` is required and gates who can reach the inbound hooks:
+
+\`\`\`ts
+// agent/channels/twilio.ts
+import { twilioChannel } from "kaf/channels/twilio";
+
+export default twilioChannel({
+  allowFrom: "+15551234567",
+  messaging: { from: "+15557654321" },
+});
+\`\`\`
+
+\`\`\`bash
+TWILIO_ACCOUNT_SID=AC...   # required for default outbound SMS
+TWILIO_AUTH_TOKEN=...      # required for inbound signature verification
+\`\`\``,
+    configure: `In the Twilio console, point your number's Messaging webhook at \`/kaf/v1/twilio/messages\` and its Voice webhook at \`/kaf/v1/twilio/voice\`. Inbound calls are answered with speech gathering, and the transcript feeds the same session SMS uses. See the [Twilio channel docs](/docs/channels/twilio) for dispatch, streaming, and voice specifics.`,
+  },
+  blooio: {
+    logo: "blooio",
+    docsHref: "https://github.com/Blooio/kaf-channel-blooio#readme",
+    badge: "Provider official",
+    keywords: [
+      "imessage",
+      "rcs",
+      "sms",
+      "blooio",
+      "tapback",
+      "typing",
+      "read receipt",
+      "poll",
+      "group",
+    ],
+    install: `Add this channel from kaf's registry. This writes \`agent/channels/blooio.ts\` and installs the \`kaf-channel-blooio\` package:
+
+\`\`\`bash
+kaf add channel/blooio
+\`\`\``,
+    quickStart: `Create \`agent/channels/blooio.ts\`:
+
+\`\`\`ts
+// agent/channels/blooio.ts
+import { blooioChannel } from "kaf-channel-blooio";
+
+export default blooioChannel();
+\`\`\`
+
+Blooio is a native kaf channel built on \`defineChannel\` (not a Chat SDK adapter), so kaf owns session dispatch, streaming, and human-in-the-loop directly. See the [kaf-channel-blooio README](https://github.com/Blooio/kaf-channel-blooio#readme) for the full \`BlooioHandle\` surface: reactions, typing indicators, read receipts, polls, groups, capability checks, and history.`,
+    configure: `Set \`BLOOIO_API_KEY\` (a \`bl_live_...\` key) and \`BLOOIO_WEBHOOK_SECRET\` (\`whsec_...\`), then point a Blooio webhook at \`/kaf/v1/blooio\`:
+
+\`\`\`bash
+curl -X POST https://api.blooio.com/v4/webhooks \\
+  -H "Authorization: Bearer $BLOOIO_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{ "url": "https://your-app.vercel.app/kaf/v1/blooio", "event_types": ["*"] }'
+\`\`\`
+
+Blooio signs every delivery with \`X-Blooio-Signature: t=<unix>,v1=<hmac_sha256>\`; the channel verifies it and rejects timestamps older than 5 minutes. Inbound media is re-hosted at servable URLs and forwarded to the model as multimodal file parts.`,
+  },
+  github: {
+    logo: "github",
+    docsHref: "/docs/channels/github",
+    keywords: ["issues", "pull requests", "app", "webhook", "code"],
+    install: `Add this channel from kaf's registry to create a Vercel Connect GitHub App, route verified webhooks, and write \`agent/channels/github.ts\`:
+
+\`\`\`bash
+kaf add channel/github
+\`\`\``,
+    quickStart: `The guided setup writes \`agent/channels/github.ts\`:
+
+\`\`\`ts
+// agent/channels/github.ts
+import { connectGitHubCredentials } from "@vercel/connect/kaf";
+import { githubChannel } from "kaf/channels/github";
+
+export default githubChannel({
+  credentials: connectGitHubCredentials("github/my-agent"),
+});
+\`\`\``,
+    configure: `Sign in to Vercel, then let the guided flow create or link a project, provision the GitHub App, and attach its verified webhook trigger to \`/kaf/v1/github\`. Deploy, install the app from Vercel Connect, then add its \`@handle\` invocation token to a new issue, pull request, or review comment. GitHub may not autocomplete or render the token as a linked mention. See the [GitHub channel docs](/docs/channels/github) for permissions and events.`,
+    relatedResources: [softwareFactoryGuide, incidentResponseGuide],
+  },
+  "linear-agent": {
+    logo: "linear",
+    docsHref: "/docs/channels/linear",
+    keywords: ["issues", "comments", "agent sessions", "developer preview", "webhook"],
+    install: `Add this channel from kaf's registry to create a Vercel Connect client, route verified Agent Session events, and write \`agent/channels/linear.ts\`:
+
+\`\`\`bash
+kaf add channel/linear
+\`\`\``,
+    quickStart: `The guided setup writes \`agent/channels/linear.ts\`:
+
+\`\`\`ts
+// agent/channels/linear.ts
+import { connectLinearCredentials } from "@vercel/connect/kaf";
+import { linearChannel } from "kaf/channels/linear";
+
+export default linearChannel({
+  credentials: connectLinearCredentials("linear/my-agent"),
+});
+\`\`\``,
+    configure: `Sign in to Vercel, then let the guided flow create or link a project, provision the Linear app, and attach its verified AgentSessionEvent trigger to \`/kaf/v1/linear\`. Deploy, install the app in your Linear workspace from Vercel Connect, then delegate an issue or mention the agent. See the [Linear channel docs](/docs/channels/linear) for Agent Activity behavior.`,
+    relatedResources: [softwareFactoryGuide],
+  },
+  kaf: {
+    logo: "kaf",
+    docsHref: "/docs/channels/kaf",
+    keywords: [
+      "web",
+      "chat",
+      "ui",
+      "embed",
+      "frontend",
+      "next.js",
+      "svelte",
+      "sveltekit",
+      "nuxt",
+      "vue",
+      "react",
+    ],
+    install: `The kaf CLI scaffolds the full Next.js web chat app alongside \`agent/channels/kaf.ts\`:
+
+\`\`\`bash
+kaf add channel/web
+\`\`\`
+
+To wire it up by hand instead — including into a Svelte or Nuxt app you already have — install the framework:
+
+\`\`\`bash
+npm install kaf@latest
+\`\`\``,
+    quickStart: `The kaf channel is on by default. Add \`agent/channels/kaf.ts\` only when you want to override the default session routes or auth:
+
+\`\`\`ts
+// agent/channels/kaf.ts
+import { kafChannel } from "kaf/channels/kaf";
+
+export default kafChannel();
+\`\`\`
+
+Point your frontend at the session routes kaf serves (\`/kaf/v1/session\`) and stream responses with the kaf web client. Next.js, Nuxt, and Svelte each have an integration that mounts those routes on your app's own origin, so there's no CORS to configure and no URL env var to keep in sync:
+
+- **Next.js.** Wrap \`next.config.ts\` with \`withEve()\` from \`kaf/next\`, then call \`useKafAgent()\` from \`kaf/react\`. See the [Next.js guide](/docs/guides/frontend/nextjs).
+- **Nuxt.** Add \`"kaf/nuxt"\` to \`modules\` in \`nuxt.config.ts\`; the \`useKafAgent()\` composable from \`kaf/vue\` is auto-imported. See the [Nuxt guide](/docs/guides/frontend/nuxt).
+- **Svelte.** Add the \`kafSvelteKit()\` Vite plugin before \`sveltekit()\` in \`vite.config.ts\`, then call \`useKafAgent()\` from \`kaf/svelte\`. See the [SvelteKit guide](/docs/guides/frontend/sveltekit).
+
+On any other stack, wire it up by hand: run the agent as its own service and proxy \`/kaf/v1/**\` to it, or pass its origin as \`host\` to \`useKafAgent()\` and enable \`cors\` on the channel. Server-side code and custom UIs can call the routes through \`Client\` from \`kaf/client\`.`,
+    configure: `The kaf channel is the lowest-friction way to talk to your agent, with no third-party provisioning required. Layer in auth and route protection as needed, and enable \`cors\` only when a browser reaches the channel from another origin. See the [kaf channel docs](/docs/channels/kaf), the [Frontend guide](/docs/guides/frontend/overview), and the per-framework guides for [Next.js](/docs/guides/frontend/nextjs), [Nuxt](/docs/guides/frontend/nuxt), and [SvelteKit](/docs/guides/frontend/sveltekit).`,
+  },
+  buzz: {
+    logo: "buzz",
+    docsHref: "https://github.com/TheHalfMoon/kaf/tree/main/packages/kaf-buzz-acp-adapter#readme",
+    badge: "ACP",
+    keywords: ["chat", "messaging", "desktop", "acp", "nostr", "agents"],
+    install: `Install [Buzz Desktop](https://buzz.xyz), then install kaf's compatibility adapter globally:
+
+\`\`\`bash
+npm install --global @kaf/buzz-acp-adapter
+\`\`\`
+
+The adapter must be installed globally because Buzz uses it whenever it interfaces with kaf.`,
+    quickStart: `From an kaf application directory, run the interactive installer:
+
+\`\`\`bash
+kaf-buzz-acp-adapter install
+\`\`\`
+
+You can also provide a local application or deployed URL explicitly:
+
+\`\`\`bash
+kaf-buzz-acp-adapter install ./path/to/kaf-app
+kaf-buzz-acp-adapter install https://agent.example.com
+\`\`\`
+
+The installer registers **kaf** as a custom harness with Buzz.`,
+    configure: `Reopen Buzz, then create or edit an agent:
+
+1. Enter an **Agent name** and, optionally, **Agent instructions** for Buzz-specific behavior.
+2. Under **AI configuration**, choose **Customize for this agent**.
+3. Set **Agent harness** to **kaf**. Buzz currently requires a **Model** value but does not prefill one for custom harnesses.
+4. Open **Advanced**. Leave **Who can talk to this agent** on its default owner-only selection. For a local application, set **Parallelism** to \`1\` and add any credentials that the application does not already load from an env file, such as \`AI_GATEWAY_API_KEY\`.
+5. Save the agent and start it.
+
+Accepted senders share one kaf identity and its capabilities.`,
+  },
+  "chat-sdk-gchat": {
+    logo: "googlechat",
+    docsHref: "/docs/channels/chat-sdk",
+    badge: "Chat SDK",
+    keywords: ["chat sdk", "google chat", "spaces", "bot"],
+    install: `Add this Chat SDK channel from kaf's registry. This writes \`agent/channels/gchat.ts\` and installs Chat SDK and its adapter dependencies:
+
+\`\`\`bash
+kaf add channel/chat-sdk-gchat
+\`\`\``,
+    quickStart: `Create \`agent/channels/gchat.ts\`. Register Chat SDK handlers on \`bot\`, call \`send\` to hand each turn to kaf, and export the channel:
+
+\`\`\`ts
+// agent/channels/gchat.ts
+import { createGoogleChatAdapter } from "@chat-adapter/gchat";
+import { createMemoryState } from "@chat-adapter/state-memory";
+import type { Message, Thread } from "chat";
+import { chatSdkChannel } from "kaf/channels/chat-sdk";
+
+export const { bot, channel, send } = chatSdkChannel({
+  userName: "My Agent",
+  adapters: { gchat: createGoogleChatAdapter() },
+  state: createMemoryState(),
+});
+
+bot.onNewMention(async (thread: Thread, message: Message) => {
+  await thread.subscribe();
+  await send(message.text, { thread });
+});
+
+bot.onSubscribedMessage(async (thread: Thread, message: Message) => {
+  await send(message.text, { thread });
+});
+
+export default channel;
+\`\`\`
+
+Credentials come from the \`createGoogleChatAdapter\` config or the adapter's environment variables; see the [Google Chat adapter docs](https://chat-sdk.dev/adapters/official/gchat).`,
+    configure: `The adapter mounts its webhook at \`/kaf/v1/gchat\`. Point your Google Chat app's HTTP endpoint at it. The adapter owns provider auth, verification, and delivery, while kaf owns session dispatch, streaming, typing, and human-in-the-loop. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for routes, streaming, and state options.`,
+  },
+  "chat-sdk-whatsapp": {
+    logo: "whatsapp",
+    docsHref: "/docs/channels/chat-sdk",
+    badge: "Chat SDK",
+    keywords: ["chat sdk", "whatsapp", "business cloud", "messaging"],
+    install: `Add this Chat SDK channel from kaf's registry. This writes \`agent/channels/whatsapp.ts\` and installs Chat SDK and its adapter dependencies:
+
+\`\`\`bash
+kaf add channel/chat-sdk-whatsapp
+\`\`\``,
+    quickStart: `Create \`agent/channels/whatsapp.ts\`. Register Chat SDK handlers on \`bot\`, call \`send\` to hand each turn to kaf, and export the channel:
+
+\`\`\`ts
+// agent/channels/whatsapp.ts
+import { createWhatsAppAdapter } from "@chat-adapter/whatsapp";
+import { createMemoryState } from "@chat-adapter/state-memory";
+import type { Message, Thread } from "chat";
+import { chatSdkChannel } from "kaf/channels/chat-sdk";
+
+export const { bot, channel, send } = chatSdkChannel({
+  userName: "My Agent",
+  adapters: { whatsapp: createWhatsAppAdapter() },
+  state: createMemoryState(),
+});
+
+bot.onNewMention(async (thread: Thread, message: Message) => {
+  await thread.subscribe();
+  await send(message.text, { thread });
+});
+
+bot.onSubscribedMessage(async (thread: Thread, message: Message) => {
+  await send(message.text, { thread });
+});
+
+export default channel;
+\`\`\`
+
+Credentials come from the \`createWhatsAppAdapter\` config or the adapter's environment variables; see the [WhatsApp adapter docs](https://chat-sdk.dev/adapters/official/whatsapp).`,
+    configure: `The adapter mounts its webhook at \`/kaf/v1/whatsapp\`. Point your WhatsApp Business Cloud webhook at it. The adapter owns provider auth, verification, and delivery, while kaf owns session dispatch, streaming, typing, and human-in-the-loop. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for routes, streaming, and state options.`,
+  },
+  "chat-sdk-x": {
+    logo: "x",
+    docsHref: "/docs/channels/chat-sdk",
+    badge: "Chat SDK",
+    keywords: ["chat sdk", "x", "twitter", "mentions", "dms"],
+    install: `Add this Chat SDK channel from kaf's registry. This writes \`agent/channels/x.ts\` and installs Chat SDK and its adapter dependencies:
+
+\`\`\`bash
+kaf add channel/chat-sdk-x
+\`\`\``,
+    quickStart: `Create \`agent/channels/x.ts\`. Register Chat SDK handlers on \`bot\`, call \`send\` to hand each turn to kaf, and export the channel:
+
+\`\`\`ts
+// agent/channels/x.ts
+import { createXAdapter } from "@chat-adapter/x";
+import { createMemoryState } from "@chat-adapter/state-memory";
+import type { Message, Thread } from "chat";
+import { chatSdkChannel } from "kaf/channels/chat-sdk";
+
+export const { bot, channel, send } = chatSdkChannel({
+  userName: "My Agent",
+  adapters: { x: createXAdapter() },
+  state: createMemoryState(),
+  // X buffers replies and posts once rather than editing a streamed message.
+  streaming: false,
+});
+
+bot.onNewMention(async (thread: Thread, message: Message) => {
+  await thread.subscribe();
+  await send(message.text, { thread });
+});
+
+bot.onDirectMessage(async (thread: Thread, message: Message) => {
+  await send(message.text, { thread });
+});
+
+bot.onSubscribedMessage(async (thread: Thread, message: Message) => {
+  await send(message.text, { thread });
+});
+
+export default channel;
+\`\`\`
+
+For a DM-only agent, keep \`bot.onDirectMessage\` and remove the \`bot.onNewMention\` and \`bot.onSubscribedMessage\` handlers. Configure the app's credentials and webhook before deploying.`,
+    configure: `Follow the [X adapter documentation](https://chat-sdk.dev/adapters/official/x) to configure authentication, webhook verification, and Activity API subscriptions. Register the deployed agent's \`/kaf/v1/x\` route as the X webhook URL. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for kaf route and state options.`,
+  },
+  "chat-sdk-messenger": {
+    logo: "messenger",
+    docsHref: "/docs/channels/chat-sdk",
+    badge: "Chat SDK",
+    keywords: ["chat sdk", "messenger", "facebook", "bot"],
+    install: `Add this Chat SDK channel from kaf's registry. This writes \`agent/channels/messenger.ts\` and installs Chat SDK and its adapter dependencies:
+
+\`\`\`bash
+kaf add channel/chat-sdk-messenger
+\`\`\``,
+    quickStart: `Create \`agent/channels/messenger.ts\`. Register Chat SDK handlers on \`bot\`, call \`send\` to hand each turn to kaf, and export the channel:
+
+\`\`\`ts
+// agent/channels/messenger.ts
+import { createMessengerAdapter } from "@chat-adapter/messenger";
+import { createMemoryState } from "@chat-adapter/state-memory";
+import type { Message, Thread } from "chat";
+import { chatSdkChannel } from "kaf/channels/chat-sdk";
+
+export const { bot, channel, send } = chatSdkChannel({
+  userName: "My Agent",
+  adapters: { messenger: createMessengerAdapter() },
+  state: createMemoryState(),
+});
+
+bot.onNewMention(async (thread: Thread, message: Message) => {
+  await thread.subscribe();
+  await send(message.text, { thread });
+});
+
+bot.onSubscribedMessage(async (thread: Thread, message: Message) => {
+  await send(message.text, { thread });
+});
+
+export default channel;
+\`\`\`
+
+Credentials come from the \`createMessengerAdapter\` config or the adapter's environment variables; see the [Messenger adapter docs](https://chat-sdk.dev/adapters/official/messenger).`,
+    configure: `The adapter mounts its webhook at \`/kaf/v1/messenger\`. Point your Messenger webhook at it. The adapter owns provider auth, verification, and delivery, while kaf owns session dispatch, streaming, typing, and human-in-the-loop. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for routes, streaming, and state options.`,
+  },
+  "chat-sdk-zernio": {
+    logo: "zernio",
+    docsHref: "/docs/channels/chat-sdk",
+    badge: "Provider official",
+    keywords: [
+      "chat sdk",
+      "zernio",
+      "instagram",
+      "facebook",
+      "x",
+      "twitter",
+      "telegram",
+      "whatsapp",
+      "bluesky",
+      "reddit",
+    ],
+    install: `Add this Chat SDK channel from kaf's registry. This writes \`agent/channels/zernio.ts\` and installs Chat SDK and its adapter dependencies:
+
+\`\`\`bash
+kaf add channel/chat-sdk-zernio
+\`\`\``,
+    quickStart: `Create \`agent/channels/zernio.ts\`:
+
+\`\`\`ts
+// agent/channels/zernio.ts
+import { createZernioAdapter } from "@zernio/chat-sdk-adapter";
+import { createMemoryState } from "@chat-adapter/state-memory";
+import type { Message, Thread } from "chat";
+import { chatSdkChannel } from "kaf/channels/chat-sdk";
+
+export const { bot, channel, send } = chatSdkChannel({
+  userName: "My Agent",
+  adapters: {
+    zernio: createZernioAdapter(),
+  },
+  state: createMemoryState(),
+});
+
+bot.onNewMention(async (thread: Thread, message: Message) => {
+  await thread.subscribe();
+  await send(message.text, { thread });
+});
+
+bot.onSubscribedMessage(async (thread: Thread, message: Message) => {
+  await send(message.text, { thread });
+});
+
+export default channel;
+\`\`\`
+
+See the [Zernio adapter documentation](https://chat-sdk.dev/adapters/vendor-official/zernio) for supported events, capabilities, and credentials.`,
+    configure: `Set \`ZERNIO_API_KEY\` and \`ZERNIO_WEBHOOK_SECRET\`, then point Zernio webhooks at \`/kaf/v1/zernio\`. Zernio provides one adapter for Instagram, Facebook, X, Telegram, WhatsApp, Bluesky, and Reddit. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for kaf session dispatch, state, streaming, and human-in-the-loop behavior.`,
+  },
+  "chat-sdk-velt": {
+    logo: "velt",
+    docsHref: "/docs/channels/chat-sdk",
+    badge: "Provider official",
+    keywords: [
+      "chat sdk",
+      "velt",
+      "comments",
+      "collaboration",
+      "documents",
+      "canvas",
+      "pdf",
+      "video",
+    ],
+    install: `Add this Chat SDK channel from kaf's registry. This writes \`agent/channels/velt.ts\` and installs Chat SDK and its adapter dependencies:
+
+\`\`\`bash
+kaf add channel/chat-sdk-velt
+\`\`\``,
+    quickStart: `Create \`agent/channels/velt.ts\`:
+
+\`\`\`ts
+// agent/channels/velt.ts
+import { createVeltAdapter } from "@veltdev/chat-sdk-adapter";
+import { createMemoryState } from "@chat-adapter/state-memory";
+import type { Message, Thread } from "chat";
+import { chatSdkChannel } from "kaf/channels/chat-sdk";
+
+export const { bot, channel, send } = chatSdkChannel({
+  userName: "My Agent",
+  adapters: {
+    velt: createVeltAdapter({
+      apiKey: process.env.VELT_API_KEY!,
+      webhookSecret: process.env.VELT_WEBHOOK_SECRET!,
+      botUserId: "my-agent",
+      botUserName: "My Agent",
+    }),
+  },
+  state: createMemoryState(),
+});
+
+bot.onNewMention(async (thread: Thread, message: Message) => {
+  await thread.subscribe();
+  await send(message.text, { thread });
+});
+
+bot.onSubscribedMessage(async (thread: Thread, message: Message) => {
+  await send(message.text, { thread });
+});
+
+export default channel;
+\`\`\`
+
+See the [Velt adapter documentation](https://chat-sdk.dev/adapters/vendor-official/velt) for supported events, capabilities, and credentials.`,
+    configure: `Create a Velt bot user and webhook, set \`VELT_API_KEY\` and \`VELT_WEBHOOK_SECRET\`, then send comment events to \`/kaf/v1/velt\`. The adapter maps documents to channels, annotations to threads, and comments to messages. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for kaf session dispatch, state, streaming, and human-in-the-loop behavior.`,
+  },
+  "chat-sdk-sendblue": {
+    logo: "sendblue",
+    docsHref: "/docs/channels/chat-sdk",
+    badge: "Provider official",
+    keywords: ["chat sdk", "sendblue", "imessage", "sms", "rcs", "tapbacks", "phone"],
+    install: `Add this Chat SDK channel from kaf's registry. This writes \`agent/channels/sendblue.ts\` and installs Chat SDK and its adapter dependencies:
+
+\`\`\`bash
+kaf add channel/chat-sdk-sendblue
+\`\`\``,
+    quickStart: `Create \`agent/channels/sendblue.ts\`:
+
+\`\`\`ts
+// agent/channels/sendblue.ts
+import { createSendblueAdapter } from "chat-adapter-sendblue";
+import { createMemoryState } from "@chat-adapter/state-memory";
+import type { Message, Thread } from "chat";
+import { chatSdkChannel } from "kaf/channels/chat-sdk";
+
+export const { bot, channel, send } = chatSdkChannel({
+  userName: "My Agent",
+  adapters: {
+    sendblue: createSendblueAdapter(),
+  },
+  state: createMemoryState(),
+  streaming: false,
+});
+
+bot.onNewMention(async (thread: Thread, message: Message) => {
+  await thread.subscribe();
+  await send(message.text, { thread });
+});
+
+bot.onSubscribedMessage(async (thread: Thread, message: Message) => {
+  await send(message.text, { thread });
+});
+
+export default channel;
+\`\`\`
+
+See the [Sendblue adapter documentation](https://chat-sdk.dev/adapters/vendor-official/sendblue) for supported events, capabilities, and credentials.`,
+    configure: `Set \`SENDBLUE_API_KEY\`, \`SENDBLUE_API_SECRET\`, and \`SENDBLUE_FROM_NUMBER\`, then point Sendblue webhooks at \`/kaf/v1/sendblue\`. The adapter also supports tapbacks, typing indicators, delivery callbacks, and number lookup. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for kaf session dispatch, state, streaming, and human-in-the-loop behavior.`,
+  },
+  "chat-sdk-novu": {
+    logo: "novu",
+    docsHref: "/docs/channels/chat-sdk",
+    badge: "Provider official",
+    keywords: [
+      "chat sdk",
+      "novu",
+      "slack",
+      "teams",
+      "whatsapp",
+      "telegram",
+      "email",
+      "multichannel",
+    ],
+    install: `Add this Chat SDK channel from kaf's registry. This writes \`agent/channels/novu.ts\` and installs Chat SDK and its adapter dependencies:
+
+\`\`\`bash
+kaf add channel/chat-sdk-novu
+\`\`\``,
+    quickStart: `Create \`agent/channels/novu.ts\`:
+
+\`\`\`ts
+// agent/channels/novu.ts
+import { createNovuAdapter } from "@novu/chat-sdk-adapter";
+import { createMemoryState } from "@chat-adapter/state-memory";
+import type { Message, Thread } from "chat";
+import { chatSdkChannel } from "kaf/channels/chat-sdk";
+
+export const { bot, channel, send } = chatSdkChannel({
+  userName: "My Agent",
+  adapters: {
+    novu: createNovuAdapter(),
+  },
+  state: createMemoryState(),
+});
+
+bot.onNewMention(async (thread: Thread, message: Message) => {
+  await thread.subscribe();
+  await send(message.text, { thread });
+});
+
+bot.onSubscribedMessage(async (thread: Thread, message: Message) => {
+  await send(message.text, { thread });
+});
+
+export default channel;
+\`\`\`
+
+See the [Novu adapter documentation](https://chat-sdk.dev/adapters/vendor-official/novu) for supported events, capabilities, and credentials.`,
+    configure: `Run \`npx novu connect --runtime chat-sdk\` to authenticate Novu, choose a channel, and create the required environment variables. Novu manages provider credentials, identity, delivery, and conversation history across its supported channels. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for kaf session dispatch, state, streaming, and human-in-the-loop behavior.`,
+  },
+  "chat-sdk-liveblocks": {
+    logo: "liveblocks",
+    docsHref: "/docs/channels/chat-sdk",
+    badge: "Provider official",
+    keywords: [
+      "chat sdk",
+      "liveblocks",
+      "comments",
+      "collaboration",
+      "threads",
+      "mentions",
+      "reactions",
+    ],
+    install: `Add this Chat SDK channel from kaf's registry. This writes \`agent/channels/liveblocks.ts\` and installs Chat SDK and its adapter dependencies:
+
+\`\`\`bash
+kaf add channel/chat-sdk-liveblocks
+\`\`\``,
+    quickStart: `Create \`agent/channels/liveblocks.ts\`:
+
+\`\`\`ts
+// agent/channels/liveblocks.ts
+import { createLiveblocksAdapter } from "@liveblocks/chat-sdk-adapter";
+import { createMemoryState } from "@chat-adapter/state-memory";
+import type { Message, Thread } from "chat";
+import { chatSdkChannel } from "kaf/channels/chat-sdk";
+
+export const { bot, channel, send } = chatSdkChannel({
+  userName: "My Agent",
+  adapters: {
+    liveblocks: createLiveblocksAdapter({
+      apiKey: process.env.LIVEBLOCKS_SECRET_KEY!,
+      webhookSecret: process.env.LIVEBLOCKS_WEBHOOK_SECRET!,
+      botUserId: "my-agent",
+      botUserName: "My Agent",
+    }),
+  },
+  state: createMemoryState(),
+});
+
+bot.onNewMention(async (thread: Thread, message: Message) => {
+  await thread.subscribe();
+  await send(message.text, { thread });
+});
+
+bot.onSubscribedMessage(async (thread: Thread, message: Message) => {
+  await send(message.text, { thread });
+});
+
+export default channel;
+\`\`\`
+
+See the [Liveblocks adapter documentation](https://chat-sdk.dev/adapters/vendor-official/liveblocks) for supported events, capabilities, and credentials.`,
+    configure: `Create a Liveblocks webhook, set \`LIVEBLOCKS_SECRET_KEY\` and \`LIVEBLOCKS_WEBHOOK_SECRET\`, and send comment events to \`/kaf/v1/liveblocks\`. The adapter maps rooms to channels, comment threads to threads, and comments to messages. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for kaf session dispatch, state, streaming, and human-in-the-loop behavior.`,
+  },
+  linq: {
+    logo: "linq",
+    docsHref: "/docs/channels/linq",
+    badge: "First-party",
+    keywords: ["linq", "imessage", "sms", "apple messages", "tapbacks", "phone"],
+    install: `Add Linq from kaf's registry, then follow the guided Connect or portable credential setup:
+
+\`\`\`bash
+kaf add channel/linq
+\`\`\``,
+    quickStart: `Create \`agent/channels/linq.ts\`:
+
+\`\`\`ts
+import { connectLinqCredentials } from "@vercel/connect/kaf";
+import { linqChannel } from "kaf/channels/linq";
+
+export default linqChannel({
+  credentials: connectLinqCredentials("linq/my-agent"),
+});
+\`\`\``,
+    configure: `The guided setup can provision a managed Linq line with Vercel Connect or collect portable credentials. Connect-backed setup creates a native Linq connector and routes verified triggers to \`/kaf/v1/linq\`; with portable credentials, deploy first, then create a signed Linq webhook for that route.`,
+  },
+  "chat-sdk-kapso": {
+    logo: "kapso",
+    docsHref: "/docs/channels/chat-sdk",
+    badge: "Provider official",
+    keywords: ["chat sdk", "kapso", "whatsapp", "meta", "business", "buttons", "media"],
+    install: `Add this Chat SDK channel from kaf's registry. This writes \`agent/channels/kapso.ts\` and installs Chat SDK and its adapter dependencies:
+
+\`\`\`bash
+kaf add channel/chat-sdk-kapso
+\`\`\``,
+    quickStart: `Create \`agent/channels/kapso.ts\`:
+
+\`\`\`ts
+// agent/channels/kapso.ts
+import { createKapsoAdapter } from "@kapso/chat-adapter";
+import { createMemoryState } from "@chat-adapter/state-memory";
+import type { Message, Thread } from "chat";
+import { chatSdkChannel } from "kaf/channels/chat-sdk";
+
+export const { bot, channel, send } = chatSdkChannel({
+  userName: "My Agent",
+  adapters: {
+    kapso: createKapsoAdapter({
+      kapsoApiKey: process.env.KAPSO_API_KEY!,
+      phoneNumberId: process.env.KAPSO_PHONE_NUMBER_ID!,
+      webhookSecret: process.env.KAPSO_WEBHOOK_SECRET!,
+    }),
+  },
+  state: createMemoryState(),
+});
+
+bot.onNewMention(async (thread: Thread, message: Message) => {
+  await thread.subscribe();
+  await send(message.text, { thread });
+});
+
+bot.onSubscribedMessage(async (thread: Thread, message: Message) => {
+  await send(message.text, { thread });
+});
+
+export default channel;
+\`\`\`
+
+See the [Kapso adapter documentation](https://chat-sdk.dev/adapters/vendor-official/kapso) for supported events, capabilities, and credentials.`,
+    configure: `Connect a WhatsApp number in Kapso, set \`KAPSO_API_KEY\`, \`KAPSO_PHONE_NUMBER_ID\`, and \`KAPSO_WEBHOOK_SECRET\`, then point the Kapso webhook at \`/kaf/v1/kapso\`. Use this provider-managed option when you do not want to integrate directly with the WhatsApp Cloud API. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for kaf session dispatch, state, streaming, and human-in-the-loop behavior.`,
+  },
+  photon: {
+    logo: "photon",
+    docsHref: "/docs/channels/photon",
+    badge: "First-party",
+    keywords: ["imessage", "apple messages", "photon", "sms", "phone"],
+    install: `Add Photon from kaf's registry, then follow the guided project, phone, and deployment setup:
+
+\`\`\`bash
+kaf add channel/photon-imessage
+\`\`\``,
+    quickStart: `Create \`agent/channels/photon.ts\`:
+
+\`\`\`ts
+import { connectPhotonCredentials } from "@vercel/connect/kaf";
+import { photonIMessageChannel } from "kaf/channels/photon";
+
+export default photonIMessageChannel({
+  credentials: connectPhotonCredentials("photon/my-agent"),
+});
+\`\`\``,
+    configure: `The guided setup can create a dedicated Photon project or use existing credentials, register your phone, and choose Vercel Connect or portable environment credentials. Connect-backed setup creates a native Photon connector and routes verified triggers to \`/kaf/v1/photon\`; portable setup registers a signed Photon webhook directly.`,
+  },
+
+  "chat-sdk-dial": {
+    logo: "dial",
+    docsHref: "/docs/channels/chat-sdk",
+    badge: "Provider official",
+    keywords: ["chat sdk", "dial", "sms", "mms", "imessage", "voice", "phone", "calls"],
+    install: `Add this Chat SDK channel from kaf's registry. This writes \`agent/channels/dial.ts\` and installs Chat SDK and its adapter dependencies:
+
+\`\`\`bash
+kaf add channel/chat-sdk-dial
+\`\`\``,
+    quickStart: `Create \`agent/channels/dial.ts\`:
+
+\`\`\`ts
+// agent/channels/dial.ts
+import { createDialAdapter } from "@getdial/chat-sdk-adapter";
+import { createMemoryState } from "@chat-adapter/state-memory";
+import type { Message, Thread } from "chat";
+import { chatSdkChannel } from "kaf/channels/chat-sdk";
+
+export const { bot, channel, send } = chatSdkChannel({
+  userName: "My Agent",
+  adapters: {
+    dial: createDialAdapter({
+      apiKey: process.env.DIAL_API_KEY!,
+      fromNumberId: process.env.DIAL_FROM_NUMBER_ID!,
+      webhookSecret: process.env.DIAL_WEBHOOK_SECRET!,
+    }),
+  },
+  state: createMemoryState(),
+});
+
+bot.onNewMention(async (thread: Thread, message: Message) => {
+  await thread.subscribe();
+  await send(message.text, { thread });
+});
+
+bot.onSubscribedMessage(async (thread: Thread, message: Message) => {
+  await send(message.text, { thread });
+});
+
+export default channel;
+\`\`\`
+
+See the [Dial adapter documentation](https://chat-sdk.dev/adapters/vendor-official/dial) for supported events, capabilities, and credentials.`,
+    configure: `Create a Dial number, set \`DIAL_API_KEY\`, \`DIAL_FROM_NUMBER_ID\`, and \`DIAL_WEBHOOK_SECRET\`, then point its webhook at \`/kaf/v1/dial\`. Dial maps each phone-number pair to a thread and delivers SMS, MMS, iMessage, and voice transcripts. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for kaf session dispatch, state, streaming, and human-in-the-loop behavior.`,
+  },
+  "chat-sdk-agentphone": {
+    logo: "agentphone",
+    docsHref: "/docs/channels/chat-sdk",
+    badge: "Provider official",
+    keywords: ["chat sdk", "agentphone", "sms", "mms", "imessage", "voice", "phone", "calls"],
+    install: `Add this Chat SDK channel from kaf's registry. This writes \`agent/channels/agentphone.ts\` and installs Chat SDK and its adapter dependencies:
+
+\`\`\`bash
+kaf add channel/chat-sdk-agentphone
+\`\`\``,
+    quickStart: `Create \`agent/channels/agentphone.ts\`:
+
+\`\`\`ts
+// agent/channels/agentphone.ts
+import { createAgentPhoneAdapter } from "@agentphone/chat-sdk-adapter";
+import { createMemoryState } from "@chat-adapter/state-memory";
+import type { Message, Thread } from "chat";
+import { chatSdkChannel } from "kaf/channels/chat-sdk";
+
+export const { bot, channel, send } = chatSdkChannel({
+  userName: "My Agent",
+  adapters: {
+    agentphone: createAgentPhoneAdapter({
+      apiKey: process.env.AGENTPHONE_API_KEY!,
+      agentId: process.env.AGENTPHONE_AGENT_ID!,
+      webhookSecret: process.env.AGENTPHONE_WEBHOOK_SECRET!,
+    }),
+  },
+  state: createMemoryState(),
+});
+
+bot.onNewMention(async (thread: Thread, message: Message) => {
+  await thread.subscribe();
+  await send(message.text, { thread });
+});
+
+bot.onSubscribedMessage(async (thread: Thread, message: Message) => {
+  await send(message.text, { thread });
+});
+
+export default channel;
+\`\`\`
+
+See the [AgentPhone adapter documentation](https://chat-sdk.dev/adapters/vendor-official/agentphone) for supported events, capabilities, and credentials.`,
+    configure: `Create an AgentPhone agent, set \`AGENTPHONE_API_KEY\`, \`AGENTPHONE_AGENT_ID\`, and \`AGENTPHONE_WEBHOOK_SECRET\`, then point its webhook at \`/kaf/v1/agentphone\`. The adapter handles SMS, MMS, iMessage, and completed voice-call transcripts. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for kaf session dispatch, state, streaming, and human-in-the-loop behavior.`,
+  },
+  "chat-sdk-lark": {
+    logo: "lark",
+    docsHref: "/docs/channels/chat-sdk",
+    badge: "Provider official",
+    keywords: ["chat sdk", "lark", "feishu", "bytedance", "cardkit", "messaging"],
+    install: `Add this Chat SDK channel from kaf's registry. This writes \`agent/channels/lark.ts\` and installs Chat SDK and its adapter dependencies:
+
+\`\`\`bash
+kaf add channel/chat-sdk-lark
+\`\`\``,
+    quickStart: `Create \`agent/channels/lark.ts\`:
+
+\`\`\`ts
+// agent/channels/lark.ts
+import { createLarkAdapter } from "@larksuite/vercel-chat-adapter";
+import { createMemoryState } from "@chat-adapter/state-memory";
+import type { Message, Thread } from "chat";
+import { chatSdkChannel } from "kaf/channels/chat-sdk";
+
+export const { bot, channel, send } = chatSdkChannel({
+  userName: "My Agent",
+  adapters: {
+    lark: createLarkAdapter(),
+  },
+  state: createMemoryState(),
+});
+
+bot.onNewMention(async (thread: Thread, message: Message) => {
+  await thread.subscribe();
+  await send(message.text, { thread });
+});
+
+bot.onSubscribedMessage(async (thread: Thread, message: Message) => {
+  await send(message.text, { thread });
+});
+
+await bot.initialize();
+
+export default channel;
+\`\`\`
+
+See the [Lark / Feishu adapter documentation](https://chat-sdk.dev/adapters/vendor-official/lark) for all supported events and credentials.`,
+    configure: `Create a Lark or Feishu app and set \`LARK_APP_ID\` and \`LARK_APP_SECRET\`. The adapter uses Lark’s WebSocket long connection rather than an HTTP webhook, so call \`bot.initialize()\` and run kaf in a long-lived Node.js process. This is a vendor-official Chat SDK adapter built on the official Lark Node SDK. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for kaf session dispatch, state, streaming, and human-in-the-loop behavior.`,
+  },
+  "chat-sdk-beeper": {
+    logo: "beeper",
+    docsHref: "/docs/channels/chat-sdk",
+    badge: "Provider official",
+    keywords: ["chat sdk", "matrix", "beeper", "encrypted chat", "e2ee", "signal", "instagram"],
+    install: `Add this Chat SDK channel from kaf's registry. This writes \`agent/channels/beeper.ts\` and installs Chat SDK and its adapter dependencies:
+
+\`\`\`bash
+kaf add channel/chat-sdk-beeper
+\`\`\``,
+    quickStart: `Create \`agent/channels/matrix.ts\`:
+
+\`\`\`ts
+// agent/channels/matrix.ts
+import { createMatrixAdapter } from "@beeper/chat-adapter-matrix";
+import { createMemoryState } from "@chat-adapter/state-memory";
+import type { Message, Thread } from "chat";
+import { chatSdkChannel } from "kaf/channels/chat-sdk";
+
+export const { bot, channel, send } = chatSdkChannel({
+  userName: "My Agent",
+  adapters: {
+    matrix: createMatrixAdapter(),
+  },
+  state: createMemoryState(),
+});
+
+bot.onNewMention(async (thread: Thread, message: Message) => {
+  await thread.subscribe();
+  await send(message.text, { thread });
+});
+
+bot.onSubscribedMessage(async (thread: Thread, message: Message) => {
+  await send(message.text, { thread });
+});
+
+await bot.initialize();
+
+export default channel;
+\`\`\`
+
+See the [Beeper Matrix adapter documentation](https://chat-sdk.dev/adapters/vendor-official/matrix) for all supported events and credentials.`,
+    configure: `Set the Matrix homeserver, access token, and bot identity environment variables documented by Beeper. This adapter consumes Matrix sync rather than webhooks, so call \`bot.initialize()\` and run kaf in a long-lived Node.js process. It requires Node.js 22 or newer and a durable state adapter in production. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for kaf session dispatch, state, streaming, and human-in-the-loop behavior.`,
+  },
+  "chat-sdk-resend": {
+    logo: "resend",
+    docsHref: "/docs/channels/chat-sdk",
+    badge: "Provider official",
+    keywords: [
+      "chat sdk",
+      "email",
+      "resend",
+      "inbound email",
+      "transactional email",
+      "attachments",
+    ],
+    install: `Add this Chat SDK channel from kaf's registry. This writes \`agent/channels/resend.ts\` and installs Chat SDK and its adapter dependencies:
+
+\`\`\`bash
+kaf add channel/chat-sdk-resend
+\`\`\``,
+    quickStart: `Create \`agent/channels/resend.ts\`:
+
+\`\`\`ts
+// agent/channels/resend.ts
+import { createResendAdapter } from "@resend/chat-sdk-adapter";
+import { createMemoryState } from "@chat-adapter/state-memory";
+import type { Message, Thread } from "chat";
+import { chatSdkChannel } from "kaf/channels/chat-sdk";
+
+export const { bot, channel, send } = chatSdkChannel({
+  userName: "My Agent",
+  adapters: {
+    resend: createResendAdapter({
+      fromAddress: process.env.RESEND_FROM_ADDRESS!,
+      fromName: "My Agent",
+    }),
+  },
+  state: createMemoryState(),
+});
+
+bot.onNewMention(async (thread: Thread, message: Message) => {
+  await thread.subscribe();
+  await send(message.text, { thread });
+});
+
+bot.onSubscribedMessage(async (thread: Thread, message: Message) => {
+  await send(message.text, { thread });
+});
+
+export default channel;
+\`\`\`
+
+See the [Email (Resend) adapter documentation](https://chat-sdk.dev/adapters/vendor-official/resend) for all supported events and credentials.`,
+    configure: `Verify a sending domain in Resend, set \`RESEND_API_KEY\`, \`RESEND_WEBHOOK_SECRET\`, and \`RESEND_FROM_ADDRESS\`, then point the Resend inbound webhook at \`/kaf/v1/resend\`. This is a vendor-official Chat SDK adapter. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for kaf session dispatch, state, streaming, and human-in-the-loop behavior.`,
+    relatedResources: [
+      {
+        title: "Give your kaf agent an email inbox with Resend",
+        description:
+          "Wire an kaf agent to email through the Chat SDK channel and Resend adapter so it can hold threaded, multi-turn conversations, send proactive messages, and process attachments.",
+        href: "https://vercel.com/kb/guide/kaf-agent-with-resend",
+      },
+    ],
+  },
+  "chat-sdk-gmail": {
+    logo: "gmail",
+    docsHref: "/docs/channels/chat-sdk",
+    badge: "Chat SDK",
+    keywords: ["chat sdk", "gmail", "email", "google workspace", "pubsub", "oauth"],
+    install: `Add this Chat SDK channel from kaf's registry. This writes \`agent/channels/gmail.ts\` and installs Chat SDK and its adapter dependencies:
+
+\`\`\`bash
+kaf add channel/chat-sdk-gmail
+\`\`\``,
+    quickStart: `Create \`agent/channels/gmail.ts\`:
+
+\`\`\`ts
+// agent/channels/gmail.ts
+import { createGmailAdapter } from "@chat-adapter/gmail";
+import { createRedisState } from "@chat-adapter/state-redis";
+import type { Message, Thread } from "chat";
+import { chatSdkChannel } from "kaf/channels/chat-sdk";
+
+export const gmail = createGmailAdapter();
+
+export const { bot, channel, send } = chatSdkChannel({
+  userName: "My Agent",
+  adapters: { gmail },
+  state: createRedisState({ keyPrefix: "gmail-agent" }),
+  // Gmail sends email once and cannot edit an in-progress response.
+  streaming: false,
+});
+
+bot.onNewMention(async (thread: Thread, message: Message) => {
+  await thread.subscribe();
+  await send(message.text, { thread });
+});
+
+bot.onSubscribedMessage(async (thread: Thread, message: Message) => {
+  await send(message.text, { thread });
+});
+
+await bot.initialize();
+
+export default channel;
+\`\`\`
+
+**Installing or deploying this channel does not start Gmail listening.** After configuring credentials and Pub/Sub, run the maintenance job once as described under [Configure](#configure). Otherwise, registration waits until the first successful daily job.
+
+Gmail receives only messages with the configured handoff label. Responses are sent after the turn completes because email cannot edit an in-progress response. The registry installs Redis-backed state so Gmail's cursor, delivery receipts, and lock survive serverless invocations. See the [Gmail adapter documentation](https://chat-sdk.dev/adapters/official/gmail) for credentials, label selection, and delivery semantics.`,
+    configure: `Enable the Gmail API and Pub/Sub, then configure user-context OAuth for the mailbox, an authenticated wrapped Pub/Sub push subscription, and a Gmail handoff-label ID. Set \`GMAIL_MAILBOX\`, \`GMAIL_LABEL_ID\`, \`GMAIL_CLIENT_ID\`, \`GMAIL_CLIENT_SECRET\`, \`GMAIL_REFRESH_TOKEN\`, \`GMAIL_PUBSUB_AUDIENCE\`, \`GMAIL_PUBSUB_SERVICE_ACCOUNT_EMAIL\`, \`GMAIL_SUBSCRIPTION\`, and \`GMAIL_TOPIC_NAME\`. Set \`REDIS_URL\` to a durable Redis connection URL; Upstash REST credentials are not compatible with this adapter. The adapter mounts its authenticated Pub/Sub webhook at \`/kaf/v1/gmail\`.
+
+The registry also writes \`agent/schedules/gmail-maintenance.ts\`, which calls \`gmail.watch()\` on a daily \`0 9 * * *\` schedule (09:00 UTC on Vercel) to register or renew Gmail's watch. Adjust the cadence for your host and plan. Incoming Pub/Sub webhooks run synchronization from the saved cursor; the schedule does not process messages. Do not call \`gmail.sync()\` from this schedule or at startup: the generated message handlers use \`send()\`, which requires an active Chat SDK webhook context. Missed changes can be picked up by a later successful webhook, but this scaffold does not provide an independent recovery sync.
+
+### Start listening — required after deployment
+
+**Run the maintenance job once after configuring credentials, deploying, and setting up Pub/Sub.** Installing the channel or deploying the app does not register Gmail's watch. Without this step, registration waits until the first successful daily job.
+
+From your linked Vercel project:
+
+\`\`\`bash
+vercel crons list
+vercel crons run <maintenance-job-path>
+\`\`\`
+
+Replace \`<maintenance-job-path>\` with the Gmail maintenance route listed by the first command. Confirm the job succeeds in Vercel runtime logs before testing email. The job calls \`gmail.watch()\` using the deployed credentials and Redis state; the daily schedule then renews it. You do not need a faster cron schedule to start listening immediately.
+
+**Existing labelled mail is not imported on first setup.** The first successful \`watch()\` initializes the cursor at registration time. Send a new message from another account and apply the handoff label after initialization. Later watch renewals preserve the existing cursor. See the [Gmail adapter setup guide](https://chat-sdk.dev/adapters/official/gmail#setup) for Google Cloud, Pub/Sub, OAuth scopes, and watch-renewal requirements.`,
+  },
+};
+const baseExtensionPresentations: Record<string, ExtensionPresentation> = {
+  blitzreels: {
+    logo: "blitzreels",
+    docsHref: "https://www.npmjs.com/package/@blitzreels/kaf",
+    keywords: [
+      "video editing",
+      "long form video",
+      "short clips",
+      "shorts",
+      "vertical video",
+      "visual qa",
+      "media generation",
+      "exports",
+    ],
+    install: `Install the BlitzReels extension for kaf:
+
+\`\`\`bash
+kaf add extension/blitzreels
+\`\`\`
+
+The extension requires Node.js 24 or later. It wraps the BlitzReels API with typed tools for clipping, project inspection, visual-QA repair, AI media generation, and exports.`,
+    quickStart: `Add a BlitzReels API key to the agent's environment:
+
+\`\`\`bash title=".env.local"
+BLITZREELS_API_KEY=br_live_...
+\`\`\`
+
+Then mount the extension under \`agent/extensions/\`:
+
+\`\`\`ts title="agent/extensions/blitzreels.ts"
+import blitzreels from "@blitzreels/kaf";
+
+export default blitzreels({
+  apiKey: process.env.BLITZREELS_API_KEY!,
+});
+\`\`\`
+
+The filename supplies the \`blitzreels\` namespace. The extension adds project, media, clipping, repair, generation, snapshot, and export tools such as \`blitzreels__create_clip_batch\`, \`blitzreels__repair_clip\`, and \`blitzreels__start_export\`. It also ships a clipping skill that teaches the agent the long-form-to-shorts workflow and visual-QA repair loop.`,
+    configure: `Keep the API key in the environment rather than prompts or source control. Keys are environment-bounded: use \`br_live_...\` with the production API, and use \`br_test_...\` only with the matching local or development \`baseUrl\`.
+
+Source imports, clipping, generation, and exports call the configured BlitzReels API. Credit-spending, download, and render tools require kaf approval by default, and durable retries reuse the original call receipt instead of spending twice. Override an individual tool from a directory mount when it needs stricter \`always()\` approval, or use \`disableTool()\` to remove it.
+
+See the [BlitzReels extension package](https://www.npmjs.com/package/@blitzreels/kaf) for the complete tool list, configuration, approval defaults, error contract, and OAuth-backed MCP alternative.`,
+  },
+  "mux-video": {
+    logo: "mux",
+    docsHref: "https://github.com/muxinc/mux-video-agent/tree/main/packages/kaf-video",
+    keywords: [
+      "video",
+      "video assets",
+      "clips",
+      "captions",
+      "subtitles",
+      "Mux Robots",
+      "summarization",
+      "moderation",
+      "translation",
+      "chapters",
+    ],
+    install: `The Mux Video extension currently ships from source with the Mux Video Agent template. Clone the repository and install its workspace dependencies:
+
+\`\`\`bash
+git clone https://github.com/muxinc/mux-video-agent.git
+cd mux-video-agent
+pnpm install
+\`\`\`
+
+The extension requires Node.js 24 or later. The reusable package lives at \`packages/kaf-video\` and is mounted by the root agent.`,
+    quickStart: `Add your Mux access token to the template's environment:
+
+\`\`\`bash title=".env.local"
+MUX_TOKEN_ID=mux_token_id_here
+MUX_TOKEN_SECRET=mux_token_secret_here
+\`\`\`
+
+The template mounts the extension under \`agent/extensions/\`:
+
+\`\`\`ts title="agent/extensions/mux_video.ts"
+import muxVideo from "@mux/kaf-video";
+
+export default muxVideo({
+  tokenId: process.env.MUX_TOKEN_ID,
+  tokenSecret: process.env.MUX_TOKEN_SECRET,
+});
+\`\`\`
+
+The filename supplies the \`mux_video\` namespace. The extension adds tools such as \`mux_video__get_asset\`, \`mux_video__create_asset\`, \`mux_video__create_clip\`, \`mux_video__run_workflow\`, and \`mux_video__get_workflow_job\`.`,
+    configure: `Use a Mux access token with Video access and access to the Mux Robots workflows you plan to run. Keep the token ID and secret in the environment rather than prompts, tool arguments, or source control.
+
+Asset creation, clip creation, and Mux Robots workflow creation require explicit human approval by default. Robots jobs are asynchronous, so start a workflow with \`mux_video__run_workflow\`, retain the returned job ID, and check it with \`mux_video__get_workflow_job\`.
+
+The extension supports creating and inspecting assets, exact-range clips, subtitles, captions, summaries, questions, chapters, scenes, key moments, thumbnails, moderation, and caption translation or editing. It intentionally excludes multimodal embeddings and semantic video search. See the [Mux Video Agent repository](https://github.com/muxinc/mux-video-agent) for the source, full capability list, deployment steps, and eval suite.`,
+  },
+  browserbase: {
+    logo: "browserbase",
+    docsHref: "https://www.npmjs.com/package/@browserbasehq/kaf",
+    keywords: [
+      "browser",
+      "browser automation",
+      "cloud browser",
+      "stagehand",
+      "search",
+      "fetch",
+      "web automation",
+    ],
+    install: `Install the Browserbase extension for kaf:
+
+\`\`\`bash
+kaf add extension/browserbase
+\`\`\`
+
+The extension requires Node.js 24 or later. A Browserbase API key covers both cloud browser sessions and Stagehand inference through Browserbase Model Gateway, so you do not need a separate model-provider key.`,
+    quickStart: `Add your Browserbase API key to the agent's environment:
+
+\`\`\`bash title=".env.local"
+BROWSERBASE_API_KEY=bb_live_...
+\`\`\`
+
+Then mount the extension under \`agent/extensions/\`:
+
+\`\`\`ts title="agent/extensions/browserbase.ts"
+import browserbase from "@browserbasehq/kaf";
+
+export default browserbase({
+  apiKey: process.env.BROWSERBASE_API_KEY!,
+});
+\`\`\`
+
+The filename supplies the \`browserbase\` namespace. The extension adds \`browserbase__search\`, \`browserbase__fetch\`, and persistent browser tools for creating sessions, navigating, observing, acting, extracting structured data, and running autonomous Stagehand tasks.`,
+    configure: `Use Search → Fetch → browser as an escalation path: search for sources first, fetch straightforward content without starting a session, and create a browser only when a page requires JavaScript or interaction.
+
+You can configure the Stagehand model, session timeout, and proxies:
+
+\`\`\`ts title="agent/extensions/browserbase.ts"
+import browserbase from "@browserbasehq/kaf";
+
+export default browserbase({
+  apiKey: process.env.BROWSERBASE_API_KEY!,
+  model: "openai/gpt-5.4-mini",
+  sessionTimeoutSeconds: 900,
+  proxies: false,
+});
+\`\`\`
+
+Browserbase uses keep-alive sessions and kaf's durable per-session state to reconnect across workflow steps and function invocations. Call \`browserbase__stop_session\` when the task finishes to release billable browser time. Keep API keys out of prompts, and add approval gates around sensitive or irreversible browser actions. See the [Browserbase extension package](https://www.npmjs.com/package/@browserbasehq/kaf) for the complete tool and configuration reference.`,
+  },
+  kernel: {
+    logo: "kernel",
+    docsHref: "https://www.kernel.sh/docs/integrations/vercel/kaf-extension",
+    keywords: [
+      "browser",
+      "browser automation",
+      "cloud browser",
+      "playwright",
+      "mcp",
+      "managed auth",
+      "vercel connect",
+    ],
+    install: `Install the Kernel extension for kaf:
+
+\`\`\`bash
+kaf add extension/kernel
+\`\`\`
+
+The extension requires Node.js 24 or later and kaf 0.25 or later. It mounts Kernel's hosted MCP browser tools and a \`browse\` skill without requiring you to maintain browser tool code.`,
+    quickStart: `Create and attach a Kernel connector with [Vercel Connect](https://vercel.com/connect):
+
+\`\`\`bash
+vercel connect create kernel --name kernel-mcp --connection-method mcp
+vercel connect attach kernel/kernel-mcp
+\`\`\`
+
+Then mount the extension under \`agent/extensions/\`:
+
+\`\`\`ts title="agent/extensions/kernel.ts"
+import kernel from "@onkernel/kaf-extension";
+
+export default kernel({ connect: "kernel/kernel-mcp" });
+\`\`\`
+
+The filename supplies the \`kernel\` namespace. The extension adds browser management, Playwright, computer control, managed auth, profiles, proxies, and replay tools under \`kernel__browser__*\`, along with the \`browse\` skill.`,
+    configure: `For a personal or single-tenant agent, you can authenticate with a Kernel API key instead. Set \`KERNEL_API_KEY\`, then mount the extension with its default configuration:
+
+\`\`\`ts title="agent/extensions/kernel.ts"
+export { default } from "@onkernel/kaf-extension";
+\`\`\`
+
+The default mount can execute JavaScript in the browser VM and reuse authenticated browser sessions. For team or multi-tenant agents, prefer Vercel Connect so each user authenticates separately, and add an approval gate by overriding the extension's \`browser\` connection. See the [Kernel kaf extension guide](https://www.kernel.sh/docs/integrations/vercel/kaf-extension) for API-key configuration, connection overrides, the complete tool list, and security guidance.`,
+    relatedResources: [
+      {
+        title: "How to build a browser agent that works behind a login",
+        description:
+          "Combine kaf, Vercel Connect, and Kernel managed auth so a user signs in once and the agent drives the authenticated browser without handling credentials.",
+        href: "https://vercel.com/kb/guide/build-a-browser-agent",
+      },
+      {
+        title: "Give your software factory a browser",
+        description:
+          "Attach Kernel's cloud browser to the kaf software factory so Foreman can reproduce flow bugs, verify fixes on preview deployments, and save what it learns.",
+        href: "https://vercel.com/kb/guide/software-factory-browser",
+      },
+    ],
+  },
+  jetty: {
+    logo: "jetty",
+    docsHref: "https://github.com/jettyio/jetty-sdk/tree/main/packages/kaf#readme",
+    keywords: [
+      "evals",
+      "evaluation",
+      "grading",
+      "experiments",
+      "observability",
+      "trajectories",
+      "bandit",
+      "a/b testing",
+    ],
+    install: `Install the Jetty extension for kaf:
+
+\`\`\`bash
+kaf add extension/jetty
+\`\`\`
+
+The extension requires Node.js 24 or later and kaf 0.25 or later. It can ingest every completed turn as a durable Jetty trajectory, grade turns inline, steer experiments from their grades, and report native \`kaf eval\` results.`,
+    quickStart: `Add your Jetty credentials and collection to the agent's environment:
+
+\`\`\`bash title=".env.local"
+JETTY_API_TOKEN=your_token
+JETTY_COLLECTION=your_collection
+\`\`\`
+
+Then mount the extension under \`agent/extensions/\`:
+
+\`\`\`ts title="agent/extensions/jetty.ts"
+import jetty from "@jetty/kaf";
+
+export default jetty({
+  collection: process.env.JETTY_COLLECTION ?? "",
+  task: "triage-live",
+  judgeMode: "simple_judge",
+  arms: {
+    warm: "Write a warm, specific response.",
+    terse: "Write a concise, direct response.",
+  },
+});
+\`\`\`
+
+The filename supplies the \`jetty\` namespace. The extension contributes a turn-ingestion hook, dynamic instructions that select an experiment arm, and \`jetty__experiment\`, which reports per-arm results and the current leader. Create the \`simple_judge\` task in Jetty before using inline grading; use the default \`ingest\` mode when a separate grader will score trajectories later.`,
+    configure: `The package also includes a reporter for kaf's native eval runner:
+
+\`\`\`ts title="evals/evals.config.ts"
+import { Jetty } from "@jetty/kaf/reporter";
+import { defineEvalConfig } from "kaf/evals";
+
+export default defineEvalConfig({
+  reporters: [Jetty()],
+});
+\`\`\`
+
+The reporter reads \`JETTY_API_TOKEN\` and \`JETTY_COLLECTION\`, sends each eval result to Jetty, and warns rather than failing the eval when Jetty is unavailable. The extension no-ops when its collection is empty, so the same agent can run without Jetty credentials.
+
+Jetty trajectories persist agent inputs and outputs. Redact PII before grading, put sensitive grader parameters in Jetty's \`secretParams\` rather than \`initParams\`, and treat trajectory storage like any other logging surface. See the [Jetty kaf extension documentation](https://github.com/jettyio/jetty-sdk/tree/main/packages/kaf#readme) for all experiment settings and the [worked example](https://github.com/jettyio/jetty-sdk/tree/main/examples/kaf-jetty) for the complete grading loop.`,
+  },
+  "github-tools": {
+    logo: "github",
+    docsHref: "https://github-tools.com/frameworks/kaf#kaf-extension",
+    keywords: [
+      "github",
+      "repositories",
+      "pull requests",
+      "issues",
+      "code review",
+      "ci",
+      "vercel connect",
+      "approval",
+    ],
+    install: `Install the GitHub Tools extension and Vercel Connect client:
+
+\`\`\`bash
+kaf add extension/github-tools
+\`\`\`
+
+The extension provides the GitHub toolset as a versioned kaf package. Use a Vercel Connect connector for short-lived, scoped GitHub tokens, or omit \`@vercel/connect\` and authenticate with a GitHub token.`,
+    quickStart: `Create and attach a GitHub connector to the Vercel project that runs your agent:
+
+\`\`\`bash
+vercel link
+vercel connect create github --name my-connector
+vercel connect attach github/my-connector --yes
+vercel env pull
+\`\`\`
+
+Then mount the extension under \`agent/extensions/\`:
+
+\`\`\`ts title="agent/extensions/github.ts"
+import githubExtension from "@github-tools/kaf-extension";
+
+export default githubExtension({
+  connector: "github/my-connector",
+  preset: "maintainer",
+  requireApproval: {
+    mergePullRequest: true,
+  },
+});
+\`\`\`
+
+The filename supplies the \`github\` namespace, so tools appear as \`github__listPullRequests\`, \`github__createIssue\`, and \`github__addPullRequestComment\`. The preset automatically limits the connector token to the scopes its tools need.`,
+    configure: `Choose one or more presets to limit the available tools: \`code-review\`, \`issue-triage\`, \`repo-explorer\`, \`ci-ops\`, or \`maintainer\`. Every write tool requires approval by default, while read tools do not. Use \`requireApproval\` to apply \`always\`, \`once\`, or an input-dependent policy to individual tools:
+
+\`\`\`ts title="agent/extensions/github.ts"
+import githubExtension from "@github-tools/kaf-extension";
+
+export default githubExtension({
+  connector: "github/my-connector",
+  preset: ["code-review", "issue-triage"],
+  requireApproval: {
+    addPullRequestComment: "once",
+    mergePullRequest: true,
+    createIssue: ({ toolInput }) => toolInput?.owner !== "my-org",
+  },
+});
+\`\`\`
+
+For local or non-Vercel deployments, omit \`connector\` and set \`GITHUB_TOKEN\`; the extension also accepts an explicit \`token\`. Prefer fine-grained credentials, expose only the presets the agent needs, and keep approval enabled for writes. See the [GitHub Tools kaf documentation](https://github-tools.com/frameworks/kaf#kaf-extension) for token authentication, per-tool overrides, commit attribution, and the complete tool catalog.`,
+    relatedResources: [softwareFactoryGuide, incidentResponseGuide],
+  },
+  hindsight: {
+    logo: "hindsight",
+    docsHref: "https://hindsight.vectorize.io/sdks/integrations/kaf",
+    keywords: [
+      "memory",
+      "long-term memory",
+      "automatic recall",
+      "retention",
+      "user profile",
+      "context",
+      "Hindsight Cloud",
+      "self-hosted",
+      "Vectorize",
+    ],
+    install: `Install Hindsight memory for kaf:
+
+\`\`\`bash
+kaf add extension/hindsight
+\`\`\`
+
+This installs \`@vectorize-io/hindsight-kaf\` and writes \`agent/instructions/hindsight.ts\` for recall plus \`agent/hooks/hindsight.ts\` for retention. The package requires Node.js 24 or later.`,
+    quickStart: `Create a Hindsight Cloud API key and add it to the agent's environment. The API URL defaults to Hindsight Cloud, and the bank defaults to \`default\`:
+
+\`\`\`bash title=".env.local"
+HINDSIGHT_API_KEY=...
+HINDSIGHT_BANK_ID=my-agent
+\`\`\`
+
+The registry creates both capability files:
+
+\`\`\`ts title="agent/instructions/hindsight.ts"
+import { hindsightMemory } from "@vectorize-io/hindsight-kaf";
+
+export default hindsightMemory();
+\`\`\`
+
+\`\`\`ts title="agent/hooks/hindsight.ts"
+import { hindsightRetainHook } from "@vectorize-io/hindsight-kaf";
+
+export default hindsightRetainHook();
+\`\`\`
+
+Before each turn, the dynamic instructions resolver recalls the user's ambient profile and working context. After the turn, the hook retains the user message and assistant reply. Neither path depends on the model choosing to call a tool.`,
+    configure: `Recall uses a fixed broad query rather than the live user message. Tune the profile context and response budget in the instructions file when needed:
+
+\`\`\`ts title="agent/instructions/hindsight.ts"
+import { hindsightMemory } from "@vectorize-io/hindsight-kaf";
+
+export default hindsightMemory({
+  recallQuery: "user preferences, identity, projects, and working context",
+  budget: "high",
+  maxTokens: 2048,
+});
+\`\`\`
+
+For a self-hosted server, set \`HINDSIGHT_API_URL\` and pass \`apiKey: null\` to both factories when the server has no authentication. Other shared options include \`bankId\`, \`context\`, \`includeAssistantReply\`, \`timeoutMs\`, and \`onError\`.
+
+A bank is one isolated memory store, and both files must use the same bank. Do not share the default bank across untrusted users; use separate agent deployments with distinct \`HINDSIGHT_BANK_ID\` values for separate users or tenants. See the [Hindsight kaf integration guide](https://hindsight.vectorize.io/sdks/integrations/kaf) for Cloud, self-hosted, and factory configuration.`,
+  },
+};
+
+const memoryPresentations: Record<string, MemoryPresentation> = {
+  file: {
+    logo: "vercel",
+    docsHref: "/docs/memory/file",
+    keywords: [
+      "memory",
+      "file memory",
+      "Vercel Blob",
+      "private storage",
+      "long-term memory",
+      "per-principal memory",
+      "OIDC",
+    ],
+    install: `Install and provision file memory for kaf:
+
+\`\`\`bash
+kaf add memory/file
+\`\`\`
+
+After you approve setup, kaf creates or reuses a dedicated private Vercel Blob store, connects it to production, preview, and development, and pulls the resulting environment variables. Vercel Blob usage may incur charges.`,
+    quickStart: `The registry writes this memory slot:
+
+\`\`\`ts title="agent/memory/file.ts"
+import { fileMemory } from "kaf/memory/file";
+import { defineMemory } from "kaf/memory";
+import { byPrincipal } from "kaf/memory/scope";
+
+export default defineMemory({
+  description: "Remember stable facts and preferences about the caller.",
+  provider: fileMemory(),
+  scope: byPrincipal,
+});
+\`\`\`
+
+During \`kaf dev\`, file memory stays in the local process. On Vercel, the default backend uses the private Blob store provisioned by setup.`,
+    configure: `Run \`kaf integration setup file-memory\` to repair or re-run provisioning without reinstalling the registry item. Setup uses the first configured function region, preserves an existing kaf-owned store if the project region later changes, and never adopts or changes an application store connected with \`BLOB_*\`.
+
+Provisioned bindings use the \`KAF_MEMORY_BLOB_*\` namespace. \`fileMemory()\` prefers \`KAF_MEMORY_BLOB_READ_WRITE_TOKEN\`, then \`KAF_MEMORY_BLOB_STORE_ID\` with Vercel OIDC from the environment or request context. Generic \`BLOB_*\` credentials remain a fallback for manually connected stores. See [File memory](/docs/memory/file) for backend behavior and manual configuration.`,
+  },
+  "upstash-agentkit": {
+    logo: "upstash",
+    docsHref: "https://upstash.com/docs/redis/sdks/agentkit/kaf",
+    keywords: [
+      "upstash",
+      "agentkit",
+      "redis",
+      "memory",
+      "memory slots",
+      "file memory",
+      "long-term memory",
+      "ranked recall",
+      "conversation history",
+    ],
+    install: `Install the Upstash AgentKit memory provider for kaf:
+
+\`\`\`bash
+kaf add memory/upstash-agentkit
+\`\`\`
+
+This installs \`@upstash/agentkit-kaf\` and \`@upstash/redis\`, then writes a memory slot. The \`@upstash/agentkit-kaf/memory\` entry point requires kaf 0.45.2 or later.`,
+    quickStart: `Add an Upstash Redis database's REST credentials to the agent's environment:
+
+\`\`\`bash title=".env.local"
+UPSTASH_REDIS_REST_URL=https://...
+UPSTASH_REDIS_REST_TOKEN=...
+\`\`\`
+
+The registry creates this memory slot:
+
+\`\`\`ts title="agent/memory/upstash-agentkit.ts"
+import { redisMemory } from "@upstash/agentkit-kaf/memory";
+import { defineMemory } from "kaf/memory";
+import { byPrincipal } from "kaf/memory/scope";
+
+export default defineMemory({
+  description: "Recall and manage durable context for the current user.",
+  provider: redisMemory({ topK: 5 }),
+  scope: byPrincipal,
+});
+\`\`\`
+
+The filename creates the \`upstash-agentkit\` slot. It recalls matching curated facts before each turn, captures user messages after completed turns by default, and gives the model \`upstash-agentkit__save_memory\`, \`upstash-agentkit__search_memory\`, \`upstash-agentkit__read_session\`, and \`upstash-agentkit__forget_memory\` tools.`,
+    configure: `\`byPrincipal\` keeps memory disabled for anonymous and runtime principals, and shares the local-development scope while you run \`kaf dev\`. For a multi-tenant agent, replace it with a scope resolver that derives both tenant and caller identity from verified session context. See [Multi-tenant memory](/docs/patterns/multi-tenant-memory).
+
+Use \`redisDocuments()\` with \`fileMemory({ backend: redisDocuments() })\` when you want kaf's bounded, model-curated document and its \`save_memory\` and \`remove_memory\` tools, but want Redis rather than the default local or Vercel Blob backend. Use \`redisMemory()\` for relevance-ranked recall and automatic capture. Both partition Redis with kaf's locked scope key.
+
+The provider stores memory content in your Upstash Redis database. Review its retention before enabling it for sensitive data. See the [Upstash AgentKit kaf guide](https://upstash.com/docs/redis/sdks/agentkit/kaf) for options including retention, recall limits, and automatic capture.
+
+AgentKit also ships \`@upstash/agentkit-kaf-extension\`, an kaf extension that adds Redis Search tools over your own documents and searchable chat history. Mount it separately under \`agent/extensions/\` when you need those capabilities; the memory slot does not depend on it.`,
+  },
+  arcana: {
+    logo: "arcana",
+    docsHref: "https://github.com/KybernesisAI/platform/tree/master/packages/arcana#readme",
+    keywords: ["memory", "long-term memory", "semantic search", "brain notes", "Kybernesis"],
+    install: `Install the Kybernesis Arcana provider for kaf:
+
+\`\`\`bash
+kaf add memory/arcana
+\`\`\`
+
+This installs \`@kybernesis/arcana\` and writes a memory slot. The provider requires Node.js 24 or later and kaf 0.49 or later.`,
+    quickStart: `Create an Arcana workspace and workspace-scoped API key, then add both values to the agent's environment:
+
+\`\`\`bash title=".env.local"
+ARCANA_API_KEY=kb_your_api_key_here
+ARCANA_WORKSPACE=your-workspace
+\`\`\`
+
+The registry creates this memory slot:
+
+\`\`\`ts title="agent/memory/arcana.ts"
+import { arcanaMemory } from "@kybernesis/arcana/memory";
+import { defineMemory } from "kaf/memory";
+import { byPrincipal } from "kaf/memory/scope";
+
+export default defineMemory({
+  description: "Recall and manage durable context for the current user.",
+  provider: arcanaMemory({
+    apiKey: process.env.ARCANA_API_KEY!,
+    workspace: process.env.ARCANA_WORKSPACE!,
+  }),
+  scope: byPrincipal,
+});
+\`\`\`
+
+The filename creates the \`arcana\` memory slot. Before each turn with at least four words, Arcana searches memories and queries brain notes, then injects the result as one context message. The provider also gives the model \`arcana__remember\`, \`arcana__recall\`, and \`arcana__search\` tools.`,
+    configure: `Arcana does not capture turns automatically by default. The model stores memories deliberately with \`arcana__remember\`; set \`capture: { enabled: true }\` when you want it to capture completed turns automatically.
+
+An Arcana key is scoped to a workspace. Keep the key in a sensitive environment variable and use a separate workspace and key when people or tenants must not share memory. The provider records kaf's scope as a tag, but Arcana isolates data by workspace rather than by kaf scope. See the [Arcana package documentation](https://github.com/KybernesisAI/platform/tree/master/packages/arcana#readme) for the full configuration and tool reference.`,
+  },
+  supermemory: {
+    logo: "supermemory",
+    docsHref: "https://github.com/supermemoryai/kaf-supermemory#readme",
+    keywords: [
+      "memory",
+      "long-term memory",
+      "semantic search",
+      "rag",
+      "conversation history",
+      "retrieval",
+      "Supermemory",
+    ],
+    install: `Install the Supermemory provider for kaf:
+
+\`\`\`bash
+kaf add memory/supermemory
+\`\`\`
+
+This installs \`@supermemory/kaf\` and writes a memory slot. The provider requires Node.js 24 or later and kaf 0.47.3 or later.`,
+    quickStart: `Create a Supermemory API key and add it to the agent's environment:
+
+\`\`\`bash title=".env.local"
+SUPERMEMORY_API_KEY=...
+\`\`\`
+
+The registry creates this memory slot:
+
+\`\`\`ts title="agent/memory/supermemory.ts"
+import supermemory from "@supermemory/kaf";
+import { defineMemory } from "kaf/memory";
+import { byPrincipal } from "kaf/memory/scope";
+
+export default defineMemory({
+  description: "Recall and manage durable context for the current user.",
+  provider: supermemory({
+    apiKey: process.env.SUPERMEMORY_API_KEY!,
+  }),
+  scope: byPrincipal,
+});
+\`\`\`
+
+The filename creates the \`supermemory\` memory slot, so the provider's tools are named \`supermemory__search\`, \`supermemory__remember\`, and \`supermemory__forget\`. The provider uses kaf's locked scope key to partition all reads and writes.`,
+    configure: `\`byPrincipal\` keeps memory disabled for anonymous and runtime principals, and shares the local-development scope while you run \`kaf dev\`. For a multi-tenant agent, replace it with a scope resolver that derives both tenant and caller identity from verified session context. See [Multi-tenant memory](/docs/patterns/multi-tenant-memory).
+
+Supermemory automatically recalls relevant context before a turn and captures completed turns. It also provides tools to search, read sessions and documents, remember context, extract files, URLs, or text, and forget memories. The provider sends stored conversations and extracted sources to Supermemory; configure its retention and data handling for your application before enabling it for sensitive data.
+
+Keep \`SUPERMEMORY_API_KEY\` in the environment rather than prompts or source control. You can change the container-tag prefix, automatic search, capture policy, and profile-context time zone through \`supermemory(...)\`. See the [Supermemory kaf provider documentation](https://supermemory.ai/docs/integrations/kaf) for all options and tool behavior.`,
+  },
+};
+
+const extensionPresentations: Record<string, ExtensionPresentation> = {
+  ...baseExtensionPresentations,
+  "agent-browser": {
+    logo: "agent-browser",
+    docsHref:
+      "https://github.com/vercel-labs/agent-browser/tree/main/packages/%40agent-browser/kaf",
+    keywords: [
+      "browser",
+      "browser automation",
+      "web automation",
+      "cli",
+      "chrome",
+      "playwright",
+      "puppeteer",
+      "kernel",
+      "browserbase",
+      "browser use",
+    ],
+    install: `Install the agent-browser extension for kaf:
+
+\`\`\`bash
+kaf add extension/agent-browser
+\`\`\`
+
+The extension installs agent-browser automatically on first use and runs it inside the agent's sandbox. It requires a sandbox backend with real process execution, such as Vercel Sandbox, Docker, or microsandbox.`,
+    quickStart: `Mount the extension under \`agent/extensions/\`:
+
+\`\`\`ts title="agent/extensions/browser.ts"
+import browser from "@agent-browser/kaf";
+
+export default browser({});
+\`\`\`
+
+The filename supplies the \`browser\` namespace. The extension adds tools such as \`browser__navigate\`, \`browser__snapshot\`, \`browser__click\`, \`browser__fill\`, \`browser__find\`, and \`browser__screenshot\`. agent-browser keeps the underlying browser process and session state in the kaf sandbox.`,
+    configure: `Restrict browser access to the sites the agent needs with the extension's domain allow-list:
+
+\`\`\`ts title="agent/extensions/browser.ts"
+import browser from "@agent-browser/kaf";
+
+export default browser({
+  allowedDomains: ["example.com", "*.example.com"],
+  contentBoundaries: true,
+  maxOutputChars: 50_000,
+});
+\`\`\`
+
+Also configure the [sandbox network policy](/docs/sandbox#network-policy) for defense in depth. Treat saved browser state, cookies, screenshots, downloads, and recordings as sensitive data. Do not place passwords or session tokens in prompts. Use the extension's per-tool overrides to gate or disable actions your agent should not take unattended.
+
+The extension also supports inline screenshots, session naming, proxies, and production pre-installation. See the [agent-browser kaf extension documentation](https://github.com/vercel-labs/agent-browser/tree/main/packages/%40agent-browser/kaf) for the complete options and example app.`,
+    relatedResources: [
+      {
+        title: "Give your kaf agent a browser",
+        description:
+          "Changelog introducing the agent-browser extension, which gives kaf agents sandboxed tools to navigate, read, click, fill forms, take screenshots, and inspect network activity.",
+        href: "https://vercel.com/changelog/give-your-kaf-agent-a-browser",
+      },
+    ],
+  },
+  link: {
+    logo: "link",
+    docsHref: "https://github.com/stripe/link-cli/tree/main/packages/integrations/kaf/README.md",
+    keywords: ["stripe", "wallet", "payments", "checkout", "spend requests", "approval"],
+    install: `Install the Link extension for kaf:
+
+\`\`\`bash
+kaf add extension/link
+\`\`\`
+
+The extension requires Node.js 24 or later. It uses a configured Link access token; it does not start OAuth or refresh tokens. The token's wallet is shared by every caller who can reach this agent, so mount it only on an appropriately access-controlled agent.`,
+    quickStart: `Add a Link access token to the agent's server environment:
+
+\`\`\`bash title=".env.local"
+LINK_ACCESS_TOKEN=...
+\`\`\`
+
+The registry mounts the extension under \`agent/extensions/link.ts\`:
+
+\`\`\`ts title="agent/extensions/link.ts"
+import link from "@stripe/link-integrations-eve";
+
+export default link({
+  accessToken: process.env.LINK_ACCESS_TOKEN!,
+});
+\`\`\`
+
+The extension contributes \`link__\` tools for wallet details, payment methods, spend requests, transactions, balances, and purchase reports, plus a wallet skill with the checkout workflow.`,
+    configure: `Creating a spend request requires kaf approval on every call by default. This is separate from Link's purchase approval: leave \`request_approval\` enabled for the normal flow, show the approval URL, then retrieve the same request and verify its current status before using credentials. Setting \`request_approval: false\` only creates a draft; it does not authorize a purchase.
+
+Payment credentials requested with \`include: ["card"]\` are returned as tool output and may appear in stored session events. The skill tells the agent not to repeat credentials in chat, but applications remain responsible for transcript access and retention. Keep the token out of prompts and source control; a 401 requires the operator to configure a replacement token. See the [extension documentation](https://github.com/stripe/link-cli/tree/main/packages/integrations/kaf) for the full tool contract and security guidance.`,
+  },
+};
+
+/**
+ * Connection presentation overlay, keyed by catalog slug. Transport (`mcp`,
+ * `openapi`) and the model-facing description come from `@kaf/catalog`;
+ * this carries the docs-only auth modes, optional connector UID, and configure
+ * note.
+ */
+const connectionPresentations: Record<string, ConnectionPresentation> = {
+  "browser-use": {
+    logo: "browser-use",
+    docsHref: "https://docs.browser-use.com/cloud/guides/mcp-server",
+    keywords: ["mcp", "browser", "browser automation", "cloud browser", "web automation"],
+    authModes: ["apiKey"],
+    apiKey: {
+      env: "BROWSER_USE_API_KEY",
+      header: "x-browser-use-api-key",
+    },
+    configureNote:
+      "Browser Use runs tasks in managed cloud browsers. Add approval gates or tool filters before allowing unattended browser actions.",
+  },
+  agentcard: {
+    logo: "agentcard",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "shopping", "checkout", "payments", "virtual cards", "commerce", "connect"],
+    authModes: ["user"],
+  },
+  vercel: {
+    logo: "vercel",
+    docsHref: "https://vercel.com/docs/agent-resources/vercel-mcp",
+    keywords: ["mcp", "projects", "deployments", "logs", "oauth", "connect"],
+    authModes: ["user", "app"],
+    connectors: {
+      user: { name: "vercel" },
+      app: { uid: "vercel/your-connector", service: "api-key", name: "vercel" },
+    },
+    configureNotes: {
+      user: "Select None when prompted for a token authentication method. Each user completes OAuth when needed.",
+      app: "Enter a team-scoped [Vercel token](https://vercel.com/kb/guide/how-do-i-use-a-vercel-api-access-token) when prompted, then copy the returned connector UID into the App example. This avoids per-user OAuth, though the Vercel token still belongs to the user who created it.",
+    },
+    relatedResources: [
+      incidentResponseGuide,
+      softwareFactoryGuide,
+      {
+        title: "Manage Vercel projects with a software factory",
+        description:
+          "Add Vercel's hosted MCP server to the kaf software factory so Foreman can read build logs, runtime errors, and deployment history through app-scoped Vercel Connect auth and a read-only tool allowlist.",
+        href: "https://vercel.com/kb/guide/software-factory-vercel-mcp",
+      },
+    ],
+  },
+  linear: {
+    logo: "linear",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "issues", "project management", "oauth", "connect"],
+    authModes: ["user", "app"],
+    relatedResources: [softwareFactoryGuide],
+  },
+  notion: {
+    logo: "notion",
+    docsHref: "/docs/connections",
+    keywords: ["mcp", "openapi", "docs", "wiki", "knowledge base", "connect"],
+    authModes: ["user", "app", "jwtBearer"],
+    configureNote:
+      "The OpenAPI setup sends the required `Notion-Version` header; bump it as Notion ships new API versions.",
+    relatedResources: [marketingTeamGuide],
+  },
+  datadog: {
+    logo: "datadog",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "observability", "metrics", "monitoring", "logs"],
+    authModes: ["jwtBearer"],
+    configureNote:
+      "Match the MCP `url` to your Datadog site (`datadoghq.com`, `datadoghq.eu`, and so on).",
+    relatedResources: [incidentResponseGuide],
+  },
+  honeycomb: {
+    logo: "honeycomb",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "observability", "traces", "queries"],
+    authModes: ["jwtBearer"],
+  },
+  airtable: {
+    logo: "airtable",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "bases", "tables", "records", "no-code", "oauth", "connect"],
+    authModes: ["user"],
+  },
+  bitly: {
+    logo: "bitly",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "links", "qr codes", "analytics", "oauth", "connect"],
+    authModes: ["user"],
+  },
+  brex: {
+    logo: "brex",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "finance", "expenses", "cards", "spend", "oauth", "connect"],
+    authModes: ["user"],
+  },
+  candid: {
+    logo: "candid",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "nonprofits", "funders", "grants", "research", "oauth", "connect"],
+    authModes: ["user"],
+  },
+  clickhouse: {
+    logo: "clickhouse",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "sql", "analytics", "warehouse", "queries", "oauth", "connect"],
+    authModes: ["user"],
+  },
+  cloudinary: {
+    logo: "cloudinary",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "images", "videos", "assets", "media", "oauth", "connect"],
+    authModes: ["user"],
+  },
+  coda: {
+    logo: "coda",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "docs", "tables", "pages", "oauth", "connect"],
+    authModes: ["user"],
+  },
+  context: {
+    logo: "context",
+    docsHref: "https://docs.context.dev/install-mcp",
+    connectors: { user: { service: "mcp.context.dev", name: "context" } },
+    keywords: [
+      "mcp",
+      "web search",
+      "web scraping",
+      "crawl",
+      "extract",
+      "parse",
+      "brand intelligence",
+      "monitoring",
+      "batches",
+      "oauth",
+      "connect",
+    ],
+    authModes: ["user"],
+  },
+  egnyte: {
+    logo: "egnyte",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "files", "content", "governance", "oauth", "connect"],
+    authModes: ["user"],
+  },
+  embat: {
+    logo: "embat",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "treasury", "cash", "payments", "accounting", "oauth", "connect"],
+    authModes: ["user"],
+  },
+  "hugging-face": {
+    logo: "hugging-face",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "models", "datasets", "spaces", "gradio", "ai", "oauth", "connect"],
+    authModes: ["user"],
+  },
+  "local-falcon": {
+    logo: "local-falcon",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "local seo", "rankings", "ai visibility", "oauth", "connect"],
+    authModes: ["user"],
+  },
+  make: {
+    logo: "make",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "scenarios", "workflows", "automation", "oauth", "connect"],
+    authModes: ["user"],
+  },
+  manufact: {
+    logo: "manufact",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "mcp servers", "deploy", "monitor", "oauth", "connect"],
+    authModes: ["user"],
+  },
+  mem0: {
+    logo: "mem0",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "memory", "agents", "retrieval", "ai", "oauth", "connect"],
+    authModes: ["user"],
+  },
+  miro: {
+    logo: "miro",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "boards", "whiteboard", "diagrams", "oauth", "connect"],
+    authModes: ["user"],
+  },
+  mixpanel: {
+    logo: "mixpanel",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "events", "funnels", "insights", "analytics", "oauth", "connect"],
+    authModes: ["user"],
+  },
+  natural: {
+    logo: "natural",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "payments", "wallets", "transfers", "oauth", "connect"],
+    authModes: ["user"],
+    configureNote:
+      "Natural moves real money. Add an approval gate or tool filters before allowing unattended payment actions.",
+  },
+  neon: {
+    logo: "neon",
+    docsHref: "https://neon.com/docs/ai/neon-mcp-server",
+    keywords: ["mcp", "postgres", "databases", "branches", "sql", "oauth", "connect"],
+    authModes: ["app"],
+    connectors: { app: { uid: "neon/neon", service: "neon" } },
+    configureNote:
+      "Neon's MCP server can modify projects and databases. Use a development or test project, review tool calls, and append `?readonly=true` or `?projectId=<project-id>` to scope access.",
+  },
+  netlify: {
+    logo: "netlify",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "deploys", "sites", "hosting", "oauth", "connect"],
+    authModes: ["user"],
+  },
+  oreilly: {
+    logo: "oreilly",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "books", "courses", "learning", "oauth", "connect"],
+    authModes: ["user"],
+  },
+  planetscale: {
+    logo: "planetscale",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "postgres", "mysql", "databases", "oauth", "connect"],
+    authModes: ["user"],
+  },
+  posthog: {
+    logo: "posthog",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "insights", "events", "feature flags", "analytics", "oauth", "connect"],
+    authModes: ["user"],
+  },
+  postman: {
+    logo: "postman",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "apis", "collections", "workspaces", "oauth", "connect"],
+    authModes: ["user"],
+  },
+  razorpay: {
+    logo: "razorpay",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "payments", "settlements", "oauth", "connect"],
+    authModes: ["user"],
+  },
+  sentry: {
+    logo: "sentry",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "errors", "issues", "observability", "oauth", "connect"],
+    authModes: ["user"],
+  },
+  similarweb: {
+    logo: "similarweb",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "traffic", "market data", "competitive intelligence", "oauth", "connect"],
+    authModes: ["user"],
+  },
+  shopify: {
+    logo: "shopify",
+    docsHref: "https://shopify.dev/docs/apps/build/storefront-mcp",
+    keywords: ["mcp", "ucp", "commerce", "products", "carts", "checkouts"],
+    authModes: [],
+    quickStart: `Create \`agent/connections/shopify.ts\`:
+
+\`\`\`ts
+import { defineMcpClientConnection } from "kaf/connections";
+
+const SHOPIFY_EXAMPLE_PROFILE =
+  "https://shopify.dev/ucp/agent-profiles/examples/2026-08-25/valid-with-capabilities.json";
+
+// Shopify cannot reach localhost. Use its public profile, or expose this route with a tool like ngrok.
+function agentProfileUrl(): string {
+  if (process.env.KAF_DEV === "1") return SHOPIFY_EXAMPLE_PROFILE;
+
+  return \`https://\${process.env.VERCEL_PROJECT_PRODUCTION_URL}/.well-known/ucp\`;
+}
+
+export default defineMcpClientConnection({
+  url: \`https://\${process.env.SHOPIFY_STORE_DOMAIN!}/api/ucp/mcp\`,
+  description: "Search products and build carts and checkouts on a Shopify storefront.",
+  toolCall: {
+    providedArguments: {
+      meta: ({ callId, session, toolName }) => ({
+        "ucp-agent": {
+          profile: agentProfileUrl(),
+        },
+
+        // Include callId so sibling calls are unique while durable replays reuse the same key.
+        ...(["cancel_cart", "complete_checkout", "cancel_checkout"].includes(toolName)
+          ? {
+              "idempotency-key": \`\${session.id}:\${session.turn.id}:\${toolName}:\${callId}\`,
+            }
+          : {}),
+      }),
+    },
+  },
+});
+\`\`\``,
+    configure: `Set your Shopify storefront domain:
+
+\`\`\`bash
+SHOPIFY_STORE_DOMAIN=your-store.myshopify.com
+\`\`\`
+
+During local development, the connection uses Shopify's public example because Shopify cannot reach localhost. To test your profile locally, expose \`/.well-known/ucp\` with [ngrok](https://ngrok.com/). In production, the connection uses the anonymous profile at \`/.well-known/ucp\`.
+
+See Shopify's [agent profile documentation](https://shopify.dev/docs/agents/profiles) for profile requirements.`,
+  },
+  stripe: {
+    logo: "stripe",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "payments", "billing", "customers", "oauth", "connect"],
+    authModes: ["user"],
+  },
+  supabase: {
+    logo: "supabase",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "postgres", "auth", "storage", "oauth", "connect"],
+    authModes: ["user"],
+  },
+  "ticket-tailor": {
+    logo: "ticket-tailor",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "tickets", "orders", "events", "oauth", "connect"],
+    authModes: ["user"],
+  },
+  ticktick: {
+    logo: "ticktick",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "tasks", "habits", "todo", "oauth", "connect"],
+    authModes: ["user"],
+  },
+  tinybird: {
+    logo: "tinybird",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "sql", "analytics", "pipes", "datasources", "queries", "connect"],
+    authModes: ["app"],
+  },
+  todoist: {
+    logo: "todoist",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "tasks", "projects", "todo", "oauth", "connect"],
+    authModes: ["user"],
+  },
+  webflow: {
+    logo: "webflow",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "cms", "pages", "sites", "oauth", "connect"],
+    authModes: ["user"],
+  },
+  wix: {
+    logo: "wix",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "sites", "apps", "cms", "oauth", "connect"],
+    authModes: ["user"],
+  },
+  zapier: {
+    logo: "zapier",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "zaps", "workflows", "apps", "automation", "oauth", "connect"],
+    authModes: ["user"],
+  },
+  zomato: {
+    logo: "zomato",
+    docsHref: "/docs/connections/mcp",
+    keywords: ["mcp", "food", "ordering", "delivery", "oauth", "connect"],
+    authModes: ["user"],
+  },
+};
+
+/**
+ * Instrumentation overlay: presentation plus hand-authored setup markdown.
+ * Instrumentation entries use hand-authored setup files, so they follow the
+ * channel shape (markdown) rather than the generated connection shape.
+ */
+type InstrumentationPresentation = ChannelPresentation;
+
+const instrumentationPresentations: Record<string, InstrumentationPresentation> = {
+  braintrust: {
+    logo: "braintrust",
+    docsHref: "/docs/observability/instrumentation",
+    keywords: ["otel", "opentelemetry", "tracing", "observability", "evals", "monitoring"],
+    install: `Add the Braintrust integration from kaf's registry:
+
+\`\`\`bash
+kaf add instrumentation/braintrust
+\`\`\``,
+
+    quickStart: `kaf installs Braintrust instrumentation:
+
+\`\`\`ts
+// agent/instrumentation/braintrust.ts
+import { braintrustKafInstrumentation, initLogger } from "braintrust";
+
+export default braintrustKafInstrumentation({
+  metadata: {
+    app: "my-kaf-agent", // Replace with your app name
+  },
+  setup: ({ agentName }) => {
+    initLogger({
+      projectName: agentName,
+      apiKey: process.env.BRAINTRUST_API_KEY,
+    });
+  },
+});
+\`\`\``,
+    configure: `Create an API key in the Braintrust dashboard and expose it as \`BRAINTRUST_API_KEY\`. Replace the \`app\` metadata with your app name. Do not wrap the result in \`defineInstrumentation\`, pass \`defineState\`, or add \`braintrustKafHook\`; the instrumentation handles kaf lifecycle events directly. See [Instrumentation](/docs/observability/instrumentation) for content policy and event handling.`,
+  },
+  "posthog-instrumentation": {
+    logo: "posthog",
+    docsHref: "/docs/observability/otel",
+    keywords: ["otel", "opentelemetry", "tracing", "observability", "generations", "analytics"],
+    install: `Add PostHog AI Observability from kaf's registry:
+
+\`\`\`bash
+kaf add instrumentation/posthog
+\`\`\``,
+
+    quickStart: `kaf installs \`agent/instrumentation/posthog.ts\` with PostHog's trace exporter. It also links spans to the user who initiated the session when an authenticated principal is available:
+
+\`\`\`ts
+// agent/instrumentation/posthog.ts
+import { SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
+import { PostHogTraceExporter } from "@posthog/ai/otel";
+import { otelIntegration } from "kaf/instrumentation/otel";
+
+export default otelIntegration({
+  spanProcessors: [
+    new SimpleSpanProcessor(
+      new PostHogTraceExporter({
+        projectToken: process.env.POSTHOG_PROJECT_TOKEN!,
+        host: process.env.POSTHOG_HOST,
+      }),
+    ),
+  ],
+  runtimeContext(input) {
+    const distinctId =
+      input.session.auth.initiator?.principalId ??
+      input.session.auth.current?.principalId;
+
+    return distinctId ? { "posthog.distinct_id": distinctId } : undefined;
+  },
+});
+\`\`\``,
+    configure: `Copy your project token and client API host from PostHog's project settings and expose them as \`POSTHOG_PROJECT_TOKEN\` and \`POSTHOG_HOST\`. Remove \`runtimeContext\` to capture generations anonymously. PostHog groups turns using \`kaf.session.id\` and preserves kaf's trace hierarchy. See [PostHog's kaf installation guide](https://posthog.com/docs/ai-observability/installation/kaf) for verification steps and the [OpenTelemetry guide](/docs/observability/otel) for content policy.`,
+  },
+  "sentry-instrumentation": {
+    logo: "sentry",
+    docsHref: "/docs/observability/otel",
+    keywords: ["otel", "opentelemetry", "tracing", "observability", "otlp", "errors"],
+    install: `Add Sentry instrumentation from kaf's registry. Sentry ingests OTLP directly, so no Sentry SDK is required:
+
+\`\`\`bash
+kaf add instrumentation/sentry
+\`\`\``,
+
+    quickStart: `Create \`agent/instrumentation/sentry.ts\` and point the OTLP exporter at your project's Sentry traces endpoint:
+
+\`\`\`ts
+// agent/instrumentation/sentry.ts
+import { OTLPHttpProtoTraceExporter } from "@vercel/otel";
+import { otelIntegration } from "kaf/instrumentation/otel";
+
+export default otelIntegration({
+  traceExporter: new OTLPHttpProtoTraceExporter({
+    url: process.env.SENTRY_OTLP_TRACES_ENDPOINT!,
+    headers: {
+      "x-sentry-auth": \`sentry sentry_key=\${process.env.SENTRY_PUBLIC_KEY}\`,
+    },
+  }),
+});
+\`\`\``,
+    configure: `Copy the OTLP traces endpoint and public key from your Sentry project under **Settings → Client Keys (DSN)** and expose them as environment variables. Sentry's OTLP intake accepts traces only, and span events are dropped at ingestion. See the [OpenTelemetry guide](/docs/observability/otel) for trace topology and content policy.`,
+  },
+  "datadog-instrumentation": {
+    logo: "datadog",
+    docsHref: "/docs/observability/otel",
+    keywords: ["otel", "opentelemetry", "tracing", "observability", "apm", "otlp"],
+    install: `Add Datadog instrumentation from kaf's registry:
+
+\`\`\`bash
+kaf add instrumentation/datadog
+\`\`\``,
+    quickStart: `Create \`agent/instrumentation/datadog.ts\` and point the OTLP exporter at Datadog's intake for your site, authenticated with your API key:
+
+\`\`\`ts
+// agent/instrumentation/datadog.ts
+import { OTLPHttpProtoTraceExporter } from "@vercel/otel";
+import { otelIntegration } from "kaf/instrumentation/otel";
+
+export default otelIntegration({
+  traceExporter: new OTLPHttpProtoTraceExporter({
+    url: process.env.DATADOG_OTLP_TRACES_ENDPOINT!,
+    headers: { "dd-api-key": process.env.DD_API_KEY! },
+  }),
+});
+\`\`\``,
+    configure: `Datadog's direct OTLP trace intake is site-specific (for example \`datadoghq.com\` vs \`datadoghq.eu\`) and currently in Preview; look up the endpoint for your site in Datadog's OTLP intake docs. For production, Datadog recommends routing through an OpenTelemetry Collector with the Datadog exporter instead. See the [OpenTelemetry guide](/docs/observability/otel) for trace topology and content policy.`,
+    relatedResources: [incidentResponseGuide],
+  },
+  "honeycomb-instrumentation": {
+    logo: "honeycomb",
+    docsHref: "/docs/observability/otel",
+    keywords: ["otel", "opentelemetry", "tracing", "observability", "queries", "otlp"],
+    install: `Add Honeycomb instrumentation from kaf's registry. Honeycomb ingests OTLP directly:
+
+\`\`\`bash
+kaf add instrumentation/honeycomb
+\`\`\``,
+
+    quickStart: `Create \`agent/instrumentation/honeycomb.ts\` and send traces to Honeycomb's OTLP endpoint with your ingest key:
+
+\`\`\`ts
+// agent/instrumentation/honeycomb.ts
+import { OTLPHttpProtoTraceExporter } from "@vercel/otel";
+import { otelIntegration } from "kaf/instrumentation/otel";
+
+export default otelIntegration({
+  traceExporter: new OTLPHttpProtoTraceExporter({
+    url: "https://api.honeycomb.io/v1/traces",
+    headers: { "x-honeycomb-team": process.env.HONEYCOMB_API_KEY! },
+  }),
+});
+\`\`\``,
+    configure: `Create an ingest key under your Honeycomb environment settings and expose it as \`HONEYCOMB_API_KEY\`. Spans arrive in a dataset named after your agent (the OTel service name). EU teams use \`https://api.eu1.honeycomb.io/v1/traces\`. See the [OpenTelemetry guide](/docs/observability/otel) for trace topology and content policy.`,
+  },
+  arize: {
+    logo: "arize",
+    docsHref: "/docs/observability/otel",
+    keywords: ["otel", "opentelemetry", "tracing", "llm observability", "evaluation", "otlp"],
+    install: `Add Arize instrumentation from kaf's registry. Arize AX ingests OTLP directly:
+
+\`\`\`bash
+kaf add instrumentation/arize
+\`\`\``,
+
+    quickStart: `Create \`agent/instrumentation/arize.ts\` and send traces to Arize's OTLP endpoint with your space ID and API key:
+
+\`\`\`ts
+// agent/instrumentation/arize.ts
+import { OTLPHttpProtoTraceExporter } from "@vercel/otel";
+import { otelIntegration } from "kaf/instrumentation/otel";
+
+export default otelIntegration({
+  traceExporter: new OTLPHttpProtoTraceExporter({
+    url: "https://otlp.arize.com/v1/traces",
+    headers: {
+      space_id: process.env.ARIZE_SPACE_ID!,
+      api_key: process.env.ARIZE_API_KEY!,
+    },
+  }),
+});
+\`\`\``,
+    configure: `Copy the space ID and API key from your Arize AX space settings and expose them as \`ARIZE_SPACE_ID\` and \`ARIZE_API_KEY\`. See the [OpenTelemetry guide](/docs/observability/otel) for trace topology, resource attributes, and content policy.`,
+  },
+  raindrop: {
+    logo: "raindrop",
+    docsHref: "/docs/observability/otel",
+    keywords: ["otel", "opentelemetry", "tracing", "observability", "ai issues", "otlp"],
+    install: `Add Raindrop instrumentation from kaf's registry. Raindrop ingests OTLP directly:
+
+\`\`\`bash
+kaf add instrumentation/raindrop
+\`\`\``,
+
+    quickStart: `Create \`agent/instrumentation/raindrop.ts\` and send traces to Raindrop's OTLP endpoint with your write key:
+
+\`\`\`ts
+// agent/instrumentation/raindrop.ts
+import { OTLPHttpProtoTraceExporter } from "@vercel/otel";
+import { otelIntegration } from "kaf/instrumentation/otel";
+
+export default otelIntegration({
+  traceExporter: new OTLPHttpProtoTraceExporter({
+    url: "https://api.raindrop.ai/v1/traces",
+    headers: {
+      Authorization: \`Bearer \${process.env.RAINDROP_WRITE_KEY}\`,
+    },
+  }),
+});
+\`\`\``,
+    configure: `Create a write key in the Raindrop dashboard and expose it as \`RAINDROP_WRITE_KEY\`. Raindrop's Vercel AI SDK integration picks up the AI SDK spans kaf emits on every turn. See the [OpenTelemetry guide](/docs/observability/otel) for trace topology and content policy.`,
+  },
+  jaeger: {
+    logo: "jaeger",
+    docsHref: "/docs/observability/otel",
+    keywords: ["otel", "opentelemetry", "tracing", "observability", "local", "self-hosted"],
+    install: `Add Jaeger instrumentation from kaf's registry:
+
+\`\`\`bash
+kaf add instrumentation/jaeger
+\`\`\``,
+    quickStart: `Create \`agent/instrumentation/jaeger.ts\` and point the OTLP exporter at your Jaeger collector:
+
+\`\`\`ts
+// agent/instrumentation/jaeger.ts
+import { OTLPHttpProtoTraceExporter } from "@vercel/otel";
+import { otelIntegration } from "kaf/instrumentation/otel";
+
+export default otelIntegration({
+  traceExporter: new OTLPHttpProtoTraceExporter({
+    url: "http://localhost:4318/v1/traces",
+  }),
+});
+\`\`\``,
+    configure: `Run Jaeger locally with Docker and open the UI at \`http://localhost:16686\`:
+
+\`\`\`bash
+docker run --rm -p 16686:16686 -p 4318:4318 jaegertracing/jaeger:latest
+\`\`\`
+
+Point the exporter at your collector's OTLP HTTP endpoint when self-hosting. See the [OpenTelemetry guide](/docs/observability/otel) for trace topology and content policy.`,
+  },
+};
+
+function buildChannel(entry: IntegrationEntry): Integration {
+  const presentation = channelPresentations[entry.slug];
+  if (presentation === undefined) {
+    throw new Error(
+      `Channel "${entry.slug}" is in the catalog gallery but has no docs presentation.`,
+    );
+  }
+  return {
+    slug: entry.slug,
+    name: entry.name,
+    type: "channel",
+    tagline: entry.tagline,
+    logo: presentation.logo,
+    badge: presentation.badge,
+    docsHref: presentation.docsHref,
+    keywords: presentation.keywords,
+    install: presentation.install,
+    quickStart: presentation.quickStart,
+    configure: presentation.configure,
+    relatedResources: presentation.relatedResources,
+  };
+}
+
+function buildConnection(entry: IntegrationEntry): Integration {
+  const presentation = connectionPresentations[entry.slug];
+  if (presentation === undefined) {
+    throw new Error(
+      `Connection "${entry.slug}" is in the catalog gallery but has no docs presentation.`,
+    );
+  }
+  if (entry.connection === undefined) {
+    throw new Error(`Catalog connection "${entry.slug}" is missing its connection identity.`);
+  }
+  const identity: ConnectionIdentity = entry.connection;
+  const { logo, docsHref, keywords, quickStart, configure, relatedResources, ...setup } =
+    presentation;
+  const spec: ConnectionSpec = {
+    ...setup,
+    description: identity.description,
+  };
+  if (identity.mcp !== undefined) spec.mcp = identity.mcp;
+  if (identity.openapi !== undefined) spec.openapi = identity.openapi;
+  return {
+    slug: entry.slug,
+    name: entry.name,
+    type: "connection",
+    tagline: entry.tagline,
+    protocols: protocolsForIdentity(identity),
+    logo,
+    docsHref,
+    keywords,
+    quickStart,
+    configure,
+    connection: spec,
+    relatedResources,
+  };
+}
+
+function buildExtension(entry: IntegrationEntry): Integration {
+  const presentation = extensionPresentations[entry.slug];
+  if (presentation === undefined) {
+    throw new Error(
+      `Extension "${entry.slug}" is in the catalog gallery but has no docs presentation.`,
+    );
+  }
+  return {
+    slug: entry.slug,
+    name: entry.name,
+    type: "extension",
+    tagline: entry.tagline,
+    logo: presentation.logo,
+    docsHref: presentation.docsHref,
+    keywords: presentation.keywords,
+    install: presentation.install,
+    quickStart: presentation.quickStart,
+    configure: presentation.configure,
+    relatedResources: presentation.relatedResources,
+  };
+}
+
+function buildMemory(entry: IntegrationEntry): Integration {
+  const presentation = memoryPresentations[entry.slug];
+  if (presentation === undefined) {
+    throw new Error(
+      `Memory provider "${entry.slug}" is in the catalog gallery but has no docs presentation.`,
+    );
+  }
+  return {
+    slug: entry.slug,
+    name: entry.name,
+    type: "memory",
+    tagline: entry.tagline,
+    logo: presentation.logo,
+    docsHref: presentation.docsHref,
+    keywords: presentation.keywords,
+    install: presentation.install,
+    quickStart: presentation.quickStart,
+    configure: presentation.configure,
+    relatedResources: presentation.relatedResources,
+  };
+}
+
+function buildInstrumentation(entry: IntegrationEntry): Integration {
+  const presentation = instrumentationPresentations[entry.slug];
+  if (presentation === undefined) {
+    throw new Error(
+      `Instrumentation entry "${entry.slug}" is in the catalog gallery but has no docs presentation.`,
+    );
+  }
+  return {
+    slug: entry.slug,
+    name: entry.name,
+    type: "instrumentation",
+    tagline: entry.tagline,
+    logo: presentation.logo,
+    docsHref: presentation.docsHref,
+    keywords: presentation.keywords,
+    install: presentation.install,
+    quickStart: presentation.quickStart,
+    configure: presentation.configure,
+    relatedResources: presentation.relatedResources,
+  };
+}
+
+const channels: Integration[] = channelEntries()
+  .filter((entry) => entry.surfaces.gallery)
+  .map(buildChannel);
+
+const connections: Integration[] = connectionEntries()
+  .filter((entry) => entry.surfaces.gallery)
+  .map(buildConnection);
+
+const extensions: Integration[] = extensionEntries()
+  .filter((entry) => entry.surfaces.gallery)
+  .map(buildExtension);
+
+const memory: Integration[] = memoryEntries()
+  .filter((entry) => entry.surfaces.gallery)
+  .map(buildMemory);
+
+const instrumentation: Integration[] = instrumentationEntries()
+  .filter((entry) => entry.surfaces.gallery)
+  .map(buildInstrumentation);
+
+/** Display label for each connection protocol. */
+export const protocolLabel: Record<ConnectionProtocol, string> = {
+  mcp: "MCP",
+  openapi: "OpenAPI",
+};
+
+/** Accent badge classes per protocol, readable in light and dark mode. */
+export const protocolBadgeClassName: Record<ConnectionProtocol, string> = {
+  mcp: "bg-blue-100 text-blue-900",
+  openapi: "bg-purple-100 text-purple-900",
+};
+
+/** Display label for each auth mode. */
+export const authModeLabel: Record<AuthMode, string> = {
+  user: "User",
+  app: "App",
+  jwtBearer: "JWT bearer",
+  apiKey: "API key",
+};
+
+export const integrations: Integration[] = [
+  ...channels,
+  ...extensions,
+  ...memory,
+  ...connections,
+  ...instrumentation,
+];
+
+export const getIntegration = (slug: string): Integration | undefined =>
+  integrations.find((integration) => integration.slug === slug);

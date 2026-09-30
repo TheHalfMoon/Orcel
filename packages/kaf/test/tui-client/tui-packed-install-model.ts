@@ -1,0 +1,216 @@
+import { spawn } from "node:child_process";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+import { theme } from "./lib/theme.ts";
+
+/**
+ * End-to-end proof that the *packed* kaf artifact can open initial onboarding
+ * after a consumer-shaped install.
+ *
+ * Every other smoke test resolves kaf's modules inside the workspace, where
+ * devDependencies are installed — so a runtime import of an undeclared
+ * dependency still resolves and the bug ships. This test packs the built
+ * package (`pnpm pack`), installs the tarball into an empty project with npm
+ * (which installs only declared dependencies, exactly like a user install),
+ * and drives the installed TUI through first-run connection setup with a minimal agent.
+ *
+ * Regression: kaf 0.6.x–0.7.0 imported `oxc-parser` from the `/model` flow
+ * while declaring it only as a devDependency. In a scaffolded project the
+ * import threw `ERR_MODULE_NOT_FOUND`, which crashed `kaf dev` with a silent
+ * non-zero exit. This test fails at the harness import or at the menu wait
+ * when any runtime dependency of the dist tree is missing from the packed
+ * manifest's `dependencies`.
+ *
+ * Needs no agent server and no model credentials. Network: the consumer
+ * `npm install` resolves kaf's declared dependencies from the registry.
+ */
+const root = dirname(fileURLToPath(import.meta.url));
+const packageRoot = resolve(root, "..", "..");
+
+process.env.KAF_TUI_UNICODE = "1";
+
+/** The harness surface this test uses from the installed package's dist. */
+interface PackedTuiHarness {
+  KafTUIRunner: new (options: Record<string, unknown>) => { run(): Promise<void> };
+  MockScreen: new (size: { columns: number; rows: number }) => {
+    waitForText(text: string, timeoutMs: number): Promise<unknown>;
+    waitForIdlePrompt(timeoutMs: number): Promise<unknown>;
+    snapshot(): string;
+  };
+  MockUserInput: new () => {
+    type(text: string): void;
+    enter(): void;
+    send(sequence: string): void;
+    ctrlC(): void;
+  };
+  createPromptCommandHandler: (options: {
+    target: { kind: "local"; serverUrl: string; workspaceRoot: string };
+  }) => unknown;
+}
+
+void (async () => {
+  const consumerRoot = await mkdtemp(join(tmpdir(), "kaf-packed-install-"));
+  try {
+    // A packed-install smoke must not discover the developer's real model accounts.
+    process.env.HOME = consumerRoot;
+    process.env.USERPROFILE = consumerRoot;
+    process.env.XDG_DATA_HOME = join(consumerRoot, "data");
+    for (const key of [
+      "OPENAI_API_KEY",
+      "ANTHROPIC_API_KEY",
+      "AI_GATEWAY_API_KEY",
+      "VERCEL_OIDC_TOKEN",
+      "VERCEL_TOKEN",
+    ])
+      delete process.env[key];
+    const tarballPath = join(consumerRoot, "kaf.tgz");
+
+    // `--config.ignore-scripts=true` skips `prepack` (a full rebuild): the
+    // `test:tui` script already built `dist`, and packing must stay faithful
+    // to it. pnpm still resolves `catalog:` ranges in the packed manifest.
+    await exec("pnpm", ["pack", "--config.ignore-scripts=true", "--out", tarballPath], packageRoot);
+    console.log(theme.muted("[tui-packed-install] packed kaf tarball"));
+
+    await writeFile(
+      join(consumerRoot, "package.json"),
+      `${JSON.stringify(
+        {
+          name: "kaf-packed-install-consumer",
+          private: true,
+          type: "module",
+          dependencies: { kaf: `file:${tarballPath}` },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    // `--min-release-age=0` matches kaf's own scaffold install (the packed
+    // manifest pins dependency versions younger than typical release-age
+    // cooldown windows).
+    await exec(
+      "npm",
+      ["install", "--min-release-age=0", "--no-audit", "--no-fund", "--loglevel=error"],
+      consumerRoot,
+    );
+    console.log(theme.muted("[tui-packed-install] consumer npm install completed"));
+
+    // Login reads the authored model before deciding which connection to reuse.
+    // Match the scaffold's layout while keeping kaf's install free of devDependencies.
+    const agentRoot = join(consumerRoot, "agent");
+    await mkdir(agentRoot);
+    await Promise.all([
+      writeFile(
+        join(agentRoot, "agent.ts"),
+        'import { defineAgent } from "kaf";\n\nexport default defineAgent({\n  model: "spacexai/grok-4.7",\n});\n',
+      ),
+      writeFile(join(agentRoot, "instructions.md"), "Help Alice with her questions.\n"),
+    ]);
+
+    // Imported by file URL: the harness is not on the package's `exports`
+    // map, and the point is to load the *installed* module graph — every
+    // bare specifier in it resolves against the consumer's node_modules.
+    const harnessPath = join(consumerRoot, "node_modules/kaf/dist/src/cli/dev/tui/test/index.js");
+    const { KafTUIRunner, MockScreen, MockUserInput, createPromptCommandHandler } = (await import(
+      pathToFileURL(harnessPath).href
+    )) as PackedTuiHarness;
+    console.log(theme.muted("[tui-packed-install] installed TUI harness imported"));
+
+    const screen = new MockScreen({ columns: 100, rows: 40 });
+    const input = new MockUserInput();
+    const runner = new KafTUIRunner({
+      // `/login` runs before the first chat turn, so no client session exists yet.
+      screen,
+      userInput: input,
+      name: "Packed install model command",
+      appRoot: consumerRoot,
+      onboard: true,
+      getVercelAuthStatus: async () => "authenticated",
+      promptCommandHandler: createPromptCommandHandler({
+        target: {
+          kind: "local",
+          serverUrl: "http://127.0.0.1:0",
+          workspaceRoot: consumerRoot,
+        },
+      }),
+      bootDetections: [
+        {
+          id: "test-model-setup-attention",
+          detect: () => [
+            {
+              kind: "attention",
+              label: "model provider not linked",
+              command: "/login",
+            },
+          ],
+        },
+      ],
+    });
+    const runPromise = runner.run();
+
+    try {
+      // The provider picker paints inside the shared onboarding journey before
+      // the first prompt only when its module graph loads — the exact surface
+      // the oxc-parser regression crashed.
+
+      await screen.waitForText("Vercel Account", 15_000);
+      await screen.waitForText("Anthropic API Key", 5_000);
+      console.log(theme.muted("[tui-packed-install] /login opened connection setup"));
+
+      input.send("\x1b");
+      // Cancelling first-run connection setup returns directly to chat.
+      await screen.waitForIdlePrompt(5_000);
+
+      input.type("/exit");
+      input.enter();
+      await withTimeout(runPromise, 5_000, "/exit did not terminate the runner");
+      console.log(theme.muted("[tui-packed-install] OK"));
+    } catch (error) {
+      console.error(`[tui-packed-install] screen at failure:\n${screen.snapshot()}`);
+      input.ctrlC();
+      // Bound cleanup so a stalled runner cannot prevent the failure from being reported.
+      await withTimeout(runPromise, 2_000, "runner did not unwind after ctrl-C").catch(() => {});
+      throw error;
+    }
+  } finally {
+    await rm(consumerRoot, { recursive: true, force: true });
+  }
+})().catch((error: unknown) => {
+  console.error(error);
+  process.exitCode = 1;
+});
+
+/** Runs a command to completion, failing loudly with its combined output. */
+function exec(command: string, args: readonly string[], cwd: string): Promise<void> {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const child = spawn(command, [...args], { cwd, stdio: ["ignore", "pipe", "pipe"] });
+    let output = "";
+    child.stdout.on("data", (chunk: Buffer) => (output += chunk.toString()));
+    child.stderr.on("data", (chunk: Buffer) => (output += chunk.toString()));
+    child.once("error", rejectPromise);
+    child.once("exit", (code) => {
+      if (code === 0) {
+        resolvePromise();
+        return;
+      }
+      rejectPromise(
+        new Error(`${command} ${args.join(" ")} exited with ${code ?? "signal"}:\n${output}`),
+      );
+    });
+  });
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}

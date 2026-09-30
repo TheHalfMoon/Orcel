@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Environment and credentials
+.env*
+!.env.example
+
+# kaf
+.kaf/
+.output/
+.nitro/
+dist/
+
+# Next.js and Vercel
+.next/
+out/
+.vercel/
+
+# Local files
+.DS_Store
+*.log
+*.tsbuildinfo
+pnpm-debug.log*
+
+apps/web/.next
+apps/web/.nuxt
+apps/web/.output
+apps/web/node_modules

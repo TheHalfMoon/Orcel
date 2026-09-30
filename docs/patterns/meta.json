@@ -1,0 +1,11 @@
+{
+  "title": "Patterns",
+  "defaultOpen": false,
+  "pages": [
+    "dynamic-scheduling",
+    "durable-cross-channel-notifications",
+    "multi-tenant-auth",
+    "multi-tenant-approvals",
+    "../protocols/ucp"
+  ]
+}

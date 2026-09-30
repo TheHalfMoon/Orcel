@@ -1,0 +1,388 @@
+---
+title: "Agent Configuration"
+description: "Configure an kaf agent's model, reasoning effort, compaction, limits, and runtime behavior in agent.ts."
+---
+
+An kaf app has one root agent assembled from the files under `agent/`. Its optional `agent.ts` calls `defineAgent` (from `kaf`) when you need to configure the model or other runtime behavior. Declared [subagents](./subagents) have their own `agent.ts` and capabilities; this page covers the configuration shared by root agents and subagents.
+
+## Set the model
+
+A typical config selects a model:
+
+```ts title="agent/agent.ts"
+import { defineAgent } from "kaf";
+
+export default defineAgent({
+  model: "anthropic/claude-opus-5.5",
+});
+```
+
+For a static AI Gateway model ID, you can make the same source change from the
+project root with `kaf set model anthropic/claude-opus-5.5` or from the local
+dev TUI with `/model anthropic/claude-opus-5.5`.
+
+The root `agent.ts` can be omitted when no runtime config is needed. kaf then selects its default `agent.ts` source at the same slot, configured with `openai/gpt-6-luna-fast` and `reasoning: "high"`; authoring the file replaces that source.
+When `agent.ts` is present, `model` is required.
+
+A config that selects a static Gateway model is compile-only. A config that contains a dynamic model or a direct-provider `LanguageModel` remains a runtime entry because kaf must resolve that authored value while the agent runs. See [Authored module lifecycle](./reference/typescript-api#authored-module-lifecycle).
+
+`model` accepts a gateway model id string, which routes through the [Vercel AI Gateway](https://vercel.com/docs/ai-gateway). To call a provider directly and configure the model in code, pass a provider-authored `LanguageModel`.
+
+Use kaf's helpers for direct OpenAI or Anthropic access without installing another provider package:
+
+```ts title="agent/agent.ts"
+import { defineAgent } from "kaf";
+import { anthropic } from "kaf/models/anthropic";
+
+export default defineAgent({
+  model: anthropic(), // claude-sonnet-5
+});
+```
+
+`openai()` from `kaf/models/openai` defaults to `gpt-6-luna-fast`. Both helpers accept an optional native provider model ID and use `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. During local development they can also use credentials saved through `/login`. Deployments require their API key in the server environment.
+
+For a local ChatGPT subscription, use `chatgpt()` from `kaf/models/openai` and sign in with `/login`. It defaults to `gpt-6-luna-fast` and cannot run in a deployment.
+
+`/login` can switch a static Gateway string to an kaf helper and manage its import. `/model` changes the selected model and settings immediately. Custom provider SDK calls and dynamic expressions retain their authored behavior and require manual source edits. You can still install an AI SDK provider package and pass its `LanguageModel` when you need provider-specific configuration.
+
+Model use is subject to the terms, data-processing commitments, retention behavior, and available controls of the selected provider and routing path. Review the [AI Gateway model catalog](https://vercel.com/ai-gateway/models) for gateway-routed models, and review the provider's terms when you configure a direct `LanguageModel`.
+
+For every OpenAI or Anthropic model call, kaf fills the provider's end-user
+safety identifier from the active turn's
+[`auth.current`](./guides/auth-and-route-protection#what-reaches-ctxsessionauth)
+principal when you have not configured it. For OpenAI, the option is
+`providerOptions.openai.safetyIdentifier`; for Anthropic, it is
+`providerOptions.anthropic.metadata.userId`. The default value is a SHA-256
+fingerprint of the principal's authenticator, issuer, type, id, and subject;
+kaf does not send the raw principal fields or attributes. The fingerprint
+follows the current caller when a later turn changes users. An authored value
+at either provider path takes precedence and is forwarded unchanged. When
+`auth.current` is `null`, kaf does not add an identifier. The same rules apply
+to compaction calls.
+
+For AI Gateway model calls, kaf sets `providerOptions.gateway.sessionId` to the
+`gen_ai.conversation.id` used by Agent Runs. By default, all turns in a
+conversation, including delegated subagents and compaction calls routed through
+Gateway, share that ID so their Gateway generations can be found together.
+Direct-provider calls do not receive the option. An authored `gateway.sessionId`
+takes precedence; AI Gateway hashes IDs longer than 256 characters.
+
+### Choose the model dynamically
+
+To select a model from the incoming prompt with an AI SDK evaluation model, use
+[`auto` from `kaf/models`](./guides/evaluate).
+
+`model` also accepts `defineDynamic({ events })`. Each matching handler must
+return the concrete model for its scope; a dynamic model has no compiled
+default.
+
+```ts title="agent/agent.ts"
+import { defineAgent, defineDynamic } from "kaf";
+
+export default defineAgent({
+  model: defineDynamic({
+    events: {
+      "session.started": (_event, ctx) => {
+        if (ctx.session.auth.initiator?.attributes.plan === "enterprise") {
+          return "anthropic/claude-opus-5.5";
+        }
+
+        return "anthropic/claude-sonnet-5";
+      },
+    },
+  }),
+});
+```
+
+Handlers receive the shared [dynamic resolver
+context](./guides/dynamic-capabilities) and return a gateway model id, an AI
+SDK `LanguageModel`, or a selection object. Returning `null` or `undefined`
+fails the turn.
+
+- **Scopes.** `session.started` (once per session), `turn.started` (once per
+  turn), `step.started` (every model step). Precedence: step > turn >
+  session. Prefer `session.started`: prompt caches are per model, so every
+  switch re-ingests the conversation at uncached prices. If no active
+  selection exists before model-dependent work begins, the turn fails.
+- **Failures stop the turn.** A resolver that throws, returns no model, or
+  returns an invalid selection fails before the provider call. A selected
+  model without valid credentials fails at request time.
+- **Serialization.** Session/turn selections must be model id strings; return
+  live `LanguageModel` objects only from `step.started`.
+- **Selection object.** `{ model, reasoning?, modelContextWindowTokens?, modelOptions? }`.
+  When `modelContextWindowTokens` is omitted, kaf resolves it from the AI
+  Gateway catalog and caches successful metadata in durable session state for
+  24 hours. Set it explicitly for an unlisted or custom model. Dynamic agents
+  cannot set sibling `modelContextWindowTokens` or `modelOptions` fields;
+  return per-model values from the handler.
+
+The `session.started` runtime identity does not include a model id for a
+dynamic agent. Each public `step.started` event reports the concrete `modelId`
+selected for that model call.
+
+## Reasoning effort
+
+In an authored `agent.ts` with a static model, omitting `reasoning` uses the provider's default.
+
+Set `reasoning` to control the model's reasoning effort through AI SDK's
+provider-agnostic option:
+
+```ts title="agent/agent.ts"
+export default defineAgent({
+  model: "openai/gpt-5.5",
+  reasoning: "high",
+});
+```
+
+Supported values are `"provider-default"`, `"none"`, `"minimal"`, `"low"`,
+`"medium"`, `"high"`, and `"xhigh"`. The selected model and provider determine
+which levels are available and how they map to provider-native settings. Use
+`modelOptions.providerOptions` when you need provider-specific reasoning controls.
+A dynamic model selection can return `reasoning` alongside `model` to override
+the agent-level setting for that selection. Omitting it inherits the agent setting;
+`"provider-default"` explicitly uses the provider's default.
+
+Run `kaf set model --reasoning high` to update this field from the command line.
+
+## Compaction
+
+Compaction summarizes older turns as you approach the context window. It's on by default, so you only tune when it kicks in. kaf adds the estimated fixed checkpoint-prompt envelope to the trigger count, so compaction starts sooner than the conversation-only estimate. Lower `thresholdPercent` to compact sooner:
+
+```ts title="agent/agent.ts"
+export default defineAgent({
+  model: "anthropic/claude-opus-5.5",
+  compaction: {
+    thresholdPercent: 0.75, // default 0.9
+  },
+});
+```
+
+See [Default harness](./concepts/default-harness#compaction) for how the loop applies it.
+
+## Runtime limits
+
+Use `limits` for framework-owned runtime caps. Session usage limits stop the
+current durable session from starting another model call after accumulated
+provider-reported tokens or model token cost reaches a configured limit:
+
+```ts title="agent/agent.ts"
+export default defineAgent({
+  model: "anthropic/claude-opus-5.5",
+  limits: {
+    maxInputTokensPerSession: 200_000,
+    maxOutputTokensPerSession: 20_000,
+    maxTokenCostUsdPerSession: 1.5,
+    sessionTimeoutMs: 7 * 24 * 60 * 60 * 1_000,
+  },
+});
+```
+
+`sessionTimeoutMs` sets the lifetime for every session, including delegated
+sessions. It defaults to 30 days and starts at creation. Each successful
+deployment handoff or legacy-session import restarts the original configured
+duration. Process restarts, ordinary messages, and failed or skipped handoffs
+keep the existing deadline. At the deadline, kaf lets an active turn settle,
+then emits `session.completed` and releases every continuation address; the next
+qualifying channel message starts fresh. Set it to `false` to disable the
+timeout. Expiration does not delete stored session data.
+
+Input tokens, output tokens, and model token cost are checked independently.
+The model call that crosses a limit is allowed to finish because exact usage
+arrives after the call completes. Before the next model call, kaf pauses the
+session and sends a deterministic continuation prompt with two options:
+**Approve** grants a fresh window of each configured size, and **Stop**
+cancels the in-flight turn through the standard cancellation path
+(`turn.cancelled` → `session.waiting`) — a user decision, not an error. The session stays resumable; because it is
+still over budget, the next message re-raises the prompt. Declining a
+delegated child's prompt cancels the root turn, which cascades to the whole
+delegation tree — the delegating parent never receives an error result it
+could retry against a fresh quota share. A reply that answers neither option
+is queued while the existing prompt stays pending; kaf does not raise another
+copy. The reply is processed once the budget is granted.
+
+Sessions that cannot request input from a human, such as markdown schedules and
+delegated runs without input proxying, skip the prompt and fail the next model
+call with `SESSION_TOKEN_LIMIT_REACHED` for token budgets or
+`SESSION_TOKEN_COST_LIMIT_REACHED` for model token cost. A delegated task with
+no inherited quota also fails instead of raising a continuation prompt that
+could only grant another zero-value window.
+
+When `maxInputTokensPerSession` is omitted, root sessions apply a default
+input budget of `40_000_000` provider-reported input tokens.
+`maxOutputTokensPerSession` and `maxTokenCostUsdPerSession` are unset by
+default. `maxTokenCostUsdPerSession` is a US-dollar limit on model token cost,
+not tool or infrastructure spend. It uses the cost reported with each model
+step; AI Gateway supplies this value, while model steps without reported cost
+do not add to the limit. Set any usage limit to `false` to uncap that axis.
+
+Delegated subagent sessions have no fixed default. Each child receives a share
+of the delegating parent's remaining quota when it starts: the remainder in
+the current budget window split evenly across the agent tasks that one model
+step starts. A session that a workflow tool opens with `ctx.agent` receives
+the share of the model step that called the tool, or the whole remainder when
+that step starts no agent tasks; kaf does not divide that share among several
+sessions one call opens. A child keeps its grant for its whole session,
+including turns that later calls with `taskId` start. Remote agent tasks count
+toward the split but receive no grant: they run under their own deployment's
+limits.
+
+A child's usage, including what the child's own subagents spent, counts
+against the parent's quota. An agent task's usage counts with each reply it
+sends. A turn it doesn't reply to, such as one a cancel stopped, counts with
+the next reply, or when the turn ends if no call waits for a reply. Sessions
+that any other `serve` workflow tool opens with `ctx.agent` count the same
+way; those of an `execute` or `task` tool count when the tool finishes. Remote
+agents' reported usage counts the same way. Later children draw from what
+remains, and the parent's own limit and continuation prompt include delegated
+spend. Token-cost budgets follow the same rules, including splitting the
+remaining US-dollar budget and adding child cost back to the parent. Approving
+a continuation opens a fresh parent window for later child grants without
+erasing lifetime usage. An authored child limit applies only when it is
+tighter than the parent's grant; an uncapped parent delegates uncapped
+children.
+
+Some delegated usage doesn't count against the parent: a `ctx.agent` turn
+still running when its workflow tool finishes or is cancelled; the `ctx.agent`
+usage of an `execute` tool whose parent turn is cancelled while it waits; and
+what a cancelled agent task's own subagents spend after the task reports its
+cancelled turn, until the task's next reply.
+
+## Workflow world
+
+By default, kaf selects the Workflow SDK world for the host: Vercel Workflow on
+Vercel, and the SDK's local world in local development or `kaf start`. Advanced
+self-hosted deployments can select the Workflow world package to use from the
+root `agent.ts`:
+
+```ts title="agent/agent.ts"
+import { defineAgent } from "kaf";
+
+export default defineAgent({
+  model: "anthropic/claude-opus-5.5",
+  experimental: {
+    workflow: {
+      world: "@workflow/world-postgres",
+    },
+  },
+});
+```
+
+Install that package in your app. It should export a default factory or
+`createWorld()` function. Pin a version built against the same `@workflow/*`
+line as your kaf release (currently the `5.0.0-beta` line):
+
+```bash
+pnpm add @workflow/world-postgres@5.0.0-beta.x
+```
+
+The npm `latest` tag can lag behind that line, so an unpinned install may pull
+an incompatible protocol version that the Workflow SDK rejects during initialization.
+
+Put credentials and host-specific options in runtime environment variables read
+by the world package, not in `agent.ts`. For the Postgres world, that means
+putting the connection string or credentials in the env vars it reads. If the
+installed package must stay external in hosted output, list it in
+`build.externalDependencies`.
+
+## Workflow checkpoint batching
+
+By default, kaf commits a durable Workflow step after every model call and its
+inline tool calls. You can experimentally let one Workflow step run several
+sequential model calls:
+
+```ts title="agent/agent.ts"
+import { defineAgent } from "kaf";
+
+export default defineAgent({
+  model: "anthropic/claude-opus-5.5",
+  experimental: {
+    workflow: {
+      modelCallsPerStep: 4,
+    },
+  },
+});
+```
+
+`experimental.workflow.modelCallsPerStep` is a positive-integer ceiling. It defaults to
+`1` and applies independently to each root agent or declared subagent. A higher
+value can reduce Workflow checkpoint overhead in sequential tool loops, but it
+widens the replay unit: if the Workflow step is interrupted, its earlier model
+calls and inline tool executions can run again. That can repeat provider costs,
+events, and side effects. Use stable idempotency keys for non-idempotent tools.
+
+kaf ends a batch before it waits for input, authorization, or blocking
+coordination. A batch can also
+end below the configured ceiling when the turn completes or steering arrives.
+Before assistant output begins, steering can interrupt pending model generation.
+Executing tools finish safely before the batch yields and applies the correction.
+This option is experimental and may change or
+disappear in any release. See [Execution model and
+durability](./concepts/execution-model-and-durability#resuming-after-a-crash)
+for the retry behavior.
+
+## Run data retention
+
+The runtime keeps each run's data after the run finishes: model and tool
+payloads, streamed output, and the event log kaf replays from. How long it keeps
+them is the World's decision, and on Vercel that follows your team's plan. Set
+`experimental.workflow.retention` to `0` to have it deleted as soon as the run
+finishes instead:
+
+```ts title="agent/agent.ts"
+import { defineAgent } from "kaf";
+
+export default defineAgent({
+  model: "anthropic/claude-opus-5.5",
+  experimental: {
+    workflow: {
+      retention: 0,
+    },
+  },
+});
+```
+
+This applies to every run that owns the session, including successor owners
+started after a deployment handoff, and to the run that collects session
+activity. Runs kaf starts for other purposes keep the world's default: session
+timeouts and [workflow tools](./tools/workflows).
+
+The value applies per agent. A [subagent](./subagents) that runs its own session
+uses its own value, unlike `experimental.workflow.world`, which is root-only.
+
+Custom Worlds used with kaf might not support this feature, in which case
+it falls back to the World's default retention period.
+
+> ⚠️ **At `0`, a finished session's output is usually gone before you can read it.** Since data is deleted immediately before it can be read back, results and transcripts become unreadable and a client polling for a finished session's output can see it disappear.
+
+## Other defineAgent fields
+
+`defineAgent` takes a few more fields, all optional. For the exported types, see the [TypeScript API Reference](./reference/typescript-api).
+
+| Field          | Type                                  | Default          | Description                                                                                                                                                                                                                                               |
+| -------------- | ------------------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `reasoning`    | `AgentReasoningDefinition`            | provider default | Provider-agnostic reasoning effort forwarded to the agent's turn model calls.                                                                                                                                                                             |
+| `modelOptions` | `AgentModelOptionsDefinition`         | none             | Provider option overrides forwarded to the model call.                                                                                                                                                                                                    |
+| `limits`       | `AgentLimitsDefinition`               | field-specific   | Framework-owned runtime limits. Sessions complete after 30 days by default; usage-limit defaults and inheritance are described above. Set a limit to `false` to disable it.                                                                               |
+| `experimental` | `AgentExperimentalDefinition`         | unset            | Unstable opt-ins. `workflow.world` selects the Workflow world package on the root agent; `workflow.modelCallsPerStep` batches sequential model calls into a wider replay unit; `workflow.retention` controls how long the durable runtime keeps run data. |
+| `build`        | `{ externalDependencies?: string[] }` | none             | Hosted-build packaging controls. `externalDependencies` keeps listed packages external while kaf compiles authored modules such as tools and channels, and traces those packages into the hosted output.                                                  |
+| `tool`         | `boolean`                             | `true`           | Exposes this agent to its parent model as a tool. On the root agent, controls the built-in `agent` tool. A subagent with `tool: false` remains callable from authored workflow tools through `ctx.agent()`.                                               |
+
+`externalDependencies` is a packaging control only. It keeps selected packages as runtime dependencies in the hosted output; it does not authorize, configure, or review any third-party service those packages may call.
+
+During `kaf dev`, ordinary dependencies are bundled into each retained runtime generation. Packages listed in `externalDependencies` keep normal Node.js resolution instead, so replacing one of those packages requires restarting the dev server.
+
+## Where adjacent settings live
+
+| Concern                       | Lives in                                                                         |
+| ----------------------------- | -------------------------------------------------------------------------------- |
+| Instructions prompt           | `agent/instructions.md`, [Instructions](./instructions)                          |
+| Per-tool approval (HITL)      | `agent/tools/*.ts`, [Tools](./tools)                                             |
+| Inbound auth & network policy | the channel layer, [Auth & route protection](./guides/auth-and-route-protection) |
+| Sandbox / workspace           | `agent/sandbox/`, [Sandbox](./sandbox)                                           |
+| Telemetry & debugging         | `agent/instrumentation/`, [Instrumentation](./observability/instrumentation)     |
+
+## What to read next
+
+- [Default harness](./concepts/default-harness) for compaction and model context, and [Built-in tools](./concepts/built-in-tools) for the framework-provided tool set
+- [TypeScript API Reference](./reference/typescript-api) for every `defineAgent` field and type
+- [Subagents](./subagents) for the `description` requirement and child-agent config

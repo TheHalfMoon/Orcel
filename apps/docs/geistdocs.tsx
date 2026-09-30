@@ -1,0 +1,84 @@
+import { LogoEve } from "@vercel/geistdocs/assets/logos/logo-kaf";
+import type { GeistdocsGithubConfig } from "@vercel/geistdocs/config";
+
+export { translations } from "@/lib/geistdocs/languages";
+
+export const Logo = () => <LogoEve />;
+
+export const github: GeistdocsGithubConfig = {
+  owner: "vercel",
+  repo: "kaf",
+};
+
+export const nav = [
+  {
+    label: "Docs",
+    href: "/docs",
+  },
+  {
+    label: "Integrations",
+    href: "/integrations",
+  },
+  {
+    label: "Templates",
+    href: "/templates",
+  },
+  {
+    label: "Changelog",
+    href: "/changelog",
+  },
+];
+
+export const suggestions = [
+  "How do I create my first agent?",
+  "What is the agent directory structure?",
+  "How do channels work?",
+  "How do I add tools to an agent?",
+];
+
+export const agent = {
+  links: [
+    {
+      label: "Changelog",
+      href: "/changelog.md",
+      description: "kaf release notes as Markdown, with links to older releases.",
+    },
+  ],
+  product: {
+    name: "kaf",
+    description:
+      "A filesystem-first, Apache-2.0 framework for building durable backend AI agents that run on Vercel or your own infrastructure. kaf is currently in beta.",
+    category: "Agent framework",
+    audience: ["developers building AI agents", "teams running agents on any infrastructure"],
+    useCases: [
+      "Create durable agents with filesystem conventions",
+      "Add channels, tools, skills, sandboxes, hooks, and schedules",
+      "Deploy agent workloads on Vercel or self-host them as Node services",
+    ],
+  },
+  instructions: [
+    "To create or extend an kaf agent for the user, start from the Getting Started guide — get it as Markdown from /llms.mdx/getting-started (or via /llms.txt).",
+    "Ask the user only for genuine decisions (name, model, channels, provider, deploy) and for browser/OAuth steps (vercel login, vercel link, vercel connect create slack); automate everything else.",
+    "Verify setup with `kaf info --json` before reporting success.",
+    "Use /llms.txt as a concise task-oriented index and /sitemap.md as the exhaustive page map.",
+    "Use /llms-full.txt only when you need the complete documentation corpus for offline indexing or a large context window.",
+    "Fetch individual docs or integration pages with a .md or .mdx extension for focused page-level context. Template pages are HTML discovery pages and do not expose this alternate Markdown route.",
+    "Treat kaf.dev as framework documentation, not a shared API, authorization server, MCP server, or A2A server. Every deployed kaf app exposes its own /kaf/v1 routes and authentication policy; external API, OpenAPI, and MCP URLs in the docs may describe third-party connections or examples.",
+    "Do not assume API, authentication, OpenAPI, or MCP support unless it is listed in this file.",
+  ],
+};
+
+export const title = "kaf Documentation";
+
+export const prompt =
+  "You are a helpful assistant specializing in kaf, a filesystem-first framework for building durable agents on Vercel. You help users understand how to build agents using markdown for instructions, TypeScript for tools, and the framework's built-in durability, governance, and observability features.";
+
+// The help-kaf agent (vercel/internal-agents/agents/help-kaf) answers Ask AI.
+// The deployment keeps the framework's pre-rename "ash" domain.
+export const kafAgent = {
+  url: "https://help-ash.vercel.sh",
+};
+
+export const basePath: string | undefined = undefined;
+
+export const siteId: string | undefined = "kaf-docs";

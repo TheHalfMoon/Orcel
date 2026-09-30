@@ -1,0 +1,185 @@
+import { e2eAgentConfig } from "@kaf-e2e/config";
+import { defineAgent, defineDynamic } from "kaf";
+import { mockModel } from "kaf/evals";
+
+import { WORKSPACE_FORWARDING_MARKER, WORKSPACE_LOOKUP_MESSAGE } from "../constants";
+import {
+  REMOTE_QUESTION_DIRECTIVE,
+  respondToRemoteQuestion,
+} from "./lib/remote-question-script.js";
+import { isNestedDirective, respondToNestedRequest } from "./lib/remote-nested-script.js";
+import { isDirectHitlDirective, respondToDirectHitl } from "./lib/remote-direct-hitl-script.js";
+import {
+  isNotebookDirective,
+  isNotebookEntry,
+  respondAsNotebookKeeper,
+  respondAsNotebookParent,
+} from "./lib/notebook.js";
+import {
+  isSurveyDirective,
+  isSurveyToolDirective,
+  respondAsSurveyParent,
+  respondAsSurveyToolParent,
+} from "./lib/survey.js";
+
+if (process.env.KAF_E2E_MODEL === "mock") {
+  process.env.KAF_MOCK_AUTHORED_MODELS = "1";
+}
+
+const TOOL_FALSE_PROBE = "E2E_TOOL_FALSE_SUBAGENT";
+const DISABLED_TOOL_PROBE = "E2E_DISABLED_SUBAGENT";
+const hiddenSubagentProbe = mockModel({
+  modelId: "hidden-subagent-probe",
+  respond(request) {
+    const probe = [...request.userMessages]
+      .reverse()
+      .find(
+        (message) => message.includes(TOOL_FALSE_PROBE) || message.includes(DISABLED_TOOL_PROBE),
+      );
+    const target = probe?.includes(TOOL_FALSE_PROBE) ? "tool-hidden" : "disabled-hidden";
+    if (request.tools.some((tool) => tool.name === target)) {
+      throw new Error(`Internal subagent ${target} was exposed to the model.`);
+    }
+    if (!request.tools.some((tool) => tool.name === "invoke-hidden")) {
+      throw new Error("The visible invoke-hidden workflow tool is missing.");
+    }
+    const result = request.toolResults.find((entry) => entry.name === "invoke-hidden");
+    return result === undefined
+      ? { toolCalls: [{ name: "invoke-hidden", input: { target } }] }
+      : JSON.stringify(result.output);
+  },
+});
+
+const base = e2eAgentConfig();
+const { model, modelContextWindowTokens, ...agentConfig } = base;
+const defaultModel = typeof model === "string" ? model : `${model.provider}/${model.modelId}`;
+const workspaceReader = mockModel({
+  modelId: "principal-forwarding-workspace-reader",
+  respond: ({ messages }) => {
+    for (const message of [...messages].reverse()) {
+      if (message.role === "tool") return message.text;
+      if (message.role === "user" && message.text === WORKSPACE_LOOKUP_MESSAGE) break;
+    }
+    return { toolCalls: [{ name: "read-workspace-label", input: {} }] };
+  },
+});
+const workspaceDispatcher = mockModel({
+  modelId: "principal-forwarding-workspace-dispatcher",
+  respond(request) {
+    let requestIndex = -1;
+    for (const [index, message] of request.messages.entries()) {
+      if (message.role === "user" && message.text.includes(WORKSPACE_FORWARDING_MARKER)) {
+        requestIndex = index;
+      }
+    }
+    if (
+      requestIndex < 0 ||
+      request.messages.slice(requestIndex + 1).some((message) => message.role === "tool")
+    ) {
+      return "The workspace lookup was submitted.";
+    }
+    const requests = request.messages.filter(
+      (message) => message.role === "user" && message.text.includes(WORKSPACE_FORWARDING_MARKER),
+    );
+    const requestCount = requests.length;
+    // Only a continuation names the task, which the [Tasks] note lists.
+    const continuing = requests.at(-1)?.text.includes("taskId") === true;
+    const taskId = continuing ? findListedTaskId(request.messages, "remote-loopback") : undefined;
+    if (continuing && taskId === undefined) {
+      throw new Error("Workspace continuation has no remote-loopback task in the [Tasks] note.");
+    }
+    return {
+      toolCalls: [
+        {
+          id: `workspace-lookup-${requestCount}`,
+          name: "remote-loopback",
+          input: { message: WORKSPACE_LOOKUP_MESSAGE, taskId },
+        },
+      ],
+    };
+  },
+});
+const remoteQuestionModel = mockModel({
+  modelId: "remote-question",
+  respond: respondToRemoteQuestion,
+});
+const remoteNestedModel = mockModel({ modelId: "remote-nested", respond: respondToNestedRequest });
+const remoteDirectHitlModel = mockModel({
+  modelId: "remote-direct-hitl",
+  respond: respondToDirectHitl,
+});
+const notebookParent = mockModel({ modelId: "notebook-parent", respond: respondAsNotebookParent });
+const surveyParent = mockModel({ modelId: "survey-parent", respond: respondAsSurveyParent });
+const surveyToolParent = mockModel({
+  modelId: "survey-tool-parent",
+  respond: respondAsSurveyToolParent,
+});
+// The remote keeper is a root session of this deployment, reached through remote-loopback.
+const notebookKeeper = mockModel({ modelId: "notebook-keeper", respond: respondAsNotebookKeeper });
+/** Reads the id of a tool's task from the latest framework-injected `[Tasks]` note. */
+function findListedTaskId(
+  messages: readonly { readonly role: string; readonly text: string }[],
+  tool: string,
+): string | undefined {
+  const note = [...messages]
+    .reverse()
+    .find((message) => message.role === "user" && message.text.startsWith("[Tasks]"));
+  const pattern = new RegExp(`<task id="([^"]+)" tool="${tool}"`);
+  return note?.text.match(pattern)?.[1];
+}
+
+export default defineAgent({
+  ...agentConfig,
+  model: defineDynamic({
+    events: {
+      "step.started": (_event, ctx) => {
+        const messages = ctx.messages.flatMap((message) => {
+          if (message.role !== "user") return [];
+          return [
+            typeof message.content === "string"
+              ? message.content
+              : message.content.map((part) => (part.type === "text" ? part.text : "")).join(""),
+          ];
+        });
+        if (
+          messages.some(
+            (message) =>
+              message.includes(TOOL_FALSE_PROBE) || message.includes(DISABLED_TOOL_PROBE),
+          )
+        ) {
+          return { model: hiddenSubagentProbe, modelContextWindowTokens: 1_000_000 };
+        }
+        // Both models must reach the real authorization boundary, including denied lookups.
+        if (messages.includes(WORKSPACE_LOOKUP_MESSAGE)) {
+          return { model: workspaceReader, modelContextWindowTokens: 1_000_000 };
+        }
+        if (messages.some((message) => message.includes(WORKSPACE_FORWARDING_MARKER))) {
+          return { model: workspaceDispatcher, modelContextWindowTokens: 1_000_000 };
+        }
+        if (messages.some((message) => message.includes(REMOTE_QUESTION_DIRECTIVE))) {
+          return { model: remoteQuestionModel, modelContextWindowTokens: 1_000_000 };
+        }
+        if (messages.some(isNestedDirective)) {
+          return { model: remoteNestedModel, modelContextWindowTokens: 1_000_000 };
+        }
+        if (messages.some(isDirectHitlDirective)) {
+          return { model: remoteDirectHitlModel, modelContextWindowTokens: 1_000_000 };
+        }
+        if (messages.some(isNotebookEntry)) {
+          return { model: notebookKeeper, modelContextWindowTokens: 1_000_000 };
+        }
+        if (messages.some(isNotebookDirective)) {
+          return { model: notebookParent, modelContextWindowTokens: 1_000_000 };
+        }
+        if (messages.some(isSurveyDirective)) {
+          return { model: surveyParent, modelContextWindowTokens: 1_000_000 };
+        }
+        if (messages.some(isSurveyToolDirective)) {
+          return { model: surveyToolParent, modelContextWindowTokens: 1_000_000 };
+        }
+        return { model: defaultModel, modelContextWindowTokens };
+      },
+    },
+  }),
+  reasoning: "high",
+});

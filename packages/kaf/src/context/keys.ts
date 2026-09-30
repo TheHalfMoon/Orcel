@@ -1,0 +1,374 @@
+/**
+ * Leaf context keys — no codec, no runtime imports. Safe to import from any
+ * tier. Codec-carrying keys (`ChannelKey`, `BundleKey`) live in
+ * `#runtime/sessions/runtime-context-keys.ts`.
+ */
+
+import type { LanguageModel, ModelMessage, SystemModelMessage } from "ai";
+
+import type {
+  ChannelDeliveryMetadata,
+  ChannelInstrumentationProjection,
+  SessionAuthContext,
+  SessionCallback,
+  SessionCapabilities,
+  SessionParent,
+  SessionTraceContext,
+  SessionTurn,
+} from "#channel/types.js";
+import { ContextKey } from "#context/key.js";
+import {
+  SESSION_INBOX_CONTEXT_KEY,
+  type SessionInboxAddress,
+} from "#execution/session-inbox/address.js";
+import { SESSION_CALLBACK_CONTEXT_KEY_NAME } from "#context/key-names.js";
+import type { LegacyRemoteAgentCaller } from "#execution/legacy-remote-agent/protocol.js";
+import type { InstrumentationChannelDeliveryRef } from "#instrumentation/lifecycle.js";
+import type { UserModelMessage } from "#harness/messages.js";
+import type { HandleEventFn } from "#harness/types.js";
+import type { PersistedDynamicToolMetadata } from "#context/dynamic-tool-metadata.js";
+import type { DynamicSubagentAgentConfig } from "#runtime/subagents/dynamic-agent-config.js";
+import type { DynamicRemoteAgentConfig } from "#runtime/subagents/dynamic-remote-agent-config.js";
+import type { SandboxAccess } from "#sandbox/state.js";
+import type { HistoryViewProjector } from "#shared/history-view.js";
+import type { RuntimeModelReference } from "#runtime/agent/bootstrap.js";
+import type { PreparedRuntimeDelegationTool } from "#runtime/sessions/turn.js";
+import type { MemoryScope, MemoryTurnContext } from "#public/memory/index.js";
+
+// Re-export so consumers don't need a direct channel/ import.
+export type { SessionAuthContext, SessionParent, SessionTurn } from "#channel/types.js";
+
+// ---------------------------------------------------------------------------
+// Session types (public API surface)
+// ---------------------------------------------------------------------------
+
+/**
+ * Auth metadata on the active session.
+ *
+ * `current` is the caller of the most recent request.
+ * `initiator` is the caller who originally created the session.
+ */
+export interface SessionAuth {
+  readonly current: SessionAuthContext | null;
+  readonly initiator: SessionAuthContext | null;
+}
+
+/**
+ * Internal session metadata seeded into the context container under
+ * {@link SessionKey}.
+ *
+ * This is not the shape authored code observes. Tools, hooks, and channel
+ * events receive the `SessionContext.session` projection (via `ctx.session`),
+ * whose session id is exposed as `id`, not `sessionId`.
+ */
+export interface Session {
+  readonly auth: SessionAuth;
+  readonly parent?: SessionParent;
+  readonly sessionId: string;
+  readonly turn: SessionTurn;
+}
+
+// ---------------------------------------------------------------------------
+// Seed keys — serializable values carried across workflow step boundaries.
+// ---------------------------------------------------------------------------
+
+export const AuthKey = new ContextKey<SessionAuthContext | null>("kaf.auth");
+export const InitiatorAuthKey = new ContextKey<SessionAuthContext | null>("kaf.initiatorAuth");
+export const SessionIdKey = new ContextKey<string>("kaf.sessionId");
+export const ConversationIdKey = new ContextKey<string>("kaf.conversationId");
+export const SessionInboxKey = new ContextKey<SessionInboxAddress>(SESSION_INBOX_CONTEXT_KEY);
+export const ContinuationTokenKey = new ContextKey<string>("kaf.continuationToken");
+/** Every channel continuation address requested for this session, in claim order. */
+export const ContinuationHookTokensKey = new ContextKey<readonly string[]>(
+  "kaf.continuationHookTokens",
+);
+export const ChannelRequestIdKey = new ContextKey<string>("kaf.channelRequestId");
+/**
+ * Dev-host-verified originating-client metadata, valid only for the current
+ * host secret. It carries the inherited dev-TUI hint, not editing authority.
+ */
+export interface LocalDevRequestProvenance {
+  readonly address: string;
+  readonly interactiveClient: boolean;
+  readonly signature: string;
+}
+export const LocalDevRequestKey = new ContextKey<LocalDevRequestProvenance>(
+  "kaf.internal.localDevRequest",
+);
+/** Authored schedule whose dispatch created this session. */
+export const ScheduleIdKey = new ContextKey<string>("kaf.scheduleId");
+/** Display title derived from the session's initial input. */
+export const SessionTitleKey = new ContextKey<string>("kaf.sessionTitle");
+export const ChannelDeliveryKey = new ContextKey<ChannelDeliveryMetadata>("kaf.channelDelivery");
+/** Accepted messages whose response owns the current turn's durable stream events. */
+export const TurnDeliveryIdsKey = new ContextKey<readonly string[]>("kaf.turnDeliveryIds");
+/** Last framework announcements recorded in the retained session history. */
+export interface HistoryState {
+  readonly availableSkills?: string;
+}
+export const HistoryStateKey = new ContextKey<HistoryState>("kaf.historyState");
+export interface ActiveChannelDelivery {
+  readonly agentName?: string;
+  readonly channelType?: string;
+  readonly delivery: InstrumentationChannelDeliveryRef;
+  readonly policyAgentName?: string;
+  readonly rootSessionId: string;
+  readonly sequence: number;
+  readonly sessionId: string;
+  readonly turnId: string;
+}
+export const ActiveChannelDeliveriesKey = new ContextKey<readonly ActiveChannelDelivery[]>(
+  "kaf.activeChannelDeliveries",
+);
+export const ChannelInstrumentationKey = new ContextKey<ChannelInstrumentationProjection>(
+  "kaf.channelInstrumentation",
+);
+export const ParentSessionKey = new ContextKey<SessionParent>("kaf.parentSession");
+/** Separate from {@link ParentSessionKey} so it stays out of what extensions read. */
+export const ParentTraceContextKey = new ContextKey<SessionTraceContext>("kaf.parentTraceContext");
+
+export type SessionTraceSeed = SessionTraceContext;
+export const SessionTraceSeedKey = new ContextKey<SessionTraceSeed>("kaf.sessionTraceSeed");
+export const OtelTraceEnabledKey = new ContextKey<boolean>("kaf.otelTraceEnabled");
+
+/**
+ * Session-level capability flags (see {@link SessionCapabilities}). Set
+ * on root runs by channel routes and inherited pointwise by subagent
+ * dispatch so HITL readiness flows through a conversation chain.
+ */
+export const CapabilitiesKey = new ContextKey<SessionCapabilities>("kaf.capabilities");
+
+/**
+ * Optional framework-owned caller callback captured when the session is created.
+ */
+export const SessionCallbackKey = new ContextKey<SessionCallback>(
+  SESSION_CALLBACK_CONTEXT_KEY_NAME,
+);
+
+/** Present when a remote agent protocol 1 caller created the session. */
+export const LegacyRemoteAgentCallerKey = new ContextKey<LegacyRemoteAgentCaller>(
+  "kaf.legacyRemoteAgentCaller",
+);
+
+// ---------------------------------------------------------------------------
+// Derived keys — reconstructed by providers each step, never serialized.
+// ---------------------------------------------------------------------------
+
+export const SessionKey = new ContextKey<Session>("kaf.session");
+export const SandboxKey = new ContextKey<SandboxAccess>("kaf.sandbox");
+export const HandleEventKey = new ContextKey<HandleEventFn>("kaf.internal.handleEvent");
+
+// ---------------------------------------------------------------------------
+// Dynamic model keys
+// ---------------------------------------------------------------------------
+
+/** Static model configured for the effective turn agent, or `null` for a dynamic-only agent. */
+export const StaticModelReferenceKey = new ContextKey<RuntimeModelReference | null>(
+  "kaf.staticModelReference",
+);
+
+/** Session-scoped dynamic model selection (from `session.started`). */
+export const SessionDynamicModelReferenceKey = new ContextKey<RuntimeModelReference | null>(
+  "kaf.sessionDynamicModelReference",
+);
+
+/** Turn-scoped dynamic model selection (from `turn.started`). */
+export const TurnDynamicModelReferenceKey = new ContextKey<RuntimeModelReference | null>(
+  "kaf.turnDynamicModelReference",
+);
+
+export interface CachedModelMetadata {
+  readonly contextWindowTokens: number;
+  readonly expiresAt: number;
+  readonly maxOutputTokens?: number;
+  readonly resolvedModelId: string;
+}
+
+/** Successful runtime catalog selections cached in durable workflow state. */
+export const RuntimeModelMetadataCacheKey = new ContextKey<
+  Readonly<Record<string, CachedModelMetadata>>
+>("kaf.runtimeModelMetadataCache");
+
+export interface LiveDynamicModelSelection {
+  /** Live provider instance; absent for string selections, which resolve through the reference. */
+  readonly model?: LanguageModel;
+  readonly reference: RuntimeModelReference;
+}
+
+/** Virtual step-scoped dynamic model selection (from `step.started`); never serialized. */
+export const LiveStepDynamicModelSelectionKey = new ContextKey<LiveDynamicModelSelection | null>(
+  "kaf.liveStepDynamicModelSelection",
+);
+
+// ---------------------------------------------------------------------------
+// Dynamic tool keys
+// ---------------------------------------------------------------------------
+
+/**
+ * Session-scoped dynamic tool metadata (from `session.started`).
+ * Persists for the session lifetime.
+ */
+export const SessionDynamicToolMetadataKey = new ContextKey<
+  readonly PersistedDynamicToolMetadata[]
+>("kaf.sessionDynamicToolMetadata");
+
+/**
+ * Runtime revision that last resolved session-scoped dynamic tools.
+ * Used to refresh their durable metadata after a deploy or development rebuild.
+ */
+export const SessionDynamicToolRuntimeRevisionKey = new ContextKey<string>(
+  "kaf.sessionDynamicToolRuntimeRevision",
+);
+
+/**
+ * Turn-scoped dynamic tool metadata (from `turn.started`).
+ * Replaced each turn.
+ */
+export const TurnDynamicToolMetadataKey = new ContextKey<readonly PersistedDynamicToolMetadata[]>(
+  "kaf.turnDynamicToolMetadata",
+);
+
+export interface LockedMemorySlot {
+  readonly scope: MemoryScope;
+  readonly slot: string;
+  readonly turn: MemoryTurnContext;
+  readonly visibility: "scope" | "session";
+}
+
+export const TurnMemoryLocksKey = new ContextKey<Readonly<Record<string, LockedMemorySlot>>>(
+  "kaf.memory.turnLocks",
+);
+
+export interface PreparedMemoryPreamble {
+  readonly projector?: HistoryViewProjector;
+  readonly history: readonly ModelMessage[];
+  readonly input: readonly ModelMessage[];
+  readonly state?: Readonly<Record<string, unknown>>;
+}
+
+export interface PendingMemoryCommit {
+  /** Records recalled by this operation, to append after the prepared history. */
+  readonly recalledMessages: readonly ModelMessage[];
+  readonly state: Readonly<Record<string, unknown>>;
+}
+
+export const PreparedMemoryPreambleKey = new ContextKey<PreparedMemoryPreamble>(
+  "kaf.memory.preparedPreamble",
+);
+export const PendingMemoryCommitKey = new ContextKey<PendingMemoryCommit>(
+  "kaf.memory.pendingCommit",
+);
+
+export interface PreparedMemoryCompaction {
+  readonly history: readonly ModelMessage[];
+  readonly state?: Readonly<Record<string, unknown>>;
+}
+
+export const PreparedMemoryCompactionKey = new ContextKey<PreparedMemoryCompaction>(
+  "kaf.memory.preparedCompaction",
+);
+
+/** Step-scoped dynamic tool metadata, replaced before each model step. */
+export const StepDynamicToolMetadataKey = new ContextKey<readonly PersistedDynamicToolMetadata[]>(
+  "kaf.stepDynamicToolMetadata",
+);
+
+export type DurableDynamicSubagentSelection =
+  | {
+      readonly agentConfig: DynamicSubagentAgentConfig;
+      readonly kind: "subagent";
+      readonly prepared: PreparedRuntimeDelegationTool;
+      readonly remoteAgent?: never;
+    }
+  | {
+      readonly agentConfig?: never;
+      readonly kind: "remote";
+      readonly prepared: PreparedRuntimeDelegationTool;
+      readonly remoteAgent: DynamicRemoteAgentConfig;
+    }
+  | null;
+
+export const SessionDynamicSubagentSelectionsKey = new ContextKey<
+  Readonly<Record<string, DurableDynamicSubagentSelection>>
+>("kaf.sessionDynamicSubagentSelections");
+
+export const TurnDynamicSubagentSelectionsKey = new ContextKey<
+  Readonly<Record<string, DurableDynamicSubagentSelection>>
+>("kaf.turnDynamicSubagentSelections");
+
+export const SessionDynamicSubagentRuntimeRevisionKey = new ContextKey<string>(
+  "kaf.sessionDynamicSubagentRuntimeRevision",
+);
+
+export const DynamicSubagentAgentConfigKey = new ContextKey<DynamicSubagentAgentConfig>(
+  "kaf.dynamicSubagentAgentConfig",
+);
+
+// ---------------------------------------------------------------------------
+// Dynamic skill keys
+// ---------------------------------------------------------------------------
+
+/**
+ * Durable state for one session-scoped dynamic skill.
+ */
+export interface DurableDynamicSkillMetadata {
+  readonly name: string;
+  readonly description: string;
+  /** `SKILL.md` content as authored; `load_skill` strips any frontmatter. */
+  readonly markdown: string;
+  /**
+   * Content hash of the package files. Present only for packages with
+   * supporting files, which are the only packages written to the sandbox.
+   */
+  readonly revision?: string;
+}
+
+export type DynamicSkillManifest = Readonly<Record<string, readonly DurableDynamicSkillMetadata[]>>;
+
+/**
+ * Durable map from resolver slug to the qualified skills it last produced.
+ * Used to diff on re-resolution, serve `load_skill`, and rebuild the
+ * model-visible announcement across turns without a sandbox.
+ */
+export const DynamicSkillManifestKey = new ContextKey<DynamicSkillManifest>(
+  "kaf.dynamicSkillManifest",
+);
+
+/**
+ * Durable map from dynamic skill name to the serialized sandbox session state
+ * that holds its current manifest revision. Refreshes skip writes when the
+ * revision and sandbox are unchanged; deleting the sandbox clears it.
+ */
+export const DynamicSkillSandboxKey = new ContextKey<Readonly<Record<string, string>>>(
+  "kaf.dynamicSkillSandbox",
+);
+
+// ---------------------------------------------------------------------------
+// Dynamic instruction keys
+// ---------------------------------------------------------------------------
+
+/**
+ * Durable session-scoped instruction messages (from `session.started`
+ * resolvers). Keyed by resolver slug. Persists for the session lifetime.
+ */
+export const SessionDynamicInstructionsKey = new ContextKey<
+  Record<string, readonly SystemModelMessage[]>
+>("kaf.sessionDynamicInstructions");
+
+/**
+ * Durable turn-scoped instruction messages (from `turn.started`
+ * resolvers). Keyed by resolver slug. Replaced each turn.
+ */
+export const TurnDynamicInstructionsKey = new ContextKey<
+  Record<string, readonly SystemModelMessage[]>
+>("kaf.turnDynamicInstructions");
+
+/** Existing history exposed only to instructions resolvers during a preamble. */
+export const DynamicInstructionResolveMessagesKey = new ContextKey<readonly ModelMessage[]>(
+  "kaf.dynamicInstructionResolveMessages",
+);
+
+/** User-role results waiting to be committed immediately after a preamble. */
+export const PendingDynamicInstructionUserMessagesKey = new ContextKey<readonly UserModelMessage[]>(
+  "kaf.pendingDynamicInstructionUserMessages",
+);

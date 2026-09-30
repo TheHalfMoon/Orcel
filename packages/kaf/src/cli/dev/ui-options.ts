@@ -1,0 +1,49 @@
+import type {
+  AssistantResponseStatsMode,
+  LogDisplayMode,
+  SubagentDisplayMode,
+  TerminalPartDisplayMode,
+  TuiDisplayOptions,
+} from "#cli/dev/tui/types.js";
+
+/** Parsed `kaf dev` options that control terminal-UI behavior. */
+interface DevelopmentTuiOptions {
+  readonly assistantResponseStats?: AssistantResponseStatsMode;
+  readonly connectionAuth?: TerminalPartDisplayMode;
+  readonly contextSize?: number;
+  readonly logs?: LogDisplayMode;
+  readonly reasoning?: TerminalPartDisplayMode;
+  readonly subagents?: SubagentDisplayMode;
+  readonly tools?: TerminalPartDisplayMode;
+  readonly ui?: boolean;
+}
+
+/** Whether `kaf dev` launches the terminal UI or keeps only the server running. */
+type DevUiMode = "tui" | "headless";
+
+/** Resolves the UI mode from parsed flags and terminal interactivity. */
+export function resolveDevUiMode(input: {
+  readonly options: Pick<DevelopmentTuiOptions, "ui">;
+  readonly interactive: boolean;
+}): DevUiMode {
+  return input.options.ui === false || !input.interactive ? "headless" : "tui";
+}
+
+/** Builds terminal-UI display options with the defaults used by `kaf dev`. */
+export function resolveTuiDisplayOptions(options: DevelopmentTuiOptions): TuiDisplayOptions {
+  const display: TuiDisplayOptions = {
+    logs: options.logs ?? "stderr",
+    // Collapsed reasoning renders as the fixed thinking line; `--reasoning
+    // full` restores the streaming transcript trace.
+    reasoning: options.reasoning ?? "auto-collapsed",
+    tools: options.tools ?? "auto-collapsed",
+  };
+
+  if (options.subagents !== undefined) display.subagents = options.subagents;
+  if (options.connectionAuth !== undefined) display.connectionAuth = options.connectionAuth;
+  if (options.assistantResponseStats !== undefined) {
+    display.assistantResponseStats = options.assistantResponseStats;
+  }
+  if (options.contextSize !== undefined) display.contextSize = options.contextSize;
+  return display;
+}

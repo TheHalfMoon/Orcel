@@ -1,0 +1,216 @@
+/**
+ * The provider contract authored under `agent/instrumentation/`.
+ *
+ * Each file in the directory declares one independently configured provider.
+ */
+
+// Type-only, so nothing couples the provider definition to the harness at
+// runtime. The event shapes are kaf's own vocabulary; deriving the handler map
+// from the union below is what keeps the public contract from drifting away
+// from the bus that feeds it.
+import type { InstrumentationEvent } from "#instrumentation/lifecycle.js";
+import type { JsonValue } from "#shared/json.js";
+import type { TraceCapturePolicy } from "#shared/trace-policy.js";
+
+export type { JsonValue } from "#shared/json.js";
+
+export type {
+  InstrumentationActionCompletedEvent,
+  InstrumentationActionFailedEvent,
+  InstrumentationActionKind,
+  InstrumentationActionOutcome,
+  InstrumentationActionOutput,
+  InstrumentationActionStartedEvent,
+  InstrumentationAttemptScope,
+  InstrumentationChannelDeliveryInput,
+  InstrumentationChannelDeliveryOutcome,
+  InstrumentationChannelDeliveryRef,
+  InstrumentationChannelDeliveryStartedEvent,
+  InstrumentationChannelDeliveryTerminalEvent,
+  InstrumentationContentPart,
+  InstrumentationEvent,
+  InstrumentationInputKind,
+  InstrumentationInputOption,
+  InstrumentationInputOutcome,
+  InstrumentationInputRequest,
+  InstrumentationInputRequestedEvent,
+  InstrumentationInputResolvedEvent,
+  InstrumentationInputResponse,
+  InstrumentationModelCallCompletedEvent,
+  InstrumentationModelCallFailedEvent,
+  InstrumentationModelCallStartedEvent,
+  InstrumentationModelRef,
+  InstrumentationOperationRef,
+  InstrumentationParentLineage,
+  InstrumentationSessionFailedEvent,
+  InstrumentationSessionSettledEvent,
+  InstrumentationSessionStartedEvent,
+  InstrumentationSessionTransitionEvent,
+  InstrumentationStepAttemptMetadataEvent,
+  InstrumentationStepAttemptCompletedEvent,
+  InstrumentationStepAttemptFailedEvent,
+  InstrumentationStepAttemptStartedEvent,
+  InstrumentationStepAttemptTerminalEvent,
+  InstrumentationToolCallCompletedEvent,
+  InstrumentationToolCallFailedEvent,
+  InstrumentationToolCallStartedEvent,
+  InstrumentationToolOutput,
+  InstrumentationTraceContext,
+  InstrumentationTurnFailedEvent,
+  InstrumentationTurnSettledEvent,
+  InstrumentationTurnStartedEvent,
+  InstrumentationTurnTerminalEvent,
+  InstrumentationUsage,
+} from "#instrumentation/lifecycle.js";
+export type {
+  InstrumentationMemoryOperation,
+  InstrumentationMemoryOperationCompletedEvent,
+  InstrumentationMemoryOperationEvent,
+  InstrumentationMemoryOperationFailedEvent,
+  InstrumentationMemoryOperationName,
+  InstrumentationMemoryOperationStartedEvent,
+  InstrumentationMemoryOperationTerminalEvent,
+  InstrumentationMemoryRecord,
+} from "#instrumentation/memory.js";
+export type {
+  TraceCaptureContext,
+  TraceCapturePolicy,
+  TracePolicyDecision,
+} from "#shared/trace-policy.js";
+
+/**
+ * Marks a value as having come from `defineInstrumentation` or a built-in
+ * factory.
+ *
+ * The brand catches a default export that never went through kaf.
+ */
+export const PROVIDER = Symbol.for("kaf.instrumentation.provider");
+
+/** Marks a slot the author turned off rather than configured. */
+export const DISABLED = Symbol.for("kaf.instrumentation.disabled");
+
+/** Where the agent is running when `setup` fires. */
+export type InstrumentationEnvironment = "development" | "preview" | "production";
+
+/** The local eval run this server was started to serve. */
+export interface EvaluationRef {
+  readonly runId: string;
+}
+
+/**
+ * Passed to {@link InstrumentationProvider.setup} once at server startup,
+ * before any event is published.
+ */
+export interface ProviderSetupContext {
+  /** The agent name declared by `defineAgent`. */
+  readonly agentName: string;
+  readonly environment: InstrumentationEnvironment;
+  /** Present only when this server was started for a local `kaf eval` run. */
+  readonly evaluation?: EvaluationRef;
+  /** The kaf version running the agent. */
+  readonly frameworkVersion: string;
+}
+
+export interface ProviderState {
+  get(): JsonValue | undefined;
+  /** Stages a JSON value; `undefined` releases this operation's slot. */
+  set(value: JsonValue | undefined): void;
+}
+
+export interface ProviderContext {
+  readonly state: ProviderState;
+}
+
+/**
+ * One event handler.
+ *
+ * A handler can carry durable JSON state from a start to its terminal through
+ * `ctx.state`. kaf scopes and releases that state by provider and operation.
+ */
+export type Handler<TEvent> = (event: TEvent, ctx: ProviderContext) => void | PromiseLike<void>;
+
+type EventForType<TEvent, TType> = TEvent extends { readonly type: infer TEventType }
+  ? TType extends TEventType
+    ? TEvent & { readonly type: TType }
+    : never
+  : never;
+
+/**
+ * The events a provider may handle, one optional handler per event type.
+ *
+ * Derived from the event union rather than written out, so a new event reaches
+ * providers the moment the bus can publish it.
+ */
+export type ProviderEvents = {
+  readonly [TType in InstrumentationEvent["type"]]?: Handler<
+    EventForType<InstrumentationEvent, TType>
+  >;
+};
+
+/**
+ * What an author writes for one file under `agent/instrumentation/`.
+ *
+ * Setup runs in slot order, but event handlers across authored providers run
+ * concurrently and are failure-isolated. Do not coordinate providers through
+ * completion order.
+ */
+export interface ProviderDefinition {
+  /**
+   * Whether this provider receives events and which content directions they
+   * include. Defaults to emitting every audience, with content only for public
+   * conversations. Boolean `true` uses the same audience-aware content rule;
+   * an explicit emitted decision can authorize either direction independently.
+   * A thrown error disables this provider for the trace. The policy can run
+   * again across durable steps, so it must be deterministic.
+   */
+  readonly tracePolicy?: TraceCapturePolicy;
+  readonly events?: ProviderEvents;
+  /** Runs once at server startup, before any event is published. */
+  readonly setup?: (context: ProviderSetupContext) => void | PromiseLike<void>;
+  /** Drains anything buffered. kaf calls this before a session goes idle. */
+  readonly flush?: () => void | PromiseLike<void>;
+  /** Releases resources when the process is going away. */
+  readonly shutdown?: () => void | PromiseLike<void>;
+}
+
+/** Declares one instrumentation provider. */
+export function defineInstrumentation(definition: ProviderDefinition): InstrumentationProvider {
+  return { ...definition, [PROVIDER]: true };
+}
+
+/** A {@link ProviderDefinition} that has been through `defineInstrumentation`. */
+export type InstrumentationProvider = ProviderDefinition & {
+  readonly [PROVIDER]: true;
+};
+
+/** A slot the author turned off. kaf registers nothing for it. */
+export interface InstrumentationDisabled {
+  readonly [DISABLED]: true;
+}
+
+/**
+ * Turns off the slot the file it is exported from names.
+ *
+ * Export it as the default of `agent/instrumentation/local.ts` to stop kaf
+ * spooling local traces, for instance. Omitting the file entirely leaves kaf's
+ * default in place, which is why turning one off takes a value.
+ */
+export function disableInstrumentation(): InstrumentationDisabled {
+  return { [DISABLED]: true };
+}
+
+export function isInstrumentationProvider(value: unknown): value is InstrumentationProvider {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as Partial<InstrumentationProvider>)[PROVIDER] === true
+  );
+}
+
+export function isInstrumentationDisabled(value: unknown): value is InstrumentationDisabled {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as Partial<InstrumentationDisabled>)[DISABLED] === true
+  );
+}

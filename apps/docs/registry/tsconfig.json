@@ -1,0 +1,16 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": [
+    "channels/**/*.ts",
+    "schedules/**/*.ts",
+    "connections/**/*.ts",
+    "extensions/**/*.ts",
+    "instrumentation/**/*.ts",
+    "memory/**/*.ts"
+  ],
+  "exclude": ["node_modules"]
+}

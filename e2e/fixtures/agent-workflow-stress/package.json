@@ -1,0 +1,22 @@
+{
+  "name": "agent-workflow-stress",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "kaf build",
+    "dev": "kaf dev",
+    "start": "kaf start",
+    "typecheck": "kaf build --skip-sandbox-prewarm && tsc",
+    "test:e2e": "kaf eval --strict"
+  },
+  "dependencies": {
+    "@kaf-e2e/config": "workspace:*",
+    "@workflow/world-postgres": "catalog:",
+    "kaf": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  }
+}

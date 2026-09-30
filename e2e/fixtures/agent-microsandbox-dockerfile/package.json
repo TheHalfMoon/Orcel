@@ -1,0 +1,26 @@
+{
+  "name": "agent-microsandbox-dockerfile",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "kaf build",
+    "typecheck": "tsc",
+    "test:e2e": "kaf eval --strict"
+  },
+  "dependencies": {
+    "@kaf-e2e/config": "workspace:*",
+    "@workflow/world-postgres": "catalog:",
+    "kaf": "workspace:*",
+    "microsandbox": "0.5.5",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  },
+  "e2e": {
+    "modelMatrix": "default",
+    "worlds": []
+  }
+}

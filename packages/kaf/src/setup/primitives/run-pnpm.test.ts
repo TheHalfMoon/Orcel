@@ -1,0 +1,364 @@
+import { ChildProcess, spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { PassThrough } from "node:stream";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+
+import { kafDevArguments, runPackageManagerInstall, runPnpmInstall, spawnPnpm } from "./pm/run.js";
+import { packageManagerInstallSucceeded } from "./pm/run.js";
+import { resultSucceeded } from "./pm/process-result.js";
+import { pnpmPackageManager } from "./pm/pnpm.js";
+
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:child_process")>()),
+  spawn: vi.fn(),
+}));
+
+vi.mock("node:fs", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:fs")>()),
+  existsSync: vi.fn(() => false),
+}));
+
+const mockedSpawn = vi.mocked(spawn);
+const mockedExistsSync = vi.mocked(existsSync);
+
+function createMockChildProcess() {
+  return Object.assign(new ChildProcess(), {
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    kill: vi.fn(() => true),
+  });
+}
+
+mockedSpawn.mockImplementation(() => {
+  const child = createMockChildProcess();
+  queueMicrotask(() => child.emit("close", 0));
+  return child;
+});
+
+function mockMembershipProbe(paths: readonly string[]): void {
+  const child = createMockChildProcess();
+  mockedSpawn.mockReturnValueOnce(child);
+  queueMicrotask(() => {
+    child.stdout.emit(
+      "data",
+      Buffer.from(JSON.stringify(paths.map((path) => ({ name: "test", path })))),
+    );
+    child.emit("close", 0);
+  });
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockedExistsSync.mockReturnValue(false);
+  vi.stubEnv("PNPM_HOME", undefined);
+  vi.stubEnv("npm_execpath", undefined);
+  vi.stubEnv("npm_config_user_agent", undefined);
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
+describe("runPnpmInstall", () => {
+  test("updates an existing lockfile after scaffolded dependencies change", async () => {
+    expect(packageManagerInstallSucceeded(await runPnpmInstall("/tmp/kaf-agent"))).toBe(true);
+
+    expect(mockedSpawn).toHaveBeenCalledTimes(1);
+    expect(mockedSpawn).toHaveBeenCalledWith(
+      "pnpm",
+      ["--dir", "/tmp/kaf-agent", "install", "--no-frozen-lockfile"],
+      expect.objectContaining({ cwd: "/tmp/kaf-agent", stdio: "inherit" }),
+    );
+  });
+
+  test("supports prompt-free installs with a scoped release-age override", async () => {
+    expect(
+      packageManagerInstallSucceeded(
+        await runPnpmInstall("/tmp/kaf-agent", {
+          autoApprove: true,
+          bypassMinimumReleaseAge: true,
+        }),
+      ),
+    ).toBe(true);
+
+    expect(mockedSpawn).toHaveBeenCalledWith(
+      "pnpm",
+      [
+        "--dir",
+        "/tmp/kaf-agent",
+        "install",
+        "--no-frozen-lockfile",
+        "--yes",
+        "--config.minimum-release-age=0",
+      ],
+      expect.objectContaining({ cwd: "/tmp/kaf-agent", stdio: ["inherit", "pipe", "pipe"] }),
+    );
+  });
+
+  test("retries without auto-approval when pnpm rejects the option", async () => {
+    mockedSpawn.mockImplementationOnce(() => {
+      const child = createMockChildProcess();
+      queueMicrotask(() => {
+        child.stderr.emit("data", Buffer.from("ERROR Unknown option: 'yes'\n"));
+        child.stderr.emit("data", Buffer.from("For help, run: pnpm help install\n"));
+        child.emit("close", 1);
+      });
+      return child;
+    });
+    const onOutput = vi.fn();
+
+    expect(
+      packageManagerInstallSucceeded(
+        await runPnpmInstall("/tmp/kaf-agent", {
+          autoApprove: true,
+          bypassMinimumReleaseAge: true,
+          onOutput,
+        }),
+      ),
+    ).toBe(true);
+
+    expect(mockedSpawn.mock.calls.map(([, args]) => args)).toEqual([
+      [
+        "--dir",
+        "/tmp/kaf-agent",
+        "install",
+        "--no-frozen-lockfile",
+        "--yes",
+        "--config.minimum-release-age=0",
+      ],
+      [
+        "--dir",
+        "/tmp/kaf-agent",
+        "install",
+        "--no-frozen-lockfile",
+        "--config.minimum-release-age=0",
+      ],
+    ]);
+    expect(onOutput).not.toHaveBeenCalled();
+  });
+
+  test("does not retry other pnpm install failures", async () => {
+    mockedSpawn.mockImplementationOnce(() => {
+      const child = createMockChildProcess();
+      queueMicrotask(() => {
+        child.stderr.emit("data", Buffer.from("ERR_PNPM_FETCH_500 Registry unavailable\n"));
+        child.emit("close", 1);
+      });
+      return child;
+    });
+    const onOutput = vi.fn();
+
+    expect(
+      packageManagerInstallSucceeded(
+        await runPnpmInstall("/tmp/kaf-agent", { autoApprove: true, onOutput }),
+      ),
+    ).toBe(false);
+
+    expect(mockedSpawn).toHaveBeenCalledTimes(1);
+    expect(onOutput).toHaveBeenCalledWith({
+      stream: "stderr",
+      text: "ERR_PNPM_FETCH_500 Registry unavailable",
+    });
+  });
+
+  test("installs a claimed workspace member with native workspace semantics", async () => {
+    mockedExistsSync.mockImplementation((path) => path === "/tmp/pnpm-workspace.yaml");
+    mockMembershipProbe(["/tmp", "/tmp/kaf-agent"]);
+
+    expect(packageManagerInstallSucceeded(await runPnpmInstall("/tmp/kaf-agent"))).toBe(true);
+
+    expect(mockedSpawn).toHaveBeenCalledTimes(2);
+    expect(mockedSpawn).toHaveBeenLastCalledWith(
+      "pnpm",
+      ["--dir", "/tmp/kaf-agent", "install", "--no-frozen-lockfile"],
+      expect.objectContaining({ cwd: "/tmp/kaf-agent", stdio: "inherit" }),
+    );
+  });
+
+  test("installs standalone immediately when the ancestor workspace does not claim the project", async () => {
+    mockedExistsSync.mockImplementation((path) => path === "/tmp/pnpm-workspace.yaml");
+    mockMembershipProbe(["/tmp"]);
+
+    expect(packageManagerInstallSucceeded(await runPnpmInstall("/tmp/kaf-agent"))).toBe(true);
+
+    expect(mockedSpawn).toHaveBeenCalledTimes(2);
+    expect(mockedSpawn).toHaveBeenLastCalledWith(
+      "pnpm",
+      ["--dir", "/tmp/kaf-agent", "install", "--no-frozen-lockfile", "--ignore-workspace"],
+      expect.objectContaining({ cwd: "/tmp/kaf-agent", stdio: "inherit" }),
+    );
+  });
+
+  test("streams install output when setup supplies an output handler", async () => {
+    const child = createMockChildProcess();
+    mockedSpawn.mockReturnValueOnce(child);
+    const onOutput = vi.fn();
+
+    const result = runPnpmInstall("/tmp/kaf-agent", { onOutput });
+    child.stdout.emit("data", Buffer.from("Packages: +12\n"));
+    child.stderr.emit("data", Buffer.from("WARN deprecated package\n"));
+    child.emit("close", 0);
+
+    expect(packageManagerInstallSucceeded(await result)).toBe(true);
+    expect(mockedSpawn).toHaveBeenCalledWith(
+      "pnpm",
+      ["--dir", "/tmp/kaf-agent", "install", "--no-frozen-lockfile"],
+      expect.objectContaining({ stdio: ["inherit", "pipe", "pipe"] }),
+    );
+    expect(onOutput.mock.calls.map(([line]) => line)).toEqual([
+      { stream: "stdout", text: "Packages: +12" },
+      { stream: "stderr", text: "WARN deprecated package" },
+    ]);
+  });
+
+  test("replays stdout when the ancestor workspace probe fails", async () => {
+    mockedExistsSync.mockImplementation((path) => path === "/tmp/pnpm-workspace.yaml");
+    const child = createMockChildProcess();
+    mockedSpawn.mockReturnValueOnce(child);
+    const onOutput = vi.fn();
+
+    const result = runPnpmInstall("/tmp/kaf-agent", { onOutput });
+    child.stdout.emit("data", Buffer.from("workspace parse failed\n"));
+    child.emit("close", 1);
+
+    const install = await result;
+    expect(install.kind).toBe("workspace-probe-failed");
+    expect(install.result.stdout).toBe("workspace parse failed\n");
+    expect(onOutput.mock.calls.map(([line]) => line)).toEqual([
+      { stream: "stdout", text: "workspace parse failed" },
+    ]);
+  });
+});
+
+describe("runPackageManagerInstall", () => {
+  test("automatically approves npm prompts and bypasses inherited release-age policies", async () => {
+    expect(
+      packageManagerInstallSucceeded(
+        await runPackageManagerInstall("npm", "/tmp/app", {
+          autoApprove: true,
+          bypassMinimumReleaseAge: true,
+        }),
+      ),
+    ).toBe(true);
+
+    expect(mockedSpawn).toHaveBeenCalledWith(
+      "npm",
+      ["install", "--yes", "--min-release-age=0"],
+      expect.objectContaining({ cwd: "/tmp/app" }),
+    );
+  });
+
+  test("bypasses inherited Bun release-age policies without passing an unsupported yes flag", async () => {
+    expect(
+      packageManagerInstallSucceeded(
+        await runPackageManagerInstall("bun", "/tmp/app", {
+          autoApprove: true,
+          bypassMinimumReleaseAge: true,
+        }),
+      ),
+    ).toBe(true);
+
+    expect(mockedSpawn).toHaveBeenCalledWith(
+      "bun",
+      ["install", "--minimum-release-age=0"],
+      expect.objectContaining({ cwd: "/tmp/app" }),
+    );
+  });
+
+  test("requests npm output before registry operations complete", async () => {
+    expect(
+      packageManagerInstallSucceeded(
+        await runPackageManagerInstall("npm", "/tmp/app", { progressDetails: true }),
+      ),
+    ).toBe(true);
+
+    expect(mockedSpawn).toHaveBeenCalledWith(
+      "npm",
+      ["install", "--loglevel=silly"],
+      expect.objectContaining({ cwd: "/tmp/app" }),
+    );
+  });
+});
+
+describe("kafDevArguments", () => {
+  test.each([
+    ["npm", ["exec", "--", "kaf", "dev"]],
+    ["pnpm", ["exec", "kaf", "dev"]],
+    ["yarn", ["kaf", "dev"]],
+    ["bun", ["x", "kaf", "dev"]],
+  ] as const)("maps %s to its local-binary invocation", (kind, expectedArgs) => {
+    expect(kafDevArguments(kind)).toEqual(expectedArgs);
+  });
+});
+
+describe("pnpmPackageManager", () => {
+  test("prefers the active pnpm npm_execpath over PNPM_HOME", () => {
+    vi.stubEnv("PNPM_HOME", "/old/pnpm-home");
+    vi.stubEnv("npm_execpath", "/active/pnpm.cjs");
+    mockedExistsSync.mockReturnValue(true);
+
+    expect(pnpmPackageManager.resolveInvocation(["install"])).toEqual({
+      args: ["/active/pnpm.cjs", "install"],
+      command: process.execPath,
+    });
+  });
+
+  test("uses PATH pnpm under pnpm when npm_execpath is not available", () => {
+    vi.stubEnv("PNPM_HOME", "/old/pnpm-home");
+    vi.stubEnv("npm_config_user_agent", "pnpm/11.5.2 npm/? node/v24.15.0 darwin arm64");
+    mockedExistsSync.mockReturnValue(true);
+
+    expect(pnpmPackageManager.resolveInvocation(["install"])).toEqual({
+      args: ["install"],
+      command: "pnpm",
+      shell: process.platform === "win32",
+    });
+  });
+});
+
+describe("spawnPnpm", () => {
+  test("inherits output when no parent renderer is supplied", async () => {
+    expect(
+      resultSucceeded(await spawnPnpm("/tmp/kaf-agent", ["exec", "kaf", "dev", "--no-ui"])),
+    ).toBe(true);
+
+    expect(mockedSpawn).toHaveBeenCalledWith(
+      "pnpm",
+      ["--dir", "/tmp/kaf-agent", "exec", "kaf", "dev", "--no-ui"],
+      expect.objectContaining({ cwd: "/tmp/kaf-agent", stdio: "inherit" }),
+    );
+  });
+
+  test("pipes output when stdin is non-interactive without a parent renderer", async () => {
+    await spawnPnpm("/tmp/kaf-agent", ["install"], { nonInteractive: true });
+
+    expect(mockedSpawn).toHaveBeenCalledWith(
+      "pnpm",
+      ["--dir", "/tmp/kaf-agent", "install"],
+      expect.objectContaining({ stdio: ["ignore", "pipe", "pipe"] }),
+    );
+  });
+
+  test("passes cancellation to the child and settles as unsuccessful", async () => {
+    const child = createMockChildProcess();
+    mockedSpawn.mockReturnValueOnce(child);
+    const controller = new AbortController();
+
+    const result = spawnPnpm("/tmp/kaf-agent", ["install"], {
+      signal: controller.signal,
+    });
+    expect(mockedSpawn).toHaveBeenCalledWith(
+      "pnpm",
+      ["--dir", "/tmp/kaf-agent", "install"],
+      expect.objectContaining({ signal: controller.signal }),
+    );
+
+    controller.abort();
+    const error: NodeJS.ErrnoException = new Error("The operation was aborted");
+    error.name = "AbortError";
+    error.code = "ABORT_ERR";
+    child.emit("error", error);
+    await expect(result).resolves.toMatchObject({ termination: { kind: "aborted" } });
+    child.emit("close", null);
+  });
+});

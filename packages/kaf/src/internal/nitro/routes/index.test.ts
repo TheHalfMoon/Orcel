@@ -1,0 +1,142 @@
+import { describe, expect, it } from "vitest";
+
+import { buildHomePageResponse } from "#internal/nitro/routes/index.js";
+
+function buildResponseForRequest(url: string, headers?: Record<string, string>): Response {
+  return buildHomePageResponse({ agentName: "support-agent" }, new Request(url, { headers }));
+}
+
+describe("buildHomePageResponse", () => {
+  it("returns a barebones HTML response", () => {
+    const response = buildResponseForRequest("https://my-agent.example.com/");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("links out to the public docs site", async () => {
+    const body = await buildResponseForRequest("https://my-agent.example.com/").text();
+
+    expect(body).toContain("https://github.com/TheHalfMoon/kaf/docs");
+  });
+
+  it("renders the kaf wordmark as an inline SVG", async () => {
+    const body = await buildResponseForRequest("https://my-agent.example.com/").text();
+
+    expect(body).toContain('<div class="brand" aria-label="kaf">');
+    expect(body).toContain('viewBox="0 0 169 53"');
+    expect(body).not.toContain('<h1 class="mono">kaf</h1>');
+  });
+
+  it("renders the kaf favicon as an embedded SVG", async () => {
+    const body = await buildResponseForRequest("https://my-agent.example.com/").text();
+
+    expect(body).toContain('<link rel="icon" href="data:image/svg+xml,');
+    expect(body).toContain('type="image/svg+xml">');
+  });
+
+  it("renders and escapes the baked-in agent name", async () => {
+    const response = buildHomePageResponse(
+      { agentName: 'support"><script>alert(1)</script>' },
+      new Request("https://my-agent.example.com/"),
+    );
+    const body = await response.text();
+
+    expect(body).toContain("support&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(body).not.toContain("<script>alert(1)</script>");
+  });
+
+  it("renders dollar-containing values literally", async () => {
+    const response = buildHomePageResponse(
+      { agentName: "support-$&-agent" },
+      new Request("https://my-agent.example.com/", {
+        headers: {
+          "x-forwarded-host": "agent-$&.example",
+          "x-forwarded-proto": "https",
+        },
+      }),
+    );
+    const body = await response.text();
+
+    expect(body).toContain("support-$&amp;-agent");
+    expect(body).toContain("kaf remote connect --url https://agent-$&amp;.example");
+    expect(body).not.toContain("{{AGENT_NAME}}");
+    expect(body).not.toContain("{{DEPLOYMENT_URL}}");
+  });
+
+  it("echoes the deployment origin into the `kaf dev` hint", async () => {
+    const body = await buildResponseForRequest("https://my-agent.example.com/").text();
+
+    expect(body).toContain("kaf remote connect --url https://my-agent.example.com");
+    expect(body).not.toContain("kaf dev {{DEPLOYMENT_URL}}");
+  });
+
+  it("prefers x-forwarded-host / x-forwarded-proto over the raw request URL", async () => {
+    // Vercel's edge forwards the public-facing host on these headers; the
+    // raw `request.url` Nitro sees is the internal route target.
+    const body = await buildResponseForRequest("http://0.0.0.0:3000/", {
+      "x-forwarded-host": "agent.production.example",
+      "x-forwarded-proto": "https",
+    }).text();
+
+    expect(body).toContain("kaf remote connect --url https://agent.production.example");
+    expect(body).not.toContain("0.0.0.0");
+  });
+
+  it("uses the leftmost hop from a comma-separated x-forwarded-host", async () => {
+    const body = await buildResponseForRequest("http://0.0.0.0:3000/", {
+      "x-forwarded-host": "public.example, internal-edge-1, internal-edge-2",
+      "x-forwarded-proto": "https",
+    }).text();
+
+    expect(body).toContain("kaf remote connect --url https://public.example");
+    expect(body).not.toContain("internal-edge");
+  });
+
+  it("escapes HTML metacharacters from the host", async () => {
+    const body = await buildResponseForRequest("http://localhost/", {
+      "x-forwarded-host": '"><script>alert(1)</script>',
+      "x-forwarded-proto": "https",
+    }).text();
+
+    expect(body).not.toContain("<script>alert(1)</script>");
+    expect(body).toContain("&lt;script&gt;");
+  });
+
+  it("does not leak any agent configuration", async () => {
+    const body = await buildResponseForRequest("https://my-agent.example.com/").text();
+
+    // The deployed URL is reachable by anonymous callers, so the response
+    // must not advertise model/provider details, instructions text, or the
+    // authenticated kaf API surface.
+    expect(body).not.toMatch(/openai|anthropic|gpt|claude/i);
+    expect(body).not.toMatch(/instructions/i);
+    expect(body).not.toMatch(/\/kaf\/v1\//);
+    expect(body).not.toContain("__KAF_UI_AGENT_INFO_ONLY_MODE__");
+  });
+
+  it("loads no external assets and asks search engines to skip the page", async () => {
+    const body = await buildResponseForRequest("https://my-agent.example.com/").text();
+
+    expect(body).toContain('<meta name="robots" content="noindex">');
+    expect(body).toContain('<meta name="referrer" content="no-referrer">');
+    // No external fonts, scripts, or images — the deployment must not
+    // leak its origin to a third party just by being visited. The only
+    // script is the inline copy-button handler, which has no `src`.
+    expect(body).not.toMatch(/<script[^>]+src=/i);
+    expect(body).not.toMatch(/<img[\s>]/i);
+    expect(body).not.toMatch(/<link[^>]+href=["']https?:/i);
+    expect(body).not.toMatch(/@import|url\(https?:/i);
+  });
+
+  it("renders an inline copy button wired to the terminal command", async () => {
+    const body = await buildResponseForRequest("https://my-agent.example.com/").text();
+
+    expect(body).toContain('<button type="button" class="terminal-copy"');
+    expect(body).toContain("navigator.clipboard.writeText");
+    // The handler reads from the DOM rather than re-serializing the command,
+    // so the script carries no request-derived, unescaped value.
+    expect(body).toContain("command.textContent");
+  });
+});

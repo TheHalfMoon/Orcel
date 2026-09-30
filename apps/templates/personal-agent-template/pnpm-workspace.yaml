@@ -1,0 +1,15 @@
+packages:
+  - "."
+
+minimumReleaseAgeExclude:
+  - kaf
+  - "@vercel/connect"
+  - ai
+  - kaf
+
+allowBuilds:
+  "@parcel/watcher": false
+  better-sqlite3: true
+  esbuild: true
+  sharp: false
+  vue-demi: false

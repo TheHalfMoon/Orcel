@@ -1,0 +1,7 @@
+node_modules
+.env*
+.kaf
+.next
+.output
+.nitro
+dist

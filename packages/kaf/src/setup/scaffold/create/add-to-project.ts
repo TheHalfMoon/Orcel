@@ -1,0 +1,191 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
+import type { PackageManagerKind } from "../../package-manager.js";
+import type { NodeEngineOverride } from "../../node-engine.js";
+import type { AgentReasoningDefinition } from "../../../shared/agent-definition.js";
+import { pathExists, writeTextFile } from "../files.js";
+import { patchPackageJson, type PackageJsonPatch } from "../update/package-json.js";
+import { resolveVersionToken } from "../version-tokens.js";
+import {
+  applyPackageManagerWorkspaceConfiguration,
+  isPackageManagerWorkspaceMember,
+  patchWorkspaceRootPackageJson,
+} from "../workspace-root.js";
+import {
+  agentTemplateFiles,
+  DEFAULT_AI_PACKAGE_VERSION,
+  DEFAULT_CONNECT_PACKAGE_VERSION,
+  DEFAULT_ZOD_PACKAGE_VERSION,
+  formatKafDependencySpecifier,
+  resolveKafPackageContract,
+  type KafPackageContract,
+} from "./project.js";
+
+export interface AddAgentToProjectOptions {
+  projectRoot: string;
+  model: string;
+  reasoning?: AgentReasoningDefinition;
+  /**
+   * The host project's package manager, which owns any manager-specific
+   * generated project configuration. Defaults to pnpm.
+   */
+  packageManager?: PackageManagerKind;
+  kafPackage?: KafPackageContract;
+  aiPackageVersion?: string;
+  connectPackageVersion?: string;
+  zodPackageVersion?: string;
+}
+
+interface AddAgentToProjectResult {
+  filesWritten: string[];
+  configurationFilesChanged: string[];
+  /** Dependencies added to package.json; ones the project already declares anywhere are left untouched. */
+  dependenciesAdded: string[];
+  /** Present when an incompatible package.json engines.node value was replaced. */
+  nodeEngineOverride?: NodeEngineOverride;
+}
+
+const DEPENDENCY_FIELDS = [
+  "dependencies",
+  "devDependencies",
+  "optionalDependencies",
+  "peerDependencies",
+] as const;
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasDeclaredDependency(packageJson: unknown, dependencyName: string): boolean {
+  if (!isJsonObject(packageJson)) return false;
+  for (const field of DEPENDENCY_FIELDS) {
+    const block = packageJson[field];
+    if (isJsonObject(block) && typeof block[dependencyName] === "string") {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Adds an kaf agent to an existing package: writes the `agent/` files, adds
+ * missing runtime dependencies, reconciles `engines.node` with kaf's
+ * requirement, and applies the selected package manager's project
+ * configuration. Other host configuration (tsconfig, scripts, ignore files)
+ * remains untouched. All conflicts are gathered and reported before anything
+ * is written.
+ */
+export async function addAgentToProject(
+  options: AddAgentToProjectOptions,
+): Promise<AddAgentToProjectResult> {
+  const packageManager = options.packageManager ?? "pnpm";
+  const packageJsonPath = join(options.projectRoot, "package.json");
+  if (!(await pathExists(packageJsonPath))) {
+    throw new Error(
+      `Cannot add an kaf agent to "${options.projectRoot}" because it has no package.json. ` +
+        "Run `kaf init <name>` to create a new project instead.",
+    );
+  }
+
+  let packageJson: unknown;
+  try {
+    packageJson = JSON.parse(await readFile(packageJsonPath, "utf8"));
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Cannot add an kaf agent because "${packageJsonPath}" is not valid JSON. No files were changed. Fix the file, then retry kaf init. ${detail}`,
+    );
+  }
+
+  const files = agentTemplateFiles(options.model, options.reasoning);
+  const conflicts: string[] = [];
+  for (const relativePath of Object.keys(files)) {
+    if (await pathExists(join(options.projectRoot, relativePath))) {
+      conflicts.push(relativePath);
+    }
+  }
+  if (conflicts.length === 0 && (await pathExists(join(options.projectRoot, "agent")))) {
+    conflicts.push("agent/");
+  }
+  if (conflicts.length > 0) {
+    throw new Error(
+      `Cannot add an kaf agent to "${options.projectRoot}" because it already has: ` +
+        `${conflicts.join(", ")}.`,
+    );
+  }
+
+  const kafPackage = resolveKafPackageContract(options.kafPackage);
+  const aiVersion = resolveVersionToken(
+    "aiPackageVersion",
+    options.aiPackageVersion ?? DEFAULT_AI_PACKAGE_VERSION,
+  );
+  // Channels and connections scaffolded later (`kaf add channel/slack`,
+  // possibly while `kaf dev` is running) import `@vercel/connect`; shipping
+  // it from init means adding them never introduces a missing dependency.
+  const connectVersion = resolveVersionToken(
+    "connectPackageVersion",
+    options.connectPackageVersion ?? DEFAULT_CONNECT_PACKAGE_VERSION,
+  );
+  const zodVersion = resolveVersionToken(
+    "zodPackageVersion",
+    options.zodPackageVersion ?? DEFAULT_ZOD_PACKAGE_VERSION,
+  );
+
+  const filesWritten: string[] = [];
+  for (const [relativePath, content] of Object.entries(files)) {
+    const filePath = join(options.projectRoot, relativePath);
+    await writeTextFile(filePath, content);
+    filesWritten.push(filePath);
+  }
+
+  const wanted: Record<string, string> = {
+    "@vercel/connect": connectVersion,
+    ai: aiVersion,
+    kaf: formatKafDependencySpecifier(kafPackage.version),
+    zod: zodVersion,
+  };
+  const additions: Record<string, string> = {};
+  for (const [name, version] of Object.entries(wanted)) {
+    if (!hasDeclaredDependency(packageJson, name)) {
+      additions[name] = version;
+    }
+  }
+  const patch: PackageJsonPatch = {};
+  if (Object.keys(additions).length > 0) {
+    patch.dependencies = additions;
+  }
+  const workspaceMember = isPackageManagerWorkspaceMember(packageManager, options.projectRoot);
+  if (!workspaceMember) {
+    patch.nodeEngineRequirement = kafPackage.nodeEngine;
+  }
+  const patchResult = await patchPackageJson(packageJsonPath, patch);
+
+  const workspacePatchResult = await patchWorkspaceRootPackageJson(
+    packageManager,
+    options.projectRoot,
+    {
+      nodeEngineRequirement: kafPackage.nodeEngine,
+    },
+  );
+  const nodeEngineOverride =
+    workspacePatchResult.nodeEngineOverride ?? patchResult.nodeEngineOverride;
+
+  const workspaceConfiguration = await applyPackageManagerWorkspaceConfiguration({
+    packageManager,
+    projectRoot: options.projectRoot,
+  });
+
+  return {
+    filesWritten,
+    dependenciesAdded: Object.keys(additions).sort(),
+    nodeEngineOverride,
+    configurationFilesChanged: [
+      ...(patchResult.changed ? [packageJsonPath] : []),
+      ...(workspacePatchResult.changed && workspacePatchResult.path !== undefined
+        ? [workspacePatchResult.path]
+        : []),
+      ...workspaceConfiguration.filesWritten,
+    ],
+  };
+}

@@ -1,0 +1,124 @@
+---
+title: "SvelteKit"
+description: "Run an kaf agent and a SvelteKit app as one project with the kafSvelteKit Vite plugin."
+---
+
+`kaf/sveltekit` runs a SvelteKit frontend and an kaf agent as one project instead of two services. The `kafSvelteKit()` Vite plugin puts both on one dev server and one Vercel deploy, and [`useKafAgent`](./use-kaf-agent-svelte) finds the mounted routes on its own. There's no CORS to configure and no URL env vars to keep in sync.
+
+## Prerequisites
+
+- The `kaf` package installed in your project (`npm install kaf@latest`).
+- An existing kaf agent directory. If you don't have one, start from [Getting started](../../getting-started).
+- A SvelteKit app to mount the agent in.
+
+## Register the Vite plugin
+
+Add `kafSvelteKit()` before `sveltekit()`:
+
+```ts title="vite.config.ts"
+import { sveltekit } from "@sveltejs/kit/vite";
+import { kafSvelteKit } from "kaf/sveltekit";
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  plugins: [kafSvelteKit(), sveltekit()],
+});
+```
+
+The plugin looks for an `agent/` folder in the SvelteKit project root. Pass `kafRoot` when the agent lives elsewhere:
+
+```ts
+export default defineConfig({
+  plugins: [
+    kafSvelteKit({
+      kafRoot: "../my-agent",
+    }),
+    sveltekit(),
+  ],
+});
+```
+
+The plugin accepts only two options, `kafRoot` and `kafBuildCommand`.
+
+## Call the binding
+
+With the plugin in `vite.config.ts`, components call [`useKafAgent`](./use-kaf-agent-svelte) from `kaf/svelte` and don't pass a host:
+
+```svelte
+<script lang="ts">
+  import { useKafAgent } from "kaf/svelte";
+
+  const agent = useKafAgent();
+  let message = $state("");
+  let isBusy = $derived(agent.status === "submitted" || agent.status === "streaming");
+  let isInputDisabled = $derived(isBusy || agent.status === "resuming");
+
+  async function handleSubmit() {
+    const text = message.trim();
+    if (!text || isInputDisabled) return;
+    message = "";
+    await agent.send(text);
+  }
+</script>
+
+<form onsubmit={(event) => {
+  event.preventDefault();
+  void handleSubmit();
+}}>
+  <input bind:value={message} disabled={isInputDisabled} />
+  <button type="submit" disabled={isInputDisabled}>Send</button>
+</form>
+```
+
+The browser still needs a production authentication policy. See [Authenticate browser requests](./overview#authenticate-browser-requests) for the default fail-closed behavior and channel configuration.
+
+## Dev vs deploy topology
+
+- **Local dev.** `npm run dev` boots the kaf dev server next to SvelteKit and proxies the kaf routes to it, so the browser only ever hits the SvelteKit origin. `npm run build && npm run preview` behaves the same way: the preview server gets its own kaf route proxy and either reuses the shared kaf server or starts one.
+- **Vercel.** The SvelteKit app and the kaf runtime deploy as a single project. On Vercel builds the plugin adds Build Output [`services`](https://vercel.com/docs/services) for kaf and a `routes` entry that sends `/kaf/v1/**` to that service before filesystem routing; the SvelteKit app remains the default app. No `vercel.json` is required. By default the generated service runs the installed kaf binary from the SvelteKit app's dependencies, so the agent directory does not need its own `package.json`. When the agent needs its own build step, set `kafBuildCommand`:
+
+  ```ts
+  export default defineConfig({
+    plugins: [
+      kafSvelteKit({
+        kafBuildCommand: "npm run build:kaf",
+      }),
+      sveltekit(),
+    ],
+  });
+  ```
+
+- **Non-Vercel hosts.** When the kaf service runs on a separate origin, pass `host` directly to `useKafAgent`:
+
+  ```ts
+  const agent = useKafAgent({
+    host: "https://agent.example.com",
+  });
+  ```
+
+## Managing vercel.json yourself
+
+When `vercel.json` declares [`services`](https://vercel.com/docs/services), the plugin generates nothing and your configuration owns routing. It must include the kaf service (`framework: "kaf"`) and a rewrite that exposes the kaf transport, or the build fails:
+
+```json title="vercel.json"
+{
+  "services": {
+    "web": { "root": ".", "framework": "sveltekit" },
+    "kaf": { "root": "agent", "framework": "kaf", "buildCommand": "kaf build" }
+  },
+  "rewrites": [{ "source": "/kaf/v1/(.*)", "destination": { "service": "kaf" } }]
+}
+```
+
+### Migrating from experimentalServices
+
+Earlier versions of the plugin wrote the legacy `experimentalServices` field into `vercel.json`. Vercel no longer routes that model, so the plugin now ignores the field and warns when it sees one. Migrate either way:
+
+- **Generated (default).** Delete `vercel.json` (or just its `experimentalServices` block) and set the project's Framework Preset back to SvelteKit. The plugin generates the kaf service and its routing on every Vercel build.
+- **Hand-maintained.** Replace `experimentalServices` with the stable `services` and `rewrites` shown above, and keep the Services Framework Preset.
+
+## What to read next
+
+- [`useKafAgent` (Svelte)](./use-kaf-agent-svelte): the binding API
+- [Auth & route protection](../auth-and-route-protection)
+- [Deployment](../deployment/overview)

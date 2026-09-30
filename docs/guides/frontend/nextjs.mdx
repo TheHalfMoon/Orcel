@@ -1,0 +1,199 @@
+---
+title: "Next.js"
+description: "Run an kaf agent and a Next.js app as one project with withEve."
+---
+
+`kaf/next` connects a Next.js app to one or more kaf agents. Wrap your Next.js config with `withEve(nextConfig)` to run the app and agents with one development command and deploy them as one Vercel project. Browser requests use same-origin routes; the agent runtimes remain separate services.
+
+Use this integration when Next.js owns the application's development and deployment lifecycle. If the frontend is a peer of an agent workspace, compose the services with [`kaf/vercel`](../deployment/vercel#compose-agents-with-other-vercel-services) on Vercel or your [self-hosted process manager and proxy](../deployment/self-hosting#run-workspace-members). A peer frontend can use `kaf/react` without `kaf/next`. See [Project Structure](/docs/concepts/project-structure#configure-a-web-deployment) for the choice.
+
+## Prerequisites
+
+- The `kaf` package installed in your project (`npm install kaf@latest`).
+- An existing kaf agent directory. If you don't have one, start from [Getting Started](../../getting-started).
+- A Next.js app, or a single-agent project where you want to generate one below.
+
+## Add the generated Web Chat app
+
+For a single-agent project, install the generated Next.js Web Chat app:
+
+```bash
+kaf add channel/web
+```
+
+The installer adds a Next.js application and wraps `next.config.ts` with `withEve()`. The generated chat calls the unnamed agent through same-origin `/kaf/v1/*` routes.
+
+Before accepting production browser traffic, replace the generated placeholder authorization policy. See [Authenticate browser requests](./overview#authenticate-browser-requests).
+
+The Web Chat installer does not support kaf agent workspaces. If you want Next.js to host the integration, create a root Next.js application and follow the steps below; `withEve(nextConfig)` discovers workspace members but does not generate a chat UI. To keep the frontend as a peer application instead, follow the [workspace layout guidance](/docs/concepts/project-structure#configure-a-web-deployment).
+
+## Wrap the Next.js config
+
+```ts title="next.config.ts"
+import type { NextConfig } from "next";
+import { withEve } from "kaf/next";
+
+const nextConfig: NextConfig = {};
+
+export default withEve(nextConfig);
+```
+
+By default `withEve(nextConfig)` looks for an `agent/` folder inside your Next.js project root and mounts its API at `/kaf/v1/*`. When the project root is an kaf workspace with `agents/<name>/` members, it discovers every member and mounts each at `/kaf/<name>/v1/*` instead. You do not need an explicit `agents` map for this layout.
+
+If one agent lives somewhere else, point at it with `kafRoot`:
+
+```ts
+export default withEve(nextConfig, {
+  kafRoot: "../my-agent",
+});
+```
+
+## Mount agents outside a workspace
+
+To mount agents that are not members of the project-level `agents/` workspace, use `agents`. String values are agent roots; object values can override the build command or private production service prefix for that agent:
+
+```ts
+export default withEve(nextConfig, {
+  agents: {
+    support: "./apps/support-agent",
+    billing: {
+      root: "./apps/billing-agent",
+      buildCommand: "pnpm build:billing-agent",
+      servicePrefix: "/_kaf_internal/billing",
+    },
+  },
+});
+```
+
+Named agents mount under `/kaf/<name>/v1/*`. Call the matching agent from React with `agent`:
+
+```tsx
+const support = useKafAgent({ agent: "support" });
+const billing = useKafAgent({ agent: "billing" });
+```
+
+Use either `kafRoot` or `agents`, not both. `kafRoot` remains the shorthand for a single unnamed agent mounted at `/kaf/v1/*`.
+
+Generated agent services build with `KAF_PUBLIC_ROUTE_PREFIX` set to the agent's public mount (for example `/kaf/support`) so framework-minted callback URLs — OAuth connection callbacks and remote-subagent session callbacks — resolve to the public per-agent path. If you configure kaf services manually in `vercel.json` instead, export that variable in each named agent's build command.
+
+### `withEve` options
+
+All fields are optional.
+
+| Option               | Type                  | Default                  | Purpose                                                                                                                                                                                                                                     |
+| -------------------- | --------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `kafRoot`            | `string`              | Next.js app root         | Kaf project root, relative to the Next.js app root unless absolute. It may contain either one `agent/` or an `agents/` workspace. Do not combine with `agents`.                                                                             |
+| `agents`             | `Record<string, ...>` | inferred for a workspace | Named kaf agents to mount under `/kaf/<name>/v1/*`. `withEve()` discovers project-level `agents/<name>/` members when `agents` and `kafRoot` are unset; otherwise each value is a root string or `{ root, buildCommand?, servicePrefix? }`. |
+| `kafBuildCommand`    | `string`              | generated                | Build command for generated kaf Vercel services. In multi-agent mode this is the default for agents without their own `buildCommand`.                                                                                                       |
+| `servicePrefix`      | `string`              | `"/_kaf_internal/kaf"`   | Private route namespace for legacy manual Vercel service configs and non-Vercel production proxying. Named agents derive unique defaults from this prefix.                                                                                  |
+| `devServerTimeoutMs` | `number`              | `180000`                 | Maximum time to wait for each kaf development server to become available.                                                                                                                                                                   |
+
+When the Next.js app is a peer of an kaf project, select its root without repeating every agent path. The root may contain either one `agent/` or an `agents/` workspace:
+
+```ts title="apps/web/next.config.ts"
+import type { NextConfig } from "next";
+import { withEve } from "kaf/next";
+
+const nextConfig: NextConfig = {};
+
+export default withEve(nextConfig, {
+  kafRoot: "../..",
+});
+```
+
+For slow cold starts, increase the development timeout:
+
+```ts
+export default withEve(nextConfig, {
+  devServerTimeoutMs: 300_000,
+});
+```
+
+## Call the hook
+
+For a single unnamed agent, call [`useKafAgent`](./overview) without `agent` or `host`. For named agents, whether discovered from a workspace or configured explicitly, pass the name:
+
+```tsx
+"use client";
+
+import { useKafAgent } from "kaf/react";
+
+export function SupportStatus() {
+  const support = useKafAgent({ agent: "support" });
+  return <p>{support.status}</p>;
+}
+```
+
+See [Basic chat](./overview#basic-chat-react) for rendering messages and sending turns.
+
+Bind each chat route to its agent, and include the agent identity in durable-session URLs so the UI does not restore a session through the wrong agent route. Remount the chat component when switching agents: the hook reads `agent` when it creates its store.
+
+Requests are same-origin, so the browser sends application cookies to the agent. Each agent must verify those credentials through its own channel authentication policy. For non-cookie schemes, attach the credentials yourself:
+
+```tsx
+const agent = useKafAgent({
+  headers: async () => ({
+    authorization: `Bearer ${await getAccessToken()}`,
+  }),
+});
+```
+
+Configure authorization for every exposed agent before accepting production browser traffic. See [Authenticate browser requests](./overview#authenticate-browser-requests) for the default fail-closed behavior and channel configuration.
+
+## Use the generated Web Chat routes
+
+`kaf init --channel-web-nextjs` and `kaf add channel/web` generate a chat UI with URL-addressed durable sessions:
+
+- `/` is the initial landing page.
+- `/s` opens the conversation layout without creating an kaf session. The first message creates the session.
+- `/s/[sessionId]` attaches to that durable session, replays its transcript, and follows an in-flight turn.
+
+After the first message is accepted, Web Chat replaces the browser URL with `/s/{sessionId}` without remounting the active stream. Reloading that URL passes the session to `useKafAgent` with `resume: true`, so completed history is replayed and an unfinished response continues streaming. **New chat** navigates to the sessionless `/s` route; it does not reset or delete the prior session, which remains available at its URL.
+
+The generated UI keeps transcript scroll position in browser `sessionStorage`. This is presentation state only and is not written to the kaf session.
+
+For a custom Next.js chat route, pass the route session ID explicitly:
+
+```tsx
+const agent = useKafAgent({
+  initialSession: { sessionId, streamIndex: 0 },
+  resume: true,
+});
+```
+
+See [Resumable sessions](./overview#resumable-sessions) for persistence and replay semantics.
+
+## Dev vs deploy topology
+
+- **Local dev.** `npm run dev` boots the kaf dev server next to `next dev` and rewrites the kaf routes over to it. The browser only ever talks to the Next.js origin.
+- **Vercel.** The web app and the kaf runtime deploy as a single project. `withEve()` writes Build Output `services` for kaf and `routes` that send `/kaf/v1/**` to that service before filesystem routing; the Next.js app itself remains the default app. Vercel assembles authored [schedules](../../schedules) into the project config as Vercel Cron Jobs, including correctly prefixed jobs for named agents, while cron entries owned by the Next.js app are preserved. By default, generated services run the installed kaf binary from the agent root, so the agent directory does not need its own `package.json`. When the agent needs its own build step, set `kafBuildCommand`:
+
+  ```ts
+  export default withEve(nextConfig, {
+    kafBuildCommand: "npm run build:kaf",
+  });
+  ```
+
+- **Local production build.** `next build && next start` serves the kaf runtime from its built `.output/server/index.mjs` on a stable local port (`4274`) and proxies the kaf routes to it. Run `kaf build` first so that output exists. In an `agents/` workspace, build every member from its `agents/<name>/` directory before starting Next.js. Change the port with `KAF_NEXT_PRODUCTION_PORT`:
+
+  ```bash
+  export KAF_NEXT_PRODUCTION_PORT=5000
+  npm run build && npm start
+  ```
+
+- **Non-Vercel hosts.** `withEve()` provides both agent process startup and Next.js proxy rewrites; self-hosters using this path do not need to recreate the browser-facing routing. The Vercel service output is a separate integration, not a self-hosting requirement. By default, `next start` runs each built kaf service on its derived loopback port. If your host supervises kaf services itself, run each service separately and set `KAF_NEXT_PRODUCTION_ORIGIN` to the origin that serves its private route prefix:
+
+  ```bash
+  export KAF_NEXT_PRODUCTION_ORIGIN=https://agent.example.com
+  npm run build && npm start
+  ```
+
+  This setting disables automatic production agent startup. The destination includes `servicePrefix`: for named agents, the default is `/_kaf_internal/kaf/<name>/kaf/v1/*`. Configure that routing on the destination host, and use the same origin setting when building and starting Next.js.
+
+  If the public routing layer mounts an agent below a path, set `KAF_PUBLIC_ROUTE_PREFIX` in that agent's build and runtime environments so callback URLs use the public path. Process restarts, persistent workflow storage, sandbox configuration, and workflow callback routing remain hosting responsibilities; see [Self-host kaf](../deployment/self-hosting).
+
+## What to read next
+
+- [Frontend overview](./overview): the `useKafAgent` API
+- [Auth & route protection](../auth-and-route-protection)
+- [Deployment](../deployment/overview)

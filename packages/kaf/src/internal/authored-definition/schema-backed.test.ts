@@ -1,0 +1,343 @@
+import { describe, expect, it } from "vitest";
+import { z as z3 } from "zod/v3";
+import { z } from "#compiled/zod/index.js";
+
+import { defineDynamic } from "#dynamic/definition.js";
+import { defineTool, disableTool } from "#tools/definition.js";
+import { once } from "#tools/approval/policies.js";
+import { webSearch } from "#tools/provided/web-search.js";
+import { normalizeToolDefinition } from "#internal/authored-definition/schema-backed.js";
+
+const FAILURE_MESSAGE = "Expected the tool export to match the public kaf shape.";
+
+describe("normalizeToolDefinition", () => {
+  it("returns a tool entry for a real defineTool default export", () => {
+    const tool = defineTool({
+      description: "Echoes the input back to the caller.",
+      inputSchema: z.object({}),
+      execute(input) {
+        return input;
+      },
+    });
+
+    const entry = normalizeToolDefinition(tool, FAILURE_MESSAGE);
+
+    expect(entry.kind).toBe("tool");
+    if (entry.kind !== "tool") {
+      throw new Error("expected tool kind");
+    }
+    expect(entry.definition.description).toBe("Echoes the input back to the caller.");
+    expect(typeof entry.definition.execute).toBe("function");
+  });
+
+  it("preserves subagent visibility", () => {
+    const tool = defineTool({
+      availableInSubagents: false,
+      description: "Runs only in a root session.",
+      inputSchema: z.object({}),
+      execute: () => null,
+    });
+
+    const entry = normalizeToolDefinition(tool, FAILURE_MESSAGE);
+
+    expect(entry.kind).toBe("tool");
+    if (entry.kind !== "tool") throw new Error("expected tool kind");
+    expect(entry.definition.availableInSubagents).toBe(false);
+  });
+
+  it("normalizes a tool with a Zod 3 input schema", () => {
+    const tool = defineTool({
+      description: "Gets weather for a city.",
+      inputSchema: z3.object({ city: z3.string() }),
+      execute(input) {
+        return input.city;
+      },
+    });
+
+    const entry = normalizeToolDefinition(tool, FAILURE_MESSAGE);
+
+    expect(entry.kind).toBe("tool");
+    if (entry.kind !== "tool") throw new Error("expected tool kind");
+    expect(entry.definition.inputSchema).toEqual({
+      additionalProperties: false,
+      properties: { city: { type: "string" } },
+      required: ["city"],
+      type: "object",
+    });
+  });
+
+  it("returns a disabled entry for a disableTool sentinel", () => {
+    const sentinel = disableTool();
+
+    const entry = normalizeToolDefinition(sentinel, FAILURE_MESSAGE);
+
+    expect(entry).toEqual({ kind: "disabled" });
+  });
+
+  it("returns a configured entry for the provider-managed web search tool", () => {
+    expect(normalizeToolDefinition(webSearch({ provider: "exa" }), FAILURE_MESSAGE)).toEqual({
+      kind: "web-search-tool",
+      provider: "exa",
+    });
+  });
+
+  it("rejects an unsupported web search provider", () => {
+    expect(() =>
+      normalizeToolDefinition({ kind: "kaf:web-search-tool", provider: "other" }, FAILURE_MESSAGE),
+    ).toThrow('Expected "provider" to be one of: exa, parallel');
+  });
+
+  it("rejects authored tool exports that carry an authored `name` field", () => {
+    expect(() =>
+      normalizeToolDefinition(
+        {
+          description: "Echo.",
+          execute(input: unknown) {
+            return input;
+          },
+          name: "echo",
+        },
+        FAILURE_MESSAGE,
+      ),
+    ).toThrow('Unknown key "name"');
+  });
+
+  it("throws on a value that is neither a tool definition nor a disable sentinel", () => {
+    expect(() => normalizeToolDefinition({ description: 42 }, FAILURE_MESSAGE)).toThrow(
+      FAILURE_MESSAGE,
+    );
+    expect(() => normalizeToolDefinition("not an object", FAILURE_MESSAGE)).toThrow(
+      FAILURE_MESSAGE,
+    );
+    expect(() => normalizeToolDefinition(null, FAILURE_MESSAGE)).toThrow(FAILURE_MESSAGE);
+  });
+
+  it("accepts and types authored tool labels", () => {
+    const tool = defineTool({
+      label: {
+        start(input) {
+          const city: string = input.city;
+          // @ts-expect-error label start callback input is schema-typed.
+          const missing = input.missing;
+          void missing;
+          return `Fetch ${city}`;
+        },
+      },
+      description: "Fetch weather.",
+      inputSchema: z.object({ city: z.string() }),
+      execute: ({ city }) => city,
+    });
+
+    expect(normalizeToolDefinition(tool, FAILURE_MESSAGE).kind).toBe("tool");
+  });
+
+  it("rejects malformed label definitions", () => {
+    expect(() =>
+      normalizeToolDefinition(
+        {
+          label: { start: "Fetch weather" },
+          description: "Fetch weather.",
+          execute: () => null,
+          inputSchema: { type: "object" },
+        },
+        FAILURE_MESSAGE,
+      ),
+    ).toThrow(FAILURE_MESSAGE);
+    expect(() =>
+      normalizeToolDefinition(
+        {
+          label: { label: () => "Fetch weather", result: "Done" },
+          description: "Fetch weather.",
+          execute: () => null,
+          inputSchema: { type: "object" },
+        },
+        FAILURE_MESSAGE,
+      ),
+    ).toThrow(FAILURE_MESSAGE);
+  });
+
+  it("accepts authored tools that declare a `toModelOutput` function", () => {
+    const tool = defineTool({
+      description: "Echo.",
+      inputSchema: z.object({}),
+      execute(input) {
+        return input;
+      },
+      toModelOutput() {
+        return { type: "text" as const, value: "ok" };
+      },
+    });
+
+    expect(normalizeToolDefinition(tool, FAILURE_MESSAGE).kind).toBe("tool");
+  });
+
+  it("normalizes authored tool output schemas", () => {
+    const tool = defineTool({
+      description: "Summarize.",
+      inputSchema: z.object({}),
+      outputSchema: z.object({ summary: z.string() }),
+      execute() {
+        return { summary: "ok" };
+      },
+    });
+
+    const entry = normalizeToolDefinition(tool, FAILURE_MESSAGE);
+
+    expect(entry.kind).toBe("tool");
+    if (entry.kind !== "tool") {
+      throw new Error("expected tool kind");
+    }
+    expect(entry.definition.outputSchema).toMatchObject({
+      properties: { summary: { type: "string" } },
+      required: ["summary"],
+      type: "object",
+    });
+  });
+
+  it("types approval context input from the tool input schema", () => {
+    const tool = defineTool({
+      description: "Requires city-scoped approval.",
+      inputSchema: z.object({ city: z.string() }),
+      execute(input) {
+        return input.city;
+      },
+      approval(ctx) {
+        const city: string | undefined = ctx.toolInput?.city;
+        const callerId: string | undefined = ctx.session.auth.current?.principalId;
+        const turnId: string = ctx.session.turn.id;
+        // @ts-expect-error approval input is schema-typed, not an open record.
+        const missing = ctx.toolInput?.missing;
+        void callerId;
+        void turnId;
+        void missing;
+        return city !== undefined ? "user-approval" : "not-applicable";
+      },
+    });
+
+    expect(normalizeToolDefinition(tool, FAILURE_MESSAGE).kind).toBe("tool");
+  });
+
+  it("accepts explicit request and response approval policies", () => {
+    const tool = defineTool({
+      approval: {
+        request: () => "user-approval",
+        response: () => ({ status: "allowed" }),
+      },
+      description: "Uses response authorization.",
+      execute: () => null,
+      inputSchema: z.object({ city: z.string() }),
+    });
+
+    expect(normalizeToolDefinition(tool, FAILURE_MESSAGE).kind).toBe("tool");
+  });
+
+  it("accepts generic approval helpers on schema-typed tools", () => {
+    const tool = defineTool({
+      description: "Uses a reusable approval helper.",
+      inputSchema: z.object({ city: z.string() }),
+      execute(input) {
+        return input.city;
+      },
+      approval: once(),
+    });
+
+    expect(normalizeToolDefinition(tool, FAILURE_MESSAGE).kind).toBe("tool");
+  });
+
+  it("rejects the removed needsApproval field", () => {
+    expect(() =>
+      normalizeToolDefinition(
+        {
+          description: "Uses the removed approval key.",
+          execute() {
+            return null;
+          },
+          inputSchema: { type: "object" },
+          needsApproval: () => true,
+        },
+        FAILURE_MESSAGE,
+      ),
+    ).toThrow('Unknown key "needsApproval"');
+  });
+
+  it("rejects authored tools whose `toModelOutput` is not a function", () => {
+    expect(() =>
+      normalizeToolDefinition(
+        {
+          description: "Echo.",
+          execute(input: unknown) {
+            return input;
+          },
+          toModelOutput: "not a function",
+        },
+        FAILURE_MESSAGE,
+      ),
+    ).toThrow(FAILURE_MESSAGE);
+  });
+
+  it("returns a dynamic-tool entry for a defineDynamic({ events }) export with a map", () => {
+    const dynamicTools = defineDynamic({
+      events: {
+        "session.started": async () => ({
+          echo: defineTool({
+            description: "Echo tool",
+            inputSchema: { type: "object" as const },
+            execute: (input: Record<string, unknown>) => input,
+          }),
+        }),
+      },
+    });
+
+    const entry = normalizeToolDefinition(dynamicTools, FAILURE_MESSAGE);
+    expect(entry.kind).toBe("dynamic-tool");
+    if (entry.kind !== "dynamic-tool") throw new Error("expected dynamic-tool");
+    expect(entry.eventNames).toEqual(["session.started"]);
+  });
+
+  it("returns a dynamic-tool entry for a defineDynamic({ events }) export with a single entry", () => {
+    const dynamicTool = defineDynamic({
+      events: {
+        "session.started": async () =>
+          defineTool({
+            description: "Dynamic echo",
+            inputSchema: { type: "object" as const },
+            execute: (input: Record<string, unknown>) => input,
+          }),
+      },
+    });
+
+    const entry = normalizeToolDefinition(dynamicTool, FAILURE_MESSAGE);
+    expect(entry.kind).toBe("dynamic-tool");
+    if (entry.kind !== "dynamic-tool") throw new Error("expected dynamic-tool");
+    expect(entry.eventNames).toEqual(["session.started"]);
+  });
+
+  it("rejects a defineDynamic tool export carrying a fallback", () => {
+    const dynamicTools = {
+      ...defineDynamic({
+        events: {
+          "session.started": async () => ({}),
+        },
+      }),
+      fallback: "not-supported-here",
+    } as never;
+
+    expect(() => normalizeToolDefinition(dynamicTools, FAILURE_MESSAGE)).toThrow(
+      "Unknown key(s): fallback",
+    );
+  });
+
+  it("handles defineDynamic with multiple events", () => {
+    const dynamicTools = defineDynamic({
+      events: {
+        "session.started": async () => ({}),
+        "step.started": async () => ({}),
+      },
+    });
+
+    const entry = normalizeToolDefinition(dynamicTools, FAILURE_MESSAGE);
+    expect(entry.kind).toBe("dynamic-tool");
+    if (entry.kind !== "dynamic-tool") throw new Error("expected dynamic-tool");
+    expect(entry.eventNames).toEqual(expect.arrayContaining(["session.started", "step.started"]));
+  });
+});

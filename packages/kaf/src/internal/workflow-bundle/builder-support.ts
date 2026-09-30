@@ -1,0 +1,545 @@
+import { WORKFLOW_REGISTRY_GLOBAL } from "#execution/workflow-registry.js";
+import { builtinModules } from "node:module";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, readdir } from "node:fs/promises";
+import { dirname, extname, join, relative, resolve } from "node:path";
+
+import { atomicWriteFile } from "#shared/atomic-write-file.js";
+
+import { normalizeEsmImportSpecifier } from "#internal/application/import-specifier.js";
+import { resolvePackageRoot, resolveWorkflowModulePath } from "#internal/application/package.js";
+import {
+  applyWorkflowTransform,
+  getImportPath,
+  type WorkflowManifest,
+} from "#internal/workflow-bundle/workflow-builders.js";
+
+export const WORKFLOW_VIRTUAL_ENTRY_ID = "\0eve-workflow-entry";
+
+export interface AuthoredWorkflowModules {
+  readonly directiveModules: readonly string[];
+  readonly workflowModules: readonly string[];
+}
+
+export interface WorkflowBundleBuilderOptions {
+  readonly authoredWorkflowModules?: AuthoredWorkflowModules;
+  agentName: string;
+  appRoot: string;
+  compiledArtifactsBootstrapPath: string;
+  outDir: string;
+  rootDir: string;
+  watch: boolean;
+  /** Test-harness-only: also scans `src/internal/testing/`. */
+  includeTestFixtures?: boolean;
+}
+const PSEUDO_PACKAGES = new Set([
+  "server-only",
+  "client-only",
+  "next/dist/compiled/server-only",
+  "next/dist/compiled/client-only",
+]);
+const NODE_BUILTIN_MODULES = new Set([
+  ...builtinModules,
+  ...builtinModules.map((moduleName) => `node:${moduleName}`),
+]);
+export const WORKFLOW_SOURCE_EXTENSIONS: readonly string[] = [
+  ".ts",
+  ".tsx",
+  ".mts",
+  ".cts",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".cjs",
+];
+
+export function isWorkflowSourceFile(fileName: string): boolean {
+  return WORKFLOW_SOURCE_EXTENSIONS.includes(extname(fileName));
+}
+const IGNORED_INPUT_DIRECTORIES = new Set([
+  "node_modules",
+  ".git",
+  ".next",
+  ".nuxt",
+  ".output",
+  ".vercel",
+  ".workflow-vitest",
+  ".well-known",
+  ".svelte-kit",
+  ".turbo",
+  ".cache",
+  ".yarn",
+  ".pnpm-store",
+]);
+
+export interface WorkflowBundleBuilderConfig {
+  readonly buildTarget: "standalone";
+  readonly dirs: readonly string[];
+  readonly externalPackages: readonly string[];
+  readonly projectRoot: string;
+  readonly watch: boolean;
+  readonly workingDir: string;
+}
+
+export interface WorkflowBundleDiscoveredEntries {
+  readonly discoveredSerdeFiles: string[];
+  readonly discoveredSteps: string[];
+  readonly discoveredWorkflows: string[];
+}
+
+export interface WorkflowBundleCreateWorkflowsBundleOptions {
+  readonly additionalOutputs?: readonly WorkflowBundleOutput[];
+  readonly appWorkflowFiles: readonly string[];
+  readonly frameworkSerdeFiles: readonly string[];
+  readonly frameworkWorkflowFiles: readonly string[];
+  readonly outfile: string;
+  readonly stepRegistrationsPath: string;
+  readonly tsconfigPath?: string;
+}
+
+export interface WorkflowBundleCreateWorkflowsBundleResult {
+  readonly manifest: WorkflowManifest;
+}
+
+export interface WorkflowBundleOutput {
+  readonly outfile: string;
+  readonly stepRegistrationsPath: string;
+}
+
+interface WorkflowGraph {
+  readonly edges: readonly unknown[];
+  readonly nodes: readonly unknown[];
+}
+
+interface WorkflowRolldownPlugin {
+  readonly name: string;
+  readonly resolveId?: (source: string, importer?: string) => unknown;
+  readonly load?: (id: string) => unknown;
+  readonly transform?: (code: string, id: string) => unknown;
+}
+
+export async function collectWorkflowInputFiles(root: string): Promise<string[]> {
+  const files: string[] = [];
+
+  async function visit(directory: string): Promise<void> {
+    let entries: Array<{
+      isDirectory(): boolean;
+      isFile(): boolean;
+      name: string;
+    }>;
+
+    try {
+      entries = await readdir(directory, { withFileTypes: true });
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        return;
+      }
+
+      throw error;
+    }
+
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (!IGNORED_INPUT_DIRECTORIES.has(entry.name)) {
+          await visit(join(directory, entry.name));
+        }
+        continue;
+      }
+
+      if (!entry.isFile()) {
+        continue;
+      }
+
+      if (isWorkflowSourceFile(entry.name)) {
+        files.push(join(directory, entry.name));
+      }
+    }
+  }
+
+  await visit(root);
+  return files;
+}
+
+export function createWorkflowImport(filePath: string, workingDir: string): string {
+  const { importPath, isPackage } = getImportPath(filePath, workingDir);
+
+  if (isPackage) {
+    return `import ${JSON.stringify(importPath)};`;
+  }
+
+  return `import ${JSON.stringify(toRelativeImportSpecifier(workingDir, filePath))};`;
+}
+
+export function createWorkflowVirtualEntryPlugin(source: string): WorkflowRolldownPlugin {
+  return {
+    name: "kaf-workflow-virtual-entry",
+    resolveId(id: string) {
+      if (id === WORKFLOW_VIRTUAL_ENTRY_ID) {
+        return { id };
+      }
+
+      return undefined;
+    },
+    load(id: string) {
+      if (id !== WORKFLOW_VIRTUAL_ENTRY_ID) {
+        return undefined;
+      }
+
+      return {
+        code: source,
+        moduleSideEffects: true,
+        moduleType: "js",
+      };
+    },
+  };
+}
+
+export function createWorkflowPseudoPackagePlugin(): WorkflowRolldownPlugin {
+  return {
+    name: "kaf-workflow-pseudo-packages",
+    resolveId(source: string) {
+      if (!PSEUDO_PACKAGES.has(source)) {
+        return undefined;
+      }
+
+      return { id: `\0eve-workflow-pseudo-package:${source}` };
+    },
+    load(id: string) {
+      if (!id.startsWith("\0eve-workflow-pseudo-package:")) {
+        return undefined;
+      }
+
+      return {
+        code: "",
+        moduleType: "js",
+      };
+    },
+  };
+}
+
+/**
+ * `workflow` resolves to the body-side shim. A `workflow/api` import still live
+ * after step bodies were stubbed means a body calls the runtime API; fail the
+ * build here rather than the driver later.
+ */
+export function createWorkflowDriverAliasPlugin(workingDir: string): WorkflowRolldownPlugin {
+  return {
+    name: "kaf-workflow-driver-aliases",
+    resolveId(source: string, importer?: string) {
+      if (source === "workflow/errors") {
+        return resolveWorkflowModulePath(source);
+      }
+
+      if (source === "workflow/api" || source === "workflow/runtime") {
+        const via = importer ? ` (imported by "${importer}")` : "";
+        throw new Error(
+          `Workflow bundle cannot import "${source}"${via}: the runtime API is not available ` +
+            `inside a workflow body. Call it from a "use step" function and await that step from the body.`,
+        );
+      }
+
+      if (source !== "workflow") {
+        return undefined;
+      }
+
+      return resolveFirstExistingPath([
+        join(workingDir, "src", "internal", "workflow-bundle", "workflow-core-shim.ts"),
+        join(workingDir, "dist", "src", "internal", "workflow-bundle", "workflow-core-shim.js"),
+      ]);
+    },
+  };
+}
+
+export function createKafPackageImportsPlugin(
+  workingDir: string,
+  options: { workflowCondition?: boolean } = {},
+): WorkflowRolldownPlugin {
+  // Production builds from kaf's package root. Fixtures that build from another
+  // directory still need kaf's own modules, e.g. the step wrapper the transform injects.
+  const roots = [...new Set([workingDir, resolvePackageRoot()])];
+  return {
+    name: "kaf-package-imports",
+    resolveId(source: string) {
+      const compiledSubpath = source.match(/^#compiled\/(.+)$/)?.[1];
+
+      if (compiledSubpath !== undefined) {
+        if (options.workflowCondition === true && compiledSubpath === "@workflow/core/index.js") {
+          return resolveFirstExistingPath(
+            roots.flatMap((root) => [
+              join(root, "src", "internal", "workflow-bundle", "workflow-core-shim.ts"),
+              join(root, "dist", "src", "internal", "workflow-bundle", "workflow-core-shim.js"),
+            ]),
+          );
+        }
+
+        return resolveFirstExistingPath(
+          roots.flatMap((root) => [
+            join(root, ".generated", "compiled", compiledSubpath),
+            join(root, "dist", "src", "compiled", compiledSubpath),
+          ]),
+        );
+      }
+
+      const sourceSubpath = source.match(/^#(.+)\.js$/)?.[1];
+
+      if (sourceSubpath === undefined) {
+        return undefined;
+      }
+
+      return resolveFirstExistingPath(
+        roots.flatMap((root) =>
+          WORKFLOW_SOURCE_EXTENSIONS.flatMap((extension) => [
+            join(root, "src", `${sourceSubpath}${extension}`),
+            join(root, "dist", "src", `${sourceSubpath}${extension}`),
+          ]),
+        ),
+      );
+    },
+  };
+}
+
+export function createWorkflowTransformPlugin(input: {
+  manifest: WorkflowManifest;
+  mode?: "step" | "workflow";
+  projectRoot: string;
+  sideEffectFiles?: readonly string[];
+  workingDir: string;
+}): WorkflowRolldownPlugin {
+  const sideEffectFiles = new Set(
+    input.sideEffectFiles?.map((filePath) => filePath.replaceAll("\\", "/")) ?? [],
+  );
+
+  return {
+    name: "kaf-workflow-transform",
+    async load(id: string) {
+      if (!isJavaScriptLikePath(id)) {
+        return undefined;
+      }
+
+      const code = await readFile(id, "utf8");
+      const relativeFilepath = createManifestRelativeFilepath(input.workingDir, id);
+      const transformed = await applyWorkflowTransform(
+        relativeFilepath,
+        code
+          .replace(/require\(\s*(['"])server-only\1\s*\)/g, "void 0")
+          .replace(/require\(\s*(['"])client-only\1\s*\)/g, "void 0"),
+        input.mode ?? "workflow",
+        id,
+        input.projectRoot,
+      );
+
+      mergeWorkflowManifest(input.manifest, transformed.workflowManifest);
+
+      return {
+        code: transformed.code,
+        map: null,
+        moduleSideEffects: sideEffectFiles.has(id.replaceAll("\\", "/")) || undefined,
+      };
+    },
+  };
+}
+
+export function createWorkflowNodeBuiltinGuardPlugin(): WorkflowRolldownPlugin {
+  return {
+    name: "kaf-workflow-node-builtins",
+    resolveId(source: string, importer?: string) {
+      const moduleName = source.startsWith("node:") ? source.slice("node:".length) : source;
+
+      if (!NODE_BUILTIN_MODULES.has(source) && !NODE_BUILTIN_MODULES.has(moduleName)) {
+        return undefined;
+      }
+
+      // Name the importer so the offending edge is obvious instead of
+      // failing later at run time with a bare "require is not defined".
+      const via = importer ? ` (imported by "${importer}")` : "";
+      throw new Error(
+        `Workflow bundle cannot import Node.js builtin "${source}"${via}. ` +
+          `Move Node.js APIs behind a "use step" function, or keep the importing ` +
+          `module out of the workflow driver body (only reachable through a "use step").`,
+      );
+    },
+  };
+}
+
+export async function bundleFinalWorkflowOutput(input: {
+  code: string;
+  outfile: string;
+  queueNamespace: string;
+  stepRegistrationsPath?: string;
+}): Promise<void> {
+  const workflowFunctionCode = createWorkflowEntrypointSource({
+    code: input.code,
+    queueNamespace: input.queueNamespace,
+    stepRegistrationsImport:
+      input.stepRegistrationsPath === undefined
+        ? undefined
+        : toRelativeImportSpecifier(dirname(input.outfile), input.stepRegistrationsPath),
+  });
+
+  await writeWorkflowBundleAtomically(input.outfile, workflowFunctionCode);
+}
+
+// The transform emits bare `.set(...)` calls, so the Map must exist before any chunk runs.
+const WORKFLOW_REGISTRY_BANNER = `globalThis.${WORKFLOW_REGISTRY_GLOBAL} = new Map();`;
+
+/**
+ * Chunks share state only through globals (the workflow registry, the serde
+ * class registry, `Symbol.for` keys), so each runs in its own IIFE and their
+ * top-level declarations never collide.
+ */
+export function composeWorkflowDriverCode(chunks: readonly string[]): string {
+  const bodies = chunks
+    .map((chunk) => chunk.trim())
+    .filter((chunk) => chunk.length > 0)
+    .map((chunk) => `(function () {\n${chunk}\n})();`);
+  return [WORKFLOW_REGISTRY_BANNER, ...bodies].join("\n");
+}
+
+export function createWorkflowEntrypointSource(input: {
+  readonly code: string;
+  readonly queueNamespace: string;
+  readonly stepRegistrationsImport?: string;
+}): string {
+  const workflowRuntimePath = normalizeEsmImportSpecifier(
+    resolveWorkflowModulePath("workflow/runtime"),
+  );
+  const encodedWorkflowCode = Buffer.from(
+    input.code.endsWith("\n") ? input.code : `${input.code}\n`,
+    "utf8",
+  ).toString("base64");
+  const chunks = encodedWorkflowCode.match(/.{1,16384}/gu) ?? [""];
+
+  const stepRegistrationsImport =
+    input.stepRegistrationsImport === undefined
+      ? ""
+      : `import { __steps_registered as __eveWorkflowStepsRegistered } from ${JSON.stringify(input.stepRegistrationsImport)};\nvoid __eveWorkflowStepsRegistered;`;
+
+  return `// Generated by kaf. Do not edit by hand.
+import { workflowEntrypoint } from ${JSON.stringify(workflowRuntimePath)};
+${stepRegistrationsImport}
+
+const workflowCode = Buffer.from(${JSON.stringify(chunks)}.join(""), "base64").toString("utf8");
+
+export const POST = workflowEntrypoint(workflowCode, { namespace: ${JSON.stringify(input.queueNamespace)} });
+`;
+}
+
+export function convertStepsManifest(steps: WorkflowManifest["steps"]): Record<string, unknown> {
+  const result: Record<string, Record<string, { stepId: string }>> = {};
+
+  for (const [filePath, entries] of Object.entries(steps ?? {})) {
+    result[filePath] = {};
+
+    for (const [name, data] of Object.entries(entries)) {
+      result[filePath][name] = { stepId: data.stepId };
+    }
+  }
+
+  return result;
+}
+
+export function convertWorkflowsManifest(
+  workflows: WorkflowManifest["workflows"],
+): Record<string, unknown> {
+  const result: Record<string, Record<string, { graph: WorkflowGraph; workflowId: string }>> = {};
+
+  for (const [filePath, entries] of Object.entries(workflows ?? {})) {
+    result[filePath] = {};
+
+    for (const [name, data] of Object.entries(entries)) {
+      result[filePath][name] = {
+        graph: { edges: [], nodes: [] },
+        workflowId: data.workflowId,
+      };
+    }
+  }
+
+  return result;
+}
+
+export function convertClassesManifest(
+  classes: WorkflowManifest["classes"],
+): Record<string, unknown> {
+  const result: Record<string, Record<string, { classId: string }>> = {};
+
+  for (const [filePath, entries] of Object.entries(classes ?? {})) {
+    result[filePath] = {};
+
+    for (const [name, data] of Object.entries(entries)) {
+      result[filePath][name] = { classId: data.classId };
+    }
+  }
+
+  return result;
+}
+
+function toRelativeImportSpecifier(fromDirectory: string, targetPath: string): string {
+  const relativePath = relative(fromDirectory, targetPath).replaceAll("\\", "/");
+
+  if (relativePath.startsWith("./") || relativePath.startsWith("../")) {
+    return relativePath;
+  }
+
+  return `./${relativePath}`;
+}
+
+function resolveFirstExistingPath(paths: readonly string[]): { id: string } | undefined {
+  for (const path of paths) {
+    if (existsSync(path)) {
+      return { id: resolve(path) };
+    }
+  }
+
+  return undefined;
+}
+
+async function writeWorkflowBundleAtomically(outfile: string, source: string): Promise<void> {
+  await mkdir(dirname(outfile), { recursive: true });
+  await atomicWriteFile(outfile, source);
+}
+
+export function mergeWorkflowManifest(target: WorkflowManifest, source: WorkflowManifest): void {
+  target.steps = mergeWorkflowManifestSection(target.steps, source.steps);
+  target.workflows = mergeWorkflowManifestSection(target.workflows, source.workflows);
+  target.classes = mergeWorkflowManifestSection(target.classes, source.classes);
+}
+
+function mergeWorkflowManifestSection<
+  TSection extends Record<string, Record<string, object>> | undefined,
+>(target: TSection, source: TSection): TSection {
+  if (source === undefined) {
+    return target;
+  }
+
+  const nextSection = {
+    ...target,
+  } as Record<string, Record<string, object>>;
+
+  for (const [relativeFileName, entries] of Object.entries(source)) {
+    nextSection[relativeFileName] = {
+      ...nextSection[relativeFileName],
+      ...entries,
+    };
+  }
+
+  return nextSection as TSection;
+}
+
+function createManifestRelativeFilepath(workingDir: string, absolutePath: string): string {
+  const normalizedFile = absolutePath.replaceAll("\\", "/");
+  const normalizedWorkingDir = workingDir.replaceAll("\\", "/");
+  let relativePath = relative(normalizedWorkingDir, normalizedFile).replaceAll("\\", "/");
+
+  if (relativePath.startsWith("../")) {
+    relativePath = relativePath
+      .split("/")
+      .filter((part) => part !== "..")
+      .join("/");
+  }
+
+  return relativePath;
+}
+
+function isJavaScriptLikePath(path: string): boolean {
+  return /\.(?:[cm]?[jt]sx?)$/.test(path);
+}

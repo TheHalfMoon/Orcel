@@ -1,0 +1,26 @@
+{
+  "name": "agent-subagents",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "kaf build",
+    "dev": "kaf dev",
+    "start": "kaf start",
+    "typecheck": "kaf build --skip-sandbox-prewarm && tsc",
+    "test:e2e": "kaf eval --strict"
+  },
+  "dependencies": {
+    "@kaf-e2e/config": "workspace:*",
+    "@workflow/world-postgres": "catalog:",
+    "kaf": "workspace:*",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  },
+  "e2e": {
+    "modelMatrix": "full"
+  }
+}

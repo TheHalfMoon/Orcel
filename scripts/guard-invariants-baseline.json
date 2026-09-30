@@ -1,0 +1,54 @@
+{
+  "_description": "Baselines for framework mechanical lints. Each rule guard refuses to let new violations slip in beyond what is recorded here. Lower a count by removing offenders, never raise it. Empty allowlists/maps mean the rule is fully enforced.",
+  "rule13_spreadTernaryByFile": {
+    "packages/kaf/src/public/channels/auth.ts": 7
+  },
+  "rule19_asyncLocalStorageAllowlist": [
+    "packages/kaf/src/context/container.ts",
+    "packages/kaf/src/public/channels/slack/slackChannel.ts",
+    "packages/kaf/src/runtime/sessions/runtime-session.ts"
+  ],
+  "rule21_authoredNameAllowlist": [],
+  "rule23_unknownCastByFile": {
+    "packages/kaf/src/channel/adapter-context.ts": 1,
+    "packages/kaf/src/compiler/manifest.ts": 1,
+    "packages/kaf/src/evals/runner/reporters/braintrust.ts": 1,
+    "packages/kaf/src/execution/node-step.test.ts": 4,
+    "packages/kaf/src/harness/prompt-cache.test.ts": 6,
+    "packages/kaf/src/harness/tool-loop-compaction-accounting.test.ts": 2,
+    "packages/kaf/src/harness/tool-loop.test.ts": 16,
+    "packages/kaf/src/internal/nitro/host/build-application.scenario.test.ts": 2,
+    "packages/kaf/src/internal/nitro/host/create-application-nitro.scenario.test.ts": 2,
+    "packages/kaf/src/internal/nitro/host/cron-handler-route.test.ts": 1,
+    "packages/kaf/src/internal/nitro/host/dev-authored-source-watcher.scenario.test.ts": 2,
+    "packages/kaf/src/internal/nitro/host/schedule-task-routes.test.ts": 1,
+    "packages/kaf/src/internal/nitro/routes/runtime-artifacts.test.ts": 1,
+    "packages/kaf/src/runtime/agent/bootstrap-model-utils.ts": 3,
+    "packages/kaf/src/runtime/agent/mock-model-adapter.test.ts": 1,
+    "packages/kaf/src/runtime/agent/mock-model-adapter.ts": 1,
+    "packages/kaf/src/runtime/resolve-sandbox.ts": 1
+  },
+  "rule25_installRuntimeArtifactsAllowlist": [
+    "packages/kaf/src/internal/application/compiled-artifacts.ts",
+    "packages/kaf/src/internal/testing/app-harness.ts",
+    "packages/kaf/src/runtime/loaders/bundled-artifacts.ts",
+    "packages/kaf/src/runtime/sessions/runtime-session.ts",
+    "packages/kaf/src/context/accessors.integration.test.ts",
+    "packages/kaf/src/execution/harness-tool-execution.integration.test.ts",
+    "packages/kaf/src/internal/nitro/routes/runtime-artifacts.test.ts",
+    "packages/kaf/test/scenarios/load-agent-info-data.scenario.test.ts",
+    "packages/kaf/test/scenarios/runtime-loaders.scenario.test.ts"
+  ],
+  "rule45_providedToolPrivateImportAllowlist": [
+    "packages/kaf/src/tools/provided/agent-router.ts",
+    "packages/kaf/src/tools/provided/bash.ts",
+    "packages/kaf/src/tools/provided/glob.ts",
+    "packages/kaf/src/tools/provided/grep.ts",
+    "packages/kaf/src/tools/provided/load-skill.ts",
+    "packages/kaf/src/tools/provided/read-file.ts",
+    "packages/kaf/src/tools/provided/web-fetch.ts",
+    "packages/kaf/src/tools/provided/web-search.ts",
+    "packages/kaf/src/tools/provided/workflow.ts",
+    "packages/kaf/src/tools/provided/write-file.ts"
+  ]
+}

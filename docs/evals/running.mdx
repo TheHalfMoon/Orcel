@@ -1,0 +1,67 @@
+---
+title: "Running Evals"
+description: "The kaf eval CLI: flags, filters, exit codes, artifacts, and how to wire evals into CI."
+---
+
+`kaf eval` discovers every `.eval.ts` file under `evals/`, boots a local dev server (or targets a remote one), runs the evals concurrently, and prints a per-eval summary.
+
+```bash
+kaf eval                       # run all discovered evals locally
+kaf eval weather smoke         # run selected evals (an id, or a directory prefix)
+kaf eval --url https://<app>   # target a remote app instead of a local host
+kaf eval --tag fast            # only evals carrying a tag
+kaf eval --exclude-tag slow    # skip evals carrying a tag
+kaf eval --strict              # soft below-threshold assertions also fail the exit code
+kaf eval --timeout 60000       # per-eval timeout in milliseconds
+kaf eval --max-concurrency 4   # cap concurrent eval executions (default 8)
+kaf eval --junit .kaf/junit.xml  # write JUnit XML
+kaf eval --list                # print discovered evals without running
+kaf eval --verbose             # stream per-eval logs and workflow run IDs
+kaf eval --json                # machine-readable output
+kaf eval --skip-report         # skip config and eval-defined reporters (e.g. Braintrust)
+```
+
+Positional ids match exactly or by directory prefix: `kaf eval weather` runs `evals/weather.eval.ts`, every eval under `evals/weather/`, and every entry of an array-exported `weather.eval.ts`.
+
+Tag filters compose: `--tag` keeps evals carrying at least one listed tag, then `--exclude-tag` drops any eval carrying an excluded tag. A `--tag` filter that matches nothing is a configuration error (exit `2`), but a run where `--exclude-tag` removes every match succeeds with nothing executed — exclusion expresses "this suite does not apply here."
+
+## Exit codes
+
+| Code | Means                                                                           |
+| ---- | ------------------------------------------------------------------------------- |
+| `0`  | Every non-skipped eval passed its gates (and soft thresholds, under `--strict`) |
+| `1`  | Any eval failed (a failed gate, an execution error, or a strict threshold miss) |
+| `2`  | Configuration error                                                             |
+
+An eval that calls `t.skip(reason)` is reported as skipped, does not count as passed or failed, and never changes the exit code.
+
+`kaf eval --json` flushes the complete report before exiting, including when stdout is piped to another process or redirected to a file.
+
+With `--verbose`, kaf prefixes each line with its eval ID. It streams authored `t.log()` lines as they occur, then prints the workflow run ID for every captured primary and secondary session. Use those `wrun_...` IDs to find the corresponding runs in your workflow provider.
+
+## Artifacts
+
+Each run drops artifacts under `.kaf/evals/<timestamp>/`: a run `summary.json`, a `results.jsonl` index, and per-eval assertion results, verdicts, captured event streams, and `t.log` lines under `evals/`. The console output stays tight on purpose; when an eval fails, the artifact has the full story.
+
+## CI
+
+A solid CI invocation is strict and machine-reportable:
+
+```bash
+kaf eval --strict --junit .kaf/junit.xml
+```
+
+- `--strict` turns soft threshold misses into failures, so score regressions block the merge.
+- `--junit` gives the CI provider per-eval annotations; upload the `.kaf/evals/` directory as a failure artifact for the full event streams.
+
+Evals run against a live model, so the CI environment must provide the model-provider credentials. Against a deployed app, add `--url`:
+
+```bash
+kaf eval --strict --url "$DEPLOY_URL" --junit .kaf/junit.xml
+```
+
+## What to read next
+
+- [Targets](./targets): what `--url` interacts with
+- [Reporters](./reporters): Braintrust and JUnit output
+- [CLI reference](../reference/cli): the rest of the `kaf` CLI
