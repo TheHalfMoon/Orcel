@@ -7,7 +7,7 @@
   </a>
   <h1>kaf</h1>
 
-<a href="https://vercel.com"><img alt="Vercel logo" src="https://img.shields.io/badge/MADE%20BY%20Vercel-000000.svg?style=for-the-badge&logo=Vercel&labelColor=000"></a>
+<a href="https://github.com/TheHalfMoon"><img alt="Built by TheHalfMoon" src="https://img.shields.io/badge/BUILT%20BY-TheHalfMoon-000000.svg?style=for-the-badge&logo=github&labelColor=000000"></a>
 <a href="https://www.npmjs.com/package/kaf"><img alt="NPM version" src="https://img.shields.io/npm/v/kaf.svg?style=for-the-badge&labelColor=000000"></a>
 <a href="https://github.com/TheHalfMoon/kaf/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/npm/l/kaf.svg?style=for-the-badge&labelColor=000000"></a>
 <a href="https://github.com/TheHalfMoon/kaf/discussions"><img alt="Join the community on GitHub" src="https://img.shields.io/badge/Join%20the%20community-blueviolet.svg?style=for-the-badge&logo=Github&labelColor=000000&logoWidth=20"></a>
@@ -125,11 +125,9 @@ participating, you agree to our [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Security
 
-Please do not open public issues for security vulnerabilities. Instead, follow
-[SECURITY.md](SECURITY.md) and report responsibly to
-[responsible.disclosure@vercel.com](mailto:responsible.disclosure@vercel.com).
+Please do not open public issues for security vulnerabilities. Follow
+[SECURITY.md](SECURITY.md) and use GitHub private vulnerability reporting for this repository when available.
 
-## Beta terms
+## Development status
 
-kaf is currently in beta and subject to the [Vercel beta terms](https://vercel.com/docs/release-phases/public-beta-agreement);
-the framework, APIs, documentation, and behavior may change before general availability.
+Kaf is under active development. APIs, documentation, and behavior may change before the first stable release.
