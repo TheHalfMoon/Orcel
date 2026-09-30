@@ -42,7 +42,7 @@ npx vercel@latest env pull
 Create `agent/connections/warehouse.ts`. Replace both the endpoint URL and connector UID below with the values you just configured:
 
 ```ts title="agent/connections/warehouse.ts"
-import { connect } from "@vercel/connect/kaf";
+import { connect } from "@vercel/connect/eve";
 import { defineMcpClientConnection } from "kaf/connections";
 
 export default defineMcpClientConnection({

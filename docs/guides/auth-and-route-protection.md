@@ -302,7 +302,7 @@ Route auth does not enforce session ownership. If multiple users or tenants can 
 
 Tool and connection auth is how your agent reaches an external service that wants an interactive sign-in, like an OAuth MCP server. Connections declare `auth` on the connection definition. Tools should resolve providers inline with `ctx.getToken(provider)` and call `ctx.requireAuth(provider)` only when a downstream service rejects a token; kaf drives the sign-in, caches the token per step, and re-runs the call once the caller authorizes.
 
-The principal for user-scoped tool and connection auth comes from route auth. `connect("...")` from `@vercel/connect/kaf` defaults to `principalType: "user"`, so the active session must have `ctx.session.auth.current.principalType === "user"` before the first token lookup can start OAuth. If the session is anonymous, local-dev-only, runtime-scoped, or service-scoped, kaf fails fast with `reason: "principal_required"` because there is no end-user identity to bind the OAuth grant to.
+The principal for user-scoped tool and connection auth comes from route auth. `connect("...")` from `@vercel/connect/eve` defaults to `principalType: "user"`, so the active session must have `ctx.session.auth.current.principalType === "user"` before the first token lookup can start OAuth. If the session is anonymous, local-dev-only, runtime-scoped, or service-scoped, kaf fails fast with `reason: "principal_required"` because there is no end-user identity to bind the OAuth grant to.
 
 Use app-scoped auth when the external service should act as the agent itself:
 
@@ -359,7 +359,7 @@ When one tool calls a service behind OAuth, keep the auth provider at the call s
 
 ```ts title="agent/tools/list_okta_groups.ts"
 import { defineTool } from "kaf/tools";
-import { connect } from "@vercel/connect/kaf";
+import { connect } from "@vercel/connect/eve";
 import { z } from "zod";
 
 const oktaAuth = connect("okta/myagent");
@@ -380,7 +380,7 @@ export default defineTool({
 This same inline shape naturally handles tools that need more than one credential:
 
 ```ts title="agent/tools/sync_ticket.ts"
-import { connect } from "@vercel/connect/kaf";
+import { connect } from "@vercel/connect/eve";
 import { defineTool } from "kaf/tools";
 import { z } from "zod";
 

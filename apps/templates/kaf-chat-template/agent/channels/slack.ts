@@ -1,4 +1,4 @@
-import { connectSlackCredentials } from "@vercel/connect/kaf";
+import { connectSlackCredentials } from "@vercel/connect/eve";
 import { slackChannel } from "kaf/channels/slack";
 
 // SLACK_CONNECTOR is the UID returned by `vercel connect create slack`.

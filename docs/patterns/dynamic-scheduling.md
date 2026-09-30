@@ -86,7 +86,7 @@ This example uses Slack because it has a proactive target of `{ channelId }`. An
 Configure Slack normally:
 
 ```ts title="agent/channels/slack.ts"
-import { connectSlackCredentials } from "@vercel/connect/kaf";
+import { connectSlackCredentials } from "@vercel/connect/eve";
 import { slackChannel } from "kaf/channels/slack";
 
 export default slackChannel({

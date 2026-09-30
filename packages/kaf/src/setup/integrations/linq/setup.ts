@@ -40,7 +40,7 @@ export default linqChannel({
 `;
 
 function connectTemplate(uid: string): string {
-  return `import { connectLinqCredentials } from "@vercel/connect/kaf";
+  return `import { connectLinqCredentials } from "@vercel/connect/eve";
 import { linqChannel } from "kaf/channels/linq";
 
 export default linqChannel({

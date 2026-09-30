@@ -50,7 +50,7 @@ const KNOWN_AUTHORIZATION_KEYS = [
   // survives `normalizeAuthorizationSpec` so consumers can pick it
   // off the normalized auth definition. See
   // `runtime/connections/types.ts#AuthorizationDefinitionBase` for
-  // the type and `@vercel/connect/kaf`'s `connect()` for the
+  // the type and `@vercel/connect/eve`'s `connect()` for the
   // canonical producer.
   "vercelConnect",
 ] as const;

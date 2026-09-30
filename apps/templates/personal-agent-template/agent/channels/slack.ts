@@ -1,4 +1,4 @@
-import { connectSlackCredentials } from "@vercel/connect/kaf";
+import { connectSlackCredentials } from "@vercel/connect/eve";
 import {
   defaultSlackAuth,
   loadThreadContextMessages,

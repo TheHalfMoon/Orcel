@@ -134,7 +134,7 @@ describe("normalizeMcpClientConnectionDefinition", () => {
     });
 
     it("preserves the optional vercelConnect marker on auth", () => {
-      // The `connect()` helper from `@vercel/connect/kaf` attaches a
+      // The `connect()` helper from `@vercel/connect/eve` attaches a
       // `vercelConnect: { connector }` marker so downstream tooling can
       // detect Vercel Connect-backed connections without inspecting the
       // closure state of `getToken`. Validation must let it through and

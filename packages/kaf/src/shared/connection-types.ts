@@ -119,7 +119,7 @@ export interface AuthorizationCallback {
  * callback alongside the resolved {@link ConnectionPrincipal}.
  *
  * Currently exposes the connection's declared MCP server `url`, which
- * helper-based `getToken` implementations (e.g. `@vercel/connect/kaf`)
+ * helper-based `getToken` implementations (e.g. `@vercel/connect/eve`)
  * use to provision the credential lazily on first use without
  * re-declaring the URL.
  *
@@ -239,7 +239,7 @@ interface AuthorizationDefinitionBase {
 
   /**
    * Optional metadata marker attached by `connect()` from
-   * `@vercel/connect/kaf` so downstream tooling can detect Vercel
+   * `@vercel/connect/eve` so downstream tooling can detect Vercel
    * Connect-backed connections at compile time without inspecting
    * `getToken`'s closure state. Examples: a future kaf compiler step
    * that surfaces connector identifiers in build output, or the Vercel

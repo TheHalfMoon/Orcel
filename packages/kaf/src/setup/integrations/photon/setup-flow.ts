@@ -64,7 +64,7 @@ export default photonIMessageChannel({
 `;
 
 function connectTemplate(connectorUid: string): string {
-  return `import { connectPhotonCredentials } from "@vercel/connect/kaf";
+  return `import { connectPhotonCredentials } from "@vercel/connect/eve";
 import { photonIMessageChannel } from "kaf/channels/photon";
 
 export default photonIMessageChannel({

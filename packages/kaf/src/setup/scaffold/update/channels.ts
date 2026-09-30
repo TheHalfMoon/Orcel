@@ -363,7 +363,7 @@ function buildSlackConnectTemplate(connectorUid: string): string {
   if (!connectorUid.startsWith("slack/") || connectorUid.length === "slack/".length) {
     throw new Error(`Invalid Slack connector UID "${connectorUid}".`);
   }
-  return `import { connectSlackCredentials } from "@vercel/connect/kaf";
+  return `import { connectSlackCredentials } from "@vercel/connect/eve";
 import { slackChannel } from "kaf/channels/slack";
 
 export default slackChannel({

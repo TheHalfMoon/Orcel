@@ -1,4 +1,4 @@
-import { connectGitHubCredentials } from "@vercel/connect/kaf";
+import { connectGitHubCredentials } from "@vercel/connect/eve";
 import { githubChannel } from "kaf/channels/github";
 
 export default githubChannel({

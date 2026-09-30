@@ -67,7 +67,7 @@ export interface PhotonIMessageChannel extends ChatSdkChannel {}
  *
  * @example
  * ```ts
- * import { connectPhotonCredentials } from "@vercel/connect/kaf";
+ * import { connectPhotonCredentials } from "@vercel/connect/eve";
  * import { photonIMessageChannel } from "kaf/channels/photon";
  *
  * export default photonIMessageChannel({

@@ -83,7 +83,7 @@ function connectTemplate(
   ].filter((handler): handler is string => handler !== undefined);
   const defaultAuthImport = handlers.length > 0 ? ", defaultGitHubAuth" : "";
   const handlerBlock = handlers.length > 0 ? `\n${handlers.join("\n")}` : "";
-  return `import { connectGitHubCredentials } from "@vercel/connect/kaf";
+  return `import { connectGitHubCredentials } from "@vercel/connect/eve";
 import { githubChannel${defaultAuthImport} } from "kaf/channels/github";
 
 export default githubChannel({

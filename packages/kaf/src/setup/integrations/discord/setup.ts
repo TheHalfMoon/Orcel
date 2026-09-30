@@ -45,7 +45,7 @@ function validateCommandName(value: string): string | null {
 }
 
 function connectTemplate(uid: string): string {
-  return `import { connectDiscordCredentials } from "@vercel/connect/kaf";
+  return `import { connectDiscordCredentials } from "@vercel/connect/eve";
 import { discordChannel } from "kaf/channels/discord";
 
 export default discordChannel({

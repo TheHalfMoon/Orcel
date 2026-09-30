@@ -115,7 +115,7 @@ A connection credential can belong to the agent or to the person using it. This 
 
 `credentialOwner: "user"` does not mean "ask any human later." It means "key this credential to the authenticated user already attached to the kaf session." If the run was started by a schedule, a same-project runtime token, `localDev()`, or another internal runtime path without an end-user principal, a user-scoped connection fails with `reason: "principal_required"` instead of starting OAuth. In that case, either authenticate the inbound channel as a user or configure the connection as app-scoped.
 
-`credentialOwner` is kaf's field for raw getToken-only connection auth. Existing non-interactive raw `principalType` definitions still work, but are deprecated. Interactive auth and `connect()` from `@vercel/connect/kaf` continue to use `principalType: "user"`; that field also remains correct for route-auth session identities.
+`credentialOwner` is kaf's field for raw getToken-only connection auth. Existing non-interactive raw `principalType` definitions still work, but are deprecated. Interactive auth and `connect()` from `@vercel/connect/eve` continue to use `principalType: "user"`; that field also remains correct for route-auth session identities.
 
 ## No auth
 
@@ -200,7 +200,7 @@ For connection tools that can create, modify, delete, transmit, purchase, messag
 
 ## Interactive OAuth via Vercel Connect
 
-When the server uses OAuth and you want each end-user to sign in through their own browser, turn on interactive authorization with [Vercel Connect](https://vercel.com/docs/connect). The `connect()` helper from `@vercel/connect/kaf` handles consent, encrypted token storage, and refresh, then hooks all of that into kaf's authorization flow.
+When the server uses OAuth and you want each end-user to sign in through their own browser, turn on interactive authorization with [Vercel Connect](https://vercel.com/docs/connect). The `connect()` helper from `@vercel/connect/eve` handles consent, encrypted token storage, and refresh, then hooks all of that into kaf's authorization flow.
 
 Create and attach the connector from the Vercel project or agent app that will use it:
 
@@ -215,7 +215,7 @@ vercel env pull
 Use the connector UID returned by the CLI in `connect("<connector-uid>")`. The service identifier accepted by `vercel connect create` depends on the provider; it is not necessarily the same as an MCP runtime URL or OpenAPI base URL.
 
 ```ts title="agent/connections/linear.ts"
-import { connect } from "@vercel/connect/kaf";
+import { connect } from "@vercel/connect/eve";
 import { defineMcpClientConnection } from "kaf/connections";
 
 export default defineMcpClientConnection({
@@ -234,7 +234,7 @@ That means the channel that creates or continues the session must authenticate a
 If the remote service should act as the agent itself instead of the end-user, make the Connect connection app-scoped:
 
 ```ts title="agent/connections/linear.ts"
-import { connect } from "@vercel/connect/kaf";
+import { connect } from "@vercel/connect/eve";
 import { defineMcpClientConnection } from "kaf/connections";
 
 export default defineMcpClientConnection({
@@ -339,7 +339,7 @@ To narrow a caught error, use `isConnectionAuthorizationRequiredError(err)` and 
 `getToken` only runs _before_ a tool call, so a grant revoked while a tool is mid-flight first surfaces as a downstream `401` inside your `execute`. A plain throw there is only a tool error, so the model sees a failure and the cached bearer sticks around. Instead, map a provider `401` to `ctx.requireAuth(provider)`. kaf then evicts the rejected token from its per-step cache and re-runs the consent flow with a fresh one, exactly as it does for a connection whose server rejects the bearer.
 
 ```ts title="agent/tools/list_issues.ts"
-import { connect } from "@vercel/connect/kaf";
+import { connect } from "@vercel/connect/eve";
 import { defineTool } from "kaf/tools";
 import { z } from "zod";
 

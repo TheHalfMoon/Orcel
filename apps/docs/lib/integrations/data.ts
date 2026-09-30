@@ -189,7 +189,7 @@ npm install kaf@latest @vercel/connect
 \`\`\`ts
 // agent/channels/slack.ts
 import { slackChannel } from "kaf/channels/slack";
-import { connectSlackCredentials } from "@vercel/connect/kaf";
+import { connectSlackCredentials } from "@vercel/connect/eve";
 
 export default slackChannel({
   credentials: connectSlackCredentials("slack/my-agent"),
@@ -361,7 +361,7 @@ kaf add channel/github
 
 \`\`\`ts
 // agent/channels/github.ts
-import { connectGitHubCredentials } from "@vercel/connect/kaf";
+import { connectGitHubCredentials } from "@vercel/connect/eve";
 import { githubChannel } from "kaf/channels/github";
 
 export default githubChannel({
@@ -384,7 +384,7 @@ kaf add channel/linear
 
 \`\`\`ts
 // agent/channels/linear.ts
-import { connectLinearCredentials } from "@vercel/connect/kaf";
+import { connectLinearCredentials } from "@vercel/connect/eve";
 import { linearChannel } from "kaf/channels/linear";
 
 export default linearChannel({
@@ -912,7 +912,7 @@ kaf add channel/linq
     quickStart: `Create \`agent/channels/linq.ts\`:
 
 \`\`\`ts
-import { connectLinqCredentials } from "@vercel/connect/kaf";
+import { connectLinqCredentials } from "@vercel/connect/eve";
 import { linqChannel } from "kaf/channels/linq";
 
 export default linqChannel({
@@ -980,7 +980,7 @@ kaf add channel/photon-imessage
     quickStart: `Create \`agent/channels/photon.ts\`:
 
 \`\`\`ts
-import { connectPhotonCredentials } from "@vercel/connect/kaf";
+import { connectPhotonCredentials } from "@vercel/connect/eve";
 import { photonIMessageChannel } from "kaf/channels/photon";
 
 export default photonIMessageChannel({

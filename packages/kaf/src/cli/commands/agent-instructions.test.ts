@@ -49,7 +49,7 @@ describe("initAgentInstructions", () => {
     expect(instructions).toContain("kaf add channel/slack");
     // Connections: per-user auth wires through Connect's kaf helper.
     expect(instructions).toContain("agent/connections/");
-    expect(instructions).toContain("@vercel/connect/kaf");
+    expect(instructions).toContain("@vercel/connect/eve");
     // Both surfaces name the product, so neither path is left to hand-rolled tokens.
     expect(instructions.match(/Vercel Connect/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
   });
@@ -95,7 +95,7 @@ describe("initAgentDevHandoff", () => {
     // Shared guidance the leaner handoff used to omit now reaches it.
     expect(handoff).toContain("What should the agent do?");
     expect(handoff).toContain("Vercel Connect");
-    expect(handoff).toContain("@vercel/connect/kaf");
+    expect(handoff).toContain("@vercel/connect/eve");
     expect(handoff).toContain("defineTool");
 
     // The REPL-versus-headless distinction survives the merge.

@@ -9,7 +9,7 @@ import type {
  * - a `getToken`-only object (static API keys, pre-provisioned JWTs);
  *   `credentialOwner` may be omitted and defaults to `"app"`.
  * - a full interactive OAuth definition (e.g. `connect("okta/myagent")` from
- *   `@vercel/connect/kaf`, or `defineInteractiveAuthorization`), which keeps
+ *   `@vercel/connect/eve`, or `defineInteractiveAuthorization`), which keeps
  *   `principalType: "user"`.
  */
 export type ToolAuthDefinition = ConnectionAuthProvider;

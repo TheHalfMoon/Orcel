@@ -12,7 +12,7 @@ Use MCP when the service already has an MCP server, when the server owns tool sc
 Create one file under `agent/connections/`. The filename becomes the runtime connection name, so `agent/connections/linear.ts` registers as `linear`, and discovered tools are called as `linear__<tool>`.
 
 ```ts title="agent/connections/linear.ts"
-import { connect } from "@vercel/connect/kaf";
+import { connect } from "@vercel/connect/eve";
 import { defineMcpClientConnection } from "kaf/connections";
 
 export default defineMcpClientConnection({
@@ -85,7 +85,7 @@ Omit `auth` and `headers` only for an intentionally public or loopback MCP serve
 MCP servers can expose broad read and write surfaces. Narrow what the model can discover with exactly one of `tools.allow` or `tools.block`:
 
 ```ts title="agent/connections/linear.ts"
-import { connect } from "@vercel/connect/kaf";
+import { connect } from "@vercel/connect/eve";
 import { defineMcpClientConnection } from "kaf/connections";
 
 export default defineMcpClientConnection({

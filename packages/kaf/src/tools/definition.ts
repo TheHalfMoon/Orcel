@@ -201,7 +201,7 @@ export type ToolContext = SessionContext & {
   /**
    * Resolves the bearer token for an inline provider. This accepts the same
    * auth shapes as a connection's `auth` field, including `connect("...")`
-   * from `@vercel/connect/kaf`.
+   * from `@vercel/connect/eve`.
    */
   getToken(provider: ToolAuthProvider, options?: ToolAuthOptions): Promise<TokenResult>;
   /**

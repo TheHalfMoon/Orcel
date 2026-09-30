@@ -40,7 +40,7 @@ export function linearSafeConnectorSlug(slug: string): string {
 }
 
 function connectTemplate(uid: string): string {
-  return `import { connectLinearCredentials } from "@vercel/connect/kaf";
+  return `import { connectLinearCredentials } from "@vercel/connect/eve";
 import { linearChannel } from "kaf/channels/linear";
 
 export default linearChannel({

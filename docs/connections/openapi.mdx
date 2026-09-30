@@ -54,7 +54,7 @@ export default defineOpenAPIConnection({
 For an OAuth-backed API, follow the shared [Vercel Connect setup](../connections#interactive-oauth-via-vercel-connect), then attach the returned connector UID to the OpenAPI connection:
 
 ```ts title="agent/connections/github.ts"
-import { connect } from "@vercel/connect/kaf";
+import { connect } from "@vercel/connect/eve";
 import { defineOpenAPIConnection } from "kaf/connections";
 
 export default defineOpenAPIConnection({

@@ -27,7 +27,7 @@ Vercel Connect creates the Linear app with the `app:assignable` and `app:mention
 The generated channel uses Connect-managed credentials:
 
 ```ts title="agent/channels/linear.ts"
-import { connectLinearCredentials } from "@vercel/connect/kaf";
+import { connectLinearCredentials } from "@vercel/connect/eve";
 import { linearChannel } from "kaf/channels/linear";
 
 export default linearChannel({

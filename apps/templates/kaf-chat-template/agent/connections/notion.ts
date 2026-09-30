@@ -1,4 +1,4 @@
-import { connect } from "@vercel/connect/kaf";
+import { connect } from "@vercel/connect/eve";
 import { defineMcpClientConnection } from "kaf/connections";
 
 // NOTION_CONNECTOR is provisioned by the "Deploy with Vercel" flow. For local

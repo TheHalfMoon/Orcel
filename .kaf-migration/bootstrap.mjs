@@ -118,7 +118,10 @@ const binaryExts = new Set([
   ".woff", ".woff2", ".ttf", ".eot", ".wasm", ".mp3", ".mp4", ".mov", ".webm", ".lockb",
 ]);
 
-const protectedLiterals = [...externalEvePackages].sort((a, b) => b.length - a.length);
+const externalProviderApiLiterals = ["@vercel/connect/eve"];
+const protectedLiterals = [...new Set([...externalEvePackages, ...externalProviderApiLiterals])].sort(
+  (a, b) => b.length - a.length,
+);
 
 function isTextFile(file, buffer) {
   if (binaryExts.has(path.extname(file).toLowerCase())) return false;

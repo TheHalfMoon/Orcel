@@ -83,7 +83,7 @@ export interface LinqChannel extends Channel<
  *
  * @example
  * ```ts
- * import { connectLinqCredentials } from "@vercel/connect/kaf";
+ * import { connectLinqCredentials } from "@vercel/connect/eve";
  * import { linqChannel } from "kaf/channels/linq";
  *
  * export default linqChannel({

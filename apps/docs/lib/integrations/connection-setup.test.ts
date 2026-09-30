@@ -25,7 +25,7 @@ describe("Browser Use connection setup", () => {
     const integration = getIntegration("linear")!;
     const quickStart = buildConnectionSetup(integration).variants["mcp:user"];
 
-    expect(quickStart).toContain("@vercel/connect/kaf");
+    expect(quickStart).toContain("@vercel/connect/eve");
     expect(buildConnectionInstall(integration)).toContain("kaf add connection/linear");
   });
 });

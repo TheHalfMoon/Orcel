@@ -27,7 +27,7 @@ Microsoft Teams app creation and installation. It routes verified Activities to
 `/kaf/v1/teams` and writes:
 
 ```ts title="agent/channels/teams.ts"
-import { connectTeamsCredentials } from "@vercel/connect/kaf";
+import { connectTeamsCredentials } from "@vercel/connect/eve";
 import { teamsChannel } from "kaf/channels/teams";
 
 export default teamsChannel({

@@ -27,7 +27,7 @@ const defaultDeps: TeamsSetupDeps = {
 };
 
 function connectTemplate(uid: string): string {
-  return `import { connectTeamsCredentials } from "@vercel/connect/kaf";
+  return `import { connectTeamsCredentials } from "@vercel/connect/eve";
 import { teamsChannel } from "kaf/channels/teams";
 
 export default teamsChannel({

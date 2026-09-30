@@ -1,4 +1,4 @@
-import { connect } from "@vercel/connect/kaf";
+import { connect } from "@vercel/connect/eve";
 import { defineMcpClientConnection } from "kaf/connections";
 
 const APPROVAL_GATED = ["create_card", "get_card_details", "remove_added_card"];

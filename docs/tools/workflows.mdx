@@ -386,7 +386,7 @@ resolve as whoever launched this workflow tool, even if another person speaks in
 The provider declaration and the API request both stay inside the step:
 
 ```ts
-import { connect } from "@vercel/connect/kaf";
+import { connect } from "@vercel/connect/eve";
 import type { WorkflowStepToolContext } from "kaf/tools";
 
 async function readRepository(ctx: WorkflowStepToolContext, repository: string) {

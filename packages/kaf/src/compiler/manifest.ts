@@ -795,7 +795,7 @@ const compiledConnectionDefinitionSchema = z
     url: z.string(),
     /**
      * Marker the compiler captures when the connection's `auth` is built
-     * by `connect()` from `@vercel/connect/kaf`. The `connector` field
+     * by `connect()` from `@vercel/connect/eve`. The `connector` field
      * carries whatever the author wrote — UID (`"oauth/mcp-linear-app"`)
      * or opaque service-connector key (`"scl_..."`); both forms address
      * the same connector on the Vercel Connect side.

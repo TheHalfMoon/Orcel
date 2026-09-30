@@ -14,7 +14,7 @@ the coding harness's prompt tools when available, and do not guess.
 3. Which external systems does it need programmatic read/write access to, such as
    Slack, Salesforce, Linear, GitHub, or your own API? Each becomes a connection
    under `agent/connections/`. When a system needs every end-user to sign in, wire
-   its auth through **Vercel Connect** (`connect()` from `@vercel/connect/kaf`),
+   its auth through **Vercel Connect** (`connect()` from `@vercel/connect/eve`),
    which handles consent, encrypted token storage, and refresh.
 4. Does the user want a specific AI Gateway model or reasoning effort? If so,
    pass its `provider/model-id` to `kaf init --model` and its reasoning effort to

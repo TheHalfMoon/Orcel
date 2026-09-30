@@ -21,7 +21,7 @@ Vercel Connect creates the GitHub App, receives and verifies its webhooks, and f
 The generated channel uses Connect-managed credentials:
 
 ```ts title="agent/channels/github.ts"
-import { connectGitHubCredentials } from "@vercel/connect/kaf";
+import { connectGitHubCredentials } from "@vercel/connect/eve";
 import { githubChannel } from "kaf/channels/github";
 
 export default githubChannel({

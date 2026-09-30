@@ -42,7 +42,7 @@ const buildSnippet = (
   const transport = protocol === "mcp" ? spec.mcp : spec.openapi;
 
   const imports = [
-    ...(auth === "apiKey" ? [] : [`import { connect } from "@vercel/connect/kaf";`]),
+    ...(auth === "apiKey" ? [] : [`import { connect } from "@vercel/connect/eve";`]),
     `import { ${defineFn} } from "kaf/connections";`,
   ];
 

@@ -8,7 +8,7 @@ Use `linqChannel` to receive and reply to iMessage and SMS conversations through
 Run `kaf add channel/linq` to choose Vercel Connect or portable credentials. With Vercel Connect, kaf signs you in and creates or links a Vercel project when needed. Then choose whether to create a managed Linq account and line or connect an existing account with its partner API token. kaf fetches the phone numbers assigned to that account, and you select the numbers for the agent. kaf configures the connector and webhook through Connect:
 
 ```ts title="agent/channels/linq.ts"
-import { connectLinqCredentials } from "@vercel/connect/kaf";
+import { connectLinqCredentials } from "@vercel/connect/eve";
 import { linqChannel } from "kaf/channels/linq";
 
 export default linqChannel({

@@ -38,7 +38,7 @@ describe("ensureConnection", () => {
     expect(result.envKeysRequired).toEqual([]);
 
     const source = await readFile(result.filePath, "utf8");
-    expect(source).toContain('import { connect } from "@vercel/connect/kaf";');
+    expect(source).toContain('import { connect } from "@vercel/connect/eve";');
     expect(source).toContain("defineMcpClientConnection");
     expect(source).toContain('auth: connect("linear")');
 

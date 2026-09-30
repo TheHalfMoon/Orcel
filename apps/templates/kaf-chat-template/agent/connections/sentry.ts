@@ -1,4 +1,4 @@
-import { connect } from "@vercel/connect/kaf";
+import { connect } from "@vercel/connect/eve";
 import { defineMcpClientConnection } from "kaf/connections";
 
 // SENTRY_CONNECTOR is the UID returned by Vercel Connect. For local setup,

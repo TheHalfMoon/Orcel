@@ -56,7 +56,7 @@ describe("Connect manifest compiler handoff", () => {
           "",
         ].join("\n"),
         "agent/channels/slack.ts": [
-          'import { connectSlackCredentials } from "@vercel/connect/kaf";',
+          'import { connectSlackCredentials } from "@vercel/connect/eve";',
           'import { slackChannel } from "kaf/channels/slack";',
           "",
           "export default slackChannel({",
@@ -65,7 +65,7 @@ describe("Connect manifest compiler handoff", () => {
           "",
         ].join("\n"),
         "agent/connections/linear.ts": [
-          'import { connect } from "@vercel/connect/kaf";',
+          'import { connect } from "@vercel/connect/eve";',
           'import { defineMcpClientConnection } from "kaf/connections";',
           "",
           "export default defineMcpClientConnection({",

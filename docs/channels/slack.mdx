@@ -23,7 +23,7 @@ Vercel Connect setup requires the Vercel CLI. The guided flow signs you in when 
 The generated channel resolves credentials at runtime:
 
 ```ts title="agent/channels/slack.ts"
-import { connectSlackCredentials } from "@vercel/connect/kaf";
+import { connectSlackCredentials } from "@vercel/connect/eve";
 import { slackChannel } from "kaf/channels/slack";
 
 export default slackChannel({
@@ -92,7 +92,7 @@ Run these commands from the linked project directory. `--environment preview` ma
 Select the matching connector at runtime instead of leaving the generated production UID hard-coded:
 
 ```ts title="agent/channels/slack.ts"
-import { connectSlackCredentials } from "@vercel/connect/kaf";
+import { connectSlackCredentials } from "@vercel/connect/eve";
 import { slackChannel } from "kaf/channels/slack";
 
 const connectorUid =
@@ -196,7 +196,7 @@ When a Slack message includes a link preview, kaf includes its attachment text i
 A valid Slack signature proves that Slack sent the event. It does not decide which channel or person your agent should trust. Fail closed in the inbound handler before returning auth, especially when the app is installed in a shared Slack Connect channel:
 
 ```ts title="agent/channels/slack.ts"
-import { connectSlackCredentials } from "@vercel/connect/kaf";
+import { connectSlackCredentials } from "@vercel/connect/eve";
 import { defaultSlackAuth, slackChannel, type SlackMessage } from "kaf/channels/slack";
 
 const allowedConversations = new Set(["C01234567", "D01234567"]);
@@ -278,7 +278,7 @@ You get the triggering mention by default, but not the earlier replies in the th
 
 ```ts
 import { slackChannel } from "kaf/channels/slack";
-import { connectSlackCredentials } from "@vercel/connect/kaf";
+import { connectSlackCredentials } from "@vercel/connect/eve";
 
 export default slackChannel({
   credentials: connectSlackCredentials("slack/my-agent"),
@@ -352,7 +352,7 @@ Reset returns `{ status: "reset", previousSessionId }` when the thread had a ses
 Use `onEvent` for subscribed events such as `reaction_added`, `team_join`, or `channel_created`. It receives the raw, open-ended Slack event and owns control flow. Call `ctx.send(message, { target, auth, title })` zero, one, or many times to start turns. `title` sets the run title without changing the message sent to the model. Each call returns the resulting session.
 
 ```ts title="agent/channels/slack.ts"
-import { connectSlackCredentials } from "@vercel/connect/kaf";
+import { connectSlackCredentials } from "@vercel/connect/eve";
 import { slackChannel } from "kaf/channels/slack";
 
 const onboardingChannels = ["C0123ABC", "C0456DEF"];
@@ -405,7 +405,7 @@ same primitive the handle uses directly:
 
 ```ts
 import { callSlackApi } from "kaf/channels/slack";
-import { connectSlackCredentials } from "@vercel/connect/kaf";
+import { connectSlackCredentials } from "@vercel/connect/eve";
 
 const { botToken } = connectSlackCredentials("slack/my-agent");
 const response = await callSlackApi({
@@ -499,7 +499,7 @@ Without `renderers`, kaf renders everything above with its default renderer. Pas
 Call `next()` to run the rest of the chain, ending with kaf's default. Call it after your own work, before it, or with changed data, as in `next({ ...event, message })`; the rest of the chain runs at most once. Skip `next` to replace the default for that event. This renderer adds feedback buttons below each final reply and a context row to the finished task card:
 
 ```ts title="agent/channels/slack.ts"
-import { connectSlackCredentials } from "@vercel/connect/kaf";
+import { connectSlackCredentials } from "@vercel/connect/eve";
 import { defineSlackRenderer, slackChannel } from "kaf/channels/slack";
 
 const feedback = defineSlackRenderer({

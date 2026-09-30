@@ -134,7 +134,7 @@ export interface VercelKafConnectionEntry {
   readonly type: VercelKafConnectionType;
   /**
    * When the connection's auth is built by `connect()` from
-   * `@vercel/connect/kaf`, the connector identifier the author passed
+   * `@vercel/connect/eve`, the connector identifier the author passed
    * (UID like `"oauth/mcp-linear-app"` or opaque `"scl_..."` form).
    * Dashboards use this to deep-link into the connector's settings page
    * — typically resolving UID → `scl_...` against

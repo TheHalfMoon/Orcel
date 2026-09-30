@@ -17,7 +17,7 @@ describe("updateConnectionConnectorUid", () => {
   test("rewrites the connector UID literal in a connect() call", async () => {
     const path = await writeTemp(
       [
-        'import { connect } from "@vercel/connect/kaf";',
+        'import { connect } from "@vercel/connect/eve";',
         "export default defineMcpClientConnection({",
         '  auth: connect("linear"),',
         "});",
@@ -31,13 +31,13 @@ describe("updateConnectionConnectorUid", () => {
     const updated = await readFile(path, "utf8");
     expect(updated).toContain('connect("oauth/linear-123")');
     // The import line is left untouched.
-    expect(updated).toContain('import { connect } from "@vercel/connect/kaf";');
+    expect(updated).toContain('import { connect } from "@vercel/connect/eve";');
   });
 
   test("rewrites the connector UID in the connect object form", async () => {
     const path = await writeTemp(
       [
-        'import { connect } from "@vercel/connect/kaf";',
+        'import { connect } from "@vercel/connect/eve";',
         "export default defineMcpClientConnection({",
         '  auth: connect({ connector: "honeycomb", principalType: "app" }),',
         "});",
