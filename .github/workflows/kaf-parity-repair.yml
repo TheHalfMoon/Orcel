@@ -6,6 +6,8 @@ on:
       - generated/eve-full-import-9c36b7c
     paths:
       - .github/workflows/kaf-parity-repair.yml
+      - .kaf-migration/repair-parity.mjs
+      - .kaf-migration/audit-identity.mjs
   workflow_dispatch:
 
 permissions:
@@ -40,6 +42,9 @@ jobs:
 
       - name: Apply deterministic identity repairs
         run: node .kaf-migration/repair-parity.mjs
+
+      - name: Audit Kaf project identity
+        run: node .kaf-migration/audit-identity.mjs
 
       - name: Rebaseline unpublished current contract metadata for Kaf
         shell: bash
@@ -78,7 +83,7 @@ jobs:
             echo "No repair changes were produced."
             exit 1
           fi
-          git commit --no-verify -m "fix: repair Kaf parity after identity migration [skip ci]"
+          git commit --no-verify -m "fix: close Kaf identity migration gaps [skip ci]"
           echo "REPAIR_COMMIT=$(git rev-parse HEAD)"
           echo "REPAIR_TREE=$(git rev-parse HEAD^{tree})"
 
