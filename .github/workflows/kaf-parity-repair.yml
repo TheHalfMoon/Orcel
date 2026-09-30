@@ -51,6 +51,9 @@ jobs:
       - name: Verify invariant guard
         run: pnpm guard:invariants
 
+      - name: Build Kaf distribution for framework fixtures
+        run: pnpm --filter kaf run build
+
       - name: Verify framework fixtures
         run: pnpm test:framework-fixtures
 
