@@ -36,6 +36,12 @@ walkPackageJsonFiles(upstream, (file) => {
   if (typeof manifest.name === "string") internalPackageNames.add(manifest.name);
 });
 
+const internalPackageScopes = new Set(
+  [...internalPackageNames]
+    .filter((name) => name.startsWith("@") && name.includes("/"))
+    .map((name) => name.slice(0, name.indexOf("/"))),
+);
+
 const dependencyFields = [
   "dependencies",
   "devDependencies",
@@ -75,8 +81,16 @@ function copyTree(src, dst) {
   }
 }
 
-function identityName(name) {
+function renameInternalScope(name) {
+  if (!internalPackageScopes.has(name)) return name;
   return name
+    .replace(/^@EVE(?=$|[-_.])/g, "@KAF")
+    .replace(/^@Eve(?=$|[-_.])/g, "@Kaf")
+    .replace(/^@eve(?=$|[-_.])/g, "@kaf");
+}
+
+function identityName(name) {
+  return renameInternalScope(name)
     .replace(/(^|[-_.])EVE(?=$|[-_.])/g, "$1KAF")
     .replace(/(^|[-_.])Eve(?=$|[-_.])/g, "$1Kaf")
     .replace(/(^|[-_.])eve(?=$|[-_.])/g, "$1kaf");
@@ -111,7 +125,7 @@ function renameIdentityTokens(text) {
     .replaceAll("@eve/", "@kaf/")
     .replaceAll("eve-source", "kaf-source")
     .replaceAll("EVE_", "KAF_")
-    .replace(/\.eve(?=$|[\/\\._-])/g, ".kaf")
+    .replace(/\.eve(?=$|[/\\._-])/g, ".kaf")
     .replace(/\bEVE(?=[A-Z0-9_])/g, "KAF")
     .replace(/\bEve(?=[A-Z0-9_])/g, "Kaf")
     .replace(/\beve(?=[A-Z0-9_])/g, "kaf")
@@ -192,10 +206,14 @@ fs.copyFileSync(path.join(upstream, "LICENSE"), path.join(root, "LICENSE"));
 
 const identityResidualPattern = /\b(?:eve|Eve|EVE)\b|\b(?:eve|Eve|EVE)(?=[A-Z0-9_])|(?<=[a-z0-9_])Eve(?=[A-Z0-9_]|$)|(?<=_)eve(?=_|$)/g;
 const residuals = [];
+const staleInternalScopePaths = [];
 function scanResiduals(dir) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     if (entry.name === ".git" || entry.name === ".kaf-migration") continue;
     const file = path.join(dir, entry.name);
+    if (internalPackageScopes.has(entry.name) && renameInternalScope(entry.name) !== entry.name) {
+      staleInternalScopePaths.push(path.relative(root, file));
+    }
     if (entry.isDirectory()) {
       scanResiduals(file);
       continue;
@@ -210,6 +228,12 @@ function scanResiduals(dir) {
 }
 scanResiduals(root);
 
+if (staleInternalScopePaths.length > 0) {
+  throw new Error(
+    `Stale project-owned package-scope paths remain after migration: ${staleInternalScopePaths.join(", ")}`,
+  );
+}
+
 const report = [
   "# Kaf Full-Import Report",
   "",
@@ -218,6 +242,7 @@ const report = [
   `- Text files inspected: ${textFiles}`,
   `- Text files transformed: ${transformedFiles}`,
   `- External Eve package coordinates preserved: ${protectedLiterals.length}`,
+  `- Stale project-owned package-scope paths: ${staleInternalScopePaths.length}`,
   `- Residual project-identity hits outside LICENSE/NOTICE: ${residuals.reduce((n, item) => n + item.count, 0)}`,
   "",
   "## Preserved external package coordinates",
@@ -231,6 +256,7 @@ const report = [
   "## Rename policy",
   "",
   "Project-owned eve identity is renamed to Kaf. Project-owned GitHub URLs are redirected to TheHalfMoon/kaf.",
+  "Project-owned package scopes are discovered from upstream workspace manifests and renamed consistently in both text and paths.",
   "Actual external package coordinates are discovered from the pinned upstream dependency manifests and preserved automatically.",
   "Actual `@vercel/*` dependencies and Vercel provider/service names remain intact because renaming them would break runtime behavior.",
   "Apache-2.0 LICENSE is copied byte-for-byte from upstream; upstream NOTICE is retained verbatim beneath Kaf attribution.",
@@ -245,5 +271,6 @@ console.log(JSON.stringify({
   textFiles,
   transformedFiles,
   protectedExternalPackages: protectedLiterals.length,
+  staleInternalScopePaths: staleInternalScopePaths.length,
   residualFiles: residuals.length,
 }, null, 2));
