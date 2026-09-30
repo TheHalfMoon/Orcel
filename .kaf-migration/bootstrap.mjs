@@ -18,6 +18,44 @@ for (const rel of [
   if (fs.existsSync(file)) preserved.set(rel, fs.readFileSync(file));
 }
 
+function walkPackageJsonFiles(dir, visitor) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name === ".git" || entry.name === "node_modules") continue;
+    const file = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      walkPackageJsonFiles(file, visitor);
+      continue;
+    }
+    if (entry.isFile() && entry.name === "package.json") visitor(file);
+  }
+}
+
+const internalPackageNames = new Set();
+walkPackageJsonFiles(upstream, (file) => {
+  const manifest = JSON.parse(fs.readFileSync(file, "utf8"));
+  if (typeof manifest.name === "string") internalPackageNames.add(manifest.name);
+});
+
+const dependencyFields = [
+  "dependencies",
+  "devDependencies",
+  "peerDependencies",
+  "optionalDependencies",
+];
+const externalEvePackages = new Set();
+walkPackageJsonFiles(upstream, (file) => {
+  const manifest = JSON.parse(fs.readFileSync(file, "utf8"));
+  for (const field of dependencyFields) {
+    const dependencies = manifest[field];
+    if (!dependencies || typeof dependencies !== "object") continue;
+    for (const dependencyName of Object.keys(dependencies)) {
+      if (/eve/i.test(dependencyName) && !internalPackageNames.has(dependencyName)) {
+        externalEvePackages.add(dependencyName);
+      }
+    }
+  }
+});
+
 function removeExceptGit(dir) {
   for (const name of fs.readdirSync(dir)) {
     if (name === ".git") continue;
@@ -60,9 +98,7 @@ const binaryExts = new Set([
   ".woff", ".woff2", ".ttf", ".eot", ".wasm", ".mp3", ".mp4", ".mov", ".webm", ".lockb",
 ]);
 
-const protectedLiterals = [
-  "@stripe/link-integrations-eve",
-];
+const protectedLiterals = [...externalEvePackages].sort((a, b) => b.length - a.length);
 
 function isTextFile(file, buffer) {
   if (binaryExts.has(path.extname(file).toLowerCase())) return false;
@@ -181,7 +217,12 @@ const report = [
   `- Files copied: ${totalFiles}`,
   `- Text files inspected: ${textFiles}`,
   `- Text files transformed: ${transformedFiles}`,
+  `- External Eve package coordinates preserved: ${protectedLiterals.length}`,
   `- Residual project-identity hits outside LICENSE/NOTICE: ${residuals.reduce((n, item) => n + item.count, 0)}`,
+  "",
+  "## Preserved external package coordinates",
+  "",
+  protectedLiterals.length ? protectedLiterals.map((item) => `- \`${item}\``).join("\n") : "None.",
   "",
   "## Residual identity hits",
   "",
@@ -190,6 +231,7 @@ const report = [
   "## Rename policy",
   "",
   "Project-owned eve identity is renamed to Kaf. Project-owned GitHub URLs are redirected to TheHalfMoon/kaf.",
+  "Actual external package coordinates are discovered from the pinned upstream dependency manifests and preserved automatically.",
   "Actual `@vercel/*` dependencies and Vercel provider/service names remain intact because renaming them would break runtime behavior.",
   "Apache-2.0 LICENSE is copied byte-for-byte from upstream; upstream NOTICE is retained verbatim beneath Kaf attribution.",
   "Third-party package coordinates are preserved when they are not owned by Kaf.",
@@ -198,4 +240,10 @@ const report = [
 fs.mkdirSync(path.join(root, ".kaf-migration"), { recursive: true });
 fs.writeFileSync(path.join(root, ".kaf-migration", "REPORT.md"), report);
 
-console.log(JSON.stringify({ totalFiles, textFiles, transformedFiles, residualFiles: residuals.length }, null, 2));
+console.log(JSON.stringify({
+  totalFiles,
+  textFiles,
+  transformedFiles,
+  protectedExternalPackages: protectedLiterals.length,
+  residualFiles: residuals.length,
+}, null, 2));
