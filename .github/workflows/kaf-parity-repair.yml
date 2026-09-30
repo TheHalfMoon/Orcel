@@ -41,21 +41,12 @@ jobs:
       - name: Apply deterministic identity repairs
         run: node .kaf-migration/repair-parity.mjs
 
-      - name: Regenerate extension contract epochs
+      - name: Rebaseline unpublished current contract metadata for Kaf
         shell: bash
         run: |
           set -euo pipefail
-          for contract in \
-            extension tool dynamicTool channel schedule subagent connection hook \
-            skill dynamicSkill instructions dynamicInstructions config state
-          do
-            # Kaf deliberately adopts Eve's structural API compatibility lineage under
-            # the Kaf namespace. Historical source worktrees predate the rename, so
-            # automatic history replay cannot resolve Kaf package paths. --retain is
-            # an explicit migration decision; the closing invariant guard compiles
-            # the retained fixtures against the current Kaf runtime.
-            pnpm update:extension-contracts --update "$contract" --retain
-          done
+          node .kaf-migration/rebaseline-extension-contracts.mjs
+          pnpm update:extension-contracts
 
       - name: Verify invariant guard
         run: pnpm guard:invariants
