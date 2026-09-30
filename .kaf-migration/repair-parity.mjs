@@ -122,12 +122,83 @@ if (!bootstrapText.includes("const externalProviderApiLiterals =")) {
     "const protectedLiterals = [...externalEvePackages].sort((a, b) => b.length - a.length);",
     "const externalProviderApiLiterals = [\"@vercel/connect/eve\"];\nconst protectedLiterals = [...new Set([...externalEvePackages, ...externalProviderApiLiterals])].sort(\n  (a, b) => b.length - a.length,\n);",
   );
+  bootstrapText = fs.readFileSync(bootstrapPath, "utf8");
 }
 
-// @vercel/connect exposes this external compatibility API under the literal
-// subpath "eve". Renaming it to "kaf" breaks package resolution, so preserve
-// the upstream provider API while Kaf's own imports continue to use "kaf/*".
+// Preserve the real third-party compatibility subpath when encountered in
+// upstream material. Kaf-owned runtime code must not depend on that Eve-only
+// adapter; the Slack template is repaired below to use Connect core directly.
 replaceLiteralInTree(root, "@vercel/connect/kaf", "@vercel/connect/eve");
+
+ensureReplacement(
+  "scripts/check-docs.mjs",
+  "new URL(target, `https://github.com/TheHalfMoon/kaf${sourceUrl}`).pathname",
+  "new URL(target, `https://kaf.invalid${sourceUrl}`).pathname",
+);
+ensureReplacement(
+  "scripts/check-docs.mjs",
+  'new URL(target, "https://github.com/TheHalfMoon/kaf/docs/channels/overview").pathname',
+  'new URL(target, "https://kaf.invalid/docs/channels/overview").pathname',
+);
+
+ensureReplacement(
+  "apps/templates/kaf-chat-template/agent/channels/slack.ts",
+  'import { connectSlackCredentials } from "@vercel/connect/eve";\nimport { slackChannel } from "kaf/channels/slack";',
+  'import { getToken } from "@vercel/connect";\nimport { vercelOidc } from "kaf/channels/auth";\nimport { slackChannel } from "kaf/channels/slack";',
+);
+ensureReplacement(
+  "apps/templates/kaf-chat-template/agent/channels/slack.ts",
+  "  credentials: connectSlackCredentials(slackConnector),",
+  '  credentials: {\n    botToken: () => getToken(slackConnector, { subject: { type: "app" } }),\n    webhookVerifier: vercelOidc(),\n  },',
+);
+
+const bootstrapCompatibilityAnchor = `removeExceptGit(root);
+copyTree(upstream, root);
+renamePaths(root);
+transformTree(root);
+
+for (const [rel, data] of preserved) {`;
+const bootstrapCompatibilityPatch = `removeExceptGit(root);
+copyTree(upstream, root);
+renamePaths(root);
+transformTree(root);
+
+// Apply Kaf-specific compatibility corrections after the generic identity
+// transform. These are semantic adaptations, not branding substitutions.
+{
+  const docsCheckerPath = path.join(root, "scripts/check-docs.mjs");
+  let docsChecker = fs.readFileSync(docsCheckerPath, "utf8");
+  docsChecker = docsChecker
+    .replaceAll("https://github.com/TheHalfMoon/kaf\\${sourceUrl}", "https://kaf.invalid\\${sourceUrl}")
+    .replaceAll(
+      "https://github.com/TheHalfMoon/kaf/docs/channels/overview",
+      "https://kaf.invalid/docs/channels/overview",
+    );
+  fs.writeFileSync(docsCheckerPath, docsChecker);
+
+  const slackChannelPath = path.join(
+    root,
+    "apps/templates/kaf-chat-template/agent/channels/slack.ts",
+  );
+  let slackChannelSource = fs.readFileSync(slackChannelPath, "utf8");
+  slackChannelSource = slackChannelSource
+    .replace(
+      'import { connectSlackCredentials } from "@vercel/connect/eve";\\nimport { slackChannel } from "kaf/channels/slack";',
+      'import { getToken } from "@vercel/connect";\\nimport { vercelOidc } from "kaf/channels/auth";\\nimport { slackChannel } from "kaf/channels/slack";',
+    )
+    .replace(
+      "  credentials: connectSlackCredentials(slackConnector),",
+      '  credentials: {\\n    botToken: () => getToken(slackConnector, { subject: { type: "app" } }),\\n    webhookVerifier: vercelOidc(),\\n  },',
+    );
+  fs.writeFileSync(slackChannelPath, slackChannelSource);
+}
+
+for (const [rel, data] of preserved) {`;
+ensureReplacement(
+  ".kaf-migration/bootstrap.mjs",
+  bootstrapCompatibilityAnchor,
+  bootstrapCompatibilityPatch,
+);
 
 const changelogPath = path.join(root, "packages/kaf/CHANGELOG.md");
 const changelog = fs.readFileSync(changelogPath, "utf8");
