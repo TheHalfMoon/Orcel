@@ -51,17 +51,19 @@ jobs:
       - name: Regenerate derived web scaffold
         run: pnpm --filter kaf generate:web-template
 
-      - name: Refresh standalone template lockfiles
+      - name: Validate standalone template prepublish policy
         shell: bash
         run: |
           set -euo pipefail
-          for template in \
-            apps/templates/kaf-chat-template \
-            apps/templates/kaf-slack-agent-template \
-            apps/templates/personal-agent-template
+          for template_pkg in \
+            apps/templates/kaf-chat-template/package.json \
+            apps/templates/kaf-slack-agent-template/package.json \
+            apps/templates/personal-agent-template/package.json
           do
-            (cd "$template" && pnpm install --lockfile-only --no-frozen-lockfile)
+            test -f "$template_pkg"
           done
+          echo "Standalone template registry lockfiles are not re-resolved before Kaf is published."
+          echo "Template compatibility is validated below from the locally packed Kaf tarball."
 
       - name: Diagnose and apply lint fixes
         id: lint
