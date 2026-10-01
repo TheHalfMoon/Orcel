@@ -106,6 +106,30 @@ ensureReplacement(
   '  { label: "Eve-prefixed symbol", pattern: /\\b(?:eve|Eve)(?=[A-Z0-9_])/g },\n  { label: "EVE-prefixed symbol", pattern: /\\bEVE(?=_|[A-Z][a-z]|\\d)/g },',
 );
 
+// The Connect manifest compiler function is owned by @vercel/connect and its
+// public API retains Eve in the symbol name. Preserve it exactly while keeping
+// Kaf-owned snapshots, messages, and runtime identity branded as Kaf.
+for (const relativePath of [
+  "packages/kaf/src/internal/external-resources.ts",
+  "packages/kaf/src/internal/external-resources.scenario.test.ts",
+]) {
+  replaceAllLiteral(
+    relativePath,
+    "experimental_createConnectManifestFromKafResources",
+    "experimental_createConnectManifestFromEveResources",
+  );
+}
+for (const relativePath of [
+  ".kaf-migration/bootstrap.mjs",
+  ".kaf-migration/audit-identity.mjs",
+]) {
+  replaceAllLiteral(
+    relativePath,
+    'const externalProviderApiLiterals = ["@vercel/connect/eve"];',
+    'const externalProviderApiLiterals = ["@vercel/connect/eve", "experimental_createConnectManifestFromEveResources"];',
+  );
+}
+
 // Kaf owns its public GHCR image. Keep the separate Vercel Container Registry
 // coordinate unchanged because it is a provider-specific integration surface.
 for (const relativePath of [
