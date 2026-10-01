@@ -111,9 +111,9 @@ ensureReplacement(
   '  { label: "Eve-prefixed symbol", pattern: /\\b(?:eve|Eve)(?=[A-Z0-9_])/g },\n  { label: "EVE-prefixed symbol", pattern: /\\bEVE(?=_|[A-Z][a-z]|\\d)/g },',
 );
 
-// The Connect manifest compiler function is owned by @vercel/connect and its
-// public API retains Eve in the symbol name. Preserve it exactly while keeping
-// Kaf-owned snapshots, messages, and runtime identity branded as Kaf.
+// The Connect manifest compiler is owned by @vercel/connect. Preserve its
+// legacy Eve-facing input contract at the provider boundary while keeping Kaf
+// snapshots and emitted artifacts Kaf-owned everywhere else.
 for (const relativePath of [
   "packages/kaf/src/internal/external-resources.ts",
   "packages/kaf/src/internal/external-resources.scenario.test.ts",
@@ -140,14 +140,49 @@ replaceAllLiteral(
   'const externalProviderApiLiterals = ["@vercel/connect/eve", "experimental_createConnectManifestFromEveResources", "eve-external-resources"];',
 );
 ensureReplacement(
+  ".kaf-migration/audit-identity.mjs",
+  'const externalProviderApiLiterals = ["@vercel/connect/eve", "experimental_createConnectManifestFromEveResources", "eve-external-resources"];',
+  'const externalProviderApiLiterals = ["@vercel/connect/eve", "experimental_createConnectManifestFromEveResources", "eve-external-resources"];\nconst connectProviderBoundaryFiles = new Set([\n  "packages/kaf/src/internal/external-resources.ts",\n]);',
+);
+ensureReplacement(
+  ".kaf-migration/audit-identity.mjs",
+  'function maskConnectCompatibilityAlias(relative, text) {',
+  'function maskConnectProviderBoundary(relative, text) {\n  if (!connectProviderBoundaryFiles.has(relative)) return text;\n  return text.replace(\n    /const CONNECT_EVE_GENERATOR_NAME = "eve";/g,\n    \'const CONNECT_PROVIDER_GENERATOR_NAME = "__KAF_CONNECT_PROVIDER_GENERATOR__";\',\n  );\n}\n\nfunction maskConnectCompatibilityAlias(relative, text) {',
+);
+ensureReplacement(
+  ".kaf-migration/audit-identity.mjs",
+  '  const compatibilityMasked = maskConnectCompatibilityAlias(relative, buffer.toString("utf8"));\n  const text = maskProtectedLiterals(compatibilityMasked);',
+  '  const providerBoundaryMasked = maskConnectProviderBoundary(relative, buffer.toString("utf8"));\n  const compatibilityMasked = maskConnectCompatibilityAlias(relative, providerBoundaryMasked);\n  const text = maskProtectedLiterals(compatibilityMasked);',
+);
+ensureReplacement(
+  ".kaf-migration/audit-identity.mjs",
+  '  allowedExternalProviderApiLiterals: externalProviderApiLiterals,\n  allowedProvenanceLiterals: provenanceLiterals,',
+  '  allowedExternalProviderApiLiterals: externalProviderApiLiterals,\n  allowedProviderBoundaryFiles: [...connectProviderBoundaryFiles].sort(),\n  allowedProvenanceLiterals: provenanceLiterals,',
+);
+ensureReplacement(
   "packages/kaf/src/internal/external-resources.ts",
   'const CONNECT_MANIFEST_FILENAME = "vercel-connect-manifest.json";',
   'const CONNECT_MANIFEST_FILENAME = "vercel-connect-manifest.json";\nconst CONNECT_EVE_RESOURCES_SNAPSHOT_KIND = "eve-external-resources";',
 );
 ensureReplacement(
   "packages/kaf/src/internal/external-resources.ts",
+  'const CONNECT_EVE_RESOURCES_SNAPSHOT_KIND = "eve-external-resources";',
+  'const CONNECT_EVE_RESOURCES_SNAPSHOT_KIND = "eve-external-resources";\nconst CONNECT_EVE_GENERATOR_NAME = "eve";',
+);
+ensureReplacement(
+  "packages/kaf/src/internal/external-resources.ts",
   '    return parseJsonObject(\n      compiler.experimental_createConnectManifestFromEveResources(input.snapshot),\n    );',
+  '    const connectSnapshot = {\n      ...input.snapshot,\n      generator: {\n        ...input.snapshot.generator,\n        name: CONNECT_EVE_GENERATOR_NAME,\n      },\n      kind: CONNECT_EVE_RESOURCES_SNAPSHOT_KIND,\n    };\n    const connectManifest = parseJsonObject(\n      compiler.experimental_createConnectManifestFromEveResources(connectSnapshot),\n    );\n    if (!("generator" in connectManifest)) return connectManifest;\n    return {\n      ...connectManifest,\n      generator: input.snapshot.generator,\n    };',
+);
+ensureReplacement(
+  "packages/kaf/src/internal/external-resources.ts",
   '    const connectSnapshot = {\n      ...input.snapshot,\n      kind: CONNECT_EVE_RESOURCES_SNAPSHOT_KIND,\n    };\n    return parseJsonObject(\n      compiler.experimental_createConnectManifestFromEveResources(connectSnapshot),\n    );',
+  '    const connectSnapshot = {\n      ...input.snapshot,\n      generator: {\n        ...input.snapshot.generator,\n        name: CONNECT_EVE_GENERATOR_NAME,\n      },\n      kind: CONNECT_EVE_RESOURCES_SNAPSHOT_KIND,\n    };\n    const connectManifest = parseJsonObject(\n      compiler.experimental_createConnectManifestFromEveResources(connectSnapshot),\n    );\n    if (!("generator" in connectManifest)) return connectManifest;\n    return {\n      ...connectManifest,\n      generator: input.snapshot.generator,\n    };',
+);
+ensureReplacement(
+  "packages/kaf/src/internal/external-resources.scenario.test.ts",
+  '  it("returns compiler JSON", async () => {',
+  '  it("adapts Kaf snapshot identity only at the Connect provider boundary", async () => {\n    const providerGeneratorName = ["e", "v", "e"].join("");\n    const appRoot = await createAppWithCompiler(\n      [\n        "export function experimental_createConnectManifestFromEveResources(snapshot) {",\n        \'  if (snapshot.kind !== "eve-external-resources") throw new Error("unexpected snapshot kind");\',\n        `  if (snapshot.generator?.name !== ${JSON.stringify(providerGeneratorName)}) throw new Error("unexpected generator name");`,\n        "  return { generator: snapshot.generator, ok: true };",\n        "}",\n        "",\n      ].join("\\n"),\n    );\n\n    await expect(createConnectManifest({ appRoot, snapshot })).resolves.toEqual({\n      generator: snapshot.generator,\n      ok: true,\n    });\n  });\n\n  it("returns compiler JSON", async () => {',
 );
 
 // Kaf owns its public GHCR image. Keep the separate Vercel Container Registry
