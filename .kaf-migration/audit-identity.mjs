@@ -15,6 +15,9 @@ const provenanceFiles = new Set([
 ]);
 const provenanceLiterals = ["generated/eve-full-import-9c36b7c"];
 const externalProviderApiLiterals = ["@vercel/connect/eve", "experimental_createConnectManifestFromEveResources", "eve-external-resources"];
+const connectProviderBoundaryFiles = new Set([
+  "packages/kaf/src/internal/external-resources.ts",
+]);
 const connectCompatibilityPackageFiles = new Set([
   "apps/templates/kaf-chat-template/package.json",
   "apps/templates/kaf-slack-agent-template/package.json",
@@ -100,6 +103,14 @@ function maskProtectedLiterals(text) {
   return output;
 }
 
+function maskConnectProviderBoundary(relative, text) {
+  if (!connectProviderBoundaryFiles.has(relative)) return text;
+  return text.replace(
+    /const CONNECT_EVE_GENERATOR_NAME = "eve";/g,
+    'const CONNECT_PROVIDER_GENERATOR_NAME = "__KAF_CONNECT_PROVIDER_GENERATOR__";',
+  );
+}
+
 function maskConnectCompatibilityAlias(relative, text) {
   if (connectCompatibilityPackageFiles.has(relative)) {
     return text.replace(
@@ -125,7 +136,8 @@ walk(root, (file) => {
   if (isProvenancePath(relative)) return;
   const buffer = fs.readFileSync(file);
   if (!isTextFile(file, buffer)) return;
-  const compatibilityMasked = maskConnectCompatibilityAlias(relative, buffer.toString("utf8"));
+  const providerBoundaryMasked = maskConnectProviderBoundary(relative, buffer.toString("utf8"));
+  const compatibilityMasked = maskConnectCompatibilityAlias(relative, providerBoundaryMasked);
   const text = maskProtectedLiterals(compatibilityMasked);
 
   for (const rule of [...forbiddenIdentity, ...forbiddenOwnership]) {
@@ -159,6 +171,7 @@ for (const item of compatibilityAliasViolations) {
 const result = {
   externalEvePackages: [...externalEvePackages].sort(),
   allowedExternalProviderApiLiterals: externalProviderApiLiterals,
+  allowedProviderBoundaryFiles: [...connectProviderBoundaryFiles].sort(),
   allowedProvenanceLiterals: provenanceLiterals,
   allowedConnectCompatibilityAliases: [...connectCompatibilityPackageFiles].sort(),
   violationCount: violations.reduce((sum, item) => sum + item.count, 0),
