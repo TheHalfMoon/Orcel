@@ -98,9 +98,9 @@ const oldIdentityName = `function identityName(name) {
     .replace(/(^|[-_.])Eve(?=$|[-_.])/g, "$1Kaf")
     .replace(/(^|[-_.])eve(?=$|[-_.])/g, "$1kaf");
 }`;
-const newIdentityName = `function identityName(name) {
+const currentIdentityName = `function identityName(name) {
   return renameInternalScope(name)
-    .replace(/^EVE(?=[A-Z0-9])/g, "KAF")
+    .replace(/^EVE(?=_|[A-Z][a-z]|\\d)/g, "KAF")
     .replace(/^Eve(?=[A-Z0-9])/g, "Kaf")
     .replace(/^eve(?=[A-Z0-9])/g, "kaf")
     .replace(/(?<=[a-z0-9_])Eve(?=[A-Z0-9_]|$)/g, "Kaf")
@@ -108,7 +108,7 @@ const newIdentityName = `function identityName(name) {
     .replace(/(^|[-_.])Eve(?=$|[-_.])/g, "$1Kaf")
     .replace(/(^|[-_.])eve(?=$|[-_.])/g, "$1kaf");
 }`;
-ensureReplacement(".kaf-migration/bootstrap.mjs", oldIdentityName, newIdentityName);
+ensureReplacement(".kaf-migration/bootstrap.mjs", oldIdentityName, currentIdentityName);
 
 const bootstrapPath = path.join(root, ".kaf-migration/bootstrap.mjs");
 let bootstrapText = fs.readFileSync(bootstrapPath, "utf8");
