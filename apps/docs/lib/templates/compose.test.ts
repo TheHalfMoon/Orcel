@@ -56,7 +56,7 @@ describe("composeTemplateEntries", () => {
     const monorepoEntry: TemplateManifestEntry = {
       ...manifestEntry,
       github: {
-        owner: "vercel",
+        owner: "TheHalfMoon",
         repo: "kaf",
         ref: "main",
         pathPrefix: "apps/templates/example-template",
