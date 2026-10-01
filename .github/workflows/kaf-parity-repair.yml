@@ -49,6 +49,7 @@ jobs:
         run: pnpm --filter kaf generate:web-template
 
       - name: Refresh standalone template lockfiles
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
