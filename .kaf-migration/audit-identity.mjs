@@ -14,7 +14,13 @@ const provenanceFiles = new Set([
   ".github/workflows/bootstrap-eve-to-kaf.yml",
 ]);
 const provenanceLiterals = ["generated/eve-full-import-9c36b7c"];
-const externalProviderApiLiterals = ["@vercel/connect/eve", "experimental_createConnectManifestFromEveResources", "eve-external-resources"];
+const externalProviderApiLiterals = [
+  "@vercel/connect/eve",
+  "experimental_createConnectManifestFromEveResources",
+  "eve-external-resources",
+  "@github-tools/sdk/eve",
+  "buildEveToolMap",
+];
 const connectProviderBoundaryFiles = new Set([
   "packages/kaf/src/internal/external-resources.ts",
 ]);
