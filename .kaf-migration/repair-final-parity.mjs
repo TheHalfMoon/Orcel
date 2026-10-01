@@ -45,6 +45,16 @@ replaceAllLiteral(
   "__kaf776561746865722d6167656e74_wkf_workflow_",
 );
 replaceAllLiteral(
+  "packages/kaf/src/internal/nitro/host/configure-nitro-routes.ts",
+  "__eveGetWorkflowWorld",
+  "__kafGetWorkflowWorld",
+);
+replaceAllLiteral(
+  "packages/kaf/src/internal/nitro/host/configure-nitro-routes.ts",
+  "__eveWorkflow",
+  "__kafWorkflow",
+);
+replaceAllLiteral(
   "packages/kaf/src/internal/nitro/host/configure-nitro-routes.test.ts",
   "const __eveWorkflowWorld = await __eveGetWorkflowWorld();",
   "const __kafWorkflowWorld = await __kafGetWorkflowWorld();",
@@ -55,8 +65,7 @@ replaceAllLiteral(
   "__kafWorkflowWorld.registerHandler(\"__kaf746573742d6167656e74_wkf_workflow_\", POST);",
 );
 
-// Preserve ordinary English and fixture content. These were false positives
-// from the broad Eve-prefix migration rule, not project identity.
+// Preserve ordinary English while correcting Kaf-owned fixture identity.
 replaceAllLiteral(
   "packages/kaf/src/cli/ui/output.test.ts",
   "[KAFNT] beforeafter red",
@@ -69,8 +78,8 @@ replaceAllLiteral(
 );
 replaceAllLiteral(
   "packages/kaf/src/cli/dev/tui/blocks.test.ts",
-  "\u00a0eve\u00a0logo.",
-  "\u00a0kaf\u00a0logo.",
+  String.raw`\u00a0eve\u00a0logo.`,
+  String.raw`\u00a0kaf\u00a0logo.`,
 );
 
 // Tighten future full imports so uppercase English words such as EVENT are not
@@ -97,6 +106,16 @@ ensureReplacement(
   '  { label: "Eve-prefixed symbol", pattern: /\\b(?:eve|Eve)(?=[A-Z0-9_])/g },\n  { label: "EVE-prefixed symbol", pattern: /\\bEVE(?=_|[A-Z][a-z]|\\d)/g },',
 );
 
+// Kaf owns its public GHCR image. Keep the separate Vercel Container Registry
+// coordinate unchanged because it is a provider-specific integration surface.
+for (const relativePath of [
+  "packages/kaf/src/execution/sandbox/bindings/kaf-image.ts",
+  "packages/kaf/src/execution/sandbox/bindings/kaf-image.test.ts",
+  ".github/workflows/release.yml",
+]) {
+  replaceAllLiteral(relativePath, "ghcr.io/vercel/kaf", "ghcr.io/thehalfmoon/kaf");
+}
+
 // pnpm does not expose a local tarball under the historical alias in the same
 // way as a published npm alias. The compatibility check still validates the
 // manifest alias, then binds the local Kaf install to that historical package
@@ -110,6 +129,16 @@ ensureReplacement(
   "scripts/check-template-compatibility.mjs",
   '    run("pnpm", ["install", "--no-frozen-lockfile"], { cwd: destination });\n    run("pnpm", ["typecheck"], { cwd: destination });',
   '    run("pnpm", ["install", "--no-frozen-lockfile"], { cwd: destination });\n    if (manifest.dependencies["@vercel/connect"]) {\n      const compatibilityPath = join(destination, "node_modules", historicalFrameworkPackage);\n      rmSync(compatibilityPath, { force: true, recursive: true });\n      symlinkSync(join(destination, "node_modules", "kaf"), compatibilityPath, "junction");\n    }\n    run("pnpm", ["typecheck"], { cwd: destination });',
+);
+
+// Prepublish template qualification must not depend on a Kaf image already
+// existing in GHCR. Build the package-owned sandbox image locally under the
+// exact reference the packed Kaf package resolves, so Docker's if-not-present
+// policy exercises the real Kaf image without a registry pull.
+ensureReplacement(
+  "scripts/check-template-compatibility.mjs",
+  "  const tarball = join(packedDirectory, tarballs[0]);\n\n  const templates =",
+  `  const tarball = join(packedDirectory, tarballs[0]);\n  const packageManifest = JSON.parse(readFileSync(join(packageDirectory, "package.json"), "utf8"));\n  const sandboxImageTag = String(packageManifest.version ?? "").split("+", 1)[0];\n  if (sandboxImageTag.length === 0) {\n    throw new Error("Kaf package version is required to build the local sandbox image");\n  }\n  const localSandboxImage = \`ghcr.io/thehalfmoon/kaf:\${sandboxImageTag}\`;\n  run("docker", [\n    "build",\n    "--file",\n    join(packageDirectory, "Dockerfile"),\n    "--tag",\n    localSandboxImage,\n    packageDirectory,\n  ]);\n\n  const templates =`,
 );
 
 console.log("Kaf final parity repair inputs applied successfully.");
