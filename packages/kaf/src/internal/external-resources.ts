@@ -13,6 +13,7 @@ import { parseJsonObject, type JsonObject } from "#shared/json.js";
 
 const CONNECT_MANIFEST_FILENAME = "vercel-connect-manifest.json";
 const CONNECT_EVE_RESOURCES_SNAPSHOT_KIND = "eve-external-resources";
+const CONNECT_EVE_GENERATOR_NAME = "eve";
 
 export function buildExternalResourcesSnapshot(input: {
   readonly generatorVersion: string;
@@ -94,7 +95,7 @@ export async function createConnectManifest(input: {
     );
   }
   try {
-    // These names and the legacy snapshot discriminator belong to the external
+    // These names and the legacy snapshot identity belong to the external
     // @vercel/connect provider contract. Kaf keeps its own snapshot identity
     // internally and adapts only at this provider boundary.
     const compiler = (await import(pathToFileURL(modulePath).href)) as {
@@ -105,11 +106,20 @@ export async function createConnectManifest(input: {
     }
     const connectSnapshot = {
       ...input.snapshot,
+      generator: {
+        ...input.snapshot.generator,
+        name: CONNECT_EVE_GENERATOR_NAME,
+      },
       kind: CONNECT_EVE_RESOURCES_SNAPSHOT_KIND,
     };
-    return parseJsonObject(
+    const connectManifest = parseJsonObject(
       compiler.experimental_createConnectManifestFromEveResources(connectSnapshot),
     );
+    if (!("generator" in connectManifest)) return connectManifest;
+    return {
+      ...connectManifest,
+      generator: input.snapshot.generator,
+    };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(
