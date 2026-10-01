@@ -57,6 +57,18 @@ function replaceLiteralInTree(dir, before, after) {
   }
 }
 
+function ensureConnectCompatibilityAlias(relativePath) {
+  const file = path.join(root, relativePath);
+  const manifest = JSON.parse(fs.readFileSync(file, "utf8"));
+  const dependencies = manifest.dependencies ?? {};
+  if (!dependencies["@vercel/connect"] || !dependencies.kaf) return;
+  const expected = `npm:kaf@${dependencies.kaf}`;
+  if (dependencies.eve === expected) return;
+  dependencies.eve = expected;
+  manifest.dependencies = dependencies;
+  fs.writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`);
+}
+
 const oldConsole = path.join(
   root,
   "apps/frameworks/sveltekit/src/lib/EveAgentConsole.svelte",
@@ -122,12 +134,21 @@ if (!bootstrapText.includes("const externalProviderApiLiterals =")) {
     "const protectedLiterals = [...externalEvePackages].sort((a, b) => b.length - a.length);",
     "const externalProviderApiLiterals = [\"@vercel/connect/eve\"];\nconst protectedLiterals = [...new Set([...externalEvePackages, ...externalProviderApiLiterals])].sort(\n  (a, b) => b.length - a.length,\n);",
   );
-  bootstrapText = fs.readFileSync(bootstrapPath, "utf8");
 }
 
+replaceAllLiteral(
+  ".kaf-migration/bootstrap.mjs",
+  '.replaceAll("https://eve.dev/", "https://github.com/TheHalfMoon/kaf/")',
+  '.replaceAll("https://eve.dev/", "https://kaf.dev/")',
+);
+replaceAllLiteral(
+  ".kaf-migration/bootstrap.mjs",
+  '.replaceAll("https://eve.dev", "https://github.com/TheHalfMoon/kaf")',
+  '.replaceAll("https://eve.dev", "https://kaf.dev")',
+);
+
 // Preserve the real third-party compatibility subpath when encountered in
-// upstream material. Kaf-owned runtime code must not depend on that Eve-only
-// adapter; the Slack template is repaired below to use Connect core directly.
+// upstream material. Kaf-owned runtime code uses Connect core directly.
 replaceLiteralInTree(root, "@vercel/connect/kaf", "@vercel/connect/eve");
 
 ensureReplacement(
@@ -152,56 +173,101 @@ ensureReplacement(
   '  credentials: {\n    botToken: () => getToken(slackConnector, { subject: { type: "app" } }),\n    webhookVerifier: vercelOidc(),\n  },',
 );
 
-const bootstrapCompatibilityAnchor = `removeExceptGit(root);
-copyTree(upstream, root);
-renamePaths(root);
-transformTree(root);
-
-for (const [rel, data] of preserved) {`;
-const bootstrapCompatibilityPatch = `removeExceptGit(root);
-copyTree(upstream, root);
-renamePaths(root);
-transformTree(root);
-
-// Apply Kaf-specific compatibility corrections after the generic identity
-// transform. These are semantic adaptations, not branding substitutions.
-{
-  const docsCheckerPath = path.join(root, "scripts/check-docs.mjs");
-  let docsChecker = fs.readFileSync(docsCheckerPath, "utf8");
-  docsChecker = docsChecker
-    .replaceAll(
-      "https://github.com/TheHalfMoon/kaf" + "$" + "{sourceUrl}",
-      "https://kaf.invalid" + "$" + "{sourceUrl}",
-    )
-    .replaceAll(
-      "https://github.com/TheHalfMoon/kaf/docs/channels/overview",
-      "https://kaf.invalid/docs/channels/overview",
-    );
-  fs.writeFileSync(docsCheckerPath, docsChecker);
-
-  const slackChannelPath = path.join(
-    root,
-    "apps/templates/kaf-chat-template/agent/channels/slack.ts",
-  );
-  let slackChannelSource = fs.readFileSync(slackChannelPath, "utf8");
-  slackChannelSource = slackChannelSource
-    .replace(
-      'import { connectSlackCredentials } from "@vercel/connect/eve";\\nimport { slackChannel } from "kaf/channels/slack";',
-      'import { getToken } from "@vercel/connect";\\nimport { vercelOidc } from "kaf/channels/auth";\\nimport { slackChannel } from "kaf/channels/slack";',
-    )
-    .replace(
-      "  credentials: connectSlackCredentials(slackConnector),",
-      '  credentials: {\\n    botToken: () => getToken(slackConnector, { subject: { type: "app" } }),\\n    webhookVerifier: vercelOidc(),\\n  },',
-    );
-  fs.writeFileSync(slackChannelPath, slackChannelSource);
+for (const relativePath of [
+  "apps/templates/kaf-chat-template/package.json",
+  "apps/templates/kaf-slack-agent-template/package.json",
+  "apps/templates/personal-agent-template/package.json",
+]) {
+  ensureConnectCompatibilityAlias(relativePath);
 }
 
-for (const [rel, data] of preserved) {`;
-ensureReplacement(
-  ".kaf-migration/bootstrap.mjs",
-  bootstrapCompatibilityAnchor,
-  bootstrapCompatibilityPatch,
+// The first migration pass incorrectly mapped the docs-site origin to a GitHub
+// repository path. Repair only the known site-origin surfaces; repository URLs
+// remain canonical TheHalfMoon/Kaf links.
+replaceAllLiteral(
+  "apps/docs/lib/analytics/events.ts",
+  "https://github.com/TheHalfMoon/kaf",
+  "https://kaf.dev",
 );
+replaceAllLiteral(
+  "apps/docs/lib/analytics/events.test.ts",
+  "https://github.com/TheHalfMoon/kaf",
+  "https://kaf.dev",
+);
+replaceAllLiteral(
+  "apps/docs/lib/geistdocs/sitemap.test.ts",
+  "https://github.com/TheHalfMoon/kaf",
+  "https://kaf.dev",
+);
+replaceAllLiteral(
+  "apps/docs/lib/geistdocs/url.test.ts",
+  "https://github.com/TheHalfMoon/kaf",
+  "https://kaf.dev",
+);
+replaceAllLiteral(
+  "apps/docs/lib/templates/readme-links.test.ts",
+  'resolveReadmeHref("https://github.com/TheHalfMoon/kaf/docs", sourceRevisionHref)',
+  'resolveReadmeHref("https://kaf.dev/docs", sourceRevisionHref)',
+);
+replaceAllLiteral(
+  "apps/docs/lib/templates/readme-links.test.ts",
+  '"https://github.com/TheHalfMoon/kaf/docs",\n    );',
+  '"https://kaf.dev/docs",\n    );',
+);
+replaceAllLiteral(
+  "apps/docs/lib/templates/readme-links.test.ts",
+  'sanitizeReadmeHref("https://github.com/TheHalfMoon/kaf")',
+  'sanitizeReadmeHref("https://kaf.dev")',
+);
+replaceAllLiteral(
+  "apps/docs/lib/templates/readme-links.test.ts",
+  'toBe("https://github.com/TheHalfMoon/kaf/")',
+  'toBe("https://kaf.dev/")',
+);
+replaceAllLiteral(
+  "apps/docs/lib/templates/compose.test.ts",
+  'owner: "vercel",\n        repo: "kaf",',
+  'owner: "TheHalfMoon",\n        repo: "kaf",',
+);
+
+// Keep future full imports self-contained. If the semantic compatibility block
+// has not yet been installed in bootstrap.mjs, add the current version once.
+bootstrapText = fs.readFileSync(bootstrapPath, "utf8");
+if (!bootstrapText.includes("manifest.dependencies.eve = `npm:kaf@${manifest.dependencies.kaf}`")) {
+  const bootstrapAliasAnchor = `  fs.writeFileSync(slackChannelPath, slackChannelSource);
+}`;
+  const bootstrapAliasPatch = `  fs.writeFileSync(slackChannelPath, slackChannelSource);
+
+  // @vercel/connect currently imports the framework by its historical bare
+  // package name. Keep that provider compatibility name scoped to templates
+  // and point it at the exact same Kaf package range rather than shipping Eve.
+  for (const relative of [
+    "apps/templates/kaf-chat-template/package.json",
+    "apps/templates/kaf-slack-agent-template/package.json",
+    "apps/templates/personal-agent-template/package.json",
+  ]) {
+    const manifestPath = path.join(root, relative);
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    if (manifest.dependencies?.["@vercel/connect"] && manifest.dependencies.kaf) {
+      manifest.dependencies.eve = \`npm:kaf@\${manifest.dependencies.kaf}\`;
+      fs.writeFileSync(manifestPath, \`\${JSON.stringify(manifest, null, 2)}\\n\`);
+    }
+  }
+
+  const composeTestPath = path.join(root, "apps/docs/lib/templates/compose.test.ts");
+  let composeTest = fs.readFileSync(composeTestPath, "utf8");
+  composeTest = composeTest.replace(
+    'owner: "vercel",\\n        repo: "kaf",',
+    'owner: "TheHalfMoon",\\n        repo: "kaf",',
+  );
+  fs.writeFileSync(composeTestPath, composeTest);
+}`;
+  ensureReplacement(
+    ".kaf-migration/bootstrap.mjs",
+    bootstrapAliasAnchor,
+    bootstrapAliasPatch,
+  );
+}
 
 const changelogPath = path.join(root, "packages/kaf/CHANGELOG.md");
 const changelog = fs.readFileSync(changelogPath, "utf8");
