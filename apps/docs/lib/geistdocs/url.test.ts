@@ -15,7 +15,7 @@ describe("getSiteOrigin", () => {
   it("adds HTTPS to a configured deployment host", () => {
     vi.stubEnv(SITE_ENV, "kaf.dev");
 
-    expect(getSiteOrigin()).toBe("https://github.com/TheHalfMoon/kaf");
+    expect(getSiteOrigin()).toBe("https://kaf.dev");
   });
 
   it("rejects a non-HTTP URL", () => {
