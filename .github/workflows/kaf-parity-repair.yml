@@ -8,6 +8,7 @@ on:
       - .github/workflows/kaf-parity-repair.yml
       - .kaf-migration/bootstrap.mjs
       - .kaf-migration/repair-parity.mjs
+      - .kaf-migration/repair-final-parity.mjs
       - .kaf-migration/audit-identity.mjs
       - scripts/check-template-compatibility.mjs
       - apps/templates/**/package.json
@@ -46,7 +47,9 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Apply deterministic identity repairs
-        run: node .kaf-migration/repair-parity.mjs
+        run: |
+          node .kaf-migration/repair-parity.mjs
+          node .kaf-migration/repair-final-parity.mjs
 
       - name: Regenerate derived web scaffold
         run: pnpm --filter kaf generate:web-template
