@@ -331,7 +331,7 @@ describe("Nitro route configuration", () => {
     expect(workflowHandlerSource).toContain(
       "const __kafWorkflowWorld = await __kafGetWorkflowWorld();",
     );
-    expect(workflowHandlerSource).toContain("__eveWorkflowWorld.registerHandler");
+    expect(workflowHandlerSource).toContain("__kafWorkflowWorld.registerHandler");
   });
 
   it("bakes the module map loader into the dev schedule handler", async () => {
