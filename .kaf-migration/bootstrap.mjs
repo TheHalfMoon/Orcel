@@ -158,8 +158,8 @@ function transformText(input) {
   text = text
     .replaceAll("git+https://github.com/vercel/eve.git", "git+https://github.com/TheHalfMoon/kaf.git")
     .replaceAll("https://github.com/vercel/eve", "https://github.com/TheHalfMoon/kaf")
-    .replaceAll("https://eve.dev/", "https://github.com/TheHalfMoon/kaf/")
-    .replaceAll("https://eve.dev", "https://github.com/TheHalfMoon/kaf");
+    .replaceAll("https://eve.dev/", "https://kaf.dev/")
+    .replaceAll("https://eve.dev", "https://kaf.dev");
   text = renameIdentityTokens(text);
 
   for (const [token, literal] of placeholders) text = text.replaceAll(token, literal);
@@ -229,6 +229,30 @@ transformTree(root);
       '  credentials: {\n    botToken: () => getToken(slackConnector, { subject: { type: "app" } }),\n    webhookVerifier: vercelOidc(),\n  },',
     );
   fs.writeFileSync(slackChannelPath, slackChannelSource);
+
+  // @vercel/connect currently imports the framework by its historical bare
+  // package name. Keep that provider compatibility name scoped to templates
+  // and point it at the exact same Kaf package range rather than shipping Eve.
+  for (const relative of [
+    "apps/templates/kaf-chat-template/package.json",
+    "apps/templates/kaf-slack-agent-template/package.json",
+    "apps/templates/personal-agent-template/package.json",
+  ]) {
+    const manifestPath = path.join(root, relative);
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    if (manifest.dependencies?.["@vercel/connect"] && manifest.dependencies.kaf) {
+      manifest.dependencies.eve = `npm:kaf@${manifest.dependencies.kaf}`;
+      fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    }
+  }
+
+  const composeTestPath = path.join(root, "apps/docs/lib/templates/compose.test.ts");
+  let composeTest = fs.readFileSync(composeTestPath, "utf8");
+  composeTest = composeTest.replace(
+    'owner: "vercel",\n        repo: "kaf",',
+    'owner: "TheHalfMoon",\n        repo: "kaf",',
+  );
+  fs.writeFileSync(composeTestPath, composeTest);
 }
 
 for (const [rel, data] of preserved) {
@@ -298,7 +322,7 @@ const report = [
   "",
   "## Rename policy",
   "",
-  "Project-owned eve identity is renamed to Kaf. Project-owned GitHub URLs are redirected to TheHalfMoon/kaf.",
+  "Project-owned eve identity is renamed to Kaf. Project-owned GitHub URLs are redirected to TheHalfMoon/kaf, while docs-site origins retain origin semantics as kaf.dev.",
   "Project-owned package scopes are discovered from upstream workspace manifests and renamed consistently in both text and paths.",
   "Actual external package coordinates and provider API literals are preserved when they are not owned by Kaf.",
   "Actual `@vercel/*` dependencies and Vercel provider/service names remain intact because renaming them would break runtime behavior.",
