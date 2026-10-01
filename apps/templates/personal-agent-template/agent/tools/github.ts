@@ -1,4 +1,4 @@
-import { buildKafToolMap } from "@github-tools/sdk/kaf";
+import { buildEveToolMap as buildKafToolMap } from "@github-tools/sdk/eve";
 import { getToken, UserAuthorizationRequiredError } from "@vercel/connect";
 import { defineDynamic } from "kaf/tools";
 import { CONNECT_USER_ISSUER, GITHUB_CONNECTOR } from "../../lib/connect.js";
