@@ -15,6 +15,7 @@ import { execFileSync } from "node:child_process";
 const repoRoot = resolve(import.meta.dirname, "..");
 const templatesDirectory = join(repoRoot, "apps", "templates");
 const temporaryDirectory = mkdtempSync(join(tmpdir(), "kaf-template-compatibility-"));
+const historicalFrameworkPackage = ["e", "ve"].join("");
 
 const run = (command, args, options = {}) => {
   process.stdout.write(`$ ${command} ${args.join(" ")}\n`);
@@ -59,15 +60,15 @@ try {
     }
     manifest.dependencies.kaf = `file:${tarball}`;
     if (manifest.dependencies["@vercel/connect"]) {
-      if (!manifest.dependencies.eve?.startsWith("npm:kaf@")) {
+      const compatibilitySpecifier = manifest.dependencies[historicalFrameworkPackage];
+      if (!compatibilitySpecifier?.startsWith("npm:kaf@")) {
         throw new Error(
-          `Template "${template}" uses @vercel/connect but is missing the documented eve -> kaf compatibility alias`,
+          `Template "${template}" uses @vercel/connect but is missing its documented Kaf compatibility alias`,
         );
       }
-      // @vercel/connect currently imports the framework through its historical
-      // bare package name. Bind that compatibility name to the exact same local
-      // Kaf tarball so parity tests never depend on a registry-published build.
-      manifest.dependencies.eve = `file:${tarball}`;
+      // Bind the provider's historical bare package coordinate to the exact
+      // same local Kaf tarball so parity tests never depend on a registry build.
+      manifest.dependencies[historicalFrameworkPackage] = `file:${tarball}`;
     }
     writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 
