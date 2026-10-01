@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  GHCR_IMAGE: ghcr.io/vercel/kaf
+  GHCR_IMAGE: ghcr.io/thehalfmoon/kaf
   VCR_IMAGE: vcr.vercel.com/vercel/kaf/base
 
 jobs:

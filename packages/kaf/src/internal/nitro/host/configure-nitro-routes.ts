@@ -152,7 +152,7 @@ function buildWorkflowFileHandlerSource(input: {
         return { ...entry, binding: "POST" };
       }
 
-      const binding = `__eveWorkflowDirectHandler${companionIndex}`;
+      const binding = `__kafWorkflowDirectHandler${companionIndex}`;
       companionIndex += 1;
       return { ...entry, binding };
     });
@@ -172,16 +172,16 @@ function buildWorkflowFileHandlerSource(input: {
     }
 
     lines.push(
-      `import { getWorld as __eveGetWorkflowWorld } from ${JSON.stringify(input.runtimeImportSpecifier)};`,
+      `import { getWorld as __kafGetWorkflowWorld } from ${JSON.stringify(input.runtimeImportSpecifier)};`,
       "",
       "try {",
-      "  const __eveWorkflowWorld = await __eveGetWorkflowWorld();",
-      '  if (typeof __eveWorkflowWorld?.registerHandler === "function") {',
+      "  const __kafWorkflowWorld = await __kafGetWorkflowWorld();",
+      '  if (typeof __kafWorkflowWorld?.registerHandler === "function") {',
     );
 
     for (const handler of handlerBindings) {
       lines.push(
-        `    __eveWorkflowWorld.registerHandler(${JSON.stringify(handler.queuePrefix)}, ${handler.binding});`,
+        `    __kafWorkflowWorld.registerHandler(${JSON.stringify(handler.queuePrefix)}, ${handler.binding});`,
       );
     }
 

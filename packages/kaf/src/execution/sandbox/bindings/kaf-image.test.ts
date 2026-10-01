@@ -23,8 +23,8 @@ describe("kaf sandbox image", () => {
   });
 
   it("uses the versioned GHCR image outside Vercel Sandbox", () => {
-    expect(resolveKafSandboxImage()).toBe("ghcr.io/vercel/kaf:1.2.3");
-    expect(DEFAULT_KAF_SANDBOX_IMAGE).toBe("ghcr.io/vercel/kaf:1.2.3");
+    expect(resolveKafSandboxImage()).toBe("ghcr.io/thehalfmoon/kaf:1.2.3");
+    expect(DEFAULT_KAF_SANDBOX_IMAGE).toBe("ghcr.io/thehalfmoon/kaf:1.2.3");
   });
 
   it("uses the versioned VCR image for Vercel Sandbox", () => {
@@ -40,8 +40,8 @@ describe("kaf sandbox image", () => {
     packageInfo.version = version;
     vi.resetModules();
     const images = await import("#execution/sandbox/bindings/kaf-image.js");
-    expect(images.resolveKafSandboxImage()).toBe(`ghcr.io/vercel/kaf:${tag}`);
-    expect(images.DEFAULT_KAF_SANDBOX_IMAGE).toBe(`ghcr.io/vercel/kaf:${tag}`);
+    expect(images.resolveKafSandboxImage()).toBe(`ghcr.io/thehalfmoon/kaf:${tag}`);
+    expect(images.DEFAULT_KAF_SANDBOX_IMAGE).toBe(`ghcr.io/thehalfmoon/kaf:${tag}`);
     expect(images.resolveVercelKafSandboxImage()).toBe(`vcr.vercel.com/vercel/kaf/base:${tag}`);
     expect(images.VERCEL_KAF_SANDBOX_IMAGE).toBe(`vcr.vercel.com/vercel/kaf/base:${tag}`);
   });
@@ -52,8 +52,8 @@ describe("kaf sandbox image", () => {
     vi.resetModules();
 
     const images = await import("#execution/sandbox/bindings/kaf-image.js");
-    expect(images.resolveKafSandboxImage()).toBe("ghcr.io/vercel/kaf:latest");
-    expect(images.DEFAULT_KAF_SANDBOX_IMAGE).toBe("ghcr.io/vercel/kaf:latest");
+    expect(images.resolveKafSandboxImage()).toBe("ghcr.io/thehalfmoon/kaf:latest");
+    expect(images.DEFAULT_KAF_SANDBOX_IMAGE).toBe("ghcr.io/thehalfmoon/kaf:latest");
     expect(images.resolveVercelKafSandboxImage()).toBe("vcr.vercel.com/vercel/kaf/base:latest");
     expect(images.VERCEL_KAF_SANDBOX_IMAGE).toBe("vcr.vercel.com/vercel/kaf/base:latest");
   });

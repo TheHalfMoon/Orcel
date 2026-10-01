@@ -1,7 +1,7 @@
 import { resolveInstalledPackageInfo } from "#internal/application/package.js";
 import { stripVersionBuildMetadata } from "#shared/package-version.js";
 
-const GHCR_KAF_SANDBOX_IMAGE_REPOSITORY = "ghcr.io/vercel/kaf";
+const GHCR_KAF_SANDBOX_IMAGE_REPOSITORY = "ghcr.io/thehalfmoon/kaf";
 const VERCEL_KAF_SANDBOX_IMAGE_REPOSITORY = "vcr.vercel.com/vercel/kaf/base";
 
 export function resolveKafSandboxImage(): string {

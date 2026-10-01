@@ -35,6 +35,20 @@ try {
     );
   }
   const tarball = join(packedDirectory, tarballs[0]);
+  const packageManifest = JSON.parse(readFileSync(join(packageDirectory, "package.json"), "utf8"));
+  const sandboxImageTag = String(packageManifest.version ?? "").split("+", 1)[0];
+  if (sandboxImageTag.length === 0) {
+    throw new Error("Kaf package version is required to build the local sandbox image");
+  }
+  const localSandboxImage = `ghcr.io/thehalfmoon/kaf:${sandboxImageTag}`;
+  run("docker", [
+    "build",
+    "--file",
+    join(packageDirectory, "Dockerfile"),
+    "--tag",
+    localSandboxImage,
+    packageDirectory,
+  ]);
 
   const templates = readdirSync(templatesDirectory, { withFileTypes: true })
     .filter(

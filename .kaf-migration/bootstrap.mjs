@@ -119,7 +119,7 @@ const binaryExts = new Set([
 
 // External provider API coordinates are not project branding. Preserve the
 // exact upstream literal when it is part of a third-party package API.
-const externalProviderApiLiterals = ["@vercel/connect/eve"];
+const externalProviderApiLiterals = ["@vercel/connect/eve", "experimental_createConnectManifestFromEveResources"];
 const protectedLiterals = [...new Set([...externalEvePackages, ...externalProviderApiLiterals])].sort(
   (a, b) => b.length - a.length,
 );
