@@ -64,6 +64,11 @@ replaceAllLiteral(
   "__eveWorkflowWorld.registerHandler(\"__eve746573742d6167656e74_wkf_workflow_\", POST);",
   "__kafWorkflowWorld.registerHandler(\"__kaf746573742d6167656e74_wkf_workflow_\", POST);",
 );
+replaceAllLiteral(
+  "packages/kaf/src/internal/nitro/host/configure-nitro-routes.test.ts",
+  "__eveWorkflowWorld.registerHandler",
+  "__kafWorkflowWorld.registerHandler",
+);
 
 // Preserve ordinary English while correcting Kaf-owned fixture identity.
 replaceAllLiteral(
