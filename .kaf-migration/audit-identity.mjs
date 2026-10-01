@@ -15,6 +15,16 @@ const provenanceFiles = new Set([
 ]);
 const provenanceLiterals = ["generated/eve-full-import-9c36b7c"];
 const externalProviderApiLiterals = ["@vercel/connect/eve"];
+const connectCompatibilityPackageFiles = new Set([
+  "apps/templates/kaf-chat-template/package.json",
+  "apps/templates/kaf-slack-agent-template/package.json",
+  "apps/templates/personal-agent-template/package.json",
+]);
+const connectCompatibilityLockfiles = new Set([
+  "apps/templates/kaf-chat-template/pnpm-lock.yaml",
+  "apps/templates/kaf-slack-agent-template/pnpm-lock.yaml",
+  "apps/templates/personal-agent-template/pnpm-lock.yaml",
+]);
 
 function walk(dir, visitor) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -51,6 +61,12 @@ for (const manifest of manifests) {
     const dependencies = manifest[field];
     if (!dependencies || typeof dependencies !== "object") continue;
     for (const dependencyName of Object.keys(dependencies)) {
+      const dependencyValue = dependencies[dependencyName];
+      const isKafCompatibilityAlias =
+        dependencyName === "eve" &&
+        typeof dependencyValue === "string" &&
+        dependencyValue.startsWith("npm:kaf@");
+      if (isKafCompatibilityAlias) continue;
       if (evePackageToken.test(dependencyName) && !internalPackageNames.has(dependencyName)) {
         externalEvePackages.add(dependencyName);
       }
@@ -83,6 +99,19 @@ function maskProtectedLiterals(text) {
   return output;
 }
 
+function maskConnectCompatibilityAlias(relative, text) {
+  if (connectCompatibilityPackageFiles.has(relative)) {
+    return text.replace(
+      /"eve"\s*:\s*"npm:kaf@[^"]+"/g,
+      '"__KAF_CONNECT_COMPAT_ALIAS__": "__KAF_CONNECT_COMPAT_TARGET__"',
+    );
+  }
+  if (connectCompatibilityLockfiles.has(relative)) {
+    return text.replace(/^(\s*)eve:/gm, "$1__KAF_CONNECT_COMPAT_ALIAS__:");
+  }
+  return text;
+}
+
 function isProvenancePath(relative) {
   if (provenanceFiles.has(relative)) return true;
   if (relative.startsWith(".kaf-migration/")) return true;
@@ -95,7 +124,8 @@ walk(root, (file) => {
   if (isProvenancePath(relative)) return;
   const buffer = fs.readFileSync(file);
   if (!isTextFile(file, buffer)) return;
-  const text = maskProtectedLiterals(buffer.toString("utf8"));
+  const compatibilityMasked = maskConnectCompatibilityAlias(relative, buffer.toString("utf8"));
+  const text = maskProtectedLiterals(compatibilityMasked);
 
   for (const rule of [...forbiddenIdentity, ...forbiddenOwnership]) {
     rule.pattern.lastIndex = 0;
@@ -105,10 +135,31 @@ walk(root, (file) => {
   }
 });
 
+const compatibilityAliasViolations = [];
+for (const relative of connectCompatibilityPackageFiles) {
+  const file = path.join(root, relative);
+  const manifest = JSON.parse(fs.readFileSync(file, "utf8"));
+  const dependencies = manifest.dependencies ?? {};
+  const kafRange = dependencies.kaf;
+  const expectedAlias = typeof kafRange === "string" ? `npm:kaf@${kafRange}` : null;
+  if (!dependencies["@vercel/connect"] || !expectedAlias || dependencies.eve !== expectedAlias) {
+    compatibilityAliasViolations.push({
+      file: relative,
+      expected: expectedAlias,
+      actual: dependencies.eve ?? null,
+    });
+  }
+}
+
+for (const item of compatibilityAliasViolations) {
+  violations.push({ file: item.file, rule: "invalid Vercel Connect Kaf compatibility alias", count: 1 });
+}
+
 const result = {
   externalEvePackages: [...externalEvePackages].sort(),
   allowedExternalProviderApiLiterals: externalProviderApiLiterals,
   allowedProvenanceLiterals: provenanceLiterals,
+  allowedConnectCompatibilityAliases: [...connectCompatibilityPackageFiles].sort(),
   violationCount: violations.reduce((sum, item) => sum + item.count, 0),
   violations,
 };
@@ -120,5 +171,5 @@ if (violations.length) {
 }
 
 console.log(
-  "[kaf:identity-audit] ok — Kaf project identity is clean outside explicit provenance and external package/provider API coordinates.",
+  "[kaf:identity-audit] ok — Kaf project identity is clean outside explicit provenance and narrowly-scoped external compatibility coordinates.",
 );
