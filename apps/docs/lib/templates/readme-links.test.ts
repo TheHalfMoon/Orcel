@@ -24,8 +24,8 @@ describe("resolveReadmeHref", () => {
 
   it("preserves page anchors and safe absolute links", () => {
     expect(resolveReadmeHref("#quick-start", sourceRevisionHref)).toBe("#quick-start");
-    expect(resolveReadmeHref("https://github.com/TheHalfMoon/kaf/docs", sourceRevisionHref)).toBe(
-      "https://github.com/TheHalfMoon/kaf/docs",
+    expect(resolveReadmeHref("https://kaf.dev/docs", sourceRevisionHref)).toBe(
+      "https://kaf.dev/docs",
     );
   });
 
@@ -52,7 +52,7 @@ describe("createResolveReadmeLinksPlugin", () => {
 
 describe("sanitizeReadmeHref", () => {
   it("allows web, email, telephone, relative, and anchor links", () => {
-    expect(sanitizeReadmeHref("https://github.com/TheHalfMoon/kaf")).toBe("https://github.com/TheHalfMoon/kaf/");
+    expect(sanitizeReadmeHref("https://kaf.dev")).toBe("https://kaf.dev/");
     expect(sanitizeReadmeHref("mailto:hello@example.com")).toBe("mailto:hello@example.com");
     expect(sanitizeReadmeHref("tel:+15555555555")).toBe("tel:+15555555555");
     expect(sanitizeReadmeHref("docs/setup.md")).toBe("docs/setup.md");
