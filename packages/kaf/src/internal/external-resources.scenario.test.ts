@@ -131,6 +131,25 @@ describe("Connect manifest compiler handoff", () => {
     });
   });
 
+  it("adapts Kaf snapshot identity only at the Connect provider boundary", async () => {
+    const providerGeneratorName = ["e", "v", "e"].join("");
+    const appRoot = await createAppWithCompiler(
+      [
+        "export function experimental_createConnectManifestFromEveResources(snapshot) {",
+        '  if (snapshot.kind !== "eve-external-resources") throw new Error("unexpected snapshot kind");',
+        `  if (snapshot.generator?.name !== ${JSON.stringify(providerGeneratorName)}) throw new Error("unexpected generator name");`,
+        "  return { generator: snapshot.generator, ok: true };",
+        "}",
+        "",
+      ].join("\n"),
+    );
+
+    await expect(createConnectManifest({ appRoot, snapshot })).resolves.toEqual({
+      generator: snapshot.generator,
+      ok: true,
+    });
+  });
+
   it("returns compiler JSON", async () => {
     const appRoot = await createAppWithCompiler(
       "export function experimental_createConnectManifestFromEveResources() { return { ok: true }; }\n",
