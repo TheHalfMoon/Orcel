@@ -12,6 +12,7 @@ import {
 import { parseJsonObject, type JsonObject } from "#shared/json.js";
 
 const CONNECT_MANIFEST_FILENAME = "vercel-connect-manifest.json";
+const CONNECT_EVE_RESOURCES_SNAPSHOT_KIND = "eve-external-resources";
 
 export function buildExternalResourcesSnapshot(input: {
   readonly generatorVersion: string;
@@ -93,16 +94,21 @@ export async function createConnectManifest(input: {
     );
   }
   try {
-    // This export name belongs to the external @vercel/connect provider API.
-    // Preserve it verbatim even though the snapshot itself is Kaf-owned.
+    // These names and the legacy snapshot discriminator belong to the external
+    // @vercel/connect provider contract. Kaf keeps its own snapshot identity
+    // internally and adapts only at this provider boundary.
     const compiler = (await import(pathToFileURL(modulePath).href)) as {
       readonly experimental_createConnectManifestFromEveResources?: (snapshot: unknown) => unknown;
     };
     if (typeof compiler.experimental_createConnectManifestFromEveResources !== "function") {
       throw new TypeError("missing experimental_createConnectManifestFromEveResources export");
     }
+    const connectSnapshot = {
+      ...input.snapshot,
+      kind: CONNECT_EVE_RESOURCES_SNAPSHOT_KIND,
+    };
     return parseJsonObject(
-      compiler.experimental_createConnectManifestFromEveResources(input.snapshot),
+      compiler.experimental_createConnectManifestFromEveResources(connectSnapshot),
     );
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
