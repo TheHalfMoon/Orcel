@@ -67,6 +67,9 @@ jobs:
       - name: Unit tests
         run: pnpm test:unit
 
+      - name: Scenario tests
+        run: pnpm test:scenario
+
       - name: Workflow helper tests
         run: node --test .github/scripts/*.test.mjs
 
@@ -139,7 +142,9 @@ jobs:
         run: |
           cat <<'EOF'
           This qualification workflow intentionally does not invoke model APIs,
-          paid SaaS, deployment credentials, or secret-backed TUI/E2E paths.
-          Those paths require separate evidence and must not be represented as
-          passing when credentials or zero-cost execution are unavailable.
+          paid SaaS, deployment credentials, or secret-backed TUI/E2E/benchmark paths.
+          Scenario tests are included because they are locally executable without
+          external model credentials. TUI/E2E/benchmark paths require separate
+          evidence and must not be represented as passing when credentials or
+          zero-cost execution are unavailable.
           EOF
