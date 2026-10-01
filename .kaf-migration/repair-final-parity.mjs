@@ -119,16 +119,31 @@ for (const relativePath of [
     "experimental_createConnectManifestFromEveResources",
   );
 }
-for (const relativePath of [
+replaceAllLiteral(
   ".kaf-migration/bootstrap.mjs",
+  'const externalProviderApiLiterals = ["@vercel/connect/eve"];',
+  'const externalProviderApiLiterals = ["@vercel/connect/eve", "experimental_createConnectManifestFromEveResources"];',
+);
+replaceAllLiteral(
   ".kaf-migration/audit-identity.mjs",
-]) {
-  replaceAllLiteral(
-    relativePath,
-    'const externalProviderApiLiterals = ["@vercel/connect/eve"];',
-    'const externalProviderApiLiterals = ["@vercel/connect/eve", "experimental_createConnectManifestFromEveResources"];',
-  );
-}
+  'const externalProviderApiLiterals = ["@vercel/connect/eve"];',
+  'const externalProviderApiLiterals = ["@vercel/connect/eve", "experimental_createConnectManifestFromEveResources", "eve-external-resources"];',
+);
+replaceAllLiteral(
+  ".kaf-migration/audit-identity.mjs",
+  'const externalProviderApiLiterals = ["@vercel/connect/eve", "experimental_createConnectManifestFromEveResources"];',
+  'const externalProviderApiLiterals = ["@vercel/connect/eve", "experimental_createConnectManifestFromEveResources", "eve-external-resources"];',
+);
+ensureReplacement(
+  "packages/kaf/src/internal/external-resources.ts",
+  'const CONNECT_MANIFEST_FILENAME = "vercel-connect-manifest.json";',
+  'const CONNECT_MANIFEST_FILENAME = "vercel-connect-manifest.json";\nconst CONNECT_EVE_RESOURCES_SNAPSHOT_KIND = "eve-external-resources";',
+);
+ensureReplacement(
+  "packages/kaf/src/internal/external-resources.ts",
+  '    return parseJsonObject(\n      compiler.experimental_createConnectManifestFromEveResources(input.snapshot),\n    );',
+  '    const connectSnapshot = {\n      ...input.snapshot,\n      kind: CONNECT_EVE_RESOURCES_SNAPSHOT_KIND,\n    };\n    return parseJsonObject(\n      compiler.experimental_createConnectManifestFromEveResources(connectSnapshot),\n    );',
+);
 
 // Kaf owns its public GHCR image. Keep the separate Vercel Container Registry
 // coordinate unchanged because it is a provider-specific integration surface.
