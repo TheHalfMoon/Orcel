@@ -12,7 +12,12 @@ const preserved = new Map();
 for (const rel of [
   "UPSTREAM.md",
   ".kaf-migration/bootstrap.mjs",
+  ".kaf-migration/audit-identity.mjs",
+  ".kaf-migration/repair-parity.mjs",
+  ".kaf-migration/repair-final-parity.mjs",
   ".github/workflows/bootstrap-eve-to-kaf.yml",
+  ".github/workflows/kaf-parity-repair.yml",
+  ".github/workflows/kaf-import-qualification.yml",
 ]) {
   const file = path.join(root, rel);
   if (fs.existsSync(file)) preserved.set(rel, fs.readFileSync(file));
@@ -119,7 +124,12 @@ const binaryExts = new Set([
 
 // External provider API coordinates are not project branding. Preserve the
 // exact upstream literal when it is part of a third-party package API.
-const externalProviderApiLiterals = ["@vercel/connect/eve", "experimental_createConnectManifestFromEveResources"];
+const externalProviderApiLiterals = [
+  "@vercel/connect/eve",
+  "experimental_createConnectManifestFromEveResources",
+  "@github-tools/sdk/eve",
+  "buildEveToolMap",
+];
 const protectedLiterals = [...new Set([...externalEvePackages, ...externalProviderApiLiterals])].sort(
   (a, b) => b.length - a.length,
 );
@@ -229,6 +239,21 @@ transformTree(root);
       '  credentials: {\n    botToken: () => getToken(slackConnector, { subject: { type: "app" } }),\n    webhookVerifier: vercelOidc(),\n  },',
     );
   fs.writeFileSync(slackChannelPath, slackChannelSource);
+
+  const githubToolsPath = path.join(
+    root,
+    "apps/templates/personal-agent-template/agent/tools/github.ts",
+  );
+  if (fs.existsSync(githubToolsPath)) {
+    let githubToolsSource = fs.readFileSync(githubToolsPath, "utf8");
+    githubToolsSource = githubToolsSource
+      .replace(
+        'import { buildEveToolMap } from "@github-tools/sdk/eve";',
+        'import { buildEveToolMap as buildKafToolMap } from "@github-tools/sdk/eve";',
+      )
+      .replace("return buildEveToolMap(", "return buildKafToolMap(");
+    fs.writeFileSync(githubToolsPath, githubToolsSource);
+  }
 
   // @vercel/connect currently imports the framework by its historical bare
   // package name. Keep that provider compatibility name scoped to templates
