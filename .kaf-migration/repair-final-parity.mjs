@@ -111,6 +111,14 @@ ensureReplacement(
   '  { label: "Eve-prefixed symbol", pattern: /\\b(?:eve|Eve)(?=[A-Z0-9_])/g },\n  { label: "EVE-prefixed symbol", pattern: /\\bEVE(?=_|[A-Z][a-z]|\\d)/g },',
 );
 
+// GitHub Tools owns its Eve-specific integration subpath and exported helper.
+// Keep the provider API exact while presenting Kaf-owned naming to the template.
+replaceAllLiteral(
+  "apps/templates/personal-agent-template/agent/tools/github.ts",
+  'import { buildKafToolMap } from "@github-tools/sdk/kaf";',
+  'import { buildEveToolMap as buildKafToolMap } from "@github-tools/sdk/eve";',
+);
+
 // The Connect manifest compiler is owned by @vercel/connect. Preserve its
 // legacy Eve-facing input contract at the provider boundary while keeping Kaf
 // snapshots and emitted artifacts Kaf-owned everywhere else.
@@ -139,7 +147,9 @@ replaceAllLiteral(
   'const externalProviderApiLiterals = ["@vercel/connect/eve", "experimental_createConnectManifestFromEveResources"];',
   'const externalProviderApiLiterals = ["@vercel/connect/eve", "experimental_createConnectManifestFromEveResources", "eve-external-resources"];',
 );
-ensureReplacement(
+// Older generated trees did not yet have the provider-boundary file set. Use a
+// non-throwing literal repair so newer multiline provider lists remain idempotent.
+replaceAllLiteral(
   ".kaf-migration/audit-identity.mjs",
   'const externalProviderApiLiterals = ["@vercel/connect/eve", "experimental_createConnectManifestFromEveResources", "eve-external-resources"];',
   'const externalProviderApiLiterals = ["@vercel/connect/eve", "experimental_createConnectManifestFromEveResources", "eve-external-resources"];\nconst connectProviderBoundaryFiles = new Set([\n  "packages/kaf/src/internal/external-resources.ts",\n]);',
