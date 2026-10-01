@@ -25,25 +25,25 @@ describe("createCanonicalSitemap", () => {
   it("includes each canonical public HTML route exactly once", () => {
     const sitemap = createCanonicalSitemap({
       excludedPathnames: ["/docs/channels"],
-      origin: "https://github.com/TheHalfMoon/kaf",
+      origin: "https://kaf.dev",
       sources,
     });
 
     expect(sitemap.map(({ url }) => url)).toEqual([
-      "https://github.com/TheHalfMoon/kaf/",
-      "https://github.com/TheHalfMoon/kaf/benchmarks",
-      "https://github.com/TheHalfMoon/kaf/docs/getting-started",
-      "https://github.com/TheHalfMoon/kaf/integrations",
-      "https://github.com/TheHalfMoon/kaf/integrations/slack",
-      "https://github.com/TheHalfMoon/kaf/templates",
-      "https://github.com/TheHalfMoon/kaf/templates/kaf-chat-template",
+      "https://kaf.dev/",
+      "https://kaf.dev/benchmarks",
+      "https://kaf.dev/docs/getting-started",
+      "https://kaf.dev/integrations",
+      "https://kaf.dev/integrations/slack",
+      "https://kaf.dev/templates",
+      "https://kaf.dev/templates/kaf-chat-template",
     ]);
   });
 
   it("excludes redirects, queries, locale aliases, machine routes, and errors", () => {
     const urls = createCanonicalSitemap({
       excludedPathnames: ["/docs/channels"],
-      origin: "https://github.com/TheHalfMoon/kaf",
+      origin: "https://kaf.dev",
       sources,
     }).map(({ url }) => url);
 
@@ -52,15 +52,15 @@ describe("createCanonicalSitemap", () => {
         expect.stringContaining("?"),
         expect.stringContaining("/en/"),
         expect.stringMatching(/\.(?:md|mdx|txt|xml)$/),
-        "https://github.com/TheHalfMoon/kaf/docs/channels",
-        "https://github.com/TheHalfMoon/kaf/api",
+        "https://kaf.dev/docs/channels",
+        "https://kaf.dev/api",
       ]),
     );
   });
 
   it("uses trustworthy source dates without build-time fallbacks", () => {
-    const first = createCanonicalSitemap({ origin: "https://github.com/TheHalfMoon/kaf", sources });
-    const second = createCanonicalSitemap({ origin: "https://github.com/TheHalfMoon/kaf", sources });
+    const first = createCanonicalSitemap({ origin: "https://kaf.dev", sources });
+    const second = createCanonicalSitemap({ origin: "https://kaf.dev", sources });
     const docsEntry = first.find(({ url }) => url.endsWith("/docs/getting-started"));
     const integrationEntry = first.find(({ url }) => url.endsWith("/integrations/slack"));
 
@@ -73,9 +73,9 @@ describe("createCanonicalSitemap", () => {
   it("omits invalid source dates", () => {
     expect(
       createCanonicalSitemap({
-        origin: "https://github.com/TheHalfMoon/kaf",
+        origin: "https://kaf.dev",
         sources: [{ pathname: "/docs/getting-started", lastModified: new Date("invalid") }],
       }),
-    ).toEqual([{ url: "https://github.com/TheHalfMoon/kaf/docs/getting-started" }]);
+    ).toEqual([{ url: "https://kaf.dev/docs/getting-started" }]);
   });
 });
