@@ -6,8 +6,11 @@ on:
       - generated/eve-full-import-9c36b7c
     paths:
       - .github/workflows/kaf-parity-repair.yml
+      - .kaf-migration/bootstrap.mjs
       - .kaf-migration/repair-parity.mjs
       - .kaf-migration/audit-identity.mjs
+      - scripts/check-template-compatibility.mjs
+      - apps/templates/**/package.json
   workflow_dispatch:
 
 permissions:
@@ -49,7 +52,6 @@ jobs:
         run: pnpm --filter kaf generate:web-template
 
       - name: Refresh standalone template lockfiles
-        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
@@ -192,3 +194,11 @@ jobs:
             exit 0
           fi
           git push origin "HEAD:${GITHUB_REF_NAME}"
+
+      - name: Enforce parity diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ steps.lint.outputs.status }}" = "0"
+          test "${{ steps.templates.outputs.status }}" = "0"
+          test "${{ steps.unit.outputs.status }}" = "0"
