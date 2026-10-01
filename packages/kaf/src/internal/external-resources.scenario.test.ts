@@ -133,7 +133,7 @@ describe("Connect manifest compiler handoff", () => {
 
   it("returns compiler JSON", async () => {
     const appRoot = await createAppWithCompiler(
-      "export function experimental_createConnectManifestFromKafResources() { return { ok: true }; }\n",
+      "export function experimental_createConnectManifestFromEveResources() { return { ok: true }; }\n",
     );
 
     await expect(createConnectManifest({ appRoot, snapshot })).resolves.toEqual({ ok: true });
@@ -141,7 +141,7 @@ describe("Connect manifest compiler handoff", () => {
 
   it("surfaces compiler failures with recovery guidance", async () => {
     const appRoot = await createAppWithCompiler(
-      'export function experimental_createConnectManifestFromKafResources() { throw new Error("unsupported snapshot"); }\n',
+      'export function experimental_createConnectManifestFromEveResources() { throw new Error("unsupported snapshot"); }\n',
     );
 
     await expect(createConnectManifest({ appRoot, snapshot })).rejects.toThrow(
@@ -153,7 +153,7 @@ describe("Connect manifest compiler handoff", () => {
     const appRoot = await createAppWithCompiler("export {};\n");
 
     await expect(createConnectManifest({ appRoot, snapshot })).rejects.toThrow(
-      /missing experimental_createConnectManifestFromKafResources export/,
+      /missing experimental_createConnectManifestFromEveResources export/,
     );
   });
 
