@@ -14,16 +14,11 @@ const provenanceFiles = new Set([
   ".github/workflows/bootstrap-eve-to-kaf.yml",
 ]);
 const provenanceLiterals = ["generated/eve-full-import-9c36b7c"];
-const externalProviderApiLiterals = [
-  "@vercel/connect/eve",
-  "experimental_createConnectManifestFromEveResources",
-  "eve-external-resources",
-  "@github-tools/sdk/eve",
-  "buildEveToolMap",
-];
+const externalProviderApiLiterals = ["@vercel/connect/eve", "experimental_createConnectManifestFromEveResources", "eve-external-resources"];
 const connectProviderBoundaryFiles = new Set([
   "packages/kaf/src/internal/external-resources.ts",
 ]);
+externalProviderApiLiterals.push("@github-tools/sdk/eve", "buildEveToolMap");
 const connectCompatibilityPackageFiles = new Set([
   "apps/templates/kaf-chat-template/package.json",
   "apps/templates/kaf-slack-agent-template/package.json",
