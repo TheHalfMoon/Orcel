@@ -92,7 +92,7 @@ function renameInternalScope(name) {
 
 function identityName(name) {
   return renameInternalScope(name)
-    .replace(/^EVE(?=[A-Z0-9])/g, "KAF")
+    .replace(/^EVE(?=_|[A-Z][a-z]|\d)/g, "KAF")
     .replace(/^Eve(?=[A-Z0-9])/g, "Kaf")
     .replace(/^eve(?=[A-Z0-9])/g, "kaf")
     .replace(/(?<=[a-z0-9_])Eve(?=[A-Z0-9_]|$)/g, "Kaf")
@@ -136,7 +136,7 @@ function renameIdentityTokens(text) {
     .replaceAll("eve-source", "kaf-source")
     .replaceAll("EVE_", "KAF_")
     .replace(/\.eve(?=$|[/\\._-])/g, ".kaf")
-    .replace(/\bEVE(?=[A-Z0-9_])/g, "KAF")
+    .replace(/\bEVE(?=_|[A-Z][a-z]|\d)/g, "KAF")
     .replace(/\bEve(?=[A-Z0-9_])/g, "Kaf")
     .replace(/\beve(?=[A-Z0-9_])/g, "kaf")
     .replace(/(?<=[a-z0-9_])Eve(?=[A-Z0-9_]|$)/g, "Kaf")
@@ -271,7 +271,7 @@ fs.writeFileSync(
 );
 fs.copyFileSync(path.join(upstream, "LICENSE"), path.join(root, "LICENSE"));
 
-const identityResidualPattern = /\b(?:eve|Eve|EVE)\b|\b(?:eve|Eve|EVE)(?=[A-Z0-9_])|(?<=[a-z0-9_])Eve(?=[A-Z0-9_]|$)|(?<=_)eve(?=_|$)/g;
+const identityResidualPattern = /\b(?:eve|Eve|EVE)\b|\b(?:eve|Eve)(?=[A-Z0-9_])|\bEVE(?=_|[A-Z][a-z]|\d)|(?<=[a-z0-9_])Eve(?=[A-Z0-9_]|$)|(?<=_)eve(?=_|$)/g;
 const residuals = [];
 const staleInternalScopePaths = [];
 function scanResiduals(dir) {

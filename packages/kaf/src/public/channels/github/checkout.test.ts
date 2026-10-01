@@ -69,7 +69,7 @@ describe("GitHub checkout", () => {
     );
     // Clean remote — the token is never embedded in the URL.
     expect(sandbox.commandLog).toContain(
-      `cd '/workspace' && git remote add origin 'https://github.com/TheHalfMoon/kaf.git'`,
+      `cd '/workspace' && git remote add origin 'https://github.com/vercel/kaf.git'`,
     );
     // No scrub step and no token anywhere in the command stream.
     expect(sandbox.commandLog.some((command) => command.includes("git remote set-url"))).toBe(

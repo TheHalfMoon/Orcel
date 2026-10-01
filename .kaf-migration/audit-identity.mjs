@@ -81,7 +81,8 @@ const protectedLiterals = [
 ].sort((a, b) => b.length - a.length);
 const forbiddenIdentity = [
   { label: "standalone Eve identity", pattern: /\b(?:eve|Eve|EVE)\b/g },
-  { label: "Eve-prefixed symbol", pattern: /\b(?:eve|Eve|EVE)(?=[A-Z0-9_])/g },
+  { label: "Eve-prefixed symbol", pattern: /\b(?:eve|Eve)(?=[A-Z0-9_])/g },
+  { label: "EVE-prefixed symbol", pattern: /\bEVE(?=_|[A-Z][a-z]|\d)/g },
   { label: "embedded Eve symbol", pattern: /(?<=[a-z0-9_])Eve(?=[A-Z0-9_]|$)/g },
   { label: "underscore Eve token", pattern: /(?<=_)eve(?=_|$)/g },
 ];

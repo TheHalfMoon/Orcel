@@ -6,6 +6,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -74,6 +75,11 @@ try {
 
     process.stdout.write(`\nChecking ${template} against ${tarballs[0]}\n`);
     run("pnpm", ["install", "--no-frozen-lockfile"], { cwd: destination });
+    if (manifest.dependencies["@vercel/connect"]) {
+      const compatibilityPath = join(destination, "node_modules", historicalFrameworkPackage);
+      rmSync(compatibilityPath, { force: true, recursive: true });
+      symlinkSync(join(destination, "node_modules", "kaf"), compatibilityPath, "junction");
+    }
     run("pnpm", ["typecheck"], { cwd: destination });
     run("pnpm", ["exec", "kaf", "build"], { cwd: destination });
     run("pnpm", ["build"], { cwd: destination });

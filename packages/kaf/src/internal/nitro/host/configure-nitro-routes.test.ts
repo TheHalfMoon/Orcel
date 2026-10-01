@@ -329,7 +329,7 @@ describe("Nitro route configuration", () => {
 
     const workflowHandlerSource = readWriteFileSourceMatching("/workflow/workflows-handler.mjs");
     expect(workflowHandlerSource).toContain(
-      "const __eveWorkflowWorld = await __eveGetWorkflowWorld();",
+      "const __kafWorkflowWorld = await __kafGetWorkflowWorld();",
     );
     expect(workflowHandlerSource).toContain("__eveWorkflowWorld.registerHandler");
   });
@@ -449,10 +449,10 @@ describe("Nitro route configuration", () => {
       'import { POST } from "../../workflow-cache/workflows.mjs";',
     );
     expect(workflowHandlerSource).toContain(
-      "const __eveWorkflowWorld = await __eveGetWorkflowWorld();",
+      "const __kafWorkflowWorld = await __kafGetWorkflowWorld();",
     );
     expect(workflowHandlerSource).toContain(
-      '__eveWorkflowWorld.registerHandler("__eve746573742d6167656e74_wkf_workflow_", POST);',
+      '__kafWorkflowWorld.registerHandler("__kaf746573742d6167656e74_wkf_workflow_", POST);',
     );
     expect(readWriteFileSourceMatching("/workflow/steps-handler.mjs")).toBeUndefined();
   });

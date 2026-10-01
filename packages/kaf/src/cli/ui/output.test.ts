@@ -56,7 +56,7 @@ describe("CLI renderers", () => {
         message: `before${osc52}after \x1b[31mred\x1b[0m`,
         tag: `event${oscTitle}`,
       }),
-    ).toBe("[KAFNT] beforeafter red");
+    ).toBe("[EVENT] beforeafter red");
   });
 
   it("sanitize section fields before rendering", () => {

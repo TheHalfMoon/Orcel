@@ -21,7 +21,7 @@ describe("Git helpers", () => {
 
   it("uses a clean GitHub remote and brokers credentials only at the firewall", () => {
     expect(gitHubRemoteUrl({ owner: "vercel", repo: "kaf" })).toBe(
-      "https://github.com/TheHalfMoon/kaf.git",
+      "https://github.com/vercel/kaf.git",
     );
     const authorization = `Basic ${Buffer.from("x-access-token:secret").toString("base64")}`;
     expect(gitHubGitBrokerNetworkPolicy("secret")).toEqual({
