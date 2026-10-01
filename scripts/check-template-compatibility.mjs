@@ -58,6 +58,17 @@ try {
       throw new Error(`Template "${template}" does not declare kaf in dependencies`);
     }
     manifest.dependencies.kaf = `file:${tarball}`;
+    if (manifest.dependencies["@vercel/connect"]) {
+      if (!manifest.dependencies.eve?.startsWith("npm:kaf@")) {
+        throw new Error(
+          `Template "${template}" uses @vercel/connect but is missing the documented eve -> kaf compatibility alias`,
+        );
+      }
+      // @vercel/connect currently imports the framework through its historical
+      // bare package name. Bind that compatibility name to the exact same local
+      // Kaf tarball so parity tests never depend on a registry-published build.
+      manifest.dependencies.eve = `file:${tarball}`;
+    }
     writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 
     process.stdout.write(`\nChecking ${template} against ${tarballs[0]}\n`);
