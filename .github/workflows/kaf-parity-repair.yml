@@ -48,6 +48,18 @@ jobs:
       - name: Regenerate derived web scaffold
         run: pnpm --filter kaf generate:web-template
 
+      - name: Refresh standalone template lockfiles
+        shell: bash
+        run: |
+          set -euo pipefail
+          for template in \
+            apps/templates/kaf-chat-template \
+            apps/templates/kaf-slack-agent-template \
+            apps/templates/personal-agent-template
+          do
+            (cd "$template" && pnpm install --lockfile-only --no-frozen-lockfile)
+          done
+
       - name: Diagnose and apply lint fixes
         id: lint
         shell: bash
@@ -122,6 +134,32 @@ jobs:
         shell: bash
         run: gh pr comment 1 --body-file "$RUNNER_TEMP/kaf-template-comment.md"
 
+      - name: Diagnose unit tests
+        id: unit
+        shell: bash
+        run: |
+          set +e
+          pnpm test:unit > "$RUNNER_TEMP/kaf-unit.log" 2>&1
+          status=$?
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Kaf unit-test diagnostic"
+            echo
+            echo "Head: \`$(git rev-parse HEAD)\`"
+            echo
+            echo '```text'
+            tail -n 400 "$RUNNER_TEMP/kaf-unit.log"
+            echo '```'
+          } > "$RUNNER_TEMP/kaf-unit-comment.md"
+          exit 0
+
+      - name: Post unit-test diagnostic to PR
+        if: steps.unit.outputs.status != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: gh pr comment 1 --body-file "$RUNNER_TEMP/kaf-unit-comment.md"
+
       - name: Verify patch integrity
         shell: bash
         run: |
@@ -140,7 +178,7 @@ jobs:
             echo "No repair changes were produced."
             exit 0
           fi
-          git commit --no-verify -m "fix: apply deterministic Kaf parity repairs [skip ci]"
+          git commit --no-verify -m "fix: apply deterministic Kaf parity repairs"
           echo "REPAIR_COMMIT=$(git rev-parse HEAD)"
           echo "REPAIR_TREE=$(git rev-parse HEAD^{tree})"
 
