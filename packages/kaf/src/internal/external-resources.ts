@@ -93,14 +93,16 @@ export async function createConnectManifest(input: {
     );
   }
   try {
+    // This export name belongs to the external @vercel/connect provider API.
+    // Preserve it verbatim even though the snapshot itself is Kaf-owned.
     const compiler = (await import(pathToFileURL(modulePath).href)) as {
-      readonly experimental_createConnectManifestFromKafResources?: (snapshot: unknown) => unknown;
+      readonly experimental_createConnectManifestFromEveResources?: (snapshot: unknown) => unknown;
     };
-    if (typeof compiler.experimental_createConnectManifestFromKafResources !== "function") {
-      throw new TypeError("missing experimental_createConnectManifestFromKafResources export");
+    if (typeof compiler.experimental_createConnectManifestFromEveResources !== "function") {
+      throw new TypeError("missing experimental_createConnectManifestFromEveResources export");
     }
     return parseJsonObject(
-      compiler.experimental_createConnectManifestFromKafResources(input.snapshot),
+      compiler.experimental_createConnectManifestFromEveResources(input.snapshot),
     );
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
