@@ -281,7 +281,7 @@ test("workflow names and concurrency preserve independent authorized harness run
   assert.match(workflow, /issue_comment:\n\s+types: \[created\]/u);
   assert.match(
     workflow,
-    /needs: request\n\s+if: needs\.request\.outputs\.run == 'true'\n\s+concurrency:/u,
+    /if: needs\.request\.outputs\.run == 'true' && github\.event_name == 'workflow_dispatch'/u,
   );
   // A deepswe-lean run never cancels or overwrites a swe-lean run of the same harnesses.
   assert.match(
@@ -318,4 +318,29 @@ test("the consumer tracks eve-bench main and owns its model selection", async ()
   assert.match(workflow, /contenders: eve-code@baseline,eve-code@head\n/u);
   assert.doesNotMatch(workflow, /^\s+task:/mu);
   assert.equal((workflow.match(/uses: \.\/\.eve-bench-action/gu) ?? []).length, 1);
+});
+
+
+test("external-cost E2E workflows stay manual-only on pull requests", async () => {
+  const local = await readFile(new URL("../workflows/e2e-local.yml", import.meta.url), "utf8");
+  assert.match(local, /name: model-e2e-policy/u);
+  assert.match(local, /github\.event_name.*workflow_dispatch/u);
+  assert.match(
+    local,
+    /if: needs\.changes\.outputs\.relevant == 'true' && needs\.model-e2e-policy\.outputs\.run == 'true'/u,
+  );
+  assert.match(local, /DISCOVERY_RESULT:/u);
+  assert.match(local, /Real-model E2E intentionally skipped: \$POLICY_REASON/u);
+  assert.match(local, /AI_GATEWAY_API_KEY is required for a manual real-model E2E run/u);
+
+  const vercel = await readFile(new URL("../workflows/e2e-vercel.yml", import.meta.url), "utf8");
+  assert.match(vercel, /name: vercel-e2e-policy/u);
+  assert.match(vercel, /github\.event_name.*workflow_dispatch/u);
+  assert.match(
+    vercel,
+    /if: needs\.changes\.outputs\.relevant == 'true' && needs\.vercel-e2e-policy\.outputs\.run == 'true'/u,
+  );
+  assert.match(vercel, /DISCOVERY_RESULT:/u);
+  assert.match(vercel, /Vercel E2E intentionally skipped: \$POLICY_REASON/u);
+  assert.match(vercel, /VERCEL_TOKEN and VERCEL_PROJECT_ID are required for a manual Vercel E2E run/u);
 });
