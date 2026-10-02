@@ -19,10 +19,10 @@ describe("workflow queue namespace", () => {
 
   it("derives the workflow queue prefix and topic from the same namespace", () => {
     expect(deriveOrcelWorkflowQueuePrefix("weather-agent")).toBe(
-      "__kaf776561746865722d6167656e74_wkf_workflow_",
+      "__orcel776561746865722d6167656e74_wkf_workflow_",
     );
     expect(deriveOrcelWorkflowQueueTopic("weather-agent")).toBe(
-      "__kaf776561746865722d6167656e74_wkf_workflow_*",
+      "__orcel776561746865722d6167656e74_wkf_workflow_*",
     );
   });
 

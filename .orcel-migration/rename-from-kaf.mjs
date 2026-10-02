@@ -141,6 +141,22 @@ replaceInFile("packages/orcel/src/harness/authorization.test.ts", (text) =>
   text.replaceAll("%3Akaf%3A", "%3Aorcel%3A"),
 );
 
+// Close project-owned identity drift in escaped, encoded, and generated test fixtures.
+for (const [relative, pairs] of [
+  ["packages/orcel/src/internal/application/import-specifier.test.ts", [["test%20kaf", "test%20orcel"]]],
+  ["packages/orcel/src/internal/workflow/queue-namespace.test.ts", [["__kaf", "__orcel"]]],
+  ["packages/orcel/src/cli/dev/tui/blocks.test.ts", [["\\u00a0kaf\\u00a0logo", "\\u00a0orcel\\u00a0logo"]]],
+  ["packages/orcel/src/internal/nitro/host/configure-nitro-routes.test.ts", [["__kaf", "__orcel"]]],
+  ["packages/orcel/src/internal/nitro/host/configure-nitro-routes.ts", [["__kaf", "__orcel"]]],
+]) {
+  replaceInFile(relative, (text) => pairs.reduce((value, [from, to]) => value.replaceAll(from, to), text));
+}
+replaceInFile("packages/orcel/src/execution/sandbox/bindings/orcel-image.test.ts", (text) =>
+  text
+    .replaceAll("ghcr.io/thehalfmoon/orcel", "ghcr.io/vercel/eve")
+    .replaceAll("vcr.vercel.com/vercel/orcel/base", "vcr.vercel.com/vercel/eve/base"),
+);
+
 // @vercel/connect/eve imports the framework package by the historical bare name.
 // Scenario apps that exercise that provider boundary install the exact same Orcel
 // tarball under the compatibility alias instead of pulling a second framework.

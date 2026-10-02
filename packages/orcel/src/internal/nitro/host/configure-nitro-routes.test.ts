@@ -329,9 +329,9 @@ describe("Nitro route configuration", () => {
 
     const workflowHandlerSource = readWriteFileSourceMatching("/workflow/workflows-handler.mjs");
     expect(workflowHandlerSource).toContain(
-      "const __kafWorkflowWorld = await __kafGetWorkflowWorld();",
+      "const __orcelWorkflowWorld = await __orcelGetWorkflowWorld();",
     );
-    expect(workflowHandlerSource).toContain("__kafWorkflowWorld.registerHandler");
+    expect(workflowHandlerSource).toContain("__orcelWorkflowWorld.registerHandler");
   });
 
   it("bakes the module map loader into the dev schedule handler", async () => {
@@ -449,10 +449,10 @@ describe("Nitro route configuration", () => {
       'import { POST } from "../../workflow-cache/workflows.mjs";',
     );
     expect(workflowHandlerSource).toContain(
-      "const __kafWorkflowWorld = await __kafGetWorkflowWorld();",
+      "const __orcelWorkflowWorld = await __orcelGetWorkflowWorld();",
     );
     expect(workflowHandlerSource).toContain(
-      '__kafWorkflowWorld.registerHandler("__kaf746573742d6167656e74_wkf_workflow_", POST);',
+      '__orcelWorkflowWorld.registerHandler("__orcel746573742d6167656e74_wkf_workflow_", POST);',
     );
     expect(readWriteFileSourceMatching("/workflow/steps-handler.mjs")).toBeUndefined();
   });

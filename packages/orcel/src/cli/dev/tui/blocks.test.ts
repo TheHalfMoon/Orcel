@@ -43,7 +43,7 @@ describe("renderBlockLines", () => {
 
     expect(lines).toHaveLength(1);
     expect(stripAnsi(lines[0] ?? "")).toBe(
-      "▲ Visit orcel or view this image:\u00a0▧\u00a0kaf\u00a0logo.",
+      "▲ Visit orcel or view this image:\u00a0▧\u00a0orcel\u00a0logo.",
     );
 
     const wrapped = renderBlockLines(
@@ -55,7 +55,7 @@ describe("renderBlockLines", () => {
       theme,
       ctx,
     ).map(stripAnsi);
-    expect(wrapped).toEqual(["▲ Visit orcel or view this", "  image:\u00a0▧\u00a0kaf\u00a0logo."]);
+    expect(wrapped).toEqual(["▲ Visit orcel or view this", "  image:\u00a0▧\u00a0orcel\u00a0logo."]);
   });
 
   it("preserves prose Markdown when Markdown rendering is disabled", () => {

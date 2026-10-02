@@ -10,7 +10,7 @@ describe("normalizeEsmImportSpecifier", () => {
   it("converts Windows drive-letter paths to file URLs", () => {
     expect(
       normalizeEsmImportSpecifier("G:\\projects\\test orcel\\node_modules\\pkg\\dist\\route.js"),
-    ).toBe("file:///G:/projects/test%20kaf/node_modules/pkg/dist/route.js");
+    ).toBe("file:///G:/projects/test%20orcel/node_modules/pkg/dist/route.js");
     expect(normalizeEsmImportSpecifier("G:/projects/test-orcel/route.js")).toBe(
       "file:///G:/projects/test-orcel/route.js",
     );
@@ -24,7 +24,7 @@ describe("normalizeEsmImportSpecifier", () => {
 
   it("converts Windows UNC paths to file URLs", () => {
     expect(normalizeEsmImportSpecifier("\\\\server\\share\\test orcel\\route.js")).toBe(
-      "file://server/share/test%20kaf/route.js",
+      "file://server/share/test%20orcel/route.js",
     );
   });
 

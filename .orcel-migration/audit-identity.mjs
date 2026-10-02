@@ -6,7 +6,7 @@ const binaryExts = new Set([
   ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".pdf", ".zip", ".gz", ".tgz",
   ".woff", ".woff2", ".ttf", ".eot", ".wasm", ".mp3", ".mp4", ".mov", ".webm", ".lockb",
 ]);
-const kafIdentity = /\b(?:kaf|Kaf|KAF)\b|\b(?:kaf|Kaf)(?=[A-Z0-9_])|\bKAF(?=_|[A-Z][a-z]|\d)|(?<=[a-z0-9_])Kaf(?=[A-Z0-9_]|$)|(?<=_)kaf(?=_|$)|%3[aA](?:kaf|Kaf|KAF)%3[aA]/g;
+const kafIdentity = /\b(?:kaf|Kaf|KAF)\b|\b(?:kaf|Kaf)(?=[A-Z0-9_])|\bKAF(?=_|[A-Z][a-z]|\d)|(?<=[a-z0-9_])Kaf(?=[A-Z0-9_]|$)|(?<=_)(?:kaf|Kaf|KAF)(?=[A-Za-z0-9_]|$)|%3[aA](?:kaf|Kaf|KAF)(?=%3[aA]|[A-Za-z0-9_]|$)|%20(?:kaf|Kaf|KAF)(?=[/%]|[A-Za-z0-9_]|$)|\\u[0-9a-fA-F]{4}(?:kaf|Kaf|KAF)(?=\\u[0-9a-fA-F]{4}|[A-Za-z0-9_]|$)/g;
 const kafPathToken = /(^|[-_.])(?:kaf|Kaf|KAF)(?=$|[-_.])|^(?:kaf|Kaf|KAF)(?=[A-Z0-9_])/;
 
 function isTextFile(file, buffer) {
@@ -63,6 +63,15 @@ assertFile(
   "packages/orcel/src/internal/vercel/orcel-service-contribution.ts",
   (text) => text.includes('framework: "eve"') && !text.includes('framework: "orcel"'),
   "Vercel service diagnostics must preserve external `eve` identifier",
+);
+assertFile(
+  "packages/orcel/src/execution/sandbox/bindings/orcel-image.test.ts",
+  (text) =>
+    text.includes("ghcr.io/vercel/eve:") &&
+    text.includes("vcr.vercel.com/vercel/eve/base:") &&
+    !text.includes("ghcr.io/thehalfmoon/orcel") &&
+    !text.includes("vcr.vercel.com/vercel/orcel/base"),
+  "sandbox image tests must assert the retained external Eve image coordinates",
 );
 assertFile(
   "packages/orcel/src/execution/sandbox/bindings/orcel-image.ts",

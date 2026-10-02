@@ -152,7 +152,7 @@ function buildWorkflowFileHandlerSource(input: {
         return { ...entry, binding: "POST" };
       }
 
-      const binding = `__kafWorkflowDirectHandler${companionIndex}`;
+      const binding = `__orcelWorkflowDirectHandler${companionIndex}`;
       companionIndex += 1;
       return { ...entry, binding };
     });
@@ -172,16 +172,16 @@ function buildWorkflowFileHandlerSource(input: {
     }
 
     lines.push(
-      `import { getWorld as __kafGetWorkflowWorld } from ${JSON.stringify(input.runtimeImportSpecifier)};`,
+      `import { getWorld as __orcelGetWorkflowWorld } from ${JSON.stringify(input.runtimeImportSpecifier)};`,
       "",
       "try {",
-      "  const __kafWorkflowWorld = await __kafGetWorkflowWorld();",
-      '  if (typeof __kafWorkflowWorld?.registerHandler === "function") {',
+      "  const __orcelWorkflowWorld = await __orcelGetWorkflowWorld();",
+      '  if (typeof __orcelWorkflowWorld?.registerHandler === "function") {',
     );
 
     for (const handler of handlerBindings) {
       lines.push(
-        `    __kafWorkflowWorld.registerHandler(${JSON.stringify(handler.queuePrefix)}, ${handler.binding});`,
+        `    __orcelWorkflowWorld.registerHandler(${JSON.stringify(handler.queuePrefix)}, ${handler.binding});`,
       );
     }
 
