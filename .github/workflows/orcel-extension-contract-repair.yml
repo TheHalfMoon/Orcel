@@ -37,8 +37,17 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Regenerate current contract reports
-        run: pnpm update:extension-contracts
+      - name: Rebase initial-import contract snapshots
+        shell: bash
+        run: |
+          set -euo pipefail
+          # These reports are all additions in Orcel's initial import; none exist on
+          # main yet. Remove only the imported metadata copies so the canonical
+          # generator can recreate the current snapshots at the inherited epochs
+          # instead of inventing fourteen publication epoch bumps for a rename.
+          find packages/orcel/extension-contracts/reports \
+            -mindepth 2 -maxdepth 2 -type f -name 'v*.json' -delete
+          pnpm update:extension-contracts
 
       - name: Prove initial-import repair scope
         id: scope
