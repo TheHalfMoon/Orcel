@@ -11,7 +11,7 @@ export default defineEval({
     t.succeeded();
     t.calledTool("bundle_probe", {
       output: {
-        binaryAsset: "data:application/octet-stream;base64,RVZFLUJJTkFSWS1BU1NFVAo=",
+        binaryAsset: "data:application/octet-stream;base64,T1JDRUwtQklOQVJZLUFTU0VUCg==",
         instrumentationReadyAtImport: true,
         rawText: "authored runtime text\n",
         sharedModule: "shared-authored-typescript-module",

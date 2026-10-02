@@ -193,6 +193,12 @@ replaceInFile("packages/orcel/src/execution/sandbox/bindings/orcel-image.test.ts
     .replaceAll("vcr.vercel.com/vercel/orcel/base", "vcr.vercel.com/vercel/eve/base"),
 );
 
+// The authored-bundling binary fixture is project-owned product identity.
+// Preserve the binary semantics while rewriting the historical Eve payload.
+replaceInFile("e2e/fixtures/agent-authored-bundling/evals/authored-bundling.eval.ts", (text) =>
+  text.replaceAll("data:application/octet-stream;base64,RVZFLUJJTkFSWS1BU1NFVAo=", "data:application/octet-stream;base64,T1JDRUwtQklOQVJZLUFTU0VUCg=="),
+);
+
 // @vercel/connect/eve imports the framework package by the historical bare name.
 // Scenario apps that exercise that provider boundary install the exact same Orcel
 // tarball under the compatibility alias instead of pulling a second framework.

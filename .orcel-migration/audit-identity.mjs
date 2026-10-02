@@ -15,6 +15,12 @@ function isTextFile(file, buffer) {
 }
 
 const violations = [];
+
+// Project-owned authored binary fixture must encode ORCEL-BINARY-ASSET, not the historical Eve payload.
+const authoredBundlingEval = fs.readFileSync(path.join(root, "e2e/fixtures/agent-authored-bundling/evals/authored-bundling.eval.ts"), "utf8");
+if (!authoredBundlingEval.includes("data:application/octet-stream;base64,T1JDRUwtQklOQVJZLUFTU0VUCg==") || authoredBundlingEval.includes("RVZFLUJJTkFSWS1BU1NFVAo=")) {
+  violations.push({ file: "e2e/fixtures/agent-authored-bundling/evals/authored-bundling.eval.ts", rule: "authored-bundling binary fixture must use Orcel identity", count: 1 });
+}
 const eveEvidence = new Map();
 function walk(dir) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
