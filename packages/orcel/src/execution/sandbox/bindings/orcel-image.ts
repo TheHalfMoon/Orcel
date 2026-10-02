@@ -1,8 +1,11 @@
 import { resolveInstalledPackageInfo } from "#internal/application/package.js";
 import { stripVersionBuildMetadata } from "#shared/package-version.js";
 
-const GHCR_ORCEL_SANDBOX_IMAGE_REPOSITORY = "ghcr.io/thehalfmoon/orcel";
-const VERCEL_ORCEL_SANDBOX_IMAGE_REPOSITORY = "vcr.vercel.com/vercel/orcel/base";
+// These repository coordinates are external Vercel/Eve runtime contracts from
+// the pinned upstream foundation. Orcel owns the local API names below, but it
+// must not silently rewrite provider-owned image coordinates.
+const GHCR_ORCEL_SANDBOX_IMAGE_REPOSITORY = "ghcr.io/vercel/eve";
+const VERCEL_ORCEL_SANDBOX_IMAGE_REPOSITORY = "vcr.vercel.com/vercel/eve/base";
 
 export function resolveOrcelSandboxImage(): string {
   return `${GHCR_ORCEL_SANDBOX_IMAGE_REPOSITORY}:${resolveOrcelSandboxImageTag()}`;
