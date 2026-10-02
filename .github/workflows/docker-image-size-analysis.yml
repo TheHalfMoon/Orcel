@@ -47,41 +47,53 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
+          set -euo pipefail
           BASELINE_ROOT="$RUNNER_TEMP/orcel-docker-image-baseline"
           rm -rf "$BASELINE_ROOT"
           git worktree add --detach "$BASELINE_ROOT" "$BASE_SHA"
           echo "root=$BASELINE_ROOT" >> "$GITHUB_OUTPUT"
-          echo "label=main (${BASE_SHA:0:7})" >> "$GITHUB_OUTPUT"
+
+          dockerfile=""
+          context=""
+          if [[ -f "$BASELINE_ROOT/packages/orcel/Dockerfile" ]]; then
+            dockerfile=packages/orcel/Dockerfile
+            context=packages/orcel
+          elif [[ -f "$BASELINE_ROOT/Dockerfile" ]]; then
+            dockerfile=Dockerfile
+            context=.
+          elif [[ -d "$BASELINE_ROOT/packages" ]]; then
+            dockerfile="$(cd "$BASELINE_ROOT" && find packages -mindepth 2 -maxdepth 2 -type f -name Dockerfile -print | sort | head -n 1)"
+            if [[ -n "$dockerfile" ]]; then
+              context="$(dirname "$dockerfile")"
+            fi
+          fi
+
+          if [[ -n "$dockerfile" ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "dockerfile=$dockerfile" >> "$GITHUB_OUTPUT"
+            echo "context=$context" >> "$GITHUB_OUTPUT"
+            echo "label=main (${BASE_SHA:0:7})" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "label=main (${BASE_SHA:0:7}; no Docker baseline)" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Build main baseline Docker image
         id: baseline_image
+        if: steps.baseline.outputs.available == 'true'
         working-directory: ${{ steps.baseline.outputs.root }}
+        env:
+          BASELINE_CONTEXT: ${{ steps.baseline.outputs.context }}
+          BASELINE_DOCKERFILE: ${{ steps.baseline.outputs.dockerfile }}
         run: |
-          if [[ -f packages/orcel/Dockerfile ]]; then
-            dockerfile=packages/orcel/Dockerfile
-            context=packages/orcel
-          elif [[ -f Dockerfile ]]; then
-            dockerfile=Dockerfile
-            context=.
-          else
-            # During a package-identity relocation, discover the predecessor's
-            # package Dockerfile from the exact base tree without hard-coding its
-            # former project name into the current Orcel workflow.
-            dockerfile="$(find packages -mindepth 2 -maxdepth 2 -type f -name Dockerfile -print | sort | head -n 1)"
-            if [[ -z "$dockerfile" ]]; then
-              echo "No baseline Dockerfile found at the current, root, or package locations." >&2
-              exit 1
-            fi
-            context="$(dirname "$dockerfile")"
-          fi
-
+          set -euo pipefail
           docker buildx build \
             --cache-from type=gha,scope=orcel-docker-image-size \
-            --file "$dockerfile" \
+            --file "$BASELINE_DOCKERFILE" \
             --load \
             --platform linux/amd64 \
             --tag orcel-docker-size:baseline \
-            "$context"
+            "$BASELINE_CONTEXT"
 
           size_bytes="$(docker image inspect orcel-docker-size:baseline --format '{{.Size}}')"
           echo "size_bytes=$size_bytes" >> "$GITHUB_OUTPUT"
@@ -89,6 +101,7 @@ jobs:
       - name: Build current Docker image
         id: current_image
         run: |
+          set -euo pipefail
           docker buildx build \
             --cache-from type=gha,scope=orcel-docker-image-size \
             --cache-to type=gha,mode=max,scope=orcel-docker-image-size \
@@ -122,7 +135,23 @@ jobs:
             bash -lc "exit 3" || test "$?" = 3
           '
 
+      - name: Record initial-import baseline absence
+        if: steps.baseline.outputs.available != 'true'
+        env:
+          CURRENT_SIZE_BYTES: ${{ steps.current_image.outputs.size_bytes }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          {
+            echo '## Docker Image Size Summary: `packages/orcel/Dockerfile`'
+            echo
+            echo '- Current Orcel Docker image built and runtime invariants passed.'
+            echo "- Current image size: ${CURRENT_SIZE_BYTES} bytes."
+            echo '- Relative size budget is not applicable because the exact `main` base has no Docker image to compare against.'
+            echo "- Current PR head: \`${HEAD_SHA}\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Generate Docker image size report
+        if: steps.baseline.outputs.available == 'true'
         env:
           BASELINE_LABEL: ${{ steps.baseline.outputs.label }}
           BASELINE_SIZE_BYTES: ${{ steps.baseline_image.outputs.size_bytes }}
@@ -141,11 +170,13 @@ jobs:
             --output-markdown "$REPORT_MARKDOWN"
 
       - name: Publish job summary
+        if: steps.baseline.outputs.available == 'true'
         env:
           REPORT_MARKDOWN: ${{ runner.temp }}/docker-image-size-report.md
         run: cat "$REPORT_MARKDOWN" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Docker image size report artifact
+        if: steps.baseline.outputs.available == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: docker-image-size-report
@@ -154,6 +185,7 @@ jobs:
             ${{ runner.temp }}/docker-image-size-report.md
 
       - name: Update pull request comment
+        if: steps.baseline.outputs.available == 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           REPORT_MARKDOWN: ${{ runner.temp }}/docker-image-size-report.md
@@ -194,6 +226,7 @@ jobs:
             });
 
       - name: Enforce Docker image size budget
+        if: steps.baseline.outputs.available == 'true'
         env:
           REPORT_JSON: ${{ runner.temp }}/docker-image-size-report.json
         run: node ./scripts/docker-image-size-budget.mjs --report-json "$REPORT_JSON"
