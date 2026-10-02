@@ -66,7 +66,10 @@ assertFile(
 );
 assertFile(
   "packages/orcel/src/execution/sandbox/bindings/orcel-image.ts",
-  (text) => text.includes("ghcr.io/vercel/eve:") && !text.includes("ghcr.io/thehalfmoon/orcel"),
+  (text) =>
+    text.includes('const GHCR_ORCEL_SANDBOX_IMAGE_REPOSITORY = "ghcr.io/vercel/eve";') &&
+    text.includes('return `${GHCR_ORCEL_SANDBOX_IMAGE_REPOSITORY}:${resolveOrcelSandboxImageTag()}`;') &&
+    !text.includes("ghcr.io/thehalfmoon/orcel"),
   "runtime image must preserve the available upstream Vercel/Eve coordinate",
 );
 assertFile(
