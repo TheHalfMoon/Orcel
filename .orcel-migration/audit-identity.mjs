@@ -34,6 +34,13 @@ function walk(dir) {
     const buffer = fs.readFileSync(file);
     if (!isTextFile(file, buffer)) continue;
     const text = buffer.toString("utf8");
+    if (
+      text.includes('framework: "orcel"') ||
+      text.includes('"framework": "orcel"') ||
+      text.includes('framework=orcel')
+    ) {
+      violations.push({ file: relative, rule: "stale Orcel-mutated Vercel framework identifier" });
+    }
     kafIdentity.lastIndex = 0;
     const kafMatches = [...text.matchAll(kafIdentity)];
     if (kafMatches.length) violations.push({ file: relative, rule: "stale project-owned Kaf identity", count: kafMatches.length });
@@ -54,6 +61,13 @@ function assertFile(relative, predicate, rule) {
   if (!predicate(text)) violations.push({ file: relative, rule });
 }
 
+assertFile(
+  "packages/orcel/src/setup/vercel-project-framework.ts",
+  (text) =>
+    text.includes('const VERCEL_EVE_FRAMEWORK_PRESET = "eve";') &&
+    !text.includes('const ORCEL_FRAMEWORK_PRESET = "orcel";'),
+  "Vercel project setup must use the external `eve` framework preset for standalone Orcel",
+);
 assertFile(
   "packages/orcel/src/shared/vercel-services.ts",
   (text) => text.includes('framework: "eve"') && !text.includes('framework: "orcel"'),

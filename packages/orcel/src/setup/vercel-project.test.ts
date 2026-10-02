@@ -646,7 +646,7 @@ describe("linkProject", () => {
           JSON.stringify({ error: { code: "not_found", message: "Project not found" } }),
         ),
       )
-      .mockResolvedValueOnce(captured({ framework: "orcel" }));
+      .mockResolvedValueOnce(captured({ framework: "eve" }));
     mockedReadProjectLink.mockResolvedValueOnce({
       orgId: "team_123",
       projectId: "prj_new",
@@ -695,7 +695,7 @@ describe("linkProject", () => {
             JSON.stringify({ error: { code: "not_found", message: "Project not found" } }),
           ),
         )
-        .mockResolvedValueOnce(captured({ framework: "orcel" }));
+        .mockResolvedValueOnce(captured({ framework: "eve" }));
       mockedReadProjectLink.mockResolvedValueOnce({
         orgId: "team-a",
         projectId: "prj_new",
@@ -724,7 +724,7 @@ describe("linkProject", () => {
           JSON.stringify({ error: { code: "not_found", message: "Project not found" } }),
         ),
       )
-      .mockResolvedValueOnce(captured({ framework: "orcel" }));
+      .mockResolvedValueOnce(captured({ framework: "eve" }));
     mockedReadProjectLink.mockResolvedValueOnce({
       orgId: "team-a",
       projectId: "prj_new",
@@ -842,7 +842,7 @@ describe("linkProject", () => {
     expect(mockedCaptureVercel).toHaveBeenCalledTimes(2);
   });
 
-  it("sets the project framework to orcel when the user rejects a detected host framework", async () => {
+  it("sets the Vercel framework to eve for standalone Orcel when the user rejects a detected host framework", async () => {
     mockedCaptureVercel
       .mockResolvedValueOnce(
         failedCapture(
@@ -850,7 +850,7 @@ describe("linkProject", () => {
         ),
       )
       .mockResolvedValueOnce(captured({ framework: "nextjs" }))
-      .mockResolvedValueOnce(captured({ framework: "orcel" }));
+      .mockResolvedValueOnce(captured({ framework: "eve" }));
     mockedReadProjectLink.mockResolvedValueOnce({
       orgId: "team-a",
       projectId: "prj_new",
@@ -879,7 +879,7 @@ describe("linkProject", () => {
         "--method",
         "PATCH",
         "--raw-field",
-        "framework=orcel",
+        "framework=eve",
         "--raw",
       ],
       {
@@ -891,7 +891,7 @@ describe("linkProject", () => {
     );
   });
 
-  it("sets the project framework to orcel when Vercel returns no framework", async () => {
+  it("sets the Vercel framework to eve for standalone Orcel when Vercel returns no framework", async () => {
     mockedCaptureVercel
       .mockResolvedValueOnce(
         failedCapture(
@@ -899,7 +899,7 @@ describe("linkProject", () => {
         ),
       )
       .mockResolvedValueOnce(captured({ framework: null }))
-      .mockResolvedValueOnce(captured({ framework: "orcel" }));
+      .mockResolvedValueOnce(captured({ framework: "eve" }));
     mockedReadProjectLink.mockResolvedValueOnce({
       orgId: "team-a",
       projectId: "prj_new",
@@ -933,7 +933,7 @@ describe("linkProject", () => {
         "--method",
         "PATCH",
         "--raw-field",
-        "framework=orcel",
+        "framework=eve",
         "--raw",
       ],
       {
@@ -945,7 +945,7 @@ describe("linkProject", () => {
     );
   });
 
-  it("sets the project framework to orcel in headless mode when a detected host framework is ambiguous", async () => {
+  it("sets the Vercel framework to eve for standalone Orcel in headless mode when a detected host framework is ambiguous", async () => {
     mockedCaptureVercel
       .mockResolvedValueOnce(
         failedCapture(
@@ -953,7 +953,7 @@ describe("linkProject", () => {
         ),
       )
       .mockResolvedValueOnce(captured({ framework: "nextjs" }))
-      .mockResolvedValueOnce(captured({ framework: "orcel" }));
+      .mockResolvedValueOnce(captured({ framework: "eve" }));
     mockedReadProjectLink.mockResolvedValueOnce({
       orgId: "team-a",
       projectId: "prj_new",
@@ -987,7 +987,7 @@ describe("linkProject", () => {
         "--method",
         "PATCH",
         "--raw-field",
-        "framework=orcel",
+        "framework=eve",
         "--raw",
       ],
       {
@@ -999,7 +999,7 @@ describe("linkProject", () => {
     );
   });
 
-  it("sets the project framework to orcel when the detected framework has no orcel integration", async () => {
+  it("sets the Vercel framework to eve for standalone Orcel when the detected framework has no Orcel integration", async () => {
     mockedCaptureVercel
       .mockResolvedValueOnce(
         failedCapture(
@@ -1007,7 +1007,7 @@ describe("linkProject", () => {
         ),
       )
       .mockResolvedValueOnce(captured({ framework: "hugo" }))
-      .mockResolvedValueOnce(captured({ framework: "orcel" }));
+      .mockResolvedValueOnce(captured({ framework: "eve" }));
     mockedReadProjectLink.mockResolvedValueOnce({
       orgId: "team-a",
       projectId: "prj_new",
@@ -1041,7 +1041,7 @@ describe("linkProject", () => {
         "--method",
         "PATCH",
         "--raw-field",
-        "framework=orcel",
+        "framework=eve",
         "--raw",
       ],
       {

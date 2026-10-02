@@ -95,7 +95,7 @@ describe("framework-nuxt build", () => {
     }
     expect(services.orcel).toEqual(
       expect.objectContaining({
-        framework: "orcel",
+        framework: "eve",
         root: ".orcel/vercel-services/orcel",
       }),
     );

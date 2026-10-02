@@ -432,7 +432,7 @@ describe("buildApplication", () => {
           experimentalServices: {
             orcel: {
               entrypoint: ".",
-              framework: "orcel",
+              framework: "eve",
               mount: "/_orcel_internal/orcel",
               type: "web",
             },
@@ -587,7 +587,7 @@ describe("buildApplication", () => {
           experimentalServices: {
             orcel: {
               entrypoint: ".",
-              framework: "orcel",
+              framework: "eve",
               routePrefix: "/_orcel_internal/orcel",
             },
             web: {
@@ -652,7 +652,7 @@ describe("buildApplication", () => {
             },
             {
               entrypoint: "package.json",
-              framework: "orcel",
+              framework: "eve",
               name: "orcel-support",
               root: ".",
               routePrefix: "/orcel/support",
@@ -712,7 +712,7 @@ describe("buildApplication", () => {
               root: ".",
             },
             "orcel-support": {
-              framework: "orcel",
+              framework: "eve",
               root: "agents/support",
               routePrefix: "/orcel/support",
             },
@@ -760,7 +760,7 @@ describe("buildApplication", () => {
             experimentalServices: {
               orcel: {
                 entrypoint: ".",
-                framework: "orcel",
+                framework: "eve",
                 routePrefix,
               },
               web: {

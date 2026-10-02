@@ -67,6 +67,10 @@ function walk(dir) {
       "@vercel/connect/orcel",
       "ghcr.io/vercel/orcel",
       "agent-repository: vercel/orcel",
+      'framework: "orcel"',
+      '"framework": "orcel"',
+      "framework=orcel",
+      'const ORCEL_FRAMEWORK_PRESET = "orcel";',
     ]) {
       if (inspected.includes(token)) staleExternal.push({ file: path.relative(root, file).split(path.sep).join("/"), token });
     }

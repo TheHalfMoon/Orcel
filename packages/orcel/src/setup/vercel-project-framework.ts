@@ -20,7 +20,7 @@ const VercelProjectFrameworkSchema = z.object({
   framework: z.string().min(1).nullish(),
 });
 
-const ORCEL_FRAMEWORK_PRESET = "orcel";
+const VERCEL_EVE_FRAMEWORK_PRESET = "eve";
 
 interface OrcelFrameworkIntegration {
   readonly label: string;
@@ -69,7 +69,7 @@ export interface CreatedProjectFrameworkOptions extends VercelProjectOperationOp
     projectRoot: string,
     importSpecifier: string,
   ) => Promise<boolean>;
-  /** Never prompt; ambiguous host framework detections fall back to the orcel preset. */
+  /** Never prompt; ambiguous host framework detections fall back to Vercel's Eve preset for standalone Orcel. */
   headless?: boolean;
 }
 
@@ -235,7 +235,7 @@ function describeError(error: unknown): string {
  * Best-effort alignment of a linked Vercel project's Framework Preset with the
  * host framework the project declares on disk (e.g. Next.js).
  *
- * A project created as a standalone orcel agent keeps the `orcel` preset; adding a
+ * A standalone Orcel agent uses Vercel's `eve` framework preset; adding a
  * host framework via `orcel add channel/web` leaves it stale, so the deploy would
  * build the agent instead of the host app. Since that command already deploys on
  * the user's behalf, this switches the preset directly (no prompt) and notes the
@@ -304,7 +304,7 @@ export async function ensureCreatedProjectFramework(
   options: CreatedProjectFrameworkOptions,
 ): Promise<void> {
   const framework = await fetchProjectFramework(projectRoot, team, projectId, options);
-  if (framework === ORCEL_FRAMEWORK_PRESET) return;
+  if (framework === VERCEL_EVE_FRAMEWORK_PRESET) return;
   const frameworkAction =
     framework === undefined
       ? "switch-to-orcel"
@@ -314,7 +314,7 @@ export async function ensureCreatedProjectFramework(
       projectRoot,
       team,
       projectId,
-      ORCEL_FRAMEWORK_PRESET,
+      VERCEL_EVE_FRAMEWORK_PRESET,
       onOutput,
       options,
     );

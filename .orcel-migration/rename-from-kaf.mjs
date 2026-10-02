@@ -128,6 +128,33 @@ replaceInFile("packages/orcel/src/public/next/index.integration.test.ts", (text)
   text.replaceAll('framework: "orcel"', 'framework: "eve"'),
 );
 
+// Vercel owns the framework preset identifier `eve`; Orcel owns the product, package,
+// service names, routes, and CLI identity around that provider contract.
+replaceInFile("packages/orcel/src/setup/vercel-project-framework.ts", (text) =>
+  text
+    .replaceAll('const ORCEL_FRAMEWORK_PRESET = "orcel";', 'const VERCEL_EVE_FRAMEWORK_PRESET = "eve";')
+    .replaceAll('framework === ORCEL_FRAMEWORK_PRESET', 'framework === VERCEL_EVE_FRAMEWORK_PRESET')
+    .replaceAll('ORCEL_FRAMEWORK_PRESET,', 'VERCEL_EVE_FRAMEWORK_PRESET,')
+    .replaceAll('fall back to the orcel preset.', "fall back to Vercel's Eve preset for standalone Orcel.")
+    .replaceAll('A project created as a standalone orcel agent keeps the `orcel` preset;', "A standalone Orcel agent uses Vercel's `eve` framework preset;"),
+);
+for (const relative of [
+  "packages/orcel/src/setup/vercel-project-framework.test.ts",
+  "packages/orcel/src/setup/vercel-project.test.ts",
+  "packages/orcel/src/internal/nitro/host/build-application.scenario.test.ts",
+  "packages/orcel/test/scenarios/framework-nuxt-build.scenario.test.ts",
+  "packages/orcel/test/scenarios/framework-sveltekit-build.scenario.test.ts",
+  "docs/guides/frontend/nuxt.mdx",
+  "docs/guides/frontend/sveltekit.mdx",
+]) {
+  replaceInFile(relative, (text) =>
+    text
+      .replaceAll('framework: "orcel"', 'framework: "eve"')
+      .replaceAll('"framework": "orcel"', '"framework": "eve"')
+      .replaceAll('framework=orcel', 'framework=eve'),
+  );
+}
+
 // The runtime image is still an upstream Vercel/Eve compatibility coordinate.
 // Orcel-specific environment variables are first-class while historical Eve
 // variables remain supported as provider compatibility aliases.

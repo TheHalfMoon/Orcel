@@ -145,7 +145,7 @@ describe("syncHostFrameworkPreset", () => {
     mockedResolvePreset.mockResolvedValue("nextjs");
     mockedCaptureVercel.mockImplementation(async (args) => {
       if (Array.isArray(args) && args.includes("--method")) return failed("patch denied");
-      return captured({ framework: "orcel" });
+      return captured({ framework: "eve" });
     });
     const { prompter } = createFakePrompter();
 

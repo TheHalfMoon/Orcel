@@ -86,13 +86,13 @@ The browser still needs a production authentication policy. See [Authenticate br
 
 ## Managing vercel.json yourself
 
-When `vercel.json` declares [`services`](https://vercel.com/docs/services), the module generates nothing and your configuration owns routing. It must include the orcel service (`framework: "orcel"`) and a rewrite that exposes the orcel transport, or the module fails the build:
+When `vercel.json` declares [`services`](https://vercel.com/docs/services), the module generates nothing and your configuration owns routing. It must include the Orcel service using Vercel's external Eve framework identifier (`framework: "eve"`) and a rewrite that exposes the orcel transport, or the module fails the build:
 
 ```json title="vercel.json"
 {
   "services": {
     "web": { "root": ".", "framework": "nuxtjs" },
-    "orcel": { "root": "agent", "framework": "orcel", "buildCommand": "orcel build" }
+    "orcel": { "root": "agent", "framework": "eve", "buildCommand": "orcel build" }
   },
   "rewrites": [{ "source": "/orcel/v1/(.*)", "destination": { "service": "orcel" } }]
 }
