@@ -38,7 +38,12 @@ const staleExternal = [];
 
 function walk(dir) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (entry.name === ".git" || entry.name === "node_modules" || entry.name === "dist") continue;
+    if (
+      entry.name === ".git" ||
+      entry.name === "node_modules" ||
+      entry.name === "dist" ||
+      entry.name === ".orcel-migration"
+    ) continue;
     const file = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       walk(file);
