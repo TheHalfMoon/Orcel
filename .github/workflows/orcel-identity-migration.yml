@@ -7,6 +7,7 @@ on:
     paths:
       - .orcel-migration/rename-from-kaf.mjs
       - .orcel-migration/audit-identity.mjs
+      - .orcel-migration/repair-external-contracts.mjs
       - .github/workflows/orcel-identity-migration.yml
   workflow_dispatch:
 
@@ -38,6 +39,7 @@ jobs:
         run: |
           set -euo pipefail
           node .orcel-migration/rename-from-kaf.mjs
+          node .orcel-migration/repair-external-contracts.mjs
           git diff --check
           git diff --binary > "$RUNNER_TEMP/orcel-first-pass.diff"
           test -s "$RUNNER_TEMP/orcel-first-pass.diff"
@@ -47,12 +49,17 @@ jobs:
         run: |
           set -euo pipefail
           node .orcel-migration/rename-from-kaf.mjs
+          node .orcel-migration/repair-external-contracts.mjs
           git diff --check
           git diff --binary > "$RUNNER_TEMP/orcel-second-pass.diff"
           cmp "$RUNNER_TEMP/orcel-first-pass.diff" "$RUNNER_TEMP/orcel-second-pass.diff"
 
       - name: Audit identity and compatibility boundaries
-        run: node .orcel-migration/audit-identity.mjs
+        shell: bash
+        run: |
+          set -euo pipefail
+          node .orcel-migration/audit-identity.mjs
+          node .orcel-migration/repair-external-contracts.mjs --check
 
       - name: Commit exact generated result
         shell: bash
@@ -64,8 +71,19 @@ jobs:
           git diff --cached --check
           git diff --cached --stat
           git commit -m "refactor: finalize Orcel identity and compatibility contracts"
-          echo "ORCEL_MIGRATION_HEAD=$(git rev-parse HEAD)"
-          echo "ORCEL_MIGRATION_TREE=$(git rev-parse HEAD^{tree})"
+          git show --no-patch --format='HEAD=%H%nTREE=%T%nPARENT=%P' HEAD | tee "$RUNNER_TEMP/orcel-generated-metadata.txt"
+          git format-patch -1 --stdout --binary > "$RUNNER_TEMP/orcel-generated.patch"
+          test -s "$RUNNER_TEMP/orcel-generated.patch"
+
+      - name: Upload exact generated patch before push
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: orcel-generated-migration-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/orcel-generated.patch
+            ${{ runner.temp }}/orcel-generated-metadata.txt
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Push normal fast-forward commit
         shell: bash
