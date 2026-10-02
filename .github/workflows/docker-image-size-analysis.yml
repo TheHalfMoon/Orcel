@@ -60,11 +60,19 @@ jobs:
           if [[ -f packages/orcel/Dockerfile ]]; then
             dockerfile=packages/orcel/Dockerfile
             context=packages/orcel
-          else
-            # The fallback lets the relocation PR compare against the previous
-            # root-level image definition. Future baselines use the package path.
+          elif [[ -f packages/kaf/Dockerfile ]]; then
+            # The rename PR compares Orcel against its immediate Kaf predecessor.
+            # This compatibility branch is baseline-only and disappears once the
+            # base branch contains packages/orcel/Dockerfile.
+            dockerfile=packages/kaf/Dockerfile
+            context=packages/kaf
+          elif [[ -f Dockerfile ]]; then
+            # Older upstream history used a root-level image definition.
             dockerfile=Dockerfile
             context=.
+          else
+            echo "No baseline Dockerfile found at Orcel, Kaf, or root locations." >&2
+            exit 1
           fi
 
           docker buildx build \
