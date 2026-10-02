@@ -45,6 +45,20 @@ jobs:
       - name: Audit Orcel project identity
         run: node .orcel-migration/audit-identity.mjs
 
+      - name: Audit external compatibility contracts
+        run: node .orcel-migration/repair-external-contracts.mjs --check
+
+      - name: Prove Orcel identity migration is terminal
+        shell: bash
+        run: |
+          set -euo pipefail
+          migration_script="$(find .orcel-migration -maxdepth 1 -type f -name 'rename-from-*.mjs' -print -quit)"
+          test -n "$migration_script"
+          node "$migration_script"
+          node .orcel-migration/repair-external-contracts.mjs
+          git diff --check
+          git diff --exit-code
+
       - name: Lint
         run: pnpm lint
 
