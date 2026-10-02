@@ -4,12 +4,12 @@ description: "Reach your agent over SMS and speech-transcribed phone calls with 
 type: integration
 ---
 
-The Twilio channel puts your agent on a phone number, so people can text it or call it. Inbound SMS arrives as a webhook. Inbound calls are answered with TwiML `<Gather input="speech">`, and the resulting transcript feeds the same kaf session that SMS uses, so a caller and a texter look identical downstream. Every request is checked against `X-Twilio-Signature` before anything else runs. The raw continuation token is `From:To`. See [Channels](./overview) for the contract this builds on.
+The Twilio channel puts your agent on a phone number, so people can text it or call it. Inbound SMS arrives as a webhook. Inbound calls are answered with TwiML `<Gather input="speech">`, and the resulting transcript feeds the same orcel session that SMS uses, so a caller and a texter look identical downstream. Every request is checked against `X-Twilio-Signature` before anything else runs. The raw continuation token is `From:To`. See [Channels](./overview) for the contract this builds on.
 
 ## Add the channel
 
 ```ts title="agent/channels/twilio.ts"
-import { twilioChannel } from "kaf/channels/twilio";
+import { twilioChannel } from "orcel/channels/twilio";
 
 export default twilioChannel({
   allowFrom: "+15551234567",
@@ -24,9 +24,9 @@ TWILIO_AUTH_TOKEN=...      # required for inbound signature verification
 
 To skip env vars, pass the same values via `credentials: { accountSid, authToken }`. The channel mounts three routes:
 
-- `POST /kaf/v1/twilio/messages`: Messaging webhook
-- `POST /kaf/v1/twilio/voice`: inbound call webhook
-- `POST /kaf/v1/twilio/voice/transcription`: speech transcript callback
+- `POST /orcel/v1/twilio/messages`: Messaging webhook
+- `POST /orcel/v1/twilio/voice`: inbound call webhook
+- `POST /orcel/v1/twilio/voice/transcription`: speech transcript callback
 
 Point your Twilio number's Messaging webhook at `/messages` and Voice webhook at `/voice`, using the exact public URL Twilio will call.
 

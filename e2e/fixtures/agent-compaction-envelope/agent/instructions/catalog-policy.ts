@@ -1,5 +1,5 @@
-import type { HookEvent } from "kaf/hooks";
-import { defineDynamic, defineInstructions } from "kaf/instructions";
+import type { HookEvent } from "orcel/hooks";
+import { defineDynamic, defineInstructions } from "orcel/instructions";
 
 export default defineDynamic({
   events: {

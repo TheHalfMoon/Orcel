@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { changelogSource } from "./changelog-source";
 
 describe("changelog source", () => {
-  it("publishes the kaf release history with stable unique entries", async () => {
+  it("publishes the orcel release history with stable unique entries", async () => {
     const entries = await changelogSource.getEntries({ lang: "en" });
     const release = entries.find(({ version }) => version === "0.52.2");
 

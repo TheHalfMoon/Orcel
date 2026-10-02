@@ -1,3 +1,3 @@
-import { sleep } from "kaf/tools/sleep";
+import { sleep } from "orcel/tools/sleep";
 
 export default sleep();

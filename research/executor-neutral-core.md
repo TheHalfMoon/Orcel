@@ -1,5 +1,5 @@
 ---
-issue: https://github.com/TheHalfMoon/kaf/pull/2690
+issue: https://github.com/TheHalfMoon/orcel/pull/2690
 status: in-progress
 last_updated: "2026-09-02"
 ---
@@ -8,7 +8,7 @@ last_updated: "2026-09-02"
 
 ## Scope of the current PR
 
-[#2690](https://github.com/TheHalfMoon/kaf/pull/2690) lands sequence steps 1–3
+[#2690](https://github.com/TheHalfMoon/orcel/pull/2690) lands sequence steps 1–3
 below, plus the parts of steps 7 and 8 that had no dependency on the
 remaining work: `subagentDepth` is removed, and the vocabulary-count guards
 are replaced by import-direction rules 42–43. Concrete subagent code moves
@@ -23,7 +23,7 @@ finalizers. Those are follow-ups against this document.
 
 The useful boundary is narrower than removing subagent concepts from all of
 `execution/**` and `harness/**`. Session and turn workflows are composition
-roots for kaf's agent runtime. They may call the built-in task, workflow-tool,
+roots for orcel's agent runtime. They may call the built-in task, workflow-tool,
 and subagent implementations directly. A runtime executor registry would add
 indirection without a second child executor to select.
 

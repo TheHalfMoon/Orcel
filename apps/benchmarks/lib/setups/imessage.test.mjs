@@ -32,12 +32,12 @@ test("serves the deterministic iMessage registry item", async () => {
     {
       name: "channel/photon-imessage",
       type: "registry:item",
-      description: "Connect an kaf agent to iMessage through a deterministic provider setup flow.",
+      description: "Connect an orcel agent to iMessage through a deterministic provider setup flow.",
       registry: "http://127.0.0.1:4173/registry.json",
       addCommandArgument: "http://127.0.0.1:4173/channel/photon-imessage.json",
     },
   ]);
-  assert.equal(item.meta.kaf.setup.command, "mock-imessage-setup");
+  assert.equal(item.meta.orcel.setup.command, "mock-imessage-setup");
   // The absolute path must reach pnpm unprefixed; `./` in front of it would
   // normalize to a relative path and link a directory that does not exist.
   assert.ok(
@@ -47,14 +47,14 @@ test("serves the deterministic iMessage registry item", async () => {
 });
 
 test("completes the deterministic iMessage setup with the supplied phone number", () => {
-  const artifactsRoot = mkdtempSync(resolve(tmpdir(), "kaf-imessage-setup-"));
+  const artifactsRoot = mkdtempSync(resolve(tmpdir(), "orcel-imessage-setup-"));
   const cliPath = resolve(setupsRoot, "mock-imessage-setup/cli.mjs");
 
   execFileSync(
     process.execPath,
     [cliPath, "--non-interactive", "--answer", `phoneNumber=${JSON.stringify(phoneNumber)}`],
     {
-      env: { ...process.env, KAF_AUTHORING_EVAL_DIRECTORY: artifactsRoot },
+      env: { ...process.env, ORCEL_AUTHORING_EVAL_DIRECTORY: artifactsRoot },
     },
   );
 

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./styles.css";
 
 export const metadata: Metadata = {
-  title: "kaf multi-agent Next.js fixture",
+  title: "orcel multi-agent Next.js fixture",
   description: "Next.js fixture for withEve named agents.",
 };
 

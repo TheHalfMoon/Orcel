@@ -4,17 +4,17 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "kaf build",
-    "dev": "kaf dev",
-    "start": "kaf start",
-    "typecheck": "kaf build --skip-sandbox-prewarm && tsc",
-    "test:e2e": "kaf eval --strict"
+    "build": "orcel build",
+    "dev": "orcel dev",
+    "start": "orcel start",
+    "typecheck": "orcel build --skip-sandbox-prewarm && tsc",
+    "test:e2e": "orcel eval --strict"
   },
   "dependencies": {
-    "@kaf-e2e/config": "workspace:*",
-    "@kaf-e2e/dynamic-import-dependency": "file:./fixtures/dynamic-import-dependency",
+    "@orcel-e2e/config": "workspace:*",
+    "@orcel-e2e/dynamic-import-dependency": "file:./fixtures/dynamic-import-dependency",
     "@workflow/world-postgres": "catalog:",
-    "kaf": "workspace:*",
+    "orcel": "workspace:*",
     "zod": "catalog:"
   },
   "devDependencies": {

@@ -1,4 +1,4 @@
-import { defineDynamic, defineSkill } from "kaf/skills";
+import { defineDynamic, defineSkill } from "orcel/skills";
 
 export const HOUSE_RULES_OVERRIDE_TOKEN = "house-rules-dynamic-ok-M5T8";
 

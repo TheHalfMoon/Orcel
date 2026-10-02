@@ -8,5 +8,5 @@ export const changelogOptions = {
   markdownPath: "/changelog.md",
   pageSize: 5,
   title: "Changelog",
-  description: "New features, breaking changes, and fixes in kaf, release by release.",
+  description: "New features, breaking changes, and fixes in orcel, release by release.",
 };

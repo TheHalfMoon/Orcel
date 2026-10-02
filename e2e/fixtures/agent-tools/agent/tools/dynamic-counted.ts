@@ -1,5 +1,5 @@
-import { defineDynamic, defineTool } from "kaf/tools";
-import { defineState } from "kaf/context";
+import { defineDynamic, defineTool } from "orcel/tools";
+import { defineState } from "orcel/context";
 
 const ioCallCount = defineState("dynamic-counted.ioCallCount", () => 0);
 

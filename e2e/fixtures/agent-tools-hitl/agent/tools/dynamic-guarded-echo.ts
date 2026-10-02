@@ -1,4 +1,4 @@
-import { defineDynamic, defineTool } from "kaf/tools";
+import { defineDynamic, defineTool } from "orcel/tools";
 import { z } from "zod";
 
 export const DYNAMIC_GUARDED_ECHO_TOKEN = "dynamic-guarded-echo-ok-L8R6";

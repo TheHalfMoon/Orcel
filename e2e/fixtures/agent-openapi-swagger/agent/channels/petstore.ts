@@ -1,4 +1,4 @@
-import { defineChannel, GET } from "kaf/channels";
+import { defineChannel, GET } from "orcel/channels";
 
 import { PETSTORE_SPEC } from "../../petstore";
 

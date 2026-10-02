@@ -1,8 +1,8 @@
 import { PULL_REQUEST_PATTERN, SHA_PATTERN } from "./package.mjs";
 
-const REPOSITORY = "vercel/kaf";
+const REPOSITORY = "vercel/orcel";
 const REPOSITORY_OWNER = "vercel";
-const REPOSITORY_SLUG = "kaf";
+const REPOSITORY_SLUG = "orcel";
 
 export async function resolveDeploymentTarget(env, fetchImplementation = fetch) {
   if (

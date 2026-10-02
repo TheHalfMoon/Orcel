@@ -1,9 +1,9 @@
-import { defineEval, type KafEvalTargetHandle, type KafEvalTurn } from "kaf/evals";
-import { equals } from "kaf/evals/expect";
+import { defineEval, type OrcelEvalTargetHandle, type OrcelEvalTurn } from "orcel/evals";
+import { equals } from "orcel/evals/expect";
 import type { DynamicSkillContextObservation } from "../dynamic-skill-context-audit";
 
 async function send(
-  target: KafEvalTargetHandle,
+  target: OrcelEvalTargetHandle,
   threadId: string,
   actor: "alice" | "bob",
   message: string,
@@ -29,7 +29,7 @@ function expectedAuth(actor: "alice" | "bob") {
 }
 
 /** The child's reply: the agent tool's task result, or the waiting tool's result for `ctx.agent`. */
-function readChildOutput(turn: KafEvalTurn, mode: "direct" | "waiting"): string {
+function readChildOutput(turn: OrcelEvalTurn, mode: "direct" | "waiting"): string {
   if (mode === "waiting") {
     const output = turn.toolCalls.find((call) => call.name === "blocking_agent")?.output;
     if (typeof output !== "string") throw new Error("The waiting tool's child reply is missing.");
@@ -86,7 +86,7 @@ export default (["direct", "waiting"] as const).map((mode) =>
         const label = `${event}[${index}]`;
         const expected: Omit<typeof context, "messages"> = {
           abortSignal: null,
-          model: { id: "kaf-mock/model" },
+          model: { id: "orcel-mock/model" },
           session: {
             id: started.sessionId,
             auth: {

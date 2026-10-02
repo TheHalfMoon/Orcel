@@ -1,11 +1,11 @@
-import { defineMcpClientConnection } from "kaf/connections";
+import { defineMcpClientConnection } from "orcel/connections";
 
 const SHOPIFY_EXAMPLE_PROFILE =
   "https://shopify.dev/ucp/agent-profiles/examples/2026-08-25/valid-with-capabilities.json";
 
 // Shopify cannot reach localhost. Use its public profile, or expose this route with a tool like ngrok.
 function agentProfileUrl(): string {
-  if (process.env.KAF_DEV === "1") return SHOPIFY_EXAMPLE_PROFILE;
+  if (process.env.ORCEL_DEV === "1") return SHOPIFY_EXAMPLE_PROFILE;
 
   return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}/.well-known/ucp`;
 }

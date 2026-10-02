@@ -1,5 +1,5 @@
 ---
-issue: https://github.com/TheHalfMoon/kaf/issues/3019
+issue: https://github.com/TheHalfMoon/orcel/issues/3019
 status: implemented
 last_updated: "2026-09-17"
 ---
@@ -19,7 +19,7 @@ schema references are supported; local schema objects, clients, and functions
 are non-serializable captures and fail resolution with a diagnostic.
 
 Packages outside the source transform use `defineDurableSchema({ closure,
-schema })` from `kaf/tools`. The synchronous `schema` function receives the JSON
+schema })` from `orcel/tools`. The synchronous `schema` function receives the JSON
 closure snapshot and returns the authored schema. The helper preserves Standard
 Schema validation and JSON Schema emission. Plain JSON schemas remain supported.
 

@@ -7,7 +7,7 @@ import {
 } from "./readme-links";
 
 const sourceRevisionHref =
-  "https://github.com/TheHalfMoon/kaf/tree/0123456789abcdef/apps/fixtures/weather-agent";
+  "https://github.com/TheHalfMoon/orcel/tree/0123456789abcdef/apps/fixtures/weather-agent";
 
 describe("resolveReadmeHref", () => {
   it("resolves relative links from the template directory", () => {
@@ -18,14 +18,14 @@ describe("resolveReadmeHref", () => {
 
   it("resolves repository-root links from the pinned revision", () => {
     expect(resolveReadmeHref("/CONTRIBUTING.md", sourceRevisionHref)).toBe(
-      "https://github.com/TheHalfMoon/kaf/tree/0123456789abcdef/CONTRIBUTING.md",
+      "https://github.com/TheHalfMoon/orcel/tree/0123456789abcdef/CONTRIBUTING.md",
     );
   });
 
   it("preserves page anchors and safe absolute links", () => {
     expect(resolveReadmeHref("#quick-start", sourceRevisionHref)).toBe("#quick-start");
-    expect(resolveReadmeHref("https://kaf.dev/docs", sourceRevisionHref)).toBe(
-      "https://kaf.dev/docs",
+    expect(resolveReadmeHref("https://orcel.dev/docs", sourceRevisionHref)).toBe(
+      "https://orcel.dev/docs",
     );
   });
 
@@ -52,7 +52,7 @@ describe("createResolveReadmeLinksPlugin", () => {
 
 describe("sanitizeReadmeHref", () => {
   it("allows web, email, telephone, relative, and anchor links", () => {
-    expect(sanitizeReadmeHref("https://kaf.dev")).toBe("https://kaf.dev/");
+    expect(sanitizeReadmeHref("https://orcel.dev")).toBe("https://orcel.dev/");
     expect(sanitizeReadmeHref("mailto:hello@example.com")).toBe("mailto:hello@example.com");
     expect(sanitizeReadmeHref("tel:+15555555555")).toBe("tel:+15555555555");
     expect(sanitizeReadmeHref("docs/setup.md")).toBe("docs/setup.md");

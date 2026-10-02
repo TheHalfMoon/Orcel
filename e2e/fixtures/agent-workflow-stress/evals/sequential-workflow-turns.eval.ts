@@ -1,15 +1,15 @@
-import { defineEval, type KafEvalSession } from "kaf/evals";
-import { equals } from "kaf/evals/expect";
+import { defineEval, type OrcelEvalSession } from "orcel/evals";
+import { equals } from "orcel/evals/expect";
 
 const TURN_COUNT = 100;
-const PERFORMANCE_LOG_PREFIX = "KAF_WORKFLOW_STRESS_METRIC=";
+const PERFORMANCE_LOG_PREFIX = "ORCEL_WORKFLOW_STRESS_METRIC=";
 
 export default defineEval({
   description: "Workflow stress: one durable session completes 100 sequential turns.",
   tags: ["stress", "workflow", "sequential"],
 
   async test(t) {
-    let session: KafEvalSession | undefined;
+    let session: OrcelEvalSession | undefined;
     const samples: Array<{ durationMs: number; turnNumber: number }> = [];
 
     for (let turnNumber = 1; turnNumber <= TURN_COUNT; turnNumber += 1) {

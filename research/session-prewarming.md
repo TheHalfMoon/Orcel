@@ -1,5 +1,5 @@
 ---
-issue: https://github.com/TheHalfMoon/kaf/issues/1476
+issue: https://github.com/TheHalfMoon/orcel/issues/1476
 status: implemented
 last_updated: "2026-09-17"
 ---
@@ -8,11 +8,11 @@ last_updated: "2026-09-17"
 
 ## Authoring API
 
-`POST /kaf/v1/session` with `{}` and `client.sessions.create()` start a conversation workflow
+`POST /orcel/v1/session` with `{}` and `client.sessions.create()` start a conversation workflow
 without a message. They return an accepted session ID. `session.send(message)` sends the first
 message to that ID; `create({ message })` still creates and starts a turn in one request.
 
-React, Vue, and Svelte accept `useKafAgent({ prewarm: true })` to prewarm on mount and after
+React, Vue, and Svelte accept `useOrcelAgent({ prewarm: true })` to prewarm on mount and after
 reset. The default is `false`. React also observes the boolean across renders: a `false` to `true`
 change prepares the current owned session, while `true` to `false` does not abort or discard one.
 Reset reevaluates the value after batched React state updates. Vue and Svelte keep construction-time

@@ -1,12 +1,12 @@
-import { defineEval } from "kaf/evals";
-import type { KafEvalContext, KafEvalSession, KafEvalTurn } from "kaf/evals";
-import { equals } from "kaf/evals/expect";
+import { defineEval } from "orcel/evals";
+import type { OrcelEvalContext, OrcelEvalSession, OrcelEvalTurn } from "orcel/evals";
+import { equals } from "orcel/evals/expect";
 import type { InputHookObservation } from "../input-hook-audit";
 
 const GOOG_PRICE = "178.92";
 
 type SessionCursor = Pick<
-  KafEvalSession,
+  OrcelEvalSession,
   "pendingInputRequests" | "requireInputRequest" | "respondAll" | "sessionId" | "state"
 >;
 
@@ -73,7 +73,7 @@ export default defineEval({
 });
 
 async function waitForInput(
-  t: KafEvalContext,
+  t: OrcelEvalContext,
   initialSession: SessionCursor,
   toolName: string,
 ): Promise<SessionCursor> {
@@ -92,10 +92,10 @@ async function waitForInput(
 }
 
 async function waitForMessage(
-  t: KafEvalContext,
+  t: OrcelEvalContext,
   initialSession: SessionCursor,
   marker: string,
-): Promise<KafEvalTurn> {
+): Promise<OrcelEvalTurn> {
   let session = initialSession;
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const live = watchNextTurn(t, session, "subagent completion wait");
@@ -107,7 +107,7 @@ async function waitForMessage(
   throw new Error(`Subagent result did not reach the parent after five turns.`);
 }
 
-function watchNextTurn(t: KafEvalContext, session: SessionCursor, operation: string) {
+function watchNextTurn(t: OrcelEvalContext, session: SessionCursor, operation: string) {
   if (session.sessionId === undefined || session.state === undefined) {
     throw new Error(`${operation} has no parent session cursor.`);
   }

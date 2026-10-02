@@ -1,5 +1,5 @@
-import { defineEval, type KafEvalContext, type KafEvalSession, type KafEvalTurn } from "kaf/evals";
-import { equals, satisfies } from "kaf/evals/expect";
+import { defineEval, type OrcelEvalContext, type OrcelEvalSession, type OrcelEvalTurn } from "orcel/evals";
+import { equals, satisfies } from "orcel/evals/expect";
 
 const CHILD_TOKEN = "CHILD_LIMIT_CONTINUED";
 const ROOT_RECOVERY_TOKEN = "ROOT_AFTER_DESCENDANT_STOP";
@@ -86,11 +86,11 @@ export default defineEval({
 });
 
 type SessionCursor = Pick<
-  KafEvalSession,
+  OrcelEvalSession,
   "pendingInputRequests" | "requireInputRequest" | "respond" | "send" | "sessionId" | "state"
 >;
 
-async function waitForInput(t: KafEvalContext, initial: SessionCursor): Promise<SessionCursor> {
+async function waitForInput(t: OrcelEvalContext, initial: SessionCursor): Promise<SessionCursor> {
   let session = initial;
   for (let attempt = 0; attempt < 5; attempt += 1) {
     if (session.pendingInputRequests.length > 0) return session;
@@ -103,10 +103,10 @@ async function waitForInput(t: KafEvalContext, initial: SessionCursor): Promise<
 }
 
 async function waitForMessage(
-  t: KafEvalContext,
+  t: OrcelEvalContext,
   initial: SessionCursor,
   marker: string,
-): Promise<KafEvalTurn> {
+): Promise<OrcelEvalTurn> {
   let session = initial;
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const live = watchNextTurn(t, session, "descendant completion wait");
@@ -118,7 +118,7 @@ async function waitForMessage(
   throw new Error("Descendant result did not reach the parent after five turns.");
 }
 
-function watchNextTurn(t: KafEvalContext, session: SessionCursor, operation: string) {
+function watchNextTurn(t: OrcelEvalContext, session: SessionCursor, operation: string) {
   if (session.sessionId === undefined || session.state === undefined) {
     throw new Error(`${operation} has no parent session cursor.`);
   }

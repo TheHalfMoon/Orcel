@@ -1,10 +1,10 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 export default defineEval({
   description: "A session-scoped dynamic OpenAPI connection participates in connection_search.",
 
   async test(t) {
-    if (process.env.KAF_E2E_MODEL !== "mock") {
+    if (process.env.ORCEL_E2E_MODEL !== "mock") {
       t.skip("Requires the deterministic mock model; the fixture API endpoint is non-routable.");
     }
 

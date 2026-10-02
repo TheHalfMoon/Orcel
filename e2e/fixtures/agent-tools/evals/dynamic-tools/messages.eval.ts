@@ -1,5 +1,5 @@
-import { defineEval } from "kaf/evals";
-import { satisfies } from "kaf/evals/expect";
+import { defineEval } from "orcel/evals";
+import { satisfies } from "orcel/evals/expect";
 
 // The step.started resolver sees the accumulated message history: the
 // second turn's count must exceed the first.

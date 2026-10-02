@@ -911,7 +911,7 @@ function renderInitDependencyManifestDelta(initInstallComparison, baselineLabel)
 
   const lines = [
     "<details>",
-    `<summary><code>kaf init</code> dependency changes vs <code>${escapeHtml(baselineLabel)}</code></summary>`,
+    `<summary><code>orcel init</code> dependency changes vs <code>${escapeHtml(baselineLabel)}</code></summary>`,
     "",
   ];
 
@@ -1214,7 +1214,7 @@ function renderPublishedPackageSection(publishedPackage) {
 function renderInitInstallSummarySection(report) {
   if (report.comparison?.initInstall) {
     const comparison = report.comparison.initInstall;
-    const lines = ["### `kaf init` install", ""];
+    const lines = ["### `orcel init` install", ""];
 
     if (comparison.status !== "present") {
       lines.push(
@@ -1264,7 +1264,7 @@ function renderInitInstallSummarySection(report) {
     return [];
   }
 
-  const lines = ["### `kaf init` install", ""];
+  const lines = ["### `orcel init` install", ""];
   lines.push("| Metric | Value |");
   lines.push("| --- | --- |");
   lines.push(`| Installed footprint | ${formatBytes(report.initInstall.installedSizeBytes)} |`);
@@ -1303,9 +1303,9 @@ function renderInitDependencyTable(title, dependencies, totalBytes) {
 }
 
 function renderInitInstallSection(initInstall) {
-  const lines = ["<details>", "<summary><code>kaf init</code> install drill-down</summary>", ""];
-  lines.push("### `kaf init` install details", "");
-  lines.push(`- Command: \`kaf init ${initInstall.projectName}\``);
+  const lines = ["<details>", "<summary><code>orcel init</code> install drill-down</summary>", ""];
+  lines.push("### `orcel init` install details", "");
+  lines.push(`- Command: \`orcel init ${initInstall.projectName}\``);
   lines.push(`- Package manager: \`${initInstall.packageManager}\``);
   lines.push(
     `- Installed footprint: ${formatBytes(initInstall.installedSizeBytes)} across ${initInstall.installedFileCount} installed file${initInstall.installedFileCount === 1 ? "" : "s"}`,
@@ -1324,7 +1324,7 @@ function renderInitInstallSection(initInstall) {
   );
   lines.push(
     "",
-    "_Installed footprint is measured from an isolated temporary `kaf init my-agent` using the current packed kaf tarball._",
+    "_Installed footprint is measured from an isolated temporary `orcel init my-agent` using the current packed orcel tarball._",
     "",
   );
 
@@ -1526,8 +1526,8 @@ async function collectPackageReports(options) {
   }
 
   const packageRoot = resolve(options.packageRoot);
-  const packDirectory = await mkdtemp(join(tmpdir(), "kaf-package-pack-"));
-  const installDirectory = await mkdtemp(join(tmpdir(), "kaf-package-install-"));
+  const packDirectory = await mkdtemp(join(tmpdir(), "orcel-package-pack-"));
+  const installDirectory = await mkdtemp(join(tmpdir(), "orcel-package-install-"));
 
   try {
     const packResult = await runPack(packageRoot, packDirectory);

@@ -10,7 +10,7 @@ import {
 } from "./materialize-registry-release-requirements.mjs";
 
 function registry() {
-  return { items: [{ name: "channel/github", meta: { kaf: { requires: ">=0.30.7" } } }] };
+  return { items: [{ name: "channel/github", meta: { orcel: { requires: ">=0.30.7" } } }] };
 }
 
 test("updates only staged requirements at the selected release version", () => {
@@ -19,11 +19,11 @@ test("updates only staged requirements at the selected release version", () => {
     { items: ["channel/github"] },
     "0.32.0",
   );
-  assert.equal(result.items[0].meta.kaf.requires, ">=0.32.0");
+  assert.equal(result.items[0].meta.orcel.requires, ">=0.32.0");
 });
 
 test("consumes staged requirements after materializing the release registry", async () => {
-  const root = await mkdtemp(join(tmpdir(), "kaf-registry-release-"));
+  const root = await mkdtemp(join(tmpdir(), "orcel-registry-release-"));
   const registryPath = join(root, "registry.json");
   const requirementsPath = join(root, "requirements.json");
   const packagePath = join(root, "package.json");
@@ -35,7 +35,7 @@ test("consumes staged requirements after materializing the release registry", as
     ]);
     await materializeRegistryReleaseRequirements({ packagePath, registryPath, requirementsPath });
     assert.equal(
-      JSON.parse(await readFile(registryPath, "utf8")).items[0].meta.kaf.requires,
+      JSON.parse(await readFile(registryPath, "utf8")).items[0].meta.orcel.requires,
       ">=0.32.0",
     );
     await assert.rejects(readFile(requirementsPath, "utf8"), { code: "ENOENT" });
@@ -45,7 +45,7 @@ test("consumes staged requirements after materializing the release registry", as
 });
 
 test("does nothing when no staged requirements exist", async () => {
-  const root = await mkdtemp(join(tmpdir(), "kaf-registry-release-"));
+  const root = await mkdtemp(join(tmpdir(), "orcel-registry-release-"));
   const registryPath = join(root, "registry.json");
   const requirementsPath = join(root, "missing.json");
   const packagePath = join(root, "package.json");

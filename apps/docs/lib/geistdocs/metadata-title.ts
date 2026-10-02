@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
 
-export const siteTitle = "kaf – durable AI agent framework";
-const siteTitleTemplate = "%s – kaf";
+export const siteTitle = "orcel – durable AI agent framework";
+const siteTitleTemplate = "%s – orcel";
 
 export const rootTitleMetadata = {
   default: siteTitle,
   template: siteTitleTemplate,
 } satisfies NonNullable<Metadata["title"]>;
 
-const standaloneBrandPattern = /(?:^|[^a-z0-9])kaf(?=$|[^a-z0-9])/i;
+const standaloneBrandPattern = /(?:^|[^a-z0-9])orcel(?=$|[^a-z0-9])/i;
 
 export const formatPageTitle = (title: string): string =>
   standaloneBrandPattern.test(title) ? title : siteTitleTemplate.replace("%s", title);

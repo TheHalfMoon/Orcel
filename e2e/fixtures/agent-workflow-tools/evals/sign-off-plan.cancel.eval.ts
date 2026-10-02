@@ -1,5 +1,5 @@
-import { defineEval } from "kaf/evals";
-import { equals } from "kaf/evals/expect";
+import { defineEval } from "orcel/evals";
+import { equals } from "orcel/evals/expect";
 
 const ALICE_REWORK =
   "WORKFLOW-SIGNOFF-CANCEL Alice wants to rework the plan before anyone signs off.";

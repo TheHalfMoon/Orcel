@@ -1,5 +1,5 @@
-import { defineDynamic, defineInstructions } from "kaf/instructions";
-import type { DynamicResolveContext } from "kaf/instructions";
+import { defineDynamic, defineInstructions } from "orcel/instructions";
+import type { DynamicResolveContext } from "orcel/instructions";
 import { BASE_INSTRUCTIONS } from "./lib/base-instructions.js";
 import { buildUserContextPrompt, fetchUserContext } from "./lib/memory-internal.js";
 
@@ -23,7 +23,7 @@ export default defineDynamic({
   events: {
     "session.started": async (_event, ctx: DynamicResolveContext) => {
       const userId = ctx.session.auth.current?.principalId;
-      if (!userId || userId.startsWith("kaf:")) {
+      if (!userId || userId.startsWith("orcel:")) {
         return defineInstructions({
           markdown: instructionsForChannel(ctx.channel.kind, BASE_INSTRUCTIONS),
         });

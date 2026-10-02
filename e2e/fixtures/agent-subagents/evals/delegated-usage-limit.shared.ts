@@ -1,5 +1,5 @@
-import type { KafEvalContext } from "kaf/evals";
-import { satisfies } from "kaf/evals/expect";
+import type { OrcelEvalContext } from "orcel/evals";
+import { satisfies } from "orcel/evals/expect";
 
 import { SURVEY_WORKER_INPUT_TOKENS } from "../constants";
 
@@ -12,7 +12,7 @@ import { SURVEY_WORKER_INPUT_TOKENS } from "../constants";
  * Approving the prompt lets the parent report the survey. Returns the session
  * for checks on how the parent delegated.
  */
-export async function expectSurveyCountedAgainstParent(t: KafEvalContext, message: string) {
+export async function expectSurveyCountedAgainstParent(t: OrcelEvalContext, message: string) {
   const { session } = await t.send(message);
   const request = session.requireInputRequest({
     display: "confirmation",

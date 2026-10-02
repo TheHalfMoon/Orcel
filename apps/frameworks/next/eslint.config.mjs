@@ -9,11 +9,11 @@ const eslintConfig = defineConfig([
   globalIgnores([
     // Default ignores of eslint-config-next:
     ".next/**",
-    ".kaf/**",
+    ".orcel/**",
     "out/**",
     "build/**",
     "next-env.d.ts",
-    // Chat UI is a thin wrapper around the kaf runtime HTTP surface. Skip the
+    // Chat UI is a thin wrapper around the orcel runtime HTTP surface. Skip the
     // Next.js lints here so it can stay focused on the agent transport contract.
     "app/_chat/**",
   ]),

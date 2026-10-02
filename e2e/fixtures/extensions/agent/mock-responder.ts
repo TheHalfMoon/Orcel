@@ -1,4 +1,4 @@
-import type { MockModelRequest, MockModelResponse } from "kaf/evals";
+import type { MockModelRequest, MockModelResponse } from "orcel/evals";
 
 const GIZMO_INSTRUCTIONS_TOKEN = "gizmo-instructions-ok-7K2M";
 const JAVASCRIPT_INSTRUCTIONS_TOKEN = "javascript-instructions-ok-9P4R";

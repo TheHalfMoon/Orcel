@@ -1,5 +1,5 @@
-import { defineTool } from "kaf/tools";
-import { always } from "kaf/tools/approval";
+import { defineTool } from "orcel/tools";
+import { always } from "orcel/tools/approval";
 import { z } from "zod";
 
 export const GUARDED_ECHO_OPENAI_TOKEN = "guarded-echo-openai-ok-R2D7";

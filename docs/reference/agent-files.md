@@ -3,11 +3,11 @@ title: "Agent Files"
 description: "Look up agent directory slots, path-derived names, subagent files, and filesystem discovery rules."
 ---
 
-kaf builds an agent from files under its agent directory. Each supported path determines how kaf loads the file. For recommended project layouts and when to split agents, read [Project Structure](/docs/concepts/project-structure).
+orcel builds an agent from files under its agent directory. Each supported path determines how orcel loads the file. For recommended project layouts and when to split agents, read [Project Structure](/docs/concepts/project-structure).
 
 ## Agent directory layout
 
-In a single-agent project, the agent directory is `agent/`. In an kaf agent workspace, each member has an `agents/<name>/agent/` directory. A minimal root agent needs an instructions source; `agent.ts` is optional when the default configuration is sufficient.
+In a single-agent project, the agent directory is `agent/`. In an orcel agent workspace, each member has an `agents/<name>/agent/` directory. A minimal root agent needs an instructions source; `agent.ts` is optional when the default configuration is sufficient.
 
 ```text
 agent/
@@ -27,11 +27,11 @@ agent/
 └── subagents/
 ```
 
-Add only the files you need. Framework defaults use the same slots, so a file at the same path replaces the default when kaf compiles the agent. Evals live beside `agent/`, not inside it.
+Add only the files you need. Framework defaults use the same slots, so a file at the same path replaces the default when orcel compiles the agent. Evals live beside `agent/`, not inside it.
 
 ## Naming from paths
 
-kaf derives capability names from file paths:
+orcel derives capability names from file paths:
 
 | Path                                  | Resolves to           |
 | ------------------------------------- | --------------------- |
@@ -40,7 +40,7 @@ kaf derives capability names from file paths:
 | `agent/skills/summarize.md`           | skill `summarize`     |
 | `agent/subagents/researcher/agent.ts` | subagent `researcher` |
 
-A standalone root agent uses its package name (without an npm scope), or its app directory name when no name is set. An kaf workspace member uses its directory name under `agents/`. A local subagent uses its directory name under `subagents/`.
+A standalone root agent uses its package name (without an npm scope), or its app directory name when no name is set. An orcel workspace member uses its directory name under `agents/`. A local subagent uses its directory name under `subagents/`.
 
 ## Agent files and directories
 
@@ -66,7 +66,7 @@ Paths below are relative to the agent directory. Root agents can use every path;
 
 ## Colocated tests
 
-kaf ignores JavaScript and TypeScript modules named `*.test.*` or `*.spec.*`,
+orcel ignores JavaScript and TypeScript modules named `*.test.*` or `*.spec.*`,
 along with `__tests__/` directories, during automatic discovery and when choosing
 extension runtime entries.
 
@@ -100,7 +100,7 @@ It uses the same `defineAgent` helper as the root and supports the slots marked 
 
 ## Flat layout
 
-kaf also supports agent files directly in the app root, without an `agent/` directory:
+orcel also supports agent files directly in the app root, without an `agent/` directory:
 
 ```text
 my-agent/
@@ -115,6 +115,6 @@ Workspace members can also use flat agent files directly under `agents/<name>/`.
 
 ## Debug file discovery
 
-Run `kaf info` from the agent's app directory, or `kaf info --agent <name>` from an kaf workspace root. It lists the discovered files and diagnostics. kaf also writes inspectable artifacts under `.kaf/`; see the [CLI reference](/docs/reference/cli#kaf-info).
+Run `orcel info` from the agent's app directory, or `orcel info --agent <name>` from an orcel workspace root. It lists the discovered files and diagnostics. orcel also writes inspectable artifacts under `.orcel/`; see the [CLI reference](/docs/reference/cli#orcel-info).
 
 Workspace discovery includes only direct `agents/<name>/` children with agent files and no `package.json` of their own. A root `agent/` directory takes precedence over `agents/` and makes the project single-agent. See [Add a second root agent](/docs/concepts/project-structure#add-a-second-root-agent) to convert that layout.

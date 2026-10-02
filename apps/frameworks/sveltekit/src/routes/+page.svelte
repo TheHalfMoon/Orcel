@@ -1,13 +1,13 @@
 <script lang="ts">
-  import KafAgentConsole from "$lib/KafAgentConsole.svelte";
+  import OrcelAgentConsole from "$lib/OrcelAgentConsole.svelte";
 </script>
 
 <svelte:head>
-  <title>kaf Agent</title>
+  <title>orcel Agent</title>
   <meta
     name="description"
-    content="Ask an kaf agent questions and inspect streamed reasoning and tool calls."
+    content="Ask an orcel agent questions and inspect streamed reasoning and tool calls."
   />
 </svelte:head>
 
-<KafAgentConsole />
+<OrcelAgentConsole />

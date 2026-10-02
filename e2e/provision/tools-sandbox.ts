@@ -10,23 +10,23 @@ import { theme } from "../lib/theme.ts";
 const APP_NAME = "agent-tools-sandbox";
 const PORT = Number(process.env.PORT ?? 3350);
 
-const AUTHOR_MARKER_PATH = "/home/vercel-sandbox/kaf-author-snapshot-marker.txt";
+const AUTHOR_MARKER_PATH = "/home/vercel-sandbox/orcel-author-snapshot-marker.txt";
 
 await provision("tools-sandbox", async (ctx) => {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    KAF_MOCK_AUTHORED_MODELS: "1",
+    ORCEL_MOCK_AUTHORED_MODELS: "1",
   };
 
   /*
    * Author-snapshot seeding needs real Vercel Sandbox credentials, so it is
    * opt-in for local runs. Without it the eval's author-snapshot case skips
-   * on its missing `env:KAF_TEST_AUTHOR_SNAPSHOT_ID` requirement.
+   * on its missing `env:ORCEL_TEST_AUTHOR_SNAPSHOT_ID` requirement.
    */
-  if (process.env.KAF_E2E_AUTHOR_SNAPSHOT === "1") {
+  if (process.env.ORCEL_E2E_AUTHOR_SNAPSHOT === "1") {
     const seeded = await seedAuthorSnapshot();
-    env.KAF_TEST_AUTHOR_SNAPSHOT_ID = seeded.snapshotId;
-    env.KAF_TEST_AUTHOR_MARKER_TOKEN = seeded.markerToken;
+    env.ORCEL_TEST_AUTHOR_SNAPSHOT_ID = seeded.snapshotId;
+    env.ORCEL_TEST_AUTHOR_MARKER_TOKEN = seeded.markerToken;
   }
 
   const server = await ctx.server({ appName: APP_NAME, env, port: PORT });
@@ -34,11 +34,11 @@ await provision("tools-sandbox", async (ctx) => {
 });
 
 /**
- * Builds an author snapshot outside kaf: create a standalone Vercel Sandbox,
+ * Builds an author snapshot outside orcel: create a standalone Vercel Sandbox,
  * write a fresh marker token outside `/workspace`, snapshot it, and delete
  * the seed. The fixture's sandbox definition rebinds its backend to
  * `vercel({ source: { type: "snapshot", snapshotId } })` when
- * `KAF_TEST_AUTHOR_SNAPSHOT_ID` is set.
+ * `ORCEL_TEST_AUTHOR_SNAPSHOT_ID` is set.
  */
 async function seedAuthorSnapshot(): Promise<{ snapshotId: string; markerToken: string }> {
   /*
@@ -73,7 +73,7 @@ async function seedAuthorSnapshot(): Promise<{ snapshotId: string; markerToken: 
   console.log(theme.muted(`[tools-sandbox] cleaning leftover ${APP_NAME} templates...`));
   const existing = await Sandbox.list({ limit: 50 });
   for (const sb of existing.sandboxes) {
-    if (sb.name.startsWith("kaf-sbx-tpl-vercel-")) {
+    if (sb.name.startsWith("orcel-sbx-tpl-vercel-")) {
       try {
         const handle = await Sandbox.get({ name: sb.name });
         if (handle) await handle.delete();
@@ -84,7 +84,7 @@ async function seedAuthorSnapshot(): Promise<{ snapshotId: string; markerToken: 
   }
 
   const markerToken = `author-snapshot-ok-${randomBytes(6).toString("hex")}`;
-  const seedSandboxName = `kaf-smoke-author-seed-${randomBytes(4).toString("hex")}`;
+  const seedSandboxName = `orcel-smoke-author-seed-${randomBytes(4).toString("hex")}`;
 
   console.log(theme.muted(`[tools-sandbox] creating seed sandbox "${seedSandboxName}"...`));
   const seedSandbox = await Sandbox.create({ name: seedSandboxName, persistent: false });

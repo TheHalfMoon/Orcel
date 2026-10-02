@@ -24,7 +24,7 @@ const base: PublishedBenchmarkResults = {
   schemaVersion: 1,
   generatedAt: "2026-08-13T00:00:00.000Z",
   suite: {
-    kafRevision: "a".repeat(40),
+    orcelRevision: "a".repeat(40),
     caseFingerprint: "b".repeat(64),
     caseCount: 2,
     runsPerCell: 3,

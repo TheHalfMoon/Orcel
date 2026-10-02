@@ -17,25 +17,25 @@ export function createNativeAuthoringSetup(options: {
 }) {
   return async (sandbox: Sandbox): Promise<void> => {
     const bootstrap = JSON.parse(
-      await sandbox.readFile(".kaf-authoring-bootstrap.json"),
+      await sandbox.readFile(".orcel-authoring-bootstrap.json"),
     ) as FixtureBootstrap;
     if (bootstrap.revision !== options.revision) {
       throw new Error("Native fixture revision does not match the selected subject.");
     }
     await run(
       sandbox,
-      "rm -f .kaf-authoring-bootstrap.json CASE.ts package.json package-lock.json PROMPT.md",
+      "rm -f .orcel-authoring-bootstrap.json CASE.ts package.json package-lock.json PROMPT.md",
       "fixture cleanup",
     );
     await sandbox.writeFiles({
-      "/usr/local/bin/kaf": `#!/bin/sh\nexec npx --yes --allow-remote=all --package=${shellQuote(options.packageSpec)} kaf "$@"\n`,
+      "/usr/local/bin/orcel": `#!/bin/sh\nexec npx --yes --allow-remote=all --package=${shellQuote(options.packageSpec)} orcel "$@"\n`,
     });
-    await run(sandbox, "chmod +x /usr/local/bin/kaf", "kaf canary wrapper");
+    await run(sandbox, "chmod +x /usr/local/bin/orcel", "orcel canary wrapper");
 
     if (bootstrap.startingPoint === "scaffolded") {
       await run(
         sandbox,
-        `AI_AGENT=claude KAF_INIT_PACKAGE_SPEC=${shellQuote(options.packageSpec)} kaf init . --model openai/gpt-5.5`,
+        `AI_AGENT=claude ORCEL_INIT_PACKAGE_SPEC=${shellQuote(options.packageSpec)} orcel init . --model openai/gpt-5.5`,
         "workspace bootstrap",
       );
     }

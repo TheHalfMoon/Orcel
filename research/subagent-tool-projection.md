@@ -27,7 +27,7 @@ On the root agent, `tool: false` disables the built-in `agent` self-delegation t
 
 ```ts
 // agent/tools/researcher.ts
-import { disableTool } from "kaf/tools";
+import { disableTool } from "orcel/tools";
 
 export default disableTool();
 ```

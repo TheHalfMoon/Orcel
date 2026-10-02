@@ -1,4 +1,4 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 import { scriptedSession, expectResponseReply, requestFrom } from "./helpers.ts";
 
 export default defineEval({

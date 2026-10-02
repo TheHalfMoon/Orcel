@@ -18,7 +18,7 @@
  *             to mistype; declare the object then assign optional keys.)
  *   rule 19 — No `new AsyncLocalStorage()` outside the two allowlisted
  *             files. All ambient runtime state flows through a single
- *             `KafContext`.
+ *             `OrcelContext`.
  *   rule 21 — No authored `name:` (or `id:`) field on
  *             `defineMcpClientConnection`, `defineTool`, `defineSkill`,
  *             `defineSandbox`, `defineSchedule`, `defineAgent`, or
@@ -42,11 +42,11 @@
  *   rule 26 — No `loadContext() as ContextContainer` casts. Thread a
  *             `ContextContainer` parameter through instead.
  *   rule 27 — No `state:` field on hook lifecycle result types in
- *             `packages/kaf/src/public/definitions/hook.ts`. Hook
+ *             `packages/orcel/src/public/definitions/hook.ts`. Hook
  *             return shapes must carry only what the harness consumes;
- *             durable state belongs on `ctx.kaf`.
- *   rule 28 — Imports under `packages/kaf/src/setup/scaffold/**` stay within
- *             their layer: node:* builtins, relative siblings, and kaf's
+ *             durable state belongs on `ctx.orcel`.
+ *   rule 28 — Imports under `packages/orcel/src/setup/scaffold/**` stay within
+ *             their layer: node:* builtins, relative siblings, and orcel's
  *             vendored integration catalog. The scaffold stays free of
  *             framework runtime, compiler, terminal UI, and provider SDK
  *             dependencies.
@@ -57,16 +57,16 @@
  *   rule 30 — The compiled-vendor pipeline (`scripts/vendor-compiled/**`)
  *             must not write a per-package `package.json` into a vendored
  *             output directory. Such a file creates a package scope that
- *             shadows kaf's `#compiled/*` imports map, so a cross-package
+ *             shadows orcel's `#compiled/*` imports map, so a cross-package
  *             `#compiled/<pkg>` reference inside one vendored `.d.ts`
  *             (e.g. `@workflow/core` → `@workflow/world` → `zod`) silently
  *             degrades to `any` under `skipLibCheck`. The bundled ESM
- *             inherits `"type": "module"` from kaf's root package.json, so
+ *             inherits `"type": "module"` from orcel's root package.json, so
  *             no per-package file is needed. See `prepareCompiledModule`.
  *   rule 31 — Active source and docs must not reference the removed
- *             `create-kaf` package or `kaf setup` command. Use `kaf init`
+ *             `create-orcel` package or `orcel setup` command. Use `orcel init`
  *             for project creation and the dedicated current commands
- *             (`kaf link`, `kaf channels add`, `kaf deploy`) afterward.
+ *             (`orcel link`, `orcel channels add`, `orcel deploy`) afterward.
  *             Changelogs and changesets are historical records and excluded.
  *   rule 32 — Every Markdown file under `research/` must have valid YAML
  *             frontmatter with non-empty `issue` and `status` fields plus an
@@ -77,7 +77,7 @@
  *             must go through the `src/internal/workflow/runtime.ts` facade and
  *             `queue-namespace.ts`. The generated agent bootstrap installs the
  *             agent-scoped namespace before queue-producing APIs can run.
- *   rule 34 — `phase` stays a runtime-only dependency. No file under the Kaf\n *             logo renderer's GPU/runtime boundary (render/, shaders/, or the\n *             offline render harness) may import the `phase` package. This keeps\n *             the mechanical separation between the lifecycle layer and the GPU\n *             renderer enforceable.
+ *   rule 34 — `phase` stays a runtime-only dependency. No file under the Orcel\n *             logo renderer's GPU/runtime boundary (render/, shaders/, or the\n *             offline render harness) may import the `phase` package. This keeps\n *             the mechanical separation between the lifecycle layer and the GPU\n *             renderer enforceable.
  *   rule 35 — No direct `#compiled/gray-matter` imports outside the
  *             `internal/helpers/gray-matter.ts` wrapper. gray-matter's default
  *             engines `eval()` a `---js` frontmatter fence, so every call must
@@ -93,8 +93,8 @@
  *             code may import only runtime facade types, and execution may use
  *             only runtime entrypoints and cancellation-state preservation.
  *   rule 38 — Workspace build scripts must not launch a nested
- *             `pnpm --filter kaf build`. Turbo owns workspace dependency
- *             ordering; nested builds race on kaf's clean-and-publish dist
+ *             `pnpm --filter orcel build`. Turbo owns workspace dependency
+ *             ordering; nested builds race on orcel's clean-and-publish dist
  *             directory and let consumers observe a partial package.
  *   rule 43 — Reusable session plumbing stays independent of the subagent
  *             executor. The generic inbox and state cursor must not
@@ -104,11 +104,11 @@
  *             `defineSandboxProvider()` and does not import sandbox runtime
  *             orchestration, registries, key derivation, or session state.
  *             Built-ins and authored providers must share one contract.
- *   rule 45 — Provided tools under `packages/kaf/src/tools/provided/**` and
- *             the body of every agent tool import only public kaf entry
+ *   rule 45 — Provided tools under `packages/orcel/src/tools/provided/**` and
+ *             the body of every agent tool import only public orcel entry
  *             points (the `#` specifiers of the package's `exports`), the
  *             vendored Workflow SDK that authored bodies import as
- *             `workflow`, and each other. kaf is built on kaf: a provided
+ *             `workflow`, and each other. orcel is built on orcel: a provided
  *             tool that needs a private hook means authors cannot build the
  *             same tool. Files that predate the rule are baselined and may
  *             only leave the baseline.
@@ -148,7 +148,7 @@ const SKIP_DIRS = new Set([
   "node_modules",
   ".git",
   ".turbo",
-  ".kaf",
+  ".orcel",
   ".next",
   ".nitro",
   ".output",
@@ -269,11 +269,11 @@ async function scanRepo(state) {
 const SUBAGENT_IMPORT_RE = /from ["'](?:#|(?:\.\.?\/)+(?:[\w-]+\/)*)subagents(?:\/|\.js|["'])/;
 
 const RULE43_GENERIC_SESSION_FILES = new Set([
-  "packages/kaf/src/execution/session-hook-claims.ts",
-  "packages/kaf/src/execution/session-inbox/inbox.ts",
-  "packages/kaf/src/execution/session-input-ledger.ts",
-  "packages/kaf/src/execution/session-input-queue.ts",
-  "packages/kaf/src/execution/session-state-cursor.ts",
+  "packages/orcel/src/execution/session-hook-claims.ts",
+  "packages/orcel/src/execution/session-inbox/inbox.ts",
+  "packages/orcel/src/execution/session-input-ledger.ts",
+  "packages/orcel/src/execution/session-input-queue.ts",
+  "packages/orcel/src/execution/session-state-cursor.ts",
 ]);
 
 /**
@@ -297,9 +297,9 @@ function checkRule43(posix, lines, violations) {
 
 // Legacy import is reachable only from workflow discovery and ingress.
 const LEGACY_INGRESS_FILES = new Set([
-  "packages/kaf/src/execution/session-inbox/resume.ts",
-  "packages/kaf/src/execution/connections/callback-route.ts",
-  "packages/kaf/src/kaf-channel/index.ts",
+  "packages/orcel/src/execution/session-inbox/resume.ts",
+  "packages/orcel/src/execution/connections/callback-route.ts",
+  "packages/orcel/src/orcel-channel/index.ts",
 ]);
 /** @param {string} posix @param {string[]} lines @param {Violation[]} violations */
 function checkRule44(posix, lines, violations) {
@@ -327,16 +327,16 @@ function checkRule44(posix, lines, violations) {
 
 // ---------- Rule 45: provided tools use only public entry points ----------
 
-const PROVIDED_TOOLS_DIR = "packages/kaf/src/tools/provided/";
-// Every agent tool is a `serve` workflow tool kaf generates around this body.
-const AGENT_TOOL_BODY_PATH = "packages/kaf/src/runtime/subagents/workflow.ts";
+const PROVIDED_TOOLS_DIR = "packages/orcel/src/tools/provided/";
+// Every agent tool is a `serve` workflow tool orcel generates around this body.
+const AGENT_TOOL_BODY_PATH = "packages/orcel/src/runtime/subagents/workflow.ts";
 
-const KAF_PACKAGE_EXPORTS = require(join(REPO_ROOT, "packages/kaf/package.json")).exports;
+const ORCEL_PACKAGE_EXPORTS = require(join(REPO_ROOT, "packages/orcel/package.json")).exports;
 const EXPORTED_TYPES_PATH_RE = /^\.\/dist\/src\/(.+)\.d\.ts$/;
 
 /**
- * The `#` specifier kaf's own source uses for one exported module, such as
- * `#public/tools/index.js` for `kaf/tools`.
+ * The `#` specifier orcel's own source uses for one exported module, such as
+ * `#public/tools/index.js` for `orcel/tools`.
  *
  * @param {unknown} target
  */
@@ -348,14 +348,14 @@ function toSourceSpecifier(target) {
   return match === null ? undefined : `#${match[1]}.js`;
 }
 
-const KAF_PUBLIC_ENTRY_SPECIFIERS = new Set(
-  Object.values(KAF_PACKAGE_EXPORTS)
+const ORCEL_PUBLIC_ENTRY_SPECIFIERS = new Set(
+  Object.values(ORCEL_PACKAGE_EXPORTS)
     .map(toSourceSpecifier)
     .filter((specifier) => specifier !== undefined),
 );
 
 const PROVIDED_TOOL_EXTRA_IMPORTS = new Set([
-  // What an authored body imports as `workflow`: kaf vendors the Workflow SDK.
+  // What an authored body imports as `workflow`: orcel vendors the Workflow SDK.
   "#compiled/@workflow/core/index.js",
   // `defineJsonSchema` is not public yet, and provided tools declare schemas without zod.
   "#tools/schema.js",
@@ -364,15 +364,15 @@ const PROVIDED_TOOL_EXTRA_IMPORTS = new Set([
 // `task_wait` and `task_cancel` belong to the session, not to authors: they
 // take their model text from execution/tasks/render.ts directly.
 const PROVIDED_TASK_TOOL_FILES = new Set([
-  "packages/kaf/src/tools/provided/task-cancel.ts",
-  "packages/kaf/src/tools/provided/task-wait.ts",
+  "packages/orcel/src/tools/provided/task-cancel.ts",
+  "packages/orcel/src/tools/provided/task-wait.ts",
 ]);
 
 const IMPORT_SPECIFIER_RE = /(?:\bfrom\s+|\bimport\s*\(\s*|^\s*import\s+)["']([^"']+)["']/;
 
 /** @param {string} specifier */
 function isProvidedToolImportAllowed(specifier) {
-  if (KAF_PUBLIC_ENTRY_SPECIFIERS.has(specifier)) return true;
+  if (ORCEL_PUBLIC_ENTRY_SPECIFIERS.has(specifier)) return true;
   if (PROVIDED_TOOL_EXTRA_IMPORTS.has(specifier)) return true;
   return specifier.startsWith("#tools/provided/") || specifier.startsWith("./");
 }
@@ -395,17 +395,17 @@ function checkRule45(posix, lines, state) {
       rule: 45,
       file: posix,
       line: idx + 1,
-      message: `imports "${specifier}", which is not a public kaf entry point. Provided tools use only the API authors have: import from the matching entry in packages/kaf/package.json "exports" (for example "#public/tools/index.js" for kaf/tools), or make the capability public first.`,
+      message: `imports "${specifier}", which is not a public orcel entry point. Provided tools use only the API authors have: import from the matching entry in packages/orcel/package.json "exports" (for example "#public/tools/index.js" for orcel/tools), or make the capability public first.`,
     });
   });
 }
 
 // ---------- Rule 46: tasks own their records and model text ----------
 
-const TASKS_DIR = "packages/kaf/src/execution/tasks/";
-const TASK_TABLE_FILE_RE = /^packages\/kaf\/src\/execution\/tasks\/table[\w-]*\.ts$/;
+const TASKS_DIR = "packages/orcel/src/execution/tasks/";
+const TASK_TABLE_FILE_RE = /^packages\/orcel\/src\/execution\/tasks\/table[\w-]*\.ts$/;
 const TASK_RENDER_FILE = `${TASKS_DIR}render.ts`;
-const TASK_TABLE_KEY = '"kaf.taskTable"';
+const TASK_TABLE_KEY = '"orcel.taskTable"';
 const TASK_MODEL_MARKERS = ["<task_result", "[Tasks]", "Started task ", "Sent to task "];
 
 /**
@@ -414,7 +414,7 @@ const TASK_MODEL_MARKERS = ["<task_result", "[Tasks]", "Started task ", "Sent to
  * @param {Violation[]} violations
  */
 function checkRule46(posix, lines, violations) {
-  if (!posix.startsWith("packages/kaf/src/") || posix.endsWith(".test.ts")) return;
+  if (!posix.startsWith("packages/orcel/src/") || posix.endsWith(".test.ts")) return;
   lines.forEach((line, idx) => {
     if (line.includes(TASK_TABLE_KEY) && !TASK_TABLE_FILE_RE.test(posix)) {
       violations.push({
@@ -439,10 +439,10 @@ function checkRule46(posix, lines, violations) {
 
 // ---------- Rule 47: one caller-reply site ----------
 
-const CALLER_REPLY_DEFINITION_FILE = "packages/kaf/src/subagents/parent-notification.ts";
+const CALLER_REPLY_DEFINITION_FILE = "packages/orcel/src/subagents/parent-notification.ts";
 const CALLER_REPLY_FILES = new Set([
-  "packages/kaf/src/execution/session/program.ts",
-  "packages/kaf/src/execution/session/finalization.ts",
+  "packages/orcel/src/execution/session/program.ts",
+  "packages/orcel/src/execution/session/finalization.ts",
 ]);
 const CALLER_REPLY_CALL_RE = /\b(?:notifyTurnCallerStep|notifyCancelledTaskCallerStep)\(/;
 
@@ -452,7 +452,7 @@ const CALLER_REPLY_CALL_RE = /\b(?:notifyTurnCallerStep|notifyCancelledTaskCalle
  * @param {Violation[]} violations
  */
 function checkRule47(posix, lines, violations) {
-  if (!posix.startsWith("packages/kaf/src/") || posix.endsWith(".test.ts")) return;
+  if (!posix.startsWith("packages/orcel/src/") || posix.endsWith(".test.ts")) return;
   if (posix === CALLER_REPLY_DEFINITION_FILE || CALLER_REPLY_FILES.has(posix)) return;
   lines.forEach((line, idx) => {
     if (!CALLER_REPLY_CALL_RE.test(line)) return;
@@ -468,14 +468,14 @@ function checkRule47(posix, lines, violations) {
 
 // ---------- Rule 48: remote agent protocol 1 stays compartmentalized ----------
 
-const LEGACY_REMOTE_AGENT_DIR = "packages/kaf/src/execution/legacy-remote-agent/";
+const LEGACY_REMOTE_AGENT_DIR = "packages/orcel/src/execution/legacy-remote-agent/";
 const LEGACY_REMOTE_AGENT_INGRESS_FILES = new Set([
-  "packages/kaf/src/channel/types.ts",
-  "packages/kaf/src/context/keys.ts",
-  "packages/kaf/src/kaf-channel/create-request.ts",
-  "packages/kaf/src/kaf-channel/index.ts",
-  "packages/kaf/src/kaf-channel/request.ts",
-  "packages/kaf/src/execution/forward-session-input.ts",
+  "packages/orcel/src/channel/types.ts",
+  "packages/orcel/src/context/keys.ts",
+  "packages/orcel/src/orcel-channel/create-request.ts",
+  "packages/orcel/src/orcel-channel/index.ts",
+  "packages/orcel/src/orcel-channel/request.ts",
+  "packages/orcel/src/execution/forward-session-input.ts",
 ]);
 // `from "…"` covers imports and re-exports; `import "…"` and `import("…")` cover side effects and dynamic imports.
 const LEGACY_REMOTE_AGENT_IMPORT_RE = /\b(?:from|import)\s*\(?\s*["'][^"']*legacy-remote-agent\//;
@@ -483,7 +483,7 @@ const LEGACY_REMOTE_AGENT_IMPORT_RE = /\b(?:from|import)\s*\(?\s*["'][^"']*legac
 /** @param {string} posix @param {string[]} lines @param {Violation[]} violations */
 function checkRule48(posix, lines, violations) {
   if (
-    !posix.startsWith("packages/kaf/src/") ||
+    !posix.startsWith("packages/orcel/src/") ||
     posix.startsWith(LEGACY_REMOTE_AGENT_DIR) ||
     /\.(?:test|integration\.test|scenario\.test)\.ts$/.test(posix) ||
     LEGACY_REMOTE_AGENT_INGRESS_FILES.has(posix)
@@ -525,8 +525,8 @@ const RAW_WORKFLOW_RUNTIME_SPECIFIER_RE =
   /["'](?:#compiled\/@workflow\/core\/runtime(?:\.js|\/[^"']+\.js)|@workflow\/core\/runtime(?:\/[^"']+)?|workflow\/(?:api|runtime))["']/;
 const WORKFLOW_QUEUE_NAMESPACE_WRITE_RE =
   /process\.env(?:\.WORKFLOW_QUEUE_NAMESPACE|\[\s*(?:WORKFLOW_QUEUE_NAMESPACE_ENV|["']WORKFLOW_QUEUE_NAMESPACE["'])\s*\])\s*=/;
-const WORKFLOW_RUNTIME_FACADES = new Set(["packages/kaf/src/internal/workflow/runtime.ts"]);
-const WORKFLOW_QUEUE_NAMESPACE_MODULE = "packages/kaf/src/internal/workflow/queue-namespace.ts";
+const WORKFLOW_RUNTIME_FACADES = new Set(["packages/orcel/src/internal/workflow/runtime.ts"]);
+const WORKFLOW_QUEUE_NAMESPACE_MODULE = "packages/orcel/src/internal/workflow/queue-namespace.ts";
 
 /**
  * @param {string} posix
@@ -534,10 +534,10 @@ const WORKFLOW_QUEUE_NAMESPACE_MODULE = "packages/kaf/src/internal/workflow/queu
  * @param {Violation[]} violations
  */
 function checkRule33(posix, lines, violations) {
-  // The single-runtime-identity boundary is kaf's own source. Application code
+  // The single-runtime-identity boundary is orcel's own source. Application code
   // (fixtures, templates) legitimately imports the public `workflow/api`
-  // surface, which kaf's bundler resolves to its own runtime.
-  if (!posix.startsWith("packages/kaf/src/")) return;
+  // surface, which orcel's bundler resolves to its own runtime.
+  if (!posix.startsWith("packages/orcel/src/")) return;
   lines.forEach((line, idx) => {
     const isTypeOnlyImport = /^\s*(?:import|export)\s+type\b/.test(line);
     const isRuntimeImport =
@@ -548,7 +548,7 @@ function checkRule33(posix, lines, violations) {
         rule: 33,
         file: posix,
         line: idx + 1,
-        message: `imports the raw Workflow runtime. Import from "#internal/workflow/runtime.js" to preserve kaf's single Workflow runtime package identity.`,
+        message: `imports the raw Workflow runtime. Import from "#internal/workflow/runtime.js" to preserve orcel's single Workflow runtime package identity.`,
       });
     }
 
@@ -557,7 +557,7 @@ function checkRule33(posix, lines, violations) {
         rule: 33,
         file: posix,
         line: idx + 1,
-        message: `writes WORKFLOW_QUEUE_NAMESPACE outside the canonical namespace module. Use installKafWorkflowQueueNamespace() so every queue surface derives the same agent-scoped value.`,
+        message: `writes WORKFLOW_QUEUE_NAMESPACE outside the canonical namespace module. Use installOrcelWorkflowQueueNamespace() so every queue surface derives the same agent-scoped value.`,
       });
     }
   });
@@ -566,7 +566,7 @@ function checkRule33(posix, lines, violations) {
 // ---------- Rule 35: direct gray-matter imports ----------
 
 const GRAY_MATTER_SPECIFIER_RE = /["']#compiled\/gray-matter(?:\/[^"']+)?["']/;
-const GRAY_MATTER_FACADE = "packages/kaf/src/internal/helpers/gray-matter.ts";
+const GRAY_MATTER_FACADE = "packages/orcel/src/internal/helpers/gray-matter.ts";
 
 /**
  * @param {string} posix
@@ -592,7 +592,7 @@ function checkRule35(posix, lines, violations) {
 
 // ---------- Rule 37: instrumentation lifecycle provider boundary ----------
 
-const INSTRUMENTATION_LIFECYCLE_CONTRACT = "packages/kaf/src/instrumentation/lifecycle.ts";
+const INSTRUMENTATION_LIFECYCLE_CONTRACT = "packages/orcel/src/instrumentation/lifecycle.ts";
 const HARNESS_RUNTIME_IMPORTS = new Map([
   ["InstrumentationAttempt", "type"],
   ["InstrumentationStepScope", "type"],
@@ -617,10 +617,10 @@ const EXECUTION_INSTRUMENTATION_IMPORTS = new Map([
  */
 function checkRule37(posix, source, violations) {
   const productionHarness =
-    posix.startsWith("packages/kaf/src/harness/") &&
+    posix.startsWith("packages/orcel/src/harness/") &&
     !/\.(?:test|integration\.test|scenario\.test)\.ts$/.test(posix);
   const productionExecution =
-    posix.startsWith("packages/kaf/src/execution/") &&
+    posix.startsWith("packages/orcel/src/execution/") &&
     !/\.(?:test|integration\.test|scenario\.test)\.ts$/.test(posix);
   if (posix !== INSTRUMENTATION_LIFECYCLE_CONTRACT && !productionHarness && !productionExecution) {
     return;
@@ -644,7 +644,7 @@ function checkRule37(posix, source, violations) {
         rule: 37,
         file: posix,
         line: sourceFile.getLineAndCharacterOfPosition(specifier.getStart(sourceFile)).line + 1,
-        message: `imports from "ai". Lifecycle event payloads are kaf's own shape, so an AI SDK type reaching them makes an SDK upgrade a breaking change for every provider. Add an kaf type here and map to it in ai-sdk-hook-bridge.ts.`,
+        message: `imports from "ai". Lifecycle event payloads are orcel's own shape, so an AI SDK type reaching them makes an SDK upgrade a breaking change for every provider. Add an orcel type here and map to it in ai-sdk-hook-bridge.ts.`,
       });
     }
     if (
@@ -916,7 +916,7 @@ function checkRule26(posix, lines, violations) {
 
 // ---------- Rule 27: hook return shapes have no `state` field ----------
 
-const HOOK_DEFINITIONS_PATH = "packages/kaf/src/public/definitions/hook.ts";
+const HOOK_DEFINITIONS_PATH = "packages/orcel/src/public/definitions/hook.ts";
 /** Matches a `state:` (or `readonly state:`, `state?:`) struct member declaration. */
 const HOOK_STATE_FIELD_RE = /^\s*(readonly\s+)?state\??\s*:/;
 
@@ -933,7 +933,7 @@ function checkRule27(posix, lines, violations) {
         rule: 27,
         file: posix,
         line: idx + 1,
-        message: `\`state:\` field detected on a hook type definition. Hook return shapes must not carry a parallel state-patch channel — durable state goes through \`ctx.kaf\`. Remove the \`state\` field; if the hook truly needs to persist something across turns, write it to a context key via \`ctx.kaf.set(...)\` instead.`,
+        message: `\`state:\` field detected on a hook type definition. Hook return shapes must not carry a parallel state-patch channel — durable state goes through \`ctx.orcel\`. Remove the \`state\` field; if the hook truly needs to persist something across turns, write it to a context key via \`ctx.orcel.set(...)\` instead.`,
       });
     }
   });
@@ -941,16 +941,16 @@ function checkRule27(posix, lines, violations) {
 
 // ---------- Rule 28: scaffold layer dependency whitelist ----------
 
-const SCAFFOLD_PREFIX = "packages/kaf/src/setup/scaffold/";
+const SCAFFOLD_PREFIX = "packages/orcel/src/setup/scaffold/";
 
 // The curated connection and channel catalogs read canonical identity from
-// the private `@kaf/catalog` workspace package through kaf's vendored copy.
+// the private `@orcel/catalog` workspace package through orcel's vendored copy.
 // This keeps the published package self-contained without allowing the
 // scaffold layer to reach into runtime, compiler, or provider SDK modules.
-// Terminal UI adapters live outside the scaffold in `packages/kaf/src/setup/cli/`.
+// Terminal UI adapters live outside the scaffold in `packages/orcel/src/setup/cli/`.
 const SCAFFOLD_ALLOWED_PACKAGES = new Set([]);
 
-const SCAFFOLD_ALLOWED_INTERNAL_IMPORTS = new Set(["#compiled/@kaf/catalog/index.js"]);
+const SCAFFOLD_ALLOWED_INTERNAL_IMPORTS = new Set(["#compiled/@orcel/catalog/index.js"]);
 
 // Only match top-of-line `import` statements, not strings nested inside
 // template literals (e.g. the channel templates embed `from "react"` as
@@ -964,7 +964,7 @@ const SCAFFOLD_IMPORT_RE = /^\s*import\b[^"']*\sfrom\s+["']([^"']+)["']/;
  */
 function checkRule28(posix, lines, violations) {
   if (!posix.startsWith(SCAFFOLD_PREFIX)) return;
-  // Test files never ship in the kaf tarball, so the bundle-size rationale
+  // Test files never ship in the orcel tarball, so the bundle-size rationale
   // doesn't apply to them. Allow vitest and other test-only dependencies.
   if (/\.(test|integration\.test|scenario\.test)\.ts$/.test(posix)) return;
   // Channel templates embed full source files inside backtick literals
@@ -989,7 +989,7 @@ function checkRule28(posix, lines, violations) {
             rule: 28,
             file: posix,
             line: idx + 1,
-            message: `import from "${spec}" not allowed in the packages/kaf/src/setup/scaffold source layer. Scaffold modules allow only node:* builtins, relative files, and #compiled/@kaf/catalog/index.js. Keep runtime, compiler, terminal UI, and provider SDK dependencies in their owning package.`,
+            message: `import from "${spec}" not allowed in the packages/orcel/src/setup/scaffold source layer. Scaffold modules allow only node:* builtins, relative files, and #compiled/@orcel/catalog/index.js. Keep runtime, compiler, terminal UI, and provider SDK dependencies in their owning package.`,
           });
         }
       }
@@ -1077,7 +1077,7 @@ async function checkRule29ChangesetPackageNames() {
       violations.push({
         rule: 29,
         file: relPath,
-        message: `changeset references package "${packageName}", but no workspace package has that name. Use the exact package.json "name" from the target workspace package; for packages/kaf that is "kaf".`,
+        message: `changeset references package "${packageName}", but no workspace package has that name. Use the exact package.json "name" from the target workspace package; for packages/orcel that is "orcel".`,
       });
     }
   }
@@ -1087,7 +1087,7 @@ async function checkRule29ChangesetPackageNames() {
 
 // ---------- Rule 30: vendored compiled output has no per-package package.json ----------
 
-const VENDOR_COMPILED_DIR = "packages/kaf/scripts/vendor-compiled";
+const VENDOR_COMPILED_DIR = "packages/orcel/scripts/vendor-compiled";
 
 // Matches a write/copy whose path argument is a `join(...)` ending in the
 // `package.json` literal — i.e. emitting a package.json into the vendored
@@ -1101,7 +1101,7 @@ const COMPILED_PACKAGE_JSON_WRITE_RE =
 
 /**
  * Rule 30. Scans the compiled-vendor scripts for any code that writes a
- * `package.json` into a vendored output directory. Such a file shadows kaf's
+ * `package.json` into a vendored output directory. Such a file shadows orcel's
  * `#compiled/*` imports map and silently turns cross-package vendored types
  * into `any` (see the rule 30 note in the header). Scanning the scripts (not
  * the generated artifact) keeps the guard meaningful in the `lint` CI job,
@@ -1122,7 +1122,7 @@ async function checkRule30VendoredCompiledPackageJson() {
         rule: 30,
         file: toPosix(relPath),
         message:
-          'vendored-compile pipeline writes a package.json into the compiled output. Remove it: a per-package package.json creates a scope that shadows kaf\'s `#compiled/*` imports map, so cross-package vendored type references (e.g. @workflow/core -> @workflow/world -> zod) silently resolve to `any` under skipLibCheck. The bundled ESM inherits `"type": "module"` from kaf\'s root package.json, so no per-package file is needed.',
+          'vendored-compile pipeline writes a package.json into the compiled output. Remove it: a per-package package.json creates a scope that shadows orcel\'s `#compiled/*` imports map, so cross-package vendored type references (e.g. @workflow/core -> @workflow/world -> zod) silently resolve to `any` under skipLibCheck. The bundled ESM inherits `"type": "module"` from orcel\'s root package.json, so no per-package file is needed.',
       });
     }
   }
@@ -1137,17 +1137,17 @@ const ACTIVE_CLI_REFERENCE_ROOTS = [
   "apps/",
   "docs/",
   "e2e/",
-  "packages/kaf/src/",
-  "packages/kaf/test/",
+  "packages/orcel/src/",
+  "packages/orcel/test/",
 ];
 const ACTIVE_CLI_REFERENCE_ROOT_FILES = new Set(["AGENTS.md", "CONTRIBUTING.md", "README.md"]);
 const REMOVED_CLI_REFERENCES = [
   {
-    pattern: /\b(?:npm|pnpm|yarn)\s+create\s+kaf(?:@[^\s`"'<>]+)?\b/i,
-    replacement: "`kaf init <name>`",
+    pattern: /\b(?:npm|pnpm|yarn)\s+create\s+orcel(?:@[^\s`"'<>]+)?\b/i,
+    replacement: "`orcel init <name>`",
   },
-  { pattern: /\bcreate-kaf\b/i, replacement: "`kaf init`" },
-  { pattern: /\beve\s+setup\b/i, replacement: "the dedicated current kaf command" },
+  { pattern: /\bcreate-orcel\b/i, replacement: "`orcel init`" },
+  { pattern: /\beve\s+setup\b/i, replacement: "the dedicated current orcel command" },
 ];
 
 /**
@@ -1180,7 +1180,7 @@ async function checkRule31RemovedCliReferences() {
         rule: 31,
         file: posix,
         line: index + 1,
-        message: `references a removed kaf CLI entry point. Replace it with ${removed.replacement}. Historical mentions belong only in changelogs or changesets.`,
+        message: `references a removed orcel CLI entry point. Replace it with ${removed.replacement}. Historical mentions belong only in changelogs or changesets.`,
       });
     });
   }
@@ -1273,9 +1273,9 @@ async function checkRule32ResearchFrontmatter() {
 // ---------- Rule 34: no `phase` imports under GPU/shader boundaries ----------
 
 const PHASE_BOUNDARY_DIRS = [
-  "apps/docs/app/[lang]/(home)/components/kaf-logo-shader/render",
-  "apps/docs/app/[lang]/(home)/components/kaf-logo-shader/shaders",
-  "apps/docs/scripts/kaf-render",
+  "apps/docs/app/[lang]/(home)/components/orcel-logo-shader/render",
+  "apps/docs/app/[lang]/(home)/components/orcel-logo-shader/shaders",
+  "apps/docs/scripts/orcel-render",
 ];
 const PHASE_IMPORT_RE =
   /(from\s+|import\s+)(?:type\s+)?['"]phase(?:\/[^'"]*)?['"]|require\(\s*['"]phase(?:\/[^'")]*)?['"]\s*\)|import\(\s*['"]phase(?:\/[^'")]*)?['"]\s*\)/;
@@ -1310,33 +1310,33 @@ async function checkRule34PhaseBoundary() {
         file: entry.relPath,
         line,
         message:
-          "imports the `phase` package inside the GPU/shader boundary. Phase must stay in the lifecycle/runtime layer — add lifecycle hooks above render/ and keep render/, shaders/, and scripts/kaf-render/ free of `phase` imports.",
+          "imports the `phase` package inside the GPU/shader boundary. Phase must stay in the lifecycle/runtime layer — add lifecycle hooks above render/ and keep render/, shaders/, and scripts/orcel-render/ free of `phase` imports.",
       });
     }
   }
   return violations;
 }
 
-// ---------- Rule 38: one owner for the kaf package build ----------
+// ---------- Rule 38: one owner for the orcel package build ----------
 
-const NESTED_KAF_BUILD_RE = /\bpnpm\s+(?:--filter(?:=|\s+)kaf|-F\s+kaf)\s+(?:run\s+)?build\b/;
+const NESTED_ORCEL_BUILD_RE = /\bpnpm\s+(?:--filter(?:=|\s+)orcel|-F\s+orcel)\s+(?:run\s+)?build\b/;
 
 /**
  * @returns {Promise<Violation[]>}
  */
-async function checkRule38NoNestedKafBuild() {
+async function checkRule38NoNestedOrcelBuild() {
   /** @type {Violation[]} */
   const violations = [];
 
   for (const dir of await readPnpmWorkspacePackageDirs()) {
-    if (dir === "packages/kaf") continue;
+    if (dir === "packages/orcel") continue;
     const packageJson = await readJsonIfExists(join(REPO_ROOT, dir, "package.json"));
     for (const [scriptName, command] of Object.entries(packageJson?.scripts ?? {})) {
-      if (typeof command !== "string" || !NESTED_KAF_BUILD_RE.test(command)) continue;
+      if (typeof command !== "string" || !NESTED_ORCEL_BUILD_RE.test(command)) continue;
       violations.push({
         rule: 38,
         file: `${dir}/package.json`,
-        message: `script "${scriptName}" launches a nested kaf package build. Declare kaf as a workspace dependency and let Turbo's ^build edge produce it once; rebuilding kaf inside a consumer races its destructive dist clean against other consumers.`,
+        message: `script "${scriptName}" launches a nested orcel package build. Declare orcel as a workspace dependency and let Turbo's ^build edge produce it once; rebuilding orcel inside a consumer races its destructive dist clean against other consumers.`,
       });
     }
   }
@@ -1496,7 +1496,7 @@ async function checkRule44SandboxProviders() {
   ];
   const issues = [];
   for (const name of providerNames) {
-    const file = `packages/kaf/src/sandbox/providers/${name}.ts`;
+    const file = `packages/orcel/src/sandbox/providers/${name}.ts`;
     const source = await readFile(join(REPO_ROOT, file), "utf8");
     if (!source.includes("defineSandboxProvider")) {
       issues.push({
@@ -1591,7 +1591,7 @@ async function main() {
       rule: 19,
       file,
       line,
-      message: `\`new AsyncLocalStorage()\` outside the allowlist. All ambient runtime state must flow through the unified KafContext (one AsyncLocalStorage). If you genuinely need a new ALS, justify it in code review and add this file to scripts/guard-invariants-baseline.json under "rule19_asyncLocalStorageAllowlist".`,
+      message: `\`new AsyncLocalStorage()\` outside the allowlist. All ambient runtime state must flow through the unified OrcelContext (one AsyncLocalStorage). If you genuinely need a new ALS, justify it in code review and add this file to scripts/guard-invariants-baseline.json under "rule19_asyncLocalStorageAllowlist".`,
     });
   }
 
@@ -1655,7 +1655,7 @@ async function main() {
   violations.push(...state.rule37);
 
   // Rule 38
-  violations.push(...(await checkRule38NoNestedKafBuild()));
+  violations.push(...(await checkRule38NoNestedOrcelBuild()));
 
   // Rule 43
   violations.push(...state.rule43);
@@ -1677,12 +1677,12 @@ async function main() {
   violations.push(...state.rule48);
 
   if (violations.length === 0) {
-    process.stdout.write("[kaf:guard:invariants] ok — all mechanical lints passed.\n");
+    process.stdout.write("[orcel:guard:invariants] ok — all mechanical lints passed.\n");
     return;
   }
 
   process.stderr.write(
-    `[kaf:guard:invariants] FAIL: ${violations.length} violation${violations.length === 1 ? "" : "s"} of framework mechanical rules.\n\n`,
+    `[orcel:guard:invariants] FAIL: ${violations.length} violation${violations.length === 1 ? "" : "s"} of framework mechanical rules.\n\n`,
   );
   printViolations(violations);
   process.stderr.write(

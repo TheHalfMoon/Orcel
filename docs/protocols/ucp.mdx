@@ -1,11 +1,11 @@
 ---
 title: "Serve a UCP Profile"
-description: "Serve a UCP profile at /.well-known/ucp from a custom kaf channel."
+description: "Serve a UCP profile at /.well-known/ucp from a custom orcel channel."
 ---
 
 The [Universal Commerce Protocol](https://ucp.dev/) (UCP) is an open standard for agentic commerce. A business declares its UCP support by serving a JSON **profile** from the `/.well-known/ucp` path. This is a document listing the spec versions it supports, its services and capabilities, its payment handlers, and the public keys agents use to verify signed responses.
 
-With kaf, you can support UCP in three steps:
+With orcel, you can support UCP in three steps:
 
 1. [Author the profile](#author-the-profile)
 2. [Serve it from a channel](#serve-it-from-a-channel)
@@ -94,7 +94,7 @@ Use a custom channel to serve the profile from the `/.well-known/ucp` endpoint.
 
 ```ts
 // agent/channels/ucp.ts
-import { defineChannel, GET } from "kaf/channels";
+import { defineChannel, GET } from "orcel/channels";
 import { profile } from "../ucp-profile";
 
 const body = JSON.stringify(profile);
@@ -124,7 +124,7 @@ The URLs in `services[].endpoint` must point at endpoints you serve. You can use
 
 ```ts
 // agent/channels/ucp-shopping.ts
-import { defineChannel, POST } from "kaf/channels";
+import { defineChannel, POST } from "orcel/channels";
 
 export default defineChannel({
   routes: [
@@ -155,7 +155,7 @@ Routes are relative to the `endpoint` base in your profile, per the service's Op
 
 ## Verify
 
-Start the dev server with `kaf dev` and fetch the well-known document locally:
+Start the dev server with `orcel dev` and fetch the well-known document locally:
 
 ```sh
 curl -i http://localhost:2000/.well-known/ucp

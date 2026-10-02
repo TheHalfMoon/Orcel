@@ -1,9 +1,9 @@
-import { defineMemory } from "kaf/memory";
-import { inMemory, type MemoryDocumentBackend } from "kaf/memory/file";
-import { vercelBlob } from "kaf/memory/file/vercel";
+import { defineMemory } from "orcel/memory";
+import { inMemory, type MemoryDocumentBackend } from "orcel/memory/file";
+import { vercelBlob } from "orcel/memory/file/vercel";
 
 const captures: MemoryDocumentBackend = process.env.VERCEL
-  ? vercelBlob({ prefix: "kaf/e2e/agent-memory/capture" })
+  ? vercelBlob({ prefix: "orcel/e2e/agent-memory/capture" })
   : inMemory();
 
 interface CaptureState {

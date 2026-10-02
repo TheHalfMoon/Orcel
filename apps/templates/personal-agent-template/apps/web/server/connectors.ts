@@ -1,5 +1,5 @@
-import type { ConnectorDef } from "#kaf/types/connector";
-import { GITHUB_CONNECTOR } from "#kaf/connect";
+import type { ConnectorDef } from "#orcel/types/connector";
+import { GITHUB_CONNECTOR } from "#orcel/connect";
 import { fetchLinearIssuesViaGraphql, fetchLinearIssuesViaMcp } from "~~/server/utils/linear-mcp";
 
 export const connectors: ConnectorDef[] = [

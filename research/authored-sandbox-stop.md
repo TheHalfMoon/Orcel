@@ -1,5 +1,5 @@
 ---
-issue: https://github.com/TheHalfMoon/kaf/issues/1709
+issue: https://github.com/TheHalfMoon/orcel/issues/1709
 status: implemented
 last_updated: "2026-08-07"
 ---
@@ -15,13 +15,13 @@ application-defined boundary and keeps authored tools from satisfying sandbox
 consumers that require an explicit stop operation.
 
 Return a `RuntimeSandboxSession` from `ctx.getSandbox()`. It extends the
-existing `SandboxSession` I/O surface with `stop()`, an kaf-owned operation
+existing `SandboxSession` I/O surface with `stop()`, an orcel-owned operation
 implemented by every sandbox backend through its native lifecycle primitive.
 
 ## Authoring API
 
 ```ts
-import { defineHook } from "kaf/hooks";
+import { defineHook } from "orcel/hooks";
 
 export default defineHook({
   events: {
@@ -33,7 +33,7 @@ export default defineHook({
 });
 ```
 
-`RuntimeSandboxSession` is exported from `kaf/sandbox`. Sandbox lifecycle
+`RuntimeSandboxSession` is exported from `orcel/sandbox`. Sandbox lifecycle
 `bootstrap({ use })` and `onSession({ use })` keep returning `SandboxSession`:
 template and session initialization do not own runtime teardown.
 
@@ -55,7 +55,7 @@ flowchart LR
   the same session through the provider's normal `open()` path. Vercel also
   automatically resumes the same handle on later I/O, matching its inactivity
   timeout behavior.
-- kaf does not create stop-specific reconnect state. Ordinary step persistence
+- orcel does not create stop-specific reconnect state. Ordinary step persistence
   continues recording the provider's existing reconnect metadata.
 - A provider stop failure rejects the authored call. Server-shutdown cleanup
   remains a separate best-effort lifecycle path.
@@ -64,7 +64,7 @@ flowchart LR
 
 ## Scope
 
-This change does not destroy sandbox state, terminate the durable kaf session,
+This change does not destroy sandbox state, terminate the durable orcel session,
 or expose a native provider handle. Ports and public port URLs from the broader
 issue remain separate work.
 

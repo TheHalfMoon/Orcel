@@ -1,5 +1,5 @@
 ---
-issue: https://github.com/TheHalfMoon/kaf/issues/1510
+issue: https://github.com/TheHalfMoon/orcel/issues/1510
 status: proposed
 last_updated: "2026-09-01"
 ---
@@ -10,7 +10,7 @@ last_updated: "2026-09-01"
 
 Memory is a path-authored capability for scoped context that outlives one
 session. A memory provider owns how it stores, retrieves, and updates memory.
-kaf owns when the provider participates in the agent lifecycle, and kaf owns a
+orcel owns when the provider participates in the agent lifecycle, and orcel owns a
 small projection record model — item identity and supersession — so recalled
 context can be updated deterministically without a stale copy surviving in the
 prompt.
@@ -20,19 +20,19 @@ scope, and a recall visibility policy. It may also describe the slot's
 purpose to the model through provider tool descriptions. The provider contract
 has three surfaces:
 
-- `recall` returns messages that kaf applies to the slot's recalled context in
+- `recall` returns messages that orcel applies to the slot's recalled context in
   durable history as user-role context. A message with an `id` inserts or
   replaces that item; a message without one appends immutably.
 - `capture` observes history before compaction and after a completed turn.
 - `tools` contributes model tools bound to the active memory scope.
 
-kaf calls recall and capture handlers at fixed boundaries. Each handler
+orcel calls recall and capture handlers at fixed boundaries. Each handler
 receives a boundary-specific context with current turn coordinates, a stable
 operation ID, and the locked memory scope resolved for the slot. Tools are
 resolved once after turn-start recall through the same durable
 dynamic-capability machinery as a `turn.started` `defineDynamic` tool resolver.
 
-Memory definitions and provider tools compile through kaf's canonical source
+Memory definitions and provider tools compile through orcel's canonical source
 graph. Each selected memory slot retains its direct binding and induces one
 derived `tools/<slot>.ts` module from a registered programmatic template. The
 template exports an ordinary `defineDynamic` resolver. It qualifies provider
@@ -47,7 +47,7 @@ compaction.completed  ---> recall["compaction.completed"]
 turn.completed        ---> capture["turn.completed"]
 ```
 
-kaf owns namespace and scope resolution, invocation order, recall validation
+orcel owns namespace and scope resolution, invocation order, recall validation
 and application, recall-record attribution and visibility, projection, tool
 qualification, and replay behavior. The provider owns storage, retrieval,
 ranking, extraction, formatting, retention, and its model-facing operations. A
@@ -58,17 +58,17 @@ contract without sharing a storage model.
 
 | Import path              | Public surface                                                                                               |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------ |
-| `kaf/memory`             | `defineMemory`, `defineMemoryProvider`, `defaultNamespace`, provider contexts, scope types, and recall types |
-| `kaf/memory/scope`       | `byPrincipal`                                                                                                |
-| `kaf/memory/file`        | `fileMemory`, `inMemory`, and the portable document backend contract                                         |
-| `kaf/memory/file/vercel` | `vercelBlob`                                                                                                 |
+| `orcel/memory`             | `defineMemory`, `defineMemoryProvider`, `defaultNamespace`, provider contexts, scope types, and recall types |
+| `orcel/memory/scope`       | `byPrincipal`                                                                                                |
+| `orcel/memory/file`        | `fileMemory`, `inMemory`, and the portable document backend contract                                         |
+| `orcel/memory/file/vercel` | `vercelBlob`                                                                                                 |
 
 The smallest complete memory slot uses the built-in file provider:
 
 ```ts title="agent/memory/user.ts"
-import { defineMemory } from "kaf/memory";
-import { fileMemory } from "kaf/memory/file";
-import { byPrincipal } from "kaf/memory/scope";
+import { defineMemory } from "orcel/memory";
+import { fileMemory } from "orcel/memory/file";
+import { byPrincipal } from "orcel/memory/scope";
 
 export default defineMemory({
   provider: fileMemory(),
@@ -76,7 +76,7 @@ export default defineMemory({
 });
 ```
 
-For `agent/memory/user.ts`, kaf derives the slot name `user`. Provider tools are
+For `agent/memory/user.ts`, orcel derives the slot name `user`. Provider tools are
 qualified with that identity, such as `user__save_memory` and
 `user__remove_memory`.
 
@@ -94,12 +94,12 @@ agent/memory/              # directory of named slots
 The flat file and directory forms are mutually exclusive. Each module
 default-exports `defineMemory(...)`. The definition contains the provider, an
 optional model-facing description, an optional namespace, a required trusted
-scope, an optional kaf-owned visibility policy, and an optional switch that
+scope, an optional orcel-owned visibility policy, and an optional switch that
 suppresses provider tools:
 
 ```ts title="agent/memory/user.ts"
-import { defineMemory } from "kaf/memory";
-import { byPrincipal } from "kaf/memory/scope";
+import { defineMemory } from "orcel/memory";
+import { byPrincipal } from "orcel/memory/scope";
 import { customMemory } from "../lib/custom-memory";
 
 export default defineMemory({
@@ -152,14 +152,14 @@ convention.
 
 The memory definition and wrapper each use the canonical candidate,
 composition, binding-validation, artifact, module-map, hydration, and runtime
-resolution pipeline used by other kaf sources. The wrapper participates in
+resolution pipeline used by other orcel sources. The wrapper participates in
 source selection before normalization; it is never appended to a resolved
 agent, contributed after preamble resolution, or reconstructed from an
 optional manifest side table. Ordinary source composition owns replacement and
 disablement, and the ordinary dynamic-tool lifecycle owns public-name
 collisions and complete-result failure.
 
-The inspection projection advances `/kaf/v1/info` to version 4. It lists each
+The inspection projection advances `/orcel/v1/info` to version 4. It lists each
 selected memory slot with its source provenance and preserves the generated
 tool wrapper's required memory-source dependency in the public binding data.
 Subagent summaries include their memory-slot count.
@@ -169,7 +169,7 @@ already locked slot, invokes `provider.tools(context)`, requires a map of
 branded `defineTool()` values, qualifies each key as
 `<slot>__<provider tool key>`, and prepends the slot description. A disabled
 slot, `null`, or an empty result contributes no tools. Provider factories use
-kaf's durable callback helpers when their callbacks cannot be stamped by
+orcel's durable callback helpers when their callbacks cannot be stamped by
 authored-source transformation.
 
 Every module-map load also memoizes zero-argument definition-factory results
@@ -210,9 +210,9 @@ several destinations with different purposes. For example, two `fileMemory()`
 slots can distinguish personal preferences from shared channel conventions:
 
 ```ts title="agent/memory/personal.ts"
-import { defineMemory } from "kaf/memory";
-import { fileMemory } from "kaf/memory/file";
-import { byPrincipal } from "kaf/memory/scope";
+import { defineMemory } from "orcel/memory";
+import { fileMemory } from "orcel/memory/file";
+import { byPrincipal } from "orcel/memory/scope";
 
 export default defineMemory({
   description: "Personal preferences belonging only to the authenticated user.",
@@ -222,8 +222,8 @@ export default defineMemory({
 ```
 
 ```ts title="agent/memory/channel.ts"
-import { defineMemory } from "kaf/memory";
-import { fileMemory } from "kaf/memory/file";
+import { defineMemory } from "orcel/memory";
+import { fileMemory } from "orcel/memory/file";
 import { channelScope } from "../lib/channel-scope";
 
 export default defineMemory({
@@ -233,17 +233,17 @@ export default defineMemory({
 });
 ```
 
-When the provider returns tools, kaf prepends the slot description and two
+When the provider returns tools, orcel prepends the slot description and two
 newline characters to every provider-authored tool description. For example,
 the first slot's `save_memory` description begins with its personal-memory
-purpose before the provider's generic save-tool guidance. kaf performs this
+purpose before the provider's generic save-tool guidance. orcel performs this
 composition after the `tools` resolver returns and before the dynamic tool
 metadata is captured, so every model step and parked continuation sees the same
 description. Omitting `description` preserves each provider tool description
 unchanged. An empty or whitespace-only description is invalid; authors omit the
 field when no slot-specific purpose is needed.
 
-The description is trusted application-authored model guidance. kaf does not
+The description is trusted application-authored model guidance. orcel does not
 derive it from the slot name, namespace, scope, or request context, and does not
 expose those values through it. The description is not added to recalled
 context or the prompt separately, so a provider without tools does not expose
@@ -271,9 +271,9 @@ type MemoryNamespaceDefinition =
 function defaultNamespace(context: MemoryNamespaceContext): string;
 ```
 
-After resolving a non-null scope, kaf invokes the namespace resolver when it
+After resolving a non-null scope, orcel invokes the namespace resolver when it
 locks memory for a lifecycle operation. A resolved `null` disables the slot for
-that operation. If `namespace` is omitted, kaf uses the exported
+that operation. If `namespace` is omitted, orcel uses the exported
 `defaultNamespace` function as the resolver. `defaultNamespace` is a pure
 function of its context and the deployment environment, so a custom resolver
 composes with it:
@@ -295,8 +295,8 @@ The default policy separates deployment classes deliberately:
 Set `namespace` to define a custom application domain:
 
 ```ts
-import { defineMemory } from "kaf/memory";
-import { byPrincipal } from "kaf/memory/scope";
+import { defineMemory } from "orcel/memory";
+import { byPrincipal } from "orcel/memory/scope";
 import { customMemory } from "../lib/custom-memory";
 
 export default defineMemory({
@@ -306,7 +306,7 @@ export default defineMemory({
 });
 ```
 
-A custom namespace is the complete namespace. kaf does not append the
+A custom namespace is the complete namespace. orcel does not append the
 application root, deployment environment, graph node, or slot to the resolved
 value.
 
@@ -340,7 +340,7 @@ type MemoryScopeDefinition =
     ) => MemoryScopeResolverResult | Promise<MemoryScopeResolverResult>);
 ```
 
-`kaf/memory/scope` exports the built-in principal resolver:
+`orcel/memory/scope` exports the built-in principal resolver:
 
 ```ts
 function byPrincipal(context: MemoryScopeContext): string | null;
@@ -349,13 +349,13 @@ function byPrincipal(context: MemoryScopeContext): string | null;
 Scope must come from authenticated session context, application data, or trusted
 channel state. Scope is an authorization partition, not a model-selected
 routing hint: the resolver context deliberately excludes messages, user-authored
-turn input, and unprojected durable history. kaf resolves scope before
+turn input, and unprojected durable history. orcel resolves scope before
 namespace. A `null` scope disables the slot without invoking its namespace
-resolver. Otherwise kaf resolves the namespace. A `null` namespace also disables
+resolver. Otherwise orcel resolves the namespace. A `null` namespace also disables
 the slot. A disabled slot does not call the provider, expose its tools, or
 include its recalled context in the model request.
 
-For an active slot, kaf validates both values and derives the provider scope key
+For an active slot, orcel validates both values and derives the provider scope key
 from exactly the resolved namespace and scope:
 
 ```ts
@@ -372,7 +372,7 @@ interface MemoryScope {
 ### Scope-key encoding
 
 The namespace-plus-scope pair is the slot's scope key, and it is
-collision-free by construction. kaf never flattens a tuple with a delimiter.
+collision-free by construction. orcel never flattens a tuple with a delimiter.
 Each input is canonically encoded with a versioned, type-tagged,
 length-prefixed UTF-8 representation that distinguishes a scalar from a
 one-element tuple, preserves tuple boundaries, and is safe for
@@ -390,11 +390,11 @@ namespace, scope, or provider item-ID values.
 Every `recall`, `capture`, and `tools` call receives this scope. Tools close
 over the same locked scope, so the model never selects a different user,
 tenant, or container. A conforming provider must apply `scope.key` to every
-downstream read and write. kaf cannot prevent faulty provider code from
+downstream read and write. orcel cannot prevent faulty provider code from
 discarding the supplied scope, but the public contract provides no unscoped
 provider invocation path.
 
-kaf locks scope for the active turn, including model steps and durable approved
+orcel locks scope for the active turn, including model steps and durable approved
 call continuations. A standalone manual compaction resolves and locks scope for
 that operation. Every recalled record remains attributed to the slot, namespace
 key, and scope key under which it was accepted.
@@ -415,9 +415,9 @@ channel coordinates explicitly. Use `isChannel` to narrow authored channel
 metadata before reading it:
 
 ```ts title="agent/memory/channel.ts"
-import { isChannel } from "kaf/channels";
-import { defineMemory } from "kaf/memory";
-import { byPrincipal } from "kaf/memory/scope";
+import { isChannel } from "orcel/channels";
+import { defineMemory } from "orcel/memory";
+import { byPrincipal } from "orcel/memory/scope";
 import slack from "../channels/slack";
 import { customMemory } from "../lib/custom-memory";
 
@@ -438,7 +438,7 @@ export default defineMemory({
 The returned array is a three-component tuple. Components may contain any
 characters, including delimiters, without colliding with another scope. Include
 a thread or conversation identifier as another component when the provider's
-data must not cross that boundary. Resolver output is evaluated once when kaf
+data must not cross that boundary. Resolver output is evaluated once when orcel
 locks the operation's memory scopes, and every provider call and tool in that
 operation uses the locked value.
 
@@ -447,21 +447,21 @@ operation uses the locked value.
 A `null` scope or namespace silently disables a slot — no provider call, no
 tools, no recalled context. Because `byPrincipal` returns `null` for anonymous
 and runtime principals, disablement is a common and correct state. In
-development mode, kaf emits a diagnostic when a slot resolves disabled, naming
+development mode, orcel emits a diagnostic when a slot resolves disabled, naming
 the slot and whether the scope or namespace resolver returned `null`, without
 logging resolved values. Disablement is never an error.
 
 ## Recall visibility across scope changes
 
-`visibility` is an kaf-owned `defineMemory` option. It controls which
+`visibility` is an orcel-owned `defineMemory` option. It controls which
 previously recalled records enter a model request when the slot resolves a
 different scope. The option belongs to the consuming memory definition rather
-than the provider because kaf owns prompt assembly and the application owns the
+than the provider because orcel owns prompt assembly and the application owns the
 session's audience boundary:
 
 ```ts title="agent/memory/user.ts"
-import { defineMemory } from "kaf/memory";
-import { byPrincipal } from "kaf/memory/scope";
+import { defineMemory } from "orcel/memory";
+import { byPrincipal } from "orcel/memory/scope";
 import { customMemory } from "../lib/custom-memory";
 
 export default defineMemory({
@@ -517,8 +517,8 @@ boundaries. `recall` is required. `capture` and `tools` are optional.
 
 ```ts
 import type { ModelMessage } from "ai";
-import type { SessionContext } from "kaf/context";
-import type { DynamicResolveContext } from "kaf/tools";
+import type { SessionContext } from "orcel/context";
+import type { DynamicResolveContext } from "orcel/tools";
 
 interface MemoryRecallMessage {
   /** Provider context recalled into durable model history as a user-role message. */
@@ -617,7 +617,7 @@ interface MemoryProvider {
 
 Recalled context is always user-role. Recall is framework context appended
 after the durable prefix and before the admitted turn input, so it preserves
-the prompt-cache prefix in the normal case. kaf does not offer a system-role
+the prompt-cache prefix in the normal case. orcel does not offer a system-role
 recall option: system-role content is position-independent, so keyed
 supersession cannot compose with it, and any change to it invalidates the
 prompt cache from message zero. Standing system-role guidance derived from
@@ -641,13 +641,13 @@ A result of `{ messages: [] }`, `null`, or `undefined` changes nothing at this
 boundary. The semantics that hold at every boundary:
 
 - **Recall is observational.** Providers must not use it for external
-  mutations. kaf makes the durable commit atomic, but it cannot roll back
+  mutations. orcel makes the durable commit atomic, but it cannot roll back
   provider side effects.
 - **Accumulation is the only mode.** An item missing from a later result
   remains visible. Missing top-k retrieval results never imply removal. A
   provider that wants content replaced returns the same `id` with new content.
 - **Item identity is `(slot, namespaceKey, scopeKey, idKey)`**, where each key
-  is an kaf-owned opaque digest. The same provider `id` under two slots,
+  is an orcel-owned opaque digest. The same provider `id` under two slots,
   namespaces, or scopes identifies two independent items; neither can update
   or reveal the other.
 - **Unkeyed messages are never content-deduplicated.** A repeated identical
@@ -669,7 +669,7 @@ never deduplicated, the provider consumes each note rather than re-reading the
 latest state:
 
 ```ts
-import { defineMemoryProvider } from "kaf/memory";
+import { defineMemoryProvider } from "orcel/memory";
 
 const auditMemory = defineMemoryProvider({
   recall: {
@@ -690,7 +690,7 @@ construction: each recall reuses the same `k` identities, superseding the
 previous occupant of each position:
 
 ```ts
-import { defineMemoryProvider } from "kaf/memory";
+import { defineMemoryProvider } from "orcel/memory";
 
 const retrievalMemory = defineMemoryProvider({
   recall: {
@@ -719,7 +719,7 @@ Two richer recall shapes were considered and cut:
   provider later needs true keyed removal, a retract form is an additive
   extension, and dropping it now also drops the private tombstone
   representation that projection would otherwise have to hide.
-- **A `coverage: "complete"` inventory flag**, from which kaf synthesized
+- **A `coverage: "complete"` inventory flag**, from which orcel synthesized
   retractions for omitted IDs. No first-party provider consumes it, and
   omission-means-deletion is the sharpest foot-gun in a sparse-retrieval API.
   An inventory result shape remains an additive extension if a real enumerable
@@ -774,7 +774,7 @@ competence, is the design driver.
 
 ### Turn-start recall
 
-After kaf admits and normalizes a new turn, it resolves each memory scope and,
+After orcel admits and normalizes a new turn, it resolves each memory scope and,
 for a non-null scope, its namespace. It then calls the required
 `recall["turn.started"]` handler for every active slot. The context contains
 the zero-based turn sequence, stable turn ID, normalized input, and the
@@ -795,7 +795,7 @@ or use the current input as a retrieval query on every turn.
 
 ### Compaction capture, canonicalization, and recall
 
-Before automatic or manual compaction rewrites history, kaf calls an
+Before automatic or manual compaction rewrites history, orcel calls an
 implemented `capture["compaction.requested"]` handler. The provider receives
 the projected pre-rewrite history and the compaction model and usage metadata.
 A provider may persist a checkpoint, extract facts the summary could omit, or
@@ -812,11 +812,11 @@ hidden from the currently active scope survive another scope's compaction, and
 sparse retrieval stays accumulative across compaction.
 
 Because superseded versions and hidden scopes can grow while the visible
-prompt stays constant, kaf triggers canonicalization on raw attributed-record
-growth independently of visible prompt size. kaf never silently summarizes,
+prompt stays constant, orcel triggers canonicalization on raw attributed-record
+growth independently of visible prompt size. orcel never silently summarizes,
 evicts, or truncates provider items.
 
-After a checkpoint is durably appended, kaf calls an implemented
+After a checkpoint is durably appended, orcel calls an implemented
 `recall["compaction.completed"]` handler. The provider receives the settled
 post-compaction projected history and may return fresh messages, applied
 through the same atomic path. Identical retained items are no-ops. The handler
@@ -839,7 +839,7 @@ exactly once.
 
 ### Turn tools
 
-After turn-start recall settles, kaf resolves `tools` once for the active turn.
+After turn-start recall settles, orcel resolves `tools` once for the active turn.
 The function may be synchronous or asynchronous. Its context contains the same
 session, authentication, channel, and message fields as a `defineDynamic`
 resolver, plus the locked memory scope, slot, and turn. Its messages include the
@@ -863,7 +863,7 @@ Within the turn that mutated storage, the stale recalled item remains visible
 and the model's own tool-call narrative covers the gap; the next turn-start or
 post-compaction recall trues it up.
 
-kaf qualifies every returned key as `<slot>__<tool>` and binds the locked scope
+orcel qualifies every returned key as `<slot>__<tool>` and binds the locked scope
 to the tool implementation. Provider tools use the standard tool contract,
 including input and output schemas, approval, authorization, and model-output
 projection. In particular, `once()` approval is session-wide: approving one
@@ -897,7 +897,7 @@ replaces the parked call's captured scope values with another turn's scope.
 
 ### Completed-turn capture
 
-After a turn reaches `turn.completed`, kaf calls an implemented
+After a turn reaches `turn.completed`, orcel calls an implemented
 `capture["turn.completed"]` handler. The provider receives the completed turn
 input and the settled projected history, including the assistant response and
 tool results. The handler does not run for failed, cancelled, input-deferred,
@@ -911,21 +911,21 @@ instrumentation can correlate the two surfaces with `ctx.session.id` and
 specific to that boundary because it describes the context about to be
 compacted.
 
-kaf awaits completed-turn captures before emitting `session.waiting` in
+orcel awaits completed-turn captures before emitting `session.waiting` in
 conversation mode or `session.completed` in task mode. A provider may capture
 the turn, update a remote profile, enqueue its own work, or do nothing.
 
 ## Replay and failures
 
 Every recall and capture invocation receives an `operationId` for one logical
-slot operation. kaf reuses the ID across workflow replay, so it is not a unique
+slot operation. orcel reuses the ID across workflow replay, so it is not a unique
 callback-attempt identifier. A provider must use it as the idempotency key for
 externally visible `capture` side effects.
 
 Recall operations for one session are serialized by construction: turn steps
 serialize through workflow hook-ownership claims, so two recall operations for
 the same slot, namespace, and scope cannot complete out of order. The message
-shape is therefore revision-free. kaf persists each operation's accepted
+shape is therefore revision-free. orcel persists each operation's accepted
 normalized batch, or its canonical digest, and a cold replay must reuse the
 stored batch or match its digest exactly; a replay that returns a reordered or
 changed batch for the same operation ID fails explicitly and mutates nothing.
@@ -943,13 +943,13 @@ Failure behavior follows the point at which the method runs:
   diagnostic and returns the session to waiting.
 - A throwing or invalid `tools` result is diagnosed and omitted for the turn,
   matching `defineDynamic` tool resolution.
-- A completed-turn `capture` failure cannot rewrite the completed response. kaf
+- A completed-turn `capture` failure cannot rewrite the completed response. orcel
   emits a content-free diagnostic and continues to the ready boundary.
 - A `null` scope skips operations; it never falls back to a shared key.
 
 ## Limits
 
-All limits reject invalid or oversized input with actionable errors. kaf never
+All limits reject invalid or oversized input with actionable errors. orcel never
 silently truncates or evicts. Values below are the proposal-review targets;
 implementation uses exactly the reviewed constants.
 
@@ -1054,12 +1054,12 @@ backend fails closed and resolves lazily on first storage access:
 | ----------------------------------------------------------------- | ------------------------------------------------------------- |
 | Vercel with Blob credentials (token, or attached store with OIDC) | Private Vercel Blob                                           |
 | Vercel without Blob configuration                                 | Error: add file memory, run setup directly, or pass a backend |
-| kaf development environment (`kaf dev`)                           | Shared process-local in-memory backend                        |
+| orcel development environment (`orcel dev`)                           | Shared process-local in-memory backend                        |
 | Every other environment, including unset or unknown `NODE_ENV`    | Error: explicit backend required                              |
 
 The default Vercel backend prefers the file-memory namespace before generic
-application bindings: `KAF_MEMORY_BLOB_READ_WRITE_TOKEN`, then
-`KAF_MEMORY_BLOB_STORE_ID` with Vercel OIDC from the environment or request
+application bindings: `ORCEL_MEMORY_BLOB_READ_WRITE_TOKEN`, then
+`ORCEL_MEMORY_BLOB_STORE_ID` with Vercel OIDC from the environment or request
 context, then the corresponding generic `BLOB_*` credentials. Direct
 `vercelBlob()` options retain their existing behavior.
 
@@ -1071,7 +1071,7 @@ environment. Tests pass `inMemory()` explicitly.
 ### Vercel provisioning
 
 The official `memory/file` registry item writes `agent/memory/file.ts` and
-declares the trusted `kaf integration setup file-memory` flow. After the
+declares the trusted `orcel integration setup file-memory` flow. After the
 registry review authorizes setup, the shared setup runner owns Vercel CLI
 installation, login, project creation or linking, cancellation, environment
 pulling, and optional deployment. File memory adds no dashboard automation or
@@ -1083,14 +1083,14 @@ the project's `defaultResourceConfig.functionDefaultRegions`, or `iad1`, in
 that order. Apply shows the resolved project, deterministic store name, region,
 target environments, and usage-charge warning before mutation. It creates a
 private Blob store when needed and connects production, preview, and
-development with the `KAF_MEMORY_` prefix.
+development with the `ORCEL_MEMORY_` prefix.
 
-Reconciliation owns exactly one kaf file-memory store per Vercel project. It
+Reconciliation owns exactly one orcel file-memory store per Vercel project. It
 reuses one valid namespaced private connection, repairs the deterministic
 unconnected private store left by a partial run, and otherwise creates a new
 store. It never adopts arbitrary application stores, changes a generic
 `BLOB_*` connection, or deletes or replaces a store. Ambiguous, public, and
-incompatible kaf-prefixed resources fail with recovery guidance. Region drift
+incompatible orcel-prefixed resources fail with recovery guidance. Region drift
 on an already connected store warns and preserves the store so setup cannot
 cause memory loss.
 
@@ -1130,7 +1130,7 @@ recall visibility. Mounted extensions cannot contribute memory slots.
   operation ID.
 - Raw durable history is storage-only. Every message-bearing consumer receives
   one canonical scope projection with attribution stripped; no authored
-  callback or model boundary sees hidden items or kaf-owned metadata.
+  callback or model boundary sees hidden items or orcel-owned metadata.
 - A recall result is a validated batch of recalled messages, committed
   atomically per turn across all active slots. Omission never removes; unkeyed
   messages are immutable; an identical keyed message is a no-op; a changed
@@ -1155,10 +1155,10 @@ recall visibility. Mounted extensions cannot contribute memory slots.
 
 ## Non-goals
 
-One earlier non-goal is explicitly reversed: this proposal gives kaf a
+One earlier non-goal is explicitly reversed: this proposal gives orcel a
 projection record model — item identity and supersession semantics for
-recalled context. kaf owns how recalled items appear and update in model
-context. kaf still owns no storage model: what a provider persists, how it
+recalled context. orcel owns how recalled items appear and update in model
+context. orcel still owns no storage model: what a provider persists, how it
 ranks, embeds, extracts, or retains data remains entirely provider-defined.
 
 Still out of scope:
@@ -1182,14 +1182,14 @@ Still out of scope:
 ## Implementation boundary
 
 The generic prerequisites are on `main`: the projected-history seam
-([#2352](https://github.com/TheHalfMoon/kaf/pull/2352)), durable dynamic callbacks
-([#2354](https://github.com/TheHalfMoon/kaf/pull/2354)), name-and-phase callback
-identity ([#2384](https://github.com/TheHalfMoon/kaf/pull/2384)), and the canonical
+([#2352](https://github.com/TheHalfMoon/orcel/pull/2352)), durable dynamic callbacks
+([#2354](https://github.com/TheHalfMoon/orcel/pull/2354)), name-and-phase callback
+identity ([#2384](https://github.com/TheHalfMoon/orcel/pull/2384)), and the canonical
 source graph, binding table, and invariant-safe derived-template API
-([#2404](https://github.com/TheHalfMoon/kaf/pull/2404),
-[#2516](https://github.com/TheHalfMoon/kaf/pull/2516),
-[#2539](https://github.com/TheHalfMoon/kaf/pull/2539)). The runtime-tool contribution
-proposal in [#2347](https://github.com/TheHalfMoon/kaf/issues/2347) is superseded;
+([#2404](https://github.com/TheHalfMoon/orcel/pull/2404),
+[#2516](https://github.com/TheHalfMoon/orcel/pull/2516),
+[#2539](https://github.com/TheHalfMoon/orcel/pull/2539)). The runtime-tool contribution
+proposal in [#2347](https://github.com/TheHalfMoon/orcel/issues/2347) is superseded;
 memory uses the compile-time wrapper described above. The kernel-effects
 follow-up to #2516 is not a prerequisite because provider tools have ordinary
 executors rather than native kernel effects.
@@ -1197,20 +1197,20 @@ executors rather than native kernel effects.
 Implementation proceeds in three pull requests:
 
 1. The first-class memory core is implemented in
-   [#2534](https://github.com/TheHalfMoon/kaf/pull/2534), rebased directly onto
+   [#2534](https://github.com/TheHalfMoon/orcel/pull/2534), rebased directly onto
    current `main`. It uses #2539's registered template API and generic
    per-module-map factory materialization, then adds the memory authoring and
    compiler surface, namespace and scope locks, recall records and projection,
    lifecycle, compaction, agent-info v4, published documentation, and
    deterministic end-to-end coverage. It does not restack or reuse the custom
-   runtime lifecycle from [#2142](https://github.com/TheHalfMoon/kaf/pull/2142).
+   runtime lifecycle from [#2142](https://github.com/TheHalfMoon/orcel/pull/2142).
 2. The bounded `fileMemory()` provider in
-   [#2580](https://github.com/TheHalfMoon/kaf/pull/2580) is stacked directly on
+   [#2580](https://github.com/TheHalfMoon/orcel/pull/2580) is stacked directly on
    #2534. It retains only provider storage, document, backend, and concurrency
    work and includes final file-provider e2e coverage. The separate e2e tail in
-   [#2145](https://github.com/TheHalfMoon/kaf/pull/2145) is superseded.
+   [#2145](https://github.com/TheHalfMoon/orcel/pull/2145) is superseded.
 3. The official `memory/file` registry item and
-   `kaf integration setup file-memory` flow provision and reconcile a dedicated
+   `orcel integration setup file-memory` flow provision and reconcile a dedicated
    private Vercel Blob store through the existing registry-owned setup runner.
    Runtime selection prefers the namespaced binding and retains generic Blob
    credentials as the manual-attachment fallback.
@@ -1228,9 +1228,9 @@ checks remain the merge gate. M2 must not begin on the pre-M1 base.
 - [Programmatic agent sources](./programmatic-agent-sources.md)
 - [Supermemory: how it works](https://supermemory.ai/docs/concepts/how-it-works)
 - [Hermes Agent memory](https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/memory.md)
-- [kaf dynamic capabilities](../docs/guides/dynamic-capabilities.md)
-- [kaf agent configuration](../docs/agent-config.md)
-- [kaf turn execution](../packages/kaf/src/execution/workflow-steps.ts)
+- [orcel dynamic capabilities](../docs/guides/dynamic-capabilities.md)
+- [orcel agent configuration](../docs/agent-config.md)
+- [orcel turn execution](../packages/orcel/src/execution/workflow-steps.ts)
 
 ## Review checklist
 
@@ -1243,7 +1243,7 @@ checks remain the merge gate. M2 must not begin on the pre-M1 base.
       principal scope crosses channels and shows how to add team, channel, and
       conversation coordinates for private memory. This resolves the [scope and
       Slack privacy
-      thread](https://github.com/TheHalfMoon/kaf/pull/1581#discussion_r3807248748).
+      thread](https://github.com/TheHalfMoon/orcel/pull/1581#discussion_r3807248748).
 
 - [x] **Keep settled-turn telemetry out of memory.**
       `capture["turn.completed"]` receives completed input and projected history,
@@ -1253,12 +1253,12 @@ checks remain the merge gate. M2 must not begin on the pre-M1 base.
       count because that value describes the context being compacted. This
       resolves the
       [usage and trace
-      thread](https://github.com/TheHalfMoon/kaf/pull/1581#discussion_r3807526107)
+      thread](https://github.com/TheHalfMoon/orcel/pull/1581#discussion_r3807526107)
       and [terminal outcome
-      thread](https://github.com/TheHalfMoon/kaf/pull/1581#discussion_r3807561187).
+      thread](https://github.com/TheHalfMoon/orcel/pull/1581#discussion_r3807561187).
 
 - [x] **Give the model a safe memory-slot purpose.** The consuming
-      `defineMemory(...)` may supply an optional static `description`. kaf
+      `defineMemory(...)` may supply an optional static `description`. orcel
       validates it and prepends it to every provider tool description before
       storing durable dynamic metadata. Omitting it preserves provider
       descriptions unchanged. The proposed wrapper neither derives nor exposes
@@ -1267,7 +1267,7 @@ checks remain the merge gate. M2 must not begin on the pre-M1 base.
       sharing one provider receive different descriptions without mutating
       provider tools; file-memory integration and e2e must exercise described
       `fileMemory()` slots. This resolves the [model-facing attribution
-      thread](https://github.com/TheHalfMoon/kaf/pull/1581#discussion_r3807269437).
+      thread](https://github.com/TheHalfMoon/orcel/pull/1581#discussion_r3807269437).
 
 - [x] **Define recall placement and tool invocation semantics.** A recall
       result is a validated batch of recalled messages applied atomically at
@@ -1276,19 +1276,19 @@ checks remain the merge gate. M2 must not begin on the pre-M1 base.
       empty content change nothing and never clear earlier history; omission
       never removes. Session
       visibility retains records across scope-key changes within one namespace;
-      scope visibility filters earlier scopes. kaf invokes `recall`
+      scope visibility filters earlier scopes. orcel invokes `recall`
       deterministically and resolves one tool set per turn, while the model
       decides whether to call an exposed tool. This resolves the
       [replacement and cache
-      thread](https://github.com/TheHalfMoon/kaf/pull/1581#discussion_r3807382863),
+      thread](https://github.com/TheHalfMoon/orcel/pull/1581#discussion_r3807382863),
       [suffix placement
-      thread](https://github.com/TheHalfMoon/kaf/pull/1581#discussion_r3807481674),
+      thread](https://github.com/TheHalfMoon/orcel/pull/1581#discussion_r3807481674),
       [recall versus tool
-      thread](https://github.com/TheHalfMoon/kaf/pull/1581#discussion_r3807408005),
+      thread](https://github.com/TheHalfMoon/orcel/pull/1581#discussion_r3807408005),
       [null sentinel
-      thread](https://github.com/TheHalfMoon/kaf/pull/1581#discussion_r3807387086),
+      thread](https://github.com/TheHalfMoon/orcel/pull/1581#discussion_r3807387086),
       and [falsy return
-      thread](https://github.com/TheHalfMoon/kaf/pull/1581#discussion_r3807755029).
+      thread](https://github.com/TheHalfMoon/orcel/pull/1581#discussion_r3807755029).
 
 - [x] **Reconcile review threads with the final contract.** Provider
       `ctx.messages` is the projected history at each boundary, and framework
@@ -1298,6 +1298,6 @@ checks remain the merge gate. M2 must not begin on the pre-M1 base.
       intended implementation. All outdated, approval-only, and superseded
       threads are resolved, including the
       [cross-provider
-      thread](https://github.com/TheHalfMoon/kaf/pull/1581#discussion_r3807280622)
+      thread](https://github.com/TheHalfMoon/orcel/pull/1581#discussion_r3807280622)
       and the [outdated turn-input
-      thread](https://github.com/TheHalfMoon/kaf/pull/1581#discussion_r3772094622).
+      thread](https://github.com/TheHalfMoon/orcel/pull/1581#discussion_r3772094622).

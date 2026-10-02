@@ -6,7 +6,7 @@ const noStore = { "cache-control": "no-store" } as const;
 export default defineNuxtConfig({
   modules: ["@nuxt/ui", "@comark/nuxt", "@nuxthub/core", "@vercel/analytics"],
   alias: {
-    "#kaf": fileURLToPath(new URL("../../lib", import.meta.url)),
+    "#orcel": fileURLToPath(new URL("../../lib", import.meta.url)),
   },
   css: ["~/assets/css/main.css"],
   devtools: { enabled: true },
@@ -31,7 +31,7 @@ export default defineNuxtConfig({
     "/api/connectors": { headers: privateNoStore },
     "/api/slack/**": { headers: privateNoStore },
     "/api/integrations/**": { headers: privateNoStore },
-    "/_kaf_internal/**": { headers: noStore },
+    "/_orcel_internal/**": { headers: noStore },
   },
   nitro: {
     compressPublicAssets: true,

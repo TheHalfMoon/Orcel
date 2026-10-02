@@ -5,13 +5,13 @@ export interface ThreadSummary {
   createdAt: number;
 }
 
-export interface KafSessionCursor {
+export interface OrcelSessionCursor {
   sessionId: string;
   streamIndex: number;
 }
 
 export interface ThreadState {
-  session: KafSessionCursor;
+  session: OrcelSessionCursor;
   events: unknown[];
 }
 

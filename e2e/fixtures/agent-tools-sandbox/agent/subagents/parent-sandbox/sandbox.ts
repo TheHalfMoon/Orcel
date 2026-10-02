@@ -1,2 +1,2 @@
-import { defineParentSandbox } from "kaf/sandbox";
+import { defineParentSandbox } from "orcel/sandbox";
 export default defineParentSandbox();

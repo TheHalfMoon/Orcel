@@ -1,4 +1,4 @@
-import { defineChannel, POST } from "kaf/channels";
+import { defineChannel, POST } from "orcel/channels";
 import { z } from "zod";
 
 const requestBody = z.strictObject({
@@ -27,7 +27,7 @@ export default defineChannel({
       return Response.json({
         sessionId: session.id,
         environment:
-          process.env.KAF_DEV === "1" || process.env.VERCEL_ENV === "development"
+          process.env.ORCEL_DEV === "1" || process.env.VERCEL_ENV === "development"
             ? "development"
             : process.env.VERCEL_ENV === "preview"
               ? "preview"

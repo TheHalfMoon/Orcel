@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "generatedAt": "2026-09-15T16:54:39.105Z",
   "suite": {
-    "kafRevision": "6ce61cd85ecf4621bcefd363a3e8b9445b7e6e91",
+    "orcelRevision": "6ce61cd85ecf4621bcefd363a3e8b9445b7e6e91",
     "caseFingerprint": "7d990b7e2c429ee4a2cf4f758d15f408f61d0e5b1ef9782ba69a33e435cdb169",
     "caseCount": 7,
     "runsPerCell": 3
@@ -2406,7 +2406,7 @@
   "previouslyMeasured": [
     {
       "suite": {
-        "kafRevision": "54a028bab589a60fc84a310304a5cf080bc7f990",
+        "orcelRevision": "54a028bab589a60fc84a310304a5cf080bc7f990",
         "caseFingerprint": "786490be9d902701f57d08b3d112ca385d49a72e5591fac741511e77d67989d2",
         "caseCount": 7,
         "runsPerCell": 3
@@ -2602,7 +2602,7 @@
     },
     {
       "suite": {
-        "kafRevision": "450681ad42ce561ba53b687fd903681d7337359e",
+        "orcelRevision": "450681ad42ce561ba53b687fd903681d7337359e",
         "caseFingerprint": "d30d6ad26abc32b54fde75c0e632d16186ed32b018e30c59baef624c0f370de9",
         "caseCount": 7,
         "runsPerCell": 3

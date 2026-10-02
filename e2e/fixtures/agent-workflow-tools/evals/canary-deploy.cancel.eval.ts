@@ -1,4 +1,4 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 /**
  * `canary_deploy` is a task that would watch its canary for an hour.

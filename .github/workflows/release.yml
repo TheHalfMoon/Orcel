@@ -12,8 +12,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  GHCR_IMAGE: ghcr.io/thehalfmoon/kaf
-  VCR_IMAGE: vcr.vercel.com/vercel/kaf/base
+  GHCR_IMAGE: ghcr.io/thehalfmoon/orcel
+  VCR_IMAGE: vcr.vercel.com/vercel/orcel/base
 
 jobs:
   release:
@@ -53,7 +53,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          version="$(jq -er '.version | select(type == "string" and length > 0)' packages/kaf/package.json)"
+          version="$(jq -er '.version | select(type == "string" and length > 0)' packages/orcel/package.json)"
           echo "version=${version}" >>"$GITHUB_OUTPUT"
           echo "ghcr-tag=${GHCR_IMAGE}:${version}" >>"$GITHUB_OUTPUT"
           echo "vcr-tag=${VCR_IMAGE}:${version}" >>"$GITHUB_OUTPUT"
@@ -117,42 +117,42 @@ jobs:
             exit 1
           fi
 
-      - name: Publish kaf image to Vercel Container Registry
+      - name: Publish orcel image to Vercel Container Registry
         if: github.ref == 'refs/heads/main' && steps.vcr-image.outputs.publish == 'true'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
-          context: ./packages/kaf
-          file: ./packages/kaf/Dockerfile
+          context: ./packages/orcel
+          file: ./packages/orcel/Dockerfile
           platforms: linux/amd64
           provenance: false
           tags: |
             ${{ steps.image-tags.outputs.vcr-tag }}
             ${{ env.VCR_IMAGE }}:latest
           labels: |
-            org.opencontainers.image.title=kaf Sandbox
-            org.opencontainers.image.description=Sandbox base image for kaf agents.
-            org.opencontainers.image.source=https://github.com/TheHalfMoon/kaf
+            org.opencontainers.image.title=orcel Sandbox
+            org.opencontainers.image.description=Sandbox base image for orcel agents.
+            org.opencontainers.image.source=https://github.com/TheHalfMoon/orcel
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ steps.image-tags.outputs.version }}
           outputs: type=image,push=true,oci-mediatypes=true,compression=zstd,compression-level=3,force-compression=true
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Publish kaf image to GitHub Container Registry
+      - name: Publish orcel image to GitHub Container Registry
         if: github.ref == 'refs/heads/main' && steps.ghcr-image.outputs.publish == 'true'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
-          context: ./packages/kaf
-          file: ./packages/kaf/Dockerfile
+          context: ./packages/orcel
+          file: ./packages/orcel/Dockerfile
           platforms: linux/amd64,linux/arm64
           provenance: false
           tags: |
             ${{ steps.image-tags.outputs.ghcr-tag }}
             ${{ env.GHCR_IMAGE }}:latest
           labels: |
-            org.opencontainers.image.title=kaf Sandbox
-            org.opencontainers.image.description=Sandbox base image for kaf agents.
-            org.opencontainers.image.source=https://github.com/TheHalfMoon/kaf
+            org.opencontainers.image.title=orcel Sandbox
+            org.opencontainers.image.description=Sandbox base image for orcel agents.
+            org.opencontainers.image.source=https://github.com/TheHalfMoon/orcel
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ steps.image-tags.outputs.version }}
           outputs: type=image,push=true,oci-mediatypes=true,compression=zstd,compression-level=3,force-compression=true
@@ -177,13 +177,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Mark kaf as the latest GitHub release
+      - name: Mark orcel as the latest GitHub release
         if: steps.changesets.outputs.published == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PUBLISHED_PACKAGES: ${{ steps.changesets.outputs.published-packages }}
         run: |
-          version="$(jq -r '.[] | select(.name == "kaf") | .version' <<< "$PUBLISHED_PACKAGES")"
+          version="$(jq -r '.[] | select(.name == "orcel") | .version' <<< "$PUBLISHED_PACKAGES")"
           if [[ -n "$version" ]]; then
-            gh release edit "kaf@$version" --latest
+            gh release edit "orcel@$version" --latest
           fi

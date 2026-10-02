@@ -16,13 +16,13 @@ import type { JSX } from "react";
 import { analyticsEvents } from "@/lib/analytics/events";
 import { cn } from "@/lib/utils";
 
-const HUMAN_COMMAND = "npx kaf@latest init my-agent";
-const AGENT_COMMAND = "npx skills add vercel/kaf";
+const HUMAN_COMMAND = "npx orcel@latest init my-agent";
+const AGENT_COMMAND = "npx skills add vercel/orcel";
 
 export type InstallAudience = "humans" | "agents";
 
 /**
- * Hero install prompt that toggles between the human-facing `kaf init` command
+ * Hero install prompt that toggles between the human-facing `orcel init` command
  * and the agent-facing skills command, with a copy-to-clipboard pill.
  */
 export const InstallSwitcher = ({

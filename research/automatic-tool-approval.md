@@ -8,11 +8,11 @@ last_updated: "2026-09-17"
 
 ## Authoring API
 
-Add `auto({ model?, instructions?, criteria? })` to `kaf/tools/approval`. `model` accepts any AI SDK `Experimental_EvaluationModel`, including a string resolved through the configured default provider, and defaults to `typesafe-ai/jev`. `instructions` and `criteria.clear` / `criteria.caution` override the classifier text.
+Add `auto({ model?, instructions?, criteria? })` to `orcel/tools/approval`. `model` accepts any AI SDK `Experimental_EvaluationModel`, including a string resolved through the configured default provider, and defaults to `typesafe-ai/jev`. `instructions` and `criteria.clear` / `criteria.caution` override the classifier text.
 
 ```ts
-import { defineTool } from "kaf/tools";
-import { auto } from "kaf/tools/approval";
+import { defineTool } from "orcel/tools";
+import { auto } from "orcel/tools/approval";
 
 export default defineTool({
   // ...

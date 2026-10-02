@@ -5,7 +5,7 @@ import {
   type MemoryByCategory,
   type MemoryCategory,
   type MemoryEntry,
-} from "#kaf/types/memory";
+} from "#orcel/types/memory";
 import { formatMemoryDate } from "~/composables/useMemory";
 
 const props = defineProps<{

@@ -3,14 +3,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "kaf dev",
-    "build": "kaf build",
-    "start": "kaf start",
-    "info": "kaf info",
+    "dev": "orcel dev",
+    "build": "orcel build",
+    "start": "orcel start",
+    "info": "orcel info",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "kaf": "workspace:*",
+    "orcel": "workspace:*",
     "zod": "catalog:"
   }
 }

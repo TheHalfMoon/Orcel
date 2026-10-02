@@ -71,7 +71,7 @@ const result = spawnSync(executable, args, {
   cwd: appRoot,
   stdio: "inherit",
   env:
-    selectedEval === undefined ? process.env : { ...process.env, KAF_BENCHMARK_EVAL: selectedEval },
+    selectedEval === undefined ? process.env : { ...process.env, ORCEL_BENCHMARK_EVAL: selectedEval },
 });
 if (result.error) throw result.error;
 process.exit(result.status ?? 1);

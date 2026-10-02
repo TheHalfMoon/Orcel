@@ -4,23 +4,23 @@ description: "Reach your agent through Linear Agent Sessions, with native Agent 
 type: integration
 ---
 
-The Linear channel uses Linear's Agent Session surface rather than ordinary comments. Users delegate work to the agent from Linear, kaf receives `AgentSessionEvent` webhooks at `/kaf/v1/linear`, and the channel replies with native Agent Activities, including `thought`, `action`, `elicitation`, `response`, and `error`. Credentials can run through [Vercel Connect](../guides/auth-and-route-protection), which manages the Linear app, its access token, and inbound webhook verification, so there's no API key or webhook secret for you to hold. See [Channels](./overview) for the contract this builds on.
+The Linear channel uses Linear's Agent Session surface rather than ordinary comments. Users delegate work to the agent from Linear, orcel receives `AgentSessionEvent` webhooks at `/orcel/v1/linear`, and the channel replies with native Agent Activities, including `thought`, `action`, `elicitation`, `response`, and `error`. Credentials can run through [Vercel Connect](../guides/auth-and-route-protection), which manages the Linear app, its access token, and inbound webhook verification, so there's no API key or webhook secret for you to hold. See [Channels](./overview) for the contract this builds on.
 
 ## Guided Connect setup
 
 Run the registry setup from the agent directory:
 
 ```bash
-kaf add channel/linear
+orcel add channel/linear
 ```
 
 To let the agent search and update Linear through MCP, install the separate Linear connection:
 
 ```bash
-kaf add connection/linear
+orcel add connection/linear
 ```
 
-The channel setup flow signs you in to Vercel when needed, creates or links a Vercel project, reuses a compatible existing connector when available or provisions an app-scoped Linear Connect client, and registers `/kaf/v1/linear` as a trigger destination. It then installs `@vercel/connect` and writes `agent/channels/linear.ts` with the connector UID.
+The channel setup flow signs you in to Vercel when needed, creates or links a Vercel project, reuses a compatible existing connector when available or provisions an app-scoped Linear Connect client, and registers `/orcel/v1/linear` as a trigger destination. It then installs `@vercel/connect` and writes `agent/channels/linear.ts` with the connector UID.
 
 Vercel Connect creates the Linear app with the `app:assignable` and `app:mentionable` scopes required for Agent Sessions, receives and verifies `AgentSessionEvent` webhooks, and forwards them to the deployed agent. After deploying, open the Linear app in the Connect dashboard and install it in the workspace where you want to delegate work. Then delegate an issue or mention the agent in a Linear Agent Session.
 
@@ -28,21 +28,21 @@ The generated channel uses Connect-managed credentials:
 
 ```ts title="agent/channels/linear.ts"
 import { connectLinearCredentials } from "@vercel/connect/eve";
-import { linearChannel } from "kaf/channels/linear";
+import { linearChannel } from "orcel/channels/linear";
 
 export default linearChannel({
   credentials: connectLinearCredentials("linear/my-agent"),
 });
 ```
 
-`connectLinearCredentials` returns `{ accessToken, webhookVerifier }`: kaf uses the Connect-managed app token for Linear GraphQL calls and verifies Connect-forwarded webhooks by their Vercel OIDC signature instead of a Linear webhook secret. Token rotation, refresh, and multi-workspace tenancy stay inside Connect, so there is no `LINEAR_AGENT_ACCESS_TOKEN` or `LINEAR_WEBHOOK_SECRET` to manage.
+`connectLinearCredentials` returns `{ accessToken, webhookVerifier }`: orcel uses the Connect-managed app token for Linear GraphQL calls and verifies Connect-forwarded webhooks by their Vercel OIDC signature instead of a Linear webhook secret. Token rotation, refresh, and multi-workspace tenancy stay inside Connect, so there is no `LINEAR_AGENT_ACCESS_TOKEN` or `LINEAR_WEBHOOK_SECRET` to manage.
 
 ### Bring your own Linear app
 
 To run a Linear OAuth app you manage yourself, pass its credentials directly instead:
 
 ```ts title="agent/channels/linear.ts"
-import { linearChannel } from "kaf/channels/linear";
+import { linearChannel } from "orcel/channels/linear";
 
 export default linearChannel({
   credentials: {
@@ -64,12 +64,12 @@ The sample passes credentials explicitly. To rely on env vars instead, drop the 
 Create the Linear OAuth app, enable Agent Session events, and point the webhook URL at:
 
 ```text
-https://<deployment>/kaf/v1/linear
+https://<deployment>/orcel/v1/linear
 ```
 
 For Linear's agent surface, configure the OAuth authorize URL with `actor=app` and grant the app scopes that let it appear as an agent in Linear, including `app:assignable` and `app:mentionable`. Subscribe to the `AgentSessionEvent` webhook category so Linear sends `created` events when the agent is delegated or mentioned and `prompted` events when the user continues the session.
 
-Linear sends webhook signatures in `Linear-Signature`; kaf verifies the HMAC over the raw body and rejects stale `webhookTimestamp` values. If a trusted gateway verifies Linear before the request reaches kaf, pass `credentials.webhookVerifier` instead of a webhook secret. Your custom verifier must enforce its timestamp policy because `maxSkewMs` does not apply.
+Linear sends webhook signatures in `Linear-Signature`; orcel verifies the HMAC over the raw body and rejects stale `webhookTimestamp` values. If a trusted gateway verifies Linear before the request reaches orcel, pass `credentials.webhookVerifier` instead of a webhook secret. Your custom verifier must enforce its timestamp policy because `maxSkewMs` does not apply.
 
 ## How the channel handles messages
 
@@ -79,11 +79,11 @@ The default hook dispatches `created` and `prompted` Agent Session events. The L
 
 ### Delivery
 
-Turn start posts an ephemeral `thought`, tool calls post ephemeral `action` activities, final assistant text posts a durable `response`, and failures post `error` activities. When the model emits text before a tool call, kaf buffers the first non-empty line and uses it as the next ephemeral Linear `thought`, mirroring Slack's typing-status behavior.
+Turn start posts an ephemeral `thought`, tool calls post ephemeral `action` activities, final assistant text posts a durable `response`, and failures post `error` activities. When the model emits text before a tool call, orcel buffers the first non-empty line and uses it as the next ephemeral Linear `thought`, mirroring Slack's typing-status behavior.
 
 ### Human-in-the-loop (HITL)
 
-Human-in-the-loop (HITL) input requests render as Linear `elicitation` activities. When the user replies to the Agent Session, the channel resolves that prompt back to the pending kaf input request and resumes with `inputResponses`.
+Human-in-the-loop (HITL) input requests render as Linear `elicitation` activities. When the user replies to the Agent Session, the channel resolves that prompt back to the pending orcel input request and resumes with `inputResponses`.
 
 ### Connection authorization
 
@@ -95,7 +95,7 @@ Start a session without an inbound webhook with `receive(linear, { target })`. S
 
 ### Attachments
 
-Markdown images hosted at `https://uploads.linear.app` in Agent Session prompts are fetched with the resolved Linear access token and included as image file parts. kaf sends the bearer token only to that exact HTTPS origin; images from other hosts remain markdown text. If a Linear upload fails or returns non-image content, kaf preserves its markdown reference and continues the text turn. Other inbound file attachments are not supported on this channel today.
+Markdown images hosted at `https://uploads.linear.app` in Agent Session prompts are fetched with the resolved Linear access token and included as image file parts. orcel sends the bearer token only to that exact HTTPS origin; images from other hosts remain markdown text. If a Linear upload fails or returns non-image content, orcel preserves its markdown reference and continues the text turn. Other inbound file attachments are not supported on this channel today.
 
 ### API handle
 
@@ -106,7 +106,7 @@ Event handlers receive `channel.linear`, which exposes `createActivity`, `listAc
 Return `{ auth }` to dispatch, or `null` to acknowledge without waking the agent. Return `title` alongside `auth` to set the title when the dispatch starts a run.
 
 ```ts
-import { defaultLinearAuth, linearChannel } from "kaf/channels/linear";
+import { defaultLinearAuth, linearChannel } from "orcel/channels/linear";
 
 export default linearChannel({
   onAgentSession: (_ctx, event) => {
@@ -119,7 +119,7 @@ export default linearChannel({
 Restrict dispatch to a subset of Linear teams or projects by inspecting `event.agentSession.issue` in `onAgentSession`. Add extra context by returning `context` alongside `auth`.
 
 ```ts
-import { defaultLinearAuth, linearChannel } from "kaf/channels/linear";
+import { defaultLinearAuth, linearChannel } from "orcel/channels/linear";
 
 export default linearChannel({
   onAgentSession: (_ctx, event) => {
@@ -135,7 +135,7 @@ export default linearChannel({
 Override event delivery when you want more specific Agent Activities.
 
 ```ts
-import { linearChannel } from "kaf/channels/linear";
+import { linearChannel } from "orcel/channels/linear";
 
 export default linearChannel({
   events: {
@@ -169,7 +169,7 @@ await channel.linear.updateSession({
 Use the channel's proactive target to continue an existing Agent Session or create one from a Linear issue or root comment. The target accepts an existing `agentSessionId`, or an `issueId` or root `commentId` to create a new session before sending the message. The example below runs from a schedule; a route handler uses the same target shape through `ctx.to(...)`.
 
 ```ts
-import { defineSchedule } from "kaf/schedules";
+import { defineSchedule } from "orcel/schedules";
 
 import linear from "../channels/linear";
 
@@ -178,7 +178,7 @@ export default defineSchedule({
   async run({ to, waitUntil, appAuth }) {
     waitUntil(
       to(linear, {
-        issueId: "KAF-123",
+        issueId: "ORCEL-123",
         initialActivity: "Preparing the status update.",
       }).send("Post a concise status update with blockers and next actions.", {
         auth: appAuth,
@@ -188,7 +188,7 @@ export default defineSchedule({
 });
 ```
 
-For issue or comment targets, the channel calls Linear's proactive Agent Session mutations before starting the kaf turn. For an existing `agentSessionId`, it skips session creation and only seeds the continuation token.
+For issue or comment targets, the channel calls Linear's proactive Agent Session mutations before starting the orcel turn. For an existing `agentSessionId`, it skips session creation and only seeds the continuation token.
 
 ## What to read next
 

@@ -4,7 +4,7 @@ export default defineAuthoringCase({
   startingPoint: simpleProject,
   async interact({ send }) {
     await send(
-      "Add an kaf packaged skill named `incident-response` at `agent/skills/incident-response/SKILL.md` for investigating production incidents. It should load when a user needs incident triage, guide the agent to establish a timeline, collect evidence, assess impact, and propose mitigations, and include `agent/skills/incident-response/references/severity-levels.md` defining SEV1 and SEV2. Use kaf's packaged skill layout, not an OpenCode `.opencode/skills` directory and not a tool.",
+      "Add an orcel packaged skill named `incident-response` at `agent/skills/incident-response/SKILL.md` for investigating production incidents. It should load when a user needs incident triage, guide the agent to establish a timeline, collect evidence, assess impact, and propose mitigations, and include `agent/skills/incident-response/references/severity-levels.md` defining SEV1 and SEV2. Use orcel's packaged skill layout, not an OpenCode `.opencode/skills` directory and not a tool.",
     );
   },
 });

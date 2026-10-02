@@ -24,7 +24,7 @@ export const transformAgentsMarkdown = (
     !markdown.includes(INTERNAL_GETTING_STARTED_INSTRUCTION) ||
     !markdown.includes(upstreamFullDocumentationInstruction)
   ) {
-    throw new Error("Geistdocs agents.md Markdown guidance changed; update the kaf transform.");
+    throw new Error("Geistdocs agents.md Markdown guidance changed; update the orcel transform.");
   }
 
   const corrected = markdown

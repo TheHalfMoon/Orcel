@@ -1,9 +1,9 @@
 ---
 title: "Execution Model and Durability"
-description: "How an kaf session runs. Durable conversations, turns that checkpoint at steps, and parked work that resumes later."
+description: "How an orcel session runs. Durable conversations, turns that checkpoint at steps, and parked work that resumes later."
 ---
 
-An kaf session is a durable conversation. It can run for days and survives process restarts and redeploys without any work on your part. You write the capabilities (tools, instructions, channels) and kaf runs the loop.
+An orcel session is a durable conversation. It can run for days and survives process restarts and redeploys without any work on your part. You write the capabilities (tools, instructions, channels) and orcel runs the loop.
 
 ## Sessions, turns, and steps
 
@@ -21,19 +21,19 @@ agent setting can group several sequential model-and-tool cycles into one
 Workflow step. This reduces checkpoint overhead but makes the entire group one
 replay unit.
 
-The Workflow SDK is not inherently tied to Vercel. In local development and in a self-deployed `kaf start` process, kaf uses the SDK's local world by default; that world persists workflow runs on disk under `.kaf/.workflow-data` and dispatches through the same Nitro-hosted workflow routes. On Vercel, the same workflow code runs against Vercel Workflow instead, which adds deployment-aware routing and dashboard run metadata.
+The Workflow SDK is not inherently tied to Vercel. In local development and in a self-deployed `orcel start` process, orcel uses the SDK's local world by default; that world persists workflow runs on disk under `.orcel/.workflow-data` and dispatches through the same Nitro-hosted workflow routes. On Vercel, the same workflow code runs against Vercel Workflow instead, which adds deployment-aware routing and dashboard run metadata.
 
 When a Vercel production deployment changes, a new delivery to an idle session hands the session's settled state to the exact deployment that accepted the request. This applies whether the delivery arrives through the session ID or through any channel continuation address the session has claimed. The session keeps its original ID and event stream, while the next model turn uses that deployment's current system-role instructions, model, and tools. Static user-role instructions stay pinned in the durable conversation history and are not seeded again. A successful handoff restarts the session's original configured [`sessionTimeoutMs`](../agent-config#runtime-limits) duration; disabled timeouts stay disabled. Failed or skipped handoffs keep the existing deadline.
 
 Before taking ownership, the target deployment validates the checkpoint's stored tasks and subagent handles and checks that no pending work remains. This includes settled tasks. If that validation fails, the previous owner recovers the session and processes the triggering delivery. Task and handle state preserve unknown metadata fields, while known fields and lifecycle rules must still be valid. Authored session state remains opaque to this validation.
 
-kaf does not move live work between deployments. A session with a running turn, pending human input or authorization, queued messages, or active tasks and subagents stays on its current deployment. After that work settles, a later delivery can move the idle session; the earlier deployment signal is not remembered.
+orcel does not move live work between deployments. A session with a running turn, pending human input or authorization, queued messages, or active tasks and subagents stays on its current deployment. After that work settles, a later delivery can move the idle session; the earlier deployment signal is not remembered.
 
 ### Upgrading sessions from the former execution model
 
 You can upgrade directly from a release that used a session driver and separate
 turn workflows. When an existing driver next dispatches a turn to this deployment,
-kaf imports its committed conversation into the current runtime. The session
+orcel imports its committed conversation into the current runtime. The session
 keeps its ID, history, authored state, usage, limits, and original event stream.
 Subsequent turns use the new deployment's instructions, model, and tools.
 
@@ -43,7 +43,7 @@ if it is still needed. Messages already buffered exclusively inside the old
 driver are not imported. The triggering message is preserved without repeating
 committed tool effects.
 
-Import supports drivers started on kaf 0.45 or later. A session from an older
+Import supports drivers started on orcel 0.45 or later. A session from an older
 release reports itself inactive on its next message, and its channel starts a
 fresh session.
 
@@ -61,7 +61,7 @@ Nitro hosts the HTTP routes and workflow entrypoints. It does not supply the wor
 For advanced self-hosted deployments, the root `agent.ts` can select the installed Workflow world package to use with `experimental.workflow.world`:
 
 ```ts title="agent/agent.ts"
-import { defineAgent } from "kaf";
+import { defineAgent } from "orcel";
 
 export default defineAgent({
   model: "anthropic/claude-opus-5.5",
@@ -73,11 +73,11 @@ export default defineAgent({
 });
 ```
 
-The world package backs workflow state, queues, hooks, and streams. Keep secrets and deployment-specific options in runtime environment variables read by that package, not in `agent.ts`. Custom worlds must implement the runtime protocol expected by kaf's vendored `@workflow/*` packages (currently the `5.0.0-beta` line); the Workflow SDK rejects incompatible protocol versions during initialization. See [Self-host kaf](../guides/deployment/self-hosting#persist-workflow-state), [agent.ts](../agent-config#workflow-world), and [Workflow Worlds](https://workflow-sdk.dev/worlds).
+The world package backs workflow state, queues, hooks, and streams. Keep secrets and deployment-specific options in runtime environment variables read by that package, not in `agent.ts`. Custom worlds must implement the runtime protocol expected by orcel's vendored `@workflow/*` packages (currently the `5.0.0-beta` line); the Workflow SDK rejects incompatible protocol versions during initialization. See [Self-host orcel](../guides/deployment/self-hosting#persist-workflow-state), [agent.ts](../agent-config#workflow-world), and [Workflow Worlds](https://workflow-sdk.dev/worlds).
 
 ## Agent loop and sandbox
 
-An kaf agent spans two execution environments with different responsibilities:
+An orcel agent spans two execution environments with different responsibilities:
 
 <AgentRuntimeDiagram />
 
@@ -93,22 +93,22 @@ Provider keys, tool secrets, and MCP, OpenAPI, and connection credentials stay i
 
 ## Resuming after a crash
 
-Crash the process, hit a timeout, or redeploy mid-turn, and the run picks up from the last completed step rather than replaying the whole turn. Completed steps never re-run; kaf replays the recorded result. A step interrupted mid-execution re-runs, so make non-idempotent side effects like charges or emails idempotent, or gate them with approval. Whatever that step already wrote to the session stream stays there, and the re-run emits its events again under new ids, so a stream consumer sees both attempts — see [the event envelope](./sessions-runs-and-streaming#the-event-envelope).
+Crash the process, hit a timeout, or redeploy mid-turn, and the run picks up from the last completed step rather than replaying the whole turn. Completed steps never re-run; orcel replays the recorded result. A step interrupted mid-execution re-runs, so make non-idempotent side effects like charges or emails idempotent, or gate them with approval. Whatever that step already wrote to the session stream stays there, and the re-run emits its events again under new ids, so a stream consumer sees both attempts — see [the event envelope](./sessions-runs-and-streaming#the-event-envelope).
 
 With `experimental.workflow.modelCallsPerStep` greater than `1`, an
 interrupted Workflow step can also repeat earlier model calls and inline tool
 executions from the same batch. Approval, input, and blocking coordination
-boundaries still force a checkpoint before kaf waits.
+boundaries still force a checkpoint before orcel waits.
 
 Steering can interrupt pending model generation before assistant output begins.
 An executing tool finishes safely, then the batch yields before another model
 call so the owner can apply accepted steering within the same turn.
 
-Durability itself needs no configuration. kaf owns the workflow lifecycle, and
+Durability itself needs no configuration. orcel owns the workflow lifecycle, and
 sessions are durable by default; checkpoint batching is an explicit
 experimental opt-in.
 
-For ordinary tools, kaf manages the workflow around your executor. Use [`defineWorkflowTool`](../tools/workflows) when your own tool body needs durable waits, such as a timer, webhook, or human answer. Two surfaces give your own code session data: tools read the current session's metadata (id, turn, auth, parent lineage) via `ctx.session`, and [`defineState`](./state) reads or writes session-scoped durable state. See [State](./state) for the read/write model.
+For ordinary tools, orcel manages the workflow around your executor. Use [`defineWorkflowTool`](../tools/workflows) when your own tool body needs durable waits, such as a timer, webhook, or human answer. Two surfaces give your own code session data: tools read the current session's metadata (id, turn, auth, parent lineage) via `ctx.session`, and [`defineState`](./state) reads or writes session-scoped durable state. See [State](./state) for the read/write model.
 
 ## Parked work
 
@@ -126,7 +126,7 @@ See [durable waits](../tools#durable-waits) and
 
 ## Message delivery and steering
 
-kaf does not maintain a durable FIFO queue of user messages for a session. An
+orcel does not maintain a durable FIFO queue of user messages for a session. An
 ID-addressed HTTP delivery and a channel-address delivery both target the
 session's current command inbox; neither is a general message queue.
 
@@ -140,7 +140,7 @@ continuation address. When cold starts race for the same address, the losing
 candidate forwards its accepted message to the owner and exits.
 
 Channel delivery attempts to resume the address before creating a session.
-After Workflow accepts the delivery, kaf resolves the stable session ID for
+After Workflow accepts the delivery, orcel resolves the stable session ID for
 the returned handle. That identity lookup does not block workflow resumption.
 ID-addressed delivery already knows the session ID and needs no hook metadata
 lookup. An ambiguous delivery failure does not trigger session creation.
@@ -153,11 +153,11 @@ never starts a replacement session for an address that is mid-handoff.
 
 When a session is waiting, a delivery through its ID or any claimed channel address wakes it and starts the next turn. Message sends default to `turnPolicy: "steer"`. Before assistant output begins, the session owner signals pending model generation to stop, then applies the correction within the same turn and with the same turn ID. This includes model requests that perform provider-managed search before answering; interrupted search work may run again. Reasoning and search progress do not count as assistant output.
 
-An executing kaf tool finishes and commits its result before steering reaches the next model request. Steering does not cancel the turn. After assistant output starts, steering applies at the next committed workflow boundary and preserves streamed text. A message that reaches the boundary after the turn has settled starts another turn.
+An executing orcel tool finishes and commits its result before steering reaches the next model request. Steering does not cancel the turn. After assistant output starts, steering applies at the next committed workflow boundary and preserves streamed text. A message that reaches the boundary after the turn has settled starts another turn.
 
-Once kaf publishes an input request or begins publishing turn completion or failure, kaf finishes committing that boundary before applying new messages.
+Once orcel publishes an input request or begins publishing turn completion or failure, orcel finishes committing that boundary before applying new messages.
 
-`turnPolicy: "queue"` preserves the message until the active turn settles. If several deliveries are ready when the owner checks, kaf may fold adjacent messages into the next turn while preserving their arrival order. Pure `inputResponses` deliveries do not steer; they remain available to the pending request they address.
+`turnPolicy: "queue"` preserves the message until the active turn settles. If several deliveries are ready when the owner checks, orcel may fold adjacent messages into the next turn while preserving their arrival order. Pure `inputResponses` deliveries do not steer; they remain available to the pending request they address.
 
 Every built-in and custom channel accepts a default `turnPolicy`, and imperative message sends can override it. The policy is part of the same durable delivery command as the message, so concurrent senders cannot separate replacement ownership from cancellation intent. Separate sessions still run independently.
 
@@ -165,7 +165,7 @@ Every built-in and custom channel accepts a default `turnPolicy`, and imperative
 
 A turn can hand work off to a [subagent](../subagents). Each subagent gets its own context and its own durable session; a declared subagent also gets its own sandbox, skills, and state. Nothing crosses the boundary implicitly.
 
-## How kaf orders session history
+## How orcel orders session history
 
 Conversation history within a session is append-only. Static user-role instructions lead fresh-session history. Dynamic user-role instructions land at their session or turn boundary before the current delivery. Turns follow in order, and the tool calls inside a turn (plus their results) keep their order too. Read a session back and you see messages in the order they happened.
 

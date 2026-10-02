@@ -1,18 +1,18 @@
 ---
 title: "Build a Memory Provider"
-description: "Implement the recall, capture, and tools contract so any store or memory service can back an kaf memory slot."
+description: "Implement the recall, capture, and tools contract so any store or memory service can back an orcel memory slot."
 ---
 
 A memory provider is an object with a `recall` handler and optional `capture`
-and `tools` handlers. kaf calls those handlers at fixed points in the agent
+and `tools` handlers. orcel calls those handlers at fixed points in the agent
 lifecycle and passes each one a locked scope key, the projected conversation,
 and a stable operation ID. Anything that can read and write under that key can
 be a provider. Package one as a library that exports a provider factory, or
 write one directly inside an agent.
 
 ```ts title="agent/lib/notes-memory.ts"
-import { defineMemoryProvider } from "kaf/memory";
-import { defineTool } from "kaf/tools";
+import { defineMemoryProvider } from "orcel/memory";
+import { defineTool } from "orcel/tools";
 import { z } from "zod";
 import { notes } from "./notes-db";
 
@@ -58,8 +58,8 @@ export function notesMemory() {
 Bind the provider to a slot like any other:
 
 ```ts title="agent/memory/notes.ts"
-import { defineMemory } from "kaf/memory";
-import { byPrincipal } from "kaf/memory/scope";
+import { defineMemory } from "orcel/memory";
+import { byPrincipal } from "orcel/memory/scope";
 import { notesMemory } from "../lib/notes-memory";
 
 export default defineMemory({
@@ -124,7 +124,7 @@ return {
 };
 ```
 
-kaf adds each message to model context as a user-role message attributed to the
+orcel adds each message to model context as a user-role message attributed to the
 slot. Provider content is never promoted to system instructions.
 
 Use a stable `id` for replaceable facts. A later message with the same ID in
@@ -135,14 +135,14 @@ cannot retract, only supersede.
 
 ### Tools
 
-`tools()` returns a map of `defineTool()` values or `null`. kaf qualifies each
+`tools()` returns a map of `defineTool()` values or `null`. orcel qualifies each
 key as `<slot>__<key>`; the qualified name must start with a letter, contain
 only letters, digits, underscores, or dashes, and be at most 64 characters.
 Schemas, `approval`, `outputSchema`, and `toModelOutput` work as they do for
 authored tools.
 
 A tool closes over the locked scope for the current turn, so it cannot be
-redirected to another tenant or caller by the model. kaf keeps each tool
+redirected to another tenant or caller by the model. orcel keeps each tool
 callback replayable after a process restart or redeployment.
 
 ## Lifecycle
@@ -154,16 +154,16 @@ callback replayable after a process restart or redeployment.
 | `compaction.requested` | `capture["compaction.requested"]` | History before the checkpoint changes                      |
 | `compaction.completed` | `recall["compaction.completed"]`  | The checkpoint plus canonical recalled records             |
 
-At turn start, kaf resolves and locks the scope for every active slot before any
-recall runs. All slots see the same pre-recall history, and kaf commits their
+At turn start, orcel resolves and locks the scope for every active slot before any
+recall runs. All slots see the same pre-recall history, and orcel commits their
 validated results atomically.
 
-During compaction, kaf excludes recalled records from the summarizer, keeps the
+During compaction, orcel excludes recalled records from the summarizer, keeps the
 latest value for each keyed record plus every unkeyed record, and then calls
 `recall["compaction.completed"]` against the new checkpoint. This keeps
 provider content attributable and prevents a summary from turning it into
 ordinary conversation history. If raw superseded records exceed 512 entries or
-256 KiB, kaf canonicalizes them without waiting for the normal token threshold;
+256 KiB, orcel canonicalizes them without waiting for the normal token threshold;
 this changes session history only, not the provider's store.
 
 Calling `clear()` on a session removes its history, recalled records, locked
@@ -174,12 +174,12 @@ turn recalls the same data again.
 
 - A throwing or invalid `recall["turn.started"]` fails the turn before the
   model call. No slot's recall results are committed. If the turn's
-  `abortSignal` is already aborted, kaf treats the error as cancellation and
+  `abortSignal` is already aborted, orcel treats the error as cancellation and
   continues with any queued follow-up. An `AbortError` with an active
   signal still fails the turn.
 - A throwing `capture["compaction.requested"]` leaves history unchanged.
 - A throwing `recall["compaction.completed"]` fails an automatic turn. For
-  standalone compaction, kaf logs the error and returns the session to waiting,
+  standalone compaction, orcel logs the error and returns the session to waiting,
   because the checkpoint has already been written.
 - An invalid or throwing `tools()` result is logged and omitted for that turn.
 - A throwing `capture["turn.completed"]` is logged after the response and does
@@ -192,13 +192,13 @@ Providers must:
 - Partition every read and write by `memory.scope.key`. For semantic
   retrieval, include the key in the query itself, not as a filter after a
   global search.
-- Treat `operationId` as an idempotency key. kaf may replay a handler with the
+- Treat `operationId` as an idempotency key. orcel may replay a handler with the
   same ID; replaying a recall with a different result is an error.
-- Enforce their own size and retention policies. kaf does not truncate or
+- Enforce their own size and retention policies. orcel does not truncate or
   expire provider content.
 - Treat recalled content as user-controlled data.
 
-kaf enforces these limits on the values it passes to and receives from a
+orcel enforces these limits on the values it passes to and receives from a
 provider:
 
 | Value                                  | Limit             |

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import type { KafDynamicToolPart } from "kaf/vue";
-import { MEMORY_CATEGORY_LABELS, type MemoryCategory } from "#kaf/types/memory";
+import type { OrcelDynamicToolPart } from "orcel/vue";
+import { MEMORY_CATEGORY_LABELS, type MemoryCategory } from "#orcel/types/memory";
 import type { AgentInputResponse } from "~/components/AgentInputRequest.vue";
 import { isSaveMemoryPending, normalizeSaveMemoryInput } from "~/utils/chat/save-memory";
 
@@ -14,7 +14,7 @@ interface SaveMemoryOutput {
 }
 
 const props = defineProps<{
-  parts: KafDynamicToolPart[];
+  parts: OrcelDynamicToolPart[];
   canRespond?: boolean;
 }>();
 
@@ -61,7 +61,7 @@ function categoryLabel(category?: string) {
 
 const allSaved = computed(() => props.parts.every((part) => part.state === "output-available"));
 
-function saveResultsForPart(part: KafDynamicToolPart): SaveMemoryResult[] {
+function saveResultsForPart(part: OrcelDynamicToolPart): SaveMemoryResult[] {
   if (part.state !== "output-available") {
     return [];
   }
@@ -82,7 +82,7 @@ const allUnchanged = computed(
 const allDeclined = computed(() =>
   props.parts.every(
     (part) =>
-      part.state === "output-denied" || part.toolMetadata?.kaf?.inputResponse?.optionId === "deny",
+      part.state === "output-denied" || part.toolMetadata?.orcel?.inputResponse?.optionId === "deny",
   ),
 );
 
@@ -132,7 +132,7 @@ const errorText = computed(() =>
 
 function respond(optionId: "approve" | "deny") {
   const responses = pendingParts.value.flatMap((part) => {
-    const requestId = part.toolMetadata?.kaf?.inputRequest?.requestId;
+    const requestId = part.toolMetadata?.orcel?.inputRequest?.requestId;
     return requestId ? [{ optionId, requestId }] : [];
   });
 

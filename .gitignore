@@ -15,28 +15,28 @@ coverage/
 .npm/
 
 # Test artifacts
-.kaf-bench-runner/
+.eve-bench-runner/
 benchmark-results/
 .vitest/
 apps/benchmarks/experiments/
 apps/benchmarks/results/
 apps/benchmarks/evals/*/PROMPT.md
 apps/benchmarks/evals/*/package.json
-apps/benchmarks/evals/*/.kaf-authoring-bootstrap.json
+apps/benchmarks/evals/*/.orcel-authoring-bootstrap.json
 .extension-contracts-cache/
-packages/kaf/.workflow-vitest/
-packages/kaf/.generated/
-packages/kaf/src/extensions/code/extension/
-packages/kaf/src/computer-use/extension/
+packages/orcel/.workflow-vitest/
+packages/orcel/.generated/
+packages/orcel/src/extensions/code/extension/
+packages/orcel/src/computer-use/extension/
 playwright-report/
 test-results/
 
 # Package lifecycle artifacts (copied from the repo root at prepack)
-packages/kaf/docs/
-packages/kaf/LICENSE
-packages/kaf/NOTICE
-packages/kaf-buzz-acp-adapter/LICENSE
-packages/kaf-buzz-acp-adapter/NOTICE
+packages/orcel/docs/
+packages/orcel/LICENSE
+packages/orcel/NOTICE
+packages/orcel-buzz-acp-adapter/LICENSE
+packages/orcel-buzz-acp-adapter/NOTICE
 
 # Logs
 *.log
@@ -62,7 +62,7 @@ Thumbs.db
 
 # Vercel/Temp build output
 .output/
-.kaf/
+.orcel/
 
 # Geist
 .source

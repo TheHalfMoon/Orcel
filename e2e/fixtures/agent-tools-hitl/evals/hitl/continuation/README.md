@@ -12,7 +12,7 @@ Start with [`read.eval.ts`](./read.eval.ts): leave a change's approval pending, 
 
 Each body uses **Given / When / Then** comments to identify the initial state, accepted input, and observable outcome. `defineEval.description` names the scenario. Native `tags` classify role (`regression` or `control`), triggering input (`user-message` or `input-response`), and behavior (`tool-result`, `tool-error`, `validation`, `workflow`, `provider-result`, `approval`, `authorization`, `partial-approval`, `stale-response`, `budget`, or `text-reply`). Every case also carries `hitl` and `continuation`.
 
-The tags are filters, not expected verdicts: every case must pass. `kaf eval --tag regression`, `--tag control`, or `--tag partial-approval` selects the corresponding conversations. This is ordinary executable `defineEval` code with native assertions; Given / When / Then is not a separate executable spec language.
+The tags are filters, not expected verdicts: every case must pass. `orcel eval --tag regression`, `--tag control`, or `--tag partial-approval` selects the corresponding conversations. This is ordinary executable `defineEval` code with native assertions; Given / When / Then is not a separate executable spec language.
 
 ## What makes a passing answer
 
@@ -64,7 +64,7 @@ Each row maps to exactly one eval. “Response authorization” here means the f
 
 ## Evidence boundaries
 
-The [adversarial integration probes](../../../../../../packages/kaf/src/harness/issue-3494-adversarial.integration.test.ts) also cover `final_output` with an older approval, multiple independent approvals plus an internally deferred message, and a complete independent batch beside a partially answered batch. Those exact scenarios are **integration-only**, not extra E2E cases. Integration workflow results are injected at runtime boundaries; the E2E cases execute fixture tools through the durable runtime.
+The [adversarial integration probes](../../../../../../packages/orcel/src/harness/issue-3494-adversarial.integration.test.ts) also cover `final_output` with an older approval, multiple independent approvals plus an internally deferred message, and a complete independent batch beside a partially answered batch. Those exact scenarios are **integration-only**, not extra E2E cases. Integration workflow results are injected at runtime boundaries; the E2E cases execute fixture tools through the durable runtime.
 
 Partial approvals in E2E use an accepted HTTP response followed by a separate user message; the API rejects combined message/response payloads. The provider cases supply a provider-executed result at the scripted model stream boundary; they do not contact a provider that performs the tool. Budget scripts report synthetic token usage against the fixture's one-million-output-token limit.
 

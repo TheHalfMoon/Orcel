@@ -1,4 +1,4 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 export default defineEval({
   description: "Dynamic model smoke: a missing selection fails the turn.",

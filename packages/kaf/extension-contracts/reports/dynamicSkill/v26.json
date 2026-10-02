@@ -1,7 +1,0 @@
-{
-  "kind": "kaf-extension-capability-contract",
-  "capability": "dynamicSkill",
-  "epoch": 26,
-  "sha256": "31fb234f85168e865f547912d001c98235a31a416803fcdb37e7be641ad13dc6",
-  "exports": ["defineDynamic"]
-}

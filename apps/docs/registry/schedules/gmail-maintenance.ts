@@ -1,4 +1,4 @@
-import { defineSchedule } from "kaf/schedules";
+import { defineSchedule } from "orcel/schedules";
 
 import { gmail } from "../channels/gmail";
 

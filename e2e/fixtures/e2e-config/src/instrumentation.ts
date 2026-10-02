@@ -1,5 +1,5 @@
 import { OTLPHttpJsonTraceExporter } from "@vercel/otel";
-import { otelIntegration } from "kaf/instrumentation/otel";
+import { otelIntegration } from "orcel/instrumentation/otel";
 
 /**
  * Shared instrumentation for e2e fixtures that export traces to Datadog.

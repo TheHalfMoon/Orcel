@@ -1,6 +1,6 @@
-# kaf benchmarks
+# orcel benchmarks
 
-This private workspace measures how coding agents create and modify kaf projects. It uses
+This private workspace measures how coding agents create and modify orcel projects. It uses
 `@vercel/agent-eval`, Vercel Sandbox, and deterministic Vitest graders. These benchmarks do not
 run in CI or as part of `pnpm test`.
 
@@ -34,7 +34,7 @@ for Anthropic models, and Codex for OpenAI models. Each attempt starts an isolat
 then scaffolds the selected immutable canary with `npx` before the coding agent starts.
 
 Local runs use the `guided` treatment by default, which keeps the `AGENTS.md` and aliases generated
-by `kaf init`. Pass `--treatment baseline` to remove those files before the coding agent starts.
+by `orcel init`. Pass `--treatment baseline` to remove those files before the coding agent starts.
 
 Results are written under `apps/benchmarks/results/`. Each run includes the native transcript,
 grader output, summary, copied project files, and validation output. Vercel Sandbox and AI Gateway
@@ -42,7 +42,7 @@ credentials are required.
 
 ## Publish canonical results
 
-Canonical publication compares the `baseline` and `guided` treatments with the same immutable kaf
+Canonical publication compares the `baseline` and `guided` treatments with the same immutable orcel
 canary, model, harness, cases, and graders. The configured harness reflects the provider: OpenCode
 for other providers, Claude Code for Anthropic, and Codex for OpenAI. Publication requires a clean
 working tree and defaults to `origin/main`:
@@ -90,6 +90,6 @@ export default defineAuthoringCase({
 });
 ```
 
-Use `simpleProject` for the selected canary's `kaf init` output and `emptyProject` for a project
+Use `simpleProject` for the selected canary's `orcel init` output and `emptyProject` for a project
 the coding agent creates. Put reusable setup under `lib/setups/`. Native runs support one-turn
 cases; the iMessage case remains local-only. Prefer source assertions over an LLM judge.

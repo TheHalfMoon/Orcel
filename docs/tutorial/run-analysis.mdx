@@ -29,12 +29,12 @@ Top-level workspace entries get advertised to the model automatically, so it kno
 
 ## Install the chart dependencies
 
-Python needs a sandbox that runs real binaries. For local development, start a Docker-compatible daemon and run `docker info` to verify it is reachable before restarting `npm run dev`. kaf also supports [microsandbox](../sandbox#microsandbox) on compatible hosts. The `just-bash` fallback cannot run Python or install packages; installing Python on your laptop does not add it to the sandbox. You can [continue to the next chapter](./remember-definitions) if you do not want to set up a local container or VM yet.
+Python needs a sandbox that runs real binaries. For local development, start a Docker-compatible daemon and run `docker info` to verify it is reachable before restarting `npm run dev`. orcel also supports [microsandbox](../sandbox#microsandbox) on compatible hosts. The `just-bash` fallback cannot run Python or install packages; installing Python on your laptop does not add it to the sandbox. You can [continue to the next chapter](./remember-definitions) if you do not want to set up a local container or VM yet.
 
-The default kaf images for Docker, microsandbox, and Vercel Sandbox include Python, but not matplotlib. Add this definition alongside `workspace/` to install matplotlib in a virtual environment. It uses the same environment for installation and chart execution, without changing the system Python:
+The default orcel images for Docker, microsandbox, and Vercel Sandbox include Python, but not matplotlib. Add this definition alongside `workspace/` to install matplotlib in a virtual environment. It uses the same environment for installation and chart execution, without changing the system Python:
 
 ```ts title="agent/sandbox/sandbox.ts"
-import { DefaultSandbox, defineSandbox } from "kaf/sandbox";
+import { DefaultSandbox, defineSandbox } from "orcel/sandbox";
 
 export const environment = DefaultSandbox.environment({
   prepare: async (sandbox) => {
@@ -58,7 +58,7 @@ export const environment = DefaultSandbox.environment({
 export default defineSandbox(() => environment.open());
 ```
 
-Preparation runs when kaf builds the sandbox template, and sessions inherit the installed environment. The first build needs network access to Ubuntu package repositories and PyPI. Keep the default network policy while following this example; a custom `deny-all` or allow-list policy must permit these downloads during preparation. The same definition uses Vercel Sandbox after deployment to Vercel.
+Preparation runs when orcel builds the sandbox template, and sessions inherit the installed environment. The first build needs network access to Ubuntu package repositories and PyPI. Keep the default network policy while following this example; a custom `deny-all` or allow-list policy must permit these downloads during preparation. The same definition uses Vercel Sandbox after deployment to Vercel.
 
 Restart `npm run dev` after adding the definition. Before asking for a chart, send this message in the TUI:
 
@@ -74,7 +74,7 @@ The built-in `bash`, `read_file`, and `write_file` tools already target the sand
 
 ```ts title="agent/tools/chart_series.ts"
 import { randomUUID } from "node:crypto";
-import { defineTool } from "kaf/tools";
+import { defineTool } from "orcel/tools";
 import { z } from "zod";
 
 export default defineTool({
@@ -156,7 +156,7 @@ Create this script in your project root. It asks for a chart through the same lo
 ```ts title="save-chart.ts"
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { Client } from "kaf/client";
+import { Client } from "orcel/client";
 import { z } from "zod";
 
 const host = process.argv[2];
@@ -219,7 +219,7 @@ This example caps charts at 1 MiB because tool outputs are persisted with sessio
 
 The sandbox has no `process.env` and no access to your app's secrets. The `run_sql` tool and sample database run in your app. You pass only the query results to the chart tool; the sandbox does not need database credentials.
 
-The local backend runs the sandbox on your laptop during `kaf dev`; on Vercel it runs on Vercel Sandbox. Lifecycle, backends, and network policy are in [Sandbox](../sandbox).
+The local backend runs the sandbox on your laptop during `orcel dev`; on Vercel it runs on Vercel Sandbox. Lifecycle, backends, and network policy are in [Sandbox](../sandbox).
 
 → Next: [Remember definitions](./remember-definitions)
 

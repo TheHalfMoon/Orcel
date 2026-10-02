@@ -1,7 +1,7 @@
 import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { memoryEntries } from "@kaf/catalog";
+import { memoryEntries } from "@orcel/catalog";
 
 interface RegistryFile {
   path: string;
@@ -14,7 +14,7 @@ interface RegistryItem {
   envVars?: Record<string, string>;
   files?: RegistryFile[];
   meta?: {
-    kaf?: {
+    orcel?: {
       setup?: { package?: string; bin?: string; args?: string[] };
     };
   };
@@ -52,10 +52,10 @@ for (const item of items) {
   await access(join(docsRoot, expectedPath));
 
   if (slug === "file") {
-    const setup = item.meta?.kaf?.setup;
+    const setup = item.meta?.orcel?.setup;
     if (
-      setup?.package !== "kaf" ||
-      setup.bin !== "kaf" ||
+      setup?.package !== "orcel" ||
+      setup.bin !== "orcel" ||
       JSON.stringify(setup.args) !== JSON.stringify(["integration", "setup", "file-memory"])
     ) {
       throw new Error(

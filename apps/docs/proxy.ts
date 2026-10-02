@@ -21,7 +21,7 @@ export const config = {
     "/llms.txt",
     "/llms-full.txt",
     "/rss.xml",
-    "/((?!api(?:/|$)|_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|kaf\\.tgz$|.*\\.(?!mdx?$)[^/]+$).*)",
+    "/((?!api(?:/|$)|_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|orcel\\.tgz$|.*\\.(?!mdx?$)[^/]+$).*)",
   ],
 };
 

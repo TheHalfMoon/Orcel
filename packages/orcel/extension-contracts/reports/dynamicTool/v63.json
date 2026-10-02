@@ -1,0 +1,16 @@
+{
+  "kind": "orcel-extension-capability-contract",
+  "capability": "dynamicTool",
+  "epoch": 63,
+  "sha256": "e23db116a2074509d033787f21fc1360886d656b22684c584b0e120831199851",
+  "exports": [
+    "DynamicToolEntry",
+    "DynamicToolEvents",
+    "DynamicToolResult",
+    "DynamicToolSet",
+    "auto",
+    "defineDurableCallback",
+    "defineDurableSchema",
+    "defineDynamic"
+  ]
+}

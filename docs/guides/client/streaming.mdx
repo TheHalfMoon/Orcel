@@ -1,6 +1,6 @@
 ---
 title: "Streaming"
-description: "Consume kaf client stream events live, reconnect by event index, and aggregate turn results."
+description: "Consume orcel client stream events live, reconnect by event index, and aggregate turn results."
 ---
 
 Every `ClientSession.send()` call posts the turn, then reads the session's NDJSON (newline-delimited JSON) event stream. `MessageResponse` gives you two ways to consume that stream, aggregating it with `result()` or iterating it live.
@@ -24,7 +24,7 @@ The cancellation result is discriminated by `status`: only `accepted` includes
 
 Cancellation does not replace stream consumption. Continue reading the response to observe its terminal `turn.cancelled` and `session.waiting` boundary and to advance the client session cursor normally. Use `session.cancel({ turnId })` instead when you have only a fixed session handle and an observed turn ID.
 
-Between turns, `session.compact()` queues context compaction without sending model input. An accepted request reports the session id; consume the durable stream through the following `session.waiting` boundary before sending the next turn. `compaction.completed` confirms that summarization succeeded; without it, kaf preserves the previous history, including when the model returns an empty summary. A never-started session returns `no_active_session` as a successful no-op.
+Between turns, `session.compact()` queues context compaction without sending model input. An accepted request reports the session id; consume the durable stream through the following `session.waiting` boundary before sending the next turn. `compaction.completed` confirms that summarization succeeded; without it, orcel preserves the previous history, including when the model returns an empty summary. A never-started session returns `no_active_session` as a successful no-op.
 
 ```ts
 const compaction = await session.compact();
@@ -94,7 +94,7 @@ for await (const event of response) {
 }
 ```
 
-`message.appended`, `reasoning.appended`, and `action.input.appended` are incremental delta events. Each carries only its new text and existing stream coordinates. kaf may combine adjacent deltas for the same event type, stream coordinates, and tool `callId` while a durable stream write is in flight, but preserves their text and event ordering. The completed text forms, `message.completed` and `reasoning.completed`, carry the authoritative value for each finalized block and remain the compatibility path for clients that don't render deltas. A streamed tool input is complete when the matching validated call arrives in `actions.requested`.
+`message.appended`, `reasoning.appended`, and `action.input.appended` are incremental delta events. Each carries only its new text and existing stream coordinates. orcel may combine adjacent deltas for the same event type, stream coordinates, and tool `callId` while a durable stream write is in flight, but preserves their text and event ordering. The completed text forms, `message.completed` and `reasoning.completed`, carry the authoritative value for each finalized block and remain the compatibility path for clients that don't render deltas. A streamed tool input is complete when the matching validated call arrives in `actions.requested`.
 
 The default message reducer accumulates these events for you. A raw stream consumer can apply the same rule directly:
 
@@ -108,19 +108,19 @@ for await (const event of response) {
 }
 ```
 
-After reconnecting without local state, replay the earlier events or wait for the completed event instead of appending a later delta to an empty value. Apply the same rule to `reasoningDelta` and `inputTextDelta`. If a model provider fails after partial output and kaf retries the call, the durable stream keeps events from both attempts. A later completed event replaces provisional text only when the failed attempt did not already complete that block; the protocol has no attempt identity with which to retract earlier completed blocks.
+After reconnecting without local state, replay the earlier events or wait for the completed event instead of appending a later delta to an empty value. Apply the same rule to `reasoningDelta` and `inputTextDelta`. If a model provider fails after partial output and orcel retries the call, the durable stream keeps events from both attempts. A later completed event replaces provisional text only when the failed attempt did not already complete that block; the protocol has no attempt identity with which to retract earlier completed blocks.
 
-The kaf client validates the stream version on every connection. It accepts v21 through v26. v25 and v26 events already use the current delta-only `MessageStreamEvent` contract, and the client normalizes v21–v24 cumulative message and reasoning append events and v24 offset-based tool-input appends to it. This also applies when an automatic reconnect reaches a newer deployment. A missing or unsupported `x-kaf-stream-version` header fails the stream instead of treating unknown JSON as the current event type.
+The orcel client validates the stream version on every connection. It accepts v21 through v26. v25 and v26 events already use the current delta-only `MessageStreamEvent` contract, and the client normalizes v21–v24 cumulative message and reasoning append events and v24 offset-based tool-input appends to it. This also applies when an automatic reconnect reaches a newer deployment. A missing or unsupported `x-orcel-stream-version` header fails the stream instead of treating unknown JSON as the current event type.
 
 ## Handle event types
 
-Import event types from `kaf/client` when you want exhaustiveness or helpers. Events read from a stream are `MessageStreamEvent`: the same union, with the `meta` envelope guaranteed present.
+Import event types from `orcel/client` when you want exhaustiveness or helpers. Events read from a stream are `MessageStreamEvent`: the same union, with the `meta` envelope guaranteed present.
 
 `HandleMessageStreamEvent` remains available as a deprecated alias, so existing type imports continue to compile.
 
 ```ts
-import type { MessageStreamEvent } from "kaf/client";
-import { isCurrentTurnBoundaryEvent } from "kaf/client";
+import type { MessageStreamEvent } from "orcel/client";
+import { isCurrentTurnBoundaryEvent } from "orcel/client";
 
 function handleEvent(event: MessageStreamEvent) {
   console.log(event.meta.id, event.meta.at);
@@ -166,7 +166,7 @@ client-resolvable `http(s)` and `data:` URLs.
 
 `authorization.required` is different from the normal `session.waiting` boundary. It means a connection needs OAuth or another authorization challenge before the parked turn can continue. Chat UIs should render the authorization prompt, disable ordinary text input for that session, and persist the event with the rest of the chat history.
 
-The stream can emit an interim `session.waiting` while the authorization callback is pending. An active `send()` or `respond()` response stays attached across that parking boundary until the authorization resolves and the resumed turn reaches its next boundary. If you support refresh while an authorization prompt is pending, keep the session cursor from the started session and rehydrate the saved events on load; the callback or a structured decline resumes the same kaf session.
+The stream can emit an interim `session.waiting` while the authorization callback is pending. An active `send()` or `respond()` response stays attached across that parking boundary until the authorization resolves and the resumed turn reaches its next boundary. If you support refresh while an authorization prompt is pending, keep the session cursor from the started session and rehydrate the saved events on load; the callback or a structured decline resumes the same orcel session.
 
 ## Reconnection
 
@@ -236,7 +236,7 @@ for await (const event of session.stream({ follow: false })) {
 
 The first connection pins the bound to the tail the server reports at open time; events recorded afterward are not part of the read. Reconnects during the read keep that original bound, and the session's stored `streamIndex` still advances past the consumed events, so a follow-up `stream()` or `send()` picks up exactly where the bounded read ended. When the cursor is already at or past the tail, the iterator returns immediately without yielding.
 
-Because a tail-relative cursor cannot be bounded, `follow: false` throws when combined with a negative `startIndex`. It also fails if the server does not report the durable tail (an agent running an older kaf version).
+Because a tail-relative cursor cannot be bounded, `follow: false` throws when combined with a negative `startIndex`. It also fails if the server does not report the durable tail (an agent running an older orcel version).
 
 ## Snapshot a session
 
@@ -265,7 +265,7 @@ stream index after the captured prefix.
 A delegated subagent reports its progress on its own child session. The parent stream announces each child session with `agent.started`, whether the model called a subagent tool or a [workflow tool](/docs/tools/workflows#delegate-work-ctxagent) opened the session with `ctx.agent`. Pass the event to `agent()` on the parent's session handle to get the child's handle, then follow it with `stream()`:
 
 ```ts
-import { isCurrentTurnBoundaryEvent } from "kaf/client";
+import { isCurrentTurnBoundaryEvent } from "orcel/client";
 
 const session = client.sessions.attach(parentSessionId);
 const { events } = await session.snapshot();

@@ -15,7 +15,7 @@ Replace `stop()` with `cancel()` on the React, Vue, and Svelte bindings. Put exa
 ## Authoring API
 
 ```ts
-const agent = useKafAgent();
+const agent = useOrcelAgent();
 
 const sending = agent.send("Run the analysis");
 await agent.cancel();

@@ -81,7 +81,7 @@ function SandboxBridge(): JSX.Element {
 }
 
 /**
- * Shows the execution boundary between kaf's trusted app runtime and isolated sandbox.
+ * Shows the execution boundary between orcel's trusted app runtime and isolated sandbox.
  */
 export function AgentRuntimeDiagram(): JSX.Element {
   return (

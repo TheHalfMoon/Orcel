@@ -1,9 +1,9 @@
 import {
   ConnectionAuthorizationRequiredError,
   defineInteractiveAuthorization,
-} from "kaf/connections";
-import { defineTool } from "kaf/tools";
-import { always } from "kaf/tools/approval";
+} from "orcel/connections";
+import { defineTool } from "orcel/tools";
+import { always } from "orcel/tools/approval";
 import { z } from "zod";
 
 const tokens = new Map<string, string>();

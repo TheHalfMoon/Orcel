@@ -1,5 +1,5 @@
 ---
-issue: https://github.com/TheHalfMoon/kaf/issues/2347
+issue: https://github.com/TheHalfMoon/orcel/issues/2347
 status: implemented
 last_updated: "2026-08-31"
 ---
@@ -29,18 +29,18 @@ subagent source nodes ───┘                                ├─> compil
 ```
 
 Logical identity and physical storage are separate. A logical path selects an
-kaf slot and derives its public name. A backing binding says how to load that
+orcel slot and derives its public name. A backing binding says how to load that
 slot. `agent/tools/search.ts` and an immutable in-memory namespace registered
 at `tools/search.ts` therefore compile identically without pretending that the
 programmatic module exists on disk.
 
-The framework API is internal. Programmatic modules export ordinary public kaf
+The framework API is internal. Programmatic modules export ordinary public orcel
 definitions: `defineTool`, `defineDynamic`, `defineChannel`, `defineSandbox`,
 `defineAgent`, `defineInstrumentation`, and the existing connection, hook,
 schedule, instruction, and skill factories. Framework-only native tools use a
 closed internal definition variant so they do not carry fake throwing
 executors. Neither form constructs `Compiled*` or `Resolved*` records.
-Production runtime behavior continues to live in the `kaf` package; generated
+Production runtime behavior continues to live in the `orcel` package; generated
 module maps only bind statically reachable module namespaces.
 
 The compiled manifest, required bindings, persisted composition report,
@@ -51,9 +51,9 @@ owned by its explicit compiled source record. A losing or disabled source is
 owned by its self-contained composition entry. No second winner-owner index,
 kernel plan, or out-of-band origin table may exist.
 
-Every ordinary framework default is a first-class kaf primitive at a canonical
+Every ordinary framework default is a first-class orcel primitive at a canonical
 logical path, including the default `agent.ts`, sandbox, home page, and the
-kaf channel carrying the public health and info endpoints. Native execution
+orcel channel carrying the public health and info endpoints. Native execution
 may implement a selected primitive, but it may not create that primitive's
 presence independently of the source graph.
 Model-visible native behavior is keyed by a closed handling descriptor carried
@@ -68,10 +68,10 @@ dispatch system for tools.
 
 ## Current state
 
-The source-graph phase landed in [#2516](https://github.com/TheHalfMoon/kaf/pull/2516).
+The source-graph phase landed in [#2516](https://github.com/TheHalfMoon/orcel/pull/2516).
 Derived slot composition landed in
-[#2539](https://github.com/TheHalfMoon/kaf/pull/2539), and first-class memory now
-uses that boundary through [#2534](https://github.com/TheHalfMoon/kaf/pull/2534).
+[#2539](https://github.com/TheHalfMoon/orcel/pull/2539), and first-class memory now
+uses that boundary through [#2534](https://github.com/TheHalfMoon/orcel/pull/2534).
 Manifest v45 and agent-info v4 are current on `main`.
 
 Those changes completed source selection, binding, loading, route planning,
@@ -100,7 +100,7 @@ layers:
   effective `sandbox.ts` source;
 - the default agent config is synthesized inside normalization rather than
   selected as an `agent.ts` source;
-- the home page, public health endpoint, and `/kaf/v1/info` inspection
+- the home page, public health endpoint, and `/orcel/v1/info` inspection
   endpoint are native host routes that bypass channel source composition and
   use a second route-precedence system;
 - subagent composition results from `composeAgentSubagentSources` and
@@ -127,7 +127,7 @@ still infers semantics after resolution:
 - agent-info reconstructs `kernelEffects` from a hard-coded logical-slot table
   instead of the selected compiled tool.
 
-`final_output` is different: kaf creates it for one model call from that
+`final_output` is different: orcel creates it for one model call from that
 turn's output schema, so it has no selected source to carry metadata. Its
 terminal interception stays explicit and localized outside the source graph.
 
@@ -149,8 +149,8 @@ The complete work includes:
 - compile one effective manifest consumed by runtime, Nitro, bundling, and
   inspection;
 - migrate ordinary and native-handled framework tools, `connection_search`, the
-  kaf channel (carrying the callbacks, health, and info), the home channel,
-  the default sandbox, and the default `agent.ts` to programmatic kaf
+  orcel channel (carrying the callbacks, health, and info), the home channel,
+  the default sandbox, and the default `agent.ts` to programmatic orcel
   modules;
 - separate public primitive definitions, execution implementations, and native
   handling metadata so each ordinary default has one definition value;
@@ -258,7 +258,7 @@ A module may declare a non-empty `semanticRevision` when its source-wide
 revision intentionally covers unrelated modules. The compiled backing keeps
 both values: the source revision still authenticates registry loading, while
 selected-backing identity uses the module revision when present. The framework
-default sandbox uses an explicit stable token so unrelated kaf source changes
+default sandbox uses an explicit stable token so unrelated orcel source changes
 do not discard durable sandbox state.
 
 Registries are explicitly assembled, statically imported, and immutable before
@@ -593,12 +593,12 @@ through source composition:
 | `tools/task_update.ts`       | internal native tool + `dispatch`         | root node        | action: `task-update`; tasks mode; visibility: `delegated-task-child` |
 | `tools/task_cancel.ts`       | internal native tool + `dispatch`         | root node        | action: `task-cancel`; tasks mode; visibility: `root-session`         |
 | `tools/web_search.ts`        | `webSearch` sentinel + `provider-tool`    | every local node | materialized at eligible model calls                                  |
-| `channels/kaf.ts`            | `kafChannel` factory                      | root node        | complete `/kaf/v1` surface: protocol, callbacks, health, info         |
+| `channels/orcel.ts`            | `orcelChannel` factory                      | root node        | complete `/orcel/v1` surface: protocol, callbacks, health, info         |
 | `channels/home.ts`           | `defineChannel`                           | root node        | `GET` and `HEAD` at `/`                                               |
 
 Every identity above is replaceable and disableable through ordinary slot
-composition. `glob` and `grep` are published at `kaf/tools/glob` and
-`kaf/tools/grep` but never registered. Runtime-generated programs use an ordinary path-derived tool created with the provided
+composition. `glob` and `grep` are published at `orcel/tools/glob` and
+`orcel/tools/grep` but never registered. Runtime-generated programs use an ordinary path-derived tool created with the provided
 `workflow()` factory and existing `ctx.agent` target resolution; there is no framework workflow slot or sentinel. Authored `instrumentation.ts` likewise composes as an ordinary module slot with no
 framework default and no dedicated plan artifact. Native behavior outside
 these identities is limited to `final_output` and the closed host inventory.
@@ -612,7 +612,7 @@ continues to own model-loop and pending-input behavior. A native-handling
 descriptor does not justify a new `kernel/` subsystem.
 
 Each ordinary default has exactly one definition value. Its framework source
-module and its public `kaf/tools/<name>` subpath export import that same
+module and its public `orcel/tools/<name>` subpath export import that same
 value; there is no barrel export. Moving modules must
 preserve durable state key identity for todo, read-before-write, skill,
 connection-search, compaction, and task behavior. These boundaries hold
@@ -647,13 +647,13 @@ bypasses the total binding table.
 Author `bash`, `read_file`, `write_file`, `todo`, `web_fetch`, and
 `load_skill` once as public `defineTool` values with plain executors. Register
 those exact values at canonical paths and publish each at its own
-`kaf/tools/<name>` subpath. The `kaf/tools/defaults` barrel export is
-deleted. `glob` and `grep` are published the same way at `kaf/tools/glob` and
-`kaf/tools/grep` but are never registered as defaults.
+`orcel/tools/<name>` subpath. The `orcel/tools/defaults` barrel export is
+deleted. `glob` and `grep` are published the same way at `orcel/tools/glob` and
+`orcel/tools/grep` but are never registered as defaults.
 
 Their executors receive ordinary `ToolContext`. Remove the public/internal
 converter, duplicate resolved-definition constants and wrappers, and the
-`sourceId.startsWith("kaf:")` calling convention. Framework ownership comes
+`sourceId.startsWith("orcel:")` calling convention. Framework ownership comes
 from the binding, not a string prefix.
 
 `load_skill` already has a real executor. Delete its
@@ -770,12 +770,12 @@ remain filesystem resources and are not virtualized.
 ### Framework channels
 
 Register a root-only zero-argument factory returning
-`kafChannel({ auth: [vercelOidc(), localDev(), placeholderAuth()] })` at
-`channels/kaf.ts`. A factory preserves the current per-resolution lifecycle.
-The channel value owns the complete `/kaf/v1` surface as ordinary channel
+`orcelChannel({ auth: [vercelOidc(), localDev(), placeholderAuth()] })` at
+`channels/orcel.ts`. A factory preserves the current per-resolution lifecycle.
+The channel value owns the complete `/orcel/v1` surface as ordinary channel
 routes: the session protocol, the connection callbacks (GET and POST plus
 their legacy forms), the workflow callback, task input, the public health
-protocol at `/kaf/v1/health`, and the agent-info route at `/kaf/v1/info`.
+protocol at `/orcel/v1/health`, and the agent-info route at `/orcel/v1/info`.
 There is exactly one framework identity for that surface; no framework
 channel registers at a deeper logical path.
 
@@ -785,19 +785,19 @@ survives inside one channel: health stays publicly reachable while info, the
 callbacks, and the protocol routes keep the resolved channel auth policy. The
 definitions carry truthful HTTP adapter metadata and use the ordinary channel
 handler path, eliminating framework-only route construction and fetch
-dispatch. Data needed by the info handler comes from an kaf-owned context
+dispatch. Data needed by the info handler comes from an orcel-owned context
 provider — the effective compiled graph, binding owners, composition
 diagnostics, and selected tool descriptors — not a special source kind or
 build-time native route.
 
 Add a root framework channel module at `channels/home.ts` using ordinary
 `defineChannel`, `GET`, and `HEAD` values for the home page at `/`. Its
-metadata also comes from an kaf-owned context provider, and the default
+metadata also comes from an orcel-owned context provider, and the default
 preserves the current response body, status codes, and authentication
 behavior.
 
-The kaf channel and home compose as two slots. An authored `channels/kaf.ts`
-— typically another `kafChannel(...)` call with different auth — replaces the
+The orcel channel and home compose as two slots. An authored `channels/orcel.ts`
+— typically another `orcelChannel(...)` call with different auth — replaces the
 complete default surface, and a disable sentinel removes it; health, info,
 and the callbacks are not independently replaceable. This is an intentional
 pre-1.0 breaking change. A replacement owns its implementation, but the
@@ -848,7 +848,7 @@ path must have identical normalized options or fail with
 `compile/channel-cors-conflict`; identical options produce one derived
 `OPTIONS` record.
 
-Replacing or disabling `channels/home.ts` or `channels/kaf.ts` is source-slot
+Replacing or disabling `channels/home.ts` or `channels/orcel.ts` is source-slot
 composition. An unrelated channel that declares the same concrete route
 follows route ordering and does not gain source precedence.
 
@@ -866,15 +866,15 @@ limited to four typed categories:
 The application and development hosts register or reserve only these inventoried
 HTTP entries:
 
-- `ALL KAF_WORKFLOW_FLOW_ROUTE_PATH`;
-- `GET KAF_DEV_RUNTIME_ARTIFACTS_ROUTE_PATH`;
-- `GET` and `POST KAF_DEV_RUNTIME_ARTIFACTS_REBUILD_ROUTE_PATH`;
-- `POST KAF_DEV_RUNTIME_ARTIFACTS_SUSPEND_ROUTE_PATH`;
-- `POST KAF_DEV_RUNTIME_ARTIFACTS_RESUME_ROUTE_PATH`;
-- `ALL KAF_DEV_WORKFLOW_WORLD_ROUTE_PATH`;
-- `ALL KAF_DEV_WORKFLOW_STREAM_ROUTE_PATH`;
-- `POST KAF_DEV_DISPATCH_SCHEDULE_ROUTE_PATTERN`;
-- reservation-only `ALL KAF_PRODUCTION_CRON_ROUTE_PATTERN`.
+- `ALL ORCEL_WORKFLOW_FLOW_ROUTE_PATH`;
+- `GET ORCEL_DEV_RUNTIME_ARTIFACTS_ROUTE_PATH`;
+- `GET` and `POST ORCEL_DEV_RUNTIME_ARTIFACTS_REBUILD_ROUTE_PATH`;
+- `POST ORCEL_DEV_RUNTIME_ARTIFACTS_SUSPEND_ROUTE_PATH`;
+- `POST ORCEL_DEV_RUNTIME_ARTIFACTS_RESUME_ROUTE_PATH`;
+- `ALL ORCEL_DEV_WORKFLOW_WORLD_ROUTE_PATH`;
+- `ALL ORCEL_DEV_WORKFLOW_STREAM_ROUTE_PATH`;
+- `POST ORCEL_DEV_DISPATCH_SCHEDULE_ROUTE_PATTERN`;
+- reservation-only `ALL ORCEL_PRODUCTION_CRON_ROUTE_PATTERN`.
 
 The schedule/cron bridge and process-ready handshake remain typed host
 capabilities; they are not fabricated as ordinary agent channel sources. Any
@@ -971,9 +971,9 @@ it from the vacated logical path.
 ## Inspection
 
 Agent-info v3 landed with #2516, and first-class memory advanced the current
-payload to v4. Phase 2 does not replace that schema. The `/kaf/v1/info` route
+payload to v4. Phase 2 does not replace that schema. The `/orcel/v1/info` route
 continues to project from the effective compiled graph and remains an ordinary
-route of `channels/kaf.ts`.
+route of `channels/orcel.ts`.
 
 Agent-info reports:
 
@@ -1028,7 +1028,7 @@ projection, adapter kind, and route identity. They never serialize callbacks.
 Tool `hasAuth` remains false because arbitrary executor calls to `getToken()` or
 `requireAuth()` cannot be inferred statically.
 
-`kaf info --json` and Vercel summaries keep their narrower contracts but use
+`orcel info --json` and Vercel summaries keep their narrower contracts but use
 the same effective compiled resources. They do not grow session-specific
 dynamic outputs or pretend prepared native potential is a concrete model-call
 tool set.
@@ -1225,7 +1225,7 @@ The implementation is complete only when:
    identity.
 8. Connection search preserves filtering, auth, approval, failure, long-name,
    durable callback, and restart behavior without history scanning; home and
-   kaf-channel replacement, client payload validation for health and info,
+   orcel-channel replacement, client payload validation for health and info,
    and internal process readiness agree without a native fallback.
 9. Agent-info explains the owner and replacement history of every config,
    primitive, route, local subagent, remote agent, and dynamic resolver
@@ -1243,7 +1243,7 @@ The implementation is complete only when:
 
 ## Invariants and rejected alternatives
 
-- Logical paths remain kaf's only definition naming grammar. Backing, owner,
+- Logical paths remain orcel's only definition naming grammar. Backing, owner,
   and source ID never change normalization semantics.
 - One candidate composer chooses before definition execution. There is no
   per-primitive precedence, disable implementation, or separate subagent

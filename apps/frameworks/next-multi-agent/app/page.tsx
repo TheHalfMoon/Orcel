@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type ComponentProps } from "react";
-import { useKafAgent } from "kaf/react";
+import { useOrcelAgent } from "orcel/react";
 
 const AGENTS = [
   {
@@ -28,7 +28,7 @@ export default function Home() {
     <main>
       <header>
         <p>Next.js named agents fixture</p>
-        <h1>Three kaf agents mounted through one Next.js app</h1>
+        <h1>Three orcel agents mounted through one Next.js app</h1>
       </header>
       <section className="grid">
         {AGENTS.map((agent) => (
@@ -48,16 +48,16 @@ function AgentPanel({
     readonly name: AgentName;
   };
 }) {
-  const kaf = useKafAgent({ agent: agent.name });
+  const orcel = useOrcelAgent({ agent: agent.name });
   const [message, setMessage] = useState(agent.initialPrompt);
-  const isBusy = kaf.status === "submitted" || kaf.status === "streaming";
+  const isBusy = orcel.status === "submitted" || orcel.status === "streaming";
 
   const submit: ComponentProps<"form">["onSubmit"] = async (event) => {
     event.preventDefault();
     const trimmed = message.trim();
     if (trimmed.length === 0 || isBusy) return;
     setMessage("");
-    await kaf.send(trimmed);
+    await orcel.send(trimmed);
   };
 
   return (
@@ -67,14 +67,14 @@ function AgentPanel({
           <h2>{agent.name}</h2>
           <p>{agent.description}</p>
         </div>
-        <span>{kaf.status}</span>
+        <span>{orcel.status}</span>
       </div>
 
       <div className="messages">
-        {kaf.data.messages.length === 0 ? (
+        {orcel.data.messages.length === 0 ? (
           <p className="empty">Send a short prompt to the {agent.name} agent.</p>
         ) : (
-          kaf.data.messages.map((item) => (
+          orcel.data.messages.map((item) => (
             <div className="message" data-role={item.role} key={item.id}>
               <strong>{item.role}</strong>
               {item.parts.map((part, index) =>

@@ -11,14 +11,14 @@ The analytics assistant sent one message and got one answer. Three terms describ
 | **turn**    | One message you send and the work it triggers.    |
 | **step**    | A durable checkpoint within the turn.             |
 
-The session runs as one durable workflow, and kaf saves each turn's progress at every step. Completed steps never re-run; kaf replays the recorded result. A step interrupted mid-execution re-runs, so make non-idempotent side effects like charges or emails idempotent, or gate them with approval. A turn that's waiting on you (an approval, a question) resumes whenever you answer, even if that's much later.
+The session runs as one durable workflow, and orcel saves each turn's progress at every step. Completed steps never re-run; orcel replays the recorded result. A step interrupted mid-execution re-runs, so make non-idempotent side effects like charges or emails idempotent, or gate them with approval. A turn that's waiting on you (an approval, a question) resumes whenever you answer, even if that's much later.
 
 That's why the features in the rest of this tutorial work the way they do:
 
 - The metric glossary in Step 5 survives across turns. State is checkpointed at step boundaries, so it sticks.
 - The spend approval in Step 7 pauses the turn on your yes/no, then picks up exactly where it left off.
 
-You author capabilities, including tools, instructions, channels, and skills. kaf drives the model-to-tool loop and decides when a turn continues, waits, or ends. You never write that loop yourself.
+You author capabilities, including tools, instructions, channels, and skills. orcel drives the model-to-tool loop and decides when a turn continues, waits, or ends. You never write that loop yourself.
 
 → Next: [Step 3: Query sample data](./query-sample-data)
 

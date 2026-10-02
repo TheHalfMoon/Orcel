@@ -1,4 +1,4 @@
-import { defineDynamic, defineTool } from "kaf/tools";
+import { defineDynamic, defineTool } from "orcel/tools";
 
 export const OVERRIDE_TOKEN = "dynamic-override-ok-K2P7";
 

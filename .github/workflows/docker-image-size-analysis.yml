@@ -8,8 +8,8 @@ on:
       - reopened
       - synchronize
     paths:
-      - packages/kaf/Dockerfile
-      - packages/kaf/.dockerignore
+      - packages/orcel/Dockerfile
+      - packages/orcel/.dockerignore
       - .github/workflows/docker-image-size-analysis.yml
       - scripts/docker-image-size-budget.mjs
       - scripts/docker-image-size-report.mjs
@@ -47,7 +47,7 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          BASELINE_ROOT="$RUNNER_TEMP/kaf-docker-image-baseline"
+          BASELINE_ROOT="$RUNNER_TEMP/orcel-docker-image-baseline"
           rm -rf "$BASELINE_ROOT"
           git worktree add --detach "$BASELINE_ROOT" "$BASE_SHA"
           echo "root=$BASELINE_ROOT" >> "$GITHUB_OUTPUT"
@@ -57,9 +57,9 @@ jobs:
         id: baseline_image
         working-directory: ${{ steps.baseline.outputs.root }}
         run: |
-          if [[ -f packages/kaf/Dockerfile ]]; then
-            dockerfile=packages/kaf/Dockerfile
-            context=packages/kaf
+          if [[ -f packages/orcel/Dockerfile ]]; then
+            dockerfile=packages/orcel/Dockerfile
+            context=packages/orcel
           else
             # The fallback lets the relocation PR compare against the previous
             # root-level image definition. Future baselines use the package path.
@@ -68,34 +68,34 @@ jobs:
           fi
 
           docker buildx build \
-            --cache-from type=gha,scope=kaf-docker-image-size \
+            --cache-from type=gha,scope=orcel-docker-image-size \
             --file "$dockerfile" \
             --load \
             --platform linux/amd64 \
-            --tag kaf-docker-size:baseline \
+            --tag orcel-docker-size:baseline \
             "$context"
 
-          size_bytes="$(docker image inspect kaf-docker-size:baseline --format '{{.Size}}')"
+          size_bytes="$(docker image inspect orcel-docker-size:baseline --format '{{.Size}}')"
           echo "size_bytes=$size_bytes" >> "$GITHUB_OUTPUT"
 
       - name: Build current Docker image
         id: current_image
         run: |
           docker buildx build \
-            --cache-from type=gha,scope=kaf-docker-image-size \
-            --cache-to type=gha,mode=max,scope=kaf-docker-image-size \
-            --file packages/kaf/Dockerfile \
+            --cache-from type=gha,scope=orcel-docker-image-size \
+            --cache-to type=gha,mode=max,scope=orcel-docker-image-size \
+            --file packages/orcel/Dockerfile \
             --load \
             --platform linux/amd64 \
-            --tag kaf-docker-size:current \
-            packages/kaf
+            --tag orcel-docker-size:current \
+            packages/orcel
 
-          size_bytes="$(docker image inspect kaf-docker-size:current --format '{{.Size}}')"
+          size_bytes="$(docker image inspect orcel-docker-size:current --format '{{.Size}}')"
           echo "size_bytes=$size_bytes" >> "$GITHUB_OUTPUT"
 
       - name: Verify sandbox user workspace and sudo permissions
         run: |
-          docker run --rm kaf-docker-size:current bash -lc '
+          docker run --rm orcel-docker-size:current bash -lc '
             set -euo pipefail
             test "$(id -un)" = vercel-sandbox
             test "$(stat -c %U /workspace)" = vercel-sandbox
@@ -104,7 +104,7 @@ jobs:
             test "$(pnpm bin -g)" = "$PNPM_HOME/bin"
             test -d "$HOME/.local/bin"
             git init --quiet /workspace
-            git -C /workspace remote add origin https://github.com/TheHalfMoon/kaf.git
+            git -C /workspace remote add origin https://github.com/TheHalfMoon/orcel.git
             sudo -n true
             # Backends run authored commands through a non-interactive `bash -lc`
             # login shell. Exiting it must be silent and preserve the exit status.
@@ -128,7 +128,7 @@ jobs:
             --baseline-size-bytes "$BASELINE_SIZE_BYTES" \
             --current-label "pull request (${HEAD_SHA:0:7})" \
             --current-size-bytes "$CURRENT_SIZE_BYTES" \
-            --image-label packages/kaf/Dockerfile \
+            --image-label packages/orcel/Dockerfile \
             --output-json "$REPORT_JSON" \
             --output-markdown "$REPORT_MARKDOWN"
 
@@ -153,7 +153,7 @@ jobs:
           script: |
             const fs = require("node:fs");
 
-            const marker = "<!-- kaf-docker-image-size-analysis -->";
+            const marker = "<!-- orcel-docker-image-size-analysis -->";
             const reportBody = fs.readFileSync(process.env.REPORT_MARKDOWN, "utf8").trim();
             const body = `${marker}\n${reportBody}`;
 

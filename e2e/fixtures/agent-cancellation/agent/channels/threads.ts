@@ -1,4 +1,4 @@
-import { defineChannel, POST, type TurnPolicy } from "kaf/channels";
+import { defineChannel, POST, type TurnPolicy } from "orcel/channels";
 
 const AUTH = {
   attributes: { source: "cancellation-eval" },

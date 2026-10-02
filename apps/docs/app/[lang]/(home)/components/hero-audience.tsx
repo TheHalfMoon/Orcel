@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { KafLogoShader } from "./kaf-logo-shader";
+import { OrcelLogoShader } from "./orcel-logo-shader";
 import { InstallSwitcher, type InstallAudience } from "./install-switcher";
 
 export function HeroAudience({ tagline }: { tagline: string }) {
@@ -10,8 +10,8 @@ export function HeroAudience({ tagline }: { tagline: string }) {
   return (
     <>
       <div className="relative z-10 max-w-5xl text-center text-heading-40 md:text-heading-48 lg:text-heading-56">
-        <KafLogoShader audience={audience} />
-        <h1 className="relative text-balance w-full max-w-[10em]">Build durable agents with kaf</h1>
+        <OrcelLogoShader audience={audience} />
+        <h1 className="relative text-balance w-full max-w-[10em]">Build durable agents with orcel</h1>
       </div>
       <p className="text-balance pt-[0.35em] relative z-10 w-full text-center text-copy-16 text-gray-900 md:max-w-2xl md:text-copy-18 lg:text-copy-20">
         {tagline}

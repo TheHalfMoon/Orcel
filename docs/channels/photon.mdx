@@ -1,29 +1,29 @@
 ---
 title: Photon
-description: Connect an kaf agent to iMessage through Photon.
+description: Connect an orcel agent to iMessage through Photon.
 ---
 
 Use `photonIMessageChannel` to receive and reply to iMessages through a Photon project.
 
-Run `kaf add channel/photon-imessage` to create or use a Photon project and register
+Run `orcel add channel/photon-imessage` to create or use a Photon project and register
 your phone number. It then asks whether to configure Vercel Connect or portable
-credentials. With Vercel Connect, kaf signs you in and creates or links a Vercel
+credentials. With Vercel Connect, orcel signs you in and creates or links a Vercel
 project when needed, then creates the connector and configures Photon’s webhook
 through Connect. The channel resolves credentials lazily when
 the adapter first initializes:
 
 ```ts title="agent/channels/photon.ts"
 import { connectPhotonCredentials } from "@vercel/connect/eve";
-import { photonIMessageChannel } from "kaf/channels/photon";
+import { photonIMessageChannel } from "orcel/channels/photon";
 
 export default photonIMessageChannel({
   credentials: connectPhotonCredentials("photon/my-agent"),
 });
 ```
 
-The default webhook route is `/kaf/v1/photon`. The channel verifies forwarded
+The default webhook route is `/orcel/v1/photon`. The channel verifies forwarded
 webhooks with same-project Vercel OIDC by default, derives user auth from each
-message author, marks accepted messages as read, and continues the same kaf
+message author, marks accepted messages as read, and continues the same orcel
 session for every message in an iMessage conversation. A new accepted message
 steers the active turn. Steering can interrupt pending model generation before
 answer output or local tool execution begins. Executing tools finish first;
@@ -53,12 +53,12 @@ trusted-forwarder verifier.
 ## Other hosts
 
 For a host without Vercel Connect, choose **Use portable credentials** during
-`kaf add channel/photon-imessage`. kaf scaffolds the channel and writes
+`orcel add channel/photon-imessage`. orcel scaffolds the channel and writes
 `IMESSAGE_PROJECT_ID` and `IMESSAGE_PROJECT_SECRET` to `.env.local`.
 
 After deploying the agent:
 
-1. Create a Photon webhook for your public `https://…/kaf/v1/photon` URL.
+1. Create a Photon webhook for your public `https://…/orcel/v1/photon` URL.
 2. Copy its signing secret into `IMESSAGE_WEBHOOK_SECRET`.
 3. Set `IMESSAGE_PROJECT_ID`, `IMESSAGE_PROJECT_SECRET`, and
    `IMESSAGE_WEBHOOK_SECRET` in the host’s encrypted environment variables.
@@ -66,7 +66,7 @@ After deploying the agent:
 To configure the channel by hand, use lazy environment-backed credentials:
 
 ```ts title="agent/channels/photon.ts"
-import { photonIMessageChannel } from "kaf/channels/photon";
+import { photonIMessageChannel } from "orcel/channels/photon";
 
 export default photonIMessageChannel({
   async credentials() {

@@ -46,7 +46,7 @@ export function useSiteSeo(options?: { title?: string; description?: string; pat
       {
         name: "keywords",
         content:
-          "Kaf, Nuxt, personal agent, AI assistant, Better Auth, Slack, iMessage, Linear, template",
+          "Orcel, Nuxt, personal agent, AI assistant, Better Auth, Slack, iMessage, Linear, template",
       },
     ],
     script: [

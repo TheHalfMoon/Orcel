@@ -19,7 +19,7 @@ Add `agent/instrumentation/otel.ts` with an explicit metadata-only policy
 before moving exporters:
 
 ```ts title="agent/instrumentation/otel.ts"
-import { otel } from "kaf/instrumentation/otel";
+import { otel } from "orcel/instrumentation/otel";
 
 export default otel({
   functionId: "support-agent",
@@ -47,7 +47,7 @@ pnpm add @vercel/otel
 
 ```ts title="agent/instrumentation/honeycomb.ts"
 import { OTLPHttpProtoTraceExporter } from "@vercel/otel";
-import { otelIntegration } from "kaf/instrumentation/otel";
+import { otelIntegration } from "orcel/instrumentation/otel";
 
 export default otelIntegration({
   exportPolicy: {
@@ -64,7 +64,7 @@ export default otelIntegration({
 
 The destination policy preserves metadata-only export even if the shared
 OpenTelemetry policy is widened later. Add another file for each additional
-destination; kaf combines them into one pipeline.
+destination; orcel combines them into one pipeline.
 
 ## Move runtime context and lifecycle events
 
@@ -80,16 +80,16 @@ Use this mapping when splitting the old definition:
 
 Move `events["step.started"]` to the destination that needs those attributes;
 see [Add runtime context](/docs/observability/otel#add-runtime-context). For
-kaf lifecycle events, create a separate file with `defineInstrumentation(...)`;
+orcel lifecycle events, create a separate file with `defineInstrumentation(...)`;
 see
 [Instrumentation](/docs/observability/instrumentation).
 
 ## Verify the migration
 
-Run `kaf build`. A remaining `agent/instrumentation.ts` fails the build with a
+Run `orcel build`. A remaining `agent/instrumentation.ts` fails the build with a
 message directing you to the instrumentation directory.
 
-New kaf deployments automatically sample 100% of requests. Existing Vercel
+New orcel deployments automatically sample 100% of requests. Existing Vercel
 deployments need project sampling configured before you verify them. See
 [Enable tracing on Vercel](/docs/observability/agent-runs#enable-tracing-on-vercel).
 

@@ -1,0 +1,321 @@
+/**
+ * Builders for the framework's reserved `$orcel.*` workflow attributes.
+ *
+ * Each builder returns a plain `Record<string, string | number | undefined>`
+ * suitable for `setOrcelAttributes` from
+ * {@link "#runtime/attributes/emit.js" }. Builders are intentionally
+ * pure data → data transforms: they hold zero dependencies on the
+ * workflow runtime so the workflow body, step bodies, and tests can
+ * all call them identically.
+ *
+ * `$orcel.*` is the framework-owned attribute namespace. Authored code
+ * never emits these tags directly — they describe the structural shape
+ * of a session/turn/subagent run so dashboards can stitch a tree of
+ * workflow runs back together without inspecting their bodies.
+ *
+ * Tag inventory (recap):
+ * - `$orcel.type`         — `"session" | "turn" | "subagent"`
+ * - `$orcel.parent`       — sessionId of the **immediate** parent
+ * - `$orcel.root`         — sessionId of the **root** session in the chain
+ * - `$orcel.parent_call`  — parent task tool-call id (subagent rows only)
+ * - `$orcel.parent_turn`  — parent turn id that dispatched the subagent (subagent rows only)
+ * - `$orcel.subagent`     — active compiled graph node id (subagent rows only)
+ * - `$orcel.trigger`      — channel adapter kind (session/subagent rows)
+ * - `$orcel.title`        — truncated session title from the first user message
+ * - `$orcel.channel_request_id` — inbound channel request id
+ * - `$orcel.schedule`     — authored schedule that created the session
+ * - `$orcel.invocation_token` — channel-local continuation token for an external invocation
+ * - `$orcel.invocation_owner` — SHA-256 fingerprint of the invocation's initiating principal
+ * - `$orcel.is_trace_content_visible` — whether observability may read content-bearing workflow data
+ * - `$orcel.is_otel_trace_enabled` — whether hosted Agent Runs OTEL is enabled for the run
+ * - `$orcel.trace_id` — sampled trace seed available in the serialized context when
+ *   tagging the run. This is a trace link, not a session-wide trace identity or
+ *   confirmation that a destination retained the trace.
+ */
+
+import { CHANNEL_CONTEXT_KEY_NAME } from "#context/key-names.js";
+import {
+  ChannelRequestIdKey,
+  OtelTraceEnabledKey,
+  ScheduleIdKey,
+  SessionTitleKey,
+  SessionTraceSeedKey,
+  type SessionTraceSeed,
+} from "#context/keys.js";
+import type { OrcelAttributeValue } from "#runtime/attributes/normalize.js";
+import { isNonEmptyString } from "#shared/guards.js";
+import { shouldCaptureInstrumentationContent } from "#shared/instrumentation-content.js";
+import {
+  ConversationContextKey,
+  normalizeConversationContext,
+} from "#shared/conversation-context.js";
+import { isSampledTrace } from "#tracing/sampled-trace.js";
+import { resolveForwardedTraceSeed } from "#shared/forwarded-trace-policy.js";
+
+/**
+ * Active compiled graph node id for the session's agent. Returned by
+ * `createSessionStep` so workflow bodies don't have to load the bundle
+ * themselves. Equal to the framework root sentinel (`"__root__"`) for
+ * the root agent; equal to the subagent's compiled node id for
+ * delegated child runs. Tag emitters use this to populate
+ * `$orcel.subagent`.
+ */
+interface SessionIdentitySummary {
+  readonly nodeId: string;
+}
+
+/** Untyped channel adapter snapshot as it survives serialization. */
+interface SerializedChannelAdapter {
+  readonly kind?: unknown;
+}
+
+/** Untyped session parent snapshot as it survives serialization. */
+interface SerializedSessionParent {
+  readonly callId?: unknown;
+  readonly sessionId?: unknown;
+  readonly rootSessionId?: unknown;
+  readonly turn?: {
+    readonly id?: unknown;
+  };
+}
+
+/**
+ * Parent session lineage decoded from the serialized run context.
+ */
+interface SessionParentLineage {
+  readonly callId?: string;
+  readonly rootSessionId?: string;
+  readonly sessionId?: string;
+  readonly turnId?: string;
+}
+
+/**
+ * Reads the active channel kind from a deserialized context map.
+ * Returns `undefined` when the channel slot is missing or malformed —
+ * tag emission silently drops undefined values.
+ */
+export function readChannelKind(serializedContext: Record<string, unknown>): string | undefined {
+  const channel = serializedContext[CHANNEL_CONTEXT_KEY_NAME] as
+    | SerializedChannelAdapter
+    | undefined;
+  const kind = channel?.kind;
+  return isNonEmptyString(kind) ? kind : undefined;
+}
+
+export function isWorkflowTraceContentVisible(serializedContext: Record<string, unknown>): boolean {
+  const seed = serializedContext[SessionTraceSeedKey.name] as SessionTraceSeed | undefined;
+  if (seed !== undefined) {
+    const traceState = resolveForwardedTraceSeed(seed)!;
+    if (
+      traceState.forwardedTracePolicy !== undefined ||
+      readParentSessionId(serializedContext) !== undefined
+    ) {
+      const decision = traceState.decision;
+      return decision?.action === "record" && decision.recordInputs && decision.recordOutputs;
+    }
+  }
+  const conversation = normalizeConversationContext(serializedContext[ConversationContextKey.name]);
+  return shouldCaptureInstrumentationContent({
+    audience: conversation?.audience ?? "unknown",
+    environment: conversation?.environment ?? "production",
+  });
+}
+
+function isWorkflowOtelTraceEnabled(serializedContext: Record<string, unknown>): boolean {
+  return serializedContext[OtelTraceEnabledKey.name] === true;
+}
+
+export function readSessionTraceId(serializedContext: Record<string, unknown>): string | undefined {
+  const seed = serializedContext[SessionTraceSeedKey.name] as SessionTraceSeed | undefined;
+  if (seed === undefined) return undefined;
+  const traceState = resolveForwardedTraceSeed(seed)!;
+  if (!isSampledTrace(traceState)) return undefined;
+  return isNonEmptyString(seed.traceId) ? seed.traceId : undefined;
+}
+
+/**
+ * Reads parent session lineage from a deserialized context map. Returns
+ * an empty object for top-level runs or malformed delegated contexts.
+ */
+export function readParentLineage(
+  serializedContext: Record<string, unknown>,
+): SessionParentLineage {
+  const parent = serializedContext["orcel.parentSession"] as SerializedSessionParent | undefined;
+  const callId = parent?.callId;
+  const rootSessionId = parent?.rootSessionId;
+  const sessionId = parent?.sessionId;
+  const turnId = parent?.turn?.id;
+  return {
+    callId: isNonEmptyString(callId) ? callId : undefined,
+    rootSessionId: isNonEmptyString(rootSessionId) ? rootSessionId : undefined,
+    sessionId: isNonEmptyString(sessionId) ? sessionId : undefined,
+    turnId: isNonEmptyString(turnId) ? turnId : undefined,
+  };
+}
+
+/**
+ * Reads the immediate parent session id from a deserialized context map.
+ * Returns `undefined` when the run is a top-level session.
+ */
+export function readParentSessionId(
+  serializedContext: Record<string, unknown>,
+): string | undefined {
+  return readParentLineage(serializedContext).sessionId;
+}
+
+/**
+ * Reads the **root** session id from a deserialized context map.
+ *
+ * `orcel.parentSession.rootSessionId` is denormalized at every dispatch
+ * site (see {@link "#channel/types.js".SessionParent}) so a subagent
+ * five levels deep can still attribute itself to the top user-facing
+ * session without walking the chain. Returns `undefined` for top-level
+ * runs, which carry no verified `orcel.parentSession`.
+ */
+export function readRootSessionId(serializedContext: Record<string, unknown>): string | undefined {
+  return readParentLineage(serializedContext).rootSessionId;
+}
+
+/**
+ * Reads the channel request id minted by an inbound channel route.
+ * Returns `undefined` when the active run was not started from an
+ * inbound route, such as a schedule.
+ */
+export function readChannelRequestId(
+  serializedContext: Record<string, unknown>,
+): string | undefined {
+  const channelRequestId = serializedContext[ChannelRequestIdKey.name];
+  return isNonEmptyString(channelRequestId) ? channelRequestId : undefined;
+}
+
+/** Reads the schedule name inherited from a schedule dispatch scope. */
+export function readScheduleId(serializedContext: Record<string, unknown>): string | undefined {
+  const scheduleId = serializedContext[ScheduleIdKey.name];
+  return isNonEmptyString(scheduleId) ? scheduleId : undefined;
+}
+
+/** Reads the bounded title stored for a top-level session. */
+function readSessionTitle(serializedContext: Record<string, unknown>): string | undefined {
+  const title = serializedContext[SessionTitleKey.name];
+  return isNonEmptyString(title) ? title : undefined;
+}
+
+/**
+ * Maximum visible length (in code points) of a derived `$orcel.title`.
+ *
+ * Titles render as the first column of the dashboard's run table, so
+ * they get a tighter, display-oriented cap here than the generic
+ * runtime byte budget (`ORCEL_ATTRIBUTE_VALUE_MAX_BYTES`). Mostly-ASCII
+ * titles stay within that budget; a title dominated by multi-byte
+ * characters may still be further truncated by the runtime tag
+ * truncator, which is acceptable.
+ */
+export const ORCEL_SESSION_TITLE_MAX_CHARS = 125;
+
+/**
+ * Derives the `$orcel.title` value from the first user message of a
+ * top-level session.
+ *
+ * Returns `undefined` when no plain-text content is available; the
+ * attribute emitter strips undefined values. Multimodal messages
+ * (image/file parts) contribute only their text parts to keep the
+ * title human-readable. Long prompts are truncated to
+ * {@link ORCEL_SESSION_TITLE_MAX_CHARS} code points with a trailing
+ * ellipsis so the dashboard's title column stays readable.
+ */
+export function deriveSessionTitle(message: unknown): string | undefined {
+  const text = collectMessageText(message);
+  if (text === undefined || text.length === 0) {
+    return undefined;
+  }
+  // Collapse whitespace runs so multi-line user prompts produce a
+  // single-line title.
+  const collapsed = text.replace(/\s+/gu, " ").trim();
+  if (collapsed.length === 0) {
+    return undefined;
+  }
+  // Truncate by code point (not UTF-16 unit) so we never split a
+  // surrogate pair, and reserve one slot for the ellipsis.
+  const codePoints = Array.from(collapsed);
+  if (codePoints.length <= ORCEL_SESSION_TITLE_MAX_CHARS) {
+    return collapsed;
+  }
+  return `${codePoints.slice(0, ORCEL_SESSION_TITLE_MAX_CHARS - 1).join("")}…`;
+}
+
+function collectMessageText(message: unknown): string | undefined {
+  if (typeof message === "string") {
+    return message;
+  }
+  if (!Array.isArray(message)) {
+    return undefined;
+  }
+  const parts: string[] = [];
+  for (const part of message) {
+    if (
+      part &&
+      typeof part === "object" &&
+      (part as { type?: unknown }).type === "text" &&
+      typeof (part as { text?: unknown }).text === "string"
+    ) {
+      parts.push((part as { text: string }).text);
+    }
+  }
+  return parts.length > 0 ? parts.join(" ") : undefined;
+}
+
+/**
+ * Builds the `$orcel.*` attribute payload for a top-level session run
+ * (`workflowEntry` invoked without an `orcel.parentSession`).
+ *
+ * `$orcel.root` is intentionally omitted — the session row IS the root,
+ * so its own `workflowRunId` already identifies the chain root.
+ */
+export function buildSessionAttributes(input: {
+  readonly serializedContext: Record<string, unknown>;
+}): Record<string, OrcelAttributeValue> {
+  const isTraceContentVisible = isWorkflowTraceContentVisible(input.serializedContext);
+  const isOtelTraceEnabled = isWorkflowOtelTraceEnabled(input.serializedContext);
+  return {
+    "$orcel.channel_request_id": readChannelRequestId(input.serializedContext),
+    "$orcel.schedule": readScheduleId(input.serializedContext),
+    "$orcel.is_otel_trace_enabled": isOtelTraceEnabled,
+    "$orcel.is_trace_content_visible": isTraceContentVisible,
+    "$orcel.trace_id": readSessionTraceId(input.serializedContext),
+    "$orcel.type": "session",
+    "$orcel.trigger": readChannelKind(input.serializedContext),
+    "$orcel.title": readSessionTitle(input.serializedContext),
+  };
+}
+
+/**
+ * Builds the `$orcel.*` attribute payload for a delegated subagent root
+ * run (`workflowEntry` invoked with an `orcel.parentSession`).
+ *
+ * `$orcel.root` carries the **root** session id so the dashboard can
+ * group every descendant under one query: `search($orcel.root=<root>)`
+ * returns all turns and nested subagents under that user-facing
+ * session in a single round trip.
+ */
+export function buildSubagentRootAttributes(input: {
+  readonly identity: SessionIdentitySummary;
+  readonly parentCallId?: string;
+  readonly parentSessionId: string;
+  readonly parentTurnId?: string;
+  readonly rootSessionId: string;
+  readonly serializedContext: Record<string, unknown>;
+}): Record<string, OrcelAttributeValue> {
+  return {
+    "$orcel.channel_request_id": readChannelRequestId(input.serializedContext),
+    "$orcel.is_otel_trace_enabled": isWorkflowOtelTraceEnabled(input.serializedContext),
+    "$orcel.is_trace_content_visible": isWorkflowTraceContentVisible(input.serializedContext),
+    "$orcel.trace_id": readSessionTraceId(input.serializedContext),
+    "$orcel.type": "subagent",
+    "$orcel.parent": input.parentSessionId,
+    "$orcel.parent_call": input.parentCallId,
+    "$orcel.parent_turn": input.parentTurnId,
+    "$orcel.root": input.rootSessionId,
+    "$orcel.subagent": input.identity.nodeId,
+    "$orcel.trigger": readChannelKind(input.serializedContext),
+  };
+}

@@ -1,4 +1,4 @@
-import { defineTool, type ToolAuthProvider } from "kaf/tools";
+import { defineTool, type ToolAuthProvider } from "orcel/tools";
 import { z } from "zod";
 
 const workspaceLabelByMembership: Readonly<Record<string, string>> = {
@@ -11,7 +11,7 @@ const membershipByPrincipal: Readonly<Record<string, string>> = {
   "e2e-user-2": "membership:bob",
 };
 
-// Models a provider-side workspace membership store selected by kaf for the current principal.
+// Models a provider-side workspace membership store selected by orcel for the current principal.
 const userGrant: ToolAuthProvider = {
   credentialOwner: "user",
   async getToken({ principal }) {

@@ -18,7 +18,7 @@ import { assertCurrentPublicationTarget } from "../lib/publication-current.mjs";
 
 const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(appRoot, "../..");
-const packageRoot = join(repoRoot, "packages/kaf");
+const packageRoot = join(repoRoot, "packages/orcel");
 const packageJsonPath = join(packageRoot, "package.json");
 const artifactDirectory = join(appRoot, ".artifacts");
 const target = await resolveDeploymentTarget(process.env);
@@ -40,7 +40,7 @@ async function publishPackage({ sourceSha, ref, origin }) {
     await writeFile(packageJsonPath, `${JSON.stringify(preparedPackageJson, null, 2)}\n`);
     const tarball = await packPackage(packageRoot, preparedPackageJson.version, {
       ...process.env,
-      KAF_PACKAGE_DEPENDENCY_URL: dependencyUrl,
+      ORCEL_PACKAGE_DEPENDENCY_URL: dependencyUrl,
     });
     const sha256 = createHash("sha256").update(tarball).digest("hex");
     const manifest = {
@@ -65,7 +65,7 @@ async function publishPackage({ sourceSha, ref, origin }) {
 
 async function assertTargetIsCurrent(ref, sourceSha) {
   await assertCurrentPublicationTarget({
-    repository: "vercel/kaf",
+    repository: "vercel/orcel",
     ref,
     sourceSha,
     token: process.env.GITHUB_TOKEN,
@@ -164,7 +164,7 @@ async function writeLandingPage() {
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>kaf packages</title>
+    <title>orcel packages</title>
     <style>
       :root { color-scheme: light dark; }
       * { box-sizing: border-box; }
@@ -176,7 +176,7 @@ async function writeLandingPage() {
       @media (prefers-color-scheme: dark) { body { background: #000; color: #ededed; } .mark { background: #ededed; } p { color: #888; } }
     </style>
   </head>
-  <body><main><div class="mark" aria-hidden="true"></div><h1>kaf packages</h1><p>Package artifacts for kaf development.</p></main></body>
+  <body><main><div class="mark" aria-hidden="true"></div><h1>orcel packages</h1><p>Package artifacts for orcel development.</p></main></body>
 </html>
 `,
   );

@@ -1,6 +1,6 @@
 ---
 title: "Messages"
-description: "Send text, full turn payloads, client context, attachments, and HITL responses with kaf/client."
+description: "Send text, full turn payloads, client context, attachments, and HITL responses with orcel/client."
 ---
 
 Create a session with its first turn, then use the returned `ClientSession` for follow-ups. Each handle targets one durable session ID.
@@ -10,7 +10,7 @@ Create a session with its first turn, then use the returned `ClientSession` for 
 Pass a string to `send()` for plain text:
 
 ```ts
-import { Client } from "kaf/client";
+import { Client } from "orcel/client";
 
 const client = new Client({ host: "http://127.0.0.1:2000" });
 const { session, response } = await client.sessions.create({
@@ -103,7 +103,7 @@ await response.result();
 The stream confirms the turn with `message.received`. Its `data.message` remains the flattened
 summary for compatibility, and `data.parts` contains structured text and file metadata for clients
 that render attachments. File parts never include raw bytes or internal sandbox paths. See [Inbound
-attachments](../../sandbox#inbound-attachments) for how kaf stages byte-backed files in the session
+attachments](../../sandbox#inbound-attachments) for how orcel stages byte-backed files in the session
 sandbox and prepares them for each model call.
 
 ## Answer human input requests
@@ -111,7 +111,7 @@ sandbox and prepares them for each model call.
 Tools can pause for approval or ask the user a question. The stream emits `input.requested` with one or more requests. Reply through the same session with `inputResponses`:
 
 ```ts
-import type { InputRequest } from "kaf/client";
+import type { InputRequest } from "orcel/client";
 
 let pendingRequests: readonly InputRequest[] = [];
 
@@ -133,7 +133,7 @@ const resumed = await session.respond(
 await resumed.result();
 ```
 
-After kaf accepts the reply, the durable stream emits `input.resolved`. Its `resolutions` array includes each request's `requestId`, `kind`, terminal `outcome`, and the accepted `response` when the client provided one. Persist this authoritative event instead of relying on the submitting client's optimistic state when rebuilding message history.
+After orcel accepts the reply, the durable stream emits `input.resolved`. Its `resolutions` array includes each request's `requestId`, `kind`, terminal `outcome`, and the accepted `response` when the client provided one. Persist this authoritative event instead of relying on the submitting client's optimistic state when rebuilding message history.
 
 `send(message, options)` and `respond(inputResponses, options)` are separate operations. Put `clientContext`, `outputSchema`, headers, or stream options in the second argument to either method.
 

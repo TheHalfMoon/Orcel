@@ -1,5 +1,5 @@
-import { defineEval } from "kaf/evals";
-import { equals } from "kaf/evals/expect";
+import { defineEval } from "orcel/evals";
+import { equals } from "orcel/evals/expect";
 
 export default defineEval({
   description: "ctx.agents exposes the root copy and hidden declared specialists.",

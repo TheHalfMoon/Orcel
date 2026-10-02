@@ -47,26 +47,26 @@ export interface TemplateManifestEntry {
 
 export const templateManifest: TemplateManifestEntry[] = [
   {
-    slug: "kaf-chat-template",
+    slug: "orcel-chat-template",
     title: "Chat",
     setupPrompt:
-      "Set up the kaf chat template in my current workspace using https://github.com/TheHalfMoon/kaf/tree/main/apps/templates/kaf-chat-template as the source. Copy the project files, install its dependencies, and follow the repository README to configure it. Preserve the existing project if the workspace is not empty, and tell me about any required environment variables or manual setup steps.",
+      "Set up the orcel chat template in my current workspace using https://github.com/TheHalfMoon/orcel/tree/main/apps/templates/orcel-chat-template as the source. Copy the project files, install its dependencies, and follow the repository README to configure it. Preserve the existing project if the workspace is not empty, and tell me about any required environment variables or manual setup steps.",
     description:
-      "A persisted Next.js chat template for kaf, with per-user long-term memory, Better Auth, Drizzle, Neon, and Upstash Redis.",
-    sourceHref: "https://github.com/TheHalfMoon/kaf/tree/main/apps/templates/kaf-chat-template",
+      "A persisted Next.js chat template for orcel, with per-user long-term memory, Better Auth, Drizzle, Neon, and Upstash Redis.",
+    sourceHref: "https://github.com/TheHalfMoon/orcel/tree/main/apps/templates/orcel-chat-template",
     category: "Chat",
     model: "anthropic/claude-sonnet-5",
     integrations: ["Web chat", "Slack"],
     source: "Vercel Templates",
     github: {
       owner: "vercel",
-      repo: "kaf",
+      repo: "orcel",
       ref: "main",
-      pathPrefix: "apps/templates/kaf-chat-template",
+      pathPrefix: "apps/templates/orcel-chat-template",
     },
     files: [
       "agent/agent.ts",
-      "agent/channels/kaf.ts",
+      "agent/channels/orcel.ts",
       "agent/channels/slack.ts",
       "agent/instructions.md",
       "agent/memory/profile.ts",
@@ -75,26 +75,26 @@ export const templateManifest: TemplateManifestEntry[] = [
     ],
   },
   {
-    slug: "kaf-llm-council-template",
+    slug: "orcel-llm-council-template",
     title: "LLM council",
     setupPrompt:
-      "Set up the LLM council template in my current workspace using https://github.com/TheHalfMoon/kaf/tree/main/apps/templates/kaf-llm-council-template as the source. Copy the project files, install its dependencies, and follow the repository README to configure it. Preserve the existing project if the workspace is not empty, and tell me about any required environment variables or manual setup steps.",
+      "Set up the LLM council template in my current workspace using https://github.com/TheHalfMoon/orcel/tree/main/apps/templates/orcel-llm-council-template as the source. Copy the project files, install its dependencies, and follow the repository README to configure it. Preserve the existing project if the workspace is not empty, and tell me about any required environment variables or manual setup steps.",
     description:
       "A Next.js LLM council that sends one prompt to four models in parallel, streams their answers, and asks a judge model for a concise answer with per-model agreement scores.",
-    sourceHref: "https://github.com/TheHalfMoon/kaf/tree/main/apps/templates/kaf-llm-council-template",
+    sourceHref: "https://github.com/TheHalfMoon/orcel/tree/main/apps/templates/orcel-llm-council-template",
     category: "Example",
     model: "anthropic/claude-opus-5",
     integrations: ["Web chat"],
     source: "Vercel Templates",
     github: {
       owner: "vercel",
-      repo: "kaf",
+      repo: "orcel",
       ref: "main",
-      pathPrefix: "apps/templates/kaf-llm-council-template",
+      pathPrefix: "apps/templates/orcel-llm-council-template",
     },
     files: [
       "agent/agent.ts",
-      "agent/channels/kaf.ts",
+      "agent/channels/orcel.ts",
       "agent/instructions.md",
       "agent/lib/schemas.ts",
       "agent/subagents/claude/agent.ts",
@@ -104,18 +104,18 @@ export const templateManifest: TemplateManifestEntry[] = [
     ],
   },
   {
-    slug: "kaf-design-template",
+    slug: "orcel-design-template",
     title: "Design",
     setupPrompt:
-      "Set up the kaf design agent template in my current workspace using https://github.com/vercel-labs/kaf-design-template/tree/main as the source. Copy the project files, install its dependencies, and follow the repository README and BOOTSTRAP.md to configure it. Preserve the existing project if the workspace is not empty, tell me about any required environment variables or manual setup steps, and do not approve or publish the design corpus for me.",
+      "Set up the orcel design agent template in my current workspace using https://github.com/vercel-labs/orcel-design-template/tree/main as the source. Copy the project files, install its dependencies, and follow the repository README and BOOTSTRAP.md to configure it. Preserve the existing project if the workspace is not empty, tell me about any required environment variables or manual setup steps, and do not approve or publish the design corpus for me.",
     description:
       "A Slack design collaborator that answers from a reviewed, versioned corpus of your organization's approved design guidance.",
-    sourceHref: "https://github.com/vercel-labs/kaf-design-template/tree/main",
+    sourceHref: "https://github.com/vercel-labs/orcel-design-template/tree/main",
     category: "Collaboration",
     model: "anthropic/claude-sonnet-4.6",
     integrations: ["Slack"],
     source: "Vercel Templates",
-    github: { owner: "vercel-labs", repo: "kaf-design-template", ref: "main" },
+    github: { owner: "vercel-labs", repo: "orcel-design-template", ref: "main" },
     files: [
       "agent/agent.ts",
       "agent/channels/slack.ts",
@@ -131,22 +131,22 @@ export const templateManifest: TemplateManifestEntry[] = [
     ],
   },
   {
-    slug: "kaf-slack-agent",
+    slug: "orcel-slack-agent",
     title: "Slack",
     setupPrompt:
-      "Set up the kaf Slack agent template in my current workspace using https://github.com/TheHalfMoon/kaf/tree/main/apps/templates/kaf-slack-agent-template as the source. Copy the project files, install its dependencies, and follow the repository README to configure it. Preserve the existing project if the workspace is not empty, and tell me about any required environment variables or manual setup steps.",
+      "Set up the orcel Slack agent template in my current workspace using https://github.com/TheHalfMoon/orcel/tree/main/apps/templates/orcel-slack-agent-template as the source. Copy the project files, install its dependencies, and follow the repository README to configure it. Preserve the existing project if the workspace is not empty, and tell me about any required environment variables or manual setup steps.",
     description:
       "A Slack agent template with webhook handling, Vercel Connect, a starter agent, and an example tool ready to deploy on Vercel.",
-    sourceHref: "https://github.com/TheHalfMoon/kaf/tree/main/apps/templates/kaf-slack-agent-template",
+    sourceHref: "https://github.com/TheHalfMoon/orcel/tree/main/apps/templates/orcel-slack-agent-template",
     category: "Collaboration",
     model: "anthropic/claude-sonnet-5",
     integrations: ["Slack"],
     source: "Vercel Templates",
     github: {
       owner: "vercel",
-      repo: "kaf",
+      repo: "orcel",
       ref: "main",
-      pathPrefix: "apps/templates/kaf-slack-agent-template",
+      pathPrefix: "apps/templates/orcel-slack-agent-template",
     },
     files: [
       "agent/agent.ts",
@@ -157,18 +157,18 @@ export const templateManifest: TemplateManifestEntry[] = [
     ],
   },
   {
-    slug: "kody-kaf-template",
+    slug: "kody-orcel-template",
     title: "GitHub maintainer",
     setupPrompt:
-      "I want to build a GitHub maintainer agent with the kaf framework, using the Kody template. Read the setup instructions at https://agent-resources.dev/kody-kaf-template.md and follow them. They will cover deploying the template, building with kaf, how everything works overall, and more.",
+      "I want to build a GitHub maintainer agent with the orcel framework, using the Kody template. Read the setup instructions at https://agent-resources.dev/kody-orcel-template.md and follow them. They will cover deploying the template, building with orcel, how everything works overall, and more.",
     description:
       "Kody, a personal GitHub maintainer agent that emails you a weekly digest of open issues, acts on your email replies, summarizes new pull requests, answers @mentions, and works delegated Linear issues.",
-    sourceHref: "https://github.com/vercel-labs/kody-kaf-template/tree/main",
+    sourceHref: "https://github.com/vercel-labs/kody-orcel-template/tree/main",
     category: "Collaboration",
     model: "anthropic/claude-fable-5",
     integrations: ["GitHub", "Linear", "Resend"],
     source: "Vercel Templates",
-    github: { owner: "vercel-labs", repo: "kody-kaf-template", ref: "main" },
+    github: { owner: "vercel-labs", repo: "kody-orcel-template", ref: "main" },
     files: [
       "agent/agent.ts",
       "agent/channels/github.ts",
@@ -184,18 +184,18 @@ export const templateManifest: TemplateManifestEntry[] = [
     ],
   },
   {
-    slug: "kaf-software-factory-template",
+    slug: "orcel-software-factory-template",
     title: "Software factory",
     setupPrompt:
-      "I want to build a software factory with the kaf framework, using the Foreman template. Read the setup instructions at https://ask-foreman.dev/docs/getting-started and follow them. They cover deploying the template, connecting GitHub and Linear, running it locally, and how the pipeline works overall.",
+      "I want to build a software factory with the orcel framework, using the Foreman template. Read the setup instructions at https://ask-foreman.dev/docs/getting-started and follow them. They cover deploying the template, connecting GitHub and Linear, running it locally, and how the pipeline works overall.",
     description:
       "Foreman, a software factory that takes tasks from GitHub and Linear, runs each through classifier, analyst, implementer, and reviewer stations, and delivers a reviewed draft pull request on your repository.",
-    sourceHref: "https://github.com/vercel-labs/kaf-software-factory-template/tree/main",
+    sourceHref: "https://github.com/vercel-labs/orcel-software-factory-template/tree/main",
     category: "Collaboration",
     model: "openai/gpt-5.6-terra-fast",
     integrations: ["GitHub", "Linear"],
     source: "Vercel Templates",
-    github: { owner: "vercel-labs", repo: "kaf-software-factory-template", ref: "main" },
+    github: { owner: "vercel-labs", repo: "orcel-software-factory-template", ref: "main" },
     files: [
       "agent/agent.ts",
       "agent/channels/github.ts",
@@ -212,18 +212,18 @@ export const templateManifest: TemplateManifestEntry[] = [
     ],
   },
   {
-    slug: "kaf-sre-agent-template",
+    slug: "orcel-sre-agent-template",
     title: "Incident response",
     setupPrompt:
-      "I want to set up sre, an incident response agent built with the kaf framework. Read the setup instructions at https://github.com/vercel-labs/kaf-sre-agent-template/blob/main/docs/setup-for-agents.md and follow them. They cover creating and linking the Vercel project, connecting Slack, GitHub, Datadog, and Vercel, deploying the agent, and verifying it in Slack.",
+      "I want to set up sre, an incident response agent built with the orcel framework. Read the setup instructions at https://github.com/vercel-labs/orcel-sre-agent-template/blob/main/docs/setup-for-agents.md and follow them. They cover creating and linking the Vercel project, connecting Slack, GitHub, Datadog, and Vercel, deploying the agent, and verifying it in Slack.",
     description:
       "sre, an incident response agent that investigates alerts from Slack or webhooks using live Datadog, GitHub, and Vercel evidence, with read-only access by default.",
-    sourceHref: "https://github.com/vercel-labs/kaf-sre-agent-template/tree/main",
+    sourceHref: "https://github.com/vercel-labs/orcel-sre-agent-template/tree/main",
     category: "Collaboration",
     model: "openai/gpt-5.6-terra",
     integrations: ["Slack", "Datadog", "GitHub", "Vercel", "HTTP API"],
     source: "Vercel Templates",
-    github: { owner: "vercel-labs", repo: "kaf-sre-agent-template", ref: "main" },
+    github: { owner: "vercel-labs", repo: "orcel-sre-agent-template", ref: "main" },
     files: [
       "agent/agent.ts",
       "agent/channels/slack.ts",
@@ -240,18 +240,18 @@ export const templateManifest: TemplateManifestEntry[] = [
     ],
   },
   {
-    slug: "marketing-team-kaf-template",
+    slug: "marketing-team-orcel-template",
     title: "Marketing team",
     setupPrompt:
-      "I want to build a team of marketing agents with the kaf framework, using the marketing team template. Read the setup instructions at https://agent-resources.dev/marketing-team-kaf-template.md and follow them. They will cover deploying the template, building with kaf, how everything works overall, and more.",
+      "I want to build a team of marketing agents with the orcel framework, using the marketing team template. Read the setup instructions at https://agent-resources.dev/marketing-team-orcel-template.md and follow them. They will cover deploying the template, building with orcel, how everything works overall, and more.",
     description:
       "A team of marketing agents: a lead routes work to specialists for positioning, long-form content, social, SEO, and email, publishing through Notion, Typefully, and Resend.",
-    sourceHref: "https://github.com/vercel-labs/marketing-team-kaf-template/tree/main",
+    sourceHref: "https://github.com/vercel-labs/marketing-team-orcel-template/tree/main",
     category: "Marketing",
     model: "anthropic/claude-opus-5",
     integrations: ["Web chat", "Slack", "Notion", "Resend", "Typefully"],
     source: "Vercel Templates",
-    github: { owner: "vercel-labs", repo: "marketing-team-kaf-template", ref: "main" },
+    github: { owner: "vercel-labs", repo: "marketing-team-orcel-template", ref: "main" },
     files: [
       "agent/agent.ts",
       "agent/channels/slack.ts",
@@ -265,18 +265,18 @@ export const templateManifest: TemplateManifestEntry[] = [
     ],
   },
   {
-    slug: "sanity-copilot-kaf-template",
+    slug: "sanity-copilot-orcel-template",
     title: "Sanity copilot",
     setupPrompt:
-      "I want to build a Slack agent with the kaf framework, using the Sanity copilot template. Read the setup instructions at https://agent-resources.dev/sanity-copilot-kaf-template.md and follow them. They will cover deploying the template, building with kaf, how everything works overall, and more.",
+      "I want to build a Slack agent with the orcel framework, using the Sanity copilot template. Read the setup instructions at https://agent-resources.dev/sanity-copilot-orcel-template.md and follow them. They will cover deploying the template, building with orcel, how everything works overall, and more.",
     description:
       "A Slack-based Sanity copilot that queries and edits content with GROQ, inspects and shapes schemas, manages drafts and releases, and drafts long-form pieces into Notion.",
-    sourceHref: "https://github.com/vercel-labs/sanity-copilot-kaf-template/tree/main",
+    sourceHref: "https://github.com/vercel-labs/sanity-copilot-orcel-template/tree/main",
     category: "Collaboration",
     model: "anthropic/claude-sonnet-5",
     integrations: ["Slack", "Sanity", "Notion"],
     source: "Vercel Templates",
-    github: { owner: "vercel-labs", repo: "sanity-copilot-kaf-template", ref: "main" },
+    github: { owner: "vercel-labs", repo: "sanity-copilot-orcel-template", ref: "main" },
     files: [
       "agent/agent.ts",
       "agent/channels/slack.ts",
@@ -291,18 +291,18 @@ export const templateManifest: TemplateManifestEntry[] = [
     ],
   },
   {
-    slug: "typefully-kaf-template",
+    slug: "typefully-orcel-template",
     title: "Social media",
     setupPrompt:
-      "I want to build a Slack agent with the kaf framework, using the Typefully social media agent template. Read the setup instructions at https://agent-resources.dev/typefully-kaf-template.md and follow them. They will cover deploying the template, building with kaf, how everything works overall, and more.",
+      "I want to build a Slack agent with the orcel framework, using the Typefully social media agent template. Read the setup instructions at https://agent-resources.dev/typefully-orcel-template.md and follow them. They will cover deploying the template, building with orcel, how everything works overall, and more.",
     description:
       "A Slack-based social media agent that drafts posts and threads for X, LinkedIn, Threads, Bluesky, and Mastodon through Typefully, manages the publishing queue, and pulls briefs from Notion.",
-    sourceHref: "https://github.com/vercel-labs/typefully-kaf-template/tree/main",
+    sourceHref: "https://github.com/vercel-labs/typefully-orcel-template/tree/main",
     category: "Marketing",
     model: "anthropic/claude-sonnet-5",
     integrations: ["Slack", "Typefully", "Notion"],
     source: "Vercel Templates",
-    github: { owner: "vercel-labs", repo: "typefully-kaf-template", ref: "main" },
+    github: { owner: "vercel-labs", repo: "typefully-orcel-template", ref: "main" },
     files: [
       "agent/agent.ts",
       "agent/channels/slack.ts",
@@ -332,32 +332,32 @@ export const templateManifest: TemplateManifestEntry[] = [
     github: { owner: "muxinc", repo: "mux-video-agent", ref: "main" },
     files: [
       "agent/agent.ts",
-      "agent/channels/kaf.ts",
+      "agent/channels/orcel.ts",
       "agent/extensions/mux_video.ts",
       "agent/instructions.md",
-      "packages/kaf-video/extension/extension.ts",
-      "packages/kaf-video/extension/instructions.md",
-      "packages/kaf-video/extension/skills/workflows/SKILL.md",
-      "packages/kaf-video/extension/tools/create_asset.ts",
-      "packages/kaf-video/extension/tools/create_clip.ts",
-      "packages/kaf-video/extension/tools/run_workflow.ts",
+      "packages/orcel-video/extension/extension.ts",
+      "packages/orcel-video/extension/instructions.md",
+      "packages/orcel-video/extension/skills/workflows/SKILL.md",
+      "packages/orcel-video/extension/tools/create_asset.ts",
+      "packages/orcel-video/extension/tools/create_clip.ts",
+      "packages/orcel-video/extension/tools/run_workflow.ts",
     ],
   },
   {
     slug: "weather-agent-fixture",
     title: "Weather",
     setupPrompt:
-      "Set up the kaf weather agent in my current workspace using https://github.com/TheHalfMoon/kaf/tree/main/apps/fixtures/weather-agent as the source. Copy that fixture into a standalone project, install its dependencies, and make any minimal changes needed to run it outside the kaf monorepo. Preserve the existing project if the workspace is not empty, and tell me about any required environment variables or manual setup steps.",
+      "Set up the orcel weather agent in my current workspace using https://github.com/TheHalfMoon/orcel/tree/main/apps/fixtures/weather-agent as the source. Copy that fixture into a standalone project, install its dependencies, and make any minimal changes needed to run it outside the orcel monorepo. Preserve the existing project if the workspace is not empty, and tell me about any required environment variables or manual setup steps.",
     description:
-      "A small representative kaf app with agent config, instructions, a typed weather tool, and a markdown skill.",
-    sourceHref: "https://github.com/TheHalfMoon/kaf/tree/main/apps/fixtures/weather-agent",
+      "A small representative orcel app with agent config, instructions, a typed weather tool, and a markdown skill.",
+    sourceHref: "https://github.com/TheHalfMoon/orcel/tree/main/apps/fixtures/weather-agent",
     category: "Example",
     model: "anthropic/claude-sonnet-5",
     integrations: ["HTTP API"],
     source: "GitHub",
     github: {
       owner: "vercel",
-      repo: "kaf",
+      repo: "orcel",
       ref: "main",
       pathPrefix: "apps/fixtures/weather-agent",
     },

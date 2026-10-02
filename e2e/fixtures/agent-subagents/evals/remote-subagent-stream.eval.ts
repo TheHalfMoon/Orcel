@@ -2,9 +2,9 @@ import {
   isCurrentTurnBoundaryEvent,
   type AgentStartedStreamEvent,
   type MessageStreamEvent,
-} from "kaf/client";
-import { defineEval, type KafEvalContext, type KafEvalTurn } from "kaf/evals";
-import { satisfies } from "kaf/evals/expect";
+} from "orcel/client";
+import { defineEval, type OrcelEvalContext, type OrcelEvalTurn } from "orcel/evals";
+import { satisfies } from "orcel/evals/expect";
 
 import { WORKSPACE_FORWARDING_MARKER, WORKSPACE_LOOKUP_MESSAGE } from "../constants";
 
@@ -50,8 +50,8 @@ export default defineEval({
 
 /** The parent may finish its turn before recording the session; wait for it on the stream if so. */
 async function requireRemoteSession(
-  t: KafEvalContext,
-  turn: KafEvalTurn,
+  t: OrcelEvalContext,
+  turn: OrcelEvalTurn,
 ): Promise<AgentStartedStreamEvent> {
   for (const event of turn.events) {
     if (event.type === "agent.started" && event.data.name === "remote-loopback") return event;

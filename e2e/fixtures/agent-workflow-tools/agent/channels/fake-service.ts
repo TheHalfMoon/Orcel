@@ -1,4 +1,4 @@
-import { defineChannel, GET } from "kaf/channels";
+import { defineChannel, GET } from "orcel/channels";
 
 export default defineChannel({
   routes: [

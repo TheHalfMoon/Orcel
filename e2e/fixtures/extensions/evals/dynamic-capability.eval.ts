@@ -1,4 +1,4 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 // Token built by the extension's shared `extension/lib/brand` stamp() helper.
 const TOOLKIT_FORECAST_TOKEN = "toolkit-forecast-ok-9F4Q";

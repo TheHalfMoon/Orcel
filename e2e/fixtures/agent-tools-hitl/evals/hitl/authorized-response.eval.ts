@@ -1,4 +1,4 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 const MARKER = "authorized-response-e2e-Q7M4";
 const TOOL_NAME = "authorized-gate";

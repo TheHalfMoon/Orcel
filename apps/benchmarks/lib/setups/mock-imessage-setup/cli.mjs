@@ -7,7 +7,7 @@ import { authoringStatePath, recordAuthoringEvent } from "./authoring-world.mjs"
 
 const PROTOCOL_VERSION = 2;
 const STATE_FILE = authoringStatePath("mock-imessage-state");
-const EXPECTED_PHONE = process.env.KAF_AUTHORING_PHONE_NUMBER ?? "+15551234567";
+const EXPECTED_PHONE = process.env.ORCEL_AUTHORING_PHONE_NUMBER ?? "+15551234567";
 
 const { values } = parseArgs({
   options: {

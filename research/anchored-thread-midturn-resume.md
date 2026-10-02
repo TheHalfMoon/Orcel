@@ -1,5 +1,5 @@
 ---
-issue: https://github.com/TheHalfMoon/kaf/issues/982
+issue: https://github.com/TheHalfMoon/orcel/issues/982
 status: proposed
 last_updated: "2026-07-20"
 ---
@@ -63,6 +63,6 @@ With `apps/fixtures/agent-tui-client` on `openai/gpt-5.6-luna` +
 `reasoning: "medium"` (the pre-`8c161c54` fixture):
 
 ```sh
-cd packages/kaf && pnpm run build:js
+cd packages/orcel && pnpm run build:js
 PORT=3210 node test/tui-client/tui-connection-auth-user.ts
 ```

@@ -3,11 +3,11 @@ title: "Docker Sandbox"
 description: "Create local persistent containers from an image or Dockerfile."
 ---
 
-Docker environments can use kaf's default image, an existing OCI image, or `agent/sandbox/Dockerfile`.
+Docker environments can use orcel's default image, an existing OCI image, or `agent/sandbox/Dockerfile`.
 
 ```ts
-import { defineSandbox } from "kaf/sandbox";
-import { DockerSandbox } from "kaf/sandbox/docker";
+import { defineSandbox } from "orcel/sandbox";
+import { DockerSandbox } from "orcel/sandbox/docker";
 
 export const environment = DockerSandbox.image("ghcr.io/acme/agent@sha256:...");
 
@@ -18,7 +18,7 @@ Use `DockerSandbox.environment()` for the default image or `DockerSandbox.docker
 
 ## Environment options
 
-Image, pull policy, environment variables, and `prepare` belong to the reusable environment. During preparation, kaf starts a temporary container, hydrates managed resources, runs authored preparation, and commits the result as the recorded template image.
+Image, pull policy, environment variables, and `prepare` belong to the reusable environment. During preparation, orcel starts a temporary container, hydrates managed resources, runs authored preparation, and commits the result as the recorded template image.
 
 ## Live container options
 

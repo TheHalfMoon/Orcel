@@ -41,7 +41,7 @@ const snippets: Snippet[] = [
     lang: "markdown",
     NavIcon: IconFileText,
     description:
-      "An instructions.md file is a complete agent. Describe its role in Markdown, then run kaf.",
+      "An instructions.md file is a complete agent. Describe its role in Markdown, then run orcel.",
     code: `# Identity
 
 You are an expert weather assistant.
@@ -55,8 +55,8 @@ city in the world.`,
     lang: "typescript",
     NavIcon: IconSparkles,
     description:
-      "kaf uses a default model. Add agent.ts when you want to choose a model or configure the runtime.",
-    code: `import { defineAgent } from "kaf";
+      "orcel uses a default model. Add agent.ts when you want to choose a model or configure the runtime.",
+    code: `import { defineAgent } from "orcel";
 
 export default defineAgent({
   model: "openai/gpt-6-luna-fast",
@@ -87,7 +87,7 @@ gather evidence first, then answer.`,
     NavIcon: IconWorkflow,
     description:
       "Drop a TypeScript file in tools/ and the model can call it — the filename becomes the tool name, no registration required.",
-    code: `import { defineTool } from "kaf/tools";
+    code: `import { defineTool } from "orcel/tools";
 import z from "zod";
 
 export default defineTool({
@@ -113,7 +113,7 @@ export default defineTool({
     description:
       "Every agent includes an isolated sandbox. Add sandbox/sandbox.ts to swap in any backend or customize its setup.",
     code: `import { DefaultSandbox,
-  defineSandbox } from "kaf/sandbox";
+  defineSandbox } from "orcel/sandbox";
 
 export const environment =
   DefaultSandbox.environment({
@@ -136,7 +136,7 @@ export default defineSandbox(() =>
     NavIcon: IconMessage,
     description: "Add channel files to use the same agent in Slack, Discord, Teams, or the web.",
     code: `import { slackChannel } from
-  "kaf/channels/slack";
+  "orcel/channels/slack";
 
 export default slackChannel({
   botName: "my-agent",
@@ -151,7 +151,7 @@ export default slackChannel({
     description:
       "Connections handle auth for services like GitHub, Stripe, and Linear, so tools can call them without managing tokens.",
     code: `import { defineMcpClientConnection }
-  from "kaf/connections";
+  from "orcel/connections";
 
 export default defineMcpClientConnection({
   url: "https://mcp.linear.app/mcp",
@@ -166,7 +166,7 @@ export default defineMcpClientConnection({
     description:
       "Add subagents for specialized work. The main agent delegates tasks and combines the results.",
     code: `import { defineAgent } from
-  "kaf";
+  "orcel";
 
 export default defineAgent({
   description: "Investigate questions",
@@ -197,8 +197,8 @@ digest for their saved cities.`,
     NavIcon: IconFileText,
     description:
       "Evals run the agent through real sessions and score the result, so you can catch regressions as it evolves.",
-    code: `import { defineEval } from "kaf/evals";
-import { includes } from "kaf/evals/expect";
+    code: `import { defineEval } from "orcel/evals";
+import { includes } from "orcel/evals/expect";
 
 export default defineEval({
   async test(t) {

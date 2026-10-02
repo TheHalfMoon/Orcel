@@ -76,7 +76,7 @@ export function getPendingChallenge(connectionName: string) {
   return challenge;
 }
 
-export async function resumeKafAuthorization(webhookUrl: string) {
+export async function resumeOrcelAuthorization(webhookUrl: string) {
   await fetch(webhookUrl, {
     method: "GET",
     credentials: "include",
@@ -90,7 +90,7 @@ export async function resolveAuthorizationChallenge(connectionName: string) {
   }
 
   if (challenge.webhookUrl) {
-    await resumeKafAuthorization(challenge.webhookUrl);
+    await resumeOrcelAuthorization(challenge.webhookUrl);
   }
 
   const next = new Map(challengesByName.value);

@@ -1,6 +1,6 @@
 import { arcanaMemory } from "@kybernesis/arcana/memory";
-import { defineMemory } from "kaf/memory";
-import { byPrincipal } from "kaf/memory/scope";
+import { defineMemory } from "orcel/memory";
+import { byPrincipal } from "orcel/memory/scope";
 
 export default defineMemory({
   description: "Recall and manage durable context for the current user.",

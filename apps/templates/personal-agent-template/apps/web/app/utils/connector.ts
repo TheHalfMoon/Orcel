@@ -1,4 +1,4 @@
-import type { ConnectorState, ParsedTestResult } from "#kaf/types/connector";
+import type { ConnectorState, ParsedTestResult } from "#orcel/types/connector";
 
 export function getFetchErrorMessage(error: unknown) {
   if (error && typeof error === "object" && "data" in error) {

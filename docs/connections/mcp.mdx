@@ -1,11 +1,11 @@
 ---
 title: "MCP Connections"
-description: "Connect an kaf agent to a remote MCP server, authorize it with Vercel Connect or static credentials, and control which tools the model can discover."
+description: "Connect an orcel agent to a remote MCP server, authorize it with Vercel Connect or static credentials, and control which tools the model can discover."
 ---
 
-MCP connections point kaf at a remote MCP server you do not author. The server publishes its tools and schemas, and kaf exposes matching tools to the model through `connection_search`.
+MCP connections point orcel at a remote MCP server you do not author. The server publishes its tools and schemas, and orcel exposes matching tools to the model through `connection_search`.
 
-Use MCP when the service already has an MCP server, when the server owns tool schemas dynamically, or when one connection should expose a family of related remote tools. Use an [OpenAPI connection](./openapi) instead when the service publishes an HTTP API contract and you want kaf to generate one tool per operation.
+Use MCP when the service already has an MCP server, when the server owns tool schemas dynamically, or when one connection should expose a family of related remote tools. Use an [OpenAPI connection](./openapi) instead when the service publishes an HTTP API contract and you want orcel to generate one tool per operation.
 
 ## Define an MCP connection
 
@@ -13,7 +13,7 @@ Create one file under `agent/connections/`. The filename becomes the runtime con
 
 ```ts title="agent/connections/linear.ts"
 import { connect } from "@vercel/connect/eve";
-import { defineMcpClientConnection } from "kaf/connections";
+import { defineMcpClientConnection } from "orcel/connections";
 
 export default defineMcpClientConnection({
   url: "https://mcp.linear.app/mcp",
@@ -26,7 +26,7 @@ The `url` must speak Streamable HTTP or SSE. Write the `description` for the mod
 
 ## Configure protocol discovery
 
-kaf discovers the server's MCP protocol by default. If a server requires the older `initialize` handshake, disable discovery for that connection:
+orcel discovers the server's MCP protocol by default. If a server requires the older `initialize` handshake, disable discovery for that connection:
 
 ```ts
 export default defineMcpClientConnection({
@@ -42,7 +42,7 @@ With `protocolVersionDiscovery: false`, the client skips `server/discover` and s
 
 For OAuth-backed MCP servers, use the shared [Vercel Connect flow](../connections#interactive-oauth-via-vercel-connect), then pass the returned connector UID to `connect()`. Keep the MCP runtime URL and Connect service identifier distinct. For example, Linear uses `https://mcp.linear.app/mcp` as the MCP endpoint and `mcp.linear.app` when creating the connector.
 
-`connect("...")` is user-scoped by default and requires an authenticated user on the active kaf session. Use `connect({ connector, principalType: "app" })` when the server should act as the agent instead. The connections overview covers connector setup, session requirements, app and user scope, callback behavior, and troubleshooting.
+`connect("...")` is user-scoped by default and requires an authenticated user on the active orcel session. Use `connect({ connector, principalType: "app" })` when the server should act as the agent instead. The connections overview covers connector setup, session requirements, app and user scope, callback behavior, and troubleshooting.
 
 ## Static tokens and headers
 
@@ -53,7 +53,7 @@ MCP connections accept the shared connection `auth` and `headers` options. Use `
 Some MCP servers require arguments that belong to the application rather than the model. For example, UCP servers expect the agent profile in `arguments.meta` on every tool call. Configure those values with `toolCall.providedArguments`:
 
 ```ts title="agent/connections/storefront.ts"
-import { defineMcpClientConnection } from "kaf/connections";
+import { defineMcpClientConnection } from "orcel/connections";
 
 const profileUrl = "https://agent.example.com/.well-known/ucp";
 
@@ -74,7 +74,7 @@ export default defineMcpClientConnection({
 
 Values may be JSON values, promises, or callbacks. Callbacks receive the active session context, the bare remote `toolName`, and a replay-stable `callId` that is unique to the tool call. Use `callId` when the remote server needs an idempotency key.
 
-kaf treats configured keys as application-owned: it removes them from every remote tool's model-facing input schema and adds their resolved values immediately before execution. They apply to every tool call on the connection and replace any conflicting model value. Approval policies continue to receive only the model-authored input.
+orcel treats configured keys as application-owned: it removes them from every remote tool's model-facing input schema and adds their resolved values immediately before execution. They apply to every tool call on the connection and replace any conflicting model value. Approval policies continue to receive only the model-authored input.
 
 ## No auth
 
@@ -86,7 +86,7 @@ MCP servers can expose broad read and write surfaces. Narrow what the model can 
 
 ```ts title="agent/connections/linear.ts"
 import { connect } from "@vercel/connect/eve";
-import { defineMcpClientConnection } from "kaf/connections";
+import { defineMcpClientConnection } from "orcel/connections";
 
 export default defineMcpClientConnection({
   url: "https://mcp.linear.app/mcp",
@@ -109,7 +109,7 @@ A remote MCP server usually mixes read tools with destructive or publishing ones
 This connection always gates deletes, gates a publish only when the call actually schedules a post, and lets everything else through:
 
 ```ts title="agent/connections/social.ts"
-import { defineMcpClientConnection } from "kaf/connections";
+import { defineMcpClientConnection } from "orcel/connections";
 
 // Bare tool names whose effects are irreversible — always gate these.
 const DELETE_TOOLS = ["delete_draft", "delete_thread"];
@@ -150,7 +150,7 @@ Return `"user-approval"` (or `true`) to pause for a person and `"not-applicable"
 
 ## Control result size
 
-kaf sends an MCP tool's returned content to the model as the tool result. MCP connections do not expose a per-result transform equivalent to an authored tool's [`toModelOutput`](/docs/tools#shape-what-the-model-sees-with-tomodeloutput).
+orcel sends an MCP tool's returned content to the model as the tool result. MCP connections do not expose a per-result transform equivalent to an authored tool's [`toModelOutput`](/docs/tools#shape-what-the-model-sees-with-tomodeloutput).
 
 When a remote tool returns more data than the model needs, narrow the result at the MCP server. Prefer a purpose-built search or summary tool, or return a stable handle that another call can use to fetch a smaller slice. If you do not control the server and an equivalent upstream API is available, replace only that operation with an authored tool that stores the full payload outside model context and projects the needed fields through `toModelOutput`. Block the original MCP operation through [`tools.block`](#tool-filters) so the model does not see duplicate tools.
 

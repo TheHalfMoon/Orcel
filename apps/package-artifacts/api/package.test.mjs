@@ -10,7 +10,7 @@ const sha = "a".repeat(40);
 const manifest = {
   sourceSha: sha,
   version: `0.33.0+main.${sha}`,
-  tarball: `https://pkg.kaf.dev/${sha}/kaf.tgz`,
+  tarball: `https://pkg.orcel.dev/${sha}/orcel.tgz`,
   sha256: "b".repeat(64),
 };
 
@@ -28,7 +28,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   get.mockImplementation(async (pathname) => ({
     stream: new Blob([
-      pathname.endsWith("kaf.tgz") ? "package bytes" : JSON.stringify(manifest),
+      pathname.endsWith("orcel.tgz") ? "package bytes" : JSON.stringify(manifest),
     ]).stream(),
   }));
 });
@@ -62,7 +62,7 @@ describe("package route", () => {
   test("serves SHA tarballs but not SHA manifests", async () => {
     const artifact = response();
     await handler({ query: { ref: sha } }, artifact);
-    expect(get).toHaveBeenLastCalledWith(`packages/${sha}/kaf.tgz`, { access: "private" });
+    expect(get).toHaveBeenLastCalledWith(`packages/${sha}/orcel.tgz`, { access: "private" });
     expect(artifact.setHeader).toHaveBeenCalledWith(
       "Cache-Control",
       "public, max-age=31536000, immutable",
@@ -78,7 +78,7 @@ describe("package route", () => {
   test("rejects pointers that redirect outside the package host", async () => {
     get.mockResolvedValueOnce({
       stream: new Blob([
-        JSON.stringify({ ...manifest, tarball: "https://example.com/kaf.tgz" }),
+        JSON.stringify({ ...manifest, tarball: "https://example.com/orcel.tgz" }),
       ]).stream(),
     });
     const res = response();

@@ -47,7 +47,7 @@ export const integrationMarkdown = (integration: Integration): string => {
     : [];
 
   return [
-    `${typeLabel[integration.type]} integration for kaf. ${integration.tagline}`,
+    `${typeLabel[integration.type]} integration for orcel. ${integration.tagline}`,
     section("Install", install),
     section("Quick start", quickStart),
     section("Configure", configure),
@@ -59,7 +59,7 @@ export const integrationMarkdown = (integration: Integration): string => {
 /** Markdown landing page for agent-readable integration discovery. */
 export const integrationsIndexMarkdown = (): string =>
   [
-    "Browse kaf integrations, including extensions, messaging channels, memory providers, and tool connections over MCP or OpenAPI.",
+    "Browse orcel integrations, including extensions, messaging channels, memory providers, and tool connections over MCP or OpenAPI.",
     ...integrations.map(
       (integration) =>
         `- [${integration.name}](/integrations/${integration.slug}): ${integration.tagline}`,

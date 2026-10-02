@@ -2,7 +2,7 @@ node_modules
 .env
 .env.*
 !.env.example
-.kaf
+.orcel
 .vercel
 .workflow-data
 .next

@@ -3,22 +3,22 @@ import { join } from "node:path";
 
 const registryPath = join("apps", "docs", "registry.json");
 const requirementsPath = join("apps", "docs", "registry.staged-requirements.json");
-const kafPackagePath = join("packages", "kaf", "package.json");
+const orcelPackagePath = join("packages", "orcel", "package.json");
 const versionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
 
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function materializeRegistryRequirements(registry, requirements, kafVersion) {
+export function materializeRegistryRequirements(registry, requirements, orcelVersion) {
   if (!isRecord(registry) || !Array.isArray(registry.items)) {
     throw new Error("registry must contain an items array");
   }
   if (!isRecord(requirements) || !Array.isArray(requirements.items)) {
     throw new Error("registry release requirements must contain an items array");
   }
-  if (typeof kafVersion !== "string" || !versionPattern.test(kafVersion)) {
-    throw new Error(`invalid kaf release version: ${String(kafVersion)}`);
+  if (typeof orcelVersion !== "string" || !versionPattern.test(orcelVersion)) {
+    throw new Error(`invalid orcel release version: ${String(orcelVersion)}`);
   }
 
   const known = new Map(registry.items.filter(isRecord).map((item) => [item.name, item]));
@@ -27,10 +27,10 @@ export function materializeRegistryRequirements(registry, requirements, kafVersi
     const item = known.get(name);
     if (item === undefined)
       throw new Error(`registry release requirement names unknown item ${name}`);
-    if (!isRecord(item.meta) || !isRecord(item.meta.kaf)) {
-      throw new Error(`registry item ${name} has no kaf metadata`);
+    if (!isRecord(item.meta) || !isRecord(item.meta.orcel)) {
+      throw new Error(`registry item ${name} has no orcel metadata`);
     }
-    item.meta.kaf.requires = `>=${kafVersion}`;
+    item.meta.orcel.requires = `>=${orcelVersion}`;
   }
   return registry;
 }
@@ -38,7 +38,7 @@ export function materializeRegistryRequirements(registry, requirements, kafVersi
 export async function materializeRegistryReleaseRequirements(paths = {}) {
   const resolvedRegistryPath = paths.registryPath ?? registryPath;
   const resolvedRequirementsPath = paths.requirementsPath ?? requirementsPath;
-  const resolvedKafPackagePath = paths.packagePath ?? kafPackagePath;
+  const resolvedOrcelPackagePath = paths.packagePath ?? orcelPackagePath;
 
   // An absent sidecar means this release has no registry requirements to stage.
   try {
@@ -51,7 +51,7 @@ export async function materializeRegistryReleaseRequirements(paths = {}) {
   const [registryText, requirementsText, packageText] = await Promise.all([
     readFile(resolvedRegistryPath, "utf8"),
     readFile(resolvedRequirementsPath, "utf8"),
-    readFile(resolvedKafPackagePath, "utf8"),
+    readFile(resolvedOrcelPackagePath, "utf8"),
   ]);
   const registry = materializeRegistryRequirements(
     JSON.parse(registryText),

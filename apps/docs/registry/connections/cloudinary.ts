@@ -1,5 +1,5 @@
 import { connect } from "@vercel/connect/eve";
-import { defineMcpClientConnection } from "kaf/connections";
+import { defineMcpClientConnection } from "orcel/connections";
 
 export default defineMcpClientConnection({
   url: "https://asset-management.mcp.cloudinary.com/sse",

@@ -9,7 +9,7 @@ The Teams channel runs your agent inside Microsoft Teams as a bot. It takes Bot 
 ## Add the channel
 
 ```ts title="agent/channels/teams.ts"
-import { teamsChannel } from "kaf/channels/teams";
+import { teamsChannel } from "orcel/channels/teams";
 
 export default teamsChannel();
 ```
@@ -19,16 +19,16 @@ export default teamsChannel();
 For a managed Teams bot on Vercel, run:
 
 ```bash
-kaf add channel/teams
+orcel add channel/teams
 ```
 
 The guided flow runs the Vercel Connect CLI, which takes you through managed
 Microsoft Teams app creation and installation. It routes verified Activities to
-`/kaf/v1/teams` and writes:
+`/orcel/v1/teams` and writes:
 
 ```ts title="agent/channels/teams.ts"
 import { connectTeamsCredentials } from "@vercel/connect/eve";
-import { teamsChannel } from "kaf/channels/teams";
+import { teamsChannel } from "orcel/channels/teams";
 
 export default teamsChannel({
   credentials: connectTeamsCredentials("microsoft-teams/my-agent"),
@@ -49,18 +49,18 @@ MICROSOFT_APP_PASSWORD=...
 MICROSOFT_TENANT_ID=...   # optional, single-tenant bots
 ```
 
-By default the channel mounts at `POST /kaf/v1/teams`. Point your Azure Bot or Teams app messaging endpoint at that public URL. To mount somewhere else, pass `route: "/api/teams/activity"`.
+By default the channel mounts at `POST /orcel/v1/teams`. Point your Azure Bot or Teams app messaging endpoint at that public URL. To mount somewhere else, pass `route: "/api/teams/activity"`.
 
 ## How the channel handles messages
 
 ### Dispatch
 
-The default `onMessage` handles two cases: personal-chat messages, and channel or group-chat messages that mention the bot directly. Ambient resource-specific-consent messages are dropped unless you override it. Return `title` alongside `auth` to set the title when the dispatch starts a run. Before dispatch, kaf strips the mention, adds `<teams_context>` with `user_id`, `bot_id`, and `is_mentioned`, and scopes channel and group threads by root activity id (`replyToId ?? id`).
+The default `onMessage` handles two cases: personal-chat messages, and channel or group-chat messages that mention the bot directly. Ambient resource-specific-consent messages are dropped unless you override it. Return `title` alongside `auth` to set the title when the dispatch starts a run. Before dispatch, orcel strips the mention, adds `<teams_context>` with `user_id`, `bot_id`, and `is_mentioned`, and scopes channel and group threads by root activity id (`replyToId ?? id`).
 
 For example, use the contextual `isSubscribed()` helper to continue active threads without requiring another mention:
 
 ```ts
-import { defaultTeamsAuth, teamsChannel } from "kaf/channels/teams";
+import { defaultTeamsAuth, teamsChannel } from "orcel/channels/teams";
 
 export default teamsChannel({
   async onMessage(ctx, message) {
@@ -81,11 +81,11 @@ Replies post as Markdown (`textFormat: "markdown"`), with oversized text split a
 
 ### Human-in-the-loop (HITL)
 
-A human-in-the-loop (HITL) `input.requested` event renders as an Adaptive Card. Approval cards show the tool input in the card and fallback text. Buttons and options map to `Action.Submit`, selects to `Input.ChoiceSet`, and freeform to `Input.Text`. Teams may return a submission as a message or invoke; kaf handles both before the normal message mention gate and resumes the thread recorded in the card.
+A human-in-the-loop (HITL) `input.requested` event renders as an Adaptive Card. Approval cards show the tool input in the card and fallback text. Buttons and options map to `Action.Submit`, selects to `Input.ChoiceSet`, and freeform to `Input.Text`. Teams may return a submission as a message or invoke; orcel handles both before the normal message mention gate and resumes the thread recorded in the card.
 
-By default, submissions use the Teams identity of the user who clicked the card. If you customize `onMessage` for an allowlist, configure the same policy in `onInputResponse`; kaf otherwise rejects HITL submissions rather than bypassing the message gate.
+By default, submissions use the Teams identity of the user who clicked the card. If you customize `onMessage` for an allowlist, configure the same policy in `onInputResponse`; orcel otherwise rejects HITL submissions rather than bypassing the message gate.
 
-When a tool approval settles, kaf replaces its Adaptive Card with the outcome and responder name. A response rejected by an approval policy leaves the shared card unchanged.
+When a tool approval settles, orcel replaces its Adaptive Card with the outcome and responder name. A response rejected by an approval policy leaves the shared card unchanged.
 
 For invokes that aren't HITL, handle them in `onInvoke(ctx, activity)`.
 
@@ -106,7 +106,7 @@ export default teamsChannel({
 });
 ```
 
-kaf authenticates downloads from Microsoft Bot Connector hosts with your bot credentials. Downloads from other allowlisted hosts remain unauthenticated.
+orcel authenticates downloads from Microsoft Bot Connector hosts with your bot credentials. Downloads from other allowlisted hosts remain unauthenticated.
 
 ## What to read next
 

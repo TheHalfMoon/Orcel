@@ -1,5 +1,5 @@
 ---
-issue: https://github.com/TheHalfMoon/kaf/issues/1159
+issue: https://github.com/TheHalfMoon/orcel/issues/1159
 status: in-progress
 last_updated: "2026-09-15"
 ---
@@ -23,7 +23,7 @@ events remain durable and the public `session.stream()` API does not change.
 The client advertises the control records it can decode:
 
 ```http
-GET /kaf/v1/session/:id/stream?streamControlVersion=1
+GET /orcel/v1/session/:id/stream?streamControlVersion=1
 ```
 
 For version 1, the server:
@@ -32,7 +32,7 @@ For version 1, the server:
   existing 15-second client read timer from treating a healthy response as
   stalled;
 - ends the response after a fixed 60-second lease;
-- writes `{"$kaf":"stream.lease-ended","version":1}` immediately before the
+- writes `{"$orcel":"stream.lease-ended","version":1}` immediately before the
   intentional close; and
 - cancels the response's Workflow reader when the lease ends.
 
@@ -63,5 +63,5 @@ older client could mistake for session events.
 
 - Changing event persistence, cursors, or the public client API.
 - Solving intermediary compression independently of reconnect recovery.
-- Negotiating lease duration; duration remains an kaf implementation detail.
+- Negotiating lease duration; duration remains an orcel implementation detail.
 - Retrofitting bounded responses onto clients that do not advertise support.

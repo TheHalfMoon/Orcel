@@ -6,8 +6,8 @@
 .cache
 dist
 
-# kaf runtime data
-.kaf
+# orcel runtime data
+.orcel
 
 # Node dependencies
 node_modules

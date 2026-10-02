@@ -1,4 +1,4 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 const SEARCH_TOOL = "connection_search";
 const PETSTORE_APPROVAL_INVENTORY_TOOL = "petstore-approval__getInventory";

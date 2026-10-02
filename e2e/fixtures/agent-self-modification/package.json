@@ -5,18 +5,18 @@
   "type": "module",
   "scripts": {
     "e2e:prepare": "node scripts/prepare.mjs",
-    "build": "pnpm run e2e:prepare && kaf build",
-    "dev": "pnpm run e2e:prepare && kaf dev",
-    "start": "kaf start",
-    "typecheck": "pnpm run e2e:prepare && kaf build --skip-sandbox-prewarm && tsc",
-    "test:e2e": "pnpm run e2e:prepare && kaf eval --strict",
+    "build": "pnpm run e2e:prepare && orcel build",
+    "dev": "pnpm run e2e:prepare && orcel dev",
+    "start": "orcel start",
+    "typecheck": "pnpm run e2e:prepare && orcel build --skip-sandbox-prewarm && tsc",
+    "test:e2e": "pnpm run e2e:prepare && orcel eval --strict",
     "test:scenario": "node --test test/*.scenario.test.mjs"
   },
   "dependencies": {
-    "@kaf-e2e/config": "workspace:*",
+    "@orcel-e2e/config": "workspace:*",
     "@vercel/connect": "2.2.0",
     "@workflow/world-postgres": "catalog:",
-    "kaf": "workspace:*",
+    "orcel": "workspace:*",
     "just-bash": "3.1.0",
     "zod": "catalog:"
   },

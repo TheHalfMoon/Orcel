@@ -1,14 +1,14 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 /**
- * Smoke-test eval for `kaf eval`.
+ * Smoke-test eval for `orcel eval`.
  *
  * Sends a plain prompt and asserts the agent completes a turn without tools.
  * The prompt instructs a verbatim echo so the check stays stable across real
  * models without a judge.
  */
 export default defineEval({
-  description: "Text-reply smoke for the kaf eval CLI.",
+  description: "Text-reply smoke for the orcel eval CLI.",
 
   // Instructing an exact echo keeps the smoke test stable regardless of how
   // the model would otherwise phrase its reply.

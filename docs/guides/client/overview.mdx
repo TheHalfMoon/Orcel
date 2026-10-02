@@ -1,25 +1,25 @@
 ---
 title: "Client SDK"
-description: "Call an kaf agent from TypeScript with Client, sessions, auth, and health checks."
+description: "Call an orcel agent from TypeScript with Client, sessions, auth, and health checks."
 ---
 
-The `kaf/client` entrypoint is the typed client for kaf's default HTTP API. Use it from scripts, server-to-server integrations, tests, evals, backend jobs, or custom UIs that want the session protocol without hand-writing the POST and NDJSON (newline-delimited JSON) stream loop.
+The `orcel/client` entrypoint is the typed client for orcel's default HTTP API. Use it from scripts, server-to-server integrations, tests, evals, backend jobs, or custom UIs that want the session protocol without hand-writing the POST and NDJSON (newline-delimited JSON) stream loop.
 
-For browser chat UIs, start with [`useKafAgent`](../frontend/overview). For wire-level details, read [Sessions, runs & streaming](../../concepts/sessions-runs-and-streaming). The client sits between those two: lower level than the frontend hooks, higher level than raw HTTP.
+For browser chat UIs, start with [`useOrcelAgent`](../frontend/overview). For wire-level details, read [Sessions, runs & streaming](../../concepts/sessions-runs-and-streaming). The client sits between those two: lower level than the frontend hooks, higher level than raw HTTP.
 
 ## Create a client
 
 A `Client` binds one host, auth policy, and header policy:
 
 ```ts
-import { Client } from "kaf/client";
+import { Client } from "orcel/client";
 
 const client = new Client({
   host: "http://127.0.0.1:2000",
 });
 ```
 
-`host` is the URL where the kaf routes are mounted. In a same-origin browser integration this is often `""`; scripts and backend services usually name the full URL. Any query parameters on `host` are included on every request, including session POSTs and event streams. Request-specific parameters, such as a stream cursor, take precedence when names overlap.
+`host` is the URL where the orcel routes are mounted. In a same-origin browser integration this is often `""`; scripts and backend services usually name the full URL. Any query parameters on `host` are included on every request, including session POSTs and event streams. Request-specific parameters, such as a stream cursor, take precedence when names overlap.
 
 ## Check health
 
@@ -47,7 +47,7 @@ Version 4 separates active static definitions from dynamic resolvers, includes b
 
 ## Authentication
 
-Pass `auth` when the [kaf channel](../../channels/kaf) route requires credentials:
+Pass `auth` when the [orcel channel](../../channels/orcel) route requires credentials:
 
 ```ts
 const client = new Client({
@@ -163,7 +163,7 @@ for await (const event of session.stream({ follow: false })) {
 await session.reset({ reason: "User requested a fresh session" });
 ```
 
-`client.sessions` stores only the session ID and stream cursor. Every method calls an ID-addressed `/kaf/v1/session/:sessionId/...` route. Sending through a handle for an unknown or terminal ID fails instead of creating a replacement, and reset leaves the handle pinned to the retired ID.
+`client.sessions` stores only the session ID and stream cursor. Every method calls an ID-addressed `/orcel/v1/session/:sessionId/...` route. Sending through a handle for an unknown or terminal ID fails instead of creating a replacement, and reset leaves the handle pinned to the retired ID.
 
 A client can own many independent fixed sessions at once:
 
@@ -187,6 +187,6 @@ The next pages cover the session lifecycle:
 
 ## What to read next
 
-- [kaf channel](../../channels/kaf): the HTTP API this client calls
+- [orcel channel](../../channels/orcel): the HTTP API this client calls
 - [Sessions, runs & streaming](../../concepts/sessions-runs-and-streaming): the raw HTTP contract
-- [Frontend](../frontend/overview): browser UI with `useKafAgent`
+- [Frontend](../frontend/overview): browser UI with `useOrcelAgent`

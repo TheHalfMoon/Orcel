@@ -1,4 +1,4 @@
-import { defineSchedule } from "kaf/schedules";
+import { defineSchedule } from "orcel/schedules";
 
 /**
  * Fired on demand by `evals/held-turn.schedule.eval.ts`. The directive runs

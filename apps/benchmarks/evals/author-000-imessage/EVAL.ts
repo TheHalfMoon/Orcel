@@ -8,7 +8,7 @@ const { commands, transcript, worldEvents } = authoringEval();
 const commandLog = commands.join("\n");
 
 test("installs the discovered iMessage registry item through the headless setup path", () => {
-  expect(commandLog).toMatch(/kaf\s+add\s+channel\/photon-imessage[^\n]*--non-interactive/i);
+  expect(commandLog).toMatch(/orcel\s+add\s+channel\/photon-imessage[^\n]*--non-interactive/i);
   expect(commandLog).toMatch(/--answer(?:=|\s+)["']?phoneNumber=/i);
 });
 

@@ -1,4 +1,4 @@
-import { defineHook, type HookContext, type HookEvent } from "kaf/hooks";
+import { defineHook, type HookContext, type HookEvent } from "orcel/hooks";
 import { auditOutbox, exportAuditEvent } from "../lib/workspace";
 
 async function exportOrQueue(event: HookEvent, ctx: HookContext): Promise<void> {
@@ -6,7 +6,7 @@ async function exportOrQueue(event: HookEvent, ctx: HookContext): Promise<void> 
     await exportAuditEvent(ctx.session.auth.current, event);
   } catch (error) {
     auditOutbox.update((queued) => [...queued, { eventId: event.meta.id, type: event.type }]);
-    // Rethrow so kaf logs the failed export. The turn keeps running.
+    // Rethrow so orcel logs the failed export. The turn keeps running.
     throw error;
   }
 }

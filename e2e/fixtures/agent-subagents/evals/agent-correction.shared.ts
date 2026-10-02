@@ -1,6 +1,6 @@
-import type { MessageStreamEvent } from "kaf/client";
-import type { KafEvalContext } from "kaf/evals";
-import { satisfies } from "kaf/evals/expect";
+import type { MessageStreamEvent } from "orcel/client";
+import type { OrcelEvalContext } from "orcel/evals";
+import { satisfies } from "orcel/evals/expect";
 
 import { CORRECTED_MEASUREMENT, NOTEBOOK_CORRECTION } from "../constants";
 
@@ -10,7 +10,7 @@ import { CORRECTED_MEASUREMENT, NOTEBOOK_CORRECTION } from "../constants";
  * correction joins that running turn, so the turn reads it before it completes
  * and its reply settles the correction's call with the corrected measurement.
  */
-export async function correctKeeperWhileItWorks(t: KafEvalContext, tool: string): Promise<void> {
+export async function correctKeeperWhileItWorks(t: OrcelEvalContext, tool: string): Promise<void> {
   const corrected = await t.send(
     `NOTEBOOK-CORRECT ${tool} Alice corrects the pier she asked about.`,
   );

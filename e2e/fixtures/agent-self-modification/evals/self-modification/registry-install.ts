@@ -20,7 +20,7 @@ export async function verifyRegistryHandoff(input: {
     result?.status !== "completed" ||
     (result.output as { nextCommand?: unknown; status?: unknown } | undefined)?.status !==
       "needs-terminal" ||
-    (result.output as { nextCommand?: unknown } | undefined)?.nextCommand !== `kaf add ${address}`
+    (result.output as { nextCommand?: unknown } | undefined)?.nextCommand !== `orcel add ${address}`
   ) {
     throw new Error(`Self-modification did not hand ${address} off to the terminal.`);
   }

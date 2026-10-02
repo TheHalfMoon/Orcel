@@ -1,5 +1,5 @@
 ---
-issue: https://github.com/TheHalfMoon/kaf/issues/2055
+issue: https://github.com/TheHalfMoon/orcel/issues/2055
 status: in-progress
 last_updated: "2026-08-13"
 ---
@@ -8,90 +8,90 @@ last_updated: "2026-08-13"
 
 ## Decision
 
-kaf will keep Nitro as its core host dependency and make the existing integration more direct,
+orcel will keep Nitro as its core host dependency and make the existing integration more direct,
 predictable, and testable. Nitro remains responsible for the final host build, native dependency
 classification and nf3 tracing, deployment presets, schedules, server lifecycle, and supported
-runtime behavior. kaf will not replace those systems with an kaf-owned H3, CrossWS, srvx, nf3, or
+runtime behavior. orcel will not replace those systems with an orcel-owned H3, CrossWS, srvx, nf3, or
 platform-adapter stack.
 
-The current pass also keeps using the Rolldown installation resolved by Nitro. An kaf-owned lazy
+The current pass also keeps using the Rolldown installation resolved by Nitro. An orcel-owned lazy
 wrapper isolates that reach-through and enforces correct resolution behavior, but importing a
-transitive dependency remains technical debt. kaf will move to a public Rolldown boundary only
+transitive dependency remains technical debt. orcel will move to a public Rolldown boundary only
 after Nitro publishes a physical core or build package that declares Rolldown as a compatible peer.
 
-The dependency-graph problem remains real, but it cannot be fixed inside kaf while kaf installs the
+The dependency-graph problem remains real, but it cannot be fixed inside orcel while orcel installs the
 current `nitro` package. The upstream requirement is a physically separate Nitro core package with
 its own package manifest. A `nitro/core` export, feature flags, or lazy imports would still make a
 package manager resolve the umbrella manifest.
 
 This plan carries forward the portable findings from the
-[direct build and routing system review](https://github.com/TheHalfMoon/kaf/blob/barba/remove-nitro-build-runtime/research/nitro-removal-review.md)
+[direct build and routing system review](https://github.com/TheHalfMoon/orcel/blob/barba/remove-nitro-build-runtime/research/nitro-removal-review.md)
 without carrying forward the decision to remove Nitro.
 
 ## Ownership boundary
 
-kaf owns the agent compiler, authored-module loading, workflow artifact generation, and the
+orcel owns the agent compiler, authored-module loading, workflow artifact generation, and the
 translation from compiled agent intent into Nitro configuration. Nitro owns the host graph and the
 runtime behavior around that graph.
 
 | Area                           | Owner | Boundary                                                                                                                                                |
 | ------------------------------ | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Agent and workflow compilation | kaf   | kaf produces entries, transforms, route intent, and compiled artifacts for Nitro to consume.                                                            |
+| Agent and workflow compilation | orcel   | orcel produces entries, transforms, route intent, and compiled artifacts for Nitro to consume.                                                            |
 | Final application build        | Nitro | Nitro creates the base build graph, installs its plugins, invokes the bundler, traces externals, and writes output.                                     |
-| Native dependency handling     | Nitro | Nitro classifies non-bundleable packages and runs nf3 tracing; kaf supplies only authored or kaf-specific additions through public configuration.       |
+| Native dependency handling     | Nitro | Nitro classifies non-bundleable packages and runs nf3 tracing; orcel supplies only authored or orcel-specific additions through public configuration.       |
 | Node and deployment output     | Nitro | Nitro presets own Node and Vercel output, environment aliases, runtime error behavior, and Bun selection where the selected preset supports it.         |
 | HTTP and WebSocket runtime     | Nitro | Nitro owns H3, CrossWS, srvx, request upgrades, and preset-specific transport behavior.                                                                 |
 | Schedules                      | Nitro | Nitro's task and schedule layer owns registration, execution, concurrency, and process integration.                                                     |
-| kaf development orchestration  | kaf   | kaf owns authored-source watching, immutable generations, worker replacement, and the outer draining server while delegating each worker host to Nitro. |
+| orcel development orchestration  | orcel   | orcel owns authored-source watching, immutable generations, worker replacement, and the outer draining server while delegating each worker host to Nitro. |
 
-This boundary allows kaf to improve the inputs and extension points around Nitro. It does not make
-kaf a second host framework.
+This boundary allows orcel to improve the inputs and extension points around Nitro. It does not make
+orcel a second host framework.
 
 ## Current-pass improvements with umbrella Nitro
 
 ### Contain the transitive Rolldown boundary
 
-kaf invokes Rolldown directly for its published JavaScript, compiled vendor artifacts,
+orcel invokes Rolldown directly for its published JavaScript, compiled vendor artifacts,
 authored-module evaluation, workflow bundles, and parser-backed transforms. In this pass, the
-kaf-owned lazy wrapper continues to resolve `rolldown` and `rolldown/parseAst` from Nitro's installed
+orcel-owned lazy wrapper continues to resolve `rolldown` and `rolldown/parseAst` from Nitro's installed
 dependency tree. This avoids adding another runtime declaration before Nitro defines a public
 embedding boundary, but it remains an undeclared transitive contract: a fresh consumer install can
-select a different Rolldown version from the one in kaf's workspace lock.
+select a different Rolldown version from the one in orcel's workspace lock.
 
-All kaf code that calls Rolldown should use the runtime wrapper, and package build scripts should
+All orcel code that calls Rolldown should use the runtime wrapper, and package build scripts should
 use the corresponding script wrapper. Both wrappers should stay lazy and enforce the same
 resolution rules so importing parser-backed helpers does not initialize the native bundler. The
 compiled-vendor stamp should include the resolved Rolldown version so a lockfile update invalidates
-generated artifacts. nf3 remains owned and invoked by Nitro, so kaf should not declare or call nf3
+generated artifacts. nf3 remains owned and invoked by Nitro, so orcel should not declare or call nf3
 directly.
 
-Rolldown resolution should preserve its per-import standard conditions. kaf may add custom
-conditions such as `kaf-source` and `workflow`, but must not put `node`, `import`, `require`,
+Rolldown resolution should preserve its per-import standard conditions. orcel may add custom
+conditions such as `orcel-source` and `workflow`, but must not put `node`, `import`, `require`,
 `browser`, or `default` in `resolve.conditionNames`. A shared assertion should reject those standard
 condition names. Conditional-export fixtures should prove that ESM import and CommonJS require
 edges retain their distinct package branches.
 
-### Simplify kaf's inputs to the Nitro build
+### Simplify orcel's inputs to the Nitro build
 
 The workflow builder can generate its final entry source directly instead of emitting an
 intermediate file and repairing imports, code literals, source maps, and mirrored paths afterward.
 This cleanup keeps the Nitro-specific transform exclusions, side-effect rules, aliases, and
 `noExternals` policy that the final host build still requires.
 
-kaf should also centralize route computation in a typed registry, then translate that registry into
+orcel should also centralize route computation in a typed registry, then translate that registry into
 Nitro handlers and preset configuration. Nitro continues to mount and emit the routes. The registry
 exists to keep HTTP, WebSocket, cron, package, development, and workflow route precedence consistent
-across kaf's configuration steps; it is not an kaf-owned runtime router.
+across orcel's configuration steps; it is not an orcel-owned runtime router.
 
 Public assets and prerender phases may be skipped only when Nitro exposes a supported builder
-sequence and kaf has neither public assets nor prerender routes. kaf must not reproduce private
+sequence and orcel has neither public assets nor prerender routes. orcel must not reproduce private
 Nitro builder phases to remove those calls.
 
 ### Strengthen correctness at existing seams
 
 The following changes do not require a new host:
 
-- Preserve authored warnings while filtering warnings that come only from kaf's compiled vendor
+- Preserve authored warnings while filtering warnings that come only from orcel's compiled vendor
   artifacts. A warning involving both authored and vendor modules must remain visible.
 - Reject WebSocket upgrades unless a WebSocket handler matched, and cover an HTTP handler and a
   WebSocket handler sharing one path. Fix this through Nitro configuration or upstream Nitro rather
@@ -100,7 +100,7 @@ The following changes do not require a new host:
   route from a WebSocket route at the same path. Nitro therefore needs protocol-typed route entries
   or a public resolver that can return either WebSocket hooks or a rejected upgrade response.
 - Retain explicit development-worker shutdown and fallback termination, and test request and
-  `waitUntil` draining at the kaf-owned outer server boundary.
+  `waitUntil` draining at the orcel-owned outer server boundary.
 - Do not claim end-to-end shutdown draining from the worker handshake alone. The current CLI parent
   gives its server child a shorter grace period than the worker fallback, and full outer-server
   shutdown releases workers before admitted requests and transitive `waitUntil` work are proven
@@ -115,10 +115,10 @@ The following changes do not require a new host:
 
 The removal branch proved several designs, but they do not fit the chosen ownership boundary:
 
-- Do not vendor H3, CrossWS, srvx, or a schedule runtime into private kaf artifacts.
-- Do not create an kaf-owned final Rolldown host graph, Fetch router, Node server, nf3 tracer, or
+- Do not vendor H3, CrossWS, srvx, or a schedule runtime into private orcel artifacts.
+- Do not create an orcel-owned final Rolldown host graph, Fetch router, Node server, nf3 tracer, or
   Vercel Build Output emitter.
-- Do not replace Nitro presets with kaf-maintained platform adapters.
+- Do not replace Nitro presets with orcel-maintained platform adapters.
 - Do not trade Nitro's native classification for an author-maintained list of external packages.
 - Do not add a direct Rolldown runtime dependency while the umbrella Nitro package supplies the
   implementation. This staging choice contains the current private reach-through; it does not make
@@ -132,7 +132,7 @@ These choices preserve the behavior and platform maintenance that justified keep
 
 ## Measured limitation of the umbrella package
 
-The reviewed alternating warm-cache npm benchmark compared `kaf@0.35.0` using
+The reviewed alternating warm-cache npm benchmark compared `orcel@0.35.0` using
 `nitro@3.0.260610-beta` with the removal branch's packed artifact. It establishes the package-graph
 cost of the umbrella package, not a runtime-performance result.
 
@@ -148,7 +148,7 @@ cost of the umbrella package, not a runtime-performance result.
 
 The branch's separate CI comparison against its merge base showed the same installation direction:
 the packed install fell from 73.48 MB to 68.31 MB, installed files fell from 6,924 to 5,782, and an
-`kaf init` install fell from 121 packages to 85. That trade was not uniformly smaller: the packed
+`orcel init` install fell from 121 packages to 85. That trade was not uniformly smaller: the packed
 tarball grew by 70.5 kB and two sampled Vercel functions each grew by about 161.7 kB.
 
 The benchmark used four alternating samples per artifact on Node 24.16.0, npm 11.13.0, macOS
@@ -160,7 +160,7 @@ improved from 2.10 seconds to 1.54 seconds, but it was explicitly informational 
 support a build-performance claim.
 
 The current Nitro manifest has 14 hard dependencies and eight optional peers. Its closure includes
-23 optional storage-provider peers from unstorage and six database-provider peers from db0. kaf
+23 optional storage-provider peers from unstorage and six database-provider peers from db0. orcel
 cannot remove those manifest edges with imports, aliases, overrides, dynamic loading, or feature
 flags. Moving dependencies to optional peers would reduce default installed bytes but would still
 leave package managers to evaluate their metadata.
@@ -171,22 +171,22 @@ The install target requires a separately published Nitro core package, not a new
 existing package. The final upstream name may differ, but the package must have its own minimal
 manifest and stable public exports.
 
-The selected Nitro packages for kaf must:
+The selected Nitro packages for orcel must:
 
 - Keep Nitro's builder, runtime application, route contracts, nf3 integration, task system, and the
-  Node and Vercel preset behavior that kaf uses.
+  Node and Vercel preset behavior that orcel uses.
 - Avoid installing storage, database, cache, proxy, generic framework-development, Vite, or Rollup
-  packages unless kaf selects the corresponding component.
+  packages unless orcel selects the corresponding component.
 - Expose a public build boundary for the Rolldown operations embedders invoke, with supported
   exports and types rather than access through Nitro's private dependency tree.
-- Declare Rolldown as a compatible peer of the build component so kaf can pin and install one exact
+- Declare Rolldown as a compatible peer of the build component so orcel can pin and install one exact
   version after migrating from the umbrella package, without a second native binding.
 - Keep storage and database integrations in opt-in physical packages so unstorage and db0 peer
-  metadata never enters kaf's default consumer graph.
+  metadata never enters orcel's default consumer graph.
 - Allow the umbrella `nitro` package and CLI to depend on the core and optional components, keeping
   Nitro's turnkey experience without imposing the full graph on embedders.
 
-Stable APIs are also needed at the seams kaf currently reaches through hooks and option mutation:
+Stable APIs are also needed at the seams orcel currently reaches through hooks and option mutation:
 
 - A typed route manifest or injected-application boundary that represents HTTP and WebSocket
   handlers independently while leaving mounting to Nitro.
@@ -198,7 +198,7 @@ Stable APIs are also needed at the seams kaf currently reaches through hooks and
   rewriting Nitro's emitted Vercel output.
 - A Node adapter on `srvx` 0.12 or newer, or a supported way for the host to supply that adapter.
   The current umbrella Nitro release resolves `srvx` 0.11.22, while the 0.12 line contains the
-  `waitUntil` retention and Node-adapter fixes needed by kaf's lifecycle contract.
+  `waitUntil` retention and Node-adapter fixes needed by orcel's lifecycle contract.
 - A disposable Node preset contract with bounded asynchronous shutdown across requests,
   WebSockets, schedules, lifecycle hooks, signals, and transitive `waitUntil` work.
 - A published compatibility matrix for Nitro's supported Rolldown, H3, CrossWS, srvx, and nf3
@@ -215,12 +215,12 @@ The cleanup against the umbrella Nitro package is ready when:
 
 1. `nitro` remains an exact runtime dependency and all production host builds still enter through
    public Nitro exports.
-2. `rolldown` is not an kaf runtime dependency. Parser-backed and build-backed code resolves
-   Nitro's installed Rolldown through the kaf-owned lazy wrapper and works from a packed npm install
+2. `rolldown` is not an orcel runtime dependency. Parser-backed and build-backed code resolves
+   Nitro's installed Rolldown through the orcel-owned lazy wrapper and works from a packed npm install
    outside the monorepo.
-3. The vendor stamp records the resolved Rolldown version, and every direct Rolldown call in kaf
-   source and build scripts goes through an kaf-owned wrapper with the same resolution checks.
-4. Conditional-export fixtures cover ESM import edges, CommonJS require edges, custom kaf
+3. The vendor stamp records the resolved Rolldown version, and every direct Rolldown call in orcel
+   source and build scripts goes through an orcel-owned wrapper with the same resolution checks.
+4. Conditional-export fixtures cover ESM import edges, CommonJS require edges, custom orcel
    conditions, and packages that expose different values for those paths.
 5. Workflow output no longer depends on repair-only rewrites or duplicate mirrors, and existing
    workflow identity, replay, source discovery, and Vercel execution scenarios pass.
@@ -245,7 +245,7 @@ The cleanup against the umbrella Nitro package is ready when:
 Migrating to a future Nitro core or build package requires a separate change and a new
 packed-install benchmark. That migration is ready when the selected Nitro package set does not
 install unstorage, db0, or their provider peer metadata; the build package exposes a public
-Rolldown boundary and declares a compatible Rolldown peer; kaf pins that peer to one exact runtime
+Rolldown boundary and declares a compatible Rolldown peer; orcel pins that peer to one exact runtime
 version; and the packed install contains one Rolldown instance. The migration must retain every
 Nitro-owned behavior listed above.
 

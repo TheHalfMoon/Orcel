@@ -1,4 +1,4 @@
-# Reviewing kaf documentation
+# Reviewing orcel documentation
 
 Run separate passes. Fix blockers and major issues before style nits.
 
@@ -30,7 +30,7 @@ Treat a wrong command, nonexistent API, unsafe instruction, or false guarantee a
 
 ## Pass 4: Style and retrieval
 
-- Is `kaf` lowercase?
+- Is `orcel` lowercase?
 - Are terms consistent with code and CLI output?
 - Does each section lead with its key fact?
 - Are headings descriptive enough to work as search results?

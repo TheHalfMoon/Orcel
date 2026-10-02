@@ -1,6 +1,6 @@
-import { buildEveToolMap as buildKafToolMap } from "@github-tools/sdk/eve";
+import { buildEveToolMap as buildOrcelToolMap } from "@github-tools/sdk/eve";
 import { getToken, UserAuthorizationRequiredError } from "@vercel/connect";
-import { defineDynamic } from "kaf/tools";
+import { defineDynamic } from "orcel/tools";
 import { CONNECT_USER_ISSUER, GITHUB_CONNECTOR } from "../../lib/connect.js";
 
 export default defineDynamic({
@@ -8,7 +8,7 @@ export default defineDynamic({
     "session.started": async (_event, ctx) => {
       const auth = ctx.session.auth.current;
       const userId = auth?.principalId;
-      if (!userId || userId.startsWith("kaf:")) {
+      if (!userId || userId.startsWith("orcel:")) {
         return {};
       }
 
@@ -21,7 +21,7 @@ export default defineDynamic({
           },
           scopes: ["repo"],
         });
-        return buildKafToolMap({ preset: "maintainer", token });
+        return buildOrcelToolMap({ preset: "maintainer", token });
       } catch (error) {
         if (error instanceof UserAuthorizationRequiredError) {
           return {};

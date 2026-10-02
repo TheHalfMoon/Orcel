@@ -1,5 +1,5 @@
-import type { KafAgentReducer, KafAgentReducerEvent } from "kaf/react";
-import type { MessageStreamEvent } from "kaf/client";
+import type { OrcelAgentReducer, OrcelAgentReducerEvent } from "orcel/react";
+import type { MessageStreamEvent } from "orcel/client";
 
 import { buildTraceTurnsFromTranscript } from "./trace";
 import type { TraceStep, TraceTurn } from "./types";
@@ -9,7 +9,7 @@ export interface TraceProjection {
   readonly turns: readonly TraceTurn[];
 }
 
-export function traceReducer(): KafAgentReducer<TraceProjection> {
+export function traceReducer(): OrcelAgentReducer<TraceProjection> {
   return {
     initial() {
       return {
@@ -25,7 +25,7 @@ export function traceReducer(): KafAgentReducer<TraceProjection> {
 
 function reduceTraceProjection(
   data: TraceProjection,
-  event: KafAgentReducerEvent,
+  event: OrcelAgentReducerEvent,
 ): TraceProjection {
   switch (event.type) {
     case "client.message.submitted":

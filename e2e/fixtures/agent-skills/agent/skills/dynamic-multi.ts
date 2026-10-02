@@ -1,4 +1,4 @@
-import { defineDynamic, defineSkill } from "kaf/skills";
+import { defineDynamic, defineSkill } from "orcel/skills";
 
 export const DYNAMIC_MULTI_ALPHA_TOKEN = "dynamic-multi-alpha-Q8V3";
 export const DYNAMIC_MULTI_BETA_TOKEN = "dynamic-multi-beta-J5W1";

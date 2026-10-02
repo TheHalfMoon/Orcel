@@ -1,7 +1,7 @@
-import { e2eAgentConfig } from "@kaf-e2e/config";
-import { defineAgent, defineDynamic } from "kaf";
+import { e2eAgentConfig } from "@orcel-e2e/config";
+import { defineAgent, defineDynamic } from "orcel";
 import { PREFIX_REQUEST, prefixModel } from "./lib/prompt-prefix";
-import type { MockModelRequest } from "kaf/evals";
+import type { MockModelRequest } from "orcel/evals";
 
 const DYNAMIC_INSTRUCTIONS_TOKEN = "dynamic-instructions-ok-M3K8";
 

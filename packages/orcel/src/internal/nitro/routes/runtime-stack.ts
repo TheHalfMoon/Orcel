@@ -1,0 +1,51 @@
+import type { Runtime } from "#channel/types.js";
+import { createWorkflowRuntime } from "#execution/workflow-runtime.js";
+import { resolveRemoteAgentStreamHeaders } from "#execution/agent-sessions/remote.js";
+import type { RemoteAgentStreamHeadersResolver } from "#internal/nitro/routes/channel-route-context.js";
+import { getCompiledRuntimeAgentBundle } from "#runtime/sessions/compiled-agent-cache.js";
+import type { ResolvedChannelDefinition } from "#runtime/types.js";
+import {
+  type NitroArtifactsConfig,
+  resolveNitroCompiledArtifactsSource,
+} from "#internal/nitro/routes/runtime-artifacts.js";
+
+/**
+ * Bundle returned to the per-channel Nitro dispatch handler.
+ *
+ * Carries the effective resolved channel set from the compiled route plan and
+ * the per-request workflow runtime.
+ * The dispatch handler walks `channels` to match the inbound request
+ * against a registered URL pattern, then calls the matched channel's
+ * `fetch` with a `RouteContext` built from `runtime`.
+ */
+interface NitroChannelRuntimeBundle {
+  readonly agentName: string;
+  readonly channels: readonly ResolvedChannelDefinition[];
+  readonly resolveRemoteAgentStreamHeaders?: RemoteAgentStreamHeadersResolver;
+  readonly runtime: Runtime;
+}
+
+/**
+ * Resolves the per-request channel bundle from the effective compiled graph
+ * and creates a fresh workflow runtime.
+ *
+ * No singleton caching is needed — session state lives inside the
+ * workflow's durable execution and the channel set is recomputed from the
+ * compiled bundle on each request.
+ */
+export async function resolveNitroChannelRuntimeBundle(
+  config: NitroArtifactsConfig,
+): Promise<NitroChannelRuntimeBundle> {
+  const compiledArtifactsSource = resolveNitroCompiledArtifactsSource(config);
+  const bundle = await getCompiledRuntimeAgentBundle({
+    compiledArtifactsSource,
+  });
+  const runtime = createWorkflowRuntime({ compiledArtifactsSource });
+  return {
+    agentName: bundle.resolvedAgent.config?.name ?? "orcel",
+    channels: bundle.graph.root.channels,
+    resolveRemoteAgentStreamHeaders: async (input) =>
+      await resolveRemoteAgentStreamHeaders({ bundle, ...input }),
+    runtime,
+  };
+}

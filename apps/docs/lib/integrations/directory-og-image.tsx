@@ -45,7 +45,7 @@ export const createIntegrationsDirectoryOgImage = async (): Promise<ImageRespons
         <path d="M1135.17 273.983H1030.13V250.981H1135.17V273.983Z" fill="white" />
         <path d="M881.178 213.99H676V190.984H881.178V213.99Z" fill="white" />
         <rect
-          fill="url(#kaf-logo-fade)"
+          fill="url(#orcel-logo-fade)"
           height="264.03"
           transform="rotate(-45 546 304.914)"
           width="410"
@@ -56,7 +56,7 @@ export const createIntegrationsDirectoryOgImage = async (): Promise<ImageRespons
         <defs>
           <linearGradient
             gradientUnits="userSpaceOnUse"
-            id="kaf-logo-fade"
+            id="orcel-logo-fade"
             x1="751"
             x2="751"
             y1="304.914"
@@ -80,7 +80,7 @@ export const createIntegrationsDirectoryOgImage = async (): Promise<ImageRespons
           top: 192,
         }}
       >
-        kaf
+        orcel
       </div>
       <div
         style={{

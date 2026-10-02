@@ -1,12 +1,12 @@
 ---
 title: "Terminal UI"
-description: "Use kaf locally or connect to a deployed agent from an interactive terminal UI."
+description: "Use orcel locally or connect to a deployed agent from an interactive terminal UI."
 ---
 
-`kaf dev` starts a local development server and opens an interactive terminal UI. Use it to talk to your agent, approve tool calls, answer its questions, and configure local development. When `kaf dev` starts a local server, self-modification is available by default; see [Self-Modification](./self-modification).
+`orcel dev` starts a local development server and opens an interactive terminal UI. Use it to talk to your agent, approve tool calls, answer its questions, and configure local development. When `orcel dev` starts a local server, self-modification is available by default; see [Self-Modification](./self-modification).
 
 ```bash
-kaf dev
+orcel dev
 ```
 
 The footer shows the active model, reasoning level when set, speed indicator, and connection separated by dots, such as `gpt-6-luna · high · ⚡︎`. The model label omits the provider prefix and removes `-fast` only at the end. A single `⚡︎` marks a model with that suffix or explicit **Fast** mode; terminals without Unicode support use an ASCII marker.
@@ -35,13 +35,13 @@ Before your first message, the empty composer may suggest asking your local agen
 | `/help`     | List available commands.                                                                                                                                     |
 | `/exit`     | Quit the UI.                                                                                                                                                 |
 
-`/login`, `/model`, `/add`, `/deploy`, `/info`, and `/traces` are available when `kaf dev` runs locally. They are unavailable when the UI connects through `kaf remote connect`.
+`/login`, `/model`, `/add`, `/deploy`, `/info`, and `/traces` are available when `orcel dev` runs locally. They are unavailable when the UI connects through `orcel remote connect`.
 
 ## Set up a new agent
 
-After interactive `kaf init`, the TUI opens directly. kaf keeps the project's selected connection. For a new connection, it checks explicit environment credentials, the saved machine default, and then the Vercel CLI's current team. Existing project OIDC connections remain supported. Automatic Vercel reuse validates account access without creating or linking a project.
+After interactive `orcel init`, the TUI opens directly. orcel keeps the project's selected connection. For a new connection, it checks explicit environment credentials, the saved machine default, and then the Vercel CLI's current team. Existing project OIDC connections remain supported. Automatic Vercel reuse validates account access without creating or linking a project.
 
-During startup, the composer stays visible while a progress indicator names the connection being checked and shows when kaf is preparing your chat. Type a message and press `Enter` to queue it for when the agent is ready. A picker temporarily takes over input when a choice or API key is needed; your draft returns afterward. If setup is cancelled or fails, queued messages return to the draft.
+During startup, the composer stays visible while a progress indicator names the connection being checked and shows when orcel is preparing your chat. Type a message and press `Enter` to queue it for when the agent is ready. A picker temporarily takes over input when a choice or API key is needed; your draft returns afterward. If setup is cancelled or fails, queued messages return to the draft.
 
 If no connection is ready, `/login` offers:
 
@@ -53,11 +53,11 @@ If no connection is ready, `/login` offers:
 
 Vercel account login opens a browser. When multiple teams are available, `/login` shows a searchable team picker with the current project or CLI team highlighted so you can switch teams. A sole available team is selected automatically. Automatic startup reuses the selected connection without opening this picker. Account-token access to Gateway depends on availability for your account and team; if it is unavailable, choose an API key or another connection.
 
-Type to filter a menu, press `Enter` to select, or `Esc` to return to chat. Dismissing a setup menu adds no cancellation message to the transcript; completed work and failures still appear. Arrow navigation is also available. Cancelling login preserves your draft. If a connection fails, retry `/login`; kaf does not silently switch providers.
+Type to filter a menu, press `Enter` to select, or `Esc` to return to chat. Dismissing a setup menu adds no cancellation message to the transcript; completed work and failures still appear. Arrow navigation is also available. Cancelling login preserves your draft. If a connection fails, retry `/login`; orcel does not silently switch providers.
 
 ### Credentials and deployment
 
-kaf saves API keys and kaf-owned OAuth refresh credentials in the OS secret store through just-secrets. It saves the last successful login as the machine default and records the project's connection and team separately as nonsecret metadata in `.kaf/provider.json`. Newly entered keys are never written into project files. A key explicitly selected through `/login` takes precedence over another key for that provider in your shell; a project connected through environment credentials continues to use its environment. Vercel CLI retains ownership of its credentials and refresh tokens.
+orcel saves API keys and orcel-owned OAuth refresh credentials in the OS secret store through just-secrets. It saves the last successful login as the machine default and records the project's connection and team separately as nonsecret metadata in `.orcel/provider.json`. Newly entered keys are never written into project files. A key explicitly selected through `/login` takes precedence over another key for that provider in your shell; a project connected through environment credentials continues to use its environment. Vercel CLI retains ownership of its credentials and refresh tokens.
 
 Local discovery runs only in development. Deployments need explicitly provisioned `AI_GATEWAY_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or supported project OIDC credentials. ChatGPT subscription models are local-only. `/login` does not link a deployment or authenticate a remote server; `/deploy` handles Vercel CLI installation and account login when needed.
 
@@ -75,7 +75,7 @@ Changes apply together after the final choice, then the picker returns to chat. 
 
 A successful login or model change takes effect on the next prompt.
 
-Gateway connections default to `openai/gpt-6-luna-fast`; OpenAI and ChatGPT default to `gpt-6-luna-fast`; Anthropic defaults to `claude-sonnet-5`. An explicitly authored compatible model stays selected. If a new default is unavailable, kaf offers the connection's available models. Dynamic or custom model expressions must be edited in `agent.ts`.
+Gateway connections default to `openai/gpt-6-luna-fast`; OpenAI and ChatGPT default to `gpt-6-luna-fast`; Anthropic defaults to `claude-sonnet-5`. An explicitly authored compatible model stays selected. If a new default is unavailable, orcel offers the connection's available models. Dynamic or custom model expressions must be edited in `agent.ts`.
 
 ## Add an integration
 
@@ -90,11 +90,11 @@ Pass an item address to install it directly:
 /add @acme/analytics
 ```
 
-Required authorization or deployment setup still runs for the selected item. Press `Esc` to cancel setup; files already installed remain in the project. If dependency installation fails, retry the `kaf add` command in a terminal for details; raw installer output is not captured in the TUI.
+Required authorization or deployment setup still runs for the selected item. Press `Esc` to cancel setup; files already installed remain in the project. If dependency installation fails, retry the `orcel add` command in a terminal for details; raw installer output is not captured in the TUI.
 
 ## Work with the agent
 
-Type a message and press `Enter` to send it. When the agent asks a question or requests tool approval, respond in the prompt shown by the UI. Connection authorization can open a browser; keep local `kaf dev` running until the browser returns to it.
+Type a message and press `Enter` to send it. When the agent asks a question or requests tool approval, respond in the prompt shown by the UI. Connection authorization can open a browser; keep local `orcel dev` running until the browser returns to it.
 
 The activity line shows **Thinking** while the model reasons or waits to respond, **Generating** while it writes a response or tool input, **Running** while tools execute, and **Waiting for** followed by task names while the turn waits on [tasks](../tools/tasks). A blinking dot and elapsed time indicate progress, with token counts shown when available. The activity line disappears when the turn finishes or needs your input.
 
@@ -118,40 +118,40 @@ Slash commands wait until the turn ends, except `/cancel`, which cancels directl
 
 By default, the UI shows `stderr` logs. Use `/loglevel <all|stderr|sandbox|none>` to change the display; bare `/loglevel` reports the current setting. `Ctrl+L` cycles the same modes.
 
-Every `kaf dev` process writes diagnostic logs to `.kaf/logs/`, regardless of the display mode. Read them with [`kaf logs`](../reference/cli#kaf-logs).
+Every `orcel dev` process writes diagnostic logs to `.orcel/logs/`, regardless of the display mode. Read them with [`orcel logs`](../reference/cli#orcel-logs).
 
 Use `/traces` to inspect traces recorded during local development. See [Local traces](../observability/otel#local-traces) for trace capture and retention settings.
 
 ## Display options
 
-Use `kaf dev` flags to control tool calls, reasoning, subagents, connection authorization, response statistics, context usage, and logs:
+Use `orcel dev` flags to control tool calls, reasoning, subagents, connection authorization, response statistics, context usage, and logs:
 
 ```bash
-kaf dev --tools full --reasoning collapsed --logs all
+orcel dev --tools full --reasoning collapsed --logs all
 ```
 
 `--subagents` accepts `collapsed` (the default), `full`, or `hidden`. `full` also writes each subagent message and tool call to the transcript as it finishes, and `hidden` leaves subagent tasks out of the transcript and the task panel.
 
-Use `--host` and `--port` to bind the local server, or `--no-ui` to run without the terminal UI. Set `KAF_TUI_RENDER_MARKDOWN=0` to show assistant and subagent responses without Markdown parsing or styling; `1` (the default) enables Markdown rendering. See the [`kaf dev` CLI reference](../reference/cli#kaf-dev) for the complete option list, accepted values, and defaults.
+Use `--host` and `--port` to bind the local server, or `--no-ui` to run without the terminal UI. Set `ORCEL_TUI_RENDER_MARKDOWN=0` to show assistant and subagent responses without Markdown parsing or styling; `1` (the default) enables Markdown rendering. See the [`orcel dev` CLI reference](../reference/cli#orcel-dev) for the complete option list, accepted values, and defaults.
 
 ## Connect to a deployment
 
-Pass a URL to use the terminal UI with an existing kaf server instead of starting one locally:
+Pass a URL to use the terminal UI with an existing orcel server instead of starting one locally:
 
 ```bash
-kaf remote connect --url https://your-app.vercel.app
+orcel remote connect --url https://your-app.vercel.app
 ```
 
-Use `kaf remote connect` for an existing agent. To send credentials or custom request headers, use a URL with HTTP Basic credentials or repeat `-H, --header`:
+Use `orcel remote connect` for an existing agent. To send credentials or custom request headers, use a URL with HTTP Basic credentials or repeat `-H, --header`:
 
 ```bash
-kaf remote connect --url https://user:pass@your-app.example.com
-kaf remote connect --url https://your-app.example.com -H 'Authorization: Bearer your_token_here'
+orcel remote connect --url https://user:pass@your-app.example.com
+orcel remote connect --url https://your-app.example.com -H 'Authorization: Bearer your_token_here'
 ```
 
 Remote Vercel sessions reuse an existing authorized CLI session. They do not open an account login flow or modify the local project's Vercel link or `.env.local`.
 
-When Deployment Protection blocks startup, kaf verifies the target project and asks before adding a Trusted Sources rule for development access to that deployment's environment. After approval, kaf applies the rule and checks access again before returning to chat. Cancelling preserves your draft; restart `kaf remote connect --url <url>` to try again. If you cannot change the project's policy, provide `VERCEL_AUTOMATION_BYPASS_SECRET` or ask a project administrator to configure access in Deployment Protection settings.
+When Deployment Protection blocks startup, orcel verifies the target project and asks before adding a Trusted Sources rule for development access to that deployment's environment. After approval, orcel applies the rule and checks access again before returning to chat. Cancelling preserves your draft; restart `orcel remote connect --url <url>` to try again. If you cannot change the project's policy, provide `VERCEL_AUTOMATION_BYPASS_SECRET` or ask a project administrator to configure access in Deployment Protection settings.
 
 ## What to read next
 

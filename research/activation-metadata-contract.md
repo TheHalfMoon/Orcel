@@ -10,7 +10,7 @@ last_updated: "2026-09-14"
 
 Schema v4 activation roots need a small provider-neutral attribute set for
 filtering and grouping without inspecting captured payloads. The contract keeps
-structural metadata on `invoke_agent` spans while preserving kaf's existing
+structural metadata on `invoke_agent` spans while preserving orcel's existing
 trace-content and destination-redaction boundaries.
 
 ## Attribute ownership

@@ -15,7 +15,7 @@ import { execFileSync } from "node:child_process";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const templatesDirectory = join(repoRoot, "apps", "templates");
-const temporaryDirectory = mkdtempSync(join(tmpdir(), "kaf-template-compatibility-"));
+const temporaryDirectory = mkdtempSync(join(tmpdir(), "orcel-template-compatibility-"));
 const historicalFrameworkPackage = ["e", "ve"].join("");
 
 const run = (command, args, options = {}) => {
@@ -24,23 +24,23 @@ const run = (command, args, options = {}) => {
 };
 
 try {
-  const packageDirectory = join(repoRoot, "packages", "kaf");
+  const packageDirectory = join(repoRoot, "packages", "orcel");
   const packedDirectory = join(temporaryDirectory, "packed");
   run("pnpm", ["--dir", packageDirectory, "pack", "--pack-destination", packedDirectory]);
 
   const tarballs = readdirSync(packedDirectory).filter((file) => file.endsWith(".tgz"));
   if (tarballs.length !== 1) {
     throw new Error(
-      `Expected one kaf tarball in ${packedDirectory}, found ${tarballs.join(", ") || "none"}`,
+      `Expected one orcel tarball in ${packedDirectory}, found ${tarballs.join(", ") || "none"}`,
     );
   }
   const tarball = join(packedDirectory, tarballs[0]);
   const packageManifest = JSON.parse(readFileSync(join(packageDirectory, "package.json"), "utf8"));
   const sandboxImageTag = String(packageManifest.version ?? "").split("+", 1)[0];
   if (sandboxImageTag.length === 0) {
-    throw new Error("Kaf package version is required to build the local sandbox image");
+    throw new Error("Orcel package version is required to build the local sandbox image");
   }
-  const localSandboxImage = `ghcr.io/thehalfmoon/kaf:${sandboxImageTag}`;
+  const localSandboxImage = `ghcr.io/thehalfmoon/orcel:${sandboxImageTag}`;
   run("docker", [
     "build",
     "--file",
@@ -64,25 +64,25 @@ try {
     const destination = join(temporaryDirectory, template);
     cpSync(source, destination, {
       filter: (path) =>
-        !["node_modules", ".next", ".nuxt", ".output", ".kaf", ".vercel"].includes(basename(path)),
+        !["node_modules", ".next", ".nuxt", ".output", ".orcel", ".vercel"].includes(basename(path)),
       recursive: true,
     });
 
     const manifestPath = join(destination, "package.json");
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-    if (!manifest.dependencies?.kaf) {
-      throw new Error(`Template "${template}" does not declare kaf in dependencies`);
+    if (!manifest.dependencies?.orcel) {
+      throw new Error(`Template "${template}" does not declare orcel in dependencies`);
     }
-    manifest.dependencies.kaf = `file:${tarball}`;
+    manifest.dependencies.orcel = `file:${tarball}`;
     if (manifest.dependencies["@vercel/connect"]) {
       const compatibilitySpecifier = manifest.dependencies[historicalFrameworkPackage];
-      if (!compatibilitySpecifier?.startsWith("npm:kaf@")) {
+      if (!compatibilitySpecifier?.startsWith("npm:orcel@")) {
         throw new Error(
-          `Template "${template}" uses @vercel/connect but is missing its documented Kaf compatibility alias`,
+          `Template "${template}" uses @vercel/connect but is missing its documented Orcel compatibility alias`,
         );
       }
       // Bind the provider's historical bare package coordinate to the exact
-      // same local Kaf tarball so parity tests never depend on a registry build.
+      // same local Orcel tarball so parity tests never depend on a registry build.
       manifest.dependencies[historicalFrameworkPackage] = `file:${tarball}`;
     }
     writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
@@ -92,10 +92,10 @@ try {
     if (manifest.dependencies["@vercel/connect"]) {
       const compatibilityPath = join(destination, "node_modules", historicalFrameworkPackage);
       rmSync(compatibilityPath, { force: true, recursive: true });
-      symlinkSync(join(destination, "node_modules", "kaf"), compatibilityPath, "junction");
+      symlinkSync(join(destination, "node_modules", "orcel"), compatibilityPath, "junction");
     }
     run("pnpm", ["typecheck"], { cwd: destination });
-    run("pnpm", ["exec", "kaf", "build"], { cwd: destination });
+    run("pnpm", ["exec", "orcel", "build"], { cwd: destination });
     run("pnpm", ["build"], { cwd: destination });
   }
 } finally {

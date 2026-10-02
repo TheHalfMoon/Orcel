@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { db, schema } from "@nuxthub/db";
-import type { UserProfile, UserProfilePatch, UserProfileWithUser } from "#kaf/types/profile";
+import type { UserProfile, UserProfilePatch, UserProfileWithUser } from "#orcel/types/profile";
 import {
   deletePhoneLinkForAppUser,
   getPhoneLinkForAppUser,

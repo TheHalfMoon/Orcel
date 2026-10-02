@@ -3,10 +3,10 @@ title: "Judge"
 description: "Grade evals with evaluation models using criteria, typed questions, or batches, and set thresholds on each assertion."
 ---
 
-Use `t.judge(...)` when a deterministic [assertion](./assertions) cannot capture what a good response looks like. It calls [`evaluate` from `kaf/ai`](../guides/evaluate#evaluate-inside-a-tool) and defaults to `typesafe-ai/jev`, TypeSafe AI's [Jev evaluation model](https://vercel.com/i/what-is-jev). The judge is separate from the agent under test and is used only for scoring.
+Use `t.judge(...)` when a deterministic [assertion](./assertions) cannot capture what a good response looks like. It calls [`evaluate` from `orcel/ai`](../guides/evaluate#evaluate-inside-a-tool) and defaults to `typesafe-ai/jev`, TypeSafe AI's [Jev evaluation model](https://vercel.com/i/what-is-jev). The judge is separate from the agent under test and is used only for scoring.
 
 ```ts
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 export default defineEval({
   async test(t) {
@@ -29,7 +29,7 @@ No judge configuration is required. Configure credentials for the evaluator as d
 | `score`                      | The returned rubric position divided by the highest level index |
 | `choice`                     | 1 when the selected option equals `expected`; otherwise 0       |
 
-Boolean scores are model estimates, not guaranteed calibrated confidence. A rubric needs at least two levels, ordered from worst to best. The SDK can return a fractional position on that rubric; kaf normalizes it to the 0–1 scale used by assertion thresholds.
+Boolean scores are model estimates, not guaranteed calibrated confidence. A rubric needs at least two levels, ordered from worst to best. The SDK can return a fractional position on that rubric; orcel normalizes it to the 0–1 scale used by assertion thresholds.
 
 ```ts
 t.judge({
@@ -41,7 +41,7 @@ t.judge({
   .atLeast(0.75);
 ```
 
-Choice questions require an `expected` option key. kaf uses that expectation locally for scoring; it does not send it to the evaluator. Instructions and rubric descriptions accept strings, JSON objects, or JSON arrays. Descriptions can also be `null`.
+Choice questions require an `expected` option key. orcel uses that expectation locally for scoring; it does not send it to the evaluator. Instructions and rubric descriptions accept strings, JSON objects, or JSON arrays. Descriptions can also be `null`.
 
 ## Choose the value to grade
 
@@ -100,7 +100,7 @@ Keys identify questions and their assertion handles; instructions must explain w
 Judges are soft by default:
 
 - Without a threshold, the score is tracked in reports and artifacts without failing the eval.
-- `.atLeast(threshold)` sets a soft bar. A lower score marks the eval `scored`, fatal only under `kaf eval --strict`.
+- `.atLeast(threshold)` sets a soft bar. A lower score marks the eval `scored`, fatal only under `orcel eval --strict`.
 - `.gate(threshold)` makes a lower score fail the eval outright. An omitted gate threshold is 1.
 
 ```ts
@@ -125,14 +125,14 @@ Model settings resolve in this order:
 A per-eval `judge` replaces the project's judge configuration. Per-call fields override the resolved configuration. `judge` and its `model` are optional; deterministic evals make no evaluation requests.
 
 ```ts title="evals/evals.config.ts"
-import { defineEvalConfig } from "kaf/evals";
+import { defineEvalConfig } from "orcel/evals";
 
 export default defineEvalConfig({
   judge: { model: "typesafe-ai/jev" },
 });
 ```
 
-String IDs resolve through the AI SDK default provider, or Vercel AI Gateway when none is configured. Gateway uses `AI_GATEWAY_API_KEY` or Vercel OIDC credentials; kaf's existing local Gateway connection is also honored by `evaluate`. An explicit provider evaluation model uses that provider's credentials:
+String IDs resolve through the AI SDK default provider, or Vercel AI Gateway when none is configured. Gateway uses `AI_GATEWAY_API_KEY` or Vercel OIDC credentials; orcel's existing local Gateway connection is also honored by `evaluate`. An explicit provider evaluation model uses that provider's credentials:
 
 ```ts
 import { openai } from "@ai-sdk/openai";

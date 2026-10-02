@@ -1,11 +1,11 @@
 ---
 title: "Extensions"
-description: "Package reusable kaf capabilities and mount them from npm or a monorepo workspace."
+description: "Package reusable orcel capabilities and mount them from npm or a monorepo workspace."
 ---
 
-Extensions package kaf tools, channels, connections, skills, schedules, subagents, instruction fragments, and hooks. An author builds an extension package; each agent that uses it declares the package as a dependency and mounts it. The package can be published to a package registry or kept private inside a monorepo workspace.
+Extensions package orcel tools, channels, connections, skills, schedules, subagents, instruction fragments, and hooks. An author builds an extension package; each agent that uses it declares the package as a dependency and mounts it. The package can be published to a package registry or kept private inside a monorepo workspace.
 
-Ready-made extensions can also be distributed through an kaf integration registry. See [Add Integrations](./install-integrations) to discover and add one with `kaf add`; this page explains how extension packages are authored, mounted, configured, and overridden.
+Ready-made extensions can also be distributed through an orcel integration registry. See [Add Integrations](./install-integrations) to discover and add one with `orcel add`; this page explains how extension packages are authored, mounted, configured, and overridden.
 
 This enables sharing many different capability sets. A browser extension might include several tools for navigating a site. A self-improving extension could pair hooks with dynamic instructions.
 
@@ -16,7 +16,7 @@ This enables sharing many different capability sets. A browser extension might i
 Start with the extension scaffold:
 
 ```bash
-npx kaf@latest extension init my-crm
+npx orcel@latest extension init my-crm
 ```
 
 The command creates the package, installs dependencies, and initializes Git. It includes `extension/extension.ts`, TypeScript configuration, and the package metadata required to build and publish.
@@ -54,7 +54,7 @@ like any other [declared subagent](./subagents).
 The author's `extension/extension.ts` default-exports a `defineExtension` handle. Give it a [Standard Schema](https://standardschema.dev) when consumers need to provide settings:
 
 ```ts title="extension/extension.ts"
-import { defineExtension } from "kaf/extension";
+import { defineExtension } from "orcel/extension";
 import { z } from "zod";
 
 export default defineExtension({
@@ -68,7 +68,7 @@ export default defineExtension({
 Contributions, including schedule handlers, can import that handle to read the validated configuration. Defaults have already been applied:
 
 ```ts title="extension/tools/search.ts"
-import { defineTool } from "kaf/tools";
+import { defineTool } from "orcel/tools";
 import { z } from "zod";
 
 import extension from "../extension";
@@ -102,7 +102,7 @@ The scaffold's `package.json` declares separate source and distribution roots:
   "name": "my-crm",
   "version": "0.0.0",
   "type": "module",
-  "kaf": {
+  "orcel": {
     "extension": {
       "source": "./extension",
       "dist": "./dist/extension",
@@ -121,8 +121,8 @@ The scaffold's `package.json` declares separate source and distribution roots:
     },
   },
   "scripts": {
-    "build": "kaf extension build",
-    "prepare": "kaf extension build",
+    "build": "orcel extension build",
+    "prepare": "orcel extension build",
     "typecheck": "tsc",
   },
   "dependencies": {
@@ -131,11 +131,11 @@ The scaffold's `package.json` declares separate source and distribution roots:
   },
   "devDependencies": {
     "@types/node": "^x",
-    "kaf": "x.y.z",
+    "orcel": "x.y.z",
     "typescript": "^x",
   },
   "peerDependencies": {
-    "kaf": "*",
+    "orcel": "*",
   },
   "engines": {
     "node": ">=24",
@@ -145,19 +145,19 @@ The scaffold's `package.json` declares separate source and distribution roots:
 
 The scaffold omits `engines` when it creates a workspace package.
 
-Build the package with `kaf extension build`:
+Build the package with `orcel extension build`:
 
 ```bash
-kaf extension build
+orcel extension build
 ```
 
-`kaf extension build` writes an agent-shaped `dist/extension` tree, copies skill assets, emits declarations, and records compatibility metadata. It also manages the package exports for the mount factory (`@acme/crm`) and tool definitions (`@acme/crm/tools`). Publish `dist/`; consumers do not need the author's TypeScript source.
+`orcel extension build` writes an agent-shaped `dist/extension` tree, copies skill assets, emits declarations, and records compatibility metadata. It also manages the package exports for the mount factory (`@acme/crm`) and tool definitions (`@acme/crm/tools`). Publish `dist/`; consumers do not need the author's TypeScript source.
 
-The exact `kaf` development pin controls the extension authoring API and build tooling. The wildcard peer lets the consumer provide the runtime copy of kaf. At consumption time, kaf checks generated metadata, not the npm peer range. Do not add kaf to regular `dependencies`.
+The exact `orcel` development pin controls the extension authoring API and build tooling. The wildcard peer lets the consumer provide the runtime copy of orcel. At consumption time, orcel checks generated metadata, not the npm peer range. Do not add orcel to regular `dependencies`.
 
 Put runtime packages such as `zod` or an SDK in `dependencies`. Most dependencies are bundled into the consuming agent automatically.
 
-When a package must keep normal Node.js package layout at runtime, add it to `kaf.extension.externalDependencies`. Common cases include native addons and SDKs that load package-relative assets. `kaf extension build` requires each listed package to also appear in `dependencies`, `optionalDependencies`, or `peerDependencies`, and records the requirement in the generated compatibility manifest. The consuming kaf keeps the package external and preserves its complete package tree; consumers do not need to edit `agent.ts` or install the transitive package directly.
+When a package must keep normal Node.js package layout at runtime, add it to `orcel.extension.externalDependencies`. Common cases include native addons and SDKs that load package-relative assets. `orcel extension build` requires each listed package to also appear in `dependencies`, `optionalDependencies`, or `peerDependencies`, and records the requirement in the generated compatibility manifest. The consuming orcel keeps the package external and preserves its complete package tree; consumers do not need to edit `agent.ts` or install the transitive package directly.
 
 Consumers can now add the built package to an agent. A workspace-only extension uses the same package contract but does not need to be published; see [Use an extension in a workspace](#use-an-extension-in-a-workspace).
 
@@ -167,7 +167,7 @@ A mount gives the extension's contributions a namespace. Updating the package up
 
 ### Install the package
 
-Install the extension with the package manager already used by the consumer's agent project. Fresh kaf projects use pnpm:
+Install the extension with the package manager already used by the consumer's agent project. Fresh orcel projects use pnpm:
 
 ```bash
 pnpm add @acme/crm
@@ -199,7 +199,7 @@ Extension state belongs to the logical mount path (for example, `extensions/crm`
 
 ### Upgrade from package-scoped extension state
 
-Deployments before this release stored extension state under package-prefixed keys. kaf does not migrate that state to mount-owned keys or reset it during restore.
+Deployments before this release stored extension state under package-prefixed keys. orcel does not migrate that state to mount-owned keys or reset it during restore.
 
 - Session handoffs across this upgrade boundary are rejected in both directions, including for agents without extensions. Keep each session's owning deployment available until the session finishes, or start a new session on the deployment you want to use.
 - Local context snapshots use a separate state-layout check. Older snapshots for agents with extensions are incompatible; snapshots for agents without extensions can restore if they contain no unrecognized state keys.
@@ -242,7 +242,7 @@ You can scaffold the extension from a directory already covered by the workspace
 
 ```bash
 cd packages
-npx kaf@latest extension init shared-capabilities
+npx orcel@latest extension init shared-capabilities
 ```
 
 Give the generated package the name consumers will import. Add `"private": true` if it should never be published:
@@ -251,7 +251,7 @@ Give the generated package the name consumers will import. Add `"private": true`
 {
   "name": "@acme/shared-capabilities",
   "private": true,
-  "kaf": {
+  "orcel": {
     "extension": {
       "source": "./extension",
       "dist": "./dist/extension",
@@ -280,11 +280,11 @@ The mount is intentionally per agent. Each consumer chooses its own mount namesp
 
 #### Develop from source
 
-When `kaf dev` starts a consuming agent, it builds mounted, source-backed extensions found inside the same workspace before compiling the agent. It watches the extension source and relevant package and TypeScript configuration, then rebuilds only the affected extension. If an extension edit fails to build, the previous successful development generation keeps running.
+When `orcel dev` starts a consuming agent, it builds mounted, source-backed extensions found inside the same workspace before compiling the agent. It watches the extension source and relevant package and TypeScript configuration, then rebuilds only the affected extension. If an extension edit fails to build, the previous successful development generation keeps running.
 
-Production builds build the same extensions from source. `kaf build` builds each mounted, source-backed workspace extension before it compiles the agent, and `withEve` does the same for its agents during `next build`. Production builds therefore do not depend on the extension package's `prepare` script, which package managers skip for no-op installs and with `--ignore-scripts`. kaf skips an extension whose distribution was built by the same kaf version and is newer than the extension's source, `package.json`, and TypeScript configuration.
+Production builds build the same extensions from source. `orcel build` builds each mounted, source-backed workspace extension before it compiles the agent, and `withEve` does the same for its agents during `next build`. Production builds therefore do not depend on the extension package's `prepare` script, which package managers skip for no-op installs and with `--ignore-scripts`. orcel skips an extension whose distribution was built by the same orcel version and is newer than the extension's source, `package.json`, and TypeScript configuration.
 
-If an extension fails to build, the agent build stops with an error that names the extension package and its directory. Fix the reported error, or run `kaf extension build` in that package directory to build it on its own.
+If an extension fails to build, the agent build stops with an error that names the extension package and its directory. Fix the reported error, or run `orcel extension build` in that package directory to build it on its own.
 
 ### Override a contribution
 
@@ -306,8 +306,8 @@ A same-named consumer channel, tool, connection, skill, schedule, or subagent wi
 
 ```ts title="agent/extensions/crm/tools/search.ts"
 import { search } from "@acme/crm/tools";
-import { defineTool } from "kaf/tools";
-import { always } from "kaf/tools/approval";
+import { defineTool } from "orcel/tools";
+import { always } from "orcel/tools/approval";
 
 export default defineTool({ ...search, approval: always() });
 ```
@@ -315,7 +315,7 @@ export default defineTool({ ...search, approval: always() });
 To remove an extension tool, use `disableTool()` in its matching slot:
 
 ```ts title="agent/extensions/crm/tools/search.ts"
-import { disableTool } from "kaf/tools";
+import { disableTool } from "orcel/tools";
 
 export default disableTool();
 ```
@@ -329,8 +329,8 @@ You can also place an override in the corresponding agent-root slot by using the
 To retain an extension tool's result type in a consumer hook, import its definition from `./tools` and pass it to [`toolResultFrom`](/docs/guides/hooks#narrowing-tool-results):
 
 ```ts title="agent/hooks/narrow-crm.ts"
-import { defineHook } from "kaf/hooks";
-import { toolResultFrom } from "kaf/tools";
+import { defineHook } from "orcel/hooks";
+import { toolResultFrom } from "orcel/tools";
 import { search } from "@acme/crm/tools";
 
 export default defineHook({
@@ -343,15 +343,15 @@ export default defineHook({
 });
 ```
 
-`toolResultFrom` recognizes the mounted `crm__search` result from the original definition, not the namespaced string. Publishers should keep tool descriptions distinct so kaf can assign each definition an unambiguous identity.
+`toolResultFrom` recognizes the mounted `crm__search` result from the original definition, not the namespaced string. Publishers should keep tool descriptions distinct so orcel can assign each definition an unambiguous identity.
 
 ### Bundled development extensions
 
-Local `kaf dev` also mounts bundled development extensions without creating a project mount. The self-modification extension is included by default when `kaf dev` starts a local server. Bundled development extensions are not included in production builds. See [Self-Modification](./guides/self-modification) for the local workflow.
+Local `orcel dev` also mounts bundled development extensions without creating a project mount. The self-modification extension is included by default when `orcel dev` starts a local server. Bundled development extensions are not included in production builds. See [Self-Modification](./guides/self-modification) for the local workflow.
 
 ### Compatibility
 
-At build time, kaf checks the extension's generated capability metadata. If the extension needs an unsupported capability contract, upgrade kaf or install a compatible extension release.
+At build time, orcel checks the extension's generated capability metadata. If the extension needs an unsupported capability contract, upgrade orcel or install a compatible extension release.
 
 ## What to read next
 

@@ -11,9 +11,9 @@ export async function prepareSelfModification(options = {}) {
   const fixture = options.fixtureRoot ?? fixtureRoot;
   const docs = resolve(options.repoRoot ?? repoRoot, "apps/docs");
   const registry = JSON.parse(await readFile(resolve(docs, "registry.json"), "utf8"));
-  const item = registry.items.find((item) => item.name === "kaf/self-modification");
+  const item = registry.items.find((item) => item.name === "orcel/self-modification");
   if (!item?.files?.length)
-    throw new Error("kaf/self-modification has no registry scaffold files.");
+    throw new Error("orcel/self-modification has no registry scaffold files.");
 
   const destination = resolve(fixture, targetDirectory);
   const files = await Promise.all(

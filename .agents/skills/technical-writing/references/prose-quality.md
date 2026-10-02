@@ -1,15 +1,15 @@
 # Prose quality
 
-Apply this pass after the technical claims and page structure are correct. The goal is clear, natural kaf documentation, not a generic rewrite.
+Apply this pass after the technical claims and page structure are correct. The goal is clear, natural orcel documentation, not a generic rewrite.
 
 ## Preserve intent
 
 - Preserve supported meaning, facts, nuance, and necessary uncertainty.
-- Keep established kaf terminology even when a synonym would add variety.
+- Keep established orcel terminology even when a synonym would add variety.
 - Leave strong sentences alone. Make the minimum effective edit.
 - Preserve useful detail instead of replacing it with broad summaries.
 - Do not invent examples, measurements, sources, opinions, reactions, or implementation details.
-- Match kaf's neutral instructional voice rather than an individual author's casual voice.
+- Match orcel's neutral instructional voice rather than an individual author's casual voice.
 
 ## Improve clarity
 

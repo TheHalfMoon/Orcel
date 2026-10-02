@@ -1,4 +1,4 @@
-import type { MockModelRequest, MockModelResponse, MockModelToolCall } from "kaf/evals";
+import type { MockModelRequest, MockModelResponse, MockModelToolCall } from "orcel/evals";
 
 const read = (id: string): MockModelToolCall => ({
   id,

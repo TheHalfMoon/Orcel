@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 env:
-  KAF_SANDBOX_IMAGE_TAG: latest
+  ORCEL_SANDBOX_IMAGE_TAG: latest
 
 jobs:
   lint:
@@ -184,7 +184,7 @@ jobs:
       - name: Build workspace packages
         run: pnpm build
 
-      - name: Build framework fixtures against the workspace kaf dist
+      - name: Build framework fixtures against the workspace orcel dist
         run: pnpm test:framework-fixtures
 
   test-templates:
@@ -208,7 +208,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Check templates against the packed kaf package
+      - name: Check templates against the packed orcel package
         run: pnpm check:templates
 
   test-tui:

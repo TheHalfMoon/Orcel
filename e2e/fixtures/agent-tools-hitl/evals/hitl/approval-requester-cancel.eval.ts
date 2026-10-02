@@ -1,7 +1,7 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
-const ALICE = { "x-kaf-fixture-user": "alice", "x-kaf-fixture-model": "continuation" };
-const BOB = { "x-kaf-fixture-user": "bob", "x-kaf-fixture-model": "continuation" };
+const ALICE = { "x-orcel-fixture-user": "alice", "x-orcel-fixture-model": "continuation" };
+const BOB = { "x-orcel-fixture-user": "bob", "x-orcel-fixture-model": "continuation" };
 const TOOL = "authorized-change";
 
 /**

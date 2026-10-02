@@ -1,9 +1,9 @@
 import { defineConfig } from "@vercel/geistdocs/config";
-import { LogoEve } from "@vercel/geistdocs/assets/logos/logo-kaf";
+import { LogoEve } from "@vercel/geistdocs/assets/logos/logo-orcel";
 import {
   agent,
   basePath,
-  kafAgent,
+  orcelAgent,
   github,
   Logo,
   nav,
@@ -23,8 +23,8 @@ export const config = defineConfig({
   logo: <Logo />,
   github,
   nav,
-  // Drops kaf (this site) from geistdocs' default OSS products menu.
-  navbarActiveProduct: "kaf",
+  // Drops orcel (this site) from geistdocs' default OSS products menu.
+  navbarActiveProduct: "orcel",
   basePath,
   siteId,
   siteUrl: getSiteOrigin(),
@@ -35,17 +35,17 @@ export const config = defineConfig({
   pageActions: { editSource: false },
   content: [{ id: "docs", label: "Docs", dir: "docs", route: "/docs" }],
   ai: {
-    kafAgent,
-    // Used only if kafAgent is removed and chat falls back to gateway mode.
+    orcelAgent,
+    // Used only if orcelAgent is removed and chat falls back to gateway mode.
     prompt,
     suggestions,
-    // Ask AI is answered by an agent built on kaf (help-kaf).
+    // Ask AI is answered by an agent built on orcel (help-orcel).
     footer: (
       <div className="flex justify-center">
         <a
-          aria-label="Powered by kaf"
+          aria-label="Powered by orcel"
           className="inline-flex items-center gap-1.5 text-gray-700 text-label-12 transition-colors hover:text-gray-900"
-          href="https://github.com/TheHalfMoon/kaf"
+          href="https://github.com/TheHalfMoon/orcel"
         >
           <span>Powered by</span>
           <LogoEve height={10} />

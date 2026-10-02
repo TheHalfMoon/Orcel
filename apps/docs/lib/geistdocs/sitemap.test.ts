@@ -11,7 +11,7 @@ const sources = [
   { pathname: "/integrations" },
   { pathname: "/integrations/slack" },
   { pathname: "/templates" },
-  { pathname: "/templates/kaf-chat-template" },
+  { pathname: "/templates/orcel-chat-template" },
   { pathname: "/docs/channels" },
   { pathname: "/docs/getting-started.md" },
   { pathname: "/integrations?filter=channel" },
@@ -25,25 +25,25 @@ describe("createCanonicalSitemap", () => {
   it("includes each canonical public HTML route exactly once", () => {
     const sitemap = createCanonicalSitemap({
       excludedPathnames: ["/docs/channels"],
-      origin: "https://kaf.dev",
+      origin: "https://orcel.dev",
       sources,
     });
 
     expect(sitemap.map(({ url }) => url)).toEqual([
-      "https://kaf.dev/",
-      "https://kaf.dev/benchmarks",
-      "https://kaf.dev/docs/getting-started",
-      "https://kaf.dev/integrations",
-      "https://kaf.dev/integrations/slack",
-      "https://kaf.dev/templates",
-      "https://kaf.dev/templates/kaf-chat-template",
+      "https://orcel.dev/",
+      "https://orcel.dev/benchmarks",
+      "https://orcel.dev/docs/getting-started",
+      "https://orcel.dev/integrations",
+      "https://orcel.dev/integrations/slack",
+      "https://orcel.dev/templates",
+      "https://orcel.dev/templates/orcel-chat-template",
     ]);
   });
 
   it("excludes redirects, queries, locale aliases, machine routes, and errors", () => {
     const urls = createCanonicalSitemap({
       excludedPathnames: ["/docs/channels"],
-      origin: "https://kaf.dev",
+      origin: "https://orcel.dev",
       sources,
     }).map(({ url }) => url);
 
@@ -52,15 +52,15 @@ describe("createCanonicalSitemap", () => {
         expect.stringContaining("?"),
         expect.stringContaining("/en/"),
         expect.stringMatching(/\.(?:md|mdx|txt|xml)$/),
-        "https://kaf.dev/docs/channels",
-        "https://kaf.dev/api",
+        "https://orcel.dev/docs/channels",
+        "https://orcel.dev/api",
       ]),
     );
   });
 
   it("uses trustworthy source dates without build-time fallbacks", () => {
-    const first = createCanonicalSitemap({ origin: "https://kaf.dev", sources });
-    const second = createCanonicalSitemap({ origin: "https://kaf.dev", sources });
+    const first = createCanonicalSitemap({ origin: "https://orcel.dev", sources });
+    const second = createCanonicalSitemap({ origin: "https://orcel.dev", sources });
     const docsEntry = first.find(({ url }) => url.endsWith("/docs/getting-started"));
     const integrationEntry = first.find(({ url }) => url.endsWith("/integrations/slack"));
 
@@ -73,9 +73,9 @@ describe("createCanonicalSitemap", () => {
   it("omits invalid source dates", () => {
     expect(
       createCanonicalSitemap({
-        origin: "https://kaf.dev",
+        origin: "https://orcel.dev",
         sources: [{ pathname: "/docs/getting-started", lastModified: new Date("invalid") }],
       }),
-    ).toEqual([{ url: "https://kaf.dev/docs/getting-started" }]);
+    ).toEqual([{ url: "https://orcel.dev/docs/getting-started" }]);
   });
 });

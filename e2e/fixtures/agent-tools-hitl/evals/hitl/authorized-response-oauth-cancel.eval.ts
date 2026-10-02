@@ -1,4 +1,4 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 const MARKER = "authorized-response-oauth-cancel-P6W2";
 const TOOL_NAME = "oauth-authorized-gate";
@@ -16,7 +16,7 @@ export default defineEval({
     });
     const approvalTurn = await conversation.startRespond(
       [{ optionId: "approve", requestId: approval.requestId }],
-      { headers: { "x-kaf-fixture-user": "oauth-cancel-responder" } },
+      { headers: { "x-orcel-fixture-user": "oauth-cancel-responder" } },
     );
     const required = await approvalTurn.waitForEvent("authorization.required");
 

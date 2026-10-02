@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import type { UseKafAgentStatus } from "kaf/vue";
+import type { UseOrcelAgentStatus } from "orcel/vue";
 
 const props = defineProps<{
-  status?: UseKafAgentStatus;
+  status?: UseOrcelAgentStatus;
 }>();
 
 const isLive = computed(() => props.status === "submitted" || props.status === "streaming");

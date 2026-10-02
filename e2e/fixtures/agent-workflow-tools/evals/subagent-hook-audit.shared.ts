@@ -1,5 +1,5 @@
-import type { MessageStreamEvent } from "kaf/client";
-import type { KafEvalTurn } from "kaf/evals";
+import type { MessageStreamEvent } from "orcel/client";
+import type { OrcelEvalTurn } from "orcel/evals";
 
 import type { SubagentHookObservation } from "../subagent-hook-audit";
 
@@ -9,7 +9,7 @@ export type AuditedHookObservation = SubagentHookObservation & {
 };
 
 /** The observations the turn's `read_subagent_hooks` call read back from the parent session. */
-export function readHookAudit(turn: KafEvalTurn): readonly AuditedHookObservation[] {
+export function readHookAudit(turn: OrcelEvalTurn): readonly AuditedHookObservation[] {
   const output = turn.toolCalls.find((call) => call.name === "read_subagent_hooks")?.output;
   if (!Array.isArray(output)) throw new Error("The recorded hook observations are missing.");
   return output as AuditedHookObservation[];

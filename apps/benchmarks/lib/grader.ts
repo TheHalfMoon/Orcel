@@ -21,7 +21,7 @@ export interface AuthoringEvalResult {
 
 export function subjectDefaultAgentModel(): string {
   const source = readFileSync(
-    `${SOURCE_ROOT}/packages/kaf/src/shared/default-agent-model.ts`,
+    `${SOURCE_ROOT}/packages/orcel/src/shared/default-agent-model.ts`,
     "utf8",
   );
   const model = source.match(/DEFAULT_AGENT_MODEL_ID\s*=\s*["']([^"']+)["']/u)?.[1];

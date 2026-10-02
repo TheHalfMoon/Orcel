@@ -33,7 +33,7 @@ Set real values in `.env`. Never commit secrets or `.data/`.
 
 ```
 personal-agent-template/
-├── agent/          # Kaf agent: channels, tools, skills, connections
+├── agent/          # Orcel agent: channels, tools, skills, connections
 ├── apps/web/       # Nuxt 4 UI: chat, settings, profile
 ├── server/         # Nitro API, Drizzle schema, auth, memory
 ├── shared/         # Types and helpers used by app + agent

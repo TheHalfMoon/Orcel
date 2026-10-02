@@ -1,5 +1,5 @@
 import { connect } from "@vercel/connect/eve";
-import { defineMcpClientConnection } from "kaf/connections";
+import { defineMcpClientConnection } from "orcel/connections";
 
 export default defineMcpClientConnection({
   url: "https://mcp.notion.com/mcp",
@@ -21,5 +21,5 @@ export default defineMcpClientConnection({
   //   },
   // }),
 
-  // Notion also supports OpenAPI. See https://github.com/TheHalfMoon/kaf/integrations/notion for that scaffold.
+  // Notion also supports OpenAPI. See https://github.com/TheHalfMoon/orcel/integrations/notion for that scaffold.
 });

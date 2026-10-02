@@ -1,5 +1,5 @@
-import { defineAgent } from "kaf";
-import { mockModel } from "kaf/evals";
+import { defineAgent } from "orcel";
+import { mockModel } from "orcel/evals";
 
 const MARKER = "PROXIED-ASK-APPROVED-6R9K";
 

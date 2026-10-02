@@ -57,7 +57,7 @@ const experimentNames = benchmarks.flatMap((benchmark) =>
 await prepareFixtures(evalsRoot, subject, publishedBenchmark.caseIds);
 writeExperiments(subject, revision, benchmarks);
 
-console.log(`> kaf revision: ${revision}`);
+console.log(`> orcel revision: ${revision}`);
 console.log(
   `> models: ${benchmarks.map((benchmark) => `${benchmark.displayName} through ${benchmark.harness}`).join(", ")}`,
 );

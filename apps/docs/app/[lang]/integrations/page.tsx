@@ -9,7 +9,7 @@ import { Gallery, type GalleryFilter } from "./components/gallery";
 
 const title = "Integrations";
 const description =
-  "Browse the channels, connections, extensions, memory providers, and observability integrations available to an kaf agent, each with install, quick start, and configuration steps.";
+  "Browse the channels, connections, extensions, memory providers, and observability integrations available to an orcel agent, each with install, quick start, and configuration steps.";
 const titleMetadata = pageTitleMetadata(title);
 
 export const metadata: Metadata = {

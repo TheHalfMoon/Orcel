@@ -3,20 +3,20 @@ title: "Multi-Tenant Outbound Auth"
 description: "Select tenant-scoped credentials inside authored tools, OpenAPI connections, and MCP connections from the active turn context."
 ---
 
-kaf carries verified inbound identity into every turn. Authored tools and connections can use that context to select outbound credentials for the current tenant:
+orcel carries verified inbound identity into every turn. Authored tools and connections can use that context to select outbound credentials for the current tenant:
 
 - tool executors receive `ctx` directly;
 - OpenAPI and MCP `auth` may be async functions of `ctx`;
 - connection headers may be an async map or async individual values.
 
-That is the entire pattern. Your application still owns tenant membership and credential storage; kaf ensures the model never needs to see or choose those credentials.
+That is the entire pattern. Your application still owns tenant membership and credential storage; orcel ensures the model never needs to see or choose those credentials.
 
 ## Establish the tenant scope
 
 Configure route auth so the accepted principal contains a string `tenantId` attribute. Then centralize the runtime check:
 
 ```ts title="agent/lib/tenant.ts"
-import type { SessionContext } from "kaf/context";
+import type { SessionContext } from "orcel/context";
 
 export function requireTenantCaller(ctx: SessionContext): {
   tenantId: string;
@@ -39,11 +39,11 @@ The tenant comes from verified route auth, never a prompt, tool argument, or rem
 
 For production apps with many customer orgs, the inbound credential is often
 your own API key, session cookie, or JWT. Use that credential to authenticate
-the caller before kaf starts a run, then stamp the tenant onto the session:
+the caller before orcel starts a run, then stamp the tenant onto the session:
 
-```ts title="agent/channels/kaf.ts"
-import { kafChannel } from "kaf/channels/kaf";
-import { localDev, type AuthFn } from "kaf/channels/auth";
+```ts title="agent/channels/orcel.ts"
+import { orcelChannel } from "orcel/channels/orcel";
+import { localDev, type AuthFn } from "orcel/channels/auth";
 import { verifyAgentCaller } from "../../lib/app-auth";
 
 function tenantAppAuth(): AuthFn<Request> {
@@ -65,7 +65,7 @@ function tenantAppAuth(): AuthFn<Request> {
   };
 }
 
-export default kafChannel({
+export default orcelChannel({
   auth: [tenantAppAuth(), localDev()],
 });
 ```
@@ -81,17 +81,17 @@ session create or continue request and stamp that selected `tenantId` onto the
 current turn.
 
 This is not connection OAuth. The user is already authenticated to your app;
-kaf uses that verified principal to pick the correct outbound credential.
+orcel uses that verified principal to pick the correct outbound credential.
 
 ## Build tenant connection auth
 
 For Bearer tokens or tenant-scoped JWTs, write one non-interactive auth helper
 and reuse it across OpenAPI and MCP connections. `principalType: "user"` tells
-kaf to require the authenticated user from route auth, key the step-local token
+orcel to require the authenticated user from route auth, key the step-local token
 cache by that user, and pass the projected principal into `getToken`:
 
 ```ts title="agent/lib/tenant-connection-auth.ts"
-import type { ConnectionAuthProvider, ConnectionPrincipal } from "kaf/connections";
+import type { ConnectionAuthProvider, ConnectionPrincipal } from "orcel/connections";
 import { tenantCredentials, type TenantService } from "./tenant-credentials";
 
 function requireTenantPrincipal(principal: ConnectionPrincipal): {
@@ -127,14 +127,14 @@ The model never supplies `tenantId` or sees the returned token. If the remote
 service uses tenant-level credentials shared by multiple users, keep the
 credential lookup keyed by `tenantId` in your provider; user-scoped connection
 auth is still useful because it rejects unauthenticated sessions and keeps
-kaf's token cache from crossing caller identities.
+orcel's token cache from crossing caller identities.
 
 ## Authenticate an authored tool call
 
 Derive the tenant inside `execute`, fetch its credential from your application provider, and construct the outbound request:
 
 ```ts title="agent/tools/list_invoices.ts"
-import { defineTool } from "kaf/tools";
+import { defineTool } from "orcel/tools";
 import { z } from "zod";
 import { tenantCredentials } from "../lib/tenant-credentials";
 import { requireTenantCaller } from "../lib/tenant";
@@ -166,7 +166,7 @@ Attach the reusable auth helper to the connection. Generated operation tools
 receive the token at call time without exposing it to the model:
 
 ```ts title="agent/connections/billing.ts"
-import { defineOpenAPIConnection } from "kaf/connections";
+import { defineOpenAPIConnection } from "orcel/connections";
 import { tenantCredentials } from "../lib/tenant-credentials";
 import { tenantBearerAuth } from "../lib/tenant-connection-auth";
 import { requireTenantCaller } from "../lib/tenant";
@@ -185,14 +185,14 @@ export default defineOpenAPIConnection({
 });
 ```
 
-Do not return `Authorization` from `headers` when `auth` is present. kaf constructs that header from `getToken` and rejects conflicting definitions.
+Do not return `Authorization` from `headers` when `auth` is present. orcel constructs that header from `getToken` and rejects conflicting definitions.
 
 ## Authenticate an MCP connection
 
 MCP connections accept the same callbacks:
 
 ```ts title="agent/connections/support.ts"
-import { defineMcpClientConnection } from "kaf/connections";
+import { defineMcpClientConnection } from "orcel/connections";
 import { tenantCredentials } from "../lib/tenant-credentials";
 import { tenantBearerAuth } from "../lib/tenant-connection-auth";
 import { requireTenantCaller } from "../lib/tenant";
@@ -219,7 +219,7 @@ If the remote server does not accept Bearer auth, omit `auth` and return the
 tenant API key from `headers` instead:
 
 ```ts title="agent/connections/support.ts"
-import { defineMcpClientConnection } from "kaf/connections";
+import { defineMcpClientConnection } from "orcel/connections";
 import { tenantCredentials } from "../lib/tenant-credentials";
 import { requireTenantCaller } from "../lib/tenant";
 
@@ -245,7 +245,7 @@ sent only on outbound requests; they are not model inputs or tool results.
 
 ## Supply the credential provider
 
-The kaf-facing files need only this application contract:
+The orcel-facing files need only this application contract:
 
 ```ts title="agent/lib/tenant-credentials.ts"
 export type TenantService = "billing" | "support";
@@ -279,7 +279,7 @@ export { tenantCredentials } from "../../lib/tenant-credentials";
 
 Implement the provider with the secret system your application already trusts:
 a cloud secret manager, an encrypted database table, a token broker, or an
-out-of-band OAuth flow you own. kaf does not prescribe that choice.
+out-of-band OAuth flow you own. orcel does not prescribe that choice.
 
 The provider must fail closed for unknown tenants, avoid returning secrets in logs or errors, and rotate or refresh credentials before `expiresAt`. Prefer credentials that are themselves restricted to one remote tenant; treat workspace headers as routing, not authorization.
 
@@ -288,7 +288,7 @@ The provider must fail closed for unknown tenants, avoid returning secrets in lo
 1. Route auth stamps the verified tenant onto the session.
 2. Tool code reads `ctx.session.auth.current`, and connection auth receives the projected `principal`.
 3. The application provider resolves the corresponding credential.
-4. kaf sends the resulting token and headers directly to the remote service.
+4. orcel sends the resulting token and headers directly to the remote service.
 5. Neither becomes a model message or tool result.
 
 Also enforce tenant ownership for session create, continue, and stream routes. Route authentication identifies the caller, but your application owns the ACL that decides which session ids that caller may access.

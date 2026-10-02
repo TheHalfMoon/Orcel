@@ -1,6 +1,6 @@
 ---
 title: "Session State"
-description: "Persist and resume kaf client sessions with durable session IDs and stream cursors."
+description: "Persist and resume orcel client sessions with durable session IDs and stream cursors."
 ---
 
 The TypeScript client uses one durable session ID for messages, controls, and
@@ -38,7 +38,7 @@ your application renders chat history.
 Attach a fixed handle to the saved ID and restore its cursor:
 
 ```ts
-import type { ClientSessionState } from "kaf/client";
+import type { ClientSessionState } from "orcel/client";
 
 const saved = (await loadSessionState()) as ClientSessionState;
 const session = client.sessions.attach(saved.sessionId, {
@@ -118,4 +118,4 @@ bounded catch-up, see [Streaming](./streaming#open-a-stream-manually).
 
 - [Streaming](./streaming): stream events and reconnect by index
 - [Sessions, runs & streaming](../../concepts/sessions-runs-and-streaming): the raw HTTP contract
-- [kaf channel](../../channels/kaf): the ID-addressed routes
+- [orcel channel](../../channels/orcel): the ID-addressed routes

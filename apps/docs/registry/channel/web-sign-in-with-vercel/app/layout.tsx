@@ -20,11 +20,11 @@ const mono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "__KAF_INIT_APP_NAME__",
-  description: "A Next.js starter for kaf agents with AI Elements.",
+  title: "__ORCEL_INIT_APP_NAME__",
+  description: "A Next.js starter for orcel agents with AI Elements.",
 };
 
-// The page and Kaf routes validate the generated app's Better Auth session.
+// The page and Orcel routes validate the generated app's Better Auth session.
 export default function RootLayout({ children }: { readonly children: ReactNode }) {
   return (
     <html className={cn(sans.variable, mono.variable)} lang="en">

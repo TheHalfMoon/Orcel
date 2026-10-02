@@ -16,7 +16,7 @@ const FILES: InteropFile[] = [
   {
     fileName: "next.config.ts",
     lang: "typescript",
-    code: `import { withEve } from "kaf/next";
+    code: `import { withEve } from "orcel/next";
 
 const nextConfig = {};
 
@@ -27,11 +27,11 @@ export default withEve(nextConfig);`,
     fileName: "app/chat.tsx",
     lang: "tsx",
     code: `"use client";
-import { useKafAgent } from "kaf/react";
+import { useOrcelAgent } from "orcel/react";
 
 export function Chat() {
   // Same-origin routes, found automatically.
-  const agent = useKafAgent();
+  const agent = useOrcelAgent();
   // agent.messages, agent.sendMessage, ...
 }`,
   },
@@ -69,7 +69,7 @@ export async function NextjsInterop() {
         <p className="mx-auto mt-4 max-w-2xl text-center text-gray-900">
           Wrap your config with <span className="text-gray-1000">withEve()</span> and the agent
           mounts into your existing app. Same dev server, same deploy.{" "}
-          <span className="text-gray-1000">useKafAgent()</span> finds its routes on its own, so
+          <span className="text-gray-1000">useOrcelAgent()</span> finds its routes on its own, so
           there's no CORS to configure and no URL env vars to keep in sync.
         </p>
 

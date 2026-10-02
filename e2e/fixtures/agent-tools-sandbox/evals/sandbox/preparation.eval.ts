@@ -1,4 +1,4 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 import { PREPARATION_MARKER_PATH, PREPARATION_MARKER_TOKEN } from "./shared";
 

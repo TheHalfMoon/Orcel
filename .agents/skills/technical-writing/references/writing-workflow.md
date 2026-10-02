@@ -1,4 +1,4 @@
-# Writing new kaf documentation
+# Writing new orcel documentation
 
 ## 1. Research the task
 
@@ -7,7 +7,7 @@ Identify:
 - What the reader needs to accomplish or understand
 - Where the task begins and ends
 - Current source, tests, CLI help, or platform documentation that verifies it
-- Existing kaf pages that overlap
+- Existing orcel pages that overlap
 - Common failures from support evidence
 - Product work that is not yet shipped
 

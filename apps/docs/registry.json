@@ -1,16 +1,16 @@
 {
   "$schema": "https://ui.shadcn.com/schema/registry.json",
-  "name": "kaf",
-  "homepage": "https://github.com/TheHalfMoon/kaf",
+  "name": "orcel",
+  "homepage": "https://github.com/TheHalfMoon/orcel",
   "items": [
     {
-      "name": "kaf/self-modification",
+      "name": "orcel/self-modification",
       "type": "registry:item",
       "title": "Self-modification",
       "description": "Add a source editing subagent with local edits and official registry installation.",
       "dependencies": ["just-bash"],
       "meta": {
-        "kaf": {
+        "orcel": {
           "requires": ">=0.62.0",
           "install": {
             "pnpm": {
@@ -26,8 +26,8 @@
           },
           "setup": [
             {
-              "package": "kaf",
-              "bin": "kaf",
+              "package": "orcel",
+              "bin": "orcel",
               "args": ["integration", "setup", "self-modification"]
             }
           ]
@@ -35,7 +35,7 @@
       },
       "files": [
         {
-          "path": "registry/kaf/self-modification/extension.ts",
+          "path": "registry/orcel/self-modification/extension.ts",
           "type": "registry:file",
           "target": "agent/extensions/self-modification/extension.ts"
         }
@@ -48,7 +48,7 @@
       "description": "Add an experimental source editing subagent with local edits and official registry installation.",
       "dependencies": ["just-bash"],
       "meta": {
-        "kaf": {
+        "orcel": {
           "hidden": true,
           "install": {
             "pnpm": {
@@ -64,8 +64,8 @@
           },
           "setup": [
             {
-              "package": "kaf",
-              "bin": "kaf",
+              "package": "orcel",
+              "bin": "orcel",
               "args": ["integration", "setup", "self-modification"]
             }
           ],
@@ -74,7 +74,7 @@
       },
       "files": [
         {
-          "path": "registry/kaf/self-modification/extension.ts",
+          "path": "registry/orcel/self-modification/extension.ts",
           "type": "registry:file",
           "target": "agent/extensions/self-modification/extension.ts"
         }
@@ -84,7 +84,7 @@
       "name": "extension/agent-browser",
       "type": "registry:item",
       "title": "agent-browser",
-      "description": "Add browser automation tools backed by agent-browser to an kaf agent.",
+      "description": "Add browser automation tools backed by agent-browser to an orcel agent.",
       "dependencies": ["@agent-browser/eve"],
       "files": [
         {
@@ -167,7 +167,7 @@
       "name": "extension/link",
       "type": "registry:item",
       "title": "Link",
-      "description": "Give an kaf agent guarded access to a Link wallet for payment methods, purchase requests, and checkout credentials.",
+      "description": "Give an orcel agent guarded access to a Link wallet for payment methods, purchase requests, and checkout credentials.",
       "dependencies": [
         "@stripe/link-integrations-eve"
       ],
@@ -175,7 +175,7 @@
         "LINK_ACCESS_TOKEN": ""
       },
       "meta": {
-        "kaf": {
+        "orcel": {
           "requires": ">=0.54.4"
         }
       },
@@ -191,7 +191,7 @@
       "name": "extension/kernel",
       "type": "registry:item",
       "title": "KERNEL",
-      "description": "Let your kaf agent use the Internet with KERNEL browser infrastructure, observability, and stealth.",
+      "description": "Let your orcel agent use the Internet with KERNEL browser infrastructure, observability, and stealth.",
       "dependencies": ["@onkernel/eve-extension"],
       "envVars": {
         "KERNEL_API_KEY": ""
@@ -210,10 +210,10 @@
       "title": "File memory",
       "description": "Store durable per-principal memory in a private Vercel Blob store. Setup connects production, preview, and development in the project's primary function region; Blob usage may incur charges.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "package": "kaf",
-            "bin": "kaf",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "setup", "file-memory"]
           },
           "requires": ">=0.49.1",
@@ -238,7 +238,7 @@
         "SUPERMEMORY_API_KEY": ""
       },
       "meta": {
-        "kaf": {
+        "orcel": {
           "requires": ">=0.47.3"
         }
       },
@@ -261,7 +261,7 @@
         "UPSTASH_REDIS_REST_TOKEN": ""
       },
       "meta": {
-        "kaf": {
+        "orcel": {
           "requires": ">=0.45.2"
         }
       },
@@ -284,7 +284,7 @@
         "ARCANA_WORKSPACE": ""
       },
       "meta": {
-        "kaf": {
+        "orcel": {
           "requires": ">=0.49.0"
         }
       },
@@ -485,11 +485,11 @@
       "title": "Vercel",
       "description": "Manage Vercel projects, deployments, and logs through Vercel's MCP server.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": [
               "integration",
               "connect",
@@ -518,11 +518,11 @@
       "title": "Linear",
       "description": "Issues, projects, cycles, and comments via Linear's MCP server.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "linear", "mcp.linear.app", "linear"]
           },
           "requires": ">=0.29.0"
@@ -543,11 +543,11 @@
       "title": "Notion",
       "description": "Search and edit Notion pages and databases over MCP or OpenAPI.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "notion", "mcp.notion.com", "notion"]
           },
           "requires": ">=0.29.0"
@@ -568,11 +568,11 @@
       "title": "Datadog",
       "description": "Query metrics, monitors, and logs through Datadog's MCP server.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "datadog", "mcp.datadoghq.com", "datadog"]
           },
           "requires": ">=0.29.0"
@@ -593,11 +593,11 @@
       "title": "Honeycomb",
       "description": "Explore traces and run queries through Honeycomb's MCP server.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "honeycomb", "mcp.honeycomb.io", "honeycomb"]
           },
           "requires": ">=0.29.0"
@@ -618,11 +618,11 @@
       "title": "Agentcard",
       "description": "let agents buy online",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": [
               "integration",
               "connect",
@@ -654,11 +654,11 @@
       "title": "Airtable",
       "description": "Bases, tables, and records through Airtable's MCP server.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "airtable", "airtable", "airtable"]
           },
           "requires": ">=0.29.0"
@@ -679,11 +679,11 @@
       "title": "Bitly",
       "description": "Shorten links, generate QR Codes, and track performance.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "bitly", "bitly", "bitly"]
           },
           "requires": ">=0.29.0"
@@ -704,11 +704,11 @@
       "title": "Brex",
       "description": "Expenses, cards, and cash through Brex's finance automation.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "brex", "brex", "brex"]
           },
           "requires": ">=0.29.0"
@@ -729,11 +729,11 @@
       "title": "Candid",
       "description": "Research nonprofits and funders using Candid's data.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "candid", "candid", "candid"]
           },
           "requires": ">=0.29.0"
@@ -754,11 +754,11 @@
       "title": "ClickHouse",
       "description": "Query and explore your ClickHouse Cloud data.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "clickhouse", "clickhouse", "clickhouse"]
           },
           "requires": ">=0.29.0"
@@ -779,11 +779,11 @@
       "title": "Cloudinary",
       "description": "Manage, transform, and deliver your images and videos.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "cloudinary", "cloudinary", "cloudinary"]
           },
           "requires": ">=0.29.0"
@@ -804,11 +804,11 @@
       "title": "Coda",
       "description": "Create, search, and update docs and tables.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "coda", "coda", "coda"]
           },
           "requires": ">=0.29.0"
@@ -829,11 +829,11 @@
       "title": "context.dev",
       "description": "search, scrape, extract, and monitor live web data.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "context", "mcp.context.dev", "context"]
           },
           "requires": ">=0.29.0"
@@ -854,11 +854,11 @@
       "title": "Egnyte",
       "description": "Securely access and analyze Egnyte content.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "egnyte", "egnyte", "egnyte"]
           },
           "requires": ">=0.29.0"
@@ -879,11 +879,11 @@
       "title": "Embat",
       "description": "Ask Embat about cash, debt, payments, and accounting.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "embat", "embat", "embat"]
           },
           "requires": ">=0.29.0"
@@ -904,11 +904,11 @@
       "title": "Hugging Face",
       "description": "Access the Hugging Face Hub and thousands of Gradio apps.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "hugging-face", "hugging-face", "hugging-face"]
           },
           "requires": ">=0.29.0"
@@ -929,11 +929,11 @@
       "title": "Local Falcon",
       "description": "AI visibility and local search intelligence.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "local-falcon", "local-falcon", "local-falcon"]
           },
           "requires": ">=0.29.0"
@@ -954,11 +954,11 @@
       "title": "Make",
       "description": "Run Make scenarios and manage your Make account.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "make", "make", "make"]
           },
           "requires": ">=0.29.0"
@@ -979,11 +979,11 @@
       "title": "Manufact",
       "description": "Deploy and monitor MCP servers with Manufact.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "manufact", "manufact", "manufact"]
           },
           "requires": ">=0.29.0"
@@ -1004,11 +1004,11 @@
       "title": "Mem0",
       "description": "Persistent memory for AI agents and assistants.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "mem0", "mem0", "mem0"]
           },
           "requires": ">=0.29.0"
@@ -1029,11 +1029,11 @@
       "title": "Miro",
       "description": "Access and create content on Miro boards.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "miro", "miro", "miro"]
           },
           "requires": ">=0.29.0"
@@ -1054,11 +1054,11 @@
       "title": "Mixpanel",
       "description": "Analyze, query, and manage your Mixpanel data.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "mixpanel", "mixpanel", "mixpanel"]
           },
           "requires": ">=0.29.0"
@@ -1079,11 +1079,11 @@
       "title": "Natural",
       "description": "Send, request, and manage payments with Natural.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "natural", "mcp.natural.com", "natural"]
           },
           "requires": ">=0.29.0"
@@ -1104,11 +1104,11 @@
       "title": "Neon",
       "description": "Manage Neon projects, run queries, and make schema changes.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "neon", "neon", "neon", "--principal-type", "app"]
           },
           "requires": ">=0.48.0"
@@ -1129,11 +1129,11 @@
       "title": "Netlify",
       "description": "Create, deploy, manage, and secure websites on Netlify.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "netlify", "netlify", "netlify"]
           },
           "requires": ">=0.29.0"
@@ -1154,11 +1154,11 @@
       "title": "O'Reilly",
       "description": "Discover O'Reilly's expert learning content.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "oreilly", "oreilly", "oreilly"]
           },
           "requires": ">=0.29.0"
@@ -1179,11 +1179,11 @@
       "title": "PlanetScale",
       "description": "Authenticated access to your PlanetScale Postgres and MySQL databases.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "planetscale", "planetscale", "planetscale"]
           },
           "requires": ">=0.29.0"
@@ -1204,11 +1204,11 @@
       "title": "PostHog",
       "description": "Query, analyze, and manage your PostHog insights.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "posthog", "posthog", "posthog"]
           },
           "requires": ">=0.29.0"
@@ -1229,11 +1229,11 @@
       "title": "Postman",
       "description": "Give API context to your coding agents with Postman.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "postman", "postman", "postman"]
           },
           "requires": ">=0.29.0"
@@ -1254,11 +1254,11 @@
       "title": "Razorpay",
       "description": "Razorpay payments, settlements, and dashboard data.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "razorpay", "razorpay", "razorpay"]
           },
           "requires": ">=0.29.0"
@@ -1279,11 +1279,11 @@
       "title": "Sentry",
       "description": "Search, query, and debug errors intelligently.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "sentry", "sentry", "sentry"]
           },
           "requires": ">=0.29.0"
@@ -1304,11 +1304,11 @@
       "title": "Similarweb",
       "description": "Real-time web, mobile app, and market data.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "similarweb", "similarweb", "similarweb"]
           },
           "requires": ">=0.29.0"
@@ -1329,11 +1329,11 @@
       "title": "Shopify",
       "description": "Search products and manage carts and checkouts on a Shopify storefront.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "setup", "shopify"]
           },
           "requires": ">=0.46.1"
@@ -1353,11 +1353,11 @@
       "title": "Stripe",
       "description": "Payment processing and financial infrastructure tools.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "stripe", "stripe", "stripe"]
           },
           "requires": ">=0.29.0"
@@ -1378,11 +1378,11 @@
       "title": "Supabase",
       "description": "Manage databases, authentication, and storage.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "supabase", "supabase", "supabase"]
           },
           "requires": ">=0.29.0"
@@ -1403,11 +1403,11 @@
       "title": "Ticket Tailor",
       "description": "Manage tickets, orders, and events with Ticket Tailor.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "ticket-tailor", "ticket-tailor", "ticket-tailor"]
           },
           "requires": ">=0.29.0"
@@ -1428,11 +1428,11 @@
       "title": "TickTick",
       "description": "Search, create, and manage your tasks and habits in TickTick.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "ticktick", "ticktick", "ticktick"]
           },
           "requires": ">=0.29.0"
@@ -1453,11 +1453,11 @@
       "title": "Tinybird",
       "description": "Query pipes and data sources in your Tinybird Workspace.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": [
               "integration",
               "connect",
@@ -1486,11 +1486,11 @@
       "title": "Todoist",
       "description": "Search, complete, and manage your tasks in Todoist.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "todoist", "todoist", "todoist"]
           },
           "requires": ">=0.29.0"
@@ -1511,11 +1511,11 @@
       "title": "Webflow",
       "description": "Manage Webflow CMS, pages, assets, and sites.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "webflow", "webflow", "webflow"]
           },
           "requires": ">=0.29.0"
@@ -1536,11 +1536,11 @@
       "title": "Wix",
       "description": "Manage and build sites and apps on Wix.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "wix", "wix", "wix"]
           },
           "requires": ">=0.29.0"
@@ -1561,11 +1561,11 @@
       "title": "Zapier",
       "description": "Automate workflows across thousands of apps.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "zapier", "zapier", "zapier"]
           },
           "requires": ">=0.29.0"
@@ -1586,11 +1586,11 @@
       "title": "Zomato",
       "description": "Online food ordering and delivery through Zomato.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "connect", "zomato", "zomato", "zomato"]
           },
           "requires": ">=0.29.0"
@@ -1609,13 +1609,13 @@
       "name": "channel/slack",
       "type": "registry:item",
       "title": "Slack",
-      "description": "Connect an kaf agent to Slack with Vercel Connect or portable credentials.",
+      "description": "Connect an orcel agent to Slack with Vercel Connect or portable credentials.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "setup", "slack"]
           },
           "requires": ">=0.33.0",
@@ -1629,14 +1629,14 @@
       "name": "channel/discord",
       "type": "registry:item",
       "title": "Discord",
-      "description": "Connect an kaf agent to Discord with guided connector and slash-command setup.",
+      "description": "Connect an orcel agent to Discord with guided connector and slash-command setup.",
       "dependencies": ["@vercel/connect@>=0.6.0"],
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "setup", "discord"]
           },
           "requires": ">=0.33.0",
@@ -1649,13 +1649,13 @@
       "name": "channel/teams",
       "type": "registry:item",
       "title": "Microsoft Teams",
-      "description": "Run an kaf agent as a managed Microsoft Teams bot, with guided Vercel Connect setup.",
+      "description": "Run an orcel agent as a managed Microsoft Teams bot, with guided Vercel Connect setup.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "setup", "teams"]
           },
           "requires": ">=0.53.0",
@@ -1682,7 +1682,7 @@
         }
       ],
       "meta": {
-        "kaf": {
+        "orcel": {
           "docs": "/docs/channels/telegram",
           "implementation": "native"
         }
@@ -1705,7 +1705,7 @@
         }
       ],
       "meta": {
-        "kaf": {
+        "orcel": {
           "docs": "/docs/channels/twilio",
           "implementation": "native"
         }
@@ -1729,7 +1729,7 @@
         }
       ],
       "meta": {
-        "kaf": {
+        "orcel": {
           "docs": "/integrations/blooio#configure",
           "implementation": "native"
         }
@@ -1741,11 +1741,11 @@
       "title": "GitHub",
       "description": "Drive your agent from issues, pull requests, and comments, with guided Connect setup.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "setup", "github"]
           },
           "requires": ">=0.33.0",
@@ -1762,11 +1762,11 @@
       "title": "Linear Agent",
       "description": "Delegate Linear issues and comments through Agent Sessions, with guided Vercel Connect setup.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "setup", "linear"]
           },
           "requires": ">=0.33.0",
@@ -1781,17 +1781,17 @@
       "name": "channel/web",
       "type": "registry:item",
       "title": "Web Chat",
-      "description": "Add the built-in Next.js Web Chat channel to an kaf agent.",
+      "description": "Add the built-in Next.js Web Chat channel to an orcel agent.",
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "setup", "web"]
           },
           "requires": ">=0.66.1",
-          "docs": "/docs/channels/kaf",
+          "docs": "/docs/channels/orcel",
           "implementation": "native"
         }
       },
@@ -2053,7 +2053,7 @@
         "GOOGLE_CHAT_CREDENTIALS": ""
       },
       "meta": {
-        "kaf": {
+        "orcel": {
           "docs": "/integrations/chat-sdk-gchat#configure",
           "implementation": "chat-sdk"
         }
@@ -2079,7 +2079,7 @@
         "WHATSAPP_VERIFY_TOKEN": ""
       },
       "meta": {
-        "kaf": {
+        "orcel": {
           "docs": "/integrations/chat-sdk-whatsapp#configure",
           "implementation": "chat-sdk"
         }
@@ -2103,7 +2103,7 @@
         "X_USER_ACCESS_TOKEN": ""
       },
       "meta": {
-        "kaf": {
+        "orcel": {
           "docs": "/integrations/chat-sdk-x#configure",
           "implementation": "chat-sdk"
         }
@@ -2128,7 +2128,7 @@
         "FACEBOOK_VERIFY_TOKEN": ""
       },
       "meta": {
-        "kaf": {
+        "orcel": {
           "docs": "/integrations/chat-sdk-messenger#configure",
           "implementation": "chat-sdk"
         }
@@ -2152,7 +2152,7 @@
         }
       ],
       "meta": {
-        "kaf": {
+        "orcel": {
           "docs": "/integrations/chat-sdk-zernio#configure",
           "implementation": "chat-sdk"
         }
@@ -2176,7 +2176,7 @@
         }
       ],
       "meta": {
-        "kaf": {
+        "orcel": {
           "docs": "/integrations/chat-sdk-velt#configure",
           "implementation": "chat-sdk"
         }
@@ -2201,7 +2201,7 @@
         }
       ],
       "meta": {
-        "kaf": {
+        "orcel": {
           "docs": "/integrations/chat-sdk-sendblue#configure",
           "implementation": "chat-sdk"
         }
@@ -2225,7 +2225,7 @@
         "NOVU_AGENT_IDENTIFIER": ""
       },
       "meta": {
-        "kaf": {
+        "orcel": {
           "docs": "/integrations/chat-sdk-novu#configure",
           "implementation": "chat-sdk"
         }
@@ -2249,7 +2249,7 @@
         }
       ],
       "meta": {
-        "kaf": {
+        "orcel": {
           "docs": "/integrations/chat-sdk-liveblocks#configure",
           "implementation": "chat-sdk"
         }
@@ -2259,15 +2259,15 @@
       "name": "channel/linq",
       "type": "registry:item",
       "title": "Linq",
-      "description": "Connect an kaf agent to iMessage and SMS through Linq with guided Connect or portable setup.",
+      "description": "Connect an orcel agent to iMessage and SMS through Linq with guided Connect or portable setup.",
       "dependencies": ["@vercel/connect@>=0.9.0"],
       "devDependencies": ["vercel@>=58.5.1"],
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "setup", "linq"]
           },
           "requires": ">=0.41.0",
@@ -2295,7 +2295,7 @@
         }
       ],
       "meta": {
-        "kaf": {
+        "orcel": {
           "docs": "/integrations/chat-sdk-kapso#configure",
           "implementation": "chat-sdk"
         }
@@ -2305,14 +2305,14 @@
       "name": "channel/photon-imessage",
       "type": "registry:item",
       "title": "Photon iMessage",
-      "description": "Connect an kaf agent to iMessage through Photon with guided project and phone setup.",
+      "description": "Connect an orcel agent to iMessage through Photon with guided project and phone setup.",
       "dependencies": ["@vercel/connect@>=0.5.0"],
       "meta": {
-        "kaf": {
+        "orcel": {
           "setup": {
-            "command": "kaf",
-            "package": "kaf",
-            "bin": "kaf",
+            "command": "orcel",
+            "package": "orcel",
+            "bin": "orcel",
             "args": ["integration", "setup", "photon"]
           },
           "requires": ">=0.33.0",
@@ -2340,7 +2340,7 @@
         }
       ],
       "meta": {
-        "kaf": {
+        "orcel": {
           "docs": "/integrations/chat-sdk-dial#configure",
           "implementation": "chat-sdk"
         }
@@ -2365,7 +2365,7 @@
         }
       ],
       "meta": {
-        "kaf": {
+        "orcel": {
           "docs": "/integrations/chat-sdk-agentphone#configure",
           "implementation": "chat-sdk"
         }
@@ -2389,7 +2389,7 @@
         }
       ],
       "meta": {
-        "kaf": {
+        "orcel": {
           "docs": "/integrations/chat-sdk-lark#configure",
           "implementation": "chat-sdk"
         }
@@ -2413,7 +2413,7 @@
         "MATRIX_ACCESS_TOKEN": ""
       },
       "meta": {
-        "kaf": {
+        "orcel": {
           "docs": "/integrations/chat-sdk-beeper#configure",
           "implementation": "chat-sdk"
         }
@@ -2438,7 +2438,7 @@
         }
       ],
       "meta": {
-        "kaf": {
+        "orcel": {
           "docs": "/integrations/chat-sdk-resend#configure",
           "implementation": "chat-sdk"
         }
@@ -2475,7 +2475,7 @@
         }
       ],
       "meta": {
-        "kaf": {
+        "orcel": {
           "docs": "/integrations/chat-sdk-gmail#configure",
           "implementation": "chat-sdk"
         }
@@ -2485,7 +2485,7 @@
       "name": "instrumentation/braintrust",
       "type": "registry:item",
       "title": "Braintrust",
-      "description": "Trace kaf agent sessions in Braintrust, including turns, steps, tool calls, and subagent interactions.",
+      "description": "Trace orcel agent sessions in Braintrust, including turns, steps, tool calls, and subagent interactions.",
       "dependencies": ["braintrust@^3.29.0"],
       "envVars": {
         "BRAINTRUST_API_KEY": ""

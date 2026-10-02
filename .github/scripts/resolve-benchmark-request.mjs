@@ -1,5 +1,5 @@
 export const BENCHMARK_HARNESSES = [
-  "kaf-code",
+  "orcel-code",
   "codex",
   "opencode",
   "claude-code",
@@ -8,11 +8,11 @@ export const BENCHMARK_HARNESSES = [
   "oracle",
 ];
 
-/** Harnesses compared on every automatic run; kaf-code against opencode and pi. */
-export const DEFAULT_HARNESSES = ["kaf-code", "opencode", "pi"];
+/** Harnesses compared on every automatic run; orcel-code against opencode and pi. */
+export const DEFAULT_HARNESSES = ["orcel-code", "opencode", "pi"];
 
 /**
- * kaf-bench datasets a benchmark can run, with the settings each was calibrated for.
+ * eve-bench datasets a benchmark can run, with the settings each was calibrated for.
  * swe-lean needs five attempts to separate a 10-15% token change from trial noise.
  * deepswe-lean resolves almost nothing at low reasoning, and its 20-minute trials
  * make three attempts the most that fits one job.

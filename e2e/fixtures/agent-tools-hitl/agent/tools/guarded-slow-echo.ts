@@ -1,11 +1,11 @@
-import { defineTool } from "kaf/tools";
-import { once } from "kaf/tools/approval";
+import { defineTool } from "orcel/tools";
+import { once } from "orcel/tools/approval";
 import { z } from "zod";
 
 export const GUARDED_SLOW_ECHO_TOKEN = "guarded-slow-echo-ok-V7K2";
 
 /**
- * HITL fixture for https://github.com/TheHalfMoon/kaf/issues/460. It is gated by
+ * HITL fixture for https://github.com/TheHalfMoon/orcel/issues/460. It is gated by
  * `once()` and deliberately slow. The issue's repro singles out a
  * non-trivial async `execute` as the trigger. The approved call's result
  * must survive the wait before history is rebuilt and replayed.

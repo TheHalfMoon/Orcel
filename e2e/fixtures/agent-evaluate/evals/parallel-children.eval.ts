@@ -1,4 +1,4 @@
-import { defineEval, type KafEvalSession } from "kaf/evals";
+import { defineEval, type OrcelEvalSession } from "orcel/evals";
 
 export default defineEval({
   description: "Parallel child agents select models from their own prompts and isolated state.",
@@ -7,7 +7,7 @@ export default defineEval({
       "Alice and Bob need parallel investigations assigned to the worker.",
     );
     first.expectOk();
-    let session: Pick<KafEvalSession, "sessionId" | "state"> = first.session;
+    let session: Pick<OrcelEvalSession, "sessionId" | "state"> = first.session;
     let combined = first.message ?? "";
     for (let attempt = 0; attempt < 6; attempt++) {
       if (

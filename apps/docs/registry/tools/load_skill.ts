@@ -1,1 +1,1 @@
-export { default } from "kaf/tools/load_skill";
+export { default } from "orcel/tools/load_skill";

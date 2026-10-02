@@ -1,22 +1,22 @@
 ---
 title: Linq
-description: Connect an kaf agent to iMessage and SMS through Linq.
+description: Connect an orcel agent to iMessage and SMS through Linq.
 ---
 
 Use `linqChannel` to receive and reply to iMessage and SMS conversations through Linq.
 
-Run `kaf add channel/linq` to choose Vercel Connect or portable credentials. With Vercel Connect, kaf signs you in and creates or links a Vercel project when needed. Then choose whether to create a managed Linq account and line or connect an existing account with its partner API token. kaf fetches the phone numbers assigned to that account, and you select the numbers for the agent. kaf configures the connector and webhook through Connect:
+Run `orcel add channel/linq` to choose Vercel Connect or portable credentials. With Vercel Connect, orcel signs you in and creates or links a Vercel project when needed. Then choose whether to create a managed Linq account and line or connect an existing account with its partner API token. orcel fetches the phone numbers assigned to that account, and you select the numbers for the agent. orcel configures the connector and webhook through Connect:
 
 ```ts title="agent/channels/linq.ts"
 import { connectLinqCredentials } from "@vercel/connect/eve";
-import { linqChannel } from "kaf/channels/linq";
+import { linqChannel } from "orcel/channels/linq";
 
 export default linqChannel({
   credentials: connectLinqCredentials("linq/my-agent"),
 });
 ```
 
-The default webhook route is `/kaf/v1/linq`. The channel verifies forwarded webhooks with same-project Vercel OIDC by default, derives user auth from each message author, marks accepted messages as read, and continues the same kaf session for every message in a Linq conversation. A new accepted message steers the active turn. Before answer output or local tool execution begins, steering can interrupt pending model generation. Executing tools finish first; after answer output starts, steering waits for the next committed workflow boundary. See [Overlapping messages](./overview#overlapping-messages).
+The default webhook route is `/orcel/v1/linq`. The channel verifies forwarded webhooks with same-project Vercel OIDC by default, derives user auth from each message author, marks accepted messages as read, and continues the same orcel session for every message in a Linq conversation. A new accepted message steers the active turn. Before answer output or local tool execution begins, steering can interrupt pending model generation. Executing tools finish first; after answer output starts, steering waits for the next committed workflow boundary. See [Overlapping messages](./overview#overlapping-messages).
 
 Set `turnPolicy: "queue"` when every response should finish before Linq starts the next message.
 
@@ -39,17 +39,17 @@ Set `route` to override the webhook path or `webhookVerifier` to use a different
 
 ## Other hosts
 
-For a host without Vercel Connect, choose **Use portable credentials** during `kaf add channel/linq`. kaf writes `LINQ_API_KEY` and `LINQ_WEBHOOK_SECRET` to `.env.local`.
+For a host without Vercel Connect, choose **Use portable credentials** during `orcel add channel/linq`. orcel writes `LINQ_API_KEY` and `LINQ_WEBHOOK_SECRET` to `.env.local`.
 
 After deploying the agent:
 
-1. Create a Linq webhook for your public `https://…/kaf/v1/linq` URL with `message.received`, `reaction.added`, and `reaction.removed` events.
+1. Create a Linq webhook for your public `https://…/orcel/v1/linq` URL with `message.received`, `reaction.added`, and `reaction.removed` events.
 2. Set `LINQ_API_KEY` and `LINQ_WEBHOOK_SECRET` in the host's encrypted environment variables.
 
 To configure the channel by hand, pass the API key and webhook signing secret:
 
 ```ts title="agent/channels/linq.ts"
-import { linqChannel } from "kaf/channels/linq";
+import { linqChannel } from "orcel/channels/linq";
 
 export default linqChannel({
   credentials: {

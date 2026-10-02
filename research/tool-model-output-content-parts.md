@@ -1,5 +1,5 @@
 ---
-issue: https://github.com/TheHalfMoon/kaf/issues/456
+issue: https://github.com/TheHalfMoon/orcel/issues/456
 status: proposed
 last_updated: "2026-07-27"
 ---
@@ -9,12 +9,12 @@ last_updated: "2026-07-27"
 ## Summary
 
 Authored tools can shape what the model sees with `toModelOutput`, but the
-kaf-owned `ToolModelOutput` union only admits `text` and `json`. A tool that
+orcel-owned `ToolModelOutput` union only admits `text` and `json`. A tool that
 produces an image — a Playwright screenshot, a rendered chart — cannot hand
 the pixels to a vision-capable model; it can only describe them. The AI SDK's
 `ToolResultOutput` already supports a `content` variant carrying text and
-file parts, and kaf already forwards `ToolModelOutput` into that type
-unchanged, so the gap is kaf's narrower public union and its validation.
+file parts, and orcel already forwards `ToolModelOutput` into that type
+unchanged, so the gap is orcel's narrower public union and its validation.
 
 Add a `content` variant to `ToolModelOutput` whose file parts carry
 JSON-safe base64 strings. The `execute` return stays JSON-only and continues
@@ -22,7 +22,7 @@ to feed `action.result` unchanged; only the model-facing projection widens.
 
 ## Authoring API
 
-Extend `ToolModelOutput` in `packages/kaf/src/shared/tool-definition.ts`:
+Extend `ToolModelOutput` in `packages/orcel/src/shared/tool-definition.ts`:
 
 ```ts
 export type ToolModelOutput =
@@ -43,7 +43,7 @@ export type ToolModelOutputPart =
 ```
 
 Builders ship alongside the union under two namespaces exported from
-`kaf/tools` (`packages/kaf/src/public/tools/index.ts`): `toolOutput` for the
+`orcel/tools` (`packages/orcel/src/public/tools/index.ts`): `toolOutput` for the
 output union and `toolOutputPart` for content parts, so authors never
 hand-write the tagged `data: { type: "data", data }` nesting:
 
@@ -66,7 +66,7 @@ union stays the source of truth, and hand-written literals remain valid.
 Authored usage:
 
 ```ts
-import { defineTool, toolOutput, toolOutputPart } from "kaf/tools";
+import { defineTool, toolOutput, toolOutputPart } from "orcel/tools";
 
 export default defineTool({
   description: "Capture a screenshot of the current page",
@@ -98,7 +98,7 @@ surface moves.
 
 ### Where validation happens
 
-`normalizeToolModelOutput` in `packages/kaf/src/harness/tools.ts` is the
+`normalizeToolModelOutput` in `packages/orcel/src/harness/tools.ts` is the
 single funnel for authored `toModelOutput` results. It gains a `content`
 case that:
 
@@ -148,9 +148,9 @@ than a hard cap.
 
 ## Boundaries and surfaces
 
-- `packages/kaf/src/shared/tool-definition.ts` — union + part type + docs.
-- `packages/kaf/src/public/tools/output-builders.ts` — `toolOutput` and `toolOutputPart` builders, exported from `kaf/tools`.
-- `packages/kaf/src/harness/tools.ts` — `ToolModelOutputValue` widening and
+- `packages/orcel/src/shared/tool-definition.ts` — union + part type + docs.
+- `packages/orcel/src/public/tools/output-builders.ts` — `toolOutput` and `toolOutputPart` builders, exported from `orcel/tools`.
+- `packages/orcel/src/harness/tools.ts` — `ToolModelOutputValue` widening and
   the `content` normalization case.
 - `docs/tools/overview.mdx` — extend the `toModelOutput` section with the
   `content` variant and payload-size guidance.
@@ -172,7 +172,7 @@ than a hard cap.
 
 ## Verification
 
-- Unit (`packages/kaf/src/harness/tools.test.ts`): content normalization
+- Unit (`packages/orcel/src/harness/tools.test.ts`): content normalization
   happy path (text + file), byte-payload rejection, rejection of `url` /
   `reference` / `text` `FileData` tags, empty-array rejection, unknown-part
   rejection, error identity (`ToolOutputSerializationError`, `toModelOutput`

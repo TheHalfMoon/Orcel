@@ -1,9 +1,9 @@
 ---
 title: "Dynamic Scheduling"
-description: "Compose one minute-level kaf schedule, proactive channel handoff, and CRUD tools into application-managed schedules."
+description: "Compose one minute-level orcel schedule, proactive channel handoff, and CRUD tools into application-managed schedules."
 ---
 
-Authored kaf schedules are static files discovered at build time. You can build dynamic scheduling today by putting schedule rows in your application store and using one authored schedule as a dispatcher:
+Authored orcel schedules are static files discovered at build time. You can build dynamic scheduling today by putting schedule rows in your application store and using one authored schedule as a dispatcher:
 
 1. CRUD tools let the agent create and manage rows for the current tenant;
 2. `defineSchedule({ cron: "* * * * *" })` wakes once a minute;
@@ -29,7 +29,7 @@ agent/
 This is the only authored schedule. It looks up due application-managed rows and hands each one to Slack as a proactive session:
 
 ```ts title="agent/schedules/dynamic.ts"
-import { defineSchedule } from "kaf/schedules";
+import { defineSchedule } from "orcel/schedules";
 import slack from "../channels/slack";
 import { scheduleStore } from "../lib/schedule-store";
 
@@ -87,7 +87,7 @@ Configure Slack normally:
 
 ```ts title="agent/channels/slack.ts"
 import { connectSlackCredentials } from "@vercel/connect/eve";
-import { slackChannel } from "kaf/channels/slack";
+import { slackChannel } from "orcel/channels/slack";
 
 export default slackChannel({
   credentials: connectSlackCredentials("slack/my-agent"),
@@ -99,7 +99,7 @@ export default slackChannel({
 Tenant and owner identity come from `ctx.session`, never the model:
 
 ```ts title="agent/lib/tenant.ts"
-import type { SessionAuthContext, SessionContext } from "kaf/context";
+import type { SessionAuthContext, SessionContext } from "orcel/context";
 
 export function requireScheduleOwner(ctx: SessionContext): {
   tenantId: string;
@@ -118,7 +118,7 @@ export function requireScheduleOwner(ctx: SessionContext): {
 Create a one-time schedule with `everyMinutes: null`, or a recurring one with an interval:
 
 ```ts title="agent/tools/create_schedule.ts"
-import { defineTool } from "kaf/tools";
+import { defineTool } from "orcel/tools";
 import { z } from "zod";
 import { scheduleStore } from "../lib/schedule-store";
 import { requireScheduleOwner } from "../lib/tenant";
@@ -141,7 +141,7 @@ export default defineTool({
 ```
 
 ```ts title="agent/tools/list_schedules.ts"
-import { defineTool } from "kaf/tools";
+import { defineTool } from "orcel/tools";
 import { z } from "zod";
 import { scheduleStore } from "../lib/schedule-store";
 import { requireScheduleOwner } from "../lib/tenant";
@@ -156,7 +156,7 @@ export default defineTool({
 ```
 
 ```ts title="agent/tools/update_schedule.ts"
-import { defineTool } from "kaf/tools";
+import { defineTool } from "orcel/tools";
 import { z } from "zod";
 import { scheduleStore } from "../lib/schedule-store";
 import { requireScheduleOwner } from "../lib/tenant";
@@ -181,8 +181,8 @@ export default defineTool({
 ```
 
 ```ts title="agent/tools/delete_schedule.ts"
-import { defineTool } from "kaf/tools";
-import { always } from "kaf/tools/approval";
+import { defineTool } from "orcel/tools";
+import { always } from "orcel/tools/approval";
 import { z } from "zod";
 import { scheduleStore } from "../lib/schedule-store";
 import { requireScheduleOwner } from "../lib/tenant";
@@ -199,10 +199,10 @@ export default defineTool({
 
 ## Supply the schedule adapter
 
-The kaf-facing implementation depends on this shape, not a database schema:
+The orcel-facing implementation depends on this shape, not a database schema:
 
 ```ts title="agent/lib/schedule-store.ts"
-import type { SessionAuthContext } from "kaf/context";
+import type { SessionAuthContext } from "orcel/context";
 
 export interface ScheduleOwner {
   tenantId: string;
@@ -255,4 +255,4 @@ for repeating work and null for a one-time run. List schedules before changing
 an ambiguous one.
 ```
 
-The kaf-specific core is small: four tools, one one-minute `defineSchedule`, and proactive `receive`. Storage and recurrence policy stay behind the application's adapter.
+The orcel-specific core is small: four tools, one one-minute `defineSchedule`, and proactive `receive`. Storage and recurrence policy stay behind the application's adapter.

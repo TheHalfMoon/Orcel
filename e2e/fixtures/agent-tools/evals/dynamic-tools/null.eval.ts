@@ -1,4 +1,4 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 // A resolver returning null must register no tools: the turn completes
 // without any "dynamic-null" call.

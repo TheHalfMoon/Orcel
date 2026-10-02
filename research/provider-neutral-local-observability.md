@@ -8,16 +8,16 @@ last_updated: "2026-08-28"
 
 ## Summary
 
-kaf produces local traces without depending on Workflow tracing, changing production
+orcel produces local traces without depending on Workflow tracing, changing production
 instrumentation, or coupling observability providers to the AI SDK. The first consumer is
-zero-config tracing in `kaf dev`; the lifecycle contract must also support OTel, Vercel,
+zero-config tracing in `orcel dev`; the lifecycle contract must also support OTel, Vercel,
 Braintrust, and custom providers.
 
 ```text
-kaf lifecycle boundaries ------------------+
-                                            +--> kaf lifecycle hooks --> providers
+orcel lifecycle boundaries ------------------+
+                                            +--> orcel lifecycle hooks --> providers
 AI SDK callbacks -> per-attempt bridge -----+       (local OTel, Vercel, Braintrust, custom)
-AI SDK execute() -> kaf-owned context runner
+AI SDK execute() -> orcel-owned context runner
 ```
 
 ## Lifecycle contract
@@ -32,13 +32,13 @@ interface InstrumentationHooks {
 }
 ```
 
-The bridge is an adapter, not a provider. It maps AI SDK callbacks into kaf-owned lifecycle
+The bridge is an adapter, not a provider. It maps AI SDK callbacks into orcel-owned lifecycle
 events, assigns stable attempt/model-call/tool-call identities, terminalizes open operations on
 error and abort, and invokes the trusted `runInContext` while calling execution exactly once. AI
 SDK `callId` values are bridge correlation details, not provider run identities.
 
 The bridge does not create spans, export records, apply provider policy, or publish durable
-kaf-native events. Session, turn, compaction, suspension, and canonical step-terminal events are
+orcel-native events. Session, turn, compaction, suspension, and canonical step-terminal events are
 published by the harness.
 
 Attempt state is WeakMap-keyed by scope identity so abandoned attempts do not leak. `before` state
@@ -46,7 +46,7 @@ is retained per provider and operation and supplied only to that provider's `aft
 
 ## Providers
 
-A provider is a hook definition: handlers for the kaf-owned events it cares about. An OTel provider
+A provider is a hook definition: handlers for the orcel-owned events it cares about. An OTel provider
 may return spans from `before` and close them in `after`; Braintrust may retain row handles; Vercel
 may enqueue records.
 
@@ -59,11 +59,11 @@ provider contract.
 
 ## Local tracing
 
-In `kaf dev` kaf registers the process tracer provider (`registerOTel`) with a private span
+In `orcel dev` orcel registers the process tracer provider (`registerOTel`) with a private span
 processor consuming the same lifecycle events as any other provider, so nested AI SDK and user
 spans share agent context. It creates one trace per session window, explicitly roots that window
 rather than inheriting the ambient Workflow span, drops spans from the `workflow` instrumentation
-scope, and persists OTLP/JSON segments under `.kaf/traces/v1`.
+scope, and persists OTLP/JSON segments under `.orcel/traces/v1`.
 
 Those immutable segments are the canonical local store. A future index or dashboard is a
 rebuildable consumer of the spool, not a second source of trace identity.
@@ -84,9 +84,9 @@ agent.session                              {agent.session.id}
 ```
 
 The durable turn and tool-execution boundaries use the OpenTelemetry GenAI agent conventions so
-backends can recognize agent invocations and tool calls without kaf-specific mapping. An
+backends can recognize agent invocations and tool calls without orcel-specific mapping. An
 `agent.step` covers one model call and the actions it requests through their resolution.
-`agent.action.kind` remains an open discriminator for kaf's broader durable dispatch boundary.
+`agent.action.kind` remains an open discriminator for orcel's broader durable dispatch boundary.
 
 The `agent.*` namespace carries cheap structural attributes only: session/turn/step/attempt
 identity, action identity, and agent and framework identity. Standard `gen_ai.*` attributes describe
@@ -97,7 +97,7 @@ hooks contain no span names, attributes, or parent contexts.
 ### The session root is a real span
 
 `agent.session` is a real root span opened with OTel's `root` option, not a synthesized parent
-context. kaf persists its span context — including the sampling decision it actually received — and
+context. orcel persists its span context — including the sampling decision it actually received — and
 later turns parent to that stored context.
 
 This is what makes an authored sampler work. A synthesized parent asserting a sampled flag is a
@@ -111,11 +111,11 @@ author can key a sampler on it.
 ### Marker spans
 
 The session root is recorded and ended immediately. A session outlives the
-worker that opened it and a span object cannot cross that boundary, so kaf records the root,
+worker that opened it and a span object cannot cross that boundary, so orcel records the root,
 persists its span context, and parents later spans through it.
 
 The cost is that a backend reports the root's duration rather than the window's. Turn and step
-durations, where the time actually is, are unaffected, and `kaf traces` renders a marker's
+durations, where the time actually is, are unaffected, and `orcel traces` renders a marker's
 descendant extent in place of its zero duration.
 
 A real duration would mean emitting the span once at session close, with explicit timestamps and a
@@ -130,7 +130,7 @@ close, so its `invoke_agent` span carries its real duration.
 A local subagent keeps its own session identity but adopts the parent action's `SpanContext`, so
 delegated work appears directly beneath the action that caused it. Remote dispatch sends the same
 context as `traceparent`; the receiver adopts it when available. A child with no propagated context
-opens its own root. `kaf traces` resolves any session recorded in a trace, not only the one that
+opens its own root. `orcel traces` resolves any session recorded in a trace, not only the one that
 opened it.
 
 ## Runtime integration
@@ -151,9 +151,9 @@ only provider-owned serializable context crosses Workflow boundaries.
 AI SDK `onStepStart` is named `attempt.started` because it begins one concrete model attempt, so
 retries have distinct starts and terminals without overloading the stream's `step.started`.
 
-Per-call integrations replace the AI SDK global list; kaf composes the bridge with `@ai-sdk/otel`
+Per-call integrations replace the AI SDK global list; orcel composes the bridge with `@ai-sdk/otel`
 when the documented `instrumentation.ts` path is active. Direct `registerTelemetry()` calls are not
-a supported customization surface. Braintrust's documented integration uses kaf hooks and
+a supported customization surface. Braintrust's documented integration uses orcel hooks and
 `defineInstrumentation`, so per-call injection does not disable it.
 
 ## Compatibility
@@ -171,9 +171,9 @@ authored path unchanged. Stream hooks and `step.started` semantics are unchanged
 3. **Local OTel provider.** — _landed._ Lifecycle events mapped to the `agent.*` convention.
 4. **Persistence.** — _landed._ OTLP/JSON segments, session context restored across dev worker
    restarts, retention bounds, capture policy.
-5. **Inspection.** — _landed._ `kaf traces ls` and `kaf traces [trace]`.
+5. **Inspection.** — _landed._ `orcel traces ls` and `orcel traces [trace]`.
 6. **Session windows.** — _in review._ Real `agent.session` root with its recorded sampling
-   decision, window rolling, subagent adoption, session-to-windows resolution in `kaf traces`.
+   decision, window rolling, subagent adoption, session-to-windows resolution in `orcel traces`.
 7. **Public providers.** — _not started._ Promote the lifecycle contract into public hooks and
    migrate OTel, Vercel, Braintrust, and custom instrumentation onto it.
 
@@ -184,11 +184,11 @@ authored path unchanged. Stream hooks and `step.started` semantics are unchanged
   providers — a known deviation from provider neutrality, to close in phase 7.
 - Multiple providers observe one attempt while execution occurs exactly once.
 - No provider definition receives model or tool execution functions.
-- Documented authored instrumentation continues to observe kaf calls.
+- Documented authored instrumentation continues to observe orcel calls.
 - Each provider builds its trace without inheriting Workflow or another provider's trace.
-- No kaf span inherits a synthesized parent, so an authored sampler's root rule is consulted.
+- No orcel span inherits a synthesized parent, so an authored sampler's root rule is consulted.
 - A session of ordinary length is exactly one trace; a session of any length has bounded traces.
-- `kaf traces <session>` resolves every window of a session.
+- `orcel traces <session>` resolves every window of a session.
 - Parallel tool calls retain independent provider state.
 - Errors and aborts terminalize all started model and tool operations.
 - Local traces contain no Workflow spans.

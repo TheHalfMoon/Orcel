@@ -8,7 +8,7 @@ import { dirname, join, relative } from "node:path";
 import {
   CONTRACT_ROOT,
   ENTRYPOINT_ROOT,
-  KAF_ROOT,
+  ORCEL_ROOT,
   PUBLIC_SURFACES,
   REPORT_ROOT,
   REPO_ROOT,
@@ -61,7 +61,7 @@ async function rewriteDeclarationSpecifiers(declarationRoot) {
   }
 }
 
-async function emitDeclarations(tempRoot, configuration, { contractRoot, kafRoot }) {
+async function emitDeclarations(tempRoot, configuration, { contractRoot, orcelRoot }) {
   const declarationRoot = join(tempRoot, "declarations");
   await mkdir(declarationRoot, { recursive: true });
   const tsconfigPath = join(tempRoot, "tsconfig.json");
@@ -79,8 +79,8 @@ async function emitDeclarations(tempRoot, configuration, { contractRoot, kafRoot
       ],
     }),
   );
-  execFileSync(process.execPath, [join(kafRoot, "scripts/vendor-compiled.mjs")], {
-    cwd: kafRoot,
+  execFileSync(process.execPath, [join(orcelRoot, "scripts/vendor-compiled.mjs")], {
+    cwd: orcelRoot,
     stdio: ["ignore", "pipe", "pipe"],
   });
   const require = createRequire(import.meta.url);
@@ -103,15 +103,15 @@ async function emitDeclarations(tempRoot, configuration, { contractRoot, kafRoot
       "--pretty",
       "false",
     ],
-    { cwd: kafRoot, stdio: ["ignore", "pipe", "pipe"] },
+    { cwd: orcelRoot, stdio: ["ignore", "pipe", "pipe"] },
   );
-  await cp(join(kafRoot, ".generated/compiled"), join(declarationRoot, "compiled"), {
+  await cp(join(orcelRoot, ".generated/compiled"), join(declarationRoot, "compiled"), {
     recursive: true,
   });
   await rewriteDeclarationSpecifiers(declarationRoot);
 
-  const packageJson = JSON.parse(await readFile(join(kafRoot, "package.json"), "utf8"));
-  packageJson.name = "kaf-extension-contracts";
+  const packageJson = JSON.parse(await readFile(join(orcelRoot, "package.json"), "utf8"));
+  packageJson.name = "orcel-extension-contracts";
   packageJson.version = "0.0.0";
   packageJson.private = true;
   packageJson.types = "./extension-contracts/entrypoints/extension.d.ts";
@@ -181,15 +181,15 @@ function extractorConfig({ capabilities, capability, declarationRoot, tempRoot }
 
 export async function generateCapabilityReports(
   configuration,
-  { contractRoot = CONTRACT_ROOT, kafRoot = KAF_ROOT } = {},
+  { contractRoot = CONTRACT_ROOT, orcelRoot = ORCEL_ROOT } = {},
 ) {
-  const cacheRoot = join(KAF_ROOT, ".extension-contracts-cache");
+  const cacheRoot = join(ORCEL_ROOT, ".extension-contracts-cache");
   await mkdir(cacheRoot, { recursive: true });
   const tempRoot = await mkdtemp(join(cacheRoot, "extension-contracts-"));
   try {
     const declarationRoot = await emitDeclarations(tempRoot, configuration, {
       contractRoot,
-      kafRoot,
+      orcelRoot,
     });
     const capabilities = Object.keys(configuration.current);
     const configs = [];
@@ -253,7 +253,7 @@ export async function generateHistoricalCapabilityReport(capability, version) {
     );
   }
 
-  const cacheRoot = join(KAF_ROOT, ".extension-contracts-cache");
+  const cacheRoot = join(ORCEL_ROOT, ".extension-contracts-cache");
   await mkdir(cacheRoot, { recursive: true });
   const historyRoot = await mkdtemp(join(cacheRoot, "history-"));
   const worktreeRoot = join(historyRoot, "worktree");
@@ -264,9 +264,9 @@ export async function generateHistoricalCapabilityReport(capability, version) {
       stdio: ["ignore", "pipe", "pipe"],
     });
     addedWorktree = true;
-    const historicalKafRoot = join(worktreeRoot, "packages/kaf");
-    const historicalContractRoot = join(historicalKafRoot, "extension-contracts");
-    await symlink(join(KAF_ROOT, "node_modules"), join(historicalKafRoot, "node_modules"), "dir");
+    const historicalOrcelRoot = join(worktreeRoot, "packages/orcel");
+    const historicalContractRoot = join(historicalOrcelRoot, "extension-contracts");
+    await symlink(join(ORCEL_ROOT, "node_modules"), join(historicalOrcelRoot, "node_modules"), "dir");
     const historicalCapabilities = (await readdir(join(historicalContractRoot, "entrypoints")))
       .filter((name) => name.endsWith(".ts"))
       .map((name) => name.slice(0, -3));
@@ -275,7 +275,7 @@ export async function generateHistoricalCapabilityReport(capability, version) {
     };
     const reports = await generateCapabilityReports(historicalConfiguration, {
       contractRoot: historicalContractRoot,
-      kafRoot: historicalKafRoot,
+      orcelRoot: historicalOrcelRoot,
     });
     const report = reports.get(capability);
     if (report === undefined) {
@@ -304,7 +304,7 @@ export async function checkCapabilityReports(configuration, update) {
       const publicNames = new Set();
       const publicValues = new Set();
       for (const path of paths) {
-        const publicSource = await readFile(join(KAF_ROOT, path), "utf8");
+        const publicSource = await readFile(join(ORCEL_ROOT, path), "utf8");
         for (const name of collectExportNames(publicSource)) publicNames.add(name);
         for (const name of collectExportNames(publicSource, { valuesOnly: true })) {
           publicValues.add(name);
@@ -321,7 +321,7 @@ export async function checkCapabilityReports(configuration, update) {
         .sort();
       if (missingTypes.length > 0) {
         issues.push({
-          file: toPosix(relative(REPO_ROOT, join(KAF_ROOT, paths[0]))),
+          file: toPosix(relative(REPO_ROOT, join(ORCEL_ROOT, paths[0]))),
           message: `Public extension types are not reachable from the ${surface.capabilities.join("/")} authoring roots: ${missingTypes.join(", ")}. Add only these standalone types to the appropriate capability entrypoint.`,
         });
       }
@@ -335,7 +335,7 @@ export async function checkCapabilityReports(configuration, update) {
       const metadataPath = join(REPORT_ROOT, capability, `v${version}.json`);
       const snapshot = formatSnapshot(
         JSON.stringify({
-          kind: "kaf-extension-capability-contract",
+          kind: "orcel-extension-capability-contract",
           capability,
           epoch: version,
           sha256: createHash("sha256").update(generatedReport).digest("hex"),

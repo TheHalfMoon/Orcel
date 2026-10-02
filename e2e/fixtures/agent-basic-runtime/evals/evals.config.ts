@@ -1,5 +1,5 @@
-import { e2eJudgeModel } from "@kaf-e2e/config";
-import { defineEvalConfig } from "kaf/evals";
+import { e2eJudgeModel } from "@orcel-e2e/config";
+import { defineEvalConfig } from "orcel/evals";
 import { evalLifecycleReporter } from "./reporter.js";
 
 export default defineEvalConfig({

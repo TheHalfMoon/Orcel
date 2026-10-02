@@ -1,4 +1,4 @@
-import { defineDynamic, defineTool } from "kaf/tools";
+import { defineDynamic, defineTool } from "orcel/tools";
 
 const TOKEN = "dynamic-turn-replay-ok-V6N";
 

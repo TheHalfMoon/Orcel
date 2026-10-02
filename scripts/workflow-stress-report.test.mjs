@@ -10,10 +10,10 @@ import {
   renderWorkflowStressMarkdown,
 } from "./workflow-stress-report.mjs";
 
-const PREFIX = "KAF_WORKFLOW_STRESS_METRIC=";
+const PREFIX = "ORCEL_WORKFLOW_STRESS_METRIC=";
 
 test("builds a report from eval artifact metrics", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "kaf-workflow-stress-report-"));
+  const root = await mkdtemp(join(tmpdir(), "orcel-workflow-stress-report-"));
   t.after(() => rm(root, { force: true, recursive: true }));
   const artifactDirectory = join(root, "2026-08-31", "evals");
   await mkdir(artifactDirectory, { recursive: true });
@@ -66,7 +66,7 @@ test("builds a report from eval artifact metrics", async (t) => {
 });
 
 test("rejects artifacts without both stress scenarios", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "kaf-workflow-stress-report-"));
+  const root = await mkdtemp(join(tmpdir(), "orcel-workflow-stress-report-"));
   t.after(() => rm(root, { force: true, recursive: true }));
   await writeArtifact(join(root, "2026-08-31", "evals"), "sequential.json", {
     fixture: "agent-workflow-stress",
@@ -80,7 +80,7 @@ test("rejects artifacts without both stress scenarios", async (t) => {
 });
 
 test("does not combine scenarios from different eval runs", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "kaf-workflow-stress-report-"));
+  const root = await mkdtemp(join(tmpdir(), "orcel-workflow-stress-report-"));
   t.after(() => rm(root, { force: true, recursive: true }));
   const olderRun = join(root, "2026-08-30", "evals");
   const latestRun = join(root, "2026-08-31", "evals");

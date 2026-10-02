@@ -1,7 +1,7 @@
 import type { H3Event } from "h3";
 import { and, eq } from "drizzle-orm";
 import { db, schema } from "@nuxthub/db";
-import type { SlackLinkRecord, SlackLinkSummary } from "#kaf/types/slack-link";
+import type { SlackLinkRecord, SlackLinkSummary } from "#orcel/types/slack-link";
 
 export interface UpsertSlackLinkInput {
   appUserId: string;

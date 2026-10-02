@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { defineInstructions } from "kaf/instructions";
+import { defineInstructions } from "orcel/instructions";
 
 import prompt from "../authored-assets/prompt.md?raw";
 import { SHARED_MODULE_MARKER } from "../authored-assets/shared";

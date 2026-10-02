@@ -1,4 +1,4 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 /**
  * `ask` returns the hook, so the question composes with `Promise.race` — here

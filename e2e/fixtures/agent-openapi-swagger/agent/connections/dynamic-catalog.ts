@@ -1,4 +1,4 @@
-import { defineDynamic, defineOpenAPIConnection } from "kaf/connections";
+import { defineDynamic, defineOpenAPIConnection } from "orcel/connections";
 
 export default defineDynamic({
   events: {

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { KafDynamicToolPart } from "kaf/svelte";
+  import type { OrcelDynamicToolPart } from "orcel/svelte";
 
   type InputResponses = readonly {
     readonly optionId?: string;
@@ -12,7 +12,7 @@
     canRespond,
     onInputResponses,
   }: {
-    part: KafDynamicToolPart;
+    part: OrcelDynamicToolPart;
     canRespond: boolean;
     onInputResponses: (responses: InputResponses) => void | Promise<void>;
   } = $props();
@@ -23,7 +23,7 @@
   );
   let isOpen = $derived(userOpen ?? initiallyOpen);
 
-  let toolName = $derived(part.toolMetadata?.kaf?.name ?? part.toolName);
+  let toolName = $derived(part.toolMetadata?.orcel?.name ?? part.toolName);
   let stateLabel = $derived.by(() => {
     const labels: Record<string, string> = {
       "input-streaming": "Pending",
@@ -46,8 +46,8 @@
     return "text-muted-foreground";
   });
 
-  let inputRequest = $derived(part.toolMetadata?.kaf?.inputRequest);
-  let inputResponse = $derived(part.toolMetadata?.kaf?.inputResponse);
+  let inputRequest = $derived(part.toolMetadata?.orcel?.inputRequest);
+  let inputResponse = $derived(part.toolMetadata?.orcel?.inputResponse);
   let selectedOption = $derived(
     inputRequest?.options?.find((option) => option.id === inputResponse?.optionId),
   );

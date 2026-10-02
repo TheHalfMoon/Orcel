@@ -1,4 +1,4 @@
-import { LogoEve } from "@vercel/geistdocs/assets/logos/logo-kaf";
+import { LogoEve } from "@vercel/geistdocs/assets/logos/logo-orcel";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ImageResponse } from "next/og";

@@ -2,7 +2,7 @@ import {
   defineWorkflowTool,
   type WorkflowToolContext,
   type WorkflowToolDefinition,
-} from "kaf/tools";
+} from "orcel/tools";
 import { z } from "zod";
 
 type Input = { target: "tool-hidden" | "disabled-hidden" };

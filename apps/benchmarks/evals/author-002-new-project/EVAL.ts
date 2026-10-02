@@ -6,16 +6,16 @@ const projectRoot = "wayfinder";
 
 const defaultAgentModel = "openai/gpt-6-luna-fast";
 
-test("creates a complete kaf project in place", () => {
-  expect(existsSync(`${projectRoot}/agent/channels/kaf.ts`)).toBe(true);
+test("creates a complete orcel project in place", () => {
+  expect(existsSync(`${projectRoot}/agent/channels/orcel.ts`)).toBe(true);
   expect(existsSync(`${projectRoot}/agent/instructions.md`)).toBe(true);
 
   const packageJson = JSON.parse(readFileSync(`${projectRoot}/package.json`, "utf8")) as {
     dependencies?: Record<string, string>;
     scripts?: Record<string, string>;
   };
-  expect(packageJson.dependencies?.kaf).toBeTruthy();
-  expect(packageJson.scripts?.build).toBe("kaf build");
+  expect(packageJson.dependencies?.orcel).toBeTruthy();
+  expect(packageJson.scripts?.build).toBe("orcel build");
 });
 
 test("authors the requested identity without pinning a different model", () => {

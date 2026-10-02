@@ -1,6 +1,6 @@
-import { e2eAgentConfig } from "@kaf-e2e/config";
-import { defineAgent } from "kaf";
-import { mockModel } from "kaf/evals";
+import { e2eAgentConfig } from "@orcel-e2e/config";
+import { defineAgent } from "orcel";
+import { mockModel } from "orcel/evals";
 
 const model = mockModel({
   modelId: "measured-compaction-model",

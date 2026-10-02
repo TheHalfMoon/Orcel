@@ -1,5 +1,5 @@
-import { defineEval, type KafEvalTargetHandle } from "kaf/evals";
-import { equals, satisfies } from "kaf/evals/expect";
+import { defineEval, type OrcelEvalTargetHandle } from "orcel/evals";
+import { equals, satisfies } from "orcel/evals/expect";
 
 interface MessageResponse {
   readonly sessionId?: string;
@@ -9,7 +9,7 @@ interface OwnerResponse {
   readonly sessionId: string | null;
 }
 
-async function postJson<T>(target: KafEvalTargetHandle, path: string, body: unknown): Promise<T> {
+async function postJson<T>(target: OrcelEvalTargetHandle, path: string, body: unknown): Promise<T> {
   const response = await target.fetch(path, {
     body: JSON.stringify(body),
     headers: { "content-type": "application/json" },

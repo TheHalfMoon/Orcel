@@ -6,12 +6,12 @@ import {
   defineInteractiveAuthorization,
   defineMcpClientConnection,
   type McpClientConnectionDefinition,
-} from "kaf/connections";
+} from "orcel/connections";
 
 /**
  * Smoke-test fixture: a user-principal MCP client connection that
  * drives a real OAuth 2.1 + PKCE flow against an external IdP. Used
- * by `packages/kaf/test/tui-client/tui-connection-auth-user.ts` to prove the
+ * by `packages/orcel/test/tui-client/tui-connection-auth-user.ts` to prove the
  * `authorization.*` lifecycle end-to-end through the live
  * runtime, with an actual token exchange.
  *
@@ -23,23 +23,23 @@ import {
  *
  * Three env vars gate participation:
  *
- *  - `KAF_TEST_MCP_STUB_USER_AUTH` must be `"1"`. Without it the
+ *  - `ORCEL_TEST_MCP_STUB_USER_AUTH` must be `"1"`. Without it the
  *    connection is inert (`auth` is omitted), so other smokes
  *    booting agent-tui-client see no extra behavior. The stub MCP URL
  *    still falls back to a sentinel that fails fast on first use.
- *  - `KAF_TEST_MCP_STUB_URL` points at the in-process stub MCP
+ *  - `ORCEL_TEST_MCP_STUB_URL` points at the in-process stub MCP
  *    server the smoke starts up.
- *  - `KAF_TEST_OAUTH_EMULATOR_URL` points at the
+ *  - `ORCEL_TEST_OAUTH_EMULATOR_URL` points at the
  *    `@emulators/microsoft` OAuth provider emulator the smoke spins
- *    up. Required when `KAF_TEST_MCP_STUB_USER_AUTH=1`; checked
+ *    up. Required when `ORCEL_TEST_MCP_STUB_USER_AUTH=1`; checked
  *    lazily inside `startAuthorization` so a misconfigured smoke
  *    fails with a clear message rather than at agent boot.
  */
-const url = process.env.KAF_TEST_MCP_STUB_URL ?? "http://127.0.0.1:0/mcp";
-const userAuthEnabled = process.env.KAF_TEST_MCP_STUB_USER_AUTH === "1";
+const url = process.env.ORCEL_TEST_MCP_STUB_URL ?? "http://127.0.0.1:0/mcp";
+const userAuthEnabled = process.env.ORCEL_TEST_MCP_STUB_USER_AUTH === "1";
 
-const CLIENT_ID = "kaf-smoke-client";
-const CLIENT_SECRET = "kaf-smoke-secret";
+const CLIENT_ID = "orcel-smoke-client";
+const CLIENT_SECRET = "orcel-smoke-secret";
 
 type OAuthState = {
   readonly [key: string]: string;
@@ -61,7 +61,7 @@ const pendingTokenExchanges = new Map<string, Promise<string>>();
 /**
  * Module-level cache of `principalId → access_token`. The runtime's
  * built-in cache is per-step (see
- * `packages/kaf/src/runtime/connections/authorization-tokens.ts:7-9`),
+ * `packages/orcel/src/runtime/connections/authorization-tokens.ts:7-9`),
  * so cross-step reuse is the connection author's responsibility, in
  * production via a refresh-token grant or upstream provider cache. For
  * the smoke we just hold the token in memory keyed by the resolved
@@ -91,10 +91,10 @@ if (userAuthEnabled) {
       throw new ConnectionAuthorizationRequiredError("stub-mcp-user");
     },
     async startAuthorization({ callbackUrl }) {
-      const oauthBase = process.env.KAF_TEST_OAUTH_EMULATOR_URL;
+      const oauthBase = process.env.ORCEL_TEST_OAUTH_EMULATOR_URL;
       if (oauthBase === undefined || oauthBase.length === 0) {
         throw new Error(
-          "stub-mcp-user: KAF_TEST_OAUTH_EMULATOR_URL must be set when KAF_TEST_MCP_STUB_USER_AUTH=1",
+          "stub-mcp-user: ORCEL_TEST_OAUTH_EMULATOR_URL must be set when ORCEL_TEST_MCP_STUB_USER_AUTH=1",
         );
       }
       const verifier = randomBytes(32).toString("base64url");
@@ -167,10 +167,10 @@ async function exchangeAuthorizationCode(input: {
   readonly code: string;
   readonly verifier: string;
 }): Promise<string> {
-  const oauthBase = process.env.KAF_TEST_OAUTH_EMULATOR_URL;
+  const oauthBase = process.env.ORCEL_TEST_OAUTH_EMULATOR_URL;
   if (oauthBase === undefined || oauthBase.length === 0) {
     throw new Error(
-      "stub-mcp-user: KAF_TEST_OAUTH_EMULATOR_URL must be set when KAF_TEST_MCP_STUB_USER_AUTH=1",
+      "stub-mcp-user: ORCEL_TEST_OAUTH_EMULATOR_URL must be set when ORCEL_TEST_MCP_STUB_USER_AUTH=1",
     );
   }
   const body = new URLSearchParams({

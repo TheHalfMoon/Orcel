@@ -8,7 +8,7 @@ import { test } from "node:test";
 const script = new URL("./timings.mjs", import.meta.url);
 
 test("reports timing phases and aggregate durations", () => {
-  const directory = mkdtempSync(join(tmpdir(), "kaf-benchmark-timings-"));
+  const directory = mkdtempSync(join(tmpdir(), "eve-benchmark-timings-"));
   const path = join(directory, "timings.json");
   try {
     writeFileSync(

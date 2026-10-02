@@ -2,8 +2,8 @@ import type {
   ActionPartialStreamEvent,
   ActionResultStreamEvent,
   MessageStreamEvent,
-} from "kaf/client";
-import { defineEval } from "kaf/evals";
+} from "orcel/client";
+import { defineEval } from "orcel/evals";
 
 const TOOL_NAME = "streamed-action";
 const LABEL = "streaming-e2e";

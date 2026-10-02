@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 import { METADATA_TOOL, PROMPT, startChannelSession } from "./shared";
 

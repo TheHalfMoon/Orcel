@@ -1,5 +1,5 @@
-import { defineTool } from "kaf/tools";
-import { auto } from "kaf/tools/approval";
+import { defineTool } from "orcel/tools";
+import { auto } from "orcel/tools/approval";
 
 import { permissionEvaluationModel } from "../testing";
 

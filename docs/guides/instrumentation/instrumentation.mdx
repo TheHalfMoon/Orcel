@@ -5,12 +5,12 @@ url: "/observability/instrumentation"
 ---
 
 Add lifecycle instrumentation as files under `agent/instrumentation/`. Each
-file handles kaf runtime events independently. Configure trace exporters and
+file handles orcel runtime events independently. Configure trace exporters and
 shared span settings with the [built-in OpenTelemetry APIs](./otel).
 
 The instrumentation directory replaces `agent/instrumentation.ts`. See
 [Migrate instrumentation](/docs/observability/instrumentation-migration) when
-upgrading from `kaf < 0.62.0`.
+upgrading from `orcel < 0.62.0`.
 
 ## Add instrumentation
 
@@ -27,7 +27,7 @@ This instrumentation records action timing and identity without receiving tool
 arguments or results:
 
 ```ts title="agent/instrumentation/audit.ts"
-import { defineInstrumentation } from "kaf/instrumentation";
+import { defineInstrumentation } from "orcel/instrumentation";
 
 export default defineInstrumentation({
   events: {
@@ -51,8 +51,8 @@ export default defineInstrumentation({
 `ctx.state` is JSON storage scoped to this file and operation. It survives
 durable suspension and is released after the terminal event.
 
-Use `setup` for asynchronous initialization. In `kaf dev` and built servers,
-kaf awaits every provider's setup before loading the server entry. A setup
+Use `setup` for asynchronous initialization. In `orcel dev` and built servers,
+orcel awaits every provider's setup before loading the server entry. A setup
 failure stops startup. Modules imported by an instrumentation file load before
 setup, so keep dependencies that need initialization out of those imports.
 
@@ -64,7 +64,7 @@ whether its events include input or output content. OpenTelemetry destinations
 share the process-wide policy declared by `otel(...)`.
 
 ```ts title="agent/instrumentation/audit.ts"
-import { defineInstrumentation } from "kaf/instrumentation";
+import { defineInstrumentation } from "orcel/instrumentation";
 
 export default defineInstrumentation({
   tracePolicy: ({ audience, environment }) => ({
@@ -88,7 +88,7 @@ The function receives `agentName`, `channel`, `audience`, `environment`, and
 `"unknown"`; `environment` is `"development"`, `"preview"`, or
 `"production"`.
 
-Without a policy, or when it returns `true`, kaf sends metadata for every
+Without a policy, or when it returns `true`, orcel sends metadata for every
 trace. It includes input and output content in these cases:
 
 | Environment           | Audience               | Content            |
@@ -114,7 +114,7 @@ Lifecycle events are immutable snapshots. Copy the fields you need into a
 destination-specific payload and redact that copy before sending it:
 
 ```ts title="agent/instrumentation/audit.ts"
-import { defineInstrumentation } from "kaf/instrumentation";
+import { defineInstrumentation } from "orcel/instrumentation";
 
 export default defineInstrumentation({
   tracePolicy: () => ({
@@ -159,15 +159,15 @@ operation key when upserting records across replays.
 | ---------------- | ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Session          | `session.started`, `session.waiting`, `session.completed`, `session.failed`                                       | Track a session from creation through suspension or termination. `session.waiting` is resumable; `session.completed` and `session.failed` are terminal.                          |
 | Turn             | `turn.started`, `turn.completed`, `turn.cancelled`, `turn.failed`                                                 | Track one turn. Cancellation is not a failure and commonly leaves the session waiting for another turn.                                                                          |
-| Channel delivery | `channel.delivery.started`, `channel.delivery.completed`, `channel.delivery.cancelled`, `channel.delivery.failed` | Track an inbound channel delivery while kaf processes its turn. These events are emitted when the channel provides delivery metadata.                                            |
+| Channel delivery | `channel.delivery.started`, `channel.delivery.completed`, `channel.delivery.cancelled`, `channel.delivery.failed` | Track an inbound channel delivery while orcel processes its turn. These events are emitted when the channel provides delivery metadata.                                            |
 | Step attempt     | `step.attempt.started`, `step.attempt.completed`, `step.attempt.failed`, `step.attempt.metadata`                  | Track each model-step attempt; retries have separate attempts. `step.attempt.metadata` is emitted after a step only when the AI SDK supplies provider metadata.                  |
 | Model call       | `model.call.started`, `model.call.completed`, `model.call.failed`                                                 | Track an individual call to the model provider. Completion includes usage and finish reason; content fields follow the trace policy.                                             |
-| Action           | `action.started`, `action.completed`, `action.failed`                                                             | Track kaf's durable dispatch of a tool, skill load, local subagent, or remote agent. A failed event's `outcome` distinguishes failure, rejection, cancellation, and abandonment. |
+| Action           | `action.started`, `action.completed`, `action.failed`                                                             | Track orcel's durable dispatch of a tool, skill load, local subagent, or remote agent. A failed event's `outcome` distinguishes failure, rejection, cancellation, and abandonment. |
 | Tool call        | `tool.call.started`, `tool.call.completed`, `tool.call.failed`                                                    | Track the AI SDK's in-process tool execution boundary, including its input and result when allowed by the trace policy.                                                          |
 | User input       | `input.requested`, `input.resolved`                                                                               | Track a question, tool approval, or session-limit request and its resolution. The resolution includes an outcome such as `answered`, `approved`, `denied`, or `cancelled`.       |
 | Memory operation | `memory.operation.started`, `memory.operation.completed`, `memory.operation.failed`                               | Track a memory-store search or write. Events include the operation name, phase, and memory slot; completion may include a record count and records.                              |
 
-An ordinary tool emits both `action.*` and `tool.call.*` events. Use `action.*` for kaf's durable dispatch lifecycle, including tools, skills, subagents, and remote agents. Use `tool.call.*` only when you need the AI SDK's in-process tool execution boundary.
+An ordinary tool emits both `action.*` and `tool.call.*` events. Use `action.*` for orcel's durable dispatch lifecycle, including tools, skills, subagents, and remote agents. Use `tool.call.*` only when you need the AI SDK's in-process tool execution boundary.
 
 For local and remote subagents, `action.completed` and `action.failed` include the child turn's `usage` directly. Token counts are always present when the child reports usage; `usage.costUsd` is present only when the model provider reports a price. Without the action-level usage, consumers would have to correlate child model events through trace lineage and sum their provider metadata, which is harder to do reliably across retries and parked turns.
 

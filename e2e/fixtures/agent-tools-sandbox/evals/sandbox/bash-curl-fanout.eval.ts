@@ -1,5 +1,5 @@
-import type { MessageStreamEvent } from "kaf/client";
-import { defineEval } from "kaf/evals";
+import type { MessageStreamEvent } from "orcel/client";
+import { defineEval } from "orcel/evals";
 
 import { FANOUT_BARRIER_SERVER_URL } from "./shared";
 
@@ -29,7 +29,7 @@ export default defineEval({
   async test(t) {
     const turn = await t.send(
       [
-        "KAF_SANDBOX_CURL_FANOUT",
+        "ORCEL_SANDBOX_CURL_FANOUT",
         `Call the \`${BASH_TOOL}\` tool at least ${MINIMUM_CURL_CALLS} separate times in one tool-use step.`,
         "Run every command below at least once. If you make extra calls, repeat a command below.",
         "Do not combine commands, use a loop, or background a process.",

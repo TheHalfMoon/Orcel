@@ -163,7 +163,7 @@ function parseArguments(argv) {
     baselineSizeBytes: null,
     currentLabel: "current",
     currentSizeBytes: null,
-    imageLabel: "packages/kaf/Dockerfile",
+    imageLabel: "packages/orcel/Dockerfile",
     outputJsonPath: null,
     outputMarkdownPath: null,
   };

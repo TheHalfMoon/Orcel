@@ -43,7 +43,7 @@ const buildSnippet = (
 
   const imports = [
     ...(auth === "apiKey" ? [] : [`import { connect } from "@vercel/connect/eve";`]),
-    `import { ${defineFn} } from "kaf/connections";`,
+    `import { ${defineFn} } from "orcel/connections";`,
   ];
 
   const fields: string[] = [];
@@ -102,7 +102,7 @@ const authNote = (auth: AuthMode): string => {
     return "Connect authenticates as the agent itself through one shared installation, with no per-user consent.";
   }
   if (auth === "apiKey") {
-    return "Keep the API key in a server-side environment variable. kaf sends it directly to the MCP server and does not expose it to the model.";
+    return "Keep the API key in a server-side environment variable. orcel sends it directly to the MCP server and does not expose it to the model.";
   }
   return "Connect exchanges a JWT bearer assertion for a provider token. `principalToSubject` maps each principal to the subject your IdP expects.";
 };
@@ -210,10 +210,10 @@ export const buildConnectionInstall = (integration: Integration): string => {
     return "";
   }
   return [
-    "Add the connection from kaf's registry. This writes the initial definition under `agent/connections/` and installs its authentication dependency when needed:",
+    "Add the connection from orcel's registry. This writes the initial definition under `agent/connections/` and installs its authentication dependency when needed:",
     ``,
     "```bash",
-    `kaf add connection/${integration.slug}`,
+    `orcel add connection/${integration.slug}`,
     "```",
   ].join("\n");
 };

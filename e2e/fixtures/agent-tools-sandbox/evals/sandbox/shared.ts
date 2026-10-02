@@ -8,8 +8,8 @@ export const PREPARATION_MARKER_PATH = "/workspace/smoke-marker.txt";
 export const PREPARATION_MARKER_TOKEN = "sandbox-preparation-ok-J3Q";
 
 /** Custom CLI installed on the PATH by environment preparation. */
-export const SANDBOX_CLI_NAME = "kaf-greet";
-export const SANDBOX_CLI_TOKEN = "kaf-greet-cli-ok-R7M";
+export const SANDBOX_CLI_NAME = "orcel-greet";
+export const SANDBOX_CLI_TOKEN = "orcel-greet-cli-ok-R7M";
 
 /** Written by the selector into each live session (not the template). */
 export const SESSION_MARKER_PATH = "/workspace/session-marker.txt";

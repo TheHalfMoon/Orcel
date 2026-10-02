@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 
-const PACKAGE_HOST = "https://pkg.kaf.dev";
-const IMMUTABLE_PACKAGE_PATH = /^\/([0-9a-f]{40})\/kaf\.tgz$/u;
+const PACKAGE_HOST = "https://pkg.orcel.dev";
+const IMMUTABLE_PACKAGE_PATH = /^\/([0-9a-f]{40})\/orcel\.tgz$/u;
 
 /** Resolves a mutable canary ref to the immutable artifact all runs must share. */
 export function canarySubject(ref, label, resolve = resolveCanaryPackageSpec) {
@@ -16,7 +16,7 @@ export function canarySubject(ref, label, resolve = resolveCanaryPackageSpec) {
 }
 
 export function resolveCanaryPackageSpec(ref) {
-  const requested = `${PACKAGE_HOST}/${encodeURIComponent(ref)}/kaf.tgz`;
+  const requested = `${PACKAGE_HOST}/${encodeURIComponent(ref)}/orcel.tgz`;
   let resolved;
   try {
     resolved = execFileSync(
@@ -28,7 +28,7 @@ export function resolveCanaryPackageSpec(ref) {
     ).trim();
   } catch {
     throw new Error(
-      `No kaf canary artifact is available for ${JSON.stringify(ref)}. Publish that revision or use a published canary ref such as "main".`,
+      `No orcel canary artifact is available for ${JSON.stringify(ref)}. Publish that revision or use a published canary ref such as "main".`,
     );
   }
   packageRevision(resolved);
@@ -38,11 +38,11 @@ export function resolveCanaryPackageSpec(ref) {
 export function packageRevision(packageSpec) {
   const url = new URL(packageSpec);
   if (url.origin !== PACKAGE_HOST) {
-    throw new Error(`Kaf canary resolved outside ${PACKAGE_HOST}: ${packageSpec}`);
+    throw new Error(`Orcel canary resolved outside ${PACKAGE_HOST}: ${packageSpec}`);
   }
   const revision = url.pathname.match(IMMUTABLE_PACKAGE_PATH)?.[1];
   if (revision === undefined) {
-    throw new Error(`Kaf canary did not resolve to an immutable revision: ${packageSpec}`);
+    throw new Error(`Orcel canary did not resolve to an immutable revision: ${packageSpec}`);
   }
   return revision;
 }

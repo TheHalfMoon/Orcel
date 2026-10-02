@@ -1,6 +1,6 @@
-import { Client } from "kaf/client";
-import { defineEval } from "kaf/evals";
-import { equals } from "kaf/evals/expect";
+import { Client } from "orcel/client";
+import { defineEval } from "orcel/evals";
+import { equals } from "orcel/evals/expect";
 
 export default defineEval({
   description: "Cancelled inspection does not prevent an agent's first chat.",

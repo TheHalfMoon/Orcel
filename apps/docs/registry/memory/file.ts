@@ -1,6 +1,6 @@
-import { fileMemory } from "kaf/memory/file";
-import { defineMemory } from "kaf/memory";
-import { byPrincipal } from "kaf/memory/scope";
+import { fileMemory } from "orcel/memory/file";
+import { defineMemory } from "orcel/memory";
+import { byPrincipal } from "orcel/memory/scope";
 
 export default defineMemory({
   description: "Remember stable facts and preferences about the caller.",

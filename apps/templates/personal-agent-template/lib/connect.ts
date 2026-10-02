@@ -1,6 +1,6 @@
 /**
  * Issuer passed to Vercel Connect for user-scoped tokens.
- * Must match Kaf's `appSession()` authenticator in `agent/channels/kaf.ts`.
+ * Must match Orcel's `appSession()` authenticator in `agent/channels/orcel.ts`.
  */
 export const CONNECT_USER_ISSUER = "app";
 

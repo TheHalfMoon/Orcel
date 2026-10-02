@@ -75,7 +75,7 @@ function createInitInstallSizeBudgetChecks(initInstallComparison) {
     createSizeBudgetCheck(initInstallComparison.installedSizeBytes, {
       area: "Init",
       metric: "Installed footprint",
-      summary: "`kaf init` install footprint",
+      summary: "`orcel init` install footprint",
     }),
   ];
 }

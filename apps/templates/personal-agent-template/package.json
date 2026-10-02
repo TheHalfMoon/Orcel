@@ -1,7 +1,7 @@
 {
   "name": "personal-agent-template",
   "version": "0.0.0",
-  "description": "A durable personal AI assistant template built with Kaf, Nuxt 4, and Better Auth",
+  "description": "A durable personal AI assistant template built with Orcel, Nuxt 4, and Better Auth",
   "bugs": {
     "url": "https://github.com/vercel-labs/personal-agent-template/issues"
   },
@@ -16,11 +16,11 @@
     "#*": "./agent/*"
   },
   "scripts": {
-    "build": "pnpm build:kaf && pnpm build:web",
-    "build:kaf": "kaf build",
+    "build": "pnpm build:orcel && pnpm build:web",
+    "build:orcel": "orcel build",
     "build:web": "nuxt build --cwd apps/web",
     "dev": "nuxt dev --cwd apps/web",
-    "dev:kaf": "kaf dev",
+    "dev:orcel": "orcel dev",
     "dev:all": "vercel dev --local",
     "dev:web": "nuxt dev --cwd apps/web",
     "start": "nuxt preview --cwd apps/web",
@@ -43,8 +43,8 @@
     "chat-adapter-sendblue": "^0.2.0",
     "drizzle-kit": "^0.31.10",
     "drizzle-orm": "^0.45.2",
-    "eve": "npm:kaf@^0.66.3",
-    "kaf": "^0.66.3",
+    "eve": "npm:orcel@^0.66.3",
+    "orcel": "^0.66.3",
     "maska": "^3.2.0",
     "nuxt": "4.5.2",
     "shiki": "^4.4.3",

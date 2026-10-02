@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { defineEval, type KafEvalContext, type KafEvalTurn } from "kaf/evals";
-import { satisfies } from "kaf/evals/expect";
+import { defineEval, type OrcelEvalContext, type OrcelEvalTurn } from "orcel/evals";
+import { satisfies } from "orcel/evals/expect";
 import { z } from "zod";
 import { purchasingSheets } from "../purchasing-sheets";
 
@@ -39,7 +39,7 @@ export default ["first", "later"].map((launchTurn) =>
   }),
 );
 
-function expectFiveReviewers(started: KafEvalTurn) {
+function expectFiveReviewers(started: OrcelEvalTurn) {
   expectHealthyTurn(started);
   started.calledSubagent("reviewer", { status: "completed", count: 5 });
   const launchSteps = started.events
@@ -53,13 +53,13 @@ function expectFiveReviewers(started: KafEvalTurn) {
   assert.equal(new Set(launchSteps).size, 1, "all five reviewers launch in one model step");
 }
 
-function expectReviewSummary(turn: KafEvalTurn) {
+function expectReviewSummary(turn: OrcelEvalTurn) {
   assert(turn.message?.trim(), "parent reports the completed reviews");
   turn.event("step.completed", { data: { finishReason: "stop" }, count: 1 });
   turn.notEvent("compaction.completed");
 }
 
-async function expectParallelReviews(t: KafEvalContext, turn: KafEvalTurn) {
+async function expectParallelReviews(t: OrcelEvalContext, turn: OrcelEvalTurn) {
   const sessions = turn.events
     .filter((event) => event.type === "agent.started")
     .filter(({ data }) => data.name === "reviewer");
@@ -77,7 +77,7 @@ async function expectParallelReviews(t: KafEvalContext, turn: KafEvalTurn) {
   assert(lastStarted < firstFinished, "all five reviews overlap");
 }
 
-function expectHealthyTurn(turn: KafEvalTurn) {
+function expectHealthyTurn(turn: OrcelEvalTurn) {
   turn.expectOk();
   turn.noFailedActions();
   turn.notEvent("step.failed");
@@ -85,12 +85,12 @@ function expectHealthyTurn(turn: KafEvalTurn) {
   const steps = turn.events.filter((event) => event.type === "step.started");
   assert(steps.length > 0, "the turn calls a model");
   assert(
-    steps.every(({ data }) => data.modelId === process.env.KAF_E2E_MODEL),
+    steps.every(({ data }) => data.modelId === process.env.ORCEL_E2E_MODEL),
     "each request uses the real matrix model",
   );
 }
 
-function expectCacheReuse(t: KafEvalContext, turn: KafEvalTurn) {
+function expectCacheReuse(t: OrcelEvalContext, turn: OrcelEvalTurn) {
   const steps = turn.events.filter((event) => event.type === "step.completed");
   assert(steps.length >= 2, "multiple parent requests exercise cache reuse");
   assert(

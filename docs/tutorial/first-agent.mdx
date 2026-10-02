@@ -3,11 +3,11 @@ title: "Your First Agent"
 description: "Scaffold the analytics assistant, give it an analyst persona, run it, and ask a question."
 ---
 
-For a bespoke learning experience, start with the [kaf template gallery](https://github.com/TheHalfMoon/kaf/templates) or ask your coding agent to build your use case. For example:
+For a bespoke learning experience, start with the [orcel template gallery](https://github.com/TheHalfMoon/orcel/templates) or ask your coding agent to build your use case. For example:
 
-- “Build an kaf Slack agent that answers questions from our team’s documentation.”
-- “Build an kaf incident-response agent that investigates alerts using our observability tools.”
-- “Build an kaf GitHub maintainer that triages issues and summarizes pull requests.”
+- “Build an orcel Slack agent that answers questions from our team’s documentation.”
+- “Build an orcel incident-response agent that investigates alerts using our observability tools.”
+- “Build an orcel GitHub maintainer that triages issues and summarizes pull requests.”
 
 If you prefer a step-by-step walkthrough, continue with this tutorial. It constructs one app end to end: a data analytics assistant. You ask in natural language, and over eight steps it learns to query sample data, run analysis in a sandbox, remember your team's metric definitions, and refuse to exceed your query budget without asking.
 
@@ -18,17 +18,17 @@ Step 1 gets it talking. In Step 3 you create a small local dataset that you use 
 - Node 24 or newer and npm.
 - A working model credential, configured through [Getting Started](../getting-started). Keep the model and credential you already tested there.
 
-If you have not run kaf before, complete [Getting Started](../getting-started) first. Without a credential, "Run the agent" below fails when the runtime tries to reach the model; the dev TUI's `/model` flow walks you through pasting a key or linking a project.
+If you have not run orcel before, complete [Getting Started](../getting-started) first. Without a credential, "Run the agent" below fails when the runtime tries to reach the model; the dev TUI's `/model` flow walks you through pasting a key or linking a project.
 
 ## Scaffold the agent
 
 ```bash
-npx kaf@latest init analytics-assistant
+npx orcel@latest init analytics-assistant
 cd analytics-assistant
 ```
 
 The command writes the starter agent and built-in HTTP API channel
-(`agent/channels/kaf.ts`), installs dependencies, initializes Git, and offers
+(`agent/channels/orcel.ts`), installs dependencies, initializes Git, and offers
 to start the development server. Stop the server if you started it before
 continuing with the edits below. It does not create a Vercel project or deploy. `init` creates the
 `analytics-assistant/` directory, so `cd` into it before running further
@@ -62,7 +62,7 @@ Instructions are identity and standing rules. On-demand procedures belong in ski
 npm run dev
 ```
 
-The `init` scaffold writes a `dev` script that runs the `kaf dev` binary from the project's `node_modules`. The local runtime boots and the dev TUI opens. Ask it something it can answer from general knowledge first:
+The `init` scaffold writes a `dev` script that runs the `orcel dev` binary from the project's `node_modules`. The local runtime boots and the dev TUI opens. Ask it something it can answer from general knowledge first:
 
 ```text
 What's a good way to measure week-over-week retention?

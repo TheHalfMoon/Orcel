@@ -18,12 +18,12 @@ describe("package artifacts", () => {
   });
 
   test("derives immutable artifacts and mutable pointers", () => {
-    expect(packageArtifactPath(sha)).toBe(`packages/${sha}/kaf.tgz`);
+    expect(packageArtifactPath(sha)).toBe(`packages/${sha}/orcel.tgz`);
     expect(packageManifestPath(sha)).toBe(`packages/${sha}/manifest.json`);
     expect(packagePointerPath("main")).toBe("packages/refs/main.json");
     expect(packagePointerPath("123")).toBe("packages/refs/pr/123.json");
     expect(packageDependencyUrl("https://packages.example.com", sha)).toBe(
-      `https://packages.example.com/${sha}/kaf.tgz`,
+      `https://packages.example.com/${sha}/orcel.tgz`,
     );
   });
 
@@ -35,9 +35,9 @@ describe("package artifacts", () => {
   });
 
   test("prepares package metadata without mutating the source", () => {
-    const source = { name: "kaf", version: "0.33.0" };
+    const source = { name: "orcel", version: "0.33.0" };
     expect(preparePackageJson(source, sha, "git")).toEqual({
-      name: "kaf",
+      name: "orcel",
       version: "0.33.0+git.aaaaaaaaaaaaaaaa",
     });
     expect(source.version).toBe("0.33.0");

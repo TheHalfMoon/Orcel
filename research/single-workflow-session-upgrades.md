@@ -1,5 +1,5 @@
 ---
-issue: https://github.com/TheHalfMoon/kaf/issues/876
+issue: https://github.com/TheHalfMoon/orcel/issues/876
 status: implemented
 last_updated: "2026-09-15"
 ---
@@ -8,7 +8,7 @@ last_updated: "2026-09-15"
 
 ## Summary
 
-kaf runs each session as a long-lived Workflow run that pins the session's stable command hooks,
+orcel runs each session as a long-lived Workflow run that pins the session's stable command hooks,
 but that run does not execute conversational turns. Every turn is dispatched to a child turn
 workflow on the deployment that accepted the channel request, and the two runs coordinate through a
 private driver/child protocol: turn-control hooks, `NextDriverAction` transport, a driver-side
@@ -49,7 +49,7 @@ channel request accepted on deployment B
   -> child settles; owner disposes the control hook only after the next turn settles
 ```
 
-The same-deployment path in [`inline-turn.ts`](../packages/kaf/src/execution/inline-turn.ts) is a
+The same-deployment path in [`inline-turn.ts`](../packages/orcel/src/execution/inline-turn.ts) is a
 half-step toward this proposal: it runs `turnStep` in the owner until a step needs coordination or
 reaches another deployment, then falls back to the child through `requiresChildDispatch`. Both
 paths must stay correct, so the fallback adds a third execution mode instead of removing one.
@@ -151,12 +151,12 @@ Deferring to the next idle delivery costs nothing in protocol and only delays co
 busy sessions.
 
 HITL responses, tool and subagent results, cancellation, reset, clear, and compact never trigger
-upgrades. kaf never cancels or restarts work to make a session eligible.
+upgrades. orcel never cancels or restarts work to make a session eligible.
 
 ### Exact deployment selection
 
-Every kaf-owned Workflow start receives an exact deployment id from trusted ingress or from its
-current owner. A missing id and the `"latest"` selector are rejected, and kaf performs no
+Every orcel-owned Workflow start receives an exact deployment id from trusted ingress or from its
+current owner. A missing id and the `"latest"` selector are rejected, and orcel performs no
 latest-deployment lookup, because a lookup can select a deployment other than the one that
 authenticated the request. Local development supplies a trusted build-generation id in the same
 role.
@@ -245,14 +245,14 @@ which drains released step stream writers before recording `step_completed`;
 the `persists model output before settlement…` integration test in
 `session/entry.integration.test.ts` covers it.
 
-The existing [hook helpers](../packages/kaf/src/execution/hook-ownership.ts)
+The existing [hook helpers](../packages/orcel/src/execution/hook-ownership.ts)
 dispose and claim in separate durable commits, so handoff steps 2–3 leave an
-interval with no hook owner spanning candidate startup and hydration. kaf
+interval with no hook owner spanning candidate startup and hydration. orcel
 closes the observable consequences of that interval without an upstream
 primitive:
 
 - **Handoff markers.** Before releasing, the owner claims
-  `kaf:inbox:handoff:<token>` for every address in its claim set and disposes
+  `orcel:inbox:handoff:<token>` for every address in its claim set and disposes
   the markers once the transfer has either activated or been recovered. Ingress
   (`session-inbox/resume.ts`) treats "hook not found, marker present" as
   "retry within a bounded window" and "hook not found, no marker" as "no
@@ -279,7 +279,7 @@ gap inside the handoff boundary without touching ordinary execution.
 
 ## Internal boundaries
 
-These are kaf-owned internal contracts inside `execution/`, not public APIs. Each exists to absorb
+These are orcel-owned internal contracts inside `execution/`, not public APIs. Each exists to absorb
 a deleted path, not to wrap the Workflow SDK generally.
 
 The owner program lives in `execution/session/`:
@@ -312,7 +312,7 @@ The result must have fewer execution paths, not the old topology behind new inte
 The current inbox implementation lives in `execution/session-inbox/`: `inbox.ts`
 owns the pump, `protocol.ts` normalizes commands, `address.ts` defines identity,
 and `resume.ts` owns resume-first delivery and lazy identity resolution.
-Session checkpoints require embedded program memory; there is no `kaf.session`
+Session checkpoints require embedded program memory; there is no `orcel.session`
 stream fallback, snapshot migration registry, or duplicate snapshot version.
 The state-level version only rejects incompatible handoffs. Client event-stream
 versions remain separate because stored output survives deployments.
@@ -330,7 +330,7 @@ versions remain separate because stored output survives deployments.
   `execution/legacy-session/`. Step types still needed move out of transport modules.
 
 Transport cutover is clean: new sessions use one stable ingress envelope with required deployment
-metadata, and legacy driver/child sessions enter the isolated one-time import in `execution/legacy-session/` on their next turn dispatch. The import preserves committed conversation data and interrupts pending execution; old drivers remain stream anchors until final completion. Import supports drivers from kaf 0.45 onward (wire versions 1–7, turn-input versions 1–2, embedded snapshots); an older driver is reported inactive so its channel starts a fresh session. Ingress
+metadata, and legacy driver/child sessions enter the isolated one-time import in `execution/legacy-session/` on their next turn dispatch. The import preserves committed conversation data and interrupts pending execution; old drivers remain stream anchors until final completion. Import supports drivers from orcel 0.45 onward (wire versions 1–7, turn-input versions 1–2, embedded snapshots); an older driver is reported inactive so its channel starts a fresh session. Ingress
 can still be newer than a busy owner, so the owner validates that one envelope and rejects
 unsupported commands instead of translating them. Nothing deleted here is replaced by wait
 migration, callback rebinding, or cross-version coordination.
@@ -372,7 +372,7 @@ This follows the holder attempt's continuous-reader boundary without adopting
 its separate holder and turn topology or its deferred settlement. Upstream
 `step-delivery-ordering.test.ts`, `step-delivery-hop-count.test.ts`, and
 `delivery-barrier-coverage.test.ts` cover iterator delivery order against cached
-step results and other hooks, including layered async consumers. kaf additionally
+step results and other hooks, including layered async consumers. orcel additionally
 tests merged alias bursts while the owner is waiting, same-turn steering,
 cancellation followed by new input, and clients following settlement races.
 
@@ -400,7 +400,7 @@ requests and internal fire-and-forget senders never hydrate it. Missing metadata
 is an identity error after acceptance, not permission to resend or create a run.
 `getRawHookByToken` is deleted: the SDK's standard lookup is already lazy.
 
-The only explicit hook lookups left in kaf are requested alias resolution,
+The only explicit hook lookups left in orcel are requested alias resolution,
 reset's release acknowledgement, and replay-idempotent background-task ownership
 resolution. Registration barriers remain for competing claims and callbacks
 that must be registered before another run can signal them. Claims within an
@@ -413,7 +413,7 @@ claim measured latency or a fixed count for arbitrary authored integrations.
 
 ## Out of scope
 
-- The general holder topology from [PR #3063](https://github.com/TheHalfMoon/kaf/pull/3063), background
+- The general holder topology from [PR #3063](https://github.com/TheHalfMoon/orcel/pull/3063), background
   write queues, detached persistence, and per-turn snapshot storage are not ported here.
   Its continuously owned inbox readers and deferred settlement inform the session pump.
 - Public upgrade or state-migration APIs: `Session.upgrade()`, a channel operation, or a route.

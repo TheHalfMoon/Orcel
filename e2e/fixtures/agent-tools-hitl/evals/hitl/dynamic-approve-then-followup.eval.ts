@@ -1,10 +1,10 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 const DYNAMIC_GUARDED_ECHO_TOKEN = "dynamic-guarded-echo-ok-L8R6";
 const TOOL_NAME = "dynamic_guarded_echo";
 
 /**
- * Regression coverage for https://github.com/TheHalfMoon/kaf/issues/533.
+ * Regression coverage for https://github.com/TheHalfMoon/orcel/issues/533.
  *
  * An always-gated dynamic tool parks, the user approves, the tool executes,
  * and then the session must keep working. The follow-up turn replays the

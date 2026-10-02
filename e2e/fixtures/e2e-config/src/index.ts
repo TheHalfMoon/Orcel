@@ -1,10 +1,10 @@
-import type { AgentDefinition, AgentStaticModelDefinition } from "kaf";
-import { mockModel, type MockModelResponder } from "kaf/evals";
+import type { AgentDefinition, AgentStaticModelDefinition } from "orcel";
+import { mockModel, type MockModelResponder } from "orcel/evals";
 
 export { e2eJudgeModel } from "./judge.js";
 
 /**
- * Sentinel value for `KAF_E2E_MODEL` that makes fixtures author a
+ * Sentinel value for `ORCEL_E2E_MODEL` that makes fixtures author a
  * deterministic `mockModel()` instead of a real gateway model. The world
  * suites (Vercel, Postgres) set it so infrastructure coverage never depends
  * on live model behavior.
@@ -43,7 +43,7 @@ export type E2EModel = string | ReturnType<typeof mockModel>;
 export interface E2EModelOptions {
   /**
    * Responder (or static reply) used when the harness requests mock models
-   * via `KAF_E2E_MODEL=mock`. Defaults to a deterministic echo of the last
+   * via `ORCEL_E2E_MODEL=mock`. Defaults to a deterministic echo of the last
    * user message.
    */
   readonly mock?: MockModelResponder | string;
@@ -51,11 +51,11 @@ export interface E2EModelOptions {
 
 /**
  * Resolves the model a fixture agent (or subagent) should author:
- * `KAF_E2E_MODEL=mock` yields a deterministic `mockModel()`, any other value
+ * `ORCEL_E2E_MODEL=mock` yields a deterministic `mockModel()`, any other value
  * is used as a gateway model id, and the harness default applies when unset.
  */
 export function e2eModel(options?: E2EModelOptions): E2EModel {
-  const requested = process.env.KAF_E2E_MODEL;
+  const requested = process.env.ORCEL_E2E_MODEL;
 
   if (requested === MOCK_MODEL_SENTINEL) {
     return mockModel(options?.mock ?? defaultMockResponder);
@@ -66,12 +66,12 @@ export function e2eModel(options?: E2EModelOptions): E2EModel {
 
 /**
  * Returns the harness-owned configuration shared by e2e fixture root agents:
- * the matrix model from `KAF_E2E_MODEL` (or a mock when the world suite
- * requests one) and the workflow world override from `KAF_E2E_WORKFLOW_WORLD`.
+ * the matrix model from `ORCEL_E2E_MODEL` (or a mock when the world suite
+ * requests one) and the workflow world override from `ORCEL_E2E_WORKFLOW_WORLD`.
  */
 export function e2eAgentConfig(options?: E2EModelOptions): E2EAgentConfig {
   const base = e2eSubagentConfig(options);
-  const workflowWorld = process.env.KAF_E2E_WORKFLOW_WORLD;
+  const workflowWorld = process.env.ORCEL_E2E_WORKFLOW_WORLD;
   if (workflowWorld === undefined) {
     return base;
   }

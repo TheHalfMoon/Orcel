@@ -1,7 +1,7 @@
 import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { connectionEntries } from "@kaf/catalog";
+import { connectionEntries } from "@orcel/catalog";
 
 interface RegistryFile {
   path: string;
@@ -14,7 +14,7 @@ interface RegistryItem {
   envVars?: Record<string, string>;
   files?: RegistryFile[];
   meta?: {
-    kaf?: {
+    orcel?: {
       setup?:
         | {
             command?: string;
@@ -72,7 +72,7 @@ if (JSON.stringify(actualSlugs) !== JSON.stringify(expectedSlugs)) {
 }
 
 for (const item of items) {
-  const declaredSetup = item.meta?.kaf?.setup;
+  const declaredSetup = item.meta?.orcel?.setup;
   const setups =
     declaredSetup === undefined
       ? undefined
@@ -101,15 +101,15 @@ for (const item of items) {
     const expectedSetup =
       slug === "shopify"
         ? {
-            command: "kaf",
-            package: "kaf",
-            bin: "kaf",
+            command: "orcel",
+            package: "orcel",
+            bin: "orcel",
             args: ["integration", "setup", "shopify"],
           }
         : {
-            command: "kaf",
-            package: "kaf",
-            bin: "kaf",
+            command: "orcel",
+            package: "orcel",
+            bin: "orcel",
             args: [
               "integration",
               "connect",
@@ -124,8 +124,8 @@ for (const item of items) {
     if (JSON.stringify(setups) !== JSON.stringify([expectedSetup])) {
       throw new Error(
         slug === "shopify"
-          ? 'Registry item "connection/shopify" must run kaf integration setup shopify.'
-          : `Registry item "${item.name}" must configure its Vercel Connect connector through kaf.`,
+          ? 'Registry item "connection/shopify" must run orcel integration setup shopify.'
+          : `Registry item "${item.name}" must configure its Vercel Connect connector through orcel.`,
       );
     }
   }

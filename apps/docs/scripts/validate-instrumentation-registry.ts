@@ -1,7 +1,7 @@
 import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { instrumentationEntries } from "@kaf/catalog";
+import { instrumentationEntries } from "@orcel/catalog";
 
 interface RegistryFile {
   path: string;

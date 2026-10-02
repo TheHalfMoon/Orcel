@@ -3,8 +3,8 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-const root = process.env.KAF_AUTHORING_EVAL_DIRECTORY;
-if (root === undefined) throw new Error("KAF_AUTHORING_EVAL_DIRECTORY is required.");
+const root = process.env.ORCEL_AUTHORING_EVAL_DIRECTORY;
+if (root === undefined) throw new Error("ORCEL_AUTHORING_EVAL_DIRECTORY is required.");
 
 const args = process.argv.slice(2);
 const nonInteractive = args.includes("--non-interactive");

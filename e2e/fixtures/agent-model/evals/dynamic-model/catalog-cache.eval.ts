@@ -1,6 +1,6 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
-const model = process.env.KAF_E2E_MODEL ?? "openai/gpt-6-sol";
+const model = process.env.ORCEL_E2E_MODEL ?? "openai/gpt-6-sol";
 
 export default defineEval({
   tags: ["real-model"],

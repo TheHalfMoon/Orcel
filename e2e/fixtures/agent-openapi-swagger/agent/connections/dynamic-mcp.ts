@@ -1,4 +1,4 @@
-import { defineDynamic, defineMcpClientConnection } from "kaf/connections";
+import { defineDynamic, defineMcpClientConnection } from "orcel/connections";
 
 export default defineDynamic({
   events: {

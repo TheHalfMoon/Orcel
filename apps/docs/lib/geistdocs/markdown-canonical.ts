@@ -4,7 +4,7 @@ export const removeProxyMarkdownCanonical = (response: Response): Response => {
   const rewrite = response.headers.get("x-middleware-rewrite");
   if (!rewrite) return response;
 
-  const pathname = new URL(rewrite, "https://github.com/TheHalfMoon/kaf").pathname;
+  const pathname = new URL(rewrite, "https://github.com/TheHalfMoon/orcel").pathname;
   if (MARKDOWN_ROUTE_PATTERN.test(pathname)) {
     response.headers.delete("link");
   }

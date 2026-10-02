@@ -3,7 +3,7 @@ import {
   type WorkflowAgentMetadata,
   type WorkflowToolContext,
   type WorkflowToolDefinition,
-} from "kaf/tools";
+} from "orcel/tools";
 
 async function execute(
   _input: Record<string, unknown>,

@@ -1,1 +1,1 @@
-export { default } from "@kaf-e2e/config/instrumentation";
+export { default } from "@orcel-e2e/config/instrumentation";

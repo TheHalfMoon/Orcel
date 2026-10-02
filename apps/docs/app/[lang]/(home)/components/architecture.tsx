@@ -12,7 +12,7 @@ import {
   IconWrench,
 } from "@vercel/geistdocs/assets/icons";
 import { IconArrowUpRight } from "@vercel/geistdocs/assets/icons/icon-arrow-up-right";
-import { LogoEve } from "@vercel/geistdocs/assets/logos/logo-kaf";
+import { LogoEve } from "@vercel/geistdocs/assets/logos/logo-orcel";
 import { LogoIconVercel } from "@vercel/geistdocs/assets/logos/logo-icon-vercel";
 import { Switch } from "@vercel/geistdocs/components/switch";
 import Link from "next/link";

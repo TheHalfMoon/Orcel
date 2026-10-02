@@ -1,6 +1,6 @@
 ---
 title: "Overview"
-description: "Define repeatable scored checks for an kaf agent with defineEval and run them with kaf eval."
+description: "Define repeatable scored checks for an orcel agent with defineEval and run them with orcel eval."
 ---
 
 An eval is a scored check that runs your agent against real sessions and grades the result, catching regressions when you change a prompt or a tool. Drive the agent through one or more turns, assert on what it did (the run completed, the right tool ran, the reply contains the right text), and optionally ship the results to Braintrust.
@@ -9,7 +9,7 @@ Evals exercise the same HTTP surface your users hit. The runner boots (or target
 
 ## `defineEval`
 
-kaf discovers evals under the app-root `evals/` directory, in `.eval.ts` files. Each file is one eval by default. A file can also default-export an array to fan out over a dataset (see [Cases](./cases)). The file path is the eval's identity, so you don't author an `id` or `name`. Directories group related evals (`evals/weather/brooklyn-forecast.eval.ts` becomes id `weather/brooklyn-forecast`).
+orcel discovers evals under the app-root `evals/` directory, in `.eval.ts` files. Each file is one eval by default. A file can also default-export an array to fan out over a dataset (see [Cases](./cases)). The file path is the eval's identity, so you don't author an `id` or `name`. Directories group related evals (`evals/weather/brooklyn-forecast.eval.ts` becomes id `weather/brooklyn-forecast`).
 
 ```text
 my-agent/
@@ -26,8 +26,8 @@ my-agent/
 An eval is a single `async test(t)` function. You drive the agent with `t` and assert on the run with the same `t`:
 
 ```ts title="evals/weather/brooklyn-forecast.eval.ts"
-import { defineEval } from "kaf/evals";
-import { includes } from "kaf/evals/expect";
+import { defineEval } from "orcel/evals";
+import { includes } from "orcel/evals/expect";
 
 export default defineEval({
   description: "Basic message and tool-usage coverage for the weather agent.",
@@ -47,8 +47,8 @@ export default defineEval({
 Every `evals/` directory needs exactly one `evals.config.ts` at its root. It declares the defaults every eval shares:
 
 ```ts title="evals/evals.config.ts"
-import { defineEvalConfig } from "kaf/evals";
-import { Braintrust } from "kaf/evals/reporters";
+import { defineEvalConfig } from "orcel/evals";
+import { Braintrust } from "orcel/evals/reporters";
 
 export default defineEvalConfig({
   judge: { model: "typesafe-ai/jev" },
@@ -60,10 +60,10 @@ Everything is optional. `judge` sets the default model for [LLM-as-judge](./judg
 
 ### Run setup and teardown
 
-Use `setup` to start shared resources or run migrations before kaf starts the local agent server. Return shared context directly from `setup`, then release resources in `teardown`:
+Use `setup` to start shared resources or run migrations before orcel starts the local agent server. Return shared context directly from `setup`, then release resources in `teardown`:
 
 ```ts title="evals/evals.config.ts"
-import { defineEvalConfig } from "kaf/evals";
+import { defineEvalConfig } from "orcel/evals";
 import { startTestDatabase } from "./database.js";
 
 export default defineEvalConfig({
@@ -80,8 +80,8 @@ export default defineEvalConfig({
 `context` is inferred from the setup return value. To use that type in an eval file, pass the config's type to `defineEval`:
 
 ```ts title="evals/database.eval.ts"
-import { defineEval } from "kaf/evals";
-import { equals } from "kaf/evals/expect";
+import { defineEval } from "orcel/evals";
+import { equals } from "orcel/evals/expect";
 import type config from "./evals.config.js";
 
 export default defineEval<typeof config>({
@@ -96,25 +96,25 @@ Setup, eval bodies, and teardown share the same context object in the runner pro
 
 `setup` can also return nothing.
 
-- Setup runs once per `kaf eval` invocation, after discovery and config loading, before target startup.
+- Setup runs once per `orcel eval` invocation, after discovery and config loading, before target startup.
 - Teardown runs after the local server and its sandbox handles shut down, including after setup, startup, or eval failures. Cleanup failures fail the command.
 
 `teardown` receives `undefined` when setup returns no context or throws before returning. In that case, setup must clean up resources that only it can access. Teardown can also be used without setup. The per-eval `timeoutMs` does not apply to setup or teardown.
 
 ## Deterministic fixture models
 
-Use `mockModel` when an eval fixture needs to exercise kaf's runtime without calling a model provider. A static fixture can be one line:
+Use `mockModel` when an eval fixture needs to exercise orcel's runtime without calling a model provider. A static fixture can be one line:
 
 ```ts title="agent/agent.ts"
-import { defineAgent } from "kaf";
-import { mockModel } from "kaf/evals";
+import { defineAgent } from "orcel";
+import { mockModel } from "orcel/evals";
 
 export default defineAgent({
   model: mockModel("A deterministic reply"),
 });
 ```
 
-Pass a callback when the reply depends on the conversation. The callback receives an kaf-owned view of the prompt, including `lastUserMessage`, `userMessages`, `userMessageCount`, available `tools`, and prior `toolResults`:
+Pass a callback when the reply depends on the conversation. The callback receives an orcel-owned view of the prompt, including `lastUserMessage`, `userMessages`, `userMessageCount`, available `tools`, and prior `toolResults`:
 
 ```ts title="agent/agent.ts"
 export default defineAgent({
@@ -150,15 +150,15 @@ model: mockModel({
 
 Each surface matches a genuinely different kind of judgment:
 
-- **Scoped methods** read the final whole run on `t`, snapshot one independent session when invoked there, or inspect one immutable `KafEvalTurn`. See [Assertions](./assertions).
-- **`t.check(value, assertion)`** grades an explicit value with a deterministic builder from `kaf/evals/expect`, such as `t.check(turn.message, includes("sunny"))`. Grade `turn.message`, an intermediate draft, parsed JSON, or anything else. See [Assertions](./assertions).
+- **Scoped methods** read the final whole run on `t`, snapshot one independent session when invoked there, or inspect one immutable `OrcelEvalTurn`. See [Assertions](./assertions).
+- **`t.check(value, assertion)`** grades an explicit value with a deterministic builder from `orcel/evals/expect`, such as `t.check(turn.message, includes("sunny"))`. Grade `turn.message`, an intermediate draft, parsed JSON, or anything else. See [Assertions](./assertions).
 - **`t.judge(...)`** is the LLM-as-judge surface, like `t.judge("cites a source")`. It grades the most recently settled turn’s assistant message by default; pass `{ on: turn.session.transcript }` to grade a multi-turn conversation. The judge uses the configured judge model, never the agent under test. See [Judge](./judge).
 
 ## Gate vs soft
 
 Every assertion returns a chainable handle, so severity rides on the assertion itself. There is no separate thresholds map.
 
-- **Gates** are hard. A failed gate marks the eval `failed` and `kaf eval` exits non-zero. Run-level methods, `includes`, `equals`, and `matches` are gates by default.
+- **Gates** are hard. A failed gate marks the eval `failed` and `orcel eval` exits non-zero. Run-level methods, `includes`, `equals`, and `matches` are gates by default.
 - **Soft** assertions are tracked data. They land in reports and artifacts, and a below-threshold soft assertion marks the eval `scored` (visible but not fatal, unless you pass `--strict`). `similarity` and every `t.judge(...)` assertion are soft by default. A soft assertion with no threshold is tracked-only and never fails.
 
 Override per assertion: `.gate(threshold?)` promotes to a hard gate, `.soft(threshold?)` demotes to tracked, and `.atLeast(threshold)` is a soft assertion with a bar.
@@ -174,19 +174,19 @@ t.judge("The response is consistent with output.reference.", {
 
 Use `await t.require(value, assertion)` for a gate that must pass before the script can safely continue. Use `t.skip(reason)` as the first operation for an intentionally unsupported target capability.
 
-## Run evals with kaf eval
+## Run evals with orcel eval
 
 ```bash
-kaf eval                       # run all discovered evals against a local dev server
-kaf eval weather               # run one eval, or every eval under evals/weather/
-kaf eval --url https://<app>   # target an existing server or deployment
+orcel eval                       # run all discovered evals against a local dev server
+orcel eval weather               # run one eval, or every eval under evals/weather/
+orcel eval --url https://<app>   # target an existing server or deployment
 ```
 
 Exit code `0` means every eval passed its gates. See [Running evals](./running) for the full flag list, exit codes, and CI guidance.
 
 ## A good baseline
 
-Most apps do fine with a few small smoke evals. Assert behavior with `t.succeeded()` plus one or two content checks, keep dataset fixtures in `evals/data/`, and reach for a judge or Braintrust only when you need fuzzy grading or shared result review. In CI, run `kaf eval --strict` so soft threshold misses fail the build too.
+Most apps do fine with a few small smoke evals. Assert behavior with `t.succeeded()` plus one or two content checks, keep dataset fixtures in `evals/data/`, and reach for a judge or Braintrust only when you need fuzzy grading or shared result review. In CI, run `orcel eval --strict` so soft threshold misses fail the build too.
 
 ## What to read next
 
@@ -197,5 +197,5 @@ The rest of this section covers each piece:
 - [Judge](./judge): LLM-as-judge grading and the judge model
 - [Targets](./targets): local vs remote targets for the same eval files
 - [Reporters](./reporters): Braintrust experiments and JUnit XML
-- [Running evals](./running): the `kaf eval` CLI, exit codes, and artifacts
+- [Running evals](./running): the `orcel eval` CLI, exit codes, and artifacts
 - [Tools](../tools): the surface most evals assert on

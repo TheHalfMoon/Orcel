@@ -1,5 +1,5 @@
 import { OTLPHttpProtoTraceExporter } from "@vercel/otel";
-import { otelIntegration } from "kaf/instrumentation/otel";
+import { otelIntegration } from "orcel/instrumentation/otel";
 
 export default otelIntegration({
   exportPolicy: {

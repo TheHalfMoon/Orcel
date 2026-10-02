@@ -2,7 +2,7 @@
 
 > Back to [README](../README.md) | See also: [Environment](./ENVIRONMENT.md), [Customization](./CUSTOMIZATION.md)
 
-This document describes the technical architecture of Personal Agent Template — a durable personal AI assistant built with Kaf, Nuxt 4, and Better Auth.
+This document describes the technical architecture of Personal Agent Template — a durable personal AI assistant built with Orcel, Nuxt 4, and Better Auth.
 
 ## System overview
 
@@ -16,8 +16,8 @@ flowchart TB
     imessage[iMessage — Sendblue]
   end
 
-  subgraph kaf [Kaf agent — agent/]
-    channels[Channels: kaf · slack · sendblue]
+  subgraph orcel [Orcel agent — agent/]
+    channels[Channels: orcel · slack · sendblue]
     tools[Tools: weather · save_memory]
     skills[Skills and connections: Linear MCP]
   end
@@ -31,8 +31,8 @@ flowchart TB
 
   connect[Vercel Connect — Linear · Slack]
 
-  surfaces --> kaf
-  kaf -->|"HTTP + Bearer INTERNAL_API_SECRET"| nuxt
+  surfaces --> orcel
+  orcel -->|"HTTP + Bearer INTERNAL_API_SECRET"| nuxt
   api --> db
   internal --> db
   auth --> db
@@ -42,17 +42,17 @@ flowchart TB
 | Vercel service | Entry                | Role                |
 | -------------- | -------------------- | ------------------- |
 | `web`          | `/`                  | Nuxt UI + Nitro API |
-| `kaf`          | `/_kaf_internal/kaf` | Kaf agent runtime   |
+| `orcel`          | `/_orcel_internal/orcel` | Orcel agent runtime   |
 
-[`vercel.ts`](../vercel.ts) composes the peer Nuxt and kaf services during the Vercel build.
+[`vercel.ts`](../vercel.ts) composes the peer Nuxt and orcel services during the Vercel build.
 
 ## Project structure
 
 ```
 personal-agent-template/
-├── agent/                    # Kaf agent
+├── agent/                    # Orcel agent
 │   ├── agent.ts              # Model and agent config
-│   ├── channels/             # kaf (web), slack, sendblue
+│   ├── channels/             # orcel (web), slack, sendblue
 │   ├── tools/                # weather, save_memory
 │   ├── skills/               # e.g. daily-summary.md
 │   ├── connections/          # Linear MCP
@@ -71,13 +71,13 @@ personal-agent-template/
 ### Web chat
 
 1. User opens `/chat/[id]` — Nuxt loads thread via `/api/threads`
-2. Chat streams through the peer kaf service routed by Vercel
+2. Chat streams through the peer orcel service routed by Vercel
 3. Tool calls render in [`MessageContentEve.vue`](../apps/web/app/components/chat/message/MessageContentEve.vue)
 4. `save_memory` shows approval UI ([`ToolSaveMemory.vue`](../apps/web/app/components/chat/tool/ToolSaveMemory.vue))
 
 ### Session memory injection
 
-1. Kaf fires `session.started` ([`agent/instructions.ts`](../agent/instructions.ts))
+1. Orcel fires `session.started` ([`agent/instructions.ts`](../agent/instructions.ts))
 2. Agent calls `GET /api/internal/memory?userId=...` with bearer token
 3. [`agent/lib/memory-internal.ts`](../agent/lib/memory-internal.ts) builds prompt section
 4. Appended to agent instructions for the session
@@ -86,14 +86,14 @@ Start a **new chat** after importing memory so injection picks up changes.
 
 ### Slack
 
-1. Slack events hit Kaf's slack channel ([`agent/channels/slack.ts`](../agent/channels/slack.ts))
+1. Slack events hit Orcel's slack channel ([`agent/channels/slack.ts`](../agent/channels/slack.ts))
 2. Linked users map Slack ID → app user via `slack_links` table
 3. Unlinked users get instructions to generate a link code in the web app
 4. Link flow: web generates code → user DMs `link <code>` → agent consumes via internal API
 
 ### Sendblue (iMessage)
 
-1. Sendblue delivers inbound messages to Kaf's sendblue channel ([`agent/channels/sendblue.ts`](../agent/channels/sendblue.ts))
+1. Sendblue delivers inbound messages to Orcel's sendblue channel ([`agent/channels/sendblue.ts`](../agent/channels/sendblue.ts))
 2. The sender's E.164 number maps to an app user via `phone_links` (set in **Settings → Profile**)
 3. Unlinked senders receive instructions to add their number in the web app
 4. Replies go back through Sendblue; tool approvals link to the web chat
@@ -102,7 +102,7 @@ Start a **new chat** after importing memory so injection picks up changes.
 
 1. User connects Linear in **Settings → Integrations**
 2. Vercel Connect provisions MCP credentials
-3. Kaf connection ([`agent/connections/linear.ts`](../agent/connections/linear.ts)) exposes Linear tools to the agent
+3. Orcel connection ([`agent/connections/linear.ts`](../agent/connections/linear.ts)) exposes Linear tools to the agent
 
 ## Internal API
 
@@ -155,6 +155,6 @@ Migrations: `pnpm db:generate` → `pnpm db:migrate`.
 
 Global middleware: [`apps/web/app/middleware/auth.global.ts`](../apps/web/app/middleware/auth.global.ts).
 
-## Kaf docs
+## Orcel docs
 
-For channels, tools, connections, and deployment details, read Kaf guides in `node_modules/kaf/dist/docs/public/`.
+For channels, tools, connections, and deployment details, read Orcel guides in `node_modules/orcel/dist/docs/public/`.

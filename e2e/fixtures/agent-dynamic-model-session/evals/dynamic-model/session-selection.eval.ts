@@ -1,7 +1,7 @@
-import { MOCK_MODEL_SENTINEL } from "@kaf-e2e/config";
-import { defineEval } from "kaf/evals";
+import { MOCK_MODEL_SENTINEL } from "@orcel-e2e/config";
+import { defineEval } from "orcel/evals";
 
-const requestedModel = process.env.KAF_E2E_MODEL;
+const requestedModel = process.env.ORCEL_E2E_MODEL;
 const selectedModel =
   requestedModel === undefined || requestedModel === MOCK_MODEL_SENTINEL
     ? "openai/gpt-6-sol"

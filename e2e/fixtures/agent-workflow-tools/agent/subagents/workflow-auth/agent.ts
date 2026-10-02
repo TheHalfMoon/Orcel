@@ -1,5 +1,5 @@
-import { defineAgent } from "kaf";
-import { mockModel } from "kaf/evals";
+import { defineAgent } from "orcel";
+import { mockModel } from "orcel/evals";
 
 export default defineAgent({
   description: "Exercise a deterministic interactive-authorization child tool.",

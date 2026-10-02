@@ -1,7 +1,7 @@
 import { access, readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-const allowedPublicPackages = new Set(["@kaf/buzz-acp-adapter", "kaf"]);
+const allowedPublicPackages = new Set(["@orcel/buzz-acp-adapter", "orcel"]);
 const workspaceRoots = ["apps", "packages"];
 
 async function readJson(path) {

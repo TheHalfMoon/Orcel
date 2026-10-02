@@ -1,13 +1,13 @@
 ---
 name: test-audit
-description: "Invoke whenever writing, changing, reviewing, or sweeping tests in the kaf repository. Authoring gate for new tests plus audit workflow for low-value, slow, implementation-coupled, or duplicative tests and the test-only production seams they demand."
+description: "Invoke whenever writing, changing, reviewing, or sweeping tests in the orcel repository. Authoring gate for new tests plus audit workflow for low-value, slow, implementation-coupled, or duplicative tests and the test-only production seams they demand."
 ---
 
 # Test audit
 
 Adapted from the OpenClaw
 [`test-audit`](https://github.com/openclaw/openclaw/blob/main/.agents/skills/test-audit/SKILL.md)
-skill for kaf's test tiers and tooling.
+skill for orcel's test tiers and tooling.
 
 Three modes, one value bar. Authoring mode gates every new or changed test at
 write time. Audit mode runs focused sweeps of tests that re-assert source,
@@ -18,7 +18,7 @@ whole subsystem's test surface (every test file one core area or package
 owns); before starting one, read [CAMPAIGN.md](CAMPAIGN.md).
 
 Read the root [`AGENTS.md`](../../../AGENTS.md) testing section first. It
-defines kaf's four tiers (unit, integration, scenario, e2e); a test belongs in
+defines orcel's four tiers (unit, integration, scenario, e2e); a test belongs in
 the tightest tier that can express its assertion.
 
 ## Authoring gate
@@ -44,7 +44,7 @@ owning boundary before landing it.
 
 Also check its cost. A scenario test that boots a dev server, installs a
 tarball, or runs a real build must need that subprocess, port, or bundler. If
-it only needs `import "kaf"` to resolve or an in-memory runtime, it belongs in
+it only needs `import "orcel"` to resolve or an in-memory runtime, it belongs in
 integration (`useTemporaryAppRoots`, `createTestRuntime`). A test that waits
 out a real production timeout or backoff should use fake timers or an existing
 public option instead of wall-clock time; do not add a test-only seam to
@@ -103,19 +103,19 @@ Keep discovery read-only and report evidence before editing. Baseline with the
 JSON reporter so slow files and tests are visible:
 
 ```sh
-pnpm --filter kaf exec vitest run --config vitest.<tier>.config.ts \
+pnpm --filter orcel exec vitest run --config vitest.<tier>.config.ts \
   --reporter=json --outputFile=/tmp/<tier>.json
 ```
 
 For broad scope, run parallel discovery lanes when available, split along
 production owner boundaries:
 
-- core unit tests (`packages/kaf/src/{execution,harness,runtime,compiler,...}`);
+- core unit tests (`packages/orcel/src/{execution,harness,runtime,compiler,...}`);
 - CLI, setup, evals, tracing, and instrumentation;
 - public API, client, channels, and `src/internal`;
 - integration tier (`*.integration.test.ts`);
-- scenario tier (`*.scenario.test.ts`, `packages/kaf/test/scenarios/`);
-- other packages and apps (`packages/kaf-code`, `packages/kaf-catalog`,
+- scenario tier (`*.scenario.test.ts`, `packages/orcel/test/scenarios/`);
+- other packages and apps (`packages/orcel-code`, `packages/orcel-catalog`,
   `apps/docs`, `e2e/`);
 - a cross-cutting pattern, test-only-export, and console-noise sweep.
 
@@ -124,7 +124,7 @@ speculative inventory. Hunt for the [junk patterns](#junk-patterns).
 
 ## Retention bar
 
-Keep a test when it independently enforces a public API (`kaf/*` exports),
+Keep a test when it independently enforces a public API (`orcel/*` exports),
 protocol, config, migration, storage, security, platform, default, prompt-byte,
 package, release, or architecture contract. Also keep:
 
@@ -164,7 +164,7 @@ package or dependency assertions into one generic contract.
 Prefer net-negative production LOC. Do not add replacement tests that restate
 the same implementation, and do not convert uncertain candidates into cleanup
 to increase deletion counts. Do not commit fixture trees under
-`packages/kaf/test/fixtures/`; scenario apps stay inline descriptors.
+`packages/orcel/test/fixtures/`; scenario apps stay inline descriptors.
 
 ## Validation
 
@@ -172,8 +172,8 @@ Never edit source or tests while Vitest is running in the checkout.
 
 1. Run the smallest owner and sibling tests with the tier config, never bare
    `vitest run`:
-   `pnpm --filter kaf exec vitest run --config vitest.<tier>.config.ts <path>`.
-   Run `pnpm --filter kaf build:compiled` first if `#compiled/*` changed, and
+   `pnpm --filter orcel exec vitest run --config vitest.<tier>.config.ts <path>`.
+   Run `pnpm --filter orcel build:compiled` first if `#compiled/*` changed, and
    `pnpm build` before scenario runs.
 2. For removed source greps or invariant assertions, run the script that owns
    the real contract, such as `pnpm guard:invariants`.
@@ -183,7 +183,7 @@ Never edit source or tests while Vitest is running in the checkout.
 5. Inspect `git diff --numstat`; report production/tooling separately from
    tests and test support. Report before and after tier timings for speed work.
 6. Follow the root `AGENTS.md` changeset rule. Test-only changes need none;
-   removing dead production code from `packages/kaf` still needs one.
+   removing dead production code from `packages/orcel` still needs one.
 
 ## Landing and continuation
 

@@ -34,13 +34,13 @@ jobs:
           fi
           # HEAD is the PR merge commit; HEAD^1 is the base branch tip, so
           # this diff is exactly the PR's changed files.
-          # PRs confined to packages/kaf-code or packages/kaf-computer-use (lockfile included) never
+          # PRs confined to packages/orcel-code or packages/orcel-computer-use (lockfile included) never
           # exercise the framework e2e fixtures; skip the whole matrix for them.
-          if ! git diff --name-only HEAD^1 HEAD | grep -qvE '^(packages/kaf-(code|computer-use)/|pnpm-lock\.yaml$)'; then
+          if ! git diff --name-only HEAD^1 HEAD | grep -qvE '^(packages/orcel-(code|computer-use)/|pnpm-lock\.yaml$)'; then
             echo "relevant=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if git diff --name-only HEAD^1 HEAD | grep -qE '^(packages/kaf/|apps/fixtures/|e2e/|pnpm-workspace\.yaml$|pnpm-lock\.yaml$|\.github/workflows/e2e-postgres\.yml$|\.github/scripts/discover-e2e-fixtures\.mjs$)'; then
+          if git diff --name-only HEAD^1 HEAD | grep -qE '^(packages/orcel/|apps/fixtures/|e2e/|pnpm-workspace\.yaml$|pnpm-lock\.yaml$|\.github/workflows/e2e-postgres\.yml$|\.github/scripts/discover-e2e-fixtures\.mjs$)'; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
           else
             echo "relevant=false" >> "$GITHUB_OUTPUT"
@@ -63,7 +63,7 @@ jobs:
 
   # The Postgres world suite: every fixture builds and runs once against a
   # production server backed by @workflow/world-postgres, with deterministic
-  # mock models (KAF_E2E_MODEL=mock). Evals that need a real model carry the
+  # mock models (ORCEL_E2E_MODEL=mock). Evals that need a real model carry the
   # `real-model` tag and run only in the model suite (e2e-local).
   e2e:
     name: e2e-postgres (${{ matrix.name }})
@@ -94,11 +94,11 @@ jobs:
       # Mock models never reach the gateway; the placeholder keeps any
       # credential-presence checks satisfied without granting live access.
       AI_GATEWAY_API_KEY: invalid-e2e-world-suite-key
-      KAF_E2E_MODEL: mock
+      ORCEL_E2E_MODEL: mock
       # The world package comes from this world's e2e/matrix.json entry.
-      KAF_E2E_WORKFLOW_WORLD: ${{ matrix.world_package }}
-      KAF_EVAL_JUNIT_DIR: ${{ github.workspace }}/.junit
-      KAF_SANDBOX_IMAGE_TAG: latest
+      ORCEL_E2E_WORKFLOW_WORLD: ${{ matrix.world_package }}
+      ORCEL_EVAL_JUNIT_DIR: ${{ github.workspace }}/.junit
+      ORCEL_SANDBOX_IMAGE_TAG: latest
       WORKFLOW_POSTGRES_MAX_POOL_SIZE: "52"
       WORKFLOW_POSTGRES_URL: postgres://world:world@127.0.0.1:5432/world
       WORKFLOW_POSTGRES_WORKER_CONCURRENCY: "50"
@@ -121,10 +121,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build kaf package
+      - name: Build orcel package
         # Full build, not build:js: the deployed/runtime bundles must carry the
         # stamped package version (scripts/stamp-version-tokens.mjs) and docs.
-        run: pnpm --filter kaf run build
+        run: pnpm --filter orcel run build
 
       - name: Build extension fixtures
         # Extension fixtures ship no committed `dist/`; produce it here so
@@ -152,13 +152,13 @@ jobs:
           POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
         run: |
           set -euo pipefail
-          mkdir -p "$KAF_EVAL_JUNIT_DIR"
+          mkdir -p "$ORCEL_EVAL_JUNIT_DIR"
           cd "${{ matrix.dir }}"
 
-          pnpm exec kaf build
+          pnpm exec orcel build
 
-          server_log="$KAF_EVAL_JUNIT_DIR/${{ matrix.name }}-server.log"
-          KAF_DEV=1 pnpm exec kaf start --host 127.0.0.1 --port 3000 >"$server_log" 2>&1 &
+          server_log="$ORCEL_EVAL_JUNIT_DIR/${{ matrix.name }}-server.log"
+          ORCEL_DEV=1 pnpm exec orcel start --host 127.0.0.1 --port 3000 >"$server_log" 2>&1 &
           server_pid=$!
 
           cleanup() {
@@ -170,7 +170,7 @@ jobs:
 
           ready=false
           for _ in {1..120}; do
-            if curl --fail --silent http://127.0.0.1:3000/kaf/v1/health >/dev/null; then
+            if curl --fail --silent http://127.0.0.1:3000/orcel/v1/health >/dev/null; then
               ready=true
               break
             fi
@@ -182,13 +182,13 @@ jobs:
           done
           if [ "$ready" != "true" ]; then
             cat "$server_log"
-            echo "Timed out waiting for the Postgres-backed kaf server."
+            echo "Timed out waiting for the Postgres-backed orcel server."
             exit 1
           fi
 
-          if ! pnpm exec kaf eval --strict --verbose --exclude-tag real-model \
+          if ! pnpm exec orcel eval --strict --verbose --exclude-tag real-model \
             --url http://127.0.0.1:3000 \
-            --junit "$KAF_EVAL_JUNIT_DIR/${{ matrix.name }}.xml"; then
+            --junit "$ORCEL_EVAL_JUNIT_DIR/${{ matrix.name }}.xml"; then
             cat "$server_log"
             exit 1
           fi
@@ -200,7 +200,7 @@ jobs:
           # runtime self-skips (junit reports tests == skipped) — and its
           # leg still proves the fixture builds, boots, and reports healthy
           # on this world.
-          junit_file="$KAF_EVAL_JUNIT_DIR/${{ matrix.name }}.xml"
+          junit_file="$ORCEL_EVAL_JUNIT_DIR/${{ matrix.name }}.xml"
           executed_evals=0
           if [ -f "$junit_file" ]; then
             total="$(grep -o 'tests="[0-9]*"' "$junit_file" | head -1 | tr -dc '0-9')"
@@ -231,8 +231,8 @@ jobs:
           name: eval-artifacts-postgres-${{ matrix.name }}
           path: |
             .junit
-            e2e/fixtures/*/.kaf/evals
-            apps/fixtures/*/.kaf/evals
+            e2e/fixtures/*/.orcel/evals
+            apps/fixtures/*/.orcel/evals
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7

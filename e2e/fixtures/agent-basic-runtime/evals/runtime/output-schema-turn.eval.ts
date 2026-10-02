@@ -1,4 +1,4 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 import { z } from "zod";
 
 const StructuredOutput = z.object({ count: z.number().int(), title: z.string() });

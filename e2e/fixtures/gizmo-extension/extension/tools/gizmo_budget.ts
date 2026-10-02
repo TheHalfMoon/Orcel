@@ -1,8 +1,8 @@
-import { defineState } from "kaf/context";
-import { defineTool } from "kaf/tools";
+import { defineState } from "orcel/context";
+import { defineTool } from "orcel/tools";
 import { z } from "zod";
 
-// Same bare "budget" name as toolkit-extension; kaf scopes each per package so
+// Same bare "budget" name as toolkit-extension; orcel scopes each per package so
 // the counters stay independent.
 const budget = defineState("budget", () => ({ count: 0 }));
 

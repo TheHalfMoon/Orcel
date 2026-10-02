@@ -4,12 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "eval": "kaf eval --strict"
+    "eval": "orcel eval --strict"
   },
   "dependencies": {
-    "@kaf-e2e/config": "workspace:*",
+    "@orcel-e2e/config": "workspace:*",
     "@workflow/world-postgres": "catalog:",
     "dd-trace": "6.13.0",
-    "kaf": "workspace:*"
+    "orcel": "workspace:*"
   }
 }

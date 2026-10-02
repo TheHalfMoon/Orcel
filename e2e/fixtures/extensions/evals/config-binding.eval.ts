@@ -1,4 +1,4 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 export default defineEval({
   description: "Two mounts of one extension keep their configured accounts separate.",

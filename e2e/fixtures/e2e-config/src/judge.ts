@@ -1,8 +1,8 @@
 import { createOpenAI } from "@ai-sdk/openai";
-import type { KafEvalJudgeConfig } from "kaf/evals";
+import type { OrcelEvalJudgeConfig } from "orcel/evals";
 
 /** Shared fixture judge, independent of the agent matrix, until CI has access to Jev. */
-export function e2eJudgeModel(): Exclude<KafEvalJudgeConfig["model"], string | undefined> {
+export function e2eJudgeModel(): Exclude<OrcelEvalJudgeConfig["model"], string | undefined> {
   return createOpenAI({
     apiKey: process.env.AI_GATEWAY_API_KEY,
     baseURL: "https://ai-gateway.vercel.sh/v1",

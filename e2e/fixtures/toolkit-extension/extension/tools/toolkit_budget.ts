@@ -1,10 +1,10 @@
-import { defineState } from "kaf/context";
-import { defineTool } from "kaf/tools";
+import { defineState } from "orcel/context";
+import { defineTool } from "orcel/tools";
 import { z } from "zod";
 
 import { PROVIDER } from "../lib/brand";
 
-// Bare "budget" name — kaf namespaces it per package so it can't collide with
+// Bare "budget" name — orcel namespaces it per package so it can't collide with
 // another extension's identically-named state.
 const budget = defineState("budget", () => ({ count: 0 }));
 

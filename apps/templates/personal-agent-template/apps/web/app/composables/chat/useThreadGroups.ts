@@ -1,4 +1,4 @@
-import type { ThreadSummary } from "#kaf/types/thread";
+import type { ThreadSummary } from "#orcel/types/thread";
 
 interface ThreadGroup {
   id: string;

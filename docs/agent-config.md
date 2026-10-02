@@ -1,16 +1,16 @@
 ---
 title: "Agent Configuration"
-description: "Configure an kaf agent's model, reasoning effort, compaction, limits, and runtime behavior in agent.ts."
+description: "Configure an orcel agent's model, reasoning effort, compaction, limits, and runtime behavior in agent.ts."
 ---
 
-An kaf app has one root agent assembled from the files under `agent/`. Its optional `agent.ts` calls `defineAgent` (from `kaf`) when you need to configure the model or other runtime behavior. Declared [subagents](./subagents) have their own `agent.ts` and capabilities; this page covers the configuration shared by root agents and subagents.
+An orcel app has one root agent assembled from the files under `agent/`. Its optional `agent.ts` calls `defineAgent` (from `orcel`) when you need to configure the model or other runtime behavior. Declared [subagents](./subagents) have their own `agent.ts` and capabilities; this page covers the configuration shared by root agents and subagents.
 
 ## Set the model
 
 A typical config selects a model:
 
 ```ts title="agent/agent.ts"
-import { defineAgent } from "kaf";
+import { defineAgent } from "orcel";
 
 export default defineAgent({
   model: "anthropic/claude-opus-5.5",
@@ -18,49 +18,49 @@ export default defineAgent({
 ```
 
 For a static AI Gateway model ID, you can make the same source change from the
-project root with `kaf set model anthropic/claude-opus-5.5` or from the local
+project root with `orcel set model anthropic/claude-opus-5.5` or from the local
 dev TUI with `/model anthropic/claude-opus-5.5`.
 
-The root `agent.ts` can be omitted when no runtime config is needed. kaf then selects its default `agent.ts` source at the same slot, configured with `openai/gpt-6-luna-fast` and `reasoning: "high"`; authoring the file replaces that source.
+The root `agent.ts` can be omitted when no runtime config is needed. orcel then selects its default `agent.ts` source at the same slot, configured with `openai/gpt-6-luna-fast` and `reasoning: "high"`; authoring the file replaces that source.
 When `agent.ts` is present, `model` is required.
 
-A config that selects a static Gateway model is compile-only. A config that contains a dynamic model or a direct-provider `LanguageModel` remains a runtime entry because kaf must resolve that authored value while the agent runs. See [Authored module lifecycle](./reference/typescript-api#authored-module-lifecycle).
+A config that selects a static Gateway model is compile-only. A config that contains a dynamic model or a direct-provider `LanguageModel` remains a runtime entry because orcel must resolve that authored value while the agent runs. See [Authored module lifecycle](./reference/typescript-api#authored-module-lifecycle).
 
 `model` accepts a gateway model id string, which routes through the [Vercel AI Gateway](https://vercel.com/docs/ai-gateway). To call a provider directly and configure the model in code, pass a provider-authored `LanguageModel`.
 
-Use kaf's helpers for direct OpenAI or Anthropic access without installing another provider package:
+Use orcel's helpers for direct OpenAI or Anthropic access without installing another provider package:
 
 ```ts title="agent/agent.ts"
-import { defineAgent } from "kaf";
-import { anthropic } from "kaf/models/anthropic";
+import { defineAgent } from "orcel";
+import { anthropic } from "orcel/models/anthropic";
 
 export default defineAgent({
   model: anthropic(), // claude-sonnet-5
 });
 ```
 
-`openai()` from `kaf/models/openai` defaults to `gpt-6-luna-fast`. Both helpers accept an optional native provider model ID and use `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. During local development they can also use credentials saved through `/login`. Deployments require their API key in the server environment.
+`openai()` from `orcel/models/openai` defaults to `gpt-6-luna-fast`. Both helpers accept an optional native provider model ID and use `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. During local development they can also use credentials saved through `/login`. Deployments require their API key in the server environment.
 
-For a local ChatGPT subscription, use `chatgpt()` from `kaf/models/openai` and sign in with `/login`. It defaults to `gpt-6-luna-fast` and cannot run in a deployment.
+For a local ChatGPT subscription, use `chatgpt()` from `orcel/models/openai` and sign in with `/login`. It defaults to `gpt-6-luna-fast` and cannot run in a deployment.
 
-`/login` can switch a static Gateway string to an kaf helper and manage its import. `/model` changes the selected model and settings immediately. Custom provider SDK calls and dynamic expressions retain their authored behavior and require manual source edits. You can still install an AI SDK provider package and pass its `LanguageModel` when you need provider-specific configuration.
+`/login` can switch a static Gateway string to an orcel helper and manage its import. `/model` changes the selected model and settings immediately. Custom provider SDK calls and dynamic expressions retain their authored behavior and require manual source edits. You can still install an AI SDK provider package and pass its `LanguageModel` when you need provider-specific configuration.
 
 Model use is subject to the terms, data-processing commitments, retention behavior, and available controls of the selected provider and routing path. Review the [AI Gateway model catalog](https://vercel.com/ai-gateway/models) for gateway-routed models, and review the provider's terms when you configure a direct `LanguageModel`.
 
-For every OpenAI or Anthropic model call, kaf fills the provider's end-user
+For every OpenAI or Anthropic model call, orcel fills the provider's end-user
 safety identifier from the active turn's
 [`auth.current`](./guides/auth-and-route-protection#what-reaches-ctxsessionauth)
 principal when you have not configured it. For OpenAI, the option is
 `providerOptions.openai.safetyIdentifier`; for Anthropic, it is
 `providerOptions.anthropic.metadata.userId`. The default value is a SHA-256
 fingerprint of the principal's authenticator, issuer, type, id, and subject;
-kaf does not send the raw principal fields or attributes. The fingerprint
+orcel does not send the raw principal fields or attributes. The fingerprint
 follows the current caller when a later turn changes users. An authored value
 at either provider path takes precedence and is forwarded unchanged. When
-`auth.current` is `null`, kaf does not add an identifier. The same rules apply
+`auth.current` is `null`, orcel does not add an identifier. The same rules apply
 to compaction calls.
 
-For AI Gateway model calls, kaf sets `providerOptions.gateway.sessionId` to the
+For AI Gateway model calls, orcel sets `providerOptions.gateway.sessionId` to the
 `gen_ai.conversation.id` used by Agent Runs. By default, all turns in a
 conversation, including delegated subagents and compaction calls routed through
 Gateway, share that ID so their Gateway generations can be found together.
@@ -70,14 +70,14 @@ takes precedence; AI Gateway hashes IDs longer than 256 characters.
 ### Choose the model dynamically
 
 To select a model from the incoming prompt with an AI SDK evaluation model, use
-[`auto` from `kaf/models`](./guides/evaluate).
+[`auto` from `orcel/models`](./guides/evaluate).
 
 `model` also accepts `defineDynamic({ events })`. Each matching handler must
 return the concrete model for its scope; a dynamic model has no compiled
 default.
 
 ```ts title="agent/agent.ts"
-import { defineAgent, defineDynamic } from "kaf";
+import { defineAgent, defineDynamic } from "orcel";
 
 export default defineAgent({
   model: defineDynamic({
@@ -110,7 +110,7 @@ fails the turn.
 - **Serialization.** Session/turn selections must be model id strings; return
   live `LanguageModel` objects only from `step.started`.
 - **Selection object.** `{ model, reasoning?, modelContextWindowTokens?, modelOptions? }`.
-  When `modelContextWindowTokens` is omitted, kaf resolves it from the AI
+  When `modelContextWindowTokens` is omitted, orcel resolves it from the AI
   Gateway catalog and caches successful metadata in durable session state for
   24 hours. Set it explicitly for an unlisted or custom model. Dynamic agents
   cannot set sibling `modelContextWindowTokens` or `modelOptions` fields;
@@ -142,11 +142,11 @@ A dynamic model selection can return `reasoning` alongside `model` to override
 the agent-level setting for that selection. Omitting it inherits the agent setting;
 `"provider-default"` explicitly uses the provider's default.
 
-Run `kaf set model --reasoning high` to update this field from the command line.
+Run `orcel set model --reasoning high` to update this field from the command line.
 
 ## Compaction
 
-Compaction summarizes older turns as you approach the context window. It's on by default, so you only tune when it kicks in. kaf adds the estimated fixed checkpoint-prompt envelope to the trigger count, so compaction starts sooner than the conversation-only estimate. Lower `thresholdPercent` to compact sooner:
+Compaction summarizes older turns as you approach the context window. It's on by default, so you only tune when it kicks in. orcel adds the estimated fixed checkpoint-prompt envelope to the trigger count, so compaction starts sooner than the conversation-only estimate. Lower `thresholdPercent` to compact sooner:
 
 ```ts title="agent/agent.ts"
 export default defineAgent({
@@ -181,14 +181,14 @@ export default defineAgent({
 sessions. It defaults to 30 days and starts at creation. Each successful
 deployment handoff or legacy-session import restarts the original configured
 duration. Process restarts, ordinary messages, and failed or skipped handoffs
-keep the existing deadline. At the deadline, kaf lets an active turn settle,
+keep the existing deadline. At the deadline, orcel lets an active turn settle,
 then emits `session.completed` and releases every continuation address; the next
 qualifying channel message starts fresh. Set it to `false` to disable the
 timeout. Expiration does not delete stored session data.
 
 Input tokens, output tokens, and model token cost are checked independently.
 The model call that crosses a limit is allowed to finish because exact usage
-arrives after the call completes. Before the next model call, kaf pauses the
+arrives after the call completes. Before the next model call, orcel pauses the
 session and sends a deterministic continuation prompt with two options:
 **Approve** grants a fresh window of each configured size, and **Stop**
 cancels the in-flight turn through the standard cancellation path
@@ -197,7 +197,7 @@ still over budget, the next message re-raises the prompt. Declining a
 delegated child's prompt cancels the root turn, which cascades to the whole
 delegation tree — the delegating parent never receives an error result it
 could retry against a fresh quota share. A reply that answers neither option
-is queued while the existing prompt stays pending; kaf does not raise another
+is queued while the existing prompt stays pending; orcel does not raise another
 copy. The reply is processed once the budget is granted.
 
 Sessions that cannot request input from a human, such as markdown schedules and
@@ -220,7 +220,7 @@ of the delegating parent's remaining quota when it starts: the remainder in
 the current budget window split evenly across the agent tasks that one model
 step starts. A session that a workflow tool opens with `ctx.agent` receives
 the share of the model step that called the tool, or the whole remainder when
-that step starts no agent tasks; kaf does not divide that share among several
+that step starts no agent tasks; orcel does not divide that share among several
 sessions one call opens. A child keeps its grant for its whole session,
 including turns that later calls with `taskId` start. Remote agent tasks count
 toward the split but receive no grant: they run under their own deployment's
@@ -249,13 +249,13 @@ cancelled turn, until the task's next reply.
 
 ## Workflow world
 
-By default, kaf selects the Workflow SDK world for the host: Vercel Workflow on
-Vercel, and the SDK's local world in local development or `kaf start`. Advanced
+By default, orcel selects the Workflow SDK world for the host: Vercel Workflow on
+Vercel, and the SDK's local world in local development or `orcel start`. Advanced
 self-hosted deployments can select the Workflow world package to use from the
 root `agent.ts`:
 
 ```ts title="agent/agent.ts"
-import { defineAgent } from "kaf";
+import { defineAgent } from "orcel";
 
 export default defineAgent({
   model: "anthropic/claude-opus-5.5",
@@ -269,7 +269,7 @@ export default defineAgent({
 
 Install that package in your app. It should export a default factory or
 `createWorld()` function. Pin a version built against the same `@workflow/*`
-line as your kaf release (currently the `5.0.0-beta` line):
+line as your orcel release (currently the `5.0.0-beta` line):
 
 ```bash
 pnpm add @workflow/world-postgres@5.0.0-beta.x
@@ -286,12 +286,12 @@ installed package must stay external in hosted output, list it in
 
 ## Workflow checkpoint batching
 
-By default, kaf commits a durable Workflow step after every model call and its
+By default, orcel commits a durable Workflow step after every model call and its
 inline tool calls. You can experimentally let one Workflow step run several
 sequential model calls:
 
 ```ts title="agent/agent.ts"
-import { defineAgent } from "kaf";
+import { defineAgent } from "orcel";
 
 export default defineAgent({
   model: "anthropic/claude-opus-5.5",
@@ -310,7 +310,7 @@ widens the replay unit: if the Workflow step is interrupted, its earlier model
 calls and inline tool executions can run again. That can repeat provider costs,
 events, and side effects. Use stable idempotency keys for non-idempotent tools.
 
-kaf ends a batch before it waits for input, authorization, or blocking
+orcel ends a batch before it waits for input, authorization, or blocking
 coordination. A batch can also
 end below the configured ceiling when the turn completes or steering arrives.
 Before assistant output begins, steering can interrupt pending model generation.
@@ -323,13 +323,13 @@ for the retry behavior.
 ## Run data retention
 
 The runtime keeps each run's data after the run finishes: model and tool
-payloads, streamed output, and the event log kaf replays from. How long it keeps
+payloads, streamed output, and the event log orcel replays from. How long it keeps
 them is the World's decision, and on Vercel that follows your team's plan. Set
 `experimental.workflow.retention` to `0` to have it deleted as soon as the run
 finishes instead:
 
 ```ts title="agent/agent.ts"
-import { defineAgent } from "kaf";
+import { defineAgent } from "orcel";
 
 export default defineAgent({
   model: "anthropic/claude-opus-5.5",
@@ -343,13 +343,13 @@ export default defineAgent({
 
 This applies to every run that owns the session, including successor owners
 started after a deployment handoff, and to the run that collects session
-activity. Runs kaf starts for other purposes keep the world's default: session
+activity. Runs orcel starts for other purposes keep the world's default: session
 timeouts and [workflow tools](./tools/workflows).
 
 The value applies per agent. A [subagent](./subagents) that runs its own session
 uses its own value, unlike `experimental.workflow.world`, which is root-only.
 
-Custom Worlds used with kaf might not support this feature, in which case
+Custom Worlds used with orcel might not support this feature, in which case
 it falls back to the World's default retention period.
 
 > ⚠️ **At `0`, a finished session's output is usually gone before you can read it.** Since data is deleted immediately before it can be read back, results and transcripts become unreadable and a client polling for a finished session's output can see it disappear.
@@ -364,12 +364,12 @@ it falls back to the World's default retention period.
 | `modelOptions` | `AgentModelOptionsDefinition`         | none             | Provider option overrides forwarded to the model call.                                                                                                                                                                                                    |
 | `limits`       | `AgentLimitsDefinition`               | field-specific   | Framework-owned runtime limits. Sessions complete after 30 days by default; usage-limit defaults and inheritance are described above. Set a limit to `false` to disable it.                                                                               |
 | `experimental` | `AgentExperimentalDefinition`         | unset            | Unstable opt-ins. `workflow.world` selects the Workflow world package on the root agent; `workflow.modelCallsPerStep` batches sequential model calls into a wider replay unit; `workflow.retention` controls how long the durable runtime keeps run data. |
-| `build`        | `{ externalDependencies?: string[] }` | none             | Hosted-build packaging controls. `externalDependencies` keeps listed packages external while kaf compiles authored modules such as tools and channels, and traces those packages into the hosted output.                                                  |
+| `build`        | `{ externalDependencies?: string[] }` | none             | Hosted-build packaging controls. `externalDependencies` keeps listed packages external while orcel compiles authored modules such as tools and channels, and traces those packages into the hosted output.                                                  |
 | `tool`         | `boolean`                             | `true`           | Exposes this agent to its parent model as a tool. On the root agent, controls the built-in `agent` tool. A subagent with `tool: false` remains callable from authored workflow tools through `ctx.agent()`.                                               |
 
 `externalDependencies` is a packaging control only. It keeps selected packages as runtime dependencies in the hosted output; it does not authorize, configure, or review any third-party service those packages may call.
 
-During `kaf dev`, ordinary dependencies are bundled into each retained runtime generation. Packages listed in `externalDependencies` keep normal Node.js resolution instead, so replacing one of those packages requires restarting the dev server.
+During `orcel dev`, ordinary dependencies are bundled into each retained runtime generation. Packages listed in `externalDependencies` keep normal Node.js resolution instead, so replacing one of those packages requires restarting the dev server.
 
 ## Where adjacent settings live
 

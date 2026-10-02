@@ -5,7 +5,7 @@ import { createChangesetsChangelogSource } from "@vercel/geistdocs/changelog";
 const readChangelog = async () => {
   "use cache";
 
-  return readFile(path.join(process.cwd(), "../../packages/kaf/CHANGELOG.md"), "utf8");
+  return readFile(path.join(process.cwd(), "../../packages/orcel/CHANGELOG.md"), "utf8");
 };
 
 export const changelogSource = createChangesetsChangelogSource({ read: readChangelog });

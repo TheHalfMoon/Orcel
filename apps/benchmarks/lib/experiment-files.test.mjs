@@ -13,7 +13,7 @@ import {
 
 const subject = {
   revision: "1234567890abcdef1234567890abcdef12345678",
-  packageSpec: "https://pkg.kaf.dev/1234567890abcdef1234567890abcdef12345678/kaf.tgz",
+  packageSpec: "https://pkg.orcel.dev/1234567890abcdef1234567890abcdef12345678/orcel.tgz",
 };
 const benchmark = {
   id: "test",
@@ -24,7 +24,7 @@ const benchmark = {
 };
 
 test("materializes fixtures and complete experiment inputs", async () => {
-  const root = mkdtempSync(join(tmpdir(), "kaf-benchmark-experiments-"));
+  const root = mkdtempSync(join(tmpdir(), "eve-benchmark-experiments-"));
   const evals = join(root, "evals");
   const experiments = join(root, "experiments");
   try {
@@ -36,11 +36,11 @@ test("materializes fixtures and complete experiment inputs", async () => {
     await prepareFixtures(evals, subject);
     assert.equal(readFileSync(join(evals, "author-001-first", "PROMPT.md"), "utf8"), "Build it.\n");
     assert.deepEqual(
-      JSON.parse(readFileSync(join(evals, "author-001-first", ".kaf-authoring-bootstrap.json"))),
+      JSON.parse(readFileSync(join(evals, "author-001-first", ".orcel-authoring-bootstrap.json"))),
       { startingPoint: "scaffolded", revision: subject.revision, setupIds: [] },
     );
     assert.deepEqual(JSON.parse(readFileSync(join(evals, "author-001-first", "package.json"))), {
-      name: "kaf-authoring-author-001-first",
+      name: "orcel-authoring-author-001-first",
       private: true,
       type: "module",
     });
@@ -57,7 +57,7 @@ test("materializes fixtures and complete experiment inputs", async () => {
 
     const experiment = readFileSync(join(experiments, "test-opencode--guided.ts"), "utf8");
     assert.match(experiment, /revision: "1234567890abcdef1234567890abcdef12345678"/u);
-    assert.match(experiment, /pkg\.kaf\.dev\/1234567890abcdef1234567890abcdef12345678\/kaf\.tgz/u);
+    assert.match(experiment, /pkg\.orcel\.dev\/1234567890abcdef1234567890abcdef12345678\/orcel\.tgz/u);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

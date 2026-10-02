@@ -1,10 +1,10 @@
-import { defineEval } from "kaf/evals";
-import { satisfies } from "kaf/evals/expect";
+import { defineEval } from "orcel/evals";
+import { satisfies } from "orcel/evals/expect";
 
 const TOOL_NAME = "wait-for-cancellation";
 
 /**
- * Cancel an in-flight turn over the kaf HTTP channel.
+ * Cancel an in-flight turn over the orcel HTTP channel.
  *
  * Flow: start a turn that hangs mid-tool, request cooperative cancellation,
  * and assert the turn settles as `turn.cancelled` followed by
@@ -13,7 +13,7 @@ const TOOL_NAME = "wait-for-cancellation";
  */
 export default defineEval({
   tags: ["real-model"],
-  description: "Cancel an in-flight turn over the kaf HTTP cancel route.",
+  description: "Cancel an in-flight turn over the orcel HTTP cancel route.",
   timeoutMs: 240_000,
 
   async test(t) {

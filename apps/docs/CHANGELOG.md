@@ -1,7 +1,7 @@
-# kaf-docs
+# orcel-docs
 
 ## 0.0.1
 
 ### Patch Changes
 
-- @kaf/catalog@0.0.1
+- @orcel/catalog@0.0.1

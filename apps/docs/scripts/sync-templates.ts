@@ -52,7 +52,7 @@ const syncedTemplates = await Promise.all(
   templateManifest.map(async (entry) => {
     const { github } = entry;
     const source =
-      deployedCommit && github.owner === "vercel" && github.repo === "kaf"
+      deployedCommit && github.owner === "vercel" && github.repo === "orcel"
         ? { ...github, ref: deployedCommit }
         : github;
     const commit = await githubJson<{ sha: string }>(

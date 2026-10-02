@@ -16,7 +16,7 @@ import { execFileSync } from "node:child_process";
 const appRoot = new URL("..", import.meta.url);
 
 test("exports missing cells without publishing private artifacts", () => {
-  const directory = mkdtempSync(join(tmpdir(), "kaf-benchmark-export-"));
+  const directory = mkdtempSync(join(tmpdir(), "eve-benchmark-export-"));
   const outputPath = join(directory, "results.json");
   const resultsPath = new URL("../results", import.meta.url).pathname;
   const savedResultsPath = join(directory, "saved-results");
@@ -72,7 +72,7 @@ test("exports missing cells without publishing private artifacts", () => {
 });
 
 test("retains superseded experiments separately from the current matrix", () => {
-  const directory = mkdtempSync(join(tmpdir(), "kaf-benchmark-export-previous-"));
+  const directory = mkdtempSync(join(tmpdir(), "eve-benchmark-export-previous-"));
   const outputPath = join(directory, "results.json");
   const resultsPath = new URL("../results", import.meta.url).pathname;
   const savedResultsPath = join(directory, "saved-results");
@@ -83,7 +83,7 @@ test("retains superseded experiments separately from the current matrix", () => 
         schemaVersion: 1,
         generatedAt: "2026-08-01T00:00:00.000Z",
         suite: {
-          kafRevision: "b".repeat(40),
+          orcelRevision: "b".repeat(40),
           caseFingerprint: "c".repeat(64),
           caseCount: 1,
           runsPerCell: 1,
@@ -142,7 +142,7 @@ test("retains superseded experiments separately from the current matrix", () => 
 });
 
 test("exports mean cost, token consumption, and tool invocations", () => {
-  const directory = mkdtempSync(join(tmpdir(), "kaf-benchmark-export-cost-"));
+  const directory = mkdtempSync(join(tmpdir(), "eve-benchmark-export-cost-"));
   const outputPath = join(directory, "results.json");
   const resultsPath = new URL("../results", import.meta.url).pathname;
   const savedResultsPath = join(directory, "saved-results");

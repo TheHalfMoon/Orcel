@@ -1,15 +1,15 @@
 import type {
-  KafEvalContext,
-  KafEvalLiveTurn,
-  KafEvalSession,
-  KafEvalTurn,
+  OrcelEvalContext,
+  OrcelEvalLiveTurn,
+  OrcelEvalSession,
+  OrcelEvalTurn,
   InputRequest,
-} from "kaf/evals";
-import { equals, satisfies } from "kaf/evals/expect";
+} from "orcel/evals";
+import { equals, satisfies } from "orcel/evals/expect";
 
-export const scriptedSession = { headers: { "x-kaf-fixture-model": "continuation" } };
+export const scriptedSession = { headers: { "x-orcel-fixture-model": "continuation" } };
 
-export function requestFrom(turn: KafEvalTurn, toolName: string): InputRequest {
+export function requestFrom(turn: OrcelEvalTurn, toolName: string): InputRequest {
   turn.expectOk();
   const matches = turn.inputRequests.filter((request) => request.action.toolName === toolName);
   if (matches.length !== 1)
@@ -18,11 +18,11 @@ export function requestFrom(turn: KafEvalTurn, toolName: string): InputRequest {
 }
 
 export async function expectReply(
-  t: KafEvalContext,
-  live: KafEvalLiveTurn,
+  t: OrcelEvalContext,
+  live: OrcelEvalLiveTurn,
   expected: string | RegExp,
   owner?: string,
-): Promise<KafEvalTurn> {
+): Promise<OrcelEvalTurn> {
   t.log(`Accepted input in ${live.sessionId}; awaiting the reply and its turn completion.`);
   const turnId = owner ?? (await live.waitForEvent("message.received")).data.turnId;
   const turn = (await live.result()).expectOk();
@@ -59,11 +59,11 @@ export async function expectReply(
 }
 
 export async function expectResponseReply(
-  t: KafEvalContext,
-  live: KafEvalLiveTurn,
+  t: OrcelEvalContext,
+  live: OrcelEvalLiveTurn,
   expected: string | RegExp,
   requestId: string,
-): Promise<KafEvalTurn> {
+): Promise<OrcelEvalTurn> {
   t.log(`Accepted response for ${requestId}; awaiting resolution and its resumed turn.`);
   await live.waitForEvent("input.resolved", {
     data: { resolutions: (items) => items.some((item) => item.requestId === requestId) },
@@ -103,26 +103,26 @@ export async function expectResponseReply(
   return turn;
 }
 
-export async function expectToolResult(t: KafEvalContext, live: KafEvalLiveTurn, toolName: string) {
+export async function expectToolResult(t: OrcelEvalContext, live: OrcelEvalLiveTurn, toolName: string) {
   t.log(`Accepted input in ${live.sessionId}; awaiting ${toolName}.`);
   const event = await live.waitForEvent("action.result", { data: { result: { toolName } } });
   t.log(`${toolName} returned before the reply: ${JSON.stringify(event.data)}`);
   return event;
 }
 
-export function expectChangeStillUnexecuted(session: KafEvalSession, toolName = "change-a") {
+export function expectChangeStillUnexecuted(session: OrcelEvalSession, toolName = "change-a") {
   session.notEvent("action.result", { data: { result: { toolName } } });
 }
 
 // A partial approval has no turn boundary to await. Await the real HTTP
 // acceptance, then send the next message on that same session's ordered inbox.
 export async function submitPartialApproval(
-  t: KafEvalContext,
-  session: KafEvalSession,
+  t: OrcelEvalContext,
+  session: OrcelEvalSession,
   request: InputRequest,
 ) {
   const response = await t.target.fetch(
-    `/kaf/v1/session/${encodeURIComponent(session.sessionId)}`,
+    `/orcel/v1/session/${encodeURIComponent(session.sessionId)}`,
     {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -138,8 +138,8 @@ export async function submitPartialApproval(
 }
 
 export async function approveSavedChange(
-  t: KafEvalContext,
-  session: KafEvalSession,
+  t: OrcelEvalContext,
+  session: OrcelEvalSession,
   request: InputRequest,
 ) {
   const live = await session.startRespond([{ requestId: request.requestId, optionId: "approve" }]);

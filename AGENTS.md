@@ -3,26 +3,26 @@
 Guidance for coding agents (and humans) working in this repository. For setup,
 PR workflow, and release process, see [CONTRIBUTING.md](./CONTRIBUTING.md).
 
-## About kaf
+## About orcel
 
-kaf is a filesystem-first framework for durable backend AI agents. You author
+orcel is a filesystem-first framework for durable backend AI agents. You author
 an agent as a directory on disk — instructions, skills, tools, connections,
-channels, subagents, and schedules are all files — and kaf compiles and runs it.
+channels, subagents, and schedules are all files — and orcel compiles and runs it.
 See the [README](./README.md) for the full overview and
 [`docs/`](./docs) for user-facing documentation.
 
-Always style the framework name as `kaf`, lowercase, in user-facing copy,
+Always style the framework name as `orcel`, lowercase, in user-facing copy,
 docs, prompts, comments, and headings.
 
 ## Repository layout
 
-- `packages/kaf` — the framework and `kaf` CLI (the main package)
-- `packages/kaf-catalog` — internal, unpublished library
-- `packages/kaf-code` — `@kaf/code`, internal source of the `kaf/extensions/code` extension shipped in `kaf`
+- `packages/orcel` — the framework and `orcel` CLI (the main package)
+- `packages/orcel-catalog` — internal, unpublished library
+- `packages/orcel-code` — `@orcel/code`, internal source of the `orcel/extensions/code` extension shipped in `orcel`
 - `apps/fixtures` — shared agent fixtures used by e2e, TUI smoke tests, and local dev
 - `apps/frameworks`, `apps/templates`, `apps/docs` — framework integrations, templates, docs site
 - `docs` — published documentation content
-- `e2e/` — fixture-owned `kaf eval` end-to-end tests
+- `e2e/` — fixture-owned `orcel eval` end-to-end tests
 - `research` — issue-backed implementation plans for proposed changes
 
 ## Git workflow
@@ -59,7 +59,7 @@ pnpm test:unit          # unit tests (<3s)
 pnpm test:integration   # integration tests (<10s)
 pnpm test:scenario      # scenario tests (2–5 min; requires pnpm build first)
 pnpm test:framework-fixtures # apps/frameworks smoke builds (requires pnpm build first)
-pnpm test:e2e           # fixture-owned kaf eval suites (CI only)
+pnpm test:e2e           # fixture-owned orcel eval suites (CI only)
 pnpm test:tui           # TUI smoke scripts (not e2e)
 ```
 
@@ -104,7 +104,7 @@ line of defense, and every required check must pass before merge.
    They also require proper and legible documentation.
 
 2. **The core is lean and powerful**. The framework core should be simple yet highly
-   expressible i.e., `kaf` can be built with `kaf`. This means that changes in
+   expressible i.e., `orcel` can be built with `orcel`. This means that changes in
    `execution/` and `harness/` should be only done when strictly necessary. The
    core should expose hooks and internal APIs so that broad functionality is built
    on top of it.
@@ -117,12 +117,12 @@ line of defense, and every required check must pass before merge.
    to exist. Common abstractions should be reused. Accidental complexity needs
    to be derived to its essence. Entropy must be contained.
 
-5. **Wrap third-party dependencies.** Do not expose third-party APIs as kaf
-   public APIs. Wrap them in kaf-owned surfaces so internals can change freely.
+5. **Wrap third-party dependencies.** Do not expose third-party APIs as orcel
+   public APIs. Wrap them in orcel-owned surfaces so internals can change freely.
    Add runtime `dependencies` only as a last resort: prefer vendoring code or
    generated artifacts into the repository and listing the source package under
-   `devDependencies`. The `kaf` package should aim to keep `nitro` as its only
-   runtime dependency. This keeps kaf installs as small as possible and avoids
+   `devDependencies`. The `orcel` package should aim to keep `nitro` as its only
+   runtime dependency. This keeps orcel installs as small as possible and avoids
    exposure to hijacked nested dependencies that are not pinned directly in the
    main lockfile.
 
@@ -137,7 +137,7 @@ line of defense, and every required check must pass before merge.
 8. **Name definitions for the protocol they target.** Use
    `defineMcpClientConnection`, not `defineConnection`.
 
-9. **All runtime functionality lives in the `kaf` package.** Never rely on
+9. **All runtime functionality lives in the `orcel` package.** Never rely on
    emitted or generated code for runtime behavior.
 
 10. **Comment why, not what.** Default to no comment; well-named code is the
@@ -172,10 +172,10 @@ assertion:
 - **Integration** (`src/**/*.integration.test.ts`): multiple modules in memory.
 - **Scenario** (`src/**/*.scenario.test.ts`, `test/scenarios/`): real
   subprocess, HTTP port, or bundler.
-- **E2E** (`e2e/fixtures/*/evals/`): fixture-owned `kaf eval` suites that run
+- **E2E** (`e2e/fixtures/*/evals/`): fixture-owned `orcel eval` suites that run
   only in CI. The model suite (`e2e-local`) runs real matrix models against
   the local world; the world suites (`e2e-vercel`, …) run deterministic mock
-  models (`KAF_E2E_MODEL=mock`) and exclude `real-model`-tagged evals. See
+  models (`ORCEL_E2E_MODEL=mock`) and exclude `real-model`-tagged evals. See
   [`e2e/README.md`](./e2e/README.md).
 
 **Running a single file or filtered test: always pass the tier config.** Only
@@ -184,15 +184,15 @@ the `vitest.<tier>.config.ts` files alias `#*` imports to `./src`; a bare
 testing stale builds. Use:
 
 ```sh
-pnpm --filter kaf exec vitest run --config vitest.unit.config.ts <path-or-pattern>
+pnpm --filter orcel exec vitest run --config vitest.unit.config.ts <path-or-pattern>
 # or vitest.integration.config.ts / vitest.scenario.config.ts for those tiers
 ```
 
 Add `-t "<name>"` to filter by test name. If you touched anything under
-`#compiled/*`, run `pnpm --filter kaf build:compiled` first — the tier configs
+`#compiled/*`, run `pnpm --filter orcel build:compiled` first — the tier configs
 do not rebuild it.
 
-Do not commit fixture trees under `packages/kaf/test/fixtures/` — scenario app
+Do not commit fixture trees under `packages/orcel/test/fixtures/` — scenario app
 content is defined inline as `ScenarioAppDescriptor` objects (CI enforces this).
 
 ## End-to-end tests
@@ -220,7 +220,7 @@ identically at build and runtime, and Vercel has no team variable at runtime.
 
 The shared Vercel project's Preview env must provide the model-provider
 credentials the fixtures need. TUI smoke tests
-live under `packages/kaf/test/tui-client` and run with `pnpm test:tui`. See
+live under `packages/orcel/test/tui-client` and run with `pnpm test:tui`. See
 [`e2e/README.md`](./e2e/README.md).
 
 ## Documentation
@@ -240,8 +240,8 @@ live under `packages/kaf/test/tui-client` and run with `pnpm test:tui`. See
 
 ## Changesets
 
-Every PR that touches the published `kaf` package must include a
-changeset (`pnpm changeset`). Because kaf is pre-1.0, use `patch` in most
+Every PR that touches the published `orcel` package must include a
+changeset (`pnpm changeset`). Because orcel is pre-1.0, use `patch` in most
 cases, including bug fixes and new features. Use `minor` only when the change
 breaks a public API. Write the body for someone reading release notes — what
 changed and what they'll see differently, in 1–2 sentences.

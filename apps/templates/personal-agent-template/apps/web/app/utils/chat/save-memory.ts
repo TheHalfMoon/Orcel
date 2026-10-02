@@ -1,10 +1,10 @@
 import { getToolName, isDynamicToolUIPart } from "ai";
 import type { UIMessage } from "ai";
-import type { KafDynamicToolPart } from "kaf/vue";
+import type { OrcelDynamicToolPart } from "orcel/vue";
 
 export type SaveMemoryDisplayPart = {
   kind: "save_memory";
-  parts: KafDynamicToolPart[];
+  parts: OrcelDynamicToolPart[];
 };
 
 export type MessageDisplayPart = {
@@ -16,7 +16,7 @@ export type DisplayPart = MessageDisplayPart | SaveMemoryDisplayPart;
 
 export function buildDisplayParts(parts: UIMessage["parts"]): DisplayPart[] {
   const display: DisplayPart[] = [];
-  let buffer: KafDynamicToolPart[] = [];
+  let buffer: OrcelDynamicToolPart[] = [];
 
   function flush() {
     if (!buffer.length) {
@@ -32,7 +32,7 @@ export function buildDisplayParts(parts: UIMessage["parts"]): DisplayPart[] {
 
   for (const part of parts) {
     if (isDynamicToolUIPart(part) && getToolName(part) === "save_memory") {
-      buffer.push(part as KafDynamicToolPart);
+      buffer.push(part as OrcelDynamicToolPart);
       continue;
     }
 
@@ -81,10 +81,10 @@ export function normalizeSaveMemoryInput(input: SaveMemoryInput | undefined) {
   };
 }
 
-export function isSaveMemoryPending(part: KafDynamicToolPart) {
+export function isSaveMemoryPending(part: OrcelDynamicToolPart) {
   return (
     part.state === "approval-requested" &&
-    part.toolMetadata?.kaf?.inputRequest &&
-    !part.toolMetadata?.kaf?.inputResponse
+    part.toolMetadata?.orcel?.inputRequest &&
+    !part.toolMetadata?.orcel?.inputResponse
   );
 }

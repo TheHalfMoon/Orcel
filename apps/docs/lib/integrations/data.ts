@@ -7,13 +7,13 @@ import {
   extensionEntries,
   instrumentationEntries,
   memoryEntries,
-} from "@kaf/catalog";
+} from "@orcel/catalog";
 import type { LogoKey } from "./logos";
 
 /**
  * The docs integration gallery layers presentation (logo, keywords, setup
  * markdown, auth modes) on top of the shared identity catalog
- * (`@kaf/catalog`). Identity — slug, name, kind, tagline, and a
+ * (`@orcel/catalog`). Identity — slug, name, kind, tagline, and a
  * connection's transport + model-facing description — comes from the catalog
  * and is never re-declared here; this module owns only the docs-facing overlay,
  * keyed by slug.
@@ -22,8 +22,8 @@ import type { LogoKey } from "./logos";
 export type IntegrationType = "channel" | "connection" | "extension" | "instrumentation" | "memory";
 
 /** Wire protocol and transport identity types are owned by the shared catalog. */
-export type { ConnectionProtocol, McpTransport, OpenApiTransport } from "@kaf/catalog";
-import type { ConnectionProtocol } from "@kaf/catalog";
+export type { ConnectionProtocol, McpTransport, OpenApiTransport } from "@orcel/catalog";
+import type { ConnectionProtocol } from "@orcel/catalog";
 
 /**
  * How a connection authenticates. A mode uses either Vercel Connect (`user`,
@@ -112,26 +112,26 @@ export interface Integration {
 
 /** Shared by the GitHub, Linear, and GitHub Tools integrations Foreman builds on. */
 const softwareFactoryGuide: RelatedResource = {
-  title: "Build a software factory with kaf",
+  title: "Build a software factory with orcel",
   description:
-    "Deploy Foreman, an kaf agent system that turns GitHub issues or Linear tickets into reviewed draft pull requests while leaving merge decisions to humans.",
-  href: "https://vercel.com/kb/guide/kaf-software-factory",
+    "Deploy Foreman, an orcel agent system that turns GitHub issues or Linear tickets into reviewed draft pull requests while leaving merge decisions to humans.",
+  href: "https://vercel.com/kb/guide/orcel-software-factory",
 };
 
 /** Shared by the Slack, GitHub, Datadog, and Vercel integrations the incident response agent uses. */
 const incidentResponseGuide: RelatedResource = {
-  title: "Build an incident response SRE agent with kaf",
+  title: "Build an incident response SRE agent with orcel",
   description:
     "Deploy a Slack-based investigation agent that connects to Datadog, GitHub, and Vercel, tests root-cause hypotheses, and posts evidence-linked findings in threads.",
-  href: "https://vercel.com/kb/guide/kaf-incident-sre-agent",
+  href: "https://vercel.com/kb/guide/orcel-incident-sre-agent",
 };
 
 /** Shared by the Slack and Notion integrations the marketing team template publishes through. */
 const marketingTeamGuide: RelatedResource = {
-  title: "Run a marketing team from Slack with kaf",
+  title: "Run a marketing team from Slack with orcel",
   description:
     "Deploy a Slack-facing lead agent that routes requests to marketing specialists who publish to Notion, Typefully, and Resend, with approval gates on irreversible actions.",
-  href: "https://vercel.com/kb/guide/marketing-team-kaf",
+  href: "https://vercel.com/kb/guide/marketing-team-orcel",
 };
 
 /** Docs presentation overlay shared by every integration kind. */
@@ -173,22 +173,22 @@ const channelPresentations: Record<string, ChannelPresentation> = {
     logo: "slack",
     docsHref: "/docs/channels/slack",
     keywords: ["chat", "messaging", "bot", "webhook"],
-    install: `The kaf CLI scaffolds the channel for you. \`kaf add channel/slack\` writes \`agent/channels/slack.ts\`, adds \`@vercel/connect\`, and runs the Connect setup flow:
+    install: `The orcel CLI scaffolds the channel for you. \`orcel add channel/slack\` writes \`agent/channels/slack.ts\`, adds \`@vercel/connect\`, and runs the Connect setup flow:
 
 \`\`\`bash
-kaf add channel/slack
+orcel add channel/slack
 \`\`\`
 
 To wire it up by hand instead, install the framework and the Connect SDK. Slack channels use [Vercel Connect](https://vercel.com/docs/connect) for both the outbound bot token and inbound webhook verification:
 
 \`\`\`bash
-npm install kaf@latest @vercel/connect
+npm install orcel@latest @vercel/connect
 \`\`\``,
     quickStart: `Create \`agent/channels/slack.ts\`. The channel name is derived from the filename, so no \`name\` field is needed:
 
 \`\`\`ts
 // agent/channels/slack.ts
-import { slackChannel } from "kaf/channels/slack";
+import { slackChannel } from "orcel/channels/slack";
 import { connectSlackCredentials } from "@vercel/connect/eve";
 
 export default slackChannel({
@@ -202,7 +202,7 @@ Link the project and pull OIDC env vars so Connect can authenticate locally:
 vercel link
 vercel env pull
 \`\`\``,
-    configure: `Create a Slack Connect client and copy its UID (for example \`slack/my-agent\`), then attach this project as the webhook trigger destination at the route kaf serves (\`/kaf/v1/slack\`):
+    configure: `Create a Slack Connect client and copy its UID (for example \`slack/my-agent\`), then attach this project as the webhook trigger destination at the route orcel serves (\`/orcel/v1/slack\`):
 
 \`\`\`bash
 vercel connect create slack --triggers
@@ -215,16 +215,16 @@ The channel handles mentions, DMs, typing indicators, delivery, and human-in-the
     logo: "discord",
     docsHref: "/docs/channels/discord",
     keywords: ["chat", "messaging", "bot", "guild"],
-    install: `Add this channel from kaf's registry. This writes \`agent/channels/discord.ts\`:
+    install: `Add this channel from orcel's registry. This writes \`agent/channels/discord.ts\`:
 
 \`\`\`bash
-kaf add channel/discord
+orcel add channel/discord
 \`\`\``,
     quickStart: `Create \`agent/channels/discord.ts\`:
 
 \`\`\`ts
 // agent/channels/discord.ts
-import { discordChannel } from "kaf/channels/discord";
+import { discordChannel } from "orcel/channels/discord";
 
 export default discordChannel({
   credentials: {
@@ -233,22 +233,22 @@ export default discordChannel({
   },
 });
 \`\`\``,
-    configure: `Create a Discord application, add a bot, and set the interactions endpoint URL to the route kaf serves (\`/kaf/v1/discord\`). Provide the bot token and public key through environment variables. See the [Discord channel docs](/docs/channels/discord) for intents and slash-command setup.`,
+    configure: `Create a Discord application, add a bot, and set the interactions endpoint URL to the route orcel serves (\`/orcel/v1/discord\`). Provide the bot token and public key through environment variables. See the [Discord channel docs](/docs/channels/discord) for intents and slash-command setup.`,
   },
   teams: {
     logo: "teams",
     docsHref: "/docs/channels/teams",
     keywords: ["chat", "messaging", "bot", "microsoft"],
-    install: `Add this channel from kaf's registry. This writes \`agent/channels/teams.ts\`:
+    install: `Add this channel from orcel's registry. This writes \`agent/channels/teams.ts\`:
 
 \`\`\`bash
-kaf add channel/teams
+orcel add channel/teams
 \`\`\``,
     quickStart: `Create \`agent/channels/teams.ts\`:
 
 \`\`\`ts
 // agent/channels/teams.ts
-import { teamsChannel } from "kaf/channels/teams";
+import { teamsChannel } from "orcel/channels/teams";
 
 export default teamsChannel({
   credentials: {
@@ -257,43 +257,43 @@ export default teamsChannel({
   },
 });
 \`\`\``,
-    configure: `Register an Azure Bot, configure the messaging endpoint to kaf's route (\`/kaf/v1/teams\`), and supply the app ID and password via environment variables. See the [Teams channel docs](/docs/channels/teams) for the full provisioning checklist.`,
+    configure: `Register an Azure Bot, configure the messaging endpoint to orcel's route (\`/orcel/v1/teams\`), and supply the app ID and password via environment variables. See the [Teams channel docs](/docs/channels/teams) for the full provisioning checklist.`,
   },
   telegram: {
     logo: "telegram",
     docsHref: "/docs/channels/telegram",
     keywords: ["chat", "messaging", "bot"],
-    install: `Add this channel from kaf's registry. This writes \`agent/channels/telegram.ts\`:
+    install: `Add this channel from orcel's registry. This writes \`agent/channels/telegram.ts\`:
 
 \`\`\`bash
-kaf add channel/telegram
+orcel add channel/telegram
 \`\`\``,
     quickStart: `Create \`agent/channels/telegram.ts\`:
 
 \`\`\`ts
 // agent/channels/telegram.ts
-import { telegramChannel } from "kaf/channels/telegram";
+import { telegramChannel } from "orcel/channels/telegram";
 
 export default telegramChannel({
   credentials: { botToken: () => process.env.TELEGRAM_BOT_TOKEN! },
 });
 \`\`\``,
-    configure: `Create a bot with [@BotFather](https://t.me/botfather), then register the webhook to point at kaf's route (\`/kaf/v1/telegram\`). Store the bot token in an environment variable. See the [Telegram channel docs](/docs/channels/telegram) for group privacy and command setup.`,
+    configure: `Create a bot with [@BotFather](https://t.me/botfather), then register the webhook to point at orcel's route (\`/orcel/v1/telegram\`). Store the bot token in an environment variable. See the [Telegram channel docs](/docs/channels/telegram) for group privacy and command setup.`,
   },
   twilio: {
     logo: "twilio",
     docsHref: "/docs/channels/twilio",
     keywords: ["sms", "voice", "calls", "phone", "transcription"],
-    install: `Add this channel from kaf's registry. This writes \`agent/channels/twilio.ts\`:
+    install: `Add this channel from orcel's registry. This writes \`agent/channels/twilio.ts\`:
 
 \`\`\`bash
-kaf add channel/twilio
+orcel add channel/twilio
 \`\`\``,
     quickStart: `Create \`agent/channels/twilio.ts\`. \`allowFrom\` is required and gates who can reach the inbound hooks:
 
 \`\`\`ts
 // agent/channels/twilio.ts
-import { twilioChannel } from "kaf/channels/twilio";
+import { twilioChannel } from "orcel/channels/twilio";
 
 export default twilioChannel({
   allowFrom: "+15551234567",
@@ -305,7 +305,7 @@ export default twilioChannel({
 TWILIO_ACCOUNT_SID=AC...   # required for default outbound SMS
 TWILIO_AUTH_TOKEN=...      # required for inbound signature verification
 \`\`\``,
-    configure: `In the Twilio console, point your number's Messaging webhook at \`/kaf/v1/twilio/messages\` and its Voice webhook at \`/kaf/v1/twilio/voice\`. Inbound calls are answered with speech gathering, and the transcript feeds the same session SMS uses. See the [Twilio channel docs](/docs/channels/twilio) for dispatch, streaming, and voice specifics.`,
+    configure: `In the Twilio console, point your number's Messaging webhook at \`/orcel/v1/twilio/messages\` and its Voice webhook at \`/orcel/v1/twilio/voice\`. Inbound calls are answered with speech gathering, and the transcript feeds the same session SMS uses. See the [Twilio channel docs](/docs/channels/twilio) for dispatch, streaming, and voice specifics.`,
   },
   blooio: {
     logo: "blooio",
@@ -322,10 +322,10 @@ TWILIO_AUTH_TOKEN=...      # required for inbound signature verification
       "poll",
       "group",
     ],
-    install: `Add this channel from kaf's registry. This writes \`agent/channels/blooio.ts\` and installs the \`eve-channel-blooio\` package:
+    install: `Add this channel from orcel's registry. This writes \`agent/channels/blooio.ts\` and installs the \`eve-channel-blooio\` package:
 
 \`\`\`bash
-kaf add channel/blooio
+orcel add channel/blooio
 \`\`\``,
     quickStart: `Create \`agent/channels/blooio.ts\`:
 
@@ -336,14 +336,14 @@ import { blooioChannel } from "eve-channel-blooio";
 export default blooioChannel();
 \`\`\`
 
-Blooio is a native kaf channel built on \`defineChannel\` (not a Chat SDK adapter), so kaf owns session dispatch, streaming, and human-in-the-loop directly. See the [eve-channel-blooio README](https://github.com/Blooio/eve-channel-blooio#readme) for the full \`BlooioHandle\` surface: reactions, typing indicators, read receipts, polls, groups, capability checks, and history.`,
-    configure: `Set \`BLOOIO_API_KEY\` (a \`bl_live_...\` key) and \`BLOOIO_WEBHOOK_SECRET\` (\`whsec_...\`), then point a Blooio webhook at \`/kaf/v1/blooio\`:
+Blooio is a native orcel channel built on \`defineChannel\` (not a Chat SDK adapter), so orcel owns session dispatch, streaming, and human-in-the-loop directly. See the [eve-channel-blooio README](https://github.com/Blooio/eve-channel-blooio#readme) for the full \`BlooioHandle\` surface: reactions, typing indicators, read receipts, polls, groups, capability checks, and history.`,
+    configure: `Set \`BLOOIO_API_KEY\` (a \`bl_live_...\` key) and \`BLOOIO_WEBHOOK_SECRET\` (\`whsec_...\`), then point a Blooio webhook at \`/orcel/v1/blooio\`:
 
 \`\`\`bash
 curl -X POST https://api.blooio.com/v4/webhooks \\
   -H "Authorization: Bearer $BLOOIO_API_KEY" \\
   -H "Content-Type: application/json" \\
-  -d '{ "url": "https://your-app.vercel.app/kaf/v1/blooio", "event_types": ["*"] }'
+  -d '{ "url": "https://your-app.vercel.app/orcel/v1/blooio", "event_types": ["*"] }'
 \`\`\`
 
 Blooio signs every delivery with \`X-Blooio-Signature: t=<unix>,v1=<hmac_sha256>\`; the channel verifies it and rejects timestamps older than 5 minutes. Inbound media is re-hosted at servable URLs and forwarded to the model as multimodal file parts.`,
@@ -352,51 +352,51 @@ Blooio signs every delivery with \`X-Blooio-Signature: t=<unix>,v1=<hmac_sha256>
     logo: "github",
     docsHref: "/docs/channels/github",
     keywords: ["issues", "pull requests", "app", "webhook", "code"],
-    install: `Add this channel from kaf's registry to create a Vercel Connect GitHub App, route verified webhooks, and write \`agent/channels/github.ts\`:
+    install: `Add this channel from orcel's registry to create a Vercel Connect GitHub App, route verified webhooks, and write \`agent/channels/github.ts\`:
 
 \`\`\`bash
-kaf add channel/github
+orcel add channel/github
 \`\`\``,
     quickStart: `The guided setup writes \`agent/channels/github.ts\`:
 
 \`\`\`ts
 // agent/channels/github.ts
 import { connectGitHubCredentials } from "@vercel/connect/eve";
-import { githubChannel } from "kaf/channels/github";
+import { githubChannel } from "orcel/channels/github";
 
 export default githubChannel({
   credentials: connectGitHubCredentials("github/my-agent"),
 });
 \`\`\``,
-    configure: `Sign in to Vercel, then let the guided flow create or link a project, provision the GitHub App, and attach its verified webhook trigger to \`/kaf/v1/github\`. Deploy, install the app from Vercel Connect, then add its \`@handle\` invocation token to a new issue, pull request, or review comment. GitHub may not autocomplete or render the token as a linked mention. See the [GitHub channel docs](/docs/channels/github) for permissions and events.`,
+    configure: `Sign in to Vercel, then let the guided flow create or link a project, provision the GitHub App, and attach its verified webhook trigger to \`/orcel/v1/github\`. Deploy, install the app from Vercel Connect, then add its \`@handle\` invocation token to a new issue, pull request, or review comment. GitHub may not autocomplete or render the token as a linked mention. See the [GitHub channel docs](/docs/channels/github) for permissions and events.`,
     relatedResources: [softwareFactoryGuide, incidentResponseGuide],
   },
   "linear-agent": {
     logo: "linear",
     docsHref: "/docs/channels/linear",
     keywords: ["issues", "comments", "agent sessions", "developer preview", "webhook"],
-    install: `Add this channel from kaf's registry to create a Vercel Connect client, route verified Agent Session events, and write \`agent/channels/linear.ts\`:
+    install: `Add this channel from orcel's registry to create a Vercel Connect client, route verified Agent Session events, and write \`agent/channels/linear.ts\`:
 
 \`\`\`bash
-kaf add channel/linear
+orcel add channel/linear
 \`\`\``,
     quickStart: `The guided setup writes \`agent/channels/linear.ts\`:
 
 \`\`\`ts
 // agent/channels/linear.ts
 import { connectLinearCredentials } from "@vercel/connect/eve";
-import { linearChannel } from "kaf/channels/linear";
+import { linearChannel } from "orcel/channels/linear";
 
 export default linearChannel({
   credentials: connectLinearCredentials("linear/my-agent"),
 });
 \`\`\``,
-    configure: `Sign in to Vercel, then let the guided flow create or link a project, provision the Linear app, and attach its verified AgentSessionEvent trigger to \`/kaf/v1/linear\`. Deploy, install the app in your Linear workspace from Vercel Connect, then delegate an issue or mention the agent. See the [Linear channel docs](/docs/channels/linear) for Agent Activity behavior.`,
+    configure: `Sign in to Vercel, then let the guided flow create or link a project, provision the Linear app, and attach its verified AgentSessionEvent trigger to \`/orcel/v1/linear\`. Deploy, install the app in your Linear workspace from Vercel Connect, then delegate an issue or mention the agent. See the [Linear channel docs](/docs/channels/linear) for Agent Activity behavior.`,
     relatedResources: [softwareFactoryGuide],
   },
-  kaf: {
-    logo: "kaf",
-    docsHref: "/docs/channels/kaf",
+  orcel: {
+    logo: "orcel",
+    docsHref: "/docs/channels/orcel",
     keywords: [
       "web",
       "chat",
@@ -410,89 +410,89 @@ export default linearChannel({
       "vue",
       "react",
     ],
-    install: `The kaf CLI scaffolds the full Next.js web chat app alongside \`agent/channels/kaf.ts\`:
+    install: `The orcel CLI scaffolds the full Next.js web chat app alongside \`agent/channels/orcel.ts\`:
 
 \`\`\`bash
-kaf add channel/web
+orcel add channel/web
 \`\`\`
 
 To wire it up by hand instead — including into a Svelte or Nuxt app you already have — install the framework:
 
 \`\`\`bash
-npm install kaf@latest
+npm install orcel@latest
 \`\`\``,
-    quickStart: `The kaf channel is on by default. Add \`agent/channels/kaf.ts\` only when you want to override the default session routes or auth:
+    quickStart: `The orcel channel is on by default. Add \`agent/channels/orcel.ts\` only when you want to override the default session routes or auth:
 
 \`\`\`ts
-// agent/channels/kaf.ts
-import { kafChannel } from "kaf/channels/kaf";
+// agent/channels/orcel.ts
+import { orcelChannel } from "orcel/channels/orcel";
 
-export default kafChannel();
+export default orcelChannel();
 \`\`\`
 
-Point your frontend at the session routes kaf serves (\`/kaf/v1/session\`) and stream responses with the kaf web client. Next.js, Nuxt, and Svelte each have an integration that mounts those routes on your app's own origin, so there's no CORS to configure and no URL env var to keep in sync:
+Point your frontend at the session routes orcel serves (\`/orcel/v1/session\`) and stream responses with the orcel web client. Next.js, Nuxt, and Svelte each have an integration that mounts those routes on your app's own origin, so there's no CORS to configure and no URL env var to keep in sync:
 
-- **Next.js.** Wrap \`next.config.ts\` with \`withEve()\` from \`kaf/next\`, then call \`useKafAgent()\` from \`kaf/react\`. See the [Next.js guide](/docs/guides/frontend/nextjs).
-- **Nuxt.** Add \`"kaf/nuxt"\` to \`modules\` in \`nuxt.config.ts\`; the \`useKafAgent()\` composable from \`kaf/vue\` is auto-imported. See the [Nuxt guide](/docs/guides/frontend/nuxt).
-- **Svelte.** Add the \`kafSvelteKit()\` Vite plugin before \`sveltekit()\` in \`vite.config.ts\`, then call \`useKafAgent()\` from \`kaf/svelte\`. See the [SvelteKit guide](/docs/guides/frontend/sveltekit).
+- **Next.js.** Wrap \`next.config.ts\` with \`withEve()\` from \`orcel/next\`, then call \`useOrcelAgent()\` from \`orcel/react\`. See the [Next.js guide](/docs/guides/frontend/nextjs).
+- **Nuxt.** Add \`"orcel/nuxt"\` to \`modules\` in \`nuxt.config.ts\`; the \`useOrcelAgent()\` composable from \`orcel/vue\` is auto-imported. See the [Nuxt guide](/docs/guides/frontend/nuxt).
+- **Svelte.** Add the \`orcelSvelteKit()\` Vite plugin before \`sveltekit()\` in \`vite.config.ts\`, then call \`useOrcelAgent()\` from \`orcel/svelte\`. See the [SvelteKit guide](/docs/guides/frontend/sveltekit).
 
-On any other stack, wire it up by hand: run the agent as its own service and proxy \`/kaf/v1/**\` to it, or pass its origin as \`host\` to \`useKafAgent()\` and enable \`cors\` on the channel. Server-side code and custom UIs can call the routes through \`Client\` from \`kaf/client\`.`,
-    configure: `The kaf channel is the lowest-friction way to talk to your agent, with no third-party provisioning required. Layer in auth and route protection as needed, and enable \`cors\` only when a browser reaches the channel from another origin. See the [kaf channel docs](/docs/channels/kaf), the [Frontend guide](/docs/guides/frontend/overview), and the per-framework guides for [Next.js](/docs/guides/frontend/nextjs), [Nuxt](/docs/guides/frontend/nuxt), and [SvelteKit](/docs/guides/frontend/sveltekit).`,
+On any other stack, wire it up by hand: run the agent as its own service and proxy \`/orcel/v1/**\` to it, or pass its origin as \`host\` to \`useOrcelAgent()\` and enable \`cors\` on the channel. Server-side code and custom UIs can call the routes through \`Client\` from \`orcel/client\`.`,
+    configure: `The orcel channel is the lowest-friction way to talk to your agent, with no third-party provisioning required. Layer in auth and route protection as needed, and enable \`cors\` only when a browser reaches the channel from another origin. See the [orcel channel docs](/docs/channels/orcel), the [Frontend guide](/docs/guides/frontend/overview), and the per-framework guides for [Next.js](/docs/guides/frontend/nextjs), [Nuxt](/docs/guides/frontend/nuxt), and [SvelteKit](/docs/guides/frontend/sveltekit).`,
   },
   buzz: {
     logo: "buzz",
-    docsHref: "https://github.com/TheHalfMoon/kaf/tree/main/packages/kaf-buzz-acp-adapter#readme",
+    docsHref: "https://github.com/TheHalfMoon/orcel/tree/main/packages/orcel-buzz-acp-adapter#readme",
     badge: "ACP",
     keywords: ["chat", "messaging", "desktop", "acp", "nostr", "agents"],
-    install: `Install [Buzz Desktop](https://buzz.xyz), then install kaf's compatibility adapter globally:
+    install: `Install [Buzz Desktop](https://buzz.xyz), then install orcel's compatibility adapter globally:
 
 \`\`\`bash
-npm install --global @kaf/buzz-acp-adapter
+npm install --global @orcel/buzz-acp-adapter
 \`\`\`
 
-The adapter must be installed globally because Buzz uses it whenever it interfaces with kaf.`,
-    quickStart: `From an kaf application directory, run the interactive installer:
+The adapter must be installed globally because Buzz uses it whenever it interfaces with orcel.`,
+    quickStart: `From an orcel application directory, run the interactive installer:
 
 \`\`\`bash
-kaf-buzz-acp-adapter install
+orcel-buzz-acp-adapter install
 \`\`\`
 
 You can also provide a local application or deployed URL explicitly:
 
 \`\`\`bash
-kaf-buzz-acp-adapter install ./path/to/kaf-app
-kaf-buzz-acp-adapter install https://agent.example.com
+orcel-buzz-acp-adapter install ./path/to/orcel-app
+orcel-buzz-acp-adapter install https://agent.example.com
 \`\`\`
 
-The installer registers **kaf** as a custom harness with Buzz.`,
+The installer registers **orcel** as a custom harness with Buzz.`,
     configure: `Reopen Buzz, then create or edit an agent:
 
 1. Enter an **Agent name** and, optionally, **Agent instructions** for Buzz-specific behavior.
 2. Under **AI configuration**, choose **Customize for this agent**.
-3. Set **Agent harness** to **kaf**. Buzz currently requires a **Model** value but does not prefill one for custom harnesses.
+3. Set **Agent harness** to **orcel**. Buzz currently requires a **Model** value but does not prefill one for custom harnesses.
 4. Open **Advanced**. Leave **Who can talk to this agent** on its default owner-only selection. For a local application, set **Parallelism** to \`1\` and add any credentials that the application does not already load from an env file, such as \`AI_GATEWAY_API_KEY\`.
 5. Save the agent and start it.
 
-Accepted senders share one kaf identity and its capabilities.`,
+Accepted senders share one orcel identity and its capabilities.`,
   },
   "chat-sdk-gchat": {
     logo: "googlechat",
     docsHref: "/docs/channels/chat-sdk",
     badge: "Chat SDK",
     keywords: ["chat sdk", "google chat", "spaces", "bot"],
-    install: `Add this Chat SDK channel from kaf's registry. This writes \`agent/channels/gchat.ts\` and installs Chat SDK and its adapter dependencies:
+    install: `Add this Chat SDK channel from orcel's registry. This writes \`agent/channels/gchat.ts\` and installs Chat SDK and its adapter dependencies:
 
 \`\`\`bash
-kaf add channel/chat-sdk-gchat
+orcel add channel/chat-sdk-gchat
 \`\`\``,
-    quickStart: `Create \`agent/channels/gchat.ts\`. Register Chat SDK handlers on \`bot\`, call \`send\` to hand each turn to kaf, and export the channel:
+    quickStart: `Create \`agent/channels/gchat.ts\`. Register Chat SDK handlers on \`bot\`, call \`send\` to hand each turn to orcel, and export the channel:
 
 \`\`\`ts
 // agent/channels/gchat.ts
 import { createGoogleChatAdapter } from "@chat-adapter/gchat";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "kaf/channels/chat-sdk";
+import { chatSdkChannel } from "orcel/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
@@ -513,26 +513,26 @@ export default channel;
 \`\`\`
 
 Credentials come from the \`createGoogleChatAdapter\` config or the adapter's environment variables; see the [Google Chat adapter docs](https://chat-sdk.dev/adapters/official/gchat).`,
-    configure: `The adapter mounts its webhook at \`/kaf/v1/gchat\`. Point your Google Chat app's HTTP endpoint at it. The adapter owns provider auth, verification, and delivery, while kaf owns session dispatch, streaming, typing, and human-in-the-loop. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for routes, streaming, and state options.`,
+    configure: `The adapter mounts its webhook at \`/orcel/v1/gchat\`. Point your Google Chat app's HTTP endpoint at it. The adapter owns provider auth, verification, and delivery, while orcel owns session dispatch, streaming, typing, and human-in-the-loop. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for routes, streaming, and state options.`,
   },
   "chat-sdk-whatsapp": {
     logo: "whatsapp",
     docsHref: "/docs/channels/chat-sdk",
     badge: "Chat SDK",
     keywords: ["chat sdk", "whatsapp", "business cloud", "messaging"],
-    install: `Add this Chat SDK channel from kaf's registry. This writes \`agent/channels/whatsapp.ts\` and installs Chat SDK and its adapter dependencies:
+    install: `Add this Chat SDK channel from orcel's registry. This writes \`agent/channels/whatsapp.ts\` and installs Chat SDK and its adapter dependencies:
 
 \`\`\`bash
-kaf add channel/chat-sdk-whatsapp
+orcel add channel/chat-sdk-whatsapp
 \`\`\``,
-    quickStart: `Create \`agent/channels/whatsapp.ts\`. Register Chat SDK handlers on \`bot\`, call \`send\` to hand each turn to kaf, and export the channel:
+    quickStart: `Create \`agent/channels/whatsapp.ts\`. Register Chat SDK handlers on \`bot\`, call \`send\` to hand each turn to orcel, and export the channel:
 
 \`\`\`ts
 // agent/channels/whatsapp.ts
 import { createWhatsAppAdapter } from "@chat-adapter/whatsapp";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "kaf/channels/chat-sdk";
+import { chatSdkChannel } from "orcel/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
@@ -553,26 +553,26 @@ export default channel;
 \`\`\`
 
 Credentials come from the \`createWhatsAppAdapter\` config or the adapter's environment variables; see the [WhatsApp adapter docs](https://chat-sdk.dev/adapters/official/whatsapp).`,
-    configure: `The adapter mounts its webhook at \`/kaf/v1/whatsapp\`. Point your WhatsApp Business Cloud webhook at it. The adapter owns provider auth, verification, and delivery, while kaf owns session dispatch, streaming, typing, and human-in-the-loop. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for routes, streaming, and state options.`,
+    configure: `The adapter mounts its webhook at \`/orcel/v1/whatsapp\`. Point your WhatsApp Business Cloud webhook at it. The adapter owns provider auth, verification, and delivery, while orcel owns session dispatch, streaming, typing, and human-in-the-loop. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for routes, streaming, and state options.`,
   },
   "chat-sdk-x": {
     logo: "x",
     docsHref: "/docs/channels/chat-sdk",
     badge: "Chat SDK",
     keywords: ["chat sdk", "x", "twitter", "mentions", "dms"],
-    install: `Add this Chat SDK channel from kaf's registry. This writes \`agent/channels/x.ts\` and installs Chat SDK and its adapter dependencies:
+    install: `Add this Chat SDK channel from orcel's registry. This writes \`agent/channels/x.ts\` and installs Chat SDK and its adapter dependencies:
 
 \`\`\`bash
-kaf add channel/chat-sdk-x
+orcel add channel/chat-sdk-x
 \`\`\``,
-    quickStart: `Create \`agent/channels/x.ts\`. Register Chat SDK handlers on \`bot\`, call \`send\` to hand each turn to kaf, and export the channel:
+    quickStart: `Create \`agent/channels/x.ts\`. Register Chat SDK handlers on \`bot\`, call \`send\` to hand each turn to orcel, and export the channel:
 
 \`\`\`ts
 // agent/channels/x.ts
 import { createXAdapter } from "@chat-adapter/x";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "kaf/channels/chat-sdk";
+import { chatSdkChannel } from "orcel/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
@@ -599,26 +599,26 @@ export default channel;
 \`\`\`
 
 For a DM-only agent, keep \`bot.onDirectMessage\` and remove the \`bot.onNewMention\` and \`bot.onSubscribedMessage\` handlers. Configure the app's credentials and webhook before deploying.`,
-    configure: `Follow the [X adapter documentation](https://chat-sdk.dev/adapters/official/x) to configure authentication, webhook verification, and Activity API subscriptions. Register the deployed agent's \`/kaf/v1/x\` route as the X webhook URL. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for kaf route and state options.`,
+    configure: `Follow the [X adapter documentation](https://chat-sdk.dev/adapters/official/x) to configure authentication, webhook verification, and Activity API subscriptions. Register the deployed agent's \`/orcel/v1/x\` route as the X webhook URL. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for orcel route and state options.`,
   },
   "chat-sdk-messenger": {
     logo: "messenger",
     docsHref: "/docs/channels/chat-sdk",
     badge: "Chat SDK",
     keywords: ["chat sdk", "messenger", "facebook", "bot"],
-    install: `Add this Chat SDK channel from kaf's registry. This writes \`agent/channels/messenger.ts\` and installs Chat SDK and its adapter dependencies:
+    install: `Add this Chat SDK channel from orcel's registry. This writes \`agent/channels/messenger.ts\` and installs Chat SDK and its adapter dependencies:
 
 \`\`\`bash
-kaf add channel/chat-sdk-messenger
+orcel add channel/chat-sdk-messenger
 \`\`\``,
-    quickStart: `Create \`agent/channels/messenger.ts\`. Register Chat SDK handlers on \`bot\`, call \`send\` to hand each turn to kaf, and export the channel:
+    quickStart: `Create \`agent/channels/messenger.ts\`. Register Chat SDK handlers on \`bot\`, call \`send\` to hand each turn to orcel, and export the channel:
 
 \`\`\`ts
 // agent/channels/messenger.ts
 import { createMessengerAdapter } from "@chat-adapter/messenger";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "kaf/channels/chat-sdk";
+import { chatSdkChannel } from "orcel/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
@@ -639,7 +639,7 @@ export default channel;
 \`\`\`
 
 Credentials come from the \`createMessengerAdapter\` config or the adapter's environment variables; see the [Messenger adapter docs](https://chat-sdk.dev/adapters/official/messenger).`,
-    configure: `The adapter mounts its webhook at \`/kaf/v1/messenger\`. Point your Messenger webhook at it. The adapter owns provider auth, verification, and delivery, while kaf owns session dispatch, streaming, typing, and human-in-the-loop. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for routes, streaming, and state options.`,
+    configure: `The adapter mounts its webhook at \`/orcel/v1/messenger\`. Point your Messenger webhook at it. The adapter owns provider auth, verification, and delivery, while orcel owns session dispatch, streaming, typing, and human-in-the-loop. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for routes, streaming, and state options.`,
   },
   "chat-sdk-zernio": {
     logo: "zernio",
@@ -657,10 +657,10 @@ Credentials come from the \`createMessengerAdapter\` config or the adapter's env
       "bluesky",
       "reddit",
     ],
-    install: `Add this Chat SDK channel from kaf's registry. This writes \`agent/channels/zernio.ts\` and installs Chat SDK and its adapter dependencies:
+    install: `Add this Chat SDK channel from orcel's registry. This writes \`agent/channels/zernio.ts\` and installs Chat SDK and its adapter dependencies:
 
 \`\`\`bash
-kaf add channel/chat-sdk-zernio
+orcel add channel/chat-sdk-zernio
 \`\`\``,
     quickStart: `Create \`agent/channels/zernio.ts\`:
 
@@ -669,7 +669,7 @@ kaf add channel/chat-sdk-zernio
 import { createZernioAdapter } from "@zernio/chat-sdk-adapter";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "kaf/channels/chat-sdk";
+import { chatSdkChannel } from "orcel/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
@@ -692,7 +692,7 @@ export default channel;
 \`\`\`
 
 See the [Zernio adapter documentation](https://chat-sdk.dev/adapters/vendor-official/zernio) for supported events, capabilities, and credentials.`,
-    configure: `Set \`ZERNIO_API_KEY\` and \`ZERNIO_WEBHOOK_SECRET\`, then point Zernio webhooks at \`/kaf/v1/zernio\`. Zernio provides one adapter for Instagram, Facebook, X, Telegram, WhatsApp, Bluesky, and Reddit. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for kaf session dispatch, state, streaming, and human-in-the-loop behavior.`,
+    configure: `Set \`ZERNIO_API_KEY\` and \`ZERNIO_WEBHOOK_SECRET\`, then point Zernio webhooks at \`/orcel/v1/zernio\`. Zernio provides one adapter for Instagram, Facebook, X, Telegram, WhatsApp, Bluesky, and Reddit. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for orcel session dispatch, state, streaming, and human-in-the-loop behavior.`,
   },
   "chat-sdk-velt": {
     logo: "velt",
@@ -708,10 +708,10 @@ See the [Zernio adapter documentation](https://chat-sdk.dev/adapters/vendor-offi
       "pdf",
       "video",
     ],
-    install: `Add this Chat SDK channel from kaf's registry. This writes \`agent/channels/velt.ts\` and installs Chat SDK and its adapter dependencies:
+    install: `Add this Chat SDK channel from orcel's registry. This writes \`agent/channels/velt.ts\` and installs Chat SDK and its adapter dependencies:
 
 \`\`\`bash
-kaf add channel/chat-sdk-velt
+orcel add channel/chat-sdk-velt
 \`\`\``,
     quickStart: `Create \`agent/channels/velt.ts\`:
 
@@ -720,7 +720,7 @@ kaf add channel/chat-sdk-velt
 import { createVeltAdapter } from "@veltdev/chat-sdk-adapter";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "kaf/channels/chat-sdk";
+import { chatSdkChannel } from "orcel/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
@@ -748,17 +748,17 @@ export default channel;
 \`\`\`
 
 See the [Velt adapter documentation](https://chat-sdk.dev/adapters/vendor-official/velt) for supported events, capabilities, and credentials.`,
-    configure: `Create a Velt bot user and webhook, set \`VELT_API_KEY\` and \`VELT_WEBHOOK_SECRET\`, then send comment events to \`/kaf/v1/velt\`. The adapter maps documents to channels, annotations to threads, and comments to messages. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for kaf session dispatch, state, streaming, and human-in-the-loop behavior.`,
+    configure: `Create a Velt bot user and webhook, set \`VELT_API_KEY\` and \`VELT_WEBHOOK_SECRET\`, then send comment events to \`/orcel/v1/velt\`. The adapter maps documents to channels, annotations to threads, and comments to messages. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for orcel session dispatch, state, streaming, and human-in-the-loop behavior.`,
   },
   "chat-sdk-sendblue": {
     logo: "sendblue",
     docsHref: "/docs/channels/chat-sdk",
     badge: "Provider official",
     keywords: ["chat sdk", "sendblue", "imessage", "sms", "rcs", "tapbacks", "phone"],
-    install: `Add this Chat SDK channel from kaf's registry. This writes \`agent/channels/sendblue.ts\` and installs Chat SDK and its adapter dependencies:
+    install: `Add this Chat SDK channel from orcel's registry. This writes \`agent/channels/sendblue.ts\` and installs Chat SDK and its adapter dependencies:
 
 \`\`\`bash
-kaf add channel/chat-sdk-sendblue
+orcel add channel/chat-sdk-sendblue
 \`\`\``,
     quickStart: `Create \`agent/channels/sendblue.ts\`:
 
@@ -767,7 +767,7 @@ kaf add channel/chat-sdk-sendblue
 import { createSendblueAdapter } from "chat-adapter-sendblue";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "kaf/channels/chat-sdk";
+import { chatSdkChannel } from "orcel/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
@@ -791,7 +791,7 @@ export default channel;
 \`\`\`
 
 See the [Sendblue adapter documentation](https://chat-sdk.dev/adapters/vendor-official/sendblue) for supported events, capabilities, and credentials.`,
-    configure: `Set \`SENDBLUE_API_KEY\`, \`SENDBLUE_API_SECRET\`, and \`SENDBLUE_FROM_NUMBER\`, then point Sendblue webhooks at \`/kaf/v1/sendblue\`. The adapter also supports tapbacks, typing indicators, delivery callbacks, and number lookup. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for kaf session dispatch, state, streaming, and human-in-the-loop behavior.`,
+    configure: `Set \`SENDBLUE_API_KEY\`, \`SENDBLUE_API_SECRET\`, and \`SENDBLUE_FROM_NUMBER\`, then point Sendblue webhooks at \`/orcel/v1/sendblue\`. The adapter also supports tapbacks, typing indicators, delivery callbacks, and number lookup. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for orcel session dispatch, state, streaming, and human-in-the-loop behavior.`,
   },
   "chat-sdk-novu": {
     logo: "novu",
@@ -807,10 +807,10 @@ See the [Sendblue adapter documentation](https://chat-sdk.dev/adapters/vendor-of
       "email",
       "multichannel",
     ],
-    install: `Add this Chat SDK channel from kaf's registry. This writes \`agent/channels/novu.ts\` and installs Chat SDK and its adapter dependencies:
+    install: `Add this Chat SDK channel from orcel's registry. This writes \`agent/channels/novu.ts\` and installs Chat SDK and its adapter dependencies:
 
 \`\`\`bash
-kaf add channel/chat-sdk-novu
+orcel add channel/chat-sdk-novu
 \`\`\``,
     quickStart: `Create \`agent/channels/novu.ts\`:
 
@@ -819,7 +819,7 @@ kaf add channel/chat-sdk-novu
 import { createNovuAdapter } from "@novu/chat-sdk-adapter";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "kaf/channels/chat-sdk";
+import { chatSdkChannel } from "orcel/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
@@ -842,7 +842,7 @@ export default channel;
 \`\`\`
 
 See the [Novu adapter documentation](https://chat-sdk.dev/adapters/vendor-official/novu) for supported events, capabilities, and credentials.`,
-    configure: `Run \`npx novu connect --runtime chat-sdk\` to authenticate Novu, choose a channel, and create the required environment variables. Novu manages provider credentials, identity, delivery, and conversation history across its supported channels. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for kaf session dispatch, state, streaming, and human-in-the-loop behavior.`,
+    configure: `Run \`npx novu connect --runtime chat-sdk\` to authenticate Novu, choose a channel, and create the required environment variables. Novu manages provider credentials, identity, delivery, and conversation history across its supported channels. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for orcel session dispatch, state, streaming, and human-in-the-loop behavior.`,
   },
   "chat-sdk-liveblocks": {
     logo: "liveblocks",
@@ -857,10 +857,10 @@ See the [Novu adapter documentation](https://chat-sdk.dev/adapters/vendor-offici
       "mentions",
       "reactions",
     ],
-    install: `Add this Chat SDK channel from kaf's registry. This writes \`agent/channels/liveblocks.ts\` and installs Chat SDK and its adapter dependencies:
+    install: `Add this Chat SDK channel from orcel's registry. This writes \`agent/channels/liveblocks.ts\` and installs Chat SDK and its adapter dependencies:
 
 \`\`\`bash
-kaf add channel/chat-sdk-liveblocks
+orcel add channel/chat-sdk-liveblocks
 \`\`\``,
     quickStart: `Create \`agent/channels/liveblocks.ts\`:
 
@@ -869,7 +869,7 @@ kaf add channel/chat-sdk-liveblocks
 import { createLiveblocksAdapter } from "@liveblocks/chat-sdk-adapter";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "kaf/channels/chat-sdk";
+import { chatSdkChannel } from "orcel/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
@@ -897,39 +897,39 @@ export default channel;
 \`\`\`
 
 See the [Liveblocks adapter documentation](https://chat-sdk.dev/adapters/vendor-official/liveblocks) for supported events, capabilities, and credentials.`,
-    configure: `Create a Liveblocks webhook, set \`LIVEBLOCKS_SECRET_KEY\` and \`LIVEBLOCKS_WEBHOOK_SECRET\`, and send comment events to \`/kaf/v1/liveblocks\`. The adapter maps rooms to channels, comment threads to threads, and comments to messages. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for kaf session dispatch, state, streaming, and human-in-the-loop behavior.`,
+    configure: `Create a Liveblocks webhook, set \`LIVEBLOCKS_SECRET_KEY\` and \`LIVEBLOCKS_WEBHOOK_SECRET\`, and send comment events to \`/orcel/v1/liveblocks\`. The adapter maps rooms to channels, comment threads to threads, and comments to messages. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for orcel session dispatch, state, streaming, and human-in-the-loop behavior.`,
   },
   linq: {
     logo: "linq",
     docsHref: "/docs/channels/linq",
     badge: "First-party",
     keywords: ["linq", "imessage", "sms", "apple messages", "tapbacks", "phone"],
-    install: `Add Linq from kaf's registry, then follow the guided Connect or portable credential setup:
+    install: `Add Linq from orcel's registry, then follow the guided Connect or portable credential setup:
 
 \`\`\`bash
-kaf add channel/linq
+orcel add channel/linq
 \`\`\``,
     quickStart: `Create \`agent/channels/linq.ts\`:
 
 \`\`\`ts
 import { connectLinqCredentials } from "@vercel/connect/eve";
-import { linqChannel } from "kaf/channels/linq";
+import { linqChannel } from "orcel/channels/linq";
 
 export default linqChannel({
   credentials: connectLinqCredentials("linq/my-agent"),
 });
 \`\`\``,
-    configure: `The guided setup can provision a managed Linq line with Vercel Connect or collect portable credentials. Connect-backed setup creates a native Linq connector and routes verified triggers to \`/kaf/v1/linq\`; with portable credentials, deploy first, then create a signed Linq webhook for that route.`,
+    configure: `The guided setup can provision a managed Linq line with Vercel Connect or collect portable credentials. Connect-backed setup creates a native Linq connector and routes verified triggers to \`/orcel/v1/linq\`; with portable credentials, deploy first, then create a signed Linq webhook for that route.`,
   },
   "chat-sdk-kapso": {
     logo: "kapso",
     docsHref: "/docs/channels/chat-sdk",
     badge: "Provider official",
     keywords: ["chat sdk", "kapso", "whatsapp", "meta", "business", "buttons", "media"],
-    install: `Add this Chat SDK channel from kaf's registry. This writes \`agent/channels/kapso.ts\` and installs Chat SDK and its adapter dependencies:
+    install: `Add this Chat SDK channel from orcel's registry. This writes \`agent/channels/kapso.ts\` and installs Chat SDK and its adapter dependencies:
 
 \`\`\`bash
-kaf add channel/chat-sdk-kapso
+orcel add channel/chat-sdk-kapso
 \`\`\``,
     quickStart: `Create \`agent/channels/kapso.ts\`:
 
@@ -938,7 +938,7 @@ kaf add channel/chat-sdk-kapso
 import { createKapsoAdapter } from "@kapso/chat-adapter";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "kaf/channels/chat-sdk";
+import { chatSdkChannel } from "orcel/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
@@ -965,29 +965,29 @@ export default channel;
 \`\`\`
 
 See the [Kapso adapter documentation](https://chat-sdk.dev/adapters/vendor-official/kapso) for supported events, capabilities, and credentials.`,
-    configure: `Connect a WhatsApp number in Kapso, set \`KAPSO_API_KEY\`, \`KAPSO_PHONE_NUMBER_ID\`, and \`KAPSO_WEBHOOK_SECRET\`, then point the Kapso webhook at \`/kaf/v1/kapso\`. Use this provider-managed option when you do not want to integrate directly with the WhatsApp Cloud API. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for kaf session dispatch, state, streaming, and human-in-the-loop behavior.`,
+    configure: `Connect a WhatsApp number in Kapso, set \`KAPSO_API_KEY\`, \`KAPSO_PHONE_NUMBER_ID\`, and \`KAPSO_WEBHOOK_SECRET\`, then point the Kapso webhook at \`/orcel/v1/kapso\`. Use this provider-managed option when you do not want to integrate directly with the WhatsApp Cloud API. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for orcel session dispatch, state, streaming, and human-in-the-loop behavior.`,
   },
   photon: {
     logo: "photon",
     docsHref: "/docs/channels/photon",
     badge: "First-party",
     keywords: ["imessage", "apple messages", "photon", "sms", "phone"],
-    install: `Add Photon from kaf's registry, then follow the guided project, phone, and deployment setup:
+    install: `Add Photon from orcel's registry, then follow the guided project, phone, and deployment setup:
 
 \`\`\`bash
-kaf add channel/photon-imessage
+orcel add channel/photon-imessage
 \`\`\``,
     quickStart: `Create \`agent/channels/photon.ts\`:
 
 \`\`\`ts
 import { connectPhotonCredentials } from "@vercel/connect/eve";
-import { photonIMessageChannel } from "kaf/channels/photon";
+import { photonIMessageChannel } from "orcel/channels/photon";
 
 export default photonIMessageChannel({
   credentials: connectPhotonCredentials("photon/my-agent"),
 });
 \`\`\``,
-    configure: `The guided setup can create a dedicated Photon project or use existing credentials, register your phone, and choose Vercel Connect or portable environment credentials. Connect-backed setup creates a native Photon connector and routes verified triggers to \`/kaf/v1/photon\`; portable setup registers a signed Photon webhook directly.`,
+    configure: `The guided setup can create a dedicated Photon project or use existing credentials, register your phone, and choose Vercel Connect or portable environment credentials. Connect-backed setup creates a native Photon connector and routes verified triggers to \`/orcel/v1/photon\`; portable setup registers a signed Photon webhook directly.`,
   },
 
   "chat-sdk-dial": {
@@ -995,10 +995,10 @@ export default photonIMessageChannel({
     docsHref: "/docs/channels/chat-sdk",
     badge: "Provider official",
     keywords: ["chat sdk", "dial", "sms", "mms", "imessage", "voice", "phone", "calls"],
-    install: `Add this Chat SDK channel from kaf's registry. This writes \`agent/channels/dial.ts\` and installs Chat SDK and its adapter dependencies:
+    install: `Add this Chat SDK channel from orcel's registry. This writes \`agent/channels/dial.ts\` and installs Chat SDK and its adapter dependencies:
 
 \`\`\`bash
-kaf add channel/chat-sdk-dial
+orcel add channel/chat-sdk-dial
 \`\`\``,
     quickStart: `Create \`agent/channels/dial.ts\`:
 
@@ -1007,7 +1007,7 @@ kaf add channel/chat-sdk-dial
 import { createDialAdapter } from "@getdial/chat-sdk-adapter";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "kaf/channels/chat-sdk";
+import { chatSdkChannel } from "orcel/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
@@ -1034,17 +1034,17 @@ export default channel;
 \`\`\`
 
 See the [Dial adapter documentation](https://chat-sdk.dev/adapters/vendor-official/dial) for supported events, capabilities, and credentials.`,
-    configure: `Create a Dial number, set \`DIAL_API_KEY\`, \`DIAL_FROM_NUMBER_ID\`, and \`DIAL_WEBHOOK_SECRET\`, then point its webhook at \`/kaf/v1/dial\`. Dial maps each phone-number pair to a thread and delivers SMS, MMS, iMessage, and voice transcripts. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for kaf session dispatch, state, streaming, and human-in-the-loop behavior.`,
+    configure: `Create a Dial number, set \`DIAL_API_KEY\`, \`DIAL_FROM_NUMBER_ID\`, and \`DIAL_WEBHOOK_SECRET\`, then point its webhook at \`/orcel/v1/dial\`. Dial maps each phone-number pair to a thread and delivers SMS, MMS, iMessage, and voice transcripts. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for orcel session dispatch, state, streaming, and human-in-the-loop behavior.`,
   },
   "chat-sdk-agentphone": {
     logo: "agentphone",
     docsHref: "/docs/channels/chat-sdk",
     badge: "Provider official",
     keywords: ["chat sdk", "agentphone", "sms", "mms", "imessage", "voice", "phone", "calls"],
-    install: `Add this Chat SDK channel from kaf's registry. This writes \`agent/channels/agentphone.ts\` and installs Chat SDK and its adapter dependencies:
+    install: `Add this Chat SDK channel from orcel's registry. This writes \`agent/channels/agentphone.ts\` and installs Chat SDK and its adapter dependencies:
 
 \`\`\`bash
-kaf add channel/chat-sdk-agentphone
+orcel add channel/chat-sdk-agentphone
 \`\`\``,
     quickStart: `Create \`agent/channels/agentphone.ts\`:
 
@@ -1053,7 +1053,7 @@ kaf add channel/chat-sdk-agentphone
 import { createAgentPhoneAdapter } from "@agentphone/chat-sdk-adapter";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "kaf/channels/chat-sdk";
+import { chatSdkChannel } from "orcel/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
@@ -1080,17 +1080,17 @@ export default channel;
 \`\`\`
 
 See the [AgentPhone adapter documentation](https://chat-sdk.dev/adapters/vendor-official/agentphone) for supported events, capabilities, and credentials.`,
-    configure: `Create an AgentPhone agent, set \`AGENTPHONE_API_KEY\`, \`AGENTPHONE_AGENT_ID\`, and \`AGENTPHONE_WEBHOOK_SECRET\`, then point its webhook at \`/kaf/v1/agentphone\`. The adapter handles SMS, MMS, iMessage, and completed voice-call transcripts. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for kaf session dispatch, state, streaming, and human-in-the-loop behavior.`,
+    configure: `Create an AgentPhone agent, set \`AGENTPHONE_API_KEY\`, \`AGENTPHONE_AGENT_ID\`, and \`AGENTPHONE_WEBHOOK_SECRET\`, then point its webhook at \`/orcel/v1/agentphone\`. The adapter handles SMS, MMS, iMessage, and completed voice-call transcripts. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for orcel session dispatch, state, streaming, and human-in-the-loop behavior.`,
   },
   "chat-sdk-lark": {
     logo: "lark",
     docsHref: "/docs/channels/chat-sdk",
     badge: "Provider official",
     keywords: ["chat sdk", "lark", "feishu", "bytedance", "cardkit", "messaging"],
-    install: `Add this Chat SDK channel from kaf's registry. This writes \`agent/channels/lark.ts\` and installs Chat SDK and its adapter dependencies:
+    install: `Add this Chat SDK channel from orcel's registry. This writes \`agent/channels/lark.ts\` and installs Chat SDK and its adapter dependencies:
 
 \`\`\`bash
-kaf add channel/chat-sdk-lark
+orcel add channel/chat-sdk-lark
 \`\`\``,
     quickStart: `Create \`agent/channels/lark.ts\`:
 
@@ -1099,7 +1099,7 @@ kaf add channel/chat-sdk-lark
 import { createLarkAdapter } from "@larksuite/vercel-chat-adapter";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "kaf/channels/chat-sdk";
+import { chatSdkChannel } from "orcel/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
@@ -1124,17 +1124,17 @@ export default channel;
 \`\`\`
 
 See the [Lark / Feishu adapter documentation](https://chat-sdk.dev/adapters/vendor-official/lark) for all supported events and credentials.`,
-    configure: `Create a Lark or Feishu app and set \`LARK_APP_ID\` and \`LARK_APP_SECRET\`. The adapter uses Lark’s WebSocket long connection rather than an HTTP webhook, so call \`bot.initialize()\` and run kaf in a long-lived Node.js process. This is a vendor-official Chat SDK adapter built on the official Lark Node SDK. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for kaf session dispatch, state, streaming, and human-in-the-loop behavior.`,
+    configure: `Create a Lark or Feishu app and set \`LARK_APP_ID\` and \`LARK_APP_SECRET\`. The adapter uses Lark’s WebSocket long connection rather than an HTTP webhook, so call \`bot.initialize()\` and run orcel in a long-lived Node.js process. This is a vendor-official Chat SDK adapter built on the official Lark Node SDK. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for orcel session dispatch, state, streaming, and human-in-the-loop behavior.`,
   },
   "chat-sdk-beeper": {
     logo: "beeper",
     docsHref: "/docs/channels/chat-sdk",
     badge: "Provider official",
     keywords: ["chat sdk", "matrix", "beeper", "encrypted chat", "e2ee", "signal", "instagram"],
-    install: `Add this Chat SDK channel from kaf's registry. This writes \`agent/channels/beeper.ts\` and installs Chat SDK and its adapter dependencies:
+    install: `Add this Chat SDK channel from orcel's registry. This writes \`agent/channels/beeper.ts\` and installs Chat SDK and its adapter dependencies:
 
 \`\`\`bash
-kaf add channel/chat-sdk-beeper
+orcel add channel/chat-sdk-beeper
 \`\`\``,
     quickStart: `Create \`agent/channels/matrix.ts\`:
 
@@ -1143,7 +1143,7 @@ kaf add channel/chat-sdk-beeper
 import { createMatrixAdapter } from "@beeper/chat-adapter-matrix";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "kaf/channels/chat-sdk";
+import { chatSdkChannel } from "orcel/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
@@ -1168,7 +1168,7 @@ export default channel;
 \`\`\`
 
 See the [Beeper Matrix adapter documentation](https://chat-sdk.dev/adapters/vendor-official/matrix) for all supported events and credentials.`,
-    configure: `Set the Matrix homeserver, access token, and bot identity environment variables documented by Beeper. This adapter consumes Matrix sync rather than webhooks, so call \`bot.initialize()\` and run kaf in a long-lived Node.js process. It requires Node.js 22 or newer and a durable state adapter in production. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for kaf session dispatch, state, streaming, and human-in-the-loop behavior.`,
+    configure: `Set the Matrix homeserver, access token, and bot identity environment variables documented by Beeper. This adapter consumes Matrix sync rather than webhooks, so call \`bot.initialize()\` and run orcel in a long-lived Node.js process. It requires Node.js 22 or newer and a durable state adapter in production. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for orcel session dispatch, state, streaming, and human-in-the-loop behavior.`,
   },
   "chat-sdk-resend": {
     logo: "resend",
@@ -1182,10 +1182,10 @@ See the [Beeper Matrix adapter documentation](https://chat-sdk.dev/adapters/vend
       "transactional email",
       "attachments",
     ],
-    install: `Add this Chat SDK channel from kaf's registry. This writes \`agent/channels/resend.ts\` and installs Chat SDK and its adapter dependencies:
+    install: `Add this Chat SDK channel from orcel's registry. This writes \`agent/channels/resend.ts\` and installs Chat SDK and its adapter dependencies:
 
 \`\`\`bash
-kaf add channel/chat-sdk-resend
+orcel add channel/chat-sdk-resend
 \`\`\``,
     quickStart: `Create \`agent/channels/resend.ts\`:
 
@@ -1194,7 +1194,7 @@ kaf add channel/chat-sdk-resend
 import { createResendAdapter } from "@resend/chat-sdk-adapter";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "kaf/channels/chat-sdk";
+import { chatSdkChannel } from "orcel/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
@@ -1220,13 +1220,13 @@ export default channel;
 \`\`\`
 
 See the [Email (Resend) adapter documentation](https://chat-sdk.dev/adapters/vendor-official/resend) for all supported events and credentials.`,
-    configure: `Verify a sending domain in Resend, set \`RESEND_API_KEY\`, \`RESEND_WEBHOOK_SECRET\`, and \`RESEND_FROM_ADDRESS\`, then point the Resend inbound webhook at \`/kaf/v1/resend\`. This is a vendor-official Chat SDK adapter. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for kaf session dispatch, state, streaming, and human-in-the-loop behavior.`,
+    configure: `Verify a sending domain in Resend, set \`RESEND_API_KEY\`, \`RESEND_WEBHOOK_SECRET\`, and \`RESEND_FROM_ADDRESS\`, then point the Resend inbound webhook at \`/orcel/v1/resend\`. This is a vendor-official Chat SDK adapter. See the [Chat SDK channel docs](/docs/channels/chat-sdk) for orcel session dispatch, state, streaming, and human-in-the-loop behavior.`,
     relatedResources: [
       {
-        title: "Give your kaf agent an email inbox with Resend",
+        title: "Give your orcel agent an email inbox with Resend",
         description:
-          "Wire an kaf agent to email through the Chat SDK channel and Resend adapter so it can hold threaded, multi-turn conversations, send proactive messages, and process attachments.",
-        href: "https://vercel.com/kb/guide/kaf-agent-with-resend",
+          "Wire an orcel agent to email through the Chat SDK channel and Resend adapter so it can hold threaded, multi-turn conversations, send proactive messages, and process attachments.",
+        href: "https://vercel.com/kb/guide/orcel-agent-with-resend",
       },
     ],
   },
@@ -1235,10 +1235,10 @@ See the [Email (Resend) adapter documentation](https://chat-sdk.dev/adapters/ven
     docsHref: "/docs/channels/chat-sdk",
     badge: "Chat SDK",
     keywords: ["chat sdk", "gmail", "email", "google workspace", "pubsub", "oauth"],
-    install: `Add this Chat SDK channel from kaf's registry. This writes \`agent/channels/gmail.ts\` and installs Chat SDK and its adapter dependencies:
+    install: `Add this Chat SDK channel from orcel's registry. This writes \`agent/channels/gmail.ts\` and installs Chat SDK and its adapter dependencies:
 
 \`\`\`bash
-kaf add channel/chat-sdk-gmail
+orcel add channel/chat-sdk-gmail
 \`\`\``,
     quickStart: `Create \`agent/channels/gmail.ts\`:
 
@@ -1247,7 +1247,7 @@ kaf add channel/chat-sdk-gmail
 import { createGmailAdapter } from "@chat-adapter/gmail";
 import { createRedisState } from "@chat-adapter/state-redis";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "kaf/channels/chat-sdk";
+import { chatSdkChannel } from "orcel/channels/chat-sdk";
 
 export const gmail = createGmailAdapter();
 
@@ -1276,7 +1276,7 @@ export default channel;
 **Installing or deploying this channel does not start Gmail listening.** After configuring credentials and Pub/Sub, run the maintenance job once as described under [Configure](#configure). Otherwise, registration waits until the first successful daily job.
 
 Gmail receives only messages with the configured handoff label. Responses are sent after the turn completes because email cannot edit an in-progress response. The registry installs Redis-backed state so Gmail's cursor, delivery receipts, and lock survive serverless invocations. See the [Gmail adapter documentation](https://chat-sdk.dev/adapters/official/gmail) for credentials, label selection, and delivery semantics.`,
-    configure: `Enable the Gmail API and Pub/Sub, then configure user-context OAuth for the mailbox, an authenticated wrapped Pub/Sub push subscription, and a Gmail handoff-label ID. Set \`GMAIL_MAILBOX\`, \`GMAIL_LABEL_ID\`, \`GMAIL_CLIENT_ID\`, \`GMAIL_CLIENT_SECRET\`, \`GMAIL_REFRESH_TOKEN\`, \`GMAIL_PUBSUB_AUDIENCE\`, \`GMAIL_PUBSUB_SERVICE_ACCOUNT_EMAIL\`, \`GMAIL_SUBSCRIPTION\`, and \`GMAIL_TOPIC_NAME\`. Set \`REDIS_URL\` to a durable Redis connection URL; Upstash REST credentials are not compatible with this adapter. The adapter mounts its authenticated Pub/Sub webhook at \`/kaf/v1/gmail\`.
+    configure: `Enable the Gmail API and Pub/Sub, then configure user-context OAuth for the mailbox, an authenticated wrapped Pub/Sub push subscription, and a Gmail handoff-label ID. Set \`GMAIL_MAILBOX\`, \`GMAIL_LABEL_ID\`, \`GMAIL_CLIENT_ID\`, \`GMAIL_CLIENT_SECRET\`, \`GMAIL_REFRESH_TOKEN\`, \`GMAIL_PUBSUB_AUDIENCE\`, \`GMAIL_PUBSUB_SERVICE_ACCOUNT_EMAIL\`, \`GMAIL_SUBSCRIPTION\`, and \`GMAIL_TOPIC_NAME\`. Set \`REDIS_URL\` to a durable Redis connection URL; Upstash REST credentials are not compatible with this adapter. The adapter mounts its authenticated Pub/Sub webhook at \`/orcel/v1/gmail\`.
 
 The registry also writes \`agent/schedules/gmail-maintenance.ts\`, which calls \`gmail.watch()\` on a daily \`0 9 * * *\` schedule (09:00 UTC on Vercel) to register or renew Gmail's watch. Adjust the cadence for your host and plan. Incoming Pub/Sub webhooks run synchronization from the saved cursor; the schedule does not process messages. Do not call \`gmail.sync()\` from this schedule or at startup: the generated message handlers use \`send()\`, which requires an active Chat SDK webhook context. Missed changes can be picked up by a later successful webhook, but this scaffold does not provide an independent recovery sync.
 
@@ -1310,10 +1310,10 @@ const baseExtensionPresentations: Record<string, ExtensionPresentation> = {
       "media generation",
       "exports",
     ],
-    install: `Install the BlitzReels extension for kaf:
+    install: `Install the BlitzReels extension for orcel:
 
 \`\`\`bash
-kaf add extension/blitzreels
+orcel add extension/blitzreels
 \`\`\`
 
 The extension requires Node.js 24 or later. It wraps the BlitzReels API with typed tools for clipping, project inspection, visual-QA repair, AI media generation, and exports.`,
@@ -1336,13 +1336,13 @@ export default blitzreels({
 The filename supplies the \`blitzreels\` namespace. The extension adds project, media, clipping, repair, generation, snapshot, and export tools such as \`blitzreels__create_clip_batch\`, \`blitzreels__repair_clip\`, and \`blitzreels__start_export\`. It also ships a clipping skill that teaches the agent the long-form-to-shorts workflow and visual-QA repair loop.`,
     configure: `Keep the API key in the environment rather than prompts or source control. Keys are environment-bounded: use \`br_live_...\` with the production API, and use \`br_test_...\` only with the matching local or development \`baseUrl\`.
 
-Source imports, clipping, generation, and exports call the configured BlitzReels API. Credit-spending, download, and render tools require kaf approval by default, and durable retries reuse the original call receipt instead of spending twice. Override an individual tool from a directory mount when it needs stricter \`always()\` approval, or use \`disableTool()\` to remove it.
+Source imports, clipping, generation, and exports call the configured BlitzReels API. Credit-spending, download, and render tools require orcel approval by default, and durable retries reuse the original call receipt instead of spending twice. Override an individual tool from a directory mount when it needs stricter \`always()\` approval, or use \`disableTool()\` to remove it.
 
 See the [BlitzReels extension package](https://www.npmjs.com/package/@blitzreels/eve) for the complete tool list, configuration, approval defaults, error contract, and OAuth-backed MCP alternative.`,
   },
   "mux-video": {
     logo: "mux",
-    docsHref: "https://github.com/muxinc/mux-video-agent/tree/main/packages/kaf-video",
+    docsHref: "https://github.com/muxinc/mux-video-agent/tree/main/packages/orcel-video",
     keywords: [
       "video",
       "video assets",
@@ -1363,7 +1363,7 @@ cd mux-video-agent
 pnpm install
 \`\`\`
 
-The extension requires Node.js 24 or later. The reusable package lives at \`packages/kaf-video\` and is mounted by the root agent.`,
+The extension requires Node.js 24 or later. The reusable package lives at \`packages/orcel-video\` and is mounted by the root agent.`,
     quickStart: `Add your Mux access token to the template's environment:
 
 \`\`\`bash title=".env.local"
@@ -1374,7 +1374,7 @@ MUX_TOKEN_SECRET=mux_token_secret_here
 The template mounts the extension under \`agent/extensions/\`:
 
 \`\`\`ts title="agent/extensions/mux_video.ts"
-import muxVideo from "@mux/kaf-video";
+import muxVideo from "@mux/orcel-video";
 
 export default muxVideo({
   tokenId: process.env.MUX_TOKEN_ID,
@@ -1401,10 +1401,10 @@ The extension supports creating and inspecting assets, exact-range clips, subtit
       "fetch",
       "web automation",
     ],
-    install: `Install the Browserbase extension for kaf:
+    install: `Install the Browserbase extension for orcel:
 
 \`\`\`bash
-kaf add extension/browserbase
+orcel add extension/browserbase
 \`\`\`
 
 The extension requires Node.js 24 or later. A Browserbase API key covers both cloud browser sessions and Stagehand inference through Browserbase Model Gateway, so you do not need a separate model-provider key.`,
@@ -1440,11 +1440,11 @@ export default browserbase({
 });
 \`\`\`
 
-Browserbase uses keep-alive sessions and kaf's durable per-session state to reconnect across workflow steps and function invocations. Call \`browserbase__stop_session\` when the task finishes to release billable browser time. Keep API keys out of prompts, and add approval gates around sensitive or irreversible browser actions. See the [Browserbase extension package](https://www.npmjs.com/package/@browserbasehq/eve) for the complete tool and configuration reference.`,
+Browserbase uses keep-alive sessions and orcel's durable per-session state to reconnect across workflow steps and function invocations. Call \`browserbase__stop_session\` when the task finishes to release billable browser time. Keep API keys out of prompts, and add approval gates around sensitive or irreversible browser actions. See the [Browserbase extension package](https://www.npmjs.com/package/@browserbasehq/eve) for the complete tool and configuration reference.`,
   },
   kernel: {
     logo: "kernel",
-    docsHref: "https://www.kernel.sh/docs/integrations/vercel/kaf-extension",
+    docsHref: "https://www.kernel.sh/docs/integrations/vercel/orcel-extension",
     keywords: [
       "browser",
       "browser automation",
@@ -1454,13 +1454,13 @@ Browserbase uses keep-alive sessions and kaf's durable per-session state to reco
       "managed auth",
       "vercel connect",
     ],
-    install: `Install the Kernel extension for kaf:
+    install: `Install the Kernel extension for orcel:
 
 \`\`\`bash
-kaf add extension/kernel
+orcel add extension/kernel
 \`\`\`
 
-The extension requires Node.js 24 or later and kaf 0.25 or later. It mounts Kernel's hosted MCP browser tools and a \`browse\` skill without requiring you to maintain browser tool code.`,
+The extension requires Node.js 24 or later and orcel 0.25 or later. It mounts Kernel's hosted MCP browser tools and a \`browse\` skill without requiring you to maintain browser tool code.`,
     quickStart: `Create and attach a Kernel connector with [Vercel Connect](https://vercel.com/connect):
 
 \`\`\`bash
@@ -1483,25 +1483,25 @@ The filename supplies the \`kernel\` namespace. The extension adds browser manag
 export { default } from "@onkernel/eve-extension";
 \`\`\`
 
-The default mount can execute JavaScript in the browser VM and reuse authenticated browser sessions. For team or multi-tenant agents, prefer Vercel Connect so each user authenticates separately, and add an approval gate by overriding the extension's \`browser\` connection. See the [Kernel kaf extension guide](https://www.kernel.sh/docs/integrations/vercel/kaf-extension) for API-key configuration, connection overrides, the complete tool list, and security guidance.`,
+The default mount can execute JavaScript in the browser VM and reuse authenticated browser sessions. For team or multi-tenant agents, prefer Vercel Connect so each user authenticates separately, and add an approval gate by overriding the extension's \`browser\` connection. See the [Kernel orcel extension guide](https://www.kernel.sh/docs/integrations/vercel/orcel-extension) for API-key configuration, connection overrides, the complete tool list, and security guidance.`,
     relatedResources: [
       {
         title: "How to build a browser agent that works behind a login",
         description:
-          "Combine kaf, Vercel Connect, and Kernel managed auth so a user signs in once and the agent drives the authenticated browser without handling credentials.",
+          "Combine orcel, Vercel Connect, and Kernel managed auth so a user signs in once and the agent drives the authenticated browser without handling credentials.",
         href: "https://vercel.com/kb/guide/build-a-browser-agent",
       },
       {
         title: "Give your software factory a browser",
         description:
-          "Attach Kernel's cloud browser to the kaf software factory so Foreman can reproduce flow bugs, verify fixes on preview deployments, and save what it learns.",
+          "Attach Kernel's cloud browser to the orcel software factory so Foreman can reproduce flow bugs, verify fixes on preview deployments, and save what it learns.",
         href: "https://vercel.com/kb/guide/software-factory-browser",
       },
     ],
   },
   jetty: {
     logo: "jetty",
-    docsHref: "https://github.com/jettyio/jetty-sdk/tree/main/packages/kaf#readme",
+    docsHref: "https://github.com/jettyio/jetty-sdk/tree/main/packages/orcel#readme",
     keywords: [
       "evals",
       "evaluation",
@@ -1512,13 +1512,13 @@ The default mount can execute JavaScript in the browser VM and reuse authenticat
       "bandit",
       "a/b testing",
     ],
-    install: `Install the Jetty extension for kaf:
+    install: `Install the Jetty extension for orcel:
 
 \`\`\`bash
-kaf add extension/jetty
+orcel add extension/jetty
 \`\`\`
 
-The extension requires Node.js 24 or later and kaf 0.25 or later. It can ingest every completed turn as a durable Jetty trajectory, grade turns inline, steer experiments from their grades, and report native \`kaf eval\` results.`,
+The extension requires Node.js 24 or later and orcel 0.25 or later. It can ingest every completed turn as a durable Jetty trajectory, grade turns inline, steer experiments from their grades, and report native \`orcel eval\` results.`,
     quickStart: `Add your Jetty credentials and collection to the agent's environment:
 
 \`\`\`bash title=".env.local"
@@ -1543,11 +1543,11 @@ export default jetty({
 \`\`\`
 
 The filename supplies the \`jetty\` namespace. The extension contributes a turn-ingestion hook, dynamic instructions that select an experiment arm, and \`jetty__experiment\`, which reports per-arm results and the current leader. Create the \`simple_judge\` task in Jetty before using inline grading; use the default \`ingest\` mode when a separate grader will score trajectories later.`,
-    configure: `The package also includes a reporter for kaf's native eval runner:
+    configure: `The package also includes a reporter for orcel's native eval runner:
 
 \`\`\`ts title="evals/evals.config.ts"
 import { Jetty } from "@jetty/eve/reporter";
-import { defineEvalConfig } from "kaf/evals";
+import { defineEvalConfig } from "orcel/evals";
 
 export default defineEvalConfig({
   reporters: [Jetty()],
@@ -1556,11 +1556,11 @@ export default defineEvalConfig({
 
 The reporter reads \`JETTY_API_TOKEN\` and \`JETTY_COLLECTION\`, sends each eval result to Jetty, and warns rather than failing the eval when Jetty is unavailable. The extension no-ops when its collection is empty, so the same agent can run without Jetty credentials.
 
-Jetty trajectories persist agent inputs and outputs. Redact PII before grading, put sensitive grader parameters in Jetty's \`secretParams\` rather than \`initParams\`, and treat trajectory storage like any other logging surface. See the [Jetty kaf extension documentation](https://github.com/jettyio/jetty-sdk/tree/main/packages/kaf#readme) for all experiment settings and the [worked example](https://github.com/jettyio/jetty-sdk/tree/main/examples/kaf-jetty) for the complete grading loop.`,
+Jetty trajectories persist agent inputs and outputs. Redact PII before grading, put sensitive grader parameters in Jetty's \`secretParams\` rather than \`initParams\`, and treat trajectory storage like any other logging surface. See the [Jetty orcel extension documentation](https://github.com/jettyio/jetty-sdk/tree/main/packages/orcel#readme) for all experiment settings and the [worked example](https://github.com/jettyio/jetty-sdk/tree/main/examples/orcel-jetty) for the complete grading loop.`,
   },
   "github-tools": {
     logo: "github",
-    docsHref: "https://github-tools.com/frameworks/kaf#kaf-extension",
+    docsHref: "https://github-tools.com/frameworks/orcel#orcel-extension",
     keywords: [
       "github",
       "repositories",
@@ -1574,10 +1574,10 @@ Jetty trajectories persist agent inputs and outputs. Redact PII before grading, 
     install: `Install the GitHub Tools extension and Vercel Connect client:
 
 \`\`\`bash
-kaf add extension/github-tools
+orcel add extension/github-tools
 \`\`\`
 
-The extension provides the GitHub toolset as a versioned kaf package. Use a Vercel Connect connector for short-lived, scoped GitHub tokens, or omit \`@vercel/connect\` and authenticate with a GitHub token.`,
+The extension provides the GitHub toolset as a versioned orcel package. Use a Vercel Connect connector for short-lived, scoped GitHub tokens, or omit \`@vercel/connect\` and authenticate with a GitHub token.`,
     quickStart: `Create and attach a GitHub connector to the Vercel project that runs your agent:
 
 \`\`\`bash
@@ -1618,12 +1618,12 @@ export default githubExtension({
 });
 \`\`\`
 
-For local or non-Vercel deployments, omit \`connector\` and set \`GITHUB_TOKEN\`; the extension also accepts an explicit \`token\`. Prefer fine-grained credentials, expose only the presets the agent needs, and keep approval enabled for writes. See the [GitHub Tools kaf documentation](https://github-tools.com/frameworks/kaf#kaf-extension) for token authentication, per-tool overrides, commit attribution, and the complete tool catalog.`,
+For local or non-Vercel deployments, omit \`connector\` and set \`GITHUB_TOKEN\`; the extension also accepts an explicit \`token\`. Prefer fine-grained credentials, expose only the presets the agent needs, and keep approval enabled for writes. See the [GitHub Tools orcel documentation](https://github-tools.com/frameworks/orcel#orcel-extension) for token authentication, per-tool overrides, commit attribution, and the complete tool catalog.`,
     relatedResources: [softwareFactoryGuide, incidentResponseGuide],
   },
   hindsight: {
     logo: "hindsight",
-    docsHref: "https://hindsight.vectorize.io/sdks/integrations/kaf",
+    docsHref: "https://hindsight.vectorize.io/sdks/integrations/orcel",
     keywords: [
       "memory",
       "long-term memory",
@@ -1635,10 +1635,10 @@ For local or non-Vercel deployments, omit \`connector\` and set \`GITHUB_TOKEN\`
       "self-hosted",
       "Vectorize",
     ],
-    install: `Install Hindsight memory for kaf:
+    install: `Install Hindsight memory for orcel:
 
 \`\`\`bash
-kaf add extension/hindsight
+orcel add extension/hindsight
 \`\`\`
 
 This installs \`@vectorize-io/hindsight-eve\` and writes \`agent/instructions/hindsight.ts\` for recall plus \`agent/hooks/hindsight.ts\` for retention. The package requires Node.js 24 or later.`,
@@ -1678,7 +1678,7 @@ export default hindsightMemory({
 
 For a self-hosted server, set \`HINDSIGHT_API_URL\` and pass \`apiKey: null\` to both factories when the server has no authentication. Other shared options include \`bankId\`, \`context\`, \`includeAssistantReply\`, \`timeoutMs\`, and \`onError\`.
 
-A bank is one isolated memory store, and both files must use the same bank. Do not share the default bank across untrusted users; use separate agent deployments with distinct \`HINDSIGHT_BANK_ID\` values for separate users or tenants. See the [Hindsight kaf integration guide](https://hindsight.vectorize.io/sdks/integrations/kaf) for Cloud, self-hosted, and factory configuration.`,
+A bank is one isolated memory store, and both files must use the same bank. Do not share the default bank across untrusted users; use separate agent deployments with distinct \`HINDSIGHT_BANK_ID\` values for separate users or tenants. See the [Hindsight orcel integration guide](https://hindsight.vectorize.io/sdks/integrations/orcel) for Cloud, self-hosted, and factory configuration.`,
   },
 };
 
@@ -1695,19 +1695,19 @@ const memoryPresentations: Record<string, MemoryPresentation> = {
       "per-principal memory",
       "OIDC",
     ],
-    install: `Install and provision file memory for kaf:
+    install: `Install and provision file memory for orcel:
 
 \`\`\`bash
-kaf add memory/file
+orcel add memory/file
 \`\`\`
 
-After you approve setup, kaf creates or reuses a dedicated private Vercel Blob store, connects it to production, preview, and development, and pulls the resulting environment variables. Vercel Blob usage may incur charges.`,
+After you approve setup, orcel creates or reuses a dedicated private Vercel Blob store, connects it to production, preview, and development, and pulls the resulting environment variables. Vercel Blob usage may incur charges.`,
     quickStart: `The registry writes this memory slot:
 
 \`\`\`ts title="agent/memory/file.ts"
-import { fileMemory } from "kaf/memory/file";
-import { defineMemory } from "kaf/memory";
-import { byPrincipal } from "kaf/memory/scope";
+import { fileMemory } from "orcel/memory/file";
+import { defineMemory } from "orcel/memory";
+import { byPrincipal } from "orcel/memory/scope";
 
 export default defineMemory({
   description: "Remember stable facts and preferences about the caller.",
@@ -1716,14 +1716,14 @@ export default defineMemory({
 });
 \`\`\`
 
-During \`kaf dev\`, file memory stays in the local process. On Vercel, the default backend uses the private Blob store provisioned by setup.`,
-    configure: `Run \`kaf integration setup file-memory\` to repair or re-run provisioning without reinstalling the registry item. Setup uses the first configured function region, preserves an existing kaf-owned store if the project region later changes, and never adopts or changes an application store connected with \`BLOB_*\`.
+During \`orcel dev\`, file memory stays in the local process. On Vercel, the default backend uses the private Blob store provisioned by setup.`,
+    configure: `Run \`orcel integration setup file-memory\` to repair or re-run provisioning without reinstalling the registry item. Setup uses the first configured function region, preserves an existing orcel-owned store if the project region later changes, and never adopts or changes an application store connected with \`BLOB_*\`.
 
-Provisioned bindings use the \`KAF_MEMORY_BLOB_*\` namespace. \`fileMemory()\` prefers \`KAF_MEMORY_BLOB_READ_WRITE_TOKEN\`, then \`KAF_MEMORY_BLOB_STORE_ID\` with Vercel OIDC from the environment or request context. Generic \`BLOB_*\` credentials remain a fallback for manually connected stores. See [File memory](/docs/memory/file) for backend behavior and manual configuration.`,
+Provisioned bindings use the \`ORCEL_MEMORY_BLOB_*\` namespace. \`fileMemory()\` prefers \`ORCEL_MEMORY_BLOB_READ_WRITE_TOKEN\`, then \`ORCEL_MEMORY_BLOB_STORE_ID\` with Vercel OIDC from the environment or request context. Generic \`BLOB_*\` credentials remain a fallback for manually connected stores. See [File memory](/docs/memory/file) for backend behavior and manual configuration.`,
   },
   "upstash-agentkit": {
     logo: "upstash",
-    docsHref: "https://upstash.com/docs/redis/sdks/agentkit/kaf",
+    docsHref: "https://upstash.com/docs/redis/sdks/agentkit/orcel",
     keywords: [
       "upstash",
       "agentkit",
@@ -1735,13 +1735,13 @@ Provisioned bindings use the \`KAF_MEMORY_BLOB_*\` namespace. \`fileMemory()\` p
       "ranked recall",
       "conversation history",
     ],
-    install: `Install the Upstash AgentKit memory provider for kaf:
+    install: `Install the Upstash AgentKit memory provider for orcel:
 
 \`\`\`bash
-kaf add memory/upstash-agentkit
+orcel add memory/upstash-agentkit
 \`\`\`
 
-This installs \`@upstash/agentkit-eve\` and \`@upstash/redis\`, then writes a memory slot. The \`@upstash/agentkit-eve/memory\` entry point requires kaf 0.45.2 or later.`,
+This installs \`@upstash/agentkit-eve\` and \`@upstash/redis\`, then writes a memory slot. The \`@upstash/agentkit-eve/memory\` entry point requires orcel 0.45.2 or later.`,
     quickStart: `Add an Upstash Redis database's REST credentials to the agent's environment:
 
 \`\`\`bash title=".env.local"
@@ -1753,8 +1753,8 @@ The registry creates this memory slot:
 
 \`\`\`ts title="agent/memory/upstash-agentkit.ts"
 import { redisMemory } from "@upstash/agentkit-eve/memory";
-import { defineMemory } from "kaf/memory";
-import { byPrincipal } from "kaf/memory/scope";
+import { defineMemory } from "orcel/memory";
+import { byPrincipal } from "orcel/memory/scope";
 
 export default defineMemory({
   description: "Recall and manage durable context for the current user.",
@@ -1764,25 +1764,25 @@ export default defineMemory({
 \`\`\`
 
 The filename creates the \`upstash-agentkit\` slot. It recalls matching curated facts before each turn, captures user messages after completed turns by default, and gives the model \`upstash-agentkit__save_memory\`, \`upstash-agentkit__search_memory\`, \`upstash-agentkit__read_session\`, and \`upstash-agentkit__forget_memory\` tools.`,
-    configure: `\`byPrincipal\` keeps memory disabled for anonymous and runtime principals, and shares the local-development scope while you run \`kaf dev\`. For a multi-tenant agent, replace it with a scope resolver that derives both tenant and caller identity from verified session context. See [Multi-tenant memory](/docs/patterns/multi-tenant-memory).
+    configure: `\`byPrincipal\` keeps memory disabled for anonymous and runtime principals, and shares the local-development scope while you run \`orcel dev\`. For a multi-tenant agent, replace it with a scope resolver that derives both tenant and caller identity from verified session context. See [Multi-tenant memory](/docs/patterns/multi-tenant-memory).
 
-Use \`redisDocuments()\` with \`fileMemory({ backend: redisDocuments() })\` when you want kaf's bounded, model-curated document and its \`save_memory\` and \`remove_memory\` tools, but want Redis rather than the default local or Vercel Blob backend. Use \`redisMemory()\` for relevance-ranked recall and automatic capture. Both partition Redis with kaf's locked scope key.
+Use \`redisDocuments()\` with \`fileMemory({ backend: redisDocuments() })\` when you want orcel's bounded, model-curated document and its \`save_memory\` and \`remove_memory\` tools, but want Redis rather than the default local or Vercel Blob backend. Use \`redisMemory()\` for relevance-ranked recall and automatic capture. Both partition Redis with orcel's locked scope key.
 
-The provider stores memory content in your Upstash Redis database. Review its retention before enabling it for sensitive data. See the [Upstash AgentKit kaf guide](https://upstash.com/docs/redis/sdks/agentkit/kaf) for options including retention, recall limits, and automatic capture.
+The provider stores memory content in your Upstash Redis database. Review its retention before enabling it for sensitive data. See the [Upstash AgentKit orcel guide](https://upstash.com/docs/redis/sdks/agentkit/orcel) for options including retention, recall limits, and automatic capture.
 
-AgentKit also ships \`@upstash/agentkit-eve-extension\`, an kaf extension that adds Redis Search tools over your own documents and searchable chat history. Mount it separately under \`agent/extensions/\` when you need those capabilities; the memory slot does not depend on it.`,
+AgentKit also ships \`@upstash/agentkit-eve-extension\`, an orcel extension that adds Redis Search tools over your own documents and searchable chat history. Mount it separately under \`agent/extensions/\` when you need those capabilities; the memory slot does not depend on it.`,
   },
   arcana: {
     logo: "arcana",
     docsHref: "https://github.com/KybernesisAI/platform/tree/master/packages/arcana#readme",
     keywords: ["memory", "long-term memory", "semantic search", "brain notes", "Kybernesis"],
-    install: `Install the Kybernesis Arcana provider for kaf:
+    install: `Install the Kybernesis Arcana provider for orcel:
 
 \`\`\`bash
-kaf add memory/arcana
+orcel add memory/arcana
 \`\`\`
 
-This installs \`@kybernesis/arcana\` and writes a memory slot. The provider requires Node.js 24 or later and kaf 0.49 or later.`,
+This installs \`@kybernesis/arcana\` and writes a memory slot. The provider requires Node.js 24 or later and orcel 0.49 or later.`,
     quickStart: `Create an Arcana workspace and workspace-scoped API key, then add both values to the agent's environment:
 
 \`\`\`bash title=".env.local"
@@ -1794,8 +1794,8 @@ The registry creates this memory slot:
 
 \`\`\`ts title="agent/memory/arcana.ts"
 import { arcanaMemory } from "@kybernesis/arcana/memory";
-import { defineMemory } from "kaf/memory";
-import { byPrincipal } from "kaf/memory/scope";
+import { defineMemory } from "orcel/memory";
+import { byPrincipal } from "orcel/memory/scope";
 
 export default defineMemory({
   description: "Recall and manage durable context for the current user.",
@@ -1810,11 +1810,11 @@ export default defineMemory({
 The filename creates the \`arcana\` memory slot. Before each turn with at least four words, Arcana searches memories and queries brain notes, then injects the result as one context message. The provider also gives the model \`arcana__remember\`, \`arcana__recall\`, and \`arcana__search\` tools.`,
     configure: `Arcana does not capture turns automatically by default. The model stores memories deliberately with \`arcana__remember\`; set \`capture: { enabled: true }\` when you want it to capture completed turns automatically.
 
-An Arcana key is scoped to a workspace. Keep the key in a sensitive environment variable and use a separate workspace and key when people or tenants must not share memory. The provider records kaf's scope as a tag, but Arcana isolates data by workspace rather than by kaf scope. See the [Arcana package documentation](https://github.com/KybernesisAI/platform/tree/master/packages/arcana#readme) for the full configuration and tool reference.`,
+An Arcana key is scoped to a workspace. Keep the key in a sensitive environment variable and use a separate workspace and key when people or tenants must not share memory. The provider records orcel's scope as a tag, but Arcana isolates data by workspace rather than by orcel scope. See the [Arcana package documentation](https://github.com/KybernesisAI/platform/tree/master/packages/arcana#readme) for the full configuration and tool reference.`,
   },
   supermemory: {
     logo: "supermemory",
-    docsHref: "https://github.com/supermemoryai/kaf-supermemory#readme",
+    docsHref: "https://github.com/supermemoryai/orcel-supermemory#readme",
     keywords: [
       "memory",
       "long-term memory",
@@ -1824,13 +1824,13 @@ An Arcana key is scoped to a workspace. Keep the key in a sensitive environment 
       "retrieval",
       "Supermemory",
     ],
-    install: `Install the Supermemory provider for kaf:
+    install: `Install the Supermemory provider for orcel:
 
 \`\`\`bash
-kaf add memory/supermemory
+orcel add memory/supermemory
 \`\`\`
 
-This installs \`@supermemory/eve\` and writes a memory slot. The provider requires Node.js 24 or later and kaf 0.47.3 or later.`,
+This installs \`@supermemory/eve\` and writes a memory slot. The provider requires Node.js 24 or later and orcel 0.47.3 or later.`,
     quickStart: `Create a Supermemory API key and add it to the agent's environment:
 
 \`\`\`bash title=".env.local"
@@ -1841,8 +1841,8 @@ The registry creates this memory slot:
 
 \`\`\`ts title="agent/memory/supermemory.ts"
 import supermemory from "@supermemory/eve";
-import { defineMemory } from "kaf/memory";
-import { byPrincipal } from "kaf/memory/scope";
+import { defineMemory } from "orcel/memory";
+import { byPrincipal } from "orcel/memory/scope";
 
 export default defineMemory({
   description: "Recall and manage durable context for the current user.",
@@ -1853,12 +1853,12 @@ export default defineMemory({
 });
 \`\`\`
 
-The filename creates the \`supermemory\` memory slot, so the provider's tools are named \`supermemory__search\`, \`supermemory__remember\`, and \`supermemory__forget\`. The provider uses kaf's locked scope key to partition all reads and writes.`,
-    configure: `\`byPrincipal\` keeps memory disabled for anonymous and runtime principals, and shares the local-development scope while you run \`kaf dev\`. For a multi-tenant agent, replace it with a scope resolver that derives both tenant and caller identity from verified session context. See [Multi-tenant memory](/docs/patterns/multi-tenant-memory).
+The filename creates the \`supermemory\` memory slot, so the provider's tools are named \`supermemory__search\`, \`supermemory__remember\`, and \`supermemory__forget\`. The provider uses orcel's locked scope key to partition all reads and writes.`,
+    configure: `\`byPrincipal\` keeps memory disabled for anonymous and runtime principals, and shares the local-development scope while you run \`orcel dev\`. For a multi-tenant agent, replace it with a scope resolver that derives both tenant and caller identity from verified session context. See [Multi-tenant memory](/docs/patterns/multi-tenant-memory).
 
 Supermemory automatically recalls relevant context before a turn and captures completed turns. It also provides tools to search, read sessions and documents, remember context, extract files, URLs, or text, and forget memories. The provider sends stored conversations and extracted sources to Supermemory; configure its retention and data handling for your application before enabling it for sensitive data.
 
-Keep \`SUPERMEMORY_API_KEY\` in the environment rather than prompts or source control. You can change the container-tag prefix, automatic search, capture policy, and profile-context time zone through \`supermemory(...)\`. See the [Supermemory kaf provider documentation](https://supermemory.ai/docs/integrations/kaf) for all options and tool behavior.`,
+Keep \`SUPERMEMORY_API_KEY\` in the environment rather than prompts or source control. You can change the container-tag prefix, automatic search, capture policy, and profile-context time zone through \`supermemory(...)\`. See the [Supermemory orcel provider documentation](https://supermemory.ai/docs/integrations/orcel) for all options and tool behavior.`,
   },
 };
 
@@ -1867,7 +1867,7 @@ const extensionPresentations: Record<string, ExtensionPresentation> = {
   "agent-browser": {
     logo: "agent-browser",
     docsHref:
-      "https://github.com/vercel-labs/agent-browser/tree/main/packages/%40agent-browser/kaf",
+      "https://github.com/vercel-labs/agent-browser/tree/main/packages/%40agent-browser/orcel",
     keywords: [
       "browser",
       "browser automation",
@@ -1880,10 +1880,10 @@ const extensionPresentations: Record<string, ExtensionPresentation> = {
       "browserbase",
       "browser use",
     ],
-    install: `Install the agent-browser extension for kaf:
+    install: `Install the agent-browser extension for orcel:
 
 \`\`\`bash
-kaf add extension/agent-browser
+orcel add extension/agent-browser
 \`\`\`
 
 The extension installs agent-browser automatically on first use and runs it inside the agent's sandbox. It requires a sandbox backend with real process execution, such as Vercel Sandbox, Docker, or microsandbox.`,
@@ -1895,7 +1895,7 @@ import browser from "@agent-browser/eve";
 export default browser({});
 \`\`\`
 
-The filename supplies the \`browser\` namespace. The extension adds tools such as \`browser__navigate\`, \`browser__snapshot\`, \`browser__click\`, \`browser__fill\`, \`browser__find\`, and \`browser__screenshot\`. agent-browser keeps the underlying browser process and session state in the kaf sandbox.`,
+The filename supplies the \`browser\` namespace. The extension adds tools such as \`browser__navigate\`, \`browser__snapshot\`, \`browser__click\`, \`browser__fill\`, \`browser__find\`, and \`browser__screenshot\`. agent-browser keeps the underlying browser process and session state in the orcel sandbox.`,
     configure: `Restrict browser access to the sites the agent needs with the extension's domain allow-list:
 
 \`\`\`ts title="agent/extensions/browser.ts"
@@ -1910,24 +1910,24 @@ export default browser({
 
 Also configure the [sandbox network policy](/docs/sandbox#network-policy) for defense in depth. Treat saved browser state, cookies, screenshots, downloads, and recordings as sensitive data. Do not place passwords or session tokens in prompts. Use the extension's per-tool overrides to gate or disable actions your agent should not take unattended.
 
-The extension also supports inline screenshots, session naming, proxies, and production pre-installation. See the [agent-browser kaf extension documentation](https://github.com/vercel-labs/agent-browser/tree/main/packages/%40agent-browser/kaf) for the complete options and example app.`,
+The extension also supports inline screenshots, session naming, proxies, and production pre-installation. See the [agent-browser orcel extension documentation](https://github.com/vercel-labs/agent-browser/tree/main/packages/%40agent-browser/orcel) for the complete options and example app.`,
     relatedResources: [
       {
-        title: "Give your kaf agent a browser",
+        title: "Give your orcel agent a browser",
         description:
-          "Changelog introducing the agent-browser extension, which gives kaf agents sandboxed tools to navigate, read, click, fill forms, take screenshots, and inspect network activity.",
-        href: "https://vercel.com/changelog/give-your-kaf-agent-a-browser",
+          "Changelog introducing the agent-browser extension, which gives orcel agents sandboxed tools to navigate, read, click, fill forms, take screenshots, and inspect network activity.",
+        href: "https://vercel.com/changelog/give-your-orcel-agent-a-browser",
       },
     ],
   },
   link: {
     logo: "link",
-    docsHref: "https://github.com/stripe/link-cli/tree/main/packages/integrations/kaf/README.md",
+    docsHref: "https://github.com/stripe/link-cli/tree/main/packages/integrations/orcel/README.md",
     keywords: ["stripe", "wallet", "payments", "checkout", "spend requests", "approval"],
-    install: `Install the Link extension for kaf:
+    install: `Install the Link extension for orcel:
 
 \`\`\`bash
-kaf add extension/link
+orcel add extension/link
 \`\`\`
 
 The extension requires Node.js 24 or later. It uses a configured Link access token; it does not start OAuth or refresh tokens. The token's wallet is shared by every caller who can reach this agent, so mount it only on an appropriately access-controlled agent.`,
@@ -1948,15 +1948,15 @@ export default link({
 \`\`\`
 
 The extension contributes \`link__\` tools for wallet details, payment methods, spend requests, transactions, balances, and purchase reports, plus a wallet skill with the checkout workflow.`,
-    configure: `Creating a spend request requires kaf approval on every call by default. This is separate from Link's purchase approval: leave \`request_approval\` enabled for the normal flow, show the approval URL, then retrieve the same request and verify its current status before using credentials. Setting \`request_approval: false\` only creates a draft; it does not authorize a purchase.
+    configure: `Creating a spend request requires orcel approval on every call by default. This is separate from Link's purchase approval: leave \`request_approval\` enabled for the normal flow, show the approval URL, then retrieve the same request and verify its current status before using credentials. Setting \`request_approval: false\` only creates a draft; it does not authorize a purchase.
 
-Payment credentials requested with \`include: ["card"]\` are returned as tool output and may appear in stored session events. The skill tells the agent not to repeat credentials in chat, but applications remain responsible for transcript access and retention. Keep the token out of prompts and source control; a 401 requires the operator to configure a replacement token. See the [extension documentation](https://github.com/stripe/link-cli/tree/main/packages/integrations/kaf) for the full tool contract and security guidance.`,
+Payment credentials requested with \`include: ["card"]\` are returned as tool output and may appear in stored session events. The skill tells the agent not to repeat credentials in chat, but applications remain responsible for transcript access and retention. Keep the token out of prompts and source control; a 401 requires the operator to configure a replacement token. See the [extension documentation](https://github.com/stripe/link-cli/tree/main/packages/integrations/orcel) for the full tool contract and security guidance.`,
   },
 };
 
 /**
  * Connection presentation overlay, keyed by catalog slug. Transport (`mcp`,
- * `openapi`) and the model-facing description come from `@kaf/catalog`;
+ * `openapi`) and the model-facing description come from `@orcel/catalog`;
  * this carries the docs-only auth modes, optional connector UID, and configure
  * note.
  */
@@ -1998,7 +1998,7 @@ const connectionPresentations: Record<string, ConnectionPresentation> = {
       {
         title: "Manage Vercel projects with a software factory",
         description:
-          "Add Vercel's hosted MCP server to the kaf software factory so Foreman can read build logs, runtime errors, and deployment history through app-scoped Vercel Connect auth and a read-only tool allowlist.",
+          "Add Vercel's hosted MCP server to the orcel software factory so Foreman can read build logs, runtime errors, and deployment history through app-scoped Vercel Connect auth and a read-only tool allowlist.",
         href: "https://vercel.com/kb/guide/software-factory-vercel-mcp",
       },
     ],
@@ -2222,14 +2222,14 @@ const connectionPresentations: Record<string, ConnectionPresentation> = {
     quickStart: `Create \`agent/connections/shopify.ts\`:
 
 \`\`\`ts
-import { defineMcpClientConnection } from "kaf/connections";
+import { defineMcpClientConnection } from "orcel/connections";
 
 const SHOPIFY_EXAMPLE_PROFILE =
   "https://shopify.dev/ucp/agent-profiles/examples/2026-08-25/valid-with-capabilities.json";
 
 // Shopify cannot reach localhost. Use its public profile, or expose this route with a tool like ngrok.
 function agentProfileUrl(): string {
-  if (process.env.KAF_DEV === "1") return SHOPIFY_EXAMPLE_PROFILE;
+  if (process.env.ORCEL_DEV === "1") return SHOPIFY_EXAMPLE_PROFILE;
 
   return \`https://\${process.env.VERCEL_PROJECT_PRODUCTION_URL}/.well-known/ucp\`;
 }
@@ -2339,21 +2339,21 @@ const instrumentationPresentations: Record<string, InstrumentationPresentation> 
     logo: "braintrust",
     docsHref: "/docs/observability/instrumentation",
     keywords: ["otel", "opentelemetry", "tracing", "observability", "evals", "monitoring"],
-    install: `Add the Braintrust integration from kaf's registry:
+    install: `Add the Braintrust integration from orcel's registry:
 
 \`\`\`bash
-kaf add instrumentation/braintrust
+orcel add instrumentation/braintrust
 \`\`\``,
 
-    quickStart: `kaf installs Braintrust instrumentation:
+    quickStart: `orcel installs Braintrust instrumentation:
 
 \`\`\`ts
 // agent/instrumentation/braintrust.ts
-import { braintrustKafInstrumentation, initLogger } from "braintrust";
+import { braintrustOrcelInstrumentation, initLogger } from "braintrust";
 
-export default braintrustKafInstrumentation({
+export default braintrustOrcelInstrumentation({
   metadata: {
-    app: "my-kaf-agent", // Replace with your app name
+    app: "my-orcel-agent", // Replace with your app name
   },
   setup: ({ agentName }) => {
     initLogger({
@@ -2363,25 +2363,25 @@ export default braintrustKafInstrumentation({
   },
 });
 \`\`\``,
-    configure: `Create an API key in the Braintrust dashboard and expose it as \`BRAINTRUST_API_KEY\`. Replace the \`app\` metadata with your app name. Do not wrap the result in \`defineInstrumentation\`, pass \`defineState\`, or add \`braintrustKafHook\`; the instrumentation handles kaf lifecycle events directly. See [Instrumentation](/docs/observability/instrumentation) for content policy and event handling.`,
+    configure: `Create an API key in the Braintrust dashboard and expose it as \`BRAINTRUST_API_KEY\`. Replace the \`app\` metadata with your app name. Do not wrap the result in \`defineInstrumentation\`, pass \`defineState\`, or add \`braintrustOrcelHook\`; the instrumentation handles orcel lifecycle events directly. See [Instrumentation](/docs/observability/instrumentation) for content policy and event handling.`,
   },
   "posthog-instrumentation": {
     logo: "posthog",
     docsHref: "/docs/observability/otel",
     keywords: ["otel", "opentelemetry", "tracing", "observability", "generations", "analytics"],
-    install: `Add PostHog AI Observability from kaf's registry:
+    install: `Add PostHog AI Observability from orcel's registry:
 
 \`\`\`bash
-kaf add instrumentation/posthog
+orcel add instrumentation/posthog
 \`\`\``,
 
-    quickStart: `kaf installs \`agent/instrumentation/posthog.ts\` with PostHog's trace exporter. It also links spans to the user who initiated the session when an authenticated principal is available:
+    quickStart: `orcel installs \`agent/instrumentation/posthog.ts\` with PostHog's trace exporter. It also links spans to the user who initiated the session when an authenticated principal is available:
 
 \`\`\`ts
 // agent/instrumentation/posthog.ts
 import { SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { PostHogTraceExporter } from "@posthog/ai/otel";
-import { otelIntegration } from "kaf/instrumentation/otel";
+import { otelIntegration } from "orcel/instrumentation/otel";
 
 export default otelIntegration({
   spanProcessors: [
@@ -2401,16 +2401,16 @@ export default otelIntegration({
   },
 });
 \`\`\``,
-    configure: `Copy your project token and client API host from PostHog's project settings and expose them as \`POSTHOG_PROJECT_TOKEN\` and \`POSTHOG_HOST\`. Remove \`runtimeContext\` to capture generations anonymously. PostHog groups turns using \`kaf.session.id\` and preserves kaf's trace hierarchy. See [PostHog's kaf installation guide](https://posthog.com/docs/ai-observability/installation/kaf) for verification steps and the [OpenTelemetry guide](/docs/observability/otel) for content policy.`,
+    configure: `Copy your project token and client API host from PostHog's project settings and expose them as \`POSTHOG_PROJECT_TOKEN\` and \`POSTHOG_HOST\`. Remove \`runtimeContext\` to capture generations anonymously. PostHog groups turns using \`orcel.session.id\` and preserves orcel's trace hierarchy. See [PostHog's orcel installation guide](https://posthog.com/docs/ai-observability/installation/orcel) for verification steps and the [OpenTelemetry guide](/docs/observability/otel) for content policy.`,
   },
   "sentry-instrumentation": {
     logo: "sentry",
     docsHref: "/docs/observability/otel",
     keywords: ["otel", "opentelemetry", "tracing", "observability", "otlp", "errors"],
-    install: `Add Sentry instrumentation from kaf's registry. Sentry ingests OTLP directly, so no Sentry SDK is required:
+    install: `Add Sentry instrumentation from orcel's registry. Sentry ingests OTLP directly, so no Sentry SDK is required:
 
 \`\`\`bash
-kaf add instrumentation/sentry
+orcel add instrumentation/sentry
 \`\`\``,
 
     quickStart: `Create \`agent/instrumentation/sentry.ts\` and point the OTLP exporter at your project's Sentry traces endpoint:
@@ -2418,7 +2418,7 @@ kaf add instrumentation/sentry
 \`\`\`ts
 // agent/instrumentation/sentry.ts
 import { OTLPHttpProtoTraceExporter } from "@vercel/otel";
-import { otelIntegration } from "kaf/instrumentation/otel";
+import { otelIntegration } from "orcel/instrumentation/otel";
 
 export default otelIntegration({
   traceExporter: new OTLPHttpProtoTraceExporter({
@@ -2435,17 +2435,17 @@ export default otelIntegration({
     logo: "datadog",
     docsHref: "/docs/observability/otel",
     keywords: ["otel", "opentelemetry", "tracing", "observability", "apm", "otlp"],
-    install: `Add Datadog instrumentation from kaf's registry:
+    install: `Add Datadog instrumentation from orcel's registry:
 
 \`\`\`bash
-kaf add instrumentation/datadog
+orcel add instrumentation/datadog
 \`\`\``,
     quickStart: `Create \`agent/instrumentation/datadog.ts\` and point the OTLP exporter at Datadog's intake for your site, authenticated with your API key:
 
 \`\`\`ts
 // agent/instrumentation/datadog.ts
 import { OTLPHttpProtoTraceExporter } from "@vercel/otel";
-import { otelIntegration } from "kaf/instrumentation/otel";
+import { otelIntegration } from "orcel/instrumentation/otel";
 
 export default otelIntegration({
   traceExporter: new OTLPHttpProtoTraceExporter({
@@ -2461,10 +2461,10 @@ export default otelIntegration({
     logo: "honeycomb",
     docsHref: "/docs/observability/otel",
     keywords: ["otel", "opentelemetry", "tracing", "observability", "queries", "otlp"],
-    install: `Add Honeycomb instrumentation from kaf's registry. Honeycomb ingests OTLP directly:
+    install: `Add Honeycomb instrumentation from orcel's registry. Honeycomb ingests OTLP directly:
 
 \`\`\`bash
-kaf add instrumentation/honeycomb
+orcel add instrumentation/honeycomb
 \`\`\``,
 
     quickStart: `Create \`agent/instrumentation/honeycomb.ts\` and send traces to Honeycomb's OTLP endpoint with your ingest key:
@@ -2472,7 +2472,7 @@ kaf add instrumentation/honeycomb
 \`\`\`ts
 // agent/instrumentation/honeycomb.ts
 import { OTLPHttpProtoTraceExporter } from "@vercel/otel";
-import { otelIntegration } from "kaf/instrumentation/otel";
+import { otelIntegration } from "orcel/instrumentation/otel";
 
 export default otelIntegration({
   traceExporter: new OTLPHttpProtoTraceExporter({
@@ -2487,10 +2487,10 @@ export default otelIntegration({
     logo: "arize",
     docsHref: "/docs/observability/otel",
     keywords: ["otel", "opentelemetry", "tracing", "llm observability", "evaluation", "otlp"],
-    install: `Add Arize instrumentation from kaf's registry. Arize AX ingests OTLP directly:
+    install: `Add Arize instrumentation from orcel's registry. Arize AX ingests OTLP directly:
 
 \`\`\`bash
-kaf add instrumentation/arize
+orcel add instrumentation/arize
 \`\`\``,
 
     quickStart: `Create \`agent/instrumentation/arize.ts\` and send traces to Arize's OTLP endpoint with your space ID and API key:
@@ -2498,7 +2498,7 @@ kaf add instrumentation/arize
 \`\`\`ts
 // agent/instrumentation/arize.ts
 import { OTLPHttpProtoTraceExporter } from "@vercel/otel";
-import { otelIntegration } from "kaf/instrumentation/otel";
+import { otelIntegration } from "orcel/instrumentation/otel";
 
 export default otelIntegration({
   traceExporter: new OTLPHttpProtoTraceExporter({
@@ -2516,10 +2516,10 @@ export default otelIntegration({
     logo: "raindrop",
     docsHref: "/docs/observability/otel",
     keywords: ["otel", "opentelemetry", "tracing", "observability", "ai issues", "otlp"],
-    install: `Add Raindrop instrumentation from kaf's registry. Raindrop ingests OTLP directly:
+    install: `Add Raindrop instrumentation from orcel's registry. Raindrop ingests OTLP directly:
 
 \`\`\`bash
-kaf add instrumentation/raindrop
+orcel add instrumentation/raindrop
 \`\`\``,
 
     quickStart: `Create \`agent/instrumentation/raindrop.ts\` and send traces to Raindrop's OTLP endpoint with your write key:
@@ -2527,7 +2527,7 @@ kaf add instrumentation/raindrop
 \`\`\`ts
 // agent/instrumentation/raindrop.ts
 import { OTLPHttpProtoTraceExporter } from "@vercel/otel";
-import { otelIntegration } from "kaf/instrumentation/otel";
+import { otelIntegration } from "orcel/instrumentation/otel";
 
 export default otelIntegration({
   traceExporter: new OTLPHttpProtoTraceExporter({
@@ -2538,23 +2538,23 @@ export default otelIntegration({
   }),
 });
 \`\`\``,
-    configure: `Create a write key in the Raindrop dashboard and expose it as \`RAINDROP_WRITE_KEY\`. Raindrop's Vercel AI SDK integration picks up the AI SDK spans kaf emits on every turn. See the [OpenTelemetry guide](/docs/observability/otel) for trace topology and content policy.`,
+    configure: `Create a write key in the Raindrop dashboard and expose it as \`RAINDROP_WRITE_KEY\`. Raindrop's Vercel AI SDK integration picks up the AI SDK spans orcel emits on every turn. See the [OpenTelemetry guide](/docs/observability/otel) for trace topology and content policy.`,
   },
   jaeger: {
     logo: "jaeger",
     docsHref: "/docs/observability/otel",
     keywords: ["otel", "opentelemetry", "tracing", "observability", "local", "self-hosted"],
-    install: `Add Jaeger instrumentation from kaf's registry:
+    install: `Add Jaeger instrumentation from orcel's registry:
 
 \`\`\`bash
-kaf add instrumentation/jaeger
+orcel add instrumentation/jaeger
 \`\`\``,
     quickStart: `Create \`agent/instrumentation/jaeger.ts\` and point the OTLP exporter at your Jaeger collector:
 
 \`\`\`ts
 // agent/instrumentation/jaeger.ts
 import { OTLPHttpProtoTraceExporter } from "@vercel/otel";
-import { otelIntegration } from "kaf/instrumentation/otel";
+import { otelIntegration } from "orcel/instrumentation/otel";
 
 export default otelIntegration({
   traceExporter: new OTLPHttpProtoTraceExporter({

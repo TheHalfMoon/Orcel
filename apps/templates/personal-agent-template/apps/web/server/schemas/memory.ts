@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { MEMORY_CATEGORIES } from "#kaf/types/memory";
+import { MEMORY_CATEGORIES } from "#orcel/types/memory";
 
 export const memoryCategorySchema = z.enum(MEMORY_CATEGORIES);
 

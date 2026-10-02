@@ -1,4 +1,4 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 const DYNAMIC_REFERENCE = "Dynamic policy reference fixture.";
 

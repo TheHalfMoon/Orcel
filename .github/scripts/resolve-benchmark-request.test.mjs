@@ -12,14 +12,14 @@ import {
 
 const sweLean = { dataset: "swe-lean", reasoning: "low", attempts: "5" };
 const deepsweLean = { dataset: "deepswe-lean", reasoning: "high", attempts: "3" };
-const defaults = { harness: "kaf-code,opencode,pi", slug: "kaf-code+opencode+pi", ...sweLean };
+const defaults = { harness: "orcel-code,opencode,pi", slug: "orcel-code+opencode+pi", ...sweLean };
 
 const sha = "a".repeat(40);
 const pull = {
   number: 42,
   state: "open",
-  head: { sha, repo: { full_name: "vercel/kaf", fork: false } },
-  base: { repo: { full_name: "vercel/kaf" } },
+  head: { sha, repo: { full_name: "vercel/orcel", fork: false } },
+  base: { repo: { full_name: "vercel/orcel" } },
 };
 
 function fixture({
@@ -31,7 +31,7 @@ function fixture({
   const calls = [];
   const context = {
     eventName,
-    repo: { owner: "vercel", repo: "kaf" },
+    repo: { owner: "vercel", repo: "orcel" },
     sha: "b".repeat(40),
     payload:
       eventName === "issue_comment"
@@ -65,11 +65,11 @@ function fixture({
 
 const resolve = (input) => resolveBenchmarkRequest(input);
 
-test("automatic PR runs compare kaf-code with opencode and pi at the exact current PR head", async () => {
-  assert.deepEqual(DEFAULT_HARNESSES, ["kaf-code", "opencode", "pi"]);
+test("automatic PR runs compare orcel-code with opencode and pi at the exact current PR head", async () => {
+  assert.deepEqual(DEFAULT_HARNESSES, ["orcel-code", "opencode", "pi"]);
   const input = fixture({ eventName: "pull_request" });
   assert.deepEqual(await resolve(input), { ...defaults, sha, pr: "42" });
-  assert.deepEqual(input.calls, [["pull", { owner: "vercel", repo: "kaf", pull_number: 42 }]]);
+  assert.deepEqual(input.calls, [["pull", { owner: "vercel", repo: "orcel", pull_number: 42 }]]);
 });
 
 test("bare comment command reruns the default harnesses at the PR head, not default-branch github.sha", async () => {
@@ -77,7 +77,7 @@ test("bare comment command reruns the default harnesses at the PR head, not defa
   assert.deepEqual(await resolve(input), { ...defaults, sha, pr: "42" });
   assert.deepEqual(input.calls[0], [
     "permission",
-    { owner: "vercel", repo: "kaf", username: "alice" },
+    { owner: "vercel", repo: "orcel", username: "alice" },
   ]);
 });
 
@@ -95,19 +95,19 @@ for (const harness of BENCHMARK_HARNESSES) {
 
 test("a comment can select several harnesses, comma- or space-separated, deduplicated in order", async () => {
   for (const body of [
-    "/benchmark pi,kaf-code",
-    "/benchmark pi kaf-code",
-    "/benchmark pi, kaf-code,pi",
+    "/benchmark pi,orcel-code",
+    "/benchmark pi orcel-code",
+    "/benchmark pi, orcel-code,pi",
   ]) {
     const result = await resolve(fixture({ body }));
-    assert.equal(result.harness, "pi,kaf-code");
-    assert.equal(result.slug, "pi+kaf-code");
+    assert.equal(result.harness, "pi,orcel-code");
+    assert.equal(result.slug, "pi+orcel-code");
   }
 });
 
 test("manual dispatch offers exactly the datasets the resolver accepts", async () => {
   const workflow = await readFile(
-    new URL("../workflows/kaf-code-benchmark.yml", import.meta.url),
+    new URL("../workflows/orcel-code-benchmark.yml", import.meta.url),
     "utf8",
   );
   const input = /\n {6}dataset:\n(?: {8}.*\n)+/u.exec(workflow)?.[0] ?? "";
@@ -124,14 +124,14 @@ test("a comment can select a dataset, with the default harnesses or its own list
     pr: "42",
   });
   for (const body of [
-    "/benchmark deepswe-lean kaf-code,pi",
-    "/benchmark kaf-code pi deepswe-lean",
-    "/benchmark kaf-code, deepswe-lean, pi",
+    "/benchmark deepswe-lean orcel-code,pi",
+    "/benchmark orcel-code pi deepswe-lean",
+    "/benchmark orcel-code, deepswe-lean, pi",
   ]) {
     const result = await resolve(fixture({ body }));
     assert.deepEqual(
       [result.dataset, result.reasoning, result.attempts, result.harness, result.slug],
-      ["deepswe-lean", "high", "3", "kaf-code,pi", "kaf-code+pi"],
+      ["deepswe-lean", "high", "3", "orcel-code,pi", "orcel-code+pi"],
     );
   }
   assert.equal((await resolve(fixture({ body: "/benchmark swe-lean pi" }))).dataset, "swe-lean");
@@ -214,7 +214,7 @@ test("closed, forked and cross-repository PRs are not executed", async () => {
       pr.head.repo.fork = true;
     },
     (pr) => {
-      pr.head.repo.full_name = "alice/kaf";
+      pr.head.repo.full_name = "alice/orcel";
     },
     (pr) => {
       pr.head.repo = null;
@@ -273,10 +273,10 @@ test("other events never run a benchmark", async () => {
 
 test("workflow names and concurrency preserve independent authorized harness runs", async () => {
   const workflow = await readFile(
-    new URL("../workflows/kaf-code-benchmark.yml", import.meta.url),
+    new URL("../workflows/orcel-code-benchmark.yml", import.meta.url),
     "utf8",
   );
-  assert.match(workflow, /^name: kaf-code\n/u);
+  assert.match(workflow, /^name: orcel-code\n/u);
   assert.match(workflow, /name: Benchmark harness/u);
   assert.match(workflow, /issue_comment:\n\s+types: \[created\]/u);
   assert.match(
@@ -286,7 +286,7 @@ test("workflow names and concurrency preserve independent authorized harness run
   // A deepswe-lean run never cancels or overwrites a swe-lean run of the same harnesses.
   assert.match(
     workflow,
-    /group: kaf-code-.*needs\.request\.outputs\.pr.*needs\.request\.outputs\.dataset.*needs\.request\.outputs\.slug/u,
+    /group: orcel-code-.*needs\.request\.outputs\.pr.*needs\.request\.outputs\.dataset.*needs\.request\.outputs\.slug/u,
   );
   assert.match(
     workflow,
@@ -299,23 +299,23 @@ test("workflow names and concurrency preserve independent authorized harness run
   assert.match(workflow, /agent-ref: \$\{\{ needs\.request\.outputs\.sha \}\}/u);
 });
 
-test("the consumer tracks kaf-bench main and owns its model selection", async () => {
+test("the consumer tracks eve-bench main and owns its model selection", async () => {
   const workflow = await readFile(
-    new URL("../workflows/kaf-code-benchmark.yml", import.meta.url),
+    new URL("../workflows/orcel-code-benchmark.yml", import.meta.url),
     "utf8",
   );
-  assert.match(workflow, /repository: vercel-labs\/kaf-bench\n\s+ref: main\n/u);
-  assert.match(workflow, /uses: \.\/\.kaf-bench-action/u);
+  assert.match(workflow, /repository: vercel-labs\/eve-bench\n\s+ref: main\n/u);
+  assert.match(workflow, /uses: \.\/\.eve-bench-action/u);
   assert.match(
     workflow,
-    /model: \$\{\{ vars\.KAF_CODE_BENCH_MODEL \|\| 'anthropic\/claude-sonnet-5\.5' \}\}/u,
+    /model: \$\{\{ vars\.ORCEL_CODE_BENCH_MODEL \|\| 'anthropic\/claude-sonnet-5\.5' \}\}/u,
   );
   assert.match(workflow, /reasoning: \$\{\{ needs\.request\.outputs\.reasoning \}\}\n/u);
   assert.doesNotMatch(workflow, /runner-revision:/u);
-  assert.match(workflow, /blob-token: \$\{\{ secrets\.KAF_BENCH_BLOB_READ_WRITE_TOKEN \}\}/u);
+  assert.match(workflow, /blob-token: \$\{\{ secrets\.EVE_BENCH_BLOB_READ_WRITE_TOKEN \}\}/u);
   assert.doesNotMatch(workflow, /artifact-id/u);
   assert.match(workflow, /dataset: \$\{\{ needs\.request\.outputs\.dataset \}\}\n/u);
-  assert.match(workflow, /contenders: kaf-code@baseline,kaf-code@head\n/u);
+  assert.match(workflow, /contenders: eve-code@baseline,eve-code@head\n/u);
   assert.doesNotMatch(workflow, /^\s+task:/mu);
-  assert.equal((workflow.match(/uses: \.\/\.kaf-bench-action/gu) ?? []).length, 1);
+  assert.equal((workflow.match(/uses: \.\/\.eve-bench-action/gu) ?? []).length, 1);
 });

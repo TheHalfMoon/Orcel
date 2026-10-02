@@ -2,7 +2,7 @@
 # build from source, so local artifacts and durable state never ship.
 .git
 node_modules
-.kaf
+.orcel
 .junit
 .next
 .nitro

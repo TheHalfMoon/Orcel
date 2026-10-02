@@ -10,7 +10,7 @@ import { prepareSelfModification } from "../scripts/prepare.mjs";
 const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 
 async function temporaryFixture(t) {
-  const fixtureRoot = await mkdtemp(join(tmpdir(), "kaf-selfmod-scaffold-"));
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "orcel-selfmod-scaffold-"));
   t.after(() => rm(fixtureRoot, { recursive: true, force: true }));
   return fixtureRoot;
 }
@@ -33,7 +33,7 @@ async function files(root, directory = "") {
 test("preparation copies the canonical registry targets and removes stale generated files", async (t) => {
   const fixtureRoot = await temporaryFixture(t);
   const registry = JSON.parse(await readFile(join(repoRoot, "apps/docs/registry.json"), "utf8"));
-  const item = registry.items.find((item) => item.name === "kaf/self-modification");
+  const item = registry.items.find((item) => item.name === "orcel/self-modification");
   await put(fixtureRoot, "agent/tools/keep.ts", "authored tool");
   await put(fixtureRoot, "agent/extensions/self-modification/instructions.md", "stale override");
 
@@ -70,7 +70,7 @@ test("invalid registry targets fail before replacing the existing scaffold", asy
     JSON.stringify({
       items: [
         {
-          name: "kaf/self-modification",
+          name: "orcel/self-modification",
           files: [{ path: "registry/example.ts", target: "agent/tools/outside.ts" }],
         },
       ],
@@ -94,7 +94,7 @@ test("missing source files fail before replacing the existing scaffold", async (
     JSON.stringify({
       items: [
         {
-          name: "kaf/self-modification",
+          name: "orcel/self-modification",
           files: [
             { path: "registry/missing.ts", target: "agent/extensions/self-modification/agent.ts" },
           ],

@@ -1,11 +1,11 @@
 import {
   defineEval,
-  type KafEvalContext,
-  type KafEvalSession,
-  type KafEvalToolCall,
-  type KafEvalTurn,
-} from "kaf/evals";
-import { satisfies } from "kaf/evals/expect";
+  type OrcelEvalContext,
+  type OrcelEvalSession,
+  type OrcelEvalToolCall,
+  type OrcelEvalTurn,
+} from "orcel/evals";
+import { satisfies } from "orcel/evals/expect";
 
 import { WORKSPACE_FORWARDING_MARKER, WORKSPACE_LOOKUP_MESSAGE } from "../constants";
 
@@ -101,8 +101,8 @@ export default defineEval({
 });
 
 async function expectWorkspaceReads(
-  t: KafEvalContext,
-  turn: KafEvalTurn,
+  t: OrcelEvalContext,
+  turn: OrcelEvalTurn,
   workspaceLabel: string,
 ): Promise<void> {
   turn.expectOk();
@@ -111,7 +111,7 @@ async function expectWorkspaceReads(
       (call) => call.name === "read-workspace-label" && call.status === "completed",
     ),
     satisfies(
-      (calls: readonly KafEvalToolCall[]) =>
+      (calls: readonly OrcelEvalToolCall[]) =>
         calls.length > 0 &&
         calls.every(
           (call) =>
@@ -123,7 +123,7 @@ async function expectWorkspaceReads(
   );
 }
 
-type SessionCursor = Pick<KafEvalSession, "respond" | "send" | "sessionId" | "state">;
+type SessionCursor = Pick<OrcelEvalSession, "respond" | "send" | "sessionId" | "state">;
 
 /** The remote-loopback agent task and the remote session every call to it reaches. */
 interface RemoteChild {
@@ -132,9 +132,9 @@ interface RemoteChild {
 }
 
 async function waitForRemoteChild(
-  t: KafEvalContext,
+  t: OrcelEvalContext,
   initial: SessionCursor,
-  initialTurn: KafEvalTurn,
+  initialTurn: OrcelEvalTurn,
   expected?: RemoteChild,
   authorization?: string,
 ): Promise<RemoteChild & { readonly session: SessionCursor }> {
@@ -171,7 +171,7 @@ async function waitForRemoteChild(
 }
 
 /** A later call reaches the task's session, which `agent.started` announced once with the task's ID. */
-function findRemoteChild(turn: KafEvalTurn, expected?: RemoteChild): RemoteChild | undefined {
+function findRemoteChild(turn: OrcelEvalTurn, expected?: RemoteChild): RemoteChild | undefined {
   for (const event of turn.events) {
     if (event.type !== "task.started" || event.data.name !== "remote-loopback") continue;
     if (expected !== undefined) {

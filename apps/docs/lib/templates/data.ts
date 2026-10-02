@@ -23,7 +23,7 @@ const getTemplateEntries = async (): Promise<TemplateEntry[]> => {
   } catch (error) {
     throw new Error(
       `Template build data is missing at ${generatedTemplatesPath}. ` +
-        "Run `pnpm --filter kaf-docs templates:sync` before rendering template pages.",
+        "Run `pnpm --filter orcel-docs templates:sync` before rendering template pages.",
       { cause: error },
     );
   }

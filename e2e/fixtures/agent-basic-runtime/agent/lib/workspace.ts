@@ -1,4 +1,4 @@
-import { defineState, type SessionAuthContext } from "kaf/context";
+import { defineState, type SessionAuthContext } from "orcel/context";
 
 /**
  * Workspace member directory. A deployed agent would read members from its

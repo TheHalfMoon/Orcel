@@ -1,4 +1,4 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 // One resolver returns a helper-built tool (closing over the helper
 // param and handler vars) and an inline tool; both survive replay.

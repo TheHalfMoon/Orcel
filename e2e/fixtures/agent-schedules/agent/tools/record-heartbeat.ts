@@ -1,4 +1,4 @@
-import { defineTool } from "kaf/tools";
+import { defineTool } from "orcel/tools";
 import { z } from "zod";
 
 /**
@@ -16,7 +16,7 @@ export default defineTool({
   approval: ({ session }) => {
     const auth = session.auth.current;
     return auth?.authenticator === "app" &&
-      auth.principalId === "kaf:app" &&
+      auth.principalId === "orcel:app" &&
       auth.principalType === "runtime"
       ? "not-applicable"
       : "user-approval";

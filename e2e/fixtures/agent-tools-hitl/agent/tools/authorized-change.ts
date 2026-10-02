@@ -1,6 +1,6 @@
-import { defineState } from "kaf/context";
-import { defineTool } from "kaf/tools";
-import { always } from "kaf/tools/approval";
+import { defineState } from "orcel/context";
+import { defineTool } from "orcel/tools";
+import { always } from "orcel/tools/approval";
 import { z } from "zod";
 
 const executions = defineState("authorized-change.executions", () => 0);

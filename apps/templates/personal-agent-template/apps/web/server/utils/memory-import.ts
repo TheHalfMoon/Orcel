@@ -5,7 +5,7 @@ import {
   type MemoryCategory,
   type MemoryEntry,
   type MemorySource,
-} from "#kaf/types/memory";
+} from "#orcel/types/memory";
 
 const HEADER_PATTERN = /^#{1,3}\s*\d*\.?\s*(.+?)\s*$/im;
 

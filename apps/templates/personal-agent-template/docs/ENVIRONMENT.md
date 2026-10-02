@@ -14,9 +14,9 @@ cp .env.example .env
 | --------------------- | ---------------------------------------------------------------- |
 | `BETTER_AUTH_SECRET`  | Run `openssl rand -base64 32`                                    |
 | `BETTER_AUTH_URL`     | `http://localhost:3000` locally, or your production URL          |
-| `INTERNAL_API_SECRET` | Run `openssl rand -base64 32` (must match on web + kaf services) |
+| `INTERNAL_API_SECRET` | Run `openssl rand -base64 32` (must match on web + orcel services) |
 
-These three variables are enough for local development. On Vercel, set them on **both** the `web` and `kaf` services — and add a database (see below).
+These three variables are enough for local development. On Vercel, set them on **both** the `web` and `orcel` services — and add a database (see below).
 
 ## Database
 
@@ -68,7 +68,7 @@ Public URL of the Nuxt app. Used for auth callbacks and as the base URL for agen
 
 ### `INTERNAL_API_SECRET` (required)
 
-Shared bearer token between the Kaf agent service and the Nuxt internal API (`/api/internal/*`).
+Shared bearer token between the Orcel agent service and the Nuxt internal API (`/api/internal/*`).
 
 Used for:
 
@@ -76,11 +76,11 @@ Used for:
 - Slack account linking
 - Sendblue / iMessage phone linking lookup
 
-**Must be identical** on both Vercel services (`web` and `kaf`). If missing or mismatched, memory injection, Slack linking, and iMessage auth will fail silently or return 401.
+**Must be identical** on both Vercel services (`web` and `orcel`). If missing or mismatched, memory injection, Slack linking, and iMessage auth will fail silently or return 401.
 
 ## Sendblue (iMessage, optional)
 
-Reach the agent over iMessage via [Sendblue](https://chat-sdk.dev/adapters/vendor-official/sendblue). Set these on the **kaf** service (and `BETTER_AUTH_URL` on both services so the agent can resolve phone links):
+Reach the agent over iMessage via [Sendblue](https://chat-sdk.dev/adapters/vendor-official/sendblue). Set these on the **orcel** service (and `BETTER_AUTH_URL` on both services so the agent can resolve phone links):
 
 | Variable                       | Required | Description                                                                             |
 | ------------------------------ | -------- | --------------------------------------------------------------------------------------- |
@@ -94,10 +94,10 @@ Reach the agent over iMessage via [Sendblue](https://chat-sdk.dev/adapters/vendo
 Setup:
 
 1. Create a Sendblue account and note your API credentials and assigned number (`sendblue show-keys`, `sendblue lines`).
-2. Set the env vars above on the **kaf** Vercel service.
+2. Set the env vars above on the **orcel** Vercel service.
 3. Configure the Sendblue **receive webhook** to:
 
-   `https://<your-domain>/kaf/v1/sendblue/webhook`
+   `https://<your-domain>/orcel/v1/sendblue/webhook`
 
 4. Users add their personal phone number (E.164) in **Settings → Profile** before messaging the Sendblue number.
 
@@ -111,7 +111,7 @@ This template does not define AI keys in `.env.example`. The default model is se
 model: "anthropic/claude-sonnet-4.6";
 ```
 
-On Vercel, Kaf handles provider configuration through the platform. For local development, follow [Kaf docs](https://github.com/TheHalfMoon/kaf) for your chosen provider.
+On Vercel, Orcel handles provider configuration through the platform. For local development, follow [Orcel docs](https://github.com/TheHalfMoon/orcel) for your chosen provider.
 
 ## Vercel Connect (optional)
 
@@ -135,7 +135,7 @@ These paths are gitignored and should never be committed:
 | ---------- | ------------------------- |
 | `.env`     | Local secrets             |
 | `.data/`   | SQLite database (NuxtHub) |
-| `.kaf/`    | Kaf dev cache             |
+| `.orcel/`    | Orcel dev cache             |
 | `.vercel/` | Vercel CLI link metadata  |
 
 Reset the local database:

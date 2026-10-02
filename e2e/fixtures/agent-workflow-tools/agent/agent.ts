@@ -1,7 +1,7 @@
-import { e2eAgentConfig } from "@kaf-e2e/config";
-import { latestTaskResult } from "@kaf-e2e/config/mock-script";
-import { defineAgent } from "kaf";
-import { mockModel, type MockModelRequest, type MockModelResponse } from "kaf/evals";
+import { e2eAgentConfig } from "@orcel-e2e/config";
+import { latestTaskResult } from "@orcel-e2e/config/mock-script";
+import { defineAgent } from "orcel";
+import { mockModel, type MockModelRequest, type MockModelResponse } from "orcel/evals";
 
 import { RESEARCH_INTERIM_MESSAGE } from "../task-scenario-text.ts";
 import { respondToTaskScenario } from "./lib/task-scenarios.ts";
@@ -135,7 +135,7 @@ const base = e2eAgentConfig({ mock: respond });
 export default defineAgent({
   ...base,
   // Always author the deterministic script so this fixture never depends on a
-  // live model; world suites already set KAF_E2E_MODEL=mock.
+  // live model; world suites already set ORCEL_E2E_MODEL=mock.
   model: mockModel(respond),
   modelContextWindowTokens: base.modelContextWindowTokens ?? 1_000_000,
 });

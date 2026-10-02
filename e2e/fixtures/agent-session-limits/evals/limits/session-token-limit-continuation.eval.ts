@@ -1,5 +1,5 @@
-import { defineEval } from "kaf/evals";
-import { equals } from "kaf/evals/expect";
+import { defineEval } from "orcel/evals";
+import { equals } from "orcel/evals/expect";
 
 /**
  * Session token limits over HTTP: a conversation session that crosses its

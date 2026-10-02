@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { canarySubject, packageRevision } from "./source.mjs";
 
 const revision = "1234567890abcdef1234567890abcdef12345678";
-const packageSpec = `https://pkg.kaf.dev/${revision}/kaf.tgz`;
+const packageSpec = `https://pkg.orcel.dev/${revision}/orcel.tgz`;
 
 test("resolves a canary alias once to an immutable subject", () => {
   const calls = [];
@@ -24,14 +24,14 @@ test("resolves a canary alias once to an immutable subject", () => {
 
 test("rejects a non-immutable canary URL", () => {
   assert.throws(
-    () => packageRevision("https://pkg.kaf.dev/main/kaf.tgz"),
+    () => packageRevision("https://pkg.orcel.dev/main/orcel.tgz"),
     /did not resolve to an immutable revision/u,
   );
 });
 
 test("rejects a canary URL from another origin", () => {
   assert.throws(
-    () => packageRevision(`https://example.com/${revision}/kaf.tgz`),
+    () => packageRevision(`https://example.com/${revision}/orcel.tgz`),
     /resolved outside/u,
   );
 });

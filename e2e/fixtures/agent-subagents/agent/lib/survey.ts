@@ -1,5 +1,5 @@
-import { latestTaskResult, outputOf, playScript } from "@kaf-e2e/config/mock-script";
-import type { MockModelRequest, MockModelResponse } from "kaf/evals";
+import { latestTaskResult, outputOf, playScript } from "@orcel-e2e/config/mock-script";
+import type { MockModelRequest, MockModelResponse } from "orcel/evals";
 
 import {
   SURVEY_DIRECTIVE,

@@ -1,5 +1,5 @@
-import { defineTool } from "kaf/tools";
-import { never } from "kaf/tools/approval";
+import { defineTool } from "orcel/tools";
+import { never } from "orcel/tools/approval";
 import { z } from "zod";
 
 const FALLBACK_TIMEOUT_MS = 90_000;

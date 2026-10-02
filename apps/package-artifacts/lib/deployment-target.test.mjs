@@ -9,14 +9,14 @@ const baseEnv = {
   VERCEL_GIT_COMMIT_SHA: sha,
   VERCEL_GIT_PULL_REQUEST_ID: "123",
   VERCEL_GIT_REPO_OWNER: "vercel",
-  VERCEL_GIT_REPO_SLUG: "kaf",
-  VERCEL_PROJECT_PRODUCTION_URL: "pkg.kaf.dev",
+  VERCEL_GIT_REPO_SLUG: "orcel",
+  VERCEL_PROJECT_PRODUCTION_URL: "pkg.orcel.dev",
 };
 const currentPull = {
   number: 123,
   state: "open",
   base: { ref: "main" },
-  head: { ref: "feature/package", repo: { full_name: "vercel/kaf" }, sha },
+  head: { ref: "feature/package", repo: { full_name: "vercel/orcel" }, sha },
 };
 
 function githubResponse(value, status = 200) {
@@ -36,7 +36,7 @@ describe("Vercel package deployment target", () => {
         VERCEL_GIT_COMMIT_REF: "main",
         VERCEL_GIT_PULL_REQUEST_ID: "",
       }),
-    ).resolves.toEqual({ sourceSha: sha, ref: "main", origin: "https://pkg.kaf.dev" });
+    ).resolves.toEqual({ sourceSha: sha, ref: "main", origin: "https://pkg.orcel.dev" });
   });
 
   test.each([
@@ -47,10 +47,10 @@ describe("Vercel package deployment target", () => {
     await expect(resolveDeploymentTarget(baseEnv, fetchImplementation)).resolves.toEqual({
       sourceSha: sha,
       ref: "123",
-      origin: "https://pkg.kaf.dev",
+      origin: "https://pkg.orcel.dev",
     });
     expect(fetchImplementation).toHaveBeenCalledWith(
-      "https://api.github.com/repos/vercel/kaf/pulls/123",
+      "https://api.github.com/repos/vercel/orcel/pulls/123",
       expect.any(Object),
     );
   });
@@ -61,7 +61,7 @@ describe("Vercel package deployment target", () => {
       .mockResolvedValue(githubResponse([{ ...currentPull, base: { ref: "feature/base" } }]));
     await expect(
       resolveDeploymentTarget({ ...baseEnv, VERCEL_GIT_PULL_REQUEST_ID: "" }, fetchImplementation),
-    ).resolves.toEqual({ sourceSha: sha, ref: "123", origin: "https://pkg.kaf.dev" });
+    ).resolves.toEqual({ sourceSha: sha, ref: "123", origin: "https://pkg.orcel.dev" });
     const [url] = fetchImplementation.mock.calls[0];
     expect(url).toContain("head=vercel%3Afeature%2Fpackage");
     expect(url).not.toContain("base=");

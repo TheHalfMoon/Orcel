@@ -10,7 +10,7 @@ import {
 } from "../evals/self-modification/harness.ts";
 
 async function sourceTree() {
-  const root = await mkdtemp(join(tmpdir(), "kaf-selfmod-test-"));
+  const root = await mkdtemp(join(tmpdir(), "orcel-selfmod-test-"));
   await mkdir(join(root, "nested"), { recursive: true });
   await writeFile(join(root, "keep.txt"), "baseline");
   await writeFile(join(root, "nested", "delete.txt"), "delete me");
@@ -126,7 +126,7 @@ async function assertTreeRestored(root) {
 }
 
 test("close restores registry installer project files", async () => {
-  const root = await mkdtemp(join(tmpdir(), "kaf-selfmod-project-"));
+  const root = await mkdtemp(join(tmpdir(), "orcel-selfmod-project-"));
   await mkdir(join(root, "agent"));
   await writeFile(join(root, ".env.example"), "EXISTING=original\n");
   await writeFile(join(root, "package.json"), '{"name":"original"}\n');
@@ -196,7 +196,7 @@ test("close retires every session before restoring the complete source tree", as
           .map((call) => call.path)
           .sort(),
         [parent, child, verification]
-          .map((turn) => `/kaf/v1/session/${turn.sessionId}/reset`)
+          .map((turn) => `/orcel/v1/session/${turn.sessionId}/reset`)
           .sort(),
       );
       assert.ok(
@@ -301,7 +301,7 @@ test("assertOnlyChanged allows listed modifications and rejects unexpected or de
 
 test("separate eval bundles serialize cleanup before the next source snapshot", async (t) => {
   const otherBundle = await import("../evals/self-modification/harness.ts?other-eval");
-  const root = await temporaryCheckout(t, "kaf-selfmod-serial-");
+  const root = await temporaryCheckout(t, "orcel-selfmod-serial-");
   await writeFile(join(root, "agent", "instructions.md"), "baseline");
   const restoring = Promise.withResolvers();
   const release = Promise.withResolvers();
@@ -331,8 +331,8 @@ test("separate eval bundles serialize cleanup before the next source snapshot", 
 });
 
 test("checkout lock rejects another eval process before source mutation", async (t) => {
-  const root = await temporaryCheckout(t, "kaf-selfmod-locked-");
-  await mkdir(join(root, ".kaf-self-modification-eval.lock"));
+  const root = await temporaryCheckout(t, "orcel-selfmod-locked-");
+  await mkdir(join(root, ".orcel-self-modification-eval.lock"));
   await writeFile(join(root, "agent", "instructions.md"), "baseline");
   let started = false;
   await assert.rejects(
@@ -346,7 +346,7 @@ test("checkout lock rejects another eval process before source mutation", async 
 });
 
 test("a failed eval restores source, releases its checkout lock, and preserves the failure", async (t) => {
-  const root = await temporaryCheckout(t, "kaf-selfmod-failed-");
+  const root = await temporaryCheckout(t, "orcel-selfmod-failed-");
   await writeFile(join(root, "agent", "instructions.md"), "baseline");
   const failure = new Error("authoring failed");
   await assert.rejects(
@@ -359,7 +359,7 @@ test("a failed eval restores source, releases its checkout lock, and preserves t
   );
   assert.equal(await readFile(join(root, "agent", "instructions.md"), "utf8"), "baseline");
   await assert.rejects(readFile(join(root, "agent", "tools", "unexpected.ts")));
-  await assert.rejects(readFile(join(root, ".kaf-self-modification-eval.lock", "owner.json")));
+  await assert.rejects(readFile(join(root, ".orcel-self-modification-eval.lock", "owner.json")));
 });
 
 test("waitForRebuild polls until the authored runtime revision changes", async () => {
@@ -367,7 +367,7 @@ test("waitForRebuild polls until the authored runtime revision changes", async (
     let reads = 0;
     const fetch = target.fetch;
     target.fetch = async (path, options) => {
-      if (path === "/kaf/v1/dev/runtime-artifacts") {
+      if (path === "/orcel/v1/dev/runtime-artifacts") {
         reads += 1;
         return response({ revision: reads < 3 ? "before" : "after" });
       }
@@ -442,7 +442,7 @@ test("request follows a continued agent task past stale child turns", async () =
 });
 
 test("cleanup failure retains a lock that identifies the source backup", async (t) => {
-  const root = await temporaryCheckout(t, "kaf-selfmod-cleanup-failed-");
+  const root = await temporaryCheckout(t, "orcel-selfmod-cleanup-failed-");
   await writeFile(join(root, "agent", "instructions.md"), "baseline");
   const target = targetFor();
   target.fetch = async (path) =>
@@ -456,7 +456,7 @@ test("cleanup failure retains a lock that identifies the source backup", async (
     /suspend.*failed: 500/,
   );
   const owner = JSON.parse(
-    await readFile(join(root, ".kaf-self-modification-eval.lock", "owner.json"), "utf8"),
+    await readFile(join(root, ".orcel-self-modification-eval.lock", "owner.json"), "utf8"),
   );
   t.after(() => rm(owner.backupRoot, { recursive: true, force: true }));
   assert.equal(

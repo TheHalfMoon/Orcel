@@ -1,6 +1,6 @@
 ---
 title: "Getting Started"
-description: "Create an kaf project, configure model credentials, and run your first agent."
+description: "Create an orcel project, configure model credentials, and run your first agent."
 contentType: "How-to"
 ---
 
@@ -20,32 +20,32 @@ Choose a model, provider, and channel that meet your data-processing and complia
 
 Start with one agent in `agent/`.
 
-Run `kaf init` with a project name:
+Run `orcel init` with a project name:
 
 ```bash
-npx kaf@latest init my-agent
+npx orcel@latest init my-agent
 ```
 
-The command creates the project, installs dependencies, initializes Git, and opens the terminal UI. kaf reuses an available model connection or opens `/login`. Once connected, type your first message. Channel and integration setup is optional; use `/add` when you need it.
+The command creates the project, installs dependencies, initializes Git, and opens the terminal UI. orcel reuses an available model connection or opens `/login`. Once connected, type your first message. Channel and integration setup is optional; use `/add` when you need it.
 
 In `/add`, search by name or capability, such as `iMessage` or `SMS`. The picker matches item names, addresses, titles, and descriptions. Select an item to install it and complete its required setup.
 
-During startup, the status line shows what kaf is waiting for. If you choose a Vercel account, finish signing in in your browser and select a team when prompted. kaf checks that team's AI Gateway access and applies the connection before returning to the composer. Changing only the account, team, or key does not rebuild your agent. Once connected, you can send your first message while the agent information refreshes in the background; no restart is required.
+During startup, the status line shows what orcel is waiting for. If you choose a Vercel account, finish signing in in your browser and select a team when prompted. orcel checks that team's AI Gateway access and applies the connection before returning to the composer. Changing only the account, team, or key does not rebuild your agent. Once connected, you can send your first message while the agent information refreshes in the background; no restart is required.
 
-To add kaf to a project that already has a `package.json`, run this command from its root before you create any `agent/` files:
+To add orcel to a project that already has a `package.json`, run this command from its root before you create any `agent/` files:
 
 ```bash
-npx kaf@latest init .
+npx orcel@latest init .
 ```
 
-kaf adds the missing `kaf`, `ai`, and `zod` dependencies without changing files the project already owns.
+orcel adds the missing `orcel`, `ai`, and `zod` dependencies without changing files the project already owns.
 
 ### Customize initialization
 
 To initialize the agent with a different AI Gateway model or reasoning effort, pass `--model` or `--reasoning`:
 
 ```bash
-npx kaf@latest init my-agent --model openai/gpt-6-luna --reasoning high
+npx orcel@latest init my-agent --model openai/gpt-6-luna --reasoning high
 ```
 
 ## Run the agent
@@ -57,7 +57,7 @@ cd my-agent
 npm run dev
 ```
 
-This starts an interactive session where you can send messages to your agent. Edit `agent/instructions.md` to change its behavior and `agent/agent.ts` to configure its model. kaf reloads your changes as you work. You can also ask the agent to update its own instructions, tools, or skills; see [Self-Modification](./guides/self-modification).
+This starts an interactive session where you can send messages to your agent. Edit `agent/instructions.md` to change its behavior and `agent/agent.ts` to configure its model. orcel reloads your changes as you work. You can also ask the agent to update its own instructions, tools, or skills; see [Self-Modification](./guides/self-modification).
 
 <span id="project-layout" />
 <span id="agent-directory-layout" />
@@ -79,7 +79,7 @@ See [Project Structure](/docs/concepts/project-structure) when adding another ro
 If you do not want to use the scaffold, install the runtime dependencies:
 
 ```bash
-npm install kaf@latest ai zod
+npm install orcel@latest ai zod
 ```
 
 Declare Node.js 24 in `package.json`, then create `agent/instructions.md` and, when you need runtime configuration, `agent/agent.ts`.

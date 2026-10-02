@@ -1,4 +1,0 @@
-interface:
-  display_name: "Kaf Template Runtime"
-  short_description: "Work safely with Kaf template internals"
-  default_prompt: "Use $kaf-chat-template-kaf to update Kaf-specific runtime, session, stream, or connection behavior in the chat template."

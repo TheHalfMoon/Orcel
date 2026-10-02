@@ -1,4 +1,4 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 import { narratedWebSearchOrder, WEB_SEARCH_TOOL_NAME } from "./web-search-ordering";
 
 export default defineEval({

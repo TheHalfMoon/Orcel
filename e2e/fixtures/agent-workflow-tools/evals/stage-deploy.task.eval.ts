@@ -1,4 +1,4 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 /**
  * `stage_deploy` defines `task()`. Its call returns a receipt, `task_wait`

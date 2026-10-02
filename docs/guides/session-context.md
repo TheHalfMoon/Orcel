@@ -1,9 +1,9 @@
 ---
 title: "Session Context"
-description: "Use ctx.session and runtime accessors inside kaf-managed execution."
+description: "Use ctx.session and runtime accessors inside orcel-managed execution."
 ---
 
-kaf passes a runtime `ctx` to tool executors, hook handlers, channel event handlers, and connection auth and header resolvers. Use it to inspect the active session and reach resources bound to that execution.
+orcel passes a runtime `ctx` to tool executors, hook handlers, channel event handlers, and connection auth and header resolvers. Use it to inspect the active session and reach resources bound to that execution.
 
 | Accessor                     | Provides                                                  | Full guide                 |
 | ---------------------------- | --------------------------------------------------------- | -------------------------- |
@@ -11,14 +11,14 @@ kaf passes a runtime `ctx` to tool executors, hook handlers, channel event handl
 | `ctx.getSandbox()`           | The current agent's live sandbox handle                   | [Sandbox](../sandbox)      |
 | `defineState(name, initial)` | Durable typed state shared by runtime code in one session | [State](../concepts/state) |
 
-These APIs work only during kaf-managed runtime execution. Calling them during module evaluation, discovery, or a build throws.
+These APIs work only during orcel-managed runtime execution. Calling them during module evaluation, discovery, or a build throws.
 
 ## `ctx.session`
 
 `ctx.session` describes the durable session and active turn:
 
 ```ts title="agent/tools/who_called_me.ts"
-import { defineTool } from "kaf/tools";
+import { defineTool } from "orcel/tools";
 import { z } from "zod";
 
 export default defineTool({
@@ -47,7 +47,7 @@ Public fields include:
 - `auth.initiator`: the caller that started the session.
 - `parent`: the parent call, session, root session, and turn for a child subagent session.
 
-Unprotected agents expose `auth.current` and `auth.initiator` as `null`. Top-level schedule sessions use the framework app principal (`principalId: "kaf:app"`, `principalType: "runtime"`). See [Authentication](./auth-and-route-protection#what-reaches-ctxsessionauth) for how inbound identity becomes session auth.
+Unprotected agents expose `auth.current` and `auth.initiator` as `null`. Top-level schedule sessions use the framework app principal (`principalId: "orcel:app"`, `principalType: "runtime"`). See [Authentication](./auth-and-route-protection#what-reaches-ctxsessionauth) for how inbound identity becomes session auth.
 
 ## `ctx.getSandbox()`
 
@@ -58,7 +58,7 @@ const sandbox = await ctx.getSandbox();
 const result = await sandbox.run({ command: "npm test" });
 ```
 
-The accessor is asynchronous because kaf may need to bind or restore the sandbox. A subagent sees its own sandbox, not its parent's. The returned handle also exposes `stop()` and `delete()`; see [Sandbox lifecycle](../sandbox#lifecycle) for their behavior.
+The accessor is asynchronous because orcel may need to bind or restore the sandbox. A subagent sees its own sandbox, not its parent's. The returned handle also exposes `stop()` and `delete()`; see [Sandbox lifecycle](../sandbox#lifecycle) for their behavior.
 
 When you need capabilities specific to the configured environment, pass its exported environment object. The return type preserves the environment's session capabilities. Provider-specific methods such as `setNetworkPolicy()` are not available from the no-argument accessor:
 
@@ -69,11 +69,11 @@ const sandbox = await ctx.getSandbox(environment);
 await sandbox.setNetworkPolicy("deny-all");
 ```
 
-The environment must be the one configured for the current sandbox. kaf rejects a different environment instead of returning a handle with capabilities that may not exist.
+The environment must be the one configured for the current sandbox. orcel rejects a different environment instead of returning a handle with capabilities that may not exist.
 
 ## Custom state with `defineState`
 
-Use `defineState` for durable per-session values that tools, hooks, and channel handlers share. Unlike the `ctx` accessors, import it from `kaf/context` and declare the handle at module scope. Its `get()` and `update()` methods still require active kaf execution. See [State](../concepts/state) for the read, update, reset, and subagent-isolation model.
+Use `defineState` for durable per-session values that tools, hooks, and channel handlers share. Unlike the `ctx` accessors, import it from `orcel/context` and declare the handle at module scope. Its `get()` and `update()` methods still require active orcel execution. See [State](../concepts/state) for the read, update, reset, and subagent-isolation model.
 
 ## Where these APIs work
 
@@ -84,11 +84,11 @@ Runtime context is available:
 - inside channel and agent hook callbacks that receive the full runtime `ctx`;
 - after asynchronous boundaries within the same authored execution chain.
 
-Runtime context is not available during top-level module evaluation, build scripts, or discovery. Declare reusable definitions and state handles at module scope, but call their context-dependent methods only from an kaf-managed callback.
+Runtime context is not available during top-level module evaluation, build scripts, or discovery. Declare reusable definitions and state handles at module scope, but call their context-dependent methods only from an orcel-managed callback.
 
 ## How it works
 
-kaf establishes the managed context before invoking authored runtime code and keeps it available across asynchronous work in that execution chain. The framework binds durable session data and step-local resources, then commits mutable state at the step boundary. Authored code uses the public accessors rather than managing this lifecycle.
+orcel establishes the managed context before invoking authored runtime code and keeps it available across asynchronous work in that execution chain. The framework binds durable session data and step-local resources, then commits mutable state at the step boundary. Authored code uses the public accessors rather than managing this lifecycle.
 
 ## What to read next
 

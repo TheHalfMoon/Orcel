@@ -1,5 +1,5 @@
 ---
-issue: https://github.com/TheHalfMoon/kaf/issues/1711
+issue: https://github.com/TheHalfMoon/orcel/issues/1711
 status: implemented
 last_updated: "2026-08-29"
 ---
@@ -9,13 +9,13 @@ last_updated: "2026-08-29"
 ## Decision
 
 Allow a module under `connections/` to export `defineDynamic({ events })` from
-`kaf/connections`. Session and turn handlers return one
+`orcel/connections`. Session and turn handlers return one
 `defineMcpClientConnection(...)` or `defineOpenAPIConnection(...)`, a map of
 connection definitions, or `null`.
 
 ```ts
 // agent/connections/accounts.ts
-import { defineDynamic, defineMcpClientConnection } from "kaf/connections";
+import { defineDynamic, defineMcpClientConnection } from "orcel/connections";
 
 export default defineDynamic({
   events: {
@@ -45,7 +45,7 @@ resolvers fail the lifecycle without rebuilding the registry.
 Connection resolvers receive authenticated session identity and channel kind,
 but no conversation history, delivery payload, tool input, model output,
 continuation token, or free-form channel metadata. Authenticated dynamic
-definitions provide a stable, non-secret `instanceKey`. kaf hashes that key
+definitions provide a stable, non-secret `instanceKey`. orcel hashes that key
 with the path-derived connection identity and endpoint, then uses the result to
 pin parked authorization callbacks and token cache entries to the reconstructed
 instance.
@@ -58,7 +58,7 @@ so `connection_search`, qualified connection tools, auth, approval, filters,
 headers, and provided arguments use the ordinary connection pipeline.
 
 Connection definitions contain live callbacks that cannot enter durable
-workflow state. When an active turn resumes in a new durable step, kaf reruns
+workflow state. When an active turn resumes in a new durable step, orcel reruns
 its effective session and turn resolvers before authorization or tool execution.
 Resolvers must therefore be idempotent. The durable state continues to store no
 connection credentials or live functions.

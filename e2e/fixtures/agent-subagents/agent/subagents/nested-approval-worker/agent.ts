@@ -1,6 +1,6 @@
-import { defineAgent, defineDynamic } from "kaf";
-import { mockModel } from "kaf/evals";
-import { playScript } from "@kaf-e2e/config/mock-script";
+import { defineAgent, defineDynamic } from "orcel";
+import { mockModel } from "orcel/evals";
+import { playScript } from "@orcel-e2e/config/mock-script";
 
 const workerModel = mockModel({
   modelId: "nested-approval-worker",

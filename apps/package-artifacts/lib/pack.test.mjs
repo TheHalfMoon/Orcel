@@ -17,7 +17,7 @@ afterEach(async () => {
 
 describe("packPackage", () => {
   test("preserves pnpm manifest transformations and stamps build metadata", async () => {
-    testRoot = await mkdtemp(join(tmpdir(), "kaf-package-artifacts-test-"));
+    testRoot = await mkdtemp(join(tmpdir(), "orcel-package-artifacts-test-"));
     const packageRoot = join(testRoot, "packages", "test-package");
     await mkdir(packageRoot, { recursive: true });
     await writeFile(
@@ -27,7 +27,7 @@ describe("packPackage", () => {
     await writeFile(
       join(packageRoot, "package.json"),
       JSON.stringify({
-        name: "kaf-pack-test",
+        name: "orcel-pack-test",
         version: "0.33.3",
         peerDependencies: { example: "catalog:" },
       }),

@@ -1,5 +1,5 @@
 ---
-issue: https://github.com/TheHalfMoon/kaf/issues/2017
+issue: https://github.com/TheHalfMoon/orcel/issues/2017
 status: implemented
 last_updated: "2026-08-12"
 ---
@@ -23,7 +23,7 @@ defineInstructions({ content: "Retrieved customer brief", role: "user" });
 are exact: definitions cannot mix `markdown` and `content`, put a role beside
 `markdown`, or supply unknown fields. `instructions.md` remains system-role.
 
-The `kaf/instructions` `defineDynamic` surface accepts only `session.started`
+The `orcel/instructions` `defineDynamic` surface accepts only `session.started`
 and `turn.started`; handlers return `defineInstructions(...)` or `null`.
 
 ## Runtime semantics

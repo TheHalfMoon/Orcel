@@ -4,15 +4,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "kaf build",
-    "dev": "kaf dev",
-    "start": "kaf start",
-    "test:e2e": "kaf eval --strict"
+    "build": "orcel build",
+    "dev": "orcel dev",
+    "start": "orcel start",
+    "test:e2e": "orcel eval --strict"
   },
   "dependencies": {
-    "@kaf-e2e/config": "workspace:*",
+    "@orcel-e2e/config": "workspace:*",
     "@workflow/world-postgres": "catalog:",
-    "kaf": "workspace:*",
+    "orcel": "workspace:*",
     "gadget-extension": "file:../gadget-extension",
     "gizmo-extension": "file:../gizmo-extension"
   },

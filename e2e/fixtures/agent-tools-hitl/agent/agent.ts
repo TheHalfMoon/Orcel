@@ -1,6 +1,6 @@
-import { e2eAgentConfig } from "@kaf-e2e/config";
-import { defineAgent, defineDynamic } from "kaf";
-import type { MockModelRequest, MockModelResponse } from "kaf/evals";
+import { e2eAgentConfig } from "@orcel-e2e/config";
+import { defineAgent, defineDynamic } from "orcel";
+import type { MockModelRequest, MockModelResponse } from "orcel/evals";
 
 import { continuationModel } from "./lib/continuation/model.ts";
 

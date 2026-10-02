@@ -11,7 +11,7 @@ describe("server analytics", () => {
   });
 
   it("does not call the SDK in a query-bearing request context", () => {
-    const request = new Request("https://github.com/TheHalfMoon/kaf/docs/missing?token=secret");
+    const request = new Request("https://github.com/TheHalfMoon/orcel/docs/missing?token=secret");
 
     trackServerEvent(request, analyticsEvents.smartMarkdownNotFound, { surface: "docs" });
 
@@ -19,7 +19,7 @@ describe("server analytics", () => {
   });
 
   it("tracks query-free requests with the original request context", () => {
-    const request = new Request("https://github.com/TheHalfMoon/kaf/api/chat", { method: "POST" });
+    const request = new Request("https://github.com/TheHalfMoon/orcel/api/chat", { method: "POST" });
 
     trackServerEvent(request, analyticsEvents.askAiSubmitted, { outcome: "accepted" });
 

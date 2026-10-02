@@ -4,13 +4,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "kaf build",
-    "dev": "kaf dev",
-    "start": "kaf start",
-    "typecheck": "kaf build --skip-sandbox-prewarm && tsc"
+    "build": "orcel build",
+    "dev": "orcel dev",
+    "start": "orcel start",
+    "typecheck": "orcel build --skip-sandbox-prewarm && tsc"
   },
   "dependencies": {
-    "kaf": "workspace:*",
+    "orcel": "workspace:*",
     "zod": "catalog:"
   },
   "devDependencies": {

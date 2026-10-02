@@ -1,0 +1,7 @@
+{
+  "kind": "orcel-extension-capability-contract",
+  "capability": "dynamicInstructions",
+  "epoch": 27,
+  "sha256": "e5964aba459db639dc31cafc3dd3a0673e9ca87fc703d8c3c44e0d9e74309df0",
+  "exports": ["defineDynamic"]
+}

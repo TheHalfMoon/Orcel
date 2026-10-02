@@ -1,5 +1,5 @@
 import { crc32, deflateSync } from "node:zlib";
-import { defineTool, toolOutput, toolOutputPart } from "kaf/tools";
+import { defineTool, toolOutput, toolOutputPart } from "orcel/tools";
 import { z } from "zod";
 
 // Single-token names no model paraphrases (unlike cyan/teal or purple/violet),

@@ -3,8 +3,8 @@ import {
   outputOf,
   playScript,
   taskIdFromReceipt,
-} from "@kaf-e2e/config/mock-script";
-import type { MockModelRequest, MockModelResponse } from "kaf/evals";
+} from "@orcel-e2e/config/mock-script";
+import type { MockModelRequest, MockModelResponse } from "orcel/evals";
 
 import {
   DELEGATE_INTERIM_MESSAGE,

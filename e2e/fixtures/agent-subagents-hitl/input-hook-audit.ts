@@ -1,5 +1,5 @@
-import { defineState } from "kaf/context";
-import type { HookContext, HookEvent } from "kaf/hooks";
+import { defineState } from "orcel/context";
+import type { HookContext, HookEvent } from "orcel/hooks";
 
 export interface InputHookObservation {
   readonly subscriber: "typed" | "wildcard";

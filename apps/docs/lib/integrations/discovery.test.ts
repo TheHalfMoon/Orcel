@@ -1,4 +1,4 @@
-import { getIntegrationEntry } from "@kaf/catalog";
+import { getIntegrationEntry } from "@orcel/catalog";
 import { describe, expect, it } from "vitest";
 import { getIntegration, integrations } from "./data";
 import { integrationMarkdown, integrationPaths, integrationSearchText } from "./discovery";
@@ -40,7 +40,7 @@ describe("integration discovery", () => {
     const markdown = integrationMarkdown(slack!);
     expect(markdown).toContain("## Install");
     expect(markdown).toContain("## Quick start");
-    expect(markdown).toContain("kaf add channel/slack");
+    expect(markdown).toContain("orcel add channel/slack");
   });
 
   it.each(integrations.map((integration) => [integration.slug, integration] as const))(
@@ -54,7 +54,7 @@ describe("integration discovery", () => {
       for (const heading of SECTIONS) expect(sectionBody(markdown, heading)).not.toBe("");
       expect(markdown).toContain(`](${integration.docsHref})`);
       expect(integrationSearchText(integration)).toContain(integration.name);
-      if (getIntegrationEntry(slug)?.surfaces.registry) expect(markdown).toContain("kaf add ");
+      if (getIntegrationEntry(slug)?.surfaces.registry) expect(markdown).toContain("orcel add ");
 
       const related = markdown.indexOf("## Related resources");
       if (!integration.relatedResources?.length) {
@@ -73,15 +73,15 @@ describe("integration discovery", () => {
     expect(buzz).toBeDefined();
 
     const markdown = integrationMarkdown(buzz!);
-    expect(markdown).toContain("npm install --global @kaf/buzz-acp-adapter");
-    expect(markdown).toContain("kaf-buzz-acp-adapter install");
+    expect(markdown).toContain("npm install --global @orcel/buzz-acp-adapter");
+    expect(markdown).toContain("orcel-buzz-acp-adapter install");
     expect(markdown).toContain("Customize for this agent");
-    expect(markdown).toContain("Agent harness** to **kaf");
+    expect(markdown).toContain("Agent harness** to **orcel");
     expect(markdown).toContain("does not prefill one for custom harnesses");
     expect(markdown).toContain("Who can talk to this agent");
     expect(markdown).toContain("AI_GATEWAY_API_KEY");
     expect(markdown).toContain("Parallelism** to `1`");
-    expect(markdown).toContain("Accepted senders share one kaf identity");
+    expect(markdown).toContain("Accepted senders share one orcel identity");
     expect(markdown).toContain("## Configure");
     expect(integrationSearchText(buzz!)).toContain("acp");
   });
@@ -101,7 +101,7 @@ describe("integration discovery", () => {
     expect(shopify).toBeDefined();
 
     const markdown = integrationMarkdown(shopify!);
-    expect(markdown).toContain('process.env.KAF_DEV === "1"');
+    expect(markdown).toContain('process.env.ORCEL_DEV === "1"');
     expect(markdown).toContain("SHOPIFY_STORE_DOMAIN");
     expect(markdown).not.toContain("### MCP ·");
   });

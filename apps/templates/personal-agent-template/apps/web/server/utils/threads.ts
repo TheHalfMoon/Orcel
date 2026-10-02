@@ -1,7 +1,7 @@
 import { and, desc, eq } from "drizzle-orm";
 import { db, schema } from "@nuxthub/db";
-import type { ThreadRecord, ThreadState, ThreadSummary } from "#kaf/types/thread";
-import { truncateThreadTitle } from "#kaf/types/thread";
+import type { ThreadRecord, ThreadState, ThreadSummary } from "#orcel/types/thread";
+import { truncateThreadTitle } from "#orcel/types/thread";
 
 const LIST_LIMIT = 50;
 

@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import type { KafDynamicToolPart, KafMessagePart } from "kaf/vue";
+import type { OrcelDynamicToolPart, OrcelMessagePart } from "orcel/vue";
 
-const { cancel, data, status, error, respond, send } = useKafAgent();
+const { cancel, data, status, error, respond, send } = useOrcelAgent();
 
-type KafFilePart = Extract<KafMessagePart, { type: "file" }>;
+type OrcelFilePart = Extract<OrcelMessagePart, { type: "file" }>;
 
 const isBusy = computed(() => status.value === "submitted" || status.value === "streaming");
 const isResuming = computed(() => status.value === "resuming");
@@ -73,20 +73,20 @@ function handleInputResponses(
   void respond(responses);
 }
 
-function partKey(part: KafMessagePart, index: number): string {
+function partKey(part: OrcelMessagePart, index: number): string {
   if (part.type === "dynamic-tool") return part.toolCallId;
   return `${part.type}:${index}`;
 }
 
-function fileLabel(part: KafFilePart): string {
+function fileLabel(part: OrcelFilePart): string {
   return part.filename ?? "Attachment";
 }
 
-function fileDetail(part: KafFilePart): string {
+function fileDetail(part: OrcelFilePart): string {
   return [part.mediaType, formatBytes(part.size)].filter(Boolean).join(" - ");
 }
 
-function isImageFile(part: KafFilePart): boolean {
+function isImageFile(part: OrcelFilePart): boolean {
   return part.url !== undefined && part.mediaType.startsWith("image/");
 }
 
@@ -103,7 +103,7 @@ function formatBytes(size: number | undefined): string | undefined {
     <header class="sticky top-0 z-10 border-b border-border/60 bg-background/80 backdrop-blur">
       <div class="mx-auto flex h-12 w-full max-w-3xl items-center justify-between px-4 sm:px-6">
         <div class="flex items-center gap-2 font-mono text-[13px] tracking-tight">
-          <span class="font-medium">kaf</span>
+          <span class="font-medium">orcel</span>
           <span class="text-muted-foreground">/</span>
           <span class="text-muted-foreground">agent</span>
         </div>
@@ -128,7 +128,7 @@ function formatBytes(size: number | undefined): string | undefined {
         v-if="isEmpty"
         class="flex flex-1 flex-col items-center justify-center gap-2 px-6 py-16 text-center"
       >
-        <h1 class="text-xl font-medium tracking-tight">kaf Agent</h1>
+        <h1 class="text-xl font-medium tracking-tight">orcel Agent</h1>
         <p class="max-w-sm text-sm text-muted-foreground">
           Ask for the weather in Vienna, or tell the agent to explain the tools it called.
         </p>
@@ -176,9 +176,9 @@ function formatBytes(size: number | undefined): string | undefined {
                   class="flex max-w-sm items-center gap-3 rounded-md border border-border/80 bg-background/60 p-2"
                 >
                   <img
-                    v-if="isImageFile(part as KafFilePart)"
+                    v-if="isImageFile(part as OrcelFilePart)"
                     :src="part.url"
-                    :alt="fileLabel(part as KafFilePart)"
+                    :alt="fileLabel(part as OrcelFilePart)"
                     class="size-12 shrink-0 rounded-sm object-cover"
                   />
                   <span
@@ -198,13 +198,13 @@ function formatBytes(size: number | undefined): string | undefined {
                   </span>
                   <span class="min-w-0 flex-1">
                     <span class="block truncate font-medium">{{
-                      fileLabel(part as KafFilePart)
+                      fileLabel(part as OrcelFilePart)
                     }}</span>
                     <span
-                      v-if="fileDetail(part as KafFilePart)"
+                      v-if="fileDetail(part as OrcelFilePart)"
                       class="block truncate text-muted-foreground"
                     >
-                      {{ fileDetail(part as KafFilePart) }}
+                      {{ fileDetail(part as OrcelFilePart) }}
                     </span>
                   </span>
                 </a>
@@ -229,20 +229,20 @@ function formatBytes(size: number | undefined): string | undefined {
                   </span>
                   <span class="min-w-0 flex-1">
                     <span class="block truncate font-medium">{{
-                      fileLabel(part as KafFilePart)
+                      fileLabel(part as OrcelFilePart)
                     }}</span>
                     <span
-                      v-if="fileDetail(part as KafFilePart)"
+                      v-if="fileDetail(part as OrcelFilePart)"
                       class="block truncate text-muted-foreground"
                     >
-                      {{ fileDetail(part as KafFilePart) }}
+                      {{ fileDetail(part as OrcelFilePart) }}
                     </span>
                   </span>
                 </div>
 
                 <ToolBlock
                   v-else-if="part.type === 'dynamic-tool'"
-                  :part="part as KafDynamicToolPart"
+                  :part="part as OrcelDynamicToolPart"
                   :can-respond="!isInputDisabled"
                   @input-responses="handleInputResponses"
                 />

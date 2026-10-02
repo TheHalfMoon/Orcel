@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { authClient } from "@/lib/auth-client";
 
-const AGENT_NAME = "__KAF_INIT_APP_NAME__";
+const AGENT_NAME = "__ORCEL_INIT_APP_NAME__";
 
 export function SignIn() {
   const [pending, setPending] = useState(false);
@@ -39,7 +39,7 @@ export function SignIn() {
     <main className="flex min-h-dvh items-center justify-center bg-background px-8 text-foreground">
       <div className="flex w-full max-w-[22rem] flex-col gap-5">
         <div className="text-foreground opacity-[0.08] dark:opacity-[0.12]">
-          <KafWordmark className="h-auto w-[4.875rem]" />
+          <OrcelWordmark className="h-auto w-[4.875rem]" />
         </div>
         <section aria-label="Sign in" className="flex flex-col gap-2">
           <h1 className="max-w-full break-words font-medium text-sm leading-6">{AGENT_NAME}</h1>
@@ -70,7 +70,7 @@ export function SignIn() {
   );
 }
 
-function KafWordmark({ className }: { readonly className?: string }) {
+function OrcelWordmark({ className }: { readonly className?: string }) {
   return (
     <svg
       aria-hidden="true"

@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./global.css";
 
 export const metadata: Metadata = {
-  title: "Page not found - kaf",
-  description: "The requested kaf documentation page does not exist.",
+  title: "Page not found - orcel",
+  description: "The requested orcel documentation page does not exist.",
 };
 
 const GlobalNotFound = () => (
@@ -12,7 +12,7 @@ const GlobalNotFound = () => (
       <main className="max-w-md text-center">
         <h1 className="text-heading-32">Page not found</h1>
         <p className="mt-3 text-copy-16 text-gray-900">
-          The requested page does not exist. Browse the kaf documentation to continue.
+          The requested page does not exist. Browse the orcel documentation to continue.
         </p>
         <a
           className="mt-6 inline-flex rounded-md border px-4 py-2 text-label-14"

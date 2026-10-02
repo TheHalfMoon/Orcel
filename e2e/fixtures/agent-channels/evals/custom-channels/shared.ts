@@ -1,7 +1,7 @@
-import type { KafEvalTargetHandle } from "kaf/evals";
+import type { OrcelEvalTargetHandle } from "orcel/evals";
 
 export async function postChannel<T>(
-  target: KafEvalTargetHandle,
+  target: OrcelEvalTargetHandle,
   path: string,
   body: unknown,
 ): Promise<T> {

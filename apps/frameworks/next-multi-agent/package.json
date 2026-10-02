@@ -5,13 +5,13 @@
   "type": "module",
   "scripts": {
     "build": "next build",
-    "build:billing-agent": "cd agents/billing && kaf build",
+    "build:billing-agent": "cd agents/billing && orcel build",
     "dev": "next dev",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "ai": "catalog:",
-    "kaf": "workspace:*",
+    "orcel": "workspace:*",
     "next": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",

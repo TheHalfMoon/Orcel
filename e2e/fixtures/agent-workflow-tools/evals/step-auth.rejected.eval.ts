@@ -1,4 +1,4 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 import { runRejectedStepAuth } from "./agent-probe.shared.ts";
 

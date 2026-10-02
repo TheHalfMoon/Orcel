@@ -1,7 +1,0 @@
-{
-  "kind": "kaf-extension-capability-contract",
-  "capability": "config",
-  "epoch": 1,
-  "sha256": "c2a2387dfc296f04b1f191f1015d748ee420aca57f3c61a8d7cc97620a4228d8",
-  "exports": ["defineExtension"]
-}

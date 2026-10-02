@@ -1,6 +1,6 @@
-import { e2eSubagentConfig } from "@kaf-e2e/config";
-import { defineAgent } from "kaf";
-import type { MockModelRequest, MockModelResponse } from "kaf/evals";
+import { e2eSubagentConfig } from "@orcel-e2e/config";
+import { defineAgent } from "orcel";
+import type { MockModelRequest, MockModelResponse } from "orcel/evals";
 
 export default defineAgent({
   description: "Verifies custom sandbox provider session capabilities.",

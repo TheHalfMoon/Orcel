@@ -1,6 +1,6 @@
 "use client";
 
-import { useKafAgent } from "kaf/react";
+import { useOrcelAgent } from "orcel/react";
 import { type FormEvent, type JSX, useEffect, useMemo, useRef, useState } from "react";
 import { type Components, Streamdown } from "streamdown";
 
@@ -88,7 +88,7 @@ export function App() {
   const [composerError, setComposerError] = useState<string | undefined>(undefined);
   const conversationStageRef = useRef<HTMLElement | null>(null);
   const reducer = useMemo(() => traceReducer(), []);
-  const agent = useKafAgent({
+  const agent = useOrcelAgent({
     prewarm: composerInput.length > 0,
     reducer,
   });
@@ -195,7 +195,7 @@ export function App() {
             </div>
           ) : (
             <div className="empty-state">
-              <h1 className="wordmark">kaf Agent</h1>
+              <h1 className="wordmark">orcel Agent</h1>
               {composerForm}
             </div>
           )}

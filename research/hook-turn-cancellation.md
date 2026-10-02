@@ -10,7 +10,7 @@ last_updated: "2026-09-23"
 
 #3091 let a `turn.started` or `step.started` hook reject a turn by throwing: the turn failed with `KAFNT_HANDLER_FAILED` and the session parked. That coupled two unrelated intents. An audit or metrics hook that crashed could stop the agent, and a hook that meant to stop the turn had to express it as a failure.
 
-#3684 makes stream-event hooks isolated observers: kaf logs a thrown handler and keeps executing, so throwing no longer vetoes anything. This plan gives hooks an explicit replacement, `ctx.cancel()`, which stops the running turn through the same durable path as `session.cancel()`.
+#3684 makes stream-event hooks isolated observers: orcel logs a thrown handler and keeps executing, so throwing no longer vetoes anything. This plan gives hooks an explicit replacement, `ctx.cancel()`, which stops the running turn through the same durable path as `session.cancel()`.
 
 ## Authoring API
 
@@ -25,7 +25,7 @@ interface HookContext extends SessionContext {
 ```
 
 ```ts title="agent/hooks/require-credentials.ts"
-import { defineHook } from "kaf/hooks";
+import { defineHook } from "orcel/hooks";
 import { loadWorkspaceCredentials } from "../lib/credentials";
 
 export default defineHook({
@@ -44,7 +44,7 @@ export default defineHook({
 
 ### Why `void`, not `Promise<void>`
 
-`session.cancel()` returns a promise because it crosses a durable inbox and reports `accepted` or `no_active_turn`. `ctx.cancel()` runs inside the turn it stops, and that turn cannot settle while kaf is still awaiting the hook. A promise would either resolve before the cancellation takes effect or never resolve. `void` states the real contract: the request is recorded now and applied when the event's hooks return. `await ctx.cancel()` still type-checks and behaves the same.
+`session.cancel()` returns a promise because it crosses a durable inbox and reports `accepted` or `no_active_turn`. `ctx.cancel()` runs inside the turn it stops, and that turn cannot settle while orcel is still awaiting the hook. A promise would either resolve before the cancellation takes effect or never resolve. `void` states the real contract: the request is recorded now and applied when the event's hooks return. `await ctx.cancel()` still type-checks and behaves the same.
 
 `cancel()` also does not throw. Throwing would route through the failure isolation catch and hide the intent in an error log. The handler keeps running and returns when appropriate.
 
@@ -61,7 +61,7 @@ flowchart LR
 - **Same outcome as `session.cancel()`.** In-flight model and tool work is aborted, delegated child turns are cancelled, and the turn settles as `turn.cancelled` followed by `session.waiting`. No failure event is emitted and no step is retried. A conversation accepts the next message as a new turn. A delegated task reports the cancellation to its caller.
 - **Task sessions with no caller end.** A scheduled or invoked task-mode session has no one left to send it work. Parking it after a cancel would leave the run open until its timeout, so it ends with `session.completed`. The workflow result, the session callback (as `failed`), and any delegated parent carry the error "The turn was cancelled." This also applies to `session.cancel()`.
 - **Deterministic before the model.** A cancel from `turn.started` or `step.started` stops the turn before that model call is sent.
-- **Fails closed on events.** Eligibility is a total map over hook event types, so a new event does not compile until it is classified. `step.failed`, turn and session terminal events, `context.cleared`, and `subagent.*` are not cancellable, and neither are clear or compact requests. Cancelling after a terminal event would give the turn a second terminal. kaf logs a warning and ignores these calls.
+- **Fails closed on events.** Eligibility is a total map over hook event types, so a new event does not compile until it is classified. `step.failed`, turn and session terminal events, `context.cleared`, and `subagent.*` are not cancellable, and neither are clear or compact requests. Cancelling after a terminal event would give the turn a second terminal. orcel logs a warning and ignores these calls.
 - **Only during dispatch.** A call from work the handler did not await, made after the event's hooks returned, is ignored with a warning. Otherwise it could cancel at an arbitrary later point, or never.
 - **Hook exceptions stay isolated.** Throwing from a hook is logged with the hook slug, subscription, event type, event ID, and session ID, and execution continues. Only `ctx.cancel()` stops a turn.
 
@@ -76,7 +76,7 @@ Internally, each turn step combines the workflow-owned turn signal with a step-l
 ## Compatibility
 
 - Hooks that relied on throwing from `turn.started` or `step.started` to reject a turn now observe that the turn continues. They migrate to `ctx.cancel()`. The #3684 changeset is `minor` for this break.
-- Adding `cancel()` bumps the hook extension contract to epoch 28 and retains epoch 27. kaf always constructs `HookContext`, and handlers compiled against epoch 27 never call `cancel()`.
+- Adding `cancel()` bumps the hook extension contract to epoch 28 and retains epoch 27. orcel always constructs `HookContext`, and handlers compiled against epoch 27 never call `cancel()`.
 
 ## Validation
 

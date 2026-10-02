@@ -5,7 +5,7 @@ import {
   slackChannel,
   type SlackContext,
   type SlackMessage,
-} from "kaf/channels/slack";
+} from "orcel/channels/slack";
 import { buildAppSessionAuth } from "../../lib/slack-auth";
 import {
   consumeSlackLinkCodeRemote,

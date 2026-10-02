@@ -1,5 +1,5 @@
-import { e2eAgentConfig } from "@kaf-e2e/config";
-import { defineAgent } from "kaf";
+import { e2eAgentConfig } from "@orcel-e2e/config";
+import { defineAgent } from "orcel";
 import { respond } from "./mock-responder.js";
 
 export default defineAgent({

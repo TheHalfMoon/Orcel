@@ -1,8 +1,8 @@
-import { defineEval } from "kaf/evals";
-import { equals } from "kaf/evals/expect";
+import { defineEval } from "orcel/evals";
+import { equals } from "orcel/evals/expect";
 
 // @ts-ignore TS6059: this eval intentionally exercises the workspace source implementation.
-import { coalesceDeliverPayloads } from "../../../../../packages/kaf/src/execution/deliver-payloads.js";
+import { coalesceDeliverPayloads } from "../../../../../packages/orcel/src/execution/deliver-payloads.js";
 
 export default defineEval({
   tags: ["real-model"],

@@ -1,10 +1,10 @@
 ---
 title: "Multi-Tenant Memory"
-description: "Bind an kaf memory provider to an authenticated tenant and caller scope."
+description: "Bind an orcel memory provider to an authenticated tenant and caller scope."
 ---
 
 Multi-tenant memory is a scope decision, not a storage implementation. Bind any
-[memory provider](../memory) to a trusted tenant and caller tuple, and kaf
+[memory provider](../memory) to a trusted tenant and caller tuple, and orcel
 passes the resulting locked scope key to every provider operation.
 
 The example below uses the built-in `fileMemory()` provider. Replace it with
@@ -17,9 +17,9 @@ Never accept the tenant or user ID from the model. Resolve both from verified
 session authentication and return a tuple:
 
 ```ts title="agent/memory/profile.ts"
-import { defineMemory } from "kaf/memory";
-import { byPrincipal } from "kaf/memory/scope";
-import { fileMemory } from "kaf/memory/file";
+import { defineMemory } from "orcel/memory";
+import { byPrincipal } from "orcel/memory/scope";
+import { fileMemory } from "orcel/memory/file";
 
 export default defineMemory({
   description: "Remember durable facts for the authenticated tenant user.",
@@ -41,7 +41,7 @@ export default defineMemory({
 ```
 
 Returning `null` disables memory for unauthenticated or incorrectly scoped
-traffic. kaf does not call the provider and never substitutes a shared scope.
+traffic. orcel does not call the provider and never substitutes a shared scope.
 `byPrincipal(ctx)` includes the authenticated principal type, authenticator,
 issuer, and principal ID, so the tuple separates callers even if the same
 principal ID exists in two authentication systems.
@@ -52,7 +52,7 @@ ownership at the channel boundary.
 
 ## Understand the locked provider boundary
 
-kaf validates the namespace and scope tuple, then derives an opaque
+orcel validates the namespace and scope tuple, then derives an opaque
 `memory.scope.key`. `fileMemory()` uses that key for its document. A hosted or
 custom provider receives the same key in every recall, capture, and tools call.
 

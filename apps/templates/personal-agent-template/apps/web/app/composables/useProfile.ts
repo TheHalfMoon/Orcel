@@ -1,5 +1,5 @@
-import type { UserProfileWithUser, UserProfilePatch } from "#kaf/types/profile";
-import { TIMEZONE_OPTIONS } from "#kaf/timezones";
+import type { UserProfileWithUser, UserProfilePatch } from "#orcel/types/profile";
+import { TIMEZONE_OPTIONS } from "#orcel/timezones";
 
 interface ProfileResponse {
   profile: UserProfileWithUser;

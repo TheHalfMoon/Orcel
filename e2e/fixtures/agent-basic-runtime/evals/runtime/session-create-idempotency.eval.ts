@@ -1,5 +1,5 @@
-import { defineEval, type KafEvalTargetHandle } from "kaf/evals";
-import { satisfies } from "kaf/evals/expect";
+import { defineEval, type OrcelEvalTargetHandle } from "orcel/evals";
+import { satisfies } from "orcel/evals/expect";
 
 interface CreateSessionResponse {
   readonly ok: true;
@@ -71,28 +71,28 @@ export default defineEval({
 });
 
 async function createSession(
-  target: KafEvalTargetHandle,
+  target: OrcelEvalTargetHandle,
   authorization: string,
   operationId: string,
   message: string,
 ): Promise<CreateSessionResponse> {
-  const response = await target.fetch("/kaf/v1/session", {
+  const response = await target.fetch("/orcel/v1/session", {
     body: JSON.stringify({ message, operationId }),
     headers: { authorization, "content-type": "application/json" },
     method: "POST",
   });
   const text = await response.text();
-  if (!response.ok) throw new Error(`POST /kaf/v1/session failed (${response.status}): ${text}`);
+  if (!response.ok) throw new Error(`POST /orcel/v1/session failed (${response.status}): ${text}`);
   return JSON.parse(text) as CreateSessionResponse;
 }
 
 async function continueSession(
-  target: KafEvalTargetHandle,
+  target: OrcelEvalTargetHandle,
   authorization: string,
   sessionId: string,
   message: string,
 ): Promise<void> {
-  const response = await target.fetch(`/kaf/v1/session/${encodeURIComponent(sessionId)}`, {
+  const response = await target.fetch(`/orcel/v1/session/${encodeURIComponent(sessionId)}`, {
     body: JSON.stringify({ message }),
     headers: { authorization, "content-type": "application/json" },
     method: "POST",

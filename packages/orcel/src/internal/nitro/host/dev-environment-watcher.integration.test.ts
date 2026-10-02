@@ -1,0 +1,173 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+
+import {
+  getDevelopmentEnvironmentFilePaths,
+  loadDevelopmentEnvironmentFiles,
+  readDevelopmentEnvironmentHostValues,
+  stageDevelopmentEnvironmentFiles,
+} from "#cli/dev/environment.js";
+
+const ENV_KEYS = [
+  "ORCEL_WATCH_ENV_FILE_ONLY",
+  "ORCEL_WATCH_ENV_NEW",
+  "ORCEL_WATCH_ENV_ROOT_ONLY",
+  "ORCEL_WATCH_ENV_SHARED",
+  "ORCEL_WATCH_ENV_SHELL",
+  "AI_GATEWAY_API_KEY",
+] as const;
+const temporaryDirectories: string[] = [];
+
+afterEach(async () => {
+  for (const key of ENV_KEYS) {
+    delete process.env[key];
+  }
+  await Promise.all(
+    temporaryDirectories
+      .splice(0)
+      .map(async (path) => await rm(path, { force: true, recursive: true })),
+  );
+});
+
+describe("development environment reload transactions", () => {
+  it("preserves parent process precedence when env files reload", async () => {
+    const appRoot = await createEnvironmentApp();
+    process.env.ORCEL_WATCH_ENV_SHELL = "from-parent";
+
+    await loadDevelopmentEnvironmentFiles(appRoot);
+
+    expect(process.env.ORCEL_WATCH_ENV_FILE_ONLY).toBe("from-env");
+    expect(process.env.ORCEL_WATCH_ENV_SHARED).toBe("from-local");
+    expect(process.env.ORCEL_WATCH_ENV_SHELL).toBe("from-parent");
+  });
+
+  it("loads connection settings separately from explicit environment keys", async () => {
+    const appRoot = await createEnvironmentApp();
+    await writeFile(join(appRoot, ".env.local"), "AI_GATEWAY_API_KEY=from-file\n");
+    await mkdir(join(appRoot, ".orcel"));
+    await writeFile(join(appRoot, ".orcel", "provider.json"), '{"selected":"ai-gateway-project"}\n');
+
+    await loadDevelopmentEnvironmentFiles(appRoot);
+    expect(process.env.AI_GATEWAY_API_KEY).toBe("from-file");
+
+    await writeFile(join(appRoot, ".orcel", "provider.json"), '{"selected":"ai-gateway-key"}\n');
+    await loadDevelopmentEnvironmentFiles(appRoot);
+    expect(process.env.AI_GATEWAY_API_KEY).toBe("from-file");
+  });
+
+  it("does not change the host fingerprint when selecting Project OIDC", async () => {
+    const appRoot = await createEnvironmentApp();
+    process.env.AI_GATEWAY_API_KEY = "from-parent";
+
+    await loadDevelopmentEnvironmentFiles(appRoot);
+    const previous = readDevelopmentEnvironmentHostValues(appRoot);
+
+    await mkdir(join(appRoot, ".orcel"));
+    await writeFile(join(appRoot, ".orcel", "provider.json"), '{"selected":"ai-gateway-project"}\n');
+    await loadDevelopmentEnvironmentFiles(appRoot);
+
+    expect(process.env.AI_GATEWAY_API_KEY).toBe("from-parent");
+    expect(readDevelopmentEnvironmentHostValues(appRoot)).toEqual(previous);
+  });
+
+  it("loads, watches, fingerprints, and reloads workspace-root env", async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), "orcel-dev-env-workspace-"));
+    temporaryDirectories.push(workspaceRoot);
+    const appRoot = join(workspaceRoot, "agents", "support");
+    await mkdir(join(appRoot, "agent"), { recursive: true });
+    await writeFile(
+      join(workspaceRoot, "package.json"),
+      JSON.stringify({ dependencies: { orcel: "*" } }),
+    );
+    await writeFile(
+      join(workspaceRoot, ".env.local"),
+      "ORCEL_WATCH_ENV_ROOT_ONLY=from-root\nORCEL_WATCH_ENV_SHARED=from-root\n",
+    );
+    await writeFile(join(appRoot, ".env.local"), "ORCEL_WATCH_ENV_SHARED=from-child\n");
+
+    await loadDevelopmentEnvironmentFiles(appRoot);
+
+    expect(process.env.ORCEL_WATCH_ENV_ROOT_ONLY).toBe("from-root");
+    expect(process.env.ORCEL_WATCH_ENV_SHARED).toBe("from-root");
+    expect(getDevelopmentEnvironmentFilePaths(appRoot)).toEqual(environmentPaths(workspaceRoot));
+    expect(readDevelopmentEnvironmentHostValues(appRoot)).toMatchObject({
+      ORCEL_WATCH_ENV_ROOT_ONLY: "from-root",
+      ORCEL_WATCH_ENV_SHARED: "from-root",
+    });
+
+    await writeFile(join(workspaceRoot, ".env.local"), "ORCEL_WATCH_ENV_ROOT_ONLY=updated\n");
+    stageDevelopmentEnvironmentFiles(appRoot).commit();
+    expect(process.env.ORCEL_WATCH_ENV_ROOT_ONLY).toBe("updated");
+    expect(process.env.ORCEL_WATCH_ENV_SHARED).toBeUndefined();
+  });
+
+  it("restores the complete prior environment when a candidate is rejected", async () => {
+    const appRoot = await createEnvironmentApp();
+    const envLocalPath = join(appRoot, ".env.local");
+    await loadDevelopmentEnvironmentFiles(appRoot);
+    await writeFile(
+      envLocalPath,
+      "ORCEL_WATCH_ENV_NEW=from-candidate\nORCEL_WATCH_ENV_SHARED=from-candidate\n",
+    );
+
+    const reload = stageDevelopmentEnvironmentFiles(appRoot);
+    expect(process.env.ORCEL_WATCH_ENV_FILE_ONLY).toBe("from-env");
+    expect(process.env.ORCEL_WATCH_ENV_NEW).toBe("from-candidate");
+    expect(process.env.ORCEL_WATCH_ENV_SHARED).toBe("from-candidate");
+
+    reload.rollback();
+
+    expect(process.env.ORCEL_WATCH_ENV_FILE_ONLY).toBe("from-env");
+    expect(process.env.ORCEL_WATCH_ENV_NEW).toBeUndefined();
+    expect(process.env.ORCEL_WATCH_ENV_SHARED).toBe("from-local");
+  });
+
+  it("retains the candidate environment after commit", async () => {
+    const appRoot = await createEnvironmentApp();
+    await loadDevelopmentEnvironmentFiles(appRoot);
+    await writeFile(join(appRoot, ".env.local"), "ORCEL_WATCH_ENV_SHARED=committed\n");
+
+    const reload = stageDevelopmentEnvironmentFiles(appRoot);
+    reload.commit();
+    reload.rollback();
+
+    expect(process.env.ORCEL_WATCH_ENV_SHARED).toBe("committed");
+  });
+
+  it("reapplies a rolled-back environment edit when a later rebuild stages again", async () => {
+    const appRoot = await createEnvironmentApp();
+    await loadDevelopmentEnvironmentFiles(appRoot);
+    await writeFile(join(appRoot, ".env.local"), "ORCEL_WATCH_ENV_SHARED=after-fix\n");
+
+    stageDevelopmentEnvironmentFiles(appRoot).rollback();
+    expect(process.env.ORCEL_WATCH_ENV_SHARED).toBe("from-local");
+
+    // The retry rebuild carries no env-file change of its own; staging from
+    // the files on disk must still pick the edit up.
+    const retry = stageDevelopmentEnvironmentFiles(appRoot);
+    retry.commit();
+
+    expect(process.env.ORCEL_WATCH_ENV_SHARED).toBe("after-fix");
+  });
+});
+
+function environmentPaths(root: string): string[] {
+  return [".env.development.local", ".env.local", ".env.development", ".env"].map((name) =>
+    join(root, name),
+  );
+}
+
+async function createEnvironmentApp(): Promise<string> {
+  const appRoot = await mkdtemp(join(tmpdir(), "orcel-dev-env-transaction-"));
+  temporaryDirectories.push(appRoot);
+  await mkdir(join(appRoot, "agent"));
+  await writeFile(join(appRoot, "package.json"), JSON.stringify({ dependencies: { orcel: "*" } }));
+  await writeFile(
+    join(appRoot, ".env"),
+    "ORCEL_WATCH_ENV_FILE_ONLY=from-env\nORCEL_WATCH_ENV_SHARED=from-env\nORCEL_WATCH_ENV_SHELL=from-env\n",
+  );
+  await writeFile(join(appRoot, ".env.local"), "ORCEL_WATCH_ENV_SHARED=from-local\n");
+  return appRoot;
+}

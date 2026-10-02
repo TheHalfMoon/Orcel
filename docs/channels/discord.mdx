@@ -4,53 +4,53 @@ description: "Reach your agent from Discord HTTP Interactions, including slash c
 type: integration
 ---
 
-The Discord channel wires your agent into Discord's HTTP Interactions, including slash and application commands, message components, and modal submissions. Discord enforces a three-second ACK deadline, so the channel acknowledges the command right away and runs the kaf work in the background. Credentials and inbound request verification run through [Vercel Connect](../guides/auth-and-route-protection), so Discord's bot token stays out of your environment and Connect verifies Discord's signature before forwarding an interaction to kaf. See [Channels](./overview) for the contract this builds on.
+The Discord channel wires your agent into Discord's HTTP Interactions, including slash and application commands, message components, and modal submissions. Discord enforces a three-second ACK deadline, so the channel acknowledges the command right away and runs the orcel work in the background. Credentials and inbound request verification run through [Vercel Connect](../guides/auth-and-route-protection), so Discord's bot token stays out of your environment and Connect verifies Discord's signature before forwarding an interaction to orcel. See [Channels](./overview) for the contract this builds on.
 
 ## Set up Discord
 
-Run the guided setup from your kaf project:
+Run the guided setup from your orcel project:
 
 ```bash
-pnpm kaf add channel/discord
+pnpm orcel add channel/discord
 ```
 
 The setup guides you through creating a Discord application and bot, then:
 
 - signs you in to Vercel and creates or links a project when needed;
 - validates the bot token;
-- creates a Vercel Connect client and attaches `/kaf/v1/discord` as its trigger destination;
+- creates a Vercel Connect client and attaches `/orcel/v1/discord` as its trigger destination;
 - registers an application command with a required `message` option;
 - configures the Discord application's Interactions Endpoint URL;
 - scaffolds the channel with Connect-managed credentials; and
 - prints the bot installation URL.
 
-The command defaults to `/ask` with the description **Ask the kaf agent**. You can edit both during setup. Discord global commands can take up to an hour to appear after registration.
+The command defaults to `/ask` with the description **Ask the orcel agent**. You can edit both during setup. Discord global commands can take up to an hour to appear after registration.
 
 The generated channel looks like this:
 
 ```ts title="agent/channels/discord.ts"
 import { connectDiscordCredentials } from "@vercel/connect/eve";
-import { discordChannel } from "kaf/channels/discord";
+import { discordChannel } from "orcel/channels/discord";
 
 export default discordChannel({
   credentials: connectDiscordCredentials("discord/my-agent"),
 });
 ```
 
-The route is `POST /kaf/v1/discord` by default. Connect resolves the application ID and bot token lazily and verifies forwarded interactions with same-project Vercel OIDC.
+The route is `POST /orcel/v1/discord` by default. Connect resolves the application ID and bot token lazily and verifies forwarded interactions with same-project Vercel OIDC.
 
 ### Configure Discord manually
 
-If you do not use the guided Connect setup, register a command with Discord's API or the Developer Portal. A string option named `message` lines up with kaf's default prompt extraction:
+If you do not use the guided Connect setup, register a command with Discord's API or the Developer Portal. A string option named `message` lines up with orcel's default prompt extraction:
 
 ```bash
 curl -X PUT "https://discord.com/api/v10/applications/$DISCORD_APPLICATION_ID/commands" \
   -H "Authorization: Bot $DISCORD_BOT_TOKEN" -H "Content-Type: application/json" \
-  -d '[{"name":"ask","description":"Ask the kaf agent","type":1,
+  -d '[{"name":"ask","description":"Ask the orcel agent","type":1,
     "options":[{"name":"message","description":"What should the agent do?","type":3,"required":true}]}]'
 ```
 
-Then configure the public `https://…/kaf/v1/discord` route as the application's Interactions Endpoint URL. Pass `credentials: { applicationId, botToken, publicKey }` to `discordChannel`, or set the corresponding `DISCORD_APPLICATION_ID`, `DISCORD_BOT_TOKEN`, and `DISCORD_PUBLIC_KEY` environment variables.
+Then configure the public `https://…/orcel/v1/discord` route as the application's Interactions Endpoint URL. Pass `credentials: { applicationId, botToken, publicKey }` to `discordChannel`, or set the corresponding `DISCORD_APPLICATION_ID`, `DISCORD_BOT_TOKEN`, and `DISCORD_PUBLIC_KEY` environment variables.
 
 ## How the channel handles messages
 
@@ -63,7 +63,7 @@ The model-visible `<discord_context>` includes `user_id` and the receiving appli
 Event handlers receive `(eventData, channel, ctx)`, with Discord platform handles on `channel.discord`:
 
 ```ts
-import { discordChannel } from "kaf/channels/discord";
+import { discordChannel } from "orcel/channels/discord";
 
 export default discordChannel({
   onCommand: (ctx, interaction) => ({

@@ -136,10 +136,10 @@ async function handleSubmit() {
     <section class="relative flex flex-1 flex-col px-6 py-6 sm:px-8 lg:px-12 lg:py-8 hero-glow">
       <header class="flex items-center justify-between">
         <NuxtLink
-          to="https://vercel.com/kaf"
+          to="https://vercel.com/orcel"
           target="_blank"
           class="text-highlighted transition-opacity hover:opacity-80"
-          aria-label="Kaf on Vercel"
+          aria-label="Orcel on Vercel"
         >
           <Logo class="h-[18px] w-auto text-highlighted" />
         </NuxtLink>
@@ -178,11 +178,11 @@ async function handleSubmit() {
         <p class="text-xs text-dimmed">
           Built with
           <NuxtLink
-            to="https://vercel.com/kaf"
+            to="https://vercel.com/orcel"
             target="_blank"
             class="text-muted underline-offset-2 hover:text-highlighted hover:underline"
           >
-            Kaf
+            Orcel
           </NuxtLink>
           on Vercel
         </p>

@@ -1,9 +1,9 @@
-import { defineEval, type KafEvalContext, type KafEvalSession, type KafEvalTurn } from "kaf/evals";
+import { defineEval, type OrcelEvalContext, type OrcelEvalSession, type OrcelEvalTurn } from "orcel/evals";
 
 const COLLISION_MARKER = "MIXED-PARK-COMPLETE-7K2M";
 
 /**
- * Regression coverage for https://github.com/TheHalfMoon/kaf/issues/1201.
+ * Regression coverage for https://github.com/TheHalfMoon/orcel/issues/1201.
  *
  * One model step requests an approval-gated tool and a subagent together.
  * The subagent may finish first, but the root turn must retain the approval
@@ -47,13 +47,13 @@ export default defineEval({
   },
 });
 
-type SessionCursor = Pick<KafEvalSession, "sessionId" | "state">;
+type SessionCursor = Pick<OrcelEvalSession, "sessionId" | "state">;
 
 async function waitForMessage(
-  t: KafEvalContext,
+  t: OrcelEvalContext,
   initialSession: SessionCursor,
   marker: string,
-): Promise<KafEvalTurn> {
+): Promise<OrcelEvalTurn> {
   let session = initialSession;
   for (let attempt = 0; attempt < 5; attempt += 1) {
     if (session.sessionId === undefined || session.state === undefined) {

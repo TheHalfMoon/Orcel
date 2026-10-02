@@ -286,7 +286,7 @@ const SHADER_READY_TIMEOUT_MS = 3000;
 const LOGO_TEXTURE_SIZE = 1024;
 const revealTargets = {
   logoMinMul: 0.025,
-  // The kaf mark has broad horizontal strokes; a lower multiplier keeps
+  // The orcel mark has broad horizontal strokes; a lower multiplier keeps
   // their dense star field granular instead of saturating into solid bars.
   logoMaxMul: 2.2,
   logoWhiteStrength: 0.65,

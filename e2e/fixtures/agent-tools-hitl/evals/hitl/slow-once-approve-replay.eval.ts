@@ -1,16 +1,16 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 import { GUARDED_SLOW_ECHO_TOKEN } from "./shared.js";
 
 const TOOL_NAME = "guarded-slow-echo";
 
 /**
- * Regression coverage for https://github.com/TheHalfMoon/kaf/issues/460.
+ * Regression coverage for https://github.com/TheHalfMoon/orcel/issues/460.
  *
  * A `once()`-gated tool with a slow async `execute` is called twice in one
  * user turn. The first call is human-approved, and the second auto-approves via
  * the session's `once()` grant. The approved call's `tool_result` reaches
- * durable history through the AI SDK's accumulated response messages. If kaf
+ * durable history through the AI SDK's accumulated response messages. If orcel
  * keeps only the final step response, the next turn replays a `tool_use`
  * without a `tool_result` and the provider rejects every later turn.
  */

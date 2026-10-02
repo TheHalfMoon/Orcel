@@ -1,5 +1,5 @@
-import { DefaultSandbox, defineSandbox, type SandboxSession } from "kaf/sandbox";
-import { VercelSandbox } from "kaf/sandbox/vercel";
+import { DefaultSandbox, defineSandbox, type SandboxSession } from "orcel/sandbox";
+import { VercelSandbox } from "orcel/sandbox/vercel";
 
 /**
  * Sandbox lifecycle fixture exercising the surfaces an agent author relies
@@ -7,20 +7,20 @@ import { VercelSandbox } from "kaf/sandbox/vercel";
  * end-to-end through a real provider.
  *
  * - `prepare()` runs once per sandbox environment generation. It writes a
- *   marker and installs a custom CLI (`kaf-greet`) that every later session
+ *   marker and installs a custom CLI (`orcel-greet`) that every later session
  *   inherits. The CLI also proves the base image can execute Python.
  * - The selector writes a marker and starts a loopback server once when the
  *   durable session first opens its sandbox.
  *
  * The default environment keeps this fixture portable between local providers
- * and Vercel Sandbox. Both run the published kaf
- * base image: GHCR locally and VCR on Vercel. CI sets `KAF_SANDBOX_IMAGE_TAG`
+ * and Vercel Sandbox. Both run the published orcel
+ * base image: GHCR locally and VCR on Vercel. CI sets `ORCEL_SANDBOX_IMAGE_TAG`
  * to `latest` so release PRs can run before their versioned image exists. The
  * image ships Python, Node, and git; the preparation below assumes
  * that real-binary environment and is not meant to run against the
  * dependency-free `just-bash` fallback.
  *
- * `KAF_TEST_AUTHOR_SNAPSHOT_ID`, when set, overrides the provider with
+ * `ORCEL_TEST_AUTHOR_SNAPSHOT_ID`, when set, overrides the provider with
  * `VercelSandbox.environment({ prepare })` with a snapshot source so the author-snapshot
  * smoke test can verify that an author-supplied snapshot remains the base
  * layer while environment preparation runs on top.
@@ -33,16 +33,16 @@ export const SANDBOX_MARKER_TOKEN = "sandbox-preparation-ok-J3Q";
  * user's npm global prefix on PATH, so the same install works across providers.
  */
 const SANDBOX_CLI_DIRECTORY_PATH = "/home/vercel-sandbox/.local/bin";
-export const SANDBOX_CLI_PATH = `${SANDBOX_CLI_DIRECTORY_PATH}/kaf-greet`;
-export const SANDBOX_CLI_TOKEN = "kaf-greet-cli-ok-R7M";
+export const SANDBOX_CLI_PATH = `${SANDBOX_CLI_DIRECTORY_PATH}/orcel-greet`;
+export const SANDBOX_CLI_TOKEN = "orcel-greet-cli-ok-R7M";
 
 /** Per-session marker written by the selector, not environment preparation. */
 export const SANDBOX_SESSION_MARKER_PATH = "/workspace/session-marker.txt";
 export const SANDBOX_SESSION_MARKER_TOKEN = "sandbox-onsession-ok-X5T";
 
 const FANOUT_SERVER_PORT = 43_100;
-const FANOUT_SERVER_PATH = "/workspace/kaf-fanout-server.py";
-const FANOUT_SERVER_LOG_PATH = "/workspace/kaf-fanout-server.log";
+const FANOUT_SERVER_PATH = "/workspace/orcel-fanout-server.py";
+const FANOUT_SERVER_LOG_PATH = "/workspace/orcel-fanout-server.log";
 const FANOUT_BARRIER_SIZE = 10;
 const FANOUT_BARRIER_TIMEOUT_SECONDS = 15;
 
@@ -128,7 +128,7 @@ const FANOUT_SERVER_SCRIPT = [
   "",
 ].join("\n");
 
-const authorSnapshotId = process.env.KAF_TEST_AUTHOR_SNAPSHOT_ID;
+const authorSnapshotId = process.env.ORCEL_TEST_AUTHOR_SNAPSHOT_ID;
 const prepareEnvironment = async (sandbox: SandboxSession) => {
   await sandbox.writeTextFile({ path: SANDBOX_MARKER_PATH, content: SANDBOX_MARKER_TOKEN });
   const mkdir = await sandbox.run({ command: `mkdir -p ${SANDBOX_CLI_DIRECTORY_PATH}` });

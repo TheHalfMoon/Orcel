@@ -1,5 +1,5 @@
-import { defineAgent, defineDynamic } from "kaf";
-import { mockModel } from "kaf/evals";
+import { defineAgent, defineDynamic } from "orcel";
+import { mockModel } from "orcel/evals";
 
 import { respondAsSurveyWorker } from "../../lib/survey.js";
 
@@ -10,7 +10,7 @@ export default defineAgent({
   description:
     "Test fixture: counts Alice's tide survey stations. Call it only for SURVEY-DELEGATE directives.",
   // Selected per step: in mock mode this fixture replaces static authored
-  // models with kaf's bootstrap mock, which would drop the worker's usage.
+  // models with orcel's bootstrap mock, which would drop the worker's usage.
   model: defineDynamic({
     events: {
       "step.started": () => ({ model: workerModel, modelContextWindowTokens: 1_000_000 }),

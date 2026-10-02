@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { DropdownMenuItem } from "@nuxt/ui";
-import type { ThreadSummary } from "#kaf/types/thread";
+import type { ThreadSummary } from "#orcel/types/thread";
 import { deleteThread } from "~/composables/chat/navigation";
 import { useThreadGroups } from "~/composables/chat/useThreadGroups";
 

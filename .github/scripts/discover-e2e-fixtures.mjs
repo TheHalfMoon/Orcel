@@ -18,7 +18,7 @@
 //   world_matrix_<world>  `{ name, dir[, world_package] }` entries for that
 //                         world's suite workflow, which runs fixtures that
 //                         select that world once with mock models
-//                         (KAF_E2E_MODEL=mock).
+//                         (ORCEL_E2E_MODEL=mock).
 import { appendFileSync, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";

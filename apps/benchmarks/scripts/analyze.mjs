@@ -4,7 +4,7 @@
 // matter when tuning the generated AGENTS.md and the shipped docs: outcome,
 // agent cost, which docs pages the agent opened, and which grader assertions
 // failed. Docs reads are recovered from shell commands because agents read
-// `node_modules/kaf/docs` with `cat`/`sed`/`grep` rather than a read tool.
+// `node_modules/orcel/docs` with `cat`/`sed`/`grep` rather than a read tool.
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
@@ -114,9 +114,9 @@ function docsSequence(toolCalls) {
   const pages = [];
   for (const call of toolCalls) {
     for (const text of [call.command ?? "", ...call.paths]) {
-      for (const match of text.matchAll(/kaf\/docs\/([\w./-]*\.mdx?)/g)) pages.push(match[1]);
+      for (const match of text.matchAll(/orcel\/docs\/([\w./-]*\.mdx?)/g)) pages.push(match[1]);
       // A bare directory listing or a glob read counts as a directory probe.
-      for (const match of text.matchAll(/kaf\/docs\/([\w/-]+)\/(?:\*|$|\s)/g)) {
+      for (const match of text.matchAll(/orcel\/docs\/([\w/-]+)\/(?:\*|$|\s)/g)) {
         pages.push(`${match[1]}/*`);
       }
     }

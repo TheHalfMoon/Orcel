@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { agent } from "#kaf/agent";
+import { agent } from "#orcel/agent";
 
 defineProps<{
   size?: "sm" | "lg";

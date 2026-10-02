@@ -1,8 +1,8 @@
 # Weather agent
 
-The weather-focused kaf fixture. It backs the repo root `pnpm dev`, the
+The weather-focused orcel fixture. It backs the repo root `pnpm dev`, the
 bundle-analysis workflow, and manual smoke testing as a small representative
-kaf app:
+orcel app:
 
 - `agent/agent.ts` — model config (`openai/gpt-5.6-luna-fast` with adaptive
   thinking)

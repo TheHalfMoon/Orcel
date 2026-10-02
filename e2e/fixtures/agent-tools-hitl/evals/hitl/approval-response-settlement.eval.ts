@@ -1,24 +1,24 @@
 import {
-  KafAgentStore,
+  OrcelAgentStore,
   defaultMessageReducer,
-  type KafDynamicToolPart,
-  type KafMessageData,
-} from "kaf/client";
-import { defineEval, type KafEvalContext } from "kaf/evals";
-import { equals } from "kaf/evals/expect";
+  type OrcelDynamicToolPart,
+  type OrcelMessageData,
+} from "orcel/client";
+import { defineEval, type OrcelEvalContext } from "orcel/evals";
+import { equals } from "orcel/evals/expect";
 
 const ALICE = {
-  "x-kaf-fixture-user": "alice",
-  "x-kaf-fixture-model": "continuation",
+  "x-orcel-fixture-user": "alice",
+  "x-orcel-fixture-model": "continuation",
 };
 const TOOL = "authorized-change";
 
-type Store = KafAgentStore<KafMessageData>;
+type Store = OrcelAgentStore<OrcelMessageData>;
 
-function toolPart(store: Store, callId: string): KafDynamicToolPart {
+function toolPart(store: Store, callId: string): OrcelDynamicToolPart {
   const parts = store.snapshot.data.messages.flatMap((message) => message.parts);
   const matches = parts.filter(
-    (part): part is KafDynamicToolPart =>
+    (part): part is OrcelDynamicToolPart =>
       part.type === "dynamic-tool" && part.toolCallId === callId,
   );
   if (matches.length !== 1) throw new Error(`Expected one projected tool part for ${callId}.`);
@@ -40,7 +40,7 @@ async function settles<T>(label: string, promise: Promise<T>): Promise<T> {
 }
 
 async function expectAnswerable(
-  t: KafEvalContext,
+  t: OrcelEvalContext,
   store: Store,
   callId: string,
   requestId: string,
@@ -50,14 +50,14 @@ async function expectAnswerable(
   const part = toolPart(store, callId);
   await t.require(part.state, equals("approval-requested"));
   await t.require(part.approval?.id, equals(requestId));
-  await t.require(part.toolMetadata?.kaf?.inputRequest?.requestId, equals(requestId));
-  await t.require(part.toolMetadata?.kaf?.inputResponse, equals(undefined));
+  await t.require(part.toolMetadata?.orcel?.inputRequest?.requestId, equals(requestId));
+  await t.require(part.toolMetadata?.orcel?.inputResponse, equals(undefined));
   const cancel = await settles("Idle store cancellation", store.cancel());
   await t.require(cancel.status, equals("no_active_turn"));
   await t.require(store.snapshot.status, equals("ready"));
 }
 
-async function refuse(t: KafEvalContext, store: Store, callId: string, requestId: string) {
+async function refuse(t: OrcelEvalContext, store: Store, callId: string, requestId: string) {
   const start = store.snapshot.events.length;
   await settles(
     "Refused approval submission",
@@ -120,7 +120,7 @@ export default defineEval({
           `Alice prepares a change; after a refused answer and reload, finish with ${decision}.`,
         );
         const session = await t.session({ headers: ALICE });
-        const page = new KafAgentStore({
+        const page = new OrcelAgentStore({
           host,
           headers: ALICE,
           initialSession: session.state,
@@ -143,7 +143,7 @@ export default defineEval({
         await t.require(retryCandidate !== firstCandidate, equals(true));
         page.reset();
 
-        const reload = new KafAgentStore({
+        const reload = new OrcelAgentStore({
           host,
           headers: ALICE,
           initialSession: { sessionId: session.sessionId, streamIndex: 0 },
@@ -174,7 +174,7 @@ export default defineEval({
           "Final approval decision",
           reload.send({
             headers:
-              decision === "approve" ? { "x-kaf-fixture-user": "e2e-approval-responder" } : ALICE,
+              decision === "approve" ? { "x-orcel-fixture-user": "e2e-approval-responder" } : ALICE,
             inputResponses: [{ requestId, optionId: decision }],
             signal: t.signal,
           }),

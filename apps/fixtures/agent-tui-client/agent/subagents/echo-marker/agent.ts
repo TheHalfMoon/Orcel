@@ -1,4 +1,4 @@
-import { defineAgent } from "kaf";
+import { defineAgent } from "orcel";
 
 /**
  * Smoke-test fixture: a leaf subagent whose only purpose is to emit a

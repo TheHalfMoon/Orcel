@@ -1,5 +1,5 @@
 {
-  "title": "kaf session network hops",
+  "title": "orcel session network hops",
   "captured": "2026-09-11",
   "baseCommit": "adb6beff622b274970d4e48b7178b7d44c11d456",
   "workingTree": true,
@@ -14,7 +14,7 @@
     "sessionId": "original stream-owning run ID",
     "ownerRunId": "current executor; changes on handoff",
     "metadata": "{ sessionId }, accessed only when requested after resumption",
-    "startupHooks": "1 kaf stable inbox + requested aliases + 1 SDK cancellation hook for the first turn"
+    "startupHooks": "1 orcel stable inbox + requested aliases + 1 SDK cancellation hook for the first turn"
   },
   "limitations": [
     "Alias-only delivery cannot distinguish an unowned address from a handoff gap. Atomic handoff is an upstream requirement.",
@@ -30,7 +30,7 @@
       "operations": "1 HTTP request; auth-dependent I/O",
       "why": "Authenticate and authorize the resource before delivery. Auth provider/cache costs are application dependent.",
       "source": {
-        "path": "packages/kaf/src/channel/channel-address.ts",
+        "path": "packages/orcel/src/channel/channel-address.ts",
         "symbol": "createChannelAddress"
       }
     },
@@ -40,9 +40,9 @@
       "modes": ["stable", "alias", "handoff"],
       "lane": "critical",
       "operations": "1 hooks.getByToken",
-      "why": "resumeHook(token, command) resolves the live hook and its resume context. No kaf preflight; no metadata hydration.",
+      "why": "resumeHook(token, command) resolves the live hook and its resume context. No orcel preflight; no metadata hydration.",
       "source": {
-        "path": "packages/kaf/node_modules/@workflow/core/dist/runtime/resume-hook.js",
+        "path": "packages/orcel/node_modules/@workflow/core/dist/runtime/resume-hook.js",
         "symbol": "async function resumeHookImpl"
       }
     },
@@ -54,7 +54,7 @@
       "operations": "0 for ID-only; 1 hooks.getByToken for an unowned alias",
       "why": "An ID-only create goes straight to start. A missing channel alias starts a candidate immediately; an ambiguous failure does not.",
       "source": {
-        "path": "packages/kaf/src/channel/channel-address.ts",
+        "path": "packages/orcel/src/channel/channel-address.ts",
         "symbol": "const existing = await dispatch()"
       }
     },
@@ -66,7 +66,7 @@
       "operations": "0 with stored public key; key/run reads on SDK fallback",
       "why": "Current hooks carry resume context. Sealing to the public key is local; this is distinct from decrypting metadata.",
       "source": {
-        "path": "packages/kaf/node_modules/@workflow/core/dist/runtime/resume-hook.js",
+        "path": "packages/orcel/node_modules/@workflow/core/dist/runtime/resume-hook.js",
         "symbol": "async function resolveHookEncryptionKey"
       }
     },
@@ -78,7 +78,7 @@
       "operations": "1 hook_received event write",
       "why": "Commit the command before publishing its wake. Backend retry/dedup capabilities control transport retries.",
       "source": {
-        "path": "packages/kaf/node_modules/@workflow/core/dist/runtime/resume-hook.js",
+        "path": "packages/orcel/node_modules/@workflow/core/dist/runtime/resume-hook.js",
         "symbol": "async function resumeHookImpl"
       }
     },
@@ -90,7 +90,7 @@
       "operations": "1 queue publish",
       "why": "Targets the current owner on its pinned deployment; acceptance requires the durable write and publish.",
       "source": {
-        "path": "packages/kaf/node_modules/@workflow/core/dist/runtime/resume-hook.js",
+        "path": "packages/orcel/node_modules/@workflow/core/dist/runtime/resume-hook.js",
         "symbol": "async function resumeHookImpl"
       }
     },
@@ -102,7 +102,7 @@
       "operations": "0 hook reads; lazy metadata key access as needed",
       "why": "Runs AFTER resume acceptance, concurrent with the awakened workflow. Known session addresses and forwarding-only senders do not access metadata.",
       "source": {
-        "path": "packages/kaf/src/execution/session-inbox/resume.ts",
+        "path": "packages/orcel/src/execution/session-inbox/resume.ts",
         "symbol": "get sessionId()"
       }
     },
@@ -114,7 +114,7 @@
       "operations": "run_created + queue publish",
       "why": "One session workflow, no child turn workflow. SDK start may overlap publication and persistence.",
       "source": {
-        "path": "packages/kaf/src/execution/workflow-runtime.ts",
+        "path": "packages/orcel/src/execution/workflow-runtime.ts",
         "symbol": "async createSession"
       }
     },
@@ -126,7 +126,7 @@
       "operations": "run lifecycle writes + history reads, capability/replay dependent",
       "why": "Queue delivery is a compute hop, not an extra producer HTTP call. Retained VM and preload paths differ from cold replay.",
       "source": {
-        "path": "packages/kaf/node_modules/@workflow/core/dist/runtime/suspension-handler.js",
+        "path": "packages/orcel/node_modules/@workflow/core/dist/runtime/suspension-handler.js",
         "symbol": "handleSuspension"
       }
     },
@@ -138,7 +138,7 @@
       "operations": "1 hook_created per address; one concurrent claim batch",
       "why": "One stable address, plus the requested alias. getConflict is a registration fence preventing duplicate first-turn execution, not hooks.getByToken.",
       "source": {
-        "path": "packages/kaf/src/execution/session/entry.ts",
+        "path": "packages/orcel/src/execution/session/entry.ts",
         "symbol": "const [sessionCreation"
       }
     },
@@ -150,7 +150,7 @@
       "operations": "new: createSessionStep lifecycle; existing: inline snapshot hydration",
       "why": "New-session initialization overlaps address claiming. Current snapshots are carried in durable step results, not fetched from a per-turn snapshot stream.",
       "source": {
-        "path": "packages/kaf/src/execution/create-session-step.ts",
+        "path": "packages/orcel/src/execution/create-session-step.ts",
         "symbol": "async function createSessionStep"
       }
     },
@@ -162,7 +162,7 @@
       "operations": "isSessionIdleForHandoffStep lifecycle",
       "why": "Only a fresh delivery to an idle session can trigger transfer. Same-deployment and busy sessions do not run this step.",
       "source": {
-        "path": "packages/kaf/src/execution/session/handoff.ts",
+        "path": "packages/orcel/src/execution/session/handoff.ts",
         "symbol": "async checkpoint"
       }
     },
@@ -174,7 +174,7 @@
       "operations": "1 hook_created on original owner's first attempt",
       "why": "Keeps the original run and its public stream alive after its execution ownership transfers.",
       "source": {
-        "path": "packages/kaf/src/execution/session/entry.ts",
+        "path": "packages/orcel/src/execution/session/entry.ts",
         "symbol": "const ensureAnchor"
       }
     },
@@ -186,7 +186,7 @@
       "operations": "1 hook_disposed per address",
       "why": "If another accepted command is found, reclaim and abandon handoff. Release and claim are not atomic.",
       "source": {
-        "path": "packages/kaf/src/execution/session-inbox/inbox.ts",
+        "path": "packages/orcel/src/execution/session-inbox/inbox.ts",
         "symbol": "async release()"
       }
     },
@@ -198,7 +198,7 @@
       "operations": "activation hook_created + startSessionOwnerStep lifecycle + run_created + publish",
       "why": "Activation callback is registered before starting a run that can signal it. Successor receives explicit anchorRunId, snapshot, address set, and configured timeout duration. Successful activation restarts that duration.",
       "source": {
-        "path": "packages/kaf/src/execution/session/handoff.ts",
+        "path": "packages/orcel/src/execution/session/handoff.ts",
         "symbol": "async start"
       }
     },
@@ -210,7 +210,7 @@
       "operations": "validation step lifecycle + 1 hook_created per address, batched",
       "why": "No model work until all claims succeed. Preserves stable identity and uses the original stream writer.",
       "source": {
-        "path": "packages/kaf/src/execution/session/entry.ts",
+        "path": "packages/orcel/src/execution/session/entry.ts",
         "symbol": "await validateSessionCheckpointStep"
       }
     },
@@ -222,7 +222,7 @@
       "operations": "signalSessionOwnerActivationStep + resume lookup/write/publish",
       "why": "Old owner can now exit or park as anchor. Later owners signal the anchor only at session end.",
       "source": {
-        "path": "packages/kaf/src/execution/session/handoff-steps.ts",
+        "path": "packages/orcel/src/execution/session/handoff-steps.ts",
         "symbol": "signalSessionOwnerActivationStep"
       }
     },
@@ -234,7 +234,7 @@
       "operations": "startSessionTimeoutStep + timer run_created/publish/lifecycle + durable wait scheduling",
       "why": "Default deadline infrastructure. Does not block the first model call; startup operations are joined before the session loop advances.",
       "source": {
-        "path": "packages/kaf/src/execution/session/entry.ts",
+        "path": "packages/orcel/src/execution/session/entry.ts",
         "symbol": "const initialTurn"
       }
     },
@@ -244,9 +244,9 @@
       "modes": ["new", "stable", "alias", "handoff"],
       "lane": "critical",
       "operations": "1 abrt_* hook_created for the new turn; abort stream read",
-      "why": "AbortSignal transport is required for cancelling active durable steps. No kaf getConflict call and no steering abort.",
+      "why": "AbortSignal transport is required for cancelling active durable steps. No orcel getConflict call and no steering abort.",
       "source": {
-        "path": "packages/kaf/node_modules/@workflow/core/dist/serialization.js",
+        "path": "packages/orcel/node_modules/@workflow/core/dist/serialization.js",
         "symbol": "function reduceAbortWithListener"
       }
     },
@@ -258,7 +258,7 @@
       "operations": "step_started; step_created/queue delivery when not inline",
       "why": "SDK may execute inline or queue a step. Registration awaiters affect inline eligibility; do not equate a step call with exactly one network request.",
       "source": {
-        "path": "packages/kaf/node_modules/@workflow/core/dist/runtime/suspension-handler.js",
+        "path": "packages/orcel/node_modules/@workflow/core/dist/runtime/suspension-handler.js",
         "symbol": "const lazyInlineCorrelationIds"
       }
     },
@@ -270,7 +270,7 @@
       "operations": "local work + authored hooks/connections/sandbox I/O",
       "why": "No universal count: authored integrations, dynamic model selection, memory, sandbox, and tracing can add work before the provider call.",
       "source": {
-        "path": "packages/kaf/src/execution/session/turn-step.ts",
+        "path": "packages/orcel/src/execution/session/turn-step.ts",
         "symbol": "async function turnStep"
       }
     },
@@ -282,7 +282,7 @@
       "operations": "run/key reads depending on writable serialization and caches",
       "why": "Original owner uses getWritable(); a successor uses the anchor run's forwarded writable. Stream names are run-scoped.",
       "source": {
-        "path": "packages/kaf/node_modules/@workflow/core/dist/runtime/run.js",
+        "path": "packages/orcel/node_modules/@workflow/core/dist/runtime/run.js",
         "symbol": "getWritable(options"
       }
     },
@@ -294,7 +294,7 @@
       "operations": "stream write batches; batch count is variable",
       "why": "Lifecycle events and authored handlers can be awaited before the model call. Count actual stream batches, not individual events.",
       "source": {
-        "path": "packages/kaf/src/execution/session/turn-step.ts",
+        "path": "packages/orcel/src/execution/session/turn-step.ts",
         "symbol": "await emitTurnPreamble"
       }
     },
@@ -306,7 +306,7 @@
       "operations": "1 provider request for this first call",
       "why": "Provider response latency is outside time-to-model. Subsequent tool/model cycles have their own costs.",
       "source": {
-        "path": "packages/kaf/src/execution/session/turn-step.ts",
+        "path": "packages/orcel/src/execution/session/turn-step.ts",
         "symbol": "await runModelCallBatch"
       }
     },
@@ -318,7 +318,7 @@
       "operations": "step_completed + optional next step + settleTurnStep + stream batches",
       "why": "Steering uses the same turn after a committed boundary; queue waits for settlement. No child turn run or owner-release handshake per ordinary turn.",
       "source": {
-        "path": "packages/kaf/src/execution/session/turn.ts",
+        "path": "packages/orcel/src/execution/session/turn.ts",
         "symbol": "async runTurn"
       }
     },
@@ -330,7 +330,7 @@
       "operations": "stream GET + read-key resolution as needed; tail-info only when requested",
       "why": "Separate clock/branch. An already-open stream is not a new request per chunk. Reconnects target the original run.",
       "source": {
-        "path": "packages/kaf/src/execution/workflow-runtime.ts",
+        "path": "packages/orcel/src/execution/workflow-runtime.ts",
         "symbol": "async getEventStream"
       }
     },
@@ -342,7 +342,7 @@
       "operations": "new root collector start; hook + activity resume/write/publish batches",
       "why": "Only channels with activity renderers. Collector startup can precede session start; separate from the ordinary ID-only path.",
       "source": {
-        "path": "packages/kaf/src/execution/workflow-runtime.ts",
+        "path": "packages/orcel/src/execution/workflow-runtime.ts",
         "symbol": "let collectorRunId"
       }
     },
@@ -354,7 +354,7 @@
       "operations": "bounded hooks.getByToken polling after reset acceptance",
       "why": "Not an ordinary send cost. Confirms the previous owner released the stable address before reset returns.",
       "source": {
-        "path": "packages/kaf/src/execution/workflow-runtime.ts",
+        "path": "packages/orcel/src/execution/workflow-runtime.ts",
         "symbol": "async function waitForCommandHookRelease"
       }
     },
@@ -366,7 +366,7 @@
       "operations": "1 hooks.getByToken + lazy metadata hydration",
       "why": "Requested read-only identity resolution. Never used as a send preflight.",
       "source": {
-        "path": "packages/kaf/src/execution/workflow-runtime.ts",
+        "path": "packages/orcel/src/execution/workflow-runtime.ts",
         "symbol": "async resolveContinuation"
       }
     },
@@ -378,7 +378,7 @@
       "operations": "bounded hooks.getByToken polling inside durable work",
       "why": "Not the ordinary turn path. Reads runId only; no metadata hydration.",
       "source": {
-        "path": "packages/kaf/src/execution/workflow-runtime.ts",
+        "path": "packages/orcel/src/execution/workflow-runtime.ts",
         "symbol": "async function waitForCommandHookOwner"
       }
     }

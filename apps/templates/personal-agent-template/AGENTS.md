@@ -1,6 +1,6 @@
 # Personal Agent Template
 
-Durable personal AI assistant built with Kaf and Nuxt.
+Durable personal AI assistant built with Orcel and Nuxt.
 
 ## Quick Reference
 
@@ -18,7 +18,7 @@ Durable personal AI assistant built with Kaf and Nuxt.
 
 ```
 personal-agent-template/
-├── agent/          # Kaf agent (channels, tools, skills, connections)
+├── agent/          # Orcel agent (channels, tools, skills, connections)
 ├── apps/web/       # Nuxt UI, Nitro API, and shared application code
 └── docs/           # Architecture, environment, customization
 ```
@@ -30,13 +30,13 @@ personal-agent-template/
 - [Customization](docs/CUSTOMIZATION.md) — Rename agent, add tools, integrations
 - [README](README.md) — Quick start and feature overview
 
-## Kaf Framework
+## Orcel Framework
 
-This project deploys its Nuxt frontend and kaf agent as peer Vercel services through `vercel.ts`. Before writing agent code, read the relevant guide in `node_modules/kaf/dist/docs/public/`.
+This project deploys its Nuxt frontend and orcel agent as peer Vercel services through `vercel.ts`. Before writing agent code, read the relevant guide in `node_modules/orcel/dist/docs/public/`.
 
 ## Internal API Pattern
 
-The Kaf agent calls Nuxt over HTTP:
+The Orcel agent calls Nuxt over HTTP:
 
 ```
 agent/lib/*-internal.ts  →  /api/internal/*  →  server/utils/*

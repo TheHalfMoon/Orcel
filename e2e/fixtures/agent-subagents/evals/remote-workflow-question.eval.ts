@@ -1,4 +1,4 @@
-import { defineEval, type KafEvalContext, type KafEvalSession } from "kaf/evals";
+import { defineEval, type OrcelEvalContext, type OrcelEvalSession } from "orcel/evals";
 import { REMOTE_QUESTION_DIRECTIVE } from "../agent/lib/remote-question-script.js";
 
 export default defineEval({
@@ -25,7 +25,7 @@ export default defineEval({
   },
 });
 
-async function waitForInput(t: KafEvalContext, initial: KafEvalSession): Promise<KafEvalSession> {
+async function waitForInput(t: OrcelEvalContext, initial: OrcelEvalSession): Promise<OrcelEvalSession> {
   let session = initial;
   for (let attempt = 0; attempt < 5; attempt += 1) {
     if (

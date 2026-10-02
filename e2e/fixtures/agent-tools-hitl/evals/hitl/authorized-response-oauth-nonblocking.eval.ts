@@ -1,10 +1,10 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 const MARKER = "authorized-response-oauth-nonblocking-K3T9";
 const TOOL_NAME = "oauth-authorized-gate";
 const REQUESTER = "oauth-nonblocking-requester";
 const RESPONDER = "oauth-nonblocking-responder";
-const as = (principalId: string) => ({ headers: { "x-kaf-fixture-user": principalId } });
+const as = (principalId: string) => ({ headers: { "x-orcel-fixture-user": principalId } });
 
 export default defineEval({
   tags: ["real-model"],

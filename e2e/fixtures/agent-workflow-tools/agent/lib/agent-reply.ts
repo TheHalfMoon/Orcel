@@ -1,4 +1,4 @@
-import type { WorkflowToolContext } from "kaf/tools";
+import type { WorkflowToolContext } from "orcel/tools";
 
 /** Sends one message to a new session with `name` and returns its reply. */
 export async function replyFrom(

@@ -1,4 +1,4 @@
-import type { MockModelRequest, MockModelResponse } from "kaf/evals";
+import type { MockModelRequest, MockModelResponse } from "orcel/evals";
 
 const PROBE_DIRECTIVE = "AUTHORED-BUNDLING-PROBE";
 const PROBE_TOOL = "bundle_probe";

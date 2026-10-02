@@ -1,5 +1,5 @@
 ---
-issue: https://github.com/TheHalfMoon/kaf/issues/2331
+issue: https://github.com/TheHalfMoon/orcel/issues/2331
 status: implemented
 last_updated: "2026-09-17"
 ---
@@ -28,9 +28,9 @@ interface AudienceInput<TState> {
 }
 ```
 
-The hook is optional for authored channels. kaf normalizes absent, malformed, throwing, asynchronous, and unsupported results to `unknown`. Built-in channels classify only from platform evidence already captured during dispatch; ambiguous and proactive destinations remain `unknown` rather than performing observability-only network requests. Proactive Slack `receive` / `ctx.send` targets may optionally supply `audience` state when the caller already knows channel visibility, for example a webhook that classified the Slack destination before handoff. `metadata(state)` returns custom observability fields only.
+The hook is optional for authored channels. orcel normalizes absent, malformed, throwing, asynchronous, and unsupported results to `unknown`. Built-in channels classify only from platform evidence already captured during dispatch; ambiguous and proactive destinations remain `unknown` rather than performing observability-only network requests. Proactive Slack `receive` / `ctx.send` targets may optionally supply `audience` state when the caller already knows channel visibility, for example a webhook that classified the Slack destination before handoff. `metadata(state)` returns custom observability fields only.
 
-The framework builds one `ConversationContext` when a session is created and persists it under `kaf.conversation`:
+The framework builds one `ConversationContext` when a session is created and persists it under `orcel.conversation`:
 
 ```ts
 interface ConversationContext {
@@ -42,7 +42,7 @@ interface ConversationContext {
 }
 ```
 
-The normalized audience is exported as `agent.channel.audience` only on each `agent.session` window. Durable kaf state and an internal OpenTelemetry context key make the same value available to descendant export policies without duplicating a public attribute onto every span. Local subagents inherit the parent audience. A remote agent with principal forwarding propagates the immutable origin audience and the current hop's effective directional ceiling through one `kaf.audience` W3C Baggage member. The receiver accepts it only with the same `trustedForwarders` decision that admitted the principal, then intersects it with its own process policy. Every later hop forwards that intersection; malformed and mixed-version assertions become metadata-only.
+The normalized audience is exported as `agent.channel.audience` only on each `agent.session` window. Durable orcel state and an internal OpenTelemetry context key make the same value available to descendant export policies without duplicating a public attribute onto every span. Local subagents inherit the parent audience. A remote agent with principal forwarding propagates the immutable origin audience and the current hop's effective directional ceiling through one `orcel.audience` W3C Baggage member. The receiver accepts it only with the same `trustedForwarders` decision that admitted the principal, then intersects it with its own process policy. Every later hop forwards that intersection; malformed and mixed-version assertions become metadata-only.
 
 ## Public tracing API
 
@@ -187,7 +187,7 @@ The default authored and production head policy is equivalent to:
 An explicit provider policy can authorize content for any audience. The OTel
 policy remains subject to its process-wide audience ceiling.
 
-The default policy for local tracing for `kaf dev` is equivalent to:
+The default policy for local tracing for `orcel dev` is equivalent to:
 
 ```ts
 () => true,
@@ -201,7 +201,7 @@ The runtime order is:
 
 1. Build and persist the conversation context, deriving and normalizing the channel audience once.
 2. Evaluate the process-wide `tracePolicy` before creating `agent.session`.
-3. For accepted traces, capture complete kaf and AI SDK spans.
+3. For accepted traces, capture complete orcel and AI SDK spans.
 4. Run each managed destination's export policy pipeline in declaration order. Custom integrations run their declared span processors.
 5. Hand the resulting facade to that destination's processors or exporter.
 
@@ -217,7 +217,7 @@ Policies fail closed at their boundary: a throwing trace policy rejects the trac
 
 Instrumentation providers deprecate the experimental `capture` field in favor
 of `tracePolicy`; `"content"` and `"metadata"` are mapped to equivalent fixed
-policies while integrations migrate. `KAF_TRACES_CONTENT=off` prepends a
+policies while integrations migrate. `ORCEL_TRACES_CONTENT=off` prepends a
 full-content redaction policy for local traces.
 
 Filtering remains a span-processor responsibility because local trace persistence and authored processors are processors rather than uniform exporters. Keeping the filtering boundary immediately above each destination prevents one destination's policy from mutating what another destination receives.

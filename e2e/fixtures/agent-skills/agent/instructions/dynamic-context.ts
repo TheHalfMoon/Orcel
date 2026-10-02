@@ -1,4 +1,4 @@
-import { defineDynamic, defineInstructions } from "kaf/instructions";
+import { defineDynamic, defineInstructions } from "orcel/instructions";
 
 export const DYNAMIC_INSTRUCTIONS_TOKEN = "dynamic-instructions-ok-M3K8";
 

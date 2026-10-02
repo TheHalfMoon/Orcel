@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { vMaska } from "maska/vue";
-import { formatPhoneNumber, parsePhoneNumber, PHONE_CODES } from "#kaf/phone-codes";
+import { formatPhoneNumber, parsePhoneNumber, PHONE_CODES } from "#orcel/phone-codes";
 
 const props = withDefaults(
   defineProps<{

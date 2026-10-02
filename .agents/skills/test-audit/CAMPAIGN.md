@@ -1,8 +1,8 @@
 # Test-pruning campaign
 
 Campaign mode prunes one subsystem's whole test surface in one PR: one core
-area such as `packages/kaf/src/execution`, one tier slice such as the
-dev-server scenario suites, or one package such as `packages/kaf-code`. The
+area such as `packages/orcel/src/execution`, one tier slice such as the
+dev-server scenario suites, or one package such as `packages/orcel-code`. The
 value bar, retention bar, candidate evidence, and validation in
 [SKILL.md](SKILL.md) apply to every lane. This file adds the order of work and
 the lessons of a full campaign. Each step ends on its completion criterion; do
@@ -65,9 +65,9 @@ assertions to carry into keepers, and the test-only production seams unlocked.
 ## 5. Cutover
 
 Edit lane by lane. Serialize changes to shared harnesses and support files
-(`packages/kaf/test/scenarios/dev-server-harness.ts`,
-`packages/kaf/test/scenarios/dev-server-descriptors.ts`,
-`packages/kaf/test/_helpers/`, `packages/kaf/src/internal/testing/`) through
+(`packages/orcel/test/scenarios/dev-server-harness.ts`,
+`packages/orcel/test/scenarios/dev-server-descriptors.ts`,
+`packages/orcel/test/_helpers/`, `packages/orcel/src/internal/testing/`) through
 one owner. With each lane, remove the test-only production seams it
 unlocks: injection parameters, getters, reset exports, and indirection layers.
 Update CI routing when suites move tiers. Shrink `pnpm guard:invariants`

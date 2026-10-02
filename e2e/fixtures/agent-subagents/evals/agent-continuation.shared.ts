@@ -1,4 +1,4 @@
-import type { KafEvalContext, KafEvalTurn } from "kaf/evals";
+import type { OrcelEvalContext, OrcelEvalTurn } from "orcel/evals";
 
 import { NOTEBOOK_NAME } from "../constants";
 
@@ -9,7 +9,7 @@ import { NOTEBOOK_NAME } from "../constants";
  * session, the cancel must end the child's review turn, and the name must
  * survive it.
  */
-export async function continueKeeperAcrossTurns(t: KafEvalContext, tool: string): Promise<void> {
+export async function continueKeeperAcrossTurns(t: OrcelEvalContext, tool: string): Promise<void> {
   const remembered = await t.send(`NOTEBOOK-REMEMBER ${tool} Alice shares the notebook name.`);
   remembered.expectOk();
   remembered.messageIncludes("NOTEBOOK-REPLY NOTEBOOK-SAVED");
@@ -55,7 +55,7 @@ export async function continueKeeperAcrossTurns(t: KafEvalContext, tool: string)
   });
 }
 
-function requireChildSession(turn: KafEvalTurn, tool: string): string {
+function requireChildSession(turn: OrcelEvalTurn, tool: string): string {
   const started = turn.events.find(
     (event) => event.type === "agent.started" && event.data.name === tool,
   );

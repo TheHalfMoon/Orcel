@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 const docsRoot = resolve(process.cwd(), "../../../apps/docs");
 const addresses = new Set(["extension/agent-browser", "channel/slack"]);
 
-/** Serve checkout-owned official manifests without depending on kaf.dev or a deployed registry. */
+/** Serve checkout-owned official manifests without depending on orcel.dev or a deployed registry. */
 export async function startRegistryServer(): Promise<() => Promise<void>> {
   const registry = JSON.parse(await readFile(resolve(docsRoot, "registry.json"), "utf8")) as {
     items: { name: string; files?: { path: string }[] }[];
@@ -50,11 +50,11 @@ export async function startRegistryServer(): Promise<() => Promise<void>> {
   }
   const address = server.address();
   if (address === null || typeof address === "string") throw new Error("No registry port.");
-  const previous = process.env.KAF_DEV_OFFICIAL_REGISTRY_URL;
-  process.env.KAF_DEV_OFFICIAL_REGISTRY_URL = `http://127.0.0.1:${address.port}/r`;
+  const previous = process.env.ORCEL_DEV_OFFICIAL_REGISTRY_URL;
+  process.env.ORCEL_DEV_OFFICIAL_REGISTRY_URL = `http://127.0.0.1:${address.port}/r`;
   return async () => {
-    if (previous === undefined) delete process.env.KAF_DEV_OFFICIAL_REGISTRY_URL;
-    else process.env.KAF_DEV_OFFICIAL_REGISTRY_URL = previous;
+    if (previous === undefined) delete process.env.ORCEL_DEV_OFFICIAL_REGISTRY_URL;
+    else process.env.ORCEL_DEV_OFFICIAL_REGISTRY_URL = previous;
     await new Promise<void>((done, reject) =>
       server.close((error) => (error ? reject(error) : done())),
     );

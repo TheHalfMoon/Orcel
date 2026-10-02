@@ -12,13 +12,13 @@ test("bootstraps the selected source before a native agent starts", async () => 
   const commands = [];
   const writes = [];
   const setup = createNativeAuthoringSetup({
-    packageSpec: "https://pkg.kaf.dev/commit/kaf.tgz",
+    packageSpec: "https://pkg.orcel.dev/commit/orcel.tgz",
     revision: "commit",
     treatment: "baseline",
   });
   await setup({
     async readFile(path) {
-      assert.equal(path, ".kaf-authoring-bootstrap.json");
+      assert.equal(path, ".orcel-authoring-bootstrap.json");
       return JSON.stringify({
         startingPoint: "scaffolded",
         revision: "commit",
@@ -36,13 +36,13 @@ test("bootstraps the selected source before a native agent starts", async () => 
     setWorkingDirectory() {},
   });
 
-  assert.match(commands[0].args[1], /rm -f \.kaf-authoring-bootstrap\.json/u);
-  assert.deepEqual(Object.keys(writes[0]), ["/usr/local/bin/kaf"]);
-  assert.match(writes[0]["/usr/local/bin/kaf"], /pkg\.kaf\.dev\/commit\/kaf\.tgz/u);
-  assert.match(commands[1].args[1], /chmod \+x \/usr\/local\/bin\/kaf/u);
+  assert.match(commands[0].args[1], /rm -f \.orcel-authoring-bootstrap\.json/u);
+  assert.deepEqual(Object.keys(writes[0]), ["/usr/local/bin/orcel"]);
+  assert.match(writes[0]["/usr/local/bin/orcel"], /pkg\.orcel\.dev\/commit\/orcel\.tgz/u);
+  assert.match(commands[1].args[1], /chmod \+x \/usr\/local\/bin\/orcel/u);
   assert.match(
     commands[2].args[1],
-    /AI_AGENT=claude KAF_INIT_PACKAGE_SPEC=.* kaf init \. --model openai\/gpt-5\.5/u,
+    /AI_AGENT=claude ORCEL_INIT_PACKAGE_SPEC=.* orcel init \. --model openai\/gpt-5\.5/u,
   );
   assert.match(commands[3].args[1], /mkdir -p agent\/lib/u);
   assert.match(commands[4].args[1], /rm -f AGENTS\.md CLAUDE\.md GEMINI\.md/u);

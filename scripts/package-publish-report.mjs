@@ -419,7 +419,7 @@ async function resolveCatalogReferences(packageRoot, manifest) {
  * read the manifest mid-rewrite.
  */
 async function rewriteCatalogReferencesInTarball(tarballPath, packageRoot) {
-  const stagingDirectory = await mkdtemp(join(tmpdir(), "kaf-package-rewrite-"));
+  const stagingDirectory = await mkdtemp(join(tmpdir(), "orcel-package-rewrite-"));
 
   try {
     await execFile("tar", ["-xzf", tarballPath, "-C", stagingDirectory], {
@@ -500,7 +500,7 @@ async function collectInstalledPackageSnapshot(input) {
     join(installRoot, "package.json"),
     `${JSON.stringify(
       {
-        name: "kaf-package-install-footprint",
+        name: "orcel-package-install-footprint",
         private: true,
       },
       null,
@@ -616,8 +616,8 @@ export async function collectPublishedPackageReportFromPack(options) {
  */
 export async function collectPublishedPackageReport(options) {
   const packageRoot = resolve(options.packageRoot);
-  const packDirectory = await mkdtemp(join(tmpdir(), "kaf-package-pack-"));
-  const installDirectory = await mkdtemp(join(tmpdir(), "kaf-package-install-"));
+  const packDirectory = await mkdtemp(join(tmpdir(), "orcel-package-pack-"));
+  const installDirectory = await mkdtemp(join(tmpdir(), "orcel-package-install-"));
 
   try {
     const packResult = await runPack(packageRoot, packDirectory);

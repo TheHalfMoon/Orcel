@@ -1,4 +1,4 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 const MARKER = "followup-dedup-H4K8";
 const TOOL_NAME = "gate";
@@ -10,7 +10,7 @@ const FOLLOW_UP_QUESTIONS = [
   "What will happen after I approve the request?",
 ] as const;
 
-/** Regression coverage for https://github.com/TheHalfMoon/kaf/issues/2217. */
+/** Regression coverage for https://github.com/TheHalfMoon/orcel/issues/2217. */
 export default defineEval({
   tags: ["real-model"],
   description: "One pending approval stays singular across many follow-up questions.",

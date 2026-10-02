@@ -1,6 +1,6 @@
 ---
 title: "Context Control"
-description: "Choose what an kaf agent's model sees and when, across instructions, skills, tools, the workspace, and subagents."
+description: "Choose what an orcel agent's model sees and when, across instructions, skills, tools, the workspace, and subagents."
 ---
 
 Control context by putting information in the narrowest surface that needs it. Keep permanent rules in instructions, load optional procedures as skills, let the model inspect runtime files through sandbox tools, and delegate specialist work to a subagent.
@@ -28,7 +28,7 @@ Use `instructions.ts` when you need typed helpers, build-time composition, or a 
 
 ## Load procedures on demand with `skills/`
 
-Use skills for optional procedures that would otherwise make the always-on prompt unnecessarily large. kaf advertises each skill's description and loads the full instructions only when the model calls `load_skill`.
+Use skills for optional procedures that would otherwise make the always-on prompt unnecessarily large. orcel advertises each skill's description and loads the full instructions only when the model calls `load_skill`.
 
 ### Flat skill
 
@@ -58,13 +58,13 @@ See [Dynamic capabilities](../guides/dynamic-capabilities) for the resolver API,
 
 ## Compaction and clear
 
-Before a model call, kaf checks the projected history together with the effective system instructions and advertised tool schemas. The check runs after `step.started` resolves dynamic capabilities. When the provider reports input usage, kaf adds estimates for new messages and growth in the instructions and tool catalog to that count; unchanged schemas are not counted again.
+Before a model call, orcel checks the projected history together with the effective system instructions and advertised tool schemas. The check runs after `step.started` resolves dynamic capabilities. When the provider reports input usage, orcel adds estimates for new messages and growth in the instructions and tool catalog to that count; unchanged schemas are not counted again.
 
 Compaction reserves space for those instructions and tools while reducing conversation history. It cannot shrink the instructions or tool catalog themselves, so keep them within the selected model's context window.
 
 User-role instructions follow the normal history lifecycle. Compaction can summarize them, and clear removes them without rerunning their static definitions or dynamic resolvers. System-role instructions remain outside history and continue to apply after either operation.
 
-Recalled memory also uses user-role messages, but kaf keeps their attribution
+Recalled memory also uses user-role messages, but orcel keeps their attribution
 separate. Compaction excludes them from the summary, preserves their canonical
 records, and recalls again after the checkpoint. Clear removes those session
 records without deleting the provider's external data.

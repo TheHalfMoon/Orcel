@@ -1,6 +1,6 @@
 import { join } from "node:path";
 
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 /**
  * Core session-route runtime behavior: multimodal attachments.
@@ -19,7 +19,7 @@ export default defineEval({
   async test(t) {
     const session = await t.session();
     // Eval modules execute from a build cache, so assets resolve against
-    // the app root (`kaf eval` runs with the app as cwd), not import.meta.
+    // the app root (`orcel eval` runs with the app as cwd), not import.meta.
     const filePath = join(process.cwd(), "evals/assets/cat-image.png");
     const turn = await session.sendFile(
       "The attached fixture image depicts a cat. Reply with exactly: cat",

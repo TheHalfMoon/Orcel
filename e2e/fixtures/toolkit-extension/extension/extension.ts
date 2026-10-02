@@ -1,4 +1,4 @@
-import { defineExtension } from "kaf/extension";
+import { defineExtension } from "orcel/extension";
 import { z } from "zod";
 
 export default defineExtension({

@@ -1,4 +1,4 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 export default defineEval({
   description: "An extension-owned external dependency retains package-relative runtime assets.",

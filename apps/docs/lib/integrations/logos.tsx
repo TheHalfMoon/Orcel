@@ -42,7 +42,7 @@ import type { ComponentProps } from "react";
 
 type LogoProps = ComponentProps<"svg">;
 
-const kafLogo = (props: LogoProps) => (
+const orcelLogo = (props: LogoProps) => (
   <svg fill="none" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" {...props}>
     <path d="M12 2 2 19.5h20L12 2Zm0 4.7 6.1 10.6H5.9L12 6.7Z" fill="currentColor" />
   </svg>
@@ -808,7 +808,7 @@ const shopifyLogo = (props: LogoProps) => (
 );
 
 export const logos = {
-  kaf: kafLogo,
+  orcel: orcelLogo,
   web: webLogo,
   buzz: BuzzLogo,
   "browser-use": browserUseLogo,

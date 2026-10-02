@@ -1,5 +1,5 @@
-import { e2eSubagentConfig } from "@kaf-e2e/config";
-import { defineAgent } from "kaf";
+import { e2eSubagentConfig } from "@orcel-e2e/config";
+import { defineAgent } from "orcel";
 
 /**
  * Smoke-test fixture: a leaf subagent whose only purpose is to emit a

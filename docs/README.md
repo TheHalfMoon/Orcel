@@ -1,14 +1,14 @@
-# kaf Public Docs
+# orcel Public Docs
 
-This folder is for app authors using kaf as a framework.
+This folder is for app authors using orcel as a framework.
 
-If you want to understand how to build agents with kaf, start here.
+If you want to understand how to build agents with orcel, start here.
 
 Important naming note:
 
-- The framework is called kaf.
-- The current published package name is `kaf`.
-- The CLI binary is `kaf`.
+- The framework is called orcel.
+- The current published package name is `orcel`.
+- The CLI binary is `orcel`.
 
 ## Find the page for your task
 
@@ -37,17 +37,17 @@ Important naming note:
 
 ## Legal and safeguards
 
-kaf is in preview; the framework, APIs, documentation, and behavior may change before general availability.
+orcel is in preview; the framework, APIs, documentation, and behavior may change before general availability.
 
 As the deployer, it is your responsibility to ensure your agent complies with applicable laws.
 
 You are responsible for configuring approval policies, tool restrictions, connection scopes, route/session authorization, sandbox controls, telemetry exports, and other safeguards appropriate for your use case.
 
-Before using kaf with non-public, sensitive, regulated, or production data, review which default tools, custom tools, MCP tools, shell/file/web tools, connected services, subagents, schedules, and external actions are available to the agent.
+Before using orcel with non-public, sensitive, regulated, or production data, review which default tools, custom tools, MCP tools, shell/file/web tools, connected services, subagents, schedules, and external actions are available to the agent.
 
 Require human approval or other safeguards for sensitive, irreversible, regulated, financial, healthcare, employment, housing, legal, safety-impacting, user-impacting, or external side-effecting actions.
 
-Unless you configure stricter controls, kaf agents may operate with permissive settings, including tool execution without human approval where approval is omitted and sandbox network egress that is not deny-all. Do not rely on model behavior alone to prevent sensitive or irreversible actions.
+Unless you configure stricter controls, orcel agents may operate with permissive settings, including tool execution without human approval where approval is omitted and sandbox network egress that is not deny-all. Do not rely on model behavior alone to prevent sensitive or irreversible actions.
 
 ## Read this first
 
@@ -75,7 +75,7 @@ For a full picture rather than a single task, read in this order:
 
 ## The public mental model
 
-kaf is a filesystem-first framework for durable backend agents.
+orcel is a filesystem-first framework for durable backend agents.
 
 You author an agent as files on disk:
 
@@ -90,7 +90,7 @@ You author an agent as files on disk:
 - recurring jobs in `schedules/`
 - additive runtime config in `agent.ts`
 
-kaf then gives you:
+orcel then gives you:
 
 - a stable HTTP message route
 - optional channel webhook routes

@@ -1,5 +1,5 @@
-import { defineDynamic, defineTool } from "kaf/tools";
-import type { DynamicToolEntry } from "kaf/tools";
+import { defineDynamic, defineTool } from "orcel/tools";
+import type { DynamicToolEntry } from "orcel/tools";
 
 const TOOL_NAMES = ["alpha", "beta"] as const;
 

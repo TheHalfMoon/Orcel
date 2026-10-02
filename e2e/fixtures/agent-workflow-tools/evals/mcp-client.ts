@@ -1,6 +1,6 @@
-import type { KafEvalTargetHandle } from "kaf/evals";
+import type { OrcelEvalTargetHandle } from "orcel/evals";
 
-const MCP_PATH = "/kaf/v1/mcp";
+const MCP_PATH = "/orcel/v1/mcp";
 const MCP_PROTOCOL_VERSION = "2026-07-28";
 const POLL_INTERVAL_MS = 500;
 
@@ -13,7 +13,7 @@ export interface McpInvocation {
 
 /** Calls one of the MCP channel's tools and returns its structured invocation state. */
 export async function callMcpTool(
-  target: KafEvalTargetHandle,
+  target: OrcelEvalTargetHandle,
   name: string,
   args: Readonly<Record<string, unknown>>,
 ): Promise<McpInvocation> {
@@ -45,7 +45,7 @@ export async function callMcpTool(
 
 /** Polls `agent_get` until the invocation leaves `working`; returns every state it read. */
 export async function pollInvocation(
-  target: KafEvalTargetHandle,
+  target: OrcelEvalTargetHandle,
   invocationId: string,
   timeoutMs: number,
 ): Promise<readonly McpInvocation[]> {
@@ -63,7 +63,7 @@ export async function pollInvocation(
 function modernRequestMeta(): Record<string, unknown> {
   return {
     "io.modelcontextprotocol/clientCapabilities": {},
-    "io.modelcontextprotocol/clientInfo": { name: "kaf-e2e", version: "0.0.0" },
+    "io.modelcontextprotocol/clientInfo": { name: "orcel-e2e", version: "0.0.0" },
     "io.modelcontextprotocol/protocolVersion": MCP_PROTOCOL_VERSION,
   };
 }

@@ -1,12 +1,12 @@
 "use client";
 
 import type {
-  KafAuthorizationPart,
-  KafDynamicToolPart,
-  KafMessage,
-  KafMessageInputRequest,
-  KafMessagePart,
-} from "kaf/react";
+  OrcelAuthorizationPart,
+  OrcelDynamicToolPart,
+  OrcelMessage,
+  OrcelMessageInputRequest,
+  OrcelMessagePart,
+} from "orcel/react";
 import { useState } from "react";
 import {
   ArrowRightIcon,
@@ -47,7 +47,7 @@ export type AgentInputResponse = {
   readonly text?: string;
 };
 
-type KafFilePart = Extract<KafMessagePart, { type: "file" }>;
+type OrcelFilePart = Extract<OrcelMessagePart, { type: "file" }>;
 
 export function AgentMessage({
   canRespond,
@@ -57,7 +57,7 @@ export function AgentMessage({
 }: {
   readonly canRespond: boolean;
   readonly isStreaming: boolean;
-  readonly message: KafMessage;
+  readonly message: OrcelMessage;
   readonly onInputResponses: (responses: readonly AgentInputResponse[]) => void | Promise<void>;
 }) {
   const lastTextIndex = message.parts.reduce(
@@ -98,7 +98,7 @@ function AgentMessagePart({
 }: {
   readonly canRespond: boolean;
   readonly onInputResponses: (responses: readonly AgentInputResponse[]) => void | Promise<void>;
-  readonly part: KafMessagePart;
+  readonly part: OrcelMessagePart;
   readonly showCaret: boolean;
 }) {
   switch (part.type) {
@@ -122,13 +122,13 @@ function AgentMessagePart({
     case "authorization":
       return <AuthorizationPrompt part={part} />;
     case "dynamic-tool": {
-      const inputRequest = part.toolMetadata?.kaf?.inputRequest;
+      const inputRequest = part.toolMetadata?.orcel?.inputRequest;
       if (inputRequest?.kind === "question") {
         return (
           <QuestionRequest
             canRespond={canRespond}
             inputRequest={inputRequest}
-            inputResponse={part.toolMetadata?.kaf?.inputResponse}
+            inputResponse={part.toolMetadata?.orcel?.inputResponse}
             onInputResponses={onInputResponses}
           />
         );
@@ -172,7 +172,7 @@ function QuestionRequest({
   onInputResponses,
 }: {
   readonly canRespond: boolean;
-  readonly inputRequest: KafMessageInputRequest;
+  readonly inputRequest: OrcelMessageInputRequest;
   readonly inputResponse?: AgentInputResponse;
   readonly onInputResponses: (responses: readonly AgentInputResponse[]) => void | Promise<void>;
 }) {
@@ -263,7 +263,7 @@ function QuestionRequest({
   );
 }
 
-function AttachmentPart({ part }: { readonly part: KafFilePart }) {
+function AttachmentPart({ part }: { readonly part: OrcelFilePart }) {
   const label = part.filename ?? "Attachment";
   const detail = [part.mediaType, formatBytes(part.size)].filter(Boolean).join(" - ");
   const isImage = part.mediaType.startsWith("image/") && part.url !== undefined;
@@ -294,7 +294,7 @@ function AttachmentPart({ part }: { readonly part: KafFilePart }) {
   );
 }
 
-function AuthorizationPrompt({ part }: { readonly part: KafAuthorizationPart }) {
+function AuthorizationPrompt({ part }: { readonly part: OrcelAuthorizationPart }) {
   const isAuthorized = part.state === "completed" && part.outcome === "authorized";
   const isCompleted = part.state === "completed";
   const Icon = isAuthorized ? CheckCircleIcon : isCompleted ? XCircleIcon : KeyRoundIcon;
@@ -353,7 +353,7 @@ function AuthorizationPrompt({ part }: { readonly part: KafAuthorizationPart }) 
   );
 }
 
-function authorizationTitle(part: KafAuthorizationPart): string {
+function authorizationTitle(part: OrcelAuthorizationPart): string {
   if (part.state === "required") {
     return `Connect ${part.displayName}`;
   }
@@ -363,7 +363,7 @@ function authorizationTitle(part: KafAuthorizationPart): string {
   return `${part.displayName} authorization ${formatAuthorizationOutcome(part.outcome)}`;
 }
 
-function authorizationDescription(part: KafAuthorizationPart): string {
+function authorizationDescription(part: OrcelAuthorizationPart): string {
   if (part.state === "required") {
     return part.description;
   }
@@ -374,7 +374,7 @@ function authorizationDescription(part: KafAuthorizationPart): string {
   return `${part.displayName} authorization ${formatAuthorizationOutcome(part.outcome)}${tail}.`;
 }
 
-function formatAuthorizationOutcome(outcome: NonNullable<KafAuthorizationPart["outcome"]>): string {
+function formatAuthorizationOutcome(outcome: NonNullable<OrcelAuthorizationPart["outcome"]>): string {
   switch (outcome) {
     case "authorized":
       return "authorized";
@@ -407,14 +407,14 @@ function InputRequestActions({
 }: {
   readonly canRespond: boolean;
   readonly onInputResponses: (responses: readonly AgentInputResponse[]) => void | Promise<void>;
-  readonly part: KafDynamicToolPart;
+  readonly part: OrcelDynamicToolPart;
 }) {
-  const inputRequest = part.toolMetadata?.kaf?.inputRequest;
+  const inputRequest = part.toolMetadata?.orcel?.inputRequest;
   if (!inputRequest) {
     return null;
   }
 
-  const inputResponse = part.toolMetadata?.kaf?.inputResponse;
+  const inputResponse = part.toolMetadata?.orcel?.inputResponse;
   const selectedOption = inputRequest.options?.find(
     (option) => option.id === inputResponse?.optionId,
   );
@@ -453,7 +453,7 @@ function InputRequestActions({
   );
 }
 
-function partKey(part: KafMessagePart, index: number): string {
+function partKey(part: OrcelMessagePart, index: number): string {
   switch (part.type) {
     case "authorization":
       return `authorization:${part.turnId}:${part.stepIndex}:${part.name}`;

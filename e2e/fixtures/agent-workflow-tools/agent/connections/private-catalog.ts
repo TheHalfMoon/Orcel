@@ -1,4 +1,4 @@
-import { defineDynamic, defineMcpClientConnection } from "kaf/connections";
+import { defineDynamic, defineMcpClientConnection } from "orcel/connections";
 
 import { createFakeAuthProvider } from "../lib/fake-auth-provider.ts";
 import { fixtureUrl } from "../lib/fake-service.ts";

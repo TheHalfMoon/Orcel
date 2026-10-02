@@ -1,4 +1,4 @@
-import { defineTool } from "kaf/tools";
+import { defineTool } from "orcel/tools";
 import { z } from "zod";
 
 const HOLD_OPEN_MS = 4_000;

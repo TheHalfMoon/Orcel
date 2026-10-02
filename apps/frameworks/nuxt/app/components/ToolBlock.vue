@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import type { KafDynamicToolPart } from "kaf/vue";
+import type { OrcelDynamicToolPart } from "orcel/vue";
 
 const props = defineProps<{
-  part: KafDynamicToolPart;
+  part: OrcelDynamicToolPart;
   canRespond: boolean;
 }>();
 
@@ -20,7 +20,7 @@ const isOpen = ref(
   props.part.state === "approval-requested" || props.part.state === "approval-responded",
 );
 
-const toolName = computed(() => props.part.toolMetadata?.kaf?.name ?? props.part.toolName);
+const toolName = computed(() => props.part.toolMetadata?.orcel?.name ?? props.part.toolName);
 
 const stateLabel = computed(() => {
   const labels: Record<string, string> = {
@@ -43,8 +43,8 @@ const stateColor = computed(() => {
   return "text-muted-foreground";
 });
 
-const inputRequest = computed(() => props.part.toolMetadata?.kaf?.inputRequest);
-const inputResponse = computed(() => props.part.toolMetadata?.kaf?.inputResponse);
+const inputRequest = computed(() => props.part.toolMetadata?.orcel?.inputRequest);
+const inputResponse = computed(() => props.part.toolMetadata?.orcel?.inputResponse);
 const selectedOption = computed(() =>
   inputRequest.value?.options?.find((option) => option.id === inputResponse.value?.optionId),
 );

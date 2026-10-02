@@ -24,10 +24,10 @@ const integrationFiles = [
     data: {
       title: "Integrations",
       description:
-        "Browse every third-party service kaf connects to, including channels and connections.",
+        "Browse every third-party service orcel connects to, including channels and connections.",
       excludeFrom: ["search" as const],
       type: "directory",
-      structuredData: structuredData("Integrations for kaf."),
+      structuredData: structuredData("Integrations for orcel."),
       getText: async () => integrationsIndexMarkdown(),
     },
   },

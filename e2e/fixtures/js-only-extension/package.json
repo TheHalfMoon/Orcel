@@ -17,20 +17,20 @@
     }
   },
   "scripts": {
-    "build": "kaf extension build"
+    "build": "orcel extension build"
   },
   "dependencies": {
     "zod": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",
-    "kaf": "workspace:*",
+    "orcel": "workspace:*",
     "typescript": "catalog:"
   },
   "peerDependencies": {
-    "kaf": "*"
+    "orcel": "*"
   },
-  "kaf": {
+  "orcel": {
     "extension": {
       "source": "./extension",
       "dist": "./dist/extension"

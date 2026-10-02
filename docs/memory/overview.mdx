@@ -1,20 +1,20 @@
 ---
 title: "Overview"
-description: "Give an agent context that outlives a session: kaf owns the memory slots, scope, and lifecycle; a provider owns the storage and retrieval."
+description: "Give an agent context that outlives a session: orcel owns the memory slots, scope, and lifecycle; a provider owns the storage and retrieval."
 url: /memory
 ---
 
 Memory gives an agent context that outlives a session. You declare a memory
 slot as a file, choose who the memory belongs to, and pick a provider. Before
-each turn kaf asks the provider to recall relevant context, after each turn it
+each turn orcel asks the provider to recall relevant context, after each turn it
 lets the provider capture what happened, and it exposes any tools the provider
 offers the model. Which facts to keep, how to store them, and how to find them
 again is the provider's job.
 
 ```ts title="agent/memory/profile.ts"
-import { defineMemory } from "kaf/memory";
-import { byPrincipal } from "kaf/memory/scope";
-import { fileMemory } from "kaf/memory/file";
+import { defineMemory } from "orcel/memory";
+import { byPrincipal } from "orcel/memory/scope";
+import { fileMemory } from "orcel/memory/file";
 
 export default defineMemory({
   description: "Remember stable facts and preferences about the caller.",
@@ -34,28 +34,28 @@ by authenticated tenant and caller.
 
 ## How a memory slot works
 
-A memory slot is the unit kaf manages. Each slot binds one provider to an
-kaf-resolved namespace and scope, and kaf drives the provider through the same
+A memory slot is the unit orcel manages. Each slot binds one provider to an
+orcel-resolved namespace and scope, and orcel drives the provider through the same
 lifecycle regardless of what the provider stores:
 
 ```mermaid
 sequenceDiagram
-  participant kaf
+  participant orcel
   participant P as Provider
   participant M as Model
-  kaf->>kaf: resolve scope, lock slot
-  kaf->>P: recall (turn.started)
-  P-->>kaf: messages
-  kaf->>P: tools()
-  P-->>kaf: save, search, ...
-  kaf->>M: history + recalled messages + tools
-  M-->>kaf: response
-  kaf->>P: capture (turn.completed)
+  orcel->>orcel: resolve scope, lock slot
+  orcel->>P: recall (turn.started)
+  P-->>orcel: messages
+  orcel->>P: tools()
+  P-->>orcel: save, search, ...
+  orcel->>M: history + recalled messages + tools
+  M-->>orcel: response
+  orcel->>P: capture (turn.completed)
 ```
 
-kaf and the provider split responsibilities along a fixed boundary:
+orcel and the provider split responsibilities along a fixed boundary:
 
-| kaf owns                                            | The provider owns                     |
+| orcel owns                                            | The provider owns                     |
 | --------------------------------------------------- | ------------------------------------- |
 | Slot names, derived from the file path              | Storage and indexing                  |
 | Namespace and scope resolution from trusted context | Retrieval, ranking, and formatting    |
@@ -76,7 +76,7 @@ automatically or only through explicit tool calls.
 
 | Provider                                | Ships as                | Recall                                                 | Capture                                              |
 | --------------------------------------- | ----------------------- | ------------------------------------------------------ | ---------------------------------------------------- |
-| [File memory](#file-memory)             | Built into kaf          | One bounded document per scope                         | Model-driven `save_memory` / `remove_memory`         |
+| [File memory](#file-memory)             | Built into orcel          | One bounded document per scope                         | Model-driven `save_memory` / `remove_memory`         |
 | [Supermemory](#supermemory)             | `@supermemory/eve`      | Semantic search over stored memories                   | Automatic after each turn, plus tools                |
 | [Upstash AgentKit](#upstash-agentkit)   | `@upstash/agentkit-eve` | Ranked Redis Search recall or a Redis document backend | Automatic user-message capture or model-driven tools |
 | [Kybernesis Arcana](#kybernesis-arcana) | `@kybernesis/arcana`    | Semantic search and brain notes                        | Model-driven tools or optional automatic capture     |
@@ -84,31 +84,31 @@ automatically or only through explicit tool calls.
 
 ### File memory
 
-`fileMemory()` from `kaf/memory/file` keeps one bounded document per scope and
+`fileMemory()` from `orcel/memory/file` keeps one bounded document per scope and
 gives the model `save_memory` and `remove_memory` tools. It does not extract
 facts automatically; the model decides what to save. It needs no external
-service in `kaf dev` and stores to Vercel Blob when deployed to Vercel, which
+service in `orcel dev` and stores to Vercel Blob when deployed to Vercel, which
 makes it the shortest path to a working slot.
 
 Read [File memory](/docs/memory/file) for size limits, storage backends, and options.
 
 ### Supermemory
 
-[Supermemory](https://github.com/supermemoryai/kaf-supermemory#readme) is a
-hosted memory service with an kaf provider. It recalls relevant context before
+[Supermemory](https://github.com/supermemoryai/orcel-supermemory#readme) is a
+hosted memory service with an orcel provider. It recalls relevant context before
 each turn, captures completed turns automatically, and gives the model tools to
 search, remember, forget, and extract sources.
 
 ```bash
-kaf add memory/supermemory
+orcel add memory/supermemory
 ```
 
 The command installs `@supermemory/eve` and writes a `supermemory` slot:
 
 ```ts title="agent/memory/supermemory.ts"
 import supermemory from "@supermemory/eve";
-import { defineMemory } from "kaf/memory";
-import { byPrincipal } from "kaf/memory/scope";
+import { defineMemory } from "orcel/memory";
+import { byPrincipal } from "orcel/memory/scope";
 
 export default defineMemory({
   description: "Recall and manage durable context for the current user.",
@@ -124,14 +124,14 @@ options.
 
 ### Upstash AgentKit
 
-[Upstash AgentKit](https://upstash.com/docs/redis/sdks/agentkit/kaf) backs a
+[Upstash AgentKit](https://upstash.com/docs/redis/sdks/agentkit/orcel) backs a
 memory slot with your Upstash Redis database. `redisMemory()` recalls
 relevance-ranked facts before each turn, captures user messages after completed
 turns by default, and gives the model tools to save, search, read past
 sessions, and forget.
 
 ```bash
-kaf add memory/upstash-agentkit
+orcel add memory/upstash-agentkit
 ```
 
 The command installs `@upstash/agentkit-eve` and writes an `upstash-agentkit`
@@ -139,8 +139,8 @@ slot:
 
 ```ts title="agent/memory/upstash-agentkit.ts"
 import { redisMemory } from "@upstash/agentkit-eve/memory";
-import { defineMemory } from "kaf/memory";
-import { byPrincipal } from "kaf/memory/scope";
+import { defineMemory } from "orcel/memory";
+import { byPrincipal } from "orcel/memory/scope";
 
 export default defineMemory({
   description: "Recall and manage durable context for the current user.",
@@ -159,15 +159,15 @@ backs a memory slot with semantic search and brain notes. It gives the model
 tools to remember, recall, and search memory; capture is disabled by default.
 
 ```bash
-kaf add memory/arcana
+orcel add memory/arcana
 ```
 
 The command installs `@kybernesis/arcana` and writes an `arcana` slot:
 
 ```ts title="agent/memory/arcana.ts"
 import { arcanaMemory } from "@kybernesis/arcana/memory";
-import { defineMemory } from "kaf/memory";
-import { byPrincipal } from "kaf/memory/scope";
+import { defineMemory } from "orcel/memory";
+import { byPrincipal } from "orcel/memory/scope";
 
 export default defineMemory({
   description: "Recall and manage durable context for the current user.",
@@ -186,13 +186,13 @@ for provider options.
 ### Build your own
 
 A provider is an object with a `recall` handler and optional `capture` and
-`tools` handlers. kaf passes each handler a locked scope key, the projected
+`tools` handlers. orcel passes each handler a locked scope key, the projected
 conversation, and a stable operation ID. Anything that can read and write
 under that key can be a memory provider: a Postgres table, a vector index, a
 key-value store, or an HTTP API.
 
 Read [Build a memory provider](/docs/memory/custom-provider) for the contract, a working
-example, and the lifecycle and failure guarantees kaf enforces.
+example, and the lifecycle and failure guarantees orcel enforces.
 
 ## Declare slots
 
@@ -234,8 +234,8 @@ authentication and channel context and returns a string, a tuple of strings, or
 `null`:
 
 ```ts title="agent/memory/account.ts"
-import { defineMemory } from "kaf/memory";
-import { fileMemory } from "kaf/memory/file";
+import { defineMemory } from "orcel/memory";
+import { fileMemory } from "orcel/memory/file";
 
 export default defineMemory({
   provider: fileMemory(),
@@ -253,19 +253,19 @@ export default defineMemory({
 ```
 
 Resolve identity from trusted authentication or channel metadata, never from
-model input. Returning `null` disables the slot for that operation: kaf skips
+model input. Returning `null` disables the slot for that operation: orcel skips
 the provider and its tools and never falls back to a shared scope. In
-`kaf dev`, a diagnostic names the disabled slot without logging the resolved
+`orcel dev`, a diagnostic names the disabled slot without logging the resolved
 value.
 
-`byPrincipal` from `kaf/memory/scope` covers the common case. It scopes memory
+`byPrincipal` from `orcel/memory/scope` covers the common case. It scopes memory
 to the authenticated principal from `auth.current`, disables memory for
 anonymous and runtime principals, and returns the shared `local-dev` scope
 during local development. Write a resolver when the boundary also needs a
 tenant, channel, or conversation identifier; see
 [Multi-tenant memory](/docs/patterns/multi-tenant-memory) for a complete setup.
 
-kaf validates the scope, locks it for the operation, and hands the provider an
+orcel validates the scope, locks it for the operation, and hands the provider an
 opaque `memory.scope.key` derived from the namespace and scope. The provider
 uses that key to partition storage; raw scope components never appear in
 durable attribution.
@@ -292,7 +292,7 @@ export default defineMemory({
 });
 ```
 
-A custom namespace is complete; kaf adds no suffix. Returning `null` disables
+A custom namespace is complete; orcel adds no suffix. Returning `null` disables
 the slot. Scope resolves first, so a disabled scope never calls the namespace
 resolver.
 
@@ -325,7 +325,7 @@ future sessions. Never save passwords, access tokens, payment data, private
 keys, or one-time codes. Tell the user when you save or delete a memory.
 ```
 
-Provider tools are ordinary kaf tools: they honor approvals, `toModelOutput`,
+Provider tools are ordinary orcel tools: they honor approvals, `toModelOutput`,
 and the dynamic-tool replay lifecycle. To replace or remove a slot's tool
 wrapper, create `agent/tools/<slot>.ts`; export `disableTool()` there to remove
 it.

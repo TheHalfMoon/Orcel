@@ -1,6 +1,6 @@
 ---
 title: "Agent Runs"
-description: "Inspect kaf sessions in Vercel and configure the Agent Runs destination."
+description: "Inspect orcel sessions in Vercel and configure the Agent Runs destination."
 url: "/observability/agent-runs"
 ---
 
@@ -11,7 +11,7 @@ url: "/observability/agent-runs"
   plans.
 </Callout>
 
-Use Vercel Agent Runs to browse kaf sessions and inspect conversation traces
+Use Vercel Agent Runs to browse orcel sessions and inspect conversation traces
 in the project's **Observability** view. The tab requires enablement for your
 Vercel team; contact your Vercel representative if it does not appear.
 
@@ -21,7 +21,7 @@ during beta. All plans include 30-day Agent Runs retention during beta.
 
 ## Enable tracing on Vercel
 
-When `kaf deploy` creates a new Vercel project, it configures 100% trace
+When `orcel deploy` creates a new Vercel project, it configures 100% trace
 sampling for all environments. Existing Vercel projects need a sampling rule
 configured to collect traces. To enable tracing for an existing project, select
 your team and project, then open
@@ -54,7 +54,7 @@ Each policy filters spans and attributes before the Agent Runs destination
 receives them:
 
 ```ts title="agent/instrumentation/agent-runs.ts"
-import { agentRuns } from "kaf/instrumentation/otel";
+import { agentRuns } from "orcel/instrumentation/otel";
 
 export default agentRuns({
   exportPolicy: {
@@ -79,7 +79,7 @@ process-wide `otel({ tracePolicy })` has admitted a trace. For example, keep
 spans while redacting inputs and outputs unless the session is public:
 
 ```ts title="agent/instrumentation/agent-runs.ts"
-import { agentRuns } from "kaf/instrumentation/otel";
+import { agentRuns } from "orcel/instrumentation/otel";
 
 export default agentRuns({
   exportPolicy: {
@@ -89,7 +89,7 @@ export default agentRuns({
 });
 ```
 
-Input redaction removes kaf's known prompt, instruction, document, and
+Input redaction removes orcel's known prompt, instruction, document, and
 tool-argument attributes. Output redaction removes response, reasoning,
 tool-result, exception, and status attributes. Redaction narrows only Agent
 Runs; it does not mutate spans sent to another destination.
@@ -97,5 +97,5 @@ Runs; it does not mutate spans sent to another destination.
 ## What to read next
 
 - [OpenTelemetry](./otel): configure process-wide settings and third-party destinations.
-- [Vercel deployment](/docs/guides/deployment/vercel): deploy an kaf agent and inspect its runtime.
+- [Vercel deployment](/docs/guides/deployment/vercel): deploy an orcel agent and inspect its runtime.
 - [Migrate instrumentation](/docs/observability/instrumentation-migration): replace `agent/instrumentation.ts`.

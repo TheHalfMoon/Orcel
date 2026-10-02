@@ -1,8 +1,8 @@
-# kaf documentation style
+# orcel documentation style
 
 ## Names and capitalization
 
-- Write `kaf` lowercase.
+- Write `orcel` lowercase.
 - Match public API, CLI, provider, and product names exactly.
 - Use sentence case for headings.
 - Use American English and the Oxford comma.

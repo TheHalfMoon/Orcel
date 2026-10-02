@@ -1,5 +1,5 @@
 ---
-issue: https://github.com/TheHalfMoon/kaf/issues/876
+issue: https://github.com/TheHalfMoon/orcel/issues/876
 status: implemented
 last_updated: "2026-09-09"
 ---
@@ -8,7 +8,7 @@ last_updated: "2026-09-09"
 
 ## Summary
 
-Today one kaf model step — one turn-model call and the inline tool calls it
+Today one orcel model step — one turn-model call and the inline tool calls it
 makes — runs in one durable Workflow step. This gives every model step its own
 checkpoint, but it also pays Workflow scheduling and persistence overhead
 between sequential tool cycles.
@@ -17,7 +17,7 @@ Add an experimental per-agent option that runs up to N adjacent model steps in
 one Workflow step:
 
 ```ts
-import { defineAgent } from "kaf";
+import { defineAgent } from "orcel";
 
 export default defineAgent({
   model: "openai/gpt-5.6-luna",
@@ -41,7 +41,7 @@ duplicate model spend and stream events after recovery.
 ## Execution boundary
 
 Keep `createToolLoopHarness` at `stopWhen: isStepCount(1)`. It remains the owner
-of exactly one logical kaf step, including step events, tool execution,
+of exactly one logical orcel step, including step events, tool execution,
 compaction, dynamic capability resolution, session limits, and result handling.
 
 Add only a bounded loop around the existing harness invocation in
@@ -76,12 +76,12 @@ therefore keep a durable boundary before external coordination:
 - cancellation, failure, and terminal turn settlement.
 
 Provider-executed tools and ordinary authored tools remain inline and do not
-force an early checkpoint. kaf does not attempt to infer whether a tool is
+force an early checkpoint. orcel does not attempt to infer whether a tool is
 idempotent; the agent-level opt-in is the entire policy.
 
 ## Observable semantics
 
-Logical kaf steps do not change. Each model call still increments `stepIndex`
+Logical orcel steps do not change. Each model call still increments `stepIndex`
 and emits its own `step.started`, action events, `step.completed`, usage, and
 instrumentation. History and state observed by the next model call are the same
 as with `1`.

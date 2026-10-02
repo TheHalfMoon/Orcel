@@ -1,4 +1,4 @@
-import { defineChannel, POST } from "kaf/channels";
+import { defineChannel, POST } from "orcel/channels";
 
 /**
  * Receive-only target channel for the cross-channel handoff smoke

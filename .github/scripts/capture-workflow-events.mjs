@@ -6,7 +6,7 @@ if (!fixtureDirectory || !outputDirectory) {
   throw new Error("Usage: capture-workflow-events.mjs <fixture-directory> <output-directory>");
 }
 
-const directory = join(fixtureDirectory, ".kaf", ".workflow-data", "events");
+const directory = join(fixtureDirectory, ".orcel", ".workflow-data", "events");
 const files = await readdir(directory).catch((error) => {
   if (error.code === "ENOENT") return [];
   throw error;

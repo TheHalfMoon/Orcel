@@ -1,1 +1,1 @@
-export { default } from "@kaf-e2e/config/instrumentation-otel";
+export { default } from "@orcel-e2e/config/instrumentation-otel";

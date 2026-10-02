@@ -166,7 +166,7 @@ function normalizeDependencyRanges(dependencies, input) {
 
 async function runInitCommand(input) {
   const packageRoot = resolve(input.packageRoot);
-  const cliPath = join(packageRoot, "bin", "kaf.js");
+  const cliPath = join(packageRoot, "bin", "orcel.js");
 
   if (!(await pathExists(cliPath))) {
     return null;
@@ -177,7 +177,7 @@ async function runInitCommand(input) {
     env: {
       ...process.env,
       CODEX_CI: "1",
-      KAF_INIT_PACKAGE_SPEC: input.kafPackageSpec,
+      ORCEL_INIT_PACKAGE_SPEC: input.orcelPackageSpec,
       npm_config_user_agent: `npm/? node/${process.versions.node} ${process.platform} ${process.arch}`,
     },
     maxBuffer: 32 * 1024 * 1024,
@@ -189,11 +189,11 @@ async function runInitCommand(input) {
 
 export async function collectInitInstallReportFromTarball(options) {
   const packageRoot = resolve(options.packageRoot);
-  const initDirectory = await mkdtemp(join(tmpdir(), "kaf-init-install-"));
+  const initDirectory = await mkdtemp(join(tmpdir(), "orcel-init-install-"));
 
   try {
     const initialized = await runInitCommand({
-      kafPackageSpec: `file:${options.tarballPath}`,
+      orcelPackageSpec: `file:${options.tarballPath}`,
       packageRoot,
       parentDirectory: initDirectory,
     });
@@ -224,14 +224,14 @@ export async function collectInitInstallReportFromTarball(options) {
     const dependencies = normalizeDependencyRanges(
       attachInstalledBytes(readDependencyBlock(packageJson, "dependencies"), packageSizes),
       {
-        packageName: "kaf",
+        packageName: "orcel",
         packageSpec,
       },
     );
     const devDependencies = normalizeDependencyRanges(
       attachInstalledBytes(readDependencyBlock(packageJson, "devDependencies"), packageSizes),
       {
-        packageName: "kaf",
+        packageName: "orcel",
         packageSpec,
       },
     );
@@ -281,7 +281,7 @@ export async function collectInitInstallReportFromTarball(options) {
 
 export async function collectInitInstallReport(options) {
   const packageRoot = resolve(options.packageRoot);
-  const packDirectory = await mkdtemp(join(tmpdir(), "kaf-init-package-pack-"));
+  const packDirectory = await mkdtemp(join(tmpdir(), "orcel-init-package-pack-"));
 
   try {
     const packResult = await runPack(packageRoot, packDirectory);

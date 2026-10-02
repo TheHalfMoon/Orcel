@@ -11,20 +11,20 @@ The Slack channel puts your agent inside a workspace. It handles `@mentions`, DM
 Run the guided setup from your agent project:
 
 ```bash
-kaf add channel/slack
+orcel add channel/slack
 ```
 
 The command recommends Vercel Connect, then scaffolds `agent/channels/slack.ts` and installs any required dependency. Choose the environment-variable option only when you need to manage the Slack bot token and signing secret yourself.
 
 ### Recommended: use Vercel Connect
 
-Vercel Connect setup requires the Vercel CLI. The guided flow signs you in when needed, creates or links a Vercel project, creates or reuses a Slack connector, waits for you to install it in a workspace, and registers `/kaf/v1/slack` as a trigger destination before writing the channel file.
+Vercel Connect setup requires the Vercel CLI. The guided flow signs you in when needed, creates or links a Vercel project, creates or reuses a Slack connector, waits for you to install it in a workspace, and registers `/orcel/v1/slack` as a trigger destination before writing the channel file.
 
 The generated channel resolves credentials at runtime:
 
 ```ts title="agent/channels/slack.ts"
 import { connectSlackCredentials } from "@vercel/connect/eve";
-import { slackChannel } from "kaf/channels/slack";
+import { slackChannel } from "orcel/channels/slack";
 
 export default slackChannel({
   credentials: connectSlackCredentials("slack/my-agent"),
@@ -36,7 +36,7 @@ export default slackChannel({
 Function-form bot tokens receive `{ teamId }` when Slack supplies the app installation workspace. Use it to select an installation in a self-managed multi-workspace app. The id can differ from the actor or content workspace for Slack Connect events:
 
 ```ts title="agent/channels/slack.ts"
-import { slackChannel } from "kaf/channels/slack";
+import { slackChannel } from "orcel/channels/slack";
 
 export default slackChannel({
   credentials: {
@@ -49,14 +49,14 @@ Literal tokens and zero-argument token functions remain supported. A multi-works
 
 ### Manage Slack credentials yourself
 
-Use this fallback when the agent does not run on Vercel or Vercel Connect is unavailable. In the setup command, **Use portable credentials** is the environment-variable option; kaf adds `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET` to `.env.example`.
+Use this fallback when the agent does not run on Vercel or Vercel Connect is unavailable. In the setup command, **Use portable credentials** is the environment-variable option; orcel adds `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET` to `.env.example`.
 
 This option does not create or install the Slack app. Configure it in [Slack app settings](https://api.slack.com/apps):
 
 1. Add the `app_mentions:read` and `chat:write` bot scopes. Add `im:history` for DMs, `files:read` for inbound attachments, and `files:write` for explicit uploads and automatic long-response snippets.
 2. Install or reinstall the app, copy its Bot User OAuth Token to `SLACK_BOT_TOKEN`, and copy the signing secret from **Basic Information** to `SLACK_SIGNING_SECRET`.
 3. Set both values in `.env.local` for local development or in the target runtime's environment, then start or deploy the agent at a public URL.
-4. Under **Event Subscriptions**, set the Request URL to `https://your-agent.example/kaf/v1/slack`. Subscribe to `app_mention`, plus `message.im` for DMs.
+4. Under **Event Subscriptions**, set the Request URL to `https://your-agent.example/orcel/v1/slack`. Subscribe to `app_mention`, plus `message.im` for DMs.
 5. Under **Interactivity & Shortcuts**, use the same Request URL when the agent uses buttons, shortcuts, or HITL prompts.
 6. Under **Slash Commands**, create each command your app handles and use the same Request URL.
 
@@ -67,10 +67,10 @@ Add the matching message events and history scopes if you also want unmentioned 
 Deploy the production agent after the trigger destination and channel file are ready:
 
 ```bash
-kaf deploy
+orcel deploy
 ```
 
-`kaf deploy` deploys the linked Vercel project to production. The guided flow registers the trigger destination against the production branch, which is the Vercel CLI default. Manage trigger destinations separately in the Connect dashboard when you need a different branch or environment.
+`orcel deploy` deploys the linked Vercel project to production. The guided flow registers the trigger destination against the production branch, which is the Vercel CLI default. Manage trigger destinations separately in the Connect dashboard when you need a different branch or environment.
 
 ## Test a preview branch with Vercel Connect
 
@@ -83,7 +83,7 @@ vercel connect attach slack/your-agent-preview \
   --environment preview \
   --triggers \
   --trigger-branch your-preview-branch \
-  --trigger-path /kaf/v1/slack \
+  --trigger-path /orcel/v1/slack \
   --yes
 ```
 
@@ -93,7 +93,7 @@ Select the matching connector at runtime instead of leaving the generated produc
 
 ```ts title="agent/channels/slack.ts"
 import { connectSlackCredentials } from "@vercel/connect/eve";
-import { slackChannel } from "kaf/channels/slack";
+import { slackChannel } from "orcel/channels/slack";
 
 const connectorUid =
   process.env.VERCEL_ENV === "preview" ? "slack/your-agent-preview" : "slack/my-agent";
@@ -109,7 +109,7 @@ Slack must be able to reach the preview route without an interactive authenticat
 
 ## Set up Vercel Connect manually
 
-To set up the connector outside the guided flow, create it, then register kaf's Slack route with the linked project:
+To set up the connector outside the guided flow, create it, then register orcel's Slack route with the linked project:
 
 ```bash
 npm install -g vercel@latest
@@ -117,11 +117,11 @@ vercel connect create slack --name your-agent --triggers
 vercel connect attach slack/your-agent \
   --environment production \
   --triggers \
-  --trigger-path /kaf/v1/slack \
+  --trigger-path /orcel/v1/slack \
   --yes
 ```
 
-`--triggers` enables Slack Event Subscriptions. The attach command registers kaf's route in addition to the default destination created with the connector. Remove the default destination separately in the [Connect dashboard](https://vercel.com/d?to=/%5Bteam%5D/~/connect&title=Go+to+Connect). For an existing connector, skip `create` and attach the intended route directly.
+`--triggers` enables Slack Event Subscriptions. The attach command registers orcel's route in addition to the default destination created with the connector. Remove the default destination separately in the [Connect dashboard](https://vercel.com/d?to=/%5Bteam%5D/~/connect&title=Go+to+Connect). For an existing connector, skip `create` and attach the intended route directly.
 
 ## Troubleshoot Slack delivery
 
@@ -129,9 +129,9 @@ Check the delivery path in order so you can identify where a Slack event stops:
 
 | Symptom                                                               | Check                                                                                                                                                                                  | Next action                                                                                                                                                          |
 | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `kaf add channel/slack` stops before scaffolding the channel          | Read the setup error for the failed Vercel login, project link, workspace install, connector lookup, or trigger registration step.                                                     | Resolve that step, then rerun `kaf add channel/slack`.                                                                                                               |
-| Setup says it could not remove an existing trigger destination        | Check the connector's destinations in the Connect dashboard. `vercel connect detach` removes project token access, not trigger destinations.                                           | Edit or remove the stale destination in the dashboard, then register `/kaf/v1/slack` with `vercel connect attach`.                                                   |
-| Mentions never reach the deployment                                   | Confirm that the connector trigger destination uses the intended project and branch, enables triggers, and points to `/kaf/v1/slack`.                                                  | Edit or remove stale destinations in the Connect dashboard, then register the intended destination with `vercel connect attach`.                                     |
+| `orcel add channel/slack` stops before scaffolding the channel          | Read the setup error for the failed Vercel login, project link, workspace install, connector lookup, or trigger registration step.                                                     | Resolve that step, then rerun `orcel add channel/slack`.                                                                                                               |
+| Setup says it could not remove an existing trigger destination        | Check the connector's destinations in the Connect dashboard. `vercel connect detach` removes project token access, not trigger destinations.                                           | Edit or remove the stale destination in the dashboard, then register `/orcel/v1/slack` with `vercel connect attach`.                                                   |
+| Mentions never reach the deployment                                   | Confirm that the connector trigger destination uses the intended project and branch, enables triggers, and points to `/orcel/v1/slack`.                                                  | Edit or remove stale destinations in the Connect dashboard, then register the intended destination with `vercel connect attach`.                                     |
 | Mentions work but DMs or thread replies do not                        | Check the Slack app's Event Subscriptions and OAuth scopes. DMs require `message.im` and `im:history`; channel replies require the matching message event and history scope.           | Add the missing events or scopes, then reinstall the Slack app if Slack requires it.                                                                                 |
 | A long response cannot be uploaded as a snippet                       | Check whether the installed Slack app has the `files:write` bot scope.                                                                                                                 | Add `files:write`, then reinstall the Slack app so the new scope takes effect.                                                                                       |
 | A preview request receives an authentication page or protection error | Check whether the branch domain is exempt or the direct Slack request URL includes `x-vercel-protection-bypass`. Slack cannot complete an interactive Vercel Authentication challenge. | Add a Deployment Protection Exception for the branch domain, or add the automation bypass query parameter to a Slack app that uses environment-variable credentials. |
@@ -140,7 +140,7 @@ Check the delivery path in order so you can identify where a Slack event stops:
 ## Audience
 
 Slack public channels are `public`; DMs, group DMs, and private channels are
-`private`. When an inbound event does not identify the conversation type, kaf
+`private`. When an inbound event does not identify the conversation type, orcel
 checks Slack and treats an ambiguous or failed lookup as `private`. The audience
 controls observability content capture, not access to the channel. See
 [Audience](./overview#audience) for the shared channel model.
@@ -151,7 +151,7 @@ controls observability content capture, not access to the channel. See
 
 Message hooks return `{ auth }` to dispatch, `null` to drop, or `{ auth, context }` to inject background into history. Public conversations use the returned `title`, or the triggering message text when `title` is omitted. DMs and private channels always use `Private message` so the run title does not expose message details.
 
-- `onMessage(ctx, message)` handles Slack `message` events. kaf drops messages authored by the installed app before this hook runs, preventing self-reply loops. Messages from other bots remain visible; check `message.author?.isBot` when those should also be ignored. `ctx.isBotMentioned()` and `ctx.isSubscribed()` support mention and active-thread policies.
+- `onMessage(ctx, message)` handles Slack `message` events. orcel drops messages authored by the installed app before this hook runs, preventing self-reply loops. Messages from other bots remain visible; check `message.author?.isBot` when those should also be ignored. `ctx.isBotMentioned()` and `ctx.isSubscribed()` support mention and active-thread policies.
 - `onAppMention(ctx, message)` handles only `app_mention` and takes precedence over `onMessage`. Its default derives workspace-scoped auth.
 - `onDirectMessage(ctx, message)` handles only DMs and takes precedence over `onMessage`. Bot-authored messages and edits are filtered first; Slack requires `message.im` and `im:history`.
 
@@ -164,16 +164,16 @@ Message hooks return `{ auth }` to dispatch, `null` to drop, or `{ auth, context
 
 Only the first available handler runs. A message hook returning `null` drops the message; it does not continue down the table.
 
-Message hooks only decide whether and how a message starts a turn. They don't render anything, so replacing one never changes what people see: kaf still acknowledges the message, shows progress, and posts the reply. To change what the agent posts, add [renderers](#customize-rendering).
+Message hooks only decide whether and how a message starts a turn. They don't render anything, so replacing one never changes what people see: orcel still acknowledges the message, shows progress, and posts the reply. To change what the agent posts, add [renderers](#customize-rendering).
 
-`onInteraction(action, ctx)` separately handles user-owned `block_actions` callbacks. kaf-owned HITL buttons and modal submissions go through `onInputResponse(ctx, submission)` instead. kaf attaches the triggering Slack user id to the same model message as its text, preserving speaker attribution without profile lookups.
+`onInteraction(action, ctx)` separately handles user-owned `block_actions` callbacks. orcel-owned HITL buttons and modal submissions go through `onInputResponse(ctx, submission)` instead. orcel attaches the triggering Slack user id to the same model message as its text, preserving speaker attribution without profile lookups.
 
-Use `onShortcut(shortcut, ctx)` for message shortcuts and global shortcuts configured under **Interactivity & Shortcuts** in your Slack app. The handler receives the shortcut callback ID, user, workspace, and trigger ID. Message shortcuts also include the selected message and channel. The context exposes workspace-scoped Slack API access because global shortcuts have no channel or message. kaf acknowledges shortcut requests immediately and keeps their handlers alive in the background.
+Use `onShortcut(shortcut, ctx)` for message shortcuts and global shortcuts configured under **Interactivity & Shortcuts** in your Slack app. The handler receives the shortcut callback ID, user, workspace, and trigger ID. Message shortcuts also include the selected message and channel. The context exposes workspace-scoped Slack API access because global shortcuts have no channel or message. orcel acknowledges shortcut requests immediately and keeps their handlers alive in the background.
 
-Use `onSlashCommand(command, ctx)` for commands configured under **Slash Commands** in your Slack app. The handler receives the command name, argument text, invoking user, channel, workspace, trigger ID, and response URL. It also receives workspace-scoped Slack API access. kaf acknowledges slash commands immediately with an empty `200 OK` response and keeps the handler alive in the background:
+Use `onSlashCommand(command, ctx)` for commands configured under **Slash Commands** in your Slack app. The handler receives the command name, argument text, invoking user, channel, workspace, trigger ID, and response URL. It also receives workspace-scoped Slack API access. orcel acknowledges slash commands immediately with an empty `200 OK` response and keeps the handler alive in the background:
 
 ```ts title="agent/channels/slack.ts"
-import { slackChannel } from "kaf/channels/slack";
+import { slackChannel } from "orcel/channels/slack";
 
 export default slackChannel({
   async onSlashCommand(command, ctx) {
@@ -189,7 +189,7 @@ export default slackChannel({
 
 The model-visible `<slack_message>` includes `sender_id`, `bot_user_id` when available, and the `is_mentioned` value from `ctx.isBotMentioned()`. Its `<content>` keeps `<@USER_ID>` intact while converting other mrkdwn to Markdown; routing is unchanged.
 
-When a Slack message includes a link preview, kaf includes its attachment text in `<content>` alongside the sender's message, including when the link has words around it. Shared Slack messages work the same way: kaf extracts the forwarded message body from Slack's message-unfurl attachment and keeps any top-level comment.
+When a Slack message includes a link preview, orcel includes its attachment text in `<content>` alongside the sender's message, including when the link has words around it. Shared Slack messages work the same way: orcel extracts the forwarded message body from Slack's message-unfurl attachment and keeps any top-level comment.
 
 #### Restrict who can invoke the agent
 
@@ -197,7 +197,7 @@ A valid Slack signature proves that Slack sent the event. It does not decide whi
 
 ```ts title="agent/channels/slack.ts"
 import { connectSlackCredentials } from "@vercel/connect/eve";
-import { defaultSlackAuth, slackChannel, type SlackMessage } from "kaf/channels/slack";
+import { defaultSlackAuth, slackChannel, type SlackMessage } from "orcel/channels/slack";
 
 const allowedConversations = new Set(["C01234567", "D01234567"]);
 const allowedUsers = new Set(["U01234567"]);
@@ -230,17 +230,17 @@ export default slackChannel({
 });
 ```
 
-Override every enabled inbound handler; leaving `onDirectMessage` out would retain kaf's default DM behavior. Apply the same policy in `onInputResponse` so someone who cannot start a turn cannot resume one through an kaf-owned HITL control. Slack Connect can deliver events from external users, so authorize the explicit user and current conversation IDs your policy expects. If access depends on organization membership, resolve it from Slack's shared-channel and user data instead of inferring it from the request signature.
+Override every enabled inbound handler; leaving `onDirectMessage` out would retain orcel's default DM behavior. Apply the same policy in `onInputResponse` so someone who cannot start a turn cannot resume one through an orcel-owned HITL control. Slack Connect can deliver events from external users, so authorize the explicit user and current conversation IDs your policy expects. If access depends on organization membership, resolve it from Slack's shared-channel and user data instead of inferring it from the request signature.
 
 Keep authorization checks inside sensitive tools too. The inbound allowlist controls who can start a turn; tool-level checks control what that authenticated Slack principal may read or change.
 
-`onInputResponse` runs after kaf decodes a built-in HITL answer but before the parked session resumes. Return `{ auth }` to accept the answer. Returning `null` or throwing rejects it, leaves the request pending, and keeps the Slack controls active. `ctx.defaultAuth` identifies the Slack user who submitted the signed interaction; it does not authorize that user by itself.
+`onInputResponse` runs after orcel decodes a built-in HITL answer but before the parked session resumes. Return `{ auth }` to accept the answer. Returning `null` or throwing rejects it, leaves the request pending, and keeps the Slack controls active. `ctx.defaultAuth` identifies the Slack user who submitted the signed interaction; it does not authorize that user by itself.
 
 If you omit `onInputResponse`, Slack accepts HITL answers with the submitting user's auth, regardless of which message or event handlers you define. Define `onInputResponse` when those handlers enforce an invocation policy that must also apply to HITL answers. Put sensitive prompts in conversations limited to the intended approvers, and re-check `ctx.session.auth.current` inside a sensitive tool before performing its side effect.
 
 #### Continue conversations without repeated mentions
 
-Use `onMessage` to handle explicit mentions and continue replies in threads with an active kaf session:
+Use `onMessage` to handle explicit mentions and continue replies in threads with an active orcel session:
 
 ```ts title="agent/channels/slack.ts"
 export default slackChannel({
@@ -254,7 +254,7 @@ export default slackChannel({
 });
 ```
 
-`isDMOrPrivateChannel()` returns `true` for DMs, group DMs, and private channels. Slack message events identify public channels as `channel` and private channels as `group`, so those events do not require an API lookup. Events such as `app_mention` omit the conversation type; for those, the helper calls Slack's `conversations.info` API and checks `is_private`. Missing scopes, API errors, and ambiguous responses return `true` so privacy-sensitive behavior fails closed. `isBotMentioned()` identifies an explicit mention. `isSubscribed()` checks whether the message belongs to a thread with an active kaf session. For Vercel Connect, open **Advanced** when creating the connector and add `message.channels` under **Trigger Event Types** and `channels:history` under **Bot Scopes**. Private channels additionally need `message.groups` and `groups:history`.
+`isDMOrPrivateChannel()` returns `true` for DMs, group DMs, and private channels. Slack message events identify public channels as `channel` and private channels as `group`, so those events do not require an API lookup. Events such as `app_mention` omit the conversation type; for those, the helper calls Slack's `conversations.info` API and checks `is_private`. Missing scopes, API errors, and ambiguous responses return `true` so privacy-sensitive behavior fails closed. `isBotMentioned()` identifies an explicit mention. `isSubscribed()` checks whether the message belongs to a thread with an active orcel session. For Vercel Connect, open **Advanced** when creating the connector and add `message.channels` under **Trigger Event Types** and `channels:history` under **Bot Scopes**. Private channels additionally need `message.groups` and `groups:history`.
 
 Use `ctx.thread.listParticipants()` when routing depends on who has joined the thread. It fetches the current thread and returns unique human Slack user ids in first-appearance order, so the first id is the starting author for a human-started thread. Bot and system messages are excluded:
 
@@ -277,7 +277,7 @@ Like `threadContext`, this helper calls `conversations.replies` and requires the
 You get the triggering mention by default, but not the earlier replies in the thread. Enable `threadContext` to fetch and inject them with every message attributed by stable Slack user id. Use `since: "last-agent-reply"` so repeated mentions inject only what is new:
 
 ```ts
-import { slackChannel } from "kaf/channels/slack";
+import { slackChannel } from "orcel/channels/slack";
 import { connectSlackCredentials } from "@vercel/connect/eve";
 
 export default slackChannel({
@@ -353,7 +353,7 @@ Use `onEvent` for subscribed events such as `reaction_added`, `team_join`, or `c
 
 ```ts title="agent/channels/slack.ts"
 import { connectSlackCredentials } from "@vercel/connect/eve";
-import { slackChannel } from "kaf/channels/slack";
+import { slackChannel } from "orcel/channels/slack";
 
 const onboardingChannels = ["C0123ABC", "C0456DEF"];
 
@@ -393,7 +393,7 @@ await ctx.reset({ reason: "Start over", target });
 const session = await ctx.resolveSession({ target });
 ```
 
-`onEvent` is the raw fallback after the message hooks. If an event is not claimed by `onAppMention`, `onDirectMessage`, or `onMessage`, an authored `onEvent` receives it; otherwise kaf applies the built-in mention/DM default or ignores it.
+`onEvent` is the raw fallback after the message hooks. If an event is not claimed by `onAppMention`, `onDirectMessage`, or `onMessage`, an authored `onEvent` receives it; otherwise orcel applies the built-in mention/DM default or ignores it.
 
 `onEvent` covers JSON `event_callback` deliveries only. URL verification, slash commands, and interactive payloads do not reach it. Slash commands reach `onSlashCommand`; add every desired event and required OAuth scope to the Slack app's Event Subscriptions configuration so other callbacks reach their handlers.
 
@@ -404,7 +404,7 @@ messages, for example, has no inbound Slack request. For that, call the
 same primitive the handle uses directly:
 
 ```ts
-import { callSlackApi } from "kaf/channels/slack";
+import { callSlackApi } from "orcel/channels/slack";
 import { connectSlackCredentials } from "@vercel/connect/eve";
 
 const { botToken } = connectSlackCredentials("slack/my-agent");
@@ -448,11 +448,11 @@ slackChannel({
 
 The bases say where a call may go. `apiBaseUrl` is the base Slack Web API method names resolve against, and defaults to `https://slack.com/api/`. `fileBaseUrl` adds a base for attachment downloads and falls back to `apiBaseUrl`: a download URL under it is fetched with the bot token, in addition to `files.slack.com` and Enterprise Grid file URLs. Every other URL passes through to the model provider unchanged. Both bases must be absolute `http:` or `https:` URLs carrying no query string or fragment; `slackChannel()` throws on one that is not, naming the option. A missing trailing slash is added, so `https://sim.example/api` sends `chat.postMessage` to `https://sim.example/api/chat.postMessage`.
 
-`api.fetch` says how the traffic travels. It replaces the global `fetch` for calls to the configured bases — use it to attach the per-call header a host behind an authenticating proxy requires, as the example does for a simulator behind Vercel Deployment Protection. kaf confines it to those bases' origins, so that header reaches the simulator alone: `files.slack.com`, and any other host Slack names in a response or an inbound payload, keep the global `fetch`. A wrapper therefore attaches its credential unconditionally. With no base configured every call already goes to Slack's own hosts, and `api.fetch` carries all of them, which is what observes or stubs the traffic in a test.
+`api.fetch` says how the traffic travels. It replaces the global `fetch` for calls to the configured bases — use it to attach the per-call header a host behind an authenticating proxy requires, as the example does for a simulator behind Vercel Deployment Protection. orcel confines it to those bases' origins, so that header reaches the simulator alone: `files.slack.com`, and any other host Slack names in a response or an inbound payload, keep the global `fetch`. A wrapper therefore attaches its credential unconditionally. With no base configured every call already goes to Slack's own hosts, and `api.fetch` carries all of them, which is what observes or stubs the traffic in a test.
 
 ### Delivery
 
-kaf shows an agent's progress in two places. Short work, such as thinking or a tool call, appears in the thread status and never posts a message. [Tasks](/docs/tools/tasks), which keep working while the conversation continues, appear in a task card: one message per turn that kaf updates in place. Replies post as ordinary messages, so the thread holds the conversation, the task card, and nothing else.
+orcel shows an agent's progress in two places. Short work, such as thinking or a tool call, appears in the thread status and never posts a message. [Tasks](/docs/tools/tasks), which keep working while the conversation continues, appear in a task card: one message per turn that orcel updates in place. Replies post as ordinary messages, so the thread holds the conversation, the task card, and nothing else.
 
 | Moment                             | Thread status                                                                 |
 | ---------------------------------- | ----------------------------------------------------------------------------- |
@@ -460,7 +460,7 @@ kaf shows an agent's progress in two places. Short work, such as thinking or a t
 | The message hook drops the message | Cleared                                                                       |
 | The turn starts                    | `Working...`                                                                  |
 | The model reasons                  | The first line of its reasoning                                               |
-| The model calls tools              | Its narration before the calls, or an action label such as `grep useKafAgent` |
+| The model calls tools              | Its narration before the calls, or an action label such as `grep useOrcelAgent` |
 | The turn waits on its tasks        | `Waiting on researcher...`, or `Waiting on researcher and 2 more tasks...`    |
 | A reply posts                      | Cleared by Slack                                                              |
 
@@ -468,7 +468,7 @@ Slack clears a thread status after two minutes without a message, so during a lo
 
 Action labels are the tool name plus its most telling argument, the agent name for agent calls, and `+N more` when the model requests several actions at once. They leave out the model's own `task_wait` and `task_cancel` calls. Reasoning snippets build progressively: extensions of at least four characters appear immediately, while smaller streamed deltas use a five-second refresh interval to avoid one Slack request per token.
 
-Replies up to 12,000 characters render inline. Longer replies are uploaded unchanged as a Markdown snippet named `kaf-response.md` with a short in-thread note, which requires the `files:write` bot scope. Upload failures are logged by the channel dispatcher; they do not trigger a model retry.
+Replies up to 12,000 characters render inline. Longer replies are uploaded unchanged as a Markdown snippet named `orcel-response.md` with a short in-thread note, which requires the `files:write` bot scope. Upload failures are logged by the channel dispatcher; they do not trigger a model retry.
 
 When the model replies while its tasks keep working, that reply posts like any other, and the reply after the results posts as another message. A schedule's session posts only the final reply.
 
@@ -476,7 +476,7 @@ Outbound text preserves bare `@` tokens as literal text. To mention a user, embe
 
 ### Task card
 
-When a turn starts its first task, kaf posts a task card in the thread and keeps it current until the turn and its tasks finish. One task renders as a Slack `task_card` block; two or more render as a `plan` block with one row per task the turn started. What an agent task does on its own, including the tasks it starts, stays inside that task and does not add rows. The card needs no configuration beyond the `chat:write` scope the channel already uses.
+When a turn starts its first task, orcel posts a task card in the thread and keeps it current until the turn and its tasks finish. One task renders as a Slack `task_card` block; two or more render as a `plan` block with one row per task the turn started. What an agent task does on its own, including the tasks it starts, stays inside that task and does not add rows. The card needs no configuration beyond the `chat:write` scope the channel already uses.
 
 Each row shows:
 
@@ -486,26 +486,26 @@ Each row shows:
 
 The plan title summarizes the turn: `Working on 2 tasks`, `1 of 2 tasks done`, `Waiting for approval`, then `Finished 2 tasks` or `Finished 3 tasks: 1 failed, 1 stopped`. A resumable task continued in a later turn appears in that turn's card.
 
-kaf writes the card from the session's own events as they happen, and only when it changed. A failed Slack call never fails the turn: kaf tries a failed write once more after a second, then again on the turn's next change. If someone deletes the card, kaf posts it again on its next change. Card posts never unfurl links. Schedule sessions and sessions without a Slack thread get no card.
+orcel writes the card from the session's own events as they happen, and only when it changed. A failed Slack call never fails the turn: orcel tries a failed write once more after a second, then again on the turn's next change. If someone deletes the card, orcel posts it again on its next change. Card posts never unfurl links. Schedule sessions and sessions without a Slack thread get no card.
 
 ### Customize rendering
 
-Without `renderers`, kaf renders everything above with its default renderer. Pass `renderers` to change what the agent posts without replacing that default. Each renderer wraps the ones after it, ending with kaf's default renderer, and has three optional parts:
+Without `renderers`, orcel renders everything above with its default renderer. Pass `renderers` to change what the agent posts without replacing that default. Each renderer wraps the ones after it, ending with orcel's default renderer, and has three optional parts:
 
-- `received(message, channel, next)` acknowledges a mention or DM the moment it arrives, and another channel message once `onMessage` dispatches it. kaf's default sets `Thinking...`.
+- `received(message, channel, next)` acknowledges a mention or DM the moment it arrives, and another channel message once `onMessage` dispatches it. orcel's default sets `Thinking...`.
 - `events` handles session events such as `message.completed` or `input.requested`. Each handler receives `(eventData, channel, ctx, next)`, with Slack platform handles on `channel.thread` and `channel.slack`; a `session.failed` handler receives `(eventData, channel, next)`.
 - `taskCard(view, next)` returns the task card's blocks and notification text, or `null` for no card.
 
-Call `next()` to run the rest of the chain, ending with kaf's default. Call it after your own work, before it, or with changed data, as in `next({ ...event, message })`; the rest of the chain runs at most once. Skip `next` to replace the default for that event. This renderer adds feedback buttons below each final reply and a context row to the finished task card:
+Call `next()` to run the rest of the chain, ending with orcel's default. Call it after your own work, before it, or with changed data, as in `next({ ...event, message })`; the rest of the chain runs at most once. Skip `next` to replace the default for that event. This renderer adds feedback buttons below each final reply and a context row to the finished task card:
 
 ```ts title="agent/channels/slack.ts"
 import { connectSlackCredentials } from "@vercel/connect/eve";
-import { defineSlackRenderer, slackChannel } from "kaf/channels/slack";
+import { defineSlackRenderer, slackChannel } from "orcel/channels/slack";
 
 const feedback = defineSlackRenderer({
   events: {
     async "message.completed"(event, channel, _ctx, next) {
-      await next(); // kaf posts the reply, or uploads a long one as a snippet
+      await next(); // orcel posts the reply, or uploads a long one as a snippet
       if (event.finishReason === "tool-calls") return;
       await channel.thread.post({
         blocks: [
@@ -545,22 +545,22 @@ export default slackChannel({
 });
 ```
 
-`taskCard` runs for every turn that calls a tool, and receives the same view kaf's default renders from:
+`taskCard` runs for every turn that calls a tool, and receives the same view orcel's default renders from:
 
 - `state`: `blocked` while any task waits on a person, `working` while the turn or any other task works, then `finished`.
 - `tasks`: the tasks the turn started, each with a `title`, `status`, `blockedOn`, and `summary`. A failed task's `summary` and a blocked task's `blockedOn.label` are present only in a DM or private channel.
 - `actions`: the turn's other tool calls, each with its tool `name`, `title`, `status`, and `input`. `input` is left out when its JSON is longer than 4,096 characters.
 
-`taskCard` is synchronous and pure: kaf posts the card and updates it as the view changes. kaf's default returns `null` for a turn that started no tasks. To change a row's title in every channel, give the tool a [label](/docs/tools#label-tool-activity) instead.
+`taskCard` is synchronous and pure: orcel posts the card and updates it as the view changes. orcel's default returns `null` for a turn that started no tasks. To change a row's title in every channel, give the tool a [label](/docs/tools#label-tool-activity) instead.
 
 Renderers run in the order you list them, and the first one is outermost. `onInteraction` receives clicks on buttons a renderer posts, such as the feedback buttons above.
 
 ### Show your own tool on the task card
 
-A renderer can draw any of the turn's tool calls from their input. For example, give the agent a `plan` tool that records a checklist, and show the checklist ahead of kaf's task rows:
+A renderer can draw any of the turn's tool calls from their input. For example, give the agent a `plan` tool that records a checklist, and show the checklist ahead of orcel's task rows:
 
 ```ts title="agent/tools/plan.ts"
-import { defineTool } from "kaf/tools";
+import { defineTool } from "orcel/tools";
 import { z } from "zod";
 
 export default defineTool({
@@ -581,7 +581,7 @@ export default defineTool({
 ```
 
 ```ts title="agent/channels/slack.ts"
-import { type BlockKitBlock, defineSlackRenderer, slackChannel } from "kaf/channels/slack";
+import { type BlockKitBlock, defineSlackRenderer, slackChannel } from "orcel/channels/slack";
 
 interface PlanItem {
   readonly status: "pending" | "working" | "completed" | "failed";
@@ -601,7 +601,7 @@ const plan = defineSlackRenderer({
     const calls = view.actions.filter((action) => action.name === "plan");
     const items = calls.at(-1)?.input?.items as PlanItem[] | undefined;
     if (items === undefined) return card;
-    // kaf's card is one `plan` block, or one `task_card` block for a single task.
+    // orcel's card is one `plan` block, or one `task_card` block for a single task.
     const [block] = card?.blocks ?? [];
     const taskRows: BlockKitBlock[] =
       block === undefined ? [] : block.type === "plan" ? (block.tasks as BlockKitBlock[]) : [block];
@@ -625,12 +625,12 @@ A turn that only plans gets a card too, because `taskCard` runs for every turn t
 
 ### Human-in-the-loop (HITL)
 
-HITL renders as Slack buttons and selects. Fixed-choice actions and freeform modal submissions pass through `onInputResponse` before the parked session resumes. The initial **Type your answer** action only opens kaf's modal; the hook runs when the user submits an answer.
+HITL renders as Slack buttons and selects. Fixed-choice actions and freeform modal submissions pass through `onInputResponse` before the parked session resumes. The initial **Type your answer** action only opens orcel's modal; the hook runs when the user submits an answer.
 
 Set `approvalChannel` to choose where each input request appears, including tool approvals and questions from `ctx.ask()`. Return `"direct-message"` when the request must be visible only to the Slack user who triggered the turn, or `"thread"` for the normal shared thread.
 
 ```ts title="agent/channels/slack.ts"
-import { slackChannel } from "kaf/channels/slack";
+import { slackChannel } from "orcel/channels/slack";
 
 export default slackChannel({
   approvalChannel: (request) =>
@@ -640,12 +640,12 @@ export default slackChannel({
 });
 ```
 
-The callback receives the `InputRequest` and current `SessionContext`, so it can switch on `kind`, `action`, or presentation properties. Omit it to keep every request in the thread, or return `"direct-message"` unconditionally to make every request private. If kaf cannot resolve the triggering Slack user for a direct message, it logs the undelivered request and posts no fallback, so private delivery fails closed. The existing `onInputResponse` or tool approval response policy still decides whether the person who clicks may respond.
+The callback receives the `InputRequest` and current `SessionContext`, so it can switch on `kind`, `action`, or presentation properties. Omit it to keep every request in the thread, or return `"direct-message"` unconditionally to make every request private. If orcel cannot resolve the triggering Slack user for a direct message, it logs the undelivered request and posts no fallback, so private delivery fails closed. The existing `onInputResponse` or tool approval response policy still decides whether the person who clicks may respond.
 
-A renderer's `input.requested` handler can extend delivery and then hand the requests on to kaf with `next()`. For example, an application can add non-sensitive context to the Slack thread before kaf renders the actionable controls. The configured `approvalChannel` still sends sensitive reviews to a DM and keeps ordinary requests in the thread:
+A renderer's `input.requested` handler can extend delivery and then hand the requests on to orcel with `next()`. For example, an application can add non-sensitive context to the Slack thread before orcel renders the actionable controls. The configured `approvalChannel` still sends sensitive reviews to a DM and keeps ordinary requests in the thread:
 
 ```ts title="agent/channels/slack.ts"
-import { slackChannel } from "kaf/channels/slack";
+import { slackChannel } from "orcel/channels/slack";
 import { isPrivate } from "../lib/review-policy";
 
 export default slackChannel({
@@ -678,7 +678,7 @@ export default slackChannel({
 });
 ```
 
-Authorization prompts split public status from private credentials. A sign-in challenge (OAuth URL, device code) is a credential. Anyone who completes it binds their identity to the session's connection. The default `authorization.required` handler posts a public, link-free status in the thread, delivers the actual challenge ephemerally to the Slack user behind the event's `principalId`, device code included, and then updates that public status when `authorization.completed` fires. A renderer's `authorization.required` handler receives a private-delivery context with `postEphemeral`, `postDirectMessage` (needs the `im:write` scope), and `state`. There is, intentionally, no public `post` and no raw API access. Its `next()` reaches kaf's default, which posts the public status; skip `next` to deliver the challenge yourself, as this handler does by direct message. `state.slackUsersByPrincipal` maps each principal kaf has seen in the thread, through a message or an input response, to its Slack user ID. If the principal has no entry, the challenge is not sent privately.
+Authorization prompts split public status from private credentials. A sign-in challenge (OAuth URL, device code) is a credential. Anyone who completes it binds their identity to the session's connection. The default `authorization.required` handler posts a public, link-free status in the thread, delivers the actual challenge ephemerally to the Slack user behind the event's `principalId`, device code included, and then updates that public status when `authorization.completed` fires. A renderer's `authorization.required` handler receives a private-delivery context with `postEphemeral`, `postDirectMessage` (needs the `im:write` scope), and `state`. There is, intentionally, no public `post` and no raw API access. Its `next()` reaches orcel's default, which posts the public status; skip `next` to deliver the challenge yourself, as this handler does by direct message. `state.slackUsersByPrincipal` maps each principal orcel has seen in the thread, through a message or an input response, to its Slack user ID. If the principal has no entry, the challenge is not sent privately.
 
 ```ts
 renderers: [
@@ -724,7 +724,7 @@ Private file downloads resolve credentials from the session's app installation w
 
 Downloads cover Slack's own file hosts plus URLs under a configured [`api.fileBaseUrl`](#point-the-channel-at-a-different-slack-api-host), and travel on `api.fetch` when one is configured.
 
-Staged files live in the session sandbox under `/workspace/attachments`. Session history keeps a reference to that path, not a second copy of the Slack file. If the backend can no longer reattach the original sandbox, kaf cannot restore the attachment bytes from history; later turns receive a missing-file result. Store files outside the sandbox when the agent must retain them independently of sandbox availability.
+Staged files live in the session sandbox under `/workspace/attachments`. Session history keeps a reference to that path, not a second copy of the Slack file. If the backend can no longer reattach the original sandbox, orcel cannot restore the attachment bytes from history; later turns receive a missing-file result. Store files outside the sandbox when the agent must retain them independently of sandbox availability.
 
 ## What to read next
 

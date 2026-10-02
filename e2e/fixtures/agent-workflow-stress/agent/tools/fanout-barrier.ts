@@ -1,4 +1,4 @@
-import { defineTool } from "kaf/tools";
+import { defineTool } from "orcel/tools";
 
 import { FANOUT_LABELS } from "../lib/fanout";
 

@@ -14,13 +14,13 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
-import type { KafEvalContext, KafEvalLiveTurn, KafEvalSession, KafEvalTurn } from "kaf/evals";
+import type { OrcelEvalContext, OrcelEvalLiveTurn, OrcelEvalSession, OrcelEvalTurn } from "orcel/evals";
 
 const SELF_MODIFICATION_AGENT = "self-modification__agent";
 const CLEANUP_TIMEOUT_MS = 30_000;
 const REBUILD_TIMEOUT_MS = 30_000;
 const REBUILD_POLL_INTERVAL_MS = 100;
-const LOCK_DIRECTORY = ".kaf-self-modification-eval.lock";
+const LOCK_DIRECTORY = ".orcel-self-modification-eval.lock";
 // Each eval entry bundles its relative imports separately. Share the lock across those copies.
 const shared = globalThis as typeof globalThis & {
   __eveSelfModificationEvalIsolation?: { previousCleanup: Promise<void>; failure?: unknown };
@@ -30,14 +30,14 @@ const isolation = (shared.__eveSelfModificationEvalIsolation ??= {
 });
 
 export interface SelfModificationRun {
-  readonly child: KafEvalTurn;
-  readonly parent: KafEvalTurn;
-  readonly session: KafEvalSession;
+  readonly child: OrcelEvalTurn;
+  readonly parent: OrcelEvalTurn;
+  readonly session: OrcelEvalSession;
 }
 
 /** Serializes source mutation, including cleanup that outlives an eval timeout. */
 export async function withSelfModification(
-  t: KafEvalContext,
+  t: OrcelEvalContext,
   test: (harness: SelfModificationHarness) => Promise<void>,
 ): Promise<void> {
   if (t.target.kind !== "local") {
@@ -93,14 +93,14 @@ export async function withSelfModification(
 }
 
 export class SelfModificationHarness {
-  readonly #t: KafEvalContext;
+  readonly #t: OrcelEvalContext;
   readonly #sourceRoot: string;
   readonly #backupRoot: string;
   readonly #projectFiles: ReadonlyMap<string, Buffer | undefined>;
-  readonly #turns = new Set<KafEvalLiveTurn>();
+  readonly #turns = new Set<OrcelEvalLiveTurn>();
 
   private constructor(
-    t: KafEvalContext,
+    t: OrcelEvalContext,
     sourceRoot: string,
     backupRoot: string,
     projectFiles: ReadonlyMap<string, Buffer | undefined>,
@@ -112,7 +112,7 @@ export class SelfModificationHarness {
   }
 
   static async create(
-    t: KafEvalContext,
+    t: OrcelEvalContext,
     sourceRootOrOptions:
       | string
       | {
@@ -125,7 +125,7 @@ export class SelfModificationHarness {
         ? { sourceRoot: sourceRootOrOptions }
         : sourceRootOrOptions;
     const sourceRoot = options.sourceRoot ?? join(process.cwd(), "agent");
-    const backupRoot = await mkdtemp(join(tmpdir(), "kaf-selfmod-eval-"));
+    const backupRoot = await mkdtemp(join(tmpdir(), "orcel-selfmod-eval-"));
     try {
       await options.onBackupCreated?.(backupRoot);
       await cp(sourceRoot, join(backupRoot, "agent"), { recursive: true, verbatimSymlinks: true });
@@ -154,7 +154,7 @@ export class SelfModificationHarness {
 
   async request(
     prompt: string,
-    session?: Pick<KafEvalSession, "start">,
+    session?: Pick<OrcelEvalSession, "start">,
   ): Promise<SelfModificationRun> {
     const liveParent = await (session ?? (await this.#t.session())).start(prompt);
     this.#turns.add(liveParent);
@@ -193,7 +193,7 @@ export class SelfModificationHarness {
   }
 
   /** Approves the registry install the parent turn paused on and observes the resumed child turn. */
-  async approveRegistry(run: SelfModificationRun): Promise<KafEvalTurn> {
+  async approveRegistry(run: SelfModificationRun): Promise<OrcelEvalTurn> {
     const toolName = "registry_add";
     const session = run.session;
     session.requireInputRequest({ toolName });
@@ -218,12 +218,12 @@ export class SelfModificationHarness {
     return childTurn;
   }
 
-  followUp(session: KafEvalSession, prompt: string): Promise<KafEvalTurn> {
+  followUp(session: OrcelEvalSession, prompt: string): Promise<OrcelEvalTurn> {
     return this.#runTurn(session, prompt);
   }
 
   /** Uses a fresh conversation so the model cannot answer from the authoring exchange alone. */
-  async verify(prompt: string): Promise<KafEvalTurn> {
+  async verify(prompt: string): Promise<OrcelEvalTurn> {
     return this.#runTurn(await this.#t.session(), prompt);
   }
 
@@ -259,7 +259,7 @@ export class SelfModificationHarness {
 
   async #readRuntimeRevision(): Promise<string | undefined> {
     try {
-      const response = await this.#t.target.fetch("/kaf/v1/dev/runtime-artifacts", {
+      const response = await this.#t.target.fetch("/orcel/v1/dev/runtime-artifacts", {
         signal: this.#t.signal,
       });
       if (!response.ok) return undefined;
@@ -310,7 +310,7 @@ export class SelfModificationHarness {
     const results = await Promise.allSettled(
       [...sessionIds].map(async (sessionId) => {
         const response = await this.#t.target.fetch(
-          `/kaf/v1/session/${encodeURIComponent(sessionId)}/reset`,
+          `/orcel/v1/session/${encodeURIComponent(sessionId)}/reset`,
           {
             method: "POST",
             signal,
@@ -351,7 +351,7 @@ export class SelfModificationHarness {
     await rm(this.#backupRoot, { recursive: true, force: true });
   }
 
-  async #readChild(sessionId: string, message?: string): Promise<KafEvalTurn> {
+  async #readChild(sessionId: string, message?: string): Promise<OrcelEvalTurn> {
     let startIndex =
       [...this.#turns].reverse().find((turn) => turn.sessionId === sessionId)?.session.state
         .streamIndex ?? 0;
@@ -376,7 +376,7 @@ export class SelfModificationHarness {
     throw new Error("Self-modification child did not receive the delegated message.");
   }
 
-  async #runTurn(session: KafEvalSession, prompt: string): Promise<KafEvalTurn> {
+  async #runTurn(session: OrcelEvalSession, prompt: string): Promise<OrcelEvalTurn> {
     const live = await session.start(prompt);
     this.#turns.add(live);
     const turn = await live.result();
@@ -392,7 +392,7 @@ export class SelfModificationHarness {
   }
 
   async #post(operation: string, signal: AbortSignal): Promise<Response> {
-    const response = await this.#t.target.fetch(`/kaf/v1/dev/runtime-artifacts/${operation}`, {
+    const response = await this.#t.target.fetch(`/orcel/v1/dev/runtime-artifacts/${operation}`, {
       method: "POST",
       signal,
     });

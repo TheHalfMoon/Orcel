@@ -1,6 +1,6 @@
-import { KafAgentStore, defaultMessageReducer } from "kaf/client";
-import { defineEval } from "kaf/evals";
-import { equals } from "kaf/evals/expect";
+import { OrcelAgentStore, defaultMessageReducer } from "orcel/client";
+import { defineEval } from "orcel/evals";
+import { equals } from "orcel/evals/expect";
 
 export default defineEval({
   description: "A frontend stream reconnect uses the latest send's authorization header.",
@@ -13,7 +13,7 @@ export default defineEval({
       resolveReconnectAuthorization = resolve;
     });
     let disconnectStream: (() => void) | undefined;
-    const store = new KafAgentStore({
+    const store = new OrcelAgentStore({
       host,
       initialSession: session.state,
       reducer: defaultMessageReducer(),

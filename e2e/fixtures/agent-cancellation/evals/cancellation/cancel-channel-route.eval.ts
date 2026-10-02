@@ -1,5 +1,5 @@
-import { defineEval, type KafEvalTargetHandle } from "kaf/evals";
-import { satisfies } from "kaf/evals/expect";
+import { defineEval, type OrcelEvalTargetHandle } from "orcel/evals";
+import { satisfies } from "orcel/evals/expect";
 
 const TOOL_NAME = "wait-for-cancellation";
 
@@ -12,7 +12,7 @@ interface StopResponse {
   readonly status?: "accepted" | "no_active_turn";
 }
 
-async function postJson<T>(target: KafEvalTargetHandle, path: string, body: unknown): Promise<T> {
+async function postJson<T>(target: OrcelEvalTargetHandle, path: string, body: unknown): Promise<T> {
   const response = await target.fetch(path, {
     body: JSON.stringify(body),
     headers: { "content-type": "application/json" },

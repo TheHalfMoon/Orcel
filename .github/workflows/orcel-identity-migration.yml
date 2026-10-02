@@ -6,7 +6,7 @@ on:
     branches:
       - generated/eve-full-import-9c36b7c
     paths:
-      - .orcel-migration/rename-from-kaf.mjs
+      - .orcel-migration/rename-from-orcel.mjs
       - .orcel-migration/audit-identity.mjs
       - .orcel-migration/repair-external-contracts.mjs
       - .github/workflows/orcel-identity-migration.yml
@@ -39,7 +39,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node .orcel-migration/rename-from-kaf.mjs
+          node .orcel-migration/rename-from-orcel.mjs
           node .orcel-migration/repair-external-contracts.mjs
           git diff --check
           git diff --binary > "$RUNNER_TEMP/orcel-first-pass.diff"
@@ -49,7 +49,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node .orcel-migration/rename-from-kaf.mjs
+          node .orcel-migration/rename-from-orcel.mjs
           node .orcel-migration/repair-external-contracts.mjs
           git diff --check
           git diff --binary > "$RUNNER_TEMP/orcel-second-pass.diff"

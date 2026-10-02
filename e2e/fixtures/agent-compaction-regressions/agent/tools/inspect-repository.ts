@@ -1,5 +1,5 @@
-import { defineState } from "kaf/context";
-import { defineTool } from "kaf/tools";
+import { defineState } from "orcel/context";
+import { defineTool } from "orcel/tools";
 import { z } from "zod";
 
 import { repositoryFindings } from "../../release-findings";

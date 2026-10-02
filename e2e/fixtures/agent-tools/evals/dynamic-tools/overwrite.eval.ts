@@ -1,4 +1,4 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 // session.started and turn.started resolvers merge: the turn-scoped
 // `shared` wins over the session-scoped one, while `session_only`

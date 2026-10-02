@@ -1,5 +1,5 @@
-import { defineAgent, defineDynamic } from "kaf";
-import { mockModel } from "kaf/evals";
+import { defineAgent, defineDynamic } from "orcel";
+import { mockModel } from "orcel/evals";
 
 import { respondAsNotebookKeeper } from "../../lib/notebook.js";
 
@@ -10,7 +10,7 @@ export default defineAgent({
   description:
     "Test fixture: keeps Alice's tide station notebook notes. Call it only for NOTEBOOK directives.",
   // Selected per step: in mock mode this fixture replaces static authored
-  // models with kaf's bootstrap mock, which would drop the keeper's script.
+  // models with orcel's bootstrap mock, which would drop the keeper's script.
   model: defineDynamic({
     events: {
       "step.started": () => ({ model: keeperModel, modelContextWindowTokens: 1_000_000 }),

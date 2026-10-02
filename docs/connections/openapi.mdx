@@ -1,9 +1,9 @@
 ---
 title: "OpenAPI Connections"
-description: "Turn an OpenAPI 3.x or Swagger 2.0 document into kaf connection tools, authorize calls, and control which operations the model can discover."
+description: "Turn an OpenAPI 3.x or Swagger 2.0 document into orcel connection tools, authorize calls, and control which operations the model can discover."
 ---
 
-OpenAPI connections turn an OpenAPI 3.x or Swagger 2.0 document into connection tools, one per operation. Use OpenAPI when a service publishes an HTTP API contract and you want kaf to derive model-facing tools from that contract.
+OpenAPI connections turn an OpenAPI 3.x or Swagger 2.0 document into connection tools, one per operation. Use OpenAPI when a service publishes an HTTP API contract and you want orcel to derive model-facing tools from that contract.
 
 Use an [MCP connection](./mcp) instead when the service already exposes an MCP server, when the server should own tool schemas dynamically, or when the remote service has richer MCP semantics than its raw HTTP API.
 
@@ -12,7 +12,7 @@ Use an [MCP connection](./mcp) instead when the service already exposes an MCP s
 Create one file under `agent/connections/`. The filename becomes the runtime connection name, so `agent/connections/petstore.ts` registers as `petstore`, and generated operation tools are called as `petstore__<operation>`.
 
 ```ts title="agent/connections/petstore.ts"
-import { defineOpenAPIConnection } from "kaf/connections";
+import { defineOpenAPIConnection } from "orcel/connections";
 
 export default defineOpenAPIConnection({
   spec: "https://petstore3.swagger.io/api/v3/openapi.json",
@@ -24,13 +24,13 @@ export default defineOpenAPIConnection({
 });
 ```
 
-Each operation becomes `<connection>__<operationId>`, for example `petstore__getInventory`. When an operation has no `operationId`, kaf derives a deterministic `<method>_<sanitized-path>` name instead.
+Each operation becomes `<connection>__<operationId>`, for example `petstore__getInventory`. When an operation has no `operationId`, orcel derives a deterministic `<method>_<sanitized-path>` name instead.
 
-`spec` can be a URL that kaf fetches at runtime, or an inline parsed OpenAPI object. A spec URL must use `https` (plain `http` is allowed only for loopback hosts such as `localhost` during local development), and kaf re-checks the transport after any redirects. Prefer a URL when the provider owns the contract and updates it; prefer an inline object for private APIs, generated specs you pin in source control, or small hand-authored contracts.
+`spec` can be a URL that orcel fetches at runtime, or an inline parsed OpenAPI object. A spec URL must use `https` (plain `http` is allowed only for loopback hosts such as `localhost` during local development), and orcel re-checks the transport after any redirects. Prefer a URL when the provider owns the contract and updates it; prefer an inline object for private APIs, generated specs you pin in source control, or small hand-authored contracts.
 
 ## Base URL and servers
 
-kaf resolves operation paths against `baseUrl` when you provide one. Otherwise, it derives the base URL from the spec:
+orcel resolves operation paths against `baseUrl` when you provide one. Otherwise, it derives the base URL from the spec:
 
 - OpenAPI 3.x: the first usable `servers` entry
 - Swagger 2.0: `schemes`, `host`, and `basePath`
@@ -40,7 +40,7 @@ Use `baseUrl` when the spec is missing server data, points at the wrong environm
 The resolved base URL must use `https` too (loopback hosts may use `http` for local development), since operation calls carry the connection's credentials.
 
 ```ts title="agent/connections/crm.ts"
-import { defineOpenAPIConnection } from "kaf/connections";
+import { defineOpenAPIConnection } from "orcel/connections";
 
 export default defineOpenAPIConnection({
   spec: "https://api.example.com/openapi.json",
@@ -55,7 +55,7 @@ For an OAuth-backed API, follow the shared [Vercel Connect setup](../connections
 
 ```ts title="agent/connections/github.ts"
 import { connect } from "@vercel/connect/eve";
-import { defineOpenAPIConnection } from "kaf/connections";
+import { defineOpenAPIConnection } from "orcel/connections";
 
 export default defineOpenAPIConnection({
   spec: "https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json",
@@ -76,7 +76,7 @@ OpenAPI connections accept the shared connection `auth` and `headers` options. U
 Some APIs declare operation parameters that should come from the application rather than the model, such as a tenant or organization ID. Configure those values with `toolCall.providedArguments`:
 
 ```ts title="agent/connections/crm.ts"
-import { defineOpenAPIConnection } from "kaf/connections";
+import { defineOpenAPIConnection } from "orcel/connections";
 
 export default defineOpenAPIConnection({
   spec: "https://api.example.com/openapi.json",
@@ -91,7 +91,7 @@ export default defineOpenAPIConnection({
 
 Values may be JSON values, promises, or callbacks. Callbacks receive the active session context, the bare operation `toolName`, and a replay-stable `callId` that is unique to the tool call. Use `callId` when the API needs an idempotency key.
 
-kaf removes configured keys from every operation's model-facing input schema and adds their resolved values immediately before constructing the HTTP request. Values apply to every operation on the connection and replace any conflicting model value. The keys correspond to the generated top-level operation inputs: path, query, header, and cookie parameter names, plus `body` for a request body.
+orcel removes configured keys from every operation's model-facing input schema and adds their resolved values immediately before constructing the HTTP request. Values apply to every operation on the connection and replace any conflicting model value. The keys correspond to the generated top-level operation inputs: path, query, header, and cookie parameter names, plus `body` for a request body.
 
 Use `headers` for transport-wide headers that are not operation inputs. Use `providedArguments` when the OpenAPI document declares the value as an operation parameter and it should remain outside model control. Approval policies continue to receive only the model-authored input.
 
@@ -100,7 +100,7 @@ Use `headers` for transport-wide headers that are not operation inputs. Use `pro
 Most OpenAPI specs describe far more than the model should use. Narrow generated tools with exactly one of `operations.allow` or `operations.block`:
 
 ```ts title="agent/connections/petstore.ts"
-import { defineOpenAPIConnection } from "kaf/connections";
+import { defineOpenAPIConnection } from "orcel/connections";
 
 export default defineOpenAPIConnection({
   spec: "https://petstore3.swagger.io/api/v3/openapi.json",
@@ -113,14 +113,14 @@ export default defineOpenAPIConnection({
 });
 ```
 
-Filters match `operationId`. If an operation does not declare one, use the deterministic name kaf derives from the method and path.
+Filters match `operationId`. If an operation does not declare one, use the deterministic name orcel derives from the method and path.
 
 ## Path parameters
 
-When an operation path contains dynamic segments, the spec must declare matching OpenAPI path parameters. kaf exposes path, query, header, and cookie parameters as top-level tool inputs, then substitutes `in: "path"` values into the matching `{name}` placeholder before making the request.
+When an operation path contains dynamic segments, the spec must declare matching OpenAPI path parameters. orcel exposes path, query, header, and cookie parameters as top-level tool inputs, then substitutes `in: "path"` values into the matching `{name}` placeholder before making the request.
 
 ```ts title="agent/connections/cart.ts"
-import { defineOpenAPIConnection } from "kaf/connections";
+import { defineOpenAPIConnection } from "orcel/connections";
 
 export default defineOpenAPIConnection({
   baseUrl: "https://api.example.com",
@@ -154,11 +154,11 @@ export default defineOpenAPIConnection({
 });
 ```
 
-The parameter `name` must exactly match the placeholder inside the path. If the spec omits an `in: "path"` parameter, the generated tool has no input for that segment and kaf cannot fill it in from query parameters.
+The parameter `name` must exactly match the placeholder inside the path. If the spec omits an `in: "path"` parameter, the generated tool has no input for that segment and orcel cannot fill it in from query parameters.
 
 ## Schema annotations
 
-kaf removes `default` and `example` annotations when their values conflict with the declared schema type. For example, a boolean property with `default: "false"` loses that annotation, while `default: false` is retained. This prevents invalid examples from guiding model input; kaf does not coerce annotation values.
+orcel removes `default` and `example` annotations when their values conflict with the declared schema type. For example, a boolean property with `default: "false"` loses that annotation, while `default: false` is retained. This prevents invalid examples from guiding model input; orcel does not coerce annotation values.
 
 ## Approval gates
 

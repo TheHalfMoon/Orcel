@@ -1,4 +1,4 @@
-import type { MockModelRequest, MockModelResponse } from "kaf/evals";
+import type { MockModelRequest, MockModelResponse } from "orcel/evals";
 
 const SUBAGENT_DIRECTIVE = /ask the `([^`]+)` subagent with message:\s*([\s\S]+)/iu;
 const BASH_DIRECTIVE = /run the bash command `([^`]+)`/iu;
@@ -12,7 +12,7 @@ const SKILL_DIRECTIVE = /load the `([^`]+)` skill/iu;
  */
 export function respond(request: MockModelRequest): MockModelResponse | string {
   const message = request.lastUserMessage ?? "";
-  if (message.includes("KAF_SANDBOX_CURL_FANOUT")) {
+  if (message.includes("ORCEL_SANDBOX_CURL_FANOUT")) {
     return request.toolResults.some((result) => result.name === "bash")
       ? "curl fanout complete"
       : {
@@ -77,7 +77,7 @@ export function respond(request: MockModelRequest): MockModelResponse | string {
   return `Mock reply: ${message}`;
 }
 
-/** The `[Tasks]` note and `<task_result>` messages are kaf's, not the user's. */
+/** The `[Tasks]` note and `<task_result>` messages are orcel's, not the user's. */
 function isFrameworkMessage(text: string): boolean {
   const trimmed = text.trim();
   return trimmed.startsWith("[Tasks]") || trimmed.startsWith("<task_result");

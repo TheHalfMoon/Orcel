@@ -1,19 +1,19 @@
 ---
 title: "Overview"
-description: "How users reach your agent: the channel contract, the base kaf HTTP channel, and authoring custom channels."
+description: "How users reach your agent: the channel contract, the base orcel HTTP channel, and authoring custom channels."
 ---
 
 A channel connects a platform to your agent. For conversations, it:
 
 - Converts incoming messages into agent input.
-- Maps each platform conversation to an kaf session.
+- Maps each platform conversation to an orcel session.
 - Decides how, where, and whether to deliver replies.
 
 A channel can also receive events and pass them to another channel, without starting a conversation of its own.
 
-kaf ships a base HTTP channel plus first-class platform channels, and you can author your own. Browse the full set in the [Integrations](/integrations) gallery and choose the Channels filter.
+orcel ships a base HTTP channel plus first-class platform channels, and you can author your own. Browse the full set in the [Integrations](/integrations) gallery and choose the Channels filter.
 
-After a channel dispatches a message, kaf runs the same agent runtime regardless of where the event came from. Tools and instructions do not need channel-specific logic.
+After a channel dispatches a message, orcel runs the same agent runtime regardless of where the event came from. Tools and instructions do not need channel-specific logic.
 
 ## Choose where the conversation lives
 
@@ -30,7 +30,7 @@ has; `unknown` is the safe default when it cannot classify a conversation.
 
 Route auth controls access and supplies the session principal. See [Auth &
 route protection](../guides/auth-and-route-protection) for principal types and
-authorization. See the [default kaf HTTP channel](./kaf#audience) for its
+authorization. See the [default orcel HTTP channel](./orcel#audience) for its
 mapping, or [custom channels](./custom#conversation-audience) to classify your
 own.
 
@@ -51,11 +51,11 @@ export default defineChannel({
 });
 ```
 
-Adjacent queued messages can combine into one turn only when their full auth contexts match, including identity, issuer, authenticator, and authorization attributes. Their attachments and context stay in payload order. A different auth context ends the batch; kaf does not regroup messages across intervening senders. Anonymous deliveries stay separate. Turns still share the session's conversation history.
+Adjacent queued messages can combine into one turn only when their full auth contexts match, including identity, issuer, authenticator, and authorization attributes. Their attachments and context stay in payload order. A different auth context ends the batch; orcel does not regroup messages across intervening senders. Anonymous deliveries stay separate. Turns still share the session's conversation history.
 
 `from(address).send(...)`, fixed `Session.send(...)`, cross-channel sends, and Chat SDK bridge sends also accept a per-send `turnPolicy` override. Pure `inputResponses` deliveries answer their pending request without steering. Explicit `cancel()` remains the stop-without-replacement operation.
 
-Events rejected before `send(...)`, such as invalid signatures or filtered mentions, never reach the active turn. A delivery already sent to the session can interrupt pending generation before the channel's `deliver` hook processes it. If that hook ignores the correction, kaf resumes the original request with its original auth, delivery provenance, and channel state.
+Events rejected before `send(...)`, such as invalid signatures or filtered mentions, never reach the active turn. A delivery already sent to the session can interrupt pending generation before the channel's `deliver` hook processes it. If that hook ignores the correction, orcel resumes the original request with its original auth, delivery provenance, and channel state.
 
 Each channel has its own provider terms, data flow, auth model, and user-consent expectations. Before sending non-public, sensitive, regulated, or production data through a channel, confirm that the channel provider and your configured scopes, signature checks, route auth, and delivery behavior are appropriate for your use case.
 
@@ -67,33 +67,33 @@ Channel files live under `agent/channels/` in the root agent or come from an [ex
 agent/
   agent.ts
   channels/
-    kaf.ts
+    orcel.ts
     slack.ts
     intake.ts
 ```
 
-Install a channel from the registry with `kaf add channel/<name>`, such as `kaf add channel/slack` or `kaf add channel/web`. You can also author the file by hand.
+Install a channel from the registry with `orcel add channel/<name>`, such as `orcel add channel/slack` or `orcel add channel/web`. You can also author the file by hand.
 
-## The kaf HTTP channel (default)
+## The orcel HTTP channel (default)
 
-The kaf channel is the framework's default HTTP session API, the routes the terminal UI, [`useKafAgent`](../guides/frontend/overview), and `curl` all talk to. Its selected `channels/kaf.ts` source owns health, inspection, callbacks, task input, and the session protocol as one replaceable surface. kaf supplies the source when no `agent/channels/kaf.ts` file exists; author that file to replace it, most often to change route auth. See [HTTP channel](./kaf) for routes, auth, replacement, and disablement.
+The orcel channel is the framework's default HTTP session API, the routes the terminal UI, [`useOrcelAgent`](../guides/frontend/overview), and `curl` all talk to. Its selected `channels/orcel.ts` source owns health, inspection, callbacks, task input, and the session protocol as one replaceable surface. orcel supplies the source when no `agent/channels/orcel.ts` file exists; author that file to replace it, most often to change route auth. See [HTTP channel](./orcel) for routes, auth, replacement, and disablement.
 
 ## Custom channels
 
-Build a channel with `defineChannel` from `kaf/channels` when you need your own HTTP or WebSocket endpoint. Its routes can start conversations on that channel or hand work to another one. See [Custom channels](./custom) for examples and the authoring API.
+Build a channel with `defineChannel` from `orcel/channels` when you need your own HTTP or WebSocket endpoint. Its routes can start conversations on that channel or hand work to another one. See [Custom channels](./custom) for examples and the authoring API.
 
 ## Relationship to the Chat SDK
 
-kaf uses the [Chat SDK's card-builder components](https://chat-sdk.dev/docs/api/cards) (Cards, Buttons, Actions, etc.) for composing rich Slack messages. When you build a card with the [Slack channel](./slack), the underlying primitives come from the Chat SDK and get converted to Slack Block Kit at post time.
+orcel uses the [Chat SDK's card-builder components](https://chat-sdk.dev/docs/api/cards) (Cards, Buttons, Actions, etc.) for composing rich Slack messages. When you build a card with the [Slack channel](./slack), the underlying primitives come from the Chat SDK and get converted to Slack Block Kit at post time.
 
-kaf's first-class channels use kaf-owned runtimes for webhook handling, verification, event parsing, and thread management. The optional [Chat SDK channel](./chat-sdk) is the exception: it accepts a Chat SDK adapter and exposes its `Chat` and `Thread` primitives. Use `slackChannel` for kaf's first-class Slack integration, `defineChannel(...)` for an kaf-native custom channel, or `chatSdkChannel` when you intentionally want a Chat SDK adapter and runtime.
+orcel's first-class channels use orcel-owned runtimes for webhook handling, verification, event parsing, and thread management. The optional [Chat SDK channel](./chat-sdk) is the exception: it accepts a Chat SDK adapter and exposes its `Chat` and `Thread` primitives. Use `slackChannel` for orcel's first-class Slack integration, `defineChannel(...)` for an orcel-native custom channel, or `chatSdkChannel` when you intentionally want a Chat SDK adapter and runtime.
 
 ## Which channel?
 
 | You want…                                   | Use                                                        |
 | ------------------------------------------- | ---------------------------------------------------------- |
-| A web app / browser chat UI                 | kaf channel + [`useKafAgent`](../guides/frontend/overview) |
-| Local tooling, SDK clients, `curl`          | [kaf HTTP channel](./kaf) (default)                        |
+| A web app / browser chat UI                 | orcel channel + [`useOrcelAgent`](../guides/frontend/overview) |
+| Local tooling, SDK clients, `curl`          | [orcel HTTP channel](./orcel) (default)                        |
 | MCP clients delegating durable work         | [MCP](./mcp)                                               |
 | Slack mentions, DMs, buttons                | [Slack](./slack)                                           |
 | iMessage and SMS                            | [Linq](./linq)                                             |
@@ -111,16 +111,16 @@ kaf's first-class channels use kaf-owned runtimes for webhook handling, verifica
 
 As the deployer, it is your responsibility to ensure your agent complies with applicable laws.
 
-Where an kaf agent communicates with people, you may be required to disclose that they are interacting with an automated AI system where law requires it. kaf does not add this disclosure automatically; configure it in your instructions and/or channel responses. See [Responsible use](../responsible-use) for the full deployer responsibilities.
+Where an orcel agent communicates with people, you may be required to disclose that they are interacting with an automated AI system where law requires it. orcel does not add this disclosure automatically; configure it in your instructions and/or channel responses. See [Responsible use](../responsible-use) for the full deployer responsibilities.
 
 ## What to read next
 
-- [kaf HTTP channel](./kaf): the default session API behind the TUI, SDK clients, and browser UIs
+- [orcel HTTP channel](./orcel): the default session API behind the TUI, SDK clients, and browser UIs
 - [Slack](./slack): the most common platform channel, end to end
 - [MCP](./mcp): expose the agent as a durable invocation service
 - [Linq](./linq), [Photon](./photon), [Discord](./discord), [Teams](./teams), [Telegram](./telegram), [Twilio](./twilio), [GitHub](./github), and [Linear](./linear): the other first-class platform channels
-- [Chat SDK adapters](./chat-sdk): reach services kaf has no first-class channel for
+- [Chat SDK adapters](./chat-sdk): reach services orcel has no first-class channel for
 - [Custom channels](./custom): build a channel for any surface with `defineChannel`
 - [Durable cross-channel notifications](../patterns/durable-cross-channel-notifications): post to another platform without starting an agent turn
-- [Frontend](../guides/frontend/overview): browser chat on the kaf channel with `useKafAgent`
+- [Frontend](../guides/frontend/overview): browser chat on the orcel channel with `useOrcelAgent`
 - [Integrations](/integrations): browse every built-in channel in one gallery using the Channels filter

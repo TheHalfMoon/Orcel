@@ -1,4 +1,4 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 import { RESEARCH_INTERIM_MESSAGE } from "../task-scenario-text";
 import { readHookAudit, recordsEveryAgentStart } from "./subagent-hook-audit.shared";

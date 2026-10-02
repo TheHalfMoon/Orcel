@@ -15,11 +15,11 @@ An approval ends the turn and the session parks at `session.waiting`. A question
 
 Approval is a property of a [tool](/docs/tools) that gates it before it runs. This includes [workflow tools](/docs/tools/workflows): a call waiting for approval does not start its workflow, and a call denied by a policy or person never runs. Other calls from the same model response that do not require approval can proceed while it waits.
 
-The policy can decide automatically or pause for a person. Set `approval` with the helpers from `kaf/tools/approval`:
+The policy can decide automatically or pause for a person. Set `approval` with the helpers from `orcel/tools/approval`:
 
 ```ts title="agent/tools/refund_charge.ts"
-import { defineTool } from "kaf/tools";
-import { auto } from "kaf/tools/approval";
+import { defineTool } from "orcel/tools";
+import { auto } from "orcel/tools/approval";
 import { z } from "zod";
 
 export default defineTool({
@@ -78,7 +78,7 @@ approval: ({ session, toolInput }) => {
 
 For compatibility with the previous predicate shape, policies may return booleans: `true` is treated as `"user-approval"` and `false` as `"not-applicable"`. Boolean promises are supported too.
 
-Policies can also return `"approved"` or `"denied"` to decide automatically. Use `{ type: "approved" | "denied", reason }` when the model should receive a reason. The `Approval`, `ApprovalContext`, and `ApprovalStatus` types are exported from `kaf/tools/approval`.
+Policies can also return `"approved"` or `"denied"` to decide automatically. Use `{ type: "approved" | "denied", reason }` when the model should receive a reason. The `Approval`, `ApprovalContext`, and `ApprovalStatus` types are exported from `orcel/tools/approval`.
 
 Gating a side effect on approval is also how you make non-idempotent work safe across replays: a charge or email that sits behind `always()` can't fire from a re-run step without a fresh human decision.
 
@@ -87,8 +87,8 @@ Gating a side effect on approval is also how you make non-idempotent work safe a
 You may also define an approval response policy that decides whether the authenticated person who selects **Approve** or **Cancel** may settle that specific call:
 
 ```ts title="agent/tools/refund_charge.ts"
-import { defineTool } from "kaf/tools";
-import { always } from "kaf/tools/approval";
+import { defineTool } from "orcel/tools";
+import { always } from "orcel/tools/approval";
 import { z } from "zod";
 
 export default defineTool({
@@ -115,7 +115,7 @@ export default defineTool({
 
 The `response` policy receives:
 
-- `request`: the stable `requestId`, `callId`, `toolName`, and typed `toolInput` for the call being approved, plus `principal`: the authenticated principal whose turn requested the call, or `null` when that caller was unauthenticated or anonymous. kaf captures `request.principal` when the approval is requested, so it stays the same while other people continue the session.
+- `request`: the stable `requestId`, `callId`, `toolName`, and typed `toolInput` for the call being approved, plus `principal`: the authenticated principal whose turn requested the call, or `null` when that caller was unauthenticated or anonymous. orcel captures `request.principal` when the approval is requested, so it stays the same while other people continue the session.
 - `response`: the submitted `decision`, `"approve"` or `"cancel"`, plus `principal`: the authenticated principal that submitted it, including its `principalId`, `principalType`, `authenticator`, and `attributes`. Your route or channel supplies this identity. The policy runs for both decisions, so a responder it rejects can neither approve nor cancel the call.
 - `session`: read-only session identity and lineage: `id`, `initiator`, `parent`, and `turn`.
 - `auth`: narrow `getToken(provider, options?)` and `requireAuth(provider, options?)` capabilities bound to the responder. Use these when authorization depends on a provider identity or permission; an interactive provider flow parks durably and then retries the policy.
@@ -125,9 +125,9 @@ Return `{ status: "allowed" }` to accept the decision. Return `{ status: "reject
 `session.initiator` is the person who started the session, and `request.principal` is the person who asked for this call. In a shared thread they can differ. Compare the full identity of `response.principal` with `request.principal` to let only the requester settle the call:
 
 ```ts title="agent/tools/publish_release.ts"
-import { defineTool } from "kaf/tools";
-import type { SessionAuthContext } from "kaf/context";
-import { always } from "kaf/tools/approval";
+import { defineTool } from "orcel/tools";
+import type { SessionAuthContext } from "orcel/context";
+import { always } from "orcel/tools/approval";
 import { z } from "zod";
 
 function samePrincipal(a: SessionAuthContext, b: SessionAuthContext): boolean {
@@ -160,10 +160,10 @@ When a response is refused without starting a turn, the session returns to `sess
 
 ### Skipping approval for schedule-dispatched turns
 
-`session.auth.current` identifies the caller of this turn. Markdown schedules use the app principal (`authenticator: "app"`, `principalId: "kaf:app"`, `principalType: "runtime"`) automatically. A `run` schedule must pass its `appAuth` to `send(...)` for the child session to use that principal. Match all three fields to skip approval for automated turns while still prompting when a person calls the same tool:
+`session.auth.current` identifies the caller of this turn. Markdown schedules use the app principal (`authenticator: "app"`, `principalId: "orcel:app"`, `principalType: "runtime"`) automatically. A `run` schedule must pass its `appAuth` to `send(...)` for the child session to use that principal. Match all three fields to skip approval for automated turns while still prompting when a person calls the same tool:
 
 ```ts title="agent/tools/refund_charge.ts"
-import { defineTool } from "kaf/tools";
+import { defineTool } from "orcel/tools";
 import { z } from "zod";
 
 export default defineTool({
@@ -172,7 +172,7 @@ export default defineTool({
   approval: ({ session }) => {
     const auth = session.auth.current;
     return auth?.authenticator === "app" &&
-      auth.principalId === "kaf:app" &&
+      auth.principalId === "orcel:app" &&
       auth.principalType === "runtime"
       ? "not-applicable"
       : "user-approval";
@@ -194,10 +194,10 @@ The `ask_question` tool lets the model pause and ask the user one question, rath
 
 The user can always type their own answer instead of picking an option, so the model never needs an "Other" option. The tool returns `{ status: "answered", answer }` with the chosen option's label or the user's words, `{ interrupted: true }` when a new message arrived that did not answer the question, or `{ status: "unavailable" }` when the session cannot request input.
 
-`ask_question` is an [opt-in framework tool](/docs/concepts/built-in-tools#ask_question). Add it with `kaf add tool/ask_question`, which creates this file:
+`ask_question` is an [opt-in framework tool](/docs/concepts/built-in-tools#ask_question). Add it with `orcel add tool/ask_question`, which creates this file:
 
 ```ts title="agent/tools/ask_question.ts"
-import { askQuestion } from "kaf/tools/ask_question";
+import { askQuestion } from "orcel/tools/ask_question";
 
 export default askQuestion();
 ```
@@ -211,7 +211,7 @@ In a custom workflow tool, an answered `ctx.ask()` returns the authenticated res
 Approvals and questions share one protocol:
 
 1. A tool call needs approval, or a workflow tool such as `ask_question` calls `ctx.ask()`.
-2. kaf emits an `input.requested` stream event carrying the pending requests.
+2. orcel emits an `input.requested` stream event carrying the pending requests.
 3. The run parks durably, for as long as it takes. An approval ends the turn with `turn.completed`, then `session.waiting`. A question keeps the turn open: the stream emits `turn.waiting`, and after the answer the turn resumes under the same `turnId`.
 4. The client answers with `inputResponses` (structured, keyed by `requestId`) or a normal follow-up `message`. A follow-up whose text matches an option ID, option label, or numeric option index resolves automatically, including approval options such as `approve` and `cancel`.
 
@@ -224,9 +224,9 @@ tool call that raised it; neither encodes the request's semantics.
 
 The run picks back up exactly where it parked. Because the pause is durable, nothing is held in memory while it waits — the process can restart and the parked turn survives.
 
-When a subagent requests input, kaf emits the same `input.requested` event on its parent session. Answering through that parent session routes the response directly to the blocked child without invoking the parent model.
+When a subagent requests input, orcel emits the same `input.requested` event on its parent session. Answering through that parent session routes the response directly to the blocked child without invoking the parent model.
 
-For approval requests, unrelated follow-up text does not deny the tool call. kaf keeps the approval pending and records that pending state in model-visible session history. Follow-up turns run normally and may call other tools while the approval remains unresolved. Once it is answered, kaf settles the original tool call exactly once.
+For approval requests, unrelated follow-up text does not deny the tool call. orcel keeps the approval pending and records that pending state in model-visible session history. Follow-up turns run normally and may call other tools while the approval remains unresolved. Once it is answered, orcel settles the original tool call exactly once.
 
 See [Sessions, runs & streaming](/docs/concepts/sessions-runs-and-streaming) for the full event and resume contract that this builds on.
 

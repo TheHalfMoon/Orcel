@@ -3,7 +3,7 @@ title: "Multi-Tenant Approvals"
 description: "Resolve tenant policy asynchronously for authored tools, OpenAPI operations, and MCP tools."
 ---
 
-kaf's `approval` field is an async policy hook. It receives the active session, qualified tool name, tool input, and previously approved tools. That is enough to ask your application whether this tenant should allow, deny, or require human confirmation for any authored or connection tool.
+orcel's `approval` field is an async policy hook. It receives the active session, qualified tool name, tool input, and previously approved tools. That is enough to ask your application whether this tenant should allow, deny, or require human confirmation for any authored or connection tool.
 
 Use this with [multi-tenant outbound auth](./multi-tenant-auth) when your own
 API key, JWT, or app session establishes the tenant and the connection
@@ -11,17 +11,17 @@ credential is selected from your credential store rather than OAuth.
 
 The pattern has two pieces:
 
-1. one adapter translates kaf's approval context into an application policy request;
+1. one adapter translates orcel's approval context into an application policy request;
 2. tools, OpenAPI connections, and MCP connections reuse that adapter.
 
 Tenant policy storage remains yours. It might be a few columns in PostgreSQL, a policy service, an authorization engine, or configuration in a durable KV store.
 
-## Adapt tenant policy to kaf approval
+## Adapt tenant policy to orcel approval
 
 The current caller and initiating caller are both available on the session. This example requires them to belong to the same tenant before consulting policy:
 
 ```ts title="agent/lib/tenant-approval.ts"
-import type { ApprovalContext, ApprovalStatus } from "kaf/tools/approval";
+import type { ApprovalContext, ApprovalStatus } from "orcel/tools/approval";
 import { approvalPolicies } from "./approval-policies";
 
 type Surface = "connection" | "tool";
@@ -75,7 +75,7 @@ The callback deliberately does not treat `approvedTools` as a session-wide grant
 Approval runs before `execute`. The executor must still derive and enforce tenancy again because approval is a gate, not authorization:
 
 ```ts title="agent/tools/transfer_funds.ts"
-import { defineTool } from "kaf/tools";
+import { defineTool } from "orcel/tools";
 import { z } from "zod";
 import { transferFunds } from "../../lib/payments";
 import { decideTenantApproval } from "../lib/tenant-approval";
@@ -110,7 +110,7 @@ Use an application idempotency key for side effects. Human approval and replay s
 The same callback gates every generated operation. The qualified operation name lets tenant policy distinguish reads from writes:
 
 ```ts title="agent/connections/billing.ts"
-import { defineOpenAPIConnection } from "kaf/connections";
+import { defineOpenAPIConnection } from "orcel/connections";
 import { decideTenantApproval } from "../lib/tenant-approval";
 
 export default defineOpenAPIConnection({
@@ -134,7 +134,7 @@ The allow-list limits what the model can discover. Approval independently decide
 ## Apply it to an MCP connection
 
 ```ts title="agent/connections/support.ts"
-import { defineMcpClientConnection } from "kaf/connections";
+import { defineMcpClientConnection } from "orcel/connections";
 import { decideTenantApproval } from "../lib/tenant-approval";
 
 export default defineMcpClientConnection({
@@ -157,7 +157,7 @@ The policy receives `connection:support__search_tickets` or `connection:support_
 
 ## Supply the policy adapter
 
-The kaf code needs only this interface:
+The orcel code needs only this interface:
 
 ```ts title="agent/lib/approval-policies.ts"
 export interface ApprovalPolicyRequest {
@@ -187,9 +187,9 @@ Policy lookup failures should throw or deny, never silently allow. Recheck autho
 
 An approval durably pauses the session and a later request resumes it. Your HTTP boundary must ensure a caller cannot continue or stream a session owned by another tenant. Persist session ownership in your application and check it before proxying:
 
-- `POST /kaf/v1/session/:sessionId`, including `inputResponses`;
-- `GET /kaf/v1/session/:sessionId/stream`.
+- `POST /orcel/v1/session/:sessionId`, including `inputResponses`;
+- `GET /orcel/v1/session/:sessionId/stream`.
 
 Built-in approval confirms that a human with access to the session approved the call. To restrict who may respond, add an [approval response policy](/docs/human-in-the-loop#authorizing-approval-responses): it receives who responded as `response.principal` and who asked for the call as `request.principal`, and runs for both Approve and Cancel. For a four-eyes workflow, where a different person or role must approve, branch on `response.decision`: allow `cancel` so the requester can still withdraw the call, and for `approve` reject a `response.principal` that matches `request.principal` and check the responder's role.
 
-The complete kaf integration is one async adapter reused by tools and both connection protocols. The tenant's rule storage and governance model remain application concerns.
+The complete orcel integration is one async adapter reused by tools and both connection protocols. The tenant's rule storage and governance model remain application concerns.

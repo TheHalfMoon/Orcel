@@ -4,14 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "kaf build",
+    "build": "orcel build",
     "typecheck": "tsc",
-    "test:e2e": "kaf eval --strict"
+    "test:e2e": "orcel eval --strict"
   },
   "dependencies": {
-    "@kaf-e2e/config": "workspace:*",
+    "@orcel-e2e/config": "workspace:*",
     "@workflow/world-postgres": "catalog:",
-    "kaf": "workspace:*",
+    "orcel": "workspace:*",
     "microsandbox": "0.5.5",
     "zod": "catalog:"
   },

@@ -1,9 +1,9 @@
 ---
 title: "Built-in Tools"
-description: "The default and opt-in tools kaf provides, including glob, grep, and sleep."
+description: "The default and opt-in tools orcel provides, including glob, grep, and sleep."
 ---
 
-kaf provides a default tool set for every agent and additional tools you can add with one file. Each default occupies the same `agent/tools/<name>.ts` slot you would author yourself, so an authored definition replaces it and `disableTool()` removes it. Use this page to review what the model can call, opt into more capabilities, or override and disable defaults. For custom tools, see [Tools](../tools).
+orcel provides a default tool set for every agent and additional tools you can add with one file. Each default occupies the same `agent/tools/<name>.ts` slot you would author yourself, so an authored definition replaces it and `disableTool()` removes it. Use this page to review what the model can call, opt into more capabilities, or override and disable defaults. For custom tools, see [Tools](../tools).
 
 ## Default tools
 
@@ -14,7 +14,7 @@ Default tools require no imports. The exact set depends on the agent and session
 Optional default tools are enabled unless you set `defaultTools: false` in `agent/agent.ts`:
 
 ```ts title="agent/agent.ts"
-import { defineAgent } from "kaf";
+import { defineAgent } from "orcel";
 
 export default defineAgent({
   defaultTools: false,
@@ -31,18 +31,18 @@ This turns off the optional defaults described below. Add back only the tools th
 `bash` runs shell commands in the agent's [sandbox](../sandbox).
 
 ```sh
-kaf add tool/bash
+orcel add tool/bash
 ```
 
 ```ts title="agent/tools/bash.ts"
-export { default } from "kaf/tools/bash";
+export { default } from "orcel/tools/bash";
 ```
 
 Override its description, approval policy, or executor by wrapping the exported definition:
 
 ```ts title="agent/tools/bash.ts"
-import { defineTool } from "kaf/tools";
-import { bash } from "kaf/tools/bash";
+import { defineTool } from "orcel/tools";
+import { bash } from "orcel/tools/bash";
 
 export default defineTool({
   ...bash,
@@ -57,7 +57,7 @@ export default defineTool({
 Disable only `bash`:
 
 ```ts title="agent/tools/bash.ts"
-import { disableTool } from "kaf/tools";
+import { disableTool } from "orcel/tools";
 
 export default disableTool();
 ```
@@ -67,18 +67,18 @@ export default disableTool();
 `read_file` reads text files from the sandbox with line-numbered output. It accepts absolute paths and paths beginning with `$HOME/`.
 
 ```sh
-kaf add tool/read_file
+orcel add tool/read_file
 ```
 
 ```ts title="agent/tools/read_file.ts"
-export { default } from "kaf/tools/read_file";
+export { default } from "orcel/tools/read_file";
 ```
 
 Override it:
 
 ```ts title="agent/tools/read_file.ts"
-import { defineTool } from "kaf/tools";
-import { readFile } from "kaf/tools/read_file";
+import { defineTool } from "orcel/tools";
+import { readFile } from "orcel/tools/read_file";
 
 export default defineTool({
   ...readFile,
@@ -89,7 +89,7 @@ export default defineTool({
 Disable it:
 
 ```ts title="agent/tools/read_file.ts"
-import { disableTool } from "kaf/tools";
+import { disableTool } from "orcel/tools";
 
 export default disableTool();
 ```
@@ -99,18 +99,18 @@ export default disableTool();
 `write_file` writes complete files in the sandbox. It enforces read-before-write and stale-read detection, and accepts absolute paths and paths beginning with `$HOME/`.
 
 ```sh
-kaf add tool/write_file
+orcel add tool/write_file
 ```
 
 ```ts title="agent/tools/write_file.ts"
-export { default } from "kaf/tools/write_file";
+export { default } from "orcel/tools/write_file";
 ```
 
 Override it:
 
 ```ts title="agent/tools/write_file.ts"
-import { defineTool } from "kaf/tools";
-import { writeFile } from "kaf/tools/write_file";
+import { defineTool } from "orcel/tools";
+import { writeFile } from "orcel/tools/write_file";
 
 export default defineTool({
   ...writeFile,
@@ -127,7 +127,7 @@ export default defineTool({
 Disable it:
 
 ```ts title="agent/tools/write_file.ts"
-import { disableTool } from "kaf/tools";
+import { disableTool } from "orcel/tools";
 
 export default disableTool();
 ```
@@ -137,18 +137,18 @@ export default disableTool();
 `web_fetch` fetches URLs from the app runtime. It follows up to ten redirects and checks every destination for SSRF safety. Non-success responses return plain text with the response body when available.
 
 ```sh
-kaf add tool/web_fetch
+orcel add tool/web_fetch
 ```
 
 ```ts title="agent/tools/web_fetch.ts"
-export { default } from "kaf/tools/web_fetch";
+export { default } from "orcel/tools/web_fetch";
 ```
 
 Override it:
 
 ```ts title="agent/tools/web_fetch.ts"
-import { defineTool } from "kaf/tools";
-import { webFetch } from "kaf/tools/web_fetch";
+import { defineTool } from "orcel/tools";
+import { webFetch } from "orcel/tools/web_fetch";
 
 export default defineTool({
   ...webFetch,
@@ -166,7 +166,7 @@ export default defineTool({
 Disable it:
 
 ```ts title="agent/tools/web_fetch.ts"
-import { disableTool } from "kaf/tools";
+import { disableTool } from "orcel/tools";
 
 export default disableTool();
 ```
@@ -176,17 +176,17 @@ export default disableTool();
 `web_search` uses provider-managed web search and appears only for supported model providers. AI Gateway models use Exa by default; direct provider models use their native search implementation.
 
 ```sh
-kaf add tool/web_search
+orcel add tool/web_search
 ```
 
 ```ts title="agent/tools/web_search.ts"
-export { default } from "kaf/tools/web_search";
+export { default } from "orcel/tools/web_search";
 ```
 
 Override the provider-managed configuration for AI Gateway:
 
 ```ts title="agent/tools/web_search.ts"
-import { webSearch } from "kaf/tools/web_search";
+import { webSearch } from "orcel/tools/web_search";
 
 export default webSearch({ provider: "parallel" });
 ```
@@ -194,7 +194,7 @@ export default webSearch({ provider: "parallel" });
 Replace provider-managed search with an authored implementation:
 
 ```ts title="agent/tools/web_search.ts"
-import { defineTool } from "kaf/tools";
+import { defineTool } from "orcel/tools";
 
 export default defineTool({
   description: "Search the internal documentation index.",
@@ -208,7 +208,7 @@ export default defineTool({
 Disable it:
 
 ```ts title="agent/tools/web_search.ts"
-import { disableTool } from "kaf/tools";
+import { disableTool } from "orcel/tools";
 
 export default disableTool();
 ```
@@ -218,17 +218,17 @@ export default disableTool();
 `agent` delegates a subtask to a fresh copy of the root agent. It is root-only, and each call is a [task](/docs/tools/tasks): the call returns a receipt, and the child's reply arrives later as the task's result. The child receives the root's instructions, tools, connections, and sandbox, but starts with fresh conversation history and [state](./state). See [Subagents](../subagents).
 
 ```sh
-kaf add tool/agent
+orcel add tool/agent
 ```
 
 ```ts title="agent/tools/agent.ts"
-export { default } from "kaf/tools/agent";
+export { default } from "orcel/tools/agent";
 ```
 
 An authored tool at `agent/tools/agent.ts` replaces the framework behavior. Re-export the definition above to restore direct root-copy delegation, export another tool such as `agentRouter()` to change the model-facing behavior, or disable the slot. `agentRouter()` runs each call as a [task](/docs/tools/workflows#run-calls-as-tasks-task), which adds `task_wait` and `task_cancel`:
 
 ```ts title="agent/tools/agent.ts"
-import { disableTool } from "kaf/tools";
+import { disableTool } from "orcel/tools";
 
 export default disableTool();
 ```
@@ -238,18 +238,18 @@ export default disableTool();
 `load_skill` pulls an on-demand [skill](../skills)'s instructions into the current turn. It appears only when the agent declares skills and adds no execution surface by itself.
 
 ```sh
-kaf add tool/load_skill
+orcel add tool/load_skill
 ```
 
 ```ts title="agent/tools/load_skill.ts"
-export { default } from "kaf/tools/load_skill";
+export { default } from "orcel/tools/load_skill";
 ```
 
 Override it:
 
 ```ts title="agent/tools/load_skill.ts"
-import { defineTool } from "kaf/tools";
-import { loadSkill } from "kaf/tools/load_skill";
+import { defineTool } from "orcel/tools";
+import { loadSkill } from "orcel/tools/load_skill";
 
 export default defineTool({
   ...loadSkill,
@@ -260,20 +260,20 @@ export default defineTool({
 Disable it:
 
 ```ts title="agent/tools/load_skill.ts"
-import { disableTool } from "kaf/tools";
+import { disableTool } from "orcel/tools";
 
 export default disableTool();
 ```
 
 ### `connection_search`
 
-`connection_search` discovers tools across declared [connections](../connections) and makes matches directly callable by qualified name, such as `linear__list_issues`. kaf adds it automatically when connections exist, even when `defaultTools` is `false`, so there is no add command.
+`connection_search` discovers tools across declared [connections](../connections) and makes matches directly callable by qualified name, such as `linear__list_issues`. orcel adds it automatically when connections exist, even when `defaultTools` is `false`, so there is no add command.
 
-An authored `agent/tools/connection_search.ts` replaces the framework behavior. Import the framework definition from `kaf/tools/connection_search` when you need to reference it directly. Exporting `disableTool()` from this slot is an error because agents with connections require connection discovery.
+An authored `agent/tools/connection_search.ts` replaces the framework behavior. Import the framework definition from `orcel/tools/connection_search` when you need to reference it directly. Exporting `disableTool()` from this slot is an error because agents with connections require connection discovery.
 
 ### `task_wait` and `task_cancel`
 
-kaf adds `task_wait` and `task_cancel` when the agent has a tool that runs its calls as [tasks](/docs/tools/tasks): any agent tool, including the built-in `agent` tool, declared subagents, and remote agents, or a tool such as `agentRouter()`, the `workflow` tool, or an authored workflow tool that defines `task(input, ctx)` or `serve(receive, ctx)`. There is no add command, and the tools are not workflow tools. Both names are reserved: the compiler rejects an authored `agent/tools/task_wait.ts` or `agent/tools/task_cancel.ts`.
+orcel adds `task_wait` and `task_cancel` when the agent has a tool that runs its calls as [tasks](/docs/tools/tasks): any agent tool, including the built-in `agent` tool, declared subagents, and remote agents, or a tool such as `agentRouter()`, the `workflow` tool, or an authored workflow tool that defines `task(input, ctx)` or `serve(receive, ctx)`. There is no add command, and the tools are not workflow tools. Both names are reserved: the compiler rejects an authored `agent/tools/task_wait.ts` or `agent/tools/task_cancel.ts`.
 
 - `task_wait({ timeoutSeconds? })` parks the turn until any task has a result, a new message arrives, or `timeoutSeconds` pass, and returns at once when a result is already waiting. While it waits, the stream reports `turn.waiting` for the open turn. Results arrive in a `<task_result>` message right after it returns. Waiting never stops a task.
 - `task_cancel({ taskId })` stops a task's current work and says so, or says the task had no work to stop when it already finished or is an idle [resumable task](/docs/tools/workflows#resumable-tasks-serve). An id that names no task fails with `UNKNOWN_TASK`. A resumable task stays available after a cancel.
@@ -291,11 +291,11 @@ These framework-provided tools are not added by default. Add only the ones the a
 `ask_question` lets the model ask the user one question, then waits for the answer. The model can offer two or three options, each with a label and a short description, and the user can always type their own answer instead. Channels render the options as native UI, such as Slack select menus. Without the tool, the model can still ask in its reply text and the user answers with their next message. See [Human-in-the-loop](/docs/human-in-the-loop). Add it:
 
 ```sh
-kaf add tool/ask_question
+orcel add tool/ask_question
 ```
 
 ```ts title="agent/tools/ask_question.ts"
-import { askQuestion } from "kaf/tools/ask_question";
+import { askQuestion } from "orcel/tools/ask_question";
 
 export default askQuestion();
 ```
@@ -307,18 +307,18 @@ export default askQuestion();
 `glob` finds sandbox files by glob pattern. Add it:
 
 ```sh
-kaf add tool/glob
+orcel add tool/glob
 ```
 
 ```ts title="agent/tools/glob.ts"
-export { default } from "kaf/tools/glob";
+export { default } from "orcel/tools/glob";
 ```
 
 Customize it by wrapping the framework definition:
 
 ```ts title="agent/tools/glob.ts"
-import { defineTool } from "kaf/tools";
-import { glob } from "kaf/tools/glob";
+import { defineTool } from "orcel/tools";
+import { glob } from "orcel/tools/glob";
 
 export default defineTool({
   ...glob,
@@ -333,18 +333,18 @@ Remove the file to remove the tool. `disableTool()` is unnecessary because `glob
 `grep` searches sandbox file contents with a regular expression. Add it:
 
 ```sh
-kaf add tool/grep
+orcel add tool/grep
 ```
 
 ```ts title="agent/tools/grep.ts"
-export { default } from "kaf/tools/grep";
+export { default } from "orcel/tools/grep";
 ```
 
 Customize it by wrapping the framework definition:
 
 ```ts title="agent/tools/grep.ts"
-import { defineTool } from "kaf/tools";
-import { grep } from "kaf/tools/grep";
+import { defineTool } from "orcel/tools";
+import { grep } from "orcel/tools/grep";
 
 export default defineTool({
   ...grep,
@@ -359,11 +359,11 @@ Remove the file to remove the tool. `disableTool()` is unnecessary because `grep
 `sleep` pauses and durably resumes the current turn. The model calls it with `{ seconds }`; the wait does not hold an application runtime open. Concurrent calls run in parallel, and the turn resumes after the longest wait. A steering message, the default for a new message, ends the wait early: `sleep` returns `{ interrupted: true }`, which the model reads as `Stopped early because a new message arrived.`, followed by the message. Add it:
 
 ```sh
-kaf add tool/sleep
+orcel add tool/sleep
 ```
 
 ```ts title="agent/tools/sleep.ts"
-import { sleep } from "kaf/tools/sleep";
+import { sleep } from "orcel/tools/sleep";
 
 export default sleep();
 ```
@@ -371,8 +371,8 @@ export default sleep();
 Customize it by wrapping the framework definition:
 
 ```ts title="agent/tools/sleep.ts"
-import { defineWorkflowTool } from "kaf/tools";
-import { sleep } from "kaf/tools/sleep";
+import { defineWorkflowTool } from "orcel/tools";
+import { sleep } from "orcel/tools/sleep";
 
 export default defineWorkflowTool({
   ...sleep(),

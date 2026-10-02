@@ -1,4 +1,4 @@
-import type { KafEvalTargetHandle } from "kaf/evals";
+import type { OrcelEvalTargetHandle } from "orcel/evals";
 
 /**
  * Shared helpers for the channel-metadata smoke evals. These cases verify
@@ -14,7 +14,7 @@ export const PROMPT =
   "If the tool is not available, reply exactly: metadata tool unavailable. Do not ask for more information.";
 
 export async function startChannelSession(
-  target: KafEvalTargetHandle,
+  target: OrcelEvalTargetHandle,
   path: string,
   body: Record<string, unknown>,
 ): Promise<string> {

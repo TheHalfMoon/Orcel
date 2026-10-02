@@ -1,5 +1,5 @@
-import { defineEval } from "kaf/evals";
-import { includes } from "kaf/evals/expect";
+import { defineEval } from "orcel/evals";
+import { includes } from "orcel/evals/expect";
 
 const DOCKERFILE_MARKER = "microsandbox-dockerfile-ok-P6N";
 const WORKSPACE_MARKER = "microsandbox-workspace-ok-W7R";
@@ -9,7 +9,7 @@ export default defineEval({
   description: "Microsandbox: a Dockerfile image boots with mounted workspace and skills.",
   async test(t) {
     const result = await t.send(
-      "Run the bash command `cat /usr/local/share/kaf-dockerfile-marker " +
+      "Run the bash command `cat /usr/local/share/orcel-dockerfile-marker " +
         "/workspace/workspace-marker.txt $HOME/.agents/skills/mounted-skill/SKILL.md` " +
         "and reply with the command output verbatim.",
     );

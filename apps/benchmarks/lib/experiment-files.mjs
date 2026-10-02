@@ -19,7 +19,7 @@ export async function prepareFixtures(evalsRoot, subject, names = fixtureNames(e
       `${await promptForCase(authoringCase, fixtureRoot)}\n`,
     );
     writeFileSync(
-      join(fixtureRoot, ".kaf-authoring-bootstrap.json"),
+      join(fixtureRoot, ".orcel-authoring-bootstrap.json"),
       `${JSON.stringify({
         startingPoint: authoringCase.startingPoint.workspace,
         projectDirectory: authoringCase.projectDirectory,
@@ -31,7 +31,7 @@ export async function prepareFixtures(evalsRoot, subject, names = fixtureNames(e
     );
     writeFileSync(
       join(fixtureRoot, "package.json"),
-      `${JSON.stringify({ name: `kaf-authoring-${name}`, private: true, type: "module" }, null, 2)}\n`,
+      `${JSON.stringify({ name: `orcel-authoring-${name}`, private: true, type: "module" }, null, 2)}\n`,
     );
   }
 }

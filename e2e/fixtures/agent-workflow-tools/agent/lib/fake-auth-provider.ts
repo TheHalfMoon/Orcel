@@ -1,7 +1,7 @@
-import { ConnectionAuthorizationRequiredError } from "kaf/connections";
-import type { ToolAuthProvider } from "kaf/tools";
+import { ConnectionAuthorizationRequiredError } from "orcel/connections";
+import type { ToolAuthProvider } from "orcel/tools";
 
-/** Simulates the external auth service; the tool uses kaf's real ctx auth methods. */
+/** Simulates the external auth service; the tool uses orcel's real ctx auth methods. */
 export function createFakeAuthProvider({
   expiredToken,
 }: {

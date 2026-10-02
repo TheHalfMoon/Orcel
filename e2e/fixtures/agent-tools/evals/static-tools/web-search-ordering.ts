@@ -1,4 +1,4 @@
-import type { MessageStreamEvent } from "kaf/client";
+import type { MessageStreamEvent } from "orcel/client";
 
 export const WEB_SEARCH_TOOL_NAME = "web_search";
 

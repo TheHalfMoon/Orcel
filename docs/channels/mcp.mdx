@@ -1,34 +1,34 @@
 ---
 title: "MCP Channel"
-description: "Publish an kaf agent as an MCP server with auth support."
+description: "Publish an orcel agent as an MCP server with auth support."
 ---
 
-The MCP channel lets clients such as Claude Code delegate durable work to an kaf agent through four tools: `agent_start`, `agent_get`, `agent_update`, and `agent_cancel`.
+The MCP channel lets clients such as Claude Code delegate durable work to an orcel agent through four tools: `agent_start`, `agent_get`, `agent_update`, and `agent_cancel`.
 
-Use an [MCP connection](../connections/mcp) instead when your kaf agent needs to call someone else's MCP server.
+Use an [MCP connection](../connections/mcp) instead when your orcel agent needs to call someone else's MCP server.
 
 ## Configure the channel
 
 Create `agent/channels/mcp.ts`. Authentication is required explicitly, even during development.
 
 ```ts title="agent/channels/mcp.ts"
-import { localDev } from "kaf/channels/auth";
-import { mcpChannel } from "kaf/channels/mcp";
+import { localDev } from "orcel/channels/auth";
+import { mcpChannel } from "orcel/channels/mcp";
 
 export default mcpChannel({
   auth: localDev(),
 });
 ```
 
-This accepts a synthetic local principal under `kaf dev` or `vercel dev` and rejects all requests in production. Before deploying, replace it with one of the production authentication modes below. `localDev()` checks the running environment, not the request hostname: accessing an `kaf start` production process through localhost does not activate it.
+This accepts a synthetic local principal under `orcel dev` or `vercel dev` and rejects all requests in production. Before deploying, replace it with one of the production authentication modes below. `localDev()` checks the running environment, not the request hostname: accessing an `orcel start` production process through localhost does not activate it.
 
 ### Routes
 
-The default Streamable HTTP endpoint is `/kaf/v1/mcp`. Set `route` when the application should publish it somewhere else:
+The default Streamable HTTP endpoint is `/orcel/v1/mcp`. Set `route` when the application should publish it somewhere else:
 
 ```ts title="agent/channels/mcp.ts"
-import { localDev } from "kaf/channels/auth";
-import { mcpChannel } from "kaf/channels/mcp";
+import { localDev } from "orcel/channels/auth";
+import { mcpChannel } from "orcel/channels/mcp";
 
 export default mcpChannel({
   auth: localDev(),
@@ -40,14 +40,14 @@ The channel registers `GET`, `POST`, and `DELETE` at the selected route.
 
 ## Interactive OAuth
 
-For an MCP client that should open a sign-in flow, configure kaf as an OAuth protected resource. Wrap the access-token verifier in `oauthResource()`:
+For an MCP client that should open a sign-in flow, configure orcel as an OAuth protected resource. Wrap the access-token verifier in `oauthResource()`:
 
 ```ts title="agent/channels/mcp.ts"
-import { oauthResource, oidc } from "kaf/channels/auth";
-import { mcpChannel } from "kaf/channels/mcp";
+import { oauthResource, oidc } from "orcel/channels/auth";
+import { mcpChannel } from "orcel/channels/mcp";
 
 const issuer = "https://auth.example.com";
-const resource = "https://agent.example.com/kaf/v1/mcp";
+const resource = "https://agent.example.com/orcel/v1/mcp";
 
 const authenticateRequest = oidc({
   issuer,
@@ -67,18 +67,18 @@ The authorization server identified by `issuer` must issue tokens accepted by th
 
 `oauthResource()` does not issue tokens or run an authorization server. It decorates an ordinary inbound `AuthFn` with OAuth protected-resource metadata so `mcpChannel()` can publish discovery and add `resource_metadata` to Bearer challenges. Client registration, consent, token issuance, and authorization-server metadata remain the identity provider's responsibility.
 
-Most hosted MCP clients (Claude, ChatGPT, Grok, and similar) register themselves with the authorization server through Dynamic Client Registration ([RFC 7591](https://www.rfc-editor.org/rfc/rfc7591)) the first time a user connects. Choose an issuer that supports it, or pre-register each client with the issuer before the demo. If registration fails, the client stops before it ever reaches kaf.
+Most hosted MCP clients (Claude, ChatGPT, Grok, and similar) register themselves with the authorization server through Dynamic Client Registration ([RFC 7591](https://www.rfc-editor.org/rfc/rfc7591)) the first time a user connects. Choose an issuer that supports it, or pre-register each client with the issuer before the demo. If registration fails, the client stops before it ever reaches orcel.
 
 ### Verify the bearer token yourself
 
 Use a custom `AuthFn` when token verification needs application-specific logic:
 
 ```ts title="agent/channels/mcp.ts"
-import { extractBearerToken, oauthResource, verifyOidc } from "kaf/channels/auth";
-import { mcpChannel } from "kaf/channels/mcp";
+import { extractBearerToken, oauthResource, verifyOidc } from "orcel/channels/auth";
+import { mcpChannel } from "orcel/channels/mcp";
 
 const issuer = "https://auth.example.com";
-const resource = "https://agent.example.com/kaf/v1/mcp";
+const resource = "https://agent.example.com/orcel/v1/mcp";
 
 async function verifyToken(request: Request) {
   const token = extractBearerToken(request.headers.get("authorization"));
@@ -99,17 +99,17 @@ export default mcpChannel({
 });
 ```
 
-`verifyOidc()` uses the issuer's discovery document to validate the token signature and claims. Returning `sessionAuth` accepts the request and binds invocation ownership to that verified principal. Returning `null` lets the auth walk continue; when no strategy accepts the request, kaf returns `401`.
+`verifyOidc()` uses the issuer's discovery document to validate the token signature and claims. Returning `sessionAuth` accepts the request and binds invocation ownership to that verified principal. Returning `null` lets the auth walk continue; when no strategy accepts the request, orcel returns `401`.
 
 You can wrap any strategy in `oauthResource()`, including `vercelOidc()`, but the advertised authorization server must issue tokens that strategy accepts. `vercelOidc()` by itself is preconfigured Vercel workload identity and does not advertise an interactive login.
 
 ### Protected-resource metadata
 
-By default, kaf derives the metadata path from the complete MCP resource identifier according to RFC 9728:
+By default, orcel derives the metadata path from the complete MCP resource identifier according to RFC 9728:
 
 | MCP resource                           | Protected-resource metadata                                                 |
 | -------------------------------------- | --------------------------------------------------------------------------- |
-| `https://agent.example.com/kaf/v1/mcp` | `https://agent.example.com/.well-known/oauth-protected-resource/kaf/v1/mcp` |
+| `https://agent.example.com/orcel/v1/mcp` | `https://agent.example.com/.well-known/oauth-protected-resource/orcel/v1/mcp` |
 | `https://agent.example.com/mcp`        | `https://agent.example.com/.well-known/oauth-protected-resource/mcp`        |
 
 Set `resource` when the public resource identifier cannot be derived from the incoming request. Set `metadataPath` only when discovery must live at a non-derived location:
@@ -118,7 +118,7 @@ Set `resource` when the public resource identifier cannot be derived from the in
 oauthResource(verifyToken, {
   issuer,
   metadataPath: "/.well-known/custom-resource",
-  resource: "https://agent.example.com/kaf/v1/mcp",
+  resource: "https://agent.example.com/orcel/v1/mcp",
   scopes: ["agent:invoke"],
 });
 ```
@@ -127,9 +127,9 @@ The metadata endpoint serves cross-origin `GET`, `HEAD`, and `OPTIONS` requests 
 
 ## Other authentication modes
 
-`mcpChannel()` accepts the same inbound auth strategies as other kaf channels: Basic auth, HMAC or ECDSA JWTs, generic OIDC, Vercel OIDC, custom `AuthFn` policies, or an ordered array of them. These modes do not automatically produce an interactive login unless wrapped in `oauthResource()`; configure credentials in the MCP client out of band.
+`mcpChannel()` accepts the same inbound auth strategies as other orcel channels: Basic auth, HMAC or ECDSA JWTs, generic OIDC, Vercel OIDC, custom `AuthFn` policies, or an ordered array of them. These modes do not automatically produce an interactive login unless wrapped in `oauthResource()`; configure credentials in the MCP client out of band.
 
-When a protected request has no accepted credentials, kaf returns a Bearer challenge. A supplied Bearer token rejected by every strategy gets `error="invalid_token"`. To report a verified caller that lacks the necessary scopes, throw `ForbiddenError` with an `error="insufficient_scope"` Bearer challenge. The MCP channel preserves that challenge and adds the protected-resource metadata URL.
+When a protected request has no accepted credentials, orcel returns a Bearer challenge. A supplied Bearer token rejected by every strategy gets `error="invalid_token"`. To report a verified caller that lacks the necessary scopes, throw `ForbiddenError` with an `error="insufficient_scope"` Bearer challenge. The MCP channel preserves that challenge and adds the protected-resource metadata URL.
 
 For the complete strategy and auth-walk model, see [Authentication](../guides/auth-and-route-protection).
 
@@ -138,8 +138,8 @@ For the complete strategy and auth-walk model, see [Authentication](../guides/au
 To intentionally expose the MCP endpoint without authentication, use `none()`:
 
 ```ts title="agent/channels/mcp.ts"
-import { none } from "kaf/channels/auth";
-import { mcpChannel } from "kaf/channels/mcp";
+import { none } from "orcel/channels/auth";
+import { mcpChannel } from "orcel/channels/mcp";
 
 export default mcpChannel({
   auth: none(),
@@ -160,7 +160,7 @@ When a gateway or reverse proxy changes the public origin or path, set `resource
 
 The protected-resource metadata endpoint is intentionally CORS-readable. The MCP transport itself does not enable cross-origin browser access; place a same-origin backend or authenticated server-side proxy in front of it when a browser application needs to connect.
 
-The endpoint serves MCP `2026-07-28` directly and retains stateless `2025-11-25` Streamable HTTP compatibility. kaf does not keep an MCP transport session in either mode.
+The endpoint serves MCP `2026-07-28` directly and retains stateless `2025-11-25` Streamable HTTP compatibility. orcel does not keep an MCP transport session in either mode.
 
 ## Invoke the agent
 
@@ -177,7 +177,7 @@ The server also returns `instructions` from `initialize` and `server/discover` t
 protocol for the connecting model, so a hosted client does not have to infer it from the tool
 schemas alone.
 
-`agent_start` creates one kaf session and returns after durable acceptance without
+`agent_start` creates one orcel session and returns after durable acceptance without
 waiting for the session continuation hook to become readable. Keep its `invocationId`, then call
 `agent_get` until the invocation reaches a terminal state. While the status is `working`, wait at
 least `pollAfterMs` before polling again.
@@ -198,7 +198,7 @@ A tool result with `isError: true` means the call itself was rejected. A `failed
 | `invalid_input` | An argument was rejected, for example an oversized `message`.                | `false`     |
 | `not_found`     | The invocation does not exist, has expired, or belongs to another caller.    | `false`     |
 | `conflict`      | The invocation is not in the expected state; read it with `agent_get` first. | `true`      |
-| `internal`      | kaf failed; `errorId` correlates with server logs. No details are exposed.   | `false`     |
+| `internal`      | orcel failed; `errorId` correlates with server logs. No details are exposed.   | `false`     |
 
 Cancellation is cooperative, so call `agent_get` after `agent_cancel` until the state becomes terminal.
 
@@ -208,7 +208,7 @@ Requests are bounded: the whole MCP request body is limited to 1 MiB, `message` 
 
 - Once `agent_start` returns, the work is durable. A dropped HTTP connection, a client restart, or a closed MCP session does not cancel it. Only `agent_cancel` stops work.
 - `agent_start` is not idempotent. If its response is lost, the client has no `invocationId` to check, and a second call starts a second task. Ask the user before starting again rather than retrying blindly.
-- `agent_update` answers one pending batch. Re-sending the same answers after kaf has accepted them returns the current invocation state; sending different answers for an already-answered batch is a conflict.
+- `agent_update` answers one pending batch. Re-sending the same answers after orcel has accepted them returns the current invocation state; sending different answers for an already-answered batch is a conflict.
 - `agent_cancel` is cooperative and can race with completion. Poll `agent_get` until the status is terminal (`cancelled`, `completed`, or `failed`), not specifically `cancelled`.
 
 ## Invocation ownership
@@ -220,5 +220,5 @@ With `none()`, every caller shares the anonymous principal, so the random invoca
 ## What to read next
 
 - [Authentication](../guides/auth-and-route-protection): configure inbound route authentication
-- [MCP connections](../connections/mcp): let an kaf agent call another MCP server
+- [MCP connections](../connections/mcp): let an orcel agent call another MCP server
 - [Sessions, runs & streaming](../concepts/sessions-runs-and-streaming): understand the durable sessions behind invocations

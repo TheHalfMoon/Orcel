@@ -1,4 +1,4 @@
-import type { ConnectorSummary } from "#kaf/types/connector";
+import type { ConnectorSummary } from "#orcel/types/connector";
 import { resolveAuthorizationChallenge } from "~/composables/chat/useAuthorizationChallenges";
 
 /**

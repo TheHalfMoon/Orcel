@@ -3,11 +3,11 @@ title: "Skills"
 description: "Author load-on-demand procedures the model pulls into context with load_skill."
 ---
 
-A skill is a model-loadable procedure that follows the `SKILL.md` convention. It is a markdown document, optionally a packaged directory with supporting files, that the model pulls into context on demand rather than carrying on every turn. kaf advertises each skill's description, and the model loads the full body only when a turn calls for it. This is progressive disclosure, the same model the broader Agent Skills standard uses, so a skill authored against that standard ports over as-is.
+A skill is a model-loadable procedure that follows the `SKILL.md` convention. It is a markdown document, optionally a packaged directory with supporting files, that the model pulls into context on demand rather than carrying on every turn. orcel advertises each skill's description, and the model loads the full body only when a turn calls for it. This is progressive disclosure, the same model the broader Agent Skills standard uses, so a skill authored against that standard ports over as-is.
 
 ## How loading works
 
-kaf scans the files under `agent/skills/` and exposes each one's description to the model alongside a framework-owned `load_skill` tool. When a request matches a skill's description (or you name the skill outright), the model calls `load_skill`, and kaf appends that skill's markdown to the active turn's context.
+orcel scans the files under `agent/skills/` and exposes each one's description to the model alongside a framework-owned `load_skill` tool. When a request matches a skill's description (or you name the skill outright), the model calls `load_skill`, and orcel appends that skill's markdown to the active turn's context.
 
 Listing skills and loading their instructions do not require a sandbox: `load_skill` returns static instructions from the compiled agent and dynamic instructions from session state. Only access to supporting package files requires a sandbox. Builds may also prewarm sandbox templates that contain static package files. Supporting files are available under `$HOME/.agents/skills/<skill>/`, with `/workspace/skills/<skill>/` as the fallback when `$HOME` is unavailable. Sibling references inside `SKILL.md`, such as `references/checklist.md`, are relative to the directory containing that specific `SKILL.md`.
 
@@ -27,7 +27,7 @@ The smallest skill is a flat markdown file. The content is the procedure, and th
 Use the weather tool before answering forecast or temperature questions.
 ```
 
-A flat markdown skill can skip the `description` frontmatter. When it does, kaf advertises the first non-empty, non-code-fence line of the body with any leading `#`, `>`, `*`, or `-` marker stripped. If the body has no such line, kaf falls back to the literal `Instructions for the <name> skill.`, which is a weak routing hint, so add a `description` when you want the model to route on intent.
+A flat markdown skill can skip the `description` frontmatter. When it does, orcel advertises the first non-empty, non-code-fence line of the body with any leading `#`, `>`, `*`, or `-` marker stripped. If the body has no such line, orcel falls back to the literal `Instructions for the <name> skill.`, which is a weak routing hint, so add a `description` when you want the model to route on intent.
 
 A packaged skill is a directory with a `SKILL.md` plus sibling files like `references/`, `assets/`, and `scripts/`. The packaged `SKILL.md` must carry `description` frontmatter; it has no filename slug to fall back on.
 
@@ -40,12 +40,12 @@ When the task is novel or ambiguous, gather evidence first, then answer with the
 key facts and the remaining uncertainty.
 ```
 
-kaf reads `description`, optional `license`, and string `metadata`; other `SKILL.md` frontmatter is accepted as a no-op.
+orcel reads `description`, optional `license`, and string `metadata`; other `SKILL.md` frontmatter is accepted as a no-op.
 
-When markdown can't express what you need (typed values, generated content, or inline sibling files), author the skill in TypeScript with `defineSkill` from `kaf/skills`:
+When markdown can't express what you need (typed values, generated content, or inline sibling files), author the skill in TypeScript with `defineSkill` from `orcel/skills`:
 
 ```ts title="agent/skills/research.ts"
-import { defineSkill } from "kaf/skills";
+import { defineSkill } from "orcel/skills";
 
 export default defineSkill({
   description: "Research unfamiliar topics before answering with confidence.",
@@ -57,17 +57,17 @@ export default defineSkill({
 });
 ```
 
-kaf generates `SKILL.md` from `markdown`, and each `files` entry becomes a package-relative sibling. Start with plain markdown and move to `defineSkill` only when you hit its limits.
+orcel generates `SKILL.md` from `markdown`, and each `files` entry becomes a package-relative sibling. Start with plain markdown and move to `defineSkill` only when you hit its limits.
 
 A static `defineSkill` module is evaluated during compilation and its resolved definition is stored in the manifest; a dynamic skill module is also retained as a runtime entry. See [Authored module lifecycle](./reference/typescript-api#authored-module-lifecycle).
 
 ## Find and install community skills
 
-`kaf registry search` includes [skills.sh](https://skills.sh) as the built-in `@skills` source. Search by task, review the source, then install the returned skill into your project:
+`orcel registry search` includes [skills.sh](https://skills.sh) as the built-in `@skills` source. Search by task, review the source, then install the returned skill into your project:
 
 ```bash
-kaf registry search react --registry @skills
-kaf add @skills/vercel-labs/agent-skills/vercel-react-best-practices
+orcel registry search react --registry @skills
+orcel add @skills/vercel-labs/agent-skills/vercel-react-best-practices
 ```
 
 skills.sh skills are community-authored project files. Review their source and the resulting diff before running the agent. See [Install integrations](./install-integrations#add-a-skill) for registry configuration and install behavior.

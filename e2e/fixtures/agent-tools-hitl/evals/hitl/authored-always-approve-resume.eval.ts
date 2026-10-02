@@ -1,9 +1,9 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 const MARKER = "authored-always-approve-resume-N4K7";
 const TOOL_NAME = "gate";
 
-/** Regression reproduction for https://github.com/TheHalfMoon/kaf/issues/533. */
+/** Regression reproduction for https://github.com/TheHalfMoon/orcel/issues/533. */
 export default defineEval({
   tags: ["real-model"],
   description:

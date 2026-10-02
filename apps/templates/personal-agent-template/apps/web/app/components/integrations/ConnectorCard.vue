@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ConnectorSummary } from "#kaf/types/connector";
+import type { ConnectorSummary } from "#orcel/types/connector";
 
 const props = defineProps<{
   connector: ConnectorSummary;

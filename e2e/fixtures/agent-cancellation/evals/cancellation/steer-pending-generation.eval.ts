@@ -1,12 +1,12 @@
-import { defineEval } from "kaf/evals";
-import { satisfies } from "kaf/evals/expect";
+import { defineEval } from "orcel/evals";
+import { satisfies } from "orcel/evals/expect";
 
 export default defineEval({
   description:
     "A correction during pending generation produces one corrected answer in the same turn.",
   timeoutMs: 120_000,
   async test(t) {
-    if (process.env.KAF_E2E_MODEL !== "mock") {
+    if (process.env.ORCEL_E2E_MODEL !== "mock") {
       t.skip("Requires the deterministic model's pending-generation gate.");
     }
     const conversation = await t.session();

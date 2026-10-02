@@ -6,8 +6,8 @@ description: "Create snapshot-backed persistent sandboxes on Vercel."
 `VercelSandbox.environment()` prepares a reusable Vercel Sandbox snapshot and creates persistent session sandboxes from its recorded snapshot ID.
 
 ```ts
-import { defineSandbox } from "kaf/sandbox";
-import { VercelSandbox } from "kaf/sandbox/vercel";
+import { defineSandbox } from "orcel/sandbox";
+import { VercelSandbox } from "orcel/sandbox/vercel";
 
 export const environment = VercelSandbox.environment({
   prepare: async (sandbox) => {
@@ -29,17 +29,17 @@ export default defineSandbox(() =>
 
 ## Snapshot preparation
 
-kaf creates a temporary persistent Vercel Sandbox during build, installs the base runtime, writes managed workspace and skill files, runs the authored `prepare` callback, and captures a snapshot. The build artifact records the snapshot ID.
+orcel creates a temporary persistent Vercel Sandbox during build, installs the base runtime, writes managed workspace and skill files, runs the authored `prepare` callback, and captures a snapshot. The build artifact records the snapshot ID.
 
-When a live session sandbox does not exist, kaf creates it directly from that snapshot ID. Runtime does not need to look up the temporary template Sandbox.
+When a live session sandbox does not exist, orcel creates it directly from that snapshot ID. Runtime does not need to look up the temporary template Sandbox.
 
 ## Initialize after open
 
 Initialize session-specific state after `open()` and before returning the sandbox. This selector writes a configuration file into the persistent `/workspace` filesystem:
 
 ```ts
-import { defineSandbox } from "kaf/sandbox";
-import { VercelSandbox } from "kaf/sandbox/vercel";
+import { defineSandbox } from "orcel/sandbox";
+import { VercelSandbox } from "orcel/sandbox/vercel";
 
 export const environment = VercelSandbox.environment();
 
@@ -47,7 +47,7 @@ export default defineSandbox(async ({ session }) => {
   const sandbox = await environment.open();
   await sandbox.writeTextFile({
     content: JSON.stringify({ sessionId: session.id, workspace: "analysis" }),
-    path: ".kaf/session.json",
+    path: ".orcel/session.json",
   });
   return sandbox;
 });
@@ -99,8 +99,8 @@ return sandbox;
 
 `open()` also accepts Vercel compute resources, timeout, and Drive mounts. Configure project credentials and custom fetch behavior on the environment, not in `open()`, because resume does not reconstruct start-only options.
 
-Initialize the returned sandbox directly in `defineSandbox()`. If initialization fails, kaf deletes the newly started sandbox and retries the selector on the next access. After initialization succeeds, the provider persists only immutable JSON-compatible state. If the named Vercel Sandbox later disappears, resume fails rather than recreating initialization side effects.
+Initialize the returned sandbox directly in `defineSandbox()`. If initialization fails, orcel deletes the newly started sandbox and retries the selector on the next access. After initialization succeeds, the provider persists only immutable JSON-compatible state. If the named Vercel Sandbox later disappears, resume fails rather than recreating initialization side effects.
 
-kaf owns the persistent sandbox identity and prepared snapshot source.
+orcel owns the persistent sandbox identity and prepared snapshot source.
 
 See the [sandbox overview](/docs/sandbox) for managed workspace, skills, parent inheritance, and custom providers.

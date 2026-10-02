@@ -3,7 +3,7 @@ export const PULL_REQUEST_PATTERN = /^[1-9]\d*$/;
 const PACKAGE_VERSION_SHA_LENGTH = 16;
 
 export function packageArtifactPath(sourceSha) {
-  return `packages/${sourceSha}/kaf.tgz`;
+  return `packages/${sourceSha}/orcel.tgz`;
 }
 
 export function packageManifestPath(sourceSha) {
@@ -19,13 +19,13 @@ export function packagePointerPath(ref) {
 export function packageDependencyUrl(baseUrl, sourceSha) {
   const url = new URL(baseUrl);
   if (url.protocol !== "https:") throw new Error("Package base URL must use HTTPS.");
-  url.pathname = `${url.pathname.replace(/\/$/, "")}/${sourceSha}/kaf.tgz`;
+  url.pathname = `${url.pathname.replace(/\/$/, "")}/${sourceSha}/orcel.tgz`;
   return url.toString();
 }
 
 export function packageVersion(stableVersion, sourceSha, channel = "main") {
   const match = stableVersion.match(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/);
-  if (match === null) throw new Error(`Expected a stable kaf version, received ${stableVersion}.`);
+  if (match === null) throw new Error(`Expected a stable orcel version, received ${stableVersion}.`);
   return `${stableVersion}+${channel}.${sourceSha.slice(0, PACKAGE_VERSION_SHA_LENGTH)}`;
 }
 

@@ -1,4 +1,4 @@
-import { defineChannel, GET, POST } from "kaf/channels";
+import { defineChannel, GET, POST } from "orcel/channels";
 import { z } from "zod";
 
 const rpcRequest = z.object({
@@ -6,7 +6,7 @@ const rpcRequest = z.object({
   method: z.string(),
 });
 
-// A fixture-owned MCP server: kaf still resolves auth and performs real HTTP discovery.
+// A fixture-owned MCP server: orcel still resolves auth and performs real HTTP discovery.
 export default defineChannel({
   routes: [
     GET("/fixture-catalog/mcp", async () => new Response(null, { status: 405 })),

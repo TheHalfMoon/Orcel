@@ -4,10 +4,10 @@ import {
   playScript,
   taskIdFromReceipt,
   type ScriptedCall,
-} from "@kaf-e2e/config/mock-script";
-import type { MockModelRequest, MockModelResponse } from "kaf/evals";
-import { defineTool } from "kaf/tools";
-import { never } from "kaf/tools/approval";
+} from "@orcel-e2e/config/mock-script";
+import type { MockModelRequest, MockModelResponse } from "orcel/evals";
+import { defineTool } from "orcel/tools";
+import { never } from "orcel/tools/approval";
 import { z } from "zod";
 
 import {
@@ -40,7 +40,7 @@ export function isNotebookDirective(message: string): boolean {
   return NOTEBOOK_DIRECTIVES.some((directive) => message.startsWith(`${directive} `));
 }
 
-/** Whether a message is one the parent sent a keeper; kaf wraps the first one in a preamble. */
+/** Whether a message is one the parent sent a keeper; orcel wraps the first one in a preamble. */
 export function isNotebookEntry(message: string): boolean {
   return message.includes(`${NOTEBOOK_ENTRY} `);
 }

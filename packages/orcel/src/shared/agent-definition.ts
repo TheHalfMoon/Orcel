@@ -1,0 +1,381 @@
+import type { CallSettings, LanguageModel } from "ai";
+import type { JsonObject } from "#shared/json.js";
+import type { ModuleSourceRef } from "#shared/source-ref.js";
+import {
+  isDynamicSentinel,
+  type DynamicResolveContext,
+  type DynamicSentinel,
+} from "#dynamic/definition.js";
+
+/**
+ * Optional overrides that orcel forwards to the AI SDK model runtime call for
+ * this model.
+ */
+export interface AgentModelOptionsDefinition {
+  readonly providerOptions?: Record<string, JsonObject>;
+}
+
+/**
+ * Provider-agnostic reasoning effort forwarded to the AI SDK model call.
+ */
+export type AgentReasoningDefinition = NonNullable<CallSettings["reasoning"]>;
+
+/**
+ * How an agent's model is reached at runtime, decided at compile time from the
+ * authored model value.
+ *
+ * - `gateway`: routed through the Vercel AI Gateway. This covers a bare model
+ *   id string (resolved via the AI SDK global default provider), a
+ *   `gateway(...)` instance, and a gateway id whose provider key is forwarded
+ *   to the gateway via `providerOptions.gateway.byok`. `target` is the upstream
+ *   provider slug carried in the model id (e.g. `"anthropic"`), best-effort.
+ *   `byok` is set to that provider slug when a `providerOptions.gateway.byok`
+ *   block is present.
+ * - `external`: a direct provider instance (e.g. `anthropic(...)`) that bypasses
+ *   the gateway and talks to the provider's own endpoint. `provider` is the AI
+ *   SDK provider name (e.g. `"anthropic"`).
+ *
+ * This is a routing fact, not a model-existence check; it does not assert the
+ * model id names a real model.
+ */
+export type ModelRouting =
+  | { kind: "gateway"; target: string; byok?: string }
+  | { kind: "external"; provider: string };
+
+export type InternalAgentModelDefinition = {
+  id: string;
+  contextWindowTokens?: number;
+  maxOutputTokens?: number;
+  source?: ModuleSourceRef;
+  providerOptions?: Record<string, JsonObject>;
+};
+
+/**
+ * A concrete model handle: an AI Gateway model id string or an AI SDK
+ * `LanguageModel` instance.
+ */
+export type PublicAgentStaticModelDefinition = string | LanguageModel;
+
+/** Context passed to dynamic model event handlers; the shared dynamic resolver context. */
+export type AgentModelResolveContext = DynamicResolveContext;
+
+export interface PublicAgentModelSelectionDefinition {
+  readonly model: PublicAgentStaticModelDefinition;
+  /** Override the agent reasoning effort for this selection; omitted values inherit it. */
+  readonly reasoning?: AgentReasoningDefinition;
+  /** Context window of the selected model, in tokens. */
+  readonly modelContextWindowTokens?: number;
+  /** Provider options for the selected model. */
+  readonly modelOptions?: AgentModelOptionsDefinition;
+}
+
+export type PublicAgentDynamicModelResult =
+  | PublicAgentStaticModelDefinition
+  | PublicAgentModelSelectionDefinition;
+
+export type AgentModelResolver = (
+  event: unknown,
+  ctx: AgentModelResolveContext,
+) => PublicAgentDynamicModelResult | Promise<PublicAgentDynamicModelResult>;
+
+export type PublicAgentDynamicModelDefinition = DynamicSentinel<PublicAgentDynamicModelResult>;
+
+export function isDynamicModelDefinition(
+  value: unknown,
+): value is PublicAgentDynamicModelDefinition {
+  return isDynamicSentinel(value);
+}
+
+/**
+ * The model handle you assign to an agent's `model` field.
+ */
+export type PublicAgentModelDefinition =
+  | PublicAgentStaticModelDefinition
+  | PublicAgentDynamicModelDefinition;
+
+export interface InternalAgentCompactionDefinition {
+  /**
+   * Optional model used only for generating compaction summaries.
+   *
+   * When omitted, orcel uses the active turn model for the summary call.
+   */
+  model?: InternalAgentModelDefinition;
+  /**
+   * Fraction of the primary model context window that triggers compaction.
+   *
+   * orcel defaults to `0.9` when this is omitted.
+   */
+  thresholdPercent?: number;
+}
+
+/**
+ * Configures conversation compaction: when the model context window fills past
+ * `thresholdPercent`, orcel summarizes earlier turns to reclaim space. Every
+ * field is optional; omit the block to use orcel's defaults.
+ */
+export interface PublicAgentCompactionDefinition {
+  /**
+   * Optional override for the compaction summary model's context window size,
+   * in tokens.
+   *
+   * Same escape hatch as the agent-level `modelContextWindowTokens`. When set,
+   * orcel uses this value verbatim and skips the AI Gateway lookup for the
+   * compaction summary model.
+   */
+  readonly modelContextWindowTokens?: number;
+  /**
+   * Optional model used only for generating compaction summaries.
+   *
+   * When omitted, orcel uses the active turn model for the summary call.
+   */
+  readonly model?: PublicAgentStaticModelDefinition;
+  /**
+   * Fraction of the primary model context window that triggers compaction.
+   *
+   * orcel defaults to `0.9` when this is omitted.
+   */
+  readonly thresholdPercent?: number;
+}
+
+/**
+ * Configures framework-owned runtime limits for this agent's runs.
+ */
+export interface AgentLimitsDefinition {
+  /**
+   * Session lifetime from creation or the latest ownership handoff, in milliseconds.
+   *
+   * A successful deployment handoff or legacy-session import restarts the
+   * original configured duration. Process restarts and failed or skipped
+   * handoffs preserve the deadline. If it elapses during an active turn, orcel lets
+   * that turn settle before completing the session normally.
+   *
+   * `false` disables the timeout.
+   *
+   * @default 2_592_000_000 (30 days)
+   */
+  readonly sessionTimeoutMs?: number | false;
+  /**
+   * Maximum provider-reported input tokens accumulated by one durable session.
+   *
+   * orcel checks this before starting each model call. The model call that crosses
+   * the limit is allowed to finish because providers only report exact usage
+   * after the call completes; later model calls in the same session are blocked.
+   *
+   * `false` disables the limit: the session is uncapped.
+   *
+   * Delegated subagent sessions default to the delegating parent's remaining
+   * quota at dispatch time, and the parent's remaining quota always caps an
+   * authored child limit — a child can never outspend its parent's budget.
+   *
+   * @default 40_000_000 for root sessions; the parent's remaining quota for delegated subagent sessions
+   */
+  readonly maxInputTokensPerSession?: number | false;
+  /**
+   * Maximum provider-reported output tokens accumulated by one durable session.
+   *
+   * orcel checks this before starting each model call. The model call that crosses
+   * the limit is allowed to finish because providers only report exact usage
+   * after the call completes; later model calls in the same session are blocked.
+   *
+   * `false` disables the limit. Unset by default; delegated subagent sessions
+   * inherit the parent's remaining output quota when the parent has one.
+   */
+  readonly maxOutputTokensPerSession?: number | false;
+  /**
+   * Maximum provider-reported model token cost accumulated by one durable
+   * session, in US dollars.
+   *
+   * orcel checks this before starting each model call. The model call that
+   * crosses the limit is allowed to finish because providers report cost only
+   * after the call completes; later model calls in the same session are
+   * blocked.
+   *
+   * `false` disables the limit. Unset by default; delegated subagent sessions
+   * inherit the parent's remaining token-cost quota when the parent has one.
+   */
+  readonly maxTokenCostUsdPerSession?: number | false;
+}
+
+/**
+ * Experimental, opt-in agent capabilities authored in `agent.ts`.
+ *
+ * These options are unstable and may change or be removed in any release.
+ */
+export interface AgentExperimentalDefinition {
+  /**
+   * Durable Workflow runtime configuration.
+   */
+  readonly workflow?: AgentWorkflowDefinition;
+}
+
+/**
+ * Advanced hosted-build controls authored in `agent.ts`.
+ *
+ * These affect packaging and bundling only. They do not affect the runtime
+ * prompt or authored execution APIs.
+ */
+export interface AgentBuildDefinition {
+  /**
+   * Additional imported package names that orcel should keep external and trace
+   * into hosted build output. orcel also keeps matching imports external while
+   * compiling authored TypeScript modules such as tools, channels, and
+   * schedules.
+   *
+   * Prefer this when a package is sensitive to bundling and should ship via
+   * `server/node_modules` in hosted output.
+   */
+  readonly externalDependencies?: string[];
+}
+
+/**
+ * Package name for a Workflow world module.
+ *
+ * The package must export either a default factory or a `createWorld` factory.
+ * The factory is called at runtime so credentials and deployment-specific
+ * options can come from environment variables instead of the compiled manifest.
+ */
+export type AgentWorkflowWorldDefinition = string;
+
+/**
+ * Accepted values for `experimental.workflow.retention`.
+ *
+ * Declared as orcel's own tuple so the authored type, the manifest schema, and
+ * the authored-definition normalizer share one source of truth. A drift test
+ * keeps it aligned with what the Workflow SDK accepts.
+ */
+export const AGENT_WORKFLOW_RETENTION_VALUES = [0, "default"] as const;
+
+/**
+ * How long the durable runtime keeps a run's data after the run finishes.
+ *
+ * The value is a duration, and zero is currently the only one besides the
+ * world's default.
+ */
+export type AgentWorkflowRetentionDefinition = (typeof AGENT_WORKFLOW_RETENTION_VALUES)[number];
+
+/**
+ * Advanced durable-runtime configuration for orcel's Workflow SDK integration.
+ */
+export interface AgentWorkflowDefinition {
+  /**
+   * Maximum number of turn-model calls orcel may run inside one durable Workflow step.
+   *
+   * Values greater than one reduce Workflow checkpoint overhead but widen the
+   * replay unit: if the Workflow step is interrupted, earlier model calls and
+   * inline tool executions in the same step may run again.
+   *
+   * @default 1
+   */
+  readonly modelCallsPerStep?: number;
+  /**
+   * How long the agent's run data is kept after the run finishes.
+   * Applied to every run that owns the session, including successors created
+   * by deployment handoff.
+   *
+   * - `"default"`: same as omission. The Workflow SDK World decides.
+   *   On Vercel this follows your team's plan.
+   * - `0`: the world deletes run payloads and stream chunks as soon as the run
+   *   completes or fails. Metadata such as run IDs, status, and timestamps may
+   *   persist up to the default period.
+   *
+   * The World you are using with the Workflow SDK might not support every
+   * option. A World that does not recognize the value keeps the data.
+   *
+   * Note that with retention set to `0`, data deletion can race reads of a finished
+   * run, so results and transcripts of completed sessions generally become
+   * unreadable. Persist anything you need to keep from inside a tool.
+   *
+   * @default "default"
+   */
+  readonly retention?: AgentWorkflowRetentionDefinition;
+  /**
+   * Workflow world module used for durable workflow storage, queueing, hooks,
+   * and streaming.
+   */
+  readonly world?: AgentWorkflowWorldDefinition;
+}
+
+/**
+ * Compiled-side agent definition. Carries a `name` because the compiler
+ * stamps the path-derived `agentId` onto every compiled agent node.
+ */
+export type InternalAgentDefinition = {
+  name: string;
+  description?: string;
+  build?: AgentBuildDefinition;
+  compaction?: InternalAgentCompactionDefinition;
+  defaultTools?: boolean;
+  experimental?: AgentExperimentalDefinition;
+  model: InternalAgentModelDefinition;
+  reasoning?: AgentReasoningDefinition;
+  source?: ModuleSourceRef;
+  tool?: boolean;
+  limits?: AgentLimitsDefinition;
+};
+
+/**
+ * Shared public definition for an agent.
+ *
+ * Identity is derived at compile time from `manifest.agentId` (the
+ * package name or app-root basename). Authored definitions do not carry
+ * a `name` field.
+ */
+type PublicAgentDefinitionBase = {
+  /**
+   * Human-readable description of the agent's purpose. Required for
+   * subagents (authored under `subagents/<id>/agent.ts`): surfaced to
+   * the parent agent as the lowered subagent tool's description.
+   */
+  readonly description?: string;
+  readonly build?: AgentBuildDefinition;
+  readonly compaction?: PublicAgentCompactionDefinition;
+  /**
+   * Whether orcel automatically adds its optional default tools. Defaults to `true`.
+   * Required connection tooling and tools authored under `agent/tools/` remain
+   * available when this is `false`.
+   */
+  readonly defaultTools?: boolean;
+  /**
+   * Experimental, opt-in capabilities. Unstable, see
+   * {@link AgentExperimentalDefinition}.
+   */
+  readonly experimental?: AgentExperimentalDefinition;
+  /**
+   * Provider-agnostic reasoning effort for the agent's turn model calls.
+   * Support for individual levels depends on the selected model and provider.
+   */
+  readonly reasoning?: AgentReasoningDefinition;
+  /**
+   * Framework-owned runtime limits for this agent's runs.
+   */
+  readonly limits?: AgentLimitsDefinition;
+  /**
+   * Whether orcel exposes this agent to its parent model as a tool. On the root
+   * agent, this controls the built-in `agent` tool. Defaults to `true`.
+   *
+   * A subagent with this set to `false` remains callable through `ctx.agent()`
+   * in workflow tools.
+   */
+  readonly tool?: boolean;
+};
+
+/**
+ * Shared public definition for an agent. Static models may carry definition-level
+ * metadata; dynamic models must return metadata with each concrete selection.
+ */
+export type PublicAgentDefinition = PublicAgentDefinitionBase &
+  (
+    | {
+        /** Language model used for agent turns. */
+        readonly model: PublicAgentStaticModelDefinition;
+        /** Optional context-window override for the static model. */
+        readonly modelContextWindowTokens?: number;
+        readonly modelOptions?: AgentModelOptionsDefinition;
+      }
+    | {
+        /** Resolver that must select a concrete model before model-dependent work. */
+        readonly model: PublicAgentDynamicModelDefinition;
+        readonly modelContextWindowTokens?: never;
+        readonly modelOptions?: never;
+      }
+  );

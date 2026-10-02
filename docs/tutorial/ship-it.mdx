@@ -1,23 +1,23 @@
 ---
 title: "Ship It"
-description: "Part 8 of the Build an Agent tutorial. Put a web dashboard on the agent with useKafAgent, replace placeholderAuth, and deploy to Vercel."
+description: "Part 8 of the Build an Agent tutorial. Put a web dashboard on the agent with useOrcelAgent, replace placeholderAuth, and deploy to Vercel."
 ---
 
 The analytics assistant runs in the TUI. Now add a web dashboard and deploy a private, single-user version on Vercel. This example protects the sample app with a username and password. It does not require another authentication service.
 
 ## Add the Web Chat app
 
-Step 1 scaffolded the agent without a web frontend. Add one now with `kaf add channel/web`, run from the `analytics-assistant/` directory:
+Step 1 scaffolded the agent without a web frontend. Add one now with `orcel add channel/web`, run from the `analytics-assistant/` directory:
 
 ```bash
-npx kaf add channel/web
+npx orcel add channel/web
 ```
 
-This adds a Next.js app (`next.config.ts`, `app/page.tsx`, `app/_components/`) wired to the existing kaf channel, plus the chat UI components and their dependencies. Run `npm install` afterward to install the added packages. The generated `next.config.ts` wraps your config with `withEve`, which wires the kaf routes automatically:
+This adds a Next.js app (`next.config.ts`, `app/page.tsx`, `app/_components/`) wired to the existing orcel channel, plus the chat UI components and their dependencies. Run `npm install` afterward to install the added packages. The generated `next.config.ts` wraps your config with `withEve`, which wires the orcel routes automatically:
 
 ```ts title="next.config.ts"
 import type { NextConfig } from "next";
-import { withEve } from "kaf/next";
+import { withEve } from "orcel/next";
 
 const nextConfig: NextConfig = {};
 
@@ -26,7 +26,7 @@ export default withEve(nextConfig);
 
 ## Use the generated chat
 
-Keep the generated `app/_components/agent-chat.tsx` and `agent-message.tsx` components. `app/page.tsx` already renders the chat, and `useKafAgent` handles session creation and streaming.
+Keep the generated `app/_components/agent-chat.tsx` and `agent-message.tsx` components. `app/page.tsx` already renders the chat, and `useOrcelAgent` handles session creation and streaming.
 
 The generated UI displays tool results and errors, authorization links, approval buttons, and question forms. The spend approval from [Guard the spend](./guard-the-spend) needs those controls to resume a waiting turn. A component that renders only text messages leaves those interactions unavailable.
 
@@ -36,10 +36,10 @@ Run `npm run dev`, open the local web URL printed by the server, and ask for an 
 
 The scaffold's channel ships with `placeholderAuth()`, which rejects unauthenticated production requests. Replace it with a verifier that checks credentials on every request. Never return a fixed user without checking the request.
 
-Create `agent/lib/auth.ts`. This uses kaf's HTTP Basic verifier, which compares passwords in constant time. Missing environment variables, missing credentials, and wrong credentials all fail closed:
+Create `agent/lib/auth.ts`. This uses orcel's HTTP Basic verifier, which compares passwords in constant time. Missing environment variables, missing credentials, and wrong credentials all fail closed:
 
 ```ts title="agent/lib/auth.ts"
-import { verifyHttpBasic, withAuthChallenges } from "kaf/channels/auth";
+import { verifyHttpBasic, withAuthChallenges } from "orcel/channels/auth";
 
 export const appAuth = withAuthChallenges(
   (request: Request) => {
@@ -63,24 +63,24 @@ export const appAuth = withAuthChallenges(
 );
 ```
 
-Replace `agent/channels/kaf.ts`, removing the earlier `devTeam` entry. The kaf channel checks `appAuth` for session creation, messages, controls, and streams. The remaining helpers preserve authenticated Vercel CLI access and local development:
+Replace `agent/channels/orcel.ts`, removing the earlier `devTeam` entry. The orcel channel checks `appAuth` for session creation, messages, controls, and streams. The remaining helpers preserve authenticated Vercel CLI access and local development:
 
-```ts title="agent/channels/kaf.ts"
-import { kafChannel } from "kaf/channels/kaf";
-import { localDev, vercelOidc } from "kaf/channels/auth";
+```ts title="agent/channels/orcel.ts"
+import { orcelChannel } from "orcel/channels/orcel";
+import { localDev, vercelOidc } from "orcel/channels/auth";
 import { appAuth } from "../lib/auth";
 
-export default kafChannel({
+export default orcelChannel({
   auth: [appAuth, vercelOidc(), localDev()],
 });
 ```
 
 The verified username becomes the user principal. The `growth` team selects the sample playbook from [Team playbooks](./team-playbooks). Keep these credentials private to one person. A shared password does not give each person a separate identity or isolated sessions. For a multi-user app, use a real session provider and enforce [session ownership](../guides/auth-and-route-protection#what-reaches-ctxsessionauth).
 
-Add `proxy.ts` at the project root so opening the dashboard triggers the browser's native username/password prompt. It protects the generated UI routes; kaf API routes keep their channel auth, so an OIDC-authenticated CLI request does not encounter a browser-only gate:
+Add `proxy.ts` at the project root so opening the dashboard triggers the browser's native username/password prompt. It protects the generated UI routes; orcel API routes keep their channel auth, so an OIDC-authenticated CLI request does not encounter a browser-only gate:
 
 ```ts title="proxy.ts"
-import { routeAuth } from "kaf/channels/auth";
+import { routeAuth } from "orcel/channels/auth";
 import { NextResponse } from "next/server";
 import { appAuth } from "./agent/lib/auth";
 
@@ -93,7 +93,7 @@ export async function proxy(request: Request) {
 export const config = { matcher: ["/", "/s/:path*"] };
 ```
 
-After login, the browser sends the credentials on same-origin requests from the generated chat. When a browser sends an `Origin` header, the Basic verifier also requires [`Sec-Fetch-Site: same-origin`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Sec-Fetch-Site). Keep the auth module server-side: never put the password in a React component, a `NEXT_PUBLIC_` variable, or a client-side `useKafAgent` option. Use HTTPS for deployed HTTP Basic authentication.
+After login, the browser sends the credentials on same-origin requests from the generated chat. When a browser sends an `Origin` header, the Basic verifier also requires [`Sec-Fetch-Site: same-origin`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Sec-Fetch-Site). Keep the auth module server-side: never put the password in a React component, a `NEXT_PUBLIC_` variable, or a client-side `useOrcelAgent` option. Use HTTPS for deployed HTTP Basic authentication.
 
 ## Deploy to Vercel
 
@@ -111,12 +111,12 @@ Before deploying, configure the model credential your agent uses in the project'
 npx vercel@latest deploy
 ```
 
-Open the HTTPS preview URL and enter the configured username and password. Create a session and ask a sample-data question. In a private browser window, cancel the login prompt and verify the dashboard is denied. A `POST /kaf/v1/session` request without credentials must also return `401`.
+Open the HTTPS preview URL and enter the configured username and password. Create a session and ask a sample-data question. In a private browser window, cancel the login prompt and verify the dashboard is denied. A `POST /orcel/v1/session` request without credentials must also return `401`.
 
-The authenticated web app and kaf runtime share the same origin, and the sandbox runs on Vercel Sandbox. You can also smoke-test the deployment through the authenticated CLI:
+The authenticated web app and orcel runtime share the same origin, and the sandbox runs on Vercel Sandbox. You can also smoke-test the deployment through the authenticated CLI:
 
 ```bash
-npx kaf remote connect --url https://your-analytics-app.vercel.app
+npx orcel remote connect --url https://your-analytics-app.vercel.app
 ```
 
 For a production deployment, add the username, password, and model credential to the Production environment too, then run `npx vercel@latest deploy --prod`. Missing Basic credentials keep browser access closed.

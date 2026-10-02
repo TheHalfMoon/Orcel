@@ -1,4 +1,4 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 const PROBE_DIRECTIVE = "AUTHORED-BUNDLING-PROBE";
 

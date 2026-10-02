@@ -1,5 +1,5 @@
-import type { ConnectorDef, ConnectorStatus } from "#kaf/types/connector";
-import { CONNECT_USER_ISSUER } from "#kaf/connect";
+import type { ConnectorDef, ConnectorStatus } from "#orcel/types/connector";
+import { CONNECT_USER_ISSUER } from "#orcel/connect";
 import type { ConnectTokenSubject } from "@vercel/connect";
 import {
   ConnectError,
@@ -155,7 +155,7 @@ export async function startConnectFlow(def: ConnectorDef, userId: string, callba
   });
 }
 
-export function isValidKafResumeUrl(url: string, origin: string) {
+export function isValidOrcelResumeUrl(url: string, origin: string) {
   try {
     const parsed = new URL(url);
     const expected = new URL(origin);
@@ -164,7 +164,7 @@ export function isValidKafResumeUrl(url: string, origin: string) {
       return false;
     }
 
-    return /^\/kaf\/v1\/connections\/[^/]+\/callback\/[^/]+$/.test(parsed.pathname);
+    return /^\/orcel\/v1\/connections\/[^/]+\/callback\/[^/]+$/.test(parsed.pathname);
   } catch {
     return false;
   }

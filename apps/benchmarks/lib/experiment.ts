@@ -21,14 +21,14 @@ export function authoringExperiment(options: {
     agent: `vercel-ai-gateway/${harnessId(options.benchmark.harness)}`,
     model: nativeModel(options.benchmark),
     evals:
-      process.env.KAF_BENCHMARK_EVAL ??
+      process.env.ORCEL_BENCHMARK_EVAL ??
       (options.evals ? [...options.evals] : [...publishedBenchmark.caseIds]),
     scripts: ["typecheck", "build"],
     runs: options.runs ?? 1,
     earlyExit: false,
     // Lower this when iterating on a case that stalls, so a hung turn surfaces
     // in minutes instead of consuming the full budget.
-    timeout: Number(process.env.KAF_BENCHMARK_TIMEOUT ?? 900),
+    timeout: Number(process.env.ORCEL_BENCHMARK_TIMEOUT ?? 900),
     sandbox: "vercel",
     copyFiles: "changed",
     setup: createNativeAuthoringSetup({

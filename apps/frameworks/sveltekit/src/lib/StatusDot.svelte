@@ -1,7 +1,7 @@
 <script lang="ts">
-  import type { UseKafAgentStatus } from "kaf/svelte";
+  import type { UseOrcelAgentStatus } from "orcel/svelte";
 
-  let { status }: { status?: UseKafAgentStatus } = $props();
+  let { status }: { status?: UseOrcelAgentStatus } = $props();
 
   let isLive = $derived(status === "submitted" || status === "streaming");
   let tone = $derived.by(() => {

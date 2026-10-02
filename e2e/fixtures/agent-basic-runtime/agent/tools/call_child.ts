@@ -1,5 +1,5 @@
-import { Client } from "kaf/client";
-import { defineDynamic, defineTool } from "kaf/tools";
+import { Client } from "orcel/client";
+import { defineDynamic, defineTool } from "orcel/tools";
 import { z } from "zod";
 
 export default defineDynamic({

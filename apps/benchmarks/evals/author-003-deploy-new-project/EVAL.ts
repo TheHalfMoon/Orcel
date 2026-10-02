@@ -5,13 +5,13 @@ import { authoringEval } from "./grader.js";
 const { commands, worldEvents } = authoringEval();
 const commandLog = commands.join("\n");
 
-test("reaches the named Vercel project through kaf without prompting", () => {
-  // The project name can be established by `kaf link` or passed to `kaf deploy`;
+test("reaches the named Vercel project through orcel without prompting", () => {
+  // The project name can be established by `orcel link` or passed to `orcel deploy`;
   // both end at the same linked project, so the world events below are what
   // decide whether the deployment actually happened.
-  expect(commandLog).toMatch(/kaf\s+(?:link|deploy)[^\n]*--project(?:=|\s+)field-notes/i);
-  expect(commandLog).toMatch(/kaf\s+deploy[^\n]*--non-interactive/i);
-  expect(commandLog).toMatch(/kaf\s+deploy[^\n]*--yes/i);
+  expect(commandLog).toMatch(/orcel\s+(?:link|deploy)[^\n]*--project(?:=|\s+)field-notes/i);
+  expect(commandLog).toMatch(/orcel\s+deploy[^\n]*--non-interactive/i);
+  expect(commandLog).toMatch(/orcel\s+deploy[^\n]*--yes/i);
   expect(commands).not.toContainEqual(
     expect.stringMatching(/(?:^|\s)(?:pnpm\s+exec\s+)?vercel\s+(?:link|env|deploy)\b/i),
   );

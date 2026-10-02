@@ -1,5 +1,5 @@
 ---
-issue: https://github.com/TheHalfMoon/kaf/issues/876
+issue: https://github.com/TheHalfMoon/orcel/issues/876
 status: proposed
 last_updated: "2026-09-04"
 ---
@@ -8,7 +8,7 @@ last_updated: "2026-09-04"
 
 ## Summary
 
-kaf's hosted turn latency is a product problem, not a model-speed problem. The deterministic
+orcel's hosted turn latency is a product problem, not a model-speed problem. The deterministic
 Vercel Workflow stress fixture currently takes about 3.1 seconds per sequential turn on the
 existing Workflow SDK, while production reports show 3.5–7 seconds before a model step starts.
 Local profiling reaches the same directional conclusion: a warm mock `turnStep` takes about
@@ -46,7 +46,7 @@ Removing guaranteed root-only caller steps reduces sequential mean by 33.1% in i
 current PR combination reduces mean by 34.0%, p50 by 33.9%, and p95 by 36.6%. A benchmark-only
 inline-turn prototype reduces p50 by 63.5%, and its combination with the root optimization
 reproduces 0.799–0.828-second p50s. That fast path cannot ship because it loses live-deployment,
-cancellation, and runtime-wait semantics, but it proves that kaf's parent/child topology—not the
+cancellation, and runtime-wait semantics, but it proves that orcel's parent/child topology—not the
 hosted platform—is the largest remaining fixed cost.
 
 The narrow background-work pass found no additional hot-path await that can safely move to
@@ -54,12 +54,12 @@ The narrow background-work pass found no additional hot-path await that can safe
 have no supported equivalent. Stream writes are already group-committed, the stress fixture's
 instrumentation flush is a no-op, and detaching attributes, hook operations, or terminal cleanup
 would weaken persistence ordering, retry safety, or cancellation. The useful follow-up is a small
-set of explicit Workflow primitives, not an kaf fire-and-forget shim.
+set of explicit Workflow primitives, not an orcel fire-and-forget shim.
 
 ## Observed baseline
 
 The current stress fixture uses a synchronous deterministic mock model, so its latency is almost
-entirely kaf and Workflow overhead. Recent unchanged/main-equivalent Vercel runs cluster at:
+entirely orcel and Workflow overhead. Recent unchanged/main-equivalent Vercel runs cluster at:
 
 | Metric                                                 |     Observed range |
 | ------------------------------------------------------ | -----------------: |
@@ -71,8 +71,8 @@ entirely kaf and Workflow overhead. Recent unchanged/main-equivalent Vercel runs
 | Sequential turn-order slope in two representative runs | +13.6–14.6 ms/turn |
 
 Representative GitHub runs are
-[`33449386170`](https://github.com/TheHalfMoon/kaf/actions/runs/33449386170) and
-[`33445215572`](https://github.com/TheHalfMoon/kaf/actions/runs/33445215572).
+[`33449386170`](https://github.com/TheHalfMoon/orcel/actions/runs/33449386170) and
+[`33445215572`](https://github.com/TheHalfMoon/orcel/actions/runs/33445215572).
 
 The turn-order slope is correlated with history depth but does not identify its cause: history,
 event-log growth, queue drift, changing hosted load, and warming all move with sequential test
@@ -80,22 +80,22 @@ order. It makes the trend visible; only an interleaved benchmark over independen
 history depths can call the resulting coefficient a history-depth slope.
 
 The Workflow dependency update in
-[PR #2611](https://github.com/TheHalfMoon/kaf/pull/2611) produced two runs near 4.91 seconds mean,
+[PR #2611](https://github.com/TheHalfMoon/orcel/pull/2611) produced two runs near 4.91 seconds mean,
 5.05–5.20 seconds p50, and 6.44–6.52 seconds p95. That is a useful demonstration that this fixture
 can expose a material regression, but it is correlation rather than causal proof: the runs were
 not an interleaved base/head experiment, and the upgrade changed several aligned Workflow
 packages. The beta.47 change that persists `hook_received` before publishing a wake is a leading
-hypothesis because kaf resumes two hot-path hooks per turn; it needs an isolated SDK A/B.
+hypothesis because orcel resumes two hot-path hooks per turn; it needs an isolated SDK A/B.
 [The Workflow change](https://github.com/vercel/workflow/pull/3841) explicitly adds one
 producer-side event-write round trip but expects end-to-end time-to-resume to remain approximately
 neutral because the consumer no longer performs the corresponding ensure write.
 
 Customer evidence is consistent with the stress fixture:
 
-- [Issue #876](https://github.com/TheHalfMoon/kaf/issues/876) records about 3.5 seconds from a warm
+- [Issue #876](https://github.com/TheHalfMoon/orcel/issues/876) records about 3.5 seconds from a warm
   channel webhook to model-step start, followed by only about 0.4 seconds of model work. Later
   reports observe 5–7 second dispatch/orchestration gaps.
-- [Issue #1476](https://github.com/TheHalfMoon/kaf/issues/1476) reports 1.1–5.5 second new-session create
+- [Issue #1476](https://github.com/TheHalfMoon/orcel/issues/1476) reports 1.1–5.5 second new-session create
   latency. `createSession()` currently waits for the workflow to own its stable command hook
   before returning the already-known run id.
 
@@ -124,8 +124,8 @@ produced these warm medians:
 The run is repeatable with:
 
 ```sh
-pnpm --filter kaf build:js
-pnpm --filter kaf exec vitest run \
+pnpm --filter orcel build:js
+pnpm --filter orcel exec vitest run \
   --config vitest.integration.config.ts \
   src/execution/workflow-entry.integration.test.ts \
   -t "parks in conversation mode and resumes via runtime delivery" \
@@ -133,7 +133,7 @@ pnpm --filter kaf exec vitest run \
 ```
 
 The phase timestamps, persisted input/output sizes, and stream-chunk counts were read from
-`packages/kaf/.kaf/.workflow-data/vitest-1/{runs,steps,streams}` after each of three clean runs.
+`packages/orcel/.orcel/.workflow-data/vitest-1/{runs,steps,streams}` after each of three clean runs.
 This is directional attribution, not the success gate. Phase 1 promotes the extraction into a
 committed reporter before an optimization relies on it.
 
@@ -198,7 +198,7 @@ The Vercel stress fixture now records raw millisecond samples in a versioned JSO
 - report: count, mean, p50, p90, p95, min, max, cold/warm buckets, and sequential
   turn-order slope, explicitly labeled as time-order confounded.
 
-`scripts/workflow-stress-report.mjs` reads the normal kaf eval artifacts and emits JSON and
+`scripts/workflow-stress-report.mjs` reads the normal orcel eval artifacts and emits JSON and
 Markdown. The existing PR Vercel e2e workflow appends the Markdown to the job summary and uploads
 both reports plus raw eval artifacts on successful stress runs. This establishes a history and
 makes a regression visible without pretending that one hosted sample is a reliable gate.
@@ -236,7 +236,7 @@ History-depth subjects must be independent pre-seeded sessions, requested in ran
 balanced interleaved order. Advancing one session from turn 1 through 100 remains a useful
 throughput test, but cannot separate history growth from elapsed test time.
 
-The artifact schema must include the base/head SHAs, kaf and Workflow package versions, world,
+The artifact schema must include the base/head SHAs, orcel and Workflow package versions, world,
 region, deployment URLs, run ids, request order, history depth, step count, event/stream-write
 count, serialized input/output bytes, and raw client and server phase durations. Client monotonic
 timings and server event timestamps stay separate; subtracting clocks from different machines
@@ -287,7 +287,7 @@ The hot-path audit produced this disposition:
 
 | Awaited work                                                                                         | Critical property                                                                            | Disposition                                                                                 |
 | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| Per-attempt `$kaf.*` attribute write                                                                 | Best-effort metadata, but cumulative writes must stay ordered and precede terminal run state | Overlap with result handling now; keep the join inside the step                             |
+| Per-attempt `$orcel.*` attribute write                                                                 | Best-effort metadata, but cumulative writes must stay ordered and precede terminal run state | Overlap with result handling now; keep the join inside the step                             |
 | Instrumentation provider `flush()`                                                                   | Public idle-drain guarantee; authored providers may buffer state                             | Measure, then split exporter drain from authored idle drain before backgrounding anything   |
 | Activity projection callback                                                                         | Best-effort presentation only; already invoked with `void`                                   | Retain lifetime and batch for reliability; there is no await left to remove                 |
 | Stable and authorization hook claims                                                                 | Both are required before the session can serve work, but neither depends on the other        | Start together and await both; preserve partial-failure cleanup                             |
@@ -298,7 +298,7 @@ The hot-path audit produced this disposition:
 | Instrumentation event handlers and trace preparation                                                 | Provider ordering, durable context state, and trace parenting                                | Keep awaited                                                                                |
 | Channel route background tasks                                                                       | Post-ack webhook work                                                                        | Already uses the appropriate request `waitUntil` path                                       |
 
-The first code change starts `setKafAttributes()` and `handleStepResult()` together, including the
+The first code change starts `setOrcelAttributes()` and `handleStepResult()` together, including the
 terminal `session.waiting` epilogue, then joins the attribute promise before returning from
 `turnStep`. This can hide the attribute round trip behind work already required to settle the
 result without allowing older cumulative counters to overwrite newer ones or racing
@@ -317,7 +317,7 @@ The next low-risk trials are:
 5. batch activity projections once per step and retain that callback for reliability.
 
 A direct host `waitUntil` comparison belongs in a fault-injection experiment, not the low-risk
-shipping queue. It must measure latency, `$kaf.*` tag retention, crash loss, retries, and
+shipping queue. It must measure latency, `$orcel.*` tag retention, crash loss, retries, and
 cross-step ordering, and it must not ship until Workflow exposes a supported step-lifetime API.
 
 Do not import Workflow's private `waitUntil` helper. Either use a supported public Workflow
@@ -333,51 +333,51 @@ stress e2e before it can ship.
 ### Hosted experiment ledger
 
 All deltas below use the exact benchmark-base run as the control. The stress model is synchronous,
-so these measurements isolate kaf and Workflow overhead rather than provider latency. Each row is
+so these measurements isolate orcel and Workflow overhead rather than provider latency. Each row is
 an independently pushed branch unless explicitly labeled as a combination. Raw JSON and Markdown
 reports are attached to the linked GitHub Actions runs.
 
 | Experiment                                     | Run                                                                     | Sequential mean | Sequential p50 | Sequential p95 | Concurrent second p50 | Turn-order slope | Decision                        |
 | ---------------------------------------------- | ----------------------------------------------------------------------- | --------------: | -------------: | -------------: | --------------------: | ---------------: | ------------------------------- |
-| Exact benchmark control                        | [`33468124247`](https://github.com/TheHalfMoon/kaf/actions/runs/33468124247) |         3.042 s |        3.036 s |        3.692 s |               1.867 s |   +13.31 ms/turn | Reference                       |
-| Parallel readiness hooks                       | [`33468104562`](https://github.com/TheHalfMoon/kaf/actions/runs/33468104562) |         3.018 s |        2.897 s |        3.753 s |               1.867 s |   +13.80 ms/turn | Neutral on follow-up turns      |
-| Overlap retired control cleanup                | [`33470436515`](https://github.com/TheHalfMoon/kaf/actions/runs/33470436515) |         3.084 s |        2.977 s |        3.604 s |               1.929 s |   +13.97 ms/turn | Neutral; do not merge           |
-| Workflow SDK beta.47                           | [`33468117677`](https://github.com/TheHalfMoon/kaf/actions/runs/33468117677) |         4.460 s |        4.847 s |        6.422 s |               1.863 s |    +7.40 ms/turn | Reject; material regression     |
-| Remove root no-op steps                        | [`33468608676`](https://github.com/TheHalfMoon/kaf/actions/runs/33468608676) |         2.036 s |        2.053 s |        2.367 s |               1.584 s |    +5.17 ms/turn | Ship                            |
-| Root no-ops + attribute overlap                | [`33469404605`](https://github.com/TheHalfMoon/kaf/actions/runs/33469404605) |         2.009 s |        2.008 s |        2.341 s |               1.607 s |    +5.27 ms/turn | Current PR candidate            |
-| Inline ordinary root turn                      | [`33468225787`](https://github.com/TheHalfMoon/kaf/actions/runs/33468225787) |         1.170 s |        1.110 s |        1.515 s |               0.946 s |    +0.44 ms/turn | Ceiling only; semantics missing |
-| Root no-ops + inline root turn, confirmation 1 | [`33469355029`](https://github.com/TheHalfMoon/kaf/actions/runs/33469355029) |         0.814 s |        0.799 s |        1.063 s |               0.743 s |    +2.63 ms/turn | Architectural floor             |
-| Root no-ops + inline root turn, confirmation 2 | [`33469627035`](https://github.com/TheHalfMoon/kaf/actions/runs/33469627035) |         0.858 s |        0.828 s |        1.218 s |               0.738 s |    +3.35 ms/turn | Architectural floor reproduced  |
+| Exact benchmark control                        | [`33468124247`](https://github.com/TheHalfMoon/orcel/actions/runs/33468124247) |         3.042 s |        3.036 s |        3.692 s |               1.867 s |   +13.31 ms/turn | Reference                       |
+| Parallel readiness hooks                       | [`33468104562`](https://github.com/TheHalfMoon/orcel/actions/runs/33468104562) |         3.018 s |        2.897 s |        3.753 s |               1.867 s |   +13.80 ms/turn | Neutral on follow-up turns      |
+| Overlap retired control cleanup                | [`33470436515`](https://github.com/TheHalfMoon/orcel/actions/runs/33470436515) |         3.084 s |        2.977 s |        3.604 s |               1.929 s |   +13.97 ms/turn | Neutral; do not merge           |
+| Workflow SDK beta.47                           | [`33468117677`](https://github.com/TheHalfMoon/orcel/actions/runs/33468117677) |         4.460 s |        4.847 s |        6.422 s |               1.863 s |    +7.40 ms/turn | Reject; material regression     |
+| Remove root no-op steps                        | [`33468608676`](https://github.com/TheHalfMoon/orcel/actions/runs/33468608676) |         2.036 s |        2.053 s |        2.367 s |               1.584 s |    +5.17 ms/turn | Ship                            |
+| Root no-ops + attribute overlap                | [`33469404605`](https://github.com/TheHalfMoon/orcel/actions/runs/33469404605) |         2.009 s |        2.008 s |        2.341 s |               1.607 s |    +5.27 ms/turn | Current PR candidate            |
+| Inline ordinary root turn                      | [`33468225787`](https://github.com/TheHalfMoon/orcel/actions/runs/33468225787) |         1.170 s |        1.110 s |        1.515 s |               0.946 s |    +0.44 ms/turn | Ceiling only; semantics missing |
+| Root no-ops + inline root turn, confirmation 1 | [`33469355029`](https://github.com/TheHalfMoon/orcel/actions/runs/33469355029) |         0.814 s |        0.799 s |        1.063 s |               0.743 s |    +2.63 ms/turn | Architectural floor             |
+| Root no-ops + inline root turn, confirmation 2 | [`33469627035`](https://github.com/TheHalfMoon/orcel/actions/runs/33469627035) |         0.858 s |        0.828 s |        1.218 s |               0.738 s |    +3.35 ms/turn | Architectural floor reproduced  |
 
 The current PR candidate improves the exact control by 34.0% on sequential mean, 33.9% on p50,
 36.6% on p95, and 13.9% on concurrent second-turn p50. The independently confirmed root no-op
 change accounts for almost all of that result; attribute overlap is directionally small compared
 with hosted noise. The two combined-floor runs reproduce a 71.8–73.2% mean reduction and a
-72.7–73.7% p50 reduction, proving that sub-second warm turns are possible if kaf replaces the
+72.7–73.7% p50 reduction, proving that sub-second warm turns are possible if orcel replaces the
 parent/child topology without losing its semantics.
 
 ### 1. Isolate Workflow SDK and resume cost
 
-Run the same kaf SHA against the current Workflow package set and beta.47, with beta.46 included
+Run the same orcel SHA against the current Workflow package set and beta.47, with beta.46 included
 if its public hook API is compatible. Interleave at least five deployed runs per package set. Add
-a small Workflow-only benchmark for one persisted `resumeHook` and an kaf-shaped two-resume child
+a small Workflow-only benchmark for one persisted `resumeHook` and an orcel-shaped two-resume child
 round trip.
 
-This decides whether the recent approximately 1.8-second fixed regression belongs in kaf, the
+This decides whether the recent approximately 1.8-second fixed regression belongs in orcel, the
 Workflow SDK/world, or their interaction. If write-before-wake is the cost, work with Workflow on
-a transactional persist-and-wake primitive; kaf must not restore a lossy wake ordering.
+a transactional persist-and-wake primitive; orcel must not restore a lossy wake ordering.
 
 #### Hosted result
 
 The isolated `barba/perf-exp-workflow-sdk-latest` branch changed only the aligned Workflow
 packages from the benchmark base to beta.47. Its stress job
-[`33468117677`](https://github.com/TheHalfMoon/kaf/actions/runs/33468117677) completed and regressed
+[`33468117677`](https://github.com/TheHalfMoon/orcel/actions/runs/33468117677) completed and regressed
 sequential mean from 3.042 to 4.460 seconds (+46.6%), p50 from 3.036 to 4.847 seconds (+59.7%),
 and p95 from 3.692 to 6.422 seconds (+73.9%). Concurrent second-turn p50 was effectively neutral
 at 1.863 versus 1.867 seconds, so the package set changed the sequential path rather than applying
 a uniform hosted-load penalty.
 
-Do not upgrade kaf on this result. The two approximately 4.91-second runs from PR #2611 point in
+Do not upgrade orcel on this result. The two approximately 4.91-second runs from PR #2611 point in
 the same direction, but the experiment does not assign causality to one Workflow change because
 the compatible core, API, Vercel World, and Nitro packages moved together. A Workflow-only
 `resumeHook`/child-round-trip microbenchmark is still required before attributing the regression
@@ -400,13 +400,13 @@ contemporaneous instrumentation-only control. The first experiment SHA, `522e869
 identical to the final `863daf1` SHA; the amend changed comments only. All three stress jobs
 completed successfully and uploaded their raw JSON reports:
 
-- [Control run `33468124247`](https://github.com/TheHalfMoon/kaf/actions/runs/33468124247), SHA
-  `57b477d`, with [artifact `9785707208`](https://github.com/TheHalfMoon/kaf/actions/runs/33468124247/artifacts/9785707208).
-- [Experiment run `33468070932`](https://github.com/TheHalfMoon/kaf/actions/runs/33468070932), SHA
-  `522e869`, with [artifact `9785657364`](https://github.com/TheHalfMoon/kaf/actions/runs/33468070932/artifacts/9785657364).
-- [Confirmatory experiment run `33468608676`](https://github.com/TheHalfMoon/kaf/actions/runs/33468608676),
+- [Control run `33468124247`](https://github.com/TheHalfMoon/orcel/actions/runs/33468124247), SHA
+  `57b477d`, with [artifact `9785707208`](https://github.com/TheHalfMoon/orcel/actions/runs/33468124247/artifacts/9785707208).
+- [Experiment run `33468070932`](https://github.com/TheHalfMoon/orcel/actions/runs/33468070932), SHA
+  `522e869`, with [artifact `9785657364`](https://github.com/TheHalfMoon/orcel/actions/runs/33468070932/artifacts/9785657364).
+- [Confirmatory experiment run `33468608676`](https://github.com/TheHalfMoon/orcel/actions/runs/33468608676),
   final SHA `863daf1`, with
-  [artifact `9785832093`](https://github.com/TheHalfMoon/kaf/actions/runs/33468608676/artifacts/9785832093).
+  [artifact `9785832093`](https://github.com/TheHalfMoon/orcel/actions/runs/33468608676/artifacts/9785832093).
 
 The control and confirmatory workflows' aggregate conclusions are failures because their separate
 `fixture-tasks` jobs failed. Their `agent-workflow-stress` jobs and artifact uploads succeeded.
@@ -442,8 +442,8 @@ both before the driver parked or returned. It retained cleanup-first error prece
 overlap the active child's cancellation-hook disposal with terminal publication. Twenty-six
 focused Workflow/cancellation integrations passed.
 
-Hosted run [`33470436515`](https://github.com/TheHalfMoon/kaf/actions/runs/33470436515), with raw report
-[artifact `9786485510`](https://github.com/TheHalfMoon/kaf/actions/runs/33470436515/artifacts/9786485510),
+Hosted run [`33470436515`](https://github.com/TheHalfMoon/orcel/actions/runs/33470436515), with raw report
+[artifact `9786485510`](https://github.com/TheHalfMoon/orcel/actions/runs/33470436515/artifacts/9786485510),
 did not show a material improvement against the exact control:
 
 | Metric                      |       Control | Overlap branch | Delta |
@@ -463,20 +463,20 @@ this one.
 
 ### 3. Reduce observability-only work in each step
 
-`setKafAttributes` is awaited after every model attempt. Inside a Workflow step the SDK writes an
+`setOrcelAttributes` is awaited after every model attempt. Inside a Workflow step the SDK writes an
 attribute event to the world, so best-effort error handling does not make it free. The first
 low-risk change overlaps that write with result handling while still joining it before step exit.
 A/B the stress and 1/2/4/8-step cases against the serialized implementation. If the remaining
 cost is material, compare disabling the write, a host-retained write with measured tag retention,
 and one cumulative write attached to the terminal control step.
 
-The stream-write audit does not currently justify an kaf runtime change. kaf already coalesces
+The stream-write audit does not currently justify an orcel runtime change. orcel already coalesces
 adjacent text, reasoning, tool-input, and tool-partial events in its bounded ordered emitter.
 Workflow `@workflow/core@5.0.0-beta.43` then acknowledges `writer.write()` when a chunk enters its
 bounded buffer and group-commits buffered chunks with `world.streams.writeMulti`. The Vercel World
 implementation (`@workflow/world-vercel@5.0.0-beta.39`) preserves each chunk boundary inside that
 single request. `writer.close()` drains pending writes before closing, and the step executor adopts
-the same drain barrier when kaf releases the writer lock to park.
+the same drain barrier when orcel releases the writer lock to park.
 
 A controlled probe against the installed Workflow stream implementation used eight ordered chunks
 and a mocked World with 20–40 ms write latency:
@@ -488,13 +488,13 @@ and a mocked World with 20–40 ms write latency:
 | Immediate, 5 ms flush interval      | 1 `writeMulti`             |            1 | At least 5 ms leading delay        |
 
 This is protocol-level evidence, not a hosted latency result. It disproves the assumption that
-eight awaited kaf writes necessarily create eight persistence round trips. Making the global
+eight awaited orcel writes necessarily create eight persistence round trips. Making the global
 flush interval positive could collapse a burst to one request, but would add fixed delay to the
 first text, tool, and terminal chunk of every idle stream. That violates this experiment's
 immediate-streaming constraint.
 
-Packing several kaf events into one Workflow chunk is also incorrect with the current protocol.
-Workflow reconnects by chunk index, while kaf clients increment that cursor once per decoded
+Packing several orcel events into one Workflow chunk is also incorrect with the current protocol.
+Workflow reconnects by chunk index, while orcel clients increment that cursor once per decoded
 event. A disconnect after the first event in a packed chunk would resume at the next chunk and
 skip the remainder. Promise concurrency would not reduce backend writes and could move lifecycle
 handlers ahead of durable event order.
@@ -585,12 +585,12 @@ rather than deleting the child boundary.
 The focused two-turn integration path passed, but the installed
 `@workflow/core@5.0.0-beta.43` implements `Run.returnValue` by polling run state every second from
 a `"use step"` getter and warns that the wait occupies a queue worker. The hosted stress run
-[`33469001202`](https://github.com/TheHalfMoon/kaf/actions/runs/33469001202) then failed the sequential
+[`33469001202`](https://github.com/TheHalfMoon/orcel/actions/runs/33469001202) then failed the sequential
 case after only two completed turns: turns 1 and 2 took 2.536 and 2.379 seconds, turn 3 never
 settled, and the eval aborted at 600.002 seconds. The concurrent two-turn case completed in 9.651
 seconds, but no performance report was emitted because the sequential gate timed out. The raw
 JUnit evidence is retained in
-[artifact `9786105820`](https://github.com/TheHalfMoon/kaf/actions/runs/33469001202/artifacts/9786105820).
+[artifact `9786105820`](https://github.com/TheHalfMoon/orcel/actions/runs/33469001202/artifacts/9786105820).
 
 Do not ship the polling join. The sustained-turn stall is consistent with the SDK's documented
 worker-capacity hazard, and replacing one terminal resume with a polling step is not a latency
@@ -640,7 +640,7 @@ The isolated `barba/perf-exp-parallel-hooks` branch started independent stable/a
 claims together and overlapped continuation-ownership validation with stable-hook readiness while
 retaining partial-failure cleanup. Focused correctness, type, invariant, and build checks passed.
 Its hosted stress run
-[`33468104562`](https://github.com/TheHalfMoon/kaf/actions/runs/33468104562) was neutral on the measured
+[`33468104562`](https://github.com/TheHalfMoon/orcel/actions/runs/33468104562) was neutral on the measured
 follow-up path: mean changed from 3.042 to 3.018 seconds (−0.8%), p50 to 2.897 seconds (−4.6%),
 p95 to 3.753 seconds (+1.6%), and concurrent second-turn p50 remained 1.867 seconds. The first
 cold turn was also unchanged at 2.614 versus 2.615 seconds.
@@ -667,7 +667,7 @@ after an interruption for lower sequential-cycle latency.
 #### Instrumentation flush audit
 
 The low-risk audit found a real critical-path await, but no safe detach primitive available to
-kaf step code today. `createExecutionNodeStep()` awaits `instrumentation.flush()` in `finally`
+orcel step code today. `createExecutionNodeStep()` awaits `instrumentation.flush()` in `finally`
 before `turnStep` can derive its next action. The resulting boundaries are:
 
 | Path                                                                   | Awaited drains | Logical boundary                                  |
@@ -686,7 +686,7 @@ session from overlapping. Detaching the entire operation would therefore change
 authored-provider ordering as well as exporter timing.
 
 This path does not explain the existing Vercel stress baseline. That fixture uses the legacy
-single-file `instrumentation.ts` layout. Its kaf runtime installs an async no-op `forceFlush`;
+single-file `instrumentation.ts` layout. Its orcel runtime installs an async no-op `forceFlush`;
 the optional Datadog `registerOTel()` call made during setup is outside that runtime. The current
 per-step await in the stress fixture therefore drains no network exporter. A regression probe now
 holds a fake drain open and proves structurally that a harness step cannot settle until the drain
@@ -697,14 +697,14 @@ move the real provider-directory exporter drain off its response path. Nitro's p
 `event.waitUntil()` exists only at the route boundary, while the step body receives no `H3Event`.
 Workflow's public exports expose no step-scoped equivalent. Its runtime has a private helper that
 loads Vercel Functions' request-scoped `waitUntil`, but importing that private module would couple
-kaf to an unsupported implementation detail. Calling Vercel Functions directly is insufficient
-for kaf's portable runtime: outside a Vercel request context it silently registers nothing and
+orcel to an unsupported implementation detail. Calling Vercel Functions directly is insufficient
+for orcel's portable runtime: outside a Vercel request context it silently registers nothing and
 does not report whether the promise gained a lifetime owner, so an await fallback cannot be
 selected reliably.
 
 The required primitive is a public step-scoped operation such as
 `waitUntil(promise): "registered" | "unsupported"` that guarantees the current invocation remains
-alive in hosted, local, and self-hosted worlds, or explicitly reports that kaf must await. Once it
+alive in hosted, local, and self-hosted worlds, or explicitly reports that orcel must await. Once it
 exists, the narrow experiment should keep authored provider flushes awaited, serialize internal
 exporter drains, register only the non-rejecting internal exporter promise in the step lifetime,
 and retain full awaited drains for shutdown. A dedicated provider-directory fixture with a gated
@@ -716,19 +716,19 @@ proof of the change.
 ### Inline-turn ceiling result
 
 The benchmark-only branch in
-[PR #2824](https://github.com/TheHalfMoon/kaf/pull/2824) executed an ordinary root turn in the session
+[PR #2824](https://github.com/TheHalfMoon/orcel/pull/2824) executed an ordinary root turn in the session
 driver instead of starting a child run. The isolated hosted run
-[`33468225787`](https://github.com/TheHalfMoon/kaf/actions/runs/33468225787) reduced sequential mean by
+[`33468225787`](https://github.com/TheHalfMoon/orcel/actions/runs/33468225787) reduced sequential mean by
 61.6% (3.042 to 1.170 seconds), p50 by 63.5% (3.036 to 1.110 seconds), p95 by 59.0% (3.692 to
 1.515 seconds), and concurrent second-turn p50 by 49.3% (1.867 to 0.946 seconds). The turn-order
 slope fell from 13.31 to 0.44 ms/turn.
 
 Combining that prototype with root no-op removal crossed the product target twice. Runs
-[`33469355029`](https://github.com/TheHalfMoon/kaf/actions/runs/33469355029) and
-[`33469627035`](https://github.com/TheHalfMoon/kaf/actions/runs/33469627035) recorded sequential p50s
+[`33469355029`](https://github.com/TheHalfMoon/orcel/actions/runs/33469355029) and
+[`33469627035`](https://github.com/TheHalfMoon/orcel/actions/runs/33469627035) recorded sequential p50s
 of 0.799 and 0.828 seconds and p95s of 1.063 and 1.218 seconds. Both stress jobs passed. This is
 the strongest evidence in the investigation: the existing platform can sustain sub-second warm
-turns when kaf removes the parent/child round trip.
+turns when orcel removes the parent/child round trip.
 
 The prototype is deliberately non-mergeable. It pins future ordinary turns to the driver's
 deployment and lacks the child's mid-turn cancellation, runtime wait, sleep, and background-work
@@ -739,7 +739,7 @@ shipping the inline fast path.
 ## Structural direction
 
 The preferred long-term prototype is a chain of bounded, latest-deployment turn runs behind a
-stable kaf session identity:
+stable orcel session identity:
 
 ```text
 stable session address
@@ -763,7 +763,7 @@ experiment, not a settled implementation. The handoff must preserve all of these
 - subagent/task caller settlement and descendant routing;
 - safe at-least-once terminal notifications and stale-message rejection.
 
-If Workflow cannot provide atomic hook ownership transfer, an kaf-owned sequenced inbox/CAS may be
+If Workflow cannot provide atomic hook ownership transfer, an orcel-owned sequenced inbox/CAS may be
 necessary. A direct ingress fast path that starts a turn before driver replay is another possible
 prototype, but it has the same serialization and fencing problem and should follow, not precede,
 the successor-run experiment.
@@ -813,7 +813,7 @@ It also shows why the workaround should not ship as the performance fix:
 - the prototype intentionally omits production cancellation, timeout, authorization, HITL,
   subagent/task, terminal-caller, and failure-recovery paths.
 
-Consequently there is no hosted stress result for this branch: wiring the prototype into the kaf
+Consequently there is no hosted stress result for this branch: wiring the prototype into the orcel
 runtime would knowingly add overhead and leave required semantics incomplete. The focused test is
 the proof artifact, not a benchmark substitute. Commit `a4c7ae2` retains that artifact; two
 focused integration cases, full typecheck, lint, and invariant checks pass.
@@ -828,10 +828,10 @@ and existing stream, one commit must:
    successor;
 4. keep `resumeHook(stableToken, payload)` continuously addressable, never transiently not found;
 5. return the same successor on replay of the handoff id; and
-6. preserve the stable kaf session id and original resumable stream.
+6. preserve the stable orcel session id and original resumable stream.
 
-An kaf-owned durable inbox with monotonic sequence numbers and compare-and-swap ownership could
-provide equivalent semantics, but then kaf owns a new storage protocol, retry/fencing rules, and a
+An orcel-owned durable inbox with monotonic sequence numbers and compare-and-swap ownership could
+provide equivalent semantics, but then orcel owns a new storage protocol, retry/fencing rules, and a
 stream directory. Prototype that only if Workflow cannot expose the atomic operation. Even with
 either handoff, append-only history revisions or delta snapshots remain a separate requirement to
 remove the growing successor-input payload.
@@ -878,13 +878,13 @@ and all durable correctness suites must pass. For the first structural release, 
   concurrent-delivery semantics.
 
 The product north star is sub-second framework-controlled time from a warm accepted delivery to
-model-step start at p50, with p95 below 1.5 seconds. Phase data may show a platform floor that kaf
+model-step start at p50, with p95 below 1.5 seconds. Phase data may show a platform floor that orcel
 cannot remove alone; in that case the report must isolate that floor and the plan moves the
 corresponding primitive into the Workflow workstream rather than weakening the measurement.
 
 ## Non-goals
 
-- Counting a faster model/provider as an kaf performance improvement.
+- Counting a faster model/provider as an orcel performance improvement.
 - Masking pre-model delay with UI animation or synthetic streaming.
 - Optimizing generic map construction, metadata parsing, or compression before phase data makes
   it material.

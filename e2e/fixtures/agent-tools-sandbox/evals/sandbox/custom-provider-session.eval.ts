@@ -1,5 +1,5 @@
-import { defineEval } from "kaf/evals";
-import { includes } from "kaf/evals/expect";
+import { defineEval } from "orcel/evals";
+import { includes } from "orcel/evals/expect";
 
 const TOKEN = "custom-provider-session-ok-P7M";
 

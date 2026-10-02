@@ -105,7 +105,7 @@ Results reach the model one way: a `task.result` message at a step boundary. Rem
   calls it waits on, and every working task; it still accepts `turnId` and `signal`.
 
 The model no longer sees `[Task state]` or `[Agents]` notes, prose task notifications,
-`<kaf-empty-delivery/>`, or result turns. A `[Tasks]` note lists its working and idle tasks
+`<orcel-empty-delivery/>`, or result turns. A `[Tasks]` note lists its working and idle tasks
 instead. The `BACKGROUND_TASK_FAILED` and `BACKGROUND_TASK_CANCELLED` codes are removed; a
 failed task reports its error in `task.settled` and in its `task.result` block.
 
@@ -181,7 +181,7 @@ client that accepts only versions up to 25 fails the stream with an unsupported-
 ## Upgrade remote agents before their callers
 
 The remote agent protocol is now version 2. Deploy each [remote agent](/docs/guides/remote-agents)
-before the deployments that call it. A remote agent on this release still serves callers on kaf 0.66
+before the deployments that call it. A remote agent on this release still serves callers on orcel 0.66
 through 0.68, which speak protocol 1. It runs their turns, sends each result to their callback, and
 accepts their follow-up and reset requests. It also sends the remote agent's tool approvals and
 sign-in requests to the caller, and accepts the caller's answers, the same way a 0.66–0.68 remote

@@ -1,5 +1,5 @@
 ---
-issue: https://github.com/TheHalfMoon/kaf/issues/2461
+issue: https://github.com/TheHalfMoon/orcel/issues/2461
 status: implemented
 last_updated: "2026-09-06"
 ---

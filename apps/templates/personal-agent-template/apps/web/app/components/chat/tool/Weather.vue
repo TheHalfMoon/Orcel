@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { WeatherUIToolInvocation } from "#kaf/utils/tools/weather";
+import type { WeatherUIToolInvocation } from "#orcel/utils/tools/weather";
 
 const props = defineProps<{
   invocation: WeatherUIToolInvocation;

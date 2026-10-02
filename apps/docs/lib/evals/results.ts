@@ -26,7 +26,7 @@ export interface BenchmarkResult {
 }
 
 export interface BenchmarkSuite {
-  kafRevision: string | null;
+  orcelRevision: string | null;
   caseFingerprint: string | null;
   caseCount: number;
   runsPerCell: number;

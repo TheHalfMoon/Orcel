@@ -1,9 +1,9 @@
 ---
 title: "Security Model"
-description: "kaf's trust boundaries, where secrets live, how credentials reach hosts, and what fails closed by default."
+description: "orcel's trust boundaries, where secrets live, how credentials reach hosts, and what fails closed by default."
 ---
 
-Your kaf agent runs across two contexts, with a trust boundary between them and every secret kept on the trusted side. Use this mental model when deciding what an agent (and the model driving it) is allowed to reach.
+Your orcel agent runs across two contexts, with a trust boundary between them and every secret kept on the trusted side. Use this mental model when deciding what an agent (and the model driving it) is allowed to reach.
 
 ## Trust boundaries
 
@@ -20,14 +20,14 @@ The sandbox is the isolated side. The model runs shell commands and accesses fil
 
 A concrete trace makes the boundary clear. When the model calls a custom `charge_card` tool, its `execute` runs in the app runtime, reads `process.env.STRIPE_KEY`, calls Stripe, and returns `{ ok: true }`. The model sees only `{ ok: true }`: the key never leaves the app runtime, and nothing about the call touches the sandbox. The built-in `write_file` is the mirror image, running in the app runtime and proxying the write into the sandbox `/workspace`. Either way the model drives the work through tool calls and their results, never by holding a credential or reaching the runtime directly.
 
-See [Agent loop and sandbox](./execution-model-and-durability#agent-loop-and-sandbox) for how kaf connects these contexts while keeping their state and lifetimes separate.
+See [Agent loop and sandbox](./execution-model-and-durability#agent-loop-and-sandbox) for how orcel connects these contexts while keeping their state and lifetimes separate.
 
 ## Data flow at a glance
 
 ```mermaid
 flowchart LR
   User["User or channel provider"] --> Channel["Channel route and route auth"]
-  Channel --> Runtime["kaf app runtime and durable session"]
+  Channel --> Runtime["orcel app runtime and durable session"]
   Runtime --> Model["Configured model provider or Vercel AI Gateway"]
   Runtime --> Tools["Authored tools and connections"]
   Tools --> Services["Customer-selected external services"]
@@ -36,26 +36,26 @@ flowchart LR
   Runtime --> Telemetry["Configured telemetry or eval provider"]
 ```
 
-kaf sends data where your agent configuration and runtime choices send it:
+orcel sends data where your agent configuration and runtime choices send it:
 
-- Inbound channel data flows through the channel provider you configure, then into the kaf app runtime.
+- Inbound channel data flows through the channel provider you configure, then into the orcel app runtime.
 - Model inputs and outputs flow to the model or routing path selected in `agent.ts`, such as a Vercel AI Gateway model id or a provider-authored `LanguageModel`.
 - Tool and connection calls flow to the external services, MCP servers, OpenAPI endpoints, and channels you configure.
 - Sandbox commands can reach network destinations allowed by the sandbox network policy.
 - Telemetry flows to destinations configured under `agent/instrumentation/`.
-  kaf also records local traces during `kaf dev` and exports to Vercel Agent
+  orcel also records local traces during `orcel dev` and exports to Vercel Agent
   Runs in preview and production by default. Eval data flows to the reporters
   configured in eval settings.
 
-kaf stores durable session and workflow state needed to resume conversations, stream events, replay completed steps, and show run observability. You are responsible for deciding whether the selected channels, model providers, connected services, sandbox egress destinations, telemetry exporters, retention settings, and deletion controls are appropriate for your data and use case.
+orcel stores durable session and workflow state needed to resume conversations, stream events, replay completed steps, and show run observability. You are responsible for deciding whether the selected channels, model providers, connected services, sandbox egress destinations, telemetry exporters, retention settings, and deletion controls are appropriate for your data and use case.
 
 ## Credential brokering
 
-Credential brokering gives the model _authenticated_ network access from inside the sandbox, like a `git clone` of a private repo or an authenticated `curl`, when there's no [tool](../tools) or [connection](../connections) to route it through. On the Vercel Sandbox backend, auth headers get injected at the sandbox's network firewall for matching domains. The secret stays in the app runtime; the sandbox process only ever sees the response. See [Vercel Sandbox Credential Brokering](https://vercel.com/docs/sandbox/concepts/firewall#credentials-brokering) for the platform mechanism, and [Sandbox](../sandbox) for the kaf policy API.
+Credential brokering gives the model _authenticated_ network access from inside the sandbox, like a `git clone` of a private repo or an authenticated `curl`, when there's no [tool](../tools) or [connection](../connections) to route it through. On the Vercel Sandbox backend, auth headers get injected at the sandbox's network firewall for matching domains. The secret stays in the app runtime; the sandbox process only ever sees the response. See [Vercel Sandbox Credential Brokering](https://vercel.com/docs/sandbox/concepts/firewall#credentials-brokering) for the platform mechanism, and [Sandbox](../sandbox) for the orcel policy API.
 
 ## Connection credentials
 
-[Connection](../connections) tokens (MCP and OpenAPI) come from either `getToken()` or an interactive OAuth flow, and kaf injects the resolved token into every outbound request. The token is cached per step and never serialized to durable state.
+[Connection](../connections) tokens (MCP and OpenAPI) come from either `getToken()` or an interactive OAuth flow, and orcel injects the resolved token into every outbound request. The token is cached per step and never serialized to durable state.
 
 ## Channel verification
 
@@ -75,7 +75,7 @@ A custom channel that accepts dashboard-style webhooks should follow the same sh
 
 ## Authored markdown is data
 
-[Skill](../skills) and [schedule](../schedules) files are markdown with YAML frontmatter, and kaf treats that frontmatter strictly as data. The code-capable engines (`---js` / `---javascript`, which would `eval()` the frontmatter body the moment the file is parsed) are disabled, so such a fence throws rather than running. Frontmatter has to parse to a plain YAML object.
+[Skill](../skills) and [schedule](../schedules) files are markdown with YAML frontmatter, and orcel treats that frontmatter strictly as data. The code-capable engines (`---js` / `---javascript`, which would `eval()` the frontmatter body the moment the file is parsed) are disabled, so such a fence throws rather than running. Frontmatter has to parse to a plain YAML object.
 
 ## Auth fails closed
 
@@ -85,7 +85,7 @@ Routes reject unauthenticated traffic by default. If no `AuthFn` in the walk acc
 
 Before exposing an agent to real traffic:
 
-- [ ] Replace `placeholderAuth()` in `agent/channels/kaf.ts` with a real
+- [ ] Replace `placeholderAuth()` in `agent/channels/orcel.ts` with a real
       `AuthFn` (`vercelOidc()`, `httpBasic()`, `oidc()`, or your own). Verify an
       unauthenticated production request gets `401`.
 - [ ] Verify channel signatures. Each platform channel needs its signing

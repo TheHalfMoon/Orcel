@@ -1,5 +1,5 @@
-import { defineEval, type KafEvalTargetHandle } from "kaf/evals";
-import { satisfies } from "kaf/evals/expect";
+import { defineEval, type OrcelEvalTargetHandle } from "orcel/evals";
+import { satisfies } from "orcel/evals/expect";
 
 const TOOL_NAME = "wait-for-cancellation";
 
@@ -16,7 +16,7 @@ interface ResetResponse {
 }
 
 async function postJson<T>(
-  target: KafEvalTargetHandle,
+  target: OrcelEvalTargetHandle,
   path: string,
   body: unknown,
   expectedStatus: number,
@@ -35,7 +35,7 @@ async function postJson<T>(
   return JSON.parse(text) as T;
 }
 
-/** Exercises every ID-only kaf HTTP session operation as one lifecycle. */
+/** Exercises every ID-only orcel HTTP session operation as one lifecycle. */
 export default defineEval({
   tags: ["real-model"],
   description: "Keep HTTP session operations pinned to one immutable session ID.",
@@ -44,7 +44,7 @@ export default defineEval({
   async test(t) {
     const created = await postJson<AcceptedResponse>(
       t.target,
-      "/kaf/v1/session",
+      "/orcel/v1/session",
       { message: "Reply with exactly HTTP-SESSION-INITIAL-OK." },
       202,
     );
@@ -68,7 +68,7 @@ export default defineEval({
     });
     const sent = await postJson<AcceptedResponse>(
       t.target,
-      `/kaf/v1/session/${sessionId}`,
+      `/orcel/v1/session/${sessionId}`,
       { message: "Please wait for cancellation." },
       202,
     );
@@ -88,7 +88,7 @@ export default defineEval({
     });
     const cancelled = await postJson<AcceptedResponse>(
       t.target,
-      `/kaf/v1/session/${sessionId}/cancel`,
+      `/orcel/v1/session/${sessionId}/cancel`,
       {},
       202,
     );
@@ -110,7 +110,7 @@ export default defineEval({
     const liveCompaction = t.target.watchTurn(sessionId, { startIndex: eventIndex });
     const compacted = await postJson<AcceptedResponse>(
       t.target,
-      `/kaf/v1/session/${sessionId}/compact`,
+      `/orcel/v1/session/${sessionId}/compact`,
       {},
       202,
     );
@@ -133,7 +133,7 @@ export default defineEval({
     const liveClear = t.target.watchTurn(sessionId, { startIndex: eventIndex });
     const cleared = await postJson<AcceptedResponse>(
       t.target,
-      `/kaf/v1/session/${sessionId}/clear`,
+      `/orcel/v1/session/${sessionId}/clear`,
       {},
       202,
     );
@@ -153,7 +153,7 @@ export default defineEval({
     const liveFollowUp = t.target.watchTurn(sessionId, { startIndex: eventIndex });
     const followUpResponse = await postJson<AcceptedResponse>(
       t.target,
-      `/kaf/v1/session/${sessionId}`,
+      `/orcel/v1/session/${sessionId}`,
       { message: "Reply with exactly HTTP-SESSION-FOLLOW-UP-OK." },
       202,
     );
@@ -171,7 +171,7 @@ export default defineEval({
 
     const reset = await postJson<ResetResponse>(
       t.target,
-      `/kaf/v1/session/${sessionId}/reset`,
+      `/orcel/v1/session/${sessionId}/reset`,
       { reason: "Verify immutable HTTP session identity" },
       200,
     );
@@ -185,7 +185,7 @@ export default defineEval({
 
     const rejected = await postJson<{ readonly code?: string; readonly ok?: boolean }>(
       t.target,
-      `/kaf/v1/session/${sessionId}`,
+      `/orcel/v1/session/${sessionId}`,
       { message: "This must not create or follow a replacement." },
       409,
     );
@@ -200,7 +200,7 @@ export default defineEval({
 
     const replacement = await postJson<AcceptedResponse>(
       t.target,
-      "/kaf/v1/session",
+      "/orcel/v1/session",
       { message: "Reply with exactly HTTP-SESSION-REPLACEMENT-OK." },
       202,
     );

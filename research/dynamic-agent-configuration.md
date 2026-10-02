@@ -24,7 +24,7 @@ the compiler stores either a concrete value or a resolver, never both.
 - Root dynamic models and dynamically selected subagent configs share runtime
   model normalization and AI Gateway metadata lookup.
 
-`DEFAULT_AGENT_MODEL_ID` remains the product default used by `kaf init`, the
+`DEFAULT_AGENT_MODEL_ID` remains the product default used by `orcel init`, the
 setup model picker, and agents with no `agent.ts`. It is not an internal
 placeholder. The bootstrap model remains limited to the framework-owned
 bootstrap runtime.
@@ -34,7 +34,7 @@ bootstrap runtime.
 The default choice belongs in the model handler:
 
 ```ts
-import { defineAgent, defineDynamic } from "kaf";
+import { defineAgent, defineDynamic } from "orcel";
 
 export default defineAgent({
   model: defineDynamic({
@@ -54,7 +54,7 @@ export default defineAgent({
 A dynamic model handler returns a model ID, a live AI SDK model, or
 `{ model, modelContextWindowTokens?, modelOptions? }`. Runtime validation still
 rejects `null`, `undefined`, malformed results, and unknown keys. When context
-metadata is omitted, kaf resolves it from AI Gateway at selection time.
+metadata is omitted, orcel resolves it from AI Gateway at selection time.
 Dynamic agents cannot set sibling `modelContextWindowTokens` or `modelOptions`
 fields because those would become implicit selection defaults.
 
@@ -62,7 +62,7 @@ A dynamic subagent returns a concrete `defineAgent`, a concrete
 `defineRemoteAgent`, or `null`:
 
 ```ts
-import { defineAgent, defineDynamic } from "kaf";
+import { defineAgent, defineDynamic } from "orcel";
 
 export default defineDynamic({
   events: {
@@ -141,7 +141,7 @@ repeat catalog lookup.
 ## Events and failures
 
 Session identity and model-call identity are separate. `session.started`
-identifies the agent, kaf version, deployment, and source revision. It does not
+identifies the agent, orcel version, deployment, and source revision. It does not
 invent a model for an unresolved dynamic agent. The concrete model ID is
 reported on the public `step.started` event after dynamic selection and before
 model-dependent work.

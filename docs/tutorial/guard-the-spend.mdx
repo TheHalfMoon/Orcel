@@ -21,7 +21,7 @@ export function estimateScanGb(sql: string): number {
 ```
 
 ```ts title="agent/tools/run_sql.ts"
-import { defineTool } from "kaf/tools";
+import { defineTool } from "orcel/tools";
 import { z } from "zod";
 import { runReadOnlySql } from "../lib/sample-db";
 import { estimateScanGb } from "../lib/cost";

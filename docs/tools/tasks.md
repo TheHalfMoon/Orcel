@@ -58,7 +58,7 @@ must always hold, write a workflow tool that runs the first step through
 side effect as a separate tool:
 
 ```ts title="agent/tools/publish_reviewed_notes.ts"
-import { defineWorkflowTool } from "kaf/tools";
+import { defineWorkflowTool } from "orcel/tools";
 import { z } from "zod";
 import { publishNotes } from "../lib/release";
 
@@ -113,7 +113,7 @@ A workflow tool body receives its signals from its context or, in a `serve` body
 A body doesn't need to tell a steering message from a cancel: in both cases, stop and return what
 you have. After a steering message the call settles with what the body returns, or with
 `{ interrupted: true }` if the body rejects, and the model reads the message next. After a cancel,
-kaf discards the result. So a question in an `execute` call lapses once the conversation moves on,
+orcel discards the result. So a question in an `execute` call lapses once the conversation moves on,
 as the provided `ask_question` tool's does, while a question in a task stays open:
 
 ```ts
@@ -134,7 +134,7 @@ provided `sleep` tool races its timer against the signal.
 
 ## What the model sees
 
-kaf adds `task_wait`, `task_cancel`, and a short system prompt block that explains tasks whenever
+orcel adds `task_wait`, `task_cancel`, and a short system prompt block that explains tasks whenever
 the agent has an agent tool or a `task` or `serve` workflow tool. The block tells the model to call
 `task_wait` when it has nothing to say until a result arrives, and to reply when the person should
 hear from it first, such as a confirmation that work is underway. In a child session or a
@@ -152,7 +152,7 @@ Sent to task researcher-7k2m9q. Its reply will arrive in a <task_result> message
 ```
 
 **Results.** Each result arrives once, as a `<task_result>` block in a `task.result` message that
-kaf appends at the next step boundary, right after `task_wait` returns, or when a held turn
+orcel appends at the next step boundary, right after `task_wait` returns, or when a held turn
 resumes. The body is the tool's `toModelOutput` projection of the output, or the error message for
 a failed call. All results in one message share a budget of 50 KB and 2,000 lines, after which the
 text is cut and marked `[truncated]`.
@@ -185,7 +185,7 @@ Stopped researcher-7k2m9q's current work; it won't report back. To give it new w
 researcher-7k2m9q had no work to stop.
 ```
 
-**`[Tasks]` note.** When the session's tasks change, kaf adds a note at the next step boundary that
+**`[Tasks]` note.** When the session's tasks change, orcel adds a note at the next step boundary that
 lists the working tasks and the 10 most recently used idle resumable tasks. The note returns after
 [compaction](/docs/concepts/default-harness#compaction), so the model can always find a task id:
 
@@ -211,12 +211,12 @@ A `final_output` call made while tasks are working returns an error that names t
 
 ## Turns wait for their tasks
 
-No turn ends while any task is working. When the model ends a turn early, kaf waits as
+No turn ends while any task is working. When the model ends a turn early, orcel waits as
 `task_wait` does: it parks until one of the tasks settles or the turn's own caller steers it,
 appends the results, and calls the model again in the same turn. No result ever starts a turn on
 its own. An idle resumable task isn't working, so it doesn't hold the turn.
 
-A held turn stays open. Each time it parks, when kaf holds it or when `task_wait` has no result
+A held turn stays open. Each time it parks, when orcel holds it or when `task_wait` has no result
 yet, the stream emits `turn.waiting` with the turn's `turnId`. The next `step.started` for the
 same `turnId` means the turn resumed, and `session.waiting` comes only after the turn ends. The
 model's text before the wait depends on the session:
@@ -281,7 +281,7 @@ stream event, so read outcomes from `task.settled`. An `input.requested`,
 `authorization.required`, or `authorization.completed` event from a task's run carries its
 `taskId`. Hooks subscribe to the same events. The stream also carries the model's `task_wait` and
 `task_cancel` calls as ordinary `actions.requested` tool calls, so evals can assert on them. The
-`kaf dev` terminal UI and Slack typing indicators leave those calls out; the terminal UI shows each
+`orcel dev` terminal UI and Slack typing indicators leave those calls out; the terminal UI shows each
 task's start and end instead. See
 [Sessions, runs, and streaming](/docs/concepts/sessions-runs-and-streaming#task-events) and
 [Follow a subagent](/docs/guides/client/streaming#follow-a-subagent).
@@ -293,7 +293,7 @@ task's start and end instead. See
   note cover every task in the session. Any later turn can continue an idle resumable task by its
   `taskId`, and that call runs with its own caller's auth. Only the turn's own caller steers it;
   anonymous callers share one identity.
-  kaf doesn't check which caller started a task: in a session with several people, such as a
+  orcel doesn't check which caller started a task: in a session with several people, such as a
   shared Slack thread, the model working for one person can continue or `task_cancel` a task
   another person started. A continued `serve` task keeps the state its body built for earlier
   calls, so [key per-caller data on the principal](/docs/tools/workflows#resumable-tasks-serve)

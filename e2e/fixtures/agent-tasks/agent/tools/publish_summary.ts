@@ -1,5 +1,5 @@
-import { defineTool } from "kaf/tools";
-import { never } from "kaf/tools/approval";
+import { defineTool } from "orcel/tools";
+import { never } from "orcel/tools/approval";
 import { z } from "zod";
 
 /** The side effect whose ordering the evals check: it must follow the review it depends on. */

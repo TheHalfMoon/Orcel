@@ -1,4 +1,4 @@
-import { defineTool } from "kaf/tools";
+import { defineTool } from "orcel/tools";
 import { z } from "zod";
 
 // Co-located override: shadows the extension's own same-named toolkit_ping.

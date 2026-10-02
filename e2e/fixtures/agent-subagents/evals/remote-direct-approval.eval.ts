@@ -1,4 +1,4 @@
-import { defineEval, type KafEvalContext, type KafEvalSession } from "kaf/evals";
+import { defineEval, type OrcelEvalContext, type OrcelEvalSession } from "orcel/evals";
 import { DIRECT_APPROVAL } from "../agent/lib/remote-direct-hitl-script.js";
 
 export default defineEval({
@@ -15,7 +15,7 @@ export default defineEval({
       throw new Error("The direct remote gate was not an approval.");
     const answered = await pending.respond([{ requestId: request.requestId, optionId: "approve" }]);
     answered.expectOk();
-    let session: KafEvalSession = answered.session;
+    let session: OrcelEvalSession = answered.session;
     if (answered.message?.includes("PARENT-DIRECT-COMPLETE: DIRECT-APPROVAL-COMPLETE")) {
       t.calledSubagent("remote-loopback", { status: "completed", count: 1 });
       t.noFailedActions();
@@ -37,9 +37,9 @@ export default defineEval({
 });
 
 async function waitForDirectApproval(
-  t: KafEvalContext,
-  initial: KafEvalSession,
-): Promise<KafEvalSession> {
+  t: OrcelEvalContext,
+  initial: OrcelEvalSession,
+): Promise<OrcelEvalSession> {
   let session = initial;
   for (let attempt = 0; attempt < 8; attempt++) {
     if (

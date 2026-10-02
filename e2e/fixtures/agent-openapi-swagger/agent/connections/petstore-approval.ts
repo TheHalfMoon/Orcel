@@ -1,5 +1,5 @@
-import { defineDynamic, defineOpenAPIConnection } from "kaf/connections";
-import { always } from "kaf/tools/approval";
+import { defineDynamic, defineOpenAPIConnection } from "orcel/connections";
+import { always } from "orcel/tools/approval";
 
 import { petstoreBaseUrl } from "../../petstore";
 

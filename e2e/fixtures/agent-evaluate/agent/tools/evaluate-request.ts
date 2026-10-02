@@ -1,5 +1,5 @@
-import { evaluate } from "kaf/ai";
-import { defineTool } from "kaf/tools";
+import { evaluate } from "orcel/ai";
+import { defineTool } from "orcel/tools";
 
 import { evaluationModel } from "../testing";
 

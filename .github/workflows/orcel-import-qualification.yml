@@ -1,0 +1,153 @@
+name: Orcel Import Qualification
+
+on:
+  push:
+    branches:
+      - generated/eve-full-import-9c36b7c
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: orcel-import-qualification-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static-and-unit:
+    name: static-and-unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Setup Bun for Scenario compatibility
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+
+      - name: Install dependencies from lockfile
+        run: pnpm install --frozen-lockfile
+
+      - name: Audit Orcel project identity
+        run: node .orcel-migration/audit-identity.mjs
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Reject lint-created changes
+        shell: bash
+        run: git diff --exit-code
+
+      - name: Check dependency consistency
+        run: pnpm check:deps
+
+      - name: Guard fixtures
+        run: pnpm guard:fixtures
+
+      - name: Guard invariants
+        run: pnpm guard:invariants
+
+      - name: Validate documentation
+        run: pnpm docs:check
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit tests
+        run: pnpm test:unit
+
+      - name: Scenario tests
+        run: pnpm test:scenario
+
+      - name: Workflow helper tests
+        run: node --test .github/scripts/*.test.mjs
+
+  integration:
+    name: integration-${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies from lockfile
+        run: pnpm install --frozen-lockfile
+
+      - name: Integration tests
+        run: pnpm test:integration
+
+  build-and-compatibility:
+    name: build-and-compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies from lockfile
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace packages
+        run: pnpm build
+
+      - name: Framework fixture compatibility
+        run: pnpm test:framework-fixtures
+
+      - name: Template compatibility
+        run: pnpm check:templates
+
+  no-paid-external-services:
+    name: zero-cost-boundary
+    runs-on: ubuntu-latest
+    steps:
+      - name: Record boundary
+        shell: bash
+        run: |
+          cat <<'EOF'
+          This qualification workflow intentionally does not invoke model APIs,
+          paid SaaS, deployment credentials, or secret-backed TUI/E2E/benchmark paths.
+          Scenario tests are included because they are locally executable without
+          external model credentials. TUI/E2E/benchmark paths require separate
+          evidence and must not be represented as passing when credentials or
+          zero-cost execution are unavailable.
+          EOF

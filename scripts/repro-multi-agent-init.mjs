@@ -7,29 +7,29 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const kafPackageRoot = join(repositoryRoot, "packages", "kaf");
+const orcelPackageRoot = join(repositoryRoot, "packages", "orcel");
 const projectName = process.argv[2] ?? "my-project";
 
 if (process.argv.length > 3 || projectName.startsWith("-")) {
   console.error("Usage: node scripts/repro-multi-agent-init.mjs [project-name]");
   process.exitCode = 1;
 } else {
-  const packageJson = JSON.parse(await readFile(join(kafPackageRoot, "package.json"), "utf8"));
+  const packageJson = JSON.parse(await readFile(join(orcelPackageRoot, "package.json"), "utf8"));
   const packageVersion = packageJson.version;
   if (typeof packageVersion !== "string")
-    throw new Error("packages/kaf/package.json has no version.");
+    throw new Error("packages/orcel/package.json has no version.");
 
-  const tempRoot = await mkdtemp(join(tmpdir(), "kaf-multi-agent-init-"));
-  const packDirectory = await mkdtemp(join(tmpdir(), "kaf-multi-agent-pack-"));
-  const homeDirectory = await mkdtemp(join(tmpdir(), "kaf-multi-agent-home-"));
+  const tempRoot = await mkdtemp(join(tmpdir(), "orcel-multi-agent-init-"));
+  const packDirectory = await mkdtemp(join(tmpdir(), "orcel-multi-agent-pack-"));
+  const homeDirectory = await mkdtemp(join(tmpdir(), "orcel-multi-agent-home-"));
   const target = join(tempRoot, projectName);
   await writeFile(join(homeDirectory, ".npmrc"), "registry=https://registry.npmjs.org/\n");
 
   try {
-    await run("pnpm", ["pack", "--pack-destination", packDirectory], { cwd: kafPackageRoot });
+    await run("pnpm", ["pack", "--pack-destination", packDirectory], { cwd: orcelPackageRoot });
     const environment = {
       ...process.env,
-      KAF_INIT_PACKAGE_SPEC: `file:${join(packDirectory, `kaf-${packageVersion}.tgz`)}`,
+      ORCEL_INIT_PACKAGE_SPEC: `file:${join(packDirectory, `orcel-${packageVersion}.tgz`)}`,
       HOME: homeDirectory,
       npm_config_globalconfig: "/dev/null",
       npm_config_registry: "https://registry.npmjs.org",
@@ -37,7 +37,7 @@ if (process.argv.length > 3 || projectName.startsWith("-")) {
     };
     await run(
       process.execPath,
-      [join(kafPackageRoot, "bin", "kaf.js"), "init", target, "--agents", "researcher,bug-finder"],
+      [join(orcelPackageRoot, "bin", "orcel.js"), "init", target, "--agents", "researcher,bug-finder"],
       {
         cwd: tempRoot,
         env: environment,

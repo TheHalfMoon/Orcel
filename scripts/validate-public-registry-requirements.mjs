@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 const registryPath = new URL("../apps/docs/registry.json", import.meta.url);
-const kafPackagePath = new URL("../packages/kaf/package.json", import.meta.url);
+const orcelPackagePath = new URL("../packages/orcel/package.json", import.meta.url);
 const minimumVersionPattern = /^>=(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/u;
 const versionPattern = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/u;
 
@@ -26,29 +26,29 @@ function compareVersions(left, right) {
   return left.prerelease.localeCompare(right.prerelease, "en");
 }
 
-export function validatePublicRegistryRequirements(registry, kafVersion) {
-  const published = parseVersion(kafVersion, versionPattern);
+export function validatePublicRegistryRequirements(registry, orcelVersion) {
+  const published = parseVersion(orcelVersion, versionPattern);
   if (published === undefined)
-    throw new Error(`invalid Kaf package version: ${String(kafVersion)}`);
+    throw new Error(`invalid Orcel package version: ${String(orcelVersion)}`);
   if (!Array.isArray(registry?.items)) throw new Error("registry must contain an items array");
 
   const errors = [];
   for (const item of registry.items) {
-    const requirement = item?.meta?.kaf?.requires;
+    const requirement = item?.meta?.orcel?.requires;
     if (requirement === undefined) continue;
     const minimum = parseVersion(requirement, minimumVersionPattern);
     if (minimum === undefined) {
-      errors.push(`${item.name}: unsupported Kaf requirement ${JSON.stringify(requirement)}`);
+      errors.push(`${item.name}: unsupported Orcel requirement ${JSON.stringify(requirement)}`);
     } else if (compareVersions(minimum, published) > 0) {
-      errors.push(`${item.name}: requires ${requirement}, but packages/kaf is ${kafVersion}`);
+      errors.push(`${item.name}: requires ${requirement}, but packages/orcel is ${orcelVersion}`);
     }
   }
   if (errors.length > 0) {
     throw new Error(
       [
-        "apps/docs/registry.json must not require an unpublished Kaf version.",
+        "apps/docs/registry.json must not require an unpublished Orcel version.",
         ...errors,
-        "Add affected items to apps/docs/registry.staged-requirements.json; the Changesets release process will materialize them after selecting the Kaf version.",
+        "Add affected items to apps/docs/registry.staged-requirements.json; the Changesets release process will materialize them after selecting the Orcel version.",
       ].join("\n"),
     );
   }
@@ -56,10 +56,10 @@ export function validatePublicRegistryRequirements(registry, kafVersion) {
 
 export async function validatePublicRegistryRequirementsFromFiles(paths = {}) {
   const resolvedRegistryPath = paths.registryPath ?? registryPath;
-  const resolvedKafPackagePath = paths.packagePath ?? kafPackagePath;
+  const resolvedOrcelPackagePath = paths.packagePath ?? orcelPackagePath;
   const [registryText, packageText] = await Promise.all([
     readFile(resolvedRegistryPath, "utf8"),
-    readFile(resolvedKafPackagePath, "utf8"),
+    readFile(resolvedOrcelPackagePath, "utf8"),
   ]);
   validatePublicRegistryRequirements(JSON.parse(registryText), JSON.parse(packageText).version);
 }

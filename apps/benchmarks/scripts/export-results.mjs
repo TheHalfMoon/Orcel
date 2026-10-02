@@ -134,7 +134,7 @@ const output = {
   schemaVersion: 1,
   generatedAt: new Date().toISOString(),
   suite: {
-    kafRevision: values.revision,
+    orcelRevision: values.revision,
     caseFingerprint: caseFingerprint(caseIds),
     caseCount: caseIds.length,
     runsPerCell: publishedBenchmark.runs,

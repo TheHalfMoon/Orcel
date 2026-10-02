@@ -1,5 +1,5 @@
-import { getErrorStatus, getSetupStatus } from "#kaf/utils/status";
-import type { ConnectorSummary } from "#kaf/types/connector";
+import { getErrorStatus, getSetupStatus } from "#orcel/utils/status";
+import type { ConnectorSummary } from "#orcel/types/connector";
 import { getPendingChallenge } from "~/composables/chat/useAuthorizationChallenges";
 
 /**

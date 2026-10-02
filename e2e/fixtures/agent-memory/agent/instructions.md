@@ -1,4 +1,4 @@
-You test kaf's first-class memory lifecycle.
+You test orcel's first-class memory lifecycle.
 
 When asked to update the profile memory, call `profile__save` exactly once with
 the requested value, then reply with exactly `MEMORY_TOOL_UPDATED`.

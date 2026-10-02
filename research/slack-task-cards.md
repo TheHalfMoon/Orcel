@@ -1,41 +1,41 @@
 ---
-issue: https://github.com/TheHalfMoon/kaf/pull/4028
+issue: https://github.com/TheHalfMoon/orcel/pull/4028
 status: implemented
 last_updated: "2026-09-30"
 ---
 
 # Slack task cards and composable rendering
 
-This plan, implemented in [#4028](https://github.com/TheHalfMoon/kaf/pull/4028), redesigns what a person sees when an kaf agent works in a Slack thread, built around
+This plan, implemented in [#4028](https://github.com/TheHalfMoon/orcel/pull/4028), redesigns what a person sees when an orcel agent works in a Slack thread, built around
 [tasks](../docs/tools/tasks.md) and Slack's task card and plan blocks. It also separates inbound
 handling (`onAppMention`, `onDirectMessage`, `onMessage`, `onEvent`) from rendering, and replaces
 both the `events` map and the experimental activity renderers with one chain of renderers that
-wraps kaf's defaults. Paths are relative to `packages/kaf/src/`.
+wraps orcel's defaults. Paths are relative to `packages/orcel/src/`.
 
 ## Summary
 
 1. **Each task a root turn starts gets a live row in a task card.** When a turn starts its first
-   task, kaf posts one message in the thread and keeps it updated. One task renders as a
+   task, orcel posts one message in the thread and keeps it updated. One task renders as a
    `task_card` block, and two or more render as a `plan` block. Each row shows the task's title,
    its status, and a one-line result when it settles. Tasks that an agent task starts on its own
    add no rows.
 2. **Short work stays in the status line.** Thinking, ordinary tool calls, and waits use Slack's
    thread status. They never post messages, so the thread holds only the conversation and the
    task card.
-3. **The card is a posted message that kaf updates, not a stream.** Tasks can run for minutes or
+3. **The card is a posted message that orcel updates, not a stream.** Tasks can run for minutes or
    days. Slack stops streams after a few minutes, and `chat.update` fails while a stream is open.
-   So kaf posts the card with `chat.postMessage` and changes it with `chat.update`.
-4. **kaf's default message hooks don't render.** A message hook decides whether to start a turn
-   and with what auth, and kaf's rendering no longer depends on which hook ran. A custom hook can
-   still post through its context, but it no longer has to recreate kaf's rendering. The `Thinking...` acknowledgement moves from `defaultOnAppMention` into kaf's default
+   So orcel posts the card with `chat.postMessage` and changes it with `chat.update`.
+4. **orcel's default message hooks don't render.** A message hook decides whether to start a turn
+   and with what auth, and orcel's rendering no longer depends on which hook ran. A custom hook can
+   still post through its context, but it no longer has to recreate orcel's rendering. The `Thinking...` acknowledgement moves from `defaultOnAppMention` into orcel's default
    renderer, so a custom `onAppMention` keeps it. It is optimistic: it appears the moment a
-   mention or DM arrives, while the hook is still deciding, and kaf clears it if the hook drops the
+   mention or DM arrives, while the hook is still deciding, and orcel clears it if the hook drops the
    message.
-5. **Rendering is a chain.** `slackChannel({ renderers: [a, b] })` wraps kaf's default renderer.
+5. **Rendering is a chain.** `slackChannel({ renderers: [a, b] })` wraps orcel's default renderer.
    Each event handler receives `next`, so it can run before or after the default, change its
-   input, or skip it. `taskCard(view, next)` is a pure function that returns blocks; kaf owns
+   input, or skip it. `taskCard(view, next)` is a pure function that returns blocks; orcel owns
    posting and updating. The view carries every tool call of the turn with its
-   input, so an app can put its own tools on the card, such as a checklist, without kaf knowing
+   input, so an app can put its own tools on the card, such as a checklist, without orcel knowing
    about them.
 6. **The card renders from the root session's own events.** The root session's Slack channel
    tracks its turns' calls and writes the card itself. The experimental activity renderers and the
@@ -53,7 +53,7 @@ Three separate mechanisms write to a Slack thread, and nothing in the default se
 | `events` handlers (`defaults.ts`)                               | Inline, while the root session publishes each event | The root session's events, but no `task.*` events | Yes     |
 | Activity collector plus renderers (`execution/activity-*.ts`)   | Separate durable workflow for each root session     | Root, child, and remote agent activity, debounced | No      |
 
-**The default experience.** kaf posts `Thinking...` from the default mention and DM hooks. Then
+**The default experience.** orcel posts `Thinking...` from the default mention and DM hooks. Then
 `turn.started`, `reasoning.appended`, and `actions.requested` update the thread status through
 `assistant.threads.setStatus`, and `message.completed` posts replies. `ChannelEvents`
 (`public/definitions/channel.ts`) has no `task.started`, `task.settled`, or `turn.waiting`. A turn
@@ -91,8 +91,8 @@ Child and remote agent sessions send it activity batches over HTTP, and it re-re
    `input.requested`, with its `defaultDeliver`, is the only handler that composes.
 3. **Options interact in hidden ways.** Adding a status renderer changes which event handlers
    run.
-4. **Custom activity rendering is too low-level.** Authors see kaf's internal reduction state.
-   They must handle `ts`, rate limits, streams, and recovery, and can't build on kaf's default.
+4. **Custom activity rendering is too low-level.** Authors see orcel's internal reduction state.
+   They must handle `ts`, rate limits, streams, and recovery, and can't build on orcel's default.
 
 ## What Slack offers
 
@@ -128,28 +128,28 @@ Alice asks in a channel thread. The agent answers one question directly, then de
 long pieces of work as tasks.
 
 ```text
-Alice   @kaf why did checkout latency spike yesterday?
-          [status] kaf is thinking...
-          [status] kaf is searching logs "checkout p99"...
-kaf     ┌ Working on 2 tasks ───────────────────────────────────────────────┐
+Alice   @orcel why did checkout latency spike yesterday?
+          [status] orcel is thinking...
+          [status] orcel is searching logs "checkout p99"...
+orcel     ┌ Working on 2 tasks ───────────────────────────────────────────────┐
         │ ◐ Deploy history for storefront                                   │
         │ ◐ researcher: Find the incidents behind the checkout spike        │
         │     Reading INC-2291 postmortem                                   │
         └────────────────────────────────────────────────────────────────┘
-kaf     Checking recent deploys and incident notes in parallel; I'll report back.
-          [status] kaf is waiting on deploy and 1 more task...
+orcel     Checking recent deploys and incident notes in parallel; I'll report back.
+          [status] orcel is waiting on deploy and 1 more task...
 ```
 
 Later, the same card message has been updated in place, and the answer follows below it:
 
 ```text
-kaf     ┌ Finished 2 tasks ─────────────────────────────────────────────────┐
+orcel     ┌ Finished 2 tasks ─────────────────────────────────────────────────┐
         │ ✓ Deploy history for storefront                                   │
         │     3 deploys; 14:02 changed the cache TTL                        │
         │ ✓ researcher: Find the incidents behind the checkout spike        │
         │     INC-2291: cache stampede after the 14:02 deploy               │
         └───────────────────────────────────────────────────────────────┘
-kaf     The spike started at 14:04, two minutes after deploy dpl_8f2...
+orcel     The spike started at 14:04, two minutes after deploy dpl_8f2...
 ```
 
 ### Status line
@@ -210,7 +210,7 @@ sign-in` in `details`. The row goes back to working on the request's `input.reso
 - **Stopped is not success.** Slack has no cancelled status. A cancelled row uses `error` with the
   output `Stopped`, so it never shows a success check. The plan title counts stopped tasks
   separately from failed ones.
-- **Writes are per card, and only on change.** kaf fingerprints the card and writes it only when
+- **Writes are per card, and only on change.** orcel fingerprints the card and writes it only when
   it changed. A failed post or update is tried once more after a second; if that fails too, the
   card keeps its last fingerprint, so the turn's next change writes it again. An update that fails
   with `message_not_found`, because someone deleted the card, posts it again. Posts set
@@ -222,32 +222,32 @@ sign-in` in `details`. The row goes back to working on the request's `input.reso
 
 ### Inbound handlers route; renderers render
 
-Message hooks keep their signatures and return values, and kaf's default hooks post nothing. `defaultOnMessage`
+Message hooks keep their signatures and return values, and orcel's default hooks post nothing. `defaultOnMessage`
 only derives auth. Acknowledging a message is rendering, so it belongs to the renderer chain's
 `received` handler:
 
-- **Mentions and DMs** are addressed to the agent. kaf runs `received` on the webhook side as soon
+- **Mentions and DMs** are addressed to the agent. orcel runs `received` on the webhook side as soon
   as the message passes signature and self-message checks, at the same time as the message hook.
   The default sets `Thinking...`, before the hook's auth work and before the runtime cold-starts.
 - **Other channel messages** reach `onMessage`, which drops most of them. For those, `received`
   runs only after the hook dispatches, so unrelated messages never flash a status.
-- **A dropped message is cleared.** If the hook returns `null` or throws, kaf clears the thread
+- **A dropped message is cleared.** If the hook returns `null` or throws, orcel clears the thread
   status once `received` finishes. Anything else a custom `received` posted is its own to clean up.
 
 ### Renderers
 
 ```ts
-import { defineSlackRenderer, slackChannel } from "kaf/channels/slack";
+import { defineSlackRenderer, slackChannel } from "orcel/channels/slack";
 
 const feedback = defineSlackRenderer({
   events: {
     async "message.completed"(event, channel, _ctx, next) {
-      await next(); // kaf posts the reply, or uploads a long one as a snippet
+      await next(); // orcel posts the reply, or uploads a long one as a snippet
       if (event.finishReason !== "tool-calls") await channel.thread.post(feedbackButtons());
     },
   },
   taskCard(view, next) {
-    const card = next(view); // kaf's default blocks and fallback text
+    const card = next(view); // orcel's default blocks and fallback text
     if (card === null || view.state !== "finished") return card;
     return { ...card, blocks: [...card.blocks, costContext(view)] };
   },
@@ -261,22 +261,22 @@ export default slackChannel({
 });
 ```
 
-- **`renderers`** is an ordered list. The first renderer is outermost, and kaf's default renderer
+- **`renderers`** is an ordered list. The first renderer is outermost, and orcel's default renderer
   is always innermost. Omitting `renderers` renders with the default alone, so a channel with no
-  renderers looks exactly like kaf's default. `events` is removed.
+  renderers looks exactly like orcel's default. `events` is removed.
 - **A renderer** has three optional parts: `received(message, channel, next)`, `events`, and
-  `taskCard(view, next)`. Every message kaf writes to Slack goes through one of them.
+  `taskCard(view, next)`. Every message orcel writes to Slack goes through one of them.
 - **Event handlers** receive `(data, channel, ctx, next)`; `session.failed` receives
   `(data, channel, next)`. `next()` runs the rest of the chain with the same data and
   `next(data)` with changed data. The rest of the chain runs at most once. Not calling `next`
   skips it, so an old `events` override moves into `renderers: [{ events }]` unchanged.
 - **The private sign-in rule holds.** A renderer's `authorization.required` handler receives only
-  `postEphemeral`, `postDirectMessage`, and `state`. Its `next` reaches kaf's default, which keeps
+  `postEphemeral`, `postDirectMessage`, and `state`. Its `next` reaches orcel's default, which keeps
   the full context and posts the public link-free status.
 - **`taskCard`** is synchronous and pure, and runs for every root turn that calls a tool. It
-  returns `{ blocks, text }`, or `null` for no card; kaf's default returns `null` for a turn that
+  returns `{ blocks, text }`, or `null` for no card; orcel's default returns `null` for a turn that
   started no tasks.
-  kaf compares the result with what it last wrote and posts or updates the message. A `taskCard`
+  orcel compares the result with what it last wrote and posts or updates the message. A `taskCard`
   that throws leaves that turn's card as it was.
 - **New channel events.** `ChannelEvents` gains `task.started`, `task.settled`, `turn.waiting`,
   and `input.resolved`, so every channel can observe tasks inline and learn when each request
@@ -285,7 +285,7 @@ export default slackChannel({
 
 ### The task card view
 
-`taskCard` receives the channel-neutral view kaf's default renders from
+`taskCard` receives the channel-neutral view orcel's default renders from
 (`channel/task-card.ts`):
 
 ```ts
@@ -350,15 +350,15 @@ root session ─ own events ─► renderers.events ─► replies, questions, s
    the root session persists with every step. No workflow, route, or sink exists for it, so a
    session that never starts a task pays one `taskCard` call per tool-call event and nothing else.
 2. **One writer per card.** Only the root session writes, and its steps run one after another. The
-   card's `ts` and a fingerprint of what kaf last wrote live next to the turn's calls, so there is
+   card's `ts` and a fingerprint of what orcel last wrote live next to the turn's calls, so there is
    no `conversations.replies` scan and no history scope.
 3. **Tracking can't be skipped.** Tracking and writing wrap the renderer chain's handlers for
-   those events, so a renderer that replaces kaf's default for one of them still gets a card.
+   those events, so a renderer that replaces orcel's default for one of them still gets a card.
 4. **Cards follow the session.** Rendering is session code, so after a deploy a handed-off session
    renders with the new deployment's code, and there is nothing pinned to the old one.
 5. **Rendering never fails a turn.** A failed write is retried once, then logged; the turn's next
    change writes the card again.
-6. **State stays bounded.** kaf forgets a turn once its card is finished, tracks at most 20
+6. **State stays bounded.** orcel forgets a turn once its card is finished, tracks at most 20
    unfinished turns and 100 calls per turn, and keeps a call's input only up to 4,096 characters
    of JSON.
 
@@ -378,7 +378,7 @@ root session ─ own events ─► renderers.events ─► replies, questions, s
   `chat.update` rewrites the whole message, so parallel agents writing their own rows would
   overwrite each other with stale rows. Remote agents can't run the app's handlers at all.
 - **Keep custom activity renderers public.** That exposes reduction internals, makes every author
-  handle `ts`, rate limits, and recovery, and offers no way to build on kaf's card.
+  handle `ts`, rate limits, and recovery, and offers no way to build on orcel's card.
 - **`preventDefault` instead of `next`.** Authors could neither change the default's input nor
   choose to run before or after it. `next` matches the old `defaultDeliver`.
 
@@ -397,9 +397,9 @@ Everything below is breaking, which is allowed before 1.0.
   renderer's `received` does, right away for mentions and DMs, whichever hook handles them.
 - **Channel core:** `ChannelEvents` gains `task.started`, `task.settled`, `turn.waiting`, and
   `input.resolved`.
-- **Removed: the activity collector** and everything that fed it: the `/kaf/v1/activity` route,
+- **Removed: the activity collector** and everything that fed it: the `/orcel/v1/activity` route,
   the activity protocol and reducer, the per-step activity posting, and the `activityObserver`
-  field on delegated and remote-agent sessions. A remote-agent request from an older kaf that still
+  field on delegated and remote-agent sessions. A remote-agent request from an older orcel that still
   sends `activityObserver` is accepted, and the field is ignored.
 - **New default output:** task cards, and the `Waiting on ...` status.
 
@@ -437,9 +437,9 @@ When a choice was open, clarity for the person reading the thread decided it.
 4. **Acknowledging is rendering, and it is immediate.** `Thinking...` belongs to `received` in the
    renderer chain, not to message hooks. It appears right away for mentions and DMs and is cleared
    if the message is dropped.
-5. **Apps own their tools' presentation.** kaf doesn't ship a checklist tool. The view carries the
+5. **Apps own their tools' presentation.** orcel doesn't ship a checklist tool. The view carries the
    turn's own tool calls with their input, so an app's `plan` tool, or any other, renders through
-   `taskCard` without a change to kaf.
+   `taskCard` without a change to orcel.
 
 ## Sources
 
@@ -454,6 +454,6 @@ When a choice was open, clarity for the person reading the thread decided it.
   [2026-02-11 changelog](https://docs.slack.dev/changelog/2026/02/11/task-cards-plan-blocks),
   [python-slack-sdk#1859](https://github.com/slackapi/python-slack-sdk/issues/1859) (stream
   lifetime reports).
-- kaf: `research/kaf-tasks.md`, `docs/tools/tasks.md`, `docs/channels/slack.mdx`,
+- orcel: `research/orcel-tasks.md`, `docs/tools/tasks.md`, `docs/channels/slack.mdx`,
   `channel/task-card.ts`, `public/channels/slack/{slackChannel,defaults,renderers,task-card}.ts`,
   `cli/dev/tui/task-activity.ts`.

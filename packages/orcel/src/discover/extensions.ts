@@ -1,0 +1,404 @@
+import { dirname, isAbsolute, join, resolve } from "node:path";
+
+import {
+  EXTENSION_COMPATIBILITY_MANIFEST_FILENAME,
+  findUnsupportedExtensionCapabilities,
+  parseExtensionCompatibilityManifest,
+} from "#compiler/extension-compatibility.js";
+import { createDiscoverErrorDiagnostic, type DiscoverDiagnostic } from "#discover/diagnostics.js";
+import { parseExtensionMountSpecifier } from "#discover/extension-specifier.js";
+import { SUPPORTED_AUTHORED_MODULE_FILE_EXTENSIONS } from "#discover/filesystem.js";
+import type { ExtensionSourceRef } from "#discover/manifest.js";
+import type { ProjectSource } from "#discover/project-source.js";
+import {
+  parseBuiltInExtensionPackageRoots,
+  parseExtensionPackageRoots,
+} from "#shared/extension-package-contract.js";
+
+/**
+ * Emitted when a mount file cannot be resolved to an extension package.
+ */
+const DISCOVER_EXTENSION_MOUNT_UNRESOLVED = "discover/extension-mount-unresolved";
+
+/**
+ * Emitted when one namespace is claimed by both a file mount
+ * (`extensions/<ns>.ts`) and a directory mount (`extensions/<ns>/`).
+ */
+export const DISCOVER_EXTENSION_MOUNT_AMBIGUOUS = "discover/extension-mount-ambiguous";
+
+/**
+ * Emitted when a directory mount (`extensions/<ns>/`) is missing its required
+ * `extension.<ext>` mount declaration.
+ */
+export const DISCOVER_EXTENSION_MOUNT_MISSING_DECLARATION =
+  "discover/extension-mount-missing-declaration";
+
+/**
+ * Emitted when an extension declares its own `extensions/` mount slot. Extensions
+ * cannot mount other extensions yet; the slot is reserved so enabling nesting
+ * later is additive rather than a surprise.
+ */
+export const DISCOVER_EXTENSION_NESTED_MOUNT_UNSUPPORTED =
+  "discover/extension-nested-mount-unsupported";
+
+/**
+ * Emitted when a resolved package is not a valid orcel extension.
+ */
+const DISCOVER_EXTENSION_PACKAGE_INVALID = "discover/extension-package-invalid";
+
+/**
+ * Emitted when an extension distribution's compatibility manifest is missing
+ * or malformed.
+ */
+export const DISCOVER_EXTENSION_COMPATIBILITY_INVALID = "discover/extension-compatibility-invalid";
+
+/**
+ * Emitted when this orcel cannot consume one of the extension capabilities the
+ * distribution requires.
+ */
+export const DISCOVER_EXTENSION_CAPABILITY_INCOMPATIBLE =
+  "discover/extension-capability-incompatible";
+
+/**
+ * Emitted when an extension source tree declares agent-level config (`agent.ts`),
+ * which is the consuming agent's to own.
+ */
+export const DISCOVER_EXTENSION_AGENT_CONFIG_UNSUPPORTED =
+  "discover/extension-agent-config-unsupported";
+
+/**
+ * Emitted when an extension source tree declares a `sandbox`, which is the
+ * consuming agent's to own.
+ */
+export const DISCOVER_EXTENSION_SANDBOX_UNSUPPORTED = "discover/extension-sandbox-unsupported";
+export const DISCOVER_EXTENSION_MEMORY_UNSUPPORTED = "discover/extension-memory-unsupported";
+
+/**
+ * Emitted when an extension declares agent-level instrumentation. Instrumentation
+ * is a singleton owned by the consuming agent and cannot be namespace-scoped.
+ */
+export const DISCOVER_EXTENSION_INSTRUMENTATION_UNSUPPORTED =
+  "discover/extension-instrumentation-unsupported";
+
+/**
+ * Resolved on-disk location of one mounted extension package.
+ */
+interface ExtensionMountLocation {
+  /** Mount namespace derived from the mount filename (e.g. `crm`). */
+  readonly namespace: string;
+  /** Package specifier the mount imports (e.g. `@acme/crm`). */
+  readonly specifier: string;
+  /** Package name from the resolved `package.json`, used to scope state. */
+  readonly packageName: string;
+  /** Absolute path to the resolved package root. */
+  readonly packageRoot: string;
+  /** Absolute path to the extension's agent-shaped distribution root. */
+  readonly sourceRoot: string;
+  /** Runtime packages this extension requires the consuming application to externalize. */
+  readonly externalDependencies: readonly string[];
+}
+
+/**
+ * Package roots resolved from one extension mount before its distribution is
+ * inspected. Development uses this to build a mounted workspace extension
+ * before the consumer requires its dist tree to exist.
+ */
+interface ExtensionMountPackageLocation {
+  /** Mount namespace derived from the mount filename. */
+  readonly namespace: string;
+  /** Package specifier read from the mount declaration. */
+  readonly specifier: string;
+  /** Package name from the resolved package manifest. */
+  readonly packageName: string;
+  /** Absolute path to the resolved package root. */
+  readonly packageRoot: string;
+  /** Absolute authoring root when the package publishes a source-backed contract. */
+  readonly authoredSourceRoot?: string;
+  /** Absolute path to the agent-shaped distribution root. */
+  readonly distRoot: string;
+  /** The distribution is shipped by the resolved orcel package itself. */
+  readonly builtIn: boolean;
+}
+
+/**
+ * Derives the mount namespace from an `extensions/<name>.<ext>` logical path.
+ */
+export function mountNamespace(logicalPath: string): string {
+  const base = logicalPath.slice(logicalPath.lastIndexOf("/") + 1);
+  for (const extension of SUPPORTED_AUTHORED_MODULE_FILE_EXTENSIONS) {
+    if (base.toLowerCase().endsWith(extension)) {
+      return base.slice(0, base.length - extension.length);
+    }
+  }
+  return base;
+}
+
+/**
+ * Derives the mount namespace from a mount ref's `extensions/…` logical path
+ * for either mount form: the file form (`extensions/crm.ts` → `crm`) or the
+ * directory form (`extensions/crm/extension.ts` → `crm`).
+ */
+export function mountRefNamespace(logicalPath: string): string {
+  const remainder = logicalPath.replace(/^extensions\//, "");
+  const slashIndex = remainder.indexOf("/");
+  if (slashIndex !== -1) {
+    return remainder.slice(0, slashIndex);
+  }
+  return mountNamespace(logicalPath);
+}
+
+/**
+ * Resolves one extension mount to its package and agent-shaped source root
+ * without importing the mount module. Reads the mount source text to extract
+ * the package specifier, resolves the package, and reads
+ * `package.json#orcel.extension.dist` for the agent-shaped distribution root.
+ */
+export async function locateExtensionMount(input: {
+  readonly source: ProjectSource;
+  readonly agentRoot: string;
+  readonly appRoot: string;
+  readonly mount: ExtensionSourceRef;
+  /**
+   * Mount namespace the caller derived from the mount path — passed in because
+   * the file and directory mount forms name it at different path positions.
+   */
+  readonly namespace: string;
+}): Promise<{ location?: ExtensionMountLocation; diagnostics: DiscoverDiagnostic[] }> {
+  const locatedPackage = await locateExtensionMountPackage(input);
+  if (locatedPackage.location === undefined) {
+    return { diagnostics: locatedPackage.diagnostics };
+  }
+
+  const { location } = locatedPackage;
+  if (location.builtIn) {
+    return {
+      location: {
+        namespace: location.namespace,
+        specifier: location.specifier,
+        packageName: location.packageName,
+        packageRoot: location.packageRoot,
+        sourceRoot: location.distRoot,
+        externalDependencies: [],
+      },
+      diagnostics: [],
+    };
+  }
+
+  const compatibilityPath = join(location.distRoot, EXTENSION_COMPATIBILITY_MANIFEST_FILENAME);
+  let compatibility;
+  try {
+    compatibility = parseExtensionCompatibilityManifest(
+      await input.source.readTextFile(compatibilityPath),
+      compatibilityPath,
+    );
+  } catch (error) {
+    return {
+      diagnostics: [
+        createDiscoverErrorDiagnostic({
+          code: DISCOVER_EXTENSION_COMPATIBILITY_INVALID,
+          message: `Extension "${location.packageName}" has no valid compatibility manifest at "${compatibilityPath}". Rebuild or reinstall the extension. ${error instanceof Error ? error.message : String(error)}`,
+          sourcePath: compatibilityPath,
+        }),
+      ],
+    };
+  }
+
+  const unsupportedCapabilities = findUnsupportedExtensionCapabilities(compatibility);
+  if (unsupportedCapabilities.length > 0) {
+    return {
+      diagnostics: unsupportedCapabilities.map((unsupported) =>
+        createDiscoverErrorDiagnostic({
+          code: DISCOVER_EXTENSION_CAPABILITY_INCOMPATIBLE,
+          message: `Extension "${location.packageName}" requires ${unsupported.capability} contract v${unsupported.requiredVersion}, but this orcel supports ${unsupported.capability} contract ${formatSupportedVersions(unsupported.supportedVersions)}. Upgrade orcel or install an extension release that requires a supported ${unsupported.capability} contract.`,
+          sourcePath: compatibilityPath,
+        }),
+      ),
+    };
+  }
+
+  return {
+    location: {
+      namespace: location.namespace,
+      specifier: location.specifier,
+      packageName: location.packageName,
+      packageRoot: location.packageRoot,
+      sourceRoot: location.distRoot,
+      externalDependencies: compatibility.build?.externalDependencies ?? [],
+    },
+    diagnostics: [],
+  };
+}
+
+/**
+ * Resolves one extension mount through its package manifest without requiring
+ * a built distribution or compatibility manifest.
+ */
+export async function locateExtensionMountPackage(input: {
+  readonly source: ProjectSource;
+  readonly agentRoot: string;
+  readonly appRoot: string;
+  readonly mount: ExtensionSourceRef;
+  readonly namespace: string;
+}): Promise<{
+  location?: ExtensionMountPackageLocation;
+  diagnostics: DiscoverDiagnostic[];
+}> {
+  const mountPath = join(input.agentRoot, input.mount.logicalPath);
+  const { namespace } = input;
+
+  let text: string;
+  try {
+    text = await input.source.readTextFile(mountPath);
+  } catch {
+    return {
+      diagnostics: [
+        createDiscoverErrorDiagnostic({
+          code: DISCOVER_EXTENSION_MOUNT_UNRESOLVED,
+          message: `Could not read extension mount "${input.mount.logicalPath}".`,
+          sourcePath: mountPath,
+        }),
+      ],
+    };
+  }
+
+  const specifier = parseExtensionMountSpecifier(text);
+  if (specifier === null) {
+    return {
+      diagnostics: [
+        createDiscoverErrorDiagnostic({
+          code: DISCOVER_EXTENSION_MOUNT_UNRESOLVED,
+          message:
+            `Extension mount "${input.mount.logicalPath}" must default-export a mounted extension, ` +
+            `e.g. \`export default crm({ ... })\` or \`export { default } from "@acme/crm"\`.`,
+          sourcePath: mountPath,
+        }),
+      ],
+    };
+  }
+
+  const packageRoot = await resolvePackageRoot({
+    source: input.source,
+    appRoot: input.appRoot,
+    mountDirectory: dirname(mountPath),
+    specifier,
+  });
+  if (packageRoot === null) {
+    return {
+      diagnostics: [
+        createDiscoverErrorDiagnostic({
+          code: DISCOVER_EXTENSION_MOUNT_UNRESOLVED,
+          message: `Could not resolve extension package "${specifier}" mounted by "${input.mount.logicalPath}".`,
+          sourcePath: mountPath,
+        }),
+      ],
+    };
+  }
+
+  const manifestPath = join(packageRoot, "package.json");
+  let pkg: { name?: unknown; orcel?: { extension?: unknown; builtInExtensions?: unknown } };
+  try {
+    pkg = JSON.parse(await input.source.readTextFile(manifestPath)) as typeof pkg;
+  } catch {
+    return {
+      diagnostics: [
+        createDiscoverErrorDiagnostic({
+          code: DISCOVER_EXTENSION_PACKAGE_INVALID,
+          message: `Extension package "${specifier}" has no readable package.json at "${manifestPath}".`,
+          sourcePath: manifestPath,
+        }),
+      ],
+    };
+  }
+
+  const builtInExtension = parseBuiltInExtensionPackageRoots(
+    pkg.orcel?.builtInExtensions,
+    packageSpecifierSubpath(specifier),
+  );
+  const extension = builtInExtension ?? parseExtensionPackageRoots(pkg.orcel?.extension);
+  if (extension === null) {
+    return {
+      diagnostics: [
+        createDiscoverErrorDiagnostic({
+          code: DISCOVER_EXTENSION_PACKAGE_INVALID,
+          message: `Package "${specifier}" is not an orcel extension: its package.json must declare \`orcel.extension.dist\`.`,
+          sourcePath: manifestPath,
+        }),
+      ],
+    };
+  }
+
+  const packageName = typeof pkg.name === "string" && pkg.name.length > 0 ? pkg.name : specifier;
+
+  return {
+    location: {
+      namespace,
+      specifier,
+      packageName,
+      packageRoot,
+      ...(extension.source === undefined
+        ? {}
+        : { authoredSourceRoot: resolve(packageRoot, extension.source) }),
+      builtIn: builtInExtension !== null,
+      distRoot: resolve(packageRoot, extension.dist),
+    },
+    diagnostics: [],
+  };
+}
+
+function formatSupportedVersions(versions: readonly number[]): string {
+  return versions.length === 0
+    ? "versions: none"
+    : `versions: ${versions.map((v) => `v${v}`).join(", ")}`;
+}
+
+async function resolvePackageRoot(input: {
+  readonly source: ProjectSource;
+  readonly appRoot: string;
+  readonly mountDirectory: string;
+  readonly specifier: string;
+}): Promise<string | null> {
+  if (input.specifier.startsWith(".")) {
+    const target = resolve(input.mountDirectory, input.specifier);
+    return (await hasPackageJson(input.source, target)) ? target : null;
+  }
+
+  if (isAbsolute(input.specifier)) {
+    return (await hasPackageJson(input.source, input.specifier)) ? input.specifier : null;
+  }
+
+  const packageSubpath = bareSpecifierPackagePath(input.specifier);
+  let current = resolve(input.appRoot);
+  while (true) {
+    const candidate = join(current, "node_modules", packageSubpath);
+    if (await hasPackageJson(input.source, candidate)) {
+      return candidate;
+    }
+    const parent = dirname(current);
+    if (parent === current) {
+      return null;
+    }
+    current = parent;
+  }
+}
+
+/** Returns the export subpath of a bare package specifier. */
+function packageSpecifierSubpath(specifier: string): string {
+  const subpath = specifier.slice(bareSpecifierPackagePath(specifier).length);
+  return subpath.length === 0 ? "." : `.${subpath}`;
+}
+
+/**
+ * Returns the package portion of a bare specifier, dropping any deep subpath.
+ * `@acme/crm/mount` → `@acme/crm`; `gizmo/mount` → `gizmo`.
+ */
+function bareSpecifierPackagePath(specifier: string): string {
+  const segments = specifier.split("/");
+  if (specifier.startsWith("@")) {
+    return segments.slice(0, 2).join("/");
+  }
+  return segments[0] ?? specifier;
+}
+
+async function hasPackageJson(source: ProjectSource, packageRoot: string): Promise<boolean> {
+  return (await source.stat(join(packageRoot, "package.json"))) === "file";
+}

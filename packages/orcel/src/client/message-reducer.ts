@@ -1,0 +1,661 @@
+import type { OrcelAgentReducer, OrcelAgentReducerEvent } from "#client/reducer.js";
+import {
+  createAuthorizationCompletedPart,
+  createAuthorizationRequiredPart,
+} from "#client/authorization-message-parts.js";
+import type {
+  OrcelAuthorizationPart,
+  OrcelMessageData,
+  OrcelDynamicToolPart,
+  OrcelMessage,
+  OrcelMessageMetadata,
+  OrcelMessagePart,
+} from "#client/message-reducer-types.js";
+import {
+  approvedApproval,
+  createToolMetadata,
+  mergeToolMetadata,
+  normalizeActionRequest,
+  normalizeActionResult,
+  stringifyUnknown,
+  toMessageInputRequest,
+} from "#client/message-action-parts.js";
+import {
+  optimisticUserMessageId,
+  partKey,
+  projectReceivedParts,
+  removeStreamingToolPartsForTurn,
+  upsertMessage,
+} from "#client/message-reducer-primitives.js";
+import { messageRun } from "#client/message-run-parts.js";
+import { createSettledTaskPart } from "#client/message-task-parts.js";
+import type { InputResponse } from "#shared/input.js";
+import type { AuthorizationCompletedStreamEvent, InputResolution } from "#protocol/message.js";
+
+export type {
+  OrcelAuthorizationChallenge,
+  OrcelAuthorizationOutcome,
+  OrcelAuthorizationPart,
+  OrcelMessageData,
+  OrcelDynamicToolPart,
+  OrcelMessageInputRequest,
+  OrcelMessage,
+  OrcelMessageMetadata,
+  OrcelMessagePart,
+  OrcelMessageToolMetadata,
+} from "#client/message-reducer-types.js";
+
+type OrcelAssistantMessage = OrcelMessage & { readonly role: "assistant" };
+type MessageReceivedEvent = Extract<OrcelAgentReducerEvent, { readonly type: "message.received" }>;
+
+function receivedMessageEventId(event: MessageReceivedEvent): string {
+  const eventId: string | undefined = event.meta.id;
+  return eventId ?? `${event.data.turnId}:${event.data.sequence}`;
+}
+
+/**
+ * Creates a UIMessage-compatible orcel reducer for chat and agent UIs.
+ *
+ * The returned projection keeps orcel-owned types while following the AI SDK
+ * `messages[].parts[]` rendering convention used by AI Elements. It projects
+ * text, reasoning, tool calls, tool results, tool approvals, submitted HITL
+ * responses, and authorization prompts.
+ */
+export function defaultMessageReducer(): OrcelAgentReducer<OrcelMessageData> {
+  return {
+    initial() {
+      return { messages: [] };
+    },
+    reduce(data, event) {
+      return reduceMessageData(data, event);
+    },
+  };
+}
+
+function reduceMessageData(data: OrcelMessageData, event: OrcelAgentReducerEvent): OrcelMessageData {
+  switch (event.type) {
+    case "client.message.submitted":
+      return upsertMessage(data, {
+        id: optimisticUserMessageId(event.data.submissionId),
+        metadata: {
+          optimistic: true,
+          status: "submitted",
+        },
+        parts: [{ type: "text", text: event.data.message }],
+        role: "user",
+      });
+
+    case "client.message.failed":
+      return upsertMessage(data, {
+        id: optimisticUserMessageId(event.data.submissionId),
+        metadata: {
+          optimistic: true,
+          status: "failed",
+        },
+        parts: [{ type: "text", text: event.data.message }],
+        role: "user",
+      });
+
+    case "input.resolved": {
+      let next = data;
+      for (const resolution of event.data.resolutions) {
+        next = resolveInputRequest(next, resolution);
+      }
+      return next;
+    }
+
+    case "message.received":
+      return upsertMessage(data, {
+        id: `${receivedMessageEventId(event)}:user`,
+        metadata: {
+          status: "complete",
+          turnId: event.data.turnId,
+        },
+        parts: projectReceivedParts(event.data.parts, event.data.message),
+        role: "user",
+      });
+
+    case "step.started":
+      return updateAssistantMessage(data, event.data.turnId, (message) =>
+        ensureStepStartPart(message, event.data.stepIndex),
+      );
+
+    case "reasoning.appended":
+      return updateAssistantMessage(data, event.data.turnId, (message) =>
+        messageRun.append(ensureStepStartPart(message, event.data.stepIndex), {
+          delta: event.data.reasoningDelta,
+          stepIndex: event.data.stepIndex,
+          type: "reasoning",
+        }),
+      );
+
+    case "reasoning.completed":
+      return updateAssistantMessage(data, event.data.turnId, (message) =>
+        messageRun.upsert(ensureStepStartPart(message, event.data.stepIndex), {
+          state: "done",
+          stepIndex: event.data.stepIndex,
+          text: event.data.reasoning,
+          type: "reasoning",
+        }),
+      );
+
+    case "action.input.appended": {
+      const existing = findToolPart(data, event.data.callId);
+      if (existing !== undefined && existing.state !== "input-streaming") return data;
+
+      const inputText =
+        (existing?.state === "input-streaming" ? existing.inputText : "") +
+        event.data.inputTextDelta;
+
+      const nextPart: OrcelDynamicToolPart = {
+        input: undefined,
+        inputText,
+        state: "input-streaming",
+        stepIndex: event.data.stepIndex,
+        toolCallId: event.data.callId,
+        toolMetadata: existing?.toolMetadata ?? {
+          orcel: {
+            kind: "unknown",
+            name: event.data.toolName,
+          },
+        },
+        toolName: event.data.toolName,
+        type: "dynamic-tool",
+      };
+
+      if (existing !== undefined) {
+        return updateToolPart(data, event.data.callId, nextPart);
+      }
+
+      return updateAssistantMessage(data, event.data.turnId, (message) =>
+        upsertPart(ensureStepStartPart(message, event.data.stepIndex), nextPart),
+      );
+    }
+
+    case "actions.requested": {
+      let next = data;
+      for (const action of event.data.actions) {
+        const descriptor = normalizeActionRequest(action);
+        next = updateAssistantMessage(next, event.data.turnId, (message) =>
+          upsertPart(ensureStepStartPart(message, event.data.stepIndex), {
+            input: "input" in action ? action.input : undefined,
+            state: "input-available",
+            stepIndex: event.data.stepIndex,
+            toolCallId: action.callId,
+            toolMetadata: createToolMetadata(descriptor),
+            toolName: descriptor.toolName,
+            type: "dynamic-tool",
+          }),
+        );
+      }
+      return next;
+    }
+
+    case "input.requested": {
+      let next = data;
+      for (const request of event.data.requests) {
+        const descriptor = normalizeActionRequest(request.action);
+        next = updateAssistantMessage(next, event.data.turnId, (message) =>
+          upsertPart(ensureStepStartPart(message, event.data.stepIndex), {
+            approval: {
+              id: request.requestId,
+            },
+            input: request.action.input,
+            state: "approval-requested",
+            stepIndex: event.data.stepIndex,
+            toolCallId: request.action.callId,
+            toolMetadata: createToolMetadata(descriptor, {
+              inputRequest: toMessageInputRequest(request),
+            }),
+            toolName: descriptor.toolName,
+            type: "dynamic-tool",
+          }),
+        );
+      }
+      return next;
+    }
+
+    case "approval.candidate":
+      // Candidate progress is responder-specific. Applications can consume the
+      // raw stream event for private UI without changing the shared tool part.
+      return data;
+
+    case "approval.settled": {
+      const existing = findToolPartByApprovalId(data, event.data.requestId);
+      if (existing === undefined) return data;
+      if (event.data.outcome === "approved") {
+        return updateToolPart(data, existing.toolCallId, {
+          approval: { approved: true, id: event.data.requestId, reason: undefined },
+          input: existing.input,
+          state: "approval-responded",
+          stepIndex: existing.stepIndex,
+          toolCallId: existing.toolCallId,
+          toolMetadata: existing.toolMetadata,
+          toolName: existing.toolName,
+          type: "dynamic-tool",
+        });
+      }
+      return updateToolPart(data, existing.toolCallId, {
+        approval: {
+          approved: false,
+          id: event.data.requestId,
+          reason: "Tool execution was cancelled.",
+        },
+        input: existing.input,
+        state: "output-denied",
+        stepIndex: existing.stepIndex,
+        toolCallId: existing.toolCallId,
+        toolMetadata: existing.toolMetadata,
+        toolName: existing.toolName,
+        type: "dynamic-tool",
+      });
+    }
+
+    case "action.result": {
+      const descriptor = normalizeActionResult(event.data.result);
+      const existing = findToolPart(data, event.data.result.callId);
+      const denied = event.data.error?.code === "TOOL_EXECUTION_DENIED";
+      const failed = event.data.status === "failed" && !denied;
+      const approvalId = existing?.approval?.id ?? event.data.result.callId;
+      const toolMetadata = mergeToolMetadata(
+        existing?.toolMetadata,
+        createToolMetadata(descriptor),
+      );
+      const resultPartBase = {
+        input: existing?.input,
+        stepIndex: event.data.stepIndex,
+        toolCallId: event.data.result.callId,
+        toolMetadata,
+        toolName: existing?.toolName ?? descriptor.toolName,
+        type: "dynamic-tool" as const,
+      };
+
+      let nextPart: OrcelDynamicToolPart;
+      if (denied) {
+        nextPart = {
+          ...resultPartBase,
+          approval: {
+            approved: false,
+            id: approvalId,
+            reason: event.data.error?.message,
+          },
+          state: "output-denied",
+        };
+      } else if (failed) {
+        nextPart = {
+          ...resultPartBase,
+          approval: approvedApproval(existing),
+          errorText: event.data.error?.message ?? stringifyUnknown(event.data.result.output),
+          state: "output-error",
+        };
+      } else {
+        nextPart = {
+          ...resultPartBase,
+          approval: approvedApproval(existing),
+          output: event.data.result.output,
+          state: "output-available",
+        };
+      }
+
+      if (existing !== undefined) {
+        // Approved tool results can arrive on a later runtime turn; keep
+        // the UI lifecycle anchored to the original tool call.
+        return updateToolPart(data, event.data.result.callId, nextPart);
+      }
+
+      return updateAssistantMessage(data, event.data.turnId, (message) =>
+        upsertPart(ensureStepStartPart(message, event.data.stepIndex), nextPart),
+      );
+    }
+
+    case "action.partial": {
+      const existing = findToolPart(data, event.data.result.callId);
+      if (existing !== undefined && isSettledToolPart(existing)) {
+        return data;
+      }
+
+      const descriptor = normalizeActionResult(event.data.result);
+      const nextPart: OrcelDynamicToolPart = {
+        approval: approvedApproval(existing),
+        input: existing?.input,
+        output: event.data.result.output,
+        partial: true,
+        state: "output-available",
+        stepIndex: event.data.stepIndex,
+        toolCallId: event.data.result.callId,
+        toolMetadata: mergeToolMetadata(existing?.toolMetadata, createToolMetadata(descriptor)),
+        toolName: existing?.toolName ?? descriptor.toolName,
+        type: "dynamic-tool",
+      };
+
+      if (existing !== undefined) {
+        return updateToolPart(data, event.data.result.callId, nextPart);
+      }
+
+      return updateAssistantMessage(data, event.data.turnId, (message) =>
+        upsertPart(ensureStepStartPart(message, event.data.stepIndex), nextPart),
+      );
+    }
+
+    case "task.settled": {
+      const existing = findToolPart(data, event.data.callId);
+      if (existing === undefined) return data;
+      return replaceToolPart(data, createSettledTaskPart(existing, event));
+    }
+
+    case "authorization.required":
+      return updateAssistantMessage(data, event.data.turnId, (message) =>
+        upsertPart(
+          ensureStepStartPart(message, event.data.stepIndex),
+          createAuthorizationRequiredPart(event),
+        ),
+      );
+
+    case "authorization.completed":
+      return completeAuthorization(data, event);
+
+    case "message.appended":
+      return updateAssistantMessage(data, event.data.turnId, (message) =>
+        messageRun.append(ensureStepStartPart(message, event.data.stepIndex), {
+          delta: event.data.messageDelta,
+          stepIndex: event.data.stepIndex,
+          type: "text",
+        }),
+      );
+
+    case "message.completed":
+      return updateAssistantMessage(data, event.data.turnId, (message) => {
+        return messageRun.upsert(ensureStepStartPart(message, event.data.stepIndex), {
+          state: "done",
+          stepIndex: event.data.stepIndex,
+          text: event.data.message,
+          type: "text",
+        });
+      });
+
+    case "result.completed":
+      return updateAssistantMetadata(data, event.data.turnId, { result: event.data.result });
+
+    case "turn.completed":
+      return updateAssistantMessage(data, event.data.turnId, (message) => ({
+        ...message,
+        metadata: { ...message.metadata, status: "complete" },
+        parts: removeStreamingToolParts(message.parts),
+      }));
+
+    case "turn.cancelled":
+      // Finalize whatever the cancelled turn streamed: no message.completed
+      // or reasoning.completed will follow a partial append.
+      return updateAssistantMessage(data, event.data.turnId, (message) => ({
+        ...message,
+        metadata: { ...message.metadata, status: "complete" },
+        parts: removeStreamingToolParts(
+          message.parts.map((part) =>
+            (part.type === "text" || part.type === "reasoning") && part.state === "streaming"
+              ? { ...part, state: "done" }
+              : part,
+          ),
+        ),
+      }));
+
+    case "turn.failed":
+      return removeStreamingToolPartsForTurn(data, event.data.turnId);
+
+    case "session.failed":
+      return data;
+
+    default:
+      return data;
+  }
+}
+
+function removeStreamingToolParts(parts: readonly OrcelMessagePart[]): readonly OrcelMessagePart[] {
+  return parts.filter((part) => part.type !== "dynamic-tool" || part.state !== "input-streaming");
+}
+
+function respondToInputRequest(data: OrcelMessageData, response: InputResponse): OrcelMessageData {
+  const existing = findToolPartByApprovalId(data, response.requestId);
+  if (!existing) return data;
+
+  const approval: { id: string; reason?: string } = {
+    id: response.requestId,
+  };
+  if (response.text !== undefined) {
+    approval.reason = response.text;
+  }
+
+  return updateToolPart(data, existing.toolCallId, {
+    approval,
+    input: existing.input,
+    state: "approval-responded",
+    stepIndex: existing.stepIndex,
+    toolCallId: existing.toolCallId,
+    toolMetadata: mergeToolMetadata(existing.toolMetadata, {
+      orcel: {
+        inputResponse: response,
+        kind: existing.toolMetadata?.orcel?.kind ?? "unknown",
+        name: existing.toolMetadata?.orcel?.name ?? existing.toolName,
+      },
+    }),
+    toolName: existing.toolName,
+    type: "dynamic-tool",
+  });
+}
+
+function resolveInputRequest(data: OrcelMessageData, resolution: InputResolution): OrcelMessageData {
+  if (resolution.response !== undefined) {
+    return respondToInputRequest(data, resolution.response);
+  }
+
+  const existing = findToolPartByApprovalId(data, resolution.requestId);
+  if (!existing) return data;
+
+  return updateToolPart(data, existing.toolCallId, {
+    input: existing.input,
+    output: { status: resolution.outcome },
+    state: "output-available",
+    stepIndex: existing.stepIndex,
+    toolCallId: existing.toolCallId,
+    toolMetadata: existing.toolMetadata,
+    toolName: existing.toolName,
+    type: "dynamic-tool",
+  });
+}
+
+function updateAssistantMessage(
+  data: OrcelMessageData,
+  turnId: string,
+  update: (message: OrcelAssistantMessage) => OrcelAssistantMessage,
+): OrcelMessageData {
+  const existing = data.messages.find(
+    (message): message is OrcelAssistantMessage =>
+      message.role === "assistant" && message.metadata?.turnId === turnId,
+  );
+
+  const message = existing ?? createAssistantMessage(turnId);
+  return upsertMessage(data, update(message));
+}
+
+function updateAssistantMetadata(
+  data: OrcelMessageData,
+  turnId: string,
+  metadata: OrcelMessageMetadata,
+): OrcelMessageData {
+  return updateAssistantMessage(data, turnId, (message) => ({
+    ...message,
+    metadata: {
+      ...message.metadata,
+      ...metadata,
+    },
+  }));
+}
+
+function createAssistantMessage(turnId: string): OrcelAssistantMessage {
+  return {
+    id: `${turnId}:assistant`,
+    metadata: {
+      status: "streaming",
+      turnId,
+    },
+    parts: [],
+    role: "assistant",
+  };
+}
+
+function ensureStepStartPart(message: OrcelAssistantMessage, stepIndex: number): OrcelAssistantMessage {
+  const stepStartCount = message.parts.filter((part) => part.type === "step-start").length;
+  if (stepStartCount > stepIndex) {
+    return message;
+  }
+
+  const missingCount = stepIndex - stepStartCount + 1;
+  return {
+    ...message,
+    parts: [
+      ...message.parts,
+      ...Array.from({ length: missingCount }, () => ({ type: "step-start" as const })),
+    ],
+  };
+}
+
+function upsertPart(message: OrcelAssistantMessage, next: OrcelMessagePart): OrcelAssistantMessage {
+  const index = message.parts.findIndex((part) => partKey(part) === partKey(next));
+  const parts =
+    index === -1
+      ? [...message.parts, next]
+      : [...message.parts.slice(0, index), next, ...message.parts.slice(index + 1)];
+
+  return {
+    ...message,
+    metadata: {
+      ...message.metadata,
+      status: next.type === "text" && next.state === "done" ? "complete" : "streaming",
+    },
+    parts,
+  };
+}
+
+function updateToolPart(
+  data: OrcelMessageData,
+  toolCallId: string,
+  next: OrcelDynamicToolPart,
+): OrcelMessageData {
+  const message = data.messages.find(
+    (candidate): candidate is OrcelAssistantMessage =>
+      candidate.role === "assistant" &&
+      candidate.parts.some(
+        (part) => part.type === "dynamic-tool" && part.toolCallId === toolCallId,
+      ),
+  );
+
+  if (!message) {
+    return data;
+  }
+
+  return upsertMessage(data, upsertPart(message, next));
+}
+
+/**
+ * Swaps a tool part in place without touching the message status: a task
+ * usually settles after the turn that called it has completed.
+ */
+function replaceToolPart(data: OrcelMessageData, next: OrcelDynamicToolPart): OrcelMessageData {
+  const message = data.messages.find((candidate) =>
+    candidate.parts.some(
+      (part) => part.type === "dynamic-tool" && part.toolCallId === next.toolCallId,
+    ),
+  );
+  if (message === undefined) return data;
+
+  return upsertMessage(data, {
+    ...message,
+    parts: message.parts.map((part) => (partKey(part) === partKey(next) ? next : part)),
+  });
+}
+
+function completeAuthorization(
+  data: OrcelMessageData,
+  event: AuthorizationCompletedStreamEvent,
+): OrcelMessageData {
+  const existing = findLatestPendingAuthorizationPart(data, event.data.name);
+  const next = createAuthorizationCompletedPart(event, existing);
+
+  if (existing !== undefined) {
+    return updateAuthorizationPart(data, existing, next);
+  }
+
+  return updateAssistantMessage(data, event.data.turnId, (message) =>
+    upsertPart(ensureStepStartPart(message, event.data.stepIndex), next),
+  );
+}
+
+function updateAuthorizationPart(
+  data: OrcelMessageData,
+  existing: OrcelAuthorizationPart,
+  next: OrcelAuthorizationPart,
+): OrcelMessageData {
+  const message = data.messages.find(
+    (candidate): candidate is OrcelAssistantMessage =>
+      candidate.role === "assistant" && candidate.parts.some((part) => part === existing),
+  );
+
+  if (!message) {
+    return data;
+  }
+
+  return upsertMessage(data, upsertPart(message, next));
+}
+
+function findToolPart(data: OrcelMessageData, toolCallId: string): OrcelDynamicToolPart | undefined {
+  for (const message of data.messages) {
+    for (const part of message.parts) {
+      if (part.type === "dynamic-tool" && part.toolCallId === toolCallId) {
+        return part;
+      }
+    }
+  }
+  return undefined;
+}
+
+function isSettledToolPart(part: OrcelDynamicToolPart): boolean {
+  return (
+    part.state === "output-denied" ||
+    part.state === "output-error" ||
+    (part.state === "output-available" && part.partial !== true)
+  );
+}
+
+function findLatestPendingAuthorizationPart(
+  data: OrcelMessageData,
+  name: string,
+): OrcelAuthorizationPart | undefined {
+  for (let messageIndex = data.messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
+    const message = data.messages[messageIndex];
+    if (message?.role !== "assistant") {
+      continue;
+    }
+
+    for (let partIndex = message.parts.length - 1; partIndex >= 0; partIndex -= 1) {
+      const part = message.parts[partIndex];
+      if (part?.type === "authorization" && part.state === "required" && part.name === name) {
+        return part;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function findToolPartByApprovalId(
+  data: OrcelMessageData,
+  approvalId: string,
+): OrcelDynamicToolPart | undefined {
+  for (const message of data.messages) {
+    for (const part of message.parts) {
+      if (part.type === "dynamic-tool" && part.approval?.id === approvalId) {
+        return part;
+      }
+    }
+  }
+  return undefined;
+}

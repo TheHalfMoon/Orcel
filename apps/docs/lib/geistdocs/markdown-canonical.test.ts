@@ -5,8 +5,8 @@ describe("Markdown canonical ownership", () => {
   it("removes proxy canonicals from Markdown rewrites", () => {
     const response = new Response(null, {
       headers: {
-        link: '<https://github.com/TheHalfMoon/kaf/docs/getting-started>; rel="canonical"',
-        "x-middleware-rewrite": "https://github.com/TheHalfMoon/kaf/en/llms.mdx/getting-started",
+        link: '<https://github.com/TheHalfMoon/orcel/docs/getting-started>; rel="canonical"',
+        "x-middleware-rewrite": "https://github.com/TheHalfMoon/orcel/en/llms.mdx/getting-started",
       },
     });
 
@@ -16,11 +16,11 @@ describe("Markdown canonical ownership", () => {
   });
 
   it("keeps canonicals on unrelated proxy responses", () => {
-    const canonical = '<https://github.com/TheHalfMoon/kaf/docs/getting-started>; rel="canonical"';
+    const canonical = '<https://github.com/TheHalfMoon/orcel/docs/getting-started>; rel="canonical"';
     const response = new Response(null, {
       headers: {
         link: canonical,
-        "x-middleware-rewrite": "https://github.com/TheHalfMoon/kaf/en/docs/getting-started",
+        "x-middleware-rewrite": "https://github.com/TheHalfMoon/orcel/en/docs/getting-started",
       },
     });
 
@@ -34,10 +34,10 @@ describe("Markdown canonical ownership", () => {
       headers: { "content-type": "text/markdown" },
     });
 
-    applyMarkdownRouteCanonical(response, "https://github.com/TheHalfMoon/kaf/docs/getting-started");
+    applyMarkdownRouteCanonical(response, "https://github.com/TheHalfMoon/orcel/docs/getting-started");
 
     expect(response.headers.get("link")).toBe(
-      '<https://github.com/TheHalfMoon/kaf/docs/getting-started>; rel="canonical"',
+      '<https://github.com/TheHalfMoon/orcel/docs/getting-started>; rel="canonical"',
     );
   });
 
@@ -51,7 +51,7 @@ describe("Markdown canonical ownership", () => {
       },
     });
 
-    applyMarkdownRouteCanonical(response, "https://github.com/TheHalfMoon/kaf/docs/installtion");
+    applyMarkdownRouteCanonical(response, "https://github.com/TheHalfMoon/orcel/docs/installtion");
 
     expect(response.status).toBe(200);
     expect(response.headers.get("link")).toBeNull();

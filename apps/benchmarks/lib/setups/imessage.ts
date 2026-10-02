@@ -8,7 +8,7 @@ const REGISTRY_URL = `http://127.0.0.1:${REGISTRY_PORT}`;
 export const imessageSetup: AuthoringSetup = {
   id: "imessage-v1",
   ports: [REGISTRY_PORT],
-  environment: { KAF_DEV_OFFICIAL_REGISTRY_URL: REGISTRY_URL },
+  environment: { ORCEL_DEV_OFFICIAL_REGISTRY_URL: REGISTRY_URL },
   async onBootstrap({ run, artifactsRoot, write }) {
     const setupRoot = `${artifactsRoot}/mock-imessage-setup`;
     await Promise.all(
@@ -22,7 +22,7 @@ export const imessageSetup: AuthoringSetup = {
     // `setupRoot` is absolute, so this must not be prefixed with `./`: pnpm
     // would normalize the result to a relative path, link a directory that does
     // not exist, and name the dependency after the basename instead of the
-    // package, leaving `kaf add` unable to find the setup command.
+    // package, leaving `orcel add` unable to find the setup command.
     await run(`pnpm add ${setupRoot}`);
     await run(`mkdir -p ${artifactsRoot}/registry/channel`);
 
@@ -30,21 +30,21 @@ export const imessageSetup: AuthoringSetup = {
       $schema: "https://ui.shadcn.com/schema/registry-item.json",
       name: "channel/photon-imessage",
       title: "Photon iMessage",
-      description: "Connect an kaf agent to iMessage through a deterministic provider setup flow.",
+      description: "Connect an orcel agent to iMessage through a deterministic provider setup flow.",
       files: [
         {
           path: "registry/channels/photon-imessage.ts",
           type: "registry:file",
           target: "agent/channels/imessage.ts",
           content:
-            'import { photonIMessageChannel } from "kaf/channels/photon";\n\nexport default photonIMessageChannel({ credentials: async () => ({ projectId: "mock-imessage-project", projectSecret: "mock-imessage-secret" }) });\n',
+            'import { photonIMessageChannel } from "orcel/channels/photon";\n\nexport default photonIMessageChannel({ credentials: async () => ({ projectId: "mock-imessage-project", projectSecret: "mock-imessage-secret" }) });\n',
         },
       ],
       meta: {
-        kaf: {
+        orcel: {
           setup: {
             command: "mock-imessage-setup",
-            package: "@kaf-internal/mock-imessage-setup",
+            package: "@orcel-internal/mock-imessage-setup",
             bin: "mock-imessage-setup",
             args: [],
           },
@@ -54,7 +54,7 @@ export const imessageSetup: AuthoringSetup = {
     };
     const registry = {
       $schema: "https://ui.shadcn.com/schema/registry.json",
-      name: "kaf-authoring-eval",
+      name: "orcel-authoring-eval",
       homepage: REGISTRY_URL,
       items: [
         {

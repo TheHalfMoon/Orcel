@@ -1,18 +1,18 @@
 {
-  "name": "kaf-docs",
+  "name": "orcel-docs",
   "version": "0.0.1",
   "private": true,
-  "description": "kaf documentation site.",
+  "description": "orcel documentation site.",
   "type": "module",
   "scripts": {
     "build": "pnpm run registry:check && pnpm run templates:sync && next build",
     "dev": "portless",
-    "dev:app": "pnpm run templates:sync && portless get docs.kaf && next dev --turbo",
+    "dev:app": "pnpm run templates:sync && portless get docs.orcel && next dev --turbo",
     "start": "next start",
     "postinstall": "fumadocs-mdx",
     "translate": "npx @vercel/geistdocs translate",
     "test:unit": "vitest run --config vitest.config.ts",
-    "render:kaf-5": "NODE_OPTIONS=--loader=./scripts/wgsl-node-loader.mjs tsx scripts/render-kaf-5.ts",
+    "render:orcel-5": "NODE_OPTIONS=--loader=./scripts/wgsl-node-loader.mjs tsx scripts/render-orcel-5.ts",
     "registry:build": "tsx scripts/prepare-registry-output.ts && shadcn build",
     "registry:check": "node --test ../../scripts/materialize-registry-release-requirements.test.mjs ../../scripts/validate-public-registry-requirements.test.mjs && node ../../scripts/validate-public-registry-requirements.mjs && pnpm run registry:build && pnpm run registry:validate && pnpm run registry:validate:channels && pnpm run registry:validate:instrumentation && pnpm run registry:validate:memory && tsc --project registry/tsconfig.json",
     "registry:validate": "tsx scripts/validate-connection-registry.ts",
@@ -22,7 +22,7 @@
     "registry:validate:memory": "tsx scripts/validate-memory-registry.ts"
   },
   "dependencies": {
-    "@kaf/catalog": "workspace:*",
+    "@orcel/catalog": "workspace:*",
     "@icons-pack/react-simple-icons": "13.13.0",
     "@streamdown/code": "1.1.1",
     "@vercel/analytics": "2.0.1",
@@ -97,7 +97,7 @@
     "braintrust": "3.29.0",
     "chat": "4.41.0",
     "chat-adapter-sendblue": "0.2.0",
-    "kaf": "workspace:*",
+    "orcel": "workspace:*",
     "eve-channel-blooio": "0.2.0",
     "portless": "0.15.6",
     "postcss": "8.5.15",
@@ -108,7 +108,7 @@
     "vitest": "catalog:"
   },
   "portless": {
-    "name": "docs.kaf",
+    "name": "docs.orcel",
     "script": "dev:app"
   }
 }

@@ -1,4 +1,4 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 const MARKER = "authorized-response-retry-e2e-N4J8";
 const TOOL_NAME = "responder-gate";
@@ -17,7 +17,7 @@ export default defineEval({
 
     const rejectedTurn = await conversation.startRespond(
       [{ optionId: "approve", requestId: approval.requestId }],
-      { headers: { "x-kaf-fixture-user": "unauthorized-responder" } },
+      { headers: { "x-orcel-fixture-user": "unauthorized-responder" } },
     );
     await rejectedTurn.waitForEvent("approval.candidate", {
       data: { outcome: "rejected", requestId: approval.requestId },
@@ -27,7 +27,7 @@ export default defineEval({
     (await rejectedTurn.result()).expectOk();
     const approved = await rejectedTurn.session.respond(
       [{ optionId: "approve", requestId: approval.requestId }],
-      { headers: { "x-kaf-fixture-user": "e2e-approval-responder" } },
+      { headers: { "x-orcel-fixture-user": "e2e-approval-responder" } },
     );
     approved.expectOk();
     approved.event("approval.settled", {

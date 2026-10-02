@@ -9,13 +9,13 @@ export const createThreadBodySchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
 });
 
-const kafSessionSchema = z.object({
+const orcelSessionSchema = z.object({
   sessionId: z.string().trim().min(1),
   streamIndex: z.number().int().min(0),
 });
 
 export const threadStateSchema = z.object({
-  session: kafSessionSchema,
+  session: orcelSessionSchema,
   events: z.array(z.unknown()),
 });
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { ChatStatus } from "~/composables/chat/types";
-import { useStreamLog } from "~/composables/chat/providers/kaf/stream-log";
+import { useStreamLog } from "~/composables/chat/providers/orcel/stream-log";
 
 const props = defineProps<{
   status: ChatStatus;
@@ -59,7 +59,7 @@ onUnmounted(() => document.removeEventListener("click", onDocumentClick));
           (status === 'streaming' || status === 'submitted') && 'animate-pulse',
         ]"
       />
-      <span class="font-mono">kaf stream</span>
+      <span class="font-mono">orcel stream</span>
       <span class="text-dimmed">·</span>
       <span class="font-mono text-dimmed">{{ status }}</span>
       <UIcon

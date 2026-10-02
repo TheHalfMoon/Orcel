@@ -1,4 +1,4 @@
-import type { ThreadSummary } from "#kaf/types/thread";
+import type { ThreadSummary } from "#orcel/types/thread";
 import { THREAD_LIST_KEY, deleteThread, refreshThreadList } from "~/composables/chat/navigation";
 
 interface ThreadListResponse {

@@ -1,4 +1,4 @@
-import { defineEvalConfig } from "kaf/evals";
+import { defineEvalConfig } from "orcel/evals";
 
 export default defineEvalConfig({
   // Workflow tools dispatch durable runs; serialize so the runs are never

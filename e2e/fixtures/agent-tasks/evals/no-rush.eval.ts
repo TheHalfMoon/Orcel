@@ -1,4 +1,4 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 import { firstSettlementOf, heldTurn, reportIdOf, settlementsOf, taskStarts } from "./task-events";
 
@@ -19,7 +19,7 @@ export default defineEval({
     turn.expectOk();
 
     turn.notCalledTool("task_wait");
-    turn.eventsSatisfy("kaf holds the turn after the reply", heldTurn);
+    turn.eventsSatisfy("orcel holds the turn after the reply", heldTurn);
     turn.eventsSatisfy("the model replies before the report is ready", (events) => {
       const callIds = taskStarts(events, "compile_report").map((call) => call.callId);
       const settled = firstSettlementOf(events, callIds);

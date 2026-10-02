@@ -1,5 +1,5 @@
 ---
-issue: https://github.com/TheHalfMoon/kaf/issues/1084
+issue: https://github.com/TheHalfMoon/orcel/issues/1084
 status: implemented
 last_updated: "2026-09-10"
 ---
@@ -8,12 +8,12 @@ last_updated: "2026-09-10"
 
 `defineWorkflowTool` is the authoring boundary for durable tools, and its executor context owns
 `agent` and `ask`. The executor must explicitly start with `"use workflow"`; the definition
-selects the kaf tool contract and the directive marks the function's replay semantics.
+selects the orcel tool contract and the directive marks the function's replay semantics.
 
 ## Authoring API
 
 ```ts
-import { defineWorkflowTool } from "kaf/tools";
+import { defineWorkflowTool } from "orcel/tools";
 import { z } from "zod";
 
 export default defineWorkflowTool({
@@ -78,7 +78,7 @@ error, or cancellation resolves the model's tool call. With `execution: "backgro
 receives a task receipt. Ordinary yields are stream-only progress; yielding
 `task.postMessage(message)` wakes the owning agent, as does completion.
 
-`ctx.agent` delegates to the visible subagent named by its first argument. kaf derives a unique,
+`ctx.agent` delegates to the visible subagent named by its first argument. orcel derives a unique,
 replay-stable invocation identity for each call from its durable reply hook, including repeated and
 parallel calls to the same subagent. `ctx.ask` publishes an input request on the session's channel
 and returns an awaitable answer. It can be raced against `sleep`; finishing or cancelling
@@ -93,8 +93,8 @@ their existing behavior.
 - Replace `defineTool` with `defineWorkflowTool` for workflow tools and keep the executor's
   `"use workflow"` directive.
 - Replace `agent(ctx, input)` with `ctx.agent(target, input)` and `ask(ctx, request)` with `ctx.ask(request)`.
-- Remove imports from `kaf/workflow`; that entry point is removed. Import `WorkflowToolContext`,
-  `AgentInput`, `ToolInputRequest`, and `ToolInputResponse` from `kaf/tools` when needed.
+- Remove imports from `orcel/workflow`; that entry point is removed. Import `WorkflowToolContext`,
+  `AgentInput`, `ToolInputRequest`, and `ToolInputResponse` from `orcel/tools` when needed.
 
 This is a breaking public API change. The existing workflow-tool fixture migrates to the new API
 and continues to cover delegation, human answers, deadlines, progress, background execution, and

@@ -3,8 +3,8 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 
-import { defineEval } from "kaf/evals";
-import type { KafEvalContext } from "kaf/evals";
+import { defineEval } from "orcel/evals";
+import type { OrcelEvalContext } from "orcel/evals";
 
 // Sandbox semantics across deployment updates, driven entirely from inside
 // the eval: the test body runs on the host with the fixture as cwd, so it
@@ -30,11 +30,11 @@ import type { KafEvalContext } from "kaf/evals";
 //       session A's file
 //   t4  session B loads the added skill and follows its instructions
 //
-// Requires KAF_E2E_REDEPLOY_ALIAS plus Vercel credentials and a linked
+// Requires ORCEL_E2E_REDEPLOY_ALIAS plus Vercel credentials and a linked
 // fixture directory (the e2e-vercel workflow provides all three); skips
 // everywhere else.
 
-const ALIAS_ENV = "KAF_E2E_REDEPLOY_ALIAS";
+const ALIAS_ENV = "ORCEL_E2E_REDEPLOY_ALIAS";
 const ALIAS_SETTLE_MATCHES = 5;
 
 const FILE_PATH = "/workspace/redeploy-note.txt";
@@ -160,10 +160,10 @@ export default defineEval({
 });
 
 /** Builds the fixture and repoints the alias at the fresh deployment. */
-async function deployToAlias(t: KafEvalContext, alias: string, phase: string): Promise<void> {
+async function deployToAlias(t: OrcelEvalContext, alias: string, phase: string): Promise<void> {
   // Mirror the workflow's build env. Sandbox templates key on
   // VERCEL_PROJECT_ID, which is already present in the environment.
-  await execFileAsync("pnpm", ["exec", "kaf", "build"], {
+  await execFileAsync("pnpm", ["exec", "orcel", "build"], {
     ...EXEC_OPTIONS,
     env: {
       ...process.env,
@@ -176,12 +176,12 @@ async function deployToAlias(t: KafEvalContext, alias: string, phase: string): P
   const tokenArgs =
     process.env.VERCEL_TOKEN === undefined ? [] : ["--token", process.env.VERCEL_TOKEN];
   const deploymentEnvArgs = [
-    ...(process.env.KAF_E2E_MODEL === undefined
+    ...(process.env.ORCEL_E2E_MODEL === undefined
       ? []
-      : ["--env", `KAF_E2E_MODEL=${process.env.KAF_E2E_MODEL}`]),
-    ...(process.env.KAF_SANDBOX_IMAGE_TAG === undefined
+      : ["--env", `ORCEL_E2E_MODEL=${process.env.ORCEL_E2E_MODEL}`]),
+    ...(process.env.ORCEL_SANDBOX_IMAGE_TAG === undefined
       ? []
-      : ["--env", `KAF_SANDBOX_IMAGE_TAG=${process.env.KAF_SANDBOX_IMAGE_TAG}`]),
+      : ["--env", `ORCEL_SANDBOX_IMAGE_TAG=${process.env.ORCEL_SANDBOX_IMAGE_TAG}`]),
   ];
   // vercel alias does not infer the team from the project link the way deploy
   // does, so pass the scope explicitly.
@@ -206,18 +206,18 @@ async function deployToAlias(t: KafEvalContext, alias: string, phase: string): P
 }
 
 /**
- * Polls `/kaf/v1/info` until the alias repeatedly serves a deployment whose
+ * Polls `/orcel/v1/info` until the alias repeatedly serves a deployment whose
  * manifest contains `marker`. One matching response is insufficient while an
  * alias update is propagating and could race the next request.
  */
-async function waitForAliasToServe(t: KafEvalContext, marker: string): Promise<void> {
+async function waitForAliasToServe(t: OrcelEvalContext, marker: string): Promise<void> {
   const deadline = Date.now() + 120_000;
   let consecutiveMatches = 0;
   let lastStatus = "transport error";
   let lastMarkerMatch = false;
   while (Date.now() < deadline) {
     try {
-      const response = await t.target.fetch("/kaf/v1/info", { cache: "no-store" });
+      const response = await t.target.fetch("/orcel/v1/info", { cache: "no-store" });
       lastStatus = String(response.status);
       lastMarkerMatch = response.ok && JSON.stringify(await response.json()).includes(marker);
       if (lastMarkerMatch) {

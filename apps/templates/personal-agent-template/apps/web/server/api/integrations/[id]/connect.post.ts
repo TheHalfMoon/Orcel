@@ -1,6 +1,6 @@
 import { getConnector } from "~~/server/connectors";
 import { connectQuerySchema, connectorIdParamsSchema } from "~~/server/schemas/integrations";
-import { isValidKafResumeUrl, startConnectFlow } from "~~/server/utils/connect";
+import { isValidOrcelResumeUrl, startConnectFlow } from "~~/server/utils/connect";
 import { throwConnectError } from "~~/server/utils/errors";
 import { getRequestOrigin } from "~~/server/utils/h3-node";
 import { requireSessionUserId } from "~~/server/utils/session";
@@ -14,7 +14,7 @@ export default defineEventHandler(async (event) => {
   const origin = getRequestOrigin(event);
 
   const callbackUrl =
-    resumeUrl && isValidKafResumeUrl(resumeUrl, origin)
+    resumeUrl && isValidOrcelResumeUrl(resumeUrl, origin)
       ? resumeUrl
       : `${origin}/settings/integrations?connected=${connector.id}`;
 

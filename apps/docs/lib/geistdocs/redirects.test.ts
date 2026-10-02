@@ -114,7 +114,7 @@ describe("docsRedirects", () => {
     ["/docs/getting-started/multiple-root-agents", "/docs/concepts/project-structure"],
     ["/docs/multi-agent-projects", "/docs/concepts/project-structure"],
     ["/docs/multi-agent-projects.mdx", "/docs/concepts/project-structure.mdx"],
-    ["/docs/reference/http-api", "/docs/channels/kaf"],
+    ["/docs/reference/http-api", "/docs/channels/orcel"],
     ["/docs/project-layout", "/docs/getting-started"],
     ["/docs/reference/project-layout", "/docs/getting-started"],
     ["/docs/reference/project-layout.md", "/docs/getting-started.md"],
@@ -154,7 +154,7 @@ describe("rootMarkdownRedirects", () => {
     ["/installation.md", "/docs/getting-started.md"],
     ["/project-structure.mdx", "/docs/concepts/project-structure.mdx"],
     ["/tools/overview.md", "/docs/tools.md"],
-    ["/channels/kaf.mdx", "/docs/channels/kaf.mdx"],
+    ["/channels/orcel.mdx", "/docs/channels/orcel.mdx"],
   ])("redirects observed root Markdown alias %s to %s", (source, destination) => {
     expect(rootMarkdownRedirects).toContainEqual({ source, destination, permanent: true });
   });

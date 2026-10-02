@@ -1,16 +1,16 @@
 ---
 title: "Sandbox"
-description: "Configure the isolated filesystem and command environment used by an kaf agent."
+description: "Configure the isolated filesystem and command environment used by an orcel agent."
 ---
 
-Every kaf agent has one sandbox rooted at `/workspace`. The built-in `bash`, `read_file`, and `write_file` tools use it. Without an authored sandbox file, kaf selects the best available environment automatically.
+Every orcel agent has one sandbox rooted at `/workspace`. The built-in `bash`, `read_file`, and `write_file` tools use it. Without an authored sandbox file, orcel selects the best available environment automatically.
 
 ## Use the sandbox
 
 Authored tools and callbacks access the live sandbox with `ctx.getSandbox()`:
 
 ```ts title="agent/tools/run_analysis.ts"
-import { defineTool } from "kaf/tools";
+import { defineTool } from "orcel/tools";
 import { z } from "zod";
 
 export default defineTool({
@@ -44,38 +44,38 @@ For example, a Vercel environment returns a handle with `setNetworkPolicy()`. Th
 A sandbox module exports an environment and returns a sandbox from `defineSandbox()`:
 
 ```ts title="agent/sandbox.ts"
-import { DefaultSandbox, defineSandbox } from "kaf/sandbox";
+import { DefaultSandbox, defineSandbox } from "orcel/sandbox";
 
 export const environment = DefaultSandbox.environment();
 export default defineSandbox(() => environment.open());
 ```
 
-`environment.open()` starts the persistent sandbox owned by the current kaf session. The `defineSandbox()` selector runs until initialization succeeds, then kaf checkpoints the selected provider and its state. Later workflow steps and process restarts call the provider's `resume()` directly without rerunning the selector or `environment.open()`.
+`environment.open()` starts the persistent sandbox owned by the current orcel session. The `defineSandbox()` selector runs until initialization succeeds, then orcel checkpoints the selected provider and its state. Later workflow steps and process restarts call the provider's `resume()` directly without rerunning the selector or `environment.open()`.
 
 Pass options for the live sandbox to `open()`, then configure the returned sandbox before returning it. This initialization runs once for a successfully started durable sandbox:
 
 ```ts
-import { defineSandbox } from "kaf/sandbox";
-import { VercelSandbox } from "kaf/sandbox/vercel";
+import { defineSandbox } from "orcel/sandbox";
+import { VercelSandbox } from "orcel/sandbox/vercel";
 
 export const environment = VercelSandbox.environment();
 
 export default defineSandbox(async ({ session }) => {
   const sandbox = await environment.open({ networkPolicy: "deny-all" });
-  await sandbox.writeTextFile({ path: ".kaf/session", content: session.id });
+  await sandbox.writeTextFile({ path: ".orcel/session", content: session.id });
   return sandbox;
 });
 ```
 
-The environment export is required because `kaf build` prepares immutable environment inputs before a session exists.
+The environment export is required because `orcel build` prepares immutable environment inputs before a session exists.
 
 ### Prepare a reusable environment
 
 Use the environment's `prepare` option for setup every new sandbox inherits:
 
 ```ts
-import { defineSandbox } from "kaf/sandbox";
-import { VercelSandbox } from "kaf/sandbox/vercel";
+import { defineSandbox } from "orcel/sandbox";
+import { VercelSandbox } from "orcel/sandbox/vercel";
 
 export const environment = VercelSandbox.environment({
   prepare: async (sandbox) => {
@@ -89,22 +89,22 @@ export const environment = VercelSandbox.environment({
 export default defineSandbox(() => environment.open());
 ```
 
-kaf runs `prepare` while creating a reusable provider artifact, not once for each live session sandbox. Vercel captures a snapshot; Docker captures an image; microsandbox captures a VM snapshot; and just-bash captures a filesystem template.
+orcel runs `prepare` while creating a reusable provider artifact, not once for each live session sandbox. Vercel captures a snapshot; Docker captures an image; microsandbox captures a VM snapshot; and just-bash captures a filesystem template.
 
-During `kaf dev`, startup and authored-source rebuilds do not prepare sandbox environments. The first sandbox access prepares all environments in that compiled generation before opening the requested sandbox. This includes environments declared by subagents and extensions, even if they use different providers. Concurrent requests share the preparation work; a failed preparation can be retried on a later access. Optional provider installation and setup can make that first access slow.
+During `orcel dev`, startup and authored-source rebuilds do not prepare sandbox environments. The first sandbox access prepares all environments in that compiled generation before opening the requested sandbox. This includes environments declared by subagents and extensions, even if they use different providers. Concurrent requests share the preparation work; a failed preparation can be retried on a later access. Optional provider installation and setup can make that first access slow.
 
-`kaf build` still prepares environments eagerly. In production, kaf passes the recorded artifact directly to the provider when it creates a live sandbox. Production runtime does not rebuild or repair a missing artifact. A missing image, snapshot, or template fails with rebuild or redeploy guidance.
+`orcel build` still prepares environments eagerly. In production, orcel passes the recorded artifact directly to the provider when it creates a live sandbox. Production runtime does not rebuild or repair a missing artifact. A missing image, snapshot, or template fails with rebuild or redeploy guidance.
 
 ### Reuse native resources across sessions
 
-Built-in environments do not expose cross-session sharing. To reuse native compute or storage across kaf sessions, define a custom provider that returns a session-owned logical sandbox view and keeps shared resources outside that view's `stop`, `shutdown`, and `delete` operations. A session-specific path is not an isolation boundary; mutually untrusted sessions require separate native compute or stronger provider-owned isolation.
+Built-in environments do not expose cross-session sharing. To reuse native compute or storage across orcel sessions, define a custom provider that returns a session-owned logical sandbox view and keeps shared resources outside that view's `stop`, `shutdown`, and `delete` operations. A session-specific path is not an isolation boundary; mutually untrusted sessions require separate native compute or stronger provider-owned isolation.
 
 ### Share a parent sandbox
 
 A declared subagent can use its dispatching parent's sandbox explicitly:
 
 ```ts title="agent/subagents/reviewer/sandbox.ts"
-import { defineParentSandbox } from "kaf/sandbox";
+import { defineParentSandbox } from "orcel/sandbox";
 
 export default defineParentSandbox();
 ```
@@ -122,9 +122,9 @@ agent/sandbox/
     schema.sql
 ```
 
-Files under `agent/sandbox/workspace/` seed writable `/workspace`. kaf copies the seed when it prepares a new environment generation. Existing live sandbox state is not overwritten by later seed changes.
+Files under `agent/sandbox/workspace/` seed writable `/workspace`. orcel copies the seed when it prepares a new environment generation. Existing live sandbox state is not overwritten by later seed changes.
 
-Agent skills are compiled into a separate resource tree and exposed at `$HOME/.agents/skills`. These are stable paths across every built-in provider, so instructions and tools can refer to `/workspace` and `$HOME/.agents/skills`. Do not refer to a concrete home directory or `/kaf/resources`, which is provider-internal staging.
+Agent skills are compiled into a separate resource tree and exposed at `$HOME/.agents/skills`. These are stable paths across every built-in provider, so instructions and tools can refer to `/workspace` and `$HOME/.agents/skills`. Do not refer to a concrete home directory or `/orcel/resources`, which is provider-internal staging.
 
 Providers receive both trees with explicit metadata:
 
@@ -147,15 +147,15 @@ interface SandboxProviderResourceTree {
 }
 ```
 
-Docker and microsandbox mount the compiled trees read-only under `/kaf/resources`, copy workspace seeds into writable `/workspace`, and expose skills read-only where possible. Vercel's snapshot environment writes workspace and skill contents before capturing its snapshot. Custom providers decide whether to upload, mount, or write each tree, but must expose the final target paths before authored preparation runs.
+Docker and microsandbox mount the compiled trees read-only under `/orcel/resources`, copy workspace seeds into writable `/workspace`, and expose skills read-only where possible. Vercel's snapshot environment writes workspace and skill contents before capturing its snapshot. Custom providers decide whether to upload, mount, or write each tree, but must expose the final target paths before authored preparation runs.
 
 ## Custom providers
 
-Define a provider with `defineSandboxProvider()` from `kaf/sandbox/provider`. The five generic parameters describe environment options, live options, the prepared artifact, minimal serialized session state, and the provider-specific sandbox session type:
+Define a provider with `defineSandboxProvider()` from `orcel/sandbox/provider`. The five generic parameters describe environment options, live options, the prepared artifact, minimal serialized session state, and the provider-specific sandbox session type:
 
 ```ts
-import type { SandboxSession } from "kaf/sandbox";
-import { defineSandboxProvider } from "kaf/sandbox/provider";
+import type { SandboxSession } from "orcel/sandbox";
+import { defineSandboxProvider } from "orcel/sandbox/provider";
 
 export const AcmeSandbox = defineSandboxProvider<
   { image: string; prepare?: (sandbox: SandboxSession) => Promise<void> },
@@ -204,13 +204,13 @@ export const AcmeSandbox = defineSandboxProvider<
 
 Open options belong to `start()` and are not serialized or passed to `resume()`. A provider must put any immutable option-derived data needed for reconnection in its session state. With the current immutable-state contract, `resume()` reconnects existing native state and fails if it is gone rather than recreating callback side effects. A custom provider may define start-only callback fields, but built-in providers initialize the sandbox in `defineSandbox()` after `open()`.
 
-Preparation discovers authored files through `ctx.files`; core keeps project layout and artifact storage keys private. Keep provider SDK values behind the provider. `environment.open()` preserves the provider's sandbox capability type, while the heterogeneous runtime registry erases it to kaf's common session surface.
+Preparation discovers authored files through `ctx.files`; core keeps project layout and artifact storage keys private. Keep provider SDK values behind the provider. `environment.open()` preserves the provider's sandbox capability type, while the heterogeneous runtime registry erases it to orcel's common session surface.
 
 ## Providers
 
 | Provider                                   | Use it for                                                                              |
 | ------------------------------------------ | --------------------------------------------------------------------------------------- |
-| [Default](/docs/sandbox/default)           | Automatic provider selection with kaf's standard behavior.                              |
+| [Default](/docs/sandbox/default)           | Automatic provider selection with orcel's standard behavior.                              |
 | [Vercel](/docs/sandbox/vercel)             | Snapshot-backed persistent Vercel Sandboxes, domain network policies, and Drive mounts. |
 | [Docker](/docs/sandbox/docker)             | Local containers from the default image, an existing OCI image, or a Dockerfile.        |
 | [microsandbox](/docs/sandbox/microsandbox) | Local lightweight VMs from an OCI image or Dockerfile.                                  |

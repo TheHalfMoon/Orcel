@@ -1,5 +1,5 @@
-import { defineEval } from "kaf/evals";
-import { equals } from "kaf/evals/expect";
+import { defineEval } from "orcel/evals";
+import { equals } from "orcel/evals/expect";
 
 // Durable sessions keep their sandbox filesystem across turns: a file written
 // in turn one must still be readable in turn two of the same session. The

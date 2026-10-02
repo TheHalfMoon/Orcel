@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { KafDynamicToolPart } from "kaf/vue";
+import type { OrcelDynamicToolPart } from "orcel/vue";
 
 export type AgentInputResponse = {
   optionId?: string;
@@ -9,7 +9,7 @@ export type AgentInputResponse = {
 
 const props = defineProps<{
   canRespond: boolean;
-  part: KafDynamicToolPart;
+  part: OrcelDynamicToolPart;
   compact?: boolean;
 }>();
 
@@ -17,8 +17,8 @@ const emit = defineEmits<{
   inputResponses: [responses: AgentInputResponse[]];
 }>();
 
-const inputRequest = computed(() => props.part.toolMetadata?.kaf?.inputRequest);
-const inputResponse = computed(() => props.part.toolMetadata?.kaf?.inputResponse);
+const inputRequest = computed(() => props.part.toolMetadata?.orcel?.inputRequest);
+const inputResponse = computed(() => props.part.toolMetadata?.orcel?.inputResponse);
 
 const hidePrompt = computed(() => !props.compact && props.part.toolName === "ask_question");
 

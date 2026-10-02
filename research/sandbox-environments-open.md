@@ -8,7 +8,7 @@ last_updated: "2026-09-16"
 
 ## Decision
 
-Authors configure an immutable provider environment, then open its sandbox for the current kaf session:
+Authors configure an immutable provider environment, then open its sandbox for the current orcel session:
 
 ```ts
 export const environment = VercelSandbox.environment({
@@ -19,7 +19,7 @@ export const environment = VercelSandbox.environment({
 
 export default defineSandbox(async ({ session }) => {
   const sandbox = await environment.open({ networkPolicy: "deny-all" });
-  await sandbox.writeTextFile({ path: ".kaf/session", content: session.id });
+  await sandbox.writeTextFile({ path: ".orcel/session", content: session.id });
   return sandbox;
 });
 ```
@@ -38,11 +38,11 @@ Provider callbacks and runtime callback arguments are never stored in prepared a
 
 ## Public sandbox sessions
 
-`SandboxSession` is an I/O-only surface used by preparation and provider-defined session hooks. It contains process and file operations and kaf-owned `resolvePath()`. Providers express additional capabilities in their exact session type. It has no `id`, `stop()`, or `delete()`.
+`SandboxSession` is an I/O-only surface used by preparation and provider-defined session hooks. It contains process and file operations and orcel-owned `resolvePath()`. Providers express additional capabilities in their exact session type. It has no `id`, `stop()`, or `delete()`.
 
 `environment.open()` returns the provider-specific session type plus `stop()` and `delete()`. Core erases that exact type only at the heterogeneous runtime registry boundary.
 
-Authors use `ctx.session.id` for durable kaf identity. Provider-native IDs and core artifact keys remain private. `resolvePath()` remains unchanged: relative paths resolve beneath `/workspace`, and absolute paths pass through.
+Authors use `ctx.session.id` for durable orcel identity. Provider-native IDs and core artifact keys remain private. `resolvePath()` remains unchanged: relative paths resolve beneath `/workspace`, and absolute paths pass through.
 
 `setNetworkPolicy()` is required on the session types returned by dedicated Vercel, Docker, and microsandbox environments. just-bash and providers that reuse one native network boundary omit it from their session types and require policy at creation time.
 
@@ -125,7 +125,7 @@ Provider state is returned only by `start()` and is immutable for the durable se
 
 ### Lifecycle hooks
 
-Provider-handle hooks describe the kaf event, not a required native effect:
+Provider-handle hooks describe the orcel event, not a required native effect:
 
 - `onSessionStop()` handles authored `sandbox.stop()` while preserving provider session state.
 - `onRuntimeShutdown()` releases a process-local attachment without changing durable state.
@@ -148,7 +148,7 @@ session ID
 → native identity
 ```
 
-A reused provider excludes the kaf session ID:
+A reused provider excludes the orcel session ID:
 
 ```text
 validated artifact
@@ -175,11 +175,11 @@ Snapshot-unavailable replacement behavior remains provider-owned. No author cont
 
 ## Reused providers
 
-Cross-session native reuse is not a core feature. A custom provider may derive native identity without `session.id` while returning one session-owned logical view per kaf session.
+Cross-session native reuse is not a core feature. A custom provider may derive native identity without `session.id` while returning one session-owned logical view per orcel session.
 
 The experimental reused Vercel provider uses the same prepared image and Drive mechanics but has a distinct provider contract. It exposes immutable shared network policy and no mutable `setNetworkPolicy()`. Its lifecycle hooks do not tear down native compute used by other sessions.
 
-Concurrent creation, initialization recovery, attachment accounting, active-handle deduplication, and garbage collection remain provider implementation details. Core tracks one logical handle per kaf session.
+Concurrent creation, initialization recovery, attachment accounting, active-handle deduplication, and garbage collection remain provider implementation details. Core tracks one logical handle per orcel session.
 
 ## Default selection
 

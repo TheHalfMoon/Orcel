@@ -15,7 +15,7 @@ describe("Browser Use connection setup", () => {
 
     expect(quickStart).toContain('"x-browser-use-api-key": process.env.BROWSER_USE_API_KEY!');
     expect(quickStart).not.toContain("@vercel/connect");
-    expect(buildConnectionInstall(integration)).toContain("kaf add connection/browser-use");
+    expect(buildConnectionInstall(integration)).toContain("orcel add connection/browser-use");
     expect(renderConnectionVariants(setup, setup.configureVariants)).toContain(
       "BROWSER_USE_API_KEY=your_api_key",
     );
@@ -26,7 +26,7 @@ describe("Browser Use connection setup", () => {
     const quickStart = buildConnectionSetup(integration).variants["mcp:user"];
 
     expect(quickStart).toContain("@vercel/connect/eve");
-    expect(buildConnectionInstall(integration)).toContain("kaf add connection/linear");
+    expect(buildConnectionInstall(integration)).toContain("orcel add connection/linear");
   });
 });
 
@@ -62,7 +62,7 @@ describe("Neon connection setup", () => {
     const setup = buildConnectionSetup(integration);
     const quickStart = setup.variants["mcp:app"];
 
-    expect(buildConnectionInstall(integration)).toContain("kaf add connection/neon");
+    expect(buildConnectionInstall(integration)).toContain("orcel add connection/neon");
     expect(quickStart).toContain('url: "https://mcp.neon.tech/mcp"');
     expect(quickStart).toContain('auth: connect({ connector: "neon/neon", principalType: "app" })');
     expect(setup.configureVariants["mcp:app"]).toContain("vercel connect create neon");
@@ -80,7 +80,7 @@ describe("Shopify connection setup", () => {
     expect(setup.variants).toEqual({});
     expect(setup.configureVariants).toEqual({});
     expect(integration.quickStart).toContain("defineMcpClientConnection");
-    expect(integration.quickStart).toContain('process.env.KAF_DEV === "1"');
+    expect(integration.quickStart).toContain('process.env.ORCEL_DEV === "1"');
     expect(integration.quickStart).not.toContain("process.env.NODE_ENV");
     expect(integration.configure).toContain("SHOPIFY_STORE_DOMAIN");
     expect(integration.configure).not.toContain("UCP_AGENT_PROFILE_URL");
@@ -88,11 +88,11 @@ describe("Shopify connection setup", () => {
 });
 
 describe("Kernel extension setup", () => {
-  it("uses Kernel's kaf extension with Vercel Connect", () => {
+  it("uses Kernel's orcel extension with Vercel Connect", () => {
     const integration = getIntegration("kernel")!;
 
     expect(integration.type).toBe("extension");
-    expect(integration.install).toContain("kaf add extension/kernel");
+    expect(integration.install).toContain("orcel add extension/kernel");
     expect(integration.quickStart).toContain('kernel({ connect: "kernel/kernel-mcp" })');
     expect(integration.configure).toContain("KERNEL_API_KEY");
     expect(integration.relatedResources?.map((resource) => resource.href)).toEqual([

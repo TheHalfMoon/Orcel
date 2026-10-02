@@ -1,4 +1,4 @@
-# kaf documentation content types
+# orcel documentation content types
 
 Use these categories as structural heuristics, not mandatory frontmatter.
 

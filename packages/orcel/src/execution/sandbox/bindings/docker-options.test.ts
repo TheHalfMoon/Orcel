@@ -1,0 +1,57 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  createDockerSandboxOptionsHash,
+  DEFAULT_DOCKER_SANDBOX_IMAGE,
+  resolveDockerSandboxOptions,
+} from "#execution/sandbox/bindings/docker-options.js";
+import { DEFAULT_ORCEL_SANDBOX_IMAGE } from "#execution/sandbox/bindings/orcel-image.js";
+
+describe("resolveDockerSandboxOptions", () => {
+  it("defaults to orcel's published sandbox runtime image", () => {
+    expect(DEFAULT_DOCKER_SANDBOX_IMAGE).toBe(DEFAULT_ORCEL_SANDBOX_IMAGE);
+    expect(resolveDockerSandboxOptions()).toEqual({
+      env: {},
+      image: DEFAULT_DOCKER_SANDBOX_IMAGE,
+      pullPolicy: "if-not-present",
+    });
+  });
+
+  it("honors explicit options", () => {
+    expect(
+      resolveDockerSandboxOptions({
+        env: { FOO: "bar" },
+        image: "ubuntu:26.04",
+        pullPolicy: "never",
+      }),
+    ).toEqual({
+      env: { FOO: "bar" },
+      image: "ubuntu:26.04",
+      pullPolicy: "never",
+    });
+  });
+
+  it("hashes template-affecting options stably", () => {
+    const first = createDockerSandboxOptionsHash(
+      resolveDockerSandboxOptions({
+        env: { B: "2", A: "1" },
+        image: "ubuntu:26.04",
+      }),
+    );
+    const second = createDockerSandboxOptionsHash(
+      resolveDockerSandboxOptions({
+        env: { A: "1", B: "2" },
+        image: "ubuntu:26.04",
+      }),
+    );
+    const changed = createDockerSandboxOptionsHash(
+      resolveDockerSandboxOptions({
+        env: { A: "changed", B: "2" },
+        image: "ubuntu:26.04",
+      }),
+    );
+
+    expect(first).toBe(second);
+    expect(changed).not.toBe(first);
+  });
+});

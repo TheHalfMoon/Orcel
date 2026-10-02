@@ -5,7 +5,7 @@ export function fixtureUrl(path: string): URL {
     (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined) ??
     (process.env.PORT ? `http://127.0.0.1:${process.env.PORT}` : undefined);
   if (origin === undefined) throw new Error("Fixture service origin is unavailable");
-  const prefix = process.env.KAF_PUBLIC_ROUTE_PREFIX ?? "";
+  const prefix = process.env.ORCEL_PUBLIC_ROUTE_PREFIX ?? "";
   const url = new URL(`${prefix}${path}`, origin);
   const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
   if (bypass) url.searchParams.set("x-vercel-protection-bypass", bypass);

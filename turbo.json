@@ -8,7 +8,7 @@
       "env": ["VERCEL"],
       "inputs": [
         "$TURBO_DEFAULT$",
-        "!.kaf/**",
+        "!.orcel/**",
         "!.next/**",
         "!.nuxt/**",
         "!.output/**",
@@ -28,7 +28,7 @@
         "**/*.d.ts",
         "tsconfig*.json",
         "package.json",
-        "!.kaf/**",
+        "!.orcel/**",
         "!.next/**",
         "!.nuxt/**",
         "!.output/**",
@@ -46,7 +46,7 @@
       "cache": false,
       "inputs": [
         "$TURBO_DEFAULT$",
-        "!.kaf/**",
+        "!.orcel/**",
         "!.next/**",
         "!.nuxt/**",
         "!.output/**",
@@ -60,7 +60,7 @@
       "cache": false,
       "inputs": [
         "$TURBO_DEFAULT$",
-        "!.kaf/**",
+        "!.orcel/**",
         "!.next/**",
         "!.nuxt/**",
         "!.output/**",
@@ -74,7 +74,7 @@
       "cache": false,
       "inputs": [
         "$TURBO_DEFAULT$",
-        "!.kaf/**",
+        "!.orcel/**",
         "!.next/**",
         "!.nuxt/**",
         "!.output/**",
@@ -86,10 +86,10 @@
     },
     "test:scenario": {
       "cache": false,
-      "env": ["KAF_SANDBOX_IMAGE_TAG"],
+      "env": ["ORCEL_SANDBOX_IMAGE_TAG"],
       "inputs": [
         "$TURBO_DEFAULT$",
-        "!.kaf/**",
+        "!.orcel/**",
         "!.next/**",
         "!.nuxt/**",
         "!.output/**",
@@ -103,7 +103,7 @@
       "cache": false,
       "inputs": [
         "$TURBO_DEFAULT$",
-        "!.kaf/**",
+        "!.orcel/**",
         "!.next/**",
         "!.nuxt/**",
         "!.output/**",
@@ -127,7 +127,7 @@
         "**/*.jsx",
         "tsconfig*.json",
         "package.json",
-        "!.kaf/**",
+        "!.orcel/**",
         "!.next/**",
         "!.nuxt/**",
         "!.output/**",

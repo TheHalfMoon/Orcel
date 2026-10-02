@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import type { ThreadRecord } from "#kaf/types/thread";
-import { resumeOptionsFromThread } from "~/composables/chat/providers/kaf/thread-state";
+import type { ThreadRecord } from "#orcel/types/thread";
+import { resumeOptionsFromThread } from "~/composables/chat/providers/orcel/thread-state";
 import { useChatNavigation, refreshThreadList } from "~/composables/chat/navigation";
 import { useAuthorizationChallenges } from "~/composables/chat/useAuthorizationChallenges";
-import { useStreamLog } from "~/composables/chat/providers/kaf/stream-log";
+import { useStreamLog } from "~/composables/chat/providers/orcel/stream-log";
 import { useChatSession } from "~/composables/chat/useChatSession";
 
 const route = useRoute();

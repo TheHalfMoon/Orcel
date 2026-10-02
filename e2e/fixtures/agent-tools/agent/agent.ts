@@ -1,5 +1,5 @@
-import { e2eAgentConfig } from "@kaf-e2e/config";
-import { defineAgent } from "kaf";
+import { e2eAgentConfig } from "@orcel-e2e/config";
+import { defineAgent } from "orcel";
 
 const base = e2eAgentConfig({
   mock(request) {

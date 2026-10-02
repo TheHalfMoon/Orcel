@@ -3,12 +3,12 @@ title: "Hooks"
 description: "Subscribe to runtime stream events from agent/hooks/."
 ---
 
-Hooks are kaf's authored extension points for the runtime event stream. A hook subscribes to stream events and runs side effects after each event is durably recorded, such as audit logging, metrics and alerting, or persisting every session and message to your own database for analytics. Reach for one to observe what the agent does without writing a tool, a context provider (a value made available across a step), or a channel adapter handler (a handler defined on a channel's adapter; see [Channels](../channels/overview)).
+Hooks are orcel's authored extension points for the runtime event stream. A hook subscribes to stream events and runs side effects after each event is durably recorded, such as audit logging, metrics and alerting, or persisting every session and message to your own database for analytics. Reach for one to observe what the agent does without writing a tool, a context provider (a value made available across a step), or a channel adapter handler (a handler defined on a channel's adapter; see [Channels](../channels/overview)).
 
 ## Define a hook
 
 ```ts title="agent/hooks/audit.ts"
-import { defineHook } from "kaf/hooks";
+import { defineHook } from "orcel/hooks";
 
 export default defineHook({
   events: {
@@ -24,7 +24,7 @@ export default defineHook({
 
 The slug is the path-relative basename. `agent/hooks/audit.ts` becomes `"audit"`, and `agent/hooks/auth/load-profile.ts` becomes `"auth/load-profile"`.
 
-`defineHook`, `HookDefinition`, and `HookContext` live on `kaf/hooks`.
+`defineHook`, `HookDefinition`, and `HookContext` live on `orcel/hooks`.
 
 A hook file declares stream-event subscribers under the `events` map, keyed by event type, with `*` matching every event. Subscribe to any event in the runtime stream vocabulary documented in [Sessions, runs and streaming](../concepts/sessions-runs-and-streaming), including the lifecycle events `session.started`, `turn.completed`, `message.completed`, `action.partial`, and `action.result`. Handlers are observe-only. They cannot inject model context. To contribute runtime model messages, use `defineDynamic` and `defineInstructions` in `agent/instructions/`.
 
@@ -33,7 +33,7 @@ A hook file declares stream-event subscribers under the `events` map, keyed by e
 A hook under `agent/hooks/` observes matching events from every channel on the root agent. `defineHook` has no channel filter. Use a channel's `events` configuration when a handler assumes a specific platform or should run only for sessions owned by that channel:
 
 ```ts title="agent/channels/github.ts"
-import { githubChannel } from "kaf/channels/github";
+import { githubChannel } from "orcel/channels/github";
 
 export default githubChannel({
   events: {
@@ -69,7 +69,7 @@ That means a hook can access the current sandbox and release its backing
 compute at an application-defined boundary:
 
 ```ts title="agent/hooks/stop-after-turn.ts"
-import { defineHook } from "kaf/hooks";
+import { defineHook } from "orcel/hooks";
 
 export default defineHook({
   events: {
@@ -97,11 +97,11 @@ when the parent's current model step ends if one is running.
 
 ### Narrowing tool results
 
-`toolResultFrom` narrows an `action.result` event to a specific authored tool or MCP connection and returns typed output. Import it from `kaf/tools`:
+`toolResultFrom` narrows an `action.result` event to a specific authored tool or MCP connection and returns typed output. Import it from `orcel/tools`:
 
 ```ts
-import { defineHook } from "kaf/hooks";
-import { toolResultFrom } from "kaf/tools";
+import { defineHook } from "orcel/hooks";
+import { toolResultFrom } from "orcel/tools";
 import getWeather from "../tools/get-weather";
 import linear from "../connections/linear";
 
@@ -140,7 +140,7 @@ const crmSearch = toolResultFrom(event.data.result, search); // typed; matches c
 Every event carries a `meta` envelope with `meta.id`, a unique, sortable identifier for that event. It makes a natural primary key for an events table:
 
 ```ts title="agent/hooks/persist.ts"
-import { defineHook } from "kaf/hooks";
+import { defineHook } from "orcel/hooks";
 
 export default defineHook({
   events: {
@@ -186,7 +186,7 @@ Hooks always run after the event is durably recorded, so if a hook throws, the s
 
 ## What happens when a hook throws
 
-kaf logs a thrown or rejected handler with the hook slug, subscription, event type, event ID, and session ID, then runs the remaining subscribers in order. The current turn, subagent notification, and session continue. This applies to every stream-event hook, including `turn.started`, `step.started`, and failure events. Throwing from a hook does not reject work or veto a turn. To stop the running turn, call [`ctx.cancel()`](#cancel-the-running-turn-from-a-hook).
+orcel logs a thrown or rejected handler with the hook slug, subscription, event type, event ID, and session ID, then runs the remaining subscribers in order. The current turn, subagent notification, and session continue. This applies to every stream-event hook, including `turn.started`, `step.started`, and failure events. Throwing from a hook does not reject work or veto a turn. To stop the running turn, call [`ctx.cancel()`](#cancel-the-running-turn-from-a-hook).
 
 A hook failure does not trigger a retry. State changes and external side effects made before the exception are not rolled back. If a side effect needs retries or compensation, handle that inside the hook. Runtime failures outside the authored handler, such as failures setting up context or persisting state, still propagate. If persisting state after a `task.started`, `task.settled`, or `agent.started` event fails, the workflow runtime retries the publishing step, which can publish the event again.
 
@@ -195,7 +195,7 @@ A hook failure does not trigger a retry. State changes and external side effects
 Call `ctx.cancel()` when a hook finds that the turn cannot proceed. For example, a `turn.started` hook that cannot load the caller's credentials can stop the turn before the model runs, instead of letting every tool call fail:
 
 ```ts title="agent/hooks/require-credentials.ts"
-import { defineHook } from "kaf/hooks";
+import { defineHook } from "orcel/hooks";
 import { loadWorkspaceCredentials } from "../lib/credentials";
 
 export default defineHook({
@@ -215,11 +215,11 @@ export default defineHook({
 });
 ```
 
-The remaining subscribers for the event still run. Then kaf cancels the turn the same way [`session.cancel()`](./client/streaming) does: in-flight model and tool work is aborted, delegated child turns are cancelled, and the turn ends with `turn.cancelled` followed by `session.waiting`. No failure event is emitted. A cancel from `turn.started` or `step.started` takes effect before that model call. In a conversation, the next message starts a new turn. A delegated task reports the cancellation to its caller.
+The remaining subscribers for the event still run. Then orcel cancels the turn the same way [`session.cancel()`](./client/streaming) does: in-flight model and tool work is aborted, delegated child turns are cancelled, and the turn ends with `turn.cancelled` followed by `session.waiting`. No failure event is emitted. A cancel from `turn.started` or `step.started` takes effect before that model call. In a conversation, the next message starts a new turn. A delegated task reports the cancellation to its caller.
 
-`ctx.cancel()` returns `void` rather than a promise. The turn stops after the hook returns, so there is nothing to await. Call it before the handler's promise settles: kaf ignores a call from work the handler does not await and logs a warning.
+`ctx.cancel()` returns `void` rather than a promise. The turn stops after the hook returns, so there is nothing to await. Call it before the handler's promise settles: orcel ignores a call from work the handler does not await and logs a warning.
 
-`ctx.cancel()` only stops a running turn. kaf logs a warning and ignores the call on `step.failed`, `turn.completed`, `turn.failed`, `turn.cancelled`, `turn.waiting`, `session.waiting`, `session.completed`, `session.failed`, `context.cleared`, `task.started`, `task.settled`, and `agent.started`, and during clear or compact requests.
+`ctx.cancel()` only stops a running turn. orcel logs a warning and ignores the call on `step.failed`, `turn.completed`, `turn.failed`, `turn.cancelled`, `turn.waiting`, `session.waiting`, `session.completed`, `session.failed`, `context.cleared`, `task.started`, `task.settled`, and `agent.started`, and during clear or compact requests.
 
 ## Subagent isolation
 

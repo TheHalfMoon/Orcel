@@ -1,6 +1,6 @@
 ---
 name: gh-pr-description
-description: Drafts and reviews GitHub pull request descriptions for the kaf repository. Use when opening, updating, or reviewing a PR, or when summarizing a branch for reviewers.
+description: Drafts and reviews GitHub pull request descriptions for the orcel repository. Use when opening, updating, or reviewing a PR, or when summarizing a branch for reviewers.
 ---
 
 # GitHub PR description

@@ -1,8 +1,8 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 const ALICE = "principal-binding-alice";
 const BOB = "principal-binding-bob";
-const as = (principalId: string) => ({ headers: { "x-kaf-fixture-user": principalId } });
+const as = (principalId: string) => ({ headers: { "x-orcel-fixture-user": principalId } });
 
 /**
  * Alice starts a sign-in, then Bob posts in the same session before Alice

@@ -1,5 +1,5 @@
 import type { NextConfig } from "next";
-import { withEve } from "kaf/next";
+import { withEve } from "orcel/next";
 
 const nextConfig: NextConfig = {};
 

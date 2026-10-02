@@ -36,13 +36,13 @@ jobs:
           fi
           # HEAD is the PR merge commit; HEAD^1 is the base branch tip, so
           # this diff is exactly the PR's changed files.
-          # PRs confined to packages/kaf-code or packages/kaf-computer-use (lockfile included) never
+          # PRs confined to packages/orcel-code or packages/orcel-computer-use (lockfile included) never
           # exercise the framework e2e fixtures; skip the whole matrix for them.
-          if ! git diff --name-only HEAD^1 HEAD | grep -qvE '^(packages/kaf-(code|computer-use)/|pnpm-lock\.yaml$)'; then
+          if ! git diff --name-only HEAD^1 HEAD | grep -qvE '^(packages/orcel-(code|computer-use)/|pnpm-lock\.yaml$)'; then
             echo "relevant=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if git diff --name-only HEAD^1 HEAD | grep -qE '^(packages/kaf/|apps/fixtures/|e2e/|pnpm-workspace\.yaml$|pnpm-lock\.yaml$|\.github/workflows/e2e-local\.yml$|\.github/scripts/discover-e2e-fixtures\.mjs$)'; then
+          if git diff --name-only HEAD^1 HEAD | grep -qE '^(packages/orcel/|apps/fixtures/|e2e/|pnpm-workspace\.yaml$|pnpm-lock\.yaml$|\.github/workflows/e2e-local\.yml$|\.github/scripts/discover-e2e-fixtures\.mjs$)'; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
           else
             echo "relevant=false" >> "$GITHUB_OUTPUT"
@@ -83,10 +83,10 @@ jobs:
 
     env:
       AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
-      KAF_E2E_MODEL: ${{ matrix.model_id }}
-      KAF_EVAL_IDS_JSON: ${{ toJSON(matrix.eval_ids) }}
-      KAF_EVAL_JUNIT_DIR: ${{ github.workspace }}/.junit
-      KAF_SANDBOX_IMAGE_TAG: latest
+      ORCEL_E2E_MODEL: ${{ matrix.model_id }}
+      ORCEL_EVAL_IDS_JSON: ${{ toJSON(matrix.eval_ids) }}
+      ORCEL_EVAL_JUNIT_DIR: ${{ github.workspace }}/.junit
+      ORCEL_SANDBOX_IMAGE_TAG: latest
 
     steps:
       - name: Checkout code
@@ -119,11 +119,11 @@ jobs:
           pnpm --filter agent-microsandbox-dockerfile exec node --input-type=module -e \
             'import { setup } from "microsandbox"; await setup().install();'
 
-      - name: Build kaf package
+      - name: Build orcel package
         if: needs.changes.outputs.relevant == 'true'
         # Full build, not build:js: the deployed/runtime bundles must carry the
         # stamped package version (scripts/stamp-version-tokens.mjs) and docs.
-        run: pnpm --filter kaf run build
+        run: pnpm --filter orcel run build
 
       - name: Build extension fixtures
         if: needs.changes.outputs.relevant == 'true'
@@ -148,14 +148,14 @@ jobs:
       - name: Run fixture evals
         if: needs.changes.outputs.relevant == 'true'
         run: |
-          mkdir -p "$KAF_EVAL_JUNIT_DIR"
+          mkdir -p "$ORCEL_EVAL_JUNIT_DIR"
           cd "${{ matrix.dir }}"
           pnpm run --if-present e2e:prepare
-          mapfile -d '' -t eval_ids < <(node -e 'for (const id of JSON.parse(process.env.KAF_EVAL_IDS_JSON || "null") || []) process.stdout.write(`${id}\0`)')
+          mapfile -d '' -t eval_ids < <(node -e 'for (const id of JSON.parse(process.env.ORCEL_EVAL_IDS_JSON || "null") || []) process.stdout.write(`${id}\0`)')
           shard_suffix="${{ matrix.shard || '' }}"
           junit_suffix="${shard_suffix:+-$shard_suffix}"
-          pnpm exec kaf eval "${eval_ids[@]}" --strict --verbose \
-            --junit "$KAF_EVAL_JUNIT_DIR/${{ matrix.name }}-${{ matrix.model_name }}${junit_suffix}.xml"
+          pnpm exec orcel eval "${eval_ids[@]}" --strict --verbose \
+            --junit "$ORCEL_EVAL_JUNIT_DIR/${{ matrix.name }}-${{ matrix.model_name }}${junit_suffix}.xml"
 
       - name: Capture failed workflow event ordering
         if: failure() && needs.changes.outputs.relevant == 'true'
@@ -169,9 +169,9 @@ jobs:
           path: |
             .junit
             .artifacts/workflow-events.json
-            e2e/fixtures/*/.kaf/evals
-            apps/fixtures/*/.kaf/evals
-            ${{ matrix.dir }}/.kaf/traces
+            e2e/fixtures/*/.orcel/evals
+            apps/fixtures/*/.orcel/evals
+            ${{ matrix.dir }}/.orcel/traces
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7

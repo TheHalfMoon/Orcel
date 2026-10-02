@@ -2,8 +2,8 @@ import { spawn } from "node:child_process";
 
 const commands = [
   {
-    args: ["--filter", "kaf", "run", "dev"],
-    label: "kaf",
+    args: ["--filter", "orcel", "run", "dev"],
+    label: "orcel",
   },
   {
     // Port 0 asks the OS to allocate an available port atomically.
@@ -17,7 +17,7 @@ let isShuttingDown = false;
 let pendingChildren = commands.length;
 let processExitCode = 0;
 
-// Each command fans out into a tree (pnpm → shell → tsc/kaf), so a signal to
+// Each command fans out into a tree (pnpm → shell → tsc/orcel), so a signal to
 // the direct child alone orphans the watchers underneath it. Killing the
 // child's process group reaches the whole tree.
 function killProcessGroup(childProcess, signal) {

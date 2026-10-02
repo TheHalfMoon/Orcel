@@ -36,13 +36,13 @@ jobs:
           fi
           # HEAD is the PR merge commit; HEAD^1 is the base branch tip, so
           # this diff is exactly the PR's changed files.
-          # PRs confined to packages/kaf-code (its lockfile entries included) never
+          # PRs confined to packages/orcel-code (its lockfile entries included) never
           # exercise the framework e2e fixtures; skip the whole matrix for them.
-          if ! git diff --name-only HEAD^1 HEAD | grep -qvE '^(packages/kaf-code/|pnpm-lock\.yaml$)'; then
+          if ! git diff --name-only HEAD^1 HEAD | grep -qvE '^(packages/orcel-code/|pnpm-lock\.yaml$)'; then
             echo "relevant=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if git diff --name-only HEAD^1 HEAD | grep -qE '^(packages/kaf/|apps/fixtures/|e2e/|pnpm-workspace\.yaml$|pnpm-lock\.yaml$|scripts/build-profile-report\.mjs$|scripts/workflow-stress-report\.(mjs|test\.mjs)$|\.github/workflows/e2e-vercel\.yml$|\.github/scripts/discover-e2e-fixtures\.mjs$)'; then
+          if git diff --name-only HEAD^1 HEAD | grep -qE '^(packages/orcel/|apps/fixtures/|e2e/|pnpm-workspace\.yaml$|pnpm-lock\.yaml$|scripts/build-profile-report\.mjs$|scripts/workflow-stress-report\.(mjs|test\.mjs)$|\.github/workflows/e2e-vercel\.yml$|\.github/scripts/discover-e2e-fixtures\.mjs$)'; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
           else
             echo "relevant=false" >> "$GITHUB_OUTPUT"
@@ -64,7 +64,7 @@ jobs:
         run: node .github/scripts/discover-e2e-fixtures.mjs
 
   # The Vercel world suite: every fixture deploys and runs once with
-  # deterministic mock models (KAF_E2E_MODEL=mock), so this matrix proves the
+  # deterministic mock models (ORCEL_E2E_MODEL=mock), so this matrix proves the
   # deployed world's infrastructure — build, deploy, boot, streaming,
   # durability — without live-model flake. Evals that need a real model carry
   # the `real-model` tag and run only in the model suite (e2e-local).
@@ -81,9 +81,9 @@ jobs:
         include: ${{ fromJSON(needs.discover-fixtures.outputs.world_matrix) }}
 
     env:
-      KAF_E2E_MODEL: mock
-      KAF_EVAL_JUNIT_DIR: ${{ github.workspace }}/.junit
-      KAF_SANDBOX_IMAGE_TAG: latest
+      ORCEL_E2E_MODEL: mock
+      ORCEL_EVAL_JUNIT_DIR: ${{ github.workspace }}/.junit
+      ORCEL_SANDBOX_IMAGE_TAG: latest
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
@@ -117,11 +117,11 @@ jobs:
         if: needs.changes.outputs.relevant == 'true'
         run: pnpm install --frozen-lockfile
 
-      - name: Build kaf package
+      - name: Build orcel package
         if: needs.changes.outputs.relevant == 'true'
         # Full build, not build:js: the deployed/runtime bundles must carry the
         # stamped package version (scripts/stamp-version-tokens.mjs) and docs.
-        run: pnpm --filter kaf run build
+        run: pnpm --filter orcel run build
 
       - name: Build extension fixtures
         if: needs.changes.outputs.relevant == 'true'
@@ -150,10 +150,10 @@ jobs:
       - name: Deploy fixture and run evals
         if: needs.changes.outputs.relevant == 'true'
         env:
-          KAF_BUILD_PROFILE: ${{ runner.temp }}/kaf-build-profile-${{ matrix.name }}.json
+          ORCEL_BUILD_PROFILE: ${{ runner.temp }}/orcel-build-profile-${{ matrix.name }}.json
         run: |
           set -euo pipefail
-          mkdir -p "$KAF_EVAL_JUNIT_DIR"
+          mkdir -p "$ORCEL_EVAL_JUNIT_DIR"
           cd "${{ matrix.dir }}"
 
           token_args=()
@@ -177,10 +177,10 @@ jobs:
             VERCEL_ENV=preview \
             VERCEL_TARGET_ENV=preview \
             VERCEL_PROJECT_ID="$VERCEL_PROJECT_ID" \
-            pnpm exec kaf build --profile "$KAF_BUILD_PROFILE"
+            pnpm exec orcel build --profile "$ORCEL_BUILD_PROFILE"
           DEPLOYMENT_URL="$(vercel deploy --prebuilt --yes --target=preview \
-            --env "KAF_E2E_MODEL=$KAF_E2E_MODEL" \
-            --env "KAF_SANDBOX_IMAGE_TAG=$KAF_SANDBOX_IMAGE_TAG" \
+            --env "ORCEL_E2E_MODEL=$ORCEL_E2E_MODEL" \
+            --env "ORCEL_SANDBOX_IMAGE_TAG=$ORCEL_SANDBOX_IMAGE_TAG" \
             "${token_args[@]}" | tail -n 1)"
 
           wait_for_target() {
@@ -190,7 +190,7 @@ jobs:
               status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
                 --header "Authorization: Bearer $VERCEL_OIDC_TOKEN" \
                 --header "x-vercel-trusted-oidc-idp-token: $VERCEL_OIDC_TOKEN" \
-                --max-time 3 "$target/kaf/v1/health" || true)"
+                --max-time 3 "$target/orcel/v1/health" || true)"
               if [ "$status" = "200" ]; then
                 echo "Eval target ready: $target (attempt $attempt)"
                 return 0
@@ -203,31 +203,31 @@ jobs:
           }
 
           wait_for_target "$DEPLOYMENT_URL"
-          npx kaf eval --strict --verbose --exclude-tag real-model \
+          npx orcel eval --strict --verbose --exclude-tag real-model \
             --url "$DEPLOYMENT_URL" \
-            --junit "$KAF_EVAL_JUNIT_DIR/${{ matrix.name }}.xml"
+            --junit "$ORCEL_EVAL_JUNIT_DIR/${{ matrix.name }}.xml"
 
           # Redeploy-tagged evals rebuild and redeploy the fixture from inside
           # the eval body, repointing a run-scoped alias at each new
           # deployment. They run against the alias (immutable deployment URLs
           # never change what they serve) and are skipped in the main suite
-          # above because KAF_E2E_REDEPLOY_ALIAS is unset there.
-          if npx kaf eval --tag redeploy --list >/dev/null 2>&1; then
-            ALIAS="kaf-e2e-${{ matrix.name }}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${{ strategy.job-index }}.vercel.app"
+          # above because ORCEL_E2E_REDEPLOY_ALIAS is unset there.
+          if npx orcel eval --tag redeploy --list >/dev/null 2>&1; then
+            ALIAS="orcel-e2e-${{ matrix.name }}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${{ strategy.job-index }}.vercel.app"
             # vercel alias does not infer the team from the project link the way
             # link/deploy do, so pass the scope explicitly.
             vercel alias set "$DEPLOYMENT_URL" "$ALIAS" "${token_args[@]}" "${scope_args[@]}"
             wait_for_target "https://$ALIAS"
-            KAF_E2E_REDEPLOY_ALIAS="$ALIAS" \
-              npx kaf eval --tag redeploy --strict --verbose --exclude-tag real-model \
+            ORCEL_E2E_REDEPLOY_ALIAS="$ALIAS" \
+              npx orcel eval --tag redeploy --strict --verbose --exclude-tag real-model \
               --url "https://$ALIAS" \
-              --junit "$KAF_EVAL_JUNIT_DIR/${{ matrix.name }}-redeploy.xml"
+              --junit "$ORCEL_EVAL_JUNIT_DIR/${{ matrix.name }}-redeploy.xml"
           fi
 
       - name: Log deployable build timing
         if: needs.changes.outputs.relevant == 'true'
         env:
-          BUILD_PROFILE: ${{ runner.temp }}/kaf-build-profile-${{ matrix.name }}.json
+          BUILD_PROFILE: ${{ runner.temp }}/orcel-build-profile-${{ matrix.name }}.json
           FIXTURE_PATH: ${{ matrix.dir }}
         run: |
           node ./scripts/build-profile-report.mjs \
@@ -241,7 +241,7 @@ jobs:
         if: success() && needs.changes.outputs.relevant == 'true' && matrix.name == 'agent-workflow-stress'
         run: |
           node ./scripts/workflow-stress-report.mjs \
-            --artifacts e2e/fixtures/agent-workflow-stress/.kaf/evals \
+            --artifacts e2e/fixtures/agent-workflow-stress/.orcel/evals \
             --json .artifacts/workflow-stress-report.json \
             --markdown .artifacts/workflow-stress-report.md
           cat .artifacts/workflow-stress-report.md >> "$GITHUB_STEP_SUMMARY"
@@ -254,7 +254,7 @@ jobs:
           path: |
             .artifacts/workflow-stress-report.json
             .artifacts/workflow-stress-report.md
-            e2e/fixtures/agent-workflow-stress/.kaf/evals
+            e2e/fixtures/agent-workflow-stress/.orcel/evals
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 30
@@ -266,8 +266,8 @@ jobs:
           name: eval-artifacts-vercel-${{ matrix.name }}
           path: |
             .junit
-            e2e/fixtures/*/.kaf/evals
-            apps/fixtures/*/.kaf/evals
+            e2e/fixtures/*/.orcel/evals
+            apps/fixtures/*/.orcel/evals
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7

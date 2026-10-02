@@ -1,4 +1,4 @@
-import type { SlackLinkSummary } from "#kaf/types/slack-link";
+import type { SlackLinkSummary } from "#orcel/types/slack-link";
 
 export function useSlackLink() {
   const toast = useToast();

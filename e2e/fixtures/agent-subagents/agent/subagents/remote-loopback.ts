@@ -1,11 +1,11 @@
-import { defineDynamic, defineRemoteAgent } from "kaf";
+import { defineDynamic, defineRemoteAgent } from "orcel";
 
 /**
  * A remote agent pointing back at this same deployment, so one fixture plays
  * both sides of a `forwardPrincipal` hop: the create-session request leaves
  * over real HTTP carrying the parent turn's principal and lands on this
- * deployment's kaf channel, whose `trustedForwarders` trusts exactly the
- * bearer this definition sends (see `agent/channels/kaf.ts`).
+ * deployment's orcel channel, whose `trustedForwarders` trusts exactly the
+ * bearer this definition sends (see `agent/channels/orcel.ts`).
  *
  * The URL resolves at runtime to the deployment's own address: `VERCEL_URL`
  * on Vercel, or the dev server's self-published origin locally.

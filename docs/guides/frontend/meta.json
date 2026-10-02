@@ -1,5 +1,5 @@
 {
   "title": "Frontend Frameworks",
   "defaultOpen": false,
-  "pages": ["overview", "nextjs", "nuxt", "sveltekit", "use-kaf-agent-vue", "use-kaf-agent-svelte"]
+  "pages": ["overview", "nextjs", "nuxt", "sveltekit", "use-orcel-agent-vue", "use-orcel-agent-svelte"]
 }

@@ -5,7 +5,7 @@ describe("createLlmsIndex", () => {
   it("follows the llms.txt index shape without frontmatter", () => {
     const output = createLlmsIndex();
 
-    expect(output).toMatch(/^# kaf\n\n> /);
+    expect(output).toMatch(/^# orcel\n\n> /);
     expect(output).not.toMatch(/^---/);
     expect(output).toContain("## Introduction");
     expect(output).toContain("## Build");
@@ -19,14 +19,14 @@ describe("createLlmsIndex", () => {
   it("states scope and routes agents to focused, exhaustive, and version-matched docs", () => {
     const output = createLlmsIndex();
 
-    expect(output).toContain("node_modules/kaf/docs/");
+    expect(output).toContain("node_modules/orcel/docs/");
     expect(output).toContain(
       "It is not a shared API, authorization server, MCP server, or A2A server",
     );
-    expect(output).toContain("https://github.com/TheHalfMoon/kaf/sitemap.md");
-    expect(output).toContain("https://github.com/TheHalfMoon/kaf/agents.md");
-    expect(output).toContain("https://github.com/TheHalfMoon/kaf/llms-full.txt");
-    expect(output).toContain("https://github.com/TheHalfMoon/kaf/changelog.md");
+    expect(output).toContain("https://github.com/TheHalfMoon/orcel/sitemap.md");
+    expect(output).toContain("https://github.com/TheHalfMoon/orcel/agents.md");
+    expect(output).toContain("https://github.com/TheHalfMoon/orcel/llms-full.txt");
+    expect(output).toContain("https://github.com/TheHalfMoon/orcel/changelog.md");
   });
 
   it("uses unique absolute links and stays concise", () => {

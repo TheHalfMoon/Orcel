@@ -1,4 +1,4 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 // The resolver's simulated I/O runs once; the durable cache replays its
 // result on the second turn so ioCallCount stays at 1.

@@ -1,4 +1,4 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 import { STAGE_INTERIM_MESSAGE } from "../task-scenario-text";
 

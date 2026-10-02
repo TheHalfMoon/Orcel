@@ -3,7 +3,7 @@ title: "Sessions, Runs & Streaming"
 description: "The ID-addressed session contract: messages, controls, the NDJSON event stream, and reconnecting."
 ---
 
-Every kaf app speaks the same stable HTTP API to a [durable session](./execution-model-and-durability). This page is the contract you hold: the handles you get back, the events you stream, and how to reconnect.
+Every orcel app speaks the same stable HTTP API to a [durable session](./execution-model-and-durability). This page is the contract you hold: the handles you get back, the events you stream, and how to reconnect.
 
 ## Identity by surface
 
@@ -13,33 +13,33 @@ or creates a replacement implicitly.
 
 The session ID currently identifies the original Workflow run that owns the
 event stream. A deployment handoff changes the executing run, not the session
-ID or stream. Stream namespaces belong to a run; kaf does not support
+ID or stream. Stream namespaces belong to a run; orcel does not support
 caller-assigned session IDs or globally addressed streams.
 
 Authored channels also have channel-local continuation tokens. A token addresses
 whichever session currently owns a platform conversation, such as a Slack thread.
 That identity stays behind the channel boundary and is never accepted or returned
-by the kaf HTTP session API. See [Custom channels](../channels/custom#channel-operations-and-session-handles).
+by the orcel HTTP session API. See [Custom channels](../channels/custom#channel-operations-and-session-handles).
 
 Sessions last 30 days by default; configure `limits.sessionTimeoutMs` in
 `agent.ts`, or set it to `false` to disable the deadline. A successful deployment
 handoff or legacy-session import restarts the original configured duration.
-Ordinary messages and process restarts keep the existing deadline. At expiration, kaf
+Ordinary messages and process restarts keep the existing deadline. At expiration, orcel
 lets an active turn settle, emits `session.completed`, and releases the
 session's continuation addresses so the next qualifying channel message starts fresh. Stored
 session data is not deleted. See [Agent config](../agent-config#runtime-limits).
 
-React, Vue, and Svelte apps reach for [`useKafAgent()`](../guides/frontend/overview) instead of calling these routes by hand. Next.js and Nuxt apps can proxy them to the kaf runtime from the same origin.
+React, Vue, and Svelte apps reach for [`useOrcelAgent()`](../guides/frontend/overview) instead of calling these routes by hand. Next.js and Nuxt apps can proxy them to the orcel runtime from the same origin.
 
 ## Start a session
 
 Create and park a conversation session before its first turn by omitting `message`:
 
 ```bash
-curl -X POST http://127.0.0.1:2000/kaf/v1/session
+curl -X POST http://127.0.0.1:2000/orcel/v1/session
 ```
 
-kaf starts the durable workflow, establishes its inbox, and waits for the first message before
+orcel starts the durable workflow, establishes its inbox, and waits for the first message before
 running session-scoped initialization or emitting `session.started`. The first message sent to the returned
 `sessionId` remains `turn_0`. Message-free creation does not accept turn-scoped `clientContext`,
 `outputSchema`, callbacks, or activity observers.
@@ -47,13 +47,13 @@ running session-scoped initialization or emitting `session.started`. The first m
 To create the session and start its first turn in one request, include the message:
 
 ```bash
-curl -X POST http://127.0.0.1:2000/kaf/v1/session \
+curl -X POST http://127.0.0.1:2000/orcel/v1/session \
   -H 'content-type: application/json' \
   -d '{"message":"Summarize the latest forecast."}'
 ```
 
-In both forms, kaf responds with `202` and the durable `sessionId` in the JSON body and
-`x-kaf-session-id` header as soon as Workflow accepts the run. The command inbox can still be
+In both forms, orcel responds with `202` and the durable `sessionId` in the JSON body and
+`x-orcel-session-id` header as soon as Workflow accepts the run. The command inbox can still be
 starting at that point. An immediate follow-up can return `409 session_not_ready`; retry that
 code with bounded backoff. The TypeScript client retries sends for up to 20 seconds and respects
 the caller's abort signal. Do not wait
@@ -62,7 +62,7 @@ for `session.waiting` on a prewarmed session: initialization and its first event
 ## Stream a session
 
 ```bash
-curl http://127.0.0.1:2000/kaf/v1/session/<sessionId>/stream
+curl http://127.0.0.1:2000/orcel/v1/session/<sessionId>/stream
 ```
 
 The stream is newline-delimited JSON (NDJSON), one event per line:
@@ -101,19 +101,19 @@ The stream is newline-delimited JSON (NDJSON), one event per line:
 | `session.failed`          | The session failed.                                                                                                                                                                                   |
 | `session.completed`       | The session reached a terminal end.                                                                                                                                                                   |
 
-The optional `data.trace` on session and turn starts contains kaf-owned W3C trace coordinates: `traceId`, `spanId`, and `traceFlags`. Use it to correlate stream consumers such as eval reporters with an observability backend. An uninstrumented target omits it.
+The optional `data.trace` on session and turn starts contains orcel-owned W3C trace coordinates: `traceId`, `spanId`, and `traceFlags`. Use it to correlate stream consumers such as eval reporters with an observability backend. An uninstrumented target omits it.
 
-`reasoning.appended`, `message.appended`, and `action.input.appended` stream incremental output as it arrives. Each append stores only its new text in `reasoningDelta`, `messageDelta`, or `inputTextDelta`. Accumulate the deltas in stream order when you need the text so far. When the durable stream writer is busy, kaf may coalesce adjacent deltas for the same event type, stream coordinates, and tool `callId`. The resulting text and event ordering stay the same.
+`reasoning.appended`, `message.appended`, and `action.input.appended` stream incremental output as it arrives. Each append stores only its new text in `reasoningDelta`, `messageDelta`, or `inputTextDelta`. Accumulate the deltas in stream order when you need the text so far. When the durable stream writer is busy, orcel may coalesce adjacent deltas for the same event type, stream coordinates, and tool `callId`. The resulting text and event ordering stay the same.
 
 The default client reducer accumulates assistant text, reasoning, and streamed tool input. A raw consumer can append each delta to its local accumulator. If it reconnects without that state, it must replay the earlier events or wait for `message.completed` or `reasoning.completed`. Those completed events carry the authoritative value for each finalized block and remain the compatibility path for clients that do not render incremental streaming.
 
-If a model provider fails after partial output and kaf retries the call, the durable stream keeps events from both attempts. When the failed attempt emitted only deltas, a later completed event lets replaceable projections converge on the successful attempt. A completed block does not mean the provider attempt itself later succeeded; removing abandoned completed blocks would require attempt identity, which these events do not carry.
+If a model provider fails after partial output and orcel retries the call, the durable stream keeps events from both attempts. When the failed attempt emitted only deltas, a later completed event lets replaceable projections converge on the successful attempt. A completed block does not mean the provider attempt itself later succeeded; removing abandoned completed blocks would require attempt identity, which these events do not carry.
 
-The client validates the `x-kaf-stream-version` header on every connection. It accepts v21 through v26 and normalizes v21–v24 cumulative message and reasoning appends, plus v24 offset-based tool-input appends, to the delta-only contract that v25 introduced. This lets a reconnect cross deployments without changing the reducer input. A current server performs the same normalization when replaying a session written by an earlier deployment. A missing or unsupported version, or an append whose fields do not match its declared version, fails instead of being interpreted as a current event.
+The client validates the `x-orcel-stream-version` header on every connection. It accepts v21 through v26 and normalizes v21–v24 cumulative message and reasoning appends, plus v24 offset-based tool-input appends, to the delta-only contract that v25 introduced. This lets a reconnect cross deployments without changing the reducer input. A current server performs the same normalization when replaying a session written by an earlier deployment. A missing or unsupported version, or an append whose fields do not match its declared version, fails instead of being interpreted as a current event.
 
 When a streamed tool input becomes a validated call, its `action.input.appended` events precede the matching `actions.requested` event. The default client reducer projects the potentially incomplete JSON as a `dynamic-tool` part with `state: "input-streaming"` and cumulative text in `inputText`. `actions.requested` replaces that part with `state: "input-available"` and the validated `input`. Excluded internal actions never publish their input stream.
 
-`action.partial` carries one complete preliminary output snapshot from an authored async-generator tool. A later partial for the same `callId` replaces it, and `action.result` is the final snapshot. When the durable writer is busy, kaf may keep only the newest adjacent partial for a call. Treat partials as last-write-wins: a durable step can retry and replay overlapping event runs. Provider-executed tool progress and MCP progress notifications are not projected as `action.partial` events.
+`action.partial` carries one complete preliminary output snapshot from an authored async-generator tool. A later partial for the same `callId` replaces it, and `action.result` is the final snapshot. When the durable writer is busy, orcel may keep only the newest adjacent partial for a call. Treat partials as last-write-wins: a durable step can retry and replay overlapping event runs. Provider-executed tool progress and MCP progress notifications are not projected as `action.partial` events.
 
 Note: consider the privacy, confidentiality, and user-experience implications for displaying, storing, or transmitting reasoning events in your application.
 
@@ -127,14 +127,14 @@ A question or sign-in from inside a running call does not end the turn. This cov
 
 A call to a tool that runs as a task, such as an agent tool, `agentRouter()`, the `workflow` tool, or a workflow tool that defines [`task(input, ctx)`](/docs/tools/workflows#run-calls-as-tasks-task) or [`serve(receive, ctx)`](/docs/tools/workflows#resumable-tasks-serve), returns a receipt as its `action.result` and keeps working. `task.started` reports the task's `taskId` for the call's `callId` and `turnId`, both when a call starts a task and when a call reaches a resumable task by its `taskId`, before any event the task's run publishes for that call. `task.settled` comes once per call, with the same `turnId`, `status` `"completed"`, `"failed"`, or `"cancelled"`, and the call's `output` when it completed or `error.message` when it failed. Results reach the model as a message in its history, not as a stream event, so read outcomes from `task.settled`. A session the task's run opens with `ctx.agent` is announced with `agent.started` carrying the `taskId`. An `input.requested`, `authorization.required`, or `authorization.completed` event from a task's run carries its `taskId`. Each of these events names the call the task is serving when it happens: a resumable task's later call brings its own `callId` and `turnId`, which may belong to a later turn than the call that started the task.
 
-A turn doesn't end while tasks are working. When the model ends its text early, kaf holds the turn and the stream emits `turn.waiting` for it; the turn continues once a result arrives or its caller writes. In a root session, that text completes as an ordinary `message.completed`. In a child session or a schedule's session, it reports `finishReason: "tool-calls"`, so channels post only the final reply. When the model calls `task_wait` and no result is ready yet, the stream also emits `turn.waiting`. Either way, the next `step.started` for the same `turnId` means the turn resumed, and `session.waiting` comes only after the turn ends. See [Tasks](/docs/tools/tasks#turns-wait-for-their-tasks).
+A turn doesn't end while tasks are working. When the model ends its text early, orcel holds the turn and the stream emits `turn.waiting` for it; the turn continues once a result arrives or its caller writes. In a root session, that text completes as an ordinary `message.completed`. In a child session or a schedule's session, it reports `finishReason: "tool-calls"`, so channels post only the final reply. When the model calls `task_wait` and no result is ready yet, the stream also emits `turn.waiting`. Either way, the next `step.started` for the same `turnId` means the turn resumed, and `session.waiting` comes only after the turn ends. See [Tasks](/docs/tools/tasks#turns-wait-for-their-tasks).
 
 `step.failed` and `turn.failed` carry `{ code, message, details? }` for the failed fragment or turn, and `session.failed` is the terminal session-level variant. `turn.cancelled` is not a failure: the cancelled turn ends without any failure event, `session.waiting` follows, and the session accepts the next message normally. Whatever the turn streamed before cancellation stays on the stream. Durable history keeps the accepted user input and previously settled work, and discards incomplete assistant output. Tool calls the cancellation stopped stay in history, each answered as cancelled, so the model sees that the work started and stopped instead of a request left unanswered. When a turn requested an output schema, the finalized payload lands on `result.completed` as `data.result` before the turn boundary. `authorization.required` carries the sign-in challenge (`data.authorization` may include `url`, `userCode`, `expiresAt`, `instructions`), and `authorization.completed` carries `data.outcome` (`"authorized" | "declined" | "failed" | "timed-out"`). Both carry `data.principalId` when a session principal started the sign-in. It holds the same value as `responderPrincipalId` on approval events, so a channel can deliver the challenge privately to that person even after someone else starts a later turn.
 
 A provider response ending with `content-filter` fails with `MODEL_CALL_FAILED`,
 `details.semanticErrorId: "model-response-content-filtered"`, and
 `details.finishReason: "content-filter"`. Details also include the Gateway
-`generationId` when available. kaf does not retry the filtered response or emit
+`generationId` when available. orcel does not retry the filtered response or emit
 `message.completed` for its partial text; deltas already streamed remain visible.
 The session then waits for another user message.
 
@@ -159,13 +159,13 @@ Alongside `type` and `data`, every event carries a `meta` envelope:
 - **`meta.id`** uniquely identifies the event. It is an `evt_`-prefixed [ULID](https://github.com/ulid/spec): a millisecond timestamp followed by random bits, so ids are broadly time-ordered.
 - **`meta.at`** is the ISO-8601 time the event was emitted.
 - **`meta.deliveryIds`**, when present, identifies the accepted messages that own
-  the turn. `POST /kaf/v1/session/:sessionId` returns its `deliveryId`, allowing
+  the turn. `POST /orcel/v1/session/:sessionId` returns its `deliveryId`, allowing
   clients to skip earlier turns when resuming from an old cursor. Coalesced
   messages share the same turn events.
 
-`meta.id` is stable. kaf mints it once, when the event is written to the durable stream, and stores it with the event. Reconnecting from a cursor, rewinding to `startIndex=0`, or replaying a finished session all return the same id for the same event.
+`meta.id` is stable. orcel mints it once, when the event is written to the durable stream, and stores it with the event. Reconnecting from a cursor, rewinding to `startIndex=0`, or replaying a finished session all return the same id for the same event.
 
-`meta.at` has always been there; `meta.id` arrived in stream version 20, `action.input.appended` arrived in version 24, and delta-only message and reasoning appends replaced cumulative snapshots in version 25. Events written by an earlier version are stored with the envelope but no id inside it, so rewinding into the part of a session that ran before you upgraded yields events whose `meta.id` is absent, even though the type says it is always a string. kaf passes those events through rather than dropping them, and they cannot be deduplicated. The exposure ends when the sessions that predate your upgrade do.
+`meta.at` has always been there; `meta.id` arrived in stream version 20, `action.input.appended` arrived in version 24, and delta-only message and reasoning appends replaced cumulative snapshots in version 25. Events written by an earlier version are stored with the envelope but no id inside it, so rewinding into the part of a session that ran before you upgraded yields events whose `meta.id` is absent, even though the type says it is always a string. orcel passes those events through rather than dropping them, and they cannot be deduplicated. The exposure ends when the sessions that predate your upgrade do.
 
 That makes it the key for ingesting a stream into a database without duplicating rows when you re-read it:
 
@@ -183,9 +183,9 @@ Because ids lead with a timestamp, a `primary key (id)` stays roughly append-ord
 - Rewinding with `startIndex=0`, or reading back from the tail with a negative `startIndex`.
 - Restoring a saved event log that overlaps the prefix the live stream replays.
 
-**What it does not cover: a retried step re-emits under new ids.** kaf runs each durable step up to four times. If a step is interrupted partway — a crash, a timeout, a model error it retries through — whatever it already wrote stays on the stream, and the new attempt emits its own events with their own ids. Both attempts carry the same `turnId`, `stepIndex`, and `sequence`, because the retry restores that state from the step's input, but they are distinct events and no field records which attempt finished.
+**What it does not cover: a retried step re-emits under new ids.** orcel runs each durable step up to four times. If a step is interrupted partway — a crash, a timeout, a model error it retries through — whatever it already wrote stays on the stream, and the new attempt emits its own events with their own ids. Both attempts carry the same `turnId`, `stepIndex`, and `sequence`, because the retry restores that state from the step's input, but they are distinct events and no field records which attempt finished.
 
-Replaying a _completed_ step is a different thing and emits nothing at all: kaf serves the recorded result from its journal without re-running the body. Crash recovery, redeploys, and resuming a parked turn therefore add nothing to the stream. Only an interrupted step re-runs.
+Replaying a _completed_ step is a different thing and emits nothing at all: orcel serves the recorded result from its journal without re-running the body. Crash recovery, redeploys, and resuming a parked turn therefore add nothing to the stream. Only an interrupted step re-runs.
 
 Three more things to know:
 
@@ -200,7 +200,7 @@ Authored [hooks](../guides/hooks) receive the same envelope, but observe each ev
 Once the session is waiting (you'll see `session.waiting`), POST your follow-up to its ID-addressed messages endpoint:
 
 ```bash
-curl -X POST http://127.0.0.1:2000/kaf/v1/session/<sessionId> \
+curl -X POST http://127.0.0.1:2000/orcel/v1/session/<sessionId> \
   -H 'content-type: application/json' \
   -d '{"message":"Now send the short version."}'
 ```
@@ -208,20 +208,20 @@ curl -X POST http://127.0.0.1:2000/kaf/v1/session/<sessionId> \
 The follow-up reuses the same durable session: same history, same state. A follow-up accepts exactly one of `message` or `inputResponses`. Use structured responses to answer one or more pending human-input requests by ID:
 
 ```bash
-curl -X POST http://127.0.0.1:2000/kaf/v1/session/<sessionId> \
+curl -X POST http://127.0.0.1:2000/orcel/v1/session/<sessionId> \
   -H 'content-type: application/json' \
   -d '{"inputResponses":[{"requestId":"req_A","optionId":"approve"}]}'
 ```
 
-Message sends default to `"steer"`. Before assistant output begins, kaf interrupts pending model generation and continues the same turn with the correction. Reasoning and provider search progress do not count as assistant output. An executing kaf tool finishes safely, and its result is preserved before the correction reaches the next model call. A steering message aborts the [`ctx.abortSignal`](/docs/tools/workflows#stop-early-for-a-new-message) of each `execute` workflow tool call the turn is waiting on: its questions are withdrawn, `sleep` and `ask_question` stop early, and the call settles with what its body returns. A steering message ends a `task_wait` but never interrupts a task. Only the turn's own caller steers it; another caller's message waits for the turn to end. After assistant output starts, steering applies at the next committed workflow boundary; text already streamed remains visible. Channels and TypeScript `Session.send(...)` calls can select `turnPolicy: "queue"` when the active turn should finish first. Structured `inputResponses` answer their addressed requests.
+Message sends default to `"steer"`. Before assistant output begins, orcel interrupts pending model generation and continues the same turn with the correction. Reasoning and provider search progress do not count as assistant output. An executing orcel tool finishes safely, and its result is preserved before the correction reaches the next model call. A steering message aborts the [`ctx.abortSignal`](/docs/tools/workflows#stop-early-for-a-new-message) of each `execute` workflow tool call the turn is waiting on: its questions are withdrawn, `sleep` and `ask_question` stop early, and the call settles with what its body returns. A steering message ends a `task_wait` but never interrupts a task. Only the turn's own caller steers it; another caller's message waits for the turn to end. After assistant output starts, steering applies at the next committed workflow boundary; text already streamed remains visible. Channels and TypeScript `Session.send(...)` calls can select `turnPolicy: "queue"` when the active turn should finish first. Structured `inputResponses` answer their addressed requests.
 
 If the session is waiting on a human-in-the-loop approval, respond with the channel’s Approve or Cancel controls. Text messages do not decide an approval; unrelated text starts an ordinary turn while the approval stays pending and answerable. A later structured `inputResponses` answer keyed by its `requestId` still resumes the original tool call, even after intervening turns.
 
-A pending `ctx.ask()` question from a tool, such as `ask_question`, can be answered with plain text. When it is the only pending question, a message that matches an option answers it, and so does any message when the question allows free text. Otherwise kaf does not guess which question the text addresses: the message follows the normal `turnPolicy`. A steering message withdraws the questions of the `execute` workflow tool calls the turn waits on, which resolve as `cancelled`; a task's questions stay open. Questions from subagents always need a structured response. Use structured responses to target requests unambiguously.
+A pending `ctx.ask()` question from a tool, such as `ask_question`, can be answered with plain text. When it is the only pending question, a message that matches an option answers it, and so does any message when the question allows free text. Otherwise orcel does not guess which question the text addresses: the message follows the normal `turnPolicy`. A steering message withdraws the questions of the `execute` workflow tool calls the turn waits on, which resolve as `cancelled`; a task's questions stay open. Questions from subagents always need a structured response. Use structured responses to target requests unambiguously.
 
-A structured response matches any currently pending request by ID, not only the newest batch. It becomes stale only after that request was answered, cleared, or cancelled. kaf delivers a stale response to the model as a new user message, and the model decides whether the old selection still matters. A stale approval never authorizes the earlier tool call; the model must request the action and approval again if they are still needed.
+A structured response matches any currently pending request by ID, not only the newest batch. It becomes stale only after that request was answered, cleared, or cancelled. orcel delivers a stale response to the model as a new user message, and the model decides whether the old selection still matters. A stale approval never authorizes the earlier tool call; the model must request the action and approval again if they are still needed.
 
-One delivery can answer requests from several batches. kaf resumes approval-bearing batches in durable order and carries later answers forward until each batch can resume. If you answer only some approvals in a batch, kaf saves those responses until the remaining approvals are answered. Meanwhile, unrelated messages can run tools and receive a completed reply. The saved partial responses neither block that reply nor trigger another model call after it.
+One delivery can answer requests from several batches. orcel resumes approval-bearing batches in durable order and carries later answers forward until each batch can resume. If you answer only some approvals in a batch, orcel saves those responses until the remaining approvals are answered. Meanwhile, unrelated messages can run tools and receive a completed reply. The saved partial responses neither block that reply nor trigger another model call after it.
 
 Multiple steering messages retain their durable arrival order and may be folded into one input at the next boundary. A message accepted after turn settlement starts the next turn. See [message delivery and steering](./execution-model-and-durability#message-delivery-and-steering).
 
@@ -230,11 +230,11 @@ Multiple steering messages retain their durable arrival order and may be folded 
 POST to the session's cancel endpoint to stop the turn that is currently running. The body is optional; pass `turnId` (stamped on every turn-scoped stream event) to scope the cancel to the turn you observed:
 
 ```bash
-curl -X POST http://127.0.0.1:2000/kaf/v1/session/<sessionId>/cancel
+curl -X POST http://127.0.0.1:2000/orcel/v1/session/<sessionId>/cancel
 # {"ok":true,"sessionId":"<sessionId>","status":"accepted"}
 ```
 
-`"accepted"` means the live session durably queued the request; cancellation completes asynchronously. Confirm turn cancellation on the stream as `turn.cancelled` followed by `session.waiting`. The session then accepts the next message normally. Each cancelled child reports its own boundary on its child-session stream. Cancelling also stops every working task, each reported as `task.settled` with `status: "cancelled"`, including while the session waits between turns. A live but already-parked session returns `"accepted"`; with no working tasks, cancellation is a no-op there. `"no_active_turn"` means the session or channel address is unknown or terminal. Both statuses are success, so clients can fire and forget. See the [kaf channel](../channels/kaf) for the full route contract.
+`"accepted"` means the live session durably queued the request; cancellation completes asynchronously. Confirm turn cancellation on the stream as `turn.cancelled` followed by `session.waiting`. The session then accepts the next message normally. Each cancelled child reports its own boundary on its child-session stream. Cancelling also stops every working task, each reported as `task.settled` with `status: "cancelled"`, including while the session waits between turns. A live but already-parked session returns `"accepted"`; with no working tasks, cancellation is a no-op there. `"no_active_turn"` means the session or channel address is unknown or terminal. Both statuses are success, so clients can fire and forget. See the [orcel channel](../channels/orcel) for the full route contract.
 
 The HTTP route returns `202` for `"accepted"` and `200` for
 `"no_active_turn"`. Only the accepted result includes `sessionId`.
@@ -248,14 +248,14 @@ Custom channel routes request the same cancellation through
 All session controls are ID-addressed and accept no continuation token:
 
 ```bash
-curl -X POST http://127.0.0.1:2000/kaf/v1/session/<sessionId>/compact
-curl -X POST http://127.0.0.1:2000/kaf/v1/session/<sessionId>/clear
-curl -X POST http://127.0.0.1:2000/kaf/v1/session/<sessionId>/reset \
+curl -X POST http://127.0.0.1:2000/orcel/v1/session/<sessionId>/compact
+curl -X POST http://127.0.0.1:2000/orcel/v1/session/<sessionId>/clear
+curl -X POST http://127.0.0.1:2000/orcel/v1/session/<sessionId>/reset \
   -H 'content-type: application/json' \
   -d '{"reason":"Start over"}'
 ```
 
-Compaction summarizes context without adding a user message. User-role instructions are ordinary history and may be represented by the summary; system-role instructions remain outside it. Attributed [memory](../memory) records are excluded from the summary, canonicalized, and recalled again after the checkpoint. If a turn is active, kaf queues the request until that turn settles. A successful compaction emits `compaction.requested` and `compaction.completed`, followed by `session.waiting`; if summarization fails before a checkpoint, the session returns to waiting with its previous history.
+Compaction summarizes context without adding a user message. User-role instructions are ordinary history and may be represented by the summary; system-role instructions remain outside it. Attributed [memory](../memory) records are excluded from the summary, canonicalized, and recalled again after the checkpoint. If a turn is active, orcel queues the request until that turn settles. A successful compaction emits `compaction.requested` and `compaction.completed`, followed by `session.waiting`; if summarization fails before a checkpoint, the session returns to waiting with its previous history.
 
 Clear removes model-message history in place, including static and dynamic user-role instructions and recalled memory records, while preserving the session identity, system-role instructions, tools, skills, application-defined durable state, limits, and sandbox. It clears framework memory locks and replay bookkeeping but does not delete data from a provider's external store. It does not rerun instruction definitions or resolvers. It emits `context.cleared` followed by `session.waiting`.
 
@@ -270,45 +270,45 @@ When automatic reconnection is enabled and `startIndex` is nonnegative, the Type
 If a reconnect overlaps events you already handled, [`meta.id`](#the-event-envelope) identifies the duplicates: it is unchanged across reconnects and rewinds, so a consumer keyed on it can replay safely.
 
 ```bash
-curl "http://127.0.0.1:2000/kaf/v1/session/<sessionId>/stream?startIndex=<count>"
+curl "http://127.0.0.1:2000/orcel/v1/session/<sessionId>/stream?startIndex=<count>"
 ```
 
 A negative `startIndex` reads relative to the stream's current tail. For example, `-1` reads the latest event, which is normally `session.waiting` for a resumable session:
 
 ```bash
-curl "http://127.0.0.1:2000/kaf/v1/session/<sessionId>/stream?startIndex=-1"
+curl "http://127.0.0.1:2000/orcel/v1/session/<sessionId>/stream?startIndex=-1"
 ```
 
 Because a tail-relative position does not resolve to an absolute consumed-event
 count, client tail reads do not automatically reconnect or advance the stored
 cursor.
 
-For a catch-up read that stops instead of following the live stream, pass `includeTailIndex=1`. The response then carries the `x-kaf-stream-tail-index` header: the zero-based index of the last durably recorded event, or `-1` before the first. Read from your cursor until it passes that tail, then disconnect — reconnecting from the updated cursor if the connection drops first:
+For a catch-up read that stops instead of following the live stream, pass `includeTailIndex=1`. The response then carries the `x-orcel-stream-tail-index` header: the zero-based index of the last durably recorded event, or `-1` before the first. Read from your cursor until it passes that tail, then disconnect — reconnecting from the updated cursor if the connection drops first:
 
 ```bash
-curl -i "http://127.0.0.1:2000/kaf/v1/session/<sessionId>/stream?startIndex=<count>&includeTailIndex=1"
-# x-kaf-stream-tail-index: <tail>
+curl -i "http://127.0.0.1:2000/orcel/v1/session/<sessionId>/stream?startIndex=<count>&includeTailIndex=1"
+# x-orcel-stream-tail-index: <tail>
 ```
 
 The lookup is opt-in; requests without the parameter get no header. The TypeScript client wraps this into `stream({ follow: false })`.
 
 ## Use the client from TypeScript
 
-For scripts, server-to-server calls, tests, evals, and custom UIs, `kaf/client` wraps these routes in a typed client so you don't hand-roll the POST and NDJSON stream loop.
+For scripts, server-to-server calls, tests, evals, and custom UIs, `orcel/client` wraps these routes in a typed client so you don't hand-roll the POST and NDJSON stream loop.
 
 Start with the [Client SDK](../guides/client/overview) guide. It covers basic usage, sending messages, session state, streaming, and per-turn `outputSchema` results.
 
 ## Inspect the agent over HTTP
 
-`GET /kaf/v1/info` returns agent-info version 6, a JSON inspection snapshot of the effective compiled agent. It reports the selected config; active tools, instructions, memory slots, skills, channels, schedules, sandbox, connections, hooks, and instrumentation with explicit source ownership; dynamic resolvers separately from their session-specific output; local and remote agents in separate collections; prepared built-in effects; and shadowed or disabled source diagnostics. Memory tool wrappers include their selected memory-source dependency. Channel routes appear in the same effective order used by the HTTP host. Static instructions remain an ordered array whose entries expose `content` and `role`. Sandbox inspection exposes the opaque `revisionHash` that identifies its compiler-discovered environment inputs.
+`GET /orcel/v1/info` returns agent-info version 6, a JSON inspection snapshot of the effective compiled agent. It reports the selected config; active tools, instructions, memory slots, skills, channels, schedules, sandbox, connections, hooks, and instrumentation with explicit source ownership; dynamic resolvers separately from their session-specific output; local and remote agents in separate collections; prepared built-in effects; and shadowed or disabled source diagnostics. Memory tool wrappers include their selected memory-source dependency. Channel routes appear in the same effective order used by the HTTP host. Static instructions remain an ordered array whose entries expose `content` and `role`. Sandbox inspection exposes the opaque `revisionHash` that identifies its compiler-discovered environment inputs.
 
-The info route belongs to the selected `channels/kaf.ts` source and uses its resolved auth policy. Without an authored replacement, kaf selects the default channel source with Vercel OIDC, local development access, and the production placeholder. Replacing or disabling that source replaces or removes the info route too; no native fallback serves it.
+The info route belongs to the selected `channels/orcel.ts` source and uses its resolved auth policy. Without an authored replacement, orcel selects the default channel source with Vercel OIDC, local development access, and the production placeholder. Replacing or disabling that source replaces or removes the info route too; no native fallback serves it.
 
 ```bash
-curl http://127.0.0.1:2000/kaf/v1/info
+curl http://127.0.0.1:2000/orcel/v1/info
 ```
 
-With the default auth chain (`[vercelOidc(), localDev(), placeholderAuth()]`), a Vercel OIDC bearer takes precedence, `localDev()` accepts requests to an `kaf dev` or `vercel dev` server, and everything else is rejected. A deployed Vercel target requires a valid OIDC bearer, with a same-project bypass for in-deployment callers. See [auth & route protection](../guides/auth-and-route-protection).
+With the default auth chain (`[vercelOidc(), localDev(), placeholderAuth()]`), a Vercel OIDC bearer takes precedence, `localDev()` accepts requests to an `orcel dev` or `vercel dev` server, and everything else is rejected. A deployed Vercel target requires a valid OIDC bearer, with a same-project bypass for in-deployment callers. See [auth & route protection](../guides/auth-and-route-protection).
 
 ## Dispatch order
 
@@ -326,4 +326,4 @@ The order is structural, not incidental. By the time a resolver or hook reads ch
 - [Execution model & durability](./execution-model-and-durability): what makes a session durable and how parked work resumes.
 - [Channels](../channels/overview): how platform addresses map to durable sessions.
 - [Client SDK](../guides/client/overview): call these routes from scripts and server-side code.
-- [Frontend](../guides/frontend/overview): `useKafAgent` instead of raw routes.
+- [Frontend](../guides/frontend/overview): `useOrcelAgent` instead of raw routes.

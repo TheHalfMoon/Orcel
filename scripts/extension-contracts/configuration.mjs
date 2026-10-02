@@ -8,9 +8,9 @@ const extractorRequire = createRequire(require.resolve("@microsoft/api-extractor
 const ts = extractorRequire("typescript");
 
 export const REPO_ROOT = resolve(fileURLToPath(import.meta.url), "../../..");
-export const KAF_ROOT = join(REPO_ROOT, "packages/kaf");
-export const COMPATIBILITY_SOURCE = join(KAF_ROOT, "src/compiler/extension-compatibility.ts");
-export const CONTRACT_ROOT = join(KAF_ROOT, "extension-contracts");
+export const ORCEL_ROOT = join(REPO_ROOT, "packages/orcel");
+export const COMPATIBILITY_SOURCE = join(ORCEL_ROOT, "src/compiler/extension-compatibility.ts");
+export const CONTRACT_ROOT = join(ORCEL_ROOT, "extension-contracts");
 export const ENTRYPOINT_ROOT = join(CONTRACT_ROOT, "entrypoints");
 export const COMPATIBILITY_FIXTURE_ROOT = join(CONTRACT_ROOT, "compatibility");
 export const REPORT_ROOT = join(CONTRACT_ROOT, "reports");
@@ -215,7 +215,7 @@ export function bumpCapabilityConfiguration(source, capability, decision) {
 export function retainedCompatibilityFixture(capability, version) {
   return `/**
  * Replace this scaffold with a representative ${capability} epoch ${version}
- * authoring example that must continue to compile against the current kaf API.
+ * authoring example that must continue to compile against the current orcel API.
  * ${COMPATIBILITY_FIXTURE_PLACEHOLDER}
  */
 export {};
@@ -368,7 +368,7 @@ export async function validateCapabilityConfiguration(configuration) {
     const paths = publicSurfacePaths(surface);
     const publicNames = new Set();
     for (const path of paths) {
-      const publicSource = await readFile(join(KAF_ROOT, path), "utf8");
+      const publicSource = await readFile(join(ORCEL_ROOT, path), "utf8");
       for (const name of collectExportNames(publicSource, { valuesOnly: true })) {
         publicNames.add(name);
       }
@@ -390,7 +390,7 @@ export async function validateCapabilityConfiguration(configuration) {
         .filter(Boolean)
         .join("; ");
       issues.push({
-        file: toPosix(relative(REPO_ROOT, join(KAF_ROOT, paths[0]))),
+        file: toPosix(relative(REPO_ROOT, join(ORCEL_ROOT, paths[0]))),
         message: `Capability contract roots are incomplete (${details}). Assign every public authoring value to one of: ${surface.capabilities.join(", ")}.`,
       });
     }

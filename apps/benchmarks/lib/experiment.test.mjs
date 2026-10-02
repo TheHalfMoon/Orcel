@@ -10,7 +10,7 @@ const { authoringExperiment } = await jiti.import(
 
 const common = {
   revision: "1234567890abcdef1234567890abcdef12345678",
-  packageSpec: "https://pkg.kaf.dev/1234567890abcdef1234567890abcdef12345678/kaf.tgz",
+  packageSpec: "https://pkg.orcel.dev/1234567890abcdef1234567890abcdef12345678/orcel.tgz",
   treatment: "guided",
 };
 

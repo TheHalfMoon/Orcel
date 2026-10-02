@@ -1,11 +1,11 @@
 ---
 name: technical-writing
-description: Write, edit, review, or audit user-facing documentation for the kaf repository. Use for changes under docs/, documentation tied to kaf APIs or CLI behavior, docs work based on Slack or support feedback, and requests to make kaf docs clearer, more natural, or less AI-patterned while verifying claims against current source, tests, CLI help, public releases, and repository conventions.
+description: Write, edit, review, or audit user-facing documentation for the orcel repository. Use for changes under docs/, documentation tied to orcel APIs or CLI behavior, docs work based on Slack or support feedback, and requests to make orcel docs clearer, more natural, or less AI-patterned while verifying claims against current source, tests, CLI help, public releases, and repository conventions.
 ---
 
 # Technical writing
 
-Write accurate, task-focused documentation for kaf. Treat developers and AI agents as readers: make each section easy to scan, retrieve, and act on without relying on unstated context.
+Write accurate, task-focused documentation for orcel. Treat developers and AI agents as readers: make each section easy to scan, retrieve, and act on without relying on unstated context.
 
 ## Choose a workflow
 
@@ -18,9 +18,9 @@ Write accurate, task-focused documentation for kaf. Treat developers and AI agen
 
 ## Verify before writing
 
-Do not rely on training data for kaf behavior. Use this source hierarchy:
+Do not rely on training data for orcel behavior. Use this source hierarchy:
 
-1. Current source, public types, and tests in `packages/kaf`
+1. Current source, public types, and tests in `packages/orcel`
 2. Current CLI help and setup implementation
 3. Existing pages under `docs/`
 4. Merged pull requests, changelogs, and release notes
@@ -29,13 +29,13 @@ Do not rely on training data for kaf behavior. Use this source hierarchy:
 
 Use support evidence to identify the reader's problem, not to establish product behavior. Verify commands, flags, API names, defaults, limitations, and examples against the current repository. For a docs-only change, also compare the implementation with the latest public release so the docs do not announce branch-only behavior. When docs accompany product code in the same change, state that dependency during review. If a claim cannot be verified, omit it or report the missing owner or source. Never leave `[VERIFY]` markers in a completed docs change.
 
-## Follow kaf conventions
+## Follow orcel conventions
 
-- Write `kaf` lowercase, including headings and sentence starts when practical.
-- Use exact public names such as `defineAgent`, `kaf dev`, and `kaf add channel/slack`.
+- Write `orcel` lowercase, including headings and sentence starts when practical.
+- Use exact public names such as `defineAgent`, `orcel dev`, and `orcel add channel/slack`.
 - Distinguish the root agent, the built-in `agent` tool, declared subagents, and remote agents. They have different inheritance and execution semantics.
-- Distinguish kaf connections from Vercel Connect, the model-facing `Workflow` tool from authored Vercel Workflows, and durable session state from sandbox filesystem or attachment storage.
-- Name diagnostic surfaces precisely: Vercel runtime logs, **Agent Runs**, OpenTelemetry, `kaf logs`, and `kaf traces` are not interchangeable.
+- Distinguish orcel connections from Vercel Connect, the model-facing `Workflow` tool from authored Vercel Workflows, and durable session state from sandbox filesystem or attachment storage.
+- Name diagnostic surfaces precisely: Vercel runtime logs, **Agent Runs**, OpenTelemetry, `orcel logs`, and `orcel traces` are not interchangeable.
 - Treat `docs/**` as published documentation. Update `docs/meta.json` when navigation changes.
 - Keep `.md` files framework-agnostic. Use MDX components only in `.mdx` files and only when nearby pages establish the convention.
 - Preserve published routes and heading anchors when possible. When moving a page, update authored links and add permanent redirects for old HTML and Markdown URLs.
@@ -65,7 +65,7 @@ Use support evidence to identify the reader's problem, not to establish product 
 - Do not rewrite clear prose merely to match a personal preference.
 - Do not manufacture examples, opinions, reactions, or specificity to make prose sound more human.
 - Do not use promotional language, rhetorical questions, filler, or claims that a task is easy, simple, or quick.
-- Do not use `we` unless describing a deliberate Vercel or kaf team action.
+- Do not use `we` unless describing a deliberate Vercel or orcel team action.
 
 ## Finish the change
 

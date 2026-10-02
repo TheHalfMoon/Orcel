@@ -6,7 +6,7 @@ import {
   type MemoryCategory,
   type MemoryEntry,
   type MemorySource,
-} from "#kaf/types/memory";
+} from "#orcel/types/memory";
 import { normalizeMemoryContent, parseMemoryImport } from "~~/server/utils/memory-import";
 
 function emptyByCategory(): MemoryByCategory {

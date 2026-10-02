@@ -1,5 +1,5 @@
 import { connect } from "@vercel/connect/eve";
-import { defineMcpClientConnection } from "kaf/connections";
+import { defineMcpClientConnection } from "orcel/connections";
 
 const CONNECTOR = "mcp.linear.app/linear";
 const USER_ISSUER = "app";

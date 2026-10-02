@@ -20,7 +20,7 @@ Keep this file to stable behavior such as identity, tone, and standing rules.
 A static system prompt belongs in markdown (`agent/instructions.md`). Switch to a TypeScript module (`agent/instructions.ts`) when you need typed composition, `lib/` code, build-time values, or a user-role message.
 
 ```ts title="agent/instructions.ts"
-import { defineInstructions } from "kaf/instructions";
+import { defineInstructions } from "orcel/instructions";
 import { buildInstructionsPrompt } from "./lib/prompts";
 
 export default defineInstructions({
@@ -31,7 +31,7 @@ export default defineInstructions({
 `defineInstructions` takes `content` and an optional `role`:
 
 ```ts title="agent/instructions/brief.ts"
-import { defineInstructions } from "kaf/instructions";
+import { defineInstructions } from "orcel/instructions";
 import { buildCustomerBrief } from "../lib/customer";
 
 export default defineInstructions({
@@ -42,7 +42,7 @@ export default defineInstructions({
 
 `role` is either `"system"` or `"user"` and defaults to `"system"`. The legacy `{ markdown: string }` form still creates system-role instructions, but is deprecated; do not combine `markdown` with `content` or `role`. Blank content contributes no context.
 
-A module-backed definition runs once at build time. kaf stores its resolved content and role in the compiled manifest, so the definition is not a runtime entry.
+A module-backed definition runs once at build time. orcel stores its resolved content and role in the compiled manifest, so the definition is not a runtime entry.
 
 This includes its normal ESM and [asset imports](./reference/typescript-api#asset-imports), such as a top-level prompt imported with `?raw`. See [Authored module lifecycle](./reference/typescript-api#authored-module-lifecycle) for the full compile/runtime contract.
 
@@ -54,7 +54,7 @@ Static user-role instructions are appended to a new session's history once, in s
 
 ## Split instructions across a directory
 
-For more than one file, add an `agent/instructions/` directory. kaf reads its entries non-recursively and accepts both `.md` files and `.ts` modules (a `.ts` file can wrap `defineInstructions` or `defineDynamic`). Static entries apply in alphabetical order by filename (`localeCompare`): system entries compose in that order, and user entries enter new-session history in that order.
+For more than one file, add an `agent/instructions/` directory. orcel reads its entries non-recursively and accepts both `.md` files and `.ts` modules (a `.ts` file can wrap `defineInstructions` or `defineDynamic`). Static entries apply in alphabetical order by filename (`localeCompare`): system entries compose in that order, and user entries enter new-session history in that order.
 
 A flat `agent/instructions.md` (or `.ts`) at the agent root and the directory can coexist. The root file's content comes first, then the sorted directory entries. You cannot author both `instructions.md` and `instructions.ts` at the root; that pairing is a build error.
 
@@ -86,13 +86,13 @@ See [Dynamic capabilities](./guides/dynamic-capabilities) for examples and failu
 
 [Compaction](./concepts/sessions-runs-and-streaming#compact-clear-and-reset) treats user-role instructions like ordinary conversation history, so a summary may replace their original text. Clear removes them with the rest of model-message history and does not rerun static or dynamic instructions. System-role instructions remain because they are outside history.
 
-Keep system-role content stable and place it before frequently changing context when practical. That gives providers the best opportunity to reuse a prompt prefix, but cache behavior and billing remain provider-specific. User-role instructions preserve the normal append-only message prefix. Framework announcements about available skills and parked agents are retained in user-role history: changed snapshots append after earlier steps instead of replacing the context sent with those steps. Unchanged announcements are skipped until history is cleared or compacted. kaf does not promise a cache hit.
+Keep system-role content stable and place it before frequently changing context when practical. That gives providers the best opportunity to reuse a prompt prefix, but cache behavior and billing remain provider-specific. User-role instructions preserve the normal append-only message prefix. Framework announcements about available skills and parked agents are retained in user-role history: changed snapshots append after earlier steps instead of replacing the context sent with those steps. Unchanged announcements are skipped until history is cleared or compacted. orcel does not promise a cache hit.
 
 ## Disclaimer
 
 As the deployer, it is your responsibility to ensure your agent complies with applicable laws.
 
-Where an kaf agent communicates with people, you may be required to disclose that they are interacting with an automated AI system where law requires it. kaf does not add this disclosure automatically; configure it in your instructions and/or channel responses.
+Where an orcel agent communicates with people, you may be required to disclose that they are interacting with an automated AI system where law requires it. orcel does not add this disclosure automatically; configure it in your instructions and/or channel responses.
 
 ## What to read next
 

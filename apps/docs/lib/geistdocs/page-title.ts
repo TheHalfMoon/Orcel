@@ -17,8 +17,8 @@ interface ResolveDocsPageTitleOptions {
 const docsSeoTitles: Readonly<Record<string, string>> = {
   "/docs/agent-config": "Agent configuration (agent.ts)",
   "/docs/concepts/sessions-runs-and-streaming": "Agent sessions, runs, and streaming",
-  "/docs/getting-started": "Get started with kaf: durable AI agents in TypeScript",
-  "/docs/guides/frontend/overview": "Build an AI agent chat UI with useKafAgent",
+  "/docs/getting-started": "Get started with orcel: durable AI agents in TypeScript",
+  "/docs/guides/frontend/overview": "Build an AI agent chat UI with useOrcelAgent",
   "/docs/reference/typescript-api": "TypeScript API reference",
   "/docs/tutorial/first-agent": "Build your first agent",
 };

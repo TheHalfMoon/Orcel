@@ -3,7 +3,7 @@ import { describe, expect, test, vi } from "vitest";
 import { assertCurrentPublicationTarget } from "./publication-current.mjs";
 
 const sha = "a".repeat(40);
-const input = { repository: "vercel/kaf", ref: "123", sourceSha: sha, token: "token" };
+const input = { repository: "vercel/orcel", ref: "123", sourceSha: sha, token: "token" };
 
 function response(body, status = 200) {
   return {
@@ -20,7 +20,7 @@ describe("current package publication target", () => {
       assertCurrentPublicationTarget({ ...input, ref: "main" }, fetchImplementation),
     ).resolves.toBeUndefined();
     expect(fetchImplementation).toHaveBeenCalledWith(
-      "https://api.github.com/repos/vercel/kaf/branches/main",
+      "https://api.github.com/repos/vercel/orcel/branches/main",
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: "Bearer token" }),
       }),
@@ -46,7 +46,7 @@ describe("current package publication target", () => {
         assertCurrentPublicationTarget({ ...input, token: undefined }, fetchImplementation),
       ).resolves.toBeUndefined();
       expect(fetchImplementation).toHaveBeenCalledWith(
-        "https://api.github.com/repos/vercel/kaf/pulls/123",
+        "https://api.github.com/repos/vercel/orcel/pulls/123",
         expect.objectContaining({
           headers: expect.not.objectContaining({ Authorization: expect.anything() }),
         }),
@@ -69,7 +69,7 @@ describe("current package publication target", () => {
 
   test("rejects invalid configuration and GitHub failures", async () => {
     await expect(
-      assertCurrentPublicationTarget({ ...input, repository: "kaf" }, vi.fn()),
+      assertCurrentPublicationTarget({ ...input, repository: "orcel" }, vi.fn()),
     ).rejects.toThrow("GITHUB_REPOSITORY");
     await expect(
       assertCurrentPublicationTarget(input, vi.fn().mockResolvedValue(response({}, 503))),

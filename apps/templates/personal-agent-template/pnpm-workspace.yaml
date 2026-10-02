@@ -2,10 +2,10 @@ packages:
   - "."
 
 minimumReleaseAgeExclude:
-  - kaf
+  - orcel
   - "@vercel/connect"
   - ai
-  - kaf
+  - orcel
 
 allowBuilds:
   "@parcel/watcher": false

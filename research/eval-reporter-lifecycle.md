@@ -1,5 +1,5 @@
 ---
-issue: https://github.com/TheHalfMoon/kaf/issues/1979
+issue: https://github.com/TheHalfMoon/orcel/issues/1979
 status: implemented
 last_updated: "2026-08-12"
 ---
@@ -26,7 +26,7 @@ onRunStart
 
 - `onEvalStart` fires when the runner schedules an observed eval. No session or trace exists yet.
 - `onSessionStart` fires once for each session after its first trace-bearing stream event. It
-  includes the session id, whether the session is primary, and kaf-owned W3C trace coordinates.
+  includes the session id, whether the session is primary, and orcel-owned W3C trace coordinates.
 
 `onEvalComplete` keeps the existing result argument and receives additional context containing the
 evaluation, target, and every distinct trace observed across its sessions. The same trace contexts
@@ -38,7 +38,7 @@ an empty completed trace list as a supported uninstrumented run.
 
 ## Runtime boundary
 
-The server attaches an kaf-owned `RuntimeTraceContext` to `session.started` and `turn.started`.
+The server attaches an orcel-owned `RuntimeTraceContext` to `session.started` and `turn.started`.
 Authored OpenTelemetry uses the turn span context. Zero-config local tracing prepares its session
 window and turn state before durable event emission, then reuses that prepared state when native
 lifecycle hooks observe the event. Preparation is idempotent and failure-isolated so tracing cannot

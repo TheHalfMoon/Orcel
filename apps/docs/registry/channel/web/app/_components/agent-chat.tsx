@@ -1,7 +1,7 @@
 "use client";
 
 import type { UserContent } from "ai";
-import { useKafAgent } from "kaf/react";
+import { useOrcelAgent } from "orcel/react";
 import { AlertCircleIcon, BrainIcon, PlusIcon, SquareIcon } from "lucide-react";
 import { useState } from "react";
 import {
@@ -23,9 +23,9 @@ import { Shimmer } from "@/components/ai-elements/shimmer";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { AgentMessage } from "./agent-message";
-import { WEB_CHAT_AGENT } from "@/app/kaf-agent";
+import { WEB_CHAT_AGENT } from "@/app/orcel-agent";
 
-const DEFAULT_AGENT_NAME = "kaf-agent";
+const DEFAULT_AGENT_NAME = "orcel-agent";
 const AGENT_NAME = WEB_CHAT_AGENT ?? DEFAULT_AGENT_NAME;
 
 export function AgentChat({
@@ -37,7 +37,7 @@ export function AgentChat({
 }) {
   const [cancellationError, setCancellationError] = useState<string>();
   const [hasInputText, setHasInputText] = useState(false);
-  const agent = useKafAgent({
+  const agent = useOrcelAgent({
     agent: WEB_CHAT_AGENT,
     initialSession:
       sessionId === undefined
@@ -142,7 +142,7 @@ export function AgentChat({
           scrollRestorationKey={
             isEmpty || activeSessionId === undefined
               ? undefined
-              : `kaf:web-chat-scroll:${activeSessionId}`
+              : `orcel:web-chat-scroll:${activeSessionId}`
           }
         >
           <ConversationTopFade className="top-14" />
@@ -281,7 +281,7 @@ function toErrorMessage(error: unknown): string {
 }
 
 function getLatestTurnFailure(
-  events: ReturnType<typeof useKafAgent>["events"],
+  events: ReturnType<typeof useOrcelAgent>["events"],
 ): string | undefined {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index];

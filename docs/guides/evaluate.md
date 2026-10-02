@@ -3,10 +3,10 @@ title: Automatic Model Selection
 description: "Choose agent models automatically or evaluate typed questions in your tools and application code."
 ---
 
-Use `auto` from `kaf/models` to choose an agent model from an allowlist before
+Use `auto` from `orcel/models` to choose an agent model from an allowlist before
 inference begins. It uses the [AI SDK evaluation API](https://ai-sdk.dev/docs/ai-sdk-core/evaluation),
 so the evaluator can be a Vercel AI Gateway model ID or an evaluation model from
-an installed provider. Use `evaluate` from `kaf/ai` to ask typed questions in
+an installed provider. Use `evaluate` from `orcel/ai` to ask typed questions in
 your own tools or application code.
 
 The AI SDK evaluation model specification is experimental and can change in
@@ -20,8 +20,8 @@ model strings, it uses Vercel AI Gateway unless the application has configured a
 different global default provider.
 
 ```ts title="agent/agent.ts"
-import { defineAgent } from "kaf";
-import { auto } from "kaf/models";
+import { defineAgent } from "orcel";
+import { auto } from "orcel/models";
 
 export default defineAgent({
   model: auto({
@@ -33,8 +33,8 @@ export default defineAgent({
 });
 ```
 
-Configure Gateway authentication as you would for any other AI SDK model. kaf
-does not add a TypeSafe credential or transport layer. During `kaf dev`, a
+Configure Gateway authentication as you would for any other AI SDK model. orcel
+does not add a TypeSafe credential or transport layer. During `orcel dev`, a
 Gateway evaluator uses the same connection selected through `/login` as Gateway
 language models. A configured AI SDK default provider still owns string model
 resolution during development. The TUI footer displays `dynamic model` when the
@@ -46,8 +46,8 @@ returns an error. The fallback can be a Gateway model ID, an AI SDK language
 model instance, or an object with `model` and a `reasoning` override:
 
 ```ts title="agent/agent.ts"
-import { defineAgent } from "kaf";
-import { auto } from "kaf/models";
+import { defineAgent } from "orcel";
+import { auto } from "orcel/models";
 
 export default defineAgent({
   model: auto({
@@ -60,7 +60,7 @@ export default defineAgent({
 });
 ```
 
-The fallback applies only to evaluator failures. kaf logs a warning with the
+The fallback applies only to evaluator failures. orcel logs a warning with the
 evaluator error and fallback identity when it switches models. Invalid prompts,
 including requests without user text or with a latest message over the routing
 limit, still fail before evaluator I/O. Cancelling the turn also aborts routing
@@ -77,8 +77,8 @@ pnpm add @ai-sdk/typesafe-ai
 
 ```ts title="agent/agent.ts"
 import { typeSafeAi } from "@ai-sdk/typesafe-ai";
-import { defineAgent } from "kaf";
-import { auto } from "kaf/models";
+import { defineAgent } from "orcel";
+import { auto } from "orcel/models";
 
 export default defineAgent({
   model: auto({
@@ -102,8 +102,8 @@ a provider instance, an alias, or needs a reasoning override.
 
 ```ts title="agent/agent.ts"
 import { anthropic } from "@ai-sdk/anthropic";
-import { defineAgent } from "kaf";
-import { auto } from "kaf/models";
+import { defineAgent } from "orcel";
+import { auto } from "orcel/models";
 
 export default defineAgent({
   reasoning: "medium",
@@ -122,7 +122,7 @@ export default defineAgent({
 
 The evaluator sees option keys, descriptions, and recent text messages. It never
 receives provider credentials or serialized language model instances. When it
-selects `my_secret_model`, kaf resolves the key back to the authored Anthropic
+selects `my_secret_model`, orcel resolves the key back to the authored Anthropic
 model.
 
 Supported reasoning values are `"provider-default"`, `"none"`, `"minimal"`,
@@ -133,13 +133,13 @@ agent's reasoning setting.
 
 Use `evaluate` to ask choice, score, or boolean questions about the state you pass to it.
 It defaults to `typesafe-ai/jev` and uses the same authentication as `auto`,
-including the Gateway connection selected through `/login` during `kaf dev`.
+including the Gateway connection selected through `/login` during `orcel dev`.
 Pass `model` to use another evaluation model ID or a provider instance. A configured
 AI SDK default provider takes precedence over the local Gateway connection.
 
 ```ts title="agent/tools/classify-request.ts"
-import { evaluate } from "kaf/ai";
-import { defineTool } from "kaf/tools";
+import { evaluate } from "orcel/ai";
+import { defineTool } from "orcel/tools";
 import { z } from "zod";
 
 export default defineTool({
@@ -173,7 +173,7 @@ provider metadata, and response metadata. To use that choice to delegate while k
 and `providerOptions`. Pass an `abortSignal` to cancel the request. Input and
 answer validation, retries, and provider errors follow AI SDK semantics.
 
-You can also call `evaluate` outside a tool; it does not require an active kaf
+You can also call `evaluate` outside a tool; it does not require an active orcel
 session. Each call performs its own evaluation. `auto` uses this function
 and adds the per-turn routing behavior described below.
 
@@ -189,8 +189,8 @@ AI SDK evaluation model strings and provider instances described above and
 defaults to `typesafe-ai/jev`:
 
 ```ts title="agent/tools/deploy.ts"
-import { defineTool } from "kaf/tools";
-import { auto } from "kaf/tools/approval";
+import { defineTool } from "orcel/tools";
+import { auto } from "orcel/tools/approval";
 import { z } from "zod";
 
 export default defineTool({
@@ -205,7 +205,7 @@ The evaluation model reviews the tool name and input for dangerous effects. A
 caution, failed review, or incomplete input requires human approval. See
 [Human-in-the-loop approvals](/docs/human-in-the-loop#approvals) for classifier
 options and data handling, and the
-[Auto-approve tool calls with Jev](https://vercel.com/kb/guide/auto-approve-tool-calls-kaf-jev)
+[Auto-approve tool calls with Jev](https://vercel.com/kb/guide/auto-approve-tool-calls-orcel-jev)
 guide for an end-to-end walkthrough.
 
 ## Runtime behavior
@@ -221,6 +221,6 @@ the limit fail before provider I/O.
 
 Evaluation validation, retries, provider errors, and model resolution follow AI
 SDK semantics. Without `fallback`, an evaluator error fails the turn. With
-`fallback`, kaf uses and retains that model for the rest of the turn. Cancelling
+`fallback`, orcel uses and retains that model for the rest of the turn. Cancelling
 the active turn aborts evaluation and prevents a routed or fallback choice from
 being retained.

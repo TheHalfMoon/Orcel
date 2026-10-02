@@ -1,5 +1,5 @@
-import type { MemoryByCategory, MemoryEntry } from "#kaf/types/memory";
-import { MEMORY_EXPORT_PROMPT } from "#kaf/memory/export-prompt";
+import type { MemoryByCategory, MemoryEntry } from "#orcel/types/memory";
+import { MEMORY_EXPORT_PROMPT } from "#orcel/memory/export-prompt";
 
 interface MemoryResponse {
   memory: MemoryByCategory;

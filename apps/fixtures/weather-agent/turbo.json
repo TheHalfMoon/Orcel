@@ -2,7 +2,7 @@
   "extends": ["//"],
   "tasks": {
     "build": {
-      "dependsOn": ["$TURBO_EXTENDS$", "kaf#build"]
+      "dependsOn": ["$TURBO_EXTENDS$", "orcel#build"]
     }
   }
 }

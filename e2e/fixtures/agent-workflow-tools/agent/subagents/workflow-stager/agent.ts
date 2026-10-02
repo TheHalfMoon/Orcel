@@ -1,6 +1,6 @@
-import { latestTaskResult, playScript } from "@kaf-e2e/config/mock-script";
-import { defineAgent } from "kaf";
-import { mockModel, type MockModelRequest, type MockModelResponse } from "kaf/evals";
+import { latestTaskResult, playScript } from "@orcel-e2e/config/mock-script";
+import { defineAgent } from "orcel";
+import { mockModel, type MockModelRequest, type MockModelResponse } from "orcel/evals";
 
 import { STAGER_INTERIM_MESSAGE } from "../../../task-scenario-text.ts";
 

@@ -1,6 +1,6 @@
-import { e2eAgentConfig, e2eModel } from "@kaf-e2e/config";
-import { defineAgent } from "kaf";
-import { mockModel, type MockModelRequest, type MockModelResponder } from "kaf/evals";
+import { e2eAgentConfig, e2eModel } from "@orcel-e2e/config";
+import { defineAgent } from "orcel";
+import { mockModel, type MockModelRequest, type MockModelResponder } from "orcel/evals";
 
 import {
   COMPACTION_CHECKPOINT_TEXT,
@@ -65,10 +65,10 @@ let requestCount = 0;
 const taskModel = mockModel({
   modelId: "compaction-regression-task-model",
   respond: withFullRequestUsage((request) => {
-    // KAF_E2E_DUMP_CONTEXT=1 prints every request's messages — the context
+    // ORCEL_E2E_DUMP_CONTEXT=1 prints every request's messages — the context
     // exactly as the model sees it, so compaction, capping, and replay are
     // observable per step while iterating on these evals.
-    if (process.env.KAF_E2E_DUMP_CONTEXT) {
+    if (process.env.ORCEL_E2E_DUMP_CONTEXT) {
       requestCount += 1;
       console.log(`\n=== model request #${requestCount} (${request.messages.length} messages) ===`);
       for (const message of request.messages) {

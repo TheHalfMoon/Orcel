@@ -1,12 +1,12 @@
-import { defineMemory } from "kaf/memory";
-import { inMemory, type MemoryDocumentBackend } from "kaf/memory/file";
-import { vercelBlob } from "kaf/memory/file/vercel";
-import { byPrincipal } from "kaf/memory/scope";
-import { defineTool } from "kaf/tools";
+import { defineMemory } from "orcel/memory";
+import { inMemory, type MemoryDocumentBackend } from "orcel/memory/file";
+import { vercelBlob } from "orcel/memory/file/vercel";
+import { byPrincipal } from "orcel/memory/scope";
+import { defineTool } from "orcel/tools";
 import { z } from "zod";
 
 const profiles: MemoryDocumentBackend = process.env.VERCEL
-  ? vercelBlob({ prefix: "kaf/e2e/agent-memory/profile" })
+  ? vercelBlob({ prefix: "orcel/e2e/agent-memory/profile" })
   : inMemory();
 
 export default defineMemory({

@@ -3,11 +3,11 @@ title: "microsandbox"
 description: "Create local lightweight VMs from an OCI image or Dockerfile."
 ---
 
-microsandbox environments use kaf's default image, an existing OCI image, or `agent/sandbox/Dockerfile`.
+microsandbox environments use orcel's default image, an existing OCI image, or `agent/sandbox/Dockerfile`.
 
 ```ts
-import { defineSandbox } from "kaf/sandbox";
-import { MicrosandboxSandbox } from "kaf/sandbox/microsandbox";
+import { defineSandbox } from "orcel/sandbox";
+import { MicrosandboxSandbox } from "orcel/sandbox/microsandbox";
 
 export const environment = MicrosandboxSandbox.dockerfile({
   setup: { autoInstall: false },
@@ -20,7 +20,7 @@ Supported hosts are macOS on Apple Silicon and Linux with glibc and KVM.
 
 ## Environment options
 
-Image, CPU, memory, pull policy, environment variables, VM setup, and `prepare` belong to the reusable environment. `kaf build` builds a Dockerfile image when present, prepares a VM, and records its snapshot and image references.
+Image, CPU, memory, pull policy, environment variables, VM setup, and `prepare` belong to the reusable environment. `orcel build` builds a Dockerfile image when present, prepares a VM, and records its snapshot and image references.
 
 ## Live VM options
 

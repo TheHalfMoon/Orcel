@@ -11,7 +11,7 @@ A tool is a typed action the agent can call, such as hitting an API, running a q
 The filename is the tool name the model sees. A file at `agent/tools/get_weather.ts` is exposed as `get_weather`.
 
 ```ts title="agent/tools/get_weather.ts"
-import { defineTool } from "kaf/tools";
+import { defineTool } from "orcel/tools";
 import { z } from "zod";
 
 export default defineTool({
@@ -32,14 +32,14 @@ A tool definition needs:
 
 When a tool returns structured data, add an optional `outputSchema`. With Zod or Standard Schema it also types the `execute` return.
 
-kaf validates the model's input against `inputSchema` before `execute` runs:
+orcel validates the model's input against `inputSchema` before `execute` runs:
 
 - A Zod or Standard Schema validates with its own library, so tools work with whichever Zod version your app installs.
-- A plain JSON Schema object reaches the model as written, without its `$schema` keyword. kaf validates input against it with JSON Schema 2020-12 rules, which also cover draft-07 keywords, then fills omitted properties from their `default` values.
-- kaf treats `format` as an annotation and does not reject input for it.
-- When kaf cannot evaluate a JSON Schema locally, for example because of an unknown `type` name or a `$ref` it cannot resolve, the model still receives the schema and kaf passes the input to `execute` unvalidated.
+- A plain JSON Schema object reaches the model as written, without its `$schema` keyword. orcel validates input against it with JSON Schema 2020-12 rules, which also cover draft-07 keywords, then fills omitted properties from their `default` values.
+- orcel treats `format` as an annotation and does not reject input for it.
+- When orcel cannot evaluate a JSON Schema locally, for example because of an unknown `type` name or a `$ref` it cannot resolve, the model still receives the schema and orcel passes the input to `execute` unvalidated.
 
-Optional input fields remain optional for authored tools and connection tools. kaf explicitly disables provider strict mode for function tools so providers such as OpenAI Responses do not implicitly require every property. Local input validation still follows the tool's schema.
+Optional input fields remain optional for authored tools and connection tools. orcel explicitly disables provider strict mode for function tools so providers such as OpenAI Responses do not implicitly require every property. Local input validation still follows the tool's schema.
 
 ### Hide a tool from delegated agents
 
@@ -80,7 +80,7 @@ export default defineTool({
 });
 ```
 
-The label is presentation only. It does not replace the path-derived tool name, enter model input, or change execution. kaf records the bounded label on the corresponding public action event so activity renderers and other authorized stream consumers can use it without interpreting raw tool data. Built-in channel activity can show `Deploy storefront to production` instead of `deploy`; if the callback throws or returns an empty label, activity falls back to the tool name.
+The label is presentation only. It does not replace the path-derived tool name, enter model input, or change execution. orcel records the bounded label on the corresponding public action event so activity renderers and other authorized stream consumers can use it without interpreting raw tool data. Built-in channel activity can show `Deploy storefront to production` instead of `deploy`; if the callback throws or returns an empty label, activity falls back to the tool name.
 
 Provided tools define labels for `bash`, `glob`, `grep`, `load_skill`, `read_file`, `web_fetch`, `web_search`, and `write_file`.
 
@@ -107,7 +107,7 @@ export default defineTool({
 });
 ```
 
-kaf publishes every earlier yield as an `action.partial` stream event. The
+orcel publishes every earlier yield as an `action.partial` stream event. The
 snapshot is visible to channels, hooks, and clients but never enters model
 history or `toModelOutput`; only the final yield does. Treat snapshots as
 last-write-wins by tool call id, not append-only progress. The durable runtime
@@ -119,11 +119,11 @@ Use `label.delta(input, partial)` to project preliminary snapshots into
 user-facing activity, and `label.complete(input, output)` to describe successful
 settlement differently. Both callbacks receive the validated input first and the typed value yielded by
 `execute` second. Each non-empty update replaces the previous activity label; the
-result projection replaces the latest update immediately before kaf marks the
+result projection replaces the latest update immediately before orcel marks the
 action complete.
 
-kaf normalizes and bounds projected text before rendering it. If either
-callback throws or returns an empty string, kaf keeps the existing activity
+orcel normalizes and bounds projected text before rendering it. If either
+callback throws or returns an empty string, orcel keeps the existing activity
 label. `label.complete` does not run for failed or rejected tool calls. The
 full values remain available in `action.partial` and `action.result`; renderers
 receive only the projected text.
@@ -153,7 +153,7 @@ returns the child's reply as its tool result.
 
 ### Yield and return
 
-`yield` hands a value to kaf's generator consumer, which processes it and advances the generator.
+`yield` hands a value to orcel's generator consumer, which processes it and advances the generator.
 It does not by itself create a durable wait for a person, timer, or external event. The value's
 meaning depends on the executor:
 
@@ -167,7 +167,7 @@ selected by the rules above becomes the tool result.
 
 ### Workflows as tools
 
-Use `defineWorkflowTool` from `kaf/tools` to run each call as a durable Workflow run. Its
+Use `defineWorkflowTool` from `orcel/tools` to run each call as a durable Workflow run. Its
 executor must start with `"use workflow"` and receives `ctx.agent` and `ctx.ask`. The tool can
 wait for a person, webhook, or timer without holding compute, then return its result to the model. See [Workflows as tools](/docs/tools/workflows) for the authoring rules and
 examples.
@@ -183,13 +183,13 @@ examples.
 - `ctx.abortSignal`: aborts when the active turn is cancelled. Pass it to cancellation-aware work; sandbox sessions from `ctx.getSandbox()` are already bound to it.
 - `ctx.getSandbox()`: the live [sandbox](/docs/sandbox) handle.
 
-Running in the app runtime is what lets a tool import shared code from `lib/`, read `process.env`, and take part in kaf’s durable pause/resume model.
+Running in the app runtime is what lets a tool import shared code from `lib/`, read `process.env`, and take part in orcel’s durable pause/resume model.
 
-kaf never runs authored tools during discovery. The model sees descriptors first, and only what it actually calls gets executed. Completed steps never re-run; kaf replays the recorded result. A step interrupted mid-execution re-runs, so make non-idempotent side effects like charges or emails idempotent, or gate them with approval.
+orcel never runs authored tools during discovery. The model sees descriptors first, and only what it actually calls gets executed. Completed steps never re-run; orcel replays the recorded result. A step interrupted mid-execution re-runs, so make non-idempotent side effects like charges or emails idempotent, or gate them with approval.
 
 ## When a tool throws
 
-If an authored tool's `execute` function throws, kaf records a failed `action.result` and gives the error to the model as a tool error. The model can respond, choose another action, or call the tool again. kaf does not automatically call the tool again based on the exception type, an upstream HTTP status, or a `retryable` property.
+If an authored tool's `execute` function throws, orcel records a failed `action.result` and gives the error to the model as a tool error. The model can respond, choose another action, or call the tool again. orcel does not automatically call the tool again based on the exception type, an upstream HTTP status, or a `retryable` property.
 
 Authored tools have no public terminal-error class or retry policy for thrown exceptions. Handle retry policy inside the tool when the operation is safe to retry, and return or throw an actionable error when it is not. Do not rely on that distinction to protect a write: an interruption before the durable step completes can re-run the step and execute the tool again even if the first request reached the upstream service.
 
@@ -203,11 +203,11 @@ See [Execution model and durability](/docs/concepts/execution-model-and-durabili
 
 ## Gate a tool on human approval
 
-A tool can require a person to sign off before it runs. Set `approval` with the helpers from `kaf/tools/approval`:
+A tool can require a person to sign off before it runs. Set `approval` with the helpers from `orcel/tools/approval`:
 
 ```ts title="agent/tools/refund_charge.ts"
-import { defineTool } from "kaf/tools";
-import { always } from "kaf/tools/approval";
+import { defineTool } from "orcel/tools";
+import { always } from "orcel/tools/approval";
 import { z } from "zod";
 
 export default defineTool({
@@ -220,7 +220,7 @@ export default defineTool({
 });
 ```
 
-Approval is one half of kaf's [human-in-the-loop](./human-in-the-loop) model — the page covers the `auto`/`always`/`once`/`never` helpers, input-dependent policies, and how a gated call pauses and resumes durably.
+Approval is one half of orcel's [human-in-the-loop](./human-in-the-loop) model — the page covers the `auto`/`always`/`once`/`never` helpers, input-dependent policies, and how a gated call pauses and resumes durably.
 
 ## Shape what the model sees with `toModelOutput`
 
@@ -238,10 +238,10 @@ Tool outputs must be JSON-serializable. Return plain objects, arrays, strings, n
 
 ### Send images to the model with content parts
 
-A tool that produces an image — a screenshot, a rendered chart — can hand the pixels to a vision-capable model by returning a `content` output from `toModelOutput`. Build outputs with the `toolOutput` helpers and parts with the `toolOutputPart` helpers, both from `kaf/tools`:
+A tool that produces an image — a screenshot, a rendered chart — can hand the pixels to a vision-capable model by returning a `content` output from `toModelOutput`. Build outputs with the `toolOutput` helpers and parts with the `toolOutputPart` helpers, both from `orcel/tools`:
 
 ```ts
-import { defineTool, toolOutput, toolOutputPart } from "kaf/tools";
+import { defineTool, toolOutput, toolOutputPart } from "orcel/tools";
 
 export default defineTool({
   description: "Capture a screenshot of the current page",
@@ -261,7 +261,7 @@ export default defineTool({
 
 The `toolOutput.text` and `toolOutput.json` builders construct the other two output shapes; hand-written literals remain valid everywhere.
 
-File payloads must be base64 strings — raw bytes (`Uint8Array`, `Buffer`) are rejected because they do not survive kaf's durable JSON boundary. Keep payloads small: a content-part image is persisted in session history and re-sent on every subsequent model call, and kaf warns above 3 MiB. Sending image parts to a model without vision support fails with that provider's error, the same as image parts in user messages.
+File payloads must be base64 strings — raw bytes (`Uint8Array`, `Buffer`) are rejected because they do not survive orcel's durable JSON boundary. Keep payloads small: a content-part image is persisted in session history and re-sent on every subsequent model call, and orcel warns above 3 MiB. Sending image parts to a model without vision support fails with that provider's error, the same as image parts in user messages.
 
 When older turns are compacted, file payloads are dropped from the summary and replaced with a text stub naming the file and media type — the model cannot re-see a compacted image. Content parts are for "look at this now"; if the agent may need an artifact again later, write it to the [sandbox](/docs/sandbox) and return its path.
 

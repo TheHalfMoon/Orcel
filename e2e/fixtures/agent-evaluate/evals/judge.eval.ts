@@ -1,5 +1,5 @@
 import type { Experimental_EvaluationModel } from "ai";
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 const model: Exclude<Experimental_EvaluationModel, string> = {
   specificationVersion: "v4",

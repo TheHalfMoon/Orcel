@@ -1,9 +1,9 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 import { z } from "zod";
 
 export default defineEval({
   description:
-    "An kaf tool receives structured output from a recursive client call with fetch tracing enabled.",
+    "An orcel tool receives structured output from a recursive client call with fetch tracing enabled.",
   timeoutMs: 180_000,
   async test(t) {
     const turn = await t.send("Call call_child exactly once, then report its returned data.");

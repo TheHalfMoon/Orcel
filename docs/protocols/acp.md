@@ -1,42 +1,42 @@
 ---
 title: "Editor Integration (ACP)"
-description: "Use local or deployed kaf agents from Agent Client Protocol clients."
+description: "Use local or deployed orcel agents from Agent Client Protocol clients."
 ---
 
-Agent Client Protocol (ACP) clients can launch an authored kaf application as a local subprocess. kaf serves stable ACP v1 over stdio while its normal development server remains the execution runtime.
+Agent Client Protocol (ACP) clients can launch an authored orcel application as a local subprocess. orcel serves stable ACP v1 over stdio while its normal development server remains the execution runtime.
 
 ```sh
-kaf acp
+orcel acp
 ```
 
-Without a URL, the client starts one process from the kaf application root. It supervises a local development server, and closing the ACP connection stops that owned server. To bridge ACP to a deployed kaf agent, pass its URL:
+Without a URL, the client starts one process from the orcel application root. It supervises a local development server, and closing the ACP connection stops that owned server. To bridge ACP to a deployed orcel agent, pass its URL:
 
 ```sh
-kaf acp --url https://agent.example.com
+orcel acp --url https://agent.example.com
 ```
 
-For a recognized Vercel deployment, kaf verifies the exact origin and resolves a short-lived project-scoped OIDC token from the local Vercel session. Remote access requires an existing authorized Vercel session; account login runs during local deployment. Configure required Trusted Sources access in the target project before launching ACP. `VERCEL_AUTOMATION_BYPASS_SECRET` remains available for deployments configured with a Protection Bypass for Automation token.
+For a recognized Vercel deployment, orcel verifies the exact origin and resolves a short-lived project-scoped OIDC token from the local Vercel session. Remote access requires an existing authorized Vercel session; account login runs during local deployment. Configure required Trusted Sources access in the target project before launching ACP. `VERCEL_AUTOMATION_BYPASS_SECRET` remains available for deployments configured with a Protection Bypass for Automation token.
 
 ## Configure Zed
 
-Open the kaf application root as the Zed workspace. In **Agent Settings → External Agents**, add a custom agent:
+Open the orcel application root as the Zed workspace. In **Agent Settings → External Agents**, add a custom agent:
 
 ```json
 {
   "agent_servers": {
-    "kaf-local": {
+    "orcel-local": {
       "type": "custom",
       "command": "pnpm",
-      "args": ["exec", "kaf", "acp"],
+      "args": ["exec", "orcel", "acp"],
       "env": {}
     }
   }
 }
 ```
 
-Use an absolute command path if Zed cannot find `pnpm` in its environment. The workspace must be the same directory as the kaf application root; kaf rejects a different `session/new.cwd` instead of running the wrong application.
+Use an absolute command path if Zed cannot find `pnpm` in its environment. The workspace must be the same directory as the orcel application root; orcel rejects a different `session/new.cwd` instead of running the wrong application.
 
-Disable Zed project MCP servers for this agent. The initial kaf adapter does not accept client-provided MCP servers.
+Disable Zed project MCP servers for this agent. The initial orcel adapter does not accept client-provided MCP servers.
 
 ## Supported behavior
 
@@ -50,16 +50,16 @@ ACP clients receive:
 - independent concurrent ACP sessions;
 - session closure and process cleanup.
 
-Development rebuilds retain normal kaf semantics. In-flight work stays pinned to its generation, and the next turn uses the newest successful generation.
+Development rebuilds retain normal orcel semantics. In-flight work stays pinned to its generation, and the next turn uses the newest successful generation.
 
 ## Security and capability limits
 
-ACP mode does not give the agent access to the editor's host filesystem or terminal. `session/new.cwd` identifies the kaf application being launched; it is not mounted into the agent sandbox.
+ACP mode does not give the agent access to the editor's host filesystem or terminal. `session/new.cwd` identifies the orcel application being launched; it is not mounted into the agent sandbox.
 
 The initial adapter does not support:
 
 - a deployed ACP HTTP or WebSocket endpoint;
-- ACP authentication (remote bridges use the deployed kaf agent's existing HTTP authentication);
+- ACP authentication (remote bridges use the deployed orcel agent's existing HTTP authentication);
 - ACP v2;
 - client filesystem or terminal methods;
 - client-provided MCP servers;
@@ -67,25 +67,25 @@ The initial adapter does not support:
 - session loading, listing, resumption, or durable ACP IDs across process restarts;
 - ACP model or mode configuration.
 
-The agent continues to use the connections, tools, credentials, and sandbox policy authored in the kaf application. Prompt text and ACP metadata never establish an authenticated end-user principal.
+The agent continues to use the connections, tools, credentials, and sandbox policy authored in the orcel application. Prompt text and ACP metadata never establish an authenticated end-user principal.
 
 ## Diagnose a connection
 
-ACP reserves stdout for newline-delimited JSON-RPC. kaf sends compilation output, server logs, and diagnostics to stderr so they cannot corrupt the protocol stream.
+ACP reserves stdout for newline-delimited JSON-RPC. orcel sends compilation output, server logs, and diagnostics to stderr so they cannot corrupt the protocol stream.
 
-For a quick headless smoke test, run an ACP client such as `acpx` from the application root. `acpx` launches the ACP process itself; do not start `kaf acp` separately.
+For a quick headless smoke test, run an ACP client such as `acpx` from the application root. `acpx` launches the ACP process itself; do not start `orcel acp` separately.
 
 ```sh
 npx acpx@latest \
-  --agent 'pnpm exec kaf acp' \
+  --agent 'pnpm exec orcel acp' \
   exec 'Reply with exactly: ACP works'
 ```
 
-When testing from the kaf source checkout, use an authored fixture rather than the monorepo root, which does not provide an `kaf` executable:
+When testing from the orcel source checkout, use an authored fixture rather than the monorepo root, which does not provide an `orcel` executable:
 
 ```sh
 cd apps/fixtures/weather-agent
-npx acpx@latest --agent 'pnpm exec kaf acp' exec 'Reply with exactly: ACP works'
+npx acpx@latest --agent 'pnpm exec orcel acp' exec 'Reply with exactly: ACP works'
 ```
 
-If startup fails, inspect the ACP client's logs together with kaf's stderr. A non-empty client MCP configuration, a mismatched working directory, and unsupported prompt content produce explicit protocol errors before model work begins.
+If startup fails, inspect the ACP client's logs together with orcel's stderr. A non-empty client MCP configuration, a mismatched working directory, and unsupported prompt content produce explicit protocol errors before model work begins.

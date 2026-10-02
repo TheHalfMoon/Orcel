@@ -1,8 +1,8 @@
 import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 
-const ROOT = process.env.KAF_AUTHORING_EVAL_DIRECTORY;
-if (ROOT === undefined) throw new Error("KAF_AUTHORING_EVAL_DIRECTORY is required.");
+const ROOT = process.env.ORCEL_AUTHORING_EVAL_DIRECTORY;
+if (ROOT === undefined) throw new Error("ORCEL_AUTHORING_EVAL_DIRECTORY is required.");
 
 export function authoringStatePath(name) {
   return join(ROOT, `${name}.json`);

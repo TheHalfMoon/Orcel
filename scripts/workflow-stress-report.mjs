@@ -2,7 +2,7 @@ import { readdir, readFile, mkdir, writeFile } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
-const PERFORMANCE_LOG_PREFIX = "KAF_WORKFLOW_STRESS_METRIC=";
+const PERFORMANCE_LOG_PREFIX = "ORCEL_WORKFLOW_STRESS_METRIC=";
 const REQUIRED_SCENARIOS = ["concurrent", "sequential"];
 
 export async function collectWorkflowStressMetrics(artifactsRoot) {
@@ -308,7 +308,7 @@ async function main() {
   const metrics = await collectWorkflowStressMetrics(options.artifacts);
   const report = createWorkflowStressReport(metrics, {
     attempt: process.env.GITHUB_RUN_ATTEMPT,
-    model: process.env.KAF_E2E_MODEL,
+    model: process.env.ORCEL_E2E_MODEL,
     runId: process.env.GITHUB_RUN_ID,
     sha: process.env.GITHUB_SHA,
   });

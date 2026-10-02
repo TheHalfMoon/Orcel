@@ -50,10 +50,10 @@ attached.messageIncludes("Sunny");
 
 ## Value assertions with `t.check`
 
-`t.check(value, assertion)` grades an explicit value against a builder from `kaf/evals/expect`. The value can be a turn’s `.message`, parsed JSON, or any local you computed:
+`t.check(value, assertion)` grades an explicit value against a builder from `orcel/evals/expect`. The value can be a turn’s `.message`, parsed JSON, or any local you computed:
 
 ```ts
-import { includes, equals, matches, satisfies, similarity } from "kaf/evals/expect";
+import { includes, equals, matches, satisfies, similarity } from "orcel/evals/expect";
 
 t.check(turn.message, includes(/sunny/i)); // substring or RegExp (gate)
 t.check(parsed, equals({ city: "Brooklyn" })); // deep structural equality (gate)
@@ -161,7 +161,7 @@ const request = session.requireInputRequest({ toolName: "guarded" });
 
 Every assertion returns a chainable handle. Severity rides on the assertion, so there is no separate thresholds map to keep in sync.
 
-- `.gate(threshold?)` is hard. A miss marks the eval `failed` and `kaf eval` exits non-zero.
+- `.gate(threshold?)` is hard. A miss marks the eval `failed` and `orcel eval` exits non-zero.
 - `.soft(threshold?)` is tracked data. A below-threshold miss marks the eval `scored`, fatal only under `--strict`. With no threshold, it is tracked-only and never fails.
 - `.atLeast(threshold)` is soft with a bar (equivalent to `.soft(threshold)`).
 - `.label(name)` adds a stable name when an eval records several assertions from the same family.

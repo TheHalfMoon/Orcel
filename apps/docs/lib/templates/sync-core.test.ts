@@ -5,7 +5,7 @@ import { commitUrl, languageForPath, rawContentsUrl, sortTemplateFiles } from ".
 
 const source: TemplateGitHubSource = {
   owner: "vercel-labs",
-  repo: "kaf-chat-template",
+  repo: "orcel-chat-template",
   ref: "main",
 };
 
@@ -25,7 +25,7 @@ describe("languageForPath", () => {
 describe("commitUrl", () => {
   it("targets the commits endpoint for the manifest ref", () => {
     expect(commitUrl(source)).toBe(
-      "https://api.github.com/repos/vercel-labs/kaf-chat-template/commits/main",
+      "https://api.github.com/repos/vercel-labs/orcel-chat-template/commits/main",
     );
   });
 });
@@ -33,19 +33,19 @@ describe("commitUrl", () => {
 describe("rawContentsUrl", () => {
   it("pins the raw file to the resolved sha", () => {
     expect(rawContentsUrl(source, "abc123", "agent/agent.ts")).toBe(
-      "https://raw.githubusercontent.com/vercel-labs/kaf-chat-template/abc123/agent/agent.ts",
+      "https://raw.githubusercontent.com/vercel-labs/orcel-chat-template/abc123/agent/agent.ts",
     );
   });
 
   it("joins the pathPrefix for monorepo sources", () => {
     const monorepo: TemplateGitHubSource = {
       owner: "vercel",
-      repo: "kaf",
+      repo: "orcel",
       ref: "main",
       pathPrefix: "apps/fixtures/weather-agent",
     };
     expect(rawContentsUrl(monorepo, "abc123", "agent/agent.ts")).toBe(
-      "https://raw.githubusercontent.com/vercel/kaf/abc123/apps/fixtures/weather-agent/agent/agent.ts",
+      "https://raw.githubusercontent.com/vercel/orcel/abc123/apps/fixtures/weather-agent/agent/agent.ts",
     );
   });
 });

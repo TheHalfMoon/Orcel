@@ -1,5 +1,5 @@
-import { defineState } from "kaf/context";
-import type { DynamicResolveContext } from "kaf/skills";
+import { defineState } from "orcel/context";
+import type { DynamicResolveContext } from "orcel/skills";
 
 function snapshot(ctx: DynamicResolveContext) {
   return {

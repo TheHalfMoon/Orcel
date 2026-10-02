@@ -57,7 +57,7 @@ export default defineAgent({
 });
 ```
 
-See Kaf docs for supported models and provider options.
+See Orcel docs for supported models and provider options.
 
 ## 3. Memory categories
 
@@ -76,8 +76,8 @@ Each category stores **one prose block**. Saves replace the entire block, not pa
 
 ## 4. Add a tool
 
-1. Create `agent/tools/my-tool.ts` using Kaf's `defineTool`
-2. Register it in Kaf's tool discovery (auto-loaded from `agent/tools/` by convention — verify in Kaf docs)
+1. Create `agent/tools/my-tool.ts` using Orcel's `defineTool`
+2. Register it in Orcel's tool discovery (auto-loaded from `agent/tools/` by convention — verify in Orcel docs)
 3. Add a UI component in `apps/web/app/components/chat/tool/` if the tool needs custom rendering
 4. Wire the component in [`apps/web/app/components/chat/message/MessageContentEve.vue`](../apps/web/app/components/chat/message/MessageContentEve.vue)
 
@@ -91,7 +91,7 @@ Skills are markdown files in [`agent/skills/`](../agent/skills/). See [`daily-su
 
 ### GitHub
 
-Uses Vercel Connect OAuth and [@github-tools/sdk/kaf](https://github-tools.com/frameworks/kaf). Connector UID: [`lib/connect.ts`](../lib/connect.ts) (`GITHUB_CONNECTOR`), registry: [`server/connectors.ts`](../apps/web/server/connectors.ts), tools: [`agent/tools/github.ts`](../agent/tools/github.ts).
+Uses Vercel Connect OAuth and [@github-tools/sdk/orcel](https://github-tools.com/frameworks/orcel). Connector UID: [`lib/connect.ts`](../lib/connect.ts) (`GITHUB_CONNECTOR`), registry: [`server/connectors.ts`](../apps/web/server/connectors.ts), tools: [`agent/tools/github.ts`](../agent/tools/github.ts).
 
 1. Create a GitHub connector in Vercel Connect:
 
@@ -131,8 +131,8 @@ Slack linking uses the internal API — `INTERNAL_API_SECRET` must be set.
 Reach the agent over iMessage via [Sendblue](https://chat-sdk.dev/adapters/vendor-official/sendblue). Channel logic: [`agent/channels/sendblue.ts`](../agent/channels/sendblue.ts).
 
 1. Create a Sendblue account and copy API credentials + assigned number from the [dashboard](https://dashboard.sendblue.com) (or `@sendblue/cli`: `sendblue setup`, `sendblue show-keys`, `sendblue lines`)
-2. Set `SENDBLUE_*` env vars on the **kaf** service — see [Environment](./ENVIRONMENT.md#sendblue-imessage-optional)
-3. Point the Sendblue receive webhook at `https://<your-domain>/kaf/v1/sendblue/webhook`
+2. Set `SENDBLUE_*` env vars on the **orcel** service — see [Environment](./ENVIRONMENT.md#sendblue-imessage-optional)
+3. Point the Sendblue receive webhook at `https://<your-domain>/orcel/v1/sendblue/webhook`
 4. Users add their E.164 phone number in **Settings → Profile**, then message the Sendblue number from that phone
 
 Phone linking uses the internal API (`GET /api/internal/phone/link`) — `INTERNAL_API_SECRET` must be set.
@@ -153,6 +153,6 @@ Users add an E.164 number on **Profile**. Required for Sendblue/iMessage auth �
 
 See [Deploy on Vercel](../README.md#deploy-on-vercel) in the README. Remember:
 
-- Dual services: `web` + `kaf` ([`vercel.ts`](../vercel.ts))
+- Dual services: `web` + `orcel` ([`vercel.ts`](../vercel.ts))
 - Same env vars on both services
 - Run migrations for production database

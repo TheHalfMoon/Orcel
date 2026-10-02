@@ -1,7 +1,7 @@
 const origin = process.env.DEPLOYMENT_URL;
 if (!origin) throw new Error("DEPLOYMENT_URL is required.");
 
-const artifact = await fetch(`${origin.replace(/\/$/, "")}/main/kaf.tgz`, { redirect: "manual" });
+const artifact = await fetch(`${origin.replace(/\/$/, "")}/main/orcel.tgz`, { redirect: "manual" });
 const location = artifact.headers.get("location") ?? "";
 if (
   location.includes("vercel.com/login") ||
@@ -10,7 +10,7 @@ if (
 ) {
   throw new Error("Package deployment is protected; disable Deployment Protection.");
 }
-if (artifact.status !== 302) throw new Error(`/main/kaf.tgz returned ${artifact.status}.`);
+if (artifact.status !== 302) throw new Error(`/main/orcel.tgz returned ${artifact.status}.`);
 
 if (!location.startsWith(`${origin.replace(/\/$/, "")}/`)) {
   throw new Error("Package route redirected outside the package deployment.");

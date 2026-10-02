@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { channelEntries } from "@kaf/catalog";
+import { channelEntries } from "@orcel/catalog";
 
 interface RegistryFile {
   path: string;
@@ -13,7 +13,7 @@ interface RegistryItem {
   dependencies?: string[];
   files?: RegistryFile[];
   meta?: {
-    kaf?: {
+    orcel?: {
       setup?:
         | {
             command?: string;
@@ -36,7 +36,7 @@ interface Registry {
 }
 
 const registrySlugsByCatalogSlug: Readonly<Record<string, string>> = {
-  kaf: "web",
+  orcel: "web",
   linq: "linq",
   photon: "photon-imessage",
   "linear-agent": "linear",
@@ -47,7 +47,7 @@ const setupKindsByCatalogSlug: Readonly<Record<string, string>> = {
   discord: "discord",
   github: "github",
   "linear-agent": "linear",
-  kaf: "web",
+  orcel: "web",
   linq: "linq",
   photon: "photon",
   teams: "teams",
@@ -110,7 +110,7 @@ if (JSON.stringify(actualSlugs) !== JSON.stringify(expectedSlugs)) {
 }
 
 for (const [index, item] of items.entries()) {
-  const declaredSetup = item.meta?.kaf?.setup;
+  const declaredSetup = item.meta?.orcel?.setup;
   const setups =
     declaredSetup === undefined
       ? undefined
@@ -133,7 +133,7 @@ for (const [index, item] of items.entries()) {
 
   const entry = registryEntries[index];
   if (entry === undefined) throw new Error(`Unexpected channel registry item "${item.name}".`);
-  if (entry.slug === "kaf") {
+  if (entry.slug === "orcel") {
     if (
       item.dependencies?.some((dependency) => dependency === "ai" || dependency.startsWith("ai@"))
     ) {
@@ -143,7 +143,7 @@ for (const [index, item] of items.entries()) {
     }
     if (item.files?.some((file) => file.target === "tsconfig.json")) {
       throw new Error(
-        `Registry item "${item.name}" must let kaf prepare tsconfig.json before shadcn installs files.`,
+        `Registry item "${item.name}" must let orcel prepare tsconfig.json before shadcn installs files.`,
       );
     }
   }
@@ -153,10 +153,10 @@ for (const [index, item] of items.entries()) {
     const expectedArgs = ["integration", "setup", setupKind];
     if (
       JSON.stringify(setups) !==
-      JSON.stringify([{ command: "kaf", package: "kaf", bin: "kaf", args: expectedArgs }])
+      JSON.stringify([{ command: "orcel", package: "orcel", bin: "orcel", args: expectedArgs }])
     ) {
       throw new Error(
-        `Registry item "${item.name}" must delegate setup to kaf integration setup ${expectedArgs[2]}.`,
+        `Registry item "${item.name}" must delegate setup to orcel integration setup ${expectedArgs[2]}.`,
       );
     }
     continue;

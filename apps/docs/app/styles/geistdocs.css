@@ -29,7 +29,7 @@ body:has([data-nights-route]) {
   color-scheme: dark;
 }
 
-@keyframes kaf-nights-rise {
+@keyframes orcel-nights-rise {
   from {
     opacity: 0;
     transform: translateY(12px);

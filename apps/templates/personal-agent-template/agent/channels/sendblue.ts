@@ -1,5 +1,5 @@
-import type { ChannelFrom, ChannelSendOptions, ChannelSource } from "kaf/channels";
-import { defineChannel, POST } from "kaf/channels";
+import type { ChannelFrom, ChannelSendOptions, ChannelSource } from "orcel/channels";
+import { defineChannel, POST } from "orcel/channels";
 import type { SendblueMessagePayload } from "chat-adapter-sendblue";
 import { agent } from "../../lib/agent.js";
 import { buildAppSessionAuth } from "../../lib/slack-auth.js";
@@ -16,7 +16,7 @@ import {
   verifySendblueWebhook,
 } from "../lib/sendblue.js";
 
-const WEBHOOK_ROUTE = "/kaf/v1/sendblue/webhook";
+const WEBHOOK_ROUTE = "/orcel/v1/sendblue/webhook";
 
 const IMESSAGE_CHANNEL_CONTEXT = [
   "Channel: iMessage (Sendblue). There is no browser UI in this thread.",

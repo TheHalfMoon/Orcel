@@ -7,19 +7,19 @@ afterEach(() => vi.unstubAllEnvs());
 
 describe("getSiteOrigin", () => {
   it("preserves a configured HTTP origin", () => {
-    vi.stubEnv(SITE_ENV, "http://docs.kaf.localhost");
+    vi.stubEnv(SITE_ENV, "http://docs.orcel.localhost");
 
-    expect(getSiteOrigin()).toBe("http://docs.kaf.localhost");
+    expect(getSiteOrigin()).toBe("http://docs.orcel.localhost");
   });
 
   it("adds HTTPS to a configured deployment host", () => {
-    vi.stubEnv(SITE_ENV, "kaf.dev");
+    vi.stubEnv(SITE_ENV, "orcel.dev");
 
-    expect(getSiteOrigin()).toBe("https://kaf.dev");
+    expect(getSiteOrigin()).toBe("https://orcel.dev");
   });
 
   it("rejects a non-HTTP URL", () => {
-    vi.stubEnv(SITE_ENV, "file:///tmp/kaf-docs");
+    vi.stubEnv(SITE_ENV, "file:///tmp/orcel-docs");
 
     expect(() => getSiteOrigin()).toThrow("Unsupported site URL protocol: file:");
   });

@@ -1,6 +1,6 @@
-import { e2eAgentConfig } from "@kaf-e2e/config";
-import { defineAgent, defineDynamic } from "kaf";
-import { mockModel } from "kaf/evals";
+import { e2eAgentConfig } from "@orcel-e2e/config";
+import { defineAgent, defineDynamic } from "orcel";
+import { mockModel } from "orcel/evals";
 
 const DISABLED_AGENT_TOOL_REQUEST = "E2E_DISABLED_ROOT_AGENT_TOOL";
 const CHILD_REQUEST = 'Call final_output exactly once with {"answer":"client-recursion-ok"}.';

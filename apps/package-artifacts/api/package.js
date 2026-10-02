@@ -62,7 +62,7 @@ function parseManifest(source, expectedSha) {
     !SHA_PATTERN.test(manifest.sourceSha ?? "") ||
     (expectedSha !== undefined && manifest.sourceSha !== expectedSha) ||
     typeof manifest.version !== "string" ||
-    manifest.tarball !== `https://pkg.kaf.dev/${manifest.sourceSha}/kaf.tgz` ||
+    manifest.tarball !== `https://pkg.orcel.dev/${manifest.sourceSha}/orcel.tgz` ||
     !/^[0-9a-f]{64}$/i.test(manifest.sha256 ?? "")
   ) {
     return undefined;

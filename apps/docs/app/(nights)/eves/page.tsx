@@ -3,14 +3,14 @@ import type { Metadata, Viewport } from "next";
 import Link from "next/link";
 import { NightsGalaxy } from "../nights/nights-galaxy";
 
-const title = "kaf eves";
+const title = "orcel eves";
 const description =
-  "kaf eves are hands-on gatherings where developers come together to build the agents of tomorrow with kaf and Vercel. The event pairs a practical, guided build with open networking, demos, and direct product feedback. You’ll leave with a working kaf agent, new connections, and a clearer path from idea to production.";
+  "orcel eves are hands-on gatherings where developers come together to build the agents of tomorrow with orcel and Vercel. The event pairs a practical, guided build with open networking, demos, and direct product feedback. You’ll leave with a working orcel agent, new connections, and a clearer path from idea to production.";
 const ogImage = {
-  url: "/kaf-nights-og.png",
+  url: "/orcel-nights-og.png",
   width: 4800,
   height: 2512,
-  alt: "kaf community nights",
+  alt: "orcel community nights",
 };
 
 export const metadata: Metadata = {
@@ -42,17 +42,17 @@ const events = [
   {
     city: "San Francisco",
     date: "Thursday, August 27, 5:30 PM PDT",
-    href: "https://luma.com/kafSF",
+    href: "https://luma.com/orcelSF",
   },
   {
     city: "New York",
     date: "Thursday, September 10, 5:30 PM EDT",
-    href: "https://luma.com/kafNY",
+    href: "https://luma.com/orcelNY",
   },
   {
     city: "London",
     date: "Tuesday, September 15, 5:30 PM BST",
-    href: "https://luma.com/kafLDN",
+    href: "https://luma.com/orcelLDN",
   },
 ] as const;
 
@@ -85,14 +85,14 @@ const NightsPage = () => (
       </div>
       <main className="flex min-h-0 items-start px-4 pt-12 pb-4 min-[740px]:items-center min-[740px]:p-4">
         <div className="mx-auto flex w-full max-w-md flex-col justify-center gap-12">
-          <h1 className="sr-only">kaf eves</h1>
+          <h1 className="sr-only">orcel eves</h1>
           <div
             data-nights-animated
-            className="grid w-full grid-cols-3 items-center animate-[kaf-nights-rise_700ms_ease-out_both]"
+            className="grid w-full grid-cols-3 items-center animate-[orcel-nights-rise_700ms_ease-out_both]"
           >
-            <span className="justify-self-start font-mono text-[14px] text-white/60">kaf eves</span>
+            <span className="justify-self-start font-mono text-[14px] text-white/60">orcel eves</span>
             <Link
-              aria-label="back to kaf.dev"
+              aria-label="back to orcel.dev"
               className="justify-self-center text-white transition-opacity hover:opacity-70 [&>svg]:size-8"
               href="/"
             >
@@ -106,7 +106,7 @@ const NightsPage = () => (
               <a
                 key={event.city}
                 data-nights-animated
-                className="group flex w-full touch-manipulation items-end justify-between rounded px-3 py-3 transition-colors hover:bg-white/5 focus-visible:bg-white/10 focus-visible:outline-none animate-[kaf-nights-rise_700ms_ease-out_both]"
+                className="group flex w-full touch-manipulation items-end justify-between rounded px-3 py-3 transition-colors hover:bg-white/5 focus-visible:bg-white/10 focus-visible:outline-none animate-[orcel-nights-rise_700ms_ease-out_both]"
                 href={event.href}
                 rel="noreferrer"
                 style={{ animationDelay: `${120 + index * 100}ms` }}

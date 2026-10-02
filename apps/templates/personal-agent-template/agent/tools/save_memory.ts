@@ -1,5 +1,5 @@
-import { defineTool } from "kaf/tools";
-import { always } from "kaf/tools/approval";
+import { defineTool } from "orcel/tools";
+import { always } from "orcel/tools/approval";
 import { z } from "zod";
 import { MEMORY_CATEGORIES } from "../lib/memory-categories.js";
 import { saveMemoryRemote } from "../lib/memory-internal.js";

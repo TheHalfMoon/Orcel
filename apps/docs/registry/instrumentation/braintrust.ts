@@ -1,8 +1,8 @@
-import { braintrustKafInstrumentation, initLogger } from "braintrust";
+import { braintrustOrcelInstrumentation, initLogger } from "braintrust";
 
-export default braintrustKafInstrumentation({
+export default braintrustOrcelInstrumentation({
   metadata: {
-    app: "my-kaf-agent", // Replace with your app name
+    app: "my-orcel-agent", // Replace with your app name
   },
   setup: ({ agentName }) => {
     initLogger({

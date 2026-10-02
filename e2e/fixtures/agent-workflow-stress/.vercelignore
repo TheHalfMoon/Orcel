@@ -1,6 +1,6 @@
 .env*.local
 node_modules
-.kaf
+.orcel
 .next
 .output
 .nitro

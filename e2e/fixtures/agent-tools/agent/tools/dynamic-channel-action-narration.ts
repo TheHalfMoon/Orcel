@@ -1,5 +1,5 @@
-import { isChannel } from "kaf/channels";
-import { defineDynamic, defineTool } from "kaf/tools";
+import { isChannel } from "orcel/channels";
+import { defineDynamic, defineTool } from "orcel/tools";
 import { z } from "zod";
 
 import actionNarration from "../channels/action-narration";

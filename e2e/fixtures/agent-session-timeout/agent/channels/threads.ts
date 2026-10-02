@@ -1,4 +1,4 @@
-import { defineChannel, POST } from "kaf/channels";
+import { defineChannel, POST } from "orcel/channels";
 
 const AUTH = {
   attributes: { source: "session-timeout-eval" },

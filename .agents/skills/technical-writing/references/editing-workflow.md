@@ -1,4 +1,4 @@
-# Editing existing kaf documentation
+# Editing existing orcel documentation
 
 ## 1. Triage the edit
 
@@ -36,7 +36,7 @@ When support feedback drove the edit, deduplicate incidents into user problems b
 
 ## 4. Verify accuracy
 
-Check commands against CLI help or their implementation. Check API examples against public exports and tests. Check deployment behavior against kaf source and authoritative Vercel platform documentation.
+Check commands against CLI help or their implementation. Check API examples against public exports and tests. Check deployment behavior against orcel source and authoritative Vercel platform documentation.
 
 If product semantics remain unsettled, document only the stable boundary. Route recovery flows, guarantees, or matrices to the responsible product owner instead of guessing.
 

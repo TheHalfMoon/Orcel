@@ -28,7 +28,7 @@ Reach V over iMessage via [Sendblue](https://chat-sdk.dev/adapters/vendor-offici
 
 ### GitHub — Repos, PRs, and CI
 
-Connect GitHub via Vercel Connect. Ask about repositories, pull requests, issues, and workflows — the agent uses [@github-tools/sdk](https://github-tools.com/frameworks/kaf) tools with durable approval on writes.
+Connect GitHub via Vercel Connect. Ask about repositories, pull requests, issues, and workflows — the agent uses [@github-tools/sdk](https://github-tools.com/frameworks/orcel) tools with durable approval on writes.
 
 ### Linear — Issues On Demand
 
@@ -50,7 +50,7 @@ Morning briefing skill: active focus from memory, assigned Linear issues, and a 
 └───────────────────────────────┬─────────────────────────────────┘
                                 ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│              Kaf agent (channels, tools, skills)                 │
+│              Orcel agent (channels, tools, skills)                 │
 └───────────────────────────────┬─────────────────────────────────┘
                                 │ /api/internal/* (Bearer auth)
                                 ▼
@@ -61,7 +61,7 @@ Morning briefing skill: active focus from memory, assigned Linear issues, and a 
                       Vercel Connect (Linear, Slack)
 ```
 
-On Vercel, [`vercel.ts`](./vercel.ts) composes the peer `web` (Nuxt) and `kaf` (agent runtime) services during the build.
+On Vercel, [`vercel.ts`](./vercel.ts) composes the peer `web` (Nuxt) and `orcel` (agent runtime) services during the build.
 
 ## Quick Start
 
@@ -90,7 +90,7 @@ Open [http://localhost:3000](http://localhost:3000), create an account, and star
 ```bash
 BETTER_AUTH_SECRET=...       # openssl rand -base64 32
 BETTER_AUTH_URL=http://localhost:3000
-INTERNAL_API_SECRET=...      # openssl rand -base64 32 — same on web + kaf
+INTERNAL_API_SECRET=...      # openssl rand -base64 32 — same on web + orcel
 ```
 
 See [ENVIRONMENT.md](./docs/ENVIRONMENT.md) for the full reference.
@@ -114,7 +114,7 @@ Personal Agent Template ships with **V** as the example persona. See the [Custom
 
 ## Memory
 
-Long-term memory is injected into every Kaf session for authenticated users (web, linked Slack, and iMessage).
+Long-term memory is injected into every Orcel session for authenticated users (web, linked Slack, and iMessage).
 
 1. Open **Profile → Import Memory**
 2. Copy the export prompt into ChatGPT, Claude, etc.
@@ -128,8 +128,8 @@ V can also propose facts via **`save_memory`** — approve or skip in chat. Edit
 > For the full technical deep-dive, see [Architecture](./docs/ARCHITECTURE.md).
 
 1. **Auth**: Users sign in via Better Auth (email/password)
-2. **Session start**: Kaf fetches profile + memory and injects into agent instructions
-3. **Chat**: Web UI streams through Kaf; Slack events hit the slack channel; iMessage via Sendblue
+2. **Session start**: Orcel fetches profile + memory and injects into agent instructions
+3. **Chat**: Web UI streams through Orcel; Slack events hit the slack channel; iMessage via Sendblue
 4. **Tools**: Agent calls weather, save_memory, Linear MCP as needed
 5. **Internal API**: Agent reads/writes memory, Slack links, and phone links via authenticated Nitro routes
 
@@ -137,7 +137,7 @@ V can also propose facts via **`save_memory`** — approve or skip in chat. Edit
 
 ```bash
 pnpm dev          # Nuxt web app
-pnpm dev:all      # Vercel dev runs the peer Nuxt and kaf services
+pnpm dev:all      # Vercel dev runs the peer Nuxt and orcel services
 pnpm typecheck    # TypeScript check
 pnpm build        # Production build
 pnpm db:generate  # Generate Drizzle migrations
@@ -148,7 +148,7 @@ See [AGENTS.md](./AGENTS.md) for notes aimed at AI coding assistants.
 
 ## Built With
 
-- [Kaf](https://github.com/TheHalfMoon/kaf) — Durable agent framework
+- [Orcel](https://github.com/TheHalfMoon/orcel) — Durable agent framework
 - [Nuxt](https://nuxt.com) — Full-stack Vue framework
 - [Nuxt UI](https://ui.nuxt.com) — UI component library
 - [NuxtHub](https://hub.nuxt.com) — SQLite database

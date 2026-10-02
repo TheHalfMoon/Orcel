@@ -7,7 +7,7 @@ import {
   isToolUIPart,
 } from "ai";
 import type { UIMessage } from "ai";
-import type { KafDynamicToolPart } from "kaf/vue";
+import type { OrcelDynamicToolPart } from "orcel/vue";
 import { isPartStreaming, isToolStreaming } from "@nuxt/ui/utils/ai";
 import type { AgentInputResponse } from "~/components/AgentInputRequest.vue";
 import type { ChatStatus } from "~/composables/chat/types";
@@ -15,11 +15,11 @@ import { getMergedParts } from "~/utils/chat/ai";
 import {
   hasVisibleParts,
   getToolDisplayName,
-  normalizeKafParts,
+  normalizeOrcelParts,
   shouldShowToolInput,
-} from "~/utils/chat/kaf";
+} from "~/utils/chat/orcel";
 import { buildDisplayParts } from "~/utils/chat/save-memory";
-import type { WeatherUIToolInvocation } from "#kaf/utils/tools/weather";
+import type { WeatherUIToolInvocation } from "#orcel/utils/tools/weather";
 
 const props = defineProps<{
   message: UIMessage;
@@ -34,7 +34,7 @@ const emit = defineEmits<{
 
 const rawParts = computed(() => props.message.parts);
 const displayParts = computed(() =>
-  buildDisplayParts(getMergedParts(normalizeKafParts(rawParts.value))),
+  buildDisplayParts(getMergedParts(normalizeOrcelParts(rawParts.value))),
 );
 
 const isBusy = computed(() => props.status === "submitted" || props.status === "streaming");
@@ -90,7 +90,7 @@ const showThinking = computed(
           v-else-if="getToolName(entry.part) !== 'ask_question'"
           :text="
             isDynamicToolUIPart(entry.part)
-              ? getToolDisplayName(entry.part as KafDynamicToolPart)
+              ? getToolDisplayName(entry.part as OrcelDynamicToolPart)
               : getToolName(entry.part)
           "
           :streaming="isToolStreaming(entry.part)"
@@ -102,7 +102,7 @@ const showThinking = computed(
           <AgentInputRequest
             v-if="isDynamicToolUIPart(entry.part)"
             :can-respond="canRespond ?? true"
-            :part="entry.part as KafDynamicToolPart"
+            :part="entry.part as OrcelDynamicToolPart"
             @input-responses="emit('inputResponses', $event)"
           />
 
@@ -110,7 +110,7 @@ const showThinking = computed(
             v-if="
               entry.part.input &&
               (!isDynamicToolUIPart(entry.part) ||
-                shouldShowToolInput(entry.part as KafDynamicToolPart))
+                shouldShowToolInput(entry.part as OrcelDynamicToolPart))
             "
             class="overflow-x-auto rounded-md bg-muted p-2 text-xs"
             >{{ JSON.stringify(entry.part.input, null, 2) }}</pre>
@@ -126,7 +126,7 @@ const showThinking = computed(
           v-else-if="isDynamicToolUIPart(entry.part)"
           compact
           :can-respond="canRespond ?? true"
-          :part="entry.part as KafDynamicToolPart"
+          :part="entry.part as OrcelDynamicToolPart"
           @input-responses="emit('inputResponses', $event)"
         />
       </template>

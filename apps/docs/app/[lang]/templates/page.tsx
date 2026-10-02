@@ -8,7 +8,7 @@ import { TemplateGallery } from "./template-gallery";
 
 const title = "Templates";
 const description =
-  "Explore agents built on kaf. Set one up with a prompt or use its source as a starting point.";
+  "Explore agents built on orcel. Set one up with a prompt or use its source as a starting point.";
 const titleMetadata = pageTitleMetadata(title);
 
 export const metadata: Metadata = {

@@ -1,8 +1,8 @@
 import { randomBytes } from "node:crypto";
 
-import type { MessageStreamEvent } from "kaf/client";
-import { defineEval, type KafEvalTargetHandle } from "kaf/evals";
-import { satisfies } from "kaf/evals/expect";
+import type { MessageStreamEvent } from "orcel/client";
+import { defineEval, type OrcelEvalTargetHandle } from "orcel/evals";
+import { satisfies } from "orcel/evals/expect";
 
 const STREAMED_ACTION_TOOL = "streamed-action";
 
@@ -68,7 +68,7 @@ function narratedStreamedActionOrder(events: readonly MessageStreamEvent[]): boo
 }
 
 async function postChannel(
-  target: KafEvalTargetHandle,
+  target: OrcelEvalTargetHandle,
   path: string,
   body: Record<string, unknown>,
 ): Promise<ChannelSessionResponse> {

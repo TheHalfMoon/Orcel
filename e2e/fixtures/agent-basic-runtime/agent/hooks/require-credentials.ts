@@ -1,4 +1,4 @@
-import { defineHook } from "kaf/hooks";
+import { defineHook } from "orcel/hooks";
 import { loadWorkspaceCredentials } from "../lib/workspace";
 
 export default defineHook({

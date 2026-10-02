@@ -11,7 +11,7 @@
     "forceConsistentCasingInFileNames": true,
     "declaration": false,
     "noEmit": true,
-    "types": ["node", "kaf/workflow-modules"],
+    "types": ["node", "orcel/workflow-modules"],
     "allowImportingTsExtensions": true
   },
   "include": ["agent/**/*.ts", "evals/**/*.ts"]

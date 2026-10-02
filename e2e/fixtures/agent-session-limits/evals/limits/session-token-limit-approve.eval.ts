@@ -1,5 +1,5 @@
-import { defineEval } from "kaf/evals";
-import { equals, satisfies } from "kaf/evals/expect";
+import { defineEval } from "orcel/evals";
+import { equals, satisfies } from "orcel/evals/expect";
 
 /**
  * Approving a session token-limit continuation over HTTP while messages queue
@@ -19,7 +19,7 @@ export default defineEval({
 
     const deliverWhileActive = async (message: string): Promise<void> => {
       const response = await t.target.fetch(
-        `/kaf/v1/session/${encodeURIComponent(active.sessionId)}`,
+        `/orcel/v1/session/${encodeURIComponent(active.sessionId)}`,
         {
           body: JSON.stringify({ message, turnPolicy: "queue" }),
           headers: { "content-type": "application/json" },

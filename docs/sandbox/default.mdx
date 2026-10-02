@@ -1,12 +1,12 @@
 ---
 title: "Default Sandbox"
-description: "Let kaf select the sandbox provider for the current environment."
+description: "Let orcel select the sandbox provider for the current environment."
 ---
 
-`DefaultSandbox.environment()` preserves kaf's standard behavior without exposing provider-specific live creation options.
+`DefaultSandbox.environment()` preserves orcel's standard behavior without exposing provider-specific live creation options.
 
 ```ts
-import { DefaultSandbox, defineSandbox } from "kaf/sandbox";
+import { DefaultSandbox, defineSandbox } from "orcel/sandbox";
 
 export const environment = DefaultSandbox.environment();
 export default defineSandbox(() => environment.open());

@@ -8,7 +8,7 @@ Each eval file is one graded case by default, and a single file can fan out over
 Before adding a case, create the required config at the root of `evals/`. An empty config is enough when you do not need shared judge, reporter, concurrency, or timeout settings:
 
 ```ts title="evals/evals.config.ts"
-import { defineEvalConfig } from "kaf/evals";
+import { defineEvalConfig } from "orcel/evals";
 
 export default defineEvalConfig({});
 ```
@@ -18,8 +18,8 @@ export default defineEvalConfig({});
 The common case sends one turn and asserts on the reply. `t.send(input)` resolves once the turn settles, and the returned turn’s `.message` is the assistant reply:
 
 ```ts title="evals/weather/brooklyn-forecast.eval.ts"
-import { defineEval } from "kaf/evals";
-import { includes } from "kaf/evals/expect";
+import { defineEval } from "orcel/evals";
+import { includes } from "orcel/evals/expect";
 
 export default defineEval({
   async test(t) {
@@ -33,7 +33,7 @@ export default defineEval({
 Some evals only care about behavior, not text. Assert on the run and skip the content check entirely:
 
 ```ts title="evals/weather/no-tools-for-greetings.eval.ts"
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 export default defineEval({
   async test(t) {
@@ -46,7 +46,7 @@ export default defineEval({
 
 ## Organizing with directories
 
-Identity is the file path, so directories are the grouping mechanism. `evals/weather/brooklyn-forecast.eval.ts` gets the id `weather/brooklyn-forecast`, and `kaf eval weather` runs everything under `evals/weather/`. Shared constants and helpers live in sibling non-eval files (any name that doesn't end in `.eval.ts`):
+Identity is the file path, so directories are the grouping mechanism. `evals/weather/brooklyn-forecast.eval.ts` gets the id `weather/brooklyn-forecast`, and `orcel eval weather` runs everything under `evals/weather/`. Shared constants and helpers live in sibling non-eval files (any name that doesn't end in `.eval.ts`):
 
 ```text
 evals/
@@ -63,8 +63,8 @@ evals/
 Drive several turns in sequence for branching, HITL approvals, structured output, attachments, or multiple sessions. Because assertions live in the function, an intermediate value is a local variable. Keep each turn in a local variable and continue through its `.session`.
 
 ```ts title="evals/draft-then-send.eval.ts"
-import { defineEval } from "kaf/evals";
-import { includes } from "kaf/evals/expect";
+import { defineEval } from "orcel/evals";
+import { includes } from "orcel/evals/expect";
 
 export default defineEval({
   async test(t) {
@@ -81,8 +81,8 @@ export default defineEval({
 Use scoped assertions for intermediate turns. When later control flow depends on a value-level check, `t.require` records a gate and stops the script if it fails:
 
 ```ts title="evals/session-continuity.eval.ts"
-import { defineEval } from "kaf/evals";
-import { equals } from "kaf/evals/expect";
+import { defineEval } from "orcel/evals";
+import { equals } from "orcel/evals/expect";
 
 export default defineEval({
   async test(t) {
@@ -105,7 +105,7 @@ export default defineEval({
 
 Every `t.session()` or `t.send()` creates a new independent conversation. Continue an existing conversation through its session handle. Events from all sessions feed the same run-level assertions.
 
-- `t.session(options?)` creates a session without starting a turn or consuming its stream. It resolves on `202 Accepted` with an `KafEvalSession` whose `.sessionId` and `.state` are available. Options accept per-request `headers` and `signal`; creation uses the eval timeout signal by default.
+- `t.session(options?)` creates a session without starting a turn or consuming its stream. It resolves on `202 Accepted` with an `OrcelEvalSession` whose `.sessionId` and `.state` are available. Options accept per-request `headers` and `signal`; creation uses the eval timeout signal by default.
 - `t.send(message, options?)` creates a new session with its first message in one request and waits for the turn to settle. The returned turn carries `.session`, `.message`, and `.expectOk()`.
 - `session.send(message, options?)` sends a follow-up on that session and waits for it to settle.
 - `session.start(message, options?)` starts a text turn and returns as soon as the server accepts it. The live turn exposes `.session`, `.sessionId`, `.waitForEvent(...)`, `.cancel()`, and `.result()`.
@@ -126,8 +126,8 @@ Each `send` (and `respond`/`respondAll`) resolves to a turn with `.message`, `.d
 Use `t.session()` to create a session before its first message:
 
 ```ts title="evals/prewarm.eval.ts"
-import { defineEval } from "kaf/evals";
-import { equals } from "kaf/evals/expect";
+import { defineEval } from "orcel/evals";
+import { equals } from "orcel/evals/expect";
 
 export default defineEval({
   async test(t) {
@@ -160,7 +160,7 @@ from `session`; read replies from `turn.message`. Session operations such as `re
 Use `start()` when the eval must observe or affect a turn before it settles. A live turn owns one stream consumer: `waitForEvent()` reads typed events from its buffer, and `result()` waits for the boundary and records the same buffered stream as an immutable turn. Event data matchers use the same partial-deep matcher language as `t.event(...)`.
 
 ```ts title="evals/cancel-running-tool.eval.ts"
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 export default defineEval({
   async test(t) {
@@ -195,12 +195,12 @@ For driving sessions created outside the eval, by a channel webhook or a schedul
 
 ## Datasets: exporting an array
 
-To fan one file out over a dataset, default-export an array of `defineEval(...)` values. Eval modules are ESM, so top-level `await` can load anything. Ids derive from the file name plus a zero-padded index in array order (`sql/0000`, `sql/0001`, and so on). The loaders (`loadJson`, `loadYaml` from `kaf/evals/loaders`) parse fixture files relative to the app root:
+To fan one file out over a dataset, default-export an array of `defineEval(...)` values. Eval modules are ESM, so top-level `await` can load anything. Ids derive from the file name plus a zero-padded index in array order (`sql/0000`, `sql/0001`, and so on). The loaders (`loadJson`, `loadYaml` from `orcel/evals/loaders`) parse fixture files relative to the app root:
 
 ```ts title="evals/sql.eval.ts"
-import { defineEval } from "kaf/evals";
-import { loadYaml } from "kaf/evals/loaders";
-import { equals } from "kaf/evals/expect";
+import { defineEval } from "orcel/evals";
+import { loadYaml } from "orcel/evals/loaders";
+import { equals } from "orcel/evals/expect";
 
 const doc = await loadYaml("evals/data/cases.yaml");
 const rows = doc.evals as readonly { task: string; prompt: string; sql: string }[];

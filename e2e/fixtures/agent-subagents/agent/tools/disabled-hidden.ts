@@ -1,3 +1,3 @@
-import { disableTool } from "kaf/tools";
+import { disableTool } from "orcel/tools";
 
 export default disableTool();

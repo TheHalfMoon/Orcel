@@ -1,4 +1,4 @@
-import { defineDynamic } from "kaf";
+import { defineDynamic } from "orcel";
 
 export default defineDynamic({
   events: {

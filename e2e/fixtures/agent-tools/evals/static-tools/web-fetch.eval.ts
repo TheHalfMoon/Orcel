@@ -1,4 +1,4 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 const TOOL_NAME = "web_fetch";
 const TARGET_URL = "https://example.com/";

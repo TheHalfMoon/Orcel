@@ -1,18 +1,18 @@
 import type { ComputedRef, Ref } from "vue";
-import type { KafMessageData, UseKafAgentOptions } from "kaf/vue";
-import type { KafSessionCursor } from "#kaf/types/thread";
+import type { OrcelMessageData, UseOrcelAgentOptions } from "orcel/vue";
+import type { OrcelSessionCursor } from "#orcel/types/thread";
 import type { UIMessage } from "ai";
 import type { AgentInputResponse } from "~/components/AgentInputRequest.vue";
 
-export type KafStreamEvent = NonNullable<
-  UseKafAgentOptions<KafMessageData>["initialEvents"]
+export type OrcelStreamEvent = NonNullable<
+  UseOrcelAgentOptions<OrcelMessageData>["initialEvents"]
 >[number];
 
 export type ChatStatus = "ready" | "submitted" | "streaming" | "error";
 
 export interface ChatSessionOptions {
-  initialSession?: KafSessionCursor;
-  initialEvents?: readonly KafStreamEvent[];
+  initialSession?: OrcelSessionCursor;
+  initialEvents?: readonly OrcelStreamEvent[];
 }
 
 export interface ChatSession {

@@ -1,5 +1,5 @@
-import { defineEval } from "kaf/evals";
-import { satisfies } from "kaf/evals/expect";
+import { defineEval } from "orcel/evals";
+import { satisfies } from "orcel/evals/expect";
 import type { QueuedAuditEvent } from "../../agent/lib/workspace";
 
 export default defineEval({

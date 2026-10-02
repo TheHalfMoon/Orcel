@@ -26,9 +26,9 @@ const config: NextConfig = {
   },
 
   // The integrations gallery sources identity from the workspace package
-  // `@kaf/catalog`; transpile it from source so dev and build compile
+  // `@orcel/catalog`; transpile it from source so dev and build compile
   // its TypeScript without a separate prebuild step.
-  transpilePackages: ["@kaf/catalog"],
+  transpilePackages: ["@orcel/catalog"],
 
   experimental: {
     globalNotFound: true,

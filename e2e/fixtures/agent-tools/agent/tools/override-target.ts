@@ -1,4 +1,4 @@
-import { defineTool } from "kaf/tools";
+import { defineTool } from "orcel/tools";
 
 // Authored tool whose name a `namespace: false` dynamic resolver
 // (override-provider.ts) also emits — the dynamic version must win, so this

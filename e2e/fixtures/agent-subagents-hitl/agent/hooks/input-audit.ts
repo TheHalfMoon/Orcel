@@ -1,4 +1,4 @@
-import { defineHook } from "kaf/hooks";
+import { defineHook } from "orcel/hooks";
 import { recordInputHook } from "../../input-hook-audit";
 
 export default defineHook({

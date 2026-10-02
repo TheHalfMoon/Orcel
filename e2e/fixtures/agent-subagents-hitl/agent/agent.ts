@@ -1,6 +1,6 @@
-import { e2eAgentConfig } from "@kaf-e2e/config";
-import { defineAgent } from "kaf";
-import { mockModel, type MockModelRequest, type MockModelResponse } from "kaf/evals";
+import { e2eAgentConfig } from "@orcel-e2e/config";
+import { defineAgent } from "orcel";
+import { mockModel, type MockModelRequest, type MockModelResponse } from "orcel/evals";
 
 const COLLISION_MARKER = "MIXED-PARK-COMPLETE-7K2M";
 

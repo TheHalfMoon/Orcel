@@ -1,4 +1,4 @@
-import { LogoEve } from "@vercel/geistdocs/assets/logos/logo-kaf";
+import { LogoEve } from "@vercel/geistdocs/assets/logos/logo-orcel";
 import { ImageResponse } from "next/og";
 import { PNG } from "pngjs";
 import { Children, cloneElement, isValidElement, type ReactElement, type ReactNode } from "react";
@@ -210,11 +210,11 @@ const balanceLogoWeight = (logo: RasterizedLogo, referenceCoverage: number): Siz
   };
 };
 
-let kafInkCoverage: Promise<number> | undefined;
+let orcelInkCoverage: Promise<number> | undefined;
 
-const getKafInkCoverage = (): Promise<number> => {
-  kafInkCoverage ??= rasterizeLogo(resolveLogo(<LogoEve />)).then((logo) => logo.inkCoverage);
-  return kafInkCoverage;
+const getOrcelInkCoverage = (): Promise<number> => {
+  orcelInkCoverage ??= rasterizeLogo(resolveLogo(<LogoEve />)).then((logo) => logo.inkCoverage);
+  return orcelInkCoverage;
 };
 
 const rasterizedLogos = new Map<string, Promise<RasterizedLogo>>();
@@ -236,7 +236,7 @@ export const createIntegrationOgImage = async (
 ): Promise<ImageResponse> => {
   const [rasterizedLogo, referenceCoverage] = await Promise.all([
     getRasterizedLogo(integration),
-    getKafInkCoverage(),
+    getOrcelInkCoverage(),
   ]);
   const integrationLogo = balanceLogoWeight(rasterizedLogo, referenceCoverage);
 

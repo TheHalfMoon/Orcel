@@ -2,10 +2,10 @@ import type {
   MessageStreamEvent,
   TaskSettledStreamEvent,
   TaskStartedStreamEvent,
-} from "kaf/client";
+} from "orcel/client";
 
 /**
- * Whether kaf held the turn: the model ended a step with a reply while its
+ * Whether orcel held the turn: the model ended a step with a reply while its
  * tasks worked, and the turn parked with `turn.waiting` instead of ending. A
  * `turn.waiting` after a `task_wait` call is the model waiting, not a hold.
  */

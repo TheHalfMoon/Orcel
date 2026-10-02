@@ -1,5 +1,5 @@
-import { defineHook, type HookDefinition } from "kaf/hooks";
-import { toolResultFrom } from "kaf/tools";
+import { defineHook, type HookDefinition } from "orcel/hooks";
+import { toolResultFrom } from "orcel/tools";
 import structuredEcho from "../tools/structured-echo";
 
 const hook: HookDefinition = defineHook({

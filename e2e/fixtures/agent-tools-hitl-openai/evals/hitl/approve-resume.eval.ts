@@ -1,9 +1,9 @@
-import { defineEval } from "kaf/evals";
+import { defineEval } from "orcel/evals";
 
 const GUARDED_ECHO_OPENAI_TOKEN = "guarded-echo-openai-ok-R2D7";
 
 /**
- * Regression coverage for https://github.com/TheHalfMoon/kaf/issues/236.
+ * Regression coverage for https://github.com/TheHalfMoon/orcel/issues/236.
  *
  * An `always()`-gated executable tool on the OpenAI Responses provider:
  * a text approval must execute the tool and the transcript must replay on a

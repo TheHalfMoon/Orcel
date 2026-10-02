@@ -1,4 +1,4 @@
-import { defineSchedule } from "kaf/schedules";
+import { defineSchedule } from "orcel/schedules";
 
 /**
  * Markdown schedule used by `evals/schedule-dispatch.eval.ts`.

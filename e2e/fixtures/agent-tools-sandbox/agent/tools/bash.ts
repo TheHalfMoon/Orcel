@@ -1,6 +1,6 @@
-import { defineTool } from "kaf/tools";
-import { never } from "kaf/tools/approval";
-import { bash } from "kaf/tools/bash";
+import { defineTool } from "orcel/tools";
+import { never } from "orcel/tools/approval";
+import { bash } from "orcel/tools/bash";
 
 /**
  * Bash tool exposed to the model for sandbox preparation smoke

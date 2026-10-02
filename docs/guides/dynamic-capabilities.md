@@ -5,7 +5,7 @@ description: "Resolve models, subagents, connections, tools, skills, and instruc
 
 `defineDynamic` resolves the model, subagents, connections, tools, skills, and instructions at runtime from a session event instead of declaring them up front. Reach for it when the right capability isn't known until the session starts, because it hinges on who the caller is, what tenant they belong to, feature flags, or external data. The [subagents](../subagents), [connections](../connections), [tools](../tools), [skills](../skills), and [instructions](../instructions) guides each point here for their dynamic form.
 
-kaf evaluates a dynamic definition module once during compilation to classify and validate it, then retains that module as a runtime entry so its event handlers can run. Its top-level code therefore runs in both phases; keep caller-specific work inside the handlers. See [Authored module lifecycle](../reference/typescript-api#authored-module-lifecycle).
+orcel evaluates a dynamic definition module once during compilation to classify and validate it, then retains that module as a runtime entry so its event handlers can run. Its top-level code therefore runs in both phases; keep caller-specific work inside the handlers. See [Authored module lifecycle](../reference/typescript-api#authored-module-lifecycle).
 
 ## Dynamic models
 
@@ -19,7 +19,7 @@ switching mid-session re-ingests the conversation at uncached prices. See
 full contract.
 
 Dynamic models do not compile a default model or model metadata. When a
-resolver first selects a model, kaf normalizes the selection and resolves any
+resolver first selects a model, orcel normalizes the selection and resolves any
 omitted context-window metadata from the AI Gateway catalog. Dynamic connections,
 tools, skills, instructions, and subagents may return `null` to omit a capability.
 
@@ -30,7 +30,7 @@ keeps GLM for text and switches to Gemini Flash when user history contains an
 image:
 
 ```ts title="agent/agent.ts"
-import { defineAgent, defineDynamic } from "kaf";
+import { defineAgent, defineDynamic } from "orcel";
 
 export default defineAgent({
   model: defineDynamic({
@@ -55,10 +55,10 @@ export default defineAgent({
 });
 ```
 
-kaf stages byte-backed `file` parts under `/workspace/attachments` before
+orcel stages byte-backed `file` parts under `/workspace/attachments` before
 `step.started`, but keeps their media type in `ctx.messages`. When an image
 reaches the provider, vision models can process it and non-vision models reject
-it. kaf does not reroute automatically. See [Inbound
+it. orcel does not reroute automatically. See [Inbound
 attachments](../sandbox#inbound-attachments).
 
 ## Dynamic subagents
@@ -72,7 +72,7 @@ The example below exposes a finance subagent to enterprise callers and gives
 it the model that the parent would use at that point:
 
 ```ts title="agent/subagents/finance/agent.ts"
-import { defineAgent, defineDynamic } from "kaf";
+import { defineAgent, defineDynamic } from "orcel";
 
 export default defineDynamic({
   events: {
@@ -96,10 +96,10 @@ available falls back to `openai/gpt-5.5-mini` if the parent has not selected
 one yet. The returned child config snapshots the model ID; a later parent
 model change does not retarget the child.
 
-kaf always compiles the subagent's filesystem resources, including its
+orcel always compiles the subagent's filesystem resources, including its
 instructions, tools, skills, connections, sandbox, and nested subagents. It
 does not compile an agent config or placeholder model for a dynamic subagent.
-When the resolver selects the subagent, kaf combines the returned config with
+When the resolver selects the subagent, orcel combines the returned config with
 those resources before starting the child session. Each resolution can return
 a different model or other runtime agent settings. A returned local config
 must use a static model; it cannot contain another `defineDynamic` model.
@@ -111,7 +111,7 @@ A single-file remote subagent uses the same lifecycle. Return
 `defineRemoteAgent(...)` to expose the selected deployment, or `null` to omit it:
 
 ```ts title="agent/subagents/finance.ts"
-import { defineDynamic, defineRemoteAgent } from "kaf";
+import { defineDynamic, defineRemoteAgent } from "orcel";
 
 export default defineDynamic({
   events: {
@@ -133,12 +133,12 @@ outbound request without entering durable workflow state.
 
 Dynamic subagents support `session.started` and `turn.started`. A turn selection
 shadows the session selection for that turn, including when the turn handler
-returns `null`. If a resolver throws or returns an invalid definition, kaf logs the
+returns `null`. If a resolver throws or returns an invalid definition, orcel logs the
 failure and omits the subagent.
 
 The resolved set applies to local and remote direct delegation. An authored workflow tool can
 also call a selected subagent through `ctx.agent`. A generated program can call it through the
-provided `workflow` tool. kaf checks availability again before starting the child, so a stale or
+provided `workflow` tool. orcel checks availability again before starting the child, so a stale or
 manually constructed call fails: a subagent tool call with `SUBAGENT_UNAVAILABLE`, and a
 `ctx.agent` session's first `send()` with an error saying the subagent is not available. Treat conditional
 availability as capability composition, not as the only authorization
@@ -161,7 +161,7 @@ This example exposes one MCP connection for each cloud account enabled for the
 current user:
 
 ```ts title="agent/connections/accounts.ts"
-import { defineDynamic, defineMcpClientConnection } from "kaf/connections";
+import { defineDynamic, defineMcpClientConnection } from "orcel/connections";
 import { listEnabledAccounts, mintAccountToken } from "../lib/accounts";
 
 export default defineDynamic({
@@ -198,9 +198,9 @@ discovered tools as `<connection>__<tool>`.
 
 Set `instanceKey` on every authenticated dynamic connection. Use a stable,
 non-secret account or tenant identifier, and change it whenever the endpoint,
-account, or auth provider changes. kaf hashes the value before storing the
+account, or auth provider changes. orcel hashes the value before storing the
 resolved instance identity in durable authorization state. If a parked sign-in
-callback resumes after the resolver selects a different instance, kaf rejects
+callback resumes after the resolver selects a different instance, orcel rejects
 the callback instead of passing it to the new connection or reusing its token.
 
 ### Naming and conflicts
@@ -212,7 +212,7 @@ the callback instead of passing it to the new connection or reusing its token.
 
 A map key must be a legal connection name: lowercase ASCII letters, digits,
 and dashes, starting with a letter, up to 64 characters. Map keys are bare;
-kaf does not prefix them with the file slug. A dynamic connection overrides a
+orcel does not prefix them with the file slug. A dynamic connection overrides a
 same-named static connection. Two effective dynamic resolvers cannot emit the
 same name; namespace one map key to remove the ambiguity.
 
@@ -224,7 +224,7 @@ handler returns `null`. A throwing or invalid handler fails the lifecycle
 without rebuilding the registry, so a static connection shadowed by the
 dynamic result cannot reappear as a fallback.
 
-kaf may run the active session and turn handlers again when a parked turn
+orcel may run the active session and turn handlers again when a parked turn
 resumes or a durable step retries. This rebuilds live auth, header, approval,
 and provided-argument callbacks without serializing them into workflow state.
 Keep connection resolvers idempotent, and keep external side effects outside
@@ -232,14 +232,14 @@ the handler.
 
 ## Dynamic tools
 
-Pass `defineDynamic` an `events` object whose handlers return either a single `defineTool(...)`, a `Record<string, defineTool(...)>`, or `null` for no tools. Wrap every entry in `defineTool()`. kaf records durable descriptors for `execute`, approval request and response policies, input-scoped `approvalKey` callbacks, and `toModelOutput`, so a parked call can reconstruct the same callbacks in a fresh process.
+Pass `defineDynamic` an `events` object whose handlers return either a single `defineTool(...)`, a `Record<string, defineTool(...)>`, or `null` for no tools. Wrap every entry in `defineTool()`. orcel records durable descriptors for `execute`, approval request and response policies, input-scoped `approvalKey` callbacks, and `toModelOutput`, so a parked call can reconstruct the same callbacks in a fresh process.
 
 Dynamic tool executors receive the same `ToolContext` as static authored tools, including inline provider auth through `ctx.getToken(provider)` and `ctx.requireAuth(provider)`.
 
 The example below builds one tool per warehouse table. A map return names each tool by its bare key, so the model sees `orders`, `users`, and so on.
 
 ```ts title="agent/tools/query.ts"
-import { defineDynamic, defineTool } from "kaf/tools";
+import { defineDynamic, defineTool } from "orcel/tools";
 import { z } from "zod";
 import { listTables, runReadOnly } from "../lib/warehouse";
 
@@ -262,26 +262,26 @@ export default defineDynamic({
 
 ### Author replayable callbacks
 
-Write callback properties as inline function expressions, arrows, method shorthand, or module-level function references. kaf transforms authored modules that import `defineTool`, including helper modules outside `agent/tools/`, and stores each callback's referenced closure values independently.
+Write callback properties as inline function expressions, arrows, method shorthand, or module-level function references. orcel transforms authored modules that import `defineTool`, including helper modules outside `agent/tools/`, and stores each callback's referenced closure values independently.
 
 Closure values must be JSON-serializable. Plain objects, arrays, strings, finite numbers, booleans, and `null` are supported; `undefined` object properties are omitted. Functions, class instances, `Date`, `Map`, symbols, non-finite numbers, and cyclic values fail resolution with the tool name and callback phase instead of being serialized lossily.
 
-Dynamic tools preserve authored input and output validation, including Zod refinements and transformations. JSON Schema describes the tool to the model; the authored validator checks its input and output. kaf transforms inline `inputSchema` and `outputSchema` expressions into schema factories and snapshots the JSON-serializable values they capture, just as it does for callbacks.
+Dynamic tools preserve authored input and output validation, including Zod refinements and transformations. JSON Schema describes the tool to the model; the authored validator checks its input and output. orcel transforms inline `inputSchema` and `outputSchema` expressions into schema factories and snapshots the JSON-serializable values they capture, just as it does for callbacks.
 
 Write schemas inline in `defineTool()`, or reference a stable module-level schema. A schema stored in a resolver-local variable is a non-serializable capture; inline its construction instead. Schema factories must be synchronous and deterministic for their captured values. Keep external reads in the resolver and capture the resulting JSON data. Imported functions and module-level values remain live code, so they must not hide per-session state.
 
-Schema factories use the same session, scope, resolver entry, and recovery rules as the tool's callbacks. A recovered factory receives its original captures, even if re-running the resolver produces different values. If a required factory is missing, validation fails explicitly; kaf does not substitute its JSON Schema description.
+Schema factories use the same session, scope, resolver entry, and recovery rules as the tool's callbacks. A recovered factory receives its original captures, even if re-running the resolver produces different values. If a required factory is missing, validation fails explicitly; orcel does not substitute its JSON Schema description.
 
-Call expressions such as `execute: makeExecutor()` are not transformed. Put the callback body directly in `defineTool()` inside an authored module; kaf rejects a dynamic tool if a callback lacks durable metadata.
+Call expressions such as `execute: makeExecutor()` are not transformed. Put the callback body directly in `defineTool()` inside an authored module; orcel rejects a dynamic tool if a callback lacks durable metadata.
 
 ### Create dynamic tools in a package
 
-Prefer an [extension](../extensions) for reusable kaf integrations. Extensions contribute a namespaced set of capabilities that consumers can override. Author the final `defineTool()` calls in the extension source. Then build the package with `kaf extension build` so kaf transforms its callbacks.
+Prefer an [extension](../extensions) for reusable orcel integrations. Extensions contribute a namespaced set of capabilities that consumers can override. Author the final `defineTool()` calls in the extension source. Then build the package with `orcel extension build` so orcel transforms its callbacks.
 
-Use `defineDurableCallback` when a provider package must return dynamic `defineTool()` values directly. kaf cannot transform callback code inside an installed dependency. Put every per-tool value in the helper's `closure`. The callback receives that snapshot as its first argument. The closure follows the same JSON-serializability rules as transformed captures.
+Use `defineDurableCallback` when a provider package must return dynamic `defineTool()` values directly. orcel cannot transform callback code inside an installed dependency. Put every per-tool value in the helper's `closure`. The callback receives that snapshot as its first argument. The closure follows the same JSON-serializability rules as transformed captures.
 
 ```ts title="provider-package/search.ts"
-import { defineDurableCallback, defineTool } from "kaf/tools";
+import { defineDurableCallback, defineTool } from "orcel/tools";
 import { z } from "zod";
 
 interface SearchInput {
@@ -305,10 +305,10 @@ export function createSearchTool(baseUrl: string) {
 
 Wrap every callback property with the helper. This includes labels, approval policies, `approvalKey`, `execute`, and `toModelOutput`.
 
-For live schemas created in a provider package, use `defineDurableSchema` from `kaf/tools`. Put the schema's per-tool values in `closure` and construct the schema in `schema`. Plain JSON Schema objects need no helper.
+For live schemas created in a provider package, use `defineDurableSchema` from `orcel/tools`. Put the schema's per-tool values in `closure` and construct the schema in `schema`. Plain JSON Schema objects need no helper.
 
 ```ts
-import { defineDurableSchema } from "kaf/tools";
+import { defineDurableSchema } from "orcel/tools";
 import { z } from "zod";
 
 export function amountSchema(limit: number) {
@@ -319,20 +319,20 @@ export function amountSchema(limit: number) {
 }
 ```
 
-Pass the result as `inputSchema` or `outputSchema` in `defineTool()`. Rebuild existing extensions with the current `kaf extension build` to generate schema factories. A live dynamic schema without a durable factory is rejected at resolution with instructions to inline its construction or use `defineDurableSchema`.
+Pass the result as `inputSchema` or `outputSchema` in `defineTool()`. Rebuild existing extensions with the current `orcel extension build` to generate schema factories. A live dynamic schema without a durable factory is rejected at resolution with instructions to inline its construction or use `defineDurableSchema`.
 
 `closure` is the callback's only durable snapshot. Store the identifiers and configuration needed to reproduce the call there. Reconstruct clients or look up live runtime state when the callback runs. The callback may call stable imported functions, but it must not capture runtime objects outside `closure`. Those values disappear on a cold start.
 
-kaf-provided factories, including [memory provider tools](../memory), use the same durable callback mechanism.
+orcel-provided factories, including [memory provider tools](../memory), use the same durable callback mechanism.
 
 ### Identity and redeploys
 
 A parked call binds to its callback within its session, lifecycle scope, and resolver entry. Another session or scope can expose the same tool name without replacing that binding. Callback identity does not depend on source position:
 
 - Editing a callback body while keeping its resolver entry and tool names is safe: replaying a parked call runs the latest deployed code with the closure values snapshotted when the call was made.
-- If a persisted session-scoped callback has no registered implementation (a fresh process, a redeploy, or an expired in-process binding), kaf re-runs `session.started` resolvers once to rebind it, then replays.
-- If an active turn resumes without a registered turn-scoped callback, kaf re-runs the owning `turn.started` resolver to restore the callback while preserving the tool set and closure captured earlier in that turn. If an authored resolver no longer returns the tool, the turn can continue, but calling that tool fails closed. Framework-provided resolvers such as memory provider-tool wrappers require all of their callbacks to be restored and fail the continuation if their locked tool set changed.
-- Step-scoped callbacks are restored from the persisted step immediately before kaf replays that step.
+- If a persisted session-scoped callback has no registered implementation (a fresh process, a redeploy, or an expired in-process binding), orcel re-runs `session.started` resolvers once to rebind it, then replays.
+- If an active turn resumes without a registered turn-scoped callback, orcel re-runs the owning `turn.started` resolver to restore the callback while preserving the tool set and closure captured earlier in that turn. If an authored resolver no longer returns the tool, the turn can continue, but calling that tool fails closed. Framework-provided resolvers such as memory provider-tool wrappers require all of their callbacks to be restored and fail the continuation if their locked tool set changed.
+- Step-scoped callbacks are restored from the persisted step immediately before orcel replays that step.
 
 A recovery rebind is not a new lifecycle event, but it can run resolver code again. Keep `session.started` and `turn.started` resolvers idempotent and return the same tool identities for the same persisted scope.
 
@@ -376,7 +376,7 @@ The tool loop reads the current set right before each model call, so a mid-turn 
 A single file can declare handlers for several events, and the most recently fired one owns that file's tool set. Re-resolve on `turn.started` to replace what `session.started` returned:
 
 ```ts title="agent/tools/catalog.ts"
-import { defineDynamic, defineTool } from "kaf/tools";
+import { defineDynamic, defineTool } from "orcel/tools";
 import { z } from "zod";
 import { runReadOnly, searchCatalog } from "../lib/catalog";
 
@@ -408,7 +408,7 @@ Resolvers across files run concurrently.
 A dynamic skills file resolves which [skill](../skills) a caller can load, keyed on the principal. It resolves on `session.started` and `turn.started` only (`step.started` is reserved for dynamic tools). Read `ctx.session.auth` or channel metadata and return a `defineSkill(...)` (named after the file slug) or `null`:
 
 ```ts title="agent/skills/team_playbook.ts"
-import { defineDynamic, defineSkill } from "kaf/skills";
+import { defineDynamic, defineSkill } from "orcel/skills";
 import { PLAYBOOKS } from "../lib/playbooks";
 
 export default defineDynamic({
@@ -426,14 +426,14 @@ The caller's team gets its own playbook advertised as a loadable skill; everyone
 
 Skills follow the same naming rule as tools: a single `defineSkill(...)` is named after the file slug, while a map names each entry by its bare key (namespace the key yourself if it might collide). A dynamic skill overrides a same-named authored one; two dynamic resolvers emitting the same name throws.
 
-A dynamic skill that returns only `markdown` never starts a sandbox: kaf keeps its instructions in session state and serves them from `load_skill`. When the skill also returns `files`, kaf writes the package to the sandbox skill root when the resolver first returns it, and again only when its contents change or the session gets a new sandbox. A changed package replaces the previous directory, so files omitted from the new result are removed.
+A dynamic skill that returns only `markdown` never starts a sandbox: orcel keeps its instructions in session state and serves them from `load_skill`. When the skill also returns `files`, orcel writes the package to the sandbox skill root when the resolver first returns it, and again only when its contents change or the session gets a new sandbox. A changed package replaces the previous directory, so files omitted from the new result are removed.
 
 ## Dynamic instructions
 
 A dynamic instructions file returns `defineInstructions({ content, role? })` built from the principal, tenant, channel, or external data. Omit `role` for system context:
 
 ```ts title="agent/instructions/persona.ts"
-import { defineDynamic, defineInstructions } from "kaf/instructions";
+import { defineDynamic, defineInstructions } from "orcel/instructions";
 
 export default defineDynamic({
   events: {
@@ -450,7 +450,7 @@ export default defineDynamic({
 Use `role: "user"` when the resolved value is application or user context that should become part of durable history:
 
 ```ts title="agent/instructions/brief.ts"
-import { defineDynamic, defineInstructions } from "kaf/instructions";
+import { defineDynamic, defineInstructions } from "orcel/instructions";
 import { loadBrief } from "../lib/briefs";
 
 export default defineDynamic({

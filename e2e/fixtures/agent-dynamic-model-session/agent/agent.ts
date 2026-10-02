@@ -1,14 +1,14 @@
-import { e2eAgentConfig, MOCK_MODEL_SENTINEL } from "@kaf-e2e/config";
-import { defineAgent, defineDynamic } from "kaf";
+import { e2eAgentConfig, MOCK_MODEL_SENTINEL } from "@orcel-e2e/config";
+import { defineAgent, defineDynamic } from "orcel";
 
-const requestedModel = process.env.KAF_E2E_MODEL;
+const requestedModel = process.env.ORCEL_E2E_MODEL;
 const selectedModel =
   requestedModel === undefined || requestedModel === MOCK_MODEL_SENTINEL
     ? "openai/gpt-6-sol"
     : requestedModel;
 
 if (requestedModel === MOCK_MODEL_SENTINEL) {
-  process.env.KAF_MOCK_AUTHORED_MODELS = "1";
+  process.env.ORCEL_MOCK_AUTHORED_MODELS = "1";
 }
 
 const { experimental } = e2eAgentConfig();

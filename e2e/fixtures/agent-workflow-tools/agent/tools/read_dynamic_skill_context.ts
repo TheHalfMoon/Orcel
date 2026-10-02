@@ -1,4 +1,4 @@
-import { defineTool } from "kaf/tools";
+import { defineTool } from "orcel/tools";
 import { z } from "zod";
 import { dynamicSkillContextAudit } from "../../dynamic-skill-context-audit";
 

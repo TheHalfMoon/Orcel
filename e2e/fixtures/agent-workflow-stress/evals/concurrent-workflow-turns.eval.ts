@@ -1,10 +1,10 @@
-import { defineEval } from "kaf/evals";
-import { equals } from "kaf/evals/expect";
+import { defineEval } from "orcel/evals";
+import { equals } from "orcel/evals/expect";
 
 const SESSION_COUNT = 50;
 const TURNS_PER_SESSION = 2;
 const TURN_COUNT = SESSION_COUNT * TURNS_PER_SESSION;
-const PERFORMANCE_LOG_PREFIX = "KAF_WORKFLOW_STRESS_METRIC=";
+const PERFORMANCE_LOG_PREFIX = "ORCEL_WORKFLOW_STRESS_METRIC=";
 
 export default defineEval({
   description: "Workflow stress: 50 durable sessions complete 100 total turns.",

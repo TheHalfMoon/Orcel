@@ -1,6 +1,6 @@
-import type { TurnPolicy } from "kaf/channels";
-import { defineEval, type KafEvalTargetHandle } from "kaf/evals";
-import { satisfies } from "kaf/evals/expect";
+import type { TurnPolicy } from "orcel/channels";
+import { defineEval, type OrcelEvalTargetHandle } from "orcel/evals";
+import { satisfies } from "orcel/evals/expect";
 
 const TOOL_NAME = "complete-work";
 
@@ -10,7 +10,7 @@ interface MessageResponse {
 }
 
 async function postMessage(
-  target: KafEvalTargetHandle,
+  target: OrcelEvalTargetHandle,
   threadId: string,
   message: string,
   turnPolicy?: TurnPolicy,

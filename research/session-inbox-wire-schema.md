@@ -1,5 +1,5 @@
 ---
-issue: https://github.com/TheHalfMoon/kaf/issues/1765
+issue: https://github.com/TheHalfMoon/orcel/issues/1765
 status: superseded
 last_updated: "2026-09-11"
 ---
@@ -17,7 +17,7 @@ them, but their shape is currently an emergent property of whatever TypeScript
 type flows into `resumeHook`. A shared type is not a wire contract: both sides
 recompile together while pinned deployments keep executing the old decode.
 That gap produced two silent-loss incidents from one refactor (#1586 →
-#1751): consumers on kaf ≤0.30.4 require the legacy `deliver` envelope,
+#1751): consumers on orcel ≤0.30.4 require the legacy `deliver` envelope,
 while consumers on 0.30.5–0.31.0 require the raw `send` command during an
 active turn.
 
@@ -90,7 +90,7 @@ Normative rules:
   policy: selecting a target, assembling the chain, and normalizing values
   received from another Workflow VM realm.
 - **The complete transported value is validated once, at encode.** The
-  schema owns the envelope and every kaf-owned `DeliverPayload` field,
+  schema owns the envelope and every orcel-owned `DeliverPayload` field,
   composing the existing strict `inputResponseSchema` and
   `jsonObjectSchema`; adapter-specific payload fields are the explicit open
   extension point. The inferred schema type is the wire type, so runtime
@@ -102,7 +102,7 @@ Normative rules:
   module, so zod never enters the self-contained/base64-embedded driver.
 - **Version 0 is the unversioned era** (`initialVersion: 0`): every shape
   the family persisted before payloads carried `version`, following the
-  field name every persisted kaf structure already uses.
+  field name every persisted orcel structure already uses.
 - **Decode trusts a known current version because that trust is earned by
   the single encoder.** `runMigrationChain` rejects unknown newer versions;
   known v1 values were produced only by the schema-validating encoder. The
@@ -147,8 +147,8 @@ consumer ──decode──────────▶ known version → typed p
 - **Markerless historical classification.** Version 0 had two incompatible
   shapes. A markerless stable session inbox, or a markerless continuation hook
   whose run owns that stable inbox, receives raw `send`. That shape is required
-  by kaf 0.30.5–0.31.0 and remains accepted by later pre-stamp stable-inbox
-  consumers. A markerless continuation without the stable inbox identifies kaf
+  by orcel 0.30.5–0.31.0 and remains accepted by later pre-stamp stable-inbox
+  consumers. A markerless continuation without the stable inbox identifies orcel
   ≤0.30.4 and receives legacy `deliver`. This tests a concrete historical
   capability rather than guessing from deployment or package metadata.
 - **Saved receiver addresses.** The pinned driver advertises its canonical
@@ -172,7 +172,7 @@ consumer ──decode──────────▶ known version → typed p
 
 The producer now emits the consumer's actual contract: markerless legacy
 continuations receive unversioned `deliver`, markerless stable-inbox consumers
-receive unversioned `send` (required by kaf 0.30.5–0.31.0), and stamped
+receive unversioned `send` (required by orcel 0.30.5–0.31.0), and stamped
 consumers receive their declared version.
 
 | Phase                                               | Emit                                                        | Removable                                                                      |
@@ -190,7 +190,7 @@ Each family carries a frozen contract test with three checks, plus one
 mechanical guard in the existing CI lint job (`pnpm guard:invariants`):
 
 - **Frozen shape.** The complete current schema serializes to a byte-frozen
-  JSON Schema snapshot. Editing any envelope or kaf-owned payload field
+  JSON Schema snapshot. Editing any envelope or orcel-owned payload field
   cannot pass this check — the only green path is bumping the version,
   adding a migration, and freezing the new schema artifact. The wire type is
   inferred from the same schema the encoder executes, so runtime validation
@@ -224,16 +224,16 @@ mechanical guard in the existing CI lint job (`pnpm guard:invariants`):
   deterministic registry checks cover future stamped-version changes. The
   agent-channels cross-version redeploy eval remains the end-to-end backstop
   for the pre-versioning gap: it runs the current producer against an actual
-  kaf@0.30.8 consumer.
+  orcel@0.30.8 consumer.
 
 ## Alternatives considered
 
 **Protobuf (or similar IDL codegen).** Rejected for this boundary. The byte
-serialization is owned by `@workflow`'s serde (devalue + zstd) — kaf hands it
+serialization is owned by `@workflow`'s serde (devalue + zstd) — orcel hands it
 JS objects — so protobuf would nest a second binary encoding inside a devalue
 envelope and re-implement the semantics devalue already provides. Proto's
 defining strengths (cross-language interop, compact bytes) do not apply to an
-kaf↔kaf-only wire, and its default evolution posture — silently tolerating
+orcel↔orcel-only wire, and its default evolution posture — silently tolerating
 unknown fields — is the exact failure mode this plan exists to eliminate.
 Its real benefit, an externalized schema with mechanical evolution rules, is
 what the frozen schema artifact provides without a second binary format or

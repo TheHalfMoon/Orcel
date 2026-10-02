@@ -1,6 +1,6 @@
 node_modules
 .env*
-.kaf
+.orcel
 .vercel
 .next
 .output
@@ -10,4 +10,4 @@ dist
 *.tsbuildinfo
 .env*.local
 /agent/extensions/self-modification/
-/.kaf-self-modification-eval.lock/
+/.orcel-self-modification-eval.lock/

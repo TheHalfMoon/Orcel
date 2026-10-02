@@ -1,4 +1,4 @@
-import { defineChannel, POST } from "kaf/channels";
+import { defineChannel, POST } from "orcel/channels";
 
 const STREAMED_ACTION_TOOL = "streamed-action";
 

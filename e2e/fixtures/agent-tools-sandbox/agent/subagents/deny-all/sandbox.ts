@@ -1,6 +1,6 @@
-import { defineSandbox } from "kaf/sandbox";
-import { DockerSandbox } from "kaf/sandbox/docker";
-import { VercelSandbox } from "kaf/sandbox/vercel";
+import { defineSandbox } from "orcel/sandbox";
+import { DockerSandbox } from "orcel/sandbox/docker";
+import { VercelSandbox } from "orcel/sandbox/vercel";
 
 export const environment = process.env.VERCEL
   ? VercelSandbox.environment()

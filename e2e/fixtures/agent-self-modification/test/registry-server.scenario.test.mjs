@@ -6,10 +6,10 @@ import { test } from "node:test";
 import { startRegistryServer } from "../evals/self-modification/registry-server.ts";
 
 test("serves only checkout-owned registry items and restores the override", async () => {
-  const previous = process.env.KAF_DEV_OFFICIAL_REGISTRY_URL;
+  const previous = process.env.ORCEL_DEV_OFFICIAL_REGISTRY_URL;
   const stop = await startRegistryServer();
   try {
-    const base = process.env.KAF_DEV_OFFICIAL_REGISTRY_URL;
+    const base = process.env.ORCEL_DEV_OFFICIAL_REGISTRY_URL;
     assert.match(base, /^http:\/\/127\.0\.0\.1:\d+\/r$/);
     const catalog = await (await fetch(`${base}/registry.json`)).json();
     assert.deepEqual(
@@ -32,5 +32,5 @@ test("serves only checkout-owned registry items and restores the override", asyn
   } finally {
     await stop();
   }
-  assert.equal(process.env.KAF_DEV_OFFICIAL_REGISTRY_URL, previous);
+  assert.equal(process.env.ORCEL_DEV_OFFICIAL_REGISTRY_URL, previous);
 });

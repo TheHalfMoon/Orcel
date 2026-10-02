@@ -1,9 +1,9 @@
 import type { MaybeRefOrGetter } from "vue";
 import { nextTick, toValue } from "vue";
-import type { ThreadRecord, ThreadSummary } from "#kaf/types/thread";
-import { resetAllKafAgents, removeKafAgent } from "~/composables/chat/providers/kaf/init";
-import { resetStreamLog } from "~/composables/chat/providers/kaf/stream-log";
-import { truncateThreadTitle } from "#kaf/types/thread";
+import type { ThreadRecord, ThreadSummary } from "#orcel/types/thread";
+import { resetAllOrcelAgents, removeOrcelAgent } from "~/composables/chat/providers/orcel/init";
+import { resetStreamLog } from "~/composables/chat/providers/orcel/stream-log";
+import { truncateThreadTitle } from "#orcel/types/thread";
 import { clearCachedPayloadData } from "~/utils/payload-cache";
 
 type PendingMessage = {
@@ -90,7 +90,7 @@ export function consumePendingMessage(chatId: string) {
 export async function startNewChat() {
   pendingMessage = null;
   resetStreamLog();
-  resetAllKafAgents();
+  resetAllOrcelAgents();
   await navigateWithChatPromptTransition("/");
 }
 
@@ -112,7 +112,7 @@ export function useChatNavigation(chatId: MaybeRefOrGetter<string>) {
 
 export async function deleteThread(id: string) {
   await $fetch(`/api/threads/${id}`, { method: "DELETE" });
-  removeKafAgent(id);
+  removeOrcelAgent(id);
   await refreshThreadList();
 
   const route = useRoute();

@@ -196,8 +196,8 @@ async function main() {
     }
     process.stdout.write(
       decision.retain
-        ? `[kaf:extension-contracts] ${request.capability} is structurally backward compatible; retaining epoch ${bumped.previousVersion} and bumping to ${bumped.version}.\n`
-        : `[kaf:extension-contracts] dropping ${request.capability} epoch ${bumped.previousVersion} and bumping to ${bumped.version}.\n`,
+        ? `[orcel:extension-contracts] ${request.capability} is structurally backward compatible; retaining epoch ${bumped.previousVersion} and bumping to ${bumped.version}.\n`
+        : `[orcel:extension-contracts] dropping ${request.capability} epoch ${bumped.previousVersion} and bumping to ${bumped.version}.\n`,
     );
   }
 
@@ -219,7 +219,7 @@ async function run() {
   }
   if (issues.length > 0) {
     process.stderr.write(
-      `[kaf:extension-contracts] FAIL: ${issues.length} capability contract issue${issues.length === 1 ? "" : "s"}.\n\n`,
+      `[orcel:extension-contracts] FAIL: ${issues.length} capability contract issue${issues.length === 1 ? "" : "s"}.\n\n`,
     );
     for (const issue of issues) {
       process.stderr.write(`  ${issue.file}\n    ${issue.message}\n`);
@@ -227,7 +227,7 @@ async function run() {
     process.exitCode = 1;
     return;
   }
-  process.stdout.write("[kaf:extension-contracts] updated current capability metadata.\n");
+  process.stdout.write("[orcel:extension-contracts] updated current capability metadata.\n");
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

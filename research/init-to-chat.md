@@ -6,13 +6,13 @@ last_updated: "2026-09-16"
 
 # From init to chat
 
-Interactive `kaf init` scaffolds and opens the TUI. Connection readiness replaces the model, channels, integrations, and review interview. `/login` connects; `/model` selects models and settings; `/add` searches and installs one addition immediately.
+Interactive `orcel init` scaffolds and opens the TUI. Connection readiness replaces the model, channels, integrations, and review interview. `/login` connects; `/model` selects models and settings; `/add` searches and installs one addition immediately.
 
-The public direct-provider surfaces are `openai(model?)` from `kaf/models/openai` and `anthropic(model?)` from `kaf/models/anthropic`, alongside `chatgpt(model?)`. Defaults are `gpt-5.6-luna-fast` and `claude-sonnet-5`. Source edits recognize kaf-owned helpers and reject unsafe custom expressions.
+The public direct-provider surfaces are `openai(model?)` from `orcel/models/openai` and `anthropic(model?)` from `orcel/models/anthropic`, alongside `chatgpt(model?)`. Defaults are `gpt-5.6-luna-fast` and `claude-sonnet-5`. Source edits recognize orcel-owned helpers and reject unsafe custom expressions.
 
-A project's choice wins over discovery. New connections prefer explicit environment credentials, the machine default, then Vercel CLI's current team. Projectless Gateway requests carry the account token and validated `x-vercel-ai-gateway-team` header. CLI credential rotation remains CLI-owned. kaf-owned refresh credentials and keys use just-secrets; rotating access tokens remain in memory behind a credential broker and cross-process refresh lock. Authored files, generated artifacts, and workflow state contain no discovered secrets. Local discovery never supplies deployment credentials.
+A project's choice wins over discovery. New connections prefer explicit environment credentials, the machine default, then Vercel CLI's current team. Projectless Gateway requests carry the account token and validated `x-vercel-ai-gateway-team` header. CLI credential rotation remains CLI-owned. orcel-owned refresh credentials and keys use just-secrets; rotating access tokens remain in memory behind a credential broker and cross-process refresh lock. Authored files, generated artifacts, and workflow state contain no discovered secrets. Local discovery never supplies deployment credentials.
 
-Menus retain kaf's renderer and scrollback with borderless rows, a `›` marker, bold selection, dim secondary text, filtering, and Enter/Esc navigation. Authorization semantics and required setup remain intact. Connection-ready and first-response telemetry contains timing and state only.
+Menus retain orcel's renderer and scrollback with borderless rows, a `›` marker, bold selection, dim secondary text, filtering, and Enter/Esc navigation. Authorization semantics and required setup remain intact. Connection-ready and first-response telemetry contains timing and state only.
 
 Release acceptance requires projectless Gateway account-token support for the intended audience; this backend capability is feature-gated. The OAuth client ID is isolated and shared with Vercel CLI for its supported device authorization flow. Deterministic tests cover routing and failure behavior. Local acceptance on 2026-09-14 also validated the existing CLI account/team and streamed a `gpt-5.6-luna-fast` response without a linked project. CI fixture evals remain the end-to-end gate.
 

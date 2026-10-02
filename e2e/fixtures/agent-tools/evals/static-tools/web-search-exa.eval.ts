@@ -1,5 +1,5 @@
-import type { HandleMessageStreamEvent } from "kaf/client";
-import { defineEval } from "kaf/evals";
+import type { HandleMessageStreamEvent } from "orcel/client";
+import { defineEval } from "orcel/evals";
 
 const TOOL_NAME = "web_search";
 const SEARCH_COUNT = 8;

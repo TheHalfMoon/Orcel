@@ -21,5 +21,5 @@ results or limitations. Explain when tests are not applicable.
 - [ ] This change was requested or approved by a maintainer
 - [ ] I ran the relevant checks from `CONTRIBUTING.md`
 - [ ] I added tests and documentation where relevant
-- [ ] I added a changeset if this touches the published `kaf` package
+- [ ] I added a changeset if this touches the published `orcel` package
 - [ ] DCO sign-off passes for every commit (`git commit --signoff`)

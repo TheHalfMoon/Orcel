@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 const execFile = promisify(execFileCallback);
 
 export async function packPackage(packageRoot, version, env = process.env) {
-  const workDirectory = await mkdtemp(join(tmpdir(), "kaf-package-artifacts-"));
+  const workDirectory = await mkdtemp(join(tmpdir(), "orcel-package-artifacts-"));
   const pnpmTarballPath = join(workDirectory, "pnpm.tgz");
   const extractedDirectory = join(workDirectory, "extracted");
   const finalDirectory = join(workDirectory, "final");

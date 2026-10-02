@@ -1,13 +1,13 @@
 ---
 title: "Default Harness"
-description: "How kaf manages model context and compaction during an agent turn."
+description: "How orcel manages model context and compaction during an agent turn."
 ---
 
-The default harness is kaf's built-in agent loop. It manages model calls, compaction, and tool execution. Review the model-facing defaults and available opt-ins in [Built-in tools](./built-in-tools). To see how turns checkpoint and resume, read [Execution model and durability](./execution-model-and-durability).
+The default harness is orcel's built-in agent loop. It manages model calls, compaction, and tool execution. Review the model-facing defaults and available opt-ins in [Built-in tools](./built-in-tools). To see how turns checkpoint and resume, read [Execution model and durability](./execution-model-and-durability).
 
 ## Compaction
 
-The harness keeps a long session from overflowing the model's context window. Before comparing the conversation with `thresholdPercent` (`0.9` by default), it adds the estimated fixed envelope of the checkpoint prompt used for compaction. It then summarizes the older turns and keeps going. The prompt asks the compaction model to distinguish completed progress and decisions from remaining work and to retain the constraints, preferences, data, and references needed to continue. When kaf compacts again, it passes the previous checkpoint separately and without the transcript's per-message truncation, then replaces it with the updated checkpoint. The summary uses the active turn model unless you override it. Tune when and how it kicks in under [`compaction`](../agent-config#compaction) in `agent.ts`:
+The harness keeps a long session from overflowing the model's context window. Before comparing the conversation with `thresholdPercent` (`0.9` by default), it adds the estimated fixed envelope of the checkpoint prompt used for compaction. It then summarizes the older turns and keeps going. The prompt asks the compaction model to distinguish completed progress and decisions from remaining work and to retain the constraints, preferences, data, and references needed to continue. When orcel compacts again, it passes the previous checkpoint separately and without the transcript's per-message truncation, then replaces it with the updated checkpoint. The summary uses the active turn model unless you override it. Tune when and how it kicks in under [`compaction`](../agent-config#compaction) in `agent.ts`:
 
 ```ts title="agent/agent.ts"
 export default defineAgent({
@@ -18,13 +18,13 @@ export default defineAgent({
 });
 ```
 
-Before summarizing, kaf tries to shorten oversized tool results in older history.
+Before summarizing, orcel tries to shorten oversized tool results in older history.
 It checks whether that reduction is sufficient using the last provider-reported
 input token count plus an estimate of new messages. A smaller character estimate
 alone cannot satisfy compaction triggered by a higher provider count. If trimming
-cannot free enough space, kaf summarizes the older history.
+cannot free enough space, orcel summarizes the older history.
 
-First-class [memory](../memory) participates in a separate lifecycle. kaf asks
+First-class [memory](../memory) participates in a separate lifecycle. orcel asks
 providers to capture before compaction, excludes attributed recalled records
 from the summarizer, keeps their canonical latest values, and recalls again
 after the checkpoint.
@@ -32,7 +32,7 @@ after the checkpoint.
 Clients and channels can also request compaction between turns. Call
 `ClientSession.compact()`, a channel route's `compact(address)`, or
 `attachSession(sessionId).compact()`. The request does not append a user message;
-if a turn is running, kaf queues it until that turn settles. A successful manual
+if a turn is running, orcel queues it until that turn settles. A successful manual
 compaction emits the same `compaction.requested` and `compaction.completed`
 events as automatic compaction, followed by `session.waiting`.
 

@@ -1,15 +1,15 @@
 ---
 title: "Remote Agents"
-description: "Call another kaf deployment as a subagent with defineRemoteAgent: the same tool call as a local subagent, with outbound auth and durable callbacks."
+description: "Call another orcel deployment as a subagent with defineRemoteAgent: the same tool call as a local subagent, with outbound auth and durable callbacks."
 ---
 
-`defineRemoteAgent` calls a separately deployed kaf agent as if it were a local subagent. Reach for it when the specialist you delegate to is a separately owned agent behind its own URL rather than a directory in your repo.
+`defineRemoteAgent` calls a separately deployed orcel agent as if it were a local subagent. Reach for it when the specialist you delegate to is a separately owned agent behind its own URL rather than a directory in your repo.
 
 The file lives under `agent/subagents/`, so its tool name is derived from the path. There's no `name` field.
 
 ```ts title="agent/subagents/weather.ts"
-import { defineRemoteAgent } from "kaf";
-import { vercelOidc } from "kaf/agents/auth";
+import { defineRemoteAgent } from "orcel";
+import { vercelOidc } from "orcel/agents/auth";
 
 export default defineRemoteAgent({
   url: "https://weather-agent.example.com",
@@ -22,12 +22,12 @@ export default defineRemoteAgent({
 
 | Parameter          | Type                                          | Required | Default           | Description                                                                                                                                              |
 | ------------------ | --------------------------------------------- | -------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `url`              | `string \| (() => string \| Promise<string>)` | Yes      | n/a               | Base URL of the remote kaf deployment to call. A string is baked at compile time; a function is resolved at runtime (see [Runtime URLs](#runtime-urls)). |
+| `url`              | `string \| (() => string \| Promise<string>)` | Yes      | n/a               | Base URL of the remote orcel deployment to call. A string is baked at compile time; a function is resolved at runtime (see [Runtime URLs](#runtime-urls)). |
 | `description`      | `string`                                      | Yes      | n/a               | Model-visible delegation description.                                                                                                                    |
-| `auth`             | `OutboundAuthFn`                              | No       | none              | Outbound auth hook from `kaf/agents/auth`.                                                                                                               |
+| `auth`             | `OutboundAuthFn`                              | No       | none              | Outbound auth hook from `orcel/agents/auth`.                                                                                                               |
 | `forwardPrincipal` | `boolean`                                     | No       | `false`           | Forward the dispatching turn's session principal to the remote deployment (see [Forwarding the caller identity](#forwarding-the-caller-identity)).       |
 | `headers`          | `HeadersValue`                                | No       | none              | Static or lazily resolved request headers.                                                                                                               |
-| `path`             | `string`                                      | No       | `/kaf/v1/session` | Route appended to `url` for the create-session request.                                                                                                  |
+| `path`             | `string`                                      | No       | `/orcel/v1/session` | Route appended to `url` for the create-session request.                                                                                                  |
 | `tool`             | `boolean`                                     | No       | `true`            | Expose the remote agent as a tool to the parent model. Set `false` to allow only `ctx.agent()` calls from authored workflow tools.                       |
 
 ## Dynamic remote agents
@@ -37,7 +37,7 @@ the current session. Return `defineRemoteAgent(...)` to expose it and `null` to
 omit it:
 
 ```ts title="agent/subagents/weather.ts"
-import { defineDynamic, defineRemoteAgent } from "kaf";
+import { defineDynamic, defineRemoteAgent } from "orcel";
 
 export default defineDynamic({
   events: {
@@ -53,7 +53,7 @@ export default defineDynamic({
 ```
 
 Dynamic remote subagents support `session.started` and `turn.started`. The
-returned definition may select different remote settings at either scope. kaf
+returned definition may select different remote settings at either scope. orcel
 resolves function-valued URLs when the event handler runs. Auth and headers
 remain lazy and resolve before each outbound request without entering durable
 workflow state.
@@ -65,10 +65,10 @@ over `_event`, `ctx`, or handler-local values.
 
 ## Runtime URLs
 
-A string `url` is read at compile time and frozen into the build. When the target comes from a runtime env var — known only once the deployment runs — pass a function instead. kaf calls it when it resolves the agent graph at runtime, so it can read `process.env`:
+A string `url` is read at compile time and frozen into the build. When the target comes from a runtime env var — known only once the deployment runs — pass a function instead. orcel calls it when it resolves the agent graph at runtime, so it can read `process.env`:
 
 ```ts title="agent/subagents/weather.ts"
-import { defineRemoteAgent } from "kaf";
+import { defineRemoteAgent } from "orcel";
 
 export default defineRemoteAgent({
   url: () => process.env.WEATHER_AGENT_URL ?? "https://weather-agent.example.com",
@@ -86,15 +86,15 @@ To require structured output, open a session with the remote agent from an autho
 
 ## Outbound auth
 
-Use `vercelOidc()` from `kaf/agents/auth` when one Vercel-deployed kaf agent calls another, as shown in the first example on this page.
+Use `vercelOidc()` from `orcel/agents/auth` when one Vercel-deployed orcel agent calls another, as shown in the first example on this page.
 
-For calls between different Vercel projects, allow the calling project on the receiving agent's kaf channel:
+For calls between different Vercel projects, allow the calling project on the receiving agent's orcel channel:
 
-```ts title="agent/channels/kaf.ts"
-import { vercelOidc, vercelSubject } from "kaf/channels/auth";
-import { kafChannel } from "kaf/channels/kaf";
+```ts title="agent/channels/orcel.ts"
+import { vercelOidc, vercelSubject } from "orcel/channels/auth";
+import { orcelChannel } from "orcel/channels/orcel";
 
-export default kafChannel({
+export default orcelChannel({
   auth: [
     vercelOidc({
       subjects: [
@@ -111,7 +111,7 @@ export default kafChannel({
 
 Set `teamSlug`, `projectName`, and `environment` to the calling deployment's Vercel OIDC subject. See [subject patterns and `vercelSubject(...)`](./auth-and-route-protection#subjects-patterns-and-vercelsubject) for other environments and wildcard matching.
 
-If [Vercel Deployment Protection](https://vercel.com/docs/deployment-protection) is active on the receiving project, also configure [Trusted Sources](https://vercel.com/docs/deployment-protection/methods-to-bypass-deployment-protection/trusted-sources) to allow the calling project and environment. The kaf subject allowlist and Trusted Sources are separate checks; cross-project calls need both.
+If [Vercel Deployment Protection](https://vercel.com/docs/deployment-protection) is active on the receiving project, also configure [Trusted Sources](https://vercel.com/docs/deployment-protection/methods-to-bypass-deployment-protection/trusted-sources) to allow the calling project and environment. The orcel subject allowlist and Trusted Sources are separate checks; cross-project calls need both.
 
 ## Forwarding the caller identity
 
@@ -120,8 +120,8 @@ Outbound auth authenticates your _deployment_ to the remote, so by default the r
 Set `forwardPrincipal: true` to forward the dispatching turn's session principal across the hop:
 
 ```ts title="agent/subagents/site-ops.ts"
-import { defineRemoteAgent } from "kaf";
-import { vercelOidc } from "kaf/agents/auth";
+import { defineRemoteAgent } from "orcel";
+import { vercelOidc } from "orcel/agents/auth";
 
 export default defineRemoteAgent({
   url: "https://site-ops.example.com",
@@ -133,38 +133,38 @@ export default defineRemoteAgent({
 
 The create-session request carries the parent turn's `session.auth.current` and `session.auth.initiator` as a `forwardedPrincipal` body field (`initiator` is optional on the wire; when absent, the receiver seeds both from `current`). A continuation by `taskId` carries the `session.auth.current` of the call that continues the task; the remote session keeps its original `auth.initiator`. Only principal metadata crosses the wire — never tokens or credentials. The receiving deployment resolves its own per-user credentials through its own connections.
 
-This makes caller authority turn-scoped even when the remote child session is persistent. If Alice starts the child and Bob later continues it with its `taskId`, the follow-up runs with Bob as `auth.current`, not Alice. If the parent turn's auth is `null`, a local child clears `auth.current`, while a remote child uses the freshly verified transport principal; neither inherits Alice. kaf's in-step bearer cache is also keyed by the resolved principal and is not serialized across steps. The external authorization provider may preserve each user's server-side OAuth grant, but a later turn can resolve only the grant belonging to its own `auth.current` principal.
+This makes caller authority turn-scoped even when the remote child session is persistent. If Alice starts the child and Bob later continues it with its `taskId`, the follow-up runs with Bob as `auth.current`, not Alice. If the parent turn's auth is `null`, a local child clears `auth.current`, while a remote child uses the freshly verified transport principal; neither inherits Alice. orcel's in-step bearer cache is also keyed by the resolved principal and is not serialized across steps. The external authorization provider may preserve each user's server-side OAuth grant, but a later turn can resolve only the grant belonging to its own `auth.current` principal.
 
 Identity forwarding does not make a persistent session private to one caller. Conversation history, tool outputs, and other child-session state still persist. If those values must not be visible across users, give each user a distinct child session or enforce that ownership at the application boundary.
 
-Forwarding identity is explicit on both sides. The receiver names which deployments it trusts with `kafChannel({ trustedForwarders })` and can limit each one to the principals it may assert (see [Auth & route protection](./auth-and-route-protection#accepting-forwarded-identity-from-another-deployment)); refusing the forwarder or what it asserts rejects a forwarded principal with a 403. The same trust decision covers parent session lineage and, with principal forwarding, trace-content constraints.
+Forwarding identity is explicit on both sides. The receiver names which deployments it trusts with `orcelChannel({ trustedForwarders })` and can limit each one to the principals it may assert (see [Auth & route protection](./auth-and-route-protection#accepting-forwarded-identity-from-another-deployment)); refusing the forwarder or what it asserts rejects a forwarded principal with a 403. The same trust decision covers parent session lineage and, with principal forwarding, trace-content constraints.
 
 ## Trace propagation
 
-Each remote turn starts a new trace. kaf links the child trace to the
+Each remote turn starts a new trace. orcel links the child trace to the
 dispatching turn and carries `gen_ai.conversation.id` so you can find the
 traces for one conversation. Trace context is observability metadata, not an
 authorization grant. See [OpenTelemetry](../observability/otel#trace-topology)
 for the trace topology.
 
-kaf carries parent session lineage separately. The receiver accepts it only
+orcel carries parent session lineage separately. The receiver accepts it only
 when `trustedForwarders` approves the authenticated caller; otherwise, trace
 correlation continues without it.
 
 ## Preserving trace content
 
 With `forwardPrincipal: true`, a sampled remote dispatch forwards its original
-audience and the maximum input and output content the next hop may record. kaf
+audience and the maximum input and output content the next hop may record. orcel
 sends this policy as [W3C Baggage](https://www.w3.org/TR/baggage/).
 
 The receiving deployment uses the policy only after it trusts the calling
 deployment:
 
-```ts title="agent/channels/kaf.ts"
-import { kafChannel } from "kaf/channels/kaf";
-import { vercelOidc, vercelSubject } from "kaf/channels/auth";
+```ts title="agent/channels/orcel.ts"
+import { orcelChannel } from "orcel/channels/orcel";
+import { vercelOidc, vercelSubject } from "orcel/channels/auth";
 
-export default kafChannel({
+export default orcelChannel({
   auth: [vercelOidc()],
   trustedForwarders: (forwarder) =>
     forwarder.subject === vercelSubject({ teamSlug: "acme", projectName: "router" }),
@@ -185,7 +185,7 @@ widen capture and use metadata-only tracing.
 
 A remote subagent call runs a child session in the remote deployment as a task:
 
-1. The parent starts a persistent conversation session on the remote's `POST /kaf/v1/session`, passing a framework callback URL.
+1. The parent starts a persistent conversation session on the remote's `POST /orcel/v1/session`, passing a framework callback URL.
 2. The remote accepts the child and runs its turn while the task works.
 3. The callback delivers the child's reply, which becomes the task's result.
 
@@ -193,11 +193,11 @@ The parent stream carries the same `task.started`, `agent.started`, and `task.se
 
 Clients follow a remote child through the parent. [`session.agent(started).stream()`](./client/streaming#follow-a-subagent) reads the `agent.started` event's `streamPath`, a route on the parent deployment. The parent verifies that its session recorded the child for that tool call, resolves the remote agent's `auth` and `headers`, and relays the child's stream. A browser never calls the remote deployment or holds its credentials; it only needs access to the parent session.
 
-Cancelling the parent turn or the agent task with `task_cancel` also cancels the remote child's current turn. kaf resolves the remote's `headers` and `auth` again for every cancellation attempt, so rotating credentials work the same way as they do for session creation. Cancellation always uses the standard kaf cancel path on `url`, even when `path` customizes only the create-session endpoint. The remote child reports `turn.cancelled` → `session.waiting` on its own stream; an older or unreachable remote is logged but cannot turn the parent's cancellation into a failure.
+Cancelling the parent turn or the agent task with `task_cancel` also cancels the remote child's current turn. orcel resolves the remote's `headers` and `auth` again for every cancellation attempt, so rotating credentials work the same way as they do for session creation. Cancellation always uses the standard orcel cancel path on `url`, even when `path` customizes only the create-session endpoint. The remote child reports `turn.cancelled` → `session.waiting` on its own stream; an older or unreachable remote is logged but cannot turn the parent's cancellation into a failure.
 
-When the workflow run that opened a remote child finishes, kaf sends an authenticated `POST /kaf/v1/session/:childSessionId/reset` for it. An agent task's run finishes when the parent session ends. Reset retires the parked remote session and recursively cleans up its descendants. The request uses freshly resolved `headers` and `auth`; failures are logged so an unreachable remote cannot block parent finalization.
+When the workflow run that opened a remote child finishes, orcel sends an authenticated `POST /orcel/v1/session/:childSessionId/reset` for it. An agent task's run finishes when the parent session ends. Reset retires the parked remote session and recursively cleans up its descendants. The request uses freshly resolved `headers` and `auth`; failures are logged so an unreachable remote cannot block parent finalization.
 
-The parent names its kaf remote agent protocol version when it creates the child, and the remote answers with the version it serves. A remote also serves parents on protocol 1 (kaf 0.66 through 0.68), including their approvals and sign-in requests, so upgrade remote agents before their callers; see [Upgrade remote agents before their callers](../tools/tasks-upgrade#upgrade-remote-agents-before-their-callers). Any other mismatch fails the call at start with an error naming both versions. A failed _start_ fails the call immediately. After a remote starts, a terminal failure callback fails the call with the remote's error. Terminal callback delivery runs as a durable step on the underlying workflow engine (see [Execution model & durability](../concepts/execution-model-and-durability)). A failed callback POST is rethrown rather than completing the call, so the engine retries it.
+The parent names its orcel remote agent protocol version when it creates the child, and the remote answers with the version it serves. A remote also serves parents on protocol 1 (orcel 0.66 through 0.68), including their approvals and sign-in requests, so upgrade remote agents before their callers; see [Upgrade remote agents before their callers](../tools/tasks-upgrade#upgrade-remote-agents-before-their-callers). Any other mismatch fails the call at start with an error naming both versions. A failed _start_ fails the call immediately. After a remote starts, a terminal failure callback fails the call with the remote's error. Terminal callback delivery runs as a durable step on the underlying workflow engine (see [Execution model & durability](../concepts/execution-model-and-durability)). A failed callback POST is rethrown rather than completing the call, so the engine retries it.
 
 ## What to read next
 

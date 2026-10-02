@@ -1,20 +1,20 @@
 ---
-title: "Self-Host kaf"
-description: "Run an kaf agent as a Node service with your own workflow storage, sandbox provider, and routing."
+title: "Self-Host orcel"
+description: "Run an orcel agent as a Node service with your own workflow storage, sandbox provider, and routing."
 ---
 
-Self-host kaf when you operate a Node service, container platform, or reverse proxy. You run kaf’s Nitro server and choose the infrastructure that stores workflows and executes sandbox sessions.
+Self-host orcel when you operate a Node service, container platform, or reverse proxy. You run orcel’s Nitro server and choose the infrastructure that stores workflows and executes sandbox sessions.
 
 ## Build and start the Node service
 
 Build the agent, then start the generated server:
 
 ```bash
-kaf build
-PORT=3000 kaf start --host 0.0.0.0
+orcel build
+PORT=3000 orcel start --host 0.0.0.0
 ```
 
-The build writes the Nitro server under `.output/`. `kaf start` serves that output and accepts either `PORT` or the `--port` flag.
+The build writes the Nitro server under `.output/`. `orcel start` serves that output and accepts either `PORT` or the `--port` flag.
 
 Run this process under the same process manager or container platform you use for other Node web services. Configure Transport Layer Security (TLS), scaling, restarts, and log collection in that platform.
 
@@ -26,23 +26,23 @@ Don’t rely on `vercelOidc()` as the only production authenticator outside Verc
 
 ## Persist workflow state
 
-The default local Workflow world stores run state under `.kaf/.workflow-data`. Mount that directory on persistent storage so runs survive process and container replacement.
+The default local Workflow world stores run state under `.orcel/.workflow-data`. Mount that directory on persistent storage so runs survive process and container replacement.
 
 You can instead select an installed Workflow world package in the root `agent.ts`:
 
 ```typescript
-import { defineAgent } from "kaf";
+import { defineAgent } from "orcel";
 
 export default defineAgent({
   experimental: {
     workflow: {
-      world: "@acme/kaf-workflow-world",
+      world: "@acme/orcel-workflow-world",
     },
   },
 });
 ```
 
-The package must export a default factory or `createWorld()` function. Read credentials and host options from runtime environment variables. Install a world built against the same `@workflow/*` line as your kaf release. The current line is `5.0.0-beta`, and the runtime rejects incompatible protocol versions.
+The package must export a default factory or `createWorld()` function. Read credentials and host options from runtime environment variables. Install a world built against the same `@workflow/*` line as your orcel release. The current line is `5.0.0-beta`, and the runtime rejects incompatible protocol versions.
 
 See [Workflow Worlds](https://workflow-sdk.dev/worlds) for the underlying Workflow software development kit (SDK) abstraction.
 
@@ -56,30 +56,30 @@ Don’t select `VercelSandbox.environment()` unless the self-hosted process shou
 
 Forward both runtime route prefixes through your reverse proxy or ingress:
 
-- `/kaf/` serves health, sessions, streams, channels, tools, and subagents
+- `/orcel/` serves health, sessions, streams, channels, tools, and subagents
 - `/.well-known/workflow/` receives workflow callbacks
 
-A proxy restricted to `/kaf/` lets a session start, but the run stalls when its callback can’t reach kaf. Preserve both prefixes without rewriting their paths.
+A proxy restricted to `/orcel/` lets a session start, but the run stalls when its callback can’t reach orcel. Preserve both prefixes without rewriting their paths.
 
 ## Run workspace members
 
-An [agent workspace](../../concepts/project-structure#several-root-agents) does not require Vercel or a frontend at runtime. Build each member from its own directory: root `kaf build` produces a Vercel workspace deployment, not a group of self-hosted Node servers.
+An [agent workspace](../../concepts/project-structure#several-root-agents) does not require Vercel or a frontend at runtime. Build each member from its own directory: root `orcel build` produces a Vercel workspace deployment, not a group of self-hosted Node servers.
 
 For a workspace containing `support` and `research`, run these from the workspace root, outside a Vercel build environment:
 
 ```bash
-(cd agents/support && npx kaf build)
-(cd agents/research && npx kaf build)
+(cd agents/support && npx orcel build)
+(cd agents/research && npx orcel build)
 ```
 
 Start each built agent in a separate terminal, or configure these commands in your process manager:
 
 ```bash
-(cd agents/support && npx kaf start --host 127.0.0.1 --port 3001)
-(cd agents/research && npx kaf start --host 127.0.0.1 --port 3002)
+(cd agents/support && npx orcel start --host 127.0.0.1 --port 3001)
+(cd agents/research && npx orcel start --host 127.0.0.1 --port 3002)
 ```
 
-For example, this Caddy configuration gives each agent its own origin and forwards both `/kaf/` and `/.well-known/workflow/` without changing their paths. Point the example hostnames at your server and run Caddy on the same machine:
+For example, this Caddy configuration gives each agent its own origin and forwards both `/orcel/` and `/.well-known/workflow/` without changing their paths. Point the example hostnames at your server and run Caddy on the same machine:
 
 ```text
 support.example.com {
@@ -91,32 +91,32 @@ research.example.com {
 }
 ```
 
-Apply the authentication, persistent storage, and sandbox configuration above to each member. With the default local Workflow world, persist each member's own `.kaf/.workflow-data` directory. If agents delegate to one another, configure an explicit [workspace-peer transport](../../subagents#vercel-workspace-peers) with the peer's URL and credentials; the default transport requires Vercel. Ensure callback URLs are reachable from the services that call them.
+Apply the authentication, persistent storage, and sandbox configuration above to each member. With the default local Workflow world, persist each member's own `.orcel/.workflow-data` directory. If agents delegate to one another, configure an explicit [workspace-peer transport](../../subagents#vercel-workspace-peers) with the peer's URL and credentials; the default transport requires Vercel. Ensure callback URLs are reachable from the services that call them.
 
 ### Add a peer frontend
 
-A frontend under `apps/web/` is another service managed by your host, not by `kaf start`. Build and start it using its framework commands. A browser client can use `useKafAgent({ host: "https://support.example.com" })`; configure [CORS](../../channels/kaf#cors) and browser credentials for that deployment. Alternatively, mount each agent on the frontend's origin through your reverse proxy.
+A frontend under `apps/web/` is another service managed by your host, not by `orcel start`. Build and start it using its framework commands. A browser client can use `useOrcelAgent({ host: "https://support.example.com" })`; configure [CORS](../../channels/orcel#cors) and browser credentials for that deployment. Alternatively, mount each agent on the frontend's origin through your reverse proxy.
 
-For path-based mounts, strip the public prefix before forwarding requests to the agent and set `KAF_PUBLIC_ROUTE_PREFIX` in that agent's build and runtime environments. Forward its workflow callback routes as well as its kaf routes. Keep the browser client, callback URLs, and peer transports consistent with the public mounts.
+For path-based mounts, strip the public prefix before forwarding requests to the agent and set `ORCEL_PUBLIC_ROUTE_PREFIX` in that agent's build and runtime environments. Forward its workflow callback routes as well as its orcel routes. Keep the browser client, callback URLs, and peer transports consistent with the public mounts.
 
-You can instead use [`kaf/next`](../frontend/nextjs#dev-vs-deploy-topology) if you want Next.js to start built agent processes and provide the browser-facing proxy routes. That integration is optional; `kaf/vercel` configuration is not used by a self-hosted process manager.
+You can instead use [`orcel/next`](../frontend/nextjs#dev-vs-deploy-topology) if you want Next.js to start built agent processes and provide the browser-facing proxy routes. That integration is optional; `orcel/vercel` configuration is not used by a self-hosted process manager.
 
 ## Run schedules
 
-The standard `kaf build && kaf start` path starts Nitro’s schedule runner. If you adapt the output to a custom HTTP-only host or preset, run Nitro scheduled tasks or invoke the same work from your scheduler.
+The standard `orcel build && orcel start` path starts Nitro’s schedule runner. If you adapt the output to a custom HTTP-only host or preset, run Nitro scheduled tasks or invoke the same work from your scheduler.
 
 ## Verify the service
 
 Check the health route after your proxy and authentication configuration are active:
 
 ```bash
-curl https://your_agent.example.com/kaf/v1/health
+curl https://your_agent.example.com/orcel/v1/health
 ```
 
 Then connect the development TUI and complete a real turn:
 
 ```bash
-kaf remote connect --url https://your_agent.example.com
+orcel remote connect --url https://your_agent.example.com
 ```
 
 ## Continue configuring production

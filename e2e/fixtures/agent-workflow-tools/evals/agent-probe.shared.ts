@@ -1,15 +1,15 @@
-import type { KafEvalContext, KafEvalSession, KafEvalStreamEvent, KafEvalTurn } from "kaf/evals";
+import type { OrcelEvalContext, OrcelEvalSession, OrcelEvalStreamEvent, OrcelEvalTurn } from "orcel/evals";
 
 import { fixtureAuthorizationCallback } from "../agent/lib/fake-service.ts";
 
 export type ProbeCase = { readonly kind: "auth" | "hitl" };
 
 type SessionCursor = Pick<
-  KafEvalSession,
+  OrcelEvalSession,
   "pendingInputRequests" | "requireInputRequest" | "respondAll" | "sessionId" | "state"
 >;
 
-export async function runProbe(t: KafEvalContext, probe: ProbeCase): Promise<void> {
+export async function runProbe(t: OrcelEvalContext, probe: ProbeCase): Promise<void> {
   const directive = `WORKFLOW-PROBE-blocking-local-${probe.kind}`;
 
   if (probe.kind === "hitl") {
@@ -35,7 +35,7 @@ export async function runProbe(t: KafEvalContext, probe: ProbeCase): Promise<voi
 }
 
 async function waitForInput(
-  t: KafEvalContext,
+  t: OrcelEvalContext,
   initial: SessionCursor,
   toolName: string,
 ): Promise<SessionCursor> {
@@ -57,11 +57,11 @@ async function waitForInput(
 }
 
 async function waitForMarker(
-  t: KafEvalContext,
+  t: OrcelEvalContext,
   initial: SessionCursor,
-  initialTurn: KafEvalTurn | undefined,
+  initialTurn: OrcelEvalTurn | undefined,
   marker: string,
-): Promise<KafEvalTurn> {
+): Promise<OrcelEvalTurn> {
   if (initialTurn?.message?.includes(marker)) {
     return initialTurn;
   }
@@ -88,10 +88,10 @@ async function waitForMarker(
  * turn to its end.
  */
 async function completeSignIn(
-  t: KafEvalContext,
+  t: OrcelEvalContext,
   message: string,
   toCallbackUrl: (authorizationUrl: string | undefined) => URL,
-): Promise<{ readonly callbackUrl: URL; readonly turn: KafEvalTurn }> {
+): Promise<{ readonly callbackUrl: URL; readonly turn: OrcelEvalTurn }> {
   const session = await t.session();
   const live = await session.start(message);
   const required = await live.waitForEvent("authorization.required");
@@ -104,11 +104,11 @@ async function completeSignIn(
 }
 
 function requireAuthorizationOutcome(
-  turn: KafEvalTurn,
-  outcome: KafEvalStreamEvent<"authorization.completed">["data"]["outcome"],
+  turn: OrcelEvalTurn,
+  outcome: OrcelEvalStreamEvent<"authorization.completed">["data"]["outcome"],
 ): void {
   const completed = turn.events.filter(
-    (event): event is KafEvalStreamEvent<"authorization.completed"> =>
+    (event): event is OrcelEvalStreamEvent<"authorization.completed"> =>
       event.type === "authorization.completed",
   );
   if (completed.length !== 1 || completed[0]?.data.outcome !== outcome) {
@@ -116,13 +116,13 @@ function requireAuthorizationOutcome(
   }
 }
 
-function requireMarker(turn: KafEvalTurn, marker: string): void {
+function requireMarker(turn: OrcelEvalTurn, marker: string): void {
   if (!turn.message?.includes(marker)) {
     throw new Error(`Probe did not produce ${marker}.`);
   }
 }
 
-function watchNext(t: KafEvalContext, session: SessionCursor) {
+function watchNext(t: OrcelEvalContext, session: SessionCursor) {
   if (session.sessionId === undefined || session.state === undefined) {
     throw new Error("Probe session cursor is incomplete.");
   }
@@ -130,7 +130,7 @@ function watchNext(t: KafEvalContext, session: SessionCursor) {
 }
 
 export async function runStepAuth(
-  t: KafEvalContext,
+  t: OrcelEvalContext,
   scenario: "EXPLICIT" | "IMPLICIT",
 ): Promise<void> {
   const { turn } = await completeSignIn(t, `WORKFLOW-STEP-AUTH-${scenario}`, (url) =>
@@ -141,7 +141,7 @@ export async function runStepAuth(
   t.noFailedActions();
 }
 
-export async function runRejectedStepAuth(t: KafEvalContext): Promise<void> {
+export async function runRejectedStepAuth(t: OrcelEvalContext): Promise<void> {
   const { callbackUrl, turn } = await completeSignIn(t, "WORKFLOW-STEP-AUTH-REJECTED", (url) =>
     fixtureAuthorizationCallback(t.target.url, url),
   );

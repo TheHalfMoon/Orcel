@@ -1,4 +1,4 @@
-import { defineDynamic, defineSkill } from "kaf/skills";
+import { defineDynamic, defineSkill } from "orcel/skills";
 
 export default defineDynamic({
   events: {

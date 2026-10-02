@@ -1,8 +1,8 @@
 import {
   ConnectionAuthorizationRequiredError,
   defineInteractiveAuthorization,
-} from "kaf/connections";
-import { defineTool } from "kaf/tools";
+} from "orcel/connections";
+import { defineTool } from "orcel/tools";
 import { z } from "zod";
 
 const CODE = "direct-release-code";

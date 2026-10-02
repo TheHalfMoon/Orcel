@@ -1,5 +1,5 @@
-import { defineMemory } from "kaf/memory";
-import { fileMemory, inMemory } from "kaf/memory/file";
+import { defineMemory } from "orcel/memory";
+import { fileMemory, inMemory } from "orcel/memory/file";
 
 const provider = process.env.VERCEL
   ? fileMemory()

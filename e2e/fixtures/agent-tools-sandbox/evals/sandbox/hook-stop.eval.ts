@@ -1,5 +1,5 @@
-import { defineEval } from "kaf/evals";
-import { equals } from "kaf/evals/expect";
+import { defineEval } from "orcel/evals";
+import { equals } from "orcel/evals/expect";
 
 const STOP_SANDBOX_TOKEN = "sandbox-stop-hook-ready-R7V";
 const STOP_SANDBOX_MARKER_PATH = "/workspace/stopped-by-hook.txt";

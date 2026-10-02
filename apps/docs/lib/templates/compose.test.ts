@@ -57,7 +57,7 @@ describe("composeTemplateEntries", () => {
       ...manifestEntry,
       github: {
         owner: "TheHalfMoon",
-        repo: "kaf",
+        repo: "orcel",
         ref: "main",
         pathPrefix: "apps/templates/example-template",
       },
@@ -66,7 +66,7 @@ describe("composeTemplateEntries", () => {
     const [entry] = composeTemplateEntries([monorepoEntry], generated);
 
     expect(entry.sourceRevisionHref).toBe(
-      "https://github.com/TheHalfMoon/kaf/tree/0123456789abcdef0123456789abcdef01234567/apps/templates/example-template",
+      "https://github.com/TheHalfMoon/orcel/tree/0123456789abcdef0123456789abcdef01234567/apps/templates/example-template",
     );
   });
 

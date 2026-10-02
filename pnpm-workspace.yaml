@@ -61,7 +61,7 @@ catalog:
   zod: "4.5.4"
 
 overrides:
-  # kaf ships one vendored Zod (packages/kaf/scripts/vendor-compiled/zod.mjs).
+  # orcel ships one vendored Zod (packages/orcel/scripts/vendor-compiled/zod.mjs).
   # @vercel/cli-config, which @vercel/oidc uses, pins its own Zod 4 release,
   # and the vendor build fails on a second copy.
   "@vercel/cli-config>zod": "catalog:"
@@ -71,7 +71,7 @@ minimumReleaseAge: 2880 # 2 days
 minimumReleaseAgeExclude:
   - "@ai-sdk/*"
   - ai
-  - kaf
+  - orcel
   - "@vercel/*"
   - "@workflow/*"
   - workflow

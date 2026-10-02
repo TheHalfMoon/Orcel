@@ -20,16 +20,16 @@ describe("docs analytics", () => {
   });
 
   it("identifies requests safe for server analytics", () => {
-    expect(isQueryFreeUrl("https://kaf.dev/api/chat")).toBe(true);
-    expect(isQueryFreeUrl("https://kaf.dev/docs/missing?token=secret")).toBe(false);
+    expect(isQueryFreeUrl("https://orcel.dev/api/chat")).toBe(true);
+    expect(isQueryFreeUrl("https://orcel.dev/docs/missing?token=secret")).toBe(false);
     expect(isQueryFreeUrl("not a URL")).toBe(false);
   });
 
   it.each([
     ["/", "home"],
-    ["https://kaf.dev/docs/agent-config?tab=files", "docs"],
+    ["https://orcel.dev/docs/agent-config?tab=files", "docs"],
     ["/integrations/slack", "integrations"],
-    ["/templates/kaf-chat-template", "templates"],
+    ["/templates/orcel-chat-template", "templates"],
     ["/api/search", "other"],
     [undefined, "other"],
   ])("classifies %s as %s without retaining the URL", (value, expected) => {
@@ -71,7 +71,7 @@ describe("docs analytics", () => {
   });
 
   it("records a bounded pathname without query data or fragments", () => {
-    expect(getAnalyticsPathname("https://kaf.dev/docs/env-vars.md?token=secret#section")).toBe(
+    expect(getAnalyticsPathname("https://orcel.dev/docs/env-vars.md?token=secret#section")).toBe(
       "/docs/env-vars.md",
     );
     expect(getAnalyticsPathname(`/docs/${"a".repeat(300)}.md`)).toHaveLength(255);

@@ -6,7 +6,7 @@
 
 ### Scopes
 - app (Nuxt UI)
-- agent (Kaf agent)
+- agent (Orcel agent)
 - server (Nitro API)
 - docs (documentation)
 - deps (dependencies)

@@ -27,7 +27,7 @@ export interface ConnectorDef {
   description: string;
   /** Vercel Connect connector UID — must match `agent/connections/<id>.ts`. */
   connector: string;
-  /** Kaf connection name from `agent/connections/<connectionName>.ts`. */
+  /** Orcel connection name from `agent/connections/<connectionName>.ts`. */
   connectionName: string;
   icon: string;
   scopes: string[];

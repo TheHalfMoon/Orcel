@@ -1,4 +1,4 @@
-import { mockModel } from "kaf/evals";
+import { mockModel } from "orcel/evals";
 import { z } from "zod";
 
 export const PREFIX_REQUEST = "Verify the durable prompt prefix.";

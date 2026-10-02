@@ -1,4 +1,4 @@
-import { defineEval, type KafEvalContext, type KafEvalSession } from "kaf/evals";
+import { defineEval, type OrcelEvalContext, type OrcelEvalSession } from "orcel/evals";
 
 /** A human text answer resolves the child's proxied request at the parent by request ID. */
 export default defineEval({
@@ -47,7 +47,7 @@ export default defineEval({
   },
 });
 
-async function waitForInput(t: KafEvalContext, initial: KafEvalSession): Promise<KafEvalSession> {
+async function waitForInput(t: OrcelEvalContext, initial: OrcelEvalSession): Promise<OrcelEvalSession> {
   let session = initial;
   for (let attempt = 0; attempt < 5; attempt += 1) {
     if (
@@ -63,7 +63,7 @@ async function waitForInput(t: KafEvalContext, initial: KafEvalSession): Promise
 }
 
 async function waitForObservedEvent<TType extends "input.resolved">(
-  turn: ReturnType<KafEvalContext["target"]["watchTurn"]>,
+  turn: ReturnType<OrcelEvalContext["target"]["watchTurn"]>,
   type: TType,
 ) {
   for (let attempt = 0; attempt < 1_500; attempt += 1) {
@@ -74,7 +74,7 @@ async function waitForObservedEvent<TType extends "input.resolved">(
   throw new Error(`Child did not emit ${type}.`);
 }
 
-function watchNextTurn(t: KafEvalContext, session: KafEvalSession, operation: string) {
+function watchNextTurn(t: OrcelEvalContext, session: OrcelEvalSession, operation: string) {
   if (session.sessionId === undefined || session.state === undefined) {
     throw new Error(`${operation} has no parent session cursor.`);
   }

@@ -1,5 +1,5 @@
-import { defineTool } from "kaf/tools";
-import { once } from "kaf/tools/approval";
+import { defineTool } from "orcel/tools";
+import { once } from "orcel/tools/approval";
 import { z } from "zod";
 
 export default defineTool({

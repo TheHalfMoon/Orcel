@@ -20,8 +20,8 @@ const mono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "kaf Next.js Starter",
-  description: "A Next.js starter for kaf agents with AI Elements.",
+  title: "orcel Next.js Starter",
+  description: "A Next.js starter for orcel agents with AI Elements.",
 };
 
 export default function RootLayout({ children }: { readonly children: ReactNode }) {

@@ -1,11 +1,11 @@
-# Next.js multi-agent kaf demo
+# Next.js multi-agent orcel demo
 
-This app demonstrates `withEve()` discovering three independent kaf agents
+This app demonstrates `withEve()` discovering three independent orcel agents
 from the project-level `agents/` workspace and mounting them into one Next.js app:
 
-- `support` at `/kaf/agents/support/kaf/v1/*`
-- `billing` at `/kaf/agents/billing/kaf/v1/*`
-- `research` at `/kaf/agents/research/kaf/v1/*`
+- `support` at `/orcel/agents/support/orcel/v1/*`
+- `billing` at `/orcel/agents/billing/orcel/v1/*`
+- `research` at `/orcel/agents/research/orcel/v1/*`
 
 Run it locally with:
 
@@ -13,4 +13,4 @@ Run it locally with:
 pnpm --filter framework-next-multi-agent dev
 ```
 
-The page calls each agent with `useKafAgent({ agent: "<name>" })`.
+The page calls each agent with `useOrcelAgent({ agent: "<name>" })`.

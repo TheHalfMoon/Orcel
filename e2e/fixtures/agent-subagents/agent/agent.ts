@@ -1,6 +1,6 @@
-import { e2eAgentConfig } from "@kaf-e2e/config";
-import { defineAgent, defineDynamic } from "kaf";
-import { mockModel } from "kaf/evals";
+import { e2eAgentConfig } from "@orcel-e2e/config";
+import { defineAgent, defineDynamic } from "orcel";
+import { mockModel } from "orcel/evals";
 
 import { WORKSPACE_FORWARDING_MARKER, WORKSPACE_LOOKUP_MESSAGE } from "../constants";
 import {
@@ -22,8 +22,8 @@ import {
   respondAsSurveyToolParent,
 } from "./lib/survey.js";
 
-if (process.env.KAF_E2E_MODEL === "mock") {
-  process.env.KAF_MOCK_AUTHORED_MODELS = "1";
+if (process.env.ORCEL_E2E_MODEL === "mock") {
+  process.env.ORCEL_MOCK_AUTHORED_MODELS = "1";
 }
 
 const TOOL_FALSE_PROBE = "E2E_TOOL_FALSE_SUBAGENT";

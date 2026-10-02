@@ -6,7 +6,7 @@ last_updated: "2026-09-18"
 
 # Evaluation models for eval judges
 
-`t.judge(...)` uses the existing `evaluate` wrapper from `kaf/ai`. A criteria
+`t.judge(...)` uses the existing `evaluate` wrapper from `orcel/ai`. A criteria
 string becomes a boolean question; an explicit question returns one assertion
 handle; `{ state?, questions }` returns named handles backed by one request.
 All calls start immediately and retain existing soft scoring, labels, thresholds,

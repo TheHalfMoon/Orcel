@@ -16,7 +16,7 @@ describe("canonical routes", () => {
       templates: "/templates",
     });
     expect(integrationPath("slack")).toBe("/integrations/slack");
-    expect(templatePath("kaf-chat-template")).toBe("/templates/kaf-chat-template");
+    expect(templatePath("orcel-chat-template")).toBe("/templates/orcel-chat-template");
   });
 
   it("removes query and fragment variants from canonical paths", () => {

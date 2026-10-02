@@ -1,5 +1,5 @@
-import { defineEval } from "kaf/evals";
-import { equals, satisfies } from "kaf/evals/expect";
+import { defineEval } from "orcel/evals";
+import { equals, satisfies } from "orcel/evals/expect";
 
 import { postChannel } from "./shared";
 

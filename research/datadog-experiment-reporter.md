@@ -4,16 +4,16 @@ status: proposed
 last_updated: "2026-09-01"
 ---
 
-# Datadog Experiments reporter for kaf evals
+# Datadog Experiments reporter for orcel evals
 
-Add a reporter that publishes an kaf eval run to Datadog LLM Observability
+Add a reporter that publishes an orcel eval run to Datadog LLM Observability
 Experiments without asking the Datadog SDK to rerun the task.
 
 ## Authoring API
 
 ```ts
-import { defineEvalConfig } from "kaf/evals";
-import { Datadog } from "kaf/evals/reporters";
+import { defineEvalConfig } from "orcel/evals";
+import { Datadog } from "orcel/evals/reporters";
 
 export default defineEvalConfig({
   reporters: [
@@ -51,7 +51,7 @@ Target the public external Experiment API in `dd-trace@6.13.0`:
 `submitSpan` generates and returns the row's `traceId` and `spanId`. Its input
 does not accept caller-owned `id`, `traceId`, `spanId`, or `apmTraceId` fields.
 The reporter must not fabricate those fields or mutate `dd-trace` internals.
-Keep `dd-trace` optional and load it from the app so the published `kaf` package
+Keep `dd-trace` optional and load it from the app so the published `orcel` package
 does not gain a runtime dependency.
 
 Initialize LLM Observability with both `projectName` and `mlApp`. Resolve the
@@ -60,7 +60,7 @@ project from explicit reporter config, `DD_LLMOBS_PROJECT_NAME`, ml_app config,
 
 ## Row mapping
 
-- `name`: the path-derived kaf eval id.
+- `name`: the path-derived orcel eval id.
 - `input`, `output`, and expected output: recorded by default, with opt-outs.
   When input recording is enabled, completed evals are buffered until run
   completion, their inputs are synced into one reused dataset keyed by eval
@@ -88,7 +88,7 @@ private propagation headers, expose trace identifiers in stream events, force
 global Datadog environment variables, or mutate private `dd-trace` span fields
 to simulate that association.
 
-If Datadog adds a public linking API later, kaf can expose an internal,
+If Datadog adds a public linking API later, orcel can expose an internal,
 reporter-visible trace link and submit it through that API. Synthetic spans
 remain the fallback for remote or uninstrumented targets.
 
@@ -97,10 +97,10 @@ remain the fallback for remote or uninstrumented targets.
 - Unit-test experiment lifecycle, dataset creation and record linkage, row
   mapping, privacy switches, metric labels, project resolution, summary status,
   and URL logging with an injected client.
-- Pin `dd-trace@6.13.0` as an kaf development dependency and in the deterministic
+- Pin `dd-trace@6.13.0` as an orcel development dependency and in the deterministic
   reporter fixture so TypeScript and runtime API smoke checks exercise the
   supported release.
-- Run the targeted reporter and runner unit tests, kaf typecheck, dependency
+- Run the targeted reporter and runner unit tests, orcel typecheck, dependency
   checks, invariant guards, docs checks, and `git diff --check`.
 - Use real Datadog credentials only for manual dogfood verification; CI tests
   remain deterministic and network-free.
