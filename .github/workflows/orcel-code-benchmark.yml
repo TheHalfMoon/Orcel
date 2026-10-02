@@ -6,10 +6,9 @@ on:
       - ".github/workflows/orcel-code-benchmark.yml"
       - ".github/scripts/resolve-benchmark-request*"
       - "packages/orcel-code/**"
-  # Every orcel-code change on main publishes a fresh swe-lean result per harness,
-  # so PRs compare their HEAD against the latest main as the baseline. Pushes do
-  # not run deepswe-lean: its baseline is only as fresh as the last manual
-  # dispatch, so a PR's delta there also includes orcel-code changes merged since.
+  # Benchmark execution is manual-only in Orcel. The upstream eve-bench action
+  # is private and can consume paid model/platform resources, so ordinary PR and
+  # main-push qualification must remain zero-cost and deterministic.
   push:
     branches: [main]
     paths:
@@ -72,7 +71,10 @@ jobs:
   benchmark:
     name: Benchmark harness
     needs: request
-    if: needs.request.outputs.run == 'true'
+    # Keep paid/private upstream benchmark infrastructure opt-in. PRs and pushes
+    # still exercise request resolution, but only an explicit manual dispatch may
+    # consume eve-bench/model/platform resources.
+    if: needs.request.outputs.run == 'true' && github.event_name == 'workflow_dispatch'
     concurrency:
       group: orcel-code-${{ needs.request.outputs.pr || github.ref }}-${{ needs.request.outputs.dataset }}-${{ needs.request.outputs.slug }}
       cancel-in-progress: true
