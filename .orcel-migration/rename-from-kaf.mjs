@@ -128,6 +128,15 @@ replaceInFile("packages/orcel/src/public/next/index.integration.test.ts", (text)
   text.replaceAll('framework: "orcel"', 'framework: "eve"'),
 );
 
+// Scenario workspaces must resolve Orcel from the candidate tarball, never from npm.
+replaceInFile("packages/orcel/src/internal/testing/scenario-app.ts", (text) => {
+  if (text.includes('"--config.auto-install-peers=false"')) return text;
+  return text.replace(
+    '      "--config.minimum-release-age=0",\n    ],',
+    '      "--config.minimum-release-age=0",\n      // Scenario workspaces can declare `orcel` as a peer. The candidate package\n      // is the local tarball above, not a registry package, so peer auto-install\n      // must stay off or pnpm will try to fetch unpublished Orcel from npm.\n      "--config.auto-install-peers=false",\n    ],',
+  );
+});
+
 // Vercel owns the framework preset identifier `eve`; Orcel owns the product, package,
 // service names, routes, and CLI identity around that provider contract.
 replaceInFile("packages/orcel/src/setup/vercel-project-framework.ts", (text) =>

@@ -315,6 +315,10 @@ async function installScenarioDependencies(input: {
       "--ignore-scripts",
       "--config.confirm-modules-purge=false",
       "--config.minimum-release-age=0",
+      // Scenario workspaces can declare `orcel` as a peer. The candidate package
+      // is the local tarball above, not a registry package, so peer auto-install
+      // must stay off or pnpm will try to fetch unpublished Orcel from npm.
+      "--config.auto-install-peers=false",
     ],
     cwd: input.appRoot,
   });

@@ -97,8 +97,10 @@ assertFile(
 );
 assertFile(
   "packages/orcel/src/internal/testing/scenario-app.ts",
-  (text) => text.includes('? { eve: `file:./${tarballFileName}` }'),
-  "scenario apps crossing @vercel/connect/eve must install the Orcel tarball under the Eve compatibility alias",
+  (text) =>
+    text.includes('? { eve: `file:./${tarballFileName}` }') &&
+    text.includes('"--config.auto-install-peers=false"'),
+  "scenario apps must use the Orcel tarball for Eve compatibility and disable registry peer auto-install",
 );
 assertFile(
   ".github/workflows/orcel-import-qualification.yml",
