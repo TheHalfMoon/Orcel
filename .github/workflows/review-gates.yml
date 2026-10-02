@@ -1,0 +1,167 @@
+name: Review Gates
+
+on:
+  pull_request_target:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-gates-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  ocr-delegation:
+    name: Alibaba OCR Delegation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      OCR_BIN: /tmp/orcel-ocr
+      OCR_OUT: /tmp/orcel-ocr-output
+      OCR_URL: https://github.com/alibaba/open-code-review/releases/download/v1.12.11/opencodereview-linux-amd64
+      OCR_SHA256: ae202b88fa03e16926512487bf1051d37ccb3f9690bdd74b889d11ea4dd8099b
+      IMPORT_REVIEW_BASE: 52047f2142c66a3c184cf3a657343bae503a46dc
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+      - name: Install checksum-pinned OpenCodeReview before candidate checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error "$OCR_URL" --output "$OCR_BIN"
+          echo "$OCR_SHA256  $OCR_BIN" | sha256sum --check --status
+          chmod 700 "$OCR_BIN"
+          mkdir -m 700 "$OCR_OUT"
+          "$OCR_BIN" --version
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Select fail-closed review scope
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git cat-file -e "$PR_BASE_SHA^{commit}"
+          git cat-file -e "$HEAD_SHA^{commit}"
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          test "$(git merge-base "$PR_BASE_SHA" "$HEAD_SHA")" = "$PR_BASE_SHA"
+
+          review_base="$PR_BASE_SHA"
+          scope_reason="full-pr-range"
+          if [ "$HEAD_REPOSITORY" = "$REPOSITORY" ] && \
+             [ "$HEAD_REF" = "generated/eve-full-import-9c36b7c" ] && \
+             git merge-base --is-ancestor "$IMPORT_REVIEW_BASE" "$HEAD_SHA"; then
+            review_base="$IMPORT_REVIEW_BASE"
+            scope_reason="initial-import-post-migration-remediation"
+          fi
+
+          git cat-file -e "$review_base^{commit}"
+          test "$(git merge-base "$review_base" "$HEAD_SHA")" = "$review_base"
+          printf 'PR_BASE_SHA=%s\n' "$PR_BASE_SHA" >> "$GITHUB_ENV"
+          printf 'REVIEW_BASE_SHA=%s\n' "$review_base" >> "$GITHUB_ENV"
+          printf 'HEAD_SHA=%s\n' "$HEAD_SHA" >> "$GITHUB_ENV"
+          printf 'SCOPE_REASON=%s\n' "$scope_reason" >> "$GITHUB_ENV"
+          printf 'Review scope: %s..%s (%s)\n' "$review_base" "$HEAD_SHA" "$scope_reason"
+      - name: Generate deterministic delegation evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$OCR_BIN" delegate preview --format json --from "$REVIEW_BASE_SHA" --to "$HEAD_SHA" | tee "$OCR_OUT/ocr-preview.json"
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import subprocess
+
+          pr_base = os.environ["PR_BASE_SHA"]
+          review_base = os.environ["REVIEW_BASE_SHA"]
+          head = os.environ["HEAD_SHA"]
+          scope_reason = os.environ["SCOPE_REASON"]
+          out = os.environ["OCR_OUT"]
+          with open(out + "/ocr-preview.json", encoding="utf-8") as handle:
+              preview = json.load(handle)
+          if preview.get("from") != review_base or preview.get("to") != head or preview.get("merge_base") != review_base:
+              raise SystemExit("OCR preview does not match the exact selected review range")
+
+          reviewable = []
+          for entry in preview.get("reviewable_files", []):
+              path = entry.get("path") if isinstance(entry, dict) else entry
+              if not isinstance(path, str) or not path or path.startswith("-") or "\x00" in path:
+                  raise SystemExit("OCR returned an invalid reviewable path")
+              reviewable.append(path)
+          excluded = []
+          for entry in preview.get("excluded_files", []):
+              path = entry.get("path") if isinstance(entry, dict) else entry
+              if not isinstance(path, str) or not path or path.startswith("-") or "\x00" in path:
+                  raise SystemExit("OCR returned an invalid excluded path")
+              excluded.append(path)
+
+          git_paths = subprocess.check_output(
+              ["git", "diff", "--name-only", "-z", review_base, head],
+          ).decode().split("\0")
+          git_paths = [path for path in git_paths if path]
+          classified = reviewable + excluded
+          if len(classified) != len(set(classified)):
+              raise SystemExit("OCR classified at least one path more than once")
+          if set(classified) != set(git_paths):
+              missing = sorted(set(git_paths) - set(classified))
+              extra = sorted(set(classified) - set(git_paths))
+              raise SystemExit(f"OCR/Git file-set mismatch; missing={missing!r} extra={extra!r}")
+          if preview.get("total_files") != len(git_paths):
+              raise SystemExit("OCR total_files does not match git diff file count")
+          if preview.get("reviewable_count") != len(reviewable) or preview.get("excluded_count") != len(excluded):
+              raise SystemExit("OCR summary counts do not match classified file lists")
+
+          rules = {"groups": []}
+          if reviewable:
+              completed = subprocess.run(
+                  [os.environ["OCR_BIN"], "delegate", "rule", "--format", "json", "--", *reviewable],
+                  check=True,
+                  text=True,
+                  stdout=subprocess.PIPE,
+              )
+              rules = json.loads(completed.stdout)
+          encoded = json.dumps(rules, sort_keys=True, separators=(",", ":")).encode()
+          evidence = {
+              "schema_version": "2",
+              "tool": "@alibaba-group/open-code-review@1.12.11",
+              "pr_base_sha": pr_base,
+              "review_base_sha": review_base,
+              "head_sha": head,
+              "scope_reason": scope_reason,
+              "total_files": len(git_paths),
+              "reviewable_count": len(reviewable),
+              "excluded_count": len(excluded),
+              "reviewable_files": reviewable,
+              "excluded_files": excluded,
+              "rule_groups": len(rules.get("groups", [])),
+              "rules_sha256": hashlib.sha256(encoded).hexdigest(),
+          }
+          with open(out + "/ocr-evidence.json", "w", encoding="utf-8") as handle:
+              json.dump(evidence, handle, indent=2, sort_keys=True)
+              handle.write("\n")
+          with open(out + "/ocr-rules.json", "w", encoding="utf-8") as handle:
+              json.dump(rules, handle)
+          print(
+              f"Orcel OCR exact-range evidence: {len(reviewable)} reviewable, "
+              f"{len(excluded)} excluded, scope={scope_reason}"
+          )
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: ocr-delegation-${{ github.event.pull_request.head.sha }}
+          path: |
+            /tmp/orcel-ocr-output/ocr-preview.json
+            /tmp/orcel-ocr-output/ocr-rules.json
+            /tmp/orcel-ocr-output/ocr-evidence.json
+          if-no-files-found: error
+          retention-days: 14
