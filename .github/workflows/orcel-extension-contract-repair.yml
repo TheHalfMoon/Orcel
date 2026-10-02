@@ -37,16 +37,25 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Rebase initial-import contract snapshots
+      - name: Regenerate current initial-import contract snapshots
         shell: bash
         run: |
           set -euo pipefail
-          # These reports are all additions in Orcel's initial import; none exist on
-          # main yet. Remove only the imported metadata copies so the canonical
-          # generator can recreate the current snapshots at the inherited epochs
-          # instead of inventing fourteen publication epoch bumps for a rename.
-          find packages/orcel/extension-contracts/reports \
-            -mindepth 2 -maxdepth 2 -type f -name 'v*.json' -delete
+          # Preserve every inherited immutable historical epoch. Orcel's initial
+          # import has not published any of these reports on main yet, so remove
+          # only the current (highest) snapshot from each capability directory and
+          # let the canonical generator recreate that same epoch from Orcel source.
+          # Byte-identical snapshots disappear from the eventual git diff; only
+          # genuinely stale current reports remain changed.
+          while IFS= read -r -d '' dir; do
+            latest="$(find "$dir" -maxdepth 1 -type f -name 'v*.json' -printf '%f\n' \
+              | sort -V | tail -n 1)"
+            if [ -n "$latest" ]; then
+              rm "$dir/$latest"
+            fi
+          done < <(find packages/orcel/extension-contracts/reports \
+            -mindepth 1 -maxdepth 1 -type d -print0)
+
           pnpm update:extension-contracts
 
       - name: Prove initial-import repair scope
@@ -69,6 +78,8 @@ jobs:
                 ;;
             esac
           done
+          printf 'Changed current contract snapshots (%s):\n' "${#changed[@]}"
+          printf '  %s\n' "${changed[@]}"
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
       - name: Re-run invariant guard
