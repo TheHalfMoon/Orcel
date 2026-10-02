@@ -2,6 +2,6 @@
   "kind": "orcel-extension-capability-contract",
   "capability": "dynamicSkill",
   "epoch": 26,
-  "sha256": "31fb234f85168e865f547912d001c98235a31a416803fcdb37e7be641ad13dc6",
+  "sha256": "d2a8d8fb4c5fa4a167a9b414c91b1f6dbccd89f8233eba8235d84e7698a23fd1",
   "exports": ["defineDynamic"]
 }

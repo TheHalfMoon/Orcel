@@ -2,7 +2,7 @@
   "kind": "orcel-extension-capability-contract",
   "capability": "state",
   "epoch": 9,
-  "sha256": "5ffd2ee46e54a540a82f6121e4d99abe12fba7528cfd18bcabfaf31cf8572678",
+  "sha256": "1eaaab829ebed33c1c76ceeb7eafbf2c737f75d0727845bae4e41123e2264c5e",
   "exports": [
     "Session",
     "SessionAuth",

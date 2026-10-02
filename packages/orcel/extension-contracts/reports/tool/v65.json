@@ -2,7 +2,7 @@
   "kind": "orcel-extension-capability-contract",
   "capability": "tool",
   "epoch": 65,
-  "sha256": "7cb453c67bbb302237141e6c00b9201d97ad02cb8a089289ec593d6419a837a2",
+  "sha256": "572e670fddcb6726ada0e79313eed497cfa3d35b3b3fac0ccaf0652026511e5a",
   "exports": [
     "AgentRouterInput",
     "AgentRouterTool",

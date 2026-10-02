@@ -2,7 +2,7 @@
   "kind": "orcel-extension-capability-contract",
   "capability": "connection",
   "epoch": 33,
-  "sha256": "54f3290326c7386da97c4d516c70b2d519da5683846cb0b03e47090adbb97bfe",
+  "sha256": "f073c051b026785fc1a66fbada980770f09edc10907acc1a2a57ce93f4fe1c75",
   "exports": [
     "ConnectionAuthorizationFailedError",
     "ConnectionAuthorizationRequiredError",

@@ -2,7 +2,7 @@
   "kind": "orcel-extension-capability-contract",
   "capability": "dynamicTool",
   "epoch": 63,
-  "sha256": "e23db116a2074509d033787f21fc1360886d656b22684c584b0e120831199851",
+  "sha256": "d02b7207e2a9b80c1b82864a1e5128a4de31f635558b6542239ad83d5bb32612",
   "exports": [
     "DynamicToolEntry",
     "DynamicToolEvents",

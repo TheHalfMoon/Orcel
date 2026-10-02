@@ -2,6 +2,6 @@
   "kind": "orcel-extension-capability-contract",
   "capability": "config",
   "epoch": 1,
-  "sha256": "c2a2387dfc296f04b1f191f1015d748ee420aca57f3c61a8d7cc97620a4228d8",
+  "sha256": "5b066079c5c27ab6894bcc99f81b1d1ef96e13103af8e5fe79b94696ec585ef9",
   "exports": ["defineExtension"]
 }

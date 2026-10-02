@@ -2,7 +2,7 @@
   "kind": "orcel-extension-capability-contract",
   "capability": "schedule",
   "epoch": 20,
-  "sha256": "d6ad35ffeef567b0378e6224d2d52e716efe0e7b367f7ec0a5d953357e0bee5b",
+  "sha256": "635ddae8cf3071a9aab79cb3de538bb20e56e9bf990424e207554bd57031e94f",
   "exports": [
     "ScheduleDefinition",
     "ScheduleHandlerArgs",

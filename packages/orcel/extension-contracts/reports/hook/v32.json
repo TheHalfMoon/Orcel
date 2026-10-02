@@ -2,6 +2,6 @@
   "kind": "orcel-extension-capability-contract",
   "capability": "hook",
   "epoch": 32,
-  "sha256": "71b71bab376d8818156d79f4712043e0af98989d717606cca0d019c145c917dd",
+  "sha256": "4f9a1c73ede2a3a393cb35dd2697867a2604417e30200ebe890f299044aef018",
   "exports": ["defineHook"]
 }
