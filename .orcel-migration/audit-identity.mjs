@@ -6,7 +6,7 @@ const binaryExts = new Set([
   ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".pdf", ".zip", ".gz", ".tgz",
   ".woff", ".woff2", ".ttf", ".eot", ".wasm", ".mp3", ".mp4", ".mov", ".webm", ".lockb",
 ]);
-const kafIdentity = /\b(?:kaf|Kaf|KAF)\b|\b(?:kaf|Kaf)(?=[A-Z0-9_])|\bKAF(?=_|[A-Z][a-z]|\d)|(?<=[a-z0-9_])Kaf(?=[A-Z0-9_]|$)|(?<=_)kaf(?=_|$)/g;
+const kafIdentity = /\b(?:kaf|Kaf|KAF)\b|\b(?:kaf|Kaf)(?=[A-Z0-9_])|\bKAF(?=_|[A-Z][a-z]|\d)|(?<=[a-z0-9_])Kaf(?=[A-Z0-9_]|$)|(?<=_)kaf(?=_|$)|%3[aA](?:kaf|Kaf|KAF)%3[aA]/g;
 const kafPathToken = /(^|[-_.])(?:kaf|Kaf|KAF)(?=$|[-_.])|^(?:kaf|Kaf|KAF)(?=[A-Z0-9_])/;
 
 function isTextFile(file, buffer) {

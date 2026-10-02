@@ -413,7 +413,7 @@ describe("tool-hosted authorization", () => {
     expect(isAuthorizationSignal(result)).toBe(true);
     if (!isAuthorizationSignal(result)) throw new Error("expected signal");
     expect(receivedCallbackUrl).toBe(
-      `http://localhost:2000/orcel/v1/connections/search_notion__mcp.notion.com_notion/callback/${result.challenges[0]?.attemptId}/orcel%3Ainbox%3Av1%3Akaf%3Asession%3Asession_auth%3Ainbox`,
+      `http://localhost:2000/orcel/v1/connections/search_notion__mcp.notion.com_notion/callback/${result.challenges[0]?.attemptId}/orcel%3Ainbox%3Av1%3Aorcel%3Asession%3Asession_auth%3Ainbox`,
     );
     expect(result.challenges[0]?.hookUrl).toBe(receivedCallbackUrl);
   });

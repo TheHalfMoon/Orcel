@@ -83,7 +83,7 @@ describe("withEve Vercel config", () => {
         orcel: {
           buildCommand:
             "cd '../../..' && export ORCEL_INTERNAL_BUILD_OUTPUT_DIRECTORY='.orcel/vercel-services/orcel/.vercel/output' && export ORCEL_INTERNAL_HOST_BUILD_OUTPUT_DIRECTORY='.vercel/output' && node 'node_modules/orcel/bin/orcel.js' build",
-          framework: "orcel",
+          framework: "eve",
           outputDirectory: ".vercel/output",
           routes: [
             {
@@ -163,7 +163,7 @@ describe("withEve Vercel config", () => {
         orcel: {
           buildCommand:
             "cd '../../..' && export ORCEL_INTERNAL_BUILD_OUTPUT_DIRECTORY='.orcel/vercel-services/orcel/.vercel/output' && export ORCEL_INTERNAL_HOST_BUILD_OUTPUT_DIRECTORY='.vercel/output' && node 'node_modules/orcel/bin/orcel.js' build",
-          framework: "orcel",
+          framework: "eve",
           outputDirectory: ".vercel/output",
           routes: [
             {
@@ -201,7 +201,7 @@ describe("withEve Vercel config", () => {
           services: {
             agent: {
               entrypoint: "package.json",
-              framework: "orcel",
+              framework: "eve",
               root: "agent",
             },
           },
@@ -246,7 +246,7 @@ describe("withEve Vercel config", () => {
           services: {
             agent: {
               entrypoint: "package.json",
-              framework: "orcel",
+              framework: "eve",
               root: "agent",
             },
           },
@@ -274,7 +274,7 @@ describe("withEve Vercel config", () => {
       services: {
         agent: {
           entrypoint: "package.json",
-          framework: "orcel",
+          framework: "eve",
           routes: [
             {
               src: "^/orcel/v1/(.*)$",
@@ -473,7 +473,7 @@ describe("withEve Vercel config", () => {
         "orcel-billing": {
           buildCommand:
             "cd '../../../agents/billing' && export ORCEL_INTERNAL_BUILD_OUTPUT_DIRECTORY='../../.orcel/vercel-services/orcel-billing/.vercel/output' && export ORCEL_INTERNAL_HOST_BUILD_OUTPUT_DIRECTORY='../../.vercel/output' && export ORCEL_PUBLIC_ROUTE_PREFIX='/orcel/billing' && pnpm build:billing-agent",
-          framework: "orcel",
+          framework: "eve",
           outputDirectory: ".vercel/output",
           routes: [
             {
@@ -493,7 +493,7 @@ describe("withEve Vercel config", () => {
         "orcel-support": {
           buildCommand:
             "cd '../../../agents/support' && export ORCEL_INTERNAL_BUILD_OUTPUT_DIRECTORY='../../.orcel/vercel-services/orcel-support/.vercel/output' && export ORCEL_INTERNAL_HOST_BUILD_OUTPUT_DIRECTORY='../../.vercel/output' && export ORCEL_PUBLIC_ROUTE_PREFIX='/orcel/support' && node 'node_modules/orcel/bin/orcel.js' build",
-          framework: "orcel",
+          framework: "eve",
           outputDirectory: ".vercel/output",
           routes: [
             {
@@ -541,7 +541,7 @@ describe("withEve Vercel config", () => {
             {
               buildCommand: "orcel build:support",
               entrypoint: "package.json",
-              framework: "orcel",
+              framework: "eve",
               name: "orcel-support",
               root: "agents/support",
               routePrefix: "/orcel/support",
@@ -593,7 +593,7 @@ describe("withEve Vercel config", () => {
         "orcel-billing": {
           buildCommand:
             "cd '../../../agents/billing' && export ORCEL_INTERNAL_BUILD_OUTPUT_DIRECTORY='../../.orcel/vercel-services/orcel-billing/.vercel/output' && export ORCEL_INTERNAL_HOST_BUILD_OUTPUT_DIRECTORY='../../.vercel/output' && export ORCEL_PUBLIC_ROUTE_PREFIX='/orcel/billing' && node 'node_modules/orcel/bin/orcel.js' build",
-          framework: "orcel",
+          framework: "eve",
           outputDirectory: ".vercel/output",
           routes: [
             {
@@ -613,7 +613,7 @@ describe("withEve Vercel config", () => {
         "orcel-support": {
           buildCommand: "orcel build:support",
           entrypoint: "package.json",
-          framework: "orcel",
+          framework: "eve",
           routes: [
             {
               src: "^/orcel/support/v1/(.*)$",

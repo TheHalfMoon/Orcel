@@ -26,7 +26,7 @@ describe("authorization callback URLs", () => {
     ctx.set(SessionIdKey, "session-1");
 
     expect(contextStorage.run(ctx, () => getHookUrl("linear", "attempt-1"))).toBe(
-      "https://agent.example.com/orcel/v1/connections/linear/callback/attempt-1/orcel%3Ainbox%3Av1%3Akaf%3Asession%3Asession-1%3Ainbox?x-vercel-protection-bypass=secret+value",
+      "https://agent.example.com/orcel/v1/connections/linear/callback/attempt-1/orcel%3Ainbox%3Av1%3Aorcel%3Asession%3Asession-1%3Ainbox?x-vercel-protection-bypass=secret+value",
     );
   });
 });

@@ -124,11 +124,22 @@ replaceInFile("packages/orcel/src/shared/vercel-services.ts", (text) =>
 replaceInFile("packages/orcel/src/internal/vercel/orcel-service-contribution.ts", (text) =>
   text.replaceAll('framework: "orcel"', 'framework: "eve"'),
 );
+replaceInFile("packages/orcel/src/public/next/index.integration.test.ts", (text) =>
+  text.replaceAll('framework: "orcel"', 'framework: "eve"'),
+);
 
 // The runtime image is still an upstream Vercel/Eve compatibility coordinate.
 // Orcel-specific environment variables are first-class while historical Eve
 // variables remain supported as provider compatibility aliases.
-replaceInFile("packages/orcel/src/execution/sandbox/bindings/orcel-image.ts", () => `import { packageVersion } from "../../../package-version.js";\n\nconst upstreamEveImage =\n  process.env.VERCEL_EVE_IMAGE ||\n  process.env.EVE_IMAGE ||\n  \`ghcr.io/vercel/eve:\${packageVersion}\`;\n\nexport const VERCEL_ORCEL_IMAGE = process.env.VERCEL_ORCEL_IMAGE || upstreamEveImage;\n\nexport const ORCEL_IMAGE = process.env.ORCEL_IMAGE || VERCEL_ORCEL_IMAGE;\n`);
+replaceInFile("packages/orcel/src/execution/sandbox/bindings/orcel-image.ts", () => "import { resolveInstalledPackageInfo } from \"#internal/application/package.js\";\nimport { stripVersionBuildMetadata } from \"#shared/package-version.js\";\n\n// These repository coordinates are external Vercel/Eve runtime contracts from\n// the pinned upstream foundation. Orcel owns the local API names below, but it\n// must not silently rewrite provider-owned image coordinates.\nconst GHCR_ORCEL_SANDBOX_IMAGE_REPOSITORY = \"ghcr.io/vercel/eve\";\nconst VERCEL_ORCEL_SANDBOX_IMAGE_REPOSITORY = \"vcr.vercel.com/vercel/eve/base\";\n\nexport function resolveOrcelSandboxImage(): string {\n  return `${GHCR_ORCEL_SANDBOX_IMAGE_REPOSITORY}:${resolveOrcelSandboxImageTag()}`;\n}\n\nexport function resolveVercelOrcelSandboxImage(): string {\n  return `${VERCEL_ORCEL_SANDBOX_IMAGE_REPOSITORY}:${resolveOrcelSandboxImageTag()}`;\n}\n\nfunction resolveOrcelSandboxImageTag(): string {\n  const override = process.env.ORCEL_SANDBOX_IMAGE_TAG?.trim();\n  return override !== undefined && override.length > 0\n    ? override\n    : stripVersionBuildMetadata(resolveInstalledPackageInfo().version);\n}\n\nexport const DEFAULT_ORCEL_SANDBOX_IMAGE = resolveOrcelSandboxImage();\nexport const VERCEL_ORCEL_SANDBOX_IMAGE = resolveVercelOrcelSandboxImage();\n");
+
+// Project-owned session identity may appear URL-encoded inside compatibility tests.
+replaceInFile("packages/orcel/src/execution/tool-auth.integration.test.ts", (text) =>
+  text.replaceAll("%3Akaf%3A", "%3Aorcel%3A"),
+);
+replaceInFile("packages/orcel/src/harness/authorization.test.ts", (text) =>
+  text.replaceAll("%3Akaf%3A", "%3Aorcel%3A"),
+);
 
 // @vercel/connect/eve imports the framework package by the historical bare name.
 // Scenario apps that exercise that provider boundary install the exact same Orcel
