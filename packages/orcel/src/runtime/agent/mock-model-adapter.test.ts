@@ -480,6 +480,79 @@ describe("createMockAuthoredRuntimeModel", () => {
     ]);
   });
 
+  it("waits silently after a task-start receipt instead of exposing task bookkeeping", async () => {
+    const result = await generateWithPrompt(
+      [
+        {
+          content: "Use the echo-marker subagent and return its final result.",
+          role: "user",
+        },
+        {
+          content: [
+            {
+              input: JSON.stringify({ message: "ping" }),
+              toolCallId: "call_echo_marker",
+              toolName: "echo-marker",
+              type: "tool-call",
+            },
+          ],
+          role: "assistant",
+        },
+        {
+          content: [
+            {
+              output: {
+                type: "text",
+                value:
+                  "Started task echo-marker-123. Its result will arrive in a <task_result> message.",
+              },
+              toolCallId: "call_echo_marker",
+              toolName: "echo-marker",
+              type: "tool-result",
+            },
+          ],
+          role: "tool",
+        },
+      ],
+      [
+        {
+          inputSchema: { additionalProperties: false, properties: {}, type: "object" },
+          name: "echo-marker",
+          type: "function",
+        },
+        {
+          inputSchema: { additionalProperties: false, properties: {}, type: "object" },
+          name: "task_wait",
+          type: "function",
+        },
+      ],
+    );
+
+    expect(result.content).toEqual([
+      {
+        input: JSON.stringify({}),
+        toolCallId: "call_task_wait",
+        toolName: "task_wait",
+        type: "tool-call",
+      },
+    ]);
+  });
+
+  it("lets the test-only mock stream latency be aborted", async () => {
+    vi.stubEnv("ORCEL_MOCK_AUTHORED_MODELS_STREAM_DELAY_MS", "10000");
+    const controller = new AbortController();
+    controller.abort(new Error("stop mock stream"));
+    const model = createMockAuthoredRuntimeModel({
+      id: "abortable-mock-stream",
+    } as never) as unknown as {
+      doStream(input: Record<string, unknown>): Promise<unknown>;
+    };
+
+    await expect(
+      model.doStream({ abortSignal: controller.signal, prompt: [], tools: [] }),
+    ).rejects.toThrow("stop mock stream");
+  });
+
   it("replies with exact fixture text from system context", async () => {
     const result = await generateWithPrompt([
       {

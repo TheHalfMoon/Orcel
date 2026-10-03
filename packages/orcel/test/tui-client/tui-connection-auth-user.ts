@@ -174,7 +174,7 @@ runEnvironment("tui-connection-auth-user", async ({ cleanup, target: resolveTarg
     () => initialAbort.abort(new Error("Initial authorization stream timed out after 60 seconds.")),
     60_000,
   );
-  const stream = session.stream({ signal: initialAbort.signal });
+  const stream = session.stream({ signal: initialAbort.signal, startIndex: 0 });
 
   let requiredEvent: AuthorizationRequiredStreamEvent | undefined;
   let completedEvent: AuthorizationCompletedStreamEvent | undefined;
