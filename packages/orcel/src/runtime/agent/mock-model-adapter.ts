@@ -31,15 +31,23 @@ import {
   getAvailableSkills,
 } from "#runtime/agent/mock-model-skill-selection.js";
 import { createJsonSchemaSample } from "#runtime/agent/mock-structured-output.js";
+import {
+  createToolCallGenerateResult,
+  createToolCallsGenerateResult,
+} from "#runtime/agent/mock-model-result-builder.js";
+import {
+  createMockConnectionSearchResult,
+  createMockConnectionToolAfterSearchResult,
+} from "#runtime/agent/mock-model-connection-selection.js";
+import { waitForMockStreamDelay } from "#runtime/agent/mock-model-stream-delay.js";
+import { createMockTaskReceiptWaitResult } from "#runtime/agent/mock-model-task-wait.js";
 import { FINAL_OUTPUT_TOOL_NAME } from "#harness/final-output.js";
 import { readTaskResults } from "#execution/tasks/render.js";
-import { TASK_WAIT_TOOL_NAME } from "#protocol/task-tools.js";
 import { LOAD_SKILL_TOOL_NAME } from "#runtime/skills/fragment-context.js";
 
 const MOCK_RUNTIME_MODEL_PROVIDER = "orcel-runtime-mock";
 const LOAD_SKILL_TOOL_CALL_ID = "call_load_skill";
 const MOCK_AUTHORED_MODELS_ENV = "ORCEL_MOCK_AUTHORED_MODELS";
-const MOCK_AUTHORED_MODELS_STREAM_DELAY_MS_ENV = "ORCEL_MOCK_AUTHORED_MODELS_STREAM_DELAY_MS";
 type BootstrapGenerateOptions = Parameters<MockLanguageModelV3["doGenerate"]>[0];
 
 interface BootstrapToolResult {
@@ -110,12 +118,33 @@ function createMockModelResult(
     if (followUpToolCall !== null) {
       return followUpToolCall;
     }
-    const taskWait = createTaskReceiptWaitResult(options, modelId, authoredToolResult);
-    if (taskWait !== null) {
-      return taskWait;
-    }
+    const connectionTool = createMockConnectionToolAfterSearchResult({
+      previousToolName: authoredToolResult.toolName,
+      tools: getAvailableTools(options),
+      message: getLastUserPromptText(options.prompt) ?? "",
+      inputTokens: estimateTokenCount(getPromptText(options.prompt)),
+      modelId,
+    });
+    if (connectionTool !== null) return connectionTool;
+
+    const taskWait = createMockTaskReceiptWaitResult({
+      isError: authoredToolResult.isError,
+      output: authoredToolResult.output,
+      tools: getAvailableTools(options),
+      inputTokens: estimateTokenCount(getPromptText(options.prompt)),
+      modelId,
+    });
+    if (taskWait !== null) return taskWait;
   } else {
+    const message = getLastUserPromptText(options.prompt) ?? "";
+    const tools = getAvailableTools(options);
     const toolCallResult =
+      createMockConnectionSearchResult({
+        tools,
+        message,
+        inputTokens: estimateTokenCount(getPromptText(options.prompt)),
+        modelId,
+      }) ??
       createParallelAuthoredToolCallsResult(options, modelId) ??
       createSubagentDelegationResult(options, modelId) ??
       createSkillLoadResult(options.prompt, modelId) ??
@@ -144,66 +173,6 @@ function createMockModelResult(
     outputTokens: estimateTokenCount(text),
     text,
   });
-}
-
-async function waitForMockStreamDelay(options: BootstrapGenerateOptions): Promise<void> {
-  const rawDelay = process.env[MOCK_AUTHORED_MODELS_STREAM_DELAY_MS_ENV];
-  if (rawDelay === undefined) return;
-
-  const parsedDelay = Number.parseInt(rawDelay, 10);
-  if (!Number.isFinite(parsedDelay) || parsedDelay <= 0) return;
-  const delayMs = Math.min(parsedDelay, 10_000);
-  const signal = (options as BootstrapGenerateOptions & { readonly abortSignal?: AbortSignal })
-    .abortSignal;
-
-  await new Promise<void>((resolve, reject) => {
-    const abort = (): void => {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", abort);
-      reject(
-        signal?.reason instanceof Error ? signal.reason : new Error("Mock model stream aborted."),
-      );
-    };
-    const complete = (): void => {
-      signal?.removeEventListener("abort", abort);
-      resolve();
-    };
-    const timer = setTimeout(complete, delayMs);
-    if (signal === undefined) return;
-    if (signal.aborted) {
-      abort();
-      return;
-    }
-    signal.addEventListener("abort", abort, { once: true });
-  });
-}
-
-function createTaskReceiptWaitResult(
-  options: BootstrapGenerateOptions,
-  modelId: string,
-  result: BootstrapToolResult,
-): BootstrapGenerateResult | null {
-  if (result.isError || !isTaskReceipt(result.output)) return null;
-  const taskWait = getAvailableTools(options).find((tool) => tool.name === TASK_WAIT_TOOL_NAME);
-  if (taskWait === undefined) return null;
-
-  return createToolCallGenerateResult({
-    input: {},
-    inputTokens: estimateTokenCount(getPromptText(options.prompt)),
-    modelId,
-    outputTokens: 1,
-    toolCallId: createToolCallId(TASK_WAIT_TOOL_NAME),
-    toolName: TASK_WAIT_TOOL_NAME,
-  });
-}
-
-function isTaskReceipt(output: unknown): boolean {
-  if (typeof output !== "string") return false;
-  const text = output.trimStart();
-  return (
-    (text.startsWith("Started task ") && text.includes("<task_result> message")) ||
-    (text.startsWith("Sent to task ") && text.includes("<task_result> message"))
-  );
 }
 
 /**
@@ -470,68 +439,6 @@ function formatToolResultReply(result: BootstrapToolResult, prompt: BootstrapPro
   const lastUserMessage = getLastUserPromptText(prompt) ?? "Hello from orcel";
 
   return `Used ${result.toolName} for "${lastUserMessage}": ${formatToolOutput(result.output)}`;
-}
-
-function createToolCallGenerateResult(input: {
-  readonly input: unknown;
-  readonly inputTokens: number;
-  readonly modelId: string;
-  readonly outputTokens: number;
-  readonly toolCallId: string;
-  readonly toolName: string;
-}): BootstrapGenerateResult {
-  return createToolCallsGenerateResult({
-    calls: [
-      {
-        input: input.input,
-        toolCallId: input.toolCallId,
-        toolName: input.toolName,
-      },
-    ],
-    inputTokens: input.inputTokens,
-    modelId: input.modelId,
-    outputTokens: input.outputTokens,
-  });
-}
-
-function createToolCallsGenerateResult(input: {
-  readonly calls: readonly {
-    readonly input: unknown;
-    readonly toolCallId: string;
-    readonly toolName: string;
-  }[];
-  readonly inputTokens: number;
-  readonly modelId: string;
-  readonly outputTokens: number;
-}): BootstrapGenerateResult {
-  return {
-    content: input.calls.map((call) => ({
-      input: JSON.stringify(call.input),
-      toolCallId: call.toolCallId,
-      toolName: call.toolName,
-      type: "tool-call",
-    })),
-    finishReason: { raw: undefined, unified: "tool-calls" },
-    response: {
-      id: "bootstrap-response",
-      modelId: input.modelId,
-      timestamp: new Date("2026-03-16T00:00:00.000Z"),
-    },
-    usage: {
-      inputTokens: {
-        cacheRead: 0,
-        cacheWrite: 0,
-        noCache: input.inputTokens,
-        total: input.inputTokens,
-      },
-      outputTokens: {
-        reasoning: 0,
-        text: input.outputTokens,
-        total: input.outputTokens,
-      },
-    },
-    warnings: [],
-  } as unknown as BootstrapGenerateResult;
 }
 
 function getAvailableTools(options: BootstrapGenerateOptions): AvailableBootstrapTool[] {

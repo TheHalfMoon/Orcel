@@ -77,6 +77,15 @@ export function renderTaskReceipt(task: {
   return `${started} To send it another message, call ${task.tool} again with taskId ${task.id}.`;
 }
 
+/** True when text is one of the model-facing receipts for a running task. */
+export function isTaskReceiptText(text: string): boolean {
+  const receipt = text.trimStart();
+  return (
+    (receipt.startsWith("Started task ") || receipt.startsWith("Sent to task ")) &&
+    receipt.includes(`${TASK_RESULT_TAG}> message`)
+  );
+}
+
 /** The receipt for a call that reaches a resumable task by its `taskId`. */
 export function renderTaskSentReceipt(taskId: string): string {
   return `Sent to task ${taskId}. Its reply will arrive in a <task_result> message.`;

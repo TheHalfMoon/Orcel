@@ -480,6 +480,98 @@ describe("createMockAuthoredRuntimeModel", () => {
     ]);
   });
 
+  it("discovers an explicitly named connection tool before calling it", async () => {
+    const prompt = [
+      {
+        content: [
+          "Use the `stub-mcp-user` connection's `echo_marker` tool.",
+          "The model-visible tool name is `connection__stub-mcp-user__echo_marker`.",
+          'Call it with `note: "smoke"`.',
+        ].join("\n"),
+        role: "user",
+      },
+    ];
+    const result = await generateWithPrompt(prompt, [
+      {
+        inputSchema: {
+          type: "object",
+          properties: { connection: { type: "string" }, keywords: { type: "string" } },
+          required: ["keywords"],
+        },
+        name: "connection_search",
+        type: "function",
+      },
+    ]);
+
+    expect(result.content).toEqual([
+      {
+        input: JSON.stringify({ connection: "stub-mcp-user", keywords: "echo_marker" }),
+        toolCallId: "call_connection_search",
+        toolName: "connection_search",
+        type: "tool-call",
+      },
+    ]);
+  });
+
+  it("calls a discovered connection tool after connection_search completes", async () => {
+    const message = [
+      "Use the `stub-mcp-user` connection's `echo_marker` tool.",
+      "The model-visible tool name is `connection__stub-mcp-user__echo_marker`.",
+      'Call it with `note: "smoke"`.',
+    ].join("\n");
+    const result = await generateWithPrompt(
+      [
+        { content: message, role: "user" },
+        {
+          content: [
+            {
+              input: JSON.stringify({ connection: "stub-mcp-user", keywords: "echo_marker" }),
+              toolCallId: "call_connection_search",
+              toolName: "connection_search",
+              type: "tool-call",
+            },
+          ],
+          role: "assistant",
+        },
+        {
+          content: [
+            {
+              output: {
+                type: "json",
+                value: [{ connection: "stub-mcp-user", tool: "echo_marker" }],
+              },
+              toolCallId: "call_connection_search",
+              toolName: "connection_search",
+              type: "tool-result",
+            },
+          ],
+          role: "tool",
+        },
+      ],
+      [
+        { name: "connection_search", type: "function", inputSchema: { type: "object" } },
+        {
+          name: "stub-mcp-user__echo_marker",
+          type: "function",
+          inputSchema: {
+            type: "object",
+            properties: { note: { type: "string" } },
+            required: ["note"],
+          },
+        },
+      ],
+    );
+
+    expect(result.content).toEqual([
+      {
+        input: JSON.stringify({ note: "smoke" }),
+        toolCallId: "call_stub_mcp_user_echo_marker",
+        toolName: "stub-mcp-user__echo_marker",
+        type: "tool-call",
+      },
+    ]);
+  });
+
   it("waits silently after a task-start receipt instead of exposing task bookkeeping", async () => {
     const result = await generateWithPrompt(
       [
@@ -544,12 +636,13 @@ describe("createMockAuthoredRuntimeModel", () => {
     controller.abort(new Error("stop mock stream"));
     const model = createMockAuthoredRuntimeModel({
       id: "abortable-mock-stream",
-    } as never) as unknown as {
-      doStream(input: Record<string, unknown>): Promise<unknown>;
-    };
+    } as never);
+    if (typeof model === "string" || !("doStream" in model) || typeof model.doStream !== "function") {
+      throw new Error("Expected the authored runtime mock to expose doStream().");
+    }
 
     await expect(
-      model.doStream({ abortSignal: controller.signal, prompt: [], tools: [] }),
+      model.doStream({ abortSignal: controller.signal, prompt: [], tools: [] } as never),
     ).rejects.toThrow("stop mock stream");
   });
 
