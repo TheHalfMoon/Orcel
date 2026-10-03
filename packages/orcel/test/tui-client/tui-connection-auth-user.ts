@@ -304,6 +304,7 @@ runEnvironment("tui-connection-auth-user", async ({ cleanup, target: resolveTarg
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       threadId: THREAD_ID,
+      sessionId,
       message: [
         "Use the `stub-mcp-user` connection's `echo_marker` tool again.",
         `The model-visible tool name is \`${EXPECTED_TOOL_NAME}\`.`,

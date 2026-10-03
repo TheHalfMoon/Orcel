@@ -75,17 +75,24 @@ export default defineChannel({
       );
     }),
 
-    POST<AnchorState>("/anchor/reply", async (request, { from, resolveSession, waitUntil }) => {
-      const body = readBody(await request.json().catch(() => ({})));
+    POST<AnchorState>("/anchor/reply", async (request, { attachSession, waitUntil }) => {
+      const rawBody = await request.json().catch(() => ({}));
+      const body = readBody(rawBody);
       const anchorToken = `thread:${body.threadId}`;
-      const session = await resolveSession(anchorToken);
-      if (session === undefined) {
-        return Response.json({ error: "anchored session not found", ok: false }, { status: 409 });
+      const sessionId =
+        rawBody &&
+        typeof rawBody === "object" &&
+        "sessionId" in rawBody &&
+        typeof rawBody.sessionId === "string"
+          ? rawBody.sessionId.trim()
+          : "";
+      if (sessionId.length === 0) {
+        return Response.json({ error: "sessionId is required", ok: false }, { status: 400 });
       }
+      const session = attachSession(sessionId);
       waitUntil(
-        from(anchorToken).send(body.message, {
+        session.send(body.message, {
           auth: authFor("reply", body.marker),
-          state: initialState(anchorToken),
         }),
       );
 
