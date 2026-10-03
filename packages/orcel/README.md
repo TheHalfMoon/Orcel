@@ -4,7 +4,7 @@ Orcel is a filesystem-first framework for durable backend AI agents that run any
 
 You author an agent as a directory on disk. The directory is the contract — markdown for the parts a human should read like a spec, TypeScript for the parts that benefit from real types and runtime behavior.
 
-The framework is called orcel. The published npm package is `orcel`. The CLI binary is `orcel`.
+The framework is called orcel. The published npm package is `@orcel/orcel`. The CLI binary is `orcel`.
 
 ## Preview Terms and Safeguards
 
@@ -55,19 +55,19 @@ my-agent/
 
 Every authored directory has a typed helper. Import each from the matching subpath:
 
-| Helper                                                          | Subpath                               | Authored Location                                |
-| --------------------------------------------------------------- | ------------------------------------- | ------------------------------------------------ |
-| `defineAgent(...)`                                              | `orcel`                                 | `agent.ts`, `subagents/<id>/agent.ts`            |
-| `defineInstructions(...)`                                       | `@orcel/orcel/instructions`                    | `instructions.ts` (or `instructions.md`)         |
-| `defineTool(...)`, `defineDynamic(...)`, `disableTool(...)`     | `@orcel/orcel/tools`                           | `tools/<name>.ts`                                |
-| `bash`, `readFile`, `writeFile`, and other provided definitions | `orcel/tools/<name>`                    | `tools/<name>.ts`                                |
-| `defineSkill(...)`                                              | `@orcel/orcel/skills`                          | `skills/<name>.ts` (or `skills/<name>.md`)       |
-| `defineHook(...)`                                               | `@orcel/orcel/hooks`                           | `hooks/<slug>.ts`                                |
-| `defineChannel(...)`, `POST`, `GET`                             | `@orcel/orcel/channels`                        | `channels/<name>.ts`                             |
-| `orcelChannel(...)`, `slackChannel(...)`, `vercelOidc(...)`       | `@orcel/orcel/channels/orcel`, `/slack`, `/auth` | reused from `channels/<name>.ts`                 |
-| `defineSandbox(...)`                                            | `@orcel/orcel/sandbox`                         | `sandbox.ts` (or `sandbox/sandbox.ts`)           |
-| `defineSchedule(...)`                                           | `@orcel/orcel/schedules`                       | `schedules/<name>.ts` (or `schedules/<name>.md`) |
-| `defineEval(...)`, `defineEvalConfig(...)`                      | `@orcel/orcel/evals`                           | `evals/<name>.eval.ts`, `evals/evals.config.ts`  |
+| Helper                                                          | Subpath                                          | Authored Location                                |
+| --------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------ |
+| `defineAgent(...)`                                              | `@orcel/orcel`                                   | `agent.ts`, `subagents/<id>/agent.ts`            |
+| `defineInstructions(...)`                                       | `@orcel/orcel/instructions`                      | `instructions.ts` (or `instructions.md`)         |
+| `defineTool(...)`, `defineDynamic(...)`, `disableTool(...)`     | `@orcel/orcel/tools`                             | `tools/<name>.ts`                                |
+| `bash`, `readFile`, `writeFile`, and other provided definitions | `@orcel/orcel/tools/<name>`                      | `tools/<name>.ts`                                |
+| `defineSkill(...)`                                              | `@orcel/orcel/skills`                            | `skills/<name>.ts` (or `skills/<name>.md`)       |
+| `defineHook(...)`                                               | `@orcel/orcel/hooks`                             | `hooks/<slug>.ts`                                |
+| `defineChannel(...)`, `POST`, `GET`                             | `@orcel/orcel/channels`                          | `channels/<name>.ts`                             |
+| `orcelChannel(...)`, `slackChannel(...)`, `vercelOidc(...)`     | `@orcel/orcel/channels/orcel`, `/slack`, `/auth` | reused from `channels/<name>.ts`                 |
+| `defineSandbox(...)`                                            | `@orcel/orcel/sandbox`                           | `sandbox.ts` (or `sandbox/sandbox.ts`)           |
+| `defineSchedule(...)`                                           | `@orcel/orcel/schedules`                         | `schedules/<name>.ts` (or `schedules/<name>.md`) |
+| `defineEval(...)`, `defineEvalConfig(...)`                      | `@orcel/orcel/evals`                             | `evals/<name>.eval.ts`, `evals/evals.config.ts`  |
 
 Runtime accessors live on the subpath that owns the concern:
 
@@ -88,7 +88,7 @@ You are a weather-focused assistant. Be concise, accurate, and explicit when you
 `agent/tools/get_weather.ts`
 
 ```ts
-import { defineTool } from "@orcel/@orcel/orcel/tools";
+import { defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 export default defineTool({
