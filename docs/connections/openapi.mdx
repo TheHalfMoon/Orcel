@@ -12,7 +12,7 @@ Use an [MCP connection](./mcp) instead when the service already exposes an MCP s
 Create one file under `agent/connections/`. The filename becomes the runtime connection name, so `agent/connections/petstore.ts` registers as `petstore`, and generated operation tools are called as `petstore__<operation>`.
 
 ```ts title="agent/connections/petstore.ts"
-import { defineOpenAPIConnection } from "@orcel/@orcel/orcel/connections";
+import { defineOpenAPIConnection } from "@orcel/orcel/connections";
 
 export default defineOpenAPIConnection({
   spec: "https://petstore3.swagger.io/api/v3/openapi.json",
@@ -40,7 +40,7 @@ Use `baseUrl` when the spec is missing server data, points at the wrong environm
 The resolved base URL must use `https` too (loopback hosts may use `http` for local development), since operation calls carry the connection's credentials.
 
 ```ts title="agent/connections/crm.ts"
-import { defineOpenAPIConnection } from "@orcel/@orcel/orcel/connections";
+import { defineOpenAPIConnection } from "@orcel/orcel/connections";
 
 export default defineOpenAPIConnection({
   spec: "https://api.example.com/openapi.json",
@@ -55,7 +55,7 @@ For an OAuth-backed API, follow the shared [Vercel Connect setup](../connections
 
 ```ts title="agent/connections/github.ts"
 import { connect } from "@vercel/connect/eve";
-import { defineOpenAPIConnection } from "@orcel/@orcel/orcel/connections";
+import { defineOpenAPIConnection } from "@orcel/orcel/connections";
 
 export default defineOpenAPIConnection({
   spec: "https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json",
@@ -76,7 +76,7 @@ OpenAPI connections accept the shared connection `auth` and `headers` options. U
 Some APIs declare operation parameters that should come from the application rather than the model, such as a tenant or organization ID. Configure those values with `toolCall.providedArguments`:
 
 ```ts title="agent/connections/crm.ts"
-import { defineOpenAPIConnection } from "@orcel/@orcel/orcel/connections";
+import { defineOpenAPIConnection } from "@orcel/orcel/connections";
 
 export default defineOpenAPIConnection({
   spec: "https://api.example.com/openapi.json",
@@ -100,7 +100,7 @@ Use `headers` for transport-wide headers that are not operation inputs. Use `pro
 Most OpenAPI specs describe far more than the model should use. Narrow generated tools with exactly one of `operations.allow` or `operations.block`:
 
 ```ts title="agent/connections/petstore.ts"
-import { defineOpenAPIConnection } from "@orcel/@orcel/orcel/connections";
+import { defineOpenAPIConnection } from "@orcel/orcel/connections";
 
 export default defineOpenAPIConnection({
   spec: "https://petstore3.swagger.io/api/v3/openapi.json",
@@ -120,7 +120,7 @@ Filters match `operationId`. If an operation does not declare one, use the deter
 When an operation path contains dynamic segments, the spec must declare matching OpenAPI path parameters. orcel exposes path, query, header, and cookie parameters as top-level tool inputs, then substitutes `in: "path"` values into the matching `{name}` placeholder before making the request.
 
 ```ts title="agent/connections/cart.ts"
-import { defineOpenAPIConnection } from "@orcel/@orcel/orcel/connections";
+import { defineOpenAPIConnection } from "@orcel/orcel/connections";
 
 export default defineOpenAPIConnection({
   baseUrl: "https://api.example.com",

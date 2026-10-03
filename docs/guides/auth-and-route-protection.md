@@ -24,8 +24,8 @@ These routes are protected by the channel's auth policy. orcel fails closed by d
 The health route created by `orcelChannel()` is public and skips the walk entirely, so load balancers and uptime monitors can probe it without credentials. Replacing `agent/channels/orcel.ts` with a custom `defineChannel(...)` or disabling that slot also replaces or removes the health route.
 
 ```ts title="agent/channels/orcel.ts"
-import { orcelChannel } from "@orcel/@orcel/orcel/channels/orcel";
-import { localDev, vercelOidc } from "@orcel/@orcel/orcel/channels/auth";
+import { orcelChannel } from "@orcel/orcel/channels/orcel";
+import { localDev, vercelOidc } from "@orcel/orcel/channels/auth";
 
 export default orcelChannel({
   auth: [vercelOidc(), localDev()],
@@ -45,8 +45,8 @@ export default orcelChannel({
 If every entry skips, the request gets a `401` whose `WWW-Authenticate` header advertises the challenge scheme(s) the configured entries declare — `Basic` for `httpBasic()`, `Bearer` for the token-based helpers (`jwtHmac`, `jwtEcdsa`, `oidc`, `vercelOidc`), both when you mix them, and `Bearer` as a fallback for entries that don't declare a scheme (custom `AuthFn`s, or an empty array). See [`withAuthChallenges`](#custom-verifiers) to declare a scheme on a custom `AuthFn`.
 
 ```ts
-import { type AuthFn, localDev, vercelOidc } from "@orcel/@orcel/orcel/channels/auth";
-import { orcelChannel } from "@orcel/@orcel/orcel/channels/orcel";
+import { type AuthFn, localDev, vercelOidc } from "@orcel/orcel/channels/auth";
+import { orcelChannel } from "@orcel/orcel/channels/orcel";
 import { getSession } from "@/lib/auth";
 
 function appSession(): AuthFn<Request> {
@@ -72,7 +72,7 @@ Put your own providers ahead of the catch-all helpers. `localDev()` is the final
 To reject with a precise status instead of skipping, throw:
 
 ```ts
-import { ForbiddenError, UnauthenticatedError } from "@orcel/@orcel/orcel/channels/auth";
+import { ForbiddenError, UnauthenticatedError } from "@orcel/orcel/channels/auth";
 
 throw new UnauthenticatedError({
   code: "authentication_required",
@@ -118,7 +118,7 @@ Auth fails closed: routes reject unauthenticated traffic by default, and the OID
 Each `subjects` entry is matched against the token's `sub` claim, which Vercel shapes as `owner:<team>:project:<name>:environment:<env>`. Hand-writing that string is a footgun: a typo silently rejects every caller, and an over-broad `*` wildcard silently lets unrelated ones in. Build the pattern with `vercelSubject(...)` instead. It rejects malformed input at construction time, and defaults `environment` to `"production"` when you omit it, so an unspecified environment cannot silently accept preview or development tokens:
 
 ```ts
-import { vercelOidc, vercelSubject } from "@orcel/@orcel/orcel/channels/auth";
+import { vercelOidc, vercelSubject } from "@orcel/orcel/channels/auth";
 
 vercelOidc({
   subjects: [
@@ -137,7 +137,7 @@ When none of the shipped helpers fit, write your own `AuthFn` (the array example
 A custom `AuthFn` doesn't declare a `WWW-Authenticate` scheme by default, so `routeAuth` falls back to `Bearer` for it. Wrap it with `withAuthChallenges(fn, challenges)` to declare the scheme(s) it actually satisfies, so a mixed `auth` array produces an accurate 401:
 
 ```ts
-import { withAuthChallenges, type AuthFn } from "@orcel/@orcel/orcel/channels/auth";
+import { withAuthChallenges, type AuthFn } from "@orcel/orcel/channels/auth";
 
 const apiKeyAuth: AuthFn<Request> = withAuthChallenges(
   (request) => (isValidApiKey(request) ? apiKeySessionAuth : null),
@@ -156,7 +156,7 @@ const apiKeyAuth: AuthFn<Request> = withAuthChallenges(
 Pull the token with `extractBearerToken(request.headers.get("authorization"))` before you hand it to the JWT/OIDC verifiers. The configs (`VerifyJwtHmacConfig`, `VerifyJwtEcdsaConfig`, `VerifyOidcConfig`) take `issuer`, `audiences`, the signing material (`secret` / `publicKey` / `discoveryUrl`), and optional `subjects` / `claims` matchers.
 
 ```ts
-import { extractBearerToken, verifyJwtHmac, type AuthFn } from "@orcel/@orcel/orcel/channels/auth";
+import { extractBearerToken, verifyJwtHmac, type AuthFn } from "@orcel/orcel/channels/auth";
 
 function hmacAuth(): AuthFn<Request> {
   return async (request) => {
@@ -177,8 +177,8 @@ function hmacAuth(): AuthFn<Request> {
 If a `defineChannel` route handler runs its own checks instead of `routeAuth`, it can still emit a framework-shaped failure with `createUnauthorizedResponse(...)`. You get back a `Response` with `cache-control: no-store`, a `{ ok: false, code, error }` JSON body, and one `www-authenticate` header per challenge:
 
 ```ts title="agent/channels/intake.ts"
-import { defineChannel, POST } from "@orcel/@orcel/orcel/channels";
-import { createUnauthorizedResponse } from "@orcel/@orcel/orcel/channels/auth";
+import { defineChannel, POST } from "@orcel/orcel/channels";
+import { createUnauthorizedResponse } from "@orcel/orcel/channels/auth";
 
 export default defineChannel({
   routes: [
@@ -207,8 +207,8 @@ export default defineChannel({
 `orcel init` scaffolds `agent/channels/orcel.ts` with a `placeholderAuth()` guardrail:
 
 ```ts
-import { orcelChannel } from "@orcel/@orcel/orcel/channels/orcel";
-import { localDev, placeholderAuth, vercelOidc } from "@orcel/@orcel/orcel/channels/auth";
+import { orcelChannel } from "@orcel/orcel/channels/orcel";
+import { localDev, placeholderAuth, vercelOidc } from "@orcel/orcel/channels/auth";
 
 export default orcelChannel({
   auth: [vercelOidc(), localDev(), placeholderAuth()],
@@ -226,8 +226,8 @@ Keep secret values (`ROUTE_AUTH_BASIC_PASSWORD`, signing keys) in environment va
 A `defineRemoteAgent({ forwardPrincipal: true })` caller (see [Remote agents](./remote-agents#forwarding-the-caller-identity)) asserts its end user's principal on create and continuation requests as a `forwardedPrincipal` body field. By default every such assertion is rejected with `403` — accepting someone else's word for who the user is requires naming exactly which forwarders you trust. Do that with `trustedForwarders` on `orcelChannel`:
 
 ```ts title="agent/channels/orcel.ts"
-import { orcelChannel } from "@orcel/@orcel/orcel/channels/orcel";
-import { vercelOidc, vercelSubject } from "@orcel/@orcel/orcel/channels/auth";
+import { orcelChannel } from "@orcel/orcel/channels/orcel";
+import { vercelOidc, vercelSubject } from "@orcel/orcel/channels/auth";
 
 export default orcelChannel({
   auth: [vercelOidc()],
@@ -244,9 +244,9 @@ export default orcelChannel({
 A forwarder accepted on its identity alone can assert any principal, including identities your tools trust directly, such as a Slack user or an app principal. When a forwarder should speak only for its own users, check what it asserts with the predicate's second argument:
 
 ```ts title="agent/channels/orcel.ts"
-import { orcelChannel } from "@orcel/@orcel/orcel/channels/orcel";
-import { vercelOidc, vercelSubject } from "@orcel/@orcel/orcel/channels/auth";
-import type { SessionAuthContext } from "@orcel/@orcel/orcel/context";
+import { orcelChannel } from "@orcel/orcel/channels/orcel";
+import { vercelOidc, vercelSubject } from "@orcel/orcel/channels/auth";
+import type { SessionAuthContext } from "@orcel/orcel/context";
 
 const router = vercelSubject({ teamSlug: "acme", projectName: "router" });
 
@@ -319,8 +319,8 @@ auth: connect("linear/myagent");
 For user-scoped auth in a browser app, the route-auth entry for the orcel channel should verify your app session and return a user principal:
 
 ```ts title="agent/channels/orcel.ts"
-import { orcelChannel } from "@orcel/@orcel/orcel/channels/orcel";
-import { localDev, type AuthFn } from "@orcel/@orcel/orcel/channels/auth";
+import { orcelChannel } from "@orcel/orcel/channels/orcel";
+import { localDev, type AuthFn } from "@orcel/orcel/channels/auth";
 import { getSession } from "@/lib/auth";
 
 function appSession(): AuthFn<Request> {
@@ -358,7 +358,7 @@ Set `auth` on an MCP or OpenAPI connection when the external service supplies a 
 When one tool calls a service behind OAuth, keep the auth provider at the call site and skip the separate connection. Providers take the same shapes as connection `auth`: `connect("...")` for Vercel Connect-backed OAuth, a custom interactive definition, or a plain `{ getToken }` for static credentials.
 
 ```ts title="agent/tools/list_okta_groups.ts"
-import { defineTool } from "@orcel/@orcel/orcel/tools";
+import { defineTool } from "@orcel/orcel/tools";
 import { connect } from "@vercel/connect/eve";
 import { z } from "zod";
 
@@ -381,7 +381,7 @@ This same inline shape naturally handles tools that need more than one credentia
 
 ```ts title="agent/tools/sync_ticket.ts"
 import { connect } from "@vercel/connect/eve";
-import { defineTool } from "@orcel/@orcel/orcel/tools";
+import { defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 const githubAuth = connect("github/myagent");

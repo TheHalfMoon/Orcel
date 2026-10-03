@@ -6,7 +6,7 @@ description: "Durable per-session memory with defineState: get() and update(), p
 `defineState` is a typed, named slot of durable per-session memory for an agent. Use it when the agent has to remember something between conversation turns (a running budget, a glossary, a checklist) and you don't want to stand up an external store for it. The values survive workflow step boundaries, so they outlast crashes, redeploys, and days-long sessions.
 
 ```ts
-import { defineState } from "@orcel/@orcel/orcel/context";
+import { defineState } from "@orcel/orcel/context";
 
 const budget = defineState("my-agent.budget", () => ({ count: 0, cap: 25 }));
 ```
@@ -19,13 +19,13 @@ Pass `defineState(name, initial)` a stable string `name` (namespace it to your a
 Declare the handle once at module scope and import it wherever you read or write the slot. Use it from inside a tool, hook, or other framework-managed runtime code:
 
 ```ts title="agent/lib/budget.ts"
-import { defineState } from "@orcel/@orcel/orcel/context";
+import { defineState } from "@orcel/orcel/context";
 
 export const budget = defineState("my-agent.budget", () => ({ count: 0, cap: 25 }));
 ```
 
 ```ts title="agent/tools/spend.ts"
-import { defineTool } from "@orcel/@orcel/orcel/tools";
+import { defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 import { budget } from "../lib/budget";
 import { runQuery } from "../lib/warehouse";
@@ -49,7 +49,7 @@ export default defineTool({
 State is durable by default and does not reset between turns. If you want a clean slate every turn, overwrite it from a lifecycle [hook](../guides/hooks) on `turn.started`:
 
 ```ts title="agent/hooks/reset-budget.ts"
-import { defineHook } from "@orcel/@orcel/orcel/hooks";
+import { defineHook } from "@orcel/orcel/hooks";
 import { budget } from "../lib/budget";
 
 export default defineHook({

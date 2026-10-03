@@ -29,7 +29,7 @@ as `deploy`.
 ## Define a workflow tool
 
 ```ts title="agent/tools/deploy.ts"
-import { defineWorkflowTool } from "@orcel/@orcel/orcel/tools";
+import { defineWorkflowTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 import { computePlan, runDeploy, type DeployPlan } from "../lib/deploy";
 
@@ -118,7 +118,7 @@ Create `agent/tools/workflow.ts` and export the provided `workflow` factory when
 supply the JavaScript program at runtime:
 
 ```ts title="agent/tools/workflow.ts"
-import { workflow } from "@orcel/@orcel/orcel/tools/workflow";
+import { workflow } from "@orcel/orcel/tools/workflow";
 
 export default workflow({ maxSubagents: 20 });
 ```
@@ -154,7 +154,7 @@ The experimental uppercase `Workflow` framework tool and its exports have been r
 old sentinel:
 
 ```diff
--import { experimental_workflow } from "@orcel/@orcel/orcel/tools/workflow";
+-import { experimental_workflow } from "@orcel/orcel/tools/workflow";
 -
 -export default experimental_workflow({ maxSubagents: 20 });
 ```
@@ -162,7 +162,7 @@ old sentinel:
 with the lowercase factory:
 
 ```ts
-import { workflow } from "@orcel/@orcel/orcel/tools/workflow";
+import { workflow } from "@orcel/orcel/tools/workflow";
 
 export default workflow({ maxSubagents: 20 });
 ```
@@ -244,7 +244,7 @@ an approval inside an `execute` call already parks durably and holds no compute,
 doesn't need a task.
 
 ```ts title="agent/tools/deploy.ts"
-import { defineWorkflowTool } from "@orcel/@orcel/orcel/tools";
+import { defineWorkflowTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 import { runDeploy } from "../lib/deploy";
 
@@ -284,7 +284,7 @@ as a revision request. A `serve` body runs once per task and gets its calls from
 instead of taking an input:
 
 ```ts title="agent/tools/release-plan.ts"
-import { defineWorkflowTool } from "@orcel/@orcel/orcel/tools";
+import { defineWorkflowTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 import { revise, type Plan } from "../lib/release-plan";
 
@@ -387,7 +387,7 @@ The provider declaration and the API request both stay inside the step:
 
 ```ts
 import { connect } from "@vercel/connect/eve";
-import type { WorkflowStepToolContext } from "@orcel/@orcel/orcel/tools";
+import type { WorkflowStepToolContext } from "@orcel/orcel/tools";
 
 async function readRepository(ctx: WorkflowStepToolContext, repository: string) {
   "use step";
@@ -588,8 +588,8 @@ export default defineAgent({
 Define the model-visible router under `agent/tools/`. Build the Jev criteria from the subagents' effective descriptions, then pass its typed choice directly to `ctx.agent()`:
 
 ```ts title="agent/tools/agent-router.ts"
-import { evaluate } from "@orcel/@orcel/orcel/ai";
-import { defineWorkflowTool } from "@orcel/@orcel/orcel/tools";
+import { evaluate } from "@orcel/orcel/ai";
+import { defineWorkflowTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 async function chooseTarget(
@@ -646,7 +646,7 @@ The evaluation runs in a step so workflow replay records its result instead of m
 To replace the model-facing `agent` tool with a router across every target in `ctx.agents`, export `agentRouter()` from the `agent` slot:
 
 ```ts title="agent/tools/agent.ts"
-import { agentRouter } from "@orcel/@orcel/orcel/tools/agent-router";
+import { agentRouter } from "@orcel/orcel/tools/agent-router";
 
 export default agentRouter();
 ```
@@ -677,7 +677,7 @@ intermediate tool results. A snapshot used as the final output does enter histor
 This workflow reports progress, then suspends until its timer expires:
 
 ```ts title="agent/tools/remind_with_progress.ts"
-import { defineWorkflowTool } from "@orcel/@orcel/orcel/tools";
+import { defineWorkflowTool } from "@orcel/orcel/tools";
 import { sleep } from "workflow";
 import { z } from "zod";
 
@@ -793,7 +793,7 @@ conversation, and a steering message doesn't withdraw the request. `sleep` is th
 ### Wait for an external system to call back
 
 ```ts title="agent/tools/render_video.ts"
-import { defineWorkflowTool } from "@orcel/@orcel/orcel/tools";
+import { defineWorkflowTool } from "@orcel/orcel/tools";
 import { createWebhook, FatalError } from "workflow";
 import { z } from "zod";
 import { submitRender } from "../lib/render";
@@ -822,7 +822,7 @@ response, pass `respondWith: new Response(...)` to `createWebhook`.
 ### Ask now, act when answered
 
 ```ts title="agent/tools/refund_order.ts"
-import { defineWorkflowTool } from "@orcel/@orcel/orcel/tools";
+import { defineWorkflowTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 import { issueRefund } from "../lib/refunds";
 

@@ -12,8 +12,8 @@ Use an [MCP connection](../connections/mcp) instead when your orcel agent needs 
 Create `agent/channels/mcp.ts`. Authentication is required explicitly, even during development.
 
 ```ts title="agent/channels/mcp.ts"
-import { localDev } from "@orcel/@orcel/orcel/channels/auth";
-import { mcpChannel } from "@orcel/@orcel/orcel/channels/mcp";
+import { localDev } from "@orcel/orcel/channels/auth";
+import { mcpChannel } from "@orcel/orcel/channels/mcp";
 
 export default mcpChannel({
   auth: localDev(),
@@ -27,8 +27,8 @@ This accepts a synthetic local principal under `orcel dev` or `vercel dev` and r
 The default Streamable HTTP endpoint is `/orcel/v1/mcp`. Set `route` when the application should publish it somewhere else:
 
 ```ts title="agent/channels/mcp.ts"
-import { localDev } from "@orcel/@orcel/orcel/channels/auth";
-import { mcpChannel } from "@orcel/@orcel/orcel/channels/mcp";
+import { localDev } from "@orcel/orcel/channels/auth";
+import { mcpChannel } from "@orcel/orcel/channels/mcp";
 
 export default mcpChannel({
   auth: localDev(),
@@ -43,8 +43,8 @@ The channel registers `GET`, `POST`, and `DELETE` at the selected route.
 For an MCP client that should open a sign-in flow, configure orcel as an OAuth protected resource. Wrap the access-token verifier in `oauthResource()`:
 
 ```ts title="agent/channels/mcp.ts"
-import { oauthResource, oidc } from "@orcel/@orcel/orcel/channels/auth";
-import { mcpChannel } from "@orcel/@orcel/orcel/channels/mcp";
+import { oauthResource, oidc } from "@orcel/orcel/channels/auth";
+import { mcpChannel } from "@orcel/orcel/channels/mcp";
 
 const issuer = "https://auth.example.com";
 const resource = "https://agent.example.com/orcel/v1/mcp";
@@ -74,8 +74,8 @@ Most hosted MCP clients (Claude, ChatGPT, Grok, and similar) register themselves
 Use a custom `AuthFn` when token verification needs application-specific logic:
 
 ```ts title="agent/channels/mcp.ts"
-import { extractBearerToken, oauthResource, verifyOidc } from "@orcel/@orcel/orcel/channels/auth";
-import { mcpChannel } from "@orcel/@orcel/orcel/channels/mcp";
+import { extractBearerToken, oauthResource, verifyOidc } from "@orcel/orcel/channels/auth";
+import { mcpChannel } from "@orcel/orcel/channels/mcp";
 
 const issuer = "https://auth.example.com";
 const resource = "https://agent.example.com/orcel/v1/mcp";
@@ -138,8 +138,8 @@ For the complete strategy and auth-walk model, see [Authentication](../guides/au
 To intentionally expose the MCP endpoint without authentication, use `none()`:
 
 ```ts title="agent/channels/mcp.ts"
-import { none } from "@orcel/@orcel/orcel/channels/auth";
-import { mcpChannel } from "@orcel/@orcel/orcel/channels/mcp";
+import { none } from "@orcel/orcel/channels/auth";
+import { mcpChannel } from "@orcel/orcel/channels/mcp";
 
 export default mcpChannel({
   auth: none(),

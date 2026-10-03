@@ -34,7 +34,7 @@ Python needs a sandbox that runs real binaries. For local development, start a D
 The default orcel images for Docker, microsandbox, and Vercel Sandbox include Python, but not matplotlib. Add this definition alongside `workspace/` to install matplotlib in a virtual environment. It uses the same environment for installation and chart execution, without changing the system Python:
 
 ```ts title="agent/sandbox/sandbox.ts"
-import { DefaultSandbox, defineSandbox } from "@orcel/@orcel/orcel/sandbox";
+import { DefaultSandbox, defineSandbox } from "@orcel/orcel/sandbox";
 
 export const environment = DefaultSandbox.environment({
   prepare: async (sandbox) => {
@@ -74,7 +74,7 @@ The built-in `bash`, `read_file`, and `write_file` tools already target the sand
 
 ```ts title="agent/tools/chart_series.ts"
 import { randomUUID } from "node:crypto";
-import { defineTool } from "@orcel/@orcel/orcel/tools";
+import { defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 export default defineTool({
@@ -156,7 +156,7 @@ Create this script in your project root. It asks for a chart through the same lo
 ```ts title="save-chart.ts"
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { Client } from "@orcel/@orcel/orcel/client";
+import { Client } from "@orcel/orcel/client";
 import { z } from "zod";
 
 const host = process.argv[2];

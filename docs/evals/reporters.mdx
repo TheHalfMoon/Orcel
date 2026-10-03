@@ -14,8 +14,8 @@ Reporters attach in two places. Declare them in `evals.config.ts` to observe **e
 `Braintrust(...)` uploads eval results to Braintrust experiments. Put one instance in the config so it covers the whole run:
 
 ```ts title="evals/evals.config.ts"
-import { defineEvalConfig } from "@orcel/@orcel/orcel/evals";
-import { Braintrust } from "@orcel/@orcel/orcel/evals/reporters";
+import { defineEvalConfig } from "@orcel/orcel/evals";
+import { Braintrust } from "@orcel/orcel/evals/reporters";
 
 export default defineEvalConfig({
   judge: { model: "typesafe-ai/jev" },
@@ -26,8 +26,8 @@ export default defineEvalConfig({
 Need a destination for only some evals? Attach it per eval instead:
 
 ```ts title="evals/brooklyn-forecast.eval.ts"
-import { defineEval } from "@orcel/@orcel/orcel/evals";
-import { Braintrust } from "@orcel/@orcel/orcel/evals/reporters";
+import { defineEval } from "@orcel/orcel/evals";
+import { Braintrust } from "@orcel/orcel/evals/reporters";
 
 export default defineEval({
   reporters: [Braintrust({ projectName: "weather-agent" })],
@@ -49,8 +49,8 @@ Braintrust needs its SDK installed in the app and credentials in the environment
 `Datadog(...)` uploads eval assertion scores to a Datadog LLM Observability Experiment. Put one instance in the config so it covers the whole run:
 
 ```ts title="evals/evals.config.ts"
-import { defineEvalConfig } from "@orcel/@orcel/orcel/evals";
-import { Datadog } from "@orcel/@orcel/orcel/evals/reporters";
+import { defineEvalConfig } from "@orcel/orcel/evals";
+import { Datadog } from "@orcel/orcel/evals/reporters";
 
 export default defineEvalConfig({
   reporters: [Datadog({ projectName: "weather-agent" })],

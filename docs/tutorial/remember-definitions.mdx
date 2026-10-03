@@ -10,7 +10,7 @@ Every team has house definitions for the analytics assistant. "Active" means a p
 ## Define the glossary slot
 
 ```ts title="agent/lib/glossary.ts"
-import { defineState } from "@orcel/@orcel/orcel/context";
+import { defineState } from "@orcel/orcel/context";
 
 export interface Glossary {
   readonly terms: Readonly<Record<string, string>>;
@@ -24,7 +24,7 @@ export const glossary = defineState<Glossary>("analytics.glossary", () => ({
 ## Tools to read and write it
 
 ```ts title="agent/tools/define_metric.ts"
-import { defineTool } from "@orcel/@orcel/orcel/tools";
+import { defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 import { glossary } from "../lib/glossary";
 
@@ -39,7 +39,7 @@ export default defineTool({
 ```
 
 ```ts title="agent/tools/recall_metrics.ts"
-import { defineTool } from "@orcel/@orcel/orcel/tools";
+import { defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 import { glossary } from "../lib/glossary";
 

@@ -8,8 +8,8 @@
   <h1>orcel</h1>
 
 <a href="https://github.com/TheHalfMoon"><img alt="Built by TheHalfMoon" src="https://img.shields.io/badge/BUILT%20BY-TheHalfMoon-000000.svg?style=for-the-badge&logo=github&labelColor=000000"></a>
-<a href="https://www.npmjs.com/package/@orcel/orcel"><img alt="NPM version" src="https://img.shields.io/npm/v/orcel.svg?style=for-the-badge&labelColor=000000"></a>
-<a href="https://github.com/TheHalfMoon/orcel/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/npm/l/orcel.svg?style=for-the-badge&labelColor=000000"></a>
+<a href="https://www.npmjs.com/package/@orcel/orcel"><img alt="NPM version" src="https://img.shields.io/npm/v/@orcel/orcel.svg?style=for-the-badge&labelColor=000000"></a>
+<a href="https://github.com/TheHalfMoon/orcel/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/npm/l/@orcel/orcel.svg?style=for-the-badge&labelColor=000000"></a>
 <a href="https://github.com/TheHalfMoon/orcel/discussions"><img alt="Join the community on GitHub" src="https://img.shields.io/badge/Join%20the%20community-blueviolet.svg?style=for-the-badge&logo=Github&labelColor=000000&logoWidth=20"></a>
 
 </div>
@@ -77,7 +77,7 @@ You are a concise weather demo assistant. Tell users that the weather data is mo
 Add a mock weather tool at `agent/tools/get_weather.ts`:
 
 ```ts
-import { defineTool } from "@orcel/@orcel/orcel/tools";
+import { defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 export default defineTool({

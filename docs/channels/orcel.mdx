@@ -10,8 +10,8 @@ Every running orcel app exposes its own API. `orcel.dev` publishes framework doc
 Reach for it when something needs HTTP access to your agent, including local tooling, a browser frontend, the terminal UI, or another API client. Most apps never write this file. Add `agent/channels/orcel.ts` only to override the defaults, usually the route auth policy.
 
 ```ts title="agent/channels/orcel.ts"
-import { orcelChannel } from "@orcel/@orcel/orcel/channels/orcel";
-import { localDev, vercelOidc } from "@orcel/@orcel/orcel/channels/auth";
+import { orcelChannel } from "@orcel/orcel/channels/orcel";
+import { localDev, vercelOidc } from "@orcel/orcel/channels/auth";
 
 export default orcelChannel({
   auth: [vercelOidc(), localDev()],
@@ -126,7 +126,7 @@ An authored `agent/channels/orcel.ts` replaces the complete default orcel channe
 Disable the complete surface by exporting `disableRoute()` at that slot:
 
 ```ts title="agent/channels/orcel.ts"
-import { disableRoute } from "@orcel/@orcel/orcel/channels";
+import { disableRoute } from "@orcel/orcel/channels";
 
 export default disableRoute();
 ```
@@ -143,8 +143,8 @@ session requests.
 Enable or narrow CORS only when browser clients call the channel directly:
 
 ```ts title="agent/channels/orcel.ts"
-import { orcelChannel } from "@orcel/@orcel/orcel/channels/orcel";
-import { localDev, vercelOidc } from "@orcel/@orcel/orcel/channels/auth";
+import { orcelChannel } from "@orcel/orcel/channels/orcel";
+import { localDev, vercelOidc } from "@orcel/orcel/channels/auth";
 
 export default orcelChannel({
   auth: [vercelOidc(), localDev()],
@@ -186,8 +186,8 @@ For a production endpoint whose conversations are all intentionally public,
 set a constant audience:
 
 ```ts title="agent/channels/orcel.ts"
-import { vercelOidc } from "@orcel/@orcel/orcel/channels/auth";
-import { orcelChannel } from "@orcel/@orcel/orcel/channels/orcel";
+import { vercelOidc } from "@orcel/orcel/channels/auth";
+import { orcelChannel } from "@orcel/orcel/channels/orcel";
 
 export default orcelChannel({
   auth: [vercelOidc()],
@@ -213,8 +213,8 @@ content](../guides/remote-agents#preserving-trace-content).
 Use `onMessage` to add request-specific context before the agent sees the user message, and `events` to observe stream events from sessions this channel created:
 
 ```ts title="agent/channels/orcel.ts"
-import { orcelChannel, defaultOrcelAuth } from "@orcel/@orcel/orcel/channels/orcel";
-import { localDev, vercelOidc } from "@orcel/@orcel/orcel/channels/auth";
+import { orcelChannel, defaultOrcelAuth } from "@orcel/orcel/channels/orcel";
+import { localDev, vercelOidc } from "@orcel/orcel/channels/auth";
 
 export default orcelChannel({
   auth: [vercelOidc(), localDev()],

@@ -9,7 +9,7 @@ The file lives under `agent/subagents/`, so its tool name is derived from the pa
 
 ```ts title="agent/subagents/weather.ts"
 import { defineRemoteAgent } from "@orcel/orcel";
-import { vercelOidc } from "@orcel/@orcel/orcel/agents/auth";
+import { vercelOidc } from "@orcel/orcel/agents/auth";
 
 export default defineRemoteAgent({
   url: "https://weather-agent.example.com",
@@ -91,8 +91,8 @@ Use `vercelOidc()` from `@orcel/orcel/agents/auth` when one Vercel-deployed orce
 For calls between different Vercel projects, allow the calling project on the receiving agent's orcel channel:
 
 ```ts title="agent/channels/orcel.ts"
-import { vercelOidc, vercelSubject } from "@orcel/@orcel/orcel/channels/auth";
-import { orcelChannel } from "@orcel/@orcel/orcel/channels/orcel";
+import { vercelOidc, vercelSubject } from "@orcel/orcel/channels/auth";
+import { orcelChannel } from "@orcel/orcel/channels/orcel";
 
 export default orcelChannel({
   auth: [
@@ -121,7 +121,7 @@ Set `forwardPrincipal: true` to forward the dispatching turn's session principal
 
 ```ts title="agent/subagents/site-ops.ts"
 import { defineRemoteAgent } from "@orcel/orcel";
-import { vercelOidc } from "@orcel/@orcel/orcel/agents/auth";
+import { vercelOidc } from "@orcel/orcel/agents/auth";
 
 export default defineRemoteAgent({
   url: "https://site-ops.example.com",
@@ -161,8 +161,8 @@ The receiving deployment uses the policy only after it trusts the calling
 deployment:
 
 ```ts title="agent/channels/orcel.ts"
-import { orcelChannel } from "@orcel/@orcel/orcel/channels/orcel";
-import { vercelOidc, vercelSubject } from "@orcel/@orcel/orcel/channels/auth";
+import { orcelChannel } from "@orcel/orcel/channels/orcel";
+import { vercelOidc, vercelSubject } from "@orcel/orcel/channels/auth";
 
 export default orcelChannel({
   auth: [vercelOidc()],

@@ -6,7 +6,7 @@ description: "Grade evals with evaluation models using criteria, typed questions
 Use `t.judge(...)` when a deterministic [assertion](./assertions) cannot capture what a good response looks like. It calls [`evaluate` from `@orcel/orcel/ai`](../guides/evaluate#evaluate-inside-a-tool) and defaults to `typesafe-ai/jev`, TypeSafe AI's [Jev evaluation model](https://vercel.com/i/what-is-jev). The judge is separate from the agent under test and is used only for scoring.
 
 ```ts
-import { defineEval } from "@orcel/@orcel/orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 export default defineEval({
   async test(t) {
@@ -125,7 +125,7 @@ Model settings resolve in this order:
 A per-eval `judge` replaces the project's judge configuration. Per-call fields override the resolved configuration. `judge` and its `model` are optional; deterministic evals make no evaluation requests.
 
 ```ts title="evals/evals.config.ts"
-import { defineEvalConfig } from "@orcel/@orcel/orcel/evals";
+import { defineEvalConfig } from "@orcel/orcel/evals";
 
 export default defineEvalConfig({
   judge: { model: "typesafe-ai/jev" },

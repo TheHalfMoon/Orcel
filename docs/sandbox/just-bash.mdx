@@ -6,8 +6,8 @@ description: "Use a pure-JavaScript shell and virtual filesystem."
 `JustBashSandbox.environment()` provides a shell and filesystem without starting a container or VM.
 
 ```ts
-import { defineSandbox } from "@orcel/@orcel/orcel/sandbox";
-import { JustBashSandbox } from "@orcel/@orcel/orcel/sandbox/just-bash";
+import { defineSandbox } from "@orcel/orcel/sandbox";
+import { JustBashSandbox } from "@orcel/orcel/sandbox/just-bash";
 
 export const environment = JustBashSandbox.environment();
 export default defineSandbox(() => environment.open());

@@ -54,7 +54,7 @@ like any other [declared subagent](./subagents).
 The author's `extension/extension.ts` default-exports a `defineExtension` handle. Give it a [Standard Schema](https://standardschema.dev) when consumers need to provide settings:
 
 ```ts title="extension/extension.ts"
-import { defineExtension } from "@orcel/@orcel/orcel/extension";
+import { defineExtension } from "@orcel/orcel/extension";
 import { z } from "zod";
 
 export default defineExtension({
@@ -68,7 +68,7 @@ export default defineExtension({
 Contributions, including schedule handlers, can import that handle to read the validated configuration. Defaults have already been applied:
 
 ```ts title="extension/tools/search.ts"
-import { defineTool } from "@orcel/@orcel/orcel/tools";
+import { defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 import extension from "../extension";
@@ -306,8 +306,8 @@ A same-named consumer channel, tool, connection, skill, schedule, or subagent wi
 
 ```ts title="agent/extensions/crm/tools/search.ts"
 import { search } from "@acme/crm/tools";
-import { defineTool } from "@orcel/@orcel/orcel/tools";
-import { always } from "@orcel/@orcel/orcel/tools/approval";
+import { defineTool } from "@orcel/orcel/tools";
+import { always } from "@orcel/orcel/tools/approval";
 
 export default defineTool({ ...search, approval: always() });
 ```
@@ -315,7 +315,7 @@ export default defineTool({ ...search, approval: always() });
 To remove an extension tool, use `disableTool()` in its matching slot:
 
 ```ts title="agent/extensions/crm/tools/search.ts"
-import { disableTool } from "@orcel/@orcel/orcel/tools";
+import { disableTool } from "@orcel/orcel/tools";
 
 export default disableTool();
 ```
@@ -329,8 +329,8 @@ You can also place an override in the corresponding agent-root slot by using the
 To retain an extension tool's result type in a consumer hook, import its definition from `./tools` and pass it to [`toolResultFrom`](/docs/guides/hooks#narrowing-tool-results):
 
 ```ts title="agent/hooks/narrow-crm.ts"
-import { defineHook } from "@orcel/@orcel/orcel/hooks";
-import { toolResultFrom } from "@orcel/@orcel/orcel/tools";
+import { defineHook } from "@orcel/orcel/hooks";
+import { toolResultFrom } from "@orcel/orcel/tools";
 import { search } from "@acme/crm/tools";
 
 export default defineHook({

@@ -13,7 +13,7 @@ It ships inside the `orcel` package. This private `@orcel/code` workspace packag
 
 ```ts
 // agent/extensions/code.ts
-import code from "@orcel/@orcel/orcel/extensions/code";
+import code from "@orcel/orcel/extensions/code";
 
 export default code({
   // Optional; omit to mount without Connect-backed Vercel authentication.
@@ -33,9 +33,9 @@ Install CLI tooling in the environment's `prepare` callback:
 
 ```ts
 // agent/sandbox.ts
-import { defineSandbox } from "@orcel/@orcel/orcel/sandbox";
-import { VercelSandbox } from "@orcel/@orcel/orcel/sandbox/vercel";
-import { installCodeTooling } from "@orcel/@orcel/orcel/extensions/code/sandbox";
+import { defineSandbox } from "@orcel/orcel/sandbox";
+import { VercelSandbox } from "@orcel/orcel/sandbox/vercel";
+import { installCodeTooling } from "@orcel/orcel/extensions/code/sandbox";
 
 export const environment = VercelSandbox.environment({
   prepare: async (sandbox) => {

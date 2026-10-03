@@ -45,7 +45,7 @@ orcel reads `description`, optional `license`, and string `metadata`; other `SKI
 When markdown can't express what you need (typed values, generated content, or inline sibling files), author the skill in TypeScript with `defineSkill` from `@orcel/orcel/skills`:
 
 ```ts title="agent/skills/research.ts"
-import { defineSkill } from "@orcel/@orcel/orcel/skills";
+import { defineSkill } from "@orcel/orcel/skills";
 
 export default defineSkill({
   description: "Research unfamiliar topics before answering with confidence.",

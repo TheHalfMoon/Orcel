@@ -119,8 +119,8 @@ Import event types from `@orcel/orcel/client` when you want exhaustiveness or he
 `HandleMessageStreamEvent` remains available as a deprecated alias, so existing type imports continue to compile.
 
 ```ts
-import type { MessageStreamEvent } from "@orcel/@orcel/orcel/client";
-import { isCurrentTurnBoundaryEvent } from "@orcel/@orcel/orcel/client";
+import type { MessageStreamEvent } from "@orcel/orcel/client";
+import { isCurrentTurnBoundaryEvent } from "@orcel/orcel/client";
 
 function handleEvent(event: MessageStreamEvent) {
   console.log(event.meta.id, event.meta.at);
@@ -265,7 +265,7 @@ stream index after the captured prefix.
 A delegated subagent reports its progress on its own child session. The parent stream announces each child session with `agent.started`, whether the model called a subagent tool or a [workflow tool](/docs/tools/workflows#delegate-work-ctxagent) opened the session with `ctx.agent`. Pass the event to `agent()` on the parent's session handle to get the child's handle, then follow it with `stream()`:
 
 ```ts
-import { isCurrentTurnBoundaryEvent } from "@orcel/@orcel/orcel/client";
+import { isCurrentTurnBoundaryEvent } from "@orcel/orcel/client";
 
 const session = client.sessions.attach(parentSessionId);
 const { events } = await session.snapshot();

@@ -32,7 +32,7 @@ Use orcel's helpers for direct OpenAI or Anthropic access without installing ano
 
 ```ts title="agent/agent.ts"
 import { defineAgent } from "@orcel/orcel";
-import { anthropic } from "@orcel/@orcel/orcel/models/anthropic";
+import { anthropic } from "@orcel/orcel/models/anthropic";
 
 export default defineAgent({
   model: anthropic(), // claude-sonnet-5

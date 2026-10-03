@@ -16,7 +16,7 @@ export default defineAgent({ model: "anthropic/claude-opus-5.5" });
 ```
 
 ```ts title="agent/tools/get_weather.ts"
-import { defineTool } from "@orcel/@orcel/orcel/tools";
+import { defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 export default defineTool({
@@ -166,7 +166,7 @@ Use `/login` for local credentials, or set `OPENAI_API_KEY` or `ANTHROPIC_API_KE
 
 ```ts title="agent/agent.ts"
 import { defineAgent } from "@orcel/orcel";
-import { chatgpt } from "@orcel/@orcel/orcel/models/openai";
+import { chatgpt } from "@orcel/orcel/models/openai";
 
 export default defineAgent({
   model: chatgpt(),

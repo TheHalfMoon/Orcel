@@ -6,8 +6,8 @@ description: "Create local persistent containers from an image or Dockerfile."
 Docker environments can use orcel's default image, an existing OCI image, or `agent/sandbox/Dockerfile`.
 
 ```ts
-import { defineSandbox } from "@orcel/@orcel/orcel/sandbox";
-import { DockerSandbox } from "@orcel/@orcel/orcel/sandbox/docker";
+import { defineSandbox } from "@orcel/orcel/sandbox";
+import { DockerSandbox } from "@orcel/orcel/sandbox/docker";
 
 export const environment = DockerSandbox.image("ghcr.io/acme/agent@sha256:...");
 

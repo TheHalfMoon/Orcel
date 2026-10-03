@@ -14,7 +14,7 @@ The extension has no config:
 
 ```ts
 // agent/extensions/computer-use.ts
-export { default } from "@orcel/@orcel/orcel/computer-use";
+export { default } from "@orcel/orcel/computer-use";
 ```
 
 Mount it only for agents whose sandbox runs the desktop. The tool schema is large, so agents that never use a desktop should leave it out.
@@ -25,9 +25,9 @@ Install the desktop and driver in the environment's `prepare` callback, then sta
 
 ```ts
 // agent/sandbox.ts
-import { defineSandbox } from "@orcel/@orcel/orcel/sandbox";
-import { VercelSandbox } from "@orcel/@orcel/orcel/sandbox/vercel";
-import { installComputerUse, startComputerUse } from "@orcel/@orcel/orcel/computer-use/sandbox";
+import { defineSandbox } from "@orcel/orcel/sandbox";
+import { VercelSandbox } from "@orcel/orcel/sandbox/vercel";
+import { installComputerUse, startComputerUse } from "@orcel/orcel/computer-use/sandbox";
 
 export const environment = VercelSandbox.environment({
   prepare: async (sandbox) => {

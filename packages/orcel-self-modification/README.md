@@ -9,7 +9,7 @@ orcel add @orcel/orcel/self-modification
 The command creates `agent/extensions/self-modification/extension.ts`:
 
 ```ts
-import selfModification from "@orcel/@orcel/orcel/self-modification";
+import selfModification from "@orcel/orcel/self-modification";
 
 export default selfModification({
   // model: "provider/model",

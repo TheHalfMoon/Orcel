@@ -26,8 +26,8 @@ my-agent/
 An eval is a single `async test(t)` function. You drive the agent with `t` and assert on the run with the same `t`:
 
 ```ts title="evals/weather/brooklyn-forecast.eval.ts"
-import { defineEval } from "@orcel/@orcel/orcel/evals";
-import { includes } from "@orcel/@orcel/orcel/evals/expect";
+import { defineEval } from "@orcel/orcel/evals";
+import { includes } from "@orcel/orcel/evals/expect";
 
 export default defineEval({
   description: "Basic message and tool-usage coverage for the weather agent.",
@@ -47,8 +47,8 @@ export default defineEval({
 Every `evals/` directory needs exactly one `evals.config.ts` at its root. It declares the defaults every eval shares:
 
 ```ts title="evals/evals.config.ts"
-import { defineEvalConfig } from "@orcel/@orcel/orcel/evals";
-import { Braintrust } from "@orcel/@orcel/orcel/evals/reporters";
+import { defineEvalConfig } from "@orcel/orcel/evals";
+import { Braintrust } from "@orcel/orcel/evals/reporters";
 
 export default defineEvalConfig({
   judge: { model: "typesafe-ai/jev" },
@@ -63,7 +63,7 @@ Everything is optional. `judge` sets the default model for [LLM-as-judge](./judg
 Use `setup` to start shared resources or run migrations before orcel starts the local agent server. Return shared context directly from `setup`, then release resources in `teardown`:
 
 ```ts title="evals/evals.config.ts"
-import { defineEvalConfig } from "@orcel/@orcel/orcel/evals";
+import { defineEvalConfig } from "@orcel/orcel/evals";
 import { startTestDatabase } from "./database.js";
 
 export default defineEvalConfig({
@@ -80,8 +80,8 @@ export default defineEvalConfig({
 `context` is inferred from the setup return value. To use that type in an eval file, pass the config's type to `defineEval`:
 
 ```ts title="evals/database.eval.ts"
-import { defineEval } from "@orcel/@orcel/orcel/evals";
-import { equals } from "@orcel/@orcel/orcel/evals/expect";
+import { defineEval } from "@orcel/orcel/evals";
+import { equals } from "@orcel/orcel/evals/expect";
 import type config from "./evals.config.js";
 
 export default defineEval<typeof config>({
@@ -107,7 +107,7 @@ Use `mockModel` when an eval fixture needs to exercise orcel's runtime without c
 
 ```ts title="agent/agent.ts"
 import { defineAgent } from "@orcel/orcel";
-import { mockModel } from "@orcel/@orcel/orcel/evals";
+import { mockModel } from "@orcel/orcel/evals";
 
 export default defineAgent({
   model: mockModel("A deterministic reply"),

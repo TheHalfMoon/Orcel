@@ -17,7 +17,7 @@ This adds a Next.js app (`next.config.ts`, `app/page.tsx`, `app/_components/`) w
 
 ```ts title="next.config.ts"
 import type { NextConfig } from "next";
-import { withEve } from "@orcel/@orcel/orcel/next";
+import { withEve } from "@orcel/orcel/next";
 
 const nextConfig: NextConfig = {};
 
@@ -39,7 +39,7 @@ The scaffold's channel ships with `placeholderAuth()`, which rejects unauthentic
 Create `agent/lib/auth.ts`. This uses orcel's HTTP Basic verifier, which compares passwords in constant time. Missing environment variables, missing credentials, and wrong credentials all fail closed:
 
 ```ts title="agent/lib/auth.ts"
-import { verifyHttpBasic, withAuthChallenges } from "@orcel/@orcel/orcel/channels/auth";
+import { verifyHttpBasic, withAuthChallenges } from "@orcel/orcel/channels/auth";
 
 export const appAuth = withAuthChallenges(
   (request: Request) => {
@@ -66,8 +66,8 @@ export const appAuth = withAuthChallenges(
 Replace `agent/channels/orcel.ts`, removing the earlier `devTeam` entry. The orcel channel checks `appAuth` for session creation, messages, controls, and streams. The remaining helpers preserve authenticated Vercel CLI access and local development:
 
 ```ts title="agent/channels/orcel.ts"
-import { orcelChannel } from "@orcel/@orcel/orcel/channels/orcel";
-import { localDev, vercelOidc } from "@orcel/@orcel/orcel/channels/auth";
+import { orcelChannel } from "@orcel/orcel/channels/orcel";
+import { localDev, vercelOidc } from "@orcel/orcel/channels/auth";
 import { appAuth } from "../lib/auth";
 
 export default orcelChannel({
@@ -80,7 +80,7 @@ The verified username becomes the user principal. The `growth` team selects the 
 Add `proxy.ts` at the project root so opening the dashboard triggers the browser's native username/password prompt. It protects the generated UI routes; orcel API routes keep their channel auth, so an OIDC-authenticated CLI request does not encounter a browser-only gate:
 
 ```ts title="proxy.ts"
-import { routeAuth } from "@orcel/@orcel/orcel/channels/auth";
+import { routeAuth } from "@orcel/orcel/channels/auth";
 import { NextResponse } from "next/server";
 import { appAuth } from "./agent/lib/auth";
 

@@ -32,8 +32,8 @@ Add credentials for direct model providers, tools, and connections to the Vercel
 The default environment selects Vercel Sandbox on Vercel. To select it explicitly:
 
 ```typescript
-import { defineSandbox } from "@orcel/@orcel/orcel/sandbox";
-import { VercelSandbox } from "@orcel/@orcel/orcel/sandbox/vercel";
+import { defineSandbox } from "@orcel/orcel/sandbox";
+import { VercelSandbox } from "@orcel/orcel/sandbox/vercel";
 
 export const environment = VercelSandbox.environment();
 export default defineSandbox(() => environment.open());
@@ -60,7 +60,7 @@ Use `withEve` from `@orcel/orcel/vercel` when the agents and other applications 
 For a standalone agent or workspace with a peer Next.js frontend under `apps/web/`, replace `vercel.json` with a root `vercel.ts`. The frontend uses an ordinary Next.js config without `@orcel/orcel/next`:
 
 ```typescript title="vercel.ts"
-import { withEve } from "@orcel/@orcel/orcel/vercel";
+import { withEve } from "@orcel/orcel/vercel";
 
 export default await withEve({
   services: {
@@ -89,7 +89,7 @@ Generated transport routes are inserted before a filesystem handler or, when no 
 Custom agent channel endpoints are not published automatically. Expose one explicitly by routing it to the generated service:
 
 ```typescript title="vercel.ts"
-import { withEve } from "@orcel/@orcel/orcel/vercel";
+import { withEve } from "@orcel/orcel/vercel";
 
 export default await withEve({
   services: {

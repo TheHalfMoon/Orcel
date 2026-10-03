@@ -31,7 +31,7 @@ The Web Chat installer does not support orcel agent workspaces. If you want Next
 
 ```ts title="next.config.ts"
 import type { NextConfig } from "next";
-import { withEve } from "@orcel/@orcel/orcel/next";
+import { withEve } from "@orcel/orcel/next";
 
 const nextConfig: NextConfig = {};
 
@@ -92,7 +92,7 @@ When the Next.js app is a peer of an orcel project, select its root without repe
 
 ```ts title="apps/web/next.config.ts"
 import type { NextConfig } from "next";
-import { withEve } from "@orcel/@orcel/orcel/next";
+import { withEve } from "@orcel/orcel/next";
 
 const nextConfig: NextConfig = {};
 
@@ -116,7 +116,7 @@ For a single unnamed agent, call [`useOrcelAgent`](./overview) without `agent` o
 ```tsx
 "use client";
 
-import { useOrcelAgent } from "@orcel/@orcel/orcel/react";
+import { useOrcelAgent } from "@orcel/orcel/react";
 
 export function SupportStatus() {
   const support = useOrcelAgent({ agent: "support" });

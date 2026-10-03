@@ -31,7 +31,7 @@ The hook lives in `@orcel/orcel/react`. Render `data.messages`, use `status` to 
 ```tsx
 "use client";
 
-import { useOrcelAgent } from "@orcel/@orcel/orcel/react";
+import { useOrcelAgent } from "@orcel/orcel/react";
 
 export function Chat() {
   const agent = useOrcelAgent();
@@ -89,7 +89,7 @@ Most chat UIs only need `data.messages` and `status`. Drop down to `events` when
 Pass `prewarm: true` to start a workflow when the chat mounts and after each reset:
 
 ```tsx
-import { useOrcelAgent } from "@orcel/@orcel/orcel/react";
+import { useOrcelAgent } from "@orcel/orcel/react";
 
 export function Chat() {
   const agent = useOrcelAgent({ prewarm: true });
@@ -102,7 +102,7 @@ In React, `prewarm` is a live boolean. Use component state to wait until the use
 composing a message:
 
 ```tsx
-import { useOrcelAgent } from "@orcel/@orcel/orcel/react";
+import { useOrcelAgent } from "@orcel/orcel/react";
 import { useState } from "react";
 
 export function Chat() {
@@ -259,7 +259,7 @@ For a question with `allowFreeform`, render a text input and send `{ requestId, 
 Connections and tools that need OAuth or another grant emit `authorization.required`. The default reducer projects that into an `authorization` message part with the display name, instructions, device code, and user-facing sign-in URL. Render that part as a normal chat message, then keep the session cursor; orcel resumes the parked turn when the callback completes and updates the part after `authorization.completed`:
 
 ```tsx
-import type { OrcelMessagePart } from "@orcel/@orcel/orcel/react";
+import type { OrcelMessagePart } from "@orcel/orcel/react";
 
 function AuthorizationPrompt({ part }: { part: OrcelMessagePart }) {
   if (part.type !== "authorization") return null;
@@ -331,8 +331,8 @@ The `optimistic` option (default `true`) projects submitted user messages into `
 The default reducer projects events into `{ messages }` (`OrcelMessageData`). When you want `data` shaped differently, pass a `reducer` implementing `OrcelAgentReducer<TData>`:
 
 ```tsx
-import { useOrcelAgent } from "@orcel/@orcel/orcel/react";
-import type { OrcelAgentReducer } from "@orcel/@orcel/orcel/react";
+import { useOrcelAgent } from "@orcel/orcel/react";
+import type { OrcelAgentReducer } from "@orcel/orcel/react";
 
 interface ToolLog {
   readonly toolCalls: number;
@@ -355,7 +355,7 @@ const agent = useOrcelAgent({ reducer: toolCounter });
 The browser conversation lives durably on the server. Persist both the rendered event log and the `session` cursor to pick it back up after a reload:
 
 ```tsx
-import type { ClientSessionState, MessageStreamEvent } from "@orcel/@orcel/orcel/client";
+import type { ClientSessionState, MessageStreamEvent } from "@orcel/orcel/client";
 
 type SavedOrcelChat = {
   events?: readonly MessageStreamEvent[];

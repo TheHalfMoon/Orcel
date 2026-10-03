@@ -17,7 +17,7 @@ Add `orcelSvelteKit()` before `sveltekit()`:
 
 ```ts title="vite.config.ts"
 import { sveltekit } from "@sveltejs/kit/vite";
-import { orcelSvelteKit } from "@orcel/@orcel/orcel/sveltekit";
+import { orcelSvelteKit } from "@orcel/orcel/sveltekit";
 import { defineConfig } from "vite";
 
 export default defineConfig({
@@ -46,7 +46,7 @@ With the plugin in `vite.config.ts`, components call [`useOrcelAgent`](./use-orc
 
 ```svelte
 <script lang="ts">
-  import { useOrcelAgent } from "@orcel/@orcel/orcel/svelte";
+  import { useOrcelAgent } from "@orcel/orcel/svelte";
 
   const agent = useOrcelAgent();
   let message = $state("");

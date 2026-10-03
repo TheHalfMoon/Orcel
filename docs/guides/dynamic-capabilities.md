@@ -161,7 +161,7 @@ This example exposes one MCP connection for each cloud account enabled for the
 current user:
 
 ```ts title="agent/connections/accounts.ts"
-import { defineDynamic, defineMcpClientConnection } from "@orcel/@orcel/orcel/connections";
+import { defineDynamic, defineMcpClientConnection } from "@orcel/orcel/connections";
 import { listEnabledAccounts, mintAccountToken } from "../lib/accounts";
 
 export default defineDynamic({
@@ -239,7 +239,7 @@ Dynamic tool executors receive the same `ToolContext` as static authored tools, 
 The example below builds one tool per warehouse table. A map return names each tool by its bare key, so the model sees `orders`, `users`, and so on.
 
 ```ts title="agent/tools/query.ts"
-import { defineDynamic, defineTool } from "@orcel/@orcel/orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 import { listTables, runReadOnly } from "../lib/warehouse";
 
@@ -281,7 +281,7 @@ Prefer an [extension](../extensions) for reusable orcel integrations. Extensions
 Use `defineDurableCallback` when a provider package must return dynamic `defineTool()` values directly. orcel cannot transform callback code inside an installed dependency. Put every per-tool value in the helper's `closure`. The callback receives that snapshot as its first argument. The closure follows the same JSON-serializability rules as transformed captures.
 
 ```ts title="provider-package/search.ts"
-import { defineDurableCallback, defineTool } from "@orcel/@orcel/orcel/tools";
+import { defineDurableCallback, defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 interface SearchInput {
@@ -308,7 +308,7 @@ Wrap every callback property with the helper. This includes labels, approval pol
 For live schemas created in a provider package, use `defineDurableSchema` from `@orcel/orcel/tools`. Put the schema's per-tool values in `closure` and construct the schema in `schema`. Plain JSON Schema objects need no helper.
 
 ```ts
-import { defineDurableSchema } from "@orcel/@orcel/orcel/tools";
+import { defineDurableSchema } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 export function amountSchema(limit: number) {
@@ -376,7 +376,7 @@ The tool loop reads the current set right before each model call, so a mid-turn 
 A single file can declare handlers for several events, and the most recently fired one owns that file's tool set. Re-resolve on `turn.started` to replace what `session.started` returned:
 
 ```ts title="agent/tools/catalog.ts"
-import { defineDynamic, defineTool } from "@orcel/@orcel/orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 import { runReadOnly, searchCatalog } from "../lib/catalog";
 
@@ -408,7 +408,7 @@ Resolvers across files run concurrently.
 A dynamic skills file resolves which [skill](../skills) a caller can load, keyed on the principal. It resolves on `session.started` and `turn.started` only (`step.started` is reserved for dynamic tools). Read `ctx.session.auth` or channel metadata and return a `defineSkill(...)` (named after the file slug) or `null`:
 
 ```ts title="agent/skills/team_playbook.ts"
-import { defineDynamic, defineSkill } from "@orcel/@orcel/orcel/skills";
+import { defineDynamic, defineSkill } from "@orcel/orcel/skills";
 import { PLAYBOOKS } from "../lib/playbooks";
 
 export default defineDynamic({
@@ -433,7 +433,7 @@ A dynamic skill that returns only `markdown` never starts a sandbox: orcel keeps
 A dynamic instructions file returns `defineInstructions({ content, role? })` built from the principal, tenant, channel, or external data. Omit `role` for system context:
 
 ```ts title="agent/instructions/persona.ts"
-import { defineDynamic, defineInstructions } from "@orcel/@orcel/orcel/instructions";
+import { defineDynamic, defineInstructions } from "@orcel/orcel/instructions";
 
 export default defineDynamic({
   events: {
@@ -450,7 +450,7 @@ export default defineDynamic({
 Use `role: "user"` when the resolved value is application or user context that should become part of durable history:
 
 ```ts title="agent/instructions/brief.ts"
-import { defineDynamic, defineInstructions } from "@orcel/@orcel/orcel/instructions";
+import { defineDynamic, defineInstructions } from "@orcel/orcel/instructions";
 import { loadBrief } from "../lib/briefs";
 
 export default defineDynamic({

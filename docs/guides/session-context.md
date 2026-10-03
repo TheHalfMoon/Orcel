@@ -18,7 +18,7 @@ These APIs work only during orcel-managed runtime execution. Calling them during
 `ctx.session` describes the durable session and active turn:
 
 ```ts title="agent/tools/who_called_me.ts"
-import { defineTool } from "@orcel/@orcel/orcel/tools";
+import { defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 export default defineTool({

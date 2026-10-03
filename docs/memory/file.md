@@ -26,9 +26,9 @@ function region, falling back to `iad1`. Blob usage may incur charges.
 The registry writes:
 
 ```ts title="agent/memory/file.ts"
-import { defineMemory } from "@orcel/@orcel/orcel/memory";
-import { byPrincipal } from "@orcel/@orcel/orcel/memory/scope";
-import { fileMemory } from "@orcel/@orcel/orcel/memory/file";
+import { defineMemory } from "@orcel/orcel/memory";
+import { byPrincipal } from "@orcel/orcel/memory/scope";
+import { fileMemory } from "@orcel/orcel/memory/file";
 
 export default defineMemory({
   description: "Remember stable facts and preferences about the caller.",
@@ -89,7 +89,7 @@ Pass a fresh in-memory backend for tests or throwaway environments. It loses
 its contents when the backend instance or process is replaced:
 
 ```ts
-import { fileMemory, inMemory } from "@orcel/@orcel/orcel/memory/file";
+import { fileMemory, inMemory } from "@orcel/orcel/memory/file";
 
 provider: fileMemory({ backend: inMemory() });
 ```
@@ -135,8 +135,8 @@ Use `vercelBlob()` from `@orcel/orcel/memory/file/vercel` to configure credentia
 object prefix explicitly instead of relying on environment detection:
 
 ```ts
-import { fileMemory } from "@orcel/@orcel/orcel/memory/file";
-import { vercelBlob } from "@orcel/@orcel/orcel/memory/file/vercel";
+import { fileMemory } from "@orcel/orcel/memory/file";
+import { vercelBlob } from "@orcel/orcel/memory/file/vercel";
 
 provider: fileMemory({
   backend: vercelBlob({ prefix: "orcel/memory/support-agent" }),
@@ -155,7 +155,7 @@ Implement `MemoryDocumentBackend` from `@orcel/orcel/memory/file` to keep the do
 another store:
 
 ```ts
-import { MemoryDocumentConflictError, type MemoryDocumentBackend } from "@orcel/@orcel/orcel/memory/file";
+import { MemoryDocumentConflictError, type MemoryDocumentBackend } from "@orcel/orcel/memory/file";
 
 export function kvBackend(store: KvStore): MemoryDocumentBackend {
   return {

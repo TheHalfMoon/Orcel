@@ -8,7 +8,7 @@ Each eval file is one graded case by default, and a single file can fan out over
 Before adding a case, create the required config at the root of `evals/`. An empty config is enough when you do not need shared judge, reporter, concurrency, or timeout settings:
 
 ```ts title="evals/evals.config.ts"
-import { defineEvalConfig } from "@orcel/@orcel/orcel/evals";
+import { defineEvalConfig } from "@orcel/orcel/evals";
 
 export default defineEvalConfig({});
 ```
@@ -18,8 +18,8 @@ export default defineEvalConfig({});
 The common case sends one turn and asserts on the reply. `t.send(input)` resolves once the turn settles, and the returned turn’s `.message` is the assistant reply:
 
 ```ts title="evals/weather/brooklyn-forecast.eval.ts"
-import { defineEval } from "@orcel/@orcel/orcel/evals";
-import { includes } from "@orcel/@orcel/orcel/evals/expect";
+import { defineEval } from "@orcel/orcel/evals";
+import { includes } from "@orcel/orcel/evals/expect";
 
 export default defineEval({
   async test(t) {
@@ -33,7 +33,7 @@ export default defineEval({
 Some evals only care about behavior, not text. Assert on the run and skip the content check entirely:
 
 ```ts title="evals/weather/no-tools-for-greetings.eval.ts"
-import { defineEval } from "@orcel/@orcel/orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 export default defineEval({
   async test(t) {
@@ -63,8 +63,8 @@ evals/
 Drive several turns in sequence for branching, HITL approvals, structured output, attachments, or multiple sessions. Because assertions live in the function, an intermediate value is a local variable. Keep each turn in a local variable and continue through its `.session`.
 
 ```ts title="evals/draft-then-send.eval.ts"
-import { defineEval } from "@orcel/@orcel/orcel/evals";
-import { includes } from "@orcel/@orcel/orcel/evals/expect";
+import { defineEval } from "@orcel/orcel/evals";
+import { includes } from "@orcel/orcel/evals/expect";
 
 export default defineEval({
   async test(t) {
@@ -81,8 +81,8 @@ export default defineEval({
 Use scoped assertions for intermediate turns. When later control flow depends on a value-level check, `t.require` records a gate and stops the script if it fails:
 
 ```ts title="evals/session-continuity.eval.ts"
-import { defineEval } from "@orcel/@orcel/orcel/evals";
-import { equals } from "@orcel/@orcel/orcel/evals/expect";
+import { defineEval } from "@orcel/orcel/evals";
+import { equals } from "@orcel/orcel/evals/expect";
 
 export default defineEval({
   async test(t) {
@@ -126,8 +126,8 @@ Each `send` (and `respond`/`respondAll`) resolves to a turn with `.message`, `.d
 Use `t.session()` to create a session before its first message:
 
 ```ts title="evals/prewarm.eval.ts"
-import { defineEval } from "@orcel/@orcel/orcel/evals";
-import { equals } from "@orcel/@orcel/orcel/evals/expect";
+import { defineEval } from "@orcel/orcel/evals";
+import { equals } from "@orcel/orcel/evals/expect";
 
 export default defineEval({
   async test(t) {
@@ -160,7 +160,7 @@ from `session`; read replies from `turn.message`. Session operations such as `re
 Use `start()` when the eval must observe or affect a turn before it settles. A live turn owns one stream consumer: `waitForEvent()` reads typed events from its buffer, and `result()` waits for the boundary and records the same buffered stream as an immutable turn. Event data matchers use the same partial-deep matcher language as `t.event(...)`.
 
 ```ts title="evals/cancel-running-tool.eval.ts"
-import { defineEval } from "@orcel/@orcel/orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 export default defineEval({
   async test(t) {
@@ -198,9 +198,9 @@ For driving sessions created outside the eval, by a channel webhook or a schedul
 To fan one file out over a dataset, default-export an array of `defineEval(...)` values. Eval modules are ESM, so top-level `await` can load anything. Ids derive from the file name plus a zero-padded index in array order (`sql/0000`, `sql/0001`, and so on). The loaders (`loadJson`, `loadYaml` from `@orcel/orcel/evals/loaders`) parse fixture files relative to the app root:
 
 ```ts title="evals/sql.eval.ts"
-import { defineEval } from "@orcel/@orcel/orcel/evals";
-import { loadYaml } from "@orcel/@orcel/orcel/evals/loaders";
-import { equals } from "@orcel/@orcel/orcel/evals/expect";
+import { defineEval } from "@orcel/orcel/evals";
+import { loadYaml } from "@orcel/orcel/evals/loaders";
+import { equals } from "@orcel/orcel/evals/expect";
 
 const doc = await loadYaml("evals/data/cases.yaml");
 const rows = doc.evals as readonly { task: string; prompt: string; sql: string }[];

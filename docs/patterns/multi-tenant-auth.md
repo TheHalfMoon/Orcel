@@ -16,7 +16,7 @@ That is the entire pattern. Your application still owns tenant membership and cr
 Configure route auth so the accepted principal contains a string `tenantId` attribute. Then centralize the runtime check:
 
 ```ts title="agent/lib/tenant.ts"
-import type { SessionContext } from "@orcel/@orcel/orcel/context";
+import type { SessionContext } from "@orcel/orcel/context";
 
 export function requireTenantCaller(ctx: SessionContext): {
   tenantId: string;
@@ -42,8 +42,8 @@ your own API key, session cookie, or JWT. Use that credential to authenticate
 the caller before orcel starts a run, then stamp the tenant onto the session:
 
 ```ts title="agent/channels/orcel.ts"
-import { orcelChannel } from "@orcel/@orcel/orcel/channels/orcel";
-import { localDev, type AuthFn } from "@orcel/@orcel/orcel/channels/auth";
+import { orcelChannel } from "@orcel/orcel/channels/orcel";
+import { localDev, type AuthFn } from "@orcel/orcel/channels/auth";
 import { verifyAgentCaller } from "../../lib/app-auth";
 
 function tenantAppAuth(): AuthFn<Request> {
@@ -91,7 +91,7 @@ orcel to require the authenticated user from route auth, key the step-local toke
 cache by that user, and pass the projected principal into `getToken`:
 
 ```ts title="agent/lib/tenant-connection-auth.ts"
-import type { ConnectionAuthProvider, ConnectionPrincipal } from "@orcel/@orcel/orcel/connections";
+import type { ConnectionAuthProvider, ConnectionPrincipal } from "@orcel/orcel/connections";
 import { tenantCredentials, type TenantService } from "./tenant-credentials";
 
 function requireTenantPrincipal(principal: ConnectionPrincipal): {
@@ -134,7 +134,7 @@ orcel's token cache from crossing caller identities.
 Derive the tenant inside `execute`, fetch its credential from your application provider, and construct the outbound request:
 
 ```ts title="agent/tools/list_invoices.ts"
-import { defineTool } from "@orcel/@orcel/orcel/tools";
+import { defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 import { tenantCredentials } from "../lib/tenant-credentials";
 import { requireTenantCaller } from "../lib/tenant";
@@ -166,7 +166,7 @@ Attach the reusable auth helper to the connection. Generated operation tools
 receive the token at call time without exposing it to the model:
 
 ```ts title="agent/connections/billing.ts"
-import { defineOpenAPIConnection } from "@orcel/@orcel/orcel/connections";
+import { defineOpenAPIConnection } from "@orcel/orcel/connections";
 import { tenantCredentials } from "../lib/tenant-credentials";
 import { tenantBearerAuth } from "../lib/tenant-connection-auth";
 import { requireTenantCaller } from "../lib/tenant";
@@ -192,7 +192,7 @@ Do not return `Authorization` from `headers` when `auth` is present. orcel const
 MCP connections accept the same callbacks:
 
 ```ts title="agent/connections/support.ts"
-import { defineMcpClientConnection } from "@orcel/@orcel/orcel/connections";
+import { defineMcpClientConnection } from "@orcel/orcel/connections";
 import { tenantCredentials } from "../lib/tenant-credentials";
 import { tenantBearerAuth } from "../lib/tenant-connection-auth";
 import { requireTenantCaller } from "../lib/tenant";
@@ -219,7 +219,7 @@ If the remote server does not accept Bearer auth, omit `auth` and return the
 tenant API key from `headers` instead:
 
 ```ts title="agent/connections/support.ts"
-import { defineMcpClientConnection } from "@orcel/@orcel/orcel/connections";
+import { defineMcpClientConnection } from "@orcel/orcel/connections";
 import { tenantCredentials } from "../lib/tenant-credentials";
 import { requireTenantCaller } from "../lib/tenant";
 
