@@ -12,7 +12,7 @@ import {
 import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import { promisify } from "node:util";
 
 import { afterEach } from "vitest";
@@ -118,6 +118,7 @@ export async function materializeScenarioApp(
     });
 
     if (descriptor.installDependencies === true) {
+      await wireWorkspaceOrcelPeerDependencies({ appRoot, descriptor });
       await installScenarioDependencies({
         appRoot,
         descriptor,
@@ -189,13 +190,6 @@ async function writePackageManifest(input: {
       ...input.descriptor.dependencies,
     },
     name: input.descriptor.name,
-    pnpm: {
-      // Workspace peer resolution must never fall back to the registry for the
-      // unpublished candidate package; bind every Orcel edge to this tarball.
-      overrides: {
-        [ORCEL_PACKAGE_NAME]: `file:./${tarballFileName}`,
-      },
-    },
     private: true,
     type: "module",
   };
@@ -275,6 +269,40 @@ async function writeDescriptorFiles(input: {
  * keeps subsequent installs in the same worker fast enough that the
  * bespoke cache wasn't pulling its weight.
  */
+async function wireWorkspaceOrcelPeerDependencies(input: {
+  readonly appRoot: string;
+  readonly descriptor: ScenarioAppDescriptor;
+}): Promise<void> {
+  const tarballFileName = await resolveScenarioOrcelTarballFileName();
+  const tarballPath = join(input.appRoot, tarballFileName);
+
+  for (const relativePath of Object.keys(input.descriptor.files)) {
+    if (!/^packages\/[^/]+\/package\.json$/.test(relativePath)) continue;
+
+    const manifestPath = join(input.appRoot, relativePath);
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+      optionalDependencies?: Record<string, string>;
+      peerDependencies?: Record<string, string>;
+    };
+    if (manifest.peerDependencies?.[ORCEL_PACKAGE_NAME] === undefined) continue;
+    if (
+      manifest.dependencies?.[ORCEL_PACKAGE_NAME] !== undefined ||
+      manifest.devDependencies?.[ORCEL_PACKAGE_NAME] !== undefined ||
+      manifest.optionalDependencies?.[ORCEL_PACKAGE_NAME] !== undefined
+    ) {
+      continue;
+    }
+
+    const tarballSpec = `file:${relative(dirname(manifestPath), tarballPath).split("\\").join("/")}`;
+    manifest.devDependencies = {
+      ...manifest.devDependencies,
+      [ORCEL_PACKAGE_NAME]: tarballSpec,
+    };
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  }
+}
 async function installScenarioDependencies(input: {
   readonly appRoot: string;
   readonly descriptor: ScenarioAppDescriptor;
