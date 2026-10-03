@@ -124,7 +124,10 @@ jobs:
           print("PUBLIC_ROUTE_DIFF_AUDIT=PASS")
           PY
 
-          if git grep -n '@orcel/orcel/orcel' -- ':!*.lock'; then
+          if git grep -n '@orcel/orcel/orcel' -- \
+            ':!*.lock' \
+            ':!.github/scripts/migrate-orcel-npm-scope.py' \
+            ':!.github/workflows/npm-scope-migration.yml'; then
             echo "Duplicated scoped package path detected." >&2
             exit 1
           fi
