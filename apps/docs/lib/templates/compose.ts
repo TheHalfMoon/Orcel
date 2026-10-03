@@ -45,7 +45,7 @@ export interface GeneratedTemplatesInput {
 const isTemplateFileLanguage = (value: string): value is TemplateFile["language"] =>
   value === "markdown" || value === "typescript";
 
-const SYNC_HINT = "run `pnpm --filter @orcel/orcel-docs templates:sync`";
+const SYNC_HINT = "run `pnpm --filter orcel-docs templates:sync`";
 
 /**
  * Merges the hand-authored manifest with the generated GitHub data into the
