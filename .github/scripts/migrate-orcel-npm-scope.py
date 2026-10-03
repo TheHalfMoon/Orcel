@@ -5,6 +5,11 @@ This helper is intentionally narrow: it changes npm package identity references 
 preserving product branding, the `orcel` CLI binary, `.orcel` state paths, `/orcel`
 HTTP routes, route inputs such as `orcel/support`, historical changelogs/research,
 provenance, and external compatibility identifiers.
+
+GitHub workflow files are intentionally excluded from the bulk write because the
+branch-scoped Actions token cannot update workflow definitions. Required workflow
+package-reference edits are applied separately through the repository connector and
+qualified on the final PR head.
 """
 
 from __future__ import annotations
@@ -19,12 +24,12 @@ OLD = "orcel"
 NEW = "@orcel/orcel"
 
 SKIP_PREFIXES = (
+    ".github/workflows/",
     ".orcel-migration/",
     "research/",
 )
 SKIP_EXACT = {
     ".github/scripts/migrate-orcel-npm-scope.py",
-    ".github/workflows/npm-scope-migration.yml",
 }
 DEPENDENCY_FIELDS = (
     "dependencies",
@@ -103,8 +108,6 @@ def scope_package_specifier(specifier: str) -> str:
 
 
 def replace_import_specifiers(text: str) -> str:
-    # Real ESM/CJS package specifiers. This deliberately does not replace generic
-    # quoted strings such as normalizePublicRoutePrefix("orcel/support").
     patterns = (
         re.compile(r"(\bfrom\s+)([\"'])(orcel(?:/[^\"']+)?)(\2)"),
         re.compile(r"(\bimport\s+)([\"'])(orcel(?:/[^\"']+)?)(\2)"),
@@ -118,8 +121,6 @@ def replace_import_specifiers(text: str) -> str:
     for pattern in patterns:
         text = pattern.sub(replace, text)
 
-    # Embedded source fixtures commonly escape their quotes. Keep this bounded to
-    # import/require syntax rather than replacing every escaped `orcel/...` string.
     escaped_prefixes = (
         'from \\"orcel',
         "from \\'orcel",
@@ -137,13 +138,11 @@ def replace_import_specifiers(text: str) -> str:
 
 
 def replace_workspace_dependency_keys(text: str) -> str:
-    # Normal JSON/YAML-ish workspace package manifests.
     text = re.sub(
         r'"orcel"(\s*:\s*"workspace:[^"]*")',
         rf'"{NEW}"\1',
         text,
     )
-    # Escaped package.json bodies embedded in tests/generated source.
     text = re.sub(
         r'\\"orcel\\"(\s*:\s*\\"workspace:[^\\"]*\\")',
         rf'\\"{NEW}\\"\1',
@@ -153,7 +152,6 @@ def replace_workspace_dependency_keys(text: str) -> str:
 
 
 def replace_inline_dependency_object_keys(text: str) -> str:
-    # Generated/test package manifests sometimes use JS object shorthand keys.
     for field in DEPENDENCY_FIELDS:
         pattern = re.compile(
             rf"({field}\s*:\s*\{{\s*)orcel(\s*:)",
@@ -170,7 +168,6 @@ def replace_package_identity_guards(text: str) -> str:
         text,
     )
 
-    # Package-resolution/bundler guards. Do not touch generic service/route IDs.
     for lhs in ("source", "specifier", "moduleSpecifier", "request", "packageName"):
         text = text.replace(f'{lhs} === "orcel"', f'{lhs} === "{NEW}"')
         text = text.replace(f"{lhs} === 'orcel'", f"{lhs} === '{NEW}'")
@@ -181,7 +178,6 @@ def replace_package_identity_guards(text: str) -> str:
             f"{lhs}.startsWith('orcel/')", f"{lhs}.startsWith('{NEW}/')"
         )
 
-    # Project-root package detection.
     text = text.replace("dependencies.orcel", f'dependencies["{NEW}"]')
     text = text.replace("dependencies?.orcel", f'dependencies?.["{NEW}"]')
     text = text.replace("packageJson.dependencies.orcel", f'packageJson.dependencies["{NEW}"]')
@@ -211,7 +207,6 @@ def replace_installation_surface(text: str) -> str:
     for before, after in replacements:
         text = text.replace(before, after)
 
-    # Runtime benchmark fixture that materializes node_modules manually.
     text = text.replace(
         'join(root, "node_modules", "orcel")',
         'join(root, "node_modules", "@orcel", "orcel")',
@@ -220,8 +215,6 @@ def replace_installation_surface(text: str) -> str:
 
 
 def replace_documented_export_paths(rel: str, text: str, subpaths: tuple[str, ...]) -> str:
-    # Docs should teach the new npm entrypoint while generic source strings remain
-    # untouched. Restrict this to Markdown/MDX/readme surfaces and known exports.
     path = Path(rel)
     is_doc = path.suffix.lower() in DOC_SUFFIXES or path.name in {"README", "README.md"}
     if not is_doc:
