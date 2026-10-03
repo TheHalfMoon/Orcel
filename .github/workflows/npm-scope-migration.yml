@@ -5,164 +5,174 @@ on:
     types: [opened, reopened, synchronize]
 
 jobs:
-  migrate:
+  audit:
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.head_ref == 'fix/npm-scoped-core-package'
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
 
     steps:
-      - name: Checkout migration branch
+      - name: Checkout exact PR head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.head_ref }}
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
-      - name: Detect completed migration
-        id: gate
-        shell: bash
-        run: |
-          set -euo pipefail
-          if jq -e '.name == "@orcel/orcel"' packages/orcel/package.json >/dev/null; then
-            echo "complete=true" >>"$GITHUB_OUTPUT"
-            echo "The npm-scope migration is already present on this head; no write will occur."
-          else
-            echo "complete=false" >>"$GITHUB_OUTPUT"
-          fi
-
       - name: Setup pnpm
-        if: steps.gate.outputs.complete != 'true'
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
 
       - name: Setup Node.js
-        if: steps.gate.outputs.complete != 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
           cache: "pnpm"
 
-      - name: Apply bounded package-identity migration
-        if: steps.gate.outputs.complete != 'true'
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-
-          files = (
-              "apps/templates/orcel-chat-template/package.json",
-              "apps/templates/orcel-llm-council-template/package.json",
-              "apps/templates/orcel-slack-agent-template/package.json",
-              "apps/templates/personal-agent-template/package.json",
-              "e2e/fixtures/gadget-extension/package.json",
-              "e2e/fixtures/gizmo-extension/package.json",
-              "e2e/fixtures/js-only-extension/package.json",
-              "e2e/fixtures/toolkit-extension/package.json",
-          )
-          fields = ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies")
-          for rel in files:
-              path = Path(rel)
-              payload = json.loads(path.read_text(encoding="utf-8"))
-              found = False
-              for field in fields:
-                  deps = payload.get(field)
-                  if not isinstance(deps, dict) or "orcel" not in deps:
-                      continue
-                  value = deps["orcel"]
-                  if "@orcel/orcel" in deps:
-                      raise SystemExit(f"{rel}:{field} contains both old and new package keys")
-                  marker = f'"orcel": {json.dumps(value)}'
-                  replacement = f'"@orcel/orcel": {json.dumps(value)}'
-                  text = path.read_text(encoding="utf-8")
-                  if marker not in text:
-                      raise SystemExit(f"{rel}:{field} dependency marker was not found exactly")
-                  path.write_text(text.replace(marker, replacement, 1), encoding="utf-8")
-                  found = True
-              if not found:
-                  raise SystemExit(f"{rel} did not contain the expected Orcel dependency key")
-          PY
-          python3 .github/scripts/migrate-orcel-npm-scope.py
-
-      - name: Regenerate and freeze lockfile
-        if: steps.gate.outputs.complete != 'true'
-        run: |
-          set -euo pipefail
-          pnpm install --lockfile-only
-          pnpm install --frozen-lockfile
-
-      - name: Audit migration diff
-        if: steps.gate.outputs.complete != 'true'
+      - name: Audit scoped package identity
         shell: bash
         run: |
           set -euo pipefail
-          git diff --check
-
           python3 - <<'PY'
-          from collections import Counter
+          from __future__ import annotations
+
+          import json
           import re
           import subprocess
+          from pathlib import Path
 
-          diff = subprocess.check_output(["git", "diff", "-U0"], text=True)
-          route = re.compile(r"(?<![A-Za-z0-9@._-])/orcel/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*")
-          deleted = Counter()
-          added = Counter()
-          for line in diff.splitlines():
-              if line.startswith("---") or line.startswith("+++"):
+          root = Path.cwd()
+          tracked = [
+              value
+              for value in subprocess.check_output(["git", "ls-files", "-z"]).decode().split("\0")
+              if value
+          ]
+          skip_prefixes = (".orcel-migration/", "research/")
+          skip_exact = {
+              ".github/scripts/migrate-orcel-npm-scope.py",
+              ".github/workflows/npm-scope-migration.yml",
+          }
+          text_suffixes = {
+              ".cjs", ".cts", ".js", ".json", ".jsonc", ".jsx", ".md", ".mdx",
+              ".mjs", ".mts", ".sh", ".svelte", ".ts", ".tsx", ".txt", ".vue",
+              ".yaml", ".yml",
+          }
+          dependency_fields = (
+              "dependencies", "devDependencies", "peerDependencies", "optionalDependencies"
+          )
+
+          definite: list[str] = []
+          suspicious_exports: list[str] = []
+
+          package_json = json.loads((root / "packages/orcel/package.json").read_text())
+          if package_json.get("name") != "@orcel/orcel":
+              definite.append("packages/orcel/package.json: core name is not @orcel/orcel")
+          if package_json.get("bin", {}).get("orcel") != "./bin/orcel.js":
+              definite.append("packages/orcel/package.json: orcel CLI binary changed")
+
+          exports = package_json.get("exports", {})
+          exported_subpaths = sorted(
+              key[2:]
+              for key in exports
+              if isinstance(key, str) and key.startswith("./") and "*" not in key and key != "."
+          )
+          export_pattern = None
+          if exported_subpaths:
+              export_pattern = re.compile(
+                  r"(?<![A-Za-z0-9@._/-])orcel/(?:"
+                  + "|".join(re.escape(value) for value in sorted(exported_subpaths, key=len, reverse=True))
+                  + r")(?![A-Za-z0-9._/-])"
+              )
+
+          import_pattern = re.compile(
+              r"(?:\bfrom\s+|\bimport\s+|\bimport\s*\(\s*|\brequire\s*\(\s*)"
+              r"[\"']orcel(?:[/\"'])"
+          )
+          escaped_import_pattern = re.compile(
+              r"(?:\bfrom\s+|\bimport\s+|\bimport\s*\(\s*|\brequire\s*\(\s*)"
+              r"\\[\"']orcel(?:[/\\])"
+          )
+
+          for rel in tracked:
+              if rel in skip_exact or rel.endswith("CHANGELOG.md") or rel.startswith(skip_prefixes):
                   continue
-              if line.startswith("-"):
-                  deleted.update(route.findall(line[1:]))
-              elif line.startswith("+"):
-                  added.update(route.findall(line[1:]))
+              path = root / rel
+              if path.suffix.lower() not in text_suffixes and path.name not in {"AGENTS.md", "Dockerfile", "README"}:
+                  continue
+              try:
+                  text = path.read_text(encoding="utf-8")
+              except UnicodeDecodeError:
+                  continue
 
-          if deleted != added:
-              print("The /orcel route-token multiset changed; refusing to continue.")
-              print("Deleted-only route tokens:", dict(deleted - added))
-              print("Added-only route tokens:", dict(added - deleted))
+              for token in ("@orcel/@orcel", "@orcel/orcel/orcel"):
+                  if token in text:
+                      definite.append(f"{rel}: malformed scoped package token {token}")
+              if import_pattern.search(text):
+                  definite.append(f"{rel}: unscoped package import")
+              if escaped_import_pattern.search(text):
+                  definite.append(f"{rel}: unscoped escaped package import")
+              if "node_modules/orcel/" in text:
+                  definite.append(f"{rel}: unscoped node_modules package path")
+              if re.search(r"--filter(?:=|\s+)orcel(?:\s|$|['\"])", text):
+                  definite.append(f"{rel}: unscoped pnpm filter")
+              if re.search(r"(?m)^\s*orcel:\s*(?:workspace:|file:)", text):
+                  definite.append(f"{rel}: unscoped YAML package key")
+              if 'modules: ["orcel/nuxt"]' in text or "modules: ['orcel/nuxt']" in text:
+                  definite.append(f"{rel}: unscoped Nuxt module package specifier")
+              if export_pattern is not None:
+                  for match in export_pattern.finditer(text):
+                      line = text.count("\n", 0, match.start()) + 1
+                      suspicious_exports.append(f"{rel}:{line}: {match.group(0)}")
+
+          for rel in tracked:
+              if not rel.endswith("package.json"):
+                  continue
+              try:
+                  payload = json.loads((root / rel).read_text(encoding="utf-8"))
+              except (UnicodeDecodeError, json.JSONDecodeError):
+                  continue
+              for field in dependency_fields:
+                  deps = payload.get(field)
+                  if isinstance(deps, dict) and "orcel" in deps:
+                      definite.append(f"{rel}: {field}.orcel remains")
+
+          route_test = (root / "packages/orcel/src/shared/public-route-prefix.test.ts").read_text()
+          if 'normalizePublicRoutePrefix("orcel/support")' not in route_test:
+              definite.append("slashless route-normalization invariant orcel/support changed")
+
+          print(f"DEFINITE_FAILURES={len(definite)}")
+          for item in definite:
+              print(f"FAIL: {item}")
+          print(f"SUSPICIOUS_EXPORTED_SUBPATH_REFS={len(suspicious_exports)}")
+          for item in suspicious_exports[:250]:
+              print(f"CHECK: {item}")
+          if len(suspicious_exports) > 250:
+              print(f"CHECK: ... and {len(suspicious_exports) - 250} more")
+
+          if definite:
               raise SystemExit(1)
-          print("PUBLIC_ROUTE_DIFF_AUDIT=PASS")
           PY
 
-          if git grep -n '@orcel/orcel/orcel' -- \
-            ':!*.lock' \
-            ':!.github/scripts/migrate-orcel-npm-scope.py' \
-            ':!.github/workflows/npm-scope-migration.yml'; then
-            echo "Duplicated scoped package path detected." >&2
-            exit 1
-          fi
-
-          echo "Changed files: $(git diff --name-only | wc -l | tr -d ' ')"
-          git diff --shortstat
-          git diff -- packages/orcel/package.json \
-            packages/orcel-buzz-acp-adapter/package.json \
-            scripts/assert-changeset-publish-packages.mjs \
-            packages/orcel/src/internal/package-name.ts \
-            packages/orcel/src/shared/public-route-prefix.test.ts
+      - name: Install frozen workspace
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
 
       - name: Build publishable packages
-        if: steps.gate.outputs.complete != 'true'
         run: |
           set -euo pipefail
           pnpm --filter '@orcel/orcel' build
           pnpm --filter '@orcel/buzz-acp-adapter' build
 
+      - name: Run scoped-package regression tests
+        run: |
+          set -euo pipefail
+          pnpm --filter '@orcel/orcel' exec vitest run \
+            src/shared/public-route-prefix.test.ts \
+            src/self-modification/package-consumption.scenario.test.ts
+
       - name: Dry-run npm publication
-        if: steps.gate.outputs.complete != 'true'
         run: |
           set -euo pipefail
           pnpm --dir packages/orcel publish --dry-run --no-git-checks --access public
           pnpm --dir packages/orcel-buzz-acp-adapter publish --dry-run --no-git-checks --access public
-
-      - name: Commit qualified migration
-        if: steps.gate.outputs.complete != 'true'
-        shell: bash
-        env:
-          HEAD_REF: ${{ github.head_ref }}
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "fix: publish Orcel from the @orcel scope"
-          git push origin "HEAD:${HEAD_REF}"
