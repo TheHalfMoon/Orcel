@@ -189,6 +189,13 @@ async function writePackageManifest(input: {
       ...input.descriptor.dependencies,
     },
     name: input.descriptor.name,
+    pnpm: {
+      // Workspace peer resolution must never fall back to the registry for the
+      // unpublished candidate package; bind every Orcel edge to this tarball.
+      overrides: {
+        [ORCEL_PACKAGE_NAME]: `file:./${tarballFileName}`,
+      },
+    },
     private: true,
     type: "module",
   };

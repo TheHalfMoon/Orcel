@@ -60,7 +60,14 @@ export async function startAgentServer(input: {
 
   // Built smoke servers run on the local machine. `orcel start` does not set
   // ORCEL_DEV, so set it here to let `localDev()` authenticate local requests.
-  const serverEnv = { ...(input.startEnv ?? process.env), ORCEL_DEV: "1" };
+  // Keep the package-manager build environment untouched, but force spawned smoke
+  // servers onto the deterministic authored-model adapter unless a test opts out.
+  const baseEnv = input.startEnv ?? process.env;
+  const serverEnv = {
+    ...baseEnv,
+    ORCEL_DEV: "1",
+    ORCEL_MOCK_AUTHORED_MODELS: baseEnv.ORCEL_MOCK_AUTHORED_MODELS ?? "1",
+  };
 
   const child = spawnServerProcess({
     args: plan.start.args,
