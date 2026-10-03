@@ -141,7 +141,7 @@ describe("packed package consumption", () => {
           scripts: { build: "orcel build" },
           dependencies: {
             "@vercel/connect": "2.2.0",
-            orcel: `file:${orcelTarball}`,
+            "@orcel/orcel": `file:${orcelTarball}`,
             "just-bash": "3.1.0",
             microsandbox: "0.5.5",
           },
@@ -153,7 +153,7 @@ describe("packed package consumption", () => {
     await writeAppFile(
       appRoot,
       "pnpm-workspace.yaml",
-      `overrides:\n  orcel: ${JSON.stringify(`file:${orcelTarball}`)}\n`,
+      `overrides:\n  "@orcel/orcel": ${JSON.stringify(`file:${orcelTarball}`)}\n`,
     );
     await writeAppFile(
       appRoot,
