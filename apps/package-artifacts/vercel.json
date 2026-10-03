@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "pnpm --filter @orcel/orcel-package-artifacts build",
+  "buildCommand": "pnpm --filter orcel-package-artifacts build",
   "installCommand": "pnpm install --frozen-lockfile",
   "outputDirectory": "public",
   "rewrites": [
