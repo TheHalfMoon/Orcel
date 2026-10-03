@@ -47,6 +47,42 @@ jobs:
         if: steps.gate.outputs.complete != 'true'
         run: |
           set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          files = (
+              "apps/templates/orcel-chat-template/package.json",
+              "apps/templates/orcel-llm-council-template/package.json",
+              "apps/templates/orcel-slack-agent-template/package.json",
+              "apps/templates/personal-agent-template/package.json",
+              "e2e/fixtures/gadget-extension/package.json",
+              "e2e/fixtures/gizmo-extension/package.json",
+              "e2e/fixtures/js-only-extension/package.json",
+              "e2e/fixtures/toolkit-extension/package.json",
+          )
+          fields = ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies")
+          for rel in files:
+              path = Path(rel)
+              payload = json.loads(path.read_text(encoding="utf-8"))
+              found = False
+              for field in fields:
+                  deps = payload.get(field)
+                  if not isinstance(deps, dict) or "orcel" not in deps:
+                      continue
+                  value = deps["orcel"]
+                  if "@orcel/orcel" in deps:
+                      raise SystemExit(f"{rel}:{field} contains both old and new package keys")
+                  marker = f'"orcel": {json.dumps(value)}'
+                  replacement = f'"@orcel/orcel": {json.dumps(value)}'
+                  text = path.read_text(encoding="utf-8")
+                  if marker not in text:
+                      raise SystemExit(f"{rel}:{field} dependency marker was not found exactly")
+                  path.write_text(text.replace(marker, replacement, 1), encoding="utf-8")
+                  found = True
+              if not found:
+                  raise SystemExit(f"{rel} did not contain the expected Orcel dependency key")
+          PY
           python3 .github/scripts/migrate-orcel-npm-scope.py
 
       - name: Regenerate and freeze lockfile
