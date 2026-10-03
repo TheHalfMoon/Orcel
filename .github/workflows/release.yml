@@ -66,8 +66,21 @@ jobs:
         if: github.ref == 'refs/heads/main'
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
-      - name: Log in to Vercel Container Registry
+      - name: Resolve VCR publishing boundary
         if: github.ref == 'refs/heads/main'
+        id: vcr-policy
+        env:
+          VCR_TEAM_ID: ${{ secrets.VCR_TEAM_ID }}
+        run: |
+          if [[ -n "$VCR_TEAM_ID" ]]; then
+            echo "enabled=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >>"$GITHUB_OUTPUT"
+            echo "VCR_TEAM_ID is unavailable; VCR image publication is skipped."
+          fi
+
+      - name: Log in to Vercel Container Registry
+        if: github.ref == 'refs/heads/main' && steps.vcr-policy.outputs.enabled == 'true'
         # Public workflows cannot resolve the upstream action while its repository is private.
         uses: ./.github/actions/vcr-login
         with:
@@ -82,7 +95,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Check whether the VCR image version is already published
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && steps.vcr-policy.outputs.enabled == 'true'
         id: vcr-image
         env:
           IMAGE_TAG: ${{ steps.image-tags.outputs.vcr-tag }}
@@ -118,7 +131,7 @@ jobs:
           fi
 
       - name: Publish orcel image to Vercel Container Registry
-        if: github.ref == 'refs/heads/main' && steps.vcr-image.outputs.publish == 'true'
+        if: github.ref == 'refs/heads/main' && steps.vcr-policy.outputs.enabled == 'true' && steps.vcr-image.outputs.publish == 'true'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: ./packages/orcel
