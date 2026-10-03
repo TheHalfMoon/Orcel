@@ -1,4 +1,4 @@
-name: Scoped package migration
+name: Scoped package repair
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  migrate:
+  repair:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
@@ -17,207 +17,124 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-
-      - name: Enable pnpm
-        run: corepack enable
-
-      - name: Apply scoped package identity migration
+      - name: Repair duplicated scoped package references
         shell: bash
         run: |
           set -euo pipefail
-          node <<'NODE'
-          const { execFileSync } = require('node:child_process');
-          const fs = require('node:fs');
-          const path = require('node:path');
+          python3 - <<'PY'
+          from __future__ import annotations
 
-          const root = process.cwd();
-          const corePackagePath = path.join(root, 'packages/orcel/package.json');
-          const corePackage = JSON.parse(fs.readFileSync(corePackagePath, 'utf8'));
-          if (corePackage.name !== 'orcel') {
-            console.log(`Core package already migrated as ${corePackage.name}; no migration required.`);
-            process.exit(0);
+          import subprocess
+          from pathlib import Path
+
+          root = Path.cwd()
+          tracked = [
+              value
+              for value in subprocess.check_output(["git", "ls-files", "-z"]).decode().split("\0")
+              if value
+          ]
+          skip_prefixes = (
+              ".github/",
+              ".orcel-migration/",
+              "research/",
+          )
+          text_suffixes = {
+              ".cjs", ".css", ".cts", ".html", ".js", ".json", ".jsonc", ".jsx",
+              ".md", ".mdx", ".mjs", ".mts", ".sh", ".svelte", ".ts", ".tsx",
+              ".txt", ".vue", ".yaml", ".yml",
           }
+          replacements = (
+              ("@orcel/@orcel/orcel", "@orcel/orcel"),
+              ("@orcel/orcel/orcel", "@orcel/orcel"),
+          )
 
-          const tracked = execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' })
-            .split('\0')
-            .filter(Boolean);
-          const packageJsonPaths = tracked.filter((file) => file === 'package.json' || file.endsWith('/package.json'));
+          changed = []
+          for rel in tracked:
+              if rel.endswith("CHANGELOG.md") or rel.startswith(skip_prefixes):
+                  continue
+              path = root / rel
+              if path.suffix.lower() not in text_suffixes and path.name not in {"AGENTS.md", "Dockerfile", "README"}:
+                  continue
+              try:
+                  source = path.read_text(encoding="utf-8")
+              except UnicodeDecodeError:
+                  continue
+              updated = source
+              for old, new in replacements:
+                  updated = updated.replace(old, new)
+              if rel == "README.md":
+                  updated = updated.replace(
+                      "https://img.shields.io/npm/v/orcel.svg",
+                      "https://img.shields.io/npm/v/@orcel/orcel.svg",
+                  )
+                  updated = updated.replace(
+                      "https://img.shields.io/npm/l/orcel.svg",
+                      "https://img.shields.io/npm/l/@orcel/orcel.svg",
+                  )
+              if updated != source:
+                  path.write_text(updated, encoding="utf-8")
+                  changed.append(rel)
 
-          const dependencySections = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'];
-          let manifestCount = 0;
+          print(f"REPAIRED_FILES={len(changed)}")
+          for rel in changed:
+              print(rel)
+          PY
 
-          for (const rel of packageJsonPaths) {
-            const full = path.join(root, rel);
-            const pkg = JSON.parse(fs.readFileSync(full, 'utf8'));
-            let changed = false;
-
-            if (rel === 'packages/orcel/package.json') {
-              pkg.name = '@orcel/orcel';
-              changed = true;
-            }
-
-            for (const section of dependencySections) {
-              const deps = pkg[section];
-              if (!deps || typeof deps !== 'object' || typeof deps.orcel !== 'string') continue;
-              const spec = deps.orcel;
-              if (!spec.startsWith('workspace:')) {
-                throw new Error(`${rel}: refusing to rewrite non-workspace orcel dependency ${JSON.stringify(spec)}`);
-              }
-              const range = spec.slice('workspace:'.length) || '*';
-              deps.orcel = `workspace:@orcel/orcel@${range}`;
-              pkg[section] = Object.fromEntries(Object.entries(deps).sort(([a], [b]) => a.localeCompare(b)));
-              changed = true;
-            }
-
-            if (rel === 'package.json') {
-              pkg.devDependencies ??= {};
-              pkg.devDependencies.orcel = 'workspace:@orcel/orcel@*';
-              pkg.devDependencies = Object.fromEntries(
-                Object.entries(pkg.devDependencies).sort(([a], [b]) => a.localeCompare(b)),
-              );
-              changed = true;
-            }
-
-            if (changed) {
-              fs.writeFileSync(full, `${JSON.stringify(pkg, null, 2)}\n`);
-              manifestCount += 1;
-            }
-          }
-
-          const allowlistPath = path.join(root, 'scripts/assert-changeset-publish-packages.mjs');
-          let allowlist = fs.readFileSync(allowlistPath, 'utf8');
-          const nextAllowlist = allowlist.replace(
-            'new Set(["@orcel/buzz-acp-adapter", "orcel"])',
-            'new Set(["@orcel/buzz-acp-adapter", "@orcel/orcel"])',
-          );
-          if (nextAllowlist === allowlist) throw new Error('Release allow-list migration did not match expected source.');
-          fs.writeFileSync(allowlistPath, nextAllowlist);
-
-          const buildJsPath = path.join(root, 'packages/orcel/scripts/build-js.mjs');
-          let buildJs = fs.readFileSync(buildJsPath, 'utf8');
-          buildJs = buildJs.replace(
-            'import { copyRuntimeAssets } from "./copy-runtime-assets.mjs";\n',
-            'import { copyRuntimeAssets } from "./copy-runtime-assets.mjs";\nimport { rewriteScopedSelfReferences } from "./rewrite-scoped-self-references.mjs";\n',
-          );
-          buildJs = buildJs.replace(
-            'await copyRuntimeAssets();\n',
-            'await copyRuntimeAssets();\nawait rewriteScopedSelfReferences();\n',
-          );
-          if (!buildJs.includes('rewriteScopedSelfReferences')) {
-            throw new Error('build-js scoped self-reference hook was not installed.');
-          }
-          fs.writeFileSync(buildJsPath, buildJs);
-
-          const rewriteScript = `import { readdir, readFile, writeFile } from "node:fs/promises";\nimport { extname, join } from "node:path";\nimport { fileURLToPath } from "node:url";\n\nconst packageRoot = fileURLToPath(new URL("..", import.meta.url));\nconst distRoot = join(packageRoot, "dist");\nconst supportedExtensions = new Set([".js", ".mjs", ".cjs", ".ts"]);\nconst specifierPatterns = [\n  /(\\bfrom\\s+["'])orcel(?=\\/|["'])/g,\n  /(\\bimport\\s*["'])orcel(?=\\/|["'])/g,\n  /(\\bimport\\s*\\(\\s*["'])orcel(?=\\/|["'])/g,\n  /(\\brequire\\s*\\(\\s*["'])orcel(?=\\/|["'])/g,\n];\n\nexport async function rewriteScopedSelfReferences(root = distRoot) {\n  let rewrittenFiles = 0;\n  for (const file of await walk(root)) {\n    if (!isSupported(file)) continue;\n    const source = await readFile(file, "utf8");\n    let next = source;\n    for (const pattern of specifierPatterns) {\n      next = next.replace(pattern, "$1@orcel/orcel");\n    }\n    if (next !== source) {\n      await writeFile(file, next);\n      rewrittenFiles += 1;\n    }\n  }\n  return rewrittenFiles;\n}\n\nasync function* walk(directory) {\n  for (const entry of await readdir(directory, { withFileTypes: true })) {\n    const target = join(directory, entry.name);\n    if (entry.isDirectory()) yield* walk(target);\n    else if (entry.isFile()) yield target;\n  }\n}\n\nfunction isSupported(file) {\n  if (file.endsWith(".d.ts")) return true;\n  return supportedExtensions.has(extname(file));\n}\n`;
-          fs.writeFileSync(path.join(root, 'packages/orcel/scripts/rewrite-scoped-self-references.mjs'), rewriteScript);
-
-          const installReplacements = [
-            ['pnpm add orcel', 'pnpm add orcel@npm:@orcel/orcel'],
-            ['npm install orcel', 'npm install orcel@npm:@orcel/orcel'],
-            ['npm i orcel', 'npm i orcel@npm:@orcel/orcel'],
-            ['yarn add orcel', 'yarn add orcel@npm:@orcel/orcel'],
-            ['bun add orcel', 'bun add orcel@npm:@orcel/orcel'],
-            ['npx orcel', 'npx @orcel/orcel'],
-          ];
-          let installDocCount = 0;
-          for (const rel of tracked) {
-            if (rel.endsWith('CHANGELOG.md') || rel.startsWith('.orcel-migration/')) continue;
-            const full = path.join(root, rel);
-            let source;
-            try { source = fs.readFileSync(full, 'utf8'); } catch { continue; }
-            let next = source;
-            for (const [before, after] of installReplacements) next = next.split(before).join(after);
-            if (next !== source) {
-              fs.writeFileSync(full, next);
-              installDocCount += 1;
-            }
-          }
-
-          console.log(`Migrated ${manifestCount} package manifests and ${installDocCount} install-command files.`);
-          NODE
-
-      - name: Refresh lockfile
-        run: corepack pnpm install --lockfile-only
-
-      - name: Validate frozen install
-        run: corepack pnpm install --frozen-lockfile
-
-      - name: Validate release allow-list
-        run: node ./scripts/assert-changeset-publish-packages.mjs
-
-      - name: Build scoped core package
-        run: corepack pnpm --filter @orcel/orcel build
-
-      - name: Verify built self-references
+      - name: Audit repaired scoped references
         shell: bash
         run: |
           set -euo pipefail
-          node <<'NODE'
-          const fs = require('node:fs');
-          const path = require('node:path');
-          const root = 'packages/orcel/dist';
-          const patterns = [
-            /\bfrom\s+["']orcel(?:\/|["'])/,
-            /\bimport\s*["']orcel(?:\/|["'])/,
-            /\bimport\s*\(\s*["']orcel(?:\/|["'])/,
-            /\brequire\s*\(\s*["']orcel(?:\/|["'])/,
-          ];
-          const failures = [];
-          function walk(dir) {
-            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-              const file = path.join(dir, entry.name);
-              if (entry.isDirectory()) walk(file);
-              else if (entry.isFile() && (file.endsWith('.js') || file.endsWith('.d.ts'))) {
-                const text = fs.readFileSync(file, 'utf8');
-                if (patterns.some((pattern) => pattern.test(text))) failures.push(file);
-              }
-            }
-          }
-          walk(root);
-          if (failures.length) throw new Error(`Unmigrated built self references:\n${failures.join('\n')}`);
-          NODE
+          python3 - <<'PY'
+          from __future__ import annotations
 
-      - name: Pack and verify publication manifests
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -rf /tmp/orcel-packs /tmp/orcel-core /tmp/orcel-adapter
-          mkdir -p /tmp/orcel-packs /tmp/orcel-core /tmp/orcel-adapter
-          corepack pnpm --dir packages/orcel pack --pack-destination /tmp/orcel-packs
-          corepack pnpm --dir packages/orcel-buzz-acp-adapter pack --pack-destination /tmp/orcel-packs
-          tar -xzf /tmp/orcel-packs/orcel-orcel-0.69.0.tgz -C /tmp/orcel-core
-          tar -xzf /tmp/orcel-packs/orcel-buzz-acp-adapter-0.0.40.tgz -C /tmp/orcel-adapter
-          node <<'NODE'
-          const fs = require('node:fs');
-          const core = JSON.parse(fs.readFileSync('/tmp/orcel-core/package/package.json', 'utf8'));
-          const adapter = JSON.parse(fs.readFileSync('/tmp/orcel-adapter/package/package.json', 'utf8'));
-          if (core.name !== '@orcel/orcel' || core.version !== '0.69.0') {
-            throw new Error(`Unexpected core publication identity: ${core.name}@${core.version}`);
-          }
-          if (core.bin?.orcel !== './bin/orcel.js') throw new Error('The orcel CLI binary mapping changed unexpectedly.');
-          if (adapter.dependencies?.orcel !== 'npm:@orcel/orcel@0.69.0') {
-            throw new Error(`Unexpected adapter Orcel dependency: ${adapter.dependencies?.orcel}`);
-          }
-          console.log(`${core.name}@${core.version}`);
-          console.log(`adapter dependency: ${adapter.dependencies.orcel}`);
-          NODE
+          import re
+          import subprocess
+          from pathlib import Path
+
+          root = Path.cwd()
+          tracked = [
+              value
+              for value in subprocess.check_output(["git", "ls-files", "-z"]).decode().split("\0")
+              if value
+          ]
+          skip_prefixes = (".github/", ".orcel-migration/", "research/")
+          failures = []
+          for rel in tracked:
+              if rel.endswith("CHANGELOG.md") or rel.startswith(skip_prefixes):
+                  continue
+              path = root / rel
+              try:
+                  text = path.read_text(encoding="utf-8")
+              except (UnicodeDecodeError, OSError):
+                  continue
+              for token in ("@orcel/@orcel", "@orcel/orcel/orcel"):
+                  if token in text:
+                      failures.append(f"{rel}: malformed scoped token {token}")
+
+          readme = (root / "README.md").read_text(encoding="utf-8")
+          if 'from "@orcel/orcel/tools"' not in readme:
+              failures.append("README.md: canonical scoped tools import is missing")
+          if "img.shields.io/npm/v/orcel.svg" in readme or "img.shields.io/npm/l/orcel.svg" in readme:
+              failures.append("README.md: legacy unscoped npm badge remains")
+
+          if failures:
+              raise SystemExit("\n".join(failures[:200]))
+          print("SCOPED_REFERENCE_REPAIR_AUDIT=PASS")
+          PY
 
       - name: Verify diff hygiene
         run: git diff --check
 
-      - name: Commit migration
+      - name: Commit repair
         shell: bash
         run: |
           set -euo pipefail
           if git diff --quiet; then
-            echo 'No migration changes to commit.'
+            echo 'No repair changes to commit.'
             exit 0
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
-          git commit -m 'fix: publish Orcel from the @orcel scope [scoped-package-migration]'
+          git commit -m 'fix: repair duplicated scoped package references'
           git push origin HEAD:fix/npm-scoped-core-package
