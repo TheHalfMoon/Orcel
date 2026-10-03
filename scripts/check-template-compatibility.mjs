@@ -76,7 +76,7 @@ try {
     manifest.dependencies["@orcel/orcel"] = `file:${tarball}`;
     if (manifest.dependencies["@vercel/connect"]) {
       const compatibilitySpecifier = manifest.dependencies[historicalFrameworkPackage];
-      if (!compatibilitySpecifier?.startsWith("npm:orcel@")) {
+      if (!compatibilitySpecifier?.startsWith("npm:@orcel/orcel@")) {
         throw new Error(
           `Template "${template}" uses @vercel/connect but is missing its documented Orcel compatibility alias`,
         );
@@ -92,7 +92,7 @@ try {
     if (manifest.dependencies["@vercel/connect"]) {
       const compatibilityPath = join(destination, "node_modules", historicalFrameworkPackage);
       rmSync(compatibilityPath, { force: true, recursive: true });
-      symlinkSync(join(destination, "node_modules", "orcel"), compatibilityPath, "junction");
+      symlinkSync(join(destination, "node_modules", "@orcel", "orcel"), compatibilityPath, "junction");
     }
     run("pnpm", ["typecheck"], { cwd: destination });
     run("pnpm", ["exec", "orcel", "build"], { cwd: destination });
