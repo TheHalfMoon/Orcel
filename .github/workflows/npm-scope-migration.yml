@@ -99,10 +99,24 @@ jobs:
           set -euo pipefail
           git diff --check
 
-          if git diff -U0 | grep -Eq '^\-.*["'"']/orcel/'; then
-            echo "A public /orcel route deletion was detected; refusing to continue." >&2
-            exit 1
-          fi
+          python3 - <<'PY'
+          import re
+          import subprocess
+
+          diff = subprocess.check_output(["git", "diff", "-U0"], text=True)
+          route = re.compile(r"[\"']/orcel/")
+          violations = [
+              line
+              for line in diff.splitlines()
+              if line.startswith("-") and not line.startswith("---") and route.search(line)
+          ]
+          if violations:
+              print("A public /orcel route deletion was detected; refusing to continue.")
+              for line in violations[:50]:
+                  print(line)
+              raise SystemExit(1)
+          print("PUBLIC_ROUTE_DIFF_AUDIT=PASS")
+          PY
 
           if git grep -n '@orcel/orcel/orcel' -- ':!*.lock'; then
             echo "Duplicated scoped package path detected." >&2
