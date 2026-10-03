@@ -54,6 +54,10 @@ TEXT_SUFFIXES = {
     ".yaml",
     ".yml",
 }
+# Count only actual route-shaped `/orcel/` occurrences. The scoped npm identity
+# contains the substring `/orcel/` inside `@orcel/orcel/`; there the slash is
+# preceded by the alphanumeric scope name and must not be treated as a route.
+PUBLIC_ROUTE_PATTERN = re.compile(r"(?<![A-Za-z0-9@._-])/orcel/")
 
 
 def tracked_files() -> list[str]:
@@ -73,6 +77,10 @@ def is_active_text(rel: str) -> bool:
         "Dockerfile",
         "README",
     }
+
+
+def public_route_count(text: str) -> int:
+    return len(PUBLIC_ROUTE_PATTERN.findall(text))
 
 
 def replace_quoted_subpaths(text: str) -> str:
@@ -182,7 +190,7 @@ def replace_installation_surface(text: str) -> str:
 
 
 def migrate_text(rel: str, text: str) -> str:
-    original_route_count = text.count("/orcel/")
+    original_route_count = public_route_count(text)
     original_state_count = text.count(".orcel/")
 
     if rel == "packages/orcel/package.json":
@@ -199,7 +207,7 @@ def migrate_text(rel: str, text: str) -> str:
         text = text.replace('"orcel"', f'"{NEW}"')
         text = text.replace("'orcel'", f"'{NEW}'")
 
-    if text.count("/orcel/") != original_route_count:
+    if public_route_count(text) != original_route_count:
         raise RuntimeError(f"public route surface changed unexpectedly: {rel}")
     if text.count(".orcel/") != original_state_count:
         raise RuntimeError(f"local state path surface changed unexpectedly: {rel}")
