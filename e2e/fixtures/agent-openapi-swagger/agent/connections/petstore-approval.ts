@@ -1,0 +1,19 @@
+import { defineDynamic, defineOpenAPIConnection } from "orcel/connections";
+import { always } from "orcel/tools/approval";
+
+import { petstoreBaseUrl } from "../../petstore";
+
+export default defineDynamic({
+  events: {
+    "session.started": () => ({
+      "petstore-approval": defineOpenAPIConnection({
+        approval: always(),
+        baseUrl: petstoreBaseUrl(),
+        spec: `${petstoreBaseUrl()}/swagger`,
+        description:
+          "Approval-gated sample Petstore API from a fixture-owned Swagger 2.0 document.",
+        operations: { allow: ["getInventory"] },
+      }),
+    }),
+  },
+});

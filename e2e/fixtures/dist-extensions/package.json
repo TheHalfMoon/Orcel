@@ -1,0 +1,23 @@
+{
+  "name": "dist-extensions",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "orcel build",
+    "dev": "orcel dev",
+    "start": "orcel start",
+    "test:e2e": "orcel eval --strict"
+  },
+  "dependencies": {
+    "@orcel-e2e/config": "workspace:*",
+    "@workflow/world-postgres": "catalog:",
+    "orcel": "workspace:*",
+    "gadget-extension": "file:../gadget-extension",
+    "gizmo-extension": "file:../gizmo-extension"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  }
+}

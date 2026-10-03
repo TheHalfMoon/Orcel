@@ -1,0 +1,7 @@
+.env*.local
+node_modules
+.orcel
+.next
+.output
+.nitro
+dist

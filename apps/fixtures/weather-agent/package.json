@@ -1,0 +1,16 @@
+{
+  "name": "weather-agent",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "orcel dev",
+    "build": "orcel build",
+    "start": "orcel start",
+    "info": "orcel info",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "orcel": "workspace:*",
+    "zod": "catalog:"
+  }
+}

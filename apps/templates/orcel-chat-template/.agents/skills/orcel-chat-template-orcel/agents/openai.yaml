@@ -1,0 +1,4 @@
+interface:
+  display_name: "Orcel Template Runtime"
+  short_description: "Work safely with Orcel template internals"
+  default_prompt: "Use $orcel-chat-template-orcel to update Orcel-specific runtime, session, stream, or connection behavior in the chat template."

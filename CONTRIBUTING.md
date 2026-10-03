@@ -1,0 +1,267 @@
+# Contributing to orcel
+
+Thanks for your interest in contributing! This guide covers everything you need to get the repo running locally and land a change.
+
+## Signed commits
+
+This repository requires verified commit signatures on protected branches.
+
+Before contributing, configure Git to sign your commits with a GitHub-verified
+GPG, SSH, or S/MIME key. Unsigned commits will be rejected by repository rules
+and need to be rewritten as signed commits before they can be merged.
+
+If a pull request includes unsigned commits, re-sign the commits and force-push
+the branch. Make sure the signing key is added to your GitHub account and that
+your commits appear as `Verified`.
+
+A `Signed-off-by` line in the commit message is not enough to satisfy this
+requirement. A verified commit signature alone does not satisfy the DCO either;
+commits need both.
+
+## Prerequisites
+
+- **Node.js 24+** — see [`.nvmrc`](./.nvmrc) (`nvm use` or `fnm use`)
+- **pnpm** — the version pinned in [`package.json`](./package.json) (`corepack enable` handles this automatically)
+
+## Getting started
+
+```bash
+git clone https://github.com/TheHalfMoon/orcel.git
+cd orcel
+pnpm install
+pnpm build
+```
+
+The repo is a pnpm workspace orchestrated with [Turborepo](https://turborepo.com):
+
+- [`packages/orcel`](./packages/orcel) — the framework and `orcel` CLI
+- [`packages/orcel-scaffold`](./packages/orcel-scaffold) / [`packages/orcel-catalog`](./packages/orcel-catalog) — internal (unpublished) scaffolding libraries
+- [`apps/fixtures`](./apps/fixtures) — shared agent fixtures used by e2e tests, TUI smoke tests, local dev, and bundle analysis
+- [`apps/frameworks`](./apps/frameworks) — framework integration apps for Next.js, Nuxt, and SvelteKit
+- [`apps/templates`](./apps/templates) — source apps for generated templates
+- [`docs`](./docs) — the published documentation content
+- [`e2e/`](./e2e) — fixture-owned `orcel eval` end-to-end tests
+
+## Development
+
+```bash
+pnpm dev
+```
+
+This runs the `orcel` package build in watch mode alongside the [`apps/fixtures/weather-agent`](./apps/fixtures/weather-agent) fixture on an OS-assigned available localhost port. The fixture prints the selected URL at startup.
+
+## Testing
+
+```bash
+pnpm test               # unit + integration
+pnpm test:unit          # unit tests
+pnpm test:integration   # integration tests
+pnpm test:scenario      # scenario tests (requires pnpm build first)
+pnpm test:framework-fixtures # apps/frameworks smoke builds (requires pnpm build first)
+pnpm test:e2e           # fixture-owned orcel eval suites
+pnpm test:tui           # TUI smoke scripts (not e2e)
+```
+
+E2E tests are fixture-owned evals. Run them from the fixture directory:
+
+```bash
+cd e2e/fixtures/agent-basic-runtime
+pnpm exec orcel eval --strict
+```
+
+The fixture agents and judges run against real models (`openai/gpt-5.5`), so
+the environment must provide the corresponding model-provider credentials.
+
+Vercel e2e builds that same fixture directory with `VERCEL=1`, deploys the
+fixture's prebuilt Vercel output, and runs evals against the immutable
+deployment URL. All fixture deployments link to the same Vercel project id; the
+shared project's Preview env must provide those same model-provider
+credentials.
+
+Do not commit fixture trees under `packages/orcel/test/fixtures/` — scenario app content is defined inline as `ScenarioAppDescriptor` objects under `packages/orcel/src/internal/testing/scenario-apps/` (CI enforces this).
+
+## Linting and formatting
+
+```bash
+pnpm lint          # oxlint (auto-fixes)
+pnpm fmt           # oxfmt (also runs on staged files via the pre-commit hook)
+pnpm typecheck     # TypeScript across the workspace
+pnpm check:deps    # syncpack — dependency versions must stay in sync
+pnpm guard:invariants  # mechanical code-invariant lints (run in CI)
+pnpm docs:check    # docs frontmatter and nav validation
+```
+
+All of these run in CI, so running them locally before pushing saves a round trip.
+
+### Extension capability contracts
+
+The extension capabilities in
+[`extension-compatibility.ts`](./packages/orcel/src/compiler/extension-compatibility.ts)
+have immutable API reports keyed by epoch. If an extension-facing type or
+signature changes, CI fails with the affected capability. Classify whether the
+new consumer retains the previous epoch while bumping it automatically:
+
+```bash
+pnpm update:extension-contracts --update hook
+```
+
+The command bumps changes it can prove structurally backward compatible,
+retains the previous epoch, and scaffolds the required fixture under
+`packages/orcel/extension-contracts/compatibility/`. Replace the scaffold with a
+representative example of the retained authoring contract, then rerun
+`pnpm update:extension-contracts` to generate the new epoch report. If the
+change cannot be classified automatically, pass `--retain` after verifying
+runtime compatibility. To stop accepting the previous epoch, pass
+`--drop "why the old contract cannot run"`; this bumps the capability and
+records the reason.
+
+Every historical epoch must be classified exactly once as supported or dropped.
+Supported historical epochs require compiling fixtures. Each epoch also retains
+a readable `vN.api.md` declaration report and compact `vN.json` metadata; do not
+edit or delete either file after merge. The invariant guard verifies the support
+history, fixtures, report integrity, and assignment of every public authoring
+export to a capability. Reports and fixtures cover structural compatibility;
+behavior changes still need focused compatibility tests.
+
+## Adding an integration to the registry
+
+The registry source lives under [`apps/docs/registry/`](./apps/docs/registry/). Add the project-owned source file to its collection directory, such as `registry/connections/linear.ts` or `registry/extensions/browserbase.ts`. Registry item names use the singular integration kind. Register the item in [`apps/docs/registry.json`](./apps/docs/registry.json):
+
+```json
+{
+  "name": "connection/linear",
+  "type": "registry:item",
+  "title": "Linear",
+  "description": "Connect an orcel agent to Linear.",
+  "dependencies": ["@vercel/connect"],
+  "files": [
+    {
+      "path": "registry/connections/linear.ts",
+      "type": "registry:file",
+      "target": "agent/connections/linear.ts"
+    }
+  ]
+}
+```
+
+`path` points to the hand-written source file relative to `apps/docs`; `target` is where `orcel add` writes it in the consuming agent. Declare packages with `dependencies` and required environment variables with `envVars`.
+
+Run:
+
+```bash
+pnpm --filter orcel-docs registry:check
+```
+
+This runs `shadcn build`, which reads each referenced source file and embeds it as the escaped `content` field in `apps/docs/public/r/<kind>/<slug>.json`. It also rebuilds `apps/docs/public/r/registry.json`, validates channel, connection, and instrumentation coverage, and typechecks the registry source files. The output under `apps/docs/public/r/` is gitignored and regenerated on every docs build; only the source files under `apps/docs/registry/` and `apps/docs/registry.json` are committed.
+
+### Extension requirements
+
+The registry and integrations gallery list reviewed, published extensions. Open an issue and get maintainer agreement before submitting a registry addition. The package must be publicly installable from npm, work with the current released `orcel` version, and include documentation for its configuration, authentication, and any security-sensitive behavior.
+
+In the PR, add the package as an `apps/docs` dev dependency, add its package to the reviewed exceptions in `pnpm-workspace.yaml`, and add a mount example under [`apps/docs/registry/extensions/`](./apps/docs/registry/extensions/). Register that example under an `extension/<slug>` name, with its dependencies, title, and description, in [`apps/docs/registry.json`](./apps/docs/registry.json).
+
+Also add the extension identity to [`packages/orcel-catalog/src/index.ts`](./packages/orcel-catalog/src/index.ts), its gallery presentation and setup instructions to [`apps/docs/lib/integrations/data.ts`](./apps/docs/lib/integrations/data.ts), and a logo in [`apps/docs/lib/integrations/logos.tsx`](./apps/docs/lib/integrations/logos.tsx). Add or update focused tests for the integration page.
+
+## Documentation
+
+User-facing docs live in [`docs/`](./docs) and are published with the `orcel` npm package and rendered by the docs site in [`apps/docs`](./apps/docs). If your change alters public behavior, update the relevant doc in the same PR and run `pnpm docs:check`.
+
+## Proposing a change
+
+If you are an external contributor and have not been invited to implement a
+change, open an issue instead of a pull request. Search the existing issues,
+discussions, and pull requests first so you do not duplicate active work. Use
+the relevant issue template to describe the problem, use case, or bug
+reproduction. You may also include a suggested implementation prompt that a
+maintainer or coding agent could use after the proposal is accepted.
+
+For changes to public APIs, agent behavior, compiler/runtime internals,
+dependencies, generated artifacts, fixture contracts, or any non-trivial
+implementation detail, wait for maintainer agreement before investing in an
+implementation. The goal is to agree that the problem is real and that the
+proposed direction fits orcel before review shifts to code.
+
+To make a proposal easier to evaluate:
+
+- Do not propose broad rewrites, style-only churn, formatting-only changes, or
+  generated-output refreshes unless a maintainer asked for them.
+- Keep each issue focused on one problem.
+- Do not propose runtime dependencies without a concrete need. Prefer orcel-owned
+  wrappers, vendored code, or generated artifacts, and remember that the `orcel`
+  package should keep runtime dependencies minimal.
+- Do not propose public behavior based only on a hypothetical use case. Include
+  a concrete user story or, for bugs, a reproduction.
+- Do not claim an issue silently. Wait for a maintainer to invite an
+  implementation, and check the thread first in case someone else is already
+  working on it.
+
+## Submitting a pull request
+
+Team members and contributors explicitly invited to implement a change may
+open a pull request. Link the issue or discussion where the change was agreed
+on when one exists. Do not create an issue solely to accompany a pull request.
+
+1. Fork the repo and create a branch from `main`.
+2. Make your change, including tests and docs where relevant.
+3. Sign off every commit with `git commit -s`.
+4. If the change affects the published `orcel` package, add a changeset:
+
+   ```bash
+   pnpm changeset
+   ```
+
+5. Make sure `pnpm lint`, `pnpm typecheck`, and `pnpm test` pass.
+6. Open the PR with a short description that explains the problem, user need,
+   or decision behind the change before describing the solution.
+
+Releases are managed with [Changesets](https://github.com/changesets/changesets) by the maintainers.
+
+## Developer Certificate of Origin (DCO)
+
+We do not require a CLA. Instead, all contributions are made under the
+[Developer Certificate of Origin (DCO)](./DCO.txt), a lightweight, one-line
+attestation that you have the right to submit your contribution under the
+project's license. There is nothing to sign and no account to create.
+
+Every commit must include a `Signed-off-by` line matching the commit author's
+name and email:
+
+```text
+Signed-off-by: Jane Doe <jane.doe@example.com>
+```
+
+Add it automatically with:
+
+```bash
+git commit -s -m "your commit message"
+```
+
+If you forget, amend the last commit:
+
+```bash
+git commit --amend -s --no-edit
+```
+
+To sign off a series of commits, rebase with `--signoff`:
+
+```bash
+git rebase --signoff main
+```
+
+The sign-off requirement applies to all contributors, including Vercel
+employees. A required check blocks pull requests that contain commits without a
+valid sign-off.
+
+## Reporting bugs and requesting features
+
+Please use the [issue templates](https://github.com/TheHalfMoon/orcel/issues/new/choose). For security issues, **do not open a public issue** — follow [SECURITY.md](./SECURITY.md) instead.
+
+## Code of conduct
+
+This project follows the [Code of Conduct](./CODE_OF_CONDUCT.md). By participating, you agree to uphold it.
+
+## License
+
+`orcel` is licensed under the [Apache License 2.0](./LICENSE). By contributing,
+you agree that your contributions will be licensed under that same license
+(inbound = outbound).

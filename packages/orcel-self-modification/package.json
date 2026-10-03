@@ -1,0 +1,80 @@
+{
+  "name": "@orcel/self-modification",
+  "version": "0.0.13",
+  "private": true,
+  "description": "Compatibility entrypoints for orcel self-modification.",
+  "keywords": [
+    "agents",
+    "orcel",
+    "extension",
+    "self-modifying"
+  ],
+  "homepage": "https://github.com/TheHalfMoon/orcel#readme",
+  "bugs": {
+    "url": "https://github.com/TheHalfMoon/orcel/issues"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TheHalfMoon/orcel.git",
+    "directory": "packages/orcel-self-modification"
+  },
+  "files": [
+    "dist",
+    "scaffold",
+    "src/*.ts",
+    "!src/*.test.ts",
+    "README.md"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.mjs"
+    },
+    "./extension": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.mjs"
+    },
+    "./agent": {
+      "orcel-source": "./src/agent.ts",
+      "types": "./scaffold/agent.d.ts",
+      "import": "./scaffold/agent.js",
+      "default": "./scaffold/agent.js"
+    },
+    "./sandbox": {
+      "orcel-source": "./src/sandbox.ts",
+      "types": "./scaffold/sandbox.d.ts",
+      "import": "./scaffold/sandbox.js",
+      "default": "./scaffold/sandbox.js"
+    },
+    "./tools": {
+      "types": "./dist/tools/index.d.ts",
+      "default": "./dist/tools/index.mjs"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "orcel extension build && pnpm run build:scaffold",
+    "build:scaffold": "node -e \"require('node:fs').rmSync('scaffold', { force: true, recursive: true })\" && tsc -p tsconfig.scaffold.json",
+    "prepack": "pnpm run build",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.scaffold.json --noEmit"
+  },
+  "dependencies": {
+    "orcel": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "catalog:"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "orcel": {
+    "extension": {
+      "source": "./extension",
+      "dist": "./dist/extension"
+    }
+  }
+}

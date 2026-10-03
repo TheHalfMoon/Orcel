@@ -1,0 +1,305 @@
+import type {
+  CompiledAgentNodeManifest,
+  CompiledAgentResources,
+  CompiledInstructionsDefinition,
+} from "#compiler/manifest.js";
+import type { AgentSourceOwner } from "#compiler/source-graph.js";
+import type { CompiledModuleMap } from "#compiler/module-map.js";
+import { resolveChannelDefinition } from "#runtime/resolve-channel.js";
+
+import { resolveConnectionDefinition } from "#runtime/resolve-connection.js";
+import { resolveDynamicConnectionDefinition } from "#runtime/resolve-dynamic-connection.js";
+import { resolveHookDefinition } from "#runtime/resolve-hook.js";
+import { createResolvedModuleSourceRef } from "#runtime/resolve-helpers.js";
+import { resolveSandboxDefinition } from "#runtime/resolve-sandbox.js";
+import { resolveDynamicInstructionsDefinition } from "#runtime/resolve-dynamic-instructions.js";
+import { resolveDynamicSkillDefinition } from "#runtime/resolve-dynamic-skill.js";
+import { resolveDynamicToolDefinition } from "#runtime/resolve-dynamic-tool.js";
+import { resolveToolDefinition } from "#runtime/resolve-tool.js";
+import { resolveMemoryDefinition } from "#runtime/resolve-memory.js";
+import type {
+  ResolvedAgent,
+  ResolvedChannelDefinition,
+  ResolvedSkillDefinition,
+  ResolvedInstructionsDefinition,
+} from "#runtime/types.js";
+
+/**
+ * Input for resolving one compiled authored agent into a runtime-owned model.
+ */
+interface ResolveAgentInput {
+  manifest: CompiledAgentNodeManifest | CompiledAgentResources;
+  moduleMap: CompiledModuleMap;
+  nodeId?: string;
+}
+
+/**
+ * Resolves the core authored agent path from compiled artifacts.
+ */
+export async function resolveAgent(input: ResolveAgentInput): Promise<ResolvedAgent> {
+  const resolvedSkills = input.manifest.skills.map((skill) => ({
+    ...skill,
+    owner: requireCompiledSourceOwner(input.manifest, skill),
+    metadata:
+      skill.metadata === undefined
+        ? undefined
+        : {
+            ...skill.metadata,
+          },
+  })) satisfies ResolvedSkillDefinition[];
+  const resolvedChannels: ResolvedChannelDefinition[] = await Promise.all(
+    input.manifest.channelRoutes.effective.map((channelEntry) =>
+      resolveChannelDefinition(channelEntry, input.moduleMap, input.nodeId),
+    ),
+  );
+  const resolvedTools = await Promise.all(
+    input.manifest.tools.map((toolDefinition) =>
+      resolveToolDefinition(
+        toolDefinition,
+        input.moduleMap,
+        input.nodeId,
+        requireBindingOwner(input.manifest, toolDefinition.sourceId),
+      ),
+    ),
+  );
+  const resolvedDynamicConnectionResolvers = await Promise.all(
+    input.manifest.dynamicConnections.map((definition) =>
+      resolveDynamicConnectionDefinition(definition, input.moduleMap, input.nodeId),
+    ),
+  );
+  const resolvedDynamicInstructionsResolvers = await Promise.all(
+    (input.manifest.dynamicInstructions ?? []).map((def) =>
+      resolveDynamicInstructionsDefinition(def, input.moduleMap, input.nodeId),
+    ),
+  );
+  const resolvedDynamicSkillResolvers = await Promise.all(
+    (input.manifest.dynamicSkills ?? []).map((def) =>
+      resolveDynamicSkillDefinition(def, input.moduleMap, input.nodeId),
+    ),
+  );
+  const resolvedDynamicToolResolvers = await Promise.all(
+    input.manifest.dynamicTools.map((def) =>
+      resolveDynamicToolDefinition(def, input.moduleMap, input.nodeId),
+    ),
+  );
+  // Hook resolution preserves the manifest's lexicographic-on-slug order
+  // produced by the discovery walker; the per-node registry inherits
+  // that order.
+  const resolvedHooks = await Promise.all(
+    input.manifest.hooks.map((hookDefinition) =>
+      resolveHookDefinition(hookDefinition, input.moduleMap, input.nodeId),
+    ),
+  );
+  const resolvedConnections = await Promise.all(
+    input.manifest.connections.map((connectionDefinition) =>
+      resolveConnectionDefinition(connectionDefinition, input.moduleMap, input.nodeId),
+    ),
+  );
+  const resolvedMemories = await Promise.all(
+    input.manifest.memories.map((definition) =>
+      resolveMemoryDefinition(definition, input.moduleMap, input.nodeId),
+    ),
+  );
+  const authoredSandbox = await resolveSandboxDefinition(
+    input.manifest.sandbox,
+    input.moduleMap,
+    input.nodeId,
+  );
+  const instructions = input.manifest.instructions.map((definition) =>
+    createResolvedInstructionsDefinition(input.manifest, definition),
+  );
+  const workspaceResourceRoot = input.manifest.workspaceResourceRoot;
+  const resolvedAgent: ResolvedAgent = {
+    channels: resolvedChannels,
+    connections: resolvedConnections,
+    dynamicConnectionResolvers: resolvedDynamicConnectionResolvers,
+    dynamicInstructionsResolvers: resolvedDynamicInstructionsResolvers,
+    dynamicSkillResolvers: resolvedDynamicSkillResolvers,
+    dynamicToolResolvers: resolvedDynamicToolResolvers,
+    hooks: resolvedHooks,
+    instructions,
+    metadata: {
+      agentRoot: input.manifest.agentRoot,
+      appRoot: input.manifest.appRoot,
+      diagnosticsSummary: input.manifest.diagnosticsSummary,
+    },
+    memories: resolvedMemories,
+    sandbox: authoredSandbox,
+    workspaceResourceRoot,
+    skills: resolvedSkills,
+    tools: resolvedTools,
+    workspaceSpec: { rootEntries: [...workspaceResourceRoot.rootEntries] },
+  };
+
+  return "config" in input.manifest
+    ? { ...resolvedAgent, config: createResolvedAgentConfig(input.manifest) }
+    : resolvedAgent;
+}
+
+function requireBindingOwner(
+  manifest: CompiledAgentNodeManifest | CompiledAgentResources,
+  sourceId: string,
+) {
+  const binding = manifest.bindings[sourceId];
+  if (binding === undefined) throw new Error(`Compiled source "${sourceId}" has no binding.`);
+  return binding.owner;
+}
+
+function createResolvedInstructionsDefinition(
+  manifest: CompiledAgentNodeManifest | CompiledAgentResources,
+  instructions: CompiledInstructionsDefinition,
+): ResolvedInstructionsDefinition {
+  return {
+    content: instructions.content,
+    name: instructions.name,
+    owner: requireCompiledSourceOwner(manifest, instructions),
+    logicalPath: instructions.logicalPath,
+    role: instructions.role,
+    sourceId: instructions.sourceId,
+    sourceKind: instructions.sourceKind,
+  };
+}
+
+function requireCompiledSourceOwner(
+  manifest: CompiledAgentNodeManifest | CompiledAgentResources,
+  source: {
+    readonly owner?: AgentSourceOwner;
+    readonly sourceId: string;
+  },
+): AgentSourceOwner {
+  const owner = manifest.bindings[source.sourceId]?.owner ?? source.owner;
+  if (owner === undefined) {
+    throw new Error(`Compiled source "${source.sourceId}" has no owner.`);
+  }
+  return owner;
+}
+
+function createResolvedAgentConfig(
+  manifest: CompiledAgentNodeManifest,
+): NonNullable<ResolvedAgent["config"]> {
+  const config: {
+    compaction?: NonNullable<ResolvedAgent["config"]>["compaction"];
+    defaultTools?: boolean;
+    description?: string;
+    experimental?: NonNullable<ResolvedAgent["config"]>["experimental"];
+    name: string;
+    reasoning?: NonNullable<ResolvedAgent["config"]>["reasoning"];
+    source?: NonNullable<ResolvedAgent["config"]>["source"];
+    tool?: boolean;
+    limits?: NonNullable<ResolvedAgent["config"]>["limits"];
+  } = {
+    name: manifest.config.name,
+  };
+
+  if (manifest.config.defaultTools !== undefined) {
+    config.defaultTools = manifest.config.defaultTools;
+  }
+  if (manifest.config.description !== undefined) {
+    config.description = manifest.config.description;
+  }
+
+  if (manifest.config.compaction !== undefined) {
+    const compaction: {
+      model?: NonNullable<NonNullable<ResolvedAgent["config"]>["compaction"]>["model"];
+      thresholdPercent?: number;
+    } = {};
+
+    if (manifest.config.compaction.model !== undefined) {
+      compaction.model =
+        manifest.config.compaction.model.source === undefined
+          ? {
+              contextWindowTokens: manifest.config.compaction.model.contextWindowTokens,
+              id: manifest.config.compaction.model.id,
+              maxOutputTokens: manifest.config.compaction.model.maxOutputTokens,
+              providerOptions: manifest.config.compaction.model.providerOptions,
+            }
+          : {
+              contextWindowTokens: manifest.config.compaction.model.contextWindowTokens,
+              id: manifest.config.compaction.model.id,
+              maxOutputTokens: manifest.config.compaction.model.maxOutputTokens,
+              providerOptions: manifest.config.compaction.model.providerOptions,
+              source: {
+                exportName: manifest.config.compaction.model.source.exportName,
+                sourceKind: "module" as const,
+                logicalPath: manifest.config.compaction.model.source.logicalPath,
+                sourceId: manifest.config.compaction.model.source.sourceId,
+              },
+            };
+    }
+
+    if (manifest.config.compaction.thresholdPercent !== undefined) {
+      compaction.thresholdPercent = manifest.config.compaction.thresholdPercent;
+    }
+
+    config.compaction = compaction;
+  }
+
+  if (manifest.config.experimental !== undefined) {
+    config.experimental = {
+      workflow:
+        manifest.config.experimental.workflow === undefined
+          ? undefined
+          : {
+              modelCallsPerStep: manifest.config.experimental.workflow.modelCallsPerStep,
+              retention: manifest.config.experimental.workflow.retention,
+              world: manifest.config.experimental.workflow.world,
+            },
+    };
+  }
+
+  if (manifest.config.reasoning !== undefined) {
+    config.reasoning = manifest.config.reasoning;
+  }
+
+  if (manifest.config.source !== undefined) {
+    config.source = createResolvedModuleSourceRef(manifest.config.source);
+  }
+
+  if (manifest.config.tool !== undefined) {
+    config.tool = manifest.config.tool;
+  }
+
+  if (manifest.config.limits !== undefined) {
+    config.limits = {
+      maxInputTokensPerSession: manifest.config.limits.maxInputTokensPerSession,
+      maxOutputTokensPerSession: manifest.config.limits.maxOutputTokensPerSession,
+      maxTokenCostUsdPerSession: manifest.config.limits.maxTokenCostUsdPerSession,
+      sessionTimeoutMs: manifest.config.limits.sessionTimeoutMs,
+    };
+  }
+
+  if (manifest.config.dynamicModel !== undefined) {
+    return {
+      ...config,
+      dynamicModel: {
+        ...createResolvedModuleSourceRef(manifest.config.dynamicModel),
+        eventNames: [...manifest.config.dynamicModel.eventNames],
+      },
+    };
+  }
+
+  const model = manifest.config.model;
+  return {
+    ...config,
+    model:
+      model.source === undefined
+        ? {
+            id: model.id,
+            contextWindowTokens: model.contextWindowTokens,
+            maxOutputTokens: model.maxOutputTokens,
+            providerOptions: model.providerOptions,
+          }
+        : {
+            contextWindowTokens: model.contextWindowTokens,
+            id: model.id,
+            maxOutputTokens: model.maxOutputTokens,
+            providerOptions: model.providerOptions,
+            source: {
+              exportName: model.source.exportName,
+              sourceKind: "module" as const,
+              logicalPath: model.source.logicalPath,
+              sourceId: model.source.sourceId,
+            },
+          },
+  };
+}

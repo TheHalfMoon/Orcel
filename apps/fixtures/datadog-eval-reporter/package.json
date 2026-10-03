@@ -1,0 +1,15 @@
+{
+  "name": "datadog-eval-reporter-fixture",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "eval": "orcel eval --strict"
+  },
+  "dependencies": {
+    "@orcel-e2e/config": "workspace:*",
+    "@workflow/world-postgres": "catalog:",
+    "dd-trace": "6.13.0",
+    "orcel": "workspace:*"
+  }
+}

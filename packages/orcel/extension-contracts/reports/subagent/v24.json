@@ -1,0 +1,23 @@
+{
+  "kind": "orcel-extension-capability-contract",
+  "capability": "subagent",
+  "epoch": 24,
+  "sha256": "25aa7b9bbf0fb33c1c3dde423b31673d69cbe0879911b388ac0650a2104c763d",
+  "exports": [
+    "AgentCompactionDefinition",
+    "AgentDefinition",
+    "AgentModelDefinition",
+    "AgentStaticModelDefinition",
+    "DefinedAgent",
+    "DynamicLocalSubagentDefinition",
+    "DynamicSubagentDefinition",
+    "RemoteAgentDefinition",
+    "RemoteAgentDefinitionInput",
+    "WorkspaceAgentDefinition",
+    "WorkspaceAgentTransport",
+    "defineAgent",
+    "defineDynamic",
+    "defineRemoteAgent",
+    "defineWorkspaceAgent"
+  ]
+}

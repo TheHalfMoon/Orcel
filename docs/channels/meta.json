@@ -1,0 +1,20 @@
+{
+  "title": "Channels",
+  "defaultOpen": false,
+  "pages": [
+    "overview",
+    "orcel",
+    "mcp",
+    "slack",
+    "linq",
+    "photon",
+    "discord",
+    "teams",
+    "telegram",
+    "twilio",
+    "github",
+    "linear",
+    "chat-sdk",
+    "custom"
+  ]
+}

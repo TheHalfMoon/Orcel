@@ -1,0 +1,4 @@
+interface:
+  display_name: "Technical writing"
+  short_description: "Write accurate, clear, task-focused orcel docs"
+  default_prompt: "Use $technical-writing to write or improve orcel documentation, verify every technical claim, and keep the prose direct and natural."

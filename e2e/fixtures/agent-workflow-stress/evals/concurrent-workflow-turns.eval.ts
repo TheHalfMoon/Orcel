@@ -1,0 +1,94 @@
+import { defineEval } from "orcel/evals";
+import { equals } from "orcel/evals/expect";
+
+const SESSION_COUNT = 50;
+const TURNS_PER_SESSION = 2;
+const TURN_COUNT = SESSION_COUNT * TURNS_PER_SESSION;
+const PERFORMANCE_LOG_PREFIX = "ORCEL_WORKFLOW_STRESS_METRIC=";
+
+export default defineEval({
+  description: "Workflow stress: 50 durable sessions complete 100 total turns.",
+  tags: ["stress", "workflow", "concurrent"],
+
+  async test(t) {
+    const firstBatchStartedAt = performance.now();
+    const firstTurns = await Promise.all(
+      Array.from({ length: SESSION_COUNT }, async (_, index) => {
+        const startedAt = performance.now();
+        const result = await t.send(markerFor(index, 1));
+
+        return {
+          durationMs: performance.now() - startedAt,
+          result,
+          sessionNumber: index + 1,
+        };
+      }),
+    );
+    const firstBatchDurationMs = performance.now() - firstBatchStartedAt;
+    const secondBatchStartedAt = performance.now();
+    const secondTurns = await Promise.all(
+      firstTurns.map(async ({ result: first }, index) => {
+        const startedAt = performance.now();
+        const result = await first.session.send(markerFor(index, 2));
+
+        return {
+          durationMs: performance.now() - startedAt,
+          result,
+          sessionNumber: index + 1,
+        };
+      }),
+    );
+    const secondBatchDurationMs = performance.now() - secondBatchStartedAt;
+
+    for (let index = 0; index < SESSION_COUNT; index += 1) {
+      const first = firstTurns[index]!.result.expectOk();
+      const second = secondTurns[index]!.result.expectOk();
+
+      await t.require(first.message, equals(`stress-ack:1:${markerFor(index, 1)}`));
+      await t.require(second.message, equals(`stress-ack:2:${markerFor(index, 2)}`));
+      await t.require(second.sessionId, equals(first.sessionId));
+    }
+
+    await t.require(
+      new Set(firstTurns.map((turn) => turn.result.sessionId)).size,
+      equals(SESSION_COUNT),
+    );
+
+    t.log(
+      `${PERFORMANCE_LOG_PREFIX}${JSON.stringify({
+        batches: [
+          {
+            batchDurationMs: firstBatchDurationMs,
+            samples: firstTurns.map(({ durationMs, sessionNumber }) => ({
+              durationMs,
+              sessionNumber,
+            })),
+            turnNumber: 1,
+          },
+          {
+            batchDurationMs: secondBatchDurationMs,
+            samples: secondTurns.map(({ durationMs, sessionNumber }) => ({
+              durationMs,
+              sessionNumber,
+            })),
+            turnNumber: 2,
+          },
+        ],
+        fixture: "agent-workflow-stress",
+        scenario: "concurrent",
+        schemaVersion: 1,
+        unit: "milliseconds",
+      })}`,
+    );
+
+    t.succeeded();
+    t.event("session.started", { count: SESSION_COUNT });
+    t.event("turn.started", { count: TURN_COUNT });
+    t.event("turn.completed", { count: TURN_COUNT });
+    t.notEvent("turn.failed");
+  },
+});
+
+function markerFor(sessionIndex: number, turnNumber: number): string {
+  return `stress-session-${String(sessionIndex + 1).padStart(2, "0")}-turn-${turnNumber}`;
+}

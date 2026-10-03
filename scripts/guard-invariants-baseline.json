@@ -1,0 +1,54 @@
+{
+  "_description": "Baselines for framework mechanical lints. Each rule guard refuses to let new violations slip in beyond what is recorded here. Lower a count by removing offenders, never raise it. Empty allowlists/maps mean the rule is fully enforced.",
+  "rule13_spreadTernaryByFile": {
+    "packages/orcel/src/public/channels/auth.ts": 7
+  },
+  "rule19_asyncLocalStorageAllowlist": [
+    "packages/orcel/src/context/container.ts",
+    "packages/orcel/src/public/channels/slack/slackChannel.ts",
+    "packages/orcel/src/runtime/sessions/runtime-session.ts"
+  ],
+  "rule21_authoredNameAllowlist": [],
+  "rule23_unknownCastByFile": {
+    "packages/orcel/src/channel/adapter-context.ts": 1,
+    "packages/orcel/src/compiler/manifest.ts": 1,
+    "packages/orcel/src/evals/runner/reporters/braintrust.ts": 1,
+    "packages/orcel/src/execution/node-step.test.ts": 4,
+    "packages/orcel/src/harness/prompt-cache.test.ts": 6,
+    "packages/orcel/src/harness/tool-loop-compaction-accounting.test.ts": 2,
+    "packages/orcel/src/harness/tool-loop.test.ts": 16,
+    "packages/orcel/src/internal/nitro/host/build-application.scenario.test.ts": 2,
+    "packages/orcel/src/internal/nitro/host/create-application-nitro.scenario.test.ts": 2,
+    "packages/orcel/src/internal/nitro/host/cron-handler-route.test.ts": 1,
+    "packages/orcel/src/internal/nitro/host/dev-authored-source-watcher.scenario.test.ts": 2,
+    "packages/orcel/src/internal/nitro/host/schedule-task-routes.test.ts": 1,
+    "packages/orcel/src/internal/nitro/routes/runtime-artifacts.test.ts": 1,
+    "packages/orcel/src/runtime/agent/bootstrap-model-utils.ts": 3,
+    "packages/orcel/src/runtime/agent/mock-model-adapter.test.ts": 1,
+    "packages/orcel/src/runtime/agent/mock-model-adapter.ts": 1,
+    "packages/orcel/src/runtime/resolve-sandbox.ts": 1
+  },
+  "rule25_installRuntimeArtifactsAllowlist": [
+    "packages/orcel/src/internal/application/compiled-artifacts.ts",
+    "packages/orcel/src/internal/testing/app-harness.ts",
+    "packages/orcel/src/runtime/loaders/bundled-artifacts.ts",
+    "packages/orcel/src/runtime/sessions/runtime-session.ts",
+    "packages/orcel/src/context/accessors.integration.test.ts",
+    "packages/orcel/src/execution/harness-tool-execution.integration.test.ts",
+    "packages/orcel/src/internal/nitro/routes/runtime-artifacts.test.ts",
+    "packages/orcel/test/scenarios/load-agent-info-data.scenario.test.ts",
+    "packages/orcel/test/scenarios/runtime-loaders.scenario.test.ts"
+  ],
+  "rule45_providedToolPrivateImportAllowlist": [
+    "packages/orcel/src/tools/provided/agent-router.ts",
+    "packages/orcel/src/tools/provided/bash.ts",
+    "packages/orcel/src/tools/provided/glob.ts",
+    "packages/orcel/src/tools/provided/grep.ts",
+    "packages/orcel/src/tools/provided/load-skill.ts",
+    "packages/orcel/src/tools/provided/read-file.ts",
+    "packages/orcel/src/tools/provided/web-fetch.ts",
+    "packages/orcel/src/tools/provided/web-search.ts",
+    "packages/orcel/src/tools/provided/workflow.ts",
+    "packages/orcel/src/tools/provided/write-file.ts"
+  ]
+}

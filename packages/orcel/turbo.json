@@ -1,0 +1,27 @@
+{
+  "extends": ["//"],
+  "tasks": {
+    "build": {
+      "dependsOn": ["$TURBO_EXTENDS$"],
+      "inputs": [
+        "$TURBO_EXTENDS$",
+        "$TURBO_ROOT$/packages/orcel-code/extension/**",
+        "$TURBO_ROOT$/packages/orcel-computer-use/extension/**"
+      ]
+    },
+    "build:types": {
+      "inputs": [
+        "$TURBO_EXTENDS$",
+        "$TURBO_ROOT$/packages/orcel-code/extension/**",
+        "$TURBO_ROOT$/packages/orcel-computer-use/extension/**"
+      ]
+    },
+    "typecheck": {
+      "inputs": [
+        "$TURBO_EXTENDS$",
+        "$TURBO_ROOT$/packages/orcel-code/extension/**",
+        "$TURBO_ROOT$/packages/orcel-computer-use/extension/**"
+      ]
+    }
+  }
+}

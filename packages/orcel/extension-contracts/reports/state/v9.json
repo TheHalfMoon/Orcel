@@ -1,0 +1,15 @@
+{
+  "kind": "orcel-extension-capability-contract",
+  "capability": "state",
+  "epoch": 9,
+  "sha256": "1eaaab829ebed33c1c76ceeb7eafbf2c737f75d0727845bae4e41123e2264c5e",
+  "exports": [
+    "Session",
+    "SessionAuth",
+    "SessionAuthContext",
+    "SessionContext",
+    "SessionParent",
+    "SessionTurn",
+    "defineState"
+  ]
+}

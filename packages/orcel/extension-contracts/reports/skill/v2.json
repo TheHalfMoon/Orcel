@@ -1,0 +1,7 @@
+{
+  "kind": "orcel-extension-capability-contract",
+  "capability": "skill",
+  "epoch": 2,
+  "sha256": "9881b78534ae2986467099c0954ec327ba91c957f80380ca3d7258935f868542",
+  "exports": ["NamedSkillDefinition", "defineSkill"]
+}

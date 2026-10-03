@@ -1,0 +1,14 @@
+.git
+.env
+.env.*
+.vercel
+.turbo
+.orcel
+node_modules
+**/node_modules
+**/dist
+**/.next
+**/.nuxt
+**/.svelte-kit
+coverage
+*.log

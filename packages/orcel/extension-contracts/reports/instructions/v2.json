@@ -1,0 +1,7 @@
+{
+  "kind": "orcel-extension-capability-contract",
+  "capability": "instructions",
+  "epoch": 2,
+  "sha256": "2a2c072fd42de41477714055072ed8c0f35edd5495d36812a98496215ebb2e20",
+  "exports": ["defineInstructions"]
+}

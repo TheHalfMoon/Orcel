@@ -1,0 +1,2290 @@
+# orcel
+
+## 0.68.0
+
+### Minor Changes
+
+- 52a18ac: Computer use moves out of `orcel/extensions/code` into its own built-in extension, `orcel/computer-use`. Mounting the code extension no longer adds `computer_use`, so agents without a desktop stop sending its schema on every request. Agents that use computer use should mount `orcel/computer-use` next to the code extension; mounted as `agent/extensions/computer-use.ts`, the tool is named `computer-use__computer_use`.
+  
+  The sandbox helpers are now exported from `orcel/computer-use/sandbox` and the tool from `orcel/computer-use/tools`. The old `orcel/extensions/code/sandbox` and `orcel/extensions/code/tools` exports still work but are deprecated.
+- 2cfcecc: A stream-event hook that throws no longer fails the turn or session. orcel logs the failure with the hook and event identifiers, runs the remaining subscribers, and continues execution, including for `turn.started` and `step.started` hooks, which previously ended the turn with `KAFNT_HANDLER_FAILED`.
+
+### Patch Changes
+
+- 2998dc1: Turn-scoped dynamic tools now restore their durable callbacks when a turn resumes in a different process, so tools resolved at `turn.started` remain callable throughout the turn.
+- 1cfe7e7: Include the authenticated responder identity in answered workflow-tool `ctx.ask()` responses.
+- 0ac01f6: Local development leaves previous invocations' workflows dormant by default. `orcel dev --resume` attempts to recover runs with valid retained snapshots even when framework or authored workflow sources changed; replay can fail after executing work. Missing snapshots are cancelled, while runs with malformed generation metadata remain stored and dormant. Requests addressed to dormant conversations fail instead of appearing accepted without a response.
+- cb5478f: Tools resolved through `defineDynamic` now emit their `label.start`, `label.delta`, and `label.complete` presentation on `actions.requested` and `action.result`, matching static tools.
+- c94736a: Filter `/model` reasoning choices to the selected model's supported effort levels from the AI Gateway catalog.
+- e590bd7: Record provider-call retries as distinct model-call spans and terminalize failed provider attempts.
+- 2cfcecc: Hooks can call `ctx.cancel()` to cancel the running turn after the remaining subscribers for the event run. The turn then settles like `session.cancel()`, with `turn.cancelled` followed by `session.waiting`.
+- e574dd3: MCP tools found through `connection_search` now pass the model only their result's `content`, not the full MCP result with its duplicated `structuredContent`, so history grows about half as fast on MCP-heavy sessions.
+- c004ac8: `orcel dev` now cancels unfinished local Workflow runs whose development snapshots are gone, instead of repeatedly reporting them as startup errors. Runs with retained snapshots still recover across restarts, and cancelled runs record why they can no longer resume.
+- dabb8bd: Web Chat's Vercel services setup no longer requires linking a Vercel project. Use `pnpm dev:all` to run the service graph locally; it uses linked project settings when available.
+- 7ed1d70: `gh-signed-commit` in `orcel/extensions/code` now commits staged files larger than 1 MiB, such as monorepo lockfiles, instead of failing with `spawnSync git ENOBUFS`.
+- d6f5f04: Update the generated Web Chat app from Next.js 16.3.0-preview.6 to 16.3.6.
+
+## 0.67.2
+
+### Patch Changes
+
+- 03d1f42: Internal cleanup: helpers that only tests used are moved out of the published runtime or removed, and internal modules no longer export symbols used only in their own file. There is no user-visible change.
+- 03d1f42: Cancelling a turn no longer logs "tool execution failed" at error level for the tool that was running. Real tool failures are still logged.
+- 03d1f42: Remove more unused internal modules and helpers from the `orcel` package. This is internal cleanup with no user-visible behavior change.
+- a6ae201: Parallel tool calls from subagents that share a sandbox no longer race to start it. In one process they now wait for a single start, and a Docker sandbox that loses the container name race to another process attaches to the winner's container instead of failing with `Conflict. The container name ... is already in use`.
+- 213ba9b: Upgrade the bundled Workflow SDK to `@workflow/core` 5.0.0-beta.57 and the matching `@workflow/errors`, `@workflow/world`, `@workflow/world-local`, and `@workflow/world-vercel` beta releases.
+
+## 0.67.1
+
+### Patch Changes
+
+- aaea9b6: Send the Agent Runs conversation ID as the AI Gateway session ID for model and compaction calls, so Gateway generations from one conversation can be grouped together. Preserve an explicitly configured Gateway session ID.
+- 16e2913: orcel no longer prints bundler warnings that come only from dependency code when it bundles authored modules, development generations, and workflow code, matching the production server build. Warnings from your own code and unresolved imports still print, and an unresolved import inside a workflow dependency still fails the build.
+- 16e2913: Remove unused internal helpers from the `orcel` package. This is internal cleanup with no user-visible behavior change.
+- 8cac212: Fix `useOrcelAgent({ resume: true })` crashing with React error #185 ("Maximum update depth exceeded") when a saved session replays more than ~50 events. The store now publishes once after catch-up instead of once per replayed event.
+
+## 0.67.0
+
+### Minor Changes
+
+- 04b6464: Simplify the CLI around explicit local and remote agent workflows. Use `orcel remote` to connect to, invoke, or inspect an existing agent; `orcel dev` now starts only local development.
+  
+  Replace `orcel dev <url>` with `orcel remote connect <url>`, and `orcel invoke` with `orcel remote invoke <url>`. Replace `orcel set --model` and `orcel set --reasoning` with `orcel set model [model] [--reasoning <effort>]`.
+- f9addc3: Remove the `conversation` / `task` run mode. Every session now parks after each turn instead of ending, including markdown schedules and MCP `agent_start` invocations. Sessions that cannot request input, such as markdown schedules, still fail when a tool needs approval. `agent_get` reports `completed` once the turn settles, and a recoverable model failure fails only that turn. The `mode` option is gone from `ChannelAddress` and Chat SDK `send(...)` options, as well as from audience and trace-policy inputs. The orcel HTTP channel now ignores a `mode` field on session creation. `outputSchema` is removed from `defineAgent`, `defineRemoteAgent`, `defineWorkspaceAgent`, dynamic subagent configs, agent info, the model-facing subagent and `agentRouter()` tool inputs, MCP `agent_start`, and channel `from(address).send()` / `respond()` options; request structured output per turn through the session API or `ctx.agent()`.
+
+### Patch Changes
+
+- bd71df9: Finish refused approval-response deliveries without leaving clients streaming, and let the dev TUI retry refused approvals. The default reducer now keeps approval, question, and session-limit prompts pending until server confirmation; frontends should disable response controls while the store is `submitted`, `streaming`, or `resuming` instead of relying on the prompt disappearing immediately.
+- 0b49e3f: Define the versioned internal snapshot used to hand compiled external resource requirements to build integrations.
+- e7d2057: Await instrumentation setup before loading server dependencies in development and production, so OpenTelemetry can instrument external packages such as `pg`.
+- e5147e7: Fix project discovery for directories named `agent` that contain their own project manifest. Nested and flat projects now resolve within that directory instead of being assigned to an ancestor or failing because the ancestor has no agent files.
+- a58fa96: Run parent stream-event hooks after publishing proxied input requests, authorization events, and their completion/waiting events. Hooks receive the parent context and the published event ID.
+- 3a1892d: Add a copy button to the deployment home page so you can copy the `orcel dev <url>` command with one click instead of selecting it by hand.
+- 5b5f746: MCP connection calls now carry OpenTelemetry context in MCP metadata and add MCP semantic attributes to their tool traces. Tool payload capture continues to follow the configured trace content policy.
+- c685f5e: Give memory compaction callbacks a step-specific operation ID so multiple compactions in one turn can return refreshed recall results.
+- cd82f57: Compile Connect-backed channels and connections into a generic external-resource snapshot, then delegate final manifest creation to the installed @vercel/connect compiler.
+- 32cd5b9: Preserve optional function-tool inputs by explicitly disabling provider strict mode. This prevents OpenAI Responses from implicitly requiring optional fields in authored and connection tool schemas.
+- 0cd4239: Limit `/orcel/v1/info` model provider options to the priority tier indicator. Other provider options no longer appear in the inspection response, so credentials stored under unexpected keys cannot be exposed there.
+- b21efb3: Prevent parent-agent steering text from resolving a delegated child's pending `ctx.ask()` question. Human-facing parent sessions continue to proxy plain-text and structured answers to children by request ID.
+- 8c8ef08: Keep inbound Slack link previews alongside the sender's message even when the link has surrounding text. Previously, shorter previews could be dropped when the message included a question or comment.
+- 3b6549c: Render terminal approvals and questions in drawers, and simplify the completed-turn stats line.
+- 83c5fe2: Restore turn-scoped dynamic connections before authorizing approval responses, including after a cold start. Connection response policies now run instead of failing because their callbacks are unavailable; missing tools or changed connection identities fail explicitly rather than replaying against a replacement connection.
+- 01cb6b4: Fix compiling agents on Windows when a mounted extension contributes a subagent. Each subagent's workspace resources now live in one URL-encoded directory under `.orcel/compile/workspace-resources/`, so ids that contain `:` no longer produce invalid Windows paths.
+
+## 0.66.3
+
+### Patch Changes
+
+- 15ad358: Allow empty-response recovery to request fresh reads when earlier tool results are stale, while continuing to warn against repeating completed writes and other side effects.
+- faab713: `orcel dev` now uses a single `*` marker for completed slash commands and excludes picker and drawer commands, including `/loglevel`, from input history. Setup failures keep their invocation visible, and failed registry installs no longer expose installer output in TUI diagnostics.
+- 0aad786: `slackChannel` and `callSlackApi` accept an `api` option, `{ apiBaseUrl?, fileBaseUrl?, fetch? }`, that sends Slack Web API calls and attachment downloads to another host. `fileBaseUrl` defaults to `apiBaseUrl`, `fetch` is called only for URLs on those hosts, each base must be an absolute http or https URL with no query string or fragment, and omitting `api` keeps `https://slack.com/api/` and the global `fetch`.
+- faab713: Keep setup drawer status content inside its temporary surface, and use the same model-login connection catalog for TUI completion and command handling.
+- e148d8f: Upgrade the Workflow SDK beta packages and mark new session handoffs as protocol version 2. Handoffs without a version remain compatible as version 1, so future forced hook claims can be limited to sessions whose previous owner supports them.
+
+## 0.66.2
+
+### Patch Changes
+
+- 306f2ce: Configure 100% Vercel trace sampling across all environments when `orcel deploy` creates a new project, with `--no-trace-sampling` to opt out.
+- fdf1364: Ignore JavaScript and TypeScript `*.test.*`/`*.spec.*` modules and `__tests__/` directories during agent discovery.
+- 8565550: Fix `auto()` model selection when a turn resumes after a question or tool approval.
+
+## 0.66.1
+
+### Patch Changes
+
+- 055f1d1: `orcel build` and `withKaf` during `next build` now build mounted, source-backed workspace extensions before compiling the agent, as `orcel dev` already does. Production builds no longer fail when a package manager skips the extension's `prepare` script, such as on a no-op install with a restored `node_modules` cache. An extension whose distribution is already current is not rebuilt, and a failed extension build names the package and the command to run.
+- faacecf: Follow a delegated child's activity from a client with `session.streamSubagent(called, options?)`. Pass a `subagent.called` event from that session. The client reads its `childStreamPath` with the session's host and credentials, so a remote child streams through the parent deployment's proxy route, and the child's cursor stays separate from the parent's. Eval sessions expose the same method with the eval client's credentials.
+- a490d88: `orcelChannel({ trustedForwarders })` now receives what the forwarder asserts as a second argument. `assertion.principal` holds the stamped `current` and `initiator` contexts the forwarder asserts, so a receiver can limit a trusted forwarder to the identities it may speak for instead of accepting any principal it asserts.
+- 6e568dc: Allow Web Chat to scaffold as a peer application for standalone agents and agent workspaces, with explicit Next.js or Vercel services hosting. `withKaf()` from `orcel/next` can discover either project layout from an explicit `orcelRoot`, so the peer application does not need to repeat agent paths.
+- d8ddf0d: Add bounded, conversation-scoped trace analysis to self-modification, with filtered search, compact timelines, and batched span payload inspection.
+- d6fc658: Keep a delegated agent task open when its model turn yields while background work started in that turn is still running. Deliver the final result after that work finishes, including usage accumulated across the yielded turns, instead of reporting the interim reply as completion.
+  
+  Propagate task cancellation to a yielded child's nested background work for self, local, and remote delegation, without waking the cancelled child on its nested task notifications. Preserve cancellation across replay and session handoff.
+  
+  Fail an unanswered delegated task when its yielded child session ends, and preserve the unreported usage in that terminal result.
+- 650b309: Use a quieter selected-row treatment and temporary drawer for interactive setup flows in the development TUI. `/add`, `/login`, and `/deploy` now emphasize the focused option with type weight instead of a caret, keep controls below the drawer, and `/login` supports inline connection completion such as `/login openai-api-key`.
+- d6fc658: Keep durable MCP invocations open for pending background subagents so clients receive the delegated result.
+
+## 0.66.0
+
+### Minor Changes
+
+- da906b6: Breaking: `ctx.getSkill()` and the `SkillHandle` and `SkillFile` types from `orcel/skills` are removed. The model still reads skill supporting files with its sandbox tools; if your own tool or hook code needs that data, import it from a module in `lib/` instead. Existing extension builds keep loading unless they call `ctx.getSkill()`.
+- ee286fe: Pass a configured sandbox environment to `ctx.getSandbox(environment)` to preserve its provider-specific session capabilities in the returned orcel sandbox handle. The common `SandboxSession` no longer exposes optional `setNetworkPolicy`; use the configured environment when accessing that capability.
+
+### Patch Changes
+
+- c541dec: Leave temperature at the model provider's default when generating compaction summaries so providers that reject explicit sampling parameters can compact normally.
+- 1b6366f: Tolerate concurrent Docker sandbox template publication when another Orcel application publishes the same deterministic image first.
+- d50a774: Add the `orcel/extensions/code` built-in extension for coding agents: mount it with `import code from "orcel/extensions/code"` to get `apply_patch`, `gh`, `grep`, computer use, coding skills, and a read-only worker subagent. Sandbox, tool, and PR-watch helpers are exported from `orcel/extensions/code/sandbox`, `orcel/extensions/code/tools`, and `orcel/extensions/code/prwatch`.
+- 23dda94: `subagent.called` and `subagent.completed` hooks can now call `ctx.getSandbox()` for the parent session, and sandbox changes they make are kept for the parent's next turn.
+- 5132625: Add inline, keyboard-navigable catalog completions for `/model` and `/add` in the development TUI.
+- 92505dd: Fix `Cannot read properties of undefined (reading 'push')` failures in turns with MCP tools such as Notion, and with the file-memory tools, when an app installs a different Zod version than orcel bundles. Tool schemas now reach the AI SDK only as JSON Schema, MCP and other JSON Schema tools are advertised exactly as published and validated with a standard JSON Schema validator, and the `*_INPUT_SCHEMA` and `*_OUTPUT_SCHEMA` constants from `orcel/tools/*` are JSON Schema-backed Standard Schemas instead of Zod objects.
+  
+  orcel now ships a single private copy of Zod instead of bundling several. `orcel/client` no longer exports `AgentInfoResultSchema`, `HealthResultSchema`, `inputOptionSchema`, `inputRequestKindSchema`, `inputRequestSchema`, or `inputResponseSchema`, and `orcel/self-modification` no longer exports `selfModificationConfigSchema`; use the exported types together with `isInputRequest`, `isInputResponse`, and `parseInputResponse`.
+- 136d339: Load optional sandbox provider packages consistently from the application during preparation, start, and resume. Providers installed automatically by `orcel dev` can now be used immediately without restarting the development server.
+- da906b6: Dynamic skills no longer start a sandbox to announce or load instructions. Skills that return supporting files are written only when their contents or sandbox change, and a changed package replaces its previous files instead of leaving stale ones behind.
+- 09fed04: The Slack channel's `views.open` and answered-card `chat.update` now go through the channel's own Slack API transport. Slack sees the same calls, and a `views.open` that fails after Slack responds is still logged and acknowledged.
+  
+  A failed `views.open` is now logged as `Slack views.open failed` with the error attached, where it was `Slack views.open returned non-2xx` with a `status` field. Alerts or log queries keyed on either need updating.
+
+## 0.65.0
+
+### Minor Changes
+
+- 60998d6: Remove the `todo` tool, its `orcel/tools/todo` export, and the dev TUI todo panel; delete any `agent/tools/todo.ts`, including one that exports `disableTool()`, which now fails the build because there is no default `todo` tool to disable. Compaction no longer resets `write_file` read tracking, so a file read before compaction can be overwritten without re-reading it; stale-read detection still rejects the write if the file changed since that read.
+  
+  `ask_question` is no longer a default tool and is now an ordinary workflow tool built on `ctx.ask()`. Add it with `orcel add tool/ask_question`, or change an existing `agent/tools/ask_question.ts` to `import { askQuestion } from "orcel/tools/ask_question"; export default askQuestion();`. The model now asks one `question` with up to three `{ label, description }` options, can always receive a free-text answer, and gets back `{ status: "answered", answer }` with the chosen label or the user's words. In sessions that cannot request input, the tool is still available and returns `{ status: "unavailable" }`. If you disabled `ask_question` with `disableTool()`, delete that file; it now fails the build for the same reason.
+  
+  `ctx.ask()` now resolves to `{ status: "answered", optionId?, text? }`, `{ status: "dismissed" }`, or `{ status: "unavailable" }`; check `status` before reading `optionId`. It returns `unavailable` immediately when the session cannot request input. A plain-text message answers a blocking tool's `ctx.ask()` question when it is the only pending question and the message matches an option or the question allows free text. Pass `dismissible: true` to resolve the question as `dismissed` when the user sends an unrelated message instead. An `ask_question` request's `requestId` is no longer its tool call ID; use `action.callId` to relate a request to its tool call.
+
+### Patch Changes
+
+- 155d24a: Make the bundled self-modification subagent scaffold an authored mount before changing its model, reasoning, or policy.
+- 155d24a: `orcel dev` now mounts bundled development extensions by default, including the local self-modification subagent. Pass `--no-default-extensions` to run without them; production bundles do not initialize these development-only mounts.
+- ebab950: Fix subagent delegation failing with `Context key "orcel.sandbox" is not set` when the parent has dynamic skills. Skill announcements are rebuilt at model preparation boundaries, so subagent notifications no longer require sandbox access.
+- d2ed49e: Exclude lazy development sandbox preparation and its transitive dependencies from every production server bundle, including self-hosted builds without a Vercel preset.
+- f945b80: Stop vendoring the unused `@workflow/builders` directive utilities into the published package.
+- a3b795b: Export an `errored` flag on eval assertion results so scorer failures can be distinguished from legitimate zero scores.
+
+## 0.64.1
+
+### Patch Changes
+
+- b49a598: Restore the active orcel context while session-scoped dynamic tools are recovered, so resolvers that read durable state keep their callbacks after a resumed session.
+- 867a6ad: Prepare pnpm's optional-dependency policy before automatically installing just-bash during development, avoiding startup failures on unapproved native codec builds. Existing package-specific build decisions are preserved.
+- 867a6ad: Pin automatic microsandbox installs and manual installation guidance to the supported version so a new development server does not install an incompatible release.
+- 3e2bf95: Fix background workflow tools in workspace agents to use app-relative workflow IDs so dispatch matches the registered workflow.
+- 070525e: Defer sandbox environment preparation during development until the first sandbox access, so startup and rebuilds no longer wait for optional engine installation. First access prepares all environments in that compiled generation, with heartbeat-backed coordination that recovers after a development worker crash; production builds still prepare eagerly.
+- 867a6ad: Serialize automatic sandbox dependency installations that share a package-manager root, preventing concurrent providers or workspace apps from racing on dependency files. Waiting installations recheck their own package and can proceed after another installation fails.
+- 1a6cb88: Write fallback Vercel service configuration under the Next.js app directory in linked monorepos. This keeps generated orcel services discoverable when no active build output directory is found, preventing deployments that omit the agent endpoints.
+
+## 0.64.0
+
+### Minor Changes
+
+- 3be0b74: Add `taskDeliveryPolicy: "auto" | "cohort"` to message sends. New channel sessions default to `"auto"`, allowing independently useful reports or silence until related work settles; schedules default to `"cohort"`, and explicit sends can select or update the session's policy.
+- 49971b7: Replace object-form sandbox definitions with exported provider environments whose `open()` method starts and returns the current orcel session's persistent live sandbox. After successful selector initialization, durable boundaries resume directly from immutable provider state without rerunning `defineSandbox()`; provider-specific session capabilities remain precisely typed.
+
+### Patch Changes
+
+- fa92e5e: Route AI SDK provider warnings to orcel's diagnostics instead of presenting successful compatibility fallbacks as stderr errors. Existing custom warning handlers and `AI_SDK_LOG_WARNINGS=false` remain respected.
+- 3be0b74: Align the bundled Chat SDK and adapters with version 4.41.0. Chat SDK channel types now reference the installed `chat` package so external adapters and handlers share the same type identity; `chat` is an optional peer for this integration.
+- 3e5ff9f: Fix a Vercel Workflow race where a rejected inline-step preclaim could skip the owner's body, leaving the durable step to fail after exhausting its retry limit without running user code.
+- aceb298: Local self-modification now depends on `orcel dev` host facilities instead of request provenance.
+- f2b8792: Pre-approve esbuild install scripts in newly initialized pnpm projects so registry additions that install the Vercel CLI no longer require a separate `pnpm approve-builds` step.
+- b174a62: Remove the redundant Enter badge from searchable setup pickers; the selected-row cursor already indicates the active choice.
+- 9f17453: Clarify that `orcel build --skip-sandbox-prewarm` skips sandbox preparation for local and hosted builds. Workspace fixture typechecks now use this mode instead of provisioning sandbox infrastructure.
+- d98edb2: Add `orcel init --non-interactive` to scaffold and install an agent without opening the development TUI.
+
+## 0.63.1
+
+### Patch Changes
+
+- de29d28: In the orcel TUI, press `Ctrl+Y` to paste text you removed with `Ctrl+K`, `Ctrl+U`, or `Ctrl+W`. Press `Alt+Y` immediately afterward to cycle through earlier removals.
+- 7cfaa6f: Option+Delete on macOS and Alt+Backspace now delete to the previous word boundary in editable orcel TUI fields.
+- e110eb2: Allow an active turn to finish its tool-result continuation when an earlier turn's HITL request remains unanswered, while preserving current-turn HITL parking. Partial approval responses remain saved until their batch can resolve; they do not cause an extra model call after an unrelated answer.
+- 56e3510: Keep sessions on their original stream across consecutive deployment handoffs. Intermediate handoffs no longer end the session before the final owner completes it, preventing later handoffs from failing with a fatal Workflow SDK `Hook not found` error.
+- b333e7d: Fix saved-session resume in browsers without `Symbol.dispose`.
+- 3d96b69: Use `spacexai/grok-4.7` as the default model for new projects, agents without an `agent.ts`, and Gateway setup.
+- d88aede: Add eval setup and teardown callbacks with typed context shared by reference across evals and cleanup. Setup returns the context directly before the local agent starts, and teardown runs after shutdown even when setup or the run fails.
+- dea2ced: Upgrade the Workflow runtime and quiet expected inline-step contention while preserving protection against duplicate execution.
+- ffb1276: Fix background subagent calls failing the parent session when typed or wildcard hooks subscribe to subagent events. These hooks now receive the parent session context after workflow step boundaries.
+
+## 0.63.0
+
+### Minor Changes
+
+- d2c92df: Require durable background tools to use `defineWorkflowTool`. Remove background execution from `defineTool` and dynamic tools, including the `TaskExec` and `postMessage` authoring APIs, and deliver each background cohort's completed, failed, and cancelled outcomes in one automatic report.
+  
+  Background invocations share workflow execution and cancellation cleanup. Agent settlement records usage once before its enclosing workflow returns a tool result. Parent sessions retain task outcomes, and late results cannot overwrite a recorded cancellation; channel task views no longer include executor bindings. Background workflow yields are consumed without publishing progress or retaining a task-progress stream.
+  
+  Align `subagent.completed` for blocking and background agents: emit the actual output only after the parent records success. Background receipts remain `action.result` tool outputs; completion events no longer announce admission or wait for cohort reporting.
+  
+  Use task lifecycle values in subagent eval assertions: replace `status: "pending"` with `"working"` and `"rejected"` with `"failed"`. Explicit cancelled child outcomes now retain `"cancelled"` instead of appearing as failures.
+
+### Patch Changes
+
+- a042a9a: Choose a model, speed, and reasoning through separate steps in the terminal UI, with clear defaults and changes applied together after the final choice. The slash menu now puts model selection and session controls first, and a steady Thinking, Generating, or Running label with a blinking dot replaces the animated Working label during turns.
+- f240baa: Fix local development snapshots for extension subagents mounted from hoisted workspace dependencies.
+
+## 0.62.0
+
+### Minor Changes
+
+- 9d394fa: Package self-modification as an extension-owned subagent and retire the legacy scaffolded self-modification capability. Registry installation uses local-only setup, while deployed-aware setup remains available separately.
+- 8e01190: Replace `t.judge.autoevals.*` with `t.judge(...)`, supporting criteria, typed questions, and batches through evaluation models with a default of `typesafe-ai/jev`. Configure provider evaluation model instances instead of language model instances; autoevals is removed while deterministic similarity and Braintrust reporting remain available.
+- fcb3ba2: Make path-named files under `agent/instrumentation/` the supported instrumentation API. Existing `agent/instrumentation.ts` configurations must be split into lifecycle instrumentation, OpenTelemetry destinations, and shared `otel()` settings; extensions that contribute subagents must be rebuilt for the new contract epoch.
+- 804e670: Remove deprecated instrumentation compatibility shapes. Providers now reject the removed `capture` option in favor of `tracePolicy`, destination export policies return object decisions, and flat `instrumentation.ts` modules are no longer discovered.
+
+### Patch Changes
+
+- 9f1d1cf: Polish `orcel init` with inline terminal output, timed installation progress, and a quiet transition into chat without automatic login entries in history. Failed installs show bounded diagnostics and recovery instructions; debug logging retains package-manager output.
+- 38ad163: Keep registry installation error traces visible in the dev TUI after an `/add` failure, alongside the per-item recovery guidance.
+- d0d2b5e: Refine the `orcel dev` terminal header with a compact `☰orcel` mark, clearer metadata separation, and a persistent command hint. `orcel dev` no longer shows the startup `/add` tip.
+- 06e17ae: Wrap long setup questions in the `orcel dev` terminal UI instead of clipping them at the terminal edge.
+
+## 0.61.1
+
+### Patch Changes
+
+- 8a21c0c: `agentRouter()` now advertises model-supplied output schemas as permissive objects, avoiding unsupported JSON Schema `propertyNames` warnings on OpenAI models while preserving downstream object validation.
+- cbb2206: Clear stale model setup warnings when the local development server becomes ready, and avoid diagnosing unavailable startup information as missing model credentials.
+- d58065e: Workflow steps now fail immediately with actionable guidance when they access workflow-body-only `ctx.agents`, `ctx.agent()`, or `ctx.ask()` capabilities. Use the new `WorkflowStepToolContext` type for step helpers and pass serializable agent metadata from the workflow body.
+
+## 0.61.0
+
+### Minor Changes
+
+- cbfc425: Root workflow tools now receive the built-in root-copy target at `ctx.agents.agent`, with its authored description or an empty string, and `agent` is reserved from use as a declared subagent name. Tool definitions can set `availableInSubagents: false`; `agentRouter()` sets it automatically, routes only to entries with non-empty descriptions, and can replace the model-facing tool at `agent/tools/agent.ts` without being inherited by the root copy.
+
+### Patch Changes
+
+- 7e95b64: Keep Web Chat attached for background task results without rendering runtime-authored task input as a user message. Task wake-ups now retain explicit provenance in the durable session stream while the default frontend reducer omits them from participant messages.
+- 7259b96: Set `minimumReleaseAge: 0` in newly generated pnpm workspace files so dependencies installed by `orcel init` also pass pnpm's checks when starting the dev server or installing again.
+- 260a359: Reconcile frontend optimistic messages with their server delivery identities instead of stream order. Concurrent, coalesced, identical, and structured message submissions now resolve the correct placeholders, and separately delivered messages within one turn remain separate chat bubbles.
+- 5f17320: Reduce development startup and production build time by removing duplicate bundler work, skipping unnecessary parsing, and overlapping independent preparation. Development terminal inspection now has a deadline, and `Client.info()` accepts an abort signal so slow inspection requests do not hold up startup.
+- 6b99f12: Upgrade orcel's Workflow runtime dependencies to the latest beta releases, including the Postgres world fix for steering pending generations.
+
+## 0.60.1
+
+### Patch Changes
+
+- 76d4dd8: Workflow tools can read effective declared-subagent descriptions from `ctx.agents`, including subagents hidden from the parent model. Export `agentRouter()` from `orcel/tools/agent-router` to route each task across that complete map with JEV and invoke the selected agent.
+
+## 0.60.0
+
+### Minor Changes
+
+- da82a95: Make managed destination `exportPolicy` accept one policy or an ordered policy array, with explicit span `emit` and redaction decisions. Attribute policies now return `emit` or `replace` decisions; and the deprecated `redactSpanInputs()`, `redactSpanOutputs()`, destination `recordInputs`, destination `recordOutputs`, `content`, and `composeSpanExportPolicies()` APIs are removed.
+  
+  Use these replacements:
+  
+  | Before                            | After                                                                           |
+  | --------------------------------- | ------------------------------------------------------------------------------- |
+  | `span: () => false`               | `span: () => ({ emit: false })`                                                 |
+  | `redactSpanInputs(when)`          | `span: (span) => when(span) ? { redact: true, inputs: true } : { emit: true }`  |
+  | `redactSpanOutputs(when)`         | `span: (span) => when(span) ? { redact: true, outputs: true } : { emit: true }` |
+  | `recordInputs: false`             | `exportPolicy: { span: () => ({ redact: true, inputs: true }) }`                |
+  | `recordOutputs: false`            | `exportPolicy: { span: () => ({ redact: true, outputs: true }) }`               |
+  | `{ action: "keep" }`              | `{ emit: true }`                                                                |
+  | `{ action: "drop" }`              | `{ emit: false }`                                                               |
+  | `{ action: "replace", value }`    | `{ replace: true, value }`                                                      |
+  | `composeSpanExportPolicies(a, b)` | `exportPolicy: [a, b]`                                                          |
+  
+  Passing the removed destination `recordInputs` or `recordOutputs` options now
+  throws during declaration instead of silently exporting content.
+  
+  Returning a boolean from `span` still works but is deprecated; return
+  `{ emit: boolean }`.
+- f3cd55a: Move automatic model selection to `auto` from `orcel/models` and standalone evaluation to `evaluate` from `orcel/ai`. The former `autoModel` and `orcel/experimental/evaluate` imports are no longer available.
+
+### Patch Changes
+
+- ed88ff4: Preserve canonical OpenTelemetry session metadata when channel delivery instrumentation runs before the session lifecycle event.
+- 190a49a: Run dependency installation during `orcel init` non-interactively where supported and bypass inherited minimum-release-age policies for the initial scaffold install.
+- 649180b: Preserve schema composition when compiling tools that reuse another tool's Zod input or output schema. Built agents no longer fail route initialization with `Cannot read properties of undefined (reading 'def')` for these nested schemas.
+- a87ad46: Allow React `useOrcelAgent` to observe `prewarm` across renders so interfaces can prepare a session when the user starts composing. Reset uses the latest rendered value, while disabling prewarming does not discard a session already starting or created.
+
+## 0.59.1
+
+### Patch Changes
+
+- 7ef42fd: Add `auto({ model?, instructions?, criteria? })` for evaluation-model tool approvals, defaulting to TypeSafe Jev and failing closed to user approval. Approval policies now receive the active turn's cancellation signal.
+- 1e872e3: Set `tool: false` on an agent or export a same-named `disableTool()` to hide its derived agent tool. Hidden subagents remain callable from authored workflow tools through `ctx.agent()`.
+
+## 0.59.0
+
+### Minor Changes
+
+- 6ddfa9b: Eval session ownership is now explicit: `t.session()` creates an empty session, and every `t.send()` creates a fresh session and returns a turn with `.session` for follow-ups. Replace `t.newSession()` with `await t.session()`, move conversation state and operations from `t` to the session handle, and read replies from `turn.message`.
+- 7973fa2: Preserve dynamic tool validation through durable schema factories that replay the original captured values, including Zod refinements and transformations. Rebuild extensions with the current orcel compiler; provider packages must wrap live dynamic schemas with `defineDurableSchema`, and resolver-local schema objects must be constructed inline or moved to module scope.
+- 9bff372: Use stable `@vercel/sandbox` v3.3 for Drive support instead of the obsolete beta alias. Vercel sandbox mount types now follow the stable SDK, including `snapshot` mounts.
+
+### Patch Changes
+
+- e301818: Account for effective instructions and tool schemas before each model call so dynamic capability growth triggers context compaction. Preserve provider-reported usage without counting unchanged schemas twice, and reserve room for the final request while compacting history.
+- 3121ca1: Show the model selected by a dynamic resolver beside `dynamic model` in the TUI footer. Update it as each model step starts and clear the previous selection when starting a new turn or resetting the session.
+- 6ddfa9b: Eval judges now retain the latest prompt across approval responses and stream reads, and include the text sent with file attachments.
+- 5b45f9b: Allow idle sessions with resumable subagents to move to a newer deployment. Parked and available child handles now remain usable after the parent session handoff instead of pinning the parent to its previous deployment.
+- 7e48f0e: Keep the dev TUI’s activity indicator animating while a background subagent is still running after its parent turn completes.
+- db5cee3: Add standalone `evaluate` to `orcel/experimental/evaluate` for typed evaluations in tools and application code. It shares model authentication with `autoModel`, including the Gateway connection selected during `orcel dev`.
+- 6ddfa9b: Fix frontend session resume so unused prewarmed sessions accept their first message and steering messages during resumed turns settle without leaving the composer busy.
+- 6ddfa9b: Create conversation sessions before their first turn through the orcel HTTP channel, TypeScript client, eval drivers, and frontend bindings so applications can move durable session startup off the first-message path.
+  
+  Frontend bindings support opt-in `prewarm: true`, keep consuming the session stream across turns, and retry a starting inbox without waiting for stream events. Session initialization runs with the first message's identity and context.
+
+## 0.58.1
+
+### Patch Changes
+
+- 40f0c45: Fix `autoModel` to use `typesafe-ai/jev` and the `/login` Gateway connection during `orcel dev`, while preserving custom AI SDK default providers.
+  Show `dynamic model` in the TUI footer instead of a missing-connection warning for dynamic selectors.
+
+## 0.58.0
+
+### Minor Changes
+
+- 9f301b6: Named workspace agent routes now use `/orcel/<name>/v1/*` across `orcel/next`, `orcel/vercel`, and agent-only workspace builds. Update existing named-agent URLs to the new route; root single-agent routes remain at `/orcel/v1/*`, and `orcel/vercel` can now compose them.
+- bfc899d: Replace the Vercel-specific deployed self-modification credential configuration with an application-supplied GitHub credential provider. Generated Vercel setup now writes an inline `@vercel/connect` adapter, while the self-hosted PAT configuration remains available through `{ pat: true }`.
+
+### Patch Changes
+
+- 29af29d: Add experimental `autoModel` routing at `orcel/experimental/evaluate`. It defaults to TypeSafe Jev through AI Gateway, accepts any AI SDK evaluation model, and chooses a Gateway model ID or provider model instance from the incoming task with per-option reasoning and per-turn retention.
+- 910bb45: Fix `turn.started` dynamic model, tool, skill, and subagent resolvers receiving an empty message snapshot. `ctx.messages` now includes visible conversation history and incoming input, including deferred session-limit turns and authorization resumes, with history projection preserved after memory recall.
+- ab5b8e9: Install integrations selected through the development TUI's `/add` command into the active workspace agent while keeping shared environment, Vercel, dependency, and deployment effects at the workspace root.
+- 987c3a0: Add development commands to generated hostless workspace services so `vercel dev --local` can start every agent. Default `defineWorkspaceAgent` transports route through the local Vercel service graph without deployment credentials.
+- 0fa8916: Add guided Microsoft Teams setup through `orcel add channel/teams`. The flow delegates app creation, installation, and Activity routing to the Vercel Connect CLI, then scaffolds the Connect-backed channel.
+- fd9a007: Reorganize the `orcel dev` command implementation without changing its behavior.
+- 16e11f9: Prevent multiline setup prompts, including the Vercel project-link question shown by `/add`, from being duplicated into TUI scrollback during repaints.
+
+## 0.57.0
+
+### Minor Changes
+
+- 61d4097: Run every conversational turn directly inside the session's owning workflow instead of dispatching a child turn run per message. An idle session hands its settled state to the exact deployment that accepted a new delivery, whether the delivery arrives through the session ID or any channel continuation address, keeping the original session ID and event stream and renewing the session's configured timeout. Deliveries that land while a handoff is in progress wait for the successor instead of starting a replacement session.
+  
+  Steering a running turn applies at the next committed step boundary without cancelling in-flight model or tool work and preserves the turn's identity and usage; input that arrives after the model has answered starts the next turn. `continuation.rekey()` is replaced by `continuation.alias()`: every claimed address stays active, and the most recently selected alias is exposed as `continuation.token`.
+  
+  Sessions from the former driver/turn execution model are imported on their next turn, preserving identity, history, and the original stream while interrupting pending work; drivers started before orcel 0.45 are reported inactive and their channel starts a fresh session. Retain the original deployment until imported sessions end, and retire sessions before rolling back across this boundary.
+
+### Patch Changes
+
+- 32aca9b: Restored `agent` tools now dispatch through the shared subagent workflow when framework defaults are disabled.
+- 7b17b27: Simplify the TUI footer by removing the local port and separating the model and connection with dots. Vercel account connections show the resolved team slug instead of a team ID.
+- f21e63f: Declare `.vercel/output` for generated orcel services so Vercel consumes the Build Output API directory that their build commands produce instead of looking for the framework preset's `.output` default.
+- 7b17b27: Model login shares resolved credentials with the running agent, avoids rebuilds for account, team, and key changes, and refreshes agent information without delaying chat. Clear status messages show when to finish browser sign-in and what orcel is waiting for, without flashing indicators for quick steps.
+- e1ae8eb: Flush the final activity snapshot when an activity stream closes during the render debounce window.
+- f21e63f: Make `withKaf` discover a containing workspace when Vercel evaluates `vercel.ts` from its temporary `.vercel` directory.
+- fe6451c: Keep automatic prompt caching enabled when local model authentication resolves an AI Gateway model to a provider object. Anthropic models retain cache reuse after signing in through `orcel dev`.
+- 032860c: Bound negotiated session stream responses with renewable leases so abandoned serverless invocations release their durable stream readers. The orcel client renews these responses from its cursor without exposing transport heartbeats or lease records as session events; tail-relative reads and streams with reconnection disabled remain unleased.
+- 7b17b27: Fix a local workflow health-check failure after model or source changes. Capability probes no longer look up a run before it exists, avoiding a spurious queue error and startup delay.
+- 7b17b27: Allow switching Vercel teams through `/login` by always showing the team picker when multiple teams are available. The current team is highlighted rather than silently selected; automatic startup still reuses the saved connection.
+- 7b17b27: Match the Vercel label's color to the surrounding model and team text in the TUI footer.
+- ba0b866: When a self-modified tool or capability later fails or behaves incorrectly, the agent now offers to delegate a repair. It waits for your confirmation before sending the observed and expected behavior back to self-modification.
+- 7b17b27: Use the same full-size arrow for empty and populated TUI prompts, with the empty arrow in the terminal's default foreground color for better visibility.
+- 7b17b27: Open the TUI directly after init, connect models through `/login` without requiring a Vercel project, and store local credentials securely. Add direct OpenAI and Anthropic model helpers, apply model selections immediately, and simplify menus and `/add` to get to chat sooner. Vercel CLI installation and login now run during deployment instead of separate `/vc:install` and `/vc:login` commands.
+- 8bb62e2: Recognize AI Gateway credit-balance and project-budget refusals in semantic error summaries.
+- 7b17b27: Restore guided Trusted Sources setup when Deployment Protection blocks `orcel dev --url`. orcel reuses the existing Vercel CLI session, asks before changing project access, and verifies the connection before returning to chat.
+- 7b17b27: Use the base release version for default sandbox images when running commit or git-ref tarballs. Build metadata such as `+git.<sha>` no longer produces invalid image tags for Docker, microsandbox, or Vercel Sandbox.
+- 7b17b27: Search `/add` by capabilities such as iMessage or SMS, as well as item names and addresses. The picker now searches catalog titles and descriptions without adding extra text to menu rows.
+- a08e4bb: Prompt for and resolve the target Vercel project before configuring production self-modification, and scope GitHub connector creation and attachment to that project's owner.
+- 7b17b27: Keep the composer available while startup connects your model and prepares chat, with animated progress and prompts only when input is needed. Preserve drafts and queued messages through setup, and announce readiness only after the runtime refresh succeeds.
+- 61d4097: Batch closely spaced stream events on Vercel within a 10 ms window to reduce network writes. Explicit Workflow stream-flush overrides remain supported.
+- 53fad6c: Emits canonical GenAI cache-write tokens, reports the provider-confirmed response model, and adds the executing agent name to tool spans.
+- 7b17b27: Replace rotating TUI prompt suggestions with a stable “Send a message…” placeholder that does not assume agent capabilities.
+- fe6451c: Apply steering in the core runtime before a pending model request produces an answer, continuing the same turn with the correction across clients and channels. Preserve executing tools and their results, prevent duplicate in-process model execution on background wakeups, and keep boundary steering after assistant output begins.
+- 7b17b27: Pressing Enter during a TUI response now steers the active agent immediately instead of queuing the message until the turn finishes. Startup messages and sessions without steering support continue to queue.
+- 7b17b27: Distinguish steered TUI messages with a yellow left gutter instead of an extra arrow row. Queued messages also render without an arrow row.
+- 1e6437b: Announce when dynamic skills are withdrawn completely so agents do not retain stale skill lists.
+
+## 0.56.0
+
+### Minor Changes
+
+- 8bc931f: Add the `workflow` factory from `orcel/tools/workflow` for running model-supplied JavaScript through durable `ctx.agent` calls. Remove the experimental uppercase `Workflow` tool and `experimental_workflow`; migrate its tool file to the new lowercase factory.
+- 6ce61cd: Remove aggregate registry packages and their component-selection flow. Install Linear integrations separately with `orcel add channel/linear` and `orcel add connection/linear`.
+
+### Patch Changes
+
+- 57d6be5: Add queryable metadata to activation spans, including run type, title when input capture permits, provenance, audience, schedule, and directional trace-content policy.
+- a63fb18: Keep background subagents bound to the authentication context of the turn that created their task, even when another caller starts a later turn first.
+- 51998ab: Automatically ignore the self-modification integration's known optional compression packages instead of prompting for its recommended pnpm build policy.
+- 56cde32: Include conversations classified as private in local `orcel dev` traces, including sessions authenticated with the developer's Vercel OIDC token.
+- 7ea3b7a: Classify anonymous orcel channel sessions as `unknown` by default, so their content is not recorded in preview or production traces unless you mark the audience public explicitly. Also add `credentialOwner` for raw getToken-only auth and `caller` for audience callbacks while preserving existing `principalType` APIs, and fix token cache keys so user identifiers containing separators or percent sequences cannot collide.
+- 23e2e7c: Allow submitting the initial TUI message while orcel is still building the agent. The message is queued and sent automatically as soon as the agent is ready.
+- bca1b4a: Self-modification registry setup now asks whether to enable deployed draft pull requests or keep source editing local before collecting deployment configuration.
+- a7f2387: Improve development TUI Markdown with clearer headings, block spacing, clickable links, responsive bordered tables, and code panels. Set `ORCEL_TUI_RENDER_MARKDOWN=0` to show assistant and subagent responses without Markdown parsing or styling.
+
+## 0.55.0
+
+### Minor Changes
+
+- 0e0f3cc: - Adds `audience(input)` to `defineChannel` and a durable conversation context for trace policies.
+  - `orcelChannel` now defaults anonymous callers to public and authenticated callers to private. Trace content is public-or-development by default.
+  - `metadata().audience` is deprecated. Channel epoch 19 extensions keep working through a warned fallback; move classification to `audience(input)`.
+
+### Patch Changes
+
+- c500167: Pass `defaultDeliver()` to custom Slack input handlers so they can delegate selected requests to orcel's standard thread or private DM delivery.
+- 520f498: Keep local subagent workflow visibility metadata aligned with the inherited trace decision so Agent Runs does not hide content that was exported for the child.
+- d63d6b7: Attribute local and remote background agent tool activity to its task, including when continuing or steering an existing agent. Each task keeps one progress item, and new work no longer reports against the previous task.
+- bf1175d: Ignore generated module and declaration source maps when discovering skills, so they are not reported as unrecognized skill files.
+- 15c7a2e: Allow `orcel init` to add an agent to an existing package without requiring a literal `.` target. You can now initialize the current package or pass the path to an existing package directly.
+- 7a63a68: Keep completed foreground turns in native terminal scrollback while a background subagent continues streaming, rather than hiding them behind the live viewport.
+- bef74fe: Add `protocolVersionDiscovery` to MCP client connections. Set it to `false` to use the initialization handshake for servers that reject modern discovery, while keeping discovery enabled by default.
+- dafa558: Scheduled runs that start background work now stay open and silent until the result is available, then deliver the final response once.
+- 7ad2740: Allow the self-modification agent arguments to set the reasoning effort used by its subagent.
+- 0f79075: Make `withKaf()` discover project-level `agents/` workspace members, mounting each named agent through a Next.js app without repeating the agent map in `next.config.ts`. Workspace peers declared with `defineWorkspaceAgent()` route through the named Next.js mount automatically.
+- 09425a0: Move the self-modification registry item to `orcel/self-modification`, remove its experimental label and separate production address, and run its production setup flow when added directly.
+- 638aed5: Background task activity now uses a tool's per-call label when one is provided, while retaining the tool or subagent name for execution identity.
+
+## 0.54.5
+
+### Patch Changes
+
+- c112e13: Self-modifying agents now relay the exact `orcel add` command required to finish an interactive registry installation instead of substituting a registry configuration command.
+- 4652b5d: Slack channels can route each input request, including tool approvals and `ctx.ask()` questions, to the shared thread or the triggering user's direct messages with the `approvalChannel` callback. Direct-message requests include a preview of the Slack message that triggered the turn, while the original thread names the reviewer without exposing the request.
+- 7ba0c77: Preserve the text of replies to Telegram approval prompts so typed approval responses resume the pending tool.
+- 956205d: Teach root agents with self-modification to treat named product installation questions as requests to add capabilities, so they delegate registry discovery instead of denying device access or asking what kind of installation the user means.
+- eef5381: Teach self-modification to implement reusable, model-callable actions as authored orcel tools instead of standalone scripts, including when the request describes a capability without calling it a tool.
+
+## 0.54.4
+
+### Patch Changes
+
+- da8f4fd: Use an installed Codex CLI's app-server for ChatGPT subscription credentials, while retaining orcel's direct sign-in and owned credential store as a fallback only when the `codex` binary is not found. Codex login output remains inside the model setup panel instead of writing directly over the TUI.
+- 3576e0a: Classify known `orcel init` target and workspace-input failures into bounded telemetry categories. Telemetry continues to exclude target paths, directory contents, and error messages.
+- 7829116: Add `withKaf` from `orcel/vercel` for composing native workspace agents with authored services in `vercel.ts`. Vercel resolves the generated agent services and transport routes before independently building each service.
+- 2d0bad9: Expose the effective model ID to model, subagent, tool, skill, and instruction resolvers through `ctx.model?.id`.
+- 7fa514b: Add a self-modification option to the interactive `orcel init` flow. Selecting it scaffolds the self-modification subagent and continues to `orcel dev` without offering an external coding-agent handoff.
+- a34ecf0: Preserve remote subagent caller spans across platform HTTP ingress so schema v4 `agent.dispatch` links target the dispatching `agent.action` rather than the request span. Remote dispatch now records the prior orcel parent in W3C `tracestate` while retaining standard `traceparent` transport correlation.
+- 871332a: Keep Vercel Agent Runs spans indexed under the root session while recording each activation's run ID and immediate parent lineage separately. Remote-created sessions retain that root when the receiver trusts the authenticated forwarder.
+- 4567151: Update workflow SDK dependencies to their latest beta releases.
+
+## 0.54.3
+
+### Patch Changes
+
+- 6cb22a4: Store ChatGPT refresh credentials in the OS credential store using vendored just-secrets, with access tokens kept in memory. Existing users must sign in once through orcel; a successful save removes the old plaintext session file. ChatGPT sign-in now remains inside the model setup panel while browser authentication is in progress.
+- c5bb66f: fix(orcel): align internal AI SDK step lifecycle hooks with the current `onStepStart` and `onStepEnd` callback names
+- fb6750f: Resume sessions whose history predates user-message provenance instead of failing with a missing-kind error. Existing unclassified messages retain their content and are marked `legacy.unknown`, without treating unknown framework input as a new human request after compaction.
+- eaf8895: Add `defineWorkspaceAgent()` for delegating to a workspace peer by name. It selects Vercel routing and OIDC automatically on Vercel, accepts explicit transport overrides elsewhere, and uses the peer agent's description by default.
+
+## 0.54.2
+
+### Patch Changes
+
+- 15e18d6: Treat recalled memory records as model input content when applying instrumentation trace policies.
+- 47b7a38: Emit OpenTelemetry GenAI `invoke_workflow` spans when a `defineWorkflowTool` run coordinates nested agents, using the path-derived tool name as `gen_ai.workflow.name`. Durable workflow tools without agent operations remain ordinary actions.
+
+## 0.54.1
+
+### Patch Changes
+
+- ee11c23: Record model input once using the OpenTelemetry `gen_ai.input.messages` schema. Local traces no longer serialize the duplicate `ai.prompt.messages` payload, avoiding binary attachment traversal.
+- b27e9f2: Remove the `task_update` tool and its child-to-parent progress callbacks; use the child session's stream to follow progress. Successful results from overlapping background tasks now reach the parent together across launch turns, after child settlement updates usage and handles; user input, failures, and cancellation remain responsive.
+- b27e9f2: Report content-filtered model responses distinctly, including their finish reason and Gateway generation ID when available, instead of retrying them as empty responses. Filtered partial text is no longer delivered as a completed reply.
+- 0e2912f: Add OpenTelemetry GenAI spans for memory provider recall and capture operations.
+- b27e9f2: Fix `orcel dev` silently stopping session updates during long periods of background work. The terminal now keeps listening while the prompt is open, so completion reports appear without another user message.
+
+## 0.54.0
+
+### Minor Changes
+
+- 879d4e5: Advance `agent.trace.schema.version` from 3 to 4 and remove `agent.session` and `agent.channel.delivery`: update dashboards to use per-activation `invoke_agent` spans, linked to callers and grouped by `gen_ai.conversation.id`. Single turn-bound channel deliveries annotate their activation and link it to the active upstream request or function span; `traceChannelRequests` only adds an orcel-owned server span as the link target. Other delivery lifecycles do not emit agent spans. Dispatch uses `agent.action` and `execute_tool`, preserves standard GenAI usage totals and trace-content restrictions, and rejects baggage overflow; settlement materializes spans without draining exporters, and conversation IDs remain available without instrumentation.
+
+### Patch Changes
+
+- f60c64b: Brand every user-role model message in `gen_ai.input.messages`. Real user input is `user`; framework-authored messages use namespaced provenance such as `context.instruction` and `execution.background_task`.
+- 84c9604: Make self-modification source edits more efficient by clarifying file and documentation discovery, guarded reads, edit selection, contract preservation, outbound request safety, registry scope, and concise completion reports. Memory providers can now be selected as a registry search category.
+- dea8cd8: The local dev TUI now reconnects idle session streams, so approvals and questions from long-running background tasks still interrupt the prompt after an earlier transport stream closes.
+- 47bd3d7: Preserve one observability conversation ID across local and remote agent dispatch, accepting incoming correlation only on callback-marked remote session creation. Apply the live delivery's trace-content ceiling to the selected caller context, including fallback when its action span is unavailable.
+- 6d0485b: Expose current and initiating principals in Agent Runs turn metadata, including channel-driven and resumed activations. Principal types remain bounded; IDs require a content-visible audience and a resolved trace policy permitting both input and output content, including any forwarded ceiling, and oversized IDs are omitted.
+- 9381078: Keep `agent.action` spans for background tools and subagents open until their tasks complete, fail, or are cancelled, and record the task's final outcome and policy-controlled error details instead of treating its receipt as completion.
+
+## 0.53.1
+
+### Patch Changes
+
+- 8c00b8e: Upload Slack responses longer than the native Markdown limit as Markdown snippets. Preserve upload errors for channel error logging instead of replacing them with a generic notice.
+- 11320e1: Enable the built-in Vercel Agent Runs instrumentation for Preview deployments as well as Production deployments.
+- 8c8888e: Normalize mixed provider-executed and local tool calls into replay-safe history so Gemini conversations can continue after the tool results are persisted.
+- 09df32c: Adds `experimental.workflow.retention` to `defineAgent`, which forwards a run's data-retention preference to the durable runtime. Set it to `0` to have a run's payloads, streams, and event log deleted as soon as the run finishes instead of kept for the world's default period.
+- 05d2047: Keep Vercel sandbox template records persistent and replace session sandboxes whose saved filesystem snapshot is no longer available. Ambiguous session creation failures no longer delete the shared template record.
+
+## 0.53.0
+
+### Minor Changes
+
+- 0f8caf4: Simplify workflow-tool delegation to `ctx.agent(target, input)`. orcel now derives replay-stable invocation identities, so workflow authors no longer provide separate `key` and `target` fields, and inline output schemas infer the structured result type.
+
+### Patch Changes
+
+- 7090a95: chore(orcel): update AI SDK dependencies
+- 67ee820: Fix loading orcel-owned authored modules, including the self-modification extension, from workspace-linked installations. Package builds now also preserve orcel self-imports without unresolved-import warnings.
+- 8c1430c: Allow `Ctrl+C` to interrupt a pending dev TUI turn cancellation and arm the next press to exit.
+- 2b2ad19: Add an experimental `workflow.modelCallsPerStep` agent option for batching sequential model and inline tool cycles into fewer Workflow checkpoints. Raising it above one reduces checkpoint overhead while widening the retry and replay unit.
+- 86e13ff: Update Workflow packages to use released Windows read retries while preserving session inbox metadata negotiation.
+
+## 0.52.5
+
+### Patch Changes
+
+- 1a9556c: Preserve framework announcements in conversation history so changing task and skill snapshots append to earlier model requests instead of replacing their context. Unchanged announcements are skipped until history is cleared or compacted, and completed compaction is retained if the next model request fails.
+- a24b68c: Export `defineDurableCallback` so provider packages can create replayable dynamic tools outside orcel's authored-source transform.
+- d630b21: Retry transient Windows file-sharing errors when reading local workflow state while still surfacing persistent access errors and malformed state. Preserve pending tasks that fit the compaction budget and keep explicitly configured `mockModel()` responders during step-scoped dynamic model selection when authored-model mocking is enabled.
+- cf1510f: Redact BYOK credentials and credential-shaped provider options from `/orcel/v1/info` responses while preserving non-secret provider settings.
+- 1a9556c: Remove the instruction that forced silence while background tasks were pending. This prevents that instruction from carrying into later user turns and suppressing their answers.
+- 3bbf8e5: Only batch adjacent queued deliveries when their full auth contexts match, preventing one sender's input from running under another sender's auth. Anonymous deliveries stay separate; matching authenticated follow-ups still batch with their attachments and context in order.
+- 71fbdb8: Classify CLI setup and onboarding failures into bounded, privacy-preserving categories, including package-manager startup and pnpm workspace-probe failures. Telemetry continues to exclude error messages and command output.
+- ee02527: Print each eval session's workflow run ID when `orcel eval --verbose` runs, including primary and secondary sessions.
+- 51c4719: Keep experimental channel activity grouped with the user request that originated it across background task reporting, human approval and question resumes, and authorization callbacks.
+
+## 0.52.4
+
+### Patch Changes
+
+- 97fccac: Dynamic tools with non-durable presentation labels now remain available and fall back to their tool names.
+- d74fdb4: Add a Datadog eval reporter that creates one LLM Observability Experiment per orcel eval run and submits eval assertion metrics through the optional `dd-trace` package. Opted-in eval inputs are pushed as versioned dataset records and linked to their experiment rows. The integration is tested against the public dataset and external Experiment APIs in `dd-trace@6.13.0`.
+- 8946bd5: Enable configured deployments to edit an agent source checkout and publish changes as draft GitHub pull requests. Registry setup installs official registry items in the disposable checkout, provisions a repository-scoped Vercel Connect GitHub connector, and can continue without secrets in headless environments; manual and self-hosted deployments can use a fine-grained GitHub PAT.
+- dc73dee: Keep sandbox template and session keys stable across unrelated agent changes when bootstrap has no skill or workspace seed files. Existing affected sandboxes switch to the corrected key on first use after upgrading.
+- b3ce510: Only suppress a response when the empty-delivery marker is the entire response, apart from surrounding whitespace. Replies that quote or explain the marker are now delivered and retained in conversation history.
+- 22046b2: Combine adjacent queued successful sibling completions into one parent turn, reducing redundant model calls while retaining every result. Batching happens automatically without waiting for unfinished tasks.
+- 6d12a70: Forward inherited activity observation when background tasks start local or remote subagents, so their tool activity appears beneath the task row.
+- f85de0d: Workflow tools can use the same requester-scoped `ctx.getToken` and `ctx.requireAuth` as ordinary tools inside step helpers, automatically waiting for sign-in and retrying the interrupted step. In background workflows, these APIs require a supporting session driver; older conversations fail before calling the auth provider with an instruction to start a new session.
+
+## 0.52.3
+
+### Patch Changes
+
+- 9cb899d: Add explicit Datadog operation and resource names to framework-owned agent spans while preserving their OpenTelemetry names and trace hierarchy. Agent invocation spans now include `agent.turn.outcome` so completion, failure, and cancellation remain queryable in backends that discard span events.
+- 1a4f0b3: Allow tools to define an input-aware activity label for channel presentation. Framework tools now provide readable labels for shell, file, skill, fetch, and search actions.
+- e5d8e7b: Match each client `send()` response to the message accepted by the server. Resuming a session with an old stream cursor now skips earlier turns instead of returning an old result.
+- 14af96f: Preserve Node.js custom resolution conditions when bundling authored modules. Production builds with a channel importing `server-only` under `react-server` now produce a valid module map.
+- 4cff7dc: Fix `orcel start` failing when an app built on another machine is deployed to a different directory. Sandbox prewarming now resolves authored modules from the deployed app while preserving TypeScript aliases and workspace package resolution.
+- 9034901: Resolve workflow path aliases from the application config and bundle only workflows reachable from the agent. Unresolved workflow imports now fail the build instead of producing a bundle that crashes every durable session.
+- 8a50983: Keep dynamic tool callbacks isolated by session, lifecycle scope, and resolver. Replaying a tool now retains its own implementation when another session or scope registers the same tool name.
+- 0d19fa3: Fix repeated ineffective compaction when provider-reported input tokens exceed the character estimate. Tool-result trimming now accounts for measured context pressure and falls back to summarization when it cannot free enough space.
+- 67f3b8d: Sign in to a ChatGPT subscription directly from orcel without installing the Codex CLI. orcel now manages its own local login and token refresh, with browser sign-in, device codes over SSH, and actionable recovery messages; existing Codex users sign in once through `/model` after upgrading.
+- 2ff8511: Preserve a cancelled task's notification to its parent when shutdown exceeds the cooperative grace period. Parents no longer wait for a notification from a task that was already cancelled.
+- 3c3a0df: Allow async-generator tools to project typed preliminary and final results into bounded user-facing activity text with `activity.update` and `activity.result`.
+- 2ff8511: Keep conversation sessions available after a `turn.started` or `step.started` handler throws. The failed turn reports the error, and a later message can resume the same session.
+- 461b578: Keep framework context at a stable position throughout a turn so tool steps can reuse the existing prompt prefix instead of moving skill announcements behind new tool results.
+- 4b5fad4: Steer a running background subagent by sending an updated message with its existing `agentId`. orcel cancels its previous task and starts a new task in the same child session, preserving its conversation history.
+- 59ec96c: Add CLI telemetry for setup and onboarding flows.
+
+## 0.52.2
+
+### Patch Changes
+
+- 9cb98b9: Ignore OpenAPI `default` and `example` annotations whose values conflict with the declared schema type, so models are not prompted to submit invalid tool input.
+- 1807ff9: Preserve conversation history when the compaction model returns an empty summary instead of replacing it with a blank checkpoint.
+- 6dfd6d6: Point published `orcel-source` export conditions at `dist` so Workflow bundle resolution works without the unpublished `src` tree.
+- 9cb98b9: Resume settled sessions without waiting for the live stream idle timeout while preserving catch-up for turns accepted during replay.
+- 4e0b345: Fix file-memory setup to connect private Vercel Blob storage with `ORCEL_MEMORY_BLOB_*` variables and OIDC authentication without provisioning a read-write token. Prefer OIDC for attached stores and let the Blob SDK resolve and refresh tokens instead of caching them in the memory backend.
+- 9cb98b9: Prevent `orcel dev` bundles that inline comma-separated CommonJS path globals from failing to load with duplicate declarations.
+- 9cb98b9: Ensure `orcel eval --json` writes the complete report when stdout is piped to another process.
+- 9cb98b9: Keep Slack connection authorization buttons valid when a connection has a long display name.
+- 9cb98b9: Workflow tools now create publicly resumable webhooks, fixing callbacks that returned 404. Webhook response options are preserved, and authored webhook tokens are rejected consistently with Workflow.
+- 9cb98b9: Preserve steering replacements when cancelled turn work throws a generic `AbortError`, so the session returns to waiting instead of failing.
+- 1807ff9: Fix client `result()` calls hanging after a turn finishes when fetch instrumentation clones the event stream, including orcel-to-orcel calls from authored tools. Client and TUI subagent stream cleanup now releases the HTTP connection without waiting for the tracing reader.
+- 4446e0d: Allow agents to set `defaultTools: false` to skip orcel's optional default tools while preserving connection discovery and tools explicitly authored under `agent/tools/`. Every optional default can be re-added from its public `orcel/tools/*` subpath.
+- 9cb98b9: Preserve complete Unicode characters when truncating compaction transcripts and tool results, preventing emoji at the cutoff from causing provider request failures.
+- 9cb98b9: Preserve input-scoped approval keys on dynamic tools, including durable replay, so approvals record the intended key instead of the bare tool name.
+- 9cb98b9: Reconnect session streams when browser response-body reads fail with vendor-specific `TypeError` messages, while keeping initial fetch retries limited to known transport errors.
+
+## 0.52.1
+
+### Patch Changes
+
+- 6967e25: Read registry configuration from the shared project package when `orcel add` targets an agent in a top-level `agents/` workspace. Registry files still install into the selected agent.
+- 0b980ab: Upgrade Nitro to 3.0.260903-beta for upstream fixes and dependency updates.
+- c48969f: Persist the receiving session's inbox address and wire version with local subagent input requests. Replies can resume the original child directly without reading hook metadata, including after the child's continuation address changes.
+- 09cb57e: Failed session and task callback attempts now emit error-level logs with HTTP status or transport failure, a token-redacted destination, and available call, task, and session identifiers. Workflow retries are unchanged; best-effort activity failures keep their single warning.
+- 468f1b2: Reject `orcel add channel/web` before it writes files when the selected agent belongs to a top-level `agents/` workspace. The error directs users to configure a root Next.js app with `withKaf({ agents })` instead.
+
+## 0.52.0
+
+### Minor Changes
+
+- 3dd8300: Define durable tools with `defineWorkflowTool` from `orcel/tools`; its inline or referenced executor must start with `"use workflow"` and receives `ctx.agent` and `ctx.ask`. Replace workflow-backed `defineTool` calls with this API and remove imports from the deleted `orcel/workflow` entry point.
+- b736b40: Remove `task.delegated()` and replace authored background-tool delegation callbacks with durable generator yields; extensions using the removed API must migrate and rebuild. Background tools now use `task.postMessage()` for explicit parent wakes; ordinary yields are stream-only progress, and returning or throwing settles the task.
+
+### Patch Changes
+
+- 97090d6: Add CLI telemetry for command usage and outcomes. Use `orcel telemetry disable` to opt out permanently, or `ORCEL_TELEMETRY_DISABLED` for a per-command override.
+- b3e4b73: Avoid decrypting hook metadata when resolving session ownership or waiting for inbox registration and release. This removes unnecessary encryption-key work from channel routing, subagent startup, and session reset.
+- 248d1b1: Fix remote-agent progress and completion callbacks for Vercel services mounted at `/orcel/v1`. The build no longer adds the protocol path twice, which caused callback 404s and left parent agents waiting without an answer or failure notification.
+- e82b889: MCP `agent_update` now acknowledges a repeated answer that orcel already accepted for the same input batch instead of returning a conflict, so a client that retries after a lost response converges on the current invocation state. `agent_get` also stops reporting `input_required` as soon as the answer is resolved rather than waiting for the next turn event.
+- 6e35923: The MCP channel now returns server `instructions` from `initialize` and `server/discover` that summarize the durable invocation protocol, and its tool descriptions state polling cadence, complete-batch input answers, cooperative cancellation, and that `agent_start` is not idempotent. Hosted MCP clients no longer have to infer the lifecycle from the tool schemas.
+- 2c2c552: The MCP channel now bounds every request: bodies over 1 MiB receive a JSON-RPC `413` before the transport reads them, and `agent_start.message` (64 KiB), input-response `text` (16 KiB), IDs (256 chars), and responses per update (64) are validated before any session is created.
+- a37938d: MCP tool calls that are rejected now return `structuredContent.error` with a stable `code` (`invalid_input`, `not_found`, `conflict`, `internal`), a short `message`, and `retryable`, so clients can act without parsing text. Unexpected server failures no longer forward their raw message; they return an `errorId` that correlates with orcel's logs.
+- 7db230f: Keep the cancelled-turn epilogue inside the orcel context. Cancelling a turn whose message carried an attachment failed `turnStep` with "No active orcel context" — the harness step's ALS scope had already closed, so staging the preserved message's file parts threw, and the retries made it a terminal session failure.
+- abc130e: Fix `chatgpt()` dropping reasoning summaries and emitting unsupported-reasoning warnings after tool calls. Stateless requests now preserve all summaries and their encrypted reasoning payload across model steps.
+- 62f076c: Inline turns now handle workflow tools on the parent through one ordered inbox for progress, input requests, and outcomes. Waiting workflow tools use a fresh cancellation token per dispatch attempt; a retried dispatch can start another run, so side effects need application idempotency.
+- 31666f8: Keep client context available across every model step in its turn while excluding it from later turns and durable conversation history.
+- 62f076c: Activity collectors now finish on expiry even when a hook read is pending. Task and activity workflows rely on workflow completion to clean up their hooks, and subagent calls skip conflict checks for generated reply tokens.
+- 16c7f24: Move Upstash AgentKit to the memory-provider registry. Run `orcel add memory/upstash-agentkit` to install `@upstash/agentkit-eve` and create a principal-scoped slot backed by `redisMemory()`; the previous `extension/upstash-agentkit` registry item is removed.
+
+## 0.51.1
+
+### Patch Changes
+
+- 38fd8d9: Honor the `image` option passed to `vercel()` when creating fresh Vercel Sandbox instances.
+- 9d0df26: Extension packages can expose built-in extension distributions from package export subpaths.
+- 98f45ea: Avoid loading interactive prompt dependencies when running non-interactive CLI commands such as `orcel build` in an agent workspace.
+- 3b73073: Run each opt-in `sleep` tool call as its own durable workflow. Parallel calls still resume the turn after the longest wait, while sleep now follows the same execution and cancellation lifecycle as other workflow-backed tools.
+- 4ee6715: Release local Workflow stream listeners when client stream followers reconnect or stop.
+- 9091777: Allow clients to cancel every background task owned by a session with `session.cancel({ tasks: true })`. Timed-out eval cases now reset their owned sessions before the next case starts so background work cannot leak across cases.
+- 73aec25: Add an optional per-session model token-cost limit in US dollars. Sessions pause for approval before another model call after reported cost reaches the limit, following the existing token-limit continuation flow.
+- 98f45ea: Only classify agent-shaped, package-less `agents/` children as orcel workspace members. Independently packaged agents remain standalone, while unrelated `agents/` directories no longer override flat standalone projects.
+- 30a6325: Allow Slack channels to register experimental custom activity renderers that consume activity snapshots and retain renderer-owned state between updates.
+- 1909295: Fix multi-agent setup flows so `orcel init --agents` asks which agent to run, while shared AI Gateway, integration, and deployment setup uses the project root.
+- 0ca3ef7: Expose workflow run and Vercel deployment references for failed MCP invocations instead of opaque workflow error payloads.
+- d594b94: Separate default memory namespaces for agents mounted under different route prefixes in the same Vercel project.
+- a6e72c4: `orcel/self-modification` now uses the same AI Gateway model catalog validation as `/model`.
+- 0e2e10d: Resolve orcel project ownership from the nearest `package.json` that declares `dependencies.orcel`, then classify its `agent/` or `agents/` shape. This avoids incorrect environment and CLI behavior in repositories that only use orcel as development tooling.
+- 30a6325: Add experimental Unicode tree and native streaming plan Slack activity renderers. The plan keeps stable top-level tasks, appends descendant lifecycle updates, and compacts completed streams to top-level work.
+- 9de667a: Refresh workspace tooling and vendored dependencies, including stable Next.js releases and the latest Drives-capable Vercel Sandbox v3 beta.
+- e83e50e: Update orcel's bundled Workflow SDK packages to the latest 5.0.0 beta releases (`@workflow/core` 5.0.0-beta.48). Sessions now claim their inbox hook in-process instead of taking an extra queue hop at start, so a new session reaches its first turn one delivery sooner.
+- 00cc672: The experimental self-modification extension is bundled with orcel, so registry installs no longer add a separate package.
+
+## 0.51.0
+
+### Minor Changes
+
+- aae2631: Background workflow tools now execute as their task's durable workflow run, subagents can be invoked directly from waiting workflow tools and workflow sandboxes, and workflow `agent()` calls require a replay-stable `key`.
+
+### Patch Changes
+
+- fc123f4: Discover multi-agent projects from their `agents/` directory, add consistent `--agent` selection to agent-scoped CLI commands, and let `orcel init --agents <name,...>` create or extend an agent workspace.
+- b03290a: Preserve background execution for durable dynamic tools so replayed callbacks receive their task runtime.
+- 6e630b4: Deploy conventional `agents/<name>/agent/` workspaces as inferred peer Vercel services at `/<name>/orcel/v1/*`, with no generated `vercel.json` step.
+- ecf0b6a: Prevent Vercel Blob file memory from receiving compressed responses with weak ETags that cannot be used for conditional writes. Blob reads now request identity encoding so memory documents continue saving as they grow.
+- 4c45d2f: Fix file-memory setup failing after it creates a Vercel Blob store when the project uses Vercel CLI 57. Setup now connects the store without passing that release an unsupported output flag, so retrying repairs the partial setup normally.
+- bad0813: Fix the sandbox base image so a non-interactive `bash -lc` login shell exits cleanly as `vercel-sandbox`. Ubuntu's default `.bash_logout` ran `clear_console` on exit, which wrote `TERM environment variable not set.` to stderr and, under `set -e`, turned a successful `exit 0` into exit 1 on Vercel Sandbox. `sudo` no longer warns about unresolvable sandbox hostnames, `$HOME/.local/bin` exists on `PATH` for user-scoped installs, and Node is root-owned on every architecture.
+- f9b760a: Ignore unrelated ancestor `agents/` directories when resolving standalone projects so local CLI commands do not misclassify neighboring repositories as agent workspaces.
+- 3cccd71: Preserve inherited channel audience metadata when local subagents persist adapter state. Public parent traces now continue capturing local child inputs and outputs while destination-specific redaction remains independent.
+- 29b9056: Run approved background tool calls even when the AI SDK skips its input callback during resume.
+
+## 0.50.0
+
+### Minor Changes
+
+- 70c8a2e: Store message and reasoning appends as plain deltas instead of repeating cumulative text. Streamed tool-input appends now use the same delta-only shape.
+
+  Empty tool-input start markers no longer emit an append event; the first append contains actual input text.
+
+  Extensions built against the previous dynamic-tool, channel, schedule, subagent, connection, hook, dynamic-skill, or dynamic-instructions capability contracts must be rebuilt and republished with this release.
+
+### Patch Changes
+
+- 5b90f3d: Fix approved tool calls silently not executing when task state or a dynamic skill announcement was injected on the resume step. The runtime context was appended after the approval response, so the AI SDK skipped the approved tool and providers rejected the prompt with errors like `No tool output found for function call`.
+- 884cba8: Prevent approving one tool call from auto-authorizing other already-pending calls with the same approval key. Existing approval prompts now remain independent, while `once()` still auto-allows calls proposed after the pending requests are resolved.
+- 2b52714: Reduce the published sandbox image by avoiding a duplicate ownership-only layer while preserving global npm and pnpm installs for sandbox users.
+- ffcd817: Bundle orcel's private integration catalog into the published package so setup runtime code and TypeScript declarations no longer reference an unavailable workspace dependency.
+
+## 0.49.1
+
+### Patch Changes
+
+- 23a4b59: Use version-matched GHCR images for Docker and microsandbox while Vercel Sandbox uses VCR. Publish each orcel sandbox image version to both registries.
+- d8c58bd: Add `memory/file` and `orcel integration setup file-memory` to provision a dedicated private Vercel Blob store automatically. Deployed file memory now prefers `ORCEL_MEMORY_BLOB_*` credentials while retaining generic `BLOB_*` bindings as a fallback.
+- 6a5fd36: Make `orcel add --overwrite` also replace files generated by orcel-owned integration setup flows, including Photon channels.
+- 86539ee: Add an internal experimental Slack status renderer for explicit agent activity reports and delegated work lifecycle. Activity updates do not start or steer model turns.
+- 4f29a21: Allow `ORCEL_SANDBOX_IMAGE_TAG` to override the version-derived tag used for orcel's default sandbox images.
+- 2ea5d60: Allow the default `fileMemory()` backend to use an attached Vercel Blob store when its OIDC token is available from the request context instead of the environment.
+
+## 0.49.0
+
+### Minor Changes
+
+- 1ee8fa9: Session creation on orcel, MCP, and authored channels now returns as soon as Workflow accepts the run. Concurrent first messages on one channel address are settled inside the workflow, racing `operationId` requests may return different candidate IDs that callers resolve after startup, and Workflow starts target known deployment IDs without resolving a latest-deployment sentinel.
+
+### Patch Changes
+
+- 68d44b5: Addressed `/add <item>` confirmations now remain responsive in the dev TUI.
+- b20c2aa: Add Browser Use to the `orcel connections add` picker. The generated MCP connection reads `BROWSER_USE_API_KEY` into Browser Use's required API-key header without adding Vercel Connect.
+- 0172af9: Preserve parent turn identity when dispatching a subagent after a parked child resumes, preventing handle-store corruption and fatal session failures.
+- fbc89e5: Registry items can now declare optional pnpm packages with build scripts. Before installation, orcel asks whether to skip those packages, allow their scripts, or abort, and records the choice in the owning workspace policy.
+- 3f20c80: Add optional `audience` on Slack proactive `receive` / `ctx.send` targets so webhook and schedule handoffs can pass channel visibility without an extra Slack API call.
+- a40ebb0: Update Orcel's bundled Workflow SDK packages to the latest 5.0.0 beta releases, which includes performance and stability improvements.
+
+## 0.48.0
+
+### Minor Changes
+
+- e219a6a: Reduce channel turn latency by using optimized session resumes, routing work to the deployment that accepted it, and running ordinary same-deployment turns without a child-workflow handshake. Turns that need sleep, background work, runtime actions, or cross-deployment execution continue in the existing child workflow without repeating completed steps.
+
+### Patch Changes
+
+- 62546ab: Continue message turns when any channel cannot retrieve an attachment, and expose a safe retrieval error to the model. Authenticate Microsoft Teams Bot Connector attachment downloads with the configured bot credentials.
+- f43525a: Preserve trace content across principal-forwarding remote agents by intersecting the parent's directional capture ceiling with each trusted receiver's policy. Origin audience remains immutable across hops, private content requires explicit approval on both sides, and malformed or mixed-version assertions degrade to metadata-only.
+- b7321c9: A tool's `execute` can now be a Workflow body: start it with `"use workflow"`, write helpers as `"use step"` functions, and use `createHook`, `createWebhook`, and `sleep` from `workflow` in the body and `start`, `getRun`, and `resumeHook` from `workflow/api` in steps. orcel runs each call as a durable run and, by default, parks the turn until it returns. Import `ask` from `orcel/workflow` to ask the human on the channel — it returns the hook the answer resumes, so it can be awaited or raced against a `sleep` deadline — and the request stays answerable even after the turn that started it ended. A workflow body may be an async generator whose `yield`s are durable progress. `ctx.abortSignal` aborts on cancellation, and the run waits a grace period for steps to stop and `finally` to clean up. With `execution: "background"` the model gets a receipt and is woken with the result. orcel also serves the Workflow webhook route so `createWebhook()` URLs work.
+- 3e2abe5: Replace the Dev TUI's single-item `/add` browser with a channel and integration planner that installs ordered batches, preserves completed results and failures, and installs explicitly addressed items directly.
+- 453d194: Add Neon to the official connection registry and support app-scoped Vercel Connect setup.
+- 1d78323: Fix deliveries to persistent subagent inboxes by projecting current caller metadata through the destination wire schema. Versioned migrations are now pure, immutable data transforms enforced by the wire guard.
+- d1b3439: orcel now owns the full OpenTelemetry lifecycle it registers: declared metric readers are flushed on `forceFlush` and shut down on `shutdown`, and declared auto-instrumentations are disabled at shutdown, so metrics recorded near teardown are exported instead of silently dropped.
+- 9ed9d29: Reduce new-session startup latency by returning the session ID as soon as Workflow accepts the run instead of waiting for its command inbox. Hook claims and session initialization also start together so the first turn can begin sooner, and `session.send()` retries the brief inbox-readiness gap three times with exponential backoff.
+- 1d74287: Present model, channel, integration, and review setup as one cohesive fresh-agent onboarding journey.
+- 859151e: Cancel only the active registry item when setup is interrupted, then report installed, failed, and cancelled selections in order.
+- 3c16df6: Publish instrumentation lifecycle events when sessions expire, reset, close, or fail outside an agent turn. Terminal paths now flush providers and release local trace retention state.
+
+## 0.47.7
+
+### Patch Changes
+
+- b0799b3: Preserve built-in tool behavior through compiled and runtime descriptors, so authored replacements, delegation, task controls, request input, and provider tools use the selected source instead of name-based runtime inference. Replacing bundled artifacts now invalidates resolved-agent caches so redeploys expose newly compiled skills consistently.
+- b9eb1b2: Keep `orcel/next` from claiming a host application's Workflow world, so `withKaf` can coexist with `withWorkflow` in one Next.js app.
+- 0a1ad48: Resume sessions with dynamic tools persisted by older orcel versions without crashing during callback restoration.
+- aafcb34: Keep `clientContext` scoped to its model call so earlier client context no longer accumulates in later session turns.
+- f2c96a1: Spans held for a parent that never ends are no longer lost or buffered without bound: orcel's span-filtering processor now drains them to destinations on `forceFlush` and `shutdown`, and caps how many a stuck parent can hold.
+- 7a7da6d: Reconstructed durable spans — `invoke_agent`, `agent.channel.delivery`, and `agent.approval` — now carry their channel audience on the parent context, so destination export policies see the real audience instead of `unknown` and apply the correct export and redaction decisions.
+- 6a8340f: Skip durable caller bookkeeping steps for root session turns that have no delegated caller.
+- ee5e4c7: Headless registry setup continuation commands now preserve answers supplied in earlier steps, so multi-question setup flows can resume without looping.
+- c72dc2e: Adds `orcel/local-dev`, whose `getLocalDevCapability()` gives authored code the
+  authored application root and a lease-based way to pause the authored-source
+  watcher while mutating that tree. The capability is scoped to executions
+  initiated by same-machine requests to `orcel dev` and remains available across
+  durable workflow steps and local subagents; deployed runtimes and
+  remote-attached clients receive `undefined`.
+- 6a8340f: Workflow run attributes now persist in parallel with turn-result delivery while remaining joined to the durable step, removing the observability write from the user-visible settlement path.
+- 1982202: Pre-allocated session trace seeds now consult the configured OTel sampler, so `$orcel.trace_id` workflow attributes are only stamped for traces the sampler will actually record. Previously an `always_off`, ratio, or custom sampler could leave links to traces that were never exported.
+- b7ac284: The self-modification subagent can now install items from the configured orcel
+  registry. A new `selfmod__registry_add` tool runs `orcel add <address>
+--non-interactive --skip-setup` in the application root under `orcel dev`,
+  pausing the authored-source watcher for the whole install and reporting the
+  item's declared environment variables that are still unset. Failed dependency
+  installs restore tracked project files and return a sanitized, structured reason
+  instead of implying the project was untouched. Items that declare a setup flow
+  or multiple components are never partially installed: the local dev TUI now
+  opens their existing setup panel automatically, while headless development
+  reports the command that finishes them, so no setup question is answered by the
+  model.
+- 7a415bf: Emit one framework-owned agent trace tree from managed OpenTelemetry runtimes. Legacy instrumentation keeps its existing span hierarchy, and authored AI SDK telemetry integrations continue to compose with orcel's structural spans.
+- bc2a1f6: Add readline-style Ctrl+B/F and Alt+B/F cursor movement to editable fields in the orcel TUI, including common modified-arrow terminal sequences.
+
+## 0.47.6
+
+### Patch Changes
+
+- 63f2e07: Run `Workflow` programs with the official AI SDK code-mode runtime while preserving orcel's durable subagent accounting and event stream.
+- 450681a: Upgrade orcel and newly generated projects to Zod 4.5, with lazy schema compilation for faster internal validation and substantially lower schema memory overhead. Boolean-only checks now use Zod's validation fast path instead of constructing full parse results.
+
+## 0.47.5
+
+### Patch Changes
+
+- e0317ff: Add Supermemory as a memory provider in the official registry. Run `orcel add memory/supermemory` to install the provider and create a principal-scoped memory slot.
+
+## 0.47.4
+
+### Patch Changes
+
+- e2e055c: Instrumentation providers can now define a `tracePolicy` to independently control event admission and input or output content capture. The deprecated `capture` setting continues to work through an equivalent policy mapping, while providers that omit both settings capture content only for public audiences.
+- 6b111ed: Exposes `metricReaders` on `otelIntegration()` so destinations can declare OTLP metric readers alongside span processors. Readers from every destination are collected in declaration order and passed to `registerOTel`, which builds the process's meter provider. Also adds the metrics API surface to the vendored `@opentelemetry/api` declarations so user-land instrumentation code can typecheck against `metrics.getMeter()`.
+- a0c33dc: Allow `connections/` modules to use `defineDynamic` for caller-specific MCP and OpenAPI connection sets resolved at session or turn boundaries. Dynamic connections participate in ordinary discovery, auth, approval, and qualified tool calls, fail closed on resolver errors, and pin durable authorization to a stable resolved instance.
+- 4264f03: Preserve completed tool results across sequential approval and authorization pauses so resumed model calls do not repeat successful tool executions.
+- fde3161: Ensure the workspace CLI restores missing compiled vendor modules before rebuilding itself.
+- cfc82cc: Refactor internal instrumentation ownership and execution wiring without changing session tracing behavior.
+- 69e9bff: Instrumentation trace policies now always receive the active agent's canonical ID, including for configless agents and cancelled turns. Explicit provider policies must be bound to an agent before events are published.
+- f062299: Slack channels can now handle signed slash command payloads with `onSlashCommand`, including command arguments, actor and channel identity, trigger metadata, and workspace-scoped Slack API access.
+- 3bdcb88: Align local agent invocation and tool execution spans with the OpenTelemetry GenAI agent conventions. Agent turns now emit usage-bearing `invoke_agent` spans, model calls emit `chat` directly beneath `agent.step` without a redundant `ai.streamText` wrapper, tool calls emit `execute_tool` spans, and terminal failures include `error.type`. In experimental provider mode, channel requests use `agent.channel.request`; legacy instrumentation retains HTTP-semantic route names. The first terminal delivery for a turn parents its invocation, and Workflow SDK spans started from agent contexts remain on a separate trace. These naming changes advance the Agent Trace schema to version 3 while local readers retain version 2 compatibility.
+- d87cf40: Add an `onShortcut` hook to the Slack channel for message and global shortcuts. Shortcut handlers receive normalized payload data and workspace-scoped Slack API access.
+- a637227: Keep conversation sessions active when AI Gateway requests require billing setup or hit free-tier model restrictions, so users can resolve the plan limit and retry in the same thread.
+
+## 0.47.3
+
+### Patch Changes
+
+- 9d28f89: Identify requests from the `orcel dev` terminal UI with an `orcel-tui/<version>` User-Agent product token while preserving caller-supplied User-Agent values.
+- cace2c5: Add the internal versioned protocol and reducer used by channel activity renderers.
+- 76f1bbd: Show authored-source rebuild and load progress in the `orcel dev` status bar, even when server logs are hidden.
+- 44c6af2: Report root, delegated work, action, and blocker lifecycle to activity collectors.
+- b8a635c: Generated Sign in with Vercel Web Chat starters now place the account control at the top-left, opposite the new-chat action, with a smaller profile image.
+- 05b12e3: Instrumentation-provider content delivery now depends only on each provider's `capture` declaration: providers that declare `capture: "content"` receive full event content regardless of channel audience or OpenTelemetry `tracePolicy`. Separately, a `tracePolicy` that drops the orcel trace no longer disables AI SDK telemetry: metadata-only AI spans (model, tokens, and timing, without message content) are still emitted into the ambient Workflow trace, and `agent.session` is not emitted.
+- 17d2445: Keep earlier Slack approval cards visibly settled when several approvals share one message and are answered out of order.
+- 55649a5: Preserve normal follow-up messages while an approval with responder authorization remains pending.
+- 3c8f2fe: Collect and render activity independently from the root agent session.
+
+## 0.47.2
+
+### Patch Changes
+
+- c77faa5: Use `openai/gpt-5.6-luna-fast` as the default model for config-less agents, new projects, and the setup model picker.
+- edc6127: Large authored dependency graphs no longer crash `orcel dev` or `orcel eval` while preparing the final host. Dynamic capabilities are now transformed only while preparing the authored generation.
+
+## 0.47.1
+
+### Patch Changes
+
+- 624d07d: Show the agent card and an editing-only prompt while `orcel dev` builds the local agent, and simplify the card to branding, agent name, and a Tip. Text typed during startup is preserved for the initialized terminal UI, while submission remains disabled until startup completes.
+
+## 0.47.0
+
+### Minor Changes
+
+- 52e89ef: Add `delete()` to the runtime sandbox handle for permanently deleting the current session sandbox and reprovisioning it on the next access. Docker handles stay bound to one physical container, and sandbox `onSession` callbacks now receive session metadata through `ctx` while using `use()` for sandbox access.
+
+### Patch Changes
+
+- a3b23c0: Eval contexts and sessions now expose a formatted `transcript` of observed user and assistant messages, which can be passed directly to an LLM judge for multi-turn conversation grading.
+- 56514d9: Models with slug ending in `-thinking` are now resolved to the
+  correct model instead of failing with `does not have known AI Gateway context window metadata` error or silently using the base model's context window.
+- 41c8286: Restore Bash process substitution in Vercel sandboxes by providing the standard `/dev/fd` path whenever orcel creates or resumes a sandbox session.
+- bdb3973: Preserve schedule provenance when a handler starts a session with user credentials. Scheduled background-task launches now stay silent instead of sending a launch acknowledgement, and schedule-created workflow runs expose `$orcel.schedule` for attribution.
+- fccbf2b: Fix a TypeScript error in the generated Web Chat `tool.tsx` where `trimEnd` was called on `string | number` values returned by the tool output helper.
+
+## 0.46.1
+
+### Patch Changes
+
+- 16c8b63: Expose a replay-stable `callId` to MCP and OpenAPI `providedArguments` callbacks so connection tools can derive per-call idempotency keys.
+- e2d9162: Update the Linq channel adapter to preserve supported text decorations, including bold, italic, strikethrough, and underline, in outbound messages.
+- fbc3080: Add Shopify registry setup for searching products and building UCP carts and checkouts. Setup now generates an anonymous UCP profile that the connection advertises in production.
+- 2af4a4c: Tool inputs now stream through the durable event protocol as `action.input.appended` before the matching validated `actions.requested` event. Each event stores only its raw delta and UTF-16 offset, while the default message reducer exposes cumulative raw input on `dynamic-tool.inputText` in the `input-streaming` state. This advances the stream protocol to version 24; when assistant text precedes a tool call, `message.completed` now arrives before that call's streamed input events.
+- 122f565: Add a local dev TUI `/info` command that shows the same application, artifact, diagnostic, and messaging details as `orcel info`. The human-readable report now begins directly with its application details instead of repeating an `orcel Info` heading.
+
+## 0.46.0
+
+### Minor Changes
+
+- 1d79217: Emit traces for every audience by default while recording content only for public conversations. `tracePolicy` can explicitly disable emission or select directional content capture, and existing boolean policies retain their current behavior.
+
+### Patch Changes
+
+- 47b3e48: Static authored definitions now remain build-only, while runtime entries and their assets use the same bundling semantics in development and production.
+- 9c0a138: Replace the orcel TUI's separate banner and text header with a startup card showing the installed version, active model, and the instructions, tools, skills, subagents, and schedules loaded by the agent.
+- 7acb4ec: Include the original message body when Slack users share a message into an orcel conversation. Agents now receive Slack crosspost content alongside distinct top-level comments without repeating content already present in the comment.
+
+## 0.45.2
+
+### Patch Changes
+
+- 295e534: Add a bounded `fileMemory()` provider with scope-partitioned indexed documents, a 4,000-character recalled-context budget by default, and model-facing save and remove tools. `orcel dev` uses shared process-local storage, configured Vercel deployments use Blob, and every other environment requires an explicit backend.
+- 5934d69: Prevent long local Workflow deliveries from timing out and replaying an in-flight turn. Explicit local delivery timeout overrides continue to take precedence.
+- 8d2d91e: GitHub, Linear Agent, and Linq registry items now install Vercel CLI 58.5.1 or newer for guided setup. Linq setup no longer tries to infer CLI compatibility from connector creation errors.
+- 295e534: Upgrade the vendored Vercel Blob SDK to 2.8.0 and copy its upstream TypeScript declarations so blob-backed file memory stays aligned with the installed SDK.
+- 79c5514: Cache AI Gateway model metadata for five minutes and refresh immediately on a cache miss, while continuing to fall back to cached metadata when refreshes fail.
+- 17e37f1: Stop producing AI SDK telemetry spans when `tracePolicy` rejects an agent trace.
+- a5917cd: Identify pending tool approvals as trusted runtime state so newer user messages can revise or supersede them without being mistaken for injected approval text.
+
+## 0.45.1
+
+### Patch Changes
+
+- a3a5ddd: Show the orcel favicon in browser tabs for the default deployed app and generated Web Chat apps. Web Chat scaffolds also include an Apple touch icon.
+- 5664cc0: Add first-class path-authored memory providers with scoped recall, capture, replayable provider tools, and compaction-safe recalled context.
+- b55d036: Agentcard setup now uses the correct MCP discovery and creation identifiers, then writes the selected connector into the installed connection template.
+- fdba4e0: Scope every extension contribution through one mount-namespace policy so multiple extensions can contribute flat `instructions.md` files without collisions. Extension-owned agent singleton slots such as instrumentation are now rejected during discovery.
+
+## 0.45.0
+
+### Minor Changes
+
+- b3cf8ee: orcel now compiles framework defaults, authored files, extensions, overrides, and in-memory modules through one authoritative source graph, with replaceable default config, sandbox, home, health, and inspection routes plus agent-info v3. Built-in tool definitions move from `orcel/tools/defaults` to individual `orcel/tools/<name>` subpaths.
+- 6252784: Move provided tool definitions and capability-specific helpers to dedicated `orcel/tools/*` entrypoints. Replace the removed `defineBashTool`, `defineReadFileTool`, `defineWriteFileTool`, `defineGlobTool`, and `defineGrepTool` factories with the corresponding reusable definitions.
+- f439e3d: Persistent subagent sessions are now the default: subagent tools expose `agentId`, completed children remain available for follow-up messages, and orcel publishes the `<agents>` listing automatically. Remove `experimental.subagentPersistentSessions` from agent configuration; `false` is no longer an opt-out.
+
+### Patch Changes
+
+- 4a18994: Keep tools available during follow-up turns while an earlier tool approval remains unresolved, allowing unrelated work to continue without resolving the pending call.
+- d2995e1: Stamp Workflow runs with whether orcel-managed OTEL tracing is enabled so dashboards can distinguish Workflow-only runs from enabled but unsampled traces. Session titles remain available alongside that metadata.
+- dfe0d18: Expose resumed session catch-up as a distinct `resuming` frontend lifecycle state so hydrated conversations do not show active-turn controls before an in-flight turn is confirmed.
+- 659774f: Refine generated Web Chat with a single Send or Stop composer action, faster question controls, and compact tool calls. Bash commands get a terminal view, while focus states, spacing, typography, and the composer backdrop are polished.
+- fc52796: Allow framework features to derive ordinary source slots from other selected modules through dependency-aware programmatic templates, with consistent composition and module-map hydration.
+- 2be67fa: Agent trace identity is now established before workflow execution begins, allowing workflow runs and OpenTelemetry spans to refer to the same trace from the outset. Delegated agents inherit the parent trace, while already-running sessions retain their current behavior.
+- 7ed4fb1: Workflow session, subagent, and turn rows now include `$orcel.trace_id` when a sampled agent trace is available, allowing workflow views to open the corresponding OpenTelemetry trace directly. Rows without an exported agent trace omit the attribute.
+- 0bc8432: Integration setup banners now describe the integration being configured instead of showing orcel's generic framework tagline.
+- 3274eee: Send remote-agent Vercel OIDC credentials in both the bearer and trusted-OIDC headers so `vercelOidc()` can reach orcel agents behind Vercel Deployment Protection.
+- ae83a08: Update the generated Web Chat starter to close completed reasoning without delay, soften the header-to-content boundary only while content scrolls beneath it, and enable global font antialiasing.
+- 80571ee: Show declared environment variables and an orcel setup link after adding a registry integration from the dev TUI. Chat SDK adapter links open the integration page's Configure section.
+- 7c5a69e: Keep durable agent sessions on their persisted OpenTelemetry trace instead of rotating after 200 turns. Agent Trace schema version 2 relies on native trace parentage instead of window, root-session, and duplicated parent-lineage attributes.
+- f38eaf1: Internal cleanup of the experimental background-tasks plumbing: centralized task-view schemas while preserving strict projection and broad tool-output contracts, removed a duplicate task tool-name set, established one task inbox-token import path, and shared serialized-context key-name constants. No behavior change.
+- cfa90d6: Telegram now supports HITL authorization challenges.
+- d79de0b: Expose channel-native receiver identity in model context, plus exact mention state for Slack, Teams, Telegram, and GitHub comments.
+- 687c371: OpenAI and Anthropic model calls now receive privacy-preserving end-user safety identifiers derived from the active session caller when the agent has not provided one, including calls made during context compaction.
+- 8e5d9b2: Add `j` and `k` as down and up shortcuts in non-editing TUI menus and the trace viewer while preserving normal text input in prompts, search fields, and editors.
+- 7eae011: Accept Vercel OIDC tokens issued from the global issuer in `vercelOidc()` and `verifyVercelOidc()`.
+- c6f9c85: Trace capture policies now receive the originating channel's type, letting a policy sample by channel (for example retaining interactive traffic while dropping scheduled runs). Policies that ignore the field are unaffected.
+
+## 0.44.4
+
+### Patch Changes
+
+- dbfa01c: New standalone projects created by `orcel init` now include a `README.md` with templated project and development instructions.
+- 5a029d9: Allow `justbash({ customCommands })` to register trusted host application commands in live just-bash sandbox sessions.
+- 2bbb775: Pass the app installation workspace id to function-form Slack bot token providers across events, interactions, proactive sends, and private file downloads.
+- 2a34f75: Chat SDK direct-message channels now support HITL authorization challenges.
+- 1b1f2dd: Resume an existing Web Chat session's active response even when its durable history still ends at the previous turn boundary.
+- 8f2bf7a: Add `eval` and `deploy` scripts to newly scaffolded orcel projects.
+- bca1304: Linq and Photon inbound messages now derive user auth from their message authors, allowing user-scoped connections to request authorization by default.
+- 50488a1: `/add` in the dev terminal UI now accepts a registry item address. `/add channel/slack` skips the category and search screens and opens that item's details and confirmation directly, then runs the same installation, setup, add-more, and deployment flow as bare `/add`, which still opens the registry browser.
+- 94a0952: Follow up to ten `web_fetch` redirects while rechecking each destination for SSRF safety. Non-success HTTP responses now return a plain-text failure result with the response body when available instead of failing the tool call.
+- 4464e4d: Slack inbound messages now derive their text from Block Kit blocks and legacy attachments when the top-level `text` field is empty or a short fallback. Alert-style bot posts (sections, fields, headers, markdown blocks, tables, cards, carousels, containers, rich text, legacy attachments) previously reached the model as an empty message body; they now carry the visible message content, and fetched thread replies get the same treatment.
+
+## 0.44.3
+
+### Patch Changes
+
+- ebf94fa: Session stream requests that ask for a durable tail index now close after replaying that tail, preventing Web Chat restoration through framework proxies from leaving local workflow listeners attached. Generated Web Chat apps also pin Shiki 3.23 to match the current Streamdown code plugin and pass type checking.
+
+## 0.44.2
+
+### Patch Changes
+
+- e79dd2f: Generated Web Chat apps now include their new-session and resumable-session routes. Abandoned browser session streams also release their local workflow listeners instead of accumulating them across navigation.
+
+## 0.44.1
+
+### Patch Changes
+
+- 7c99773: Linq setup now recognizes Vercel CLI versions that lack required trigger options and offers to upgrade the CLI from the `/add` flow instead of reporting a generic connector failure.
+- 02403b9: Dynamic tool callbacks are now identified by tool name and phase instead of byte offsets in the authored source. Editing an agent file no longer risks a parked approval replaying the wrong tool: after a redeploy or crash, parked calls run the latest deployed callback code under the same name, and a tool that no longer exists fails closed with an explicit error. Session-scoped resolvers may run once more on resume to rebind callbacks, so keep them idempotent.
+- 84ddb09: Apply release-age policies during project and extension setup instead of bypassing them. New standalone pnpm projects use strict enforcement, while projects inside an existing workspace retain that workspace's policy.
+- 85b2dc8: Redact model, tool, approval, and delivery content from hosted instrumentation for private and unknown channel audiences. Content-denied Workflow runs now carry a metadata marker and omit their content-derived title so dashboards can exclude them without reading the event stream. Local `orcel dev` tracing continues to retain content for unknown TUI and HTTP sessions.
+- a4fd288: Add declarative `resume: true` and imperative `resume()` support for replaying durable frontend sessions and following in-flight turns. Generated Web Chat apps now keep session IDs in `/s/{sessionId}` URLs, restore conversations on reload, and provide a sessionless `/s` route for starting a new chat.
+- 923921c: Give models runtime-authored task state after background work starts so initiating turns acknowledge launch, partial task wakes stay silent, and settled cohorts produce one combined report.
+- 673def2: Allow `useOrcelAgent` message sends with `turnPolicy: "steer"` while a turn is active, keeping the local projection attached to the durable replacement stream. Generated web chats now keep the composer enabled during responses and steer by default when a follow-up is submitted. Cancelled turns preserve their accepted user input in durable history, so replacement turns retain the interrupted request as context.
+
+## 0.44.0
+
+### Minor Changes
+
+- 47e8b64: Make traces public-only by default while retaining unclassified HTTP/TUI sessions in zero-config local tracing, and add composable input/output redaction, span filtering, and attribute filtering to the export pipeline.
+
+### Patch Changes
+
+- beba1a2: Prepare the TypeScript path alias and Next.js compiler settings before `orcel add channel/web` installs the Web Chat registry item, so fresh agent projects build without manual `tsconfig.json` changes.
+- 830dd40: Classify built-in messaging channel metadata by conversation audience.
+- 4da95bb: Fix dynamic tool builds when callback parameters use destructuring defaults by forwarding the original arguments through the durable callback wrapper.
+- 4ed62a7: Render `ask_question` prompts as visible, vendored AI Elements forms in generated Web Chat apps, with vertical single-choice options and freeform answers submitted through orcel's structured input response API.
+- e43d9cb: Add an optional audience classification to channel instrumentation metadata.
+
+## 0.43.0
+
+### Minor Changes
+
+- 1390675: Background tools can now report a delegated task's terminal result in-process via `task.send({ kind: "complete" | "fail" | "cancel", ... })`, without minting a callback URL.
+
+### Patch Changes
+
+- 1c2684a: Add the native Agentcard MCP connection to the registry through Vercel Connect.
+- f3f4f4a: Allow in-process background tool executors to report progress and terminal results through `task.send`. Progress updates now use executor-neutral coordinates internally, and background task types are exported from `orcel/tools`.
+- 7de783e: Existing Linq account setup now fetches the phone numbers assigned to the partner API token, then lets you select the numbers for your agent.
+- 3ec0e5b: Route model-facing session history through one prepared view so dynamic resolvers, compaction, instrumentation, and model calls receive a consistent conversation without changing durable history.
+- b57c965: Forward the active caller on persistent local and remote subagent continuations so user-scoped connections resolve for the current turn without inheriting the previous caller's authority. Upgrade both remote-agent deployments before resuming existing persistent sessions; create-only receivers reject forwarded continuations rather than falling back to service authority.
+- 3811d81: Update the project scripts after `orcel add channel/web` so `pnpm dev` starts the generated Next.js app.
+- be9be27: Make dynamic tool approval, execution, and output callbacks durable across cold starts. Non-serializable callback captures now fail with an actionable error instead of losing values during replay.
+- 1390675: Add generic background `defineTool` execution so authored tools can return `task.delegated()` receipts and run through the durable task lifecycle without subagent-specific harness branches.
+- 99de091: Run local and remote subagents through generic background `defineTool` execution when `experimental.tasks` is enabled, preserving durable task receipts, HITL, cancellation, and child stream events.
+- f3f4f4a: Give the parent model runtime-authored task state on background wakes so related intermediate results can stay silent and settle into one consolidated report.
+- 3811d81: New npm, Yarn, and Bun agents no longer receive an obsolete AI SDK package-manager pin. Web Chat installation now preserves the AI SDK version already declared by the agent, avoiding npm `EOVERRIDE` failures.
+
+## 0.42.0
+
+### Minor Changes
+
+- a43e14f: Prevent channel HITL responses from carrying channel-local metadata into strict session-inbox payloads. Channel and session `respond()` calls now accept exact response literals or values proven by `parseInputResponses()`, rejecting imprecise `InputResponse[]` values that could have erased extra keys.
+
+### Patch Changes
+
+- f2169fa: Remove the `task_sleep` framework tool. Task-mode parents now rely on lifecycle notifications instead of model-paced waits.
+
+## 0.41.0
+
+### Minor Changes
+
+- 0569638: Add a first-class Linq iMessage and SMS channel with managed Vercel Connect and portable credential setup paths. Connect setup can provision a new Linq account and line or connect an existing account with its partner API token.
+
+### Patch Changes
+
+- bdf5f63: Improve the generated web chat experience with immediate thinking feedback, a disabled composer while responses stream, clearer cancellation controls, and visible turn failures.
+- c47350f: Rebuild untransformed session-scoped dynamic tool executors and approval policies on durable continuations so dependency-created tools remain available after replay.
+- c47350f: Update Teams tool-approval cards only after approval settlement, with the outcome and the Teams responder who acted.
+- 9e19fa4: Keep active client streams attached across authorization parking boundaries so connection callbacks resume browser chats automatically.
+
+## 0.40.0
+
+### Minor Changes
+
+- 2838bb3: Remove `task_peek` from experimental background tasks and include completed results and failures directly in task notifications. Conditionally delivered task wakes can remain silent when that result was already covered by an earlier response.
+
+### Patch Changes
+
+- e843b4d: Registry browsing now uses titles returned by the catalog, avoiding a separate request for every displayed item.
+- 899e079: Keep `orcel info --json` output valid JSON by omitting the CLI banner.
+- cda9539: Redact brokered credential transforms when sandbox network policies are written to bootstrap logs.
+- 87c61a1: Update orcel's bundled Workflow SDK packages to the latest 5.0.0 beta releases, picking up a replay-determinism fix for branch wake order under concurrent replays.
+
+## 0.39.3
+
+### Patch Changes
+
+- c2bfee1: Keep top-level sessions in an independent `agent.session` trace while preserving shared trace context for local and remote subagents.
+- 9a7964b: Add a configurable, development-only `@orcel/self-modification` source-editing subagent that mounts authored agent source read-write, exposes its instructions through an extension, and uses structured file tools to inspect and safely update source.
+- 542c380: Preserve the configured `turnPolicy` on built-in and custom channels, and restore the option for Slack channels.
+- 75bd9c8: Allow extension-owned external dependencies to use ESM-only packages that do not expose a CommonJS entry.
+- 6fc904d: Session inbox hook payloads are now a validated, versioned wire format following orcel's existing durable-format idioms. Producers inspect the target hook's wire capability and encode the shape its pinned consumer understands, including sessions created by orcel 0.30.8; readers migrate legacy shapes forward and reject unknown versions instead of reinterpreting them.
+
+## 0.39.2
+
+### Patch Changes
+
+- 33db9a4: Improve non-interactive setup recovery: `orcel add` now reports terminal outcomes on every path and includes non-secret answer placeholders in blocked continuation commands. `orcel link` and `orcel deploy` also point non-interactive callers to orcel's own project commands.
+- 6e87b13: Allow extension packages to declare runtime dependencies that orcel must keep external and preserve with their complete package files. Consumers receive these packaging requirements automatically without editing their agent config.
+- 2c01eab: Rebuild untransformed session-scoped dynamic tool executors and approval policies on durable continuations so dependency-created tools remain available after replay.
+- 5e5d91b: Fix `vercel.json` services detection when a Vercel Root Directory is configured. The framework integrations now read `vercel.json` from the framework app root first, so a `services` declaration next to the app wins over the linked repository root's `vercel.json` — matching where Vercel itself reads the file from.
+
+## 0.39.1
+
+### Patch Changes
+
+- 9965cfc: Use `@vercel/otel`'s automatic context propagators when no custom propagators are configured.
+- 1d857ca: Report agent files, dependencies, and configuration files changed when `orcel init` adds an agent to an existing project, including when dependency installation later fails.
+- c9d3e25: Wait for tool approval settlement before marking Slack approval cards as answered, so rejected approval responses leave the shared card open.
+- 075dc1f: Tell coding agents that content-only instruction edits do not require reading the framework docs, while preserving docs-first guidance for orcel framework changes.
+- c6d6b3e: Add non-interactive `orcel link` and `orcel deploy` options for linking a named Vercel project and deploying from CI or coding agents without terminal prompts.
+- e739c28: Coding-agent `orcel init` runs now report the selected model and generated instructions file without changing the interactive human flow.
+- 8a3288d: Parent `agent.action` OpenTelemetry spans to their replay-stable `agent.step` boundary instead of directly to the turn.
+- 69c6f12: Let parent agents process background-task notifications without requiring a user-visible channel message. Human messages and input responses remain required delivery.
+- 7995d57: Add `ctx.isDMOrPrivateChannel()` to Slack message handlers so agents can detect DMs, group DMs, and private channels without parsing raw events or implementing their own Slack API fallback.
+- 8180633: Use `Private message` as the Slack run title for DMs and private channels so sensitive message text never appears in run titles.
+- 822dbff: Dev runtime generations now retain the compiled authored module graph instead of recursively copying the app and workspace source trees. Local rebuilds keep immutable runtime behavior while using substantially less disk space.
+- 1473e2a: Capture package-manager command identity, termination, bounded in-memory output, and workspace probes as structured process results for consistent setup diagnostics.
+- 97d166a: New orcel projects now give coding agents direct documentation routes and a bounded authoring loop, including a local recipe for routine typed tools. This reduces redundant project and package discovery while preserving deeper guidance for approvals and other advanced behavior.
+- e1ebb53: Emit durable `input.resolved` stream events with server-accepted human-input outcomes and responses so clients can persist and replay HITL state.
+- f02bc3d: Keep pending tool approvals visible across follow-up turns and prevent those turns from issuing duplicate tool calls.
+
+## 0.39.0
+
+### Minor Changes
+
+- 00c0a26: Promote ChatGPT subscription models to the stable `chatgpt()` API with Codex-owned authentication, automatic token refresh, `orcel dev` recovery through `codex login` or `/model`, setup/source-authoring support, and local-only deployment safeguards. The deprecated `experimental_chatgpt()` alias remains available.
+
+### Patch Changes
+
+- 267a59a: Align the Sign in with Vercel Web Chat screen with orcel's default status page while keeping the generated app name primary and Vercel branding confined to the authentication button.
+- 7a140d4: Carry the one-run pnpm minimum-release-age bypass from dependency installation into the `orcel init` development handoff so onboarding starts without a redundant policy failure.
+- e8da571: Allow a child to return `parent.sandbox` from a `defineSandbox` callback, reusing the dispatching parent's live sandbox across agent sessions. Parent and child see the same files, processes, workspace, and sandbox home. A child that selects `parent.sandbox` cannot also declare managed workspace or skill resources; orcel rejects that configuration before execution and requires either removing those resources or giving the child its own sandbox.
+- 24f6c06: Orcel now emits `workflow.stream.follow.read` spans while following newly created runs, measuring each event from its durable write timestamp to the reader without counting replayed events.
+- 7a8f43b: Treat `orcel init` targets as filesystem paths and classify non-empty targets before writing. When the generated initial Git commit fails, retain the repository and staged files and print the command to retry it.
+- 4c1bd80: Remove `glob` and `grep` from the default agent tool set. Agents can opt into either sandbox search tool by exporting `defineGlobTool()` or `defineGrepTool()` from the corresponding tool file.
+- 4af3b1e: Use canonical project discovery for project-scoped CLI commands, including instructions-only agents and commands invoked from descendant directories.
+
+## 0.38.3
+
+### Patch Changes
+
+- 8b2a914: Authorize Slack HITL answers with `onInputResponse` before they resume a parked session. Omitting the hook preserves the existing submitting-user authorization behavior regardless of other Slack handlers.
+- c2b9bbf: Slack `onEvent` handlers can now pass `title` to `ctx.send()` to set the run title without changing the message sent to the model.
+
+## 0.38.2
+
+### Patch Changes
+
+- 250d67a: Bump `@workflow/*` packages to the latest 5.0.0 betas (`core` beta.42, `errors` beta.17, `world` beta.27, `world-local` beta.36, `world-vercel` beta.38, `world-postgres` beta.34). The development Workflow world now advertises spec version 6 (slot-numbered event ids), matching the updated local world.
+- f9f29d3: Surface AI Gateway model catalog request failures during compilation instead of reporting unavailable models as missing metadata. Models with orcel-owned metadata continue to compile without the catalog.
+- 77de320: Let background task children send intermediate progress to their parent with `task_update`, using the existing local and remote child-to-parent transports. Remote task HITL is now presented only by the parent channel, finished agents continue through their original subagent tool with `agentId`, and the redundant `task_send` tool has been removed.
+- 88f6ca9: Configure MCP channel endpoints with `route`, default them to `/orcel/v1/mcp`, and derive OAuth protected-resource metadata paths from the MCP resource identifier.
+- fe1ad3b: Search by item name when suggesting registry matches, so path typos such as `channels/slack` can still suggest `channel/slack`.
+
+## 0.38.1
+
+### Patch Changes
+
+- d23467d: Allow extensions to contribute namespaced subagents, including their tools, configuration access, nested subagents, and directory-mount overrides.
+- cb2fa2a: Configure MCP channel endpoints with `route`, default them to `/orcel/v1/mcp`, and derive OAuth protected-resource metadata paths from the MCP resource identifier.
+
+## 0.38.0
+
+### Minor Changes
+
+- 48c1105: Replace `stop()` on frontend agent bindings with `cancel()`. Cancellation now targets the exact durable turn through `MessageResponse.cancel()` while the binding stays attached through settlement.
+
+### Patch Changes
+
+- 8904392: Extensions can now contribute channels. Mounted channel IDs receive the extension namespace while their authored route paths remain unchanged.
+- 4c3c475: Built-in inbound hooks can now return `title` to set the workflow run title without changing the message sent to the model.
+- a7d34e5: Make Nitro-backed builds more reliable by preserving per-import conditional exports, keeping authored and vendored OpenTelemetry tracers on one registered provider, and running development worker close hooks during an explicit shutdown handshake. Workflow artifacts are now emitted directly instead of repaired through post-build string rewrites.
+- bdd5a9b: Suggest close registry matches when `orcel add` cannot find the requested item.
+- ccc604c: Show `orcel add` help and registry search guidance when no item is provided.
+- abcd06d: Resolve project-scoped CLI commands from the nearest enclosing orcel application when run from a nested directory.
+- 775c061: Extensions can contribute schedules. Mounted schedule IDs use the extension namespace while cron expressions and handler behavior remain unchanged.
+
+## 0.37.1
+
+### Patch Changes
+
+- 8bf1e5b: Render background subagent activity in one persistent dev TUI section across parent turns. Idle task wakes render while the prompt remains active, remote child streams use the authenticated parent proxy, and child boundaries finalize sections without later-turn cancellation closing unrelated background work.
+- 046981e: Add experimental background tasks for local and remote subagents. With `experimental.tasks` enabled, subagent calls return durable task receipts; parents can inspect, continue, or cancel work while lifecycle notifications and human-input requests arrive asynchronously. Remote child streams are exposed through an authenticated parent-origin proxy so clients never receive remote credentials.
+- d8cef1a: Scope create-once operations to the effective forwarded principal so two forwarded users behind the same trusted forwarder cannot adopt each other's session.
+- 5d12328: Preserve a session-scoped dynamic model selection when the first turn is cancelled so later turns can reuse it without requiring a `turn.started` resolver.
+- 10a09a1: Make failed `orcel init` runs recoverable: new targets are cleaned up, preexisting empty targets are restored, and existing projects receive clear dependency-install recovery guidance.
+- 8bf1e5b: The dev TUI now presents and routes approval or question prompts raised by background tasks while the parent session is idle, instead of leaving the task blocked.
+- 046981e: Preserve remote task HITL response routes for loopback HTTP children and Vercel deployments configured with Protection Bypass for Automation. HTTPS remains required for every non-loopback remote child.
+- 63726db: Polish the connection authorization completion page with a Vercel-styled success state.
+- d8cef1a: Add authenticated create-once session requests through `operationId`. Concurrent or retried creates adopt the active session that first claimed the operation without dispatching duplicate input.
+- 5ba9749: Add a secure MCP channel that reuses orcel route auth and lets clients start, inspect, update, authorize, and cancel principal-bound durable agent invocations over MCP 2026-07-28 with a stateless 2025 compatibility path.
+- 60e87ef: Keep active client turns connected while they are paused for authorization so responses resume automatically after the callback completes.
+
+## 0.37.0
+
+### Minor Changes
+
+- fe691aa: Expose Vercel Sandbox Drives and allow authors to mount them when creating live session sandboxes.
+
+### Patch Changes
+
+- d0bb6af: Fix Sign in with Vercel Web Chat projects failing to load user-scoped Vercel Connect tools because the generated channel used a reserved issuer.
+- 7ab7d97: Running orcel without a command now initializes the current directory when no orcel project is present, and starts development when one is detected.
+- c77c661: `orcel init` now asks whether to scaffold a non-empty current directory in place or create a named subdirectory. In-place scaffolds preserve unrelated files and overwrite generated paths; coding-agent and non-interactive launches must pass an explicit directory name.
+- 456c0a5: `orcel init` now scaffolds the current directory when no target is provided, including when launched by a coding agent.
+
+## 0.36.0
+
+### Minor Changes
+
+- 2714386: `orcel/sveltekit` now deploys the agent through Vercel's stable services model. On Vercel builds it generates an orcel Build Output service and a `/orcel/v1/*` service route instead of writing legacy `experimentalServices` to `vercel.json`. The `configureVercelJson` and `servicePrefix` plugin options and the `ORCEL_SVELTEKIT_SERVICE_PREFIX` export were removed; delete any generated `experimentalServices` block from `vercel.json`.
+
+### Patch Changes
+
+- 20a5201: Update orcel's default agent model to `zai/glm-5.2`. New agents created with `orcel init`, config-less agents, and the setup model picker now use GLM 5.2 instead of Claude Sonnet 5.
+- ee8943b: Recover cancelled responder-authorized approvals after replay so the pending tool call remains cancelled and cannot hang while waiting for a consumed response.
+
+## 0.35.0
+
+### Minor Changes
+
+- 3f92f7d: Instrumentation now records trace metadata without model or tool inputs and outputs by default. Set `recordInputs` or `recordOutputs` to `true`, or use `ORCEL_TRACES_CONTENT=on` for the automatic local trace spool, to opt into content capture.
+
+### Patch Changes
+
+- 9a07754: Recognize repository-style Vercel link metadata during guided setup, so Vercel Connect integrations can continue after Vercel CLI links a repository-backed project.
+- 1cd563b: A model step that requests a tool approval (or question) and a subagent or remote-agent call in the same response no longer drops the approval. The harness now parks on both: the input request surfaces immediately, the delegation runs, and when its result arrives the turn re-parks on the still-pending approval instead of calling the model with a dangling tool call (`AI_MissingToolResultsError`).
+- 02b7b7e: `githubChannel({ botName })` now also accepts a lazy resolver function, resolved on first use inside request handling, cached on success, and retried after a failure, so resolvers that depend on request-scoped credentials work in production. When `botName` is omitted, the channel falls back to the new `appSlug` field on `GitHubChannelCredentials`, then to `GITHUB_APP_SLUG`.
+- 77eb819: Traced session and turn start events now carry portable trace context. Eval reporters can observe individual eval and traced-session starts, correlate completed results across every session trace, and read those contexts from artifacts and Braintrust metadata.
+- df0804e: Instructions now accept `content` with an optional `system` or `user` role, and dynamic instruction resolvers have a lifecycle-specific typed API. User-role instructions enter durable conversation history at their static, session, or turn boundary; the legacy `markdown` form remains available as a deprecated system-role definition.
+- a19c743: The local trace viewer now reads user messages and runtime actions from durable channel delivery and action spans, avoiding duplicate SDK tool details in `orcel traces` output.
+- 23c7354: Organize the internal harness instrumentation modules under a dedicated directory without changing runtime behavior.
+- 891aed8: Fix authored-module evaluation on Windows when configured external dependencies resolve to absolute paths.
+- df398a9: Update orcel's bundled Workflow SDK packages to the latest 5.0.0 beta releases, aligning the worlds with the `@workflow/core` beta already pinned.
+
+## 0.34.0
+
+### Minor Changes
+
+- 11908eb: Tools and connections can now define optional `request` and `response` approval policies, while preserving the existing function shorthand. Response policies can authenticate the responder and return a tagged allow or rejection decision, and authorization token results can expose a stable provider subject.
+
+### Patch Changes
+
+- 82c1314: Instrumentation providers can observe durable inbound channel deliveries from processing start through the resulting turn terminal. OpenTelemetry destinations receive consumer spans under the session window, with traced HTTP requests represented as links rather than parents.
+- 29313be: Reconstruct durable `agent.action` spans when runtime actions settle, including across worker replacement, and record each action's exact caller-accepted duration, kind, outcome, stable error code, and subagent usage. Remote orcel sessions join the caller action trace through W3C `traceparent`; older receivers may ignore the header. Human approval waits appear as durable `agent.approval` child spans, while chat spans use standard self-contained model input and output attributes.
+- 749581b: Instrumentation lifecycle events now use orcel-owned payloads and flat event names, including `step.attempt.*` and durable `input.requested`/`input.resolved` boundaries, instead of AI SDK callback types and paired hooks. Existing spans and attributes are unchanged.
+- 7770fba: Add an experimental Buzz ACP compatibility adapter that publishes threaded and top-level responses through the local Buzz CLI, prevents duplicate replies, and defaults to Buzz's owner-only author gate. Shared service agents must explicitly opt in to letting multiple accepted Buzz senders use the same orcel authentication and connections.
+- 3eba855: Post GitHub human-in-the-loop prompts by default so users can see and answer pending input requests in the issue or pull request thread.
+- f06633b: Give every instrumentation lifecycle event a replay-stable `idempotencyKey` derived from durable orcel identity, allowing providers to upsert one record across retries and worker replays.
+- c90a459: Add the experimental `agent/instrumentation/` provider layout with durable lifecycle handlers, including user input boundaries and action settlement-time, outcome, error-code, and usage metadata, final setup context, reserved OpenTelemetry destinations, and coordinated flush and shutdown. OpenTelemetry singleton settings and destinations are exposed through `orcel/instrumentation/otel`, and orcel's AI SDK bridge composes with registered integrations.
+- d304544: OpenTelemetry destinations can independently decline input or output content. Redaction covers span attributes, exception and custom events, and status messages without mutating spans shared with other destinations; `ORCEL_TRACES_CONTENT=off` now narrows only local traces.
+- 084f8f1: orcel now assembles its local OpenTelemetry runtime from declarative singleton settings and ordered destinations. The local trace spool is an ordinary span processor, and tracer-provider ownership, flushing, and shutdown are managed centrally without changing recorded spans.
+- 3b43b3d: Instrumentation providers can choose metadata-only or content-bearing events. orcel builds sensitive projections only when requested and keeps prompts, responses, tool payloads, exceptions, and opaque provider metadata away from metadata-only providers.
+- 1528fda: Add durable operation-scoped state to instrumentation handlers, isolated by provider and automatically released at terminal boundaries. Bound each handler and persist start-handler abandonment so a stalled provider cannot block the bus or later receive a mismatched terminal.
+- 760c14a: Allow canary builds to scaffold projects pinned to their exact package artifact URL.
+- 4138e64: Publish durable lifecycle events for runtime actions and user input requests, including approval decisions that resume in another worker. Action terminals expose caller-accepted settlement time, exact outcome, stable error code, and subagent usage even when settlement crosses workers. Framework skill loads are also preserved in eval tool-call facts.
+
+## 0.33.3
+
+### Patch Changes
+
+- 22975d3: Keep GitHub comment text separate from channel metadata so option replies can resume pending input requests.
+
+## 0.33.2
+
+### Patch Changes
+
+- 89255bd: Update `@workflow/core` to `5.0.0-beta.41` to pick up event log corruption fixes.
+
+## 0.33.1
+
+### Patch Changes
+
+- 7dd64d3: Messages no longer wait behind pending tool approvals: a follow-up message now runs as an ordinary turn while the approval stays open and answerable, and a later structured answer still resolves the original tool call. Pending HITL batches are stored as an ordered collection, so a turn that runs while an approval is open can raise its own requests without overwriting it; multiple approval answers delivered together resume safely in order. Sessions wedged by the old deferral release the held message on their next delivery.
+- b1ce580: Add an opt-in Sign in with Vercel authentication variant for programmatically scaffolded Web Chat apps.
+- 7dd64d3: Keep task runs parked when unrelated messages arrive while tool approvals remain open, and resolve later text approval responses before replaying deferred messages. Invalid persisted input request kinds now fail closed.
+- e402672: Keep follow-up subagent dispatches in the active parent turn when a resumed runtime-action batch has lost its turn ID, preventing the session from failing while persisting the child handle.
+- 8d6afc3: Scope Vercel CLI authentication checks to an existing linked team project, preventing an unrelated default CLI scope from blocking integration setup.
+
+## 0.33.0
+
+### Minor Changes
+
+- ccaa596: Dynamic models and subagents now resolve without compiled fallbacks or placeholder configs. `defineDynamic` accepts only `events`; dynamic model handlers must return a concrete selection, while runtime model metadata is normalized and cached when the selection becomes active.
+- 2dd193b: Channel message sends now use `turnPolicy: "steer"` by default, so accepted messages replace active turns through cancellation-backed steering without a separate cancel request. Set `turnPolicy: "queue"` on a channel or individual send to preserve the previous wait-for-completion behavior.
+
+### Patch Changes
+
+- 672c054: Add `orcel set` with `--model` and `--reasoning` options for changing an existing agent's model settings, and add the same model settings to `orcel init` for scaffolding.
+- 1ee27be: Interactive setup now offers an explicit exit after `orcel init` and runs Vercel login and project linking in place whenever Vercel-backed integration setup or deployment needs them.
+
+## 0.32.0
+
+### Minor Changes
+
+- 1702f91: Tool approval responses now use `cancel` instead of `deny`, while retaining `approve` for the positive response, aligning the public protocol with the user-facing flow-control semantics.
+- cbe7105: Allow authored hooks, tools, and channel callbacks to stop their active sandbox through `ctx.getSandbox().stop()`. Every built-in backend preserves the durable session for a later callback, and custom sandbox backend handles must now implement `stop()`.
+
+### Patch Changes
+
+- ea530ec: Update `orcel add` to better support agent-based invocation of guided setup flows. Interactive setup links a Vercel project when needed; after each deployable setup, `/add` offers to add more by default, deploy to production, or finish.
+- a29cc8e: Update the bundled AI SDK to 7.0.58 and the `@ai-sdk/*` providers to their latest minors.
+- 39c76ca: AI Gateway models now use Exa by default for the built-in `web_search` tool. Agents can continue to select Parallel explicitly with `webSearch({ provider: "parallel" })`.
+- 261af74: Photon setup now shows an existing project's dedicated number when available, rather than allocating and showing a shared fallback number.
+- 55b5cc7: Teach newly scaffolded coding agents to discover integrations and follow the structured `orcel add --headless` setup flow through completion.
+- 91cca9a: Slack now posts tool input previews separately from approval controls so large inputs no longer inflate button callbacks and approvals remain responsive.
+- 50f2d96: Conversation sessions no longer stall while an interactive authorization challenge is open: ordinary messages run as normal turns, while tasks defer unrelated input until their blocked authorization completes. Callbacks are bound to the exact challenge attempt and initiating connection principal, remain live across parked activity, and start a valid callback turn after the authorization park closes its boundary. Session timeouts are also honored during an open challenge, and `client.fetch` preserves query strings embedded in the request path.
+- 7449917: Stop completed and cancelled todo lists from being re-injected as user messages after compaction. Lists that still contain active work continue to be preserved in full.
+- 63a76f0: Local traces now record `agent.turn` with the turn's real duration instead of a zero-duration marker, and the separate `agent.turn.terminal` marker span is gone — terminal and transition events land on the turn span itself. `agent.session` window roots remain zero-duration markers because an idle session never closes.
+- a159596: Export telemetry for every step of multi-step turns when an OpenTelemetry consumer groups spans by completed local segments.
+- e1080e0: Reject HTML sign-in pages returned by Slack private file downloads and explain how to restore attachment access.
+- 52000dd: Build tool input schemas authored with Zod 3 instead of crashing during JSON Schema conversion.
+- f06e12e: Add a structured `orcel add --non-interactive` flow with stable setup answers, component selection, and resumable setup blockers for coding agents.
+
+## 0.31.3
+
+### Patch Changes
+
+- 0dbe7ef: Add `toolCall.providedArguments` to MCP and OpenAPI connections so applications can hide and supply application-owned arguments on every remote tool call.
+- 53c05ff: Allow Linear channels to configure the accepted webhook timestamp skew for retry deliveries.
+
+## 0.31.2
+
+### Patch Changes
+
+- 69244fe: Update orcel's bundled Workflow SDK packages to the latest 5.0.0 beta releases, keeping the core runtime and workflow worlds aligned.
+
+## 0.31.1
+
+### Patch Changes
+
+- 2a141f0: Keep sessions resumable across orcel deployment upgrades: sends now cross durable session hooks as the established `deliver` envelope (with a transitional single-payload mirror for sessions pinned to 0.30.5–0.30.8), and consumers keep accepting payloads persisted by those versions.
+- 99982f7: Treat AI SDK `.devtools` like other generated directories: ignore it in `orcel dev` watching, agent discovery, and source snapshots so generation writes do not recompile or warn.
+- a497e8d: Preserve each tool executor's concrete return type through `defineTool`, so non-streaming tools no longer appear to return an async iterable. Allow `ctx.to()` to infer closed receive-target interfaces such as Slack's without requiring an index signature.
+- fe9e7ef: Consume interactive authorization callback results once and keep targeted connection searches from replaying callbacks for unrelated connections.
+
+## 0.31.0
+
+### Minor Changes
+
+- 40b09e6: Replace continuation-token session APIs with fixed, ID-addressed handles and consistent channel-local operations. This is a breaking migration across the following public surfaces:
+
+  - TypeScript clients now use `client.sessions.create(input)` to start a session and `client.sessions.attach(sessionId)` to obtain a fixed handle; `client.session(...)` and continuation-token client state are removed.
+  - Client, eval, frontend, fixed-session, and Slack message delivery now use positional `send(message, options)`. HITL replies use the separate `respond(inputResponses, options)` method, and `message` and `inputResponses` are mutually exclusive.
+  - Custom channels use `from(address)` for channel-local operations, top-level `resolveSession(address)` to resolve the current owner, `attachSession(sessionId)` for an immutable session handle, and `to(channel, target)` for cross-channel delivery.
+  - Slack message and interaction hooks expose `ctx.send`, `ctx.respond`, `ctx.cancel`, `ctx.compact`, `ctx.clear`, `ctx.reset`, and `ctx.resolveSession`. For generic events, the target is passed in each operation's options; `ctx.receive` and `resolveActiveSession` are removed.
+  - Schedule handlers replace `receive(channel, { message, target, auth })` with `to(channel, target).send(message, { auth })`.
+  - Channel event session identity moves to `ctx.session.id`, while `session.failed` includes `sessionId` in its event data.
+  - The orcel HTTP API keeps `POST /orcel/v1/session` for creation and `POST /orcel/v1/session/:sessionId` for follow-ups. Clear, compact, and reset move from continuation-token body routes to `POST /orcel/v1/session/:sessionId/{clear,compact,reset}`; cancel and streaming remain ID-addressed.
+  - Session message and control bodies no longer accept or return continuation tokens. Accepted asynchronous work returns HTTP `202`; no-active operation results omit `sessionId`, and inactive follow-ups return HTTP `409` with `code: "session_not_active"`, available as `ClientError.code`.
+  - Canonical orcel `onMessage` hooks can no longer drop an otherwise authorized delivery by returning `null`.
+
+### Patch Changes
+
+- 2054b9f: Agent-messaging `<agents>` listings are now announced as framework-injected user-role notes instead of assistant messages appended to history. This fixes parent resume failures on models that reject assistant-final requests (e.g. `This model does not support assistant message prefill` from Claude via AI Gateway) after a persistent child parks, keeps the announcement append-only so provider prompt caches stay warm, and the agent-messaging system prompt now declares the `[Agents]` note as framework-injected.
+- 84c3dfc: Flush local development streaming response headers immediately so pending Workflow streams can be cancelled without accumulating listeners.
+- b7a2a14: Dev runtime snapshots now mount workspace dependency packages in place
+  instead of copying them. Only roots that host runtime-hydrated authored
+  source — the app root, extension mount roots, and tsconfig path-alias
+  targets — are still copied, matching how installed dependencies already
+  resolved. In monorepos this removes the largest per-generation copy: a
+  workspace-linked framework package (hundreds of files and tens of
+  megabytes per rebuild) no longer lands under
+  `.orcel/dev-runtime/snapshots/`.
+
+## 0.30.8
+
+### Patch Changes
+
+- e6f4808: Add a single `orcel add linear` flow that installs and configures both the Linear Channel and Linear MCP connection.
+- f51f866: Tools can now use async generators to stream preliminary output snapshots. orcel publishes local snapshots as `action.partial` events before the final `action.result`, and the default client reducer exposes provisional output with `partial: true`.
+
+## 0.30.7
+
+### Patch Changes
+
+- e5c9191: Add experimental agent messaging behind `experimental.subagentPersistentSessions` in `agent.ts`. Opted-in agents keep delegated children alive after they answer: each child is owned by a lifecycle handle, settles every turn with an explicit outcome carrying its per-turn token usage, and parks instead of terminating. The parent's subagent tools gain an `agentId` parameter to continue a parked child, discoverable from a per-model-call `<agents>` system injection that lists only parked (resumable) children. An omitted, empty, or unknown `agentId` starts a fresh child; continuing a child that is still starting or working fails with `AGENT_BUSY`. Without the opt-in, children keep running as one-shot tasks. The subagent tool input schema no longer includes the unused `description` field.
+- bd21332: Cancelling a turn with running delegated children no longer leaks their handles as permanently `running`. The cancellation epilogue now parks each abandoned child as `"(cancelled)"`, so cancelled children stay resumable and later cancellations no longer stall retrying already-dead children.
+- 1758161: Add guided GitHub channel setup through `orcel add channel/github`. The flow provisions a Vercel Connect GitHub App, routes verified webhooks, scaffolds the channel, and explains how to install and use the app.
+- 56de47b: Show far more of what local traces record in `orcel traces`: span rows carry inline token/cost/tool chips, the header aggregates models, token totals, cost, and errors, and two new flags expose everything else — `--verbose` expands every span with all attributes and events, and `--json` dumps the full trace machine-readably.
+
+## 0.30.6
+
+### Patch Changes
+
+- 7fa4d36: Accept unmodeled `SKILL.md` frontmatter when importing a skill from another runtime. These fields are no-ops in orcel.
+
+## 0.30.5
+
+### Patch Changes
+
+- 5ee18e2: Prevent successful local `orcel invoke` commands from logging a spurious Workflow queue 503 while their temporary development server shuts down.
+- d8fc092: Format registry search results as concise, width-aware entries and limit searches to 10 matches by default. Use `--limit` to request up to 100 results.
+- 557000b: Add skills.sh as a built-in registry, so `orcel registry search --registry @skills <query>` and `orcel add @skills/<skill>` work without project configuration.
+- 1953d20: Prevent sandbox abort listeners from accumulating across repeated operations in a turn.
+- 7086776: Route session controls and follow-up messages through one durable command inbox shared by stable session IDs and rekeyable channel addresses.
+
+## 0.30.4
+
+### Patch Changes
+
+- fc87d23: Dev runtime snapshots no longer copy the `.workflow-vitest` test cache. In
+  workspaces that had run integration tests, this directory was duplicated into
+  every generation under `.orcel/dev-runtime/snapshots` — tens of megabytes per
+  rebuild that nothing at dev runtime reads.
+
+## 0.30.3
+
+### Patch Changes
+
+- 601fb13: Allow just-bash sandboxes to compose a custom filesystem around orcel's durable, session-owned workspace.
+- c8bd9c0: Allow declared local subagents to mount extensions under their own `extensions/` directory. Contributions, configuration, and overrides are scoped to that subagent and do not extend the root agent.
+- 279b5e6: Use compatible POSIX search fallbacks in sandboxes whose `rg` implementation lacks the options required by orcel, and surface command errors instead of reporting them as empty results.
+- c10ca06: Allow dynamic subagents to declare compile-time `build.externalDependencies`, so their authored modules can safely use packages that must remain external before runtime resolution.
+- 95b4183: Configure new Linear connectors to receive only Agent Session webhook events, avoiding unrelated default Linear webhook deliveries.
+- 95b4183: Add guided Linear Agent channel setup through `orcel add channel/linear-agent`. The flow provisions a Vercel Connect Linear app, routes verified Agent Session events, scaffolds the channel, and explains how to install and use the agent in Linear.
+
+## 0.30.2
+
+### Patch Changes
+
+- 512808c: Allow agents to select Exa or Parallel for the built-in `web_search` tool by exporting `webSearch({ provider })` from `agent/tools/web_search.ts`. Parallel remains the default for AI Gateway models.
+
+## 0.30.1
+
+### Patch Changes
+
+- dae6f73: Upload Vercel sandbox workspace seed files in one compressed SDK request instead of one request per file, substantially reducing fresh template build times for large workspaces.
+
+## 0.30.0
+
+### Minor Changes
+
+- f43b22d: `localDev()` now grants the synthetic local principal based on the deployment (an `orcel dev` or `vercel dev` process) instead of the request URL host, so a request `Host` header can no longer obtain local-dev access on a self-hosted server. The previously exported `isLoopbackRequest` helper is removed. The default orcel channel now falls back to `[vercelOidc(), localDev(), placeholderAuth()]`, which keeps local dev working and rejects all production traffic.
+
+### Patch Changes
+
+- 021dbbf: Add `/new` as an alias of `/clear` in the orcel dev TUI. It clears model-message history while preserving the current session and its durable resources.
+- 136749f: Make `Ctrl+C` cooperatively cancel or steer a running turn like `Esc` in the orcel dev TUI. At the idle prompt, the first `Ctrl+C` now shows an exit warning and a second consecutive press exits.
+- 13420ab: Allow dynamic subagent resolvers to return `defineRemoteAgent(...)`. Session and turn selections can now conditionally expose a remote deployment and change its runtime connection settings.
+- ee50ae7: Prevent the dev TUI from duplicating setup panels when an integration setup error includes multiline command output.
+- e1cd7b7: Move orcel's internal integration catalog from the Vercel npm scope to `@orcel/catalog`.
+- 56651ee: Update orcel's bundled Workflow SDK packages to the latest 5.0.0 beta releases, keeping the core runtime and workflow worlds aligned.
+
+## 0.29.5
+
+### Patch Changes
+
+- c0dc572: Rename the TUI `/new` command to `/reset` so session reset uses the same name across the client, HTTP, channel, and TUI APIs.
+- 3dce30a: Add manual session compaction through custom-channel helpers, the orcel HTTP client, and the `orcel dev` TUI's `/compact` command. Compaction preserves the session, queues behind an active turn, and does not send synthetic model input.
+- 910805e: Make a single `Esc` cancel the running turn in the orcel dev TUI when no message is queued. Queued messages still use `Esc` to steer the oldest message into the next turn.
+- 9c51755: Connection search and discovered connection tools now use the same `defineDynamic` and `defineTool` pipeline as authored tools. Dynamic tool maps now reject entries that omit `defineTool` instead of accepting unsupported raw objects.
+- 84aa671: Clarify the dev TUI’s `/add` flow with consistent integration categories and category-specific browsing labels. MCP connections are now named explicitly, and the flow more clearly explains channels, extensions, and observability integrations.
+- 0c28eb7: Allow declared subagents to export `defineDynamic` from `agent.ts`. Session and turn resolvers can now return an agent configuration to expose it or nil to omit it from direct and Workflow delegation.
+- f3bb60d: Add manual session-context clearing through custom-channel helpers, the orcel HTTP client, and the `orcel dev` TUI's `/clear` command. Clearing removes model-message history while preserving the session, agent configuration, durable state, limits, and sandbox.
+- ac7d3c6: Add `/cancel` to the orcel dev TUI. The command cooperatively cancels a running turn from either the live streaming input or the idle prompt while preserving the session and settled context.
+
+## 0.29.4
+
+### Patch Changes
+
+- e90a8c2: Launch local or deployed orcel applications as stable ACP v1 agents with `orcel acp [url]`, including streamed messages, tool activity, human input, cancellation, concurrent sessions, and verified Vercel authentication.
+- cec672d: Add guided Discord setup through `orcel add channel/discord`, including Vercel Connect provisioning, trigger attachment, interactions endpoint configuration, slash-command registration, and channel scaffolding.
+- ed328e7: Render registry item titles with their exact registry-provided casing by loading manifests for each page of catalog results.
+- c875a67: Update the generated `AGENTS.md` to direct coding agents to the orcel registry for discovering and installing integrations.
+- 5153b13: Add JSON output to `orcel registry list` and `orcel registry search` for scripts that inspect registry catalogs.
+- 155d46a: Connection registry items now configure their Vercel Connect connector during `orcel add`, and registry setup commands close their IPC channel after reporting an outcome so `/add` returns instead of remaining stuck.
+- 6f3daca: Add `ClientSession.snapshot()` for reading a finite, cursor-consistent session event prefix that can hydrate server-rendered applications.
+- 67bfc76: Resolve sandbox skill roots and seed-file paths through the same `$HOME` resolver the file tools use, so the skills location is spelled once instead of twice.
+- a5acde8: Ensure exiting the dev TUI shuts down its owned server and any surviving workflow processes before the CLI exits. Persisted workflow messages now reach the ready worker during restart instead of being rejected while the file watcher starts.
+- 731464f: Give the local trace spool's on-disk layout a single owner: the shared trace reader now exposes the listing and segment-read primitives that `orcel traces` and the `/traces` viewer both use, and payload formatting is shared between the detail panel and the conversation view.
+- f7ba3b3: Derive the `/traces` conversation viewer's line geometry from one prefix-sum helper so scroll, click, and wheel math cannot disagree, and reset the view through a single factory when the viewed trace changes.
+- 3f4bb9c: The `/traces` viewer now follows your terminal's colors instead of forcing a hardcoded black/grey truecolor palette. It probes the terminal's default background (OSC 11) and derives its card surfaces from your own theme — subtly elevated bands on dark and light backgrounds alike, with red bands for failures, and card titles that invert to black on light backgrounds so they stay legible. Terminals that don't answer the probe get a clean gutter-rail rendering drawn entirely with the shared TUI theme.
+- f5d0533: Derive the dev TUI's slash-command suggestion window from the command registry instead of a hand-maintained constant, and collapse the duplicated cursor step in the terminal line-wrap loop.
+
+## 0.29.3
+
+### Patch Changes
+
+- 22bfa02: Add guided Photon setup through `orcel add channel/photon-imessage`, including project creation, phone registration, Vercel Connect or portable credentials, and channel scaffolding.
+- 0c0de19: Add an opt-in steering policy to Chat SDK sends that cancels an active turn before delivering its replacement message.
+- b00a79d: Add `photonIMessageChannel`, a first-class Photon iMessage channel with lazy credentials, Vercel OIDC webhook verification, and automatic orcel session routing.
+- 495e93b: Resolve leading `$HOME` paths in the built-in `read_file`, `write_file`, `glob`, and `grep` tools so agents can directly access packaged skill references advertised in their prompt.
+- bf01952: Local trace spans now capture model and tool payloads: the system prompt, prompt messages, and response text/reasoning/tool calls on model spans, and call arguments/results on tool spans, each capped at 32 KB with provider transport metadata stripped. Set `ORCEL_TRACES_CONTENT=off` to keep payloads out of the spool.
+- 680db59: Provider-executed tool calls (like a gateway's `web_search`) now show up in local traces: their calls and results are captured on the model span and the `/traces` viewer renders them as tool cards, with oversized outputs truncated to stay valid JSON.
+- 7ab6d8a: Terminal text wrapping in the dev TUI is now linear-time, so views rendering large single-line payloads (long tool results, big JSON) no longer stall on every repaint.
+- 52cee9c: Consolidate the three Vercel CLI subprocess runners onto one shared lifecycle. A `vercel` lookup killed by a signal (for example Ctrl-C during setup) now reports a cancellation failure instead of resolving as a success with truncated output.
+- 7703448: The local trace spool reader behind `orcel traces` moved into a shared internal module; command behavior is unchanged.
+- 2d87acb: Subagent turn spans now record the dispatch that created them —
+  `agent.parent.session.id`, `agent.parent.turn.id`, `agent.parent.call_id`, and
+  `agent.subagent.name` — so a parent turn that fans out to several children can
+  be attributed to the exact tool call behind each one.
+- 3c846bc: The `/traces` viewer supports drag-to-select: dragging with the mouse highlights text and releasing copies it to the clipboard (OSC 52 with tmux passthrough, plus the platform clipboard command) with a confirmation toast. Clicks now act on release so drags never toggle cards, and Esc cancels an in-flight selection.
+- 3645c6e: The `/traces` viewer frame breathes: padding rows around the title and above the footer hints, the copy toast floats top-right as a small surface with a left edge bar, and the scroll wheel scrolls the attributes drawer when the pointer is over it.
+- 8858403: The local tracing subsystem (spool writer/reader, retention, the zero-config local OTel runtime, and agent span capture) moved from `src/harness` into its own `src/tracing` module; no behavior change.
+- 9adb455: Adds a `/traces` command to the dev TUI: a full-screen live viewer over the local trace spool that re-tells each trace as a chat-style conversation — system prompt, user and assistant messages, and tool calls render as expandable cards (arrow keys or mouse click to expand/collapse), with a right-side metadata drawer. Subagent turns are badged with their dispatch lineage (`subagent:<name>`), and the viewer opens on the trace containing the current session — including windowed sessions and subagent children recorded into a parent's trace. Expanded cards scroll line-by-line so content taller than the viewport is fully readable. Model spans with errors, token usage, or tool calls (but no text) now appear as cards instead of disappearing. Terminal escape sequences in trace payloads are stripped at render time. Tool-call arguments and results are captured without stripping domain-level `providerOptions`/`providerMetadata` keys. A single prompt message over 32 KiB is truncated at the text level so the serialized JSON stays parseable. Local spans capture system prompt, prompt messages, responses, reasoning, and tool arguments/results (`ORCEL_TRACES_CONTENT=off` to disable); long conversations truncate oldest messages first with an omission marker.
+- 275271d: Subagent runs now record into the trace of the session that dispatched them instead of a disconnected trace of their own, and `orcel traces` resolves either session id to it. Local traces also open a real `agent.session` root span rather than a synthesized parent, so an authored OTel sampler's root rule decides whether a session is sampled, and a session long enough to outgrow one trace rolls into numbered windows that `orcel traces <session-id>` lists oldest first. Rows whose lifetime outlives the worker that opened them — `agent.session` and `agent.turn` — now show the extent of their descendants instead of `0ms`.
+
+## 0.29.2
+
+### Patch Changes
+
+- f3ecdcd: Eval config timeouts are now applied to every eval and enforced even when an eval task does not cooperate with its abort signal, preventing stalled eval runs.
+- f3ecdcd: Malformed raw tool arguments now preserve the original JSON syntax error and return it to the model as a failed tool result instead of reporting a misleading serialization error.
+
+## 0.29.1
+
+### Patch Changes
+
+- 438ae8a: Add an opt-in OpenTelemetry `SERVER` span around each inbound HTTP channel request. Enable it with `defineInstrumentation({ traceChannelRequests: true })` — it is off by default. When enabled, the span is named for the registered route (e.g. `POST /orcel/v1/session/:sessionId`), respects an incoming `traceparent` (becoming a child of the upstream span, or a trace root when there is none), and becomes the parent of nested channel and Workflow spans such as `hook.resume` and outgoing HTTP calls. It records only low-cardinality, non-sensitive attributes (`http.request.method`, `http.route` — the path template alone, per the OTel HTTP convention — `http.response.status_code`, `url.scheme`, `server.address`, `orcel.channel.name`, `orcel.channel.kind`) — never session ids, tokens, headers, bodies, or query parameters. This is observability-only: it does not change request handling and performs no synchronous span export in the request path, adding only minimal in-process tracing overhead.
+
+## 0.29.0
+
+### Minor Changes
+
+- 2b09840: Remove the `/channels` dev TUI command, `orcel channels add`, and the unused programmatic onboarding API. Channel integrations install through `orcel add`, run isolated integration setup without deploying, and leave deployment as an explicit `orcel deploy` step.
+- 38cdff8: Renames the `orcel trace` CLI command to `orcel traces` so it matches the `/traces` TUI command and the plural `orcel logs` command. `orcel traces ls` and `orcel traces <trace>` work as before; the old singular form is removed.
+
+### Patch Changes
+
+- 6dd3006: Cancelling a parent turn now delivers descendant cancellations more reliably: the cancel request retries with exponential backoff (~8s budget instead of 3s), `no_active_turn` results carry the error class that marked the target inactive, and every previously silent drop path (missing pending batch, missing child session ids, exhausted retries) now logs a warning so an uncancelled child no longer runs to completion without a trace.
+- 255027e: Add an opt-in durable `sleep` tool from `orcel/tools/sleep`. Agents can export `sleep()` from `agent/tools/sleep.ts` to let the model pause a turn before checking progress or status again without holding an application runtime open.
+- 01ed80d: `orcel eval` gains a repeatable `--exclude-tag <tag...>` flag that skips evals carrying a tag. Exclusion applies after `--tag` inclusion, and a run where exclusion removes every matching eval now exits successfully with nothing executed. `--list` reports the post-filter selection — `--list --json` prints `[]` when exclusion removes everything — so suite runners can probe whether anything would run.
+- f09a399: Allow `orcel init .` to scaffold in directories that already contain common, source-controlled toolchain and development-environment manifests. Existing mise configs and lockfiles, Node version selectors, proto, Devbox, Nix flake, and devenv configuration are preserved.
+- 2b09840: Remove the `/connect` dev TUI command. Add connections through `orcel add` or `/add`; official Connect-backed connection items now configure and patch their Vercel connector during registry setup.
+- 0179111: Report concise, actionable diagnostics for failed value and LLM judge assertions, including actual and expected values, schema issues, evaluated prompts, and judge rationale. Add assertion labels, preserve structured evidence in artifacts, and prevent duplicate Braintrust score names from overwriting each other.
+- 2b09840: Add a `/add` dev TUI command with categorized registry browsing, manifest inspection, and integration installation without leaving the interactive session. Fresh `orcel init` sessions open this next-steps hub after model setup.
+- 6dd3006: A turn cancellation observed while a durable turn step is returning now settles the turn as cancelled instead of losing the race to an ordinary completion. Previously the step could miss the abort signal and finish `done`, leaving the session in a completed state after the user had already cancelled. The cancel signal also now aborts in the same microtask that consumes the cancel payload, so a cancel replayed alongside a completed step can no longer lose the settle check by one task-queue hop.
+- 6dd3006: Upgrade the vendored Workflow DevKit to `@workflow/core@5.0.0-beta.38`. This picks up the upstream fix for runs going dormant after an accepted hook resume (vercel/workflow#3183): a session cancelled while parked on subagents could previously hold the accepted cancel indefinitely — its turn only settling as cancelled when unrelated traffic happened to wake the run. beta.38 also restored runtime world selection in core's `createWorld()`, which statically imports both first-party worlds; orcel stubs those imports at vendor time so hosted Vercel bundles keep excluding local-world infrastructure.
+
+## 0.28.0
+
+### Minor Changes
+
+- 98d17c7: Input requests now include a required `kind` discriminator so clients can route tool approvals, questions, and session-limit decisions without inferring behavior from tool names or request IDs. Descendant session-limit Stop responses now let the parent own turn cancellation, avoiding a parent-child wait cycle.
+- 7ff4f77: Every session stream event now carries a stable, `evt_`-prefixed ULID in `meta.id`, and stream consumers use it to drop re-delivery without collapsing distinct events. Retried steps re-emit under new ids, while reconnects, rewinds, and saved-log overlap preserve the original id.
+
+  **Breaking:** `MessageStreamEvent` is now the canonical public type for events read from a stream, with `meta.id` and `meta.at` required. `HandleMessageStreamEvent` remains as a deprecated alias, so existing imports continue to compile; code that constructs unstamped events under that type must add the envelope. Client, channel, hook, frontend, and eval APIs carry `MessageStreamEvent` end to end, so consumers can read `meta.id` without guards. Events persisted by an earlier version carry `meta.at` but no `meta.id`, so rewinding into a session that started before this release yields events whose id is absent despite the type. orcel passes those through rather than dropping them, and they cannot be deduplicated; the exposure ends when those sessions do.
+
+### Patch Changes
+
+- 28417c4: Declining a session token-limit prompt no longer leaves a stale copy of the prompt in the parked session. Previously the cancelled turn settled with a snapshot that resurrected the already-answered prompt, so every follow-up message was queued behind it and never re-raised the prompt; follow-ups now reach the budget gate, which re-raises a fresh prompt while the session is over budget.
+- 33ea372: Records Vercel AI Gateway cost on local trace spans: `agent.step` spans now carry `gen_ai.usage.cost`, `gen_ai.usage.gateway_cost`, `gen_ai.usage.input_cost`/`output_cost`, and `gen_ai.generation.id` when the gateway reports them. The attributes only exist for gateway-served calls — other providers emit nothing.
+- 28417c4: Session token limits are now tracked as a runtime limit — an absolute lifetime-usage ceiling that each approved continuation re-anchors to `usage + configured limit` — replacing the window-baseline bookkeeping. Behavior is unchanged except the continuation prompt's `usedTokens` now reports the absolute session total instead of the window-relative amount.
+- feac858: Complete durable sessions after 30 days by default, and add `limits.sessionTimeoutMs` to configure or disable the lifetime for each agent. Once an expired session settles, the next qualifying channel message for its continuation starts a fresh session.
+- 28417c4: Keep one session token-limit prompt pending while concurrent input queues behind it. Approving restores the configured budget window, delegated sessions inherit from the fresh window, and zero-quota child tasks no longer raise continuation prompts that cannot grant tokens.
+- dbc8eae: Splits token usage on local trace spans: model and step spans now record `gen_ai.usage.cache_read.input_tokens` and `gen_ai.usage.cache_creation.input_tokens` (OTel GenAI semantic-convention names) alongside the input/output totals when the provider reports detailed usage — cached tokens price differently, so the split makes cost attribution exact. Providers without detailed usage emit only the totals.
+- 46c6ce3: The dev TUI now renders the session token-limit continuation prompt as a proper question — prompt copy and labeled Approve/Stop options in the question pane — instead of a generic y/n tool-approval line, and answers every confirmation prompt with the request's own option ids instead of hardcoded `approve`/`deny`. Previously, approving the continuation prompt in the TUI submitted an option the server did not recognize, so the same prompt was re-raised indefinitely.
+
+## 0.27.13
+
+### Patch Changes
+
+- c1bf6d4: Fix `orcel dev` startup for bundled extensions whose output declares `__filename` without `__dirname`.
+- 5d25b16: Render user-scoped connection authorization in Linear Agent Sessions. Linear users now receive the native account-linking affordance, and the channel posts the authorization outcome before a parked turn resumes.
+- d257866: `orcel add` now asks before running an official registry item's setup and prints a resumable command when setup is skipped or cancelled. Run `orcel add <item> --skip-install` to launch setup later without reinstalling the item.
+
+## 0.27.12
+
+### Patch Changes
+
+- 9df880e: Upgrade the runtime HTTP client to undici 8 while preserving Node fetch compatibility for SSRF-safe web requests.
+- 9ddb890: Update the bundled Workflow runtime dependencies to their latest 5.0 beta releases.
+- c27b44a: Invoke an agent without a TUI using `orcel invoke`, which returns pretty JSON at terminal or blocking events. Durable session coordinates support follow-up turns, human input, authorization, interrupted waits, and machine discovery through `--json-schema`.
+
+## 0.27.11
+
+### Patch Changes
+
+- 1e35a26: Bound the zero-config local trace store so `.orcel/traces` no longer grows without limit. `orcel dev` now sweeps it when a session finishes and at startup, keeping open sessions, the twenty newest traces, and anything from the last seven days before evicting oldest-first above 512 MB. Tune it with `ORCEL_TRACES_MAX_AGE_MS`, `ORCEL_TRACES_MAX_TOTAL_BYTES`, and `ORCEL_TRACES_RETAIN_COUNT`, or set `ORCEL_TRACES=off` to turn local tracing off entirely.
+- 1c0347f: Expose schedules from generated `withKaf` services to Vercel's project-level Cron Jobs. Single and named agents now register routable jobs without requiring duplicate `vercel.json` entries.
+- 0755e97: Resolve package-owned runtime files from the installed orcel package when generated host bundles execute outside its package root, including on Windows.
+- 4deab71: Keep traced external dependencies resolvable from queue-triggered Vercel workflow functions, including dependency graphs that contain multiple versions of the same package.
+- cf40283: Development runtime snapshots no longer copy legacy root-level `.workflow-data` directories. Projects with large local workflow histories avoid redundant multi-gigabyte snapshot copies and related disk-space failures.
+- 0f5fcdb: Allow `orcel add channel/web` and `orcel add channel/slack` to install their package dependencies and run the existing channel setup flows. The official registry now lists Web Chat and Slack channel items with trusted built-in setup metadata.
+- 41cc919: Retry model calls when undici terminates a response stream after a headers or body timeout, so transient provider stalls no longer immediately fail task runs.
+- a45e4cb: Keep `t.judge.autoevals.*` assertions working when Braintrust reporting is active by preserving the judge client's OpenAI-compatible interface during autoevals wrapping checks.
+
+## 0.27.10
+
+### Patch Changes
+
+- 15478d2: Show result counts and concise kind-and-slug addresses for official items in `orcel registry list` and `orcel registry search` instead of their full registry URLs.
+
+## 0.27.9
+
+### Patch Changes
+
+- f736533: Update the bundled AI SDK to 7.0.38.
+- 0d2d0cd: Persist zero-config agent, AI SDK, and user-created OpenTelemetry spans under `.orcel/traces` during `orcel dev` when authored instrumentation is absent.
+- 71bb2c6: Compaction no longer reproduces base64 file payloads from `content` tool outputs. In the summarizer transcript and in capped kept-history results alike, file parts are replaced with a text stub naming the file and media type (matching how message attachments are summarized); sibling text parts survive instead of being truncated away behind the serialized payload.
+- ebeedd6: Add `orcel trace ls` and `orcel trace [trace]` commands for inspecting locally persisted agent traces after or during `orcel dev`.
+- 5e4b70f: Allow `orcel add channel/web` and `orcel add channel/slack` to use the existing channel setup flows. The official registry now lists Web Chat and Slack channel items.
+- 83c753e: Harden `web_fetch` against SSRF by requiring HTTPS, rejecting non-public destinations during DNS resolution, and returning redirect targets without following them automatically.
+- c804141: `toModelOutput` can now return `{ type: "content", value }` with text and file parts, so a tool can send images (screenshots, rendered charts) to vision-capable models as actual pixels instead of descriptions. Build outputs with the new `toolOutput.text` / `toolOutput.json` / `toolOutput.content` helpers and parts with `toolOutputPart.text` / `toolOutputPart.file`, all from `orcel/tools`; file payloads must be base64 strings.
+
+## 0.27.8
+
+### Patch Changes
+
+- a69faae: Add `orcel add` and `orcel registry` commands for installing and discovering official or configured shadcn registry items.
+
+## 0.27.7
+
+### Patch Changes
+
+- 3c53306: Vercel builds now run a single Nitro build. The workflow flow function is emitted through Nitro's per-route `functionRules` (queue trigger, `maxDuration: "max"`, precondition guard) instead of a second standalone Nitro build that was copied and retargeted into the output, making `orcel build` on Vercel roughly twice as fast.
+- e368fcd: The client's `session.stream()` accepts `follow: false` for bounded catch-up reads (`follow` defaults to `true`, following the live stream): it consumes events from the cursor to the durable tail observed when the stream opens — surviving reconnects and still advancing the stored `streamIndex` — then returns instead of following the live stream. The HTTP stream route reports the durable tail as the `x-orcel-stream-tail-index` response header when a request opts in with `includeTailIndex=1`, and channel-authoring `Session` objects gain `getStreamTailIndex()` for serving bounded reads from custom routes.
+- 7e4f7ef: Tool calls whose arguments arrive as a raw JSON string (e.g. provider-executed server tools) are now parsed, and arguments that cannot be parsed at all — such as malformed JSON emitted by the model — surface as a failed tool result the model can react to instead of failing the whole turn.
+
+## 0.27.6
+
+### Patch Changes
+
+- 0a8b63c: `orcel channels add` now scaffolds portable channel variants when Vercel is unavailable and asks before deploying Vercel-integrated channels. Portable Slack setup uses environment credentials and records the required variables in `.env.example`.
+- ad0dfa7: Remote agents can now forward the end user's identity across deployments. `defineRemoteAgent({ forwardPrincipal: true })` sends the dispatching turn's session principal (metadata only — never tokens) on the create-session request, and the receiving deployment opts in with `orcelChannel({ trustedForwarders })`, a predicate over the verified transport forwarder. Accepted forwarding replaces the session principal so per-user connections, local subagents, and chained remote hops see the original user; a receiver that refuses the forwarder (or accepts no forwarded principal) rejects with 403 and the dispatch fails instead of silently downgrading to the calling service's identity.
+- ad0dfa7: Remote agent dispatch now ignores an empty `outputSchema` (`{}`) passed by the model on the lowered subagent tool call, matching local subagent dispatch. An empty schema constrains nothing, but forwarding it flipped the remote child into structured-output mode and replaced its text reply with `{}`.
+- 5cf8ae0: Make `orcel dev` return the terminal after one Ctrl+C or termination signal. The local server gets a bounded cleanup window before process-group termination, and interrupted sandbox cleanup resumes on the next start. A forced exit (second Ctrl+C or the shutdown backstop) now restores the terminal — raw mode, cursor, bracketed paste — before the process ends.
+- c2079a4: Preserve remote agent base paths when creating sessions and cancelling turns, so same-origin agents mounted below a route prefix no longer receive requests at the wrong endpoint.
+
+## 0.27.5
+
+### Patch Changes
+
+- 1987e12: Add thread-bound session reset helpers to Slack message and interaction contexts, plus targeted reset support for generic Slack event handlers.
+
+## 0.27.4
+
+### Patch Changes
+
+- 5d961f3: Request Vercel CLI's maximum 100-team page instead of following its broken default pagination path.
+- 04d5814: `orcel dev` no longer fails at boot with `UNRESOLVED_IMPORT` when a mounted extension (or any dependency) resolves through a `node_modules` above the app root — npm/yarn workspace hoisting, intermediate monorepo levels, and bare `withKaf` agent directories whose host app owns the install now materialize in the dev-runtime snapshot.
+- bbba073: The dev TUI supports queueing, steering, and cooperative turn cancellation. Pressing Enter while a turn is running queues the message (up to 5) in a pinned panel directly above the input — one line per message — and the queue coalesces into the next turn's message when the turn ends. Esc steers: it pops the oldest queued message, cancels the running turn cooperatively (`turn.cancelled` → `session.waiting`, keeping the session's context), and submits the popped message as the replacement turn. With nothing queued, Esc twice cancels the turn. Cancellation requests retry while the turn is live, so an Esc that lands in the turn-dispatch window (before the server has armed the turn's cancel hook) is no longer silently lost. Cancelling a turn mid-delegation settles its subagent sections and stops their child streams, so stale subagent output cannot paint into the steered turn. Messages still queued when a turn is interrupted or fails restore into the next prompt's input, and a turn cancelled from outside the prompt (a stale cancel or another client's `/cancel`) restores its submitted message the same way. On exit, the parting line names the server session id (`☰orcel  v0.27.0 · session ses_…`) so the conversation can be found again.
+- dfd360f: Custom channel routes can now call `reset()` and `ClientSession` can reset the session that owns a stable continuation token. The next `send()` starts a fresh workflow session and lazily initializes a new session-scoped sandbox instead of reusing prior history or workspace state, and the `orcel dev` TUI's `/new` performs that durable reset before clearing its transcript.
+
+## 0.27.3
+
+### Patch Changes
+
+- 8168518: Fix connector-auth and remote-subagent callback URLs returning 404 in multi-agent mode. Generated per-agent Vercel services now bake the agent's public route prefix (`/orcel/agents/<name>`) into their workflow function environment via `ORCEL_PUBLIC_ROUTE_PREFIX`, framework-minted callback URLs prepend it, and the session-callback validator accepts callback URLs mounted behind a route prefix so OAuth redirects and remote-subagent session callbacks reach the deployed agent.
+- fecdaf3: Attach authenticated `uploads.linear.app` images from inbound Linear Agent Session markdown as multimodal file parts while preserving the text fallback for untrusted, failed, or non-image URLs.
+- 25c12d3: Prevent bundler-suffixed CommonJS compatibility variables from suppressing the Node ESM globals that orcel bundles need at startup.
+- 1bd0aa4: Preserve underscores in connection tool names shown by Slack typing status indicators.
+- 4d3748d: Keep raw outer workflow failure details in the private session trace instead of copying them into provider logs and Workflow telemetry.
+- 4803dbe: Scope authored resolver hooks to relevant import specifiers and reuse filesystem probes for one build. Repeated extensionless misses now perform at most 19 stats once per plugin instance instead of on every resolution.
+- d76f76b: Refresh session-scoped dynamic tools when an existing production session moves to a new Vercel deployment, so added, removed, and reordered tools use the current build.
+- 45ad5d0: Analyze dynamic tool closure references from the syntax tree so object keys and string contents cannot become invalid runtime captures.
+- fc53a9f: Show the number of discovered authored tools in the human-readable `orcel info` output.
+- 1c3123c: Write authored sandbox workspace seed files before running bootstrap across the Vercel, Docker, microsandbox, and just-bash backends, so bootstrap can consume canonical workspace inputs and its outputs remain in the captured template.
+- 7094b4a: Load up to 100 Vercel teams per page and use the authenticated API continuation that matches Vercel's emitted cursor, avoiding repeated-page loops for accounts with many teams. When an outdated CLI lacks the required list options, the TUI can upgrade it with the native upgrader and now retains a concise error if that upgrade fails.
+
+## 0.27.2
+
+### Patch Changes
+
+- 6c433f4: Expose thread-scoped cancellation in Slack message and interaction contexts, plus target-addressed cancellation in `onEvent`, so authored Slack handlers can stop or replace in-flight turns.
+- 835f076: Emit an initial NDJSON whitespace byte when opening a session event stream so clients and proxies receive the response body before the first durable event.
+- f36f143: Added `thread.listParticipants()` for Slack thread routing based on the unique human participants in first-appearance order.
+- eb92ee3: Allow `session.send()` and `session.stream()` callers to disable automatic stream reconnection with `streamReconnectPolicy: { reconnect: false }`, so relays and proxies can own cursor recovery and retry policy.
+- 4133ffc: Slack thread helpers now reuse messages loaded within the same inbound handler, while overlapping `thread.refresh()` calls share one request and failed refreshes preserve the last successful snapshot.
+- ee72db8: Messages posted by the installed Slack app are now ignored before reaching message hooks to prevent self-reply loops.
+- bd4397b: Fixed Slack `threadContext` with `since: "last-agent-reply"` so only replies from the installed app move the context boundary. Replies from other bots remain part of the incremental thread context, are labeled `bot` instead of `agent` in the injected transcript, and their file uploads are now eligible for mention attachment lookback.
+- 64dbe2b: Add actionable authored-module evaluation errors that identify installed packages and distinguish extensionless ESM from missing package output while preserving the original failure as the cause.
+
+## 0.27.1
+
+### Patch Changes
+
+- eaaf6d6: Enable Workflow's optimistic concurrency precondition guard in every generated Vercel workflow function so stale replays reload concurrent events before committing.
+- 6ded22e: Preserve every queued delivery's message, context, and input responses when orcel batches payloads before routing.
+- 3ffaf12: Added a Slack `onMessage` hook with `isBotMentioned()` and `isSubscribed()` helpers for custom message routing.
+- 49f2f13: Report `connection_search` as failed when every targeted connection fails to load, including authorization startup failures, so tool-call observability preserves the underlying error. Requests for unregistered connections now fail instead of returning an empty result.
+- 9679abc: Added an `isSubscribed()` helper to the Microsoft Teams `onMessage` hook for custom routing that can continue conversations without repeated mentions.
+- 1a618ba: Add a generic Slack `onEvent` fallback for subscribed Events API callbacks. Handlers can use a Slack-bound `receive` function to start zero, one, or many agent turns while authored mention and direct-message handlers retain precedence.
+- 0df8ab9: Update the bundled AI SDK and provider integrations to their latest compatible releases.
+- 394b467: Update the bundled Vercel integrations and core execution utilities to their latest compatible releases.
+- f2724fb: Update the Vite integration and Vitest test tooling to their latest compatible releases.
+- 01552fc: Update the bundled Workflow runtime dependencies to their latest 5.0 beta releases.
+- dd1ba23: Declining a session token-budget prompt now cancels the in-flight turn cleanly (`turn.cancelled` → `session.waiting`) instead of completing the session or surfacing an error to the delegating parent. Declining a delegated child's prompt cancels the whole turn tree from the root, so the parent can no longer retry the child against a fresh quota share, and stale answers to budget prompts are dropped instead of being shown to the model. The prompt copy is reworded ("This session has hit the input-token limit (2M) per session…") with Approve/Stop buttons.
+- a70d4ce: Restart native progress feedback across built-in chat channels when a completed connection authorization resumes the agent session. Slack also shows an explicit connected and resuming status.
+- d3cd770: Generated Web Chat apps now retain completed sessions for follow-up messages and cancel the active durable turn when Stop is clicked instead of only disconnecting the browser stream.
+
+## 0.27.0
+
+### Minor Changes
+
+- 1db41fd: `orcel/nuxt` now deploys the agent through Vercel's stable services model: on Vercel builds the module generates an orcel Build Output service and a `/orcel/v1/*` service route instead of writing legacy `experimentalServices` to `vercel.json`, which Vercel no longer routes (every agent request returned a platform NOT_FOUND). The `configureVercelJson` and `servicePrefix` module options and the `ORCEL_NUXT_SERVICE_PREFIX` export were removed. Delete any generated `experimentalServices` block from `vercel.json` — the module warns when it sees one — or declare the orcel service and its rewrite yourself under the stable `services` field to keep managing routing manually.
+
+  A generated orcel service build now also skips host middleware preservation when the host's Build Output config is not yet present, instead of failing the build. Unlike the Next.js integration, which writes that config early, the Nuxt web service emits it only at the end of its own build, so an isolated orcel service build could crash reading a file that had no middleware to preserve.
+
+### Patch Changes
+
+- 707de7f: Anthropic models served through the standard `@ai-sdk/amazon-bedrock` Converse provider are now detected as cacheable. Prompt-cache breakpoints previously only matched on the provider name, so Bedrock (which reports provider `amazon-bedrock` and carries the Anthropic identity in the model id) fell through to no caching. The cache marker now also carries the Bedrock `cachePoint` namespace that the Converse provider reads.
+- 7df0bf1: Compaction now reserves room for its checkpoint prompt before reaching the configured threshold. The prompt asks the compaction model to distinguish completed work from remaining work, and later compactions receive the previous checkpoint intact instead of truncating it with ordinary transcript text.
+- 7df0bf1: Compaction now feeds the summarizer full-fidelity conversation text (tool payloads stay compact) and first tries evicting older tool results before summarizing; the kept recent window retains tool results verbatim. Agents lose less context per compaction and stop re-running completed tools.
+- c0e368a: Routes protected by `httpBasic()` now advertise a standards-compliant `WWW-Authenticate: Basic` challenge on 401, using an optional realm that defaults to `"orcel"`; HTTP Basic credentials are normalized to Unicode NFC to match the advertised UTF-8 encoding. `routeAuth` collects challenges from the configured auth strategies instead of always emitting `Bearer`.
+
+## 0.26.2
+
+### Patch Changes
+
+- dbca15c: Bump the vendored chat SDK (`chat`, `@chat-adapter/*`) from 4.31.0 to 4.34.0. Slack card tables now render as native data table blocks — paginated and sortable — instead of plain table blocks, and `Table()` supports optional `caption` and `pageSize` fields.
+- 938ef92: Identify Orcel and its version on AI Gateway, Sandbox, and Workflow service requests.
+- d034e01: Fixed the default chat message reducer dropping assistant text when a single turn produced more than one message — for example, text shown before an OAuth authorization prompt was overwritten by the text that followed it once authorization completed. Each message now renders in the order it arrived.
+- dad9472: `orcel info` now reports discovered subagents and schedules in both the human table and the `--json` output, matching what the CLI reference already documented. Previously both surfaces silently omitted them even though discovery resolved them correctly.
+- f1253c5: Listing or loading static skills no longer requires opening a sandbox. Dynamic skills and access to supporting skill package files, such as references, assets, and scripts, remain sandbox-backed.
+- de917a6: Fix a crash when an agent is triggered by a bare mention with no text (e.g. sending just `@bot` in a Microsoft Teams channel). The agent now responds normally instead of failing.
+
+## 0.26.1
+
+### Patch Changes
+
+- 1f04ff7: The dev TUI renders Markdown through a real GFM parser (width-fitted tables, code blocks, task lists, links), presents every builtin tool with semantic activity copy (`Fetch <url>`, `Run <command>`, `Search <query>` — including `web_search` across provider input shapes, `todo`, `ask_question`, `agent`, and `connection_search`), and shows rejected tool approvals as denied instead of successful. Tool activity now accumulates in place: an in-flight batch renders as one counted header with its newest calls listed first behind a `│` rail and a `… (N more)` elision, then collapses to a single past-tense line (`▪ Fetched 30 URLs`) once every call settles — failures keep their itemized per-call error rail — and each `write_file` keeps its own block rendering a real line diff (`+`/`-` rows with context, computed from content the session has already seen — prior writes and full-file reads; new files show all additions). `ask_question` prompts open as a numbered overlay panel above the input (number keys select directly, the "Type your own answer" row focuses its inline editor on reach, Esc dismisses to plain text input), committing as `? question ⎿ answer` in the transcript. The `todo` tool no longer emits transcript blocks; it drives a pinned panel above the input showing per-task state, which commits as a completed block once every task settles. An empty prompt now shows a quiet `›` mark with a rotating placeholder of things to try, switching to the active `❯` once typing starts. Reasoning defaults to a fixed one-line thinking indicator that updates in place (persisting as `○ Thought for 12s` only for long thoughts; `--reasoning full` restores the streaming trace), the prompt stays anchored during a turn with Enter inert (the draft carries into the next prompt), and completed turns close with a `└ Done in <duration>` stats coda (per-turn token flow, context fill) when the turn was long or expensive. Subagent calls render as individual `※ subagent(<name>) #N` sections in the tool column whose child rows window to the three most recently active (failures stay itemized while settled work condenses to one counted row) and close on a corner that reports `Done` once the call's final message arrives; captured server output renders as one open-railed `○ stderr` / `○ stdout` stream section per source (streams are continuous — no closing corner, and interleaved activity never fragments them): the section sits at its newest write's position — everything that happened after the last error displays after it — and shows only that newest write, with earlier ones behind an `… (N more)` count (the stored-diagnostics pointer carries the history); the status bar names the model's actual routing and credential (`via ai-gateway(oidc:<project>)`, `via ai-gateway(api-key)`, or `via <provider>⌝` for a directly-authored endpoint); an empty prompt no longer submits; and a mid-conversation session replacement marks the context cut with a `┌── Session restarted, clear context.` boundary line.
+
+## 0.26.0
+
+### Minor Changes
+
+- 26504e9: The client now reconnects durable event streams from their last cursor, so long turns continue across transient connection cuts without replaying events. Stream retries are now managed internally, interrupted sessions remain resumable, and `maxReconnectAttempts` has been removed from `ClientOptions`, `OrcelAgentStoreInit`, and the React, Svelte, and Vue `UseOrcelAgentOptions` APIs.
+
+### Patch Changes
+
+- 82fba04: Provide dynamic tools with the full auth-capable `ToolContext`, including `ctx.getToken(provider)` and `ctx.requireAuth(provider)`, across live execution and durable replay.
+- 82fba04: Canonicalize Windows publication-lock watcher paths to avoid Node/libuv crashes when temporary directories use 8.3 short names.
+- 51beea7: Workflow now keeps sandbox bridge capacity aligned with its configured `maxSubagents` budget, so large `Promise.all` fan-outs park and dispatch child sessions instead of failing at code mode's lower internal concurrency limit.
+- 9a1800f: Fix `experimental_chatgpt` sending requests in an improper format that the
+  Codex backend rejected with a 400 Bad Request: system instructions are now sent
+  in the top-level `instructions` field and the unsupported `max_output_tokens`
+  parameter is dropped.
+- 65a7823: `orcel dev` now writes a private per-process diagnostic log under `.orcel/logs/` capturing stderr, stdout (including sandbox and rebuild lines), tool failures, workflow errors, and orcel framework log records (stored structured, with level, namespace, and JSON fields). The file is JSON Lines: every line is one JSON record with `at` and `source` fields. Long stderr output collapses in the transcript to a one-line summary pointing at the log file (the raw text stays available in the `all` log mode), and error details reference the log instead of flooding the transcript.
+- 65a7823: `orcel dev` now writes an environment dump next to each diagnostic log (`.orcel/logs/dev-<instance>.dump`): one JSON document capturing orcel, Node.js, and Vercel CLI versions, the Vercel CLI path, local session-store size, and running session stats (prompts, token usage, tool calls by name, subagent dispatches). `orcel logs --dump` prints the dump and its JSONL log together as one parseable report.
+- 65a7823: The dev TUI's `/model` "Change model" row now opens a value menu — Model, Reasoning effort, Service tier, Done. Reasoning and tier adjust inline with `←`/`→` (Tab acts as `→`, both wrap as a ring): a `●─◉─○` track slides over the model's supported effort levels — snapping to the closest supported level when a pick changes what the model serves — and the tier flips between `fast ↯` and `normal`; the tier row disappears when the catalog prices no priority tier for the model. Enter on Model opens the searchable catalog as model ids on a `▏` rail — the same railed list component the team and project pickers now render with. All drafted changes commit through one atomic `agent.ts` edit. The provider picker marks and describes the currently-active provider and reports an accepted key as `AI_GATEWAY_API_KEY set.`. Linking an existing project now suggests the team project named after the agent, searching for it when it is not among the recents. Command cancellations now read "dismissed". The status line drops its `·` separators and shows the model as `slug@level ↯`.
+- 65a7823: New `orcel logs` command for reading the diagnostic logs `orcel dev` writes under `.orcel/logs/`: `orcel logs` prints the most recent log, `orcel logs ls [--json]` lists them, and `orcel logs <logid>` prints a specific log by id, file name, transcript path, or unambiguous prefix.
+- 65a7823: `orcel logs --events` interleaves session events (session/turn/step lifecycle, message deltas) into the diagnostic-log output, resolved at query time from the local workflow store — nothing extra is written while `orcel dev` runs.
+- b53d713: Fixed transient TUI and CLI output rendering by standardizing spinners and progress rows on the shared `LiveRegion`. Streamed command output now stays aligned beneath active spinners, while failed operations preserve their command transcript for diagnostics.
+- 65a7823: Errors that escape a session — not just model-call failures — now pass through a semantic-error catalog: declarative, linter-style rules applied to any thrown error. Rules cover AI Gateway (auth, model-not-found, rate limits, upstream availability), model providers (missing API keys, unsupported capabilities), the durable workflow runtime (store version/access, replay divergence, corrupted event logs), sandbox backends (Docker CLI/daemon, provisioning), and system failures (port in use, disk full, network dials). Matched failures render a stable, actionable summary in the transcript with the raw error routed to the `orcel dev` diagnostic log, and failure events carry a stable `semanticErrorId` for correlation.
+
+## 0.25.3
+
+### Patch Changes
+
+- 4fb1924: Fix `orcel dev` snapshots for extensions installed as physical `node_modules` directories, making dependency handling consistent across npm, Yarn, and pnpm layouts.
+
+## 0.25.2
+
+### Patch Changes
+
+- a4c48a9: The integrations catalog gains 4 Chat SDK adapter channels for surfaces without a first-class orcel channel (Google Chat, WhatsApp, X, and Messenger), each with a `chatSdkChannel` quick start. The `orcel channels add` picker is unchanged.
+- d9c49fc: Tool schemas that cannot be rehydrated into local validators no longer fail the turn. Serialized JSON Schemas first retry rehydration as JSON Schema 2020-12 (so MCP `$defs` references validate correctly), and schemas outside the supported conversion subset (such as inline JSON Pointer `$ref`s) are now advertised to the model unchanged with validation left to the tool's own executor — OpenAPI operations with such schemas are kept instead of omitted.
+
+## 0.25.1
+
+### Patch Changes
+
+- b2bc6b6: Make default-exported hooks emit portable extension declarations while preserving typed event handlers and authored event keys.
+
+## 0.25.0
+
+### Minor Changes
+
+- b9bb8b2: Scaffold extensions with separate source and dist roots, a required wildcard orcel peer, and dist-only publication. `orcel extension build` now emits an agent-shaped JavaScript distribution with declarations, assets, and capability compatibility metadata instead of requiring author TypeScript in the published package.
+
+### Patch Changes
+
+- 29ecffc: Build mounted source-backed workspace extensions before `orcel dev` compiles the agent, then rebuild only the affected extension when its source changes. Failed extension builds keep the previous dist and active development generation serving.
+- 46b78b8: Stop development microsandboxes on `orcel dev` shutdown by discovering resources from their run labels and loading the application's installed microsandbox version during cleanup.
+- 6a5a36a: Deliver stale HITL responses — answers to a question or approval that is no longer pending — as a new user message, letting the model decide whether the old selection still matters. A stale approval never authorizes the earlier tool call.
+- f7c69b1: The Vercel Framework Preset is now reconciled with the host framework on disk when running `/deploy` via the TUI.
+- bbec675: Extensions installed with a registry-style store layout (e.g. from npm with pnpm) now work in `orcel dev` and `orcel eval`. Extension modules reached through a node_modules symlink resolve their dependencies from the package's real location — matching standard resolver semantics — instead of failing with `UNRESOLVED_IMPORT`/`ERR_MODULE_NOT_FOUND` or silently picking up another copy of the dependency from the consuming app.
+- 14501dc: Every orcel-owned tool input is now validated against its schema before execution, so invalid calls are returned to the model for retry instead of failing the run. Subagent calls treat an empty `outputSchema` as absent, and OpenAPI operations with invalid schemas are omitted with a warning.
+
+## 0.24.6
+
+### Patch Changes
+
+- 3029647: Update the generated Web Chat template for Next.js 16.3 preview type declarations.
+- b97f1d1: Custom channel routes can now cancel a session's in-flight turn: route handlers receive a `cancel({ continuationToken, turnId? })` helper addressed by the channel-local continuation token, and `Session` handles returned by `send()` and `getSession()` expose `cancel({ turnId? })` for session-id-addressed cancellation. `ClientSession.cancel()` accepts the same optional `turnId` stale-request guard.
+
+## 0.24.5
+
+### Patch Changes
+
+- bfbbe92: Add `orcel build --profile <path>` for a machine-readable build-timing and final-output-size report. Profile collection is best-effort, so reporting failures do not fail an otherwise successful build.
+- dab9889: Allow agents to remove the root-only built-in `agent` delegation tool with `disableTool()` from `agent/tools/agent.ts`.
+- e1cb505: Retry transient network failures while reopening client session streams so active turns remain attached.
+- 2568387: Cancel active local, nested, and remote subagent turns when their parent turn is cancelled. Client and eval sessions can now cancel active turns directly, and eval live-turn handles can wait for typed mid-turn events before cancellation or settlement.
+- 20cd9a1: Added `POST /orcel/v1/session/:sessionId/cancel` to the orcel HTTP channel for requesting cancellation of an in-flight turn. The optional `{ turnId }` body limits the request to the turn the caller observed; the response reports `"accepted"` when a cancellation hook accepts it or the benign `"no_active_turn"` when no resumable target exists.
+- 02698fd: Fix Vercel deploys for the Next.js web channel. `orcel` no longer scaffolds a
+  `vercel.json` `experimentalServices` block, which the Vercel platform now
+  rejects (it requires the `services` key and a stricter schema). For Next.js the
+  block was also redundant — `withKaf()` generates the orcel service and
+  `/orcel/v1/*` routes into the Build Output at build time — so the scaffold now
+  writes a minimal `vercel.json`.
+- e45a066: `orcel link` now lets you create a Vercel project or link an existing one, matching the project setup available through `/model` usage.
+- 5f8818b: `orcel channels add web` now updates the Vercel Framework Preset when adding a
+  Next.js web channel to an already-linked orcel project to prevent deployment
+  failures.
+- 887908c: Bundle authored modules in each development generation as one shared graph, avoiding repeated parsing and emission of dependencies for every tool.
+- 376a82f: Report the root-only `agent` action alongside other framework tools in agent info, including whether it is active, disabled, or replaced.
+- 4f2863d: Update the bundled Workflow runtime dependencies to their latest 5.0 beta releases.
+- d9d3226: Fix `withKaf` producing a broken Vercel build command in npm workspaces, where the `orcel` module is located in the workspace root.
+
+## 0.24.4
+
+### Patch Changes
+
+- d5db876: Session teardown now disposes authorization hooks without waiting on pending durable iterator reads, preventing cancelled sessions from hanging during cleanup.
+- 0dbea62: Store local Workflow World data under `.orcel/.workflow-data` for both `orcel dev` and `orcel start`.
+- 9058962: Keep an active `orcel dev` REPL session across successful authored-source reloads, so its next turn continues the durable conversation on the latest generation.
+- 4531a3d: Route all of orcel's single-file bundles through a shared Rolldown helper that always disables code splitting. This closes a remaining gap where a dynamic import reachable from a final workflow bundle could still fail with "Expected one bundled ..." during builds.
+- b6e5923: Include the current continuation token in `session.waiting` events, and allow negative stream start indexes such as `-1` to read relative to the current tail.
+- 159d674: Turns are now cancellable: resuming a session's durable cancel hook (`{sessionId}:cancel`, with an optional `turnId` guard) aborts in-flight work and settles the turn as a new `turn.cancelled` stream event followed by `session.waiting` — never as a failure. Channels and stream-event hooks can handle `turn.cancelled`, and `orcel/client` finalizes partially streamed messages. The HTTP cancellation API ships in a following release.
+
+## 0.24.3
+
+### Patch Changes
+
+- dddfb20: Fix `orcel dev` generation bundling for authored modules whose dependencies use dynamic imports. Development generations now bundle ordinary dependencies directly instead of inheriting a copied server-external package list and tracing dependency closures; Nitro remains the sole owner of hosted dependency packaging.
+- 2494b33: Bound `orcel dev` runtime snapshot storage with a World-independent retention policy. Superseded generations remain available for at least 30 minutes, and the five most recently superseded generations are retained as an additional rebuild-rate safety net.
+- 0333a63: Fix the dev-only schedule dispatch route to load compiled artifacts from the active development generation instead of the authored app root, which returned a 500 for every dispatch.
+- 0333a63: Rework `orcel dev` structural reloads to never interrupt admitted work: an isolated candidate must compile, bundle, and start before it is promoted atomically, the retired worker keeps serving the responses and sockets it already admitted until they settle, and a failed candidate or crashed worker leaves the server available with shutdown bounded even while streams are open.
+- 5473f76: Keep active local Workflow turns on the development generation they selected across reloads, retries, and server restarts. New turns use the latest successful generation, and `orcel dev` stores local Workflow state under `.workflow-data`.
+- 0333a63: Retry transient Windows filesystem contention while atomically releasing build publication locks.
+
+## 0.24.2
+
+### Patch Changes
+
+- 72ccdc0: Compaction now reserves room for its checkpoint prompt before reaching the configured threshold. The prompt asks the compaction model to distinguish completed work from remaining work, and later compactions receive the previous checkpoint intact instead of truncating it with ordinary transcript text.
+- 2c12460: Tool approvals now resolve before channel context is added to the next model request, so approving a tool from channels such as Linear executes the tool instead of leaving a dangling tool call.
+- d810570: Keep generated orcel service builds isolated from a colocated Next.js Build Output and preserve host middleware mappings when Vercel collects the generated service.
+
+## 0.24.1
+
+### Patch Changes
+
+- e0b64a5: Keep development runtime generations executable after authored source or dependencies change by bundling ordinary dependencies and materializing configured external dependency closures.
+- c4f5b58: Model calls now merge multiple system instructions into one message, avoiding provider failures when dynamic instructions are combined with array-form user content.
+- 6aac45d: `orcel build` now uses invocation-owned compiler, host, Nitro, Workflow, and output workspaces. Concurrent builds can run beside `orcel dev`, and failed builds preserve the last successfully published output.
+- 0046308: Update the bundled Workflow runtime dependencies to their latest 5.0 beta releases.
+
+## 0.24.0
+
+### Minor Changes
+
+- 1f85922: Replace the `ExperimentalWorkflow` marker with `experimental_workflow(options)` and move the per-program `maxSubagents` setting from `defineAgent({ limits })` to that Workflow tool definition.
+
+### Patch Changes
+
+- ce5c06d: `ToolContext` now exposes `toolName`, the final runtime tool name, so executors can share routing, authorization, and observability logic without duplicating path-derived or qualified names.
+- e0f09b4: The `orcel dev` schedule dispatch route now reuses the module loader path resolved when the server is built, preventing module resolution failures in the bundled Windows dev server.
+- d194243: Fix Microsoft Teams HITL cards to show tool arguments, resume the recorded channel thread for message and invoke submissions, and authorize submissions as the Teams user who clicked the card.
+- 4649f70: Local `vercel build` runs now select the hosted Workflow runtime and prewarm sandbox templates, so their output can be deployed with `vercel deploy --prebuilt`. Builds that require templates fail with setup guidance when Vercel OIDC credentials are unavailable instead of emitting broken prebuilt output.
+
+## 0.23.0
+
+### Minor Changes
+
+- e5d142f: Make the built-in `agent` tool root-only, so copies created by it cannot delegate recursively. Declared subagents can still call their own nested subagents, and `limits.maxSubagentDepth` has been removed.
+- 9a594c2: Infer authored channel metadata directly from the channel definition passed to `isChannel`, without compiler-generated declarations. Use `isChannel(...)` whenever you need authored metadata type narrowing; direct `channel:<name>` comparisons continue to identify channels but no longer narrow authored metadata.
+
+  The `.orcel/**/*.d.ts` TypeScript include is no longer needed. Existing apps may remove it, but leaving the unmatched glob in place does not change typechecking.
+
+## 0.22.6
+
+### Patch Changes
+
+- 5035812: Vercel deployments now emit `framework: { slug: "orcel" }` alongside the version in the Build Output API config. Vercel's build-output deserializer drops the entire `framework` object when `slug` is absent, so this restores framework attribution end to end — `framework_slug` and `framework_version` are now populated in AI Gateway routing and access logs.
+- 9cd5c99: chatSdkChannel now mounts both GET and POST on each adapter's webhook route, so adapters that verify with a GET challenge like X's CRC check work through the bridge. POST-only adapters are unaffected.
+- caa0c17: `orcel dev` now keeps Nitro build inputs outside prunable runtime snapshots. Long-running development servers no longer fail structural rebuilds with stale import errors after snapshot cleanup.
+- 01f0345: Resume active local workflow runs on the agent-scoped queue after restarting the orcel server.
+
+## 0.22.5
+
+### Patch Changes
+
+- c8f00aa: Add `experimental_chatgpt` under the new `orcel/models/openai` subpath: it returns an AI SDK language model served through the local Codex login (`codex login`), billed to the ChatGPT subscription, and defaults to `gpt-5.6-sol`. Direct provider API request errors now also surface their upstream message when one is available.
+- 640cd8e: Keep provider streams moving while durable event writes are in flight. orcel now coalesces only adjacent queued text or reasoning appends behind an ordered writer, preserving event order while avoiding one durable round trip per provider delta.
+- a5b43e7: Add `orcel extension init` and `orcel extension build` for scaffolding and building extension packages.
+- a325195: `limits.maxSubagentDepth` now defaults to `1` instead of `3`. Agents that rely on deeper default delegation should set `limits: { maxSubagentDepth: 3 }` (or another value) explicitly.
+- 4f86a21: Persist AI SDK approval-resume response messages in session history so approved local tool results survive later provider requests.
+- 3577534: Update the bundled Workflow runtime dependencies to their latest 5.0 beta releases.
+- bd780bd: Update the bundled Workflow runtime to `@workflow/core@5.0.0-beta.30` and align its world packages.
+
+## 0.22.4
+
+### Patch Changes
+
+- b5aedaf: The shared integrations catalog gains 33 curated MCP connections from the Vercel Connect preset directory (Airtable, Stripe, Sentry, Supabase, Zapier, and more) for the docs integrations gallery, and the connection scaffolder now skips gallery-only catalog entries, so the `orcel connections add` picker is unchanged.
+- edc93cc: Keep the mounted extensions guide out of the docs sidebar for now. The page stays at `/docs/extensions`, but the feature isn't surfaced in the nav while its API stabilizes.
+- f00f084: Add named multi-agent routing to `withKaf` and `useOrcelAgent`. Next.js apps can now configure multiple orcel roots with `agents`, then target one from the frontend with `useOrcelAgent({ agent: "name" })`.
+- f83d47d: `defineRemoteAgent` now accepts a function for `url`, resolved at runtime instead of baked at compile time. Return a `string` (or `Promise<string>`) from `() => process.env.MY_SERVICE_URL` to target an endpoint supplied by a runtime env var, known only once the deployment runs.
+
+## 0.22.3
+
+### Patch Changes
+
+- 8223498: Start remote authentication when a credentialed Vercel deployment returns an `UNAUTHORIZED` protection response.
+- 79df338: feat(orcel): scaffold projects with bundler module resolution
+
+  `orcel init` now writes a `tsconfig.json` using `"moduleResolution": "bundler"` (and `"module": "esnext"`), which matches how orcel compiles authored agents and extensions. Relative imports in your agent and extension source no longer need `.js` extensions (e.g. `import extension from "../extension"`).
+
+- 173fa5d: Restore the `DISCORD_BOT_TOKEN` environment fallback for proactive Discord messages, typing indicators, and bot-authenticated requests when `discordChannel()` is configured without explicit credentials.
+- 89cd2d6: Eval assertion `count` options now accept predicates, allowing ranges such as “at least two” while preserving exact numeric counts.
+- fdf56ef: feat(orcel): mounted extensions
+
+  Package orcel capabilities — tools, connections, skills, instructions, hooks — as a reusable package and mount it under `agent/extensions/`, as a file (`crm.ts`) or a directory with co-located override slots that shadow the extension's own contributions. Contributions compose into the agent under a `<namespace>__` prefix. Author with `defineExtension` from `orcel/extension`, taking an optional Standard-Schema `config` read via `extension.config`; `defineState` is auto-scoped to the package. `orcel build` compiles the package to runnable JavaScript with type declarations and fills its `exports`, so a published extension installs and mounts with no second compiler. `orcel` is a peer dependency whose declared range orcel enforces at mount; an extension cannot declare a sandbox, agent config, schedules, or limits, or mount other extensions.
+
+- 89f13e0: Hardened frontmatter parsing and OpenAPI connection loading.
+
+  All frontmatter parsing now runs through a single safe-by-default helper with gray-matter's code-capable engines disabled, so a `---js` / `---javascript` fence throws instead of being `eval()`d. Previously only authored markdown (skills, schedules, instructions) was hardened; the eval YAML loader and the OpenAPI spec loader used gray-matter's defaults and would execute such a fence. This closes that path for OpenAPI specs, which are fetched over the network. Parsing untrusted frontmatter as code is now opt-in only, and a direct import of the bundled gray-matter outside the wrapper fails CI.
+
+  OpenAPI spec URLs and the resolved base URL are now required to use `https` (plain `http` is still allowed for loopback hosts during local development), so neither the spec fetch nor the credentialed operation calls run over cleartext; the spec transport is also re-checked after redirects.
+
+- aff35e2: Stop `orcel dev` source snapshots from copying nested Git repositories and worktrees, preventing duplicate checkouts from inflating each development snapshot.
+- 9087496: Prevent brokered credential values from being exposed to commands running in Microsandbox. Guest Git configuration continues to use broker-managed placeholders for authenticated requests.
+- 72c58ae: Recover `orcel dev <url>` authentication when Vercel Deployment Protection returns an SSO redirect or a structured protected-deployment response.
+- 87688f9: Slack outbound messages now preserve literal bare `@` tokens, including scoped package names, while explicit `<@USER_ID>` mention syntax continues to pass through unchanged.
+- c1c4ee5: Preserve query parameters passed to `orcel dev` and send them on every agent request, including session POSTs and streams.
+
+## 0.22.2
+
+### Patch Changes
+
+- 4da4d86: Fixed Anthropic prompt caching placing the final cache breakpoint one message too early. Fresh tool results were billed as uncached input every turn and only entered the cache on the following request, capping the effective cache hit rate near 50%; the breakpoint now sits on the last message of each request, so agentic tool loops get near-full prefix hits.
+- 4446f96: Update the vendored Workflow SDK packages to the latest 5.0 beta releases. orcel now delegates world target selection and construction to the upstream SDK instead of maintaining parallel factory and compatibility logic, and no longer disables stable Workflow Turbo mode.
+- 3da5def: Retry transient provider overload errors delivered inside model streams. Classified transient failures get at most three fresh model-call attempts, while other recoverable task-mode errors fall back to Workflow's durable step retries without multiplying retry budgets.
+- 2afed3b: Update `withKaf()` to generate Vercel Build Output service routes for orcel instead of the legacy Next.js rewrite setup. The generated output now uses the stable `services` field and service routes, including in hosted Vercel builds where no local `.vercel/project.json` exists, so Vercel builds the orcel service without Next.js rewrites.
+- 3983d36: The Slack channel's default typing indicator for `actions.requested` now shows the action's contents instead of a generic `Running <tool>...` label: the tool name plus its most telling argument (`grep useOrcelAgent`, `read_file agent/agent.ts`), the subagent or remote-agent name for dispatched calls, and `+N more` for batches. The label helpers are exported from `orcel/channels/slack` as `describeActionRequest` and `describeActionRequests` for use in custom handlers.
+- 15309f3: New projects created with `orcel init` now use stable TypeScript 7.0.2 instead of the release candidate.
+
+## 0.22.1
+
+### Patch Changes
+
+- 9c63a4e: Export `callSlackApi` and `resolveSlackBotToken` from `orcel/channels/slack`. Code running outside a webhook-side handler — schedules resolving reactions or reading history, for example — has no `ctx.slack` handle; these were the internal primitives behind `slack.request`, already public-shaped and documented, and are now importable so apps stop hand-rolling `fetch` against the Slack Web API.
+- 210f097: Session sandboxes are now keyed per durable session instead of per deployment, so redeploying no longer discards a session's `/workspace` state. A session gets a fresh sandbox only when the sandbox definition itself changes (authored sandbox source, workspace seed content, or `revalidationKey`), and `onSession` runs again on the replacement sandbox.
+- a3efd4b: Render Slack HITL button prompts as card blocks, move approval tool input into collapsible containers, and keep answered-card updates scoped to the answered request so sibling batched approval buttons remain clickable.
+- 3c6abbf: Surface authorization prompts and completion updates from local subagents on the parent channel, including through nested delegation chains, while keeping the authorization callback scoped to the child session.
+
+## 0.22.0
+
+### Minor Changes
+
+- 2958abf: feat(orcel): add `konsistent` with initial config to enforce structural conventions
+
+### Patch Changes
+
+- b7d1089: Add `defineDynamic({ fallback, events })` support for scoped dynamic agent model selection. Agents can choose a model once per session, once per turn, or per model step while keeping a compiled fallback for metadata and unset scopes.
+- bd287b1: fix(orcel): pass error messages when tool call input is invalid back to model instead of throwing so that it can try again
+
+## 0.21.1
+
+### Patch Changes
+
+- 0b42ba1: `orcel eval` now shuts down tracked sandbox handles after a local one-shot eval run completes. This prevents local sandbox compute, including microsandbox sessions, from outliving the eval process.
+
+## 0.21.0
+
+### Minor Changes
+
+- 79e9959: Expand the Chat SDK channel (`chatSdkChannel`): post completed assistant messages as markdown, stream replies via post-then-edit (configurable with `streaming` and `streamingEditIntervalMs`), surface typing status on turn start and tool calls, and degrade optional adapter operations (`startTyping`, `editMessage`) gracefully when an adapter does not implement them. Add the `messageToUserContent` inbound helper and export `isNotImplemented`. The default adapter webhook route is now `/orcel/v1/{adapter}`.
+- 73a9bf9: feat(orcel): write skills into `$HOME/.agents/skills` instead of the workspace directory
+
+### Patch Changes
+
+- 99c2380: Subagents now report their token usage back to the caller — local, runtime, and remote alike. A completed turn carries the session's token totals (`inputTokens`, `outputTokens`, `cacheReadTokens`, `cacheWriteTokens`) on its terminal result; remote agents transport the same totals over the session callback. The parent's turn emits one `invoke_agent` span per usage-bearing result (`gen_ai.operation.name=invoke_agent`, `gen_ai.agent.name`, `gen_ai.usage.*`, per the OpenTelemetry GenAI semantic conventions) in the caller's trace. Remote usage requires both sides to run this version; collection stays best-effort everywhere.
+- c5cddb6: `message.received` events now include structured `parts` with text and file metadata so clients can render user attachments without parsing the flattened message summary. The default message reducer projects those attachments as `file` message parts while keeping raw bytes and internal sandbox paths off the stream.
+- 5ef4ec6: Reintroduce the `ExperimentalWorkflow` opt-in marker in `orcel/tools`. Re-exporting it from `agent/tools/workflow.ts` enables the `Workflow` orchestration tool, which can spawn the agent's subagents from model-authored JavaScript. Workflow-spawned subagent calls are now capped per program by the new `limits.maxSubagents` agent setting (default 100) — calls beyond the budget resolve with a `WORKFLOW_SUBAGENT_LIMIT_REACHED` error result instead of starting a child session — and the tool stays root-only, so delegated subagent sessions never receive it.
+- 61745d5: Slack channel posts that combine Markdown and file uploads now send the Markdown message first and upload files as a threaded follow-up. This preserves Slack's full Markdown rendering, including tables, instead of downgrading the response into a file upload comment.
+- d408d0b: Reaching a session token limit no longer fails interactive sessions outright. The harness now pauses and sends a deterministic HITL continuation prompt; answering "Continue" grants a fresh budget window of the configured size, while "Stop" ends the session gracefully with `session.completed`. Task-mode sessions keep the structured `SESSION_TOKEN_LIMIT_REACHED` failure so parent tool calls receive an error result.
+- da2ec6c: Delegated subagent sessions now receive a share of the parent's remaining token quota at dispatch time — the remainder split across the batch's delegated calls — instead of a fixed 5M input-token cap, and a completed child's usage counts against the parent's quota, so a delegation tree can never outspend the budget configured at its root. Session token limits also accept `false` to uncap a session explicitly. Delegated children likewise inherit the parent's delegation caps (`limits.maxSubagentDepth` and `limits.maxSubagents`); on every inherited axis the tighter of the configured and inherited value wins.
+
+## 0.20.0
+
+### Minor Changes
+
+- 6f9364a: Sandboxes are now stopped when the orcel server shuts down. Self-hosted production servers stop every open sandbox (microsandbox VMs, Docker containers, Vercel sandboxes, just-bash interpreters) on `SIGTERM`/`SIGINT`, matching the cleanup `orcel dev` already performs, and sessions reattach from persisted state on the next start. Breaking change for custom sandbox backends: `SandboxBackendHandle` gains a required `shutdown()` and the unused `dispose()` is removed.
+
+### Patch Changes
+
+- 7699e98: `orcel eval` now prints a clear, actionable message when it finds no evals but detects `*.eval.ts` files placed inside `agent/`. Instead of the generic "No evals found", it names the offending directories and reminds you that eval files belong in the top-level `evals/` directory (a sibling of `agent/`).
+- f3a05c5: `ToolContext` and `ApprovalContext` now expose `callId`, the tool call id carried by the call's stream events, so approval-gated tools can key records to one identity across proposal, rejection, and execution.
+- f9621b6: Resuming a durable session whose history references a file attachment no longer fails the turn when the staged bytes are gone (for example after a redeploy pointed the session at a fresh sandbox). The missing attachment degrades to a `FileNotFound` text notice the model can interpret, so the run continues instead of ending in `session.failed`.
+- c233a6a: The turn harness now propagates a cooperative `AbortSignal` end to end: model calls, retries, recovery, compaction, and tool executions all honor it, and an aborted turn settles with a canonical `TurnCancelledError` that is never retried or misclassified as a failure. Authored tools receive the signal as `ctx.abortSignal` (and via the AI SDK execute options), and framework tools forward it into sandbox commands, file I/O, `web_fetch`, and MCP/OpenAPI connection calls. This is the lowest layer of turn cancellation — no trigger exists yet, so runtime behavior is unchanged until the cancellation API ships.
+
+## 0.19.0
+
+### Minor Changes
+
+- 92f5162: add generic chat sdk channel for adapter-backed agents
+
+### Patch Changes
+
+- 8892504: Render the deployment home page with the orcel SVG wordmark, baked-in agent name, and refined ready-state layout.
+- 3daaba0: Reduce development runtime snapshot disk usage by excluding `.env*`, generated dependency, and build output directories, using clone-friendly file copies where supported, and pruning stale snapshots after dev rebuilds.
+- 74ce164: reuse chat sdk twilio primitives for webhook, api, and voice helpers
+- c0a0ae2: Terminal model-call failures in delegated subagent runs (e.g. an unresolvable model id returning 404) now propagate to the parent as a failed subagent result instead of a successful empty output, so orchestrator sessions no longer report success when a delegation failed.
+- 0498252: Tool execution failures now return failed tool results to the model instead of leaving streamed tool calls without matching result history. Agents can recover from failed calls such as a missing `load_skill` target within the same turn.
+
+## 0.18.2
+
+### Patch Changes
+
+- c5da8e7: Sandbox API requests now append an `orcel/<version>` token to the `user-agent` so the sandbox control plane can attribute traffic to orcel.
+
+## 0.18.1
+
+### Patch Changes
+
+- 68365e8: Show tool call input in Slack approval prompts so operators can inspect approval-gated actions before approving.
+- 68365e8: Harden Slack HITL posting against API limits: large approval batches now split across multiple messages instead of exceeding Slack's 50-block cap, and long freeform answers are truncated so the answered-card update cannot fail.
+
+## 0.18.0
+
+### Minor Changes
+
+- a75dd47: Vercel sandbox: drop the `runtime` option. orcel now always boots its hosted sandboxes from the published orcel image.
+
+### Patch Changes
+
+- afc7ded: Allow `orcel dev` to start from a package-less flat agent that only has `instructions.md`. Development runtime snapshots now generate private package metadata when the authored app has none.
+- 7d1084d: fix(orcel): remove unnecessary preview deployment check that prevented production access from `orcel dev`
+- 63f94f0: Remove optional framework peer dependencies from the published package metadata so installs no longer resolve unused framework packages.
+- ba2e0ce: Create new Vercel projects through `vercel link` instead of posting directly to the projects API. This lets the Vercel CLI apply its framework and local config handling while orcel reads the resulting link metadata, keeps framework-specific orcel host integrations when detected, and otherwise ensures new projects use the orcel framework preset.
+
+## 0.17.2
+
+### Patch Changes
+
+- afa22f8: Cap recursive subagent delegation at three child-session levels by default, configurable with `defineAgent({ limits: { maxSubagentDepth } })`. At the limit, orcel no longer advertises subagent tools and blocks stale delegated calls before starting another child session.
+- 55e9ad5: Update the scaffold's default agent model to `anthropic/claude-sonnet-5`. New agents created with `orcel init` (and the setup model picker's pre-selected default) now use Claude Sonnet 5 instead of Claude Sonnet 4.6.
+- f26d600: use Chat SDK Slack format primitives for Slack mrkdwn conversion
+- 087d6fd: use chat sdk slack api primitives for slack channel api helpers
+- 70ebe69: use Chat SDK Slack webhook primitives for Slack channel parsing and verification
+- ed8a935: Keep the `Workflow` orchestration tool root-only. Delegated subagent sessions can still call visible subagent tools directly until the configured depth cap, but orcel no longer advertises `Workflow` from those child sessions.
+- 37bd2bb: Use authored `orcelChannel()` auth for `GET /orcel/v1/info` so remote `orcel dev` can authenticate with the same policy as the session routes.
+- 2fdc561: Add `limits.maxInputTokensPerSession` and `limits.maxOutputTokensPerSession` to stop a durable session from starting more model calls after its accumulated provider-reported input or output token usage reaches the configured cap. Root sessions default to a 40M input-token budget, delegated subagent sessions default to 5M, and authored input limits override those defaults.
+- 39c90de: Add explicit `dev:orcel`, `build:orcel`, and `start:orcel` scripts to generated Web Chat projects so users can run the embedded orcel app directly when needed.
+
+## 0.17.1
+
+### Patch Changes
+
+- 97aa99b: Add HTTP Basic userinfo and repeatable `-H, --header` support to `orcel dev` URL targets so the terminal UI can send credentials or routing headers to protected remote deployments.
+- c7827fb: Stop injecting subagent tool descriptions into delegated child prompts. Child runs now receive only the caller's delegated message plus the stable subagent invocation wrapper.
+- 739af96: Update orcel's bundled Workflow SDK dependency set to the latest 5.0.0 beta releases, keeping the core package and local workflow world aligned.
+
+## 0.17.0
+
+### Minor Changes
+
+- 02ed501: Remove the experimental `ExperimentalWorkflow` opt-in marker from the public `orcel/tools` API and remove the dynamic Workflow docs. The internal runtime path remains in place for existing compiled manifests, but authored apps can no longer enable the tool through the public API.
+
+### Patch Changes
+
+- 6dc84fc: Keep Telegram proactive private chat sessions keyed to their chat or topic after outbound sends, while group and supergroup proactive sends still anchor to the bot message id.
+
+## 0.16.2
+
+### Patch Changes
+
+- 9580a88: Disable the Workflow SDK turbo first-delivery path for orcel. Workflow runs now stay on the fully ordered runtime path instead of the beta turbo mode.
+
+## 0.16.1
+
+### Patch Changes
+
+- 8470695: HTTP channels can now opt into browser CORS with preflight handling. Use `defineChannel({ cors })` for custom channels or `orcelChannel({ cors: true | options })` for the orcel channel; omitted CORS remains disabled.
+- aa3aca4: The GitHub channel now accepts Vercel Connect-forwarded webhook payloads that omit `x-github-event` and `x-github-delivery` by inferring the supported event type from the payload shape. Headerless forwarded payloads now emit a warning with the inferred metadata instead of being silently acknowledged and ignored.
+- 8713a71: Fix human-in-the-loop approval resume behavior so text replies like `approve` resolve pending tool approvals and unrelated follow-up messages no longer synthesize a denial. Rejected approval results now include explicit approval and not-run metadata for clients.
+- 7fd53f7: Update the curated Linear MCP connection to use Linear's Streamable HTTP endpoint at `https://mcp.linear.app/mcp`. The MCP and OpenAPI connection docs now include fuller setup guidance for Vercel Connect, static credentials, filters, and approvals.
+- c0f9749: Fix Vercel Connect local interactive connection authorization when the dev server uses an IPv4 or IPv6 loopback address. OAuth callbacks now retain the active port while using the `localhost` hostname accepted by Connect, and local `/connect` refreshes the dev runtime before the next prompt can use the new connection.
+- c14b022: The `orcel dev` TUI retries one transient agent-inspection failure before treating a local or remote agent as unavailable.
+
+## 0.16.0
+
+### Minor Changes
+
+- 24faac0: Add a searchable `/connect` flow to the local dev TUI. It scaffolds an MCP connection, resolves its Vercel Connect connector, and reuses the model setup flow to create or link a Vercel project when needed. Local Vercel users now authorize Connect with their Vercel user ID instead of a reserved OIDC issuer.
+
+### Patch Changes
+
+- ddda14c: Fresh agents now start model setup from their prefilled `/model` prompt, installing the Vercel CLI and logging in when those prerequisites are missing. Other `orcel dev` sessions leave missing model setup as an attention prompt.
+- ca8512a: Generated projects now emit peer-resolution metadata only for their selected package manager. pnpm scaffolds no longer include npm or Yarn fields that can make frozen Vercel installs fail.
+
+## 0.15.5
+
+### Patch Changes
+
+- 8078807: Render authorization prompts in the default web chat projection. Scaffolded web UIs now show OAuth sign-in affordances from `authorization.required` events and update them when authorization completes.
+
+## 0.15.4
+
+### Patch Changes
+
+- da83b03: Slack assistant-thread status text now strips lightweight Markdown before calling Slack, so model progress updates like `**Considering turbo tasks**` display without literal formatting markers.
+- 5b31627: Add a deterministic `mockModel` eval helper with static, prompt-aware, and tool-calling responses.
+- 2e00da7: Scope workflow queue prefixes to each orcel agent so multiple uniquely named agents can deploy in the same project without consuming one another's workflow messages.
+- 86ae773: Clarify Vercel build failures when an agent pins the Docker or microsandbox sandbox backend. The error now explains those local backends are unavailable on Vercel and directs users to `defaultBackend()` or an explicit Vercel-compatible backend.
+
+## 0.15.3
+
+### Patch Changes
+
+- d8449cf: Keep provider-managed web search calls replayable when the model emits narration before results or when the provider returns an error.
+
+## 0.15.2
+
+### Patch Changes
+
+- f1abdfd: Deduplicate repeated durable turn dispatches through turn-inbox ownership so a duplicate child workflow no longer fails the active session.
+- f1abdfd: Keep each logical turn active while local or remote subagents run, including while proxying child input requests, so child completion resumes the same turn instead of starting a replacement turn.
+
+## 0.15.1
+
+### Patch Changes
+
+- b049756: Use the active orcel development server URL for connection authorization callbacks. Local Vercel Connect flows now return to orcel's actual port instead of Workflow's port 3000 fallback.
+- 2933ab2: The local `orcel dev` status bar now shows a gray `:port` badge and retains it as terminal width narrows. Status segments now use tighter spacing.
+- 2e4e15d: `orcel init` now accepts `--yes` as a no-op compatibility flag and warns before continuing.
+- 2933ab2: Running `orcel dev` interactively now reconnects to the healthy loopback dev server recorded for the same app root, with a fresh session for each attached terminal UI. Orcel replaces stale or malformed state when it starts a new server. `--host`, `--port`, or `PORT` skips reconnection and reports a healthy recorded server instead.
+
+## 0.15.0
+
+### Minor Changes
+
+- 194a8bb: Add snapshot-based turn and session assertions, lifecycle-aware tool and subagent matching, typed event checks, recorded requirements, and explicit skipped results. The simplified API uses `succeeded`/`parked`, completed calls by default, exact `count` options, and `require*` lookups so evals no longer need manual event scans or thrown assertion errors.
+
+### Patch Changes
+
+- f618bef: New Vercel project names now show the suggested name as a placeholder, so typing replaces it instead of editing a prefilled value.
+- 194a8bb: Make `isChannel` recognize authored channel imports evaluated in a different local runtime bundle from the route instance.
+- d83b418: orcel's health endpoint (`/orcel/v1/health`) now responds to `HEAD` requests, not just `GET`, so load balancers and uptime monitors that probe with `HEAD` (UptimeRobot, Kubernetes probes, and others) no longer report a healthy deployment as down.
+- e5ccf93: Self-hosted `orcel start` now registers the workflow queue handler for custom (non-Vercel) worlds, so jobs dispatched by a configured world no longer return `Unhandled queue` or leave runs stuck `pending` — and you no longer need `orcel dev --no-ui` to run a local world in production. orcel also fails fast at boot with an actionable error when a configured workflow world's `@workflow/*` version is incompatible with the line orcel bundles, instead of surfacing a cryptic `ZodError` deep in workflow replay.
+- 3865605: Stream `actions.requested` as each model tool call arrives, before the tool finishes or a runtime action is dispatched.
+
+## 0.14.0
+
+### Minor Changes
+
+- 78ef30a: Standardize authored tools and connections on an `approval` function that receives the active session context and returns AI SDK 7 approval statuses, with synchronous and asynchronous policies supported. Boolean results remain supported as aliases for user approval and no approval, schedules no longer accept approval configuration, and no AI SDK 6 `needsApproval` adapter remains.
+- 5c32eb0: Remove `defineAgent({ experimental: { codeMode } })` and the `ORCEL_EXPERIMENTAL_CODE_MODE` fallback. Tools are always exposed directly to the model; model-authored JavaScript orchestration remains available through the experimental `Workflow` tool for subagents and remote agents.
+
+### Patch Changes
+
+- a3d8441: Fix dynamic `Workflow` fan-out so concurrent subagent calls dispatch together, replay in deterministic program order, and resume reliably across runtime isolates. Generated pnpm workspaces now exempt the bundled code-mode package from release-age gating so fresh orcel releases install immediately.
+- 91e43ae: Upgrade orcel to the stable AI SDK 7 release and copy vendored AI SDK declarations directly from the installed packages. Newly scaffolded pnpm workspaces now exempt the AI SDK, Vercel, and Workflow package families from minimum release age checks.
+- 89969b2: Add a top-level `defineAgent({ reasoning })` option that forwards provider-agnostic reasoning effort to the agent's turn model calls.
+- 5c32eb0: Strengthen the built-in `agent` tool guidance so models know when and how to split large tasks across a fixed batch of parallel recursive calls.
+- 7c532fe: MCP and OpenAPI connections can now resolve `auth` providers and headers from the active session context, enabling per-caller and per-tenant credentials.
+- 72b3d0e: Keep Slack sender ids attached to their message text and add an opt-in `threadContext` setting that injects ID-attributed thread replies since a configurable boundary. Workflow titles retain the original Slack text, while later turns and authorization prompts consistently use the current caller.
+
+## 0.13.8
+
+### Patch Changes
+
+- 9d72bb1: Seed session, subagent, and turn workflow attributes when their runs are created so Workflow turbo mode cannot race tag writes against run creation.
+
+## 0.13.7
+
+### Patch Changes
+
+- c8014d1: Improve Vercel Connect-backed connection auth by allowing authored definitions to include the `evict` hook and clarifying `principal_required` guidance when user-scoped connections run without an authenticated user principal.
+- ff44c4c: Clarify scaffolded guidance for locating bundled orcel package docs in workspaces and local installs.
+- 30c5965: Preserve dynamic tool approval gates when session- and turn-scoped tools are replayed from durable metadata. If a replayed approval callback cannot be recovered, orcel now requires approval by default instead of silently running the tool unguarded.
+- 55af52e: Acknowledge Slack view submissions with an empty response body so submitted modals close without an error.
+- dd960df: Fix Vercel CLI detection on Windows by invoking npm's command shims through `cmd.exe`, so an installed `vercel` command is no longer misreported as missing.
+
+## 0.13.6
+
+### Patch Changes
+
+- 7f66a06: Add opt-in GitHub channel hooks for check suite, check run, and workflow run webhooks, with normalized CI metadata and pull request dispatch.
+- a63dfa2: Project search now resolves exact names directly and ranks one fallback result page, avoiding unbounded substring-match pagination for short queries.
+- a63dfa2: Fixed remote `/vc:login` rejecting a freshly resolved Vercel project with "The local Vercel OIDC token does not match the resolved deployment: owner_id." The verified deployment now takes its owner id from Vercel's response instead of the team slug used to scope the lookup, so it matches the OIDC token's `owner_id` claim.
+- a63dfa2: In remote sessions, `/vc:login` resolves the target Vercel project and owning team from the deployment URL. When the target requires authentication and Vercel cannot resolve its host in the active scope, the flow asks you to select another team, then reruns the lookup in that scope. When access is denied, for example because a team SSO session expired, it re-authenticates and retries.
+- a63dfa2: Remote `orcel dev --url` now treats `/orcel/v1/info` as best-effort inspection rather than a connection gate. Once authentication succeeds and the deployment is reachable, the session connects even when the agent info route is absent (confirmed via the public health route) or returns an unrecognized shape (e.g. a deployment built from an older orcel). Inspection-only data is simply omitted from the header in that case, and the underlying parse failure now names the offending fields instead of an opaque message.
+- a63dfa2: Remote `orcel dev --url` sessions now show deployment and authentication state, try refreshed project-scoped OIDC credentials at startup, and open a cancellable `/vc:login` recovery flow when access is rejected. The flow can update the target project's Trusted Sources after confirmation.
+- c5071e6: Ensure every orcel Workflow runtime entrypoint installs the orcel queue namespace through a single guarded boundary.
+- c9e895b: Fix `orcel dev` streaming throughput and time-to-first-token degrading as parked (`ask_question` / HITL) sessions accumulate. The dev runtime's NDJSON event-stream reader now forwards cancellation to the underlying run stream, so disconnecting from a parked session no longer leaks a filesystem polling loop for the life of the dev server.
+- c6b2da8: Add `$orcel.channel_request_id` workflow attributes from Vercel's `x-vercel-id` header so session and turn workflow runs can be joined back to the inbound request that started or resumed them.
+- ab3e6e8: Give each threadless proactive Slack session a unique temporary continuation token so overlapping scheduled runs targeting the same channel do not conflict before they anchor to a Slack thread.
+- a63dfa2: The dev TUI's `/vc` and `/login` commands are now `/vc:install` and `/vc:login`. `/vc:login` is the single Vercel authentication command: it logs in locally and, in remote (`orcel dev --url`) sessions, recovers access with Vercel OIDC.
+
+## 0.13.5
+
+### Patch Changes
+
+- c927ecd: Confirm continuation-token ownership before an agent turn starts or a session re-keys. Competing sessions now fail before processing input, and successful delivery reports the hook owner atomically.
+- 5f0f69f: Use Parallel through AI Gateway for the built-in `web_search` tool with every string model. Gateway requests no longer select native provider search tools or pin routing to a model provider.
+- 430ed8c: Teach agents that conditionally delivered work can finish successfully without sending a message. Polling schedules can now intentionally skip delivery without treating an accidental blank model response as success.
+- 25b1b14: fix(orcel): catch unserializable tool output values instead of sending them to the model
+
+## 0.13.4
+
+### Patch Changes
+
+- efca390: Make optional sandbox engine loading more resilient after auto-install. orcel now
+  probes installed engine packages in a cache-isolated worker, checks ancestor
+  `node_modules` directories for workspace-hoisted installs, and reports a clear
+  post-install diagnostic when an engine package still cannot be loaded.
+- 7079d08: Bundle client-safe vendored dependencies in a neutral chunk group so `orcel/react` can use the Zod-backed `/orcel/v1/info` validator without pulling in Node-only vendored runtime helpers.
+- 598b5e0: Clear pending connection/tool authorization state after a matching callback resumes a session, so Slack threads do not keep waiting for already-completed auth and swallow follow-up messages.
+- 9298c90: Upgrade the Workflow development packages to their latest beta releases.
+
+## 0.13.3
+
+### Patch Changes
+
+- b33c611: use shared Chat SDK Block Kit primitives for Slack card rendering
+
+## 0.13.2
+
+### Patch Changes
+
+- d82e8d1: Consolidate model provider setup into one choice between project-backed AI Gateway, an inline `AI_GATEWAY_API_KEY`, and direct provider credentials. Gateway key validation now reports its latest result inline without leaving stale errors in the setup panel.
+- b29e2ae: Remote clients can now send Vercel OIDC credentials through a dedicated auth mode and reject malformed agent metadata before using it.
+
+## 0.13.1
+
+### Patch Changes
+
+- 9d8bd6e: Existing production sessions now refresh their system prompt from the latest deployment before each model step. Long-lived channel conversations retain their history and state while adopting updated agent instructions.
+
+## 0.13.0
+
+### Minor Changes
+
+- 306e14e: Remove the top-level `auth` field from `defineTool()` and require tool auth providers to be passed inline to `ctx.getToken(provider)` or `ctx.requireAuth(provider)`.
+- f00ca73: Search every Vercel project in the selected team and preserve the selected project ID through linking.
+
+### Patch Changes
+
+- 36b67fc: Make `orcel init` respect ancestor package-manager workspaces when scaffolding nested packages. The scaffold now updates workspace-owned package policy at the npm, pnpm, Yarn, or Bun workspace root instead of writing nested root-only config into the generated package.
+
+## 0.12.3
+
+### Patch Changes
+
+- 680ff48: Text prompts now use block cursors, while active turns and model or channel setup use shared green progress pulses.
+- 27a9701: Resolve extensionless relative imports whose target basename contains dots when bundling authored modules. Local files such as `./mock-registry.schemas` and dependency requires such as `./Reflect.getPrototypeOf` now probe Orcel's configured `.ts` and `.js` extensions before being treated as asset imports.
+- 3a64a8f: `orcel init` with no target, when run by a coding agent, now prints a setup guide — what to ask the user, then the scaffold command — instead of scaffolding the current directory. The guide routes both channels (Slack credentials) and connections (per-user OAuth) through Vercel Connect so credentials are provisioned rather than hand-managed. `orcel init <name>` and `orcel init .` are unchanged.
+- 3a64a8f: `orcel init` now offers to open an installed coding-agent REPL when its CLI is on `PATH`, while keeping `orcel dev` as the default. It detects Claude Code, Codex, Cursor, Droid, Gemini CLI, opencode, and Pi. The selected REPL starts with a project-specific setup prompt and `orcel dev --no-ui` verification guidance. Coding-agent and non-interactive launches, plus systems without any supported CLI, keep the existing development-server handoff.
+- 86a35eb: Add inline tool auth provider overloads so tools can call `ctx.getToken(provider, options?)` and `ctx.requireAuth(provider, options?)` without declaring a single top-level `auth`. Vercel Connect providers can be authored inline with `connect("service/agent")` or `connect({ connector, tokenParams })`; the existing top-level tool `auth` field and no-argument tool auth accessors remain supported for compatibility, but are now deprecated in favor of inline providers.
+- 25ab1e7: Preserve dev-runtime snapshots that are still referenced by local durable workflow data so parked HITL turns can resume after `orcel dev` rebuilds.
+- 504f59e: Allow `orcel eval` target checks to match a scoped package name such as `@acme/agent` against the runtime agent identity `agent`.
+- 0dca794: Restore Slack authorization status updates by posting a link-free public status while sending the sign-in challenge privately, then updating the public status when authorization completes.
+- 3548363: Strengthen Vercel and just-bash process streaming with deterministic completion, safe output cancellation, and idempotent process operations.
+
+## 0.12.2
+
+### Patch Changes
+
+- 8f7d97b: Keep Vercel Sandbox option types synchronized with the installed SDK by vendoring its upstream declaration files instead of maintaining a hand-written copy. Vercel-backed file reads now convert provider Node streams to Orcel's public Web stream contract.
+
+## 0.12.1
+
+### Patch Changes
+
+- 3f3a86b: Improve conversation compaction for longer, more reliable sessions.
+- e296fb8: The dev TUI now opens `/model` when the runtime confirms no model provider is configured and refreshes model access after setup. Selected rows now use padded inverse labels with a filled arrow.
+- f68ecbe: Set the Orcel Vercel framework preset when creating standalone Orcel projects.
+- c084232: Verify remote Vercel deployment origins against the owner and project supplied by `VERCEL_ORG_ID` and `VERCEL_PROJECT_ID`, or by a local project link, before sending ambient credentials. Remote dev and eval clients now refresh scoped OIDC tokens per request and refuse to forward credentials across redirects. Remote `orcel dev` and `orcel eval --url` targets now require `https://` (loopback hosts may still use `http://`).
+
+## 0.12.0
+
+### Minor Changes
+
+- 7df41e1: Dynamic map resolvers no longer auto-prefix entries with the file slug — the map key is the tool/skill name verbatim (a single `defineTool`/`defineSkill` is still named after the file slug). Namespace keys yourself (e.g. `team__playbook`) when a bare name might collide. A dynamic tool/skill overrides a same-named authored one; two dynamic resolvers emitting the same name now throw, recommending manual namespacing. Connection tools are renamed accordingly: the search tool is `connection_search` and discovered tools are `<connection>__<tool>` (e.g. `linear__list_issues`).
+
+### Patch Changes
+
+- 10e9237: Fix code-defined models under `orcel dev`, including NodeNext `.js` imports that target authored `.ts` files. Runtime model resolution now reuses the active agent bundle's module map and node scope, so child agents resolve their own models without rebuilding authored modules on each step.
+
+## 0.11.10
+
+### Patch Changes
+
+- c707ca3: Keep `orcel init` and local `orcel dev` progress on one terminal row. Init now includes elapsed completion times and preserves useful package-manager diagnostics on failure. With `ORCEL_LOG_LEVEL=debug`, both commands use plain phase logs instead of animation.
+- 2197c14: Dynamic skill resolvers that return a map now name every entry `<slug>__<key>` even when the map holds a single entry, matching dynamic tools and the documented contract. Previously a one-entry map was advertised and materialized under the bare resolver slug, so `load_skill` failed to find it and adding a second skill silently renamed the first. `load_skill` failures now also list the available skill names so the model can correct a wrong id.
+
+  Adds a `t.loadedSkill(skill, opts?)` eval assertion — sugar for `t.calledTool("load_skill", { input: { skill }, ... })`.
+
+- d22fd04: In the dev TUI, Ctrl+C now clears a non-empty chat or freeform `ask_question` prompt instead of quitting. On an empty prompt it still quits, and during a running turn it still interrupts.
+- d22fd04: The dev TUI prompt now takes multi-line input in both chat and freeform `ask_question` fields. Pasting multi-line text inserts it intact instead of submitting at the first line, `Shift+Enter` inserts a newline, a tall prompt scrolls within the terminal height, and editing moves by whole graphemes so wide and emoji characters aren't split.
+
+## 0.11.9
+
+### Patch Changes
+
+- 4bfbaa0: Add root agent `experimental.workflow.world` configuration for selecting an installed Workflow world package. Orcel now loads and registers the configured world at runtime and documents how self-hosted deployments can provide a custom Workflow world.
+
+## 0.11.8
+
+### Patch Changes
+
+- 4622d94: Point the npm README, runtime landing page, and setup guidance at the canonical orcel documentation domain.
+- bfc7191: Use the official TypeScript 7 `tsc` compiler for orcel builds, base generated projects, and fixture typechecks. Next.js projects and generated Web Chat apps pin `typescript@6.0.3`, which still provides the JavaScript compiler API Next.js requires.
+
+## 0.11.7
+
+### Patch Changes
+
+- 11a9a3e: Report image-pull and VM-boot progress during microsandbox creation, and include phase and provider-specific recovery guidance when prewarm fails.
+- 7b8df64: Serialize optional sandbox engine auto-installs and reload newly installed engines through their package entrypoint file instead of retrying the cached bare specifier. This prevents first-run `orcel dev` sessions from racing microsandbox installation or surfacing Node's stale same-process module-not-found result after Bun installs `microsandbox`.
+
+  `orcel init` also supports `ORCEL_INIT_PACKAGE_SPEC` so local tarball/source validation can make the generated project install the same orcel build under test instead of resolving the published semver range from the registry.
+
+- 159d4af: Slack reasoning typing indicators now update progressively when the cumulative status grows by at least four characters, preventing opening fragments from remaining stale without issuing one Slack request per token.
+
+## 0.11.6
+
+### Patch Changes
+
+- 23cb00f: Slack channels now refresh assistant thread typing status during streamed reasoning, using a truncated reasoning snippet so long reasoning steps keep visible progress before tool calls or final replies.
+
+## 0.11.5
+
+### Patch Changes
+
+- 4761011: Avoid creating workflow park hooks with an empty continuation token. Sessions that start without a token now wait until the first turn anchors one before registering the park hook.
+- 93ff280: The `orcel dev` header now shows the beta-terms link inline (`orcel is currently in preview: <url>`), clickable via the terminal's own URL matcher. The verbose preview notice is dropped from the boot banner and from `orcel init` output.
+- 432503d: Clarify the duplicate `orcel dev` process error with a copyable package-manager command for connecting to the existing local server instead of stopping it.
+- c0c5cbf: Upgrades the workflow dependency to 5.0.0-beta.19
+- 602e9e0: Detect parent workspace package managers when running `orcel init <name>` so fresh agents created inside monorepos install with the workspace manager instead of always following the launcher.
+- 0bd7aca: Warn when a Vercel build skips sandbox template prewarming because `VERCEL_DEPLOYMENT_ID` is missing, and direct users away from deploying that output with `vercel deploy --prebuilt`.
+
+## 0.11.4
+
+### Patch Changes
+
+- e5b777b: Resolve AI Gateway OIDC readiness through Vercel's token resolver so `orcel dev` recognizes projects linked by the Vercel CLI without requiring an environment pull or showing a missing-credentials setup issue.
+
+## 0.11.3
+
+### Patch Changes
+
+- 1e2e8ef: Standardize the product name as `orcel` across documentation, CLI output, diagnostics, generated text, and runtime messages.
+- ea35d0e: Changing a model or configuring its provider in `/model` now returns to the prompt and prints the result there. Cancelling or choosing an external provider still returns to the menu.
+- ea35d0e: The dev TUI now shows `/vc` or `/login` before `/model` when Vercel authentication is blocking model setup.
+- 29e27b8: Run `vercel link` non-interactively when connecting a project via the dev TUI `/model` menu (and `orcel link`). The link is already fully specified by the team and project picked in the TUI, so the CLI no longer inherits a TTY and can no longer surface its interactive prompts (such as the agent/MCP setup question), which previously corrupted the TUI.
+
+## 0.11.2
+
+### Patch Changes
+
+- dbac239: Fix dynamic connection tools so approval gates from OpenAPI and other connection-backed tools are preserved when the tools are exposed to the model. Calls to connections with `approval: always()` now correctly park for HITL approval before execution.
+
+## 0.11.1
+
+### Patch Changes
+
+- e7cdefd: Handle missing sandbox template and session state more gracefully across Vercel, Microsandbox, and Docker backends. orcel now treats stale Vercel template references, missing Microsandbox session/template snapshots, and Docker template image races as recoverable provisioning misses so the runtime can rebuild or create a fresh sandbox automatically.
+
+## 0.11.0
+
+### Minor Changes
+
+- 31fb09f: Remove the `withKaf` Vercel output opt-out option. Next.js projects now skip generated Vercel Build Output writes when no linked Vercel project or existing output context is detected.
+
+### Patch Changes
+
+- ff80e38: The `orcel eval --verbose` help text now refers to `t.log` (the actual eval context logging API) instead of the outdated `ctx.log`.
+- f6c5932: Emit a `rejected` `action.result` stream event when a tool call is denied at a HITL approval gate. Denied calls previously left no trace in the session stream (the denial lived only in model history), so consumers like observability never saw the tool call resolve. The `action.result` status union now includes `rejected`, and the message stream version is bumped to `16`.
+
+## 0.10.0
+
+### Minor Changes
+
+- c2ac540: Initial public release of the orcel framework

@@ -1,0 +1,53 @@
+/**
+ * Connection authoring helpers for `agent/connections/*.ts` files.
+ */
+
+export type {
+  AuthorizationCallback,
+  AuthorizationDefinition,
+  CredentialOwner,
+  ConnectionAuthDefinition,
+  ConnectionAuthProvider,
+  ConnectionAuthResolver,
+  ConnectionPrincipal,
+  HeadersDefinition,
+  InteractiveAuthorizationDefinition,
+  NonInteractiveAuthorizationDefinition,
+  TokenResult,
+  ToolFilterDefinition,
+} from "#shared/connection-types.js";
+export { defineInteractiveAuthorization } from "#shared/connection-types.js";
+export type { JsonValue } from "#public/types/json.js";
+export {
+  defineDynamic,
+  type DynamicConnectionDefinition,
+  type DynamicConnectionEvents,
+  type DynamicConnectionResolveContext,
+  type DynamicConnectionResult,
+  type DynamicConnectionSet,
+} from "#public/definitions/connections/dynamic.js";
+export type { DynamicResolveContext, DynamicSentinel } from "#dynamic/definition.js";
+export {
+  defineMcpClientConnection,
+  type McpClientConnectionDefinition,
+} from "#public/definitions/connections/mcp.js";
+export type {
+  ConnectionToolCallDefinition,
+  ProvidedArgumentContext,
+  ProvidedArgumentsDefinition,
+  ProvidedArgumentValue,
+} from "#public/definitions/connections/tool-call.js";
+export {
+  defineOpenAPIConnection,
+  type OpenAPIConnectionDefinition,
+  type OpenAPISpecSource,
+} from "#public/definitions/connections/openapi.js";
+export {
+  type ConnectionAuthorizationChallenge,
+  ConnectionAuthorizationFailedError,
+  type ConnectionAuthorizationFailedErrorOptions,
+  ConnectionAuthorizationRequiredError,
+  type ConnectionAuthorizationRequiredErrorOptions,
+  isConnectionAuthorizationFailedError,
+  isConnectionAuthorizationRequiredError,
+} from "#public/connections/errors.js";

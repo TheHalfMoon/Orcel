@@ -1,0 +1,15 @@
+import { OTLPHttpProtoTraceExporter } from "@vercel/otel";
+import { otelIntegration } from "orcel/instrumentation/otel";
+
+export default otelIntegration({
+  exportPolicy: {
+    span: () => ({ redact: true, inputs: true, outputs: true }),
+  },
+  traceExporter: new OTLPHttpProtoTraceExporter({
+    url: "https://otlp.arize.com/v1/traces",
+    headers: {
+      space_id: process.env.ARIZE_SPACE_ID!,
+      api_key: process.env.ARIZE_API_KEY!,
+    },
+  }),
+});

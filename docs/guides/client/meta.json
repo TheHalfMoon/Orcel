@@ -1,0 +1,5 @@
+{
+  "title": "Client SDK",
+  "defaultOpen": false,
+  "pages": ["overview", "messages", "continuations", "streaming", "output-schema"]
+}

@@ -1,0 +1,6 @@
+node_modules
+.env*
+.orcel
+dist
+*.tsbuildinfo
+.DS_Store

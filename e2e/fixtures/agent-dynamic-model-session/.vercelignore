@@ -1,0 +1,6 @@
+node_modules
+.orcel
+.next
+.output
+.nitro
+dist

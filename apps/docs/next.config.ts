@@ -1,0 +1,78 @@
+import { createRequire } from "node:module";
+import path from "node:path";
+import { createGeistdocs } from "@vercel/geistdocs/next";
+import type { NextConfig } from "next";
+import {
+  compatibilityRedirects,
+  defaultLanguageRedirects,
+  docsRedirects,
+  rootMarkdownRedirects,
+} from "./lib/geistdocs/redirects";
+
+const withGeistdocs = createGeistdocs();
+const require = createRequire(import.meta.url);
+const wgslLoader = require.resolve("@vgpu/wgsl/loader-webpack");
+
+const localSite = process.env.PORTLESS_URL ?? "localhost:3000";
+
+const config: NextConfig = {
+  cacheComponents: true,
+  partialPrefetching: true,
+  outputFileTracingRoot: path.resolve(import.meta.dirname, "../.."),
+
+  env: {
+    NEXT_PUBLIC_VERCEL_PROJECT_PRODUCTION_URL:
+      process.env.NEXT_PUBLIC_VERCEL_PROJECT_PRODUCTION_URL ?? localSite,
+  },
+
+  // The integrations gallery sources identity from the workspace package
+  // `@orcel/catalog`; transpile it from source so dev and build compile
+  // its TypeScript without a separate prebuild step.
+  transpilePackages: ["@orcel/catalog"],
+
+  experimental: {
+    globalNotFound: true,
+    turbopackFileSystemCacheForDev: true,
+  },
+
+  turbopack: {
+    rules: {
+      "*.wgsl": {
+        loaders: [wgslLoader],
+        as: "*.js",
+      },
+    },
+  },
+
+  images: {
+    formats: ["image/avif", "image/webp"],
+    qualities: [75, 95],
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "placehold.co",
+      },
+    ],
+  },
+
+  async redirects() {
+    return [
+      {
+        source: "/nights",
+        destination: "/eves",
+        permanent: true,
+      },
+      {
+        source: "/docs",
+        destination: "/docs/getting-started",
+        permanent: true,
+      },
+      ...compatibilityRedirects,
+      ...docsRedirects,
+      ...rootMarkdownRedirects,
+      ...defaultLanguageRedirects,
+    ];
+  },
+};
+
+export default withGeistdocs(config);

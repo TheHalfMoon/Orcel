@@ -1,0 +1,209 @@
+import { describe, expect, it } from "vitest";
+
+import { compileFromMemory } from "#internal/testing/compile-from-memory.js";
+import { AgentInfoResultSchema } from "#client/agent-info-schema.js";
+import { buildAgentInfoResponse } from "#internal/nitro/routes/agent-info/build-agent-info-response.js";
+import { webSearch } from "#tools/provided/web-search.js";
+import { defineMemory } from "#public/memory/index.js";
+
+describe("buildAgentInfoResponse", () => {
+  it("projects v4 exclusively from the effective compiled graph", async () => {
+    const { manifest } = await compileFromMemory({
+      model: "openai/gpt-5.4",
+      name: "info-agent",
+      tools: [{ name: "weather" }],
+    });
+
+    const response = buildAgentInfoResponse(
+      { manifest, schedules: [] },
+      {
+        gatewayCredentials: { apiKey: true, oidc: false },
+        mode: "development",
+      },
+    );
+
+    expect(response).toMatchObject({
+      agent: {
+        model: {
+          endpoint: { connected: true, credential: "api-key", kind: "gateway" },
+          id: "openai/gpt-5.4",
+          routing: { kind: "gateway", target: "openai" },
+        },
+        name: "info-agent",
+        nodeId: "__root__",
+      },
+      capabilities: { devRoutes: true },
+      kind: "orcel-agent-info",
+      version: 5,
+    });
+    expect(response.tools.static).toContainEqual(
+      expect.objectContaining({
+        name: "weather",
+        owner: { kind: "application" },
+        sourceKind: "module",
+      }),
+    );
+    expect(response.channels.routes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ method: "GET", urlPath: "/orcel/v1/health" }),
+        expect.objectContaining({ method: "GET", urlPath: "/orcel/v1/info" }),
+      ]),
+    );
+    expect(response.sandbox).toMatchObject({
+      logicalPath: "sandbox.ts",
+      owner: { feature: "orcel:defaults", kind: "framework" },
+    });
+    expect(response.composition.shadowed).toContainEqual(
+      expect.objectContaining({
+        logicalPath: "agent.ts",
+        owner: { feature: "orcel:defaults", kind: "framework" },
+        winnerSourceId: "memory:info-agent:agent.ts",
+      }),
+    );
+  });
+
+  it("reports selected memory and provider-tool wrapper provenance", async () => {
+    const { manifest } = await compileFromMemory({
+      model: "openai/gpt-5.4",
+      modules: [
+        {
+          loadNamespace: async () => ({
+            default: defineMemory({
+              description: "Caller profile.",
+              provider: {
+                recall: { "turn.started": async () => null },
+                tools: async () => ({}),
+              },
+              scope: "user_1",
+            }),
+          }),
+          logicalPath: "memory/profile.ts",
+        },
+      ],
+    });
+    const response = buildAgentInfoResponse(
+      { manifest, schedules: [] },
+      {
+        gatewayCredentials: { apiKey: false, oidc: false },
+        mode: "production",
+      },
+    );
+
+    expect(response.memories).toContainEqual(
+      expect.objectContaining({
+        description: "Caller profile.",
+        slot: "profile",
+        visibility: "scope",
+      }),
+    );
+    expect(response.tools.dynamic).toContainEqual(
+      expect.objectContaining({
+        binding: expect.objectContaining({
+          backing: expect.objectContaining({
+            dependencies: { memory: response.memories[0]?.sourceId },
+            parameters: expect.objectContaining({ slot: "profile" }),
+          }),
+        }),
+        slug: "profile",
+      }),
+    );
+    expect(response.agent.config.binding).not.toHaveProperty("usage");
+    expect(response.memories[0]?.binding).not.toHaveProperty("usage");
+    expect(() => AgentInfoResultSchema.parse(response)).not.toThrow();
+  });
+
+  it("derives kernel effects only from active framework-owned canonical slots", async () => {
+    const { manifest } = await compileFromMemory({ model: "openai/gpt-5.4" });
+    const response = buildAgentInfoResponse(
+      { manifest, schedules: [] },
+      {
+        gatewayCredentials: { apiKey: false, oidc: false },
+        mode: "production",
+      },
+    );
+
+    expect(response.kernelEffects).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ action: "subagent-call", kind: "dispatch" }),
+      ]),
+    );
+  });
+
+  it("reports an authored webSearch sentinel as a prepared provider effect", async () => {
+    const { manifest } = await compileFromMemory({
+      model: "openai/gpt-5.4",
+      modules: [
+        {
+          loadNamespace: async () => ({ default: webSearch({ provider: "parallel" }) }),
+          logicalPath: "tools/web_search.ts",
+        },
+      ],
+    });
+    const response = buildAgentInfoResponse(
+      { manifest, schedules: [] },
+      {
+        gatewayCredentials: { apiKey: false, oidc: false },
+        mode: "production",
+      },
+    );
+
+    expect(response.kernelEffects).toContainEqual(
+      expect.objectContaining({
+        kind: "provider-tool",
+        sourceId: expect.stringContaining("tools/web_search.ts"),
+      }),
+    );
+  });
+
+  it("only exposes the priority tier from providerOptions", async () => {
+    const { manifest } = await compileFromMemory({
+      model: "openai/gpt-5.4",
+      name: "info-agent",
+    });
+    const model = manifest.config.model;
+    if (model === undefined) throw new Error("Expected a static compiled model.");
+    // The shipped BYOK scaffold places the owner's provider key under
+    // `gateway.byok`; a custom provider may carry other credential fields.
+    model.providerOptions = {
+      gateway: {
+        byok: { openai: [{ apiKey: "sk-canary-byok" }] },
+        serviceTier: "priority",
+      },
+      openai: {
+        apiKey: "sk-canary-direct",
+        headers: { authorization: "Bearer canary-header" },
+        reasoningEffort: "high",
+        metadata: { workspace: "sk-canary-unrecognized" },
+      },
+    };
+
+    const response = buildAgentInfoResponse(
+      { manifest, schedules: [] },
+      {
+        gatewayCredentials: { apiKey: false, oidc: false },
+        mode: "production",
+      },
+    );
+
+    const serialized = JSON.stringify(response);
+    expect(serialized).not.toContain("sk-canary-byok");
+    expect(serialized).not.toContain("sk-canary-direct");
+    expect(serialized).not.toContain("canary-header");
+    expect(serialized).not.toContain("sk-canary-unrecognized");
+    // Non-secret options survive for the dev TUI (`gateway.serviceTier`).
+    expect(response.agent.model.providerOptions).toEqual({
+      gateway: { serviceTier: "priority" },
+    });
+
+    model.providerOptions = { gateway: { serviceTier: "sk-canary-tier" } };
+    const customTierResponse = buildAgentInfoResponse(
+      { manifest, schedules: [] },
+      {
+        gatewayCredentials: { apiKey: false, oidc: false },
+        mode: "production",
+      },
+    );
+    expect(customTierResponse.agent.model.providerOptions).toBeUndefined();
+    expect(JSON.stringify(customTierResponse)).not.toContain("sk-canary-tier");
+  });
+});

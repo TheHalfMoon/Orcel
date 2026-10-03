@@ -1,0 +1,154 @@
+// ---------------------------------------------------------------------------
+// Client and ClientSession
+// ---------------------------------------------------------------------------
+
+export { OrcelAgentStore } from "#client/orcel-agent-store.js";
+export { Client } from "#client/client.js";
+export { AgentInfoResponseError } from "#client/agent-info-error.js";
+export { HealthResponseError } from "#client/health-response-error.js";
+export { ClientError } from "#client/client-error.js";
+export { defaultMessageReducer } from "#client/message-reducer.js";
+export { createDataUrlFilePart, createTextWithFileContent } from "#client/file-parts.js";
+export { MessageResponse } from "#client/message-response.js";
+export { ClientAgentSession } from "#client/agent-session.js";
+export { ClientSession } from "#client/session.js";
+export {
+  ClientSessions,
+  type CreatedClientSession,
+  type CreatedIdleClientSession,
+} from "#client/sessions.js";
+
+// ---------------------------------------------------------------------------
+// Client types
+// ---------------------------------------------------------------------------
+
+export type {
+  OrcelAgentStoreCallbacks,
+  OrcelAgentStoreInit,
+  OrcelAgentStoreSnapshot,
+  OrcelAgentStoreStatus,
+  PrepareSend,
+} from "#client/orcel-agent-store.js";
+
+export type {
+  AgentInfoEntry,
+  AgentInfoChannelEntry,
+  AgentInfoChannels,
+  AgentInfoConnectionEntry,
+  AgentInfoDynamicResolverEntry,
+  AgentInfoHookEntry,
+  AgentInfoInstructions,
+  AgentInfoInstructionsEntry,
+  AgentInfoResult,
+  AgentInfoRemoteAgentEntry,
+  AgentInfoSandboxEntry,
+  AgentInfoScheduleEntry,
+  AgentInfoSkillEntry,
+  AgentInfoSource,
+  AgentInfoSubagentEntry,
+  AgentInfoToolEntry,
+  AgentInfoTools,
+  CancelSessionResult,
+  ClearResult,
+  CompactResult,
+  ClientAuth,
+  ClientOptions,
+  ClientRedirectPolicy,
+  CreateSessionOptions,
+  HeadersValue,
+  HealthResult,
+  MessageResult,
+  RespondTurnOptions,
+  ResetResult,
+  ResolvedStreamReconnectPolicy,
+  SendTurnInput,
+  SendTurnOptions,
+  SessionSnapshot,
+  ClientSessionState,
+  StreamOptions,
+  StreamReconnectPolicy,
+  StreamReconnectRetryPolicy,
+  TokenValue,
+} from "#client/types.js";
+
+export type {
+  OrcelAgentReducer,
+  OrcelAgentReducerEvent,
+  ClientInputRespondedEvent,
+  ClientMessageFailedEvent,
+  ClientMessageSubmittedEvent,
+} from "#client/reducer.js";
+
+export type {
+  OrcelAuthorizationChallenge,
+  OrcelAuthorizationOutcome,
+  OrcelAuthorizationPart,
+  OrcelMessageData,
+  OrcelDynamicToolPart,
+  OrcelMessageInputRequest,
+  OrcelMessage,
+  OrcelMessageMetadata,
+  OrcelMessagePart,
+  OrcelMessageToolMetadata,
+} from "#client/message-reducer.js";
+
+// ---------------------------------------------------------------------------
+// Stream event types (re-exported so consumers can type-narrow without
+// importing from the main package).
+// ---------------------------------------------------------------------------
+
+export type {
+  ActionPartialStreamEvent,
+  ActionResultStreamEvent,
+  ActionsRequestedStreamEvent,
+  AgentStartedStreamEvent,
+  AssistantStepFinishReason,
+  AuthorizationOutcome,
+  CompactionCompletedStreamEvent,
+  CompactionRequestedStreamEvent,
+  AuthorizationCompletedStreamEvent,
+  ConnectionAuthorizationOutcome,
+  AuthorizationRequiredStreamEvent,
+  HandleMessageStreamEvent,
+  MessageStreamEventMeta,
+  InputResolution,
+  InputResolutionOutcome,
+  InputResolvedStreamEvent,
+  InputRequestedStreamEvent,
+  MessageAppendedStreamEvent,
+  MessageCompletedStreamEvent,
+  MessageReceivedPart,
+  MessageReceivedStreamEvent,
+  ReasoningAppendedStreamEvent,
+  ReasoningCompletedStreamEvent,
+  ResultCompletedStreamEvent,
+  RuntimeTraceContext,
+  SessionCompletedStreamEvent,
+  SessionFailedStreamEvent,
+  SessionStartedStreamEvent,
+  SessionWaitingStreamEvent,
+  MessageStreamEvent,
+  StepCompletedStreamEvent,
+  StepFailedStreamEvent,
+  StepStartedStreamEvent,
+  TaskSettledStreamEvent,
+  TaskStartedStreamEvent,
+  TurnCancelledStreamEvent,
+  TurnCompletedStreamEvent,
+  TurnFailedStreamEvent,
+  TurnStartedStreamEvent,
+  TurnFailureStreamEvent,
+  TurnWaitingStreamEvent,
+} from "#protocol/message.js";
+
+export { isCurrentTurnBoundaryEvent, isTurnFailureEvent } from "#protocol/message.js";
+
+export type { InputOption, InputRequest, InputRequestKind, InputResponse } from "#shared/input.js";
+export {
+  isInputRequest,
+  isInputResponse,
+  parseInputResponse,
+  parseInputResponses,
+} from "#shared/input.js";
+
+export { resolveTextToResponse, resolveTextToResponses } from "#channel/resolve-text.js";

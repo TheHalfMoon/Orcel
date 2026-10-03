@@ -1,0 +1,28 @@
+import { defineEval } from "orcel/evals";
+
+const model = process.env.ORCEL_E2E_MODEL ?? "openai/gpt-6-sol";
+
+export default defineEval({
+  tags: ["real-model"],
+  description: "Dynamic model smoke: runtime catalog metadata is reusable across turns.",
+  async test(t) {
+    const first = await t.send(
+      '[model: catalog] Reply with exactly the text "catalog one" and nothing else.',
+    );
+    const session = first.session;
+    first.expectOk();
+    first.messageIncludes("catalog one");
+
+    const second = await session.send(
+      '[model: catalog] Reply with exactly the text "catalog two" and nothing else.',
+    );
+    second.expectOk();
+    second.messageIncludes("catalog two");
+    second.eventsSatisfy("the model call is attributed to the selected model", (events) =>
+      events.some((event) => event.type === "step.started" && event.data.modelId === model),
+    );
+
+    t.succeeded();
+    t.usedNoTools();
+  },
+});

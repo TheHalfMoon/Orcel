@@ -1,0 +1,47 @@
+import { describe, expect, it } from "vitest";
+
+import { ClientError } from "#client/client-error.js";
+
+describe("ClientError", () => {
+  it("uses structured orcel JSON error bodies as the public message", () => {
+    const error = new ClientError(
+      401,
+      JSON.stringify({
+        code: "orcel_production_auth_not_configured",
+        error: "Production auth is not configured.",
+        ok: false,
+      }),
+    );
+
+    expect(error.message).toBe("Production auth is not configured.");
+    expect(error.code).toBe("orcel_production_auth_not_configured");
+    expect(error.status).toBe(401);
+  });
+
+  it("summarizes HTML responses without exposing the document", () => {
+    const error = new ClientError(404, "<!doctype html><title>Not Found</title>", {
+      "content-type": "text/html; charset=utf-8",
+    });
+
+    expect(error.message).toBe(
+      "Server returned 404 with an HTML response. Check the orcel route and development server configuration.",
+    );
+    expect(error.body).toBe("<!doctype html><title>Not Found</title>");
+  });
+
+  it("falls back to the raw body for non-JSON errors", () => {
+    const error = new ClientError(500, "Internal Server Error");
+
+    expect(error.message).toBe("Internal Server Error");
+  });
+
+  it("preserves normalized response headers", () => {
+    const source = new Headers({ Location: "https://vercel.com/sso-api?url=https://orcel.test" });
+    const error = new ClientError(302, "Redirecting...", source);
+    source.set("location", "https://example.com");
+
+    expect(error.headers).toEqual({
+      location: "https://vercel.com/sso-api?url=https://orcel.test",
+    });
+  });
+});

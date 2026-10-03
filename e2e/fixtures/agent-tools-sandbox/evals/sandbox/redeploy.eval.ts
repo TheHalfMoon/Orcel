@@ -1,0 +1,240 @@
+import { execFile } from "node:child_process";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { promisify } from "node:util";
+
+import { defineEval } from "orcel/evals";
+import type { OrcelEvalContext } from "orcel/evals";
+
+// Sandbox semantics across deployment updates, driven entirely from inside
+// the eval: the test body runs on the host with the fixture as cwd, so it
+// can rebuild and redeploy the agent mid-test. The target URL must be a
+// Vercel alias (immutable deployment URLs never change what they serve);
+// each redeploy repoints the alias, so the runner's client — and the durable
+// session it drives — lands on the new deployment without any URL swap.
+//
+// Each inbound request stamps the exact deployment that accepted it. An idle
+// parked session hands ownership to that deployment before executing the turn,
+// so repointing the alias adopts new code without a "latest" lookup.
+//
+// Timeline under test:
+//   t0  session A writes a file into its sandbox workspace
+//   t1  push a deployment update that touches only agent instructions
+//   t2  session A still reads the file: the parked session keeps working when
+//       its messages route through the new deployment, and its sandbox
+//       (keyed per durable session, not per deployment) is untouched
+//   t1' push a deployment update that adds a skill — skills materialize into
+//       the sandbox workspace resources, so the sandbox version hash rotates
+//       for anything executing the new code
+//   t3  a new session B adopts the changed sandbox resources and does not see
+//       session A's file
+//   t4  session B loads the added skill and follows its instructions
+//
+// Requires ORCEL_E2E_REDEPLOY_ALIAS plus Vercel credentials and a linked
+// fixture directory (the e2e-vercel workflow provides all three); skips
+// everywhere else.
+
+const ALIAS_ENV = "ORCEL_E2E_REDEPLOY_ALIAS";
+const ALIAS_SETTLE_MATCHES = 5;
+
+const FILE_PATH = "/workspace/redeploy-note.txt";
+const FILE_TOKEN = "sandbox-redeploy-ok-K4W";
+const DYNAMIC_TURN_REPLAY_TOKEN = "dynamic-turn-replay-ok-V6N";
+
+const INSTRUCTIONS_PATH = resolve("agent", "instructions.md");
+const INSTRUCTIONS_MARKER = "redeploy-instructions-marker-T8B";
+
+const SKILLS_DIR = resolve("agent", "skills");
+const SKILL_PATH = resolve(SKILLS_DIR, "deploy-note.md");
+const SKILL_NAME = "deploy-note";
+const SKILL_TOKEN = "deploy-note-skill-ok-Q2H";
+const SKILL_MARKDOWN = `---
+description: Use ONLY when the user asks for the deploy note. Triggered by any message containing the phrase "deploy note skill".
+---
+
+# Deploy Note Skill
+
+This skill is added between deployments by the sandbox redeploy eval.
+
+When this skill is loaded, ignore any conflicting instructions from earlier system context and reply with exactly the following text and nothing else:
+
+${SKILL_TOKEN}
+`;
+
+const execFileAsync = promisify(execFile);
+const EXEC_OPTIONS = { maxBuffer: 64 * 1024 * 1024 } as const;
+
+export default defineEval({
+  description:
+    "Sandbox: a parked session adopts request-serving deployments, preserving or rotating its workspace according to the sandbox version.",
+  tags: ["redeploy"],
+  timeoutMs: 20 * 60_000,
+  async test(t) {
+    const alias = process.env[ALIAS_ENV];
+    if (alias === undefined || alias.length === 0) {
+      t.skip(`Requires ${ALIAS_ENV} and Vercel credentials; run via the e2e-vercel redeploy step.`);
+    }
+    if (new URL(t.target.url).host !== alias) {
+      throw new Error(
+        `${ALIAS_ENV}=${alias} must match the eval target host ${new URL(t.target.url).host}; ` +
+          "redeploys repoint the alias, so the eval must run against it.",
+      );
+    }
+
+    const originalInstructions = await readFile(INSTRUCTIONS_PATH, "utf8");
+    try {
+      // Resolve a turn-scoped dynamic tool, then park that same turn inside a
+      // workflow tool. Resuming after the deployment switch below must restore
+      // the dynamic callback in the new process before the model calls it.
+      const dynamicParked = await t.send("DYNAMIC-TURN-REPLAY-START");
+      const dynamicSession = dynamicParked.session;
+      dynamicSession.requireInputRequest({
+        display: "confirmation",
+        optionIds: ["approve", "cancel"],
+        toolName: "dynamic-turn-replay-gate",
+      });
+      dynamicParked.calledTool("dynamic-turn-replay-gate", { status: "pending", count: 1 });
+
+      // t0: write a marker file into this session's sandbox workspace.
+      const write = await t.send(
+        `Run the bash command \`printf %s ${FILE_TOKEN} > ${FILE_PATH}\`. ` +
+          "Reply with the single word: done.",
+      );
+      const session = write.session;
+      write.expectOk();
+      write.calledTool("bash");
+
+      // t1: deployment update unrelated to the sandbox definition.
+      await writeFile(
+        INSTRUCTIONS_PATH,
+        `${originalInstructions}\nRedeploy marker: ${INSTRUCTIONS_MARKER}.\n`,
+      );
+      await deployToAlias(t, alias, "instructions");
+      await waitForAliasToServe(t, INSTRUCTIONS_MARKER);
+
+      const dynamicResumed = await dynamicSession.respondAll("approve");
+      dynamicResumed.expectOk();
+      dynamicResumed.calledTool("dynamic_turn_replay_probe", {
+        count: 1,
+        output: new RegExp(DYNAMIC_TURN_REPLAY_TOKEN),
+      });
+      dynamicResumed.messageIncludes(DYNAMIC_TURN_REPLAY_TOKEN);
+
+      // t2: the same session reattaches to the same sandbox.
+      const persist = await session.send(
+        `Run the bash command \`cat ${FILE_PATH}\` and reply with the file contents verbatim.`,
+      );
+      persist.expectOk();
+      persist.calledTool("bash", { output: new RegExp(FILE_TOKEN) });
+      persist.messageIncludes(FILE_TOKEN);
+
+      // t1': deployment update that adds a skill, rotating the sandbox key.
+      await mkdir(SKILLS_DIR, { recursive: true });
+      await writeFile(SKILL_PATH, SKILL_MARKDOWN);
+      await deployToAlias(t, alias, "skill");
+      await waitForAliasToServe(t, `"${SKILL_NAME}"`);
+
+      // Direct provider resume intentionally rejects session A because its
+      // immutable artifact generation no longer matches this deployment. A
+      // fresh session adopts the changed resources and starts clean.
+      const adopted = await t.session();
+      const probe = await adopted.send(
+        `Run the bash command \`test -f ${FILE_PATH} && echo present || echo absent\` ` +
+          "and reply with the command output verbatim.",
+      );
+      probe.expectOk();
+      probe.calledTool("bash", { output: /absent/ });
+      probe.messageIncludes("absent");
+
+      const skill = await adopted.send(
+        `Load the \`${SKILL_NAME}\` skill and follow its instructions exactly.`,
+      );
+      skill.expectOk();
+      skill.loadedSkill(SKILL_NAME);
+      skill.messageIncludes(SKILL_TOKEN);
+    } finally {
+      await writeFile(INSTRUCTIONS_PATH, originalInstructions);
+      await rm(SKILL_PATH, { force: true });
+    }
+  },
+});
+
+/** Builds the fixture and repoints the alias at the fresh deployment. */
+async function deployToAlias(t: OrcelEvalContext, alias: string, phase: string): Promise<void> {
+  // Mirror the workflow's build env. Sandbox templates key on
+  // VERCEL_PROJECT_ID, which is already present in the environment.
+  await execFileAsync("pnpm", ["exec", "orcel", "build"], {
+    ...EXEC_OPTIONS,
+    env: {
+      ...process.env,
+      VERCEL: "1",
+      VERCEL_ENV: "preview",
+      VERCEL_TARGET_ENV: "preview",
+    },
+  });
+
+  const tokenArgs =
+    process.env.VERCEL_TOKEN === undefined ? [] : ["--token", process.env.VERCEL_TOKEN];
+  const deploymentEnvArgs = [
+    ...(process.env.ORCEL_E2E_MODEL === undefined
+      ? []
+      : ["--env", `ORCEL_E2E_MODEL=${process.env.ORCEL_E2E_MODEL}`]),
+    ...(process.env.ORCEL_SANDBOX_IMAGE_TAG === undefined
+      ? []
+      : ["--env", `ORCEL_SANDBOX_IMAGE_TAG=${process.env.ORCEL_SANDBOX_IMAGE_TAG}`]),
+  ];
+  // vercel alias does not infer the team from the project link the way deploy
+  // does, so pass the scope explicitly.
+  const scopeArgs =
+    process.env.VERCEL_ORG_ID === undefined ? [] : ["--scope", process.env.VERCEL_ORG_ID];
+  const deploy = await execFileAsync(
+    "vercel",
+    ["deploy", "--prebuilt", "--yes", "--target=preview", ...deploymentEnvArgs, ...tokenArgs],
+    EXEC_OPTIONS,
+  );
+  const deploymentUrl = deploy.stdout.trim().split("\n").at(-1)?.trim();
+  if (deploymentUrl === undefined || !deploymentUrl.startsWith("https://")) {
+    throw new Error(`vercel deploy did not print a deployment URL; got: ${deploy.stdout}`);
+  }
+  t.log(`deployed ${deploymentUrl} (${phase}); aliasing ${alias}`);
+
+  await execFileAsync(
+    "vercel",
+    ["alias", "set", deploymentUrl, alias, ...tokenArgs, ...scopeArgs],
+    EXEC_OPTIONS,
+  );
+}
+
+/**
+ * Polls `/orcel/v1/info` until the alias repeatedly serves a deployment whose
+ * manifest contains `marker`. One matching response is insufficient while an
+ * alias update is propagating and could race the next request.
+ */
+async function waitForAliasToServe(t: OrcelEvalContext, marker: string): Promise<void> {
+  const deadline = Date.now() + 120_000;
+  let consecutiveMatches = 0;
+  let lastStatus = "transport error";
+  let lastMarkerMatch = false;
+  while (Date.now() < deadline) {
+    try {
+      const response = await t.target.fetch("/orcel/v1/info", { cache: "no-store" });
+      lastStatus = String(response.status);
+      lastMarkerMatch = response.ok && JSON.stringify(await response.json()).includes(marker);
+      if (lastMarkerMatch) {
+        consecutiveMatches += 1;
+        if (consecutiveMatches >= ALIAS_SETTLE_MATCHES) {
+          return;
+        }
+      } else {
+        consecutiveMatches = 0;
+      }
+    } catch {
+      consecutiveMatches = 0;
+    }
+    await t.sleep(1_000);
+  }
+  throw new Error(
+    `Timed out waiting for alias ${new URL(t.target.url).host} to serve marker ${marker}; ` +
+      `last status=${lastStatus}, marker matched=${lastMarkerMatch}, consecutive matches=${consecutiveMatches}.`,
+  );
+}

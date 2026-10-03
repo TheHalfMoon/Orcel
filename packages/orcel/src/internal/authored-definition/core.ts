@@ -1,0 +1,507 @@
+import { isAgentReasoningDefinition } from "#internal/runtime-model.js";
+import type {
+  AgentDefinition,
+  AgentBuildDefinition,
+  AgentWorkflowDefinition,
+} from "#public/definitions/agent.js";
+import type { ScheduleDefinition, ScheduleRunHandler } from "#public/definitions/schedule.js";
+import type { SkillDefinition, SkillFileContent } from "#public/definitions/skill.js";
+import {
+  expectBoolean,
+  expectFunction,
+  expectObjectRecord,
+  expectOnlyKnownKeys,
+  expectPositiveInteger,
+  expectProviderOptions,
+  expectString,
+  getOptionalStringRecordProperty,
+} from "#internal/authored-module.js";
+import {
+  AGENT_WORKFLOW_RETENTION_VALUES,
+  type PublicAgentStaticModelDefinition,
+} from "#shared/agent-definition.js";
+import {
+  isDynamicSentinel,
+  type DynamicEvents,
+  type DynamicToolEventName,
+} from "#dynamic/definition.js";
+
+type Mutable<T> = { -readonly [K in keyof T]: T[K] };
+type MutableDynamicEvents = {
+  -readonly [K in DynamicToolEventName]?: DynamicEvents[DynamicToolEventName];
+};
+
+type NormalizedAgentDefinition = Omit<AgentDefinition, "build"> & {
+  build?: {
+    externalDependencies?: Readonly<AgentBuildDefinition["externalDependencies"]>;
+  };
+};
+
+/**
+ * Normalizes one authored agent definition into the canonical internal shape.
+ *
+ * Authored `name` fields are rejected — agent identity is derived at compile
+ * time from `manifest.agentId` (package name or app-root basename).
+ */
+export function normalizeAgentDefinition(
+  value: unknown,
+  message: string,
+): Readonly<NormalizedAgentDefinition> {
+  const record = expectObjectRecord(value, message);
+  expectOnlyKnownKeys(
+    record,
+    [
+      "build",
+      "compaction",
+      "defaultTools",
+      "description",
+      "experimental",
+      "limits",
+      "model",
+      "modelContextWindowTokens",
+      "modelOptions",
+      "reasoning",
+      "tool",
+    ],
+    message,
+  );
+  if (record.model === undefined) {
+    throw new Error(`${message} The "model" field is required.`);
+  }
+
+  const definition: Mutable<NormalizedAgentDefinition> = {
+    model: normalizeAgentModelDefinition(record.model, message),
+  };
+
+  if (
+    isDynamicSentinel(definition.model) &&
+    (record.modelContextWindowTokens !== undefined || record.modelOptions !== undefined)
+  ) {
+    throw new Error(
+      `${message} Dynamic model definitions do not support sibling "modelContextWindowTokens" or "modelOptions" fields. Return those overrides from the resolver selection instead.`,
+    );
+  }
+
+  if (record.description !== undefined) {
+    definition.description = expectString(record.description, message);
+  }
+
+  if (record.defaultTools !== undefined) {
+    definition.defaultTools = expectBoolean(record.defaultTools, message);
+  }
+
+  if (record.compaction !== undefined) {
+    definition.compaction = normalizeAgentCompactionDefinition(record.compaction, message);
+  }
+
+  if (record.build !== undefined) {
+    definition.build = normalizeAgentBuildDefinition(record.build, message);
+  }
+
+  if (record.experimental !== undefined) {
+    definition.experimental = normalizeAgentExperimentalDefinition(record.experimental, message);
+  }
+
+  if (record.modelOptions !== undefined) {
+    definition.modelOptions = normalizeAgentModelOptions(record.modelOptions, message);
+  }
+
+  if (record.modelContextWindowTokens !== undefined) {
+    definition.modelContextWindowTokens = expectPositiveInteger(
+      record.modelContextWindowTokens,
+      message,
+    );
+  }
+
+  if (record.reasoning !== undefined) {
+    definition.reasoning = normalizeAgentReasoningDefinition(record.reasoning, message);
+  }
+
+  if (record.tool !== undefined) {
+    definition.tool = expectBoolean(record.tool, message);
+  }
+
+  if (record.limits !== undefined) {
+    definition.limits = normalizeAgentLimitsDefinition(record.limits, message);
+  }
+
+  return definition as Readonly<NormalizedAgentDefinition>;
+}
+
+function normalizeAgentReasoningDefinition(
+  value: unknown,
+  message: string,
+): NonNullable<NormalizedAgentDefinition["reasoning"]> {
+  if (!isAgentReasoningDefinition(value)) throw new Error(message);
+  return value;
+}
+
+function normalizeAgentModelDefinition(
+  value: unknown,
+  message: string,
+): NormalizedAgentDefinition["model"] {
+  if (!isDynamicSentinel(value)) {
+    return value as NormalizedAgentDefinition["model"];
+  }
+
+  const record = expectObjectRecord(value, message);
+  expectOnlyKnownKeys(record, ["events", "kind"], message);
+
+  const rawEvents = expectObjectRecord(record.events, message);
+  const events: MutableDynamicEvents = {};
+  for (const [eventName, handler] of Object.entries(rawEvents)) {
+    events[eventName as DynamicToolEventName] = expectFunction(handler, message) as NonNullable<
+      DynamicEvents[DynamicToolEventName]
+    >;
+  }
+
+  return {
+    events,
+    kind: record.kind,
+  } as NormalizedAgentDefinition["model"];
+}
+
+/** `false` explicitly disables one numeric runtime limit. */
+function expectPositiveIntegerOrFalse(value: unknown, message: string): number | false {
+  if (value === false) {
+    return false;
+  }
+
+  return expectPositiveInteger(value, message);
+}
+
+function expectPositiveNumberOrFalse(value: unknown, message: string): number | false {
+  if (value === false) {
+    return false;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new Error(message);
+  }
+  return value;
+}
+
+function normalizeAgentLimitsDefinition(
+  value: unknown,
+  message: string,
+): NonNullable<NormalizedAgentDefinition["limits"]> {
+  const record = expectObjectRecord(value, message);
+  expectOnlyKnownKeys(
+    record,
+    [
+      "maxInputTokensPerSession",
+      "maxOutputTokensPerSession",
+      "maxTokenCostUsdPerSession",
+      "sessionTimeoutMs",
+    ],
+    message,
+  );
+  const normalizedDefinition: Mutable<NonNullable<NormalizedAgentDefinition["limits"]>> = {};
+
+  if (record.sessionTimeoutMs !== undefined) {
+    normalizedDefinition.sessionTimeoutMs = expectPositiveIntegerOrFalse(
+      record.sessionTimeoutMs,
+      message,
+    );
+  }
+  if (record.maxInputTokensPerSession !== undefined) {
+    normalizedDefinition.maxInputTokensPerSession = expectPositiveIntegerOrFalse(
+      record.maxInputTokensPerSession,
+      message,
+    );
+  }
+  if (record.maxOutputTokensPerSession !== undefined) {
+    normalizedDefinition.maxOutputTokensPerSession = expectPositiveIntegerOrFalse(
+      record.maxOutputTokensPerSession,
+      message,
+    );
+  }
+  if (record.maxTokenCostUsdPerSession !== undefined) {
+    normalizedDefinition.maxTokenCostUsdPerSession = expectPositiveNumberOrFalse(
+      record.maxTokenCostUsdPerSession,
+      message,
+    );
+  }
+  return normalizedDefinition;
+}
+
+function normalizeAgentBuildDefinition(
+  value: unknown,
+  message: string,
+): NonNullable<NormalizedAgentDefinition["build"]> {
+  const record = expectObjectRecord(value, message);
+  expectOnlyKnownKeys(record, ["externalDependencies"], message);
+  const normalizedDefinition: NormalizedAgentDefinition["build"] = {};
+
+  if (record.externalDependencies !== undefined) {
+    if (!Array.isArray(record.externalDependencies)) {
+      throw new Error(message);
+    }
+
+    normalizedDefinition.externalDependencies = Object.freeze(
+      record.externalDependencies.map((entry) => expectString(entry, message)),
+    );
+  }
+
+  return normalizedDefinition;
+}
+
+function normalizeAgentWorkflowDefinition(
+  value: unknown,
+  message: string,
+): AgentWorkflowDefinition {
+  const record = expectObjectRecord(value, message);
+  expectOnlyKnownKeys(record, ["modelCallsPerStep", "retention", "world"], message);
+  const normalizedDefinition: Mutable<AgentWorkflowDefinition> = {};
+
+  if (record.modelCallsPerStep !== undefined) {
+    normalizedDefinition.modelCallsPerStep = expectPositiveInteger(
+      record.modelCallsPerStep,
+      message,
+    );
+  }
+
+  if (record.retention !== undefined) {
+    normalizedDefinition.retention = normalizeAgentWorkflowRetentionDefinition(
+      record.retention,
+      message,
+    );
+  }
+
+  if (record.world !== undefined) {
+    normalizedDefinition.world = normalizeAgentWorkflowWorldDefinition(record.world, message);
+  }
+
+  return normalizedDefinition;
+}
+
+function normalizeAgentWorkflowRetentionDefinition(
+  value: unknown,
+  message: string,
+): NonNullable<AgentWorkflowDefinition["retention"]> {
+  const match = AGENT_WORKFLOW_RETENTION_VALUES.find((accepted) => accepted === value);
+  if (match === undefined) {
+    const accepted = AGENT_WORKFLOW_RETENTION_VALUES.map((entry) => JSON.stringify(entry)).join(
+      " or ",
+    );
+    throw new Error(`${message} "experimental.workflow.retention" must be ${accepted}.`);
+  }
+
+  return match;
+}
+
+function normalizeAgentWorkflowWorldDefinition(
+  value: unknown,
+  message: string,
+): NonNullable<AgentWorkflowDefinition["world"]> {
+  const packageName = expectString(value, message);
+  if (packageName.trim() === "") {
+    throw new Error(`${message} "experimental.workflow.world" must be a non-empty package name.`);
+  }
+
+  return packageName;
+}
+
+function normalizeAgentExperimentalDefinition(
+  value: unknown,
+  message: string,
+): NonNullable<NormalizedAgentDefinition["experimental"]> {
+  const record = expectObjectRecord(value, message);
+  expectOnlyKnownKeys(record, ["workflow"], message);
+  const normalizedDefinition: Mutable<NonNullable<NormalizedAgentDefinition["experimental"]>> = {};
+
+  if (record.workflow !== undefined) {
+    normalizedDefinition.workflow = normalizeAgentWorkflowDefinition(record.workflow, message);
+  }
+
+  return normalizedDefinition;
+}
+
+function normalizeAgentModelOptions(
+  value: unknown,
+  message: string,
+): NonNullable<NormalizedAgentDefinition["modelOptions"]> {
+  const record = expectObjectRecord(value, message);
+  expectOnlyKnownKeys(record, ["providerOptions"], message);
+  const providerOptions = record.providerOptions;
+
+  if (providerOptions === undefined) {
+    return {};
+  }
+
+  return {
+    providerOptions: expectProviderOptions(providerOptions, message),
+  };
+}
+
+function normalizeAgentCompactionDefinition(
+  value: unknown,
+  message: string,
+): NonNullable<NormalizedAgentDefinition["compaction"]> {
+  const record = expectObjectRecord(value, message);
+  expectOnlyKnownKeys(record, ["model", "modelContextWindowTokens", "thresholdPercent"], message);
+  const normalizedDefinition: Mutable<NonNullable<NormalizedAgentDefinition["compaction"]>> = {};
+
+  if (record.model !== undefined) {
+    if (isDynamicSentinel(record.model)) {
+      throw new Error(
+        `${message} "compaction.model" does not support defineDynamic — provide a static model.`,
+      );
+    }
+    normalizedDefinition.model = record.model as PublicAgentStaticModelDefinition;
+  }
+
+  if (record.modelContextWindowTokens !== undefined) {
+    normalizedDefinition.modelContextWindowTokens = expectPositiveInteger(
+      record.modelContextWindowTokens,
+      message,
+    );
+  }
+
+  if (record.thresholdPercent !== undefined) {
+    const thresholdPercent = record.thresholdPercent;
+
+    if (
+      typeof thresholdPercent !== "number" ||
+      !Number.isFinite(thresholdPercent) ||
+      thresholdPercent < 0 ||
+      thresholdPercent > 1
+    ) {
+      throw new Error(message);
+    }
+
+    normalizedDefinition.thresholdPercent = thresholdPercent;
+  }
+
+  return normalizedDefinition;
+}
+
+/**
+ * Normalizes one authored instructions definition into the canonical
+ * internal shape.
+ *
+ * Authored `name` fields are rejected — instructions prompt identity is
+ * derived from the file path (`instructions.md` or
+ * `instructions.{ts,...}`).
+ */
+export function normalizeInstructionsDefinition(
+  value: unknown,
+  message: string,
+): { readonly content: string; readonly role: "system" | "user" } {
+  const record = expectObjectRecord(value, message);
+  expectOnlyKnownKeys(record, ["content", "markdown", "role"], message);
+
+  const hasContent = Object.hasOwn(record, "content");
+  const hasMarkdown = Object.hasOwn(record, "markdown");
+  if (hasContent === hasMarkdown) {
+    throw new Error(`${message} Provide exactly one of "content" or "markdown".`);
+  }
+
+  if (hasMarkdown) {
+    if (Object.hasOwn(record, "role")) {
+      throw new Error(`${message} The deprecated "markdown" shape does not support "role".`);
+    }
+    return {
+      content: expectString(record.markdown, message),
+      role: "system",
+    };
+  }
+
+  const role = record.role === undefined ? "system" : expectString(record.role, message);
+  if (role !== "system" && role !== "user") {
+    throw new Error(`${message} Expected "role" to be one of: system, user.`);
+  }
+  return {
+    content: expectString(record.content, message),
+    role,
+  };
+}
+
+/**
+ * Normalizes one authored skill definition into the canonical internal
+ * shape.
+ *
+ * Authored `name` fields are rejected — skill identity is derived from
+ * the file path under `agent/skills/`.
+ */
+export function normalizeSkillDefinition(value: unknown, message: string): SkillDefinition {
+  const record = expectObjectRecord(value, message);
+  expectOnlyKnownKeys(record, ["description", "files", "license", "markdown", "metadata"], message);
+  const definition: Mutable<SkillDefinition> = {
+    description: expectString(record.description, message),
+    markdown: expectString(record.markdown, message),
+  };
+  const license = record.license;
+  const metadata = getOptionalStringRecordProperty(record, "metadata", message);
+
+  if (license !== undefined) {
+    definition.license = expectString(license, message);
+  }
+
+  if (metadata !== undefined) {
+    definition.metadata = metadata;
+  }
+
+  if (record.files !== undefined) {
+    definition.files = normalizeSkillFiles(record.files, message);
+  }
+
+  return definition;
+}
+
+function normalizeSkillFiles(
+  value: unknown,
+  message: string,
+): Readonly<Record<string, SkillFileContent>> {
+  const files = expectObjectRecord(value, message);
+  const normalized: Record<string, SkillFileContent> = {};
+
+  for (const [filePath, content] of Object.entries(files)) {
+    if (typeof content === "string" || content instanceof Uint8Array) {
+      normalized[filePath] = content;
+      continue;
+    }
+
+    throw new Error(`${message} Expected skill file "${filePath}" to be a string or Uint8Array.`);
+  }
+
+  return normalized;
+}
+
+/**
+ * Normalizes one authored schedule definition into the canonical internal
+ * shape.
+ *
+ * Authored `name` fields are rejected — schedule identity is derived from
+ * the file path under `agent/schedules/`. Exactly one of `markdown` (the
+ * fire-and-forget agent prompt) or `run` (the cron handler function)
+ * must be provided.
+ */
+export function normalizeScheduleDefinition(value: unknown, message: string): ScheduleDefinition {
+  const record = expectObjectRecord(value, message);
+  expectOnlyKnownKeys(record, ["cron", "markdown", "run"], message);
+
+  const cron = expectString(record.cron, message);
+  const hasMarkdown = record.markdown !== undefined;
+  const hasRun = record.run !== undefined;
+
+  if (hasMarkdown && hasRun) {
+    throw new Error(
+      `${message} Pass either "markdown" (fire-and-forget) or "run" (handler) — not both.`,
+    );
+  }
+  if (!hasMarkdown && !hasRun) {
+    throw new Error(
+      `${message} Must provide either "markdown" (fire-and-forget) or "run" (handler).`,
+    );
+  }
+
+  const definition: { cron: string; markdown?: string; run?: ScheduleRunHandler } = { cron };
+
+  if (hasMarkdown) {
+    definition.markdown = expectString(record.markdown, message);
+  } else {
+    definition.run = expectFunction(record.run, message) as ScheduleRunHandler;
+  }
+
+  return definition as ScheduleDefinition;
+}

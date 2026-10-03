@@ -1,0 +1,11 @@
+packages:
+  - "."
+
+minimumReleaseAgeExclude:
+  - orcel
+  - "@vercel/connect"
+  - ai
+  - orcel
+
+allowBuilds:
+  esbuild: true

@@ -1,0 +1,12 @@
+enableGlobalVirtualStore: false
+
+minimumReleaseAgeExclude:
+  - "@ai-sdk/*"
+  - "@vercel/*"
+  - "@workflow/*"
+  - ai
+  - orcel
+  - workflow
+
+allowBuilds:
+  esbuild: true

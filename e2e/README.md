@@ -1,0 +1,261 @@
+# e2e
+
+End-to-end coverage is fixture-owned `orcel eval` runs. The suite only runs
+fixture eval files from the fixture directory.
+
+CI splits the coverage into two suites so live-model flake never gates
+world-infrastructure coverage (and vice versa):
+
+- **Model suite** (`e2e-local.yml`): every fixture runs against the local
+  workflow world with real matrix models. Fixtures whose behavior varies per
+  provider declare `"e2e": { "modelMatrix": "full" }` in `package.json` and
+  run on every matrix model; all other fixtures run once on the default
+  model.
+- **World suites** (`e2e-vercel.yml`, `e2e-postgres.yml`, and one workflow
+  per additional workflow world): every fixture builds, deploys, and runs
+  once with deterministic mock models (`ORCEL_E2E_MODEL=mock`), proving the
+  world's infrastructure — build, deploy, boot, streaming, durability —
+  without live models. Evals whose assertions need a real model carry the
+  `real-model` tag and are excluded there via `--exclude-tag real-model`.
+
+## Harness config (`@orcel-e2e/config`)
+
+Fixture agents author their harness-owned configuration through the private
+`@orcel-e2e/config` workspace package (`e2e/fixtures/e2e-config`):
+
+- `e2eAgentConfig({ mock? })` — spread into the root `defineAgent`: resolves
+  the matrix model from `ORCEL_E2E_MODEL`, and applies the workflow-world
+  override from `ORCEL_E2E_WORKFLOW_WORLD` when set.
+- `e2eSubagentConfig({ mock? })` — the same model resolution for subagents,
+  without root-only settings.
+- `e2eModel({ mock? })` — a bare model handle for nested slots such as
+  compaction models and dynamic selections.
+
+When `ORCEL_E2E_MODEL=mock`, all of these return a deterministic `mockModel()`
+instead of a gateway model id. The default responder echoes the last user
+message; fixtures whose evals need tool calls pass a scripted responder via
+the `mock` option (see `agent-tools-sandbox/agent/agent.ts`).
+
+### The `real-model` tag
+
+An eval tagged `real-model` asserts behavior only a live model produces
+(judge scoring, provider cache metrics, free-form tool planning). The world
+suites exclude it; it still runs in the model suite. Untagging an eval is the
+migration unit for world-suite coverage: script the fixture's mock responder
+until the eval passes under `ORCEL_E2E_MODEL=mock`, then remove the tag. Prefer
+untagging over new `real-model` tags — deterministic evals make every world
+suite stronger.
+
+## Local
+
+Run evals from the fixture directory:
+
+```sh
+cd e2e/fixtures/agent-basic-runtime
+ORCEL_E2E_MODEL="openai/gpt-6-sol" pnpm exec orcel eval --strict
+```
+
+Mock-model runs work anywhere with no provider credentials, which makes them
+the fastest way to validate world-suite behavior locally:
+
+```sh
+ORCEL_E2E_MODEL=mock pnpm exec orcel eval --strict --exclude-tag real-model
+```
+
+Every retained e2e eval is deterministic and self-contained. Coverage that
+needs external services or injected env is intentionally not part of this
+suite. Most fixtures use the shared model-provider credentials; dedicated
+runtime stress fixtures may use an authored deterministic model instead.
+
+Each retained fixture package also exposes the same command as:
+
+```sh
+pnpm --filter agent-basic-runtime test:e2e
+```
+
+The root convenience command runs every fixture package with a `test:e2e`
+script:
+
+```sh
+pnpm test:e2e
+```
+
+## Vercel
+
+Vercel e2e uses the same fixture evals against immutable preview deployment
+URLs. All fixture deployments link to the same Vercel project id; isolation
+comes from the deployment URL returned by `vercel deploy --prebuilt`.
+
+One-time project setup:
+
+- Configure the shared Vercel project for Node.js 24.
+- Provide the model-provider credentials needed by `ORCEL_E2E_MODEL` in the
+  project's Preview environment.
+- Provide `VERCEL_TOKEN`, `VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID` in CI.
+
+The repository does not install the Vercel CLI. Locally, any global `vercel`
+install works. CI installs the latest native binary:
+
+```sh
+npm install --global --force --allow-scripts=@vercel/vc-native @vercel/vc-native
+```
+
+Run a fixture against Vercel from its directory:
+
+```sh
+vercel link --yes --project "$VERCEL_PROJECT_ID"
+vercel env pull --yes --environment=preview
+VERCEL=1 VERCEL_ENV=preview VERCEL_TARGET_ENV=preview \
+  VERCEL_PROJECT_ID="$VERCEL_PROJECT_ID" \
+  pnpm exec orcel build
+DEPLOYMENT_URL="$(vercel deploy --prebuilt --yes --target=preview \
+  --env "ORCEL_E2E_MODEL=$ORCEL_E2E_MODEL" | tail -n 1)"
+npx orcel eval --strict --url "$DEPLOYMENT_URL"
+```
+
+Do not set `VERCEL_TEAM_ID` at build: sandbox template keys must derive
+identically at build and runtime, and Vercel has no team variable at runtime.
+
+### Redeploy suite
+
+`agent-tools-sandbox/evals/sandbox/redeploy.eval.ts` proves sandbox semantics
+across deployment updates as they behave on preview targets. A delivery to an
+idle parked session hands ownership to the exact deployment that accepted the
+request while preserving the public session stream. The eval verifies that an
+instruction-only redeploy preserves the sandbox workspace, a resource-changing
+redeploy rotates it, and a new session loads the new deployment's skill.
+
+The eval redeploys from inside its test body: it mutates the agent source,
+runs `orcel build` + `vercel deploy`, and repoints a run-scoped Vercel alias at
+each new deployment, polling `/orcel/v1/info` until the alias serves it.
+Because immutable deployment URLs never change what they serve, the eval
+must run against the alias — the `e2e-vercel` workflow sets
+`ORCEL_E2E_REDEPLOY_ALIAS`, aliases the deployment, and runs `--tag redeploy`
+evals as a second `orcel eval` invocation after the main suite. Without the
+alias env (local matrix, plain `orcel eval --strict`) the eval skips.
+
+Most fixture agents resolve `ORCEL_E2E_MODEL`
+through `@orcel-e2e/config`, defaulting to `openai/gpt-6-sol` for local runs.
+Fixture eval configs use the shared `e2eJudgeModel()` helper, which returns an OpenAI evaluation-model instance for `openai/gpt-5.6-luna` until CI has access to Jev. The adapter uses Gateway's Responses endpoint and `AI_GATEWAY_API_KEY`, independently of the agent matrix. A bare Luna string targets Gateway's native evaluation API and is not supported. Deterministic judge coverage in `agent-evaluate` passes a fixture evaluation model explicitly.
+
+`agent-workflow-stress` uses orcel's `mockModel` fixture helper so its 100-turn
+runs stay fast and deterministic. Its concurrent and sequential evals cover
+high-volume session execution and repeated session resumption respectively.
+Its parallel-tool-calls eval scripts ten tool calls into one model step and
+proves the durable runtime executes them concurrently, which a live model
+cannot guarantee because it may split the calls across steps.
+
+## Fixtures
+
+The [`agent-self-modification`](./fixtures/agent-self-modification/README.md)
+fixture contains source-generation and repair examples using `orcel eval`. It
+checks generated tools through real calls in fresh sessions and restores source
+after retiring the parent and child sessions. Routing-only self-modification
+coverage stays in `agent-subagents`.
+
+`agent-tasks` is the real-model gate for how models plan around tasks: waiting
+for a needed result, fanning out, keeping or correcting tasks after a new
+message, and ordering a side effect after the result it depends on. Every eval
+in it is tagged `real-model`. Deterministic task coverage lives with the
+surfaces it exercises, in `agent-workflow-tools` and `agent-subagents`.
+
+E2E fixtures live under `e2e/fixtures/*`. Fixture discovery also accepts
+`apps/fixtures/*` apps with an `evals/` directory, but shared development apps
+should stay out of the e2e matrix unless they intentionally own evals.
+
+When adding e2e coverage:
+
+- Put the eval in the fixture app's `evals/` directory.
+- Keep it runnable with only `orcel eval --strict`.
+- Keep it deterministic: no external service startup or injected env
+  requirements (beyond model-provider credentials).
+- If the behavior cannot fit that shape yet, leave it out and rebuild it later
+  as a first-class eval story.
+
+## CI
+
+The matrix models and worlds are registered in [`e2e/matrix.json`](./matrix.json)
+— edit that file to add either. `.github/scripts/discover-e2e-fixtures.mjs`
+discovers every fixture with an `evals/` directory and emits the suite
+matrices from the registry:
+
+- `model_matrix` — fixture × model legs for `e2e-local.yml`. The first
+  registry model is the default that every fixture runs on; the rest run only
+  on fixtures with `"e2e": { "modelMatrix": "full" }` in package.json.
+  A fixture can set `e2e.localOnly: true` when it requires local-runner hardware
+  or daemons and must not enter world deployment matrices. A fixture can add a
+  narrowly scoped leg with `e2e.additionalModels` entries
+  shaped as `{ "name": "short-check-name", "id": "provider/model" }`.
+  `e2e.optionalModels` can name selected model legs that should still run and
+  report failures without blocking the aggregate check. Fixtures can define
+  `e2e.modelShards` as named, non-empty eval-ID partitions; discovery requires
+  the partitions to assign every discovered eval exactly once and expands each
+  selected model into one job per shard. This partitions only the local model
+  suite; world matrices remain one leg per fixture.
+- `world_matrix_<world>` — one leg per fixture for that world's suite
+  workflow. A fixture can set `e2e.worlds` to a subset of registered world
+  names, or to `[]` when its evals require local dev behavior; omitting it
+  selects every world. A registered world's `package` reaches the job as
+  `ORCEL_E2E_WORKFLOW_WORLD` (worlds without one, like `vercel`, use the
+  deploy target's default).
+
+The short model name is the stable Actions check identifier; the full id
+selects the provider model. Updating a model version does not rename required
+checks. Each workflow also publishes one stable aggregate check —
+`e2e-local`, `e2e-vercel`, or `e2e-postgres` — which succeeds only when every
+leg succeeds. Require those aggregate checks in the repository ruleset so
+newly added fixtures and models become required automatically. Add a new
+aggregate to the ruleset only after its workflow lands on `main`: a required
+check nothing reports blocks every PR as permanently "expected".
+
+`.github/workflows/e2e-local.yml` (the model suite) builds the orcel package
+once per leg, then runs one fixture directory with the leg's real model:
+
+```sh
+pnpm --filter orcel run build
+cd "$FIXTURE_DIR"
+pnpm run --if-present e2e:prepare
+ORCEL_E2E_MODEL="$MODEL" pnpm exec orcel eval --strict --junit "$JUNIT_PATH"
+```
+
+For a sharded fixture, the workflow passes that shard's eval IDs as positional
+arguments to `orcel eval`. Each matrix leg has its own checkout, server, JUnit
+file, and failure-artifact name.
+
+Fixtures with generated source can define an `e2e:prepare` script. The local
+model suite runs it before starting the eval server; the self-modification
+fixture uses it to copy the checkout's standard registry scaffold.
+
+Always build with the full `build` script (not `build:js`); only the full
+build stamps the package version into `dist`.
+
+`.github/workflows/e2e-vercel.yml` (the Vercel world suite) links each
+fixture directory to the shared Vercel project id, builds Vercel output
+locally with `ORCEL_E2E_MODEL=mock`, deploys that output, and runs the
+mock-compatible evals:
+
+```sh
+pnpm exec orcel build
+DEPLOYMENT_URL="$(vercel deploy --prebuilt --yes --target=preview \
+  --env "ORCEL_E2E_MODEL=mock" | tail -n 1)"
+npx orcel eval --strict --exclude-tag real-model \
+  --url "$DEPLOYMENT_URL" --junit "$JUNIT_PATH"
+```
+
+`.github/workflows/e2e-postgres.yml` (the Postgres world suite) starts a
+PostgreSQL service container, bootstraps the `@workflow/world-postgres`
+schema, builds each fixture with `ORCEL_E2E_WORKFLOW_WORLD=@workflow/world-postgres`,
+runs the mock-compatible evals against a local production server
+(`orcel start`), and asserts the traffic produced Postgres-backed workflow
+runs. Every fixture carries `@workflow/world-postgres` as a dependency so
+the world module resolves at build time.
+
+A world suite for another workflow world follows the same shape: register
+the world in `e2e/matrix.json`, add an `e2e-<world>.yml` that consumes its
+`world_matrix_<world>` output (the registered `package` arrives as
+`matrix.world_package` for `ORCEL_E2E_WORKFLOW_WORLD`), set
+`ORCEL_E2E_MODEL=mock` (plus any backing services), and run with
+`--exclude-tag real-model`.
+
+TUI smoke scripts are not e2e. They live under
+`packages/orcel/test/tui-client` and run through `pnpm test:tui`.

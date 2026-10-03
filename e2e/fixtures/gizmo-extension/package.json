@@ -1,0 +1,42 @@
+{
+  "name": "gizmo-extension",
+  "version": "0.0.0",
+  "private": true,
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.mjs"
+    },
+    "./tools": {
+      "types": "./dist/tools/index.d.ts",
+      "default": "./dist/tools/index.mjs"
+    }
+  },
+  "scripts": {
+    "build": "orcel extension build"
+  },
+  "dependencies": {
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "orcel": "workspace:*",
+    "typescript": "catalog:"
+  },
+  "peerDependencies": {
+    "orcel": "*"
+  },
+  "orcel": {
+    "extension": {
+      "source": "./extension",
+      "dist": "./dist/extension",
+      "externalDependencies": [
+        "zod"
+      ]
+    }
+  }
+}

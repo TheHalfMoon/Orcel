@@ -1,0 +1,14 @@
+{
+  "kind": "orcel-extension-capability-contract",
+  "capability": "schedule",
+  "epoch": 20,
+  "sha256": "635ddae8cf3071a9aab79cb3de538bb20e56e9bf990424e207554bd57031e94f",
+  "exports": [
+    "ScheduleDefinition",
+    "ScheduleHandlerArgs",
+    "ScheduleRunHandler",
+    "ScheduleToFn",
+    "TypedReceiveTarget",
+    "defineSchedule"
+  ]
+}

@@ -1,0 +1,4 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "tmp=\"$(mktemp -d)\" && pnpm --filter ../../packages/orcel pack --pack-destination \"$tmp\" && mkdir -p public && cp \"$tmp\"/orcel-*.tgz public/orcel.tgz && pnpm build"
+}

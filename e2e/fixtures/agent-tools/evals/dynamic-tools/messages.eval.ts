@@ -1,0 +1,52 @@
+import { defineEval } from "orcel/evals";
+import { satisfies } from "orcel/evals/expect";
+
+// The step.started resolver sees the accumulated message history: the
+// second turn's count must exceed the first.
+export default defineEval({
+  tags: ["real-model"],
+  description: "Dynamic tools smoke: step.started resolver sees accumulated message history.",
+  async test(t) {
+    const first = await t.send(
+      "Alice is checking the conversation history tracking in her support assistant. " +
+        "Use the check_messages tool with label 'turn1' to record the initial count " +
+        "from the application's conversation log, then summarize the returned counts.",
+    );
+    const session = first.session;
+    first.expectOk();
+    const firstOutput = first.requireToolCall("check_messages").output;
+
+    const second = await session.send(
+      "Bob has added this follow-up to the support conversation. Use the check_messages " +
+        "tool with label 'turn2' to record the updated count from the application's " +
+        "conversation log, then summarize the returned counts so Alice can compare them.",
+    );
+    const secondOutput = second.requireToolCall("check_messages").output;
+    t.check(
+      [firstOutput, secondOutput],
+      satisfies(([firstValue, secondValue]: readonly unknown[]) => {
+        const firstCount = readMessageCount(firstValue);
+        const secondCount = readMessageCount(secondValue);
+        return (
+          firstCount !== undefined &&
+          secondCount !== undefined &&
+          firstCount >= 1 &&
+          secondCount > firstCount
+        );
+      }, "message count increases across turns"),
+    );
+
+    t.succeeded();
+    // The accumulated-history property is verified per-turn above
+    // (firstCount >= 1, secondCount > firstCount). The model may call the
+    // tool more than once in a turn, so assert it was called without error
+    // rather than pinning an exact count.
+    t.calledTool("check_messages");
+  },
+});
+
+function readMessageCount(value: unknown): number | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const count = (value as { messageCount?: unknown }).messageCount;
+  return typeof count === "number" ? count : undefined;
+}

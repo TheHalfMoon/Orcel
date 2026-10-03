@@ -1,0 +1,138 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import pc from "#compiled/picocolors/index.js";
+
+import { DEFAULT_AGENT_MODEL_ID } from "#shared/default-agent-model.js";
+
+// The two coding-agent prompts are one onboarding flow in two phases, composed
+// from the section files in `agent-prompt/`. The setup guide runs before
+// anything is scaffolded when malformed init input prevents the command from
+// running; the handoff runs once a project exists (after `orcel init`, or when
+// seeding a REPL). Both reuse the `collect-intent`, `vercel-connect`, and
+// `build-and-verify` sections verbatim, so guidance authored once reaches both.
+// `{{devCommand}}` is rendered per
+// caller; `{{workingDirectory}}` is post-scaffold only and lives in the handoff
+// intro. The shared sections use paths relative to the project directory so the
+// setup guide, which has no working directory yet, can reuse them unchanged.
+// Exported so `agent-instructions.test.ts` can assert these lists name exactly
+// the files in `agent-prompt/`, which is what keeps them from drifting.
+/** Ordered `agent-prompt/` sections composed into the pre-scaffold setup guide. */
+export const SETUP_SECTIONS = [
+  "intro-setup.md",
+  "collect-intent.md",
+  "vercel-connect.md",
+  "scaffold.md",
+  "build-and-verify.md",
+] as const;
+
+/** Ordered `agent-prompt/` sections composed into the post-scaffold handoff. */
+export const HANDOFF_SECTIONS = [
+  "intro-handoff.md",
+  "collect-intent.md",
+  "vercel-connect.md",
+  "build-and-verify.md",
+] as const;
+
+function compose(
+  sections: readonly string[],
+  options: { devCommand: string; workingDirectory?: string },
+): string {
+  const prompt = sections
+    .map((section) =>
+      readFileSync(new URL(`./agent-prompt/${section}`, import.meta.url), "utf8").trim(),
+    )
+    .join("\n\n")
+    .replaceAll("{{devCommand}}", () => options.devCommand);
+  const { workingDirectory } = options;
+  if (workingDirectory === undefined) {
+    return prompt;
+  }
+  return prompt.replaceAll("{{workingDirectory}}", () => workingDirectory);
+}
+
+/**
+ * The pre-scaffold setup guide shown after malformed coding-agent input. It
+ * scaffolds from scratch, so it renders with the universal `npx orcel dev` rather
+ * than a launcher-specific command.
+ */
+export function initAgentInstructions(): string {
+  return compose(SETUP_SECTIONS, { devCommand: "npx orcel dev" });
+}
+
+/** Concise scaffold facts printed only when a coding agent launched `orcel init`. */
+export function initAgentReadySummary(
+  model: string | undefined,
+  projectPath: string,
+  options: { workspace?: boolean } = {},
+): string {
+  const selectedModel = model ?? DEFAULT_AGENT_MODEL_ID;
+  const defaultLabel = model === undefined ? pc.dim(" (orcel default)") : "";
+  const authoredFiles = options.workspace
+    ? `${pc.green("✓")} Agents ${pc.bold(join(projectPath, "agents"))}`
+    : `${pc.green("✓")} Instructions ${pc.bold(join(projectPath, "agent/instructions.md"))}`;
+  return [`${pc.green("✓")} Model ${pc.bold(selectedModel)}${defaultLabel}`, authoredFiles].join(
+    "\n",
+  );
+}
+
+/** The post-scaffold handoff printed after a coding agent runs `orcel init`. */
+export function initAgentDevHandoff(options: { projectPath: string; devCommand: string }): string {
+  return compose(HANDOFF_SECTIONS, {
+    devCommand: options.devCommand,
+    workingDirectory: options.projectPath,
+  });
+}
+
+/**
+ * Pre-scaffold guide for a coding agent that ran `orcel extension init` with no
+ * target. Mirrors agent bare-init: collect a package name, then re-run with it.
+ */
+export function initExtensionInstructions(): string {
+  return [
+    "You are scaffolding an orcel extension package (a reusable package of tools,",
+    "connections, skills, and hooks that a consuming agent mounts under",
+    "agent/extensions/).",
+    "",
+    "Ask the user for a package directory name, then run:",
+    "",
+    "    npx orcel@latest extension init <name>",
+    "",
+    "That creates the package, installs dependencies, and initializes Git. It",
+    "prints what was set up and how to author, build, and mount the extension —",
+    "it does not start orcel dev (extensions are not standalone agents).",
+    "",
+    "Build with `orcel extension build` (or the package `build` script).",
+  ].join("\n");
+}
+
+/**
+ * Post-scaffold handoff after `orcel extension init`. Same text for human and
+ * coding-agent launches: what was written and what to do next. Never assumes
+ * `orcel dev`.
+ */
+export function initExtensionHandoff(options: {
+  packageManager: string;
+  packageName: string;
+  projectPath: string;
+}): string {
+  const buildCommand = `${options.packageManager} run build`;
+  return [
+    "",
+    "What we set up:",
+    "  - package.json with orcel.extension source/dist roots, peer+dev orcel, and zod",
+    "  - extension/extension.ts (config schema via defineExtension)",
+    "  - build/prepare scripts → orcel extension build",
+    "",
+    "Next:",
+    "  - Add tools, skills, hooks, or connections under extension/",
+    "    (see AGENTS.md and node_modules/orcel/docs/extensions.md)",
+    `  - ${buildCommand}   # builds dist/extension and package exports`,
+    "  - Mount from a consumer agent:",
+    `      // agent/extensions/${options.packageName}.ts`,
+    `      import ext from "${options.packageName}";`,
+    "      export default ext({ apiKey: process.env.API_KEY });",
+    "",
+    `Working directory: ${options.projectPath}`,
+  ].join("\n");
+}

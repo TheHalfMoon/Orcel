@@ -1,0 +1,21 @@
+{
+  "kind": "orcel-extension-capability-contract",
+  "capability": "channel",
+  "epoch": 38,
+  "sha256": "08888eef4b9184dacda6b3752ccfba41c55791aff0773c4e2a1d8f94b8b82bfb",
+  "exports": [
+    "DELETE",
+    "GET",
+    "HEAD",
+    "OPTIONS",
+    "PATCH",
+    "POST",
+    "PUT",
+    "WS",
+    "createWebSocketUpgradeServer",
+    "defineChannel",
+    "disableRoute",
+    "isChannel",
+    "isDisabledRouteSentinel"
+  ]
+}
