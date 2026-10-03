@@ -113,8 +113,6 @@ jobs:
                   definite.append(f"{rel}: unscoped escaped package import")
               if "node_modules/orcel/" in text:
                   definite.append(f"{rel}: unscoped node_modules package path")
-              if re.search(r"--filter(?:=|\s+)orcel(?:\s|$|['\"])", text):
-                  definite.append(f"{rel}: unscoped pnpm filter")
               if re.search(r"(?m)^\s*orcel:\s*(?:workspace:|file:)", text):
                   definite.append(f"{rel}: unscoped YAML package key")
               if 'modules: ["orcel/nuxt"]' in text or "modules: ['orcel/nuxt']" in text:
@@ -157,6 +155,14 @@ jobs:
         run: |
           set -euo pipefail
           pnpm install --frozen-lockfile
+
+      - name: Prove pnpm selector resolves scoped core package
+        shell: bash
+        run: |
+          set -euo pipefail
+          resolved="$(pnpm --filter orcel exec node -p 'require("./package.json").name')"
+          test "$resolved" = "@orcel/orcel"
+          echo "pnpm selector orcel resolved to $resolved"
 
       - name: Build publishable packages
         run: |
