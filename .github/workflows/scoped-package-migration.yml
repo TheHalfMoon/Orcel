@@ -80,6 +80,42 @@ jobs:
               print(rel)
           PY
 
+      - name: Repair workflow package filters
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          workflow_paths = [
+              ".github/workflows/bundle-analysis.yml",
+              ".github/workflows/e2e-local.yml",
+              ".github/workflows/e2e-postgres.yml",
+              ".github/workflows/e2e-vercel.yml",
+          ]
+          replacements = (
+              ("pnpm --filter orcel run build", "pnpm --filter './packages/orcel' run build"),
+              ("pnpm --filter orcel build", "pnpm --filter './packages/orcel' build"),
+              ("pnpm --filter=orcel run build", "pnpm --filter './packages/orcel' run build"),
+              ("pnpm --filter=orcel build", "pnpm --filter './packages/orcel' build"),
+          )
+
+          changed = []
+          for rel in workflow_paths:
+              path = Path(rel)
+              source = path.read_text(encoding="utf-8")
+              updated = source
+              for old, new in replacements:
+                  updated = updated.replace(old, new)
+              if updated != source:
+                  path.write_text(updated, encoding="utf-8")
+                  changed.append(rel)
+
+          print(f"REPAIRED_WORKFLOW_FILTERS={len(changed)}")
+          for rel in changed:
+              print(rel)
+          PY
+
       - name: Audit repaired scoped references
         shell: bash
         run: |
@@ -117,6 +153,16 @@ jobs:
           if "img.shields.io/npm/v/orcel.svg" in readme or "img.shields.io/npm/l/orcel.svg" in readme:
               failures.append("README.md: legacy unscoped npm badge remains")
 
+          for rel in (
+              ".github/workflows/bundle-analysis.yml",
+              ".github/workflows/e2e-local.yml",
+              ".github/workflows/e2e-postgres.yml",
+              ".github/workflows/e2e-vercel.yml",
+          ):
+              text = (root / rel).read_text(encoding="utf-8")
+              if re.search(r"--filter(?:=|\s+)orcel(?:\s|$)", text):
+                  failures.append(f"{rel}: legacy unscoped pnpm filter remains")
+
           if failures:
               raise SystemExit("\n".join(failures[:200]))
           print("SCOPED_REFERENCE_REPAIR_AUDIT=PASS")
@@ -136,5 +182,5 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
-          git commit -m 'fix: repair duplicated scoped package references'
+          git commit -m 'fix: repair scoped workflow filters'
           git push origin HEAD:fix/npm-scoped-core-package
