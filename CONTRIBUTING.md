@@ -111,8 +111,7 @@ retains the previous epoch, and scaffolds the required fixture under
 representative example of the retained authoring contract, then rerun
 `pnpm update:extension-contracts` to generate the new epoch report. If the
 change cannot be classified automatically, pass `--retain` after verifying
-runtime compatibility. To stop accepting the previous epoch, pass
-`--drop "why the old contract cannot run"`; this bumps the capability and
+runtime compatibility. To stop accepting the previous epoch, pass `--drop "why the old contract cannot run"`; this bumps the capability and
 records the reason.
 
 Every historical epoch must be classified exactly once as supported or dropped.
@@ -149,7 +148,7 @@ The registry source lives under [`apps/docs/registry/`](./apps/docs/registry/). 
 Run:
 
 ```bash
-pnpm --filter @orcel/orcel-docs registry:check
+pnpm --filter orcel-docs registry:check
 ```
 
 This runs `shadcn build`, which reads each referenced source file and embeds it as the escaped `content` field in `apps/docs/public/r/<kind>/<slug>.json`. It also rebuilds `apps/docs/public/r/registry.json`, validates channel, connection, and instrumentation coverage, and typechecks the registry source files. The output under `apps/docs/public/r/` is gitignored and regenerated on every docs build; only the source files under `apps/docs/registry/` and `apps/docs/registry.json` are committed.
