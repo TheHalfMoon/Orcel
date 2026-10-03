@@ -100,20 +100,26 @@ jobs:
           git diff --check
 
           python3 - <<'PY'
+          from collections import Counter
           import re
           import subprocess
 
           diff = subprocess.check_output(["git", "diff", "-U0"], text=True)
-          route = re.compile(r"[\"']/orcel/")
-          violations = [
-              line
-              for line in diff.splitlines()
-              if line.startswith("-") and not line.startswith("---") and route.search(line)
-          ]
-          if violations:
-              print("A public /orcel route deletion was detected; refusing to continue.")
-              for line in violations[:50]:
-                  print(line)
+          route = re.compile(r"(?<![A-Za-z0-9@._-])/orcel/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*")
+          deleted = Counter()
+          added = Counter()
+          for line in diff.splitlines():
+              if line.startswith("---") or line.startswith("+++"):
+                  continue
+              if line.startswith("-"):
+                  deleted.update(route.findall(line[1:]))
+              elif line.startswith("+"):
+                  added.update(route.findall(line[1:]))
+
+          if deleted != added:
+              print("The /orcel route-token multiset changed; refusing to continue.")
+              print("Deleted-only route tokens:", dict(deleted - added))
+              print("Added-only route tokens:", dict(added - deleted))
               raise SystemExit(1)
           print("PUBLIC_ROUTE_DIFF_AUDIT=PASS")
           PY
@@ -128,7 +134,8 @@ jobs:
           git diff -- packages/orcel/package.json \
             packages/orcel-buzz-acp-adapter/package.json \
             scripts/assert-changeset-publish-packages.mjs \
-            packages/orcel/src/internal/package-name.ts
+            packages/orcel/src/internal/package-name.ts \
+            packages/orcel/src/shared/public-route-prefix.test.ts
 
       - name: Build publishable packages
         if: steps.gate.outputs.complete != 'true'
