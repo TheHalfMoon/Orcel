@@ -1,5 +1,5 @@
-import { defineEval } from "orcel/evals";
-import { includes } from "orcel/evals/expect";
+import { defineEval } from "@orcel/orcel/evals";
+import { includes } from "@orcel/orcel/evals/expect";
 
 const PARENT_TOKEN = "sandbox-parent-write-ok-N4K";
 const PARENT_PATH = "/workspace/parent-write.txt";

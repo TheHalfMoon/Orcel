@@ -61,8 +61,8 @@ describe("tool schemas in an app that pins its own Zod", () => {
       dependencies: { zod: "4.4.3" },
       files: {
         "agent/instructions.md": "File the pages Alice asked for.\n",
-        "agent/agent.ts": `import { defineAgent } from "orcel";
-import { mockModel } from "orcel/evals";
+        "agent/agent.ts": `import { defineAgent } from "@orcel/orcel";
+import { mockModel } from "@orcel/orcel/evals";
 export default defineAgent({
   model: mockModel(({ toolResults, tools }) => {
     if (toolResults.length === 0) {
@@ -80,7 +80,7 @@ export default defineAgent({
   modelContextWindowTokens: 32000,
 });
 `,
-        "agent/tools/file-pages.ts": `import { defineDynamic, defineTool } from "orcel/tools";
+        "agent/tools/file-pages.ts": `import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 export default defineDynamic({
   events: {
     "session.started": () => ({
@@ -93,7 +93,7 @@ export default defineDynamic({
   },
 });
 `,
-        "agent/tools/tag_page.ts": `import { defineTool } from "orcel/tools";
+        "agent/tools/tag_page.ts": `import { defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 export default defineTool({
   description: "Tag one page.",

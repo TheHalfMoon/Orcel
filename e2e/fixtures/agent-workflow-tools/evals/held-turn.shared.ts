@@ -1,4 +1,4 @@
-import type { MessageStreamEvent } from "orcel/client";
+import type { MessageStreamEvent } from "@orcel/orcel/client";
 
 /** Whether every turn-scoped event in `events` belongs to one turn. */
 export function staysInOneTurn(events: readonly MessageStreamEvent[]): boolean {

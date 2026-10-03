@@ -1,4 +1,4 @@
-import type { MessageStreamEvent } from "orcel/client";
+import type { MessageStreamEvent } from "@orcel/orcel/client";
 
 export type TranscriptStreamEvent = MessageStreamEvent;
 

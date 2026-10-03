@@ -185,7 +185,7 @@ describe("orcel init smoke", () => {
     const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
       dependencies: Record<string, string>;
     };
-    manifest.dependencies.orcel = "0.0.0-orcel-init-unpublished";
+    manifest.dependencies["@orcel/orcel"] = "0.0.0-orcel-init-unpublished";
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
     await expect(
       runFile(

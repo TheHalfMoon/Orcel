@@ -32,8 +32,8 @@ Add credentials for direct model providers, tools, and connections to the Vercel
 The default environment selects Vercel Sandbox on Vercel. To select it explicitly:
 
 ```typescript
-import { defineSandbox } from "orcel/sandbox";
-import { VercelSandbox } from "orcel/sandbox/vercel";
+import { defineSandbox } from "@orcel/@orcel/orcel/sandbox";
+import { VercelSandbox } from "@orcel/@orcel/orcel/sandbox/vercel";
 
 export const environment = VercelSandbox.environment();
 export default defineSandbox(() => environment.open());
@@ -55,12 +55,12 @@ A Next.js-centered project uses [`withEve` in `next.config.ts`](../frontend/next
 
 ### Compose agents with other Vercel services
 
-Use `withEve` from `orcel/vercel` when the agents and other applications are peer services. The helper contributes workspace agents to a Vercel service graph; it does not manage or require a particular frontend framework. Unlike `orcel/next`, this keeps the project lifecycle separate from Next.js. Both integrations deploy the agent services together in one Vercel project.
+Use `withEve` from `@orcel/orcel/vercel` when the agents and other applications are peer services. The helper contributes workspace agents to a Vercel service graph; it does not manage or require a particular frontend framework. Unlike `@orcel/orcel/next`, this keeps the project lifecycle separate from Next.js. Both integrations deploy the agent services together in one Vercel project.
 
-For a standalone agent or workspace with a peer Next.js frontend under `apps/web/`, replace `vercel.json` with a root `vercel.ts`. The frontend uses an ordinary Next.js config without `orcel/next`:
+For a standalone agent or workspace with a peer Next.js frontend under `apps/web/`, replace `vercel.json` with a root `vercel.ts`. The frontend uses an ordinary Next.js config without `@orcel/orcel/next`:
 
 ```typescript title="vercel.ts"
-import { withEve } from "orcel/vercel";
+import { withEve } from "@orcel/@orcel/orcel/vercel";
 
 export default await withEve({
   services: {
@@ -89,7 +89,7 @@ Generated transport routes are inserted before a filesystem handler or, when no 
 Custom agent channel endpoints are not published automatically. Expose one explicitly by routing it to the generated service:
 
 ```typescript title="vercel.ts"
-import { withEve } from "orcel/vercel";
+import { withEve } from "@orcel/@orcel/orcel/vercel";
 
 export default await withEve({
   services: {
@@ -108,7 +108,7 @@ export default await withEve({
 });
 ```
 
-A Vercel project can use only one configuration source, so remove `vercel.json` when adopting `vercel.ts`. Keep `orcel` in the root package dependencies so Vercel can import `orcel/vercel` while evaluating the configuration. `withEve` discovers the workspace containing its evaluation directory, including Vercel's temporary `.vercel` configuration directory. Pass `{ root: "/absolute/workspace/path" }` as the second argument only when you need to select a specific workspace root.
+A Vercel project can use only one configuration source, so remove `vercel.json` when adopting `vercel.ts`. Keep `orcel` in the root package dependencies so Vercel can import `@orcel/orcel/vercel` while evaluating the configuration. `withEve` discovers the workspace containing its evaluation directory, including Vercel's temporary `.vercel` configuration directory. Pass `{ root: "/absolute/workspace/path" }` as the second argument only when you need to select a specific workspace root.
 
 An authored orcel service routed at `/orcel/v1` already uses the protocol path; callbacks remain at `/orcel/v1/callback/*`. A named mount such as `/orcel/support` adds that mount before the protocol path, giving `/orcel/support/v1/callback/*`.
 

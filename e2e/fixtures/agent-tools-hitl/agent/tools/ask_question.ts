@@ -1,3 +1,3 @@
-import { askQuestion } from "orcel/tools/ask_question";
+import { askQuestion } from "@orcel/orcel/tools/ask_question";
 
 export default askQuestion();

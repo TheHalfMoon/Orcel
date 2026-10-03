@@ -1,6 +1,6 @@
-import type { MessageStreamEvent } from "orcel/client";
-import type { OrcelEvalContext } from "orcel/evals";
-import { satisfies } from "orcel/evals/expect";
+import type { MessageStreamEvent } from "@orcel/orcel/client";
+import type { OrcelEvalContext } from "@orcel/orcel/evals";
+import { satisfies } from "@orcel/orcel/evals/expect";
 
 import { CORRECTED_MEASUREMENT, NOTEBOOK_CORRECTION } from "../constants";
 

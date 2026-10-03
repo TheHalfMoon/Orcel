@@ -8,8 +8,8 @@ description: "Call another orcel deployment as a subagent with defineRemoteAgent
 The file lives under `agent/subagents/`, so its tool name is derived from the path. There's no `name` field.
 
 ```ts title="agent/subagents/weather.ts"
-import { defineRemoteAgent } from "orcel";
-import { vercelOidc } from "orcel/agents/auth";
+import { defineRemoteAgent } from "@orcel/orcel";
+import { vercelOidc } from "@orcel/@orcel/orcel/agents/auth";
 
 export default defineRemoteAgent({
   url: "https://weather-agent.example.com",
@@ -24,7 +24,7 @@ export default defineRemoteAgent({
 | ------------------ | --------------------------------------------- | -------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `url`              | `string \| (() => string \| Promise<string>)` | Yes      | n/a               | Base URL of the remote orcel deployment to call. A string is baked at compile time; a function is resolved at runtime (see [Runtime URLs](#runtime-urls)). |
 | `description`      | `string`                                      | Yes      | n/a               | Model-visible delegation description.                                                                                                                    |
-| `auth`             | `OutboundAuthFn`                              | No       | none              | Outbound auth hook from `orcel/agents/auth`.                                                                                                               |
+| `auth`             | `OutboundAuthFn`                              | No       | none              | Outbound auth hook from `@orcel/orcel/agents/auth`.                                                                                                               |
 | `forwardPrincipal` | `boolean`                                     | No       | `false`           | Forward the dispatching turn's session principal to the remote deployment (see [Forwarding the caller identity](#forwarding-the-caller-identity)).       |
 | `headers`          | `HeadersValue`                                | No       | none              | Static or lazily resolved request headers.                                                                                                               |
 | `path`             | `string`                                      | No       | `/orcel/v1/session` | Route appended to `url` for the create-session request.                                                                                                  |
@@ -37,7 +37,7 @@ the current session. Return `defineRemoteAgent(...)` to expose it and `null` to
 omit it:
 
 ```ts title="agent/subagents/weather.ts"
-import { defineDynamic, defineRemoteAgent } from "orcel";
+import { defineDynamic, defineRemoteAgent } from "@orcel/orcel";
 
 export default defineDynamic({
   events: {
@@ -68,7 +68,7 @@ over `_event`, `ctx`, or handler-local values.
 A string `url` is read at compile time and frozen into the build. When the target comes from a runtime env var — known only once the deployment runs — pass a function instead. orcel calls it when it resolves the agent graph at runtime, so it can read `process.env`:
 
 ```ts title="agent/subagents/weather.ts"
-import { defineRemoteAgent } from "orcel";
+import { defineRemoteAgent } from "@orcel/orcel";
 
 export default defineRemoteAgent({
   url: () => process.env.WEATHER_AGENT_URL ?? "https://weather-agent.example.com",
@@ -86,13 +86,13 @@ To require structured output, open a session with the remote agent from an autho
 
 ## Outbound auth
 
-Use `vercelOidc()` from `orcel/agents/auth` when one Vercel-deployed orcel agent calls another, as shown in the first example on this page.
+Use `vercelOidc()` from `@orcel/orcel/agents/auth` when one Vercel-deployed orcel agent calls another, as shown in the first example on this page.
 
 For calls between different Vercel projects, allow the calling project on the receiving agent's orcel channel:
 
 ```ts title="agent/channels/orcel.ts"
-import { vercelOidc, vercelSubject } from "orcel/channels/auth";
-import { orcelChannel } from "orcel/channels/orcel";
+import { vercelOidc, vercelSubject } from "@orcel/@orcel/orcel/channels/auth";
+import { orcelChannel } from "@orcel/@orcel/orcel/channels/orcel";
 
 export default orcelChannel({
   auth: [
@@ -120,8 +120,8 @@ Outbound auth authenticates your _deployment_ to the remote, so by default the r
 Set `forwardPrincipal: true` to forward the dispatching turn's session principal across the hop:
 
 ```ts title="agent/subagents/site-ops.ts"
-import { defineRemoteAgent } from "orcel";
-import { vercelOidc } from "orcel/agents/auth";
+import { defineRemoteAgent } from "@orcel/orcel";
+import { vercelOidc } from "@orcel/@orcel/orcel/agents/auth";
 
 export default defineRemoteAgent({
   url: "https://site-ops.example.com",
@@ -161,8 +161,8 @@ The receiving deployment uses the policy only after it trusts the calling
 deployment:
 
 ```ts title="agent/channels/orcel.ts"
-import { orcelChannel } from "orcel/channels/orcel";
-import { vercelOidc, vercelSubject } from "orcel/channels/auth";
+import { orcelChannel } from "@orcel/@orcel/orcel/channels/orcel";
+import { vercelOidc, vercelSubject } from "@orcel/@orcel/orcel/channels/auth";
 
 export default orcelChannel({
   auth: [vercelOidc()],

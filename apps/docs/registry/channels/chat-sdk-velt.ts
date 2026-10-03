@@ -1,7 +1,7 @@
 import { createVeltAdapter } from "@veltdev/chat-sdk-adapter";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "orcel/channels/chat-sdk";
+import { chatSdkChannel } from "@orcel/orcel/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",

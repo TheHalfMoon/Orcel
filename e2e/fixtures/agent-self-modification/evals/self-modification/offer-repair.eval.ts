@@ -1,11 +1,11 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 import { withSelfModification } from "./harness";
 
 const TOOL_NAME = "eval_reorder_plan";
 const TOOL_PATH = `tools/${TOOL_NAME}.ts`;
-const DEFECTIVE_SOURCE = `import { defineTool } from "orcel/tools";
-import { never } from "orcel/tools/approval";
+const DEFECTIVE_SOURCE = `import { defineTool } from "@orcel/orcel/tools";
+import { never } from "@orcel/orcel/tools/approval";
 import { z } from "zod";
 
 export default defineTool({

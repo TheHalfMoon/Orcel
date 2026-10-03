@@ -1,5 +1,5 @@
 import { e2eAgentConfig, e2eModel } from "@orcel-e2e/config";
-import { defineAgent, defineDynamic, type AgentDefinition, type DynamicResolveContext } from "orcel";
+import { defineAgent, defineDynamic, type AgentDefinition, type DynamicResolveContext } from "@orcel/orcel";
 
 const model = e2eModel();
 const { experimental } = e2eAgentConfig();

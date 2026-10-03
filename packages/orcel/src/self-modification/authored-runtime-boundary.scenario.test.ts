@@ -17,9 +17,9 @@ describe("self-modification authored runtime boundary", () => {
       expect(code).not.toContain("createJustBashSandboxBackend");
       expect(code).not.toContain("loadJustBashModule");
       if (entry === "sandbox") {
-        expect(code).toContain('from "orcel/self-modification/sandbox"');
+        expect(code).toContain('from "@orcel/orcel/self-modification/sandbox"');
       } else {
-        expect(code).toContain('from "orcel"');
+        expect(code).toContain('from "@orcel/orcel"');
       }
     },
   );

@@ -1,6 +1,6 @@
 import { e2eAgentConfig, e2eModel } from "@orcel-e2e/config";
-import { defineAgent } from "orcel";
-import { mockModel, type MockModelRequest, type MockModelResponder } from "orcel/evals";
+import { defineAgent } from "@orcel/orcel";
+import { mockModel, type MockModelRequest, type MockModelResponder } from "@orcel/orcel/evals";
 
 import {
   COMPACTION_CHECKPOINT_TEXT,

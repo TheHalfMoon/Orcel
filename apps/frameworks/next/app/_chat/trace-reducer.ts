@@ -1,5 +1,5 @@
-import type { OrcelAgentReducer, OrcelAgentReducerEvent } from "orcel/react";
-import type { MessageStreamEvent } from "orcel/client";
+import type { OrcelAgentReducer, OrcelAgentReducerEvent } from "@orcel/orcel/react";
+import type { MessageStreamEvent } from "@orcel/orcel/client";
 
 import { buildTraceTurnsFromTranscript } from "./trace";
 import type { TraceStep, TraceTurn } from "./types";

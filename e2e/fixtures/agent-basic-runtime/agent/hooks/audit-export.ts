@@ -1,4 +1,4 @@
-import { defineHook, type HookContext, type HookEvent } from "orcel/hooks";
+import { defineHook, type HookContext, type HookEvent } from "@orcel/orcel/hooks";
 import { auditOutbox, exportAuditEvent } from "../lib/workspace";
 
 async function exportOrQueue(event: HookEvent, ctx: HookContext): Promise<void> {

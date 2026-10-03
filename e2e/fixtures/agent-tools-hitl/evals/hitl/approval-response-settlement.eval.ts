@@ -3,9 +3,9 @@ import {
   defaultMessageReducer,
   type OrcelDynamicToolPart,
   type OrcelMessageData,
-} from "orcel/client";
-import { defineEval, type OrcelEvalContext } from "orcel/evals";
-import { equals } from "orcel/evals/expect";
+} from "@orcel/orcel/client";
+import { defineEval, type OrcelEvalContext } from "@orcel/orcel/evals";
+import { equals } from "@orcel/orcel/evals/expect";
 
 const ALICE = {
   "x-orcel-fixture-user": "alice",

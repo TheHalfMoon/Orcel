@@ -4,7 +4,7 @@ import {
   getToken,
   type ConnectTokenParams,
 } from "@vercel/connect";
-import type { SandboxSession } from "orcel/sandbox";
+import type { SandboxSession } from "@orcel/orcel/sandbox";
 
 import extension from "../extension.ts";
 import { authenticateVercel } from "./credentials.ts";

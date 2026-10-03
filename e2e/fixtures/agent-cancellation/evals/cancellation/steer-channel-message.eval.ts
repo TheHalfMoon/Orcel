@@ -1,6 +1,6 @@
-import type { TurnPolicy } from "orcel/channels";
-import { defineEval, type OrcelEvalTargetHandle } from "orcel/evals";
-import { satisfies } from "orcel/evals/expect";
+import type { TurnPolicy } from "@orcel/orcel/channels";
+import { defineEval, type OrcelEvalTargetHandle } from "@orcel/orcel/evals";
+import { satisfies } from "@orcel/orcel/evals/expect";
 
 const TOOL_NAME = "complete-work";
 

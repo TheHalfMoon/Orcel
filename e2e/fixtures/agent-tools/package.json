@@ -14,7 +14,7 @@
     "@orcel-e2e/config": "workspace:*",
     "@orcel-e2e/dynamic-import-dependency": "file:./fixtures/dynamic-import-dependency",
     "@workflow/world-postgres": "catalog:",
-    "orcel": "workspace:*",
+    "@orcel/orcel": "workspace:*",
     "zod": "catalog:"
   },
   "devDependencies": {

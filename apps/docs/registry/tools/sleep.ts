@@ -1,3 +1,3 @@
-import { sleep } from "orcel/tools/sleep";
+import { sleep } from "@orcel/orcel/tools/sleep";
 
 export default sleep();

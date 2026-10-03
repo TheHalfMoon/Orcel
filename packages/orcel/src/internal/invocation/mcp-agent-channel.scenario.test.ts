@@ -13,8 +13,8 @@ const MCP_PROTOCOL_VERSION = "2026-07-28";
 
 const MCP_AGENT_DESCRIPTOR: ScenarioAppDescriptor = {
   files: {
-    "agent/agent.ts": `import { defineAgent } from "orcel";
-import { mockModel } from "orcel/evals";
+    "agent/agent.ts": `import { defineAgent } from "@orcel/orcel";
+import { mockModel } from "@orcel/orcel/evals";
 
 const model = mockModel((request) => {
   const prompt = JSON.stringify(request.messages);
@@ -46,7 +46,7 @@ export default defineAgent({
   modelContextWindowTokens: 32_000,
 });
 `,
-    "agent/channels/mcp.ts": `import { mcpChannel } from "orcel/channels/mcp";
+    "agent/channels/mcp.ts": `import { mcpChannel } from "@orcel/orcel/channels/mcp";
 
 export default mcpChannel({
   auth: (request) => {
@@ -58,7 +58,7 @@ export default mcpChannel({
 });
 `,
     "agent/instructions.md": "Follow the deterministic mock-model lifecycle.\n",
-    "agent/tools/ask_question.ts": `import { askQuestion } from "orcel/tools/ask_question";
+    "agent/tools/ask_question.ts": `import { askQuestion } from "@orcel/orcel/tools/ask_question";
 
 export default askQuestion();
 `,

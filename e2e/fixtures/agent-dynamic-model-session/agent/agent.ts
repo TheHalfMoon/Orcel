@@ -1,5 +1,5 @@
 import { e2eAgentConfig, MOCK_MODEL_SENTINEL } from "@orcel-e2e/config";
-import { defineAgent, defineDynamic } from "orcel";
+import { defineAgent, defineDynamic } from "@orcel/orcel";
 
 const requestedModel = process.env.ORCEL_E2E_MODEL;
 const selectedModel =

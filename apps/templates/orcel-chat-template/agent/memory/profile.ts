@@ -1,6 +1,6 @@
-import { defineMemory } from "orcel/memory";
-import { fileMemory } from "orcel/memory/file";
-import { byPrincipal } from "orcel/memory/scope";
+import { defineMemory } from "@orcel/orcel/memory";
+import { fileMemory } from "@orcel/orcel/memory/file";
+import { byPrincipal } from "@orcel/orcel/memory/scope";
 
 // Only the ORCEL_MEMORY_BLOB_* namespace enables memory on Vercel. orcel also
 // accepts generic BLOB_* variables, but this template ignores them so memory

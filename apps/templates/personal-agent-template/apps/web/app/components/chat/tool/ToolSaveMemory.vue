@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { OrcelDynamicToolPart } from "orcel/vue";
+import type { OrcelDynamicToolPart } from "@orcel/orcel/vue";
 import { MEMORY_CATEGORY_LABELS, type MemoryCategory } from "#orcel/types/memory";
 import type { AgentInputResponse } from "~/components/AgentInputRequest.vue";
 import { isSaveMemoryPending, normalizeSaveMemoryInput } from "~/utils/chat/save-memory";

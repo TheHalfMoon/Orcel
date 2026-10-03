@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const monorepoRoot = fileURLToPath(new URL("../../..", import.meta.url));
 
-// Scaffolded apps tell agents to read `node_modules/orcel/docs/`. The package-local
+// Scaffolded apps tell agents to read `node_modules/@orcel/orcel/docs/`. The package-local
 // README is already listed in package.json#files; do not overwrite it with the
 // monorepo root README.
 const packageDocsDir = join(packageRoot, "docs");

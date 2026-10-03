@@ -19,7 +19,7 @@ describe("createLlmsIndex", () => {
   it("states scope and routes agents to focused, exhaustive, and version-matched docs", () => {
     const output = createLlmsIndex();
 
-    expect(output).toContain("node_modules/orcel/docs/");
+    expect(output).toContain("node_modules/@orcel/orcel/docs/");
     expect(output).toContain(
       "It is not a shared API, authorization server, MCP server, or A2A server",
     );

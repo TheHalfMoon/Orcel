@@ -70,10 +70,10 @@ try {
 
     const manifestPath = join(destination, "package.json");
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-    if (!manifest.dependencies?.orcel) {
+    if (!manifest.dependencies?.["@orcel/orcel"]) {
       throw new Error(`Template "${template}" does not declare orcel in dependencies`);
     }
-    manifest.dependencies.orcel = `file:${tarball}`;
+    manifest.dependencies["@orcel/orcel"] = `file:${tarball}`;
     if (manifest.dependencies["@vercel/connect"]) {
       const compatibilitySpecifier = manifest.dependencies[historicalFrameworkPackage];
       if (!compatibilitySpecifier?.startsWith("npm:orcel@")) {

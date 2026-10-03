@@ -5,9 +5,9 @@ import {
   taskIdFromReceipt,
   type ScriptedCall,
 } from "@orcel-e2e/config/mock-script";
-import type { MockModelRequest, MockModelResponse } from "orcel/evals";
-import { defineTool } from "orcel/tools";
-import { never } from "orcel/tools/approval";
+import type { MockModelRequest, MockModelResponse } from "@orcel/orcel/evals";
+import { defineTool } from "@orcel/orcel/tools";
+import { never } from "@orcel/orcel/tools/approval";
 import { z } from "zod";
 
 import {

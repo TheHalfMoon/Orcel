@@ -1,4 +1,4 @@
-import { defineAgent } from "orcel";
+import { defineAgent } from "@orcel/orcel";
 
 export default defineAgent({
   model: "openai/gpt-5.6-luna-fast",

@@ -18,7 +18,7 @@ const scenarioApp = useScenarioApp();
 
 const DURABLE_FACTORY_SOURCE = `import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { defineTool as tool } from "orcel/tools";
+import { defineTool as tool } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 interface MarkerService {
@@ -79,7 +79,7 @@ export function createDurableMarkerTool(key: string) {
 
 const DYNAMIC_TOOLS_SOURCE = `import { appendFileSync } from "node:fs";
 import { join } from "node:path";
-import { defineDynamic } from "orcel/tools";
+import { defineDynamic } from "@orcel/orcel/tools";
 import { createDurableMarkerTool } from "../lib/durable-factory.ts";
 
 const guardedMarker = createDurableMarkerTool("guarded");

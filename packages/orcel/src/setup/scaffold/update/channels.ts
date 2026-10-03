@@ -364,7 +364,7 @@ function buildSlackConnectTemplate(connectorUid: string): string {
     throw new Error(`Invalid Slack connector UID "${connectorUid}".`);
   }
   return `import { connectSlackCredentials } from "@vercel/connect/eve";
-import { slackChannel } from "orcel/channels/slack";
+import { slackChannel } from "@orcel/orcel/channels/slack";
 
 export default slackChannel({
   credentials: connectSlackCredentials(${JSON.stringify(connectorUid)}),
@@ -372,7 +372,7 @@ export default slackChannel({
 `;
 }
 
-const SLACK_ENV_TEMPLATE = `import { slackChannel } from "orcel/channels/slack";
+const SLACK_ENV_TEMPLATE = `import { slackChannel } from "@orcel/orcel/channels/slack";
 
 export default slackChannel();
 `;

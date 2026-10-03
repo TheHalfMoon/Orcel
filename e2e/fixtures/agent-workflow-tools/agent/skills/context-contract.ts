@@ -1,4 +1,4 @@
-import { defineDynamic, defineSkill, type DynamicResolveContext } from "orcel/skills";
+import { defineDynamic, defineSkill, type DynamicResolveContext } from "@orcel/orcel/skills";
 import { recordDynamicSkillContext } from "../../dynamic-skill-context-audit";
 
 function resolve(event: "session.started" | "turn.started", ctx: DynamicResolveContext) {

@@ -2,7 +2,7 @@ import {
   inspectVerifiedRemoteAgent,
   type Prompter,
   type VerifiedRemoteAgentInspection,
-} from "orcel/setup";
+} from "@orcel/orcel/setup";
 import { parseOrcelTargetInfo, readOrcelTargetInfo, type OrcelTargetInfo } from "./orcel-target.js";
 import type { InstallTarget } from "./install-flow.js";
 

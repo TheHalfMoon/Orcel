@@ -1,5 +1,5 @@
 import type { ComputedRef, Ref } from "vue";
-import type { OrcelMessageData, UseOrcelAgentOptions } from "orcel/vue";
+import type { OrcelMessageData, UseOrcelAgentOptions } from "@orcel/orcel/vue";
 import type { OrcelSessionCursor } from "#orcel/types/thread";
 import type { UIMessage } from "ai";
 import type { AgentInputResponse } from "~/components/AgentInputRequest.vue";

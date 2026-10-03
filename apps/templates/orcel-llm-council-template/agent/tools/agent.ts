@@ -1,3 +1,3 @@
-import { disableTool } from "orcel/tools";
+import { disableTool } from "@orcel/orcel/tools";
 
 export default disableTool();

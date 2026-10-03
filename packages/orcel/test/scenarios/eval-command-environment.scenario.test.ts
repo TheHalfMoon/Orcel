@@ -58,7 +58,7 @@ async function createEnvironmentFixture(): Promise<string> {
   await mkdir(join(fixtureRoot, "agent"), { recursive: true });
   await writeFile(
     join(fixtureRoot, "package.json"),
-    `${JSON.stringify({ dependencies: { orcel: "*" }, name: "orcel-eval-env-test", private: true, type: "module" })}\n`,
+    `${JSON.stringify({ dependencies: { "@orcel/orcel": "*" }, name: "orcel-eval-env-test", private: true, type: "module" })}\n`,
   );
   await writeFile(
     join(fixtureRoot, "agent", "agent.mjs"),

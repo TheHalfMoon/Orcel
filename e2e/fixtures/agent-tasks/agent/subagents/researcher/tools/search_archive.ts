@@ -1,7 +1,7 @@
 import { setTimeout } from "node:timers/promises";
 
-import { defineTool } from "orcel/tools";
-import { never } from "orcel/tools/approval";
+import { defineTool } from "@orcel/orcel/tools";
+import { never } from "@orcel/orcel/tools/approval";
 import { z } from "zod";
 
 import { findChurnNote } from "../../../../findings.ts";

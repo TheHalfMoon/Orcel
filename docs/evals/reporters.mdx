@@ -3,7 +3,7 @@ title: "Reporters"
 description: "Ship eval results to Braintrust, Datadog, or JUnit XML. orcel runs and scores everything itself."
 ---
 
-orcel runs and grades everything itself; reporters ship the results out. The CLI prints a console summary by default (one line per eval, with failed assertions and their messages), and reporters from `orcel/evals/reporters` add destinations on top.
+orcel runs and grades everything itself; reporters ship the results out. The CLI prints a console summary by default (one line per eval, with failed assertions and their messages), and reporters from `@orcel/orcel/evals/reporters` add destinations on top.
 
 You are responsible for ensuring any observability or eval provider is approved for the data exported to it.
 
@@ -14,8 +14,8 @@ Reporters attach in two places. Declare them in `evals.config.ts` to observe **e
 `Braintrust(...)` uploads eval results to Braintrust experiments. Put one instance in the config so it covers the whole run:
 
 ```ts title="evals/evals.config.ts"
-import { defineEvalConfig } from "orcel/evals";
-import { Braintrust } from "orcel/evals/reporters";
+import { defineEvalConfig } from "@orcel/@orcel/orcel/evals";
+import { Braintrust } from "@orcel/@orcel/orcel/evals/reporters";
 
 export default defineEvalConfig({
   judge: { model: "typesafe-ai/jev" },
@@ -26,8 +26,8 @@ export default defineEvalConfig({
 Need a destination for only some evals? Attach it per eval instead:
 
 ```ts title="evals/brooklyn-forecast.eval.ts"
-import { defineEval } from "orcel/evals";
-import { Braintrust } from "orcel/evals/reporters";
+import { defineEval } from "@orcel/@orcel/orcel/evals";
+import { Braintrust } from "@orcel/@orcel/orcel/evals/reporters";
 
 export default defineEval({
   reporters: [Braintrust({ projectName: "weather-agent" })],
@@ -49,8 +49,8 @@ Braintrust needs its SDK installed in the app and credentials in the environment
 `Datadog(...)` uploads eval assertion scores to a Datadog LLM Observability Experiment. Put one instance in the config so it covers the whole run:
 
 ```ts title="evals/evals.config.ts"
-import { defineEvalConfig } from "orcel/evals";
-import { Datadog } from "orcel/evals/reporters";
+import { defineEvalConfig } from "@orcel/@orcel/orcel/evals";
+import { Datadog } from "@orcel/@orcel/orcel/evals/reporters";
 
 export default defineEvalConfig({
   reporters: [Datadog({ projectName: "weather-agent" })],
@@ -77,7 +77,7 @@ Each eval becomes one `<testcase>` named by its path-derived id; failed gates an
 
 ## Custom reporters
 
-A reporter implements the `EvalReporter` interface from `orcel/evals/reporters` and receives the same structured results the built-ins do. Every callback may return a promise for async work like a remote upload:
+A reporter implements the `EvalReporter` interface from `@orcel/orcel/evals/reporters` and receives the same structured results the built-ins do. Every callback may return a promise for async work like a remote upload:
 
 ```ts
 interface EvalReporter {

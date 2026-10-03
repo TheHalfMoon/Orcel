@@ -1,5 +1,5 @@
-import type { MessageStreamEvent } from "orcel/client";
-import { defineEval } from "orcel/evals";
+import type { MessageStreamEvent } from "@orcel/orcel/client";
+import { defineEval } from "@orcel/orcel/evals";
 
 const TOOL_NAME = "render-stripes";
 

@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 const MARKER = "authorized-response-oauth-e2e-R8N5";
 const TOOL_NAME = "oauth-authorized-gate";

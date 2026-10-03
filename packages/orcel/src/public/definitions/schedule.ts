@@ -66,7 +66,7 @@ export type ScheduleDefinition = GenericScheduleDefinition<ScheduleHandlerArgs>;
  *
  * @example Start a session on Slack:
  * ```ts
- * import { defineSchedule } from "orcel/schedules";
+ * import { defineSchedule } from "@orcel/orcel/schedules";
  * import slack from "../channels/slack.js";
  *
  * export default defineSchedule({

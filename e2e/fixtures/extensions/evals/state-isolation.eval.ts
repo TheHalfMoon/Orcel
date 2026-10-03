@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 // Both extensions author defineState("budget"). If package scoping regressed,
 // the counters would collapse onto one slot and gizmo would read 3, not 1.

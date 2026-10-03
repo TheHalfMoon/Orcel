@@ -1,5 +1,5 @@
-import { defineEval } from "orcel/evals";
-import { equals } from "orcel/evals/expect";
+import { defineEval } from "@orcel/orcel/evals";
+import { equals } from "@orcel/orcel/evals/expect";
 import { requestFrom } from "./continuation/helpers.ts";
 
 const MARKER = "draft-status-3494";

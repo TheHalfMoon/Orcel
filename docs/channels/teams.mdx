@@ -9,7 +9,7 @@ The Teams channel runs your agent inside Microsoft Teams as a bot. It takes Bot 
 ## Add the channel
 
 ```ts title="agent/channels/teams.ts"
-import { teamsChannel } from "orcel/channels/teams";
+import { teamsChannel } from "@orcel/@orcel/orcel/channels/teams";
 
 export default teamsChannel();
 ```
@@ -28,7 +28,7 @@ Microsoft Teams app creation and installation. It routes verified Activities to
 
 ```ts title="agent/channels/teams.ts"
 import { connectTeamsCredentials } from "@vercel/connect/eve";
-import { teamsChannel } from "orcel/channels/teams";
+import { teamsChannel } from "@orcel/@orcel/orcel/channels/teams";
 
 export default teamsChannel({
   credentials: connectTeamsCredentials("microsoft-teams/my-agent"),
@@ -60,7 +60,7 @@ The default `onMessage` handles two cases: personal-chat messages, and channel o
 For example, use the contextual `isSubscribed()` helper to continue active threads without requiring another mention:
 
 ```ts
-import { defaultTeamsAuth, teamsChannel } from "orcel/channels/teams";
+import { defaultTeamsAuth, teamsChannel } from "@orcel/@orcel/orcel/channels/teams";
 
 export default teamsChannel({
   async onMessage(ctx, message) {

@@ -1,6 +1,6 @@
 "use client";
 
-import type { OrcelDynamicToolPart, OrcelMessage, OrcelMessagePart } from "orcel/react";
+import type { OrcelDynamicToolPart, OrcelMessage, OrcelMessagePart } from "@orcel/orcel/react";
 import { ChevronDownIcon, ChevronRightIcon, CheckIcon, Loader2Icon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Markdown } from "@/components/chat/markdown";

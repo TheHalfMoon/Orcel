@@ -1,6 +1,6 @@
-import { defineMemory } from "orcel/memory";
-import { inMemory, type MemoryDocumentBackend } from "orcel/memory/file";
-import { vercelBlob } from "orcel/memory/file/vercel";
+import { defineMemory } from "@orcel/orcel/memory";
+import { inMemory, type MemoryDocumentBackend } from "@orcel/orcel/memory/file";
+import { vercelBlob } from "@orcel/orcel/memory/file/vercel";
 
 const captures: MemoryDocumentBackend = process.env.VERCEL
   ? vercelBlob({ prefix: "orcel/e2e/agent-memory/capture" })

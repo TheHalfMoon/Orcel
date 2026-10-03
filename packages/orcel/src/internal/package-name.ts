@@ -5,4 +5,4 @@
  * any layer can reference the package identity without pulling in filesystem
  * or module-resolution code.
  */
-export const ORCEL_PACKAGE_NAME = "orcel";
+export const ORCEL_PACKAGE_NAME = "@orcel/orcel";

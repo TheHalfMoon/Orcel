@@ -33,7 +33,7 @@ const WEBSOCKET_DEV_SERVER_DESCRIPTOR: ScenarioAppDescriptor = {
   files: {
     ...DEV_SERVER_AGENT_DESCRIPTOR.files,
     "agent/channels/socket.ts": [
-      'import { defineChannel, WS } from "orcel/channels";',
+      'import { defineChannel, WS } from "@orcel/orcel/channels";',
       "",
       "export default defineChannel({",
       '  routes: [WS("/socket", () => ({',
@@ -54,7 +54,7 @@ const STREAM_PROMOTION_DESCRIPTOR: ScenarioAppDescriptor = {
     "agent/channels/dev-generation.ts": [
       'import { existsSync, watch } from "node:fs";',
       'import { join } from "node:path";',
-      'import { defineChannel, GET } from "orcel/channels";',
+      'import { defineChannel, GET } from "@orcel/orcel/channels";',
       "",
       "export default defineChannel({",
       "  routes: [",
@@ -96,7 +96,7 @@ function createBlockedInstrumentationSource(): string {
   return [
     'import { existsSync, watch, writeFileSync } from "node:fs";',
     'import { join } from "node:path";',
-    'import { defineInstrumentation } from "orcel/instrumentation";',
+    'import { defineInstrumentation } from "@orcel/orcel/instrumentation";',
     "",
     "declare global {",
     "  var __ORCEL_INSTRUMENTATION_MARKER__: string | undefined;",

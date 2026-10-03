@@ -400,7 +400,7 @@ export function isPathImport(source: string): boolean {
 function isFrameworkRuntimeImport(source: string, importer: string | undefined): boolean {
   // The packaged extension is authored code: its mount and child must share a scoped handle.
   if (source === "orcel/self-modification") return false;
-  if (source === "orcel" || source.startsWith("orcel/")) {
+  if (source === "@orcel/orcel" || source.startsWith("@orcel/orcel/")) {
     return true;
   }
 
@@ -423,7 +423,7 @@ function isFrameworkRuntimeImport(source: string, importer: string | undefined):
  * orcel's own modules by path and share the process-wide Workflow runtime.
  */
 function resolveFrameworkRuntimeImport(source: string): string {
-  if (source === "orcel" || source.startsWith("orcel/")) {
+  if (source === "@orcel/orcel" || source.startsWith("@orcel/orcel/")) {
     return source;
   }
   return normalizeEsmImportSpecifier(resolveWorkflowModulePath(source));
@@ -436,7 +436,7 @@ function resolveFrameworkRuntimeImport(source: string): string {
  * scope. Generation bundles remain portable and keep these imports bare.
  */
 function resolveRuntimeLoaderFrameworkImport(source: string): string {
-  if (source === "orcel" || source.startsWith("orcel/")) {
+  if (source === "@orcel/orcel" || source.startsWith("@orcel/orcel/")) {
     return normalizeEsmImportSpecifier(resolvePackageDependencyPath(source));
   }
   return resolveFrameworkRuntimeImport(source);

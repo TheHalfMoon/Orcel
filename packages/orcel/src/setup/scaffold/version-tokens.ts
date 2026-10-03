@@ -48,7 +48,7 @@ const TOKEN_SOURCES: Readonly<Record<string, TokenSource>> = {
 
 // The published name; rule 28 keeps the scaffold layer free of `#internal/*`
 // imports, so the shared package-name constant cannot be reused here.
-const ORCEL_PACKAGE_NAME = "orcel";
+const ORCEL_PACKAGE_NAME = "@orcel/orcel";
 
 // Published tarballs ship only bin/ and dist/ (package.json `files`), so the
 // stamp script's presence next to the package marks a dev checkout. Without

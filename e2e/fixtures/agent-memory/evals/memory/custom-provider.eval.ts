@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 export default defineEval({
   description: "A custom provider recalls context, mutates through a tool, and supersedes it.",

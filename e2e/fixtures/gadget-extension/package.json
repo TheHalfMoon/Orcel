@@ -25,11 +25,11 @@
   },
   "devDependencies": {
     "@types/node": "catalog:",
-    "orcel": "workspace:*",
+    "@orcel/orcel": "workspace:*",
     "typescript": "catalog:"
   },
   "peerDependencies": {
-    "orcel": "*"
+    "@orcel/orcel": "*"
   },
   "orcel": {
     "extension": {

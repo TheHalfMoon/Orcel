@@ -1,4 +1,4 @@
-import { defineEval, type OrcelEvalContext, type OrcelEvalSession } from "orcel/evals";
+import { defineEval, type OrcelEvalContext, type OrcelEvalSession } from "@orcel/orcel/evals";
 
 /** A human text answer resolves the child's proxied request at the parent by request ID. */
 export default defineEval({

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { OrcelDynamicToolPart } from "orcel/svelte";
+  import type { OrcelDynamicToolPart } from "@orcel/orcel/svelte";
 
   type InputResponses = readonly {
     readonly optionId?: string;

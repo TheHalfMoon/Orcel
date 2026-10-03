@@ -58,7 +58,7 @@ async function createMinimalAppRoot(prefix: string): Promise<string> {
     join(appRoot, "package.json"),
     `${JSON.stringify(
       {
-        dependencies: { orcel: "*" },
+        dependencies: { "@orcel/orcel": "*" },
         name: "orcel-cli-start-health-test",
         private: true,
         type: "module",
@@ -494,7 +494,7 @@ describe("runCli", () => {
     });
     await writeFile(
       join(workspaceRoot, "package.json"),
-      `${JSON.stringify({ dependencies: { orcel: "*" }, name: "build-diagnostics" }, null, 2)}\n`,
+      `${JSON.stringify({ dependencies: { "@orcel/orcel": "*" }, name: "build-diagnostics" }, null, 2)}\n`,
     );
     await writeFile(
       join(workspaceRoot, "agent", "agent.mjs"),

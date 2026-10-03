@@ -1,5 +1,5 @@
-import { defineEval } from "orcel/evals";
-import { equals, satisfies } from "orcel/evals/expect";
+import { defineEval } from "@orcel/orcel/evals";
+import { equals, satisfies } from "@orcel/orcel/evals/expect";
 
 /** `evt_` followed by a 26-character Crockford base32 ULID. */
 const KAFNT_ID = /^evt_[0-9ABCDEFGHJKMNPQRSTVWXYZ]{26}$/;

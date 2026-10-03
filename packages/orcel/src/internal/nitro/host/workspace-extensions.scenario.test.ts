@@ -58,7 +58,7 @@ async function createWorkspaceAgent(): Promise<{ appRoot: string; packageRoot: s
       name: "@acme/alpha",
       type: "module",
       orcel: { extension: { source: "extension", dist: "dist/extension" } },
-      peerDependencies: { orcel: "*" },
+      peerDependencies: { "@orcel/orcel": "*" },
     })}\n`,
   );
   await writeText(
@@ -75,7 +75,7 @@ async function createWorkspaceAgent(): Promise<{ appRoot: string; packageRoot: s
   );
   await writeText(
     join(packageRoot, "extension", "extension.ts"),
-    'import { defineExtension } from "orcel/extension";\nexport default defineExtension();\n',
+    'import { defineExtension } from "@orcel/orcel/extension";\nexport default defineExtension();\n',
   );
   await writeText(
     join(packageRoot, "extension", "tools", "plan_week.ts"),

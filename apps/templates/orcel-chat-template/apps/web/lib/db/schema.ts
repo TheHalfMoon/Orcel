@@ -9,7 +9,7 @@ import {
   timestamp,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
-import type { ClientSessionState, MessageStreamEvent } from "orcel/client";
+import type { ClientSessionState, MessageStreamEvent } from "@orcel/orcel/client";
 
 export const user = pgTable("user", {
   id: text("id").primaryKey(),

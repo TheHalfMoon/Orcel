@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createAgentSourceManifest, createModuleSourceRef } from "#discover/manifest.js";
 import { createStaticSourceChange } from "#source-change/static-source-change.js";
 
-const SCAFFOLD = `import { defineAgent } from "orcel";
+const SCAFFOLD = `import { defineAgent } from "@orcel/orcel";
 
 export default defineAgent({
   model: "anthropic/claude-sonnet-5",
@@ -46,7 +46,7 @@ describe("createStaticSourceChange.updateModelName", () => {
     expect(result.kind).toBe("applied");
     const written = await readFile(join(agentRoot, "agent.ts"), "utf8");
     expect(written).toContain(`model: "anthropic/claude-opus-4.6"`);
-    expect(written).toContain(`import { defineAgent } from "orcel"`);
+    expect(written).toContain(`import { defineAgent } from "@orcel/orcel"`);
   });
 
   it("bails with a source location when the value is not a literal", async () => {

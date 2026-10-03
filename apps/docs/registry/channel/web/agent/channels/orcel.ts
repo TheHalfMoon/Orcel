@@ -1,5 +1,5 @@
-import { orcelChannel } from "orcel/channels/orcel";
-import { localDev, placeholderAuth, vercelOidc } from "orcel/channels/auth";
+import { orcelChannel } from "@orcel/orcel/channels/orcel";
+import { localDev, placeholderAuth, vercelOidc } from "@orcel/orcel/channels/auth";
 
 export default orcelChannel({
   auth: [

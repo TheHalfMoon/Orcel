@@ -1,6 +1,6 @@
 "use client";
 
-import type { ClientSessionState, MessageStreamEvent } from "orcel/client";
+import type { ClientSessionState, MessageStreamEvent } from "@orcel/orcel/client";
 import { createFallbackTitle, DEFAULT_CHAT_TITLE } from "./title";
 import type { ActiveChat, ChatListItem } from "./types";
 

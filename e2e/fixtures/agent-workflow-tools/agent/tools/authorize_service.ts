@@ -1,4 +1,4 @@
-import { defineWorkflowTool, type WorkflowToolContext } from "orcel/tools";
+import { defineWorkflowTool, type WorkflowToolContext } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 import { createFakeAuthProvider } from "../lib/fake-auth-provider.ts";

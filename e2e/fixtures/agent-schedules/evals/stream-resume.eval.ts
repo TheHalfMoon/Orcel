@@ -1,5 +1,5 @@
-import { defineEval } from "orcel/evals";
-import { equals, satisfies } from "orcel/evals/expect";
+import { defineEval } from "@orcel/orcel/evals";
+import { equals, satisfies } from "@orcel/orcel/evals/expect";
 
 /**
  * Proof that `GET /orcel/v1/session/:id/stream?startIndex=N` replays missed

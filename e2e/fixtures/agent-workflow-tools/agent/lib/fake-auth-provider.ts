@@ -1,5 +1,5 @@
-import { ConnectionAuthorizationRequiredError } from "orcel/connections";
-import type { ToolAuthProvider } from "orcel/tools";
+import { ConnectionAuthorizationRequiredError } from "@orcel/orcel/connections";
+import type { ToolAuthProvider } from "@orcel/orcel/tools";
 
 /** Simulates the external auth service; the tool uses orcel's real ctx auth methods. */
 export function createFakeAuthProvider({

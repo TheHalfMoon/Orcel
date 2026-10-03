@@ -3,11 +3,11 @@ title: "SvelteKit"
 description: "Run an orcel agent and a SvelteKit app as one project with the orcelSvelteKit Vite plugin."
 ---
 
-`orcel/sveltekit` runs a SvelteKit frontend and an orcel agent as one project instead of two services. The `orcelSvelteKit()` Vite plugin puts both on one dev server and one Vercel deploy, and [`useOrcelAgent`](./use-orcel-agent-svelte) finds the mounted routes on its own. There's no CORS to configure and no URL env vars to keep in sync.
+`@orcel/orcel/sveltekit` runs a SvelteKit frontend and an orcel agent as one project instead of two services. The `orcelSvelteKit()` Vite plugin puts both on one dev server and one Vercel deploy, and [`useOrcelAgent`](./use-orcel-agent-svelte) finds the mounted routes on its own. There's no CORS to configure and no URL env vars to keep in sync.
 
 ## Prerequisites
 
-- The `orcel` package installed in your project (`npm install orcel@latest`).
+- The `orcel` package installed in your project (`npm install @orcel/orcel@latest`).
 - An existing orcel agent directory. If you don't have one, start from [Getting started](../../getting-started).
 - A SvelteKit app to mount the agent in.
 
@@ -17,7 +17,7 @@ Add `orcelSvelteKit()` before `sveltekit()`:
 
 ```ts title="vite.config.ts"
 import { sveltekit } from "@sveltejs/kit/vite";
-import { orcelSvelteKit } from "orcel/sveltekit";
+import { orcelSvelteKit } from "@orcel/@orcel/orcel/sveltekit";
 import { defineConfig } from "vite";
 
 export default defineConfig({
@@ -42,11 +42,11 @@ The plugin accepts only two options, `orcelRoot` and `orcelBuildCommand`.
 
 ## Call the binding
 
-With the plugin in `vite.config.ts`, components call [`useOrcelAgent`](./use-orcel-agent-svelte) from `orcel/svelte` and don't pass a host:
+With the plugin in `vite.config.ts`, components call [`useOrcelAgent`](./use-orcel-agent-svelte) from `@orcel/orcel/svelte` and don't pass a host:
 
 ```svelte
 <script lang="ts">
-  import { useOrcelAgent } from "orcel/svelte";
+  import { useOrcelAgent } from "@orcel/@orcel/orcel/svelte";
 
   const agent = useOrcelAgent();
   let message = $state("");

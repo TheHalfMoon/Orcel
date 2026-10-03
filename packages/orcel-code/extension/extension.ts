@@ -1,5 +1,5 @@
-import { defineExtension } from "orcel/extension";
-import type { SandboxSession } from "orcel/sandbox";
+import { defineExtension } from "@orcel/orcel/extension";
+import type { SandboxSession } from "@orcel/orcel/sandbox";
 import { z } from "zod";
 
 export type CredentialPolicyBroker = (

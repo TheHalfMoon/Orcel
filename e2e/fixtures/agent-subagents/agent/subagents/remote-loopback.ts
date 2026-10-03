@@ -1,4 +1,4 @@
-import { defineDynamic, defineRemoteAgent } from "orcel";
+import { defineDynamic, defineRemoteAgent } from "@orcel/orcel";
 
 /**
  * A remote agent pointing back at this same deployment, so one fixture plays

@@ -1,4 +1,4 @@
-import { defineTool } from "orcel/tools";
+import { defineTool } from "@orcel/orcel/tools";
 
 import type { ResolvedSelfModificationConfig } from "../../../../config.js";
 import { defineLocalOnlyDynamic, resolveLocalOnly } from "../../../local-only.js";

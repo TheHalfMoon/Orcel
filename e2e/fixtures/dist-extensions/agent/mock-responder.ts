@@ -1,4 +1,4 @@
-import type { MockModelRequest, MockModelResponse } from "orcel/evals";
+import type { MockModelRequest, MockModelResponse } from "@orcel/orcel/evals";
 
 const LAYOUT_TOOL = "gizmo__gizmo_layout";
 

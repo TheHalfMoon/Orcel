@@ -1,4 +1,4 @@
-import { defineChannel, POST } from "orcel/channels";
+import { defineChannel, POST } from "@orcel/orcel/channels";
 import { z } from "zod";
 
 const requestBody = z.strictObject({

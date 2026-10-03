@@ -1,4 +1,4 @@
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 export const MODEL_OUTPUT_TOKEN = "projected-X9K3";

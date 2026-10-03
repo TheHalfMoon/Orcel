@@ -2,7 +2,7 @@ import type { ScenarioAppDescriptor } from "#internal/testing/scenario-app.js";
 
 export const TWILIO_ROUTE_PORTABILITY_DESCRIPTOR: ScenarioAppDescriptor = {
   files: {
-    "agent/channels/twilio.ts": `import { twilioChannel } from "orcel/channels/twilio";
+    "agent/channels/twilio.ts": `import { twilioChannel } from "@orcel/orcel/channels/twilio";
 
 export default twilioChannel({
   allowFrom: "+15551234567",

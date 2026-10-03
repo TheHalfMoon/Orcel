@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 const SEARCH_TOOL = "connection_search";
 const PETSTORE_INVENTORY_TOOL = "petstore__getInventory";

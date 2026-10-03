@@ -1,5 +1,5 @@
-import { defineState } from "orcel/context";
-import type { HookContext, HookEvent } from "orcel/hooks";
+import { defineState } from "@orcel/orcel/context";
+import type { HookContext, HookEvent } from "@orcel/orcel/hooks";
 
 export interface SubagentHookObservation {
   readonly subscriber: "typed" | "wildcard";

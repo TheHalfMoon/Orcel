@@ -1,5 +1,5 @@
 import { e2eJudgeModel } from "@orcel-e2e/config";
-import { defineEvalConfig } from "orcel/evals";
+import { defineEvalConfig } from "@orcel/orcel/evals";
 
 import { startRegistryServer } from "./self-modification/registry-server";
 

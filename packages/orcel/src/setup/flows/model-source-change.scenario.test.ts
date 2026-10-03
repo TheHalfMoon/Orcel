@@ -24,7 +24,7 @@ it.each(["flat", "nested", "agent-directory"])(
     const file = join(agentRoot, "agent.ts");
     await writeFile(
       file,
-      'import { defineAgent } from "orcel"; export default defineAgent({model: "openai/gpt-5.6-luna-fast"});',
+      'import { defineAgent } from "@orcel/orcel"; export default defineAgent({model: "openai/gpt-5.6-luna-fast"});',
     );
     const startPath = layout === "agent-directory" ? agentRoot : root;
     await expect(
@@ -55,8 +55,8 @@ it.each([false, true])(
     await writeFile(join(root, "package.json"), '{"type":"module"}');
     const file = join(root, "agent.ts");
     const source = dynamic
-      ? 'import { defineAgent } from "orcel"; export default defineAgent({model: getModel()});'
-      : 'import { defineAgent } from "orcel"; export default defineAgent({model: "openai/gpt-5.6-luna-fast"});';
+      ? 'import { defineAgent } from "@orcel/orcel"; export default defineAgent({model: getModel()});'
+      : 'import { defineAgent } from "@orcel/orcel"; export default defineAgent({model: "openai/gpt-5.6-luna-fast"});';
     await writeFile(file, source);
     const fetch = vi.fn(() => {
       throw new Error("Unexpected catalog request");

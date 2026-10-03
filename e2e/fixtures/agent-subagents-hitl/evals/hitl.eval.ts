@@ -1,6 +1,6 @@
-import { defineEval } from "orcel/evals";
-import type { OrcelEvalContext, OrcelEvalSession, OrcelEvalTurn } from "orcel/evals";
-import { equals } from "orcel/evals/expect";
+import { defineEval } from "@orcel/orcel/evals";
+import type { OrcelEvalContext, OrcelEvalSession, OrcelEvalTurn } from "@orcel/orcel/evals";
+import { equals } from "@orcel/orcel/evals/expect";
 import type { InputHookObservation } from "../input-hook-audit";
 
 const GOOG_PRICE = "178.92";

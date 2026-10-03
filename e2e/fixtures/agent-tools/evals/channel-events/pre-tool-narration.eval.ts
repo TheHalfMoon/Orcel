@@ -1,8 +1,8 @@
 import { randomBytes } from "node:crypto";
 
-import type { MessageStreamEvent } from "orcel/client";
-import { defineEval, type OrcelEvalTargetHandle } from "orcel/evals";
-import { satisfies } from "orcel/evals/expect";
+import type { MessageStreamEvent } from "@orcel/orcel/client";
+import { defineEval, type OrcelEvalTargetHandle } from "@orcel/orcel/evals";
+import { satisfies } from "@orcel/orcel/evals/expect";
 
 const STREAMED_ACTION_TOOL = "streamed-action";
 

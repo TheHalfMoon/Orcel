@@ -29,17 +29,17 @@ async function createExtensionPackage(pkg?: Record<string, unknown>): Promise<st
       type: "module",
       orcel: { extension: { source: "extension", dist: "dist/extension" } },
       files: ["dist"],
-      peerDependencies: { orcel: "*" },
+      peerDependencies: { "@orcel/orcel": "*" },
       ...pkg,
     }),
     "utf8",
   );
   await mkdir(join(root, "node_modules"), { recursive: true });
-  await symlink(orcelPackageRoot, join(root, "node_modules", "orcel"), "dir");
+  await symlink(orcelPackageRoot, join(root, "node_modules", "@orcel", "orcel"), "dir");
   await mkdir(join(root, "extension", "tools"), { recursive: true });
   await writeFile(
     join(root, "extension", "extension.ts"),
-    'import { defineExtension } from "orcel/extension";\nexport default defineExtension();\n',
+    'import { defineExtension } from "@orcel/orcel/extension";\nexport default defineExtension();\n',
     "utf8",
   );
   await writeFile(
@@ -75,13 +75,13 @@ describe("extension build output", () => {
           : 'describe("crm", () => { it("works", () => { expect(1).toBe(1); }); });',
         "lib/client.spec.ts": 'throw new Error("spec executed"); export {};',
         "lib/state.test.ts":
-          'import { defineState } from "orcel/context"; export const state = defineState("test", () => 0);',
+          'import { defineState } from "@orcel/orcel/context"; export const state = defineState("test", () => 0);',
         "tools/__tests__/setup.ts": 'throw new Error("test setup executed"); export {};',
         "tools/__tests__/_manifest.json": "{}",
         "skills/checks/SKILL.md":
           "---\nname: checks\ndescription: Run checks.\n---\nRun the checks.",
         "skills/checks/scripts/check.test.ts":
-          'import { defineState } from "orcel/context"; defineState("resource-test", () => 0);',
+          'import { defineState } from "@orcel/orcel/context"; defineState("resource-test", () => 0);',
       };
       for (const [path, content] of Object.entries(files)) {
         await mkdir(dirname(join(root, "extension", path)), { recursive: true });
@@ -130,7 +130,7 @@ describe("extension build output", () => {
     await mkdir(join(root, "extension", "lib", "__tests__"), { recursive: true });
     await writeFile(
       join(root, "extension", "lib", "__tests__", "value.ts"),
-      'import { defineState } from "orcel/context"; export const state = defineState("value", () => 0); export const value = "imported value";',
+      'import { defineState } from "@orcel/orcel/context"; export const state = defineState("value", () => 0); export const value = "imported value";',
     );
     await writeFile(
       join(root, "extension", "tools", "crm_search.ts"),
@@ -159,14 +159,14 @@ describe("extension build output", () => {
   });
 
   it.each([
-    ["static re-export", 'export { evaluate as assess } from "orcel/ai";'],
+    ["static re-export", 'export { evaluate as assess } from "@orcel/orcel/ai";'],
     [
       "namespace import",
-      'import * as evaluation from "orcel/ai"; export const assess = evaluation.evaluate;',
+      'import * as evaluation from "@orcel/orcel/ai"; export const assess = evaluation.evaluate;',
     ],
     [
       "dynamic import",
-      'export async function assess(options: Parameters<typeof import("orcel/ai").evaluate>[0]): Promise<void> { await (await import("orcel/ai")).evaluate(options); }',
+      'export async function assess(options: Parameters<typeof import("@orcel/orcel/ai").evaluate>[0]): Promise<void> { await (await import("@orcel/orcel/ai")).evaluate(options); }',
     ],
   ])("stamps the tool capability for a hook-only extension using a %s", async (_name, helper) => {
     const root = await createExtensionPackage();
@@ -176,7 +176,7 @@ describe("extension build output", () => {
     await writeFile(join(root, "extension", "lib", "evaluation.ts"), helper);
     await writeFile(
       join(root, "extension", "hooks", "evaluate.ts"),
-      `import { defineHook } from "orcel/hooks";
+      `import { defineHook } from "@orcel/orcel/hooks";
 import { assess } from "../lib/evaluation";
 export default defineHook({ events: { "turn.started": async () => {
   await assess({ state: { request: "Alice needs a summary." }, questions: {
@@ -216,17 +216,17 @@ export default defineHook({ events: { "turn.started": async () => {
   it.each([
     [
       "automatic model selection",
-      'import { auto } from "orcel/models"; export const route: ReturnType<typeof auto> = auto({ options: { "openai/small": "Routine work" } });',
+      'import { auto } from "@orcel/orcel/models"; export const route: ReturnType<typeof auto> = auto({ options: { "openai/small": "Routine work" } });',
       "dynamicTool",
     ],
     [
       "type-only AI import",
-      'import type { evaluate } from "orcel/ai"; export type Evaluate = typeof evaluate;',
+      'import type { evaluate } from "@orcel/orcel/ai"; export type Evaluate = typeof evaluate;',
       undefined,
     ],
     [
       "type-only model import",
-      'import type { auto } from "orcel/models"; export type Auto = typeof auto;',
+      'import type { auto } from "@orcel/orcel/models"; export type Auto = typeof auto;',
       undefined,
     ],
   ] as const)(
@@ -352,7 +352,7 @@ export default defineHook({ events: { "turn.started": async () => {
     await writeFile(
       join(root, "extension", "hooks", "audit.ts"),
       [
-        'import { defineHook } from "orcel/hooks";',
+        'import { defineHook } from "@orcel/orcel/hooks";',
         "",
         "export default defineHook({",
         "  events: {",
@@ -380,7 +380,7 @@ export default defineHook({ events: { "turn.started": async () => {
     await writeFile(
       join(root, "extension", "extension.ts"),
       [
-        'import { defineExtension } from "orcel/extension";',
+        'import { defineExtension } from "@orcel/orcel/extension";',
         'const config = { "~standard": { version: 1, vendor: "test", validate: (value: unknown) => ({ value }) } } as const;',
         "export default defineExtension({ config });",
         "",
@@ -391,7 +391,7 @@ export default defineHook({ events: { "turn.started": async () => {
     await writeFile(
       join(root, "extension", "lib", "budget.ts"),
       [
-        'import { defineState as state } from "orcel/context";',
+        'import { defineState as state } from "@orcel/orcel/context";',
         'export const budget = state("budget", () => 1);',
         "",
       ].join("\n"),
@@ -400,7 +400,7 @@ export default defineHook({ events: { "turn.started": async () => {
     await writeFile(
       join(root, "extension", "tools", "crm_search.ts"),
       [
-        'import { defineDynamic, defineTool } from "orcel/tools";',
+        'import { defineDynamic, defineTool } from "@orcel/orcel/tools";',
         "export default defineDynamic({",
         "  events: {",
         '    "session.started": async () => defineTool({',

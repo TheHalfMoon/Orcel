@@ -1,4 +1,4 @@
-import { defineEval, type OrcelEvalContext, type OrcelEvalSession, type OrcelEvalTurn } from "orcel/evals";
+import { defineEval, type OrcelEvalContext, type OrcelEvalSession, type OrcelEvalTurn } from "@orcel/orcel/evals";
 
 const COLLISION_MARKER = "MIXED-PARK-COMPLETE-7K2M";
 

@@ -1,4 +1,4 @@
-export const SHOPIFY_UCP_CHANNEL_TEMPLATE = `import { defineChannel, GET } from "orcel/channels";
+export const SHOPIFY_UCP_CHANNEL_TEMPLATE = `import { defineChannel, GET } from "@orcel/orcel/channels";
 
 const profile = {
   ucp: {

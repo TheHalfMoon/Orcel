@@ -54,7 +54,7 @@ Each policy filters spans and attributes before the Agent Runs destination
 receives them:
 
 ```ts title="agent/instrumentation/agent-runs.ts"
-import { agentRuns } from "orcel/instrumentation/otel";
+import { agentRuns } from "@orcel/@orcel/orcel/instrumentation/otel";
 
 export default agentRuns({
   exportPolicy: {
@@ -79,7 +79,7 @@ process-wide `otel({ tracePolicy })` has admitted a trace. For example, keep
 spans while redacting inputs and outputs unless the session is public:
 
 ```ts title="agent/instrumentation/agent-runs.ts"
-import { agentRuns } from "orcel/instrumentation/otel";
+import { agentRuns } from "@orcel/@orcel/orcel/instrumentation/otel";
 
 export default agentRuns({
   exportPolicy: {

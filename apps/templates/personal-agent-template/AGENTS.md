@@ -32,7 +32,7 @@ personal-agent-template/
 
 ## Orcel Framework
 
-This project deploys its Nuxt frontend and orcel agent as peer Vercel services through `vercel.ts`. Before writing agent code, read the relevant guide in `node_modules/orcel/dist/docs/public/`.
+This project deploys its Nuxt frontend and orcel agent as peer Vercel services through `vercel.ts`. Before writing agent code, read the relevant guide in `node_modules/@orcel/orcel/dist/docs/public/`.
 
 ## Internal API Pattern
 

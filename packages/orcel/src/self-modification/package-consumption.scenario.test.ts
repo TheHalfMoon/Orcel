@@ -158,7 +158,7 @@ describe("packed package consumption", () => {
     await writeAppFile(
       appRoot,
       "agent/agent.ts",
-      'import { defineAgent } from "orcel";\n\nexport default defineAgent({ model: "openai/gpt-5.4" });\n',
+      'import { defineAgent } from "@orcel/orcel";\n\nexport default defineAgent({ model: "openai/gpt-5.4" });\n',
     );
     await writeAppFile(appRoot, "agent/instructions.md", "You are a test agent.\n");
     await writeAppFile(
@@ -179,13 +179,13 @@ describe("packed package consumption", () => {
       ["install", "--ignore-scripts", "--no-frozen-lockfile", "--prefer-offline"],
       appRoot,
     );
-    await access(join(appRoot, "node_modules/orcel/dist/src/self-modification/agent.js"));
+    await access(join(appRoot, "node_modules/@orcel/orcel/dist/src/self-modification/agent.js"));
     await writeAppFile(
       appRoot,
       "verify-development-extension.mjs",
-      `import { defaultDevelopmentExtensions } from "./node_modules/orcel/dist/src/compiler/development-extensions.js";
-import { compileAgentManifest } from "./node_modules/orcel/dist/src/compiler/normalize-manifest.js";
-import { createAgentSourceManifest } from "./node_modules/orcel/dist/src/discover/manifest.js";
+      `import { defaultDevelopmentExtensions } from "./node_modules/@orcel/orcel/dist/src/compiler/development-extensions.js";
+import { compileAgentManifest } from "./node_modules/@orcel/orcel/dist/src/compiler/normalize-manifest.js";
+import { createAgentSourceManifest } from "./node_modules/@orcel/orcel/dist/src/discover/manifest.js";
 
 const manifest = createAgentSourceManifest({ agentId: "packed-dev", agentRoot: "/virtual/agent", appRoot: "/virtual" });
 const compiled = await compileAgentManifest(manifest, { developmentExtensions: defaultDevelopmentExtensions() });

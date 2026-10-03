@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { UseOrcelAgentStatus } from "orcel/svelte";
+  import type { UseOrcelAgentStatus } from "@orcel/orcel/svelte";
 
   let { status }: { status?: UseOrcelAgentStatus } = $props();
 

@@ -1,5 +1,5 @@
-import { defineEval } from "orcel/evals";
-import { satisfies } from "orcel/evals/expect";
+import { defineEval } from "@orcel/orcel/evals";
+import { satisfies } from "@orcel/orcel/evals/expect";
 
 // An authored tool reads the step's model input from ctx.messages: it includes
 // the message that led to the call and accumulates across turns.

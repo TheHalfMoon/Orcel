@@ -45,7 +45,7 @@ describe("runExtensionBuildCommand", () => {
           orcel: {
             extension: { source: "./extension", dist: "./dist/extension" },
           },
-          peerDependencies: { orcel: "*" },
+          peerDependencies: { "@orcel/orcel": "*" },
         },
         null,
         2,
@@ -55,14 +55,14 @@ describe("runExtensionBuildCommand", () => {
     await mkdir(join(root, "node_modules"), { recursive: true });
     await symlink(
       dirname(createRequire(import.meta.url).resolve("orcel/package.json")),
-      join(root, "node_modules", "orcel"),
+      join(root, "node_modules", "@orcel", "orcel"),
       "dir",
     );
     await mkdir(join(root, "extension"), { recursive: true });
     await writeFile(
       join(root, "extension", "extension.ts"),
       [
-        'import { defineExtension } from "orcel/extension";',
+        'import { defineExtension } from "@orcel/orcel/extension";',
         "export default defineExtension();",
         "",
       ].join("\n"),

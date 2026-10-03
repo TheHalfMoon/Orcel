@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 /**
  * Both turns select the matrix model independently. The first uses a smaller

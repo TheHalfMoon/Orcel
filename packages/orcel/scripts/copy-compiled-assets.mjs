@@ -12,7 +12,7 @@ export async function copyCompiledAssets() {
     await stat(sourcePath);
   } catch {
     throw new Error(
-      `Missing compiled vendor assets at "${sourcePath}". Run "pnpm --filter orcel build:compiled".`,
+      `Missing compiled vendor assets at "${sourcePath}". Run "pnpm --filter @orcel/orcel build:compiled".`,
     );
   }
 

@@ -13,7 +13,7 @@ it("installs an addressed addition without a review and makes it available to th
   const { appRoot, agentRoot } = await createAppRoot("orcel-add-chat-");
   await writeFile(
     join(appRoot, "package.json"),
-    JSON.stringify({ name: "orcel-add-chat", type: "module", dependencies: { orcel: "*" } }),
+    JSON.stringify({ name: "orcel-add-chat", type: "module", dependencies: { "@orcel/orcel": "*" } }),
   );
   await writeFile(join(agentRoot, "instructions.md"), "Help Alice with her work.\n");
   const content =

@@ -31,7 +31,7 @@ The default local Workflow world stores run state under `.orcel/.workflow-data`.
 You can instead select an installed Workflow world package in the root `agent.ts`:
 
 ```typescript
-import { defineAgent } from "orcel";
+import { defineAgent } from "@orcel/orcel";
 
 export default defineAgent({
   experimental: {
@@ -68,15 +68,15 @@ An [agent workspace](../../concepts/project-structure#several-root-agents) does 
 For a workspace containing `support` and `research`, run these from the workspace root, outside a Vercel build environment:
 
 ```bash
-(cd agents/support && npx orcel build)
-(cd agents/research && npx orcel build)
+(cd agents/support && npx @orcel/orcel build)
+(cd agents/research && npx @orcel/orcel build)
 ```
 
 Start each built agent in a separate terminal, or configure these commands in your process manager:
 
 ```bash
-(cd agents/support && npx orcel start --host 127.0.0.1 --port 3001)
-(cd agents/research && npx orcel start --host 127.0.0.1 --port 3002)
+(cd agents/support && npx @orcel/orcel start --host 127.0.0.1 --port 3001)
+(cd agents/research && npx @orcel/orcel start --host 127.0.0.1 --port 3002)
 ```
 
 For example, this Caddy configuration gives each agent its own origin and forwards both `/orcel/` and `/.well-known/workflow/` without changing their paths. Point the example hostnames at your server and run Caddy on the same machine:
@@ -99,7 +99,7 @@ A frontend under `apps/web/` is another service managed by your host, not by `or
 
 For path-based mounts, strip the public prefix before forwarding requests to the agent and set `ORCEL_PUBLIC_ROUTE_PREFIX` in that agent's build and runtime environments. Forward its workflow callback routes as well as its orcel routes. Keep the browser client, callback URLs, and peer transports consistent with the public mounts.
 
-You can instead use [`orcel/next`](../frontend/nextjs#dev-vs-deploy-topology) if you want Next.js to start built agent processes and provide the browser-facing proxy routes. That integration is optional; `orcel/vercel` configuration is not used by a self-hosted process manager.
+You can instead use [`@orcel/orcel/next`](../frontend/nextjs#dev-vs-deploy-topology) if you want Next.js to start built agent processes and provide the browser-facing proxy routes. That integration is optional; `@orcel/orcel/vercel` configuration is not used by a self-hosted process manager.
 
 ## Run schedules
 

@@ -11,7 +11,7 @@ Use this skill to preserve the Orcel protocol and durable-session invariants whi
 
 ## First Pass
 
-- Read `AGENTS.md` first. It requires reading the relevant guide under `node_modules/orcel/dist/docs/public/` before writing code.
+- Read `AGENTS.md` first. It requires reading the relevant guide under `node_modules/@orcel/orcel/dist/docs/public/` before writing code.
 - Read `docs/how-the-chatbot-works.md` for architecture changes and `docs/setup-and-deploy.md` for setup, auth, storage, or deployment changes.
 - Search with `rg "useOrcelAgent|ClientSession|SessionState|message.appended|authorization.required|orcelSession|chat_event|streamIndex|continuationToken|defineMcpClientConnection|defineTool"`.
 - Keep Orcel runtime code separate from product shell code: `agent/` defines agent behavior; `app/_components/agent-chat.tsx` bridges Orcel to the web UI; `lib/db/*` persists app state.

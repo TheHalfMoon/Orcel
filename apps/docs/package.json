@@ -97,7 +97,7 @@
     "braintrust": "3.29.0",
     "chat": "4.41.0",
     "chat-adapter-sendblue": "0.2.0",
-    "orcel": "workspace:*",
+    "@orcel/orcel": "workspace:*",
     "eve-channel-blooio": "0.2.0",
     "portless": "0.15.6",
     "postcss": "8.5.15",

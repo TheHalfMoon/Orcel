@@ -1,3 +1,3 @@
-import { workflow } from "orcel/tools/workflow";
+import { workflow } from "@orcel/orcel/tools/workflow";
 
 export default workflow({ maxSubagents: 3 });

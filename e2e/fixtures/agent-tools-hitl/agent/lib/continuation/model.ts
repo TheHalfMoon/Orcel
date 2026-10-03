@@ -1,4 +1,4 @@
-import { mockModel } from "orcel/evals";
+import { mockModel } from "@orcel/orcel/evals";
 import { respond } from "./respond.ts";
 
 export function continuationModel() {

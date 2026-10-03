@@ -1,1 +1,1 @@
-export { default } from "orcel/tools/glob";
+export { default } from "@orcel/orcel/tools/glob";

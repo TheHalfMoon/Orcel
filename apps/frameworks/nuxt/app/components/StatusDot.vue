@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { UseOrcelAgentStatus } from "orcel/vue";
+import type { UseOrcelAgentStatus } from "@orcel/orcel/vue";
 
 const props = defineProps<{
   status?: UseOrcelAgentStatus;

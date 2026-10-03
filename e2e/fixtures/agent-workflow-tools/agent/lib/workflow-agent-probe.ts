@@ -1,4 +1,4 @@
-import type { WorkflowToolContext } from "orcel/tools";
+import type { WorkflowToolContext } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 import { replyFrom } from "./agent-reply.ts";

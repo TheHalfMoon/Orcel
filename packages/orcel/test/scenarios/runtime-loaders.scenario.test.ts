@@ -191,7 +191,7 @@ async function writeRuntimeLoaderSubagentFixture(agentRoot: string): Promise<voi
   await writeFile(
     join(researcherRoot, "sandbox", "sandbox.mjs"),
     [
-      'import { DefaultSandbox, defineSandbox } from "orcel/sandbox";',
+      'import { DefaultSandbox, defineSandbox } from "@orcel/orcel/sandbox";',
       "export const environment = DefaultSandbox.environment();",
       "export default defineSandbox(() => environment.open());",
       "",

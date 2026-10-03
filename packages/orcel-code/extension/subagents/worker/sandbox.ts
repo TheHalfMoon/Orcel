@@ -1,3 +1,3 @@
-import { defineParentSandbox } from "orcel/sandbox";
+import { defineParentSandbox } from "@orcel/orcel/sandbox";
 
 export default defineParentSandbox();

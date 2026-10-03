@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 const ALICE = "principal-binding-alice";
 const BOB = "principal-binding-bob";

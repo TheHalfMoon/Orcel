@@ -2,7 +2,7 @@ import type { ScenarioAppDescriptor } from "#internal/testing/scenario-app.js";
 
 export const TELEGRAM_ROUTE_PORTABILITY_DESCRIPTOR: ScenarioAppDescriptor = {
   files: {
-    "agent/channels/telegram.ts": `import { telegramChannel } from "orcel/channels/telegram";
+    "agent/channels/telegram.ts": `import { telegramChannel } from "@orcel/orcel/channels/telegram";
 
 export default telegramChannel();
 `,

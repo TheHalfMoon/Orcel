@@ -58,7 +58,7 @@ must always hold, write a workflow tool that runs the first step through
 side effect as a separate tool:
 
 ```ts title="agent/tools/publish_reviewed_notes.ts"
-import { defineWorkflowTool } from "orcel/tools";
+import { defineWorkflowTool } from "@orcel/@orcel/orcel/tools";
 import { z } from "zod";
 import { publishNotes } from "../lib/release";
 

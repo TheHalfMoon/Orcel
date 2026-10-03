@@ -1,8 +1,8 @@
 import {
   ConnectionAuthorizationRequiredError,
   defineInteractiveAuthorization,
-} from "orcel/connections";
-import { defineTool } from "orcel/tools";
+} from "@orcel/orcel/connections";
+import { defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 const auth = defineInteractiveAuthorization<{ marker: string }>({

@@ -91,7 +91,7 @@ describe("shim baking (shared)", () => {
     const shim = createFixedMountScopePlugin("extensions/crm").load(
       "\0eve-ext-scope:context:extensions%2Fcrm",
     );
-    expect(shim?.code).toContain(`import { defineMountedState } from "orcel/internal/mount-state"`);
+    expect(shim?.code).toContain(`import { defineMountedState } from "@orcel/orcel/internal/mount-state"`);
     expect(shim?.code).toContain(`defineMountedState("extensions/crm", name, initial)`);
   });
 

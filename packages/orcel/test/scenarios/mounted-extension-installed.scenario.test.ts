@@ -41,14 +41,14 @@ async function compileRuntimeGraph(appRoot: string) {
 const PACKAGE_NAME = "@acme/installed-crm";
 const EXT_TREE: Readonly<Record<string, string>> = {
   "extension/extension.ts": [
-    'import { defineExtension } from "orcel/extension";',
+    'import { defineExtension } from "@orcel/orcel/extension";',
     "interface CrmConfig { apiKey: string; }",
     'const config = { "~standard": { version: 1, vendor: "scenario", validate: (value: unknown) => ({ value: value as CrmConfig }), types: undefined as { input: CrmConfig; output: CrmConfig } | undefined } } as const;',
     "export default defineExtension({ config });",
     "",
   ].join("\n"),
   "extension/tools/echo.ts": [
-    'import { defineTool } from "orcel/tools";',
+    'import { defineTool } from "@orcel/orcel/tools";',
     'import extension from "../extension.js";',
     "export default defineTool({",
     '  description: "Echo the configured API key.",',
@@ -60,7 +60,7 @@ const EXT_TREE: Readonly<Record<string, string>> = {
     "",
   ].join("\n"),
   "extension/tools/shout.ts": [
-    'import { defineTool } from "orcel/tools";',
+    'import { defineTool } from "@orcel/orcel/tools";',
     'import extension from "../extension.js";',
     "export default defineTool({",
     '  description: "Shout the configured API key.",',
@@ -72,7 +72,7 @@ const EXT_TREE: Readonly<Record<string, string>> = {
     "",
   ].join("\n"),
   "extension/tools/dynamic.ts": [
-    'import { defineDynamic, defineTool } from "orcel/tools";',
+    'import { defineDynamic, defineTool } from "@orcel/orcel/tools";',
     'import extension from "../extension.js";',
     "export default defineDynamic({",
     "  events: {",
@@ -88,7 +88,7 @@ const EXT_TREE: Readonly<Record<string, string>> = {
     "",
   ].join("\n"),
   "extension/channels/status.ts": [
-    'import { defineChannel, GET } from "orcel/channels";',
+    'import { defineChannel, GET } from "@orcel/orcel/channels";',
     'import extension from "../extension.js";',
     "export default defineChannel({",
     "  routes: [",
@@ -98,7 +98,7 @@ const EXT_TREE: Readonly<Record<string, string>> = {
     "",
   ].join("\n"),
   "extension/schedules/sync.ts": [
-    'import { defineSchedule } from "orcel/schedules";',
+    'import { defineSchedule } from "@orcel/orcel/schedules";',
     'import extension from "../extension.js";',
     "export default defineSchedule({",
     '  cron: "0 9 * * *",',
@@ -109,7 +109,7 @@ const EXT_TREE: Readonly<Record<string, string>> = {
     "",
   ].join("\n"),
   "extension/subagents/reviewer/agent.ts": [
-    'import { defineAgent } from "orcel";',
+    'import { defineAgent } from "@orcel/orcel";',
     "export default defineAgent({",
     '  model: "openai/gpt-5.4",',
     '  description: "Review CRM records.",',
@@ -117,7 +117,7 @@ const EXT_TREE: Readonly<Record<string, string>> = {
     "",
   ].join("\n"),
   "extension/subagents/reviewer/tools/key.ts": [
-    'import { defineTool } from "orcel/tools";',
+    'import { defineTool } from "@orcel/orcel/tools";',
     'import extension from "../../../extension.js";',
     "export default defineTool({",
     '  description: "Read the configured API key.",',
@@ -129,7 +129,7 @@ const EXT_TREE: Readonly<Record<string, string>> = {
     "",
   ].join("\n"),
   "extension/subagents/weather.ts": [
-    'import { defineRemoteAgent } from "orcel";',
+    'import { defineRemoteAgent } from "@orcel/orcel";',
     "export default defineRemoteAgent({",
     '  description: "Answer weather questions.",',
     '  url: "https://weather.example.com",',
@@ -137,7 +137,7 @@ const EXT_TREE: Readonly<Record<string, string>> = {
     "",
   ].join("\n"),
   "extension/skills/notes.ts": [
-    'import { defineSkill } from "orcel/skills";',
+    'import { defineSkill } from "@orcel/orcel/skills";',
     "export default defineSkill({",
     '  description: "Take structured notes.",',
     '  markdown: "# Notes\\nRecord decisions as bullet points.",',
@@ -145,7 +145,7 @@ const EXT_TREE: Readonly<Record<string, string>> = {
     "",
   ].join("\n"),
   "extension/skills/research.ts": [
-    'import { defineSkill } from "orcel/skills";',
+    'import { defineSkill } from "@orcel/orcel/skills";',
     "export default defineSkill({",
     '  description: "Research an account.",',
     '  markdown: "# Research\\nUse the checklist.",',
@@ -165,7 +165,7 @@ const EXT_TREE: Readonly<Record<string, string>> = {
   ].join("\n"),
   "extension/skills/guide/references/steps.md": "# Steps\n",
   "extension/skills/oncall.ts": [
-    'import { defineDynamic, defineSkill } from "orcel/skills";',
+    'import { defineDynamic, defineSkill } from "@orcel/orcel/skills";',
     "export default defineDynamic({",
     "  events: {",
     '    "session.started": async () => ({',
@@ -180,7 +180,7 @@ const EXT_TREE: Readonly<Record<string, string>> = {
   ].join("\n"),
   "extension/instructions/policy.md": "Prefer the CRM tools for account questions.\n",
   "extension/instructions/dynamic.ts": [
-    'import { defineDynamic, defineInstructions } from "orcel/instructions";',
+    'import { defineDynamic, defineInstructions } from "@orcel/orcel/instructions";',
     "export default defineDynamic({",
     "  events: {",
     '    "session.started": async () =>',
@@ -208,7 +208,7 @@ async function buildInstalledExtensionFiles(): Promise<Record<string, string>> {
         orcel: {
           extension: { source: "./extension", dist: "./dist/extension" },
         },
-        peerDependencies: { orcel: "*" },
+        peerDependencies: { "@orcel/orcel": "*" },
       },
       null,
       2,

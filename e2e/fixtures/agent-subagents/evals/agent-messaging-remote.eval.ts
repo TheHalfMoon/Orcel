@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 const MEMORABLE_FACT = "Alice named the tide station notebook Harbor Lumen 4482.";
 

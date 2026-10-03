@@ -22,7 +22,7 @@ describe("parseExtensionMountSpecifier", () => {
 
   it("resolves the aliased named import that binds the exported value", () => {
     const source = [
-      'import { search } from "orcel/tools";',
+      'import { search } from "@orcel/orcel/tools";',
       'import { crm as mount } from "@acme/crm";',
       "export default mount({});",
     ].join("\n");

@@ -28,14 +28,14 @@ describe("initAgentInstructions", () => {
     expect(instructions).toContain("--model provider/model-id");
     expect(instructions).toContain("--reasoning effort");
     // `npx` runs without a prior install and is package-manager agnostic, so the
-    // pre-scaffold guide renders the universal `npx orcel dev` through the shared
+    // pre-scaffold guide renders the universal `npx @orcel/orcel dev` through the shared
     // prompt renderer rather than a launcher-specific command.
-    expect(instructions).toContain("npx orcel@latest init <name>");
-    expect(instructions).toContain("npx orcel@latest extension init <name>");
+    expect(instructions).toContain("npx @orcel/orcel@latest init <name>");
+    expect(instructions).toContain("npx @orcel/orcel@latest extension init <name>");
     expect(instructions).toContain("full docs are bundled");
-    expect(instructions).toContain("node_modules/orcel/docs/");
+    expect(instructions).toContain("node_modules/@orcel/orcel/docs/");
     expect(instructions).toContain("resolve\nthe installed `orcel` package location");
-    expect(instructions).toContain("npx orcel dev --no-ui");
+    expect(instructions).toContain("npx @orcel/orcel dev --no-ui");
     expect(instructions).not.toContain("npm run dev");
     expect(instructions).not.toContain("starts the dev server");
     // The shared renderer resolves every placeholder, even in the pre-scaffold guide.
@@ -83,7 +83,7 @@ describe("initAgentDevHandoff", () => {
     // paths relative to it rather than interpolating the working directory.
     expect(handoff).toContain("The project at `/tmp/triage-bot` is already scaffolded");
     expect(handoff).toContain("full docs are bundled");
-    expect(handoff).toContain("node_modules/orcel/docs/");
+    expect(handoff).toContain("node_modules/@orcel/orcel/docs/");
     expect(handoff).toContain("resolve\nthe installed `orcel` package location");
     expect(handoff).toContain("agent/instructions.md");
     expect(handoff).toContain("`orcel registry search <query>`");
@@ -112,7 +112,7 @@ describe("initExtensionInstructions", () => {
   it("points coding agents at extension init with a package name", () => {
     const instructions = initExtensionInstructions();
 
-    expect(instructions).toContain("npx orcel@latest extension init <name>");
+    expect(instructions).toContain("npx @orcel/orcel@latest extension init <name>");
     expect(instructions).toContain("orcel extension build");
     expect(instructions).toContain("does not start orcel dev");
     expect(instructions).not.toContain("{{");

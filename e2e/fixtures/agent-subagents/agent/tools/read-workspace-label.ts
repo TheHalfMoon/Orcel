@@ -1,4 +1,4 @@
-import { defineTool, type ToolAuthProvider } from "orcel/tools";
+import { defineTool, type ToolAuthProvider } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 const workspaceLabelByMembership: Readonly<Record<string, string>> = {

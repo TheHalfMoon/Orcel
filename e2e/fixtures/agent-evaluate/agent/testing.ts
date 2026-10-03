@@ -1,8 +1,8 @@
 import type { Experimental_EvaluationModel } from "ai";
-import { defineDynamic } from "orcel";
-import { defineState } from "orcel/context";
-import { mockModel, type MockModelResponder } from "orcel/evals";
-import { auto } from "orcel/models";
+import { defineDynamic } from "@orcel/orcel";
+import { defineState } from "@orcel/orcel/context";
+import { mockModel, type MockModelResponder } from "@orcel/orcel/evals";
+import { auto } from "@orcel/orcel/models";
 
 export const routing = defineState("evaluate-fixture.routing", () => ({
   requests: 0,

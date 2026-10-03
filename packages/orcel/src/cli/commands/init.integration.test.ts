@@ -330,7 +330,7 @@ describe("runInitCommand", () => {
     };
     const deps = { ...dependencies(), hasInteractiveTerminal: () => interactive };
     deps.isCodingAgentLaunch.mockResolvedValue(agent);
-    const shellOutput = "$ pnpm dlx orcel init agent\nProgress: resolved 47, added 33, done\n";
+    const shellOutput = "$ pnpm dlx @orcel/orcel init agent\nProgress: resolved 47, added 33, done\n";
     screen.write(shellOutput);
     try {
       await runInitCommand(output, parentDirectory, "agent", {}, deps);
@@ -643,7 +643,7 @@ describe("runInitCommand", () => {
     const packageJson = JSON.parse(
       await readFile(join(parentDirectory, "my-agent", "package.json"), "utf8"),
     ) as { dependencies: Record<string, string> };
-    expect(packageJson.dependencies.orcel).toBe("file:/tmp/orcel-0.11.5.tgz");
+    expect(packageJson.dependencies["@orcel/orcel"]).toBe("file:/tmp/orcel-0.11.5.tgz");
   });
 
   it("uses an explicit init package spec when adding to an existing project", async () => {
@@ -658,7 +658,7 @@ describe("runInitCommand", () => {
     const packageJson = JSON.parse(await readFile(join(projectRoot, "package.json"), "utf8")) as {
       dependencies: Record<string, string>;
     };
-    expect(packageJson.dependencies.orcel).toBe("file:/tmp/orcel-0.11.5.tgz");
+    expect(packageJson.dependencies["@orcel/orcel"]).toBe("file:/tmp/orcel-0.11.5.tgz");
   });
 
   it.each([undefined, "."] as const)(
@@ -890,7 +890,7 @@ describe("runInitCommand", () => {
       overrides?: unknown;
       resolutions?: unknown;
     };
-    expect(projectPackageJson.dependencies.orcel).toBe("^0.6.0");
+    expect(projectPackageJson.dependencies["@orcel/orcel"]).toBe("^0.6.0");
     expect(projectPackageJson.engines).toBeUndefined();
     expect(projectPackageJson.overrides).toBeUndefined();
     expect(projectPackageJson.resolutions).toBeUndefined();
@@ -981,7 +981,7 @@ describe("runInitCommand", () => {
       overrides?: unknown;
       resolutions?: unknown;
     };
-    expect(projectPackageJson.dependencies.orcel).toBe("^0.6.0");
+    expect(projectPackageJson.dependencies["@orcel/orcel"]).toBe("^0.6.0");
     expect(projectPackageJson.dependencies.next).toBe("16.0.0");
     expect(projectPackageJson.engines).toBeUndefined();
     expect(projectPackageJson.overrides).toBeUndefined();
@@ -1352,7 +1352,7 @@ describe("runInitCommand", () => {
         DEFAULT_AGENT_MODEL_ID,
       );
       expect(JSON.parse(await readFile(join(projectRoot, "package.json"), "utf8"))).toMatchObject({
-        dependencies: { orcel: "^0.6.0" },
+        dependencies: { "@orcel/orcel": "^0.6.0" },
       });
       // The workspace policy is pnpm configuration; it must not leak into
       // projects owned by other managers.
@@ -1421,7 +1421,7 @@ describe("runInitCommand", () => {
     const projectPackageJson = JSON.parse(
       await readFile(join(projectRoot, "package.json"), "utf8"),
     ) as { dependencies: Record<string, string>; engines?: unknown };
-    expect(projectPackageJson.dependencies.orcel).toBe("^0.6.0");
+    expect(projectPackageJson.dependencies["@orcel/orcel"]).toBe("^0.6.0");
     expect(projectPackageJson.engines).toBeUndefined();
     expect(JSON.parse(await readFile(join(workspaceRoot, "package.json"), "utf8"))).toMatchObject({
       engines: { node: "24.x" },
@@ -1617,7 +1617,7 @@ describe("runInitCommand", () => {
 
     await expect(pathExists(join(projectRoot, "agent/agent.ts"))).resolves.toBe(true);
     expect(JSON.parse(await readFile(join(projectRoot, "package.json"), "utf8"))).toMatchObject({
-      dependencies: { orcel: "^0.6.0" },
+      dependencies: { "@orcel/orcel": "^0.6.0" },
     });
     expect(output.messages.join("\n")).toContain("Updated existing project:");
     expect(output.messages.join("\n")).toContain("Created agent/agent.ts");

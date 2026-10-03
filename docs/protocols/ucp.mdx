@@ -94,7 +94,7 @@ Use a custom channel to serve the profile from the `/.well-known/ucp` endpoint.
 
 ```ts
 // agent/channels/ucp.ts
-import { defineChannel, GET } from "orcel/channels";
+import { defineChannel, GET } from "@orcel/@orcel/orcel/channels";
 import { profile } from "../ucp-profile";
 
 const body = JSON.stringify(profile);
@@ -124,7 +124,7 @@ The URLs in `services[].endpoint` must point at endpoints you serve. You can use
 
 ```ts
 // agent/channels/ucp-shopping.ts
-import { defineChannel, POST } from "orcel/channels";
+import { defineChannel, POST } from "@orcel/@orcel/orcel/channels";
 
 export default defineChannel({
   routes: [

@@ -50,10 +50,10 @@ attached.messageIncludes("Sunny");
 
 ## Value assertions with `t.check`
 
-`t.check(value, assertion)` grades an explicit value against a builder from `orcel/evals/expect`. The value can be a turn’s `.message`, parsed JSON, or any local you computed:
+`t.check(value, assertion)` grades an explicit value against a builder from `@orcel/orcel/evals/expect`. The value can be a turn’s `.message`, parsed JSON, or any local you computed:
 
 ```ts
-import { includes, equals, matches, satisfies, similarity } from "orcel/evals/expect";
+import { includes, equals, matches, satisfies, similarity } from "@orcel/@orcel/orcel/evals/expect";
 
 t.check(turn.message, includes(/sunny/i)); // substring or RegExp (gate)
 t.check(parsed, equals({ city: "Brooklyn" })); // deep structural equality (gate)

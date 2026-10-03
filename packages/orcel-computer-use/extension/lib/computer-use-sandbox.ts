@@ -1,4 +1,4 @@
-import type { SandboxSession } from "orcel/sandbox";
+import type { SandboxSession } from "@orcel/orcel/sandbox";
 
 import { commandFailureDetail } from "./command-failure.ts";
 import { COMPUTER_USE_DRIVER_SOURCES } from "./computer-use-driver-source.ts";

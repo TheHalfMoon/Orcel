@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { SandboxSession } from "orcel/sandbox";
+import type { SandboxSession } from "@orcel/orcel/sandbox";
 
 import {
   applyPatchToSandbox,

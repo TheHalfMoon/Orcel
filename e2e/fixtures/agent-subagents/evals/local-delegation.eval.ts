@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 const SUBAGENT_TOKEN = "SUBAGENT_TOKEN=echo-marker-9F2X";
 

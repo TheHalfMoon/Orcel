@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 const DYNAMIC_SKILL_TOKEN = "dynamic-skill-ok-P4K9";
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { OrcelDynamicToolPart, OrcelMessagePart } from "orcel/vue";
+import type { OrcelDynamicToolPart, OrcelMessagePart } from "@orcel/orcel/vue";
 
 const { cancel, data, status, error, respond, send } = useOrcelAgent();
 

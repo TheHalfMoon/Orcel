@@ -1,4 +1,4 @@
-import { defineChannel, POST } from "orcel/channels";
+import { defineChannel, POST } from "@orcel/orcel/channels";
 import { getHookByToken, getRun, resumeHook } from "workflow/api";
 import { z } from "zod";
 import { verificationNamespace, type VerificationGate } from "../lib/verification-gate.js";

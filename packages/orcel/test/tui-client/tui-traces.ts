@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { Client } from "orcel/client";
+import { Client } from "@orcel/orcel/client";
 import {
   createPromptCommandHandler,
   OrcelTUIRunner,

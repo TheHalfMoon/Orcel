@@ -1,5 +1,5 @@
 import { latestTaskResult, outputOf, playScript } from "@orcel-e2e/config/mock-script";
-import type { MockModelRequest, MockModelResponse } from "orcel/evals";
+import type { MockModelRequest, MockModelResponse } from "@orcel/orcel/evals";
 
 import {
   SURVEY_DIRECTIVE,

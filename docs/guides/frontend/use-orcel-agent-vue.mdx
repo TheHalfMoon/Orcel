@@ -3,17 +3,17 @@ title: "useOrcelAgent (Vue)"
 description: "Use the orcel Vue composable and its Vue-specific reactive interface."
 ---
 
-`useOrcelAgent()` from `orcel/vue` exposes the shared orcel frontend client as Vue computed refs and methods. Read the [frontend overview](./overview) for session behavior, messages, human input, authorization, callbacks, reducers, and persistence. This page covers the Vue-specific interface.
+`useOrcelAgent()` from `@orcel/orcel/vue` exposes the shared orcel frontend client as Vue computed refs and methods. Read the [frontend overview](./overview) for session behavior, messages, human input, authorization, callbacks, reducers, and persistence. This page covers the Vue-specific interface.
 
-Nuxt users normally receive the composable as an auto-import after registering the [`orcel/nuxt` module](./nuxt).
+Nuxt users normally receive the composable as an auto-import after registering the [`@orcel/orcel/nuxt` module](./nuxt).
 
 ## Basic usage
 
-Import the composable from `orcel/vue`. Its state is exposed as `ComputedRef`s, so templates unwrap it automatically:
+Import the composable from `@orcel/orcel/vue`. Its state is exposed as `ComputedRef`s, so templates unwrap it automatically:
 
 ```vue
 <script setup lang="ts">
-import { useOrcelAgent } from "orcel/vue";
+import { useOrcelAgent } from "@orcel/@orcel/orcel/vue";
 import { computed, ref } from "vue";
 
 const { data, status, send } = useOrcelAgent();
@@ -66,7 +66,7 @@ Pending requests appear in `data.value.messages`. Use the Vue exports when narro
 ```vue
 <script setup lang="ts">
 import { computed } from "vue";
-import { useOrcelAgent } from "orcel/vue";
+import { useOrcelAgent } from "@orcel/@orcel/orcel/vue";
 
 const { data, respond } = useOrcelAgent();
 
@@ -130,7 +130,7 @@ Pass `onEvent`, `onError`, `onFinish`, or `onSessionChange` when the application
 
 ## Custom reducer
 
-Import `OrcelAgentReducer` from `orcel/vue` when projecting events into application-specific state. The resulting `data` remains a `ComputedRef<TData>`. See [Custom reducer](./overview#custom-reducer) for the reducer contract and client projection events.
+Import `OrcelAgentReducer` from `@orcel/orcel/vue` when projecting events into application-specific state. The resulting `data` remains a `ComputedRef<TData>`. See [Custom reducer](./overview#custom-reducer) for the reducer contract and client projection events.
 
 ## What to read next
 

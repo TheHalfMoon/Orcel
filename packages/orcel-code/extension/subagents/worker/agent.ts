@@ -1,4 +1,4 @@
-import { defineAgent, defineDynamic } from "orcel";
+import { defineAgent, defineDynamic } from "@orcel/orcel";
 
 import extension from "../../extension.ts";
 

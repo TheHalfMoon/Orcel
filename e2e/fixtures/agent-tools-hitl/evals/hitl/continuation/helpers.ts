@@ -4,8 +4,8 @@ import type {
   OrcelEvalSession,
   OrcelEvalTurn,
   InputRequest,
-} from "orcel/evals";
-import { equals, satisfies } from "orcel/evals/expect";
+} from "@orcel/orcel/evals";
+import { equals, satisfies } from "@orcel/orcel/evals/expect";
 
 export const scriptedSession = { headers: { "x-orcel-fixture-model": "continuation" } };
 

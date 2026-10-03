@@ -1,4 +1,4 @@
-import { defineTool } from "orcel/tools";
+import { defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 import { GREP_OUTPUT_MODES, MAX_GREP_LIMIT, executeGrepSearch } from "../lib/grep-search.ts";

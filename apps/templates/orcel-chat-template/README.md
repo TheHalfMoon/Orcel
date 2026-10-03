@@ -156,4 +156,4 @@ This template intentionally does not include file uploads, guest mode, NextAuth/
 
 Edit the agent in `agent/agent.ts`. Its behavior is defined in `agent/instructions.md`, tools live in `agent/tools/`, and `agent/memory/profile.ts` defines per-user long-term memory.
 
-The browser talks to orcel with `useOrcelAgent()` from `orcel/react`; the app stores orcel stream events and session state so `/chat/[id]` can resume the same durable conversation after refresh.
+The browser talks to orcel with `useOrcelAgent()` from `@orcel/orcel/react`; the app stores orcel stream events and session state so `/chat/[id]` can resume the same durable conversation after refresh.

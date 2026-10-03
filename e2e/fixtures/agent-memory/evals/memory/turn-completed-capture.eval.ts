@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 export default defineEval({
   description: "A successful turn is captured once with its settled conversation history.",

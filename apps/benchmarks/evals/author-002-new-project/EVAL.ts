@@ -14,7 +14,7 @@ test("creates a complete orcel project in place", () => {
     dependencies?: Record<string, string>;
     scripts?: Record<string, string>;
   };
-  expect(packageJson.dependencies?.orcel).toBeTruthy();
+  expect(packageJson.dependencies?.["@orcel/orcel"]).toBeTruthy();
   expect(packageJson.scripts?.build).toBe("orcel build");
 });
 

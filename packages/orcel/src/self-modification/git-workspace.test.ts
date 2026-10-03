@@ -1,4 +1,4 @@
-import type { SandboxNetworkPolicy } from "orcel/sandbox";
+import type { SandboxNetworkPolicy } from "@orcel/orcel/sandbox";
 import { describe, expect, it } from "vitest";
 
 import { prepareSelfModificationWorkspace } from "./git-workspace.js";

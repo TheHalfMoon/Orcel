@@ -110,7 +110,7 @@ VERCEL=1 VERCEL_ENV=preview VERCEL_TARGET_ENV=preview \
   pnpm exec orcel build
 DEPLOYMENT_URL="$(vercel deploy --prebuilt --yes --target=preview \
   --env "ORCEL_E2E_MODEL=$ORCEL_E2E_MODEL" | tail -n 1)"
-npx orcel eval --strict --url "$DEPLOYMENT_URL"
+npx @orcel/orcel eval --strict --url "$DEPLOYMENT_URL"
 ```
 
 Do not set `VERCEL_TEAM_ID` at build: sandbox template keys must derive
@@ -212,7 +212,7 @@ check nothing reports blocks every PR as permanently "expected".
 once per leg, then runs one fixture directory with the leg's real model:
 
 ```sh
-pnpm --filter orcel run build
+pnpm --filter @orcel/orcel run build
 cd "$FIXTURE_DIR"
 pnpm run --if-present e2e:prepare
 ORCEL_E2E_MODEL="$MODEL" pnpm exec orcel eval --strict --junit "$JUNIT_PATH"
@@ -238,7 +238,7 @@ mock-compatible evals:
 pnpm exec orcel build
 DEPLOYMENT_URL="$(vercel deploy --prebuilt --yes --target=preview \
   --env "ORCEL_E2E_MODEL=mock" | tail -n 1)"
-npx orcel eval --strict --exclude-tag real-model \
+npx @orcel/orcel eval --strict --exclude-tag real-model \
   --url "$DEPLOYMENT_URL" --junit "$JUNIT_PATH"
 ```
 

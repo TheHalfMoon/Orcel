@@ -1,6 +1,6 @@
 import { setImmediate } from "node:timers/promises";
 
-import { defineInstrumentation } from "orcel/instrumentation";
+import { defineInstrumentation } from "@orcel/orcel/instrumentation";
 
 import marker from "../../authored-assets/instrumentation.txt?raw";
 

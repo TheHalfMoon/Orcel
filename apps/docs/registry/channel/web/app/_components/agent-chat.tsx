@@ -1,7 +1,7 @@
 "use client";
 
 import type { UserContent } from "ai";
-import { useOrcelAgent } from "orcel/react";
+import { useOrcelAgent } from "@orcel/orcel/react";
 import { AlertCircleIcon, BrainIcon, PlusIcon, SquareIcon } from "lucide-react";
 import { useState } from "react";
 import {

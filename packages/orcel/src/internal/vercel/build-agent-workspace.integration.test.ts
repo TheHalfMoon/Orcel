@@ -16,7 +16,7 @@ async function createWorkspace(): Promise<string> {
   await writeFile(
     join(root, "package.json"),
     JSON.stringify({
-      dependencies: { orcel: "*" },
+      dependencies: { "@orcel/orcel": "*" },
       packageManager: "pnpm@10.0.0",
       private: true,
     }),
@@ -91,9 +91,9 @@ describe("buildAgentWorkspace", () => {
 
     expect(config.services["orcel-support"]).toEqual({
       buildCommand:
-        "cd '../../../agents/support' && export ORCEL_INTERNAL_BUILD_OUTPUT_DIRECTORY='../../.orcel/vercel-services/orcel-support/.vercel/output' && export ORCEL_INTERNAL_HOST_BUILD_OUTPUT_DIRECTORY='../../.vercel/output' && export ORCEL_PUBLIC_ROUTE_PREFIX='/orcel/support' && export ORCEL_INTERNAL_AGENT_WORKSPACE_MEMBER=1 && node 'node_modules/orcel/bin/orcel.js' build",
+        "cd '../../../agents/support' && export ORCEL_INTERNAL_BUILD_OUTPUT_DIRECTORY='../../.orcel/vercel-services/orcel-support/.vercel/output' && export ORCEL_INTERNAL_HOST_BUILD_OUTPUT_DIRECTORY='../../.vercel/output' && export ORCEL_PUBLIC_ROUTE_PREFIX='/orcel/support' && export ORCEL_INTERNAL_AGENT_WORKSPACE_MEMBER=1 && node 'node_modules/@orcel/orcel/bin/orcel.js' build",
       devCommand:
-        "cd '../../../agents/support' && export ORCEL_PUBLIC_ROUTE_PREFIX='/orcel/support' && export ORCEL_INTERNAL_AGENT_WORKSPACE_MEMBER=1 && node 'node_modules/orcel/bin/orcel.js' dev --no-ui",
+        "cd '../../../agents/support' && export ORCEL_PUBLIC_ROUTE_PREFIX='/orcel/support' && export ORCEL_INTERNAL_AGENT_WORKSPACE_MEMBER=1 && node 'node_modules/@orcel/orcel/bin/orcel.js' dev --no-ui",
       framework: "eve",
       outputDirectory: ".vercel/output",
       root: ".orcel/vercel-services/orcel-support",

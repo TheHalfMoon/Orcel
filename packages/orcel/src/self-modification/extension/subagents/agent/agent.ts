@@ -6,10 +6,10 @@ import {
   type AgentStaticModelDefinition,
   type DynamicSentinel,
   type DynamicSubagentDefinition,
-} from "orcel";
+} from "@orcel/orcel";
 
 import { DEFAULT_AGENT_MODEL_ID, DEFAULT_AGENT_REASONING } from "#shared/default-agent-model.js";
-import { getLocalDevCapability } from "orcel/local-dev";
+import { getLocalDevCapability } from "@orcel/orcel/local-dev";
 
 import selfModification from "../../extension.js";
 import { resolveSelfModificationConfig, type SelfModificationConfig } from "../../../config.js";

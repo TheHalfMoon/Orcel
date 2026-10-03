@@ -13,7 +13,7 @@ async function createWorkspace(): Promise<string> {
   await Promise.all([
     mkdir(join(root, "agents", "support", "agent"), { recursive: true }),
     mkdir(join(root, "agents", "research", "agent"), { recursive: true }),
-    writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { orcel: "*" } })),
+    writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { "@orcel/orcel": "*" } })),
   ]);
   return root;
 }
@@ -38,7 +38,7 @@ describe("resolveOrcelProjectContext", () => {
     const root = await mkdtemp(join(tmpdir(), "orcel-workspace-no-dependency-"));
     await Promise.all([
       mkdir(join(root, "agents", "support", "agent"), { recursive: true }),
-      writeFile(join(root, "package.json"), JSON.stringify({ devDependencies: { orcel: "*" } })),
+      writeFile(join(root, "package.json"), JSON.stringify({ devDependencies: { "@orcel/orcel": "*" } })),
     ]);
     await expect(findOrcelProjectContext(root)).resolves.toBeUndefined();
   });
@@ -48,10 +48,10 @@ describe("resolveOrcelProjectContext", () => {
     const appRoot = join(root, "agents", "support");
     await mkdir(join(appRoot, "agent"), { recursive: true });
     await Promise.all([
-      writeFile(join(root, "package.json"), JSON.stringify({ devDependencies: { orcel: "*" } })),
+      writeFile(join(root, "package.json"), JSON.stringify({ devDependencies: { "@orcel/orcel": "*" } })),
       writeFile(
         join(appRoot, "package.json"),
-        JSON.stringify({ dependencies: { orcel: "*" }, name: "support" }),
+        JSON.stringify({ dependencies: { "@orcel/orcel": "*" }, name: "support" }),
       ),
     ]);
 
@@ -76,7 +76,7 @@ describe("resolveOrcelProjectContext", () => {
   it("allows an empty workspace", async () => {
     const root = await mkdtemp(join(tmpdir(), "orcel-workspace-empty-"));
     await mkdir(join(root, "agents"));
-    await writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { orcel: "*" } }));
+    await writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { "@orcel/orcel": "*" } }));
 
     await expect(resolveOrcelProjectContext(root)).resolves.toMatchObject({
       kind: "workspace",
@@ -102,7 +102,7 @@ describe("resolveOrcelProjectContext", () => {
     await mkdir(join(appRoot, "agent"), { recursive: true });
     await writeFile(
       join(appRoot, "package.json"),
-      JSON.stringify({ dependencies: { orcel: "*" }, name: "billing" }),
+      JSON.stringify({ dependencies: { "@orcel/orcel": "*" }, name: "billing" }),
     );
 
     await expect(resolveOrcelProjectContext(root)).resolves.toMatchObject({
@@ -171,7 +171,7 @@ describe("resolveOrcelProjectContext", () => {
     const supportRoot = join(root, "agents", "support");
     const source = createMemoryProjectSource({
       files: {
-        [join(root, "package.json")]: JSON.stringify({ dependencies: { orcel: "*" } }),
+        [join(root, "package.json")]: JSON.stringify({ dependencies: { "@orcel/orcel": "*" } }),
         [join(supportRoot, "agent", "instructions.md")]: "Support users.",
       },
     });
@@ -202,7 +202,7 @@ describe("resolveOrcelProjectContext", () => {
     const appRoot = join(root, "orcel", "apps", "fixtures", "weather-agent");
     await mkdir(join(appRoot, "agent"), { recursive: true });
     await mkdir(join(root, "agents", "apps"), { recursive: true });
-    await writeFile(join(appRoot, "package.json"), JSON.stringify({ dependencies: { orcel: "*" } }));
+    await writeFile(join(appRoot, "package.json"), JSON.stringify({ dependencies: { "@orcel/orcel": "*" } }));
 
     await expect(resolveOrcelProjectContext(appRoot)).resolves.toEqual({
       appRoot,
@@ -216,8 +216,8 @@ describe("resolveOrcelProjectContext", () => {
     const appRoot = join(root, "agents", "support");
     await mkdir(join(root, "agent"), { recursive: true });
     await mkdir(join(appRoot, "agent"), { recursive: true });
-    await writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { orcel: "*" } }));
-    await writeFile(join(appRoot, "package.json"), JSON.stringify({ dependencies: { orcel: "*" } }));
+    await writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { "@orcel/orcel": "*" } }));
+    await writeFile(join(appRoot, "package.json"), JSON.stringify({ dependencies: { "@orcel/orcel": "*" } }));
 
     await expect(resolveOrcelProjectContext(appRoot)).resolves.toEqual({
       appRoot,
@@ -229,7 +229,7 @@ describe("resolveOrcelProjectContext", () => {
   it("resolves a flat standalone agent", async () => {
     const root = await mkdtemp(join(tmpdir(), "orcel-flat-agent-"));
     await Promise.all([
-      writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { orcel: "*" } })),
+      writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { "@orcel/orcel": "*" } })),
       writeFile(join(root, "agent.ts"), "export default {};\n"),
     ]);
 
@@ -244,7 +244,7 @@ describe("resolveOrcelProjectContext", () => {
     const root = await mkdtemp(join(tmpdir(), "orcel-flat-agent-unrelated-agents-"));
     await mkdir(join(root, "agents", "customer-support"), { recursive: true });
     await Promise.all([
-      writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { orcel: "*" } })),
+      writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { "@orcel/orcel": "*" } })),
       writeFile(join(root, "agent.ts"), "export default {};\n"),
       writeFile(join(root, "agents", "customer-support", "index.ts"), "export {};\n"),
     ]);
@@ -279,7 +279,7 @@ describe("resolveOrcelProjectContext", () => {
 
   it("rejects an orcel package without agent files", async () => {
     const root = await mkdtemp(join(tmpdir(), "orcel-invalid-shape-"));
-    await writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { orcel: "*" } }));
+    await writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { "@orcel/orcel": "*" } }));
 
     await expect(resolveOrcelProjectContext(root)).rejects.toThrow(/found no agent files/);
   });

@@ -68,7 +68,7 @@ export interface PhotonIMessageChannel extends ChatSdkChannel {}
  * @example
  * ```ts
  * import { connectPhotonCredentials } from "@vercel/connect/eve";
- * import { photonIMessageChannel } from "orcel/channels/photon";
+ * import { photonIMessageChannel } from "@orcel/orcel/channels/photon";
  *
  * export default photonIMessageChannel({
  *   credentials: connectPhotonCredentials("photon/my-agent"),

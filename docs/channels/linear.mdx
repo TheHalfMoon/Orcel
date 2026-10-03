@@ -28,7 +28,7 @@ The generated channel uses Connect-managed credentials:
 
 ```ts title="agent/channels/linear.ts"
 import { connectLinearCredentials } from "@vercel/connect/eve";
-import { linearChannel } from "orcel/channels/linear";
+import { linearChannel } from "@orcel/@orcel/orcel/channels/linear";
 
 export default linearChannel({
   credentials: connectLinearCredentials("linear/my-agent"),
@@ -42,7 +42,7 @@ export default linearChannel({
 To run a Linear OAuth app you manage yourself, pass its credentials directly instead:
 
 ```ts title="agent/channels/linear.ts"
-import { linearChannel } from "orcel/channels/linear";
+import { linearChannel } from "@orcel/@orcel/orcel/channels/linear";
 
 export default linearChannel({
   credentials: {
@@ -106,7 +106,7 @@ Event handlers receive `channel.linear`, which exposes `createActivity`, `listAc
 Return `{ auth }` to dispatch, or `null` to acknowledge without waking the agent. Return `title` alongside `auth` to set the title when the dispatch starts a run.
 
 ```ts
-import { defaultLinearAuth, linearChannel } from "orcel/channels/linear";
+import { defaultLinearAuth, linearChannel } from "@orcel/@orcel/orcel/channels/linear";
 
 export default linearChannel({
   onAgentSession: (_ctx, event) => {
@@ -119,7 +119,7 @@ export default linearChannel({
 Restrict dispatch to a subset of Linear teams or projects by inspecting `event.agentSession.issue` in `onAgentSession`. Add extra context by returning `context` alongside `auth`.
 
 ```ts
-import { defaultLinearAuth, linearChannel } from "orcel/channels/linear";
+import { defaultLinearAuth, linearChannel } from "@orcel/@orcel/orcel/channels/linear";
 
 export default linearChannel({
   onAgentSession: (_ctx, event) => {
@@ -135,7 +135,7 @@ export default linearChannel({
 Override event delivery when you want more specific Agent Activities.
 
 ```ts
-import { linearChannel } from "orcel/channels/linear";
+import { linearChannel } from "@orcel/@orcel/orcel/channels/linear";
 
 export default linearChannel({
   events: {
@@ -169,7 +169,7 @@ await channel.linear.updateSession({
 Use the channel's proactive target to continue an existing Agent Session or create one from a Linear issue or root comment. The target accepts an existing `agentSessionId`, or an `issueId` or root `commentId` to create a new session before sending the message. The example below runs from a schedule; a route handler uses the same target shape through `ctx.to(...)`.
 
 ```ts
-import { defineSchedule } from "orcel/schedules";
+import { defineSchedule } from "@orcel/@orcel/orcel/schedules";
 
 import linear from "../channels/linear";
 

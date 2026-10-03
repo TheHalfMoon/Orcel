@@ -1,4 +1,4 @@
-import { defineWorkflowTool } from "orcel/tools";
+import { defineWorkflowTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 import { stageDeploy } from "../../../lib/stage.ts";

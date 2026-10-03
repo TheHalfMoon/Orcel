@@ -1,1 +1,1 @@
-export { default } from "orcel/tools/web_search";
+export { default } from "@orcel/orcel/tools/web_search";

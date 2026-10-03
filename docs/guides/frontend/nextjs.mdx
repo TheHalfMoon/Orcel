@@ -3,13 +3,13 @@ title: "Next.js"
 description: "Run an orcel agent and a Next.js app as one project with withEve."
 ---
 
-`orcel/next` connects a Next.js app to one or more orcel agents. Wrap your Next.js config with `withEve(nextConfig)` to run the app and agents with one development command and deploy them as one Vercel project. Browser requests use same-origin routes; the agent runtimes remain separate services.
+`@orcel/orcel/next` connects a Next.js app to one or more orcel agents. Wrap your Next.js config with `withEve(nextConfig)` to run the app and agents with one development command and deploy them as one Vercel project. Browser requests use same-origin routes; the agent runtimes remain separate services.
 
-Use this integration when Next.js owns the application's development and deployment lifecycle. If the frontend is a peer of an agent workspace, compose the services with [`orcel/vercel`](../deployment/vercel#compose-agents-with-other-vercel-services) on Vercel or your [self-hosted process manager and proxy](../deployment/self-hosting#run-workspace-members). A peer frontend can use `orcel/react` without `orcel/next`. See [Project Structure](/docs/concepts/project-structure#configure-a-web-deployment) for the choice.
+Use this integration when Next.js owns the application's development and deployment lifecycle. If the frontend is a peer of an agent workspace, compose the services with [`@orcel/orcel/vercel`](../deployment/vercel#compose-agents-with-other-vercel-services) on Vercel or your [self-hosted process manager and proxy](../deployment/self-hosting#run-workspace-members). A peer frontend can use `@orcel/orcel/react` without `@orcel/orcel/next`. See [Project Structure](/docs/concepts/project-structure#configure-a-web-deployment) for the choice.
 
 ## Prerequisites
 
-- The `orcel` package installed in your project (`npm install orcel@latest`).
+- The `orcel` package installed in your project (`npm install @orcel/orcel@latest`).
 - An existing orcel agent directory. If you don't have one, start from [Getting Started](../../getting-started).
 - A Next.js app, or a single-agent project where you want to generate one below.
 
@@ -31,7 +31,7 @@ The Web Chat installer does not support orcel agent workspaces. If you want Next
 
 ```ts title="next.config.ts"
 import type { NextConfig } from "next";
-import { withEve } from "orcel/next";
+import { withEve } from "@orcel/@orcel/orcel/next";
 
 const nextConfig: NextConfig = {};
 
@@ -92,7 +92,7 @@ When the Next.js app is a peer of an orcel project, select its root without repe
 
 ```ts title="apps/web/next.config.ts"
 import type { NextConfig } from "next";
-import { withEve } from "orcel/next";
+import { withEve } from "@orcel/@orcel/orcel/next";
 
 const nextConfig: NextConfig = {};
 
@@ -116,7 +116,7 @@ For a single unnamed agent, call [`useOrcelAgent`](./overview) without `agent` o
 ```tsx
 "use client";
 
-import { useOrcelAgent } from "orcel/react";
+import { useOrcelAgent } from "@orcel/@orcel/orcel/react";
 
 export function SupportStatus() {
   const support = useOrcelAgent({ agent: "support" });

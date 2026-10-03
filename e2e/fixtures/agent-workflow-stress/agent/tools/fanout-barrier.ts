@@ -1,4 +1,4 @@
-import { defineTool } from "orcel/tools";
+import { defineTool } from "@orcel/orcel/tools";
 
 import { FANOUT_LABELS } from "../lib/fanout";
 

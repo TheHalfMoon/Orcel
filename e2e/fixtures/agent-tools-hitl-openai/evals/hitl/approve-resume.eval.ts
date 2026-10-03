@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 const GUARDED_ECHO_OPENAI_TOKEN = "guarded-echo-openai-ok-R2D7";
 

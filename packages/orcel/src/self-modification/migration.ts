@@ -5,17 +5,17 @@ const LEGACY_SELF_MODIFICATION_ROOT = "agent/subagents/self-modification";
 const LEGACY_FILES = ["agent.ts", "config.ts", "sandbox.ts", "extensions/selfmod.ts"] as const;
 const LEGACY_DEFAULTS: Readonly<Record<string, readonly string[]>> = {
   "agent.ts": [
-    'import { defineSelfModificationAgent } from "orcel/self-modification/agent";\n\nimport config from "./config";\n\nexport default defineSelfModificationAgent({\n  config,\n\n  // To use a specific model instead of orcel\'s default, add:\n  // model: "provider/model",\n});\n',
+    'import { defineSelfModificationAgent } from "@orcel/orcel/self-modification/agent";\n\nimport config from "./config";\n\nexport default defineSelfModificationAgent({\n  config,\n\n  // To use a specific model instead of orcel\'s default, add:\n  // model: "provider/model",\n});\n',
   ],
   "sandbox.ts": [
-    'import { defineSelfModificationSandbox } from "orcel/self-modification/sandbox";\n\nimport config from "./config";\n\nexport default defineSelfModificationSandbox({ config });\n',
+    'import { defineSelfModificationSandbox } from "@orcel/orcel/self-modification/sandbox";\n\nimport config from "./config";\n\nexport default defineSelfModificationSandbox({ config });\n',
   ],
   "config.ts": [
-    'import { defineSelfModificationConfig } from "orcel/self-modification/config";\n\nexport default defineSelfModificationConfig({});\n',
-    'import { defineSelfModificationConfig } from "orcel/self-modification/config";\n\nexport default defineSelfModificationConfig({\n  local: { enabled: true },\n});\n',
+    'import { defineSelfModificationConfig } from "@orcel/orcel/self-modification/config";\n\nexport default defineSelfModificationConfig({});\n',
+    'import { defineSelfModificationConfig } from "@orcel/orcel/self-modification/config";\n\nexport default defineSelfModificationConfig({\n  local: { enabled: true },\n});\n',
   ],
   "extensions/selfmod.ts": [
-    'import selfModification from "orcel/self-modification";\nimport config from "../config";\n\nexport default selfModification(config);\n',
+    'import selfModification from "@orcel/orcel/self-modification";\nimport config from "../config";\n\nexport default selfModification(config);\n',
   ],
 };
 
@@ -50,8 +50,8 @@ export async function detectLegacySelfModificationScaffold(
         }),
       )
     ).some(Boolean) ||
-    !agent.includes('from "orcel/self-modification/agent"') ||
-    (await readText(join(root, "sandbox.ts")))?.includes('from "orcel/self-modification/sandbox"') !==
+    !agent.includes('from "@orcel/orcel/self-modification/agent"') ||
+    (await readText(join(root, "sandbox.ts")))?.includes('from "@orcel/orcel/self-modification/sandbox"') !==
       true;
 
   return {

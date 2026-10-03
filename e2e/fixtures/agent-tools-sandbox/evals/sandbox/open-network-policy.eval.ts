@@ -1,5 +1,5 @@
-import { defineEval } from "orcel/evals";
-import { includes } from "orcel/evals/expect";
+import { defineEval } from "@orcel/orcel/evals";
+import { includes } from "@orcel/orcel/evals/expect";
 
 export default defineEval({
   description: "Sandbox: an open-time deny-all policy applies before authored commands run.",

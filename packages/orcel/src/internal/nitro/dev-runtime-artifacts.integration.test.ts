@@ -108,7 +108,7 @@ async function createNextStyleImportSnapshotFixture(): Promise<{ readonly appRoo
   await writeFile(
     join(agentRoot, "tools", "routed.ts"),
     [
-      'import { defineTool } from "orcel/tools";',
+      'import { defineTool } from "@orcel/orcel/tools";',
       'import { createOrcelModelRouter } from "../model-router";',
       'import { authSessionAuth } from "@/features/editor/orcel/auth-session";',
       "",

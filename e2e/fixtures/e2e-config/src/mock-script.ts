@@ -1,6 +1,6 @@
 // Helpers for scripted mock responders: a scenario is a fixed sequence of tool
 // calls with stable ids, played one model step at a time.
-import type { MockModelRequest, MockModelResponse } from "orcel/evals";
+import type { MockModelRequest, MockModelResponse } from "@orcel/orcel/evals";
 
 /** One tool call of a scripted scenario. Its fixed id marks it as done once its result is in the prompt. */
 export interface ScriptedCall {

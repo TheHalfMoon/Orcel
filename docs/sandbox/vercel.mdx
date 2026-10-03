@@ -6,8 +6,8 @@ description: "Create snapshot-backed persistent sandboxes on Vercel."
 `VercelSandbox.environment()` prepares a reusable Vercel Sandbox snapshot and creates persistent session sandboxes from its recorded snapshot ID.
 
 ```ts
-import { defineSandbox } from "orcel/sandbox";
-import { VercelSandbox } from "orcel/sandbox/vercel";
+import { defineSandbox } from "@orcel/@orcel/orcel/sandbox";
+import { VercelSandbox } from "@orcel/@orcel/orcel/sandbox/vercel";
 
 export const environment = VercelSandbox.environment({
   prepare: async (sandbox) => {
@@ -38,8 +38,8 @@ When a live session sandbox does not exist, orcel creates it directly from that 
 Initialize session-specific state after `open()` and before returning the sandbox. This selector writes a configuration file into the persistent `/workspace` filesystem:
 
 ```ts
-import { defineSandbox } from "orcel/sandbox";
-import { VercelSandbox } from "orcel/sandbox/vercel";
+import { defineSandbox } from "@orcel/@orcel/orcel/sandbox";
+import { VercelSandbox } from "@orcel/@orcel/orcel/sandbox/vercel";
 
 export const environment = VercelSandbox.environment();
 

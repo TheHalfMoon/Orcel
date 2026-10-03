@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 import { HANDOFF_REFERENCE, REVIEW_REFERENCE } from "../release-reports";
 

@@ -1,5 +1,5 @@
-import { defineState } from "orcel/context";
-import { defineTool } from "orcel/tools";
+import { defineState } from "@orcel/orcel/context";
+import { defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 import { repositoryFindings } from "../../release-findings";

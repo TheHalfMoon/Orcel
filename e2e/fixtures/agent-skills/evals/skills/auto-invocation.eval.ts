@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 const ECHO_MARKER_TOKEN = "skill-echo-marker-ok-V8Y2";
 

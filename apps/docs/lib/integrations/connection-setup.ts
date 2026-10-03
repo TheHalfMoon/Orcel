@@ -43,7 +43,7 @@ const buildSnippet = (
 
   const imports = [
     ...(auth === "apiKey" ? [] : [`import { connect } from "@vercel/connect/eve";`]),
-    `import { ${defineFn} } from "orcel/connections";`,
+    `import { ${defineFn} } from "@orcel/orcel/connections";`,
   ];
 
   const fields: string[] = [];

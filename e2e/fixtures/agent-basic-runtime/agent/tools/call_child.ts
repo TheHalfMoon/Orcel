@@ -1,5 +1,5 @@
-import { Client } from "orcel/client";
-import { defineDynamic, defineTool } from "orcel/tools";
+import { Client } from "@orcel/orcel/client";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 export default defineDynamic({

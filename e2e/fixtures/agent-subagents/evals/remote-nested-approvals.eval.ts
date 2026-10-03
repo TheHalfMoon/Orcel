@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 import { NESTED_APPROVALS } from "../agent/lib/remote-nested-script.js";
 
 export default defineEval({

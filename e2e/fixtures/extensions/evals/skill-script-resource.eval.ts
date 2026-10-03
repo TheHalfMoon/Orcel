@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 const TOOLKIT_SKILL_SCRIPT_TOKEN = "toolkit-skill-script-ok-8M3P";
 

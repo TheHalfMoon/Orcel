@@ -31,7 +31,7 @@ export interface WebSearchToolDefinition {
  * @example
  * ```ts
  * // agent/tools/web_search.ts
- * import { webSearch } from "orcel/tools/web_search";
+ * import { webSearch } from "@orcel/orcel/tools/web_search";
  *
  * export default webSearch({ provider: "parallel" });
  * ```

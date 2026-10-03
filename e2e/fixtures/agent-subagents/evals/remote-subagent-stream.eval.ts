@@ -2,9 +2,9 @@ import {
   isCurrentTurnBoundaryEvent,
   type AgentStartedStreamEvent,
   type MessageStreamEvent,
-} from "orcel/client";
-import { defineEval, type OrcelEvalContext, type OrcelEvalTurn } from "orcel/evals";
-import { satisfies } from "orcel/evals/expect";
+} from "@orcel/orcel/client";
+import { defineEval, type OrcelEvalContext, type OrcelEvalTurn } from "@orcel/orcel/evals";
+import { satisfies } from "@orcel/orcel/evals/expect";
 
 import { WORKSPACE_FORWARDING_MARKER, WORKSPACE_LOOKUP_MESSAGE } from "../constants";
 

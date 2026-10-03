@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 export default defineEval({
   description: "A resumed client skips old turns when collecting a newly accepted message.",

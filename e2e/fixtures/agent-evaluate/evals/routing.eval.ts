@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 export default defineEval({
   description: "An evaluation model routes each turn once without model tool calls.",

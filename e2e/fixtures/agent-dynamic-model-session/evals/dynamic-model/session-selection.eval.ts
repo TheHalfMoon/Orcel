@@ -1,5 +1,5 @@
 import { MOCK_MODEL_SENTINEL } from "@orcel-e2e/config";
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 const requestedModel = process.env.ORCEL_E2E_MODEL;
 const selectedModel =

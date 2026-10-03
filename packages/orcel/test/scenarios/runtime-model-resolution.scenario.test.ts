@@ -35,7 +35,7 @@ describe("runtime model resolution", () => {
       const { agentRoot, appRoot } = await createAppRoot("orcel-direct-model-", APP_ROOT_OPTIONS);
       await writeFile(
         join(agentRoot, "agent.ts"),
-        `import { defineAgent } from "orcel";\nimport { ${helper} } from "${module}";\nexport default defineAgent({ model: ${helper}(), modelContextWindowTokens: 100000 });\n`,
+        `import { defineAgent } from "@orcel/orcel";\nimport { ${helper} } from "${module}";\nexport default defineAgent({ model: ${helper}(), modelContextWindowTokens: 100000 });\n`,
       );
       await writeFile(join(agentRoot, "instructions.md"), "Help Alice get started.\n");
       await compileAgent({ startPath: appRoot });

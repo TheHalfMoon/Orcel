@@ -1,5 +1,5 @@
-import { defineEval } from "orcel/evals";
-import { equals, includes, satisfies } from "orcel/evals/expect";
+import { defineEval } from "@orcel/orcel/evals";
+import { equals, includes, satisfies } from "@orcel/orcel/evals/expect";
 
 /**
  * Core session-route runtime behavior: multi-turn session continuity.

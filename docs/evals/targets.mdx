@@ -10,7 +10,7 @@ The runner polls `/orcel/v1/health`, verifies `/orcel/v1/info`, and exposes the 
 ## Target helpers
 
 ```ts title="evals/heartbeat.eval.ts"
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/@orcel/orcel/evals";
 
 export default defineEval({
   async test(t) {

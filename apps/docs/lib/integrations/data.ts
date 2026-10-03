@@ -182,13 +182,13 @@ orcel add channel/slack
 To wire it up by hand instead, install the framework and the Connect SDK. Slack channels use [Vercel Connect](https://vercel.com/docs/connect) for both the outbound bot token and inbound webhook verification:
 
 \`\`\`bash
-npm install orcel@latest @vercel/connect
+npm install @orcel/orcel@latest @vercel/connect
 \`\`\``,
     quickStart: `Create \`agent/channels/slack.ts\`. The channel name is derived from the filename, so no \`name\` field is needed:
 
 \`\`\`ts
 // agent/channels/slack.ts
-import { slackChannel } from "orcel/channels/slack";
+import { slackChannel } from "@orcel/orcel/channels/slack";
 import { connectSlackCredentials } from "@vercel/connect/eve";
 
 export default slackChannel({
@@ -224,7 +224,7 @@ orcel add channel/discord
 
 \`\`\`ts
 // agent/channels/discord.ts
-import { discordChannel } from "orcel/channels/discord";
+import { discordChannel } from "@orcel/orcel/channels/discord";
 
 export default discordChannel({
   credentials: {
@@ -248,7 +248,7 @@ orcel add channel/teams
 
 \`\`\`ts
 // agent/channels/teams.ts
-import { teamsChannel } from "orcel/channels/teams";
+import { teamsChannel } from "@orcel/orcel/channels/teams";
 
 export default teamsChannel({
   credentials: {
@@ -272,7 +272,7 @@ orcel add channel/telegram
 
 \`\`\`ts
 // agent/channels/telegram.ts
-import { telegramChannel } from "orcel/channels/telegram";
+import { telegramChannel } from "@orcel/orcel/channels/telegram";
 
 export default telegramChannel({
   credentials: { botToken: () => process.env.TELEGRAM_BOT_TOKEN! },
@@ -293,7 +293,7 @@ orcel add channel/twilio
 
 \`\`\`ts
 // agent/channels/twilio.ts
-import { twilioChannel } from "orcel/channels/twilio";
+import { twilioChannel } from "@orcel/orcel/channels/twilio";
 
 export default twilioChannel({
   allowFrom: "+15551234567",
@@ -362,7 +362,7 @@ orcel add channel/github
 \`\`\`ts
 // agent/channels/github.ts
 import { connectGitHubCredentials } from "@vercel/connect/eve";
-import { githubChannel } from "orcel/channels/github";
+import { githubChannel } from "@orcel/orcel/channels/github";
 
 export default githubChannel({
   credentials: connectGitHubCredentials("github/my-agent"),
@@ -385,7 +385,7 @@ orcel add channel/linear
 \`\`\`ts
 // agent/channels/linear.ts
 import { connectLinearCredentials } from "@vercel/connect/eve";
-import { linearChannel } from "orcel/channels/linear";
+import { linearChannel } from "@orcel/orcel/channels/linear";
 
 export default linearChannel({
   credentials: connectLinearCredentials("linear/my-agent"),
@@ -419,13 +419,13 @@ orcel add channel/web
 To wire it up by hand instead — including into a Svelte or Nuxt app you already have — install the framework:
 
 \`\`\`bash
-npm install orcel@latest
+npm install @orcel/orcel@latest
 \`\`\``,
     quickStart: `The orcel channel is on by default. Add \`agent/channels/orcel.ts\` only when you want to override the default session routes or auth:
 
 \`\`\`ts
 // agent/channels/orcel.ts
-import { orcelChannel } from "orcel/channels/orcel";
+import { orcelChannel } from "@orcel/orcel/channels/orcel";
 
 export default orcelChannel();
 \`\`\`
@@ -492,7 +492,7 @@ orcel add channel/chat-sdk-gchat
 import { createGoogleChatAdapter } from "@chat-adapter/gchat";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "orcel/channels/chat-sdk";
+import { chatSdkChannel } from "@orcel/orcel/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
@@ -532,7 +532,7 @@ orcel add channel/chat-sdk-whatsapp
 import { createWhatsAppAdapter } from "@chat-adapter/whatsapp";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "orcel/channels/chat-sdk";
+import { chatSdkChannel } from "@orcel/orcel/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
@@ -572,7 +572,7 @@ orcel add channel/chat-sdk-x
 import { createXAdapter } from "@chat-adapter/x";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "orcel/channels/chat-sdk";
+import { chatSdkChannel } from "@orcel/orcel/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
@@ -618,7 +618,7 @@ orcel add channel/chat-sdk-messenger
 import { createMessengerAdapter } from "@chat-adapter/messenger";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "orcel/channels/chat-sdk";
+import { chatSdkChannel } from "@orcel/orcel/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
@@ -669,7 +669,7 @@ orcel add channel/chat-sdk-zernio
 import { createZernioAdapter } from "@zernio/chat-sdk-adapter";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "orcel/channels/chat-sdk";
+import { chatSdkChannel } from "@orcel/orcel/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
@@ -720,7 +720,7 @@ orcel add channel/chat-sdk-velt
 import { createVeltAdapter } from "@veltdev/chat-sdk-adapter";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "orcel/channels/chat-sdk";
+import { chatSdkChannel } from "@orcel/orcel/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
@@ -767,7 +767,7 @@ orcel add channel/chat-sdk-sendblue
 import { createSendblueAdapter } from "chat-adapter-sendblue";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "orcel/channels/chat-sdk";
+import { chatSdkChannel } from "@orcel/orcel/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
@@ -819,7 +819,7 @@ orcel add channel/chat-sdk-novu
 import { createNovuAdapter } from "@novu/chat-sdk-adapter";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "orcel/channels/chat-sdk";
+import { chatSdkChannel } from "@orcel/orcel/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
@@ -869,7 +869,7 @@ orcel add channel/chat-sdk-liveblocks
 import { createLiveblocksAdapter } from "@liveblocks/chat-sdk-adapter";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "orcel/channels/chat-sdk";
+import { chatSdkChannel } from "@orcel/orcel/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
@@ -913,7 +913,7 @@ orcel add channel/linq
 
 \`\`\`ts
 import { connectLinqCredentials } from "@vercel/connect/eve";
-import { linqChannel } from "orcel/channels/linq";
+import { linqChannel } from "@orcel/orcel/channels/linq";
 
 export default linqChannel({
   credentials: connectLinqCredentials("linq/my-agent"),
@@ -938,7 +938,7 @@ orcel add channel/chat-sdk-kapso
 import { createKapsoAdapter } from "@kapso/chat-adapter";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "orcel/channels/chat-sdk";
+import { chatSdkChannel } from "@orcel/orcel/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
@@ -981,7 +981,7 @@ orcel add channel/photon-imessage
 
 \`\`\`ts
 import { connectPhotonCredentials } from "@vercel/connect/eve";
-import { photonIMessageChannel } from "orcel/channels/photon";
+import { photonIMessageChannel } from "@orcel/orcel/channels/photon";
 
 export default photonIMessageChannel({
   credentials: connectPhotonCredentials("photon/my-agent"),
@@ -1007,7 +1007,7 @@ orcel add channel/chat-sdk-dial
 import { createDialAdapter } from "@getdial/chat-sdk-adapter";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "orcel/channels/chat-sdk";
+import { chatSdkChannel } from "@orcel/orcel/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
@@ -1053,7 +1053,7 @@ orcel add channel/chat-sdk-agentphone
 import { createAgentPhoneAdapter } from "@agentphone/chat-sdk-adapter";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "orcel/channels/chat-sdk";
+import { chatSdkChannel } from "@orcel/orcel/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
@@ -1099,7 +1099,7 @@ orcel add channel/chat-sdk-lark
 import { createLarkAdapter } from "@larksuite/vercel-chat-adapter";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "orcel/channels/chat-sdk";
+import { chatSdkChannel } from "@orcel/orcel/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
@@ -1143,7 +1143,7 @@ orcel add channel/chat-sdk-beeper
 import { createMatrixAdapter } from "@beeper/chat-adapter-matrix";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "orcel/channels/chat-sdk";
+import { chatSdkChannel } from "@orcel/orcel/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
@@ -1194,7 +1194,7 @@ orcel add channel/chat-sdk-resend
 import { createResendAdapter } from "@resend/chat-sdk-adapter";
 import { createMemoryState } from "@chat-adapter/state-memory";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "orcel/channels/chat-sdk";
+import { chatSdkChannel } from "@orcel/orcel/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "My Agent",
@@ -1247,7 +1247,7 @@ orcel add channel/chat-sdk-gmail
 import { createGmailAdapter } from "@chat-adapter/gmail";
 import { createRedisState } from "@chat-adapter/state-redis";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "orcel/channels/chat-sdk";
+import { chatSdkChannel } from "@orcel/orcel/channels/chat-sdk";
 
 export const gmail = createGmailAdapter();
 
@@ -1547,7 +1547,7 @@ The filename supplies the \`jetty\` namespace. The extension contributes a turn-
 
 \`\`\`ts title="evals/evals.config.ts"
 import { Jetty } from "@jetty/eve/reporter";
-import { defineEvalConfig } from "orcel/evals";
+import { defineEvalConfig } from "@orcel/orcel/evals";
 
 export default defineEvalConfig({
   reporters: [Jetty()],
@@ -1705,9 +1705,9 @@ After you approve setup, orcel creates or reuses a dedicated private Vercel Blob
     quickStart: `The registry writes this memory slot:
 
 \`\`\`ts title="agent/memory/file.ts"
-import { fileMemory } from "orcel/memory/file";
-import { defineMemory } from "orcel/memory";
-import { byPrincipal } from "orcel/memory/scope";
+import { fileMemory } from "@orcel/orcel/memory/file";
+import { defineMemory } from "@orcel/orcel/memory";
+import { byPrincipal } from "@orcel/orcel/memory/scope";
 
 export default defineMemory({
   description: "Remember stable facts and preferences about the caller.",
@@ -1753,8 +1753,8 @@ The registry creates this memory slot:
 
 \`\`\`ts title="agent/memory/upstash-agentkit.ts"
 import { redisMemory } from "@upstash/agentkit-eve/memory";
-import { defineMemory } from "orcel/memory";
-import { byPrincipal } from "orcel/memory/scope";
+import { defineMemory } from "@orcel/orcel/memory";
+import { byPrincipal } from "@orcel/orcel/memory/scope";
 
 export default defineMemory({
   description: "Recall and manage durable context for the current user.",
@@ -1794,8 +1794,8 @@ The registry creates this memory slot:
 
 \`\`\`ts title="agent/memory/arcana.ts"
 import { arcanaMemory } from "@kybernesis/arcana/memory";
-import { defineMemory } from "orcel/memory";
-import { byPrincipal } from "orcel/memory/scope";
+import { defineMemory } from "@orcel/orcel/memory";
+import { byPrincipal } from "@orcel/orcel/memory/scope";
 
 export default defineMemory({
   description: "Recall and manage durable context for the current user.",
@@ -1841,8 +1841,8 @@ The registry creates this memory slot:
 
 \`\`\`ts title="agent/memory/supermemory.ts"
 import supermemory from "@supermemory/eve";
-import { defineMemory } from "orcel/memory";
-import { byPrincipal } from "orcel/memory/scope";
+import { defineMemory } from "@orcel/orcel/memory";
+import { byPrincipal } from "@orcel/orcel/memory/scope";
 
 export default defineMemory({
   description: "Recall and manage durable context for the current user.",
@@ -2222,7 +2222,7 @@ const connectionPresentations: Record<string, ConnectionPresentation> = {
     quickStart: `Create \`agent/connections/shopify.ts\`:
 
 \`\`\`ts
-import { defineMcpClientConnection } from "orcel/connections";
+import { defineMcpClientConnection } from "@orcel/orcel/connections";
 
 const SHOPIFY_EXAMPLE_PROFILE =
   "https://shopify.dev/ucp/agent-profiles/examples/2026-08-25/valid-with-capabilities.json";
@@ -2381,7 +2381,7 @@ orcel add instrumentation/posthog
 // agent/instrumentation/posthog.ts
 import { SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { PostHogTraceExporter } from "@posthog/ai/otel";
-import { otelIntegration } from "orcel/instrumentation/otel";
+import { otelIntegration } from "@orcel/orcel/instrumentation/otel";
 
 export default otelIntegration({
   spanProcessors: [
@@ -2418,7 +2418,7 @@ orcel add instrumentation/sentry
 \`\`\`ts
 // agent/instrumentation/sentry.ts
 import { OTLPHttpProtoTraceExporter } from "@vercel/otel";
-import { otelIntegration } from "orcel/instrumentation/otel";
+import { otelIntegration } from "@orcel/orcel/instrumentation/otel";
 
 export default otelIntegration({
   traceExporter: new OTLPHttpProtoTraceExporter({
@@ -2445,7 +2445,7 @@ orcel add instrumentation/datadog
 \`\`\`ts
 // agent/instrumentation/datadog.ts
 import { OTLPHttpProtoTraceExporter } from "@vercel/otel";
-import { otelIntegration } from "orcel/instrumentation/otel";
+import { otelIntegration } from "@orcel/orcel/instrumentation/otel";
 
 export default otelIntegration({
   traceExporter: new OTLPHttpProtoTraceExporter({
@@ -2472,7 +2472,7 @@ orcel add instrumentation/honeycomb
 \`\`\`ts
 // agent/instrumentation/honeycomb.ts
 import { OTLPHttpProtoTraceExporter } from "@vercel/otel";
-import { otelIntegration } from "orcel/instrumentation/otel";
+import { otelIntegration } from "@orcel/orcel/instrumentation/otel";
 
 export default otelIntegration({
   traceExporter: new OTLPHttpProtoTraceExporter({
@@ -2498,7 +2498,7 @@ orcel add instrumentation/arize
 \`\`\`ts
 // agent/instrumentation/arize.ts
 import { OTLPHttpProtoTraceExporter } from "@vercel/otel";
-import { otelIntegration } from "orcel/instrumentation/otel";
+import { otelIntegration } from "@orcel/orcel/instrumentation/otel";
 
 export default otelIntegration({
   traceExporter: new OTLPHttpProtoTraceExporter({
@@ -2527,7 +2527,7 @@ orcel add instrumentation/raindrop
 \`\`\`ts
 // agent/instrumentation/raindrop.ts
 import { OTLPHttpProtoTraceExporter } from "@vercel/otel";
-import { otelIntegration } from "orcel/instrumentation/otel";
+import { otelIntegration } from "@orcel/orcel/instrumentation/otel";
 
 export default otelIntegration({
   traceExporter: new OTLPHttpProtoTraceExporter({
@@ -2554,7 +2554,7 @@ orcel add instrumentation/jaeger
 \`\`\`ts
 // agent/instrumentation/jaeger.ts
 import { OTLPHttpProtoTraceExporter } from "@vercel/otel";
-import { otelIntegration } from "orcel/instrumentation/otel";
+import { otelIntegration } from "@orcel/orcel/instrumentation/otel";
 
 export default otelIntegration({
   traceExporter: new OTLPHttpProtoTraceExporter({

@@ -84,7 +84,7 @@ export interface LinqChannel extends Channel<
  * @example
  * ```ts
  * import { connectLinqCredentials } from "@vercel/connect/eve";
- * import { linqChannel } from "orcel/channels/linq";
+ * import { linqChannel } from "@orcel/orcel/channels/linq";
  *
  * export default linqChannel({
  *   credentials: connectLinqCredentials("linq/my-agent"),

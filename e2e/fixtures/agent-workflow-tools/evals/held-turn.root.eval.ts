@@ -1,5 +1,5 @@
-import { defineEval } from "orcel/evals";
-import { includes } from "orcel/evals/expect";
+import { defineEval } from "@orcel/orcel/evals";
+import { includes } from "@orcel/orcel/evals/expect";
 
 import { STAGE_INTERIM_MESSAGE } from "../task-scenario-text";
 import { staysInOneTurn } from "./held-turn.shared";

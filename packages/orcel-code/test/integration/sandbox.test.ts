@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { SandboxSession } from "orcel/sandbox";
+import type { SandboxSession } from "@orcel/orcel/sandbox";
 import { CODE_TOOLING_REVALIDATION_KEY, installCodeTooling } from "../../extension/lib/sandbox.ts";
 import { toolingPaths, typescriptInstallCommand } from "../../extension/lib/tooling.ts";
 import { shellQuote } from "../../extension/lib/shell.ts";

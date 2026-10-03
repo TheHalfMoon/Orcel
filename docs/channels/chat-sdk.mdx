@@ -12,7 +12,7 @@ You supply an adapter and a state store: the adapter owns provider auth, webhook
 Add orcel, the Chat SDK core (`chat`), an adapter, and a state adapter. The example below uses the Resend email adapter with the in-memory state store:
 
 ```bash
-npm install orcel@latest chat @resend/chat-sdk-adapter @chat-adapter/state-memory
+npm install @orcel/orcel@latest chat @resend/chat-sdk-adapter @chat-adapter/state-memory
 ```
 
 Swap in whichever adapter matches your surface — `@chat-adapter/slack`, `@chat-adapter/discord`, `@chat-adapter/telegram`, and so on. Any Chat SDK adapter works.
@@ -25,7 +25,7 @@ Swap in whichever adapter matches your surface — `@chat-adapter/slack`, `@chat
 import { createMemoryState } from "@chat-adapter/state-memory";
 import { createResendAdapter } from "@resend/chat-sdk-adapter";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "orcel/channels/chat-sdk";
+import { chatSdkChannel } from "@orcel/@orcel/orcel/channels/chat-sdk";
 
 export const { bot, channel, send } = chatSdkChannel({
   userName: "Resend Bot",
@@ -147,7 +147,7 @@ Typing indicators post automatically where the adapter supports them: `Working�
 Adapters do not all implement every operation. When an adapter's `startTyping` or `editMessage` throws a `NotImplementedError` (or an error with code `NOT_IMPLEMENTED`), the channel swallows it: typing indicators are skipped, and a streaming edit falls back to a single final post for the rest of the session. You never have to guard optional capabilities in your own handlers. The same predicate is exported as `isNotImplemented` if you want it in custom `events`:
 
 ```ts
-import { isNotImplemented } from "orcel/channels/chat-sdk";
+import { isNotImplemented } from "@orcel/@orcel/orcel/channels/chat-sdk";
 ```
 
 Override any default by passing `events`. Handlers receive `(eventData, channel, ctx)`, with the rebuilt Chat SDK thread on `channel.thread`:
@@ -200,7 +200,7 @@ await to(channel, { adapterName: "resend", threadId: "resend:user@example.com" }
 `send` takes plain text or an AI SDK `UserContent` array. To forward a Chat SDK message's attachments, convert it with `messageToUserContent`, which returns `message.text` when there are no attachments and a `UserContent` array (text plus one file part per attachment URL) when there are:
 
 ```ts
-import { messageToUserContent } from "orcel/channels/chat-sdk";
+import { messageToUserContent } from "@orcel/@orcel/orcel/channels/chat-sdk";
 
 bot.onNewMention(async (thread, message) => {
   await send(messageToUserContent(message), { thread });

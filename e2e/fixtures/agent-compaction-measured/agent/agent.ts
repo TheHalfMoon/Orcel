@@ -1,6 +1,6 @@
 import { e2eAgentConfig } from "@orcel-e2e/config";
-import { defineAgent } from "orcel";
-import { mockModel } from "orcel/evals";
+import { defineAgent } from "@orcel/orcel";
+import { mockModel } from "@orcel/orcel/evals";
 
 const model = mockModel({
   modelId: "measured-compaction-model",

@@ -27,7 +27,7 @@ describe("extension orcel peer compatibility", () => {
         writePackageJson(extensionRoot, {
           name: "@acme/extension-peer-test",
           version: "1.0.0",
-          peerDependencies: { orcel: "*" },
+          peerDependencies: { "@orcel/orcel": "*" },
         }),
         writePackageJson(appRoot, { name: "consumer", version: "1.0.0", private: true }),
       ]);

@@ -41,7 +41,7 @@ function evaluateSessionHandler(code: string): Function {
 describe("transformDynamicRemoteAgentCredentials", () => {
   it("registers remote auth and headers without making them enumerable", async () => {
     const source = `
-import { defineDynamic, defineRemoteAgent } from "orcel";
+import { defineDynamic, defineRemoteAgent } from "@orcel/orcel";
 
 function createAuth() {
   return async () => ({ headers: { authorization: "Bearer fresh" } });
@@ -80,7 +80,7 @@ export default defineDynamic({
 
   it("transforms remote definitions inside conditional expressions", async () => {
     const source = `
-import { defineDynamic, defineRemoteAgent } from "orcel";
+import { defineDynamic, defineRemoteAgent } from "@orcel/orcel";
 
 const enabled = true;
 export default defineDynamic({
@@ -104,7 +104,7 @@ export default defineDynamic({
 
   it("preserves quoted credential keys and method shorthand", async () => {
     const source = `
-import { defineDynamic, defineRemoteAgent } from "orcel";
+import { defineDynamic, defineRemoteAgent } from "@orcel/orcel";
 
 export default defineDynamic({
   events: {
@@ -147,7 +147,7 @@ export default defineDynamic({
           url: "https://research.example.com",
         })`;
     const source = `
-import { defineDynamic, defineRemoteAgent } from "orcel";
+import { defineDynamic, defineRemoteAgent } from "@orcel/orcel";
 
 export default defineDynamic({
   events: {

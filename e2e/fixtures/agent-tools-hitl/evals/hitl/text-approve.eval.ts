@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 const MARKER = "authorized-response-retry-e2e-N4J8";
 const TOOL_NAME = "responder-gate";

@@ -1,4 +1,4 @@
-import { defineDynamic, defineTool, type ToolContext } from "orcel/tools";
+import { defineDynamic, defineTool, type ToolContext } from "@orcel/orcel/tools";
 
 import { resolveSelfModificationConfig } from "../../../../config.js";
 import { createGitHubCredentialProvider } from "../../../../credentials.js";

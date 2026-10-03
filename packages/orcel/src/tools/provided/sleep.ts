@@ -50,7 +50,7 @@ const SLEEP_OUTPUT_SCHEMA = defineJsonSchema<SleepToolOutput>({
  * Export it from `agent/tools/sleep.ts`:
  *
  * ```ts
- * import { sleep } from "orcel/tools/sleep";
+ * import { sleep } from "@orcel/orcel/tools/sleep";
  *
  * export default sleep();
  * ```

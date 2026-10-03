@@ -19,7 +19,7 @@ const scenarioApp = useScenarioApp();
 function editableFactorySource(build: number): string {
   return `import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { defineTool as tool } from "orcel/tools";
+import { defineTool as tool } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 const BUILD = ${build};
@@ -49,7 +49,7 @@ export function createEditableMarkerTool(key: string, version: string) {
 `;
 }
 
-const EDITABLE_TOOLS_SOURCE = `import { defineDynamic } from "orcel/tools";
+const EDITABLE_TOOLS_SOURCE = `import { defineDynamic } from "@orcel/orcel/tools";
 import { createEditableMarkerTool } from "../lib/editable-factory.ts";
 
 export default defineDynamic({

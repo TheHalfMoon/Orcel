@@ -8,7 +8,7 @@
   <h1>orcel</h1>
 
 <a href="https://github.com/TheHalfMoon"><img alt="Built by TheHalfMoon" src="https://img.shields.io/badge/BUILT%20BY-TheHalfMoon-000000.svg?style=for-the-badge&logo=github&labelColor=000000"></a>
-<a href="https://www.npmjs.com/package/orcel"><img alt="NPM version" src="https://img.shields.io/npm/v/orcel.svg?style=for-the-badge&labelColor=000000"></a>
+<a href="https://www.npmjs.com/package/@orcel/orcel"><img alt="NPM version" src="https://img.shields.io/npm/v/orcel.svg?style=for-the-badge&labelColor=000000"></a>
 <a href="https://github.com/TheHalfMoon/orcel/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/npm/l/orcel.svg?style=for-the-badge&labelColor=000000"></a>
 <a href="https://github.com/TheHalfMoon/orcel/discussions"><img alt="Join the community on GitHub" src="https://img.shields.io/badge/Join%20the%20community-blueviolet.svg?style=for-the-badge&logo=Github&labelColor=000000&logoWidth=20"></a>
 
@@ -41,7 +41,7 @@ Read the [documentation](https://github.com/TheHalfMoon/orcel/docs) for the full
 ## Quick start
 
 ```bash
-npx orcel@latest init my-agent
+npx @orcel/orcel@latest init my-agent
 ```
 
 This creates a new `my-agent` directory, installs its dependencies, initializes Git, and starts
@@ -50,7 +50,7 @@ the interactive terminal UI. The generated agent uses `openai/gpt-6-luna-fast` w
 To start with another AI Gateway model, pass its model ID:
 
 ```bash
-npx orcel@latest init my-agent --model openai/gpt-5.6-terra
+npx @orcel/orcel@latest init my-agent --model openai/gpt-5.6-terra
 ```
 
 Passing `--model` without `--reasoning` uses the provider's default reasoning. Pass `--reasoning` to set it explicitly.
@@ -59,12 +59,12 @@ To add orcel to an existing project, pass a path:
 
 ```bash
 cd myapp
-npx orcel@latest init .
+npx @orcel/orcel@latest init .
 ```
 
 > [!NOTE]
 > The `orcel` package includes its full documentation, so coding agents can read it locally from
-> `node_modules/orcel/docs`.
+> `node_modules/@orcel/orcel/docs`.
 
 ### A minimal example
 
@@ -77,7 +77,7 @@ You are a concise weather demo assistant. Tell users that the weather data is mo
 Add a mock weather tool at `agent/tools/get_weather.ts`:
 
 ```ts
-import { defineTool } from "orcel/tools";
+import { defineTool } from "@orcel/@orcel/orcel/tools";
 import { z } from "zod";
 
 export default defineTool({
@@ -92,7 +92,7 @@ export default defineTool({
 Choose the model in `agent/agent.ts`:
 
 ```ts
-import { defineAgent } from "orcel";
+import { defineAgent } from "@orcel/orcel";
 
 export default defineAgent({
   model: "openai/gpt-6-luna-fast",

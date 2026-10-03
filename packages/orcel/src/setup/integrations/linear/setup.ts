@@ -41,7 +41,7 @@ export function linearSafeConnectorSlug(slug: string): string {
 
 function connectTemplate(uid: string): string {
   return `import { connectLinearCredentials } from "@vercel/connect/eve";
-import { linearChannel } from "orcel/channels/linear";
+import { linearChannel } from "@orcel/orcel/channels/linear";
 
 export default linearChannel({
   credentials: connectLinearCredentials(${JSON.stringify(uid)}),

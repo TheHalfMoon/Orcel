@@ -2,7 +2,7 @@ import type {
   MessageStreamEvent,
   TaskSettledStreamEvent,
   TaskStartedStreamEvent,
-} from "orcel/client";
+} from "@orcel/orcel/client";
 
 /**
  * Whether orcel held the turn: the model ended a step with a reply while its

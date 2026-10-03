@@ -1,6 +1,6 @@
 import { buildEveToolMap as buildOrcelToolMap } from "@github-tools/sdk/eve";
 import { getToken, UserAuthorizationRequiredError } from "@vercel/connect";
-import { defineDynamic } from "orcel/tools";
+import { defineDynamic } from "@orcel/orcel/tools";
 import { CONNECT_USER_ISSUER, GITHUB_CONNECTOR } from "../../lib/connect.js";
 
 export default defineDynamic({

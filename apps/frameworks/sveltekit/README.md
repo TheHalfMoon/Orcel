@@ -4,7 +4,7 @@ A SvelteKit app with an embedded orcel agent, integrated through the
 `orcelSvelteKit()` Vite plugin:
 
 ```ts
-import { orcelSvelteKit } from "orcel/sveltekit";
+import { orcelSvelteKit } from "@orcel/@orcel/orcel/sveltekit";
 
 export default defineConfig({
   plugins: [orcelSvelteKit(), sveltekit()],

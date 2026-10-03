@@ -13,8 +13,8 @@ const scenarioApp = useScenarioApp();
 
 const FILE_MEMORY_DESCRIPTOR: ScenarioAppDescriptor = {
   files: {
-    "smoke.mjs": `import { fileMemory, inMemory } from "orcel/memory/file";
-import { vercelBlob } from "orcel/memory/file/vercel";
+    "smoke.mjs": `import { fileMemory, inMemory } from "@orcel/orcel/memory/file";
+import { vercelBlob } from "@orcel/orcel/memory/file/vercel";
 
 const provider = fileMemory({ backend: inMemory() });
 const blob = vercelBlob({ token: "unused" });

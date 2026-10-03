@@ -61,7 +61,7 @@ Nitro hosts the HTTP routes and workflow entrypoints. It does not supply the wor
 For advanced self-hosted deployments, the root `agent.ts` can select the installed Workflow world package to use with `experimental.workflow.world`:
 
 ```ts title="agent/agent.ts"
-import { defineAgent } from "orcel";
+import { defineAgent } from "@orcel/orcel";
 
 export default defineAgent({
   model: "anthropic/claude-opus-5.5",

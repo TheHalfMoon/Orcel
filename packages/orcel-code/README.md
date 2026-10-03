@@ -1,19 +1,19 @@
-# orcel/extensions/code
+# @orcel/orcel/extensions/code
 
-`orcel/extensions/code` is an orcel extension for coding work. It contributes `apply_patch`, `gh`, `grep`, investigation and PR skills, a read-only worker subagent, sandbox tooling, and shared PR-watch primitives. Vercel credentials are brokered before each turn; GitHub credentials are scoped to one repository and leased for each `gh` tool invocation. Because orcel workflow directives are application-only, consumers own their `prwatch` / `prwatch_delete` workflow tools.
+`@orcel/orcel/extensions/code` is an orcel extension for coding work. It contributes `apply_patch`, `gh`, `grep`, investigation and PR skills, a read-only worker subagent, sandbox tooling, and shared PR-watch primitives. Vercel credentials are brokered before each turn; GitHub credentials are scoped to one repository and leased for each `gh` tool invocation. Because orcel workflow directives are application-only, consumers own their `prwatch` / `prwatch_delete` workflow tools.
 
 It ships inside the `orcel` package. This private `@orcel/code` workspace package is its source of truth: orcel's build copies `extension/` into `packages/orcel/src/extensions/code/extension` and publishes it with these entry points:
 
-- `orcel/extensions/code`: the extension
-- `orcel/extensions/code/sandbox`: sandbox bootstrap and credential helpers
-- `orcel/extensions/code/tools`: `apply_patch`, `gh`, and `grep`
-- `orcel/extensions/code/prwatch`: PR-watch primitives for consumer-owned workflow tools
+- `@orcel/orcel/extensions/code`: the extension
+- `@orcel/orcel/extensions/code/sandbox`: sandbox bootstrap and credential helpers
+- `@orcel/orcel/extensions/code/tools`: `apply_patch`, `gh`, and `grep`
+- `@orcel/orcel/extensions/code/prwatch`: PR-watch primitives for consumer-owned workflow tools
 
 ## Mount
 
 ```ts
 // agent/extensions/code.ts
-import code from "orcel/extensions/code";
+import code from "@orcel/@orcel/orcel/extensions/code";
 
 export default code({
   // Optional; omit to mount without Connect-backed Vercel authentication.
@@ -33,9 +33,9 @@ Install CLI tooling in the environment's `prepare` callback:
 
 ```ts
 // agent/sandbox.ts
-import { defineSandbox } from "orcel/sandbox";
-import { VercelSandbox } from "orcel/sandbox/vercel";
-import { installCodeTooling } from "orcel/extensions/code/sandbox";
+import { defineSandbox } from "@orcel/@orcel/orcel/sandbox";
+import { VercelSandbox } from "@orcel/@orcel/orcel/sandbox/vercel";
+import { installCodeTooling } from "@orcel/@orcel/orcel/extensions/code/sandbox";
 
 export const environment = VercelSandbox.environment({
   prepare: async (sandbox) => {
@@ -48,20 +48,20 @@ export default defineSandbox(() => environment.open());
 
 orcel derives the prepared environment generation from the sandbox file and environment options, not from imported helpers, so upgrading orcel alone does not rebuild an existing prepared artifact.
 
-Computer use lives in `orcel/computer-use`. Mount it next to this extension when the sandbox has a desktop. `installComputerUse`, `startComputerUse`, and `COMPUTER_USE_REVALIDATION_KEY` are still re-exported from `orcel/extensions/code/sandbox`, and `computer_use` from `orcel/extensions/code/tools`, but both are deprecated.
+Computer use lives in `@orcel/orcel/computer-use`. Mount it next to this extension when the sandbox has a desktop. `installComputerUse`, `startComputerUse`, and `COMPUTER_USE_REVALIDATION_KEY` are still re-exported from `@orcel/orcel/extensions/code/sandbox`, and `computer_use` from `@orcel/orcel/extensions/code/tools`, but both are deprecated.
 
 Preparation ensures `gh`, installs wrappers for `gh`, `vc`, and `gh-signed-commit`, and installs TypeScript diagnostics. For repositories requiring verified signatures, stage the intended changes and use `gh-signed-commit`.
 
 ## Non-Connect escape hatch
 
-Consumers with a PAT, benchmark token, or another credential provider can omit the corresponding connector and call `authenticateGitHub` or `authenticateVercel` from `orcel/extensions/code/sandbox` in their own sandbox lifecycle. These helpers support firewall, command-delivery, and broker options for consumer-owned commands; they do not configure the extension's `gh` tool.
+Consumers with a PAT, benchmark token, or another credential provider can omit the corresponding connector and call `authenticateGitHub` or `authenticateVercel` from `@orcel/orcel/extensions/code/sandbox` in their own sandbox lifecycle. These helpers support firewall, command-delivery, and broker options for consumer-owned commands; they do not configure the extension's `gh` tool.
 
 ## Develop in this workspace
 
-Rebuild orcel after editing `extension/`; the local agent under `agent/` mounts the built `orcel/extensions/code`:
+Rebuild orcel after editing `extension/`; the local agent under `agent/` mounts the built `@orcel/orcel/extensions/code`:
 
 ```sh
-pnpm --filter orcel build
+pnpm --filter @orcel/orcel build
 pnpm --filter @orcel/code typecheck
 pnpm --filter @orcel/code test
 pnpm --filter @orcel/code test:scenario

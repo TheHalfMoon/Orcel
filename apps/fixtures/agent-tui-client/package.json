@@ -10,7 +10,7 @@
     "typecheck": "orcel build --skip-sandbox-prewarm && tsc"
   },
   "dependencies": {
-    "orcel": "workspace:*",
+    "@orcel/orcel": "workspace:*",
     "zod": "catalog:"
   },
   "devDependencies": {

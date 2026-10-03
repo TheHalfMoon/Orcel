@@ -1,6 +1,6 @@
 "use client";
 
-import { useOrcelAgent } from "orcel/react";
+import { useOrcelAgent } from "@orcel/orcel/react";
 import { type FormEvent, type JSX, useEffect, useMemo, useRef, useState } from "react";
 import { type Components, Streamdown } from "streamdown";
 

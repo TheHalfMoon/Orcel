@@ -11,7 +11,7 @@
   "dependencies": {
     "@orcel-e2e/config": "workspace:*",
     "@workflow/world-postgres": "catalog:",
-    "orcel": "workspace:*",
+    "@orcel/orcel": "workspace:*",
     "microsandbox": "0.5.5",
     "zod": "catalog:"
   },

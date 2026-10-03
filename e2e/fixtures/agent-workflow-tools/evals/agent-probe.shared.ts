@@ -1,4 +1,4 @@
-import type { OrcelEvalContext, OrcelEvalSession, OrcelEvalStreamEvent, OrcelEvalTurn } from "orcel/evals";
+import type { OrcelEvalContext, OrcelEvalSession, OrcelEvalStreamEvent, OrcelEvalTurn } from "@orcel/orcel/evals";
 
 import { fixtureAuthorizationCallback } from "../agent/lib/fake-service.ts";
 

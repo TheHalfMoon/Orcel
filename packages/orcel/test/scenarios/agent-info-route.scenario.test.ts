@@ -116,7 +116,7 @@ describe("orcel agent info route", () => {
 
     await writeFile(
       join(agentRoot, "tools", "agent.mjs"),
-      'import { disableTool } from "orcel/tools";\nexport default disableTool();\n',
+      'import { disableTool } from "@orcel/orcel/tools";\nexport default disableTool();\n',
     );
     await compileAgent({ startPath: appRoot });
 
@@ -167,7 +167,7 @@ describe("orcel agent info route", () => {
     await writeFile(join(agentRoot, "instructions.md"), "You are a precise assistant.\n");
     await writeFile(
       join(agentRoot, "channels", "orcel.mjs"),
-      `import { orcelChannel } from "orcel/channels/orcel";
+      `import { orcelChannel } from "@orcel/orcel/channels/orcel";
 
 function issue389Auth(request) {
   if (request.headers.get("x-orcel-info-token") !== "issue-389") {

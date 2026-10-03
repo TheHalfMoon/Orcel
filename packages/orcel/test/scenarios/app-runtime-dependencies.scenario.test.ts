@@ -333,12 +333,12 @@ describe("app runtime dependency tracing", () => {
         join(appRoot, "agent", "tools", `${tool}.ts`),
         tool === "workflow"
           ? [
-              'import { workflow } from "orcel/tools/workflow";',
+              'import { workflow } from "@orcel/orcel/tools/workflow";',
               "",
               'export default workflow({ agents: ["researcher"], maxSubagents: 6 });',
               "",
             ].join("\n")
-          : 'import { sleep } from "orcel/tools/sleep";\n\nexport default sleep();\n',
+          : 'import { sleep } from "@orcel/orcel/tools/sleep";\n\nexport default sleep();\n',
       );
 
       return appRoot;
@@ -410,8 +410,8 @@ describe("app runtime dependency tracing", () => {
         await writeFile(
           join(appRoot, "agent", "sandbox.ts"),
           [
-            'import { defineSandbox } from "orcel/sandbox";',
-            'import { JustBashSandbox } from "orcel/sandbox/just-bash";',
+            'import { defineSandbox } from "@orcel/orcel/sandbox";',
+            'import { JustBashSandbox } from "@orcel/orcel/sandbox/just-bash";',
             "",
             "export const environment = JustBashSandbox.environment();",
             "export default defineSandbox(() => environment.open());",
@@ -922,7 +922,7 @@ describe("app runtime dependency tracing", () => {
       join(appRoot, "agent", "instrumentation", "dependency.ts"),
       [
         'import fixtureInstrumentationDep from "fixture-instrumentation-dep";',
-        'import { defineInstrumentation } from "orcel/instrumentation";',
+        'import { defineInstrumentation } from "@orcel/orcel/instrumentation";',
         "",
         "export default defineInstrumentation({",
         "  setup() {",

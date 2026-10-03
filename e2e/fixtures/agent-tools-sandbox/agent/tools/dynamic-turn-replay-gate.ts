@@ -2,7 +2,7 @@ import {
   defineWorkflowTool,
   type WorkflowToolContext,
   type WorkflowToolDefinition,
-} from "orcel/tools";
+} from "@orcel/orcel/tools";
 
 export async function dynamicTurnReplayGate(_input: unknown, ctx: WorkflowToolContext) {
   "use workflow";

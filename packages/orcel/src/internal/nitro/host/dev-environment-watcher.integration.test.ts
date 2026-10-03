@@ -79,7 +79,7 @@ describe("development environment reload transactions", () => {
     await mkdir(join(appRoot, "agent"), { recursive: true });
     await writeFile(
       join(workspaceRoot, "package.json"),
-      JSON.stringify({ dependencies: { orcel: "*" } }),
+      JSON.stringify({ dependencies: { "@orcel/orcel": "*" } }),
     );
     await writeFile(
       join(workspaceRoot, ".env.local"),
@@ -163,7 +163,7 @@ async function createEnvironmentApp(): Promise<string> {
   const appRoot = await mkdtemp(join(tmpdir(), "orcel-dev-env-transaction-"));
   temporaryDirectories.push(appRoot);
   await mkdir(join(appRoot, "agent"));
-  await writeFile(join(appRoot, "package.json"), JSON.stringify({ dependencies: { orcel: "*" } }));
+  await writeFile(join(appRoot, "package.json"), JSON.stringify({ dependencies: { "@orcel/orcel": "*" } }));
   await writeFile(
     join(appRoot, ".env"),
     "ORCEL_WATCH_ENV_FILE_ONLY=from-env\nORCEL_WATCH_ENV_SHARED=from-env\nORCEL_WATCH_ENV_SHELL=from-env\n",

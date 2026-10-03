@@ -8,7 +8,7 @@ describe("agent templates", () => {
       'model: chatgpt("gpt-5.6-sol")',
     );
     expect(agentTemplateFiles("chatgpt/gpt-5.6-sol")["agent/agent.ts"]).toContain(
-      'import { chatgpt } from "orcel/models/openai"',
+      'import { chatgpt } from "@orcel/orcel/models/openai"',
     );
   });
 });

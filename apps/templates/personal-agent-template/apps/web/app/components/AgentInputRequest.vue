@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { OrcelDynamicToolPart } from "orcel/vue";
+import type { OrcelDynamicToolPart } from "@orcel/orcel/vue";
 
 export type AgentInputResponse = {
   optionId?: string;

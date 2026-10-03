@@ -19,7 +19,7 @@ Add `agent/instrumentation/otel.ts` with an explicit metadata-only policy
 before moving exporters:
 
 ```ts title="agent/instrumentation/otel.ts"
-import { otel } from "orcel/instrumentation/otel";
+import { otel } from "@orcel/@orcel/orcel/instrumentation/otel";
 
 export default otel({
   functionId: "support-agent",
@@ -47,7 +47,7 @@ pnpm add @vercel/otel
 
 ```ts title="agent/instrumentation/honeycomb.ts"
 import { OTLPHttpProtoTraceExporter } from "@vercel/otel";
-import { otelIntegration } from "orcel/instrumentation/otel";
+import { otelIntegration } from "@orcel/@orcel/orcel/instrumentation/otel";
 
 export default otelIntegration({
   exportPolicy: {

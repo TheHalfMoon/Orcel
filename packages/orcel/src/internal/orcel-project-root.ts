@@ -19,7 +19,7 @@ async function packageDeclaresEve(
 
   if (!isJsonObject(packageJson)) return false;
   const dependencies = packageJson.dependencies;
-  return isJsonObject(dependencies) && typeof dependencies.orcel === "string";
+  return isJsonObject(dependencies) && typeof dependencies["@orcel/orcel"] === "string";
 }
 
 /** Find the nearest package boundary and return it only when it owns an orcel project. */

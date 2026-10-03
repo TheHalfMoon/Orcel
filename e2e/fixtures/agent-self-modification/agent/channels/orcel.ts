@@ -1,4 +1,4 @@
-import { orcelChannel } from "orcel/channels/orcel";
+import { orcelChannel } from "@orcel/orcel/channels/orcel";
 
 export default orcelChannel({
   auth: () => ({

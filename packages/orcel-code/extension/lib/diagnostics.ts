@@ -1,6 +1,6 @@
 import { extname } from "node:path";
 
-import type { SandboxSession } from "orcel/sandbox";
+import type { SandboxSession } from "@orcel/orcel/sandbox";
 
 import { toolingPaths } from "./tooling.ts";
 import { shellQuote } from "./shell.ts";

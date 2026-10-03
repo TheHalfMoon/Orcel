@@ -1,1 +1,1 @@
-export { default } from "orcel/tools/grep";
+export { default } from "@orcel/orcel/tools/grep";

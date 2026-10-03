@@ -1,6 +1,6 @@
 import { redisMemory } from "@upstash/agentkit-eve/memory";
-import { defineMemory } from "orcel/memory";
-import { byPrincipal } from "orcel/memory/scope";
+import { defineMemory } from "@orcel/orcel/memory";
+import { byPrincipal } from "@orcel/orcel/memory/scope";
 
 export default defineMemory({
   description: "Recall and manage durable context for the current user.",

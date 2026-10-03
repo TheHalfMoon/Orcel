@@ -1,4 +1,4 @@
-import { defineState } from "orcel/context";
+import { defineState } from "@orcel/orcel/context";
 
 export const REVIEW_REFERENCE = "reviews/storefront/repository";
 export const HANDOFF_REFERENCE = "handoffs/storefront/repository";

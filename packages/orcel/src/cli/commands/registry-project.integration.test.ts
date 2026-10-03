@@ -14,7 +14,7 @@ describe("readRegistryConfig", () => {
     await writeFile(
       join(workspaceRoot, "package.json"),
       JSON.stringify({
-        dependencies: { orcel: "*" },
+        dependencies: { "@orcel/orcel": "*" },
         registries: { "@acme": "https://example.com/r/{name}.json" },
       }),
     );

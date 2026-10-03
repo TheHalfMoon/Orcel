@@ -20,7 +20,7 @@ Add `agent/instrumentation/otel.ts` when you need process-wide settings or
 want to control the content orcel writes to OpenTelemetry spans:
 
 ```ts title="agent/instrumentation/otel.ts"
-import { otel } from "orcel/instrumentation/otel";
+import { otel } from "@orcel/@orcel/orcel/instrumentation/otel";
 
 export default otel({
   resource: { "deployment.environment": process.env.VERCEL_ENV ?? "development" },
@@ -49,7 +49,7 @@ pnpm add pg @opentelemetry/instrumentation-pg
 
 ```ts title="agent/instrumentation/otel.ts"
 import { PgInstrumentation } from "@opentelemetry/instrumentation-pg";
-import { otel } from "orcel/instrumentation/otel";
+import { otel } from "@orcel/@orcel/orcel/instrumentation/otel";
 
 export default otel({
   instrumentations: [new PgInstrumentation()],
@@ -60,7 +60,7 @@ Keep the instrumented package external so Node.js module hooks can intercept
 it. Add `pg` to your agent's [build configuration](/docs/agent-config#other-defineagent-fields):
 
 ```ts title="agent/agent.ts"
-import { defineAgent } from "orcel";
+import { defineAgent } from "@orcel/orcel";
 
 export default defineAgent({
   model: "openai/gpt-5.4-mini",
@@ -79,7 +79,7 @@ pnpm add @vercel/otel
 
 ```ts title="agent/instrumentation/honeycomb.ts"
 import { OTLPHttpProtoTraceExporter } from "@vercel/otel";
-import { otelIntegration } from "orcel/instrumentation/otel";
+import { otelIntegration } from "@orcel/@orcel/orcel/instrumentation/otel";
 
 export default otelIntegration({
   exportPolicy: {
@@ -105,8 +105,8 @@ For typed channel metadata, import the channel definition and narrow with
 `isChannel`:
 
 ```ts title="agent/instrumentation/support.ts"
-import { isChannel } from "orcel/instrumentation";
-import { otelIntegration } from "orcel/instrumentation/otel";
+import { isChannel } from "@orcel/@orcel/orcel/instrumentation";
+import { otelIntegration } from "@orcel/@orcel/orcel/instrumentation/otel";
 
 import supportChannel from "../channels/support";
 
@@ -153,7 +153,7 @@ destination's span-search surface.
 `localTraces(...)` from that file to reconfigure it, or disable it explicitly:
 
 ```ts title="agent/instrumentation/local.ts"
-import { disableInstrumentation } from "orcel/instrumentation";
+import { disableInstrumentation } from "@orcel/@orcel/orcel/instrumentation";
 
 export default disableInstrumentation();
 ```
@@ -170,7 +170,7 @@ For Agent Runs sampling defaults and existing-deployment setup, see
 and attributes before that destination's processors receive them:
 
 ```ts title="agent/instrumentation/local.ts"
-import { localTraces } from "orcel/instrumentation/otel";
+import { localTraces } from "@orcel/@orcel/orcel/instrumentation/otel";
 
 export default localTraces({
   exportPolicy: {

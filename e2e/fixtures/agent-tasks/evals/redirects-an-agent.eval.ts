@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 import { APAC_CHURN } from "../findings";
 import { taskStarts } from "./task-events";

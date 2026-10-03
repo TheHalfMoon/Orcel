@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 export default defineEval({
   description: "Dynamic model smoke: a throwing resolver fails the turn.",

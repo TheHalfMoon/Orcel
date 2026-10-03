@@ -9,7 +9,7 @@ Use this guide when you already have a browser application and need to connect i
 
 A browser UI is a client of the agent's HTTP routes (the [orcel channel](../../channels/overview)). Two layers wire it up:
 
-- **Routing** makes the agent reachable from the browser. A framework integration can mount orcel on your app's origin: [Next.js](./nextjs) (`withEve`), [Nuxt](./nuxt) (the `orcel/nuxt` module), or [SvelteKit](./sveltekit) (the `orcelSvelteKit` Vite plugin). If the frontend and agents are peer services, use your deployment platform or reverse proxy instead. The hook works with either setup; pass `host` for a different origin or a named path mount.
+- **Routing** makes the agent reachable from the browser. A framework integration can mount orcel on your app's origin: [Next.js](./nextjs) (`withEve`), [Nuxt](./nuxt) (the `@orcel/orcel/nuxt` module), or [SvelteKit](./sveltekit) (the `orcelSvelteKit` Vite plugin). If the frontend and agents are peer services, use your deployment platform or reverse proxy instead. The hook works with either setup; pass `host` for a different origin or a named path mount.
 - **The hook** (`useOrcelAgent`) holds the session state, streaming, errors, and composer status. It defaults to same-origin orcel routes such as `/orcel/v1/session`.
 
 The framework pages walk through the wiring step by step: [Next.js](./nextjs), [Nuxt](./nuxt), and [SvelteKit](./sveltekit). See [Project Structure](../../concepts/project-structure#configure-a-web-deployment) to choose between a framework integration and peer services.
@@ -22,16 +22,16 @@ A same-origin framework integration sends your application cookies with every or
 
 The default orcel channel fails closed. Without an authored `agent/channels/orcel.ts`, production browser traffic receives `401` from the default `[vercelOidc(), localDev(), placeholderAuth()]` policy. Add the channel file with an `AuthFn` that verifies your application session or token.
 
-For a public demo, use `none()` from `orcel/channels/auth` to admit anonymous requests explicitly. Do not use `none()` for an agent that handles private or production data. See [Authentication](../auth-and-route-protection) for application-session examples, token verifiers, and the default policy.
+For a public demo, use `none()` from `@orcel/orcel/channels/auth` to admit anonymous requests explicitly. Do not use `none()` for an agent that handles private or production data. See [Authentication](../auth-and-route-protection) for application-session examples, token verifiers, and the default policy.
 
 ## Basic chat (React)
 
-The hook lives in `orcel/react`. Render `data.messages`, use `status` to steer follow-ups during an active turn, and send text with `send`:
+The hook lives in `@orcel/orcel/react`. Render `data.messages`, use `status` to steer follow-ups during an active turn, and send text with `send`:
 
 ```tsx
 "use client";
 
-import { useOrcelAgent } from "orcel/react";
+import { useOrcelAgent } from "@orcel/@orcel/orcel/react";
 
 export function Chat() {
   const agent = useOrcelAgent();
@@ -89,7 +89,7 @@ Most chat UIs only need `data.messages` and `status`. Drop down to `events` when
 Pass `prewarm: true` to start a workflow when the chat mounts and after each reset:
 
 ```tsx
-import { useOrcelAgent } from "orcel/react";
+import { useOrcelAgent } from "@orcel/@orcel/orcel/react";
 
 export function Chat() {
   const agent = useOrcelAgent({ prewarm: true });
@@ -102,7 +102,7 @@ In React, `prewarm` is a live boolean. Use component state to wait until the use
 composing a message:
 
 ```tsx
-import { useOrcelAgent } from "orcel/react";
+import { useOrcelAgent } from "@orcel/@orcel/orcel/react";
 import { useState } from "react";
 
 export function Chat() {
@@ -259,7 +259,7 @@ For a question with `allowFreeform`, render a text input and send `{ requestId, 
 Connections and tools that need OAuth or another grant emit `authorization.required`. The default reducer projects that into an `authorization` message part with the display name, instructions, device code, and user-facing sign-in URL. Render that part as a normal chat message, then keep the session cursor; orcel resumes the parked turn when the callback completes and updates the part after `authorization.completed`:
 
 ```tsx
-import type { OrcelMessagePart } from "orcel/react";
+import type { OrcelMessagePart } from "@orcel/@orcel/orcel/react";
 
 function AuthorizationPrompt({ part }: { part: OrcelMessagePart }) {
   if (part.type !== "authorization") return null;
@@ -331,8 +331,8 @@ The `optimistic` option (default `true`) projects submitted user messages into `
 The default reducer projects events into `{ messages }` (`OrcelMessageData`). When you want `data` shaped differently, pass a `reducer` implementing `OrcelAgentReducer<TData>`:
 
 ```tsx
-import { useOrcelAgent } from "orcel/react";
-import type { OrcelAgentReducer } from "orcel/react";
+import { useOrcelAgent } from "@orcel/@orcel/orcel/react";
+import type { OrcelAgentReducer } from "@orcel/@orcel/orcel/react";
 
 interface ToolLog {
   readonly toolCalls: number;
@@ -355,7 +355,7 @@ const agent = useOrcelAgent({ reducer: toolCounter });
 The browser conversation lives durably on the server. Persist both the rendered event log and the `session` cursor to pick it back up after a reload:
 
 ```tsx
-import type { ClientSessionState, MessageStreamEvent } from "orcel/client";
+import type { ClientSessionState, MessageStreamEvent } from "@orcel/@orcel/orcel/client";
 
 type SavedOrcelChat = {
   events?: readonly MessageStreamEvent[];
@@ -432,7 +432,7 @@ const support = useOrcelAgent({ agent: "support" });
 | Framework | Integration                          | Hook                                             |
 | --------- | ------------------------------------ | ------------------------------------------------ |
 | Next.js   | [`withEve`](./nextjs)                | [`useOrcelAgent` (React)](#basic-chat-react)       |
-| Nuxt      | [`orcel/nuxt` module](./nuxt)          | [`useOrcelAgent` (Vue)](./use-orcel-agent-vue)       |
+| Nuxt      | [`@orcel/orcel/nuxt` module](./nuxt)          | [`useOrcelAgent` (Vue)](./use-orcel-agent-vue)       |
 | SvelteKit | [`orcelSvelteKit` plugin](./sveltekit) | [`useOrcelAgent` (Svelte)](./use-orcel-agent-svelte) |
 | Any React | same-origin or `host`                | [`useOrcelAgent` (React)](#basic-chat-react)       |
 

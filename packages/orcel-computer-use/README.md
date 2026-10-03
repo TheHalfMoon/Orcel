@@ -1,12 +1,12 @@
-# orcel/computer-use
+# @orcel/orcel/computer-use
 
-`orcel/computer-use` is an orcel extension for computer use. It contributes the `computer_use` tool, which drives a Linux desktop inside the sandbox, plus the helpers that install and start that desktop.
+`@orcel/orcel/computer-use` is an orcel extension for computer use. It contributes the `computer_use` tool, which drives a Linux desktop inside the sandbox, plus the helpers that install and start that desktop.
 
 It ships inside the `orcel` package. This private `@orcel/computer-use` workspace package is its source of truth: orcel's build copies `extension/` into `packages/orcel/src/computer-use/extension` and publishes it with these entry points:
 
-- `orcel/computer-use`: the extension
-- `orcel/computer-use/sandbox`: `installComputerUse`, `startComputerUse`, and `COMPUTER_USE_REVALIDATION_KEY`
-- `orcel/computer-use/tools`: `computer_use`
+- `@orcel/orcel/computer-use`: the extension
+- `@orcel/orcel/computer-use/sandbox`: `installComputerUse`, `startComputerUse`, and `COMPUTER_USE_REVALIDATION_KEY`
+- `@orcel/orcel/computer-use/tools`: `computer_use`
 
 ## Mount
 
@@ -14,7 +14,7 @@ The extension has no config:
 
 ```ts
 // agent/extensions/computer-use.ts
-export { default } from "orcel/computer-use";
+export { default } from "@orcel/@orcel/orcel/computer-use";
 ```
 
 Mount it only for agents whose sandbox runs the desktop. The tool schema is large, so agents that never use a desktop should leave it out.
@@ -25,9 +25,9 @@ Install the desktop and driver in the environment's `prepare` callback, then sta
 
 ```ts
 // agent/sandbox.ts
-import { defineSandbox } from "orcel/sandbox";
-import { VercelSandbox } from "orcel/sandbox/vercel";
-import { installComputerUse, startComputerUse } from "orcel/computer-use/sandbox";
+import { defineSandbox } from "@orcel/@orcel/orcel/sandbox";
+import { VercelSandbox } from "@orcel/@orcel/orcel/sandbox/vercel";
+import { installComputerUse, startComputerUse } from "@orcel/@orcel/orcel/computer-use/sandbox";
 
 export const environment = VercelSandbox.environment({
   prepare: async (sandbox) => {
@@ -49,7 +49,7 @@ Mounting the extension exposes `computer_use` but does not install or start its 
 Rebuild orcel after editing `extension/`:
 
 ```sh
-pnpm --filter orcel build
+pnpm --filter @orcel/orcel build
 pnpm --filter @orcel/computer-use typecheck
 pnpm --filter @orcel/computer-use test:scenario
 pnpm exec oxlint packages/orcel-computer-use

@@ -1,5 +1,5 @@
-import { defineDynamic, defineTool } from "orcel/tools";
-import { defineState } from "orcel/context";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
+import { defineState } from "@orcel/orcel/context";
 
 const invocationCount = defineState("dynamic-conditional.invocations", () => 0);
 

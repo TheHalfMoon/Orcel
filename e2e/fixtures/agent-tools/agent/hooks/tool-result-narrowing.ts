@@ -1,5 +1,5 @@
-import { defineHook, type HookDefinition } from "orcel/hooks";
-import { toolResultFrom } from "orcel/tools";
+import { defineHook, type HookDefinition } from "@orcel/orcel/hooks";
+import { toolResultFrom } from "@orcel/orcel/tools";
 import structuredEcho from "../tools/structured-echo";
 
 const hook: HookDefinition = defineHook({

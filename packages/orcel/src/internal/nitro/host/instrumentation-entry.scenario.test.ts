@@ -129,20 +129,20 @@ describe("instrumentation before the Nitro entry", () => {
           'export default { model: "openai/gpt-5.4-mini", build: { externalDependencies: ["fixture-driver"] } };',
         "agent/instructions.md": "Help Alice check her database.",
         "agent/tools/check.mjs": [
-          'import { defineTool } from "orcel/tools";',
+          'import { defineTool } from "@orcel/orcel/tools";',
           'import driver from "fixture-driver";',
           'export default defineTool({ description: "Check the database.", inputSchema: {}, execute: () => driver });',
         ].join("\n"),
         "agent/instrumentation/audit.mjs": [
           'import { setImmediate } from "node:timers/promises";',
-          'import { defineInstrumentation } from "orcel/instrumentation";',
+          'import { defineInstrumentation } from "@orcel/orcel/instrumentation";',
           "export default defineInstrumentation({ async setup() {",
           "  await setImmediate();",
           "  globalThis.startup.push('setup');",
           "} });",
         ].join("\n"),
         "agent/instrumentation/otel.mjs": [
-          'import { otel } from "orcel/instrumentation/otel";',
+          'import { otel } from "@orcel/orcel/instrumentation/otel";',
           "export default otel({ instrumentations: [{",
           "  getConfig: () => ({ enabled: false }),",
           "  setTracerProvider() {}, setMeterProvider() {}, disable() {},",

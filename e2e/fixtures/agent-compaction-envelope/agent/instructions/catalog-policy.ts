@@ -1,5 +1,5 @@
-import type { HookEvent } from "orcel/hooks";
-import { defineDynamic, defineInstructions } from "orcel/instructions";
+import type { HookEvent } from "@orcel/orcel/hooks";
+import { defineDynamic, defineInstructions } from "@orcel/orcel/instructions";
 
 export default defineDynamic({
   events: {

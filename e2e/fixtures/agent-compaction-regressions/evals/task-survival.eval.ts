@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 import { TASK_PRESERVED_MARKER, TASK_TAIL_SENTINEL } from "../constants";
 

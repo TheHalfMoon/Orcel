@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 import { DYNAMIC_ECHO_TOKEN, ECHO_TOOL } from "./shared";
 

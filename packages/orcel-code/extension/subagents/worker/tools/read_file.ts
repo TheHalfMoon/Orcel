@@ -1,1 +1,1 @@
-export { default } from "orcel/tools/read_file";
+export { default } from "@orcel/orcel/tools/read_file";

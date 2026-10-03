@@ -1,5 +1,5 @@
-import { defineEval } from "orcel/evals";
-import { includes } from "orcel/evals/expect";
+import { defineEval } from "@orcel/orcel/evals";
+import { includes } from "@orcel/orcel/evals/expect";
 
 const DOCKERFILE_MARKER = "microsandbox-dockerfile-ok-P6N";
 const WORKSPACE_MARKER = "microsandbox-workspace-ok-W7R";

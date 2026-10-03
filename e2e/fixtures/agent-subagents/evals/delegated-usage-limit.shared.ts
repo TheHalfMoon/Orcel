@@ -1,5 +1,5 @@
-import type { OrcelEvalContext } from "orcel/evals";
-import { satisfies } from "orcel/evals/expect";
+import type { OrcelEvalContext } from "@orcel/orcel/evals";
+import { satisfies } from "@orcel/orcel/evals/expect";
 
 import { SURVEY_WORKER_INPUT_TOKENS } from "../constants";
 

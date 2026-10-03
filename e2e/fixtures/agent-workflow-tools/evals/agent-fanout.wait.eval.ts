@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 import { readHookAudit, recordsEveryAgentStart } from "./subagent-hook-audit.shared";
 

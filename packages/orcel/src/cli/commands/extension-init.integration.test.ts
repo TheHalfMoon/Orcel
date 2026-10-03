@@ -177,7 +177,7 @@ describe("runExtensionInitCommand", () => {
     expect(deps.runPackageManagerInstall).not.toHaveBeenCalled();
     expect(deps.tryInitializeGit).not.toHaveBeenCalled();
     const printed = output.messages.join("\n");
-    expect(printed).toContain("npx orcel@latest extension init <name>");
+    expect(printed).toContain("npx @orcel/orcel@latest extension init <name>");
     expect(printed).toContain("does not start orcel dev");
     expect(printed).toContain("orcel extension build");
   });

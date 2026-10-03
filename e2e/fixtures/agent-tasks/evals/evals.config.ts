@@ -1,4 +1,4 @@
-import { defineEvalConfig } from "orcel/evals";
+import { defineEvalConfig } from "@orcel/orcel/evals";
 
 export default defineEvalConfig({
   // Each eval waits on tasks that take ten to fifteen seconds, sometimes twice.

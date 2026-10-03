@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 /**
  * HITL flow: `once()` approval semantics — a denial does not grant, so the

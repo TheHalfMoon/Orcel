@@ -78,7 +78,7 @@ This is an in-memory tutorial database. A row limit does not bound the work need
 ## Define the run_sql tool
 
 ```ts title="agent/tools/run_sql.ts"
-import { defineTool } from "orcel/tools";
+import { defineTool } from "@orcel/@orcel/orcel/tools";
 import { z } from "zod";
 import { runReadOnlySql } from "../lib/sample-db";
 

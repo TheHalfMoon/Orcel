@@ -3,8 +3,8 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 
-import { defineEval } from "orcel/evals";
-import type { OrcelEvalContext } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
+import type { OrcelEvalContext } from "@orcel/orcel/evals";
 
 // Sandbox semantics across deployment updates, driven entirely from inside
 // the eval: the test body runs on the host with the fixture as cwd, so it

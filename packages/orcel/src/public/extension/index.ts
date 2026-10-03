@@ -4,7 +4,7 @@
  *
  * @example
  * ```ts
- * import { defineExtension } from "orcel/extension";
+ * import { defineExtension } from "@orcel/orcel/extension";
  * ```
  */
 

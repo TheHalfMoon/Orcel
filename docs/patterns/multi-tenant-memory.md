@@ -17,9 +17,9 @@ Never accept the tenant or user ID from the model. Resolve both from verified
 session authentication and return a tuple:
 
 ```ts title="agent/memory/profile.ts"
-import { defineMemory } from "orcel/memory";
-import { byPrincipal } from "orcel/memory/scope";
-import { fileMemory } from "orcel/memory/file";
+import { defineMemory } from "@orcel/@orcel/orcel/memory";
+import { byPrincipal } from "@orcel/@orcel/orcel/memory/scope";
+import { fileMemory } from "@orcel/@orcel/orcel/memory/file";
 
 export default defineMemory({
   description: "Remember durable facts for the authenticated tenant user.",

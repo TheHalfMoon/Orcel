@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 /**
  * `stage_deploy` defines `task()`. Its call returns a receipt, `task_wait`

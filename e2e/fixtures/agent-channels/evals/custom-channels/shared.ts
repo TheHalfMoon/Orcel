@@ -1,4 +1,4 @@
-import type { OrcelEvalTargetHandle } from "orcel/evals";
+import type { OrcelEvalTargetHandle } from "@orcel/orcel/evals";
 
 export async function postChannel<T>(
   target: OrcelEvalTargetHandle,

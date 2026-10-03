@@ -1,4 +1,4 @@
-import { defineEvalConfig } from "orcel/evals";
+import { defineEvalConfig } from "@orcel/orcel/evals";
 
 export default defineEvalConfig({
   // Workflow tools dispatch durable runs; serialize so the runs are never

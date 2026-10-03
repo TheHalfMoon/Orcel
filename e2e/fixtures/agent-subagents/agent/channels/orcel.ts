@@ -1,6 +1,6 @@
-import type { AuthFn } from "orcel/channels/auth";
-import { orcelChannel } from "orcel/channels/orcel";
-import type { SessionAuthContext } from "orcel/context";
+import type { AuthFn } from "@orcel/orcel/channels/auth";
+import { orcelChannel } from "@orcel/orcel/channels/orcel";
+import type { SessionAuthContext } from "@orcel/orcel/context";
 
 /**
  * Authored orcel channel for the remote principal-forwarding eval. Four

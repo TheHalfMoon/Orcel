@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 import { NESTED_AUTHORIZATION } from "../agent/lib/remote-nested-script.js";
 
 const AUTHORIZATION_CODE = "nested-release-code";

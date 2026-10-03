@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gte, lt, or, sql } from "drizzle-orm";
-import type { ClientSessionState, MessageStreamEvent } from "orcel/client";
+import type { ClientSessionState, MessageStreamEvent } from "@orcel/orcel/client";
 import { isChatTurnSettledEvent } from "../chat/events";
 import type { ActiveChat, ChatListItem, ChatListPage } from "../chat/types";
 import { createFallbackTitle, DEFAULT_CHAT_TITLE } from "../chat/title";

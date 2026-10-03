@@ -1,4 +1,4 @@
-import { defineAgent } from "orcel";
+import { defineAgent } from "@orcel/orcel";
 
 export default defineAgent({
   description: "Independently answer the user's prompt with Moonshot AI Kimi K3.",

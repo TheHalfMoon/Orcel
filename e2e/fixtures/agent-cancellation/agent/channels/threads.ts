@@ -1,4 +1,4 @@
-import { defineChannel, POST, type TurnPolicy } from "orcel/channels";
+import { defineChannel, POST, type TurnPolicy } from "@orcel/orcel/channels";
 
 const AUTH = {
   attributes: { source: "cancellation-eval" },

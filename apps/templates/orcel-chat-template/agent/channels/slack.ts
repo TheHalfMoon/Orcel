@@ -1,6 +1,6 @@
 import { getToken } from "@vercel/connect";
-import { vercelOidc } from "orcel/channels/auth";
-import { slackChannel } from "orcel/channels/slack";
+import { vercelOidc } from "@orcel/orcel/channels/auth";
+import { slackChannel } from "@orcel/orcel/channels/slack";
 
 // SLACK_CONNECTOR is the UID returned by `vercel connect create slack`.
 // For local setup, create a connector with:

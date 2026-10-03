@@ -9,7 +9,7 @@ Run `orcel add channel/linq` to choose Vercel Connect or portable credentials. W
 
 ```ts title="agent/channels/linq.ts"
 import { connectLinqCredentials } from "@vercel/connect/eve";
-import { linqChannel } from "orcel/channels/linq";
+import { linqChannel } from "@orcel/@orcel/orcel/channels/linq";
 
 export default linqChannel({
   credentials: connectLinqCredentials("linq/my-agent"),
@@ -49,7 +49,7 @@ After deploying the agent:
 To configure the channel by hand, pass the API key and webhook signing secret:
 
 ```ts title="agent/channels/linq.ts"
-import { linqChannel } from "orcel/channels/linq";
+import { linqChannel } from "@orcel/@orcel/orcel/channels/linq";
 
 export default linqChannel({
   credentials: {

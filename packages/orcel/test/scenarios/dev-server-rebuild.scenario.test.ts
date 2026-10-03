@@ -45,8 +45,8 @@ const LOCAL_DEV_CAPABILITY_DESCRIPTOR: ScenarioAppDescriptor = {
     "agent/channels/local-dev-capability.ts": [
       'import { writeFile } from "node:fs/promises";',
       'import { join } from "node:path";',
-      'import { defineChannel, GET } from "orcel/channels";',
-      'import { getLocalDevCapability } from "orcel/local-dev";',
+      'import { defineChannel, GET } from "@orcel/orcel/channels";',
+      'import { getLocalDevCapability } from "@orcel/orcel/local-dev";',
       "",
       "export default defineChannel({",
       "  routes: [",

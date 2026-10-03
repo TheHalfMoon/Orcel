@@ -35,7 +35,7 @@ describe("loadAgentInfoData", () => {
     await writeFile(
       join(agentRoot, "sandbox", "sandbox.ts"),
       [
-        'import { DefaultSandbox, defineSandbox } from "orcel/sandbox";',
+        'import { DefaultSandbox, defineSandbox } from "@orcel/orcel/sandbox";',
         "export const environment = DefaultSandbox.environment();",
         "export default defineSandbox(() => environment.open());",
         "",

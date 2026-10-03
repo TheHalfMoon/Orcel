@@ -1,5 +1,5 @@
-import { evaluate } from "orcel/ai";
-import { defineTool } from "orcel/tools";
+import { evaluate } from "@orcel/orcel/ai";
+import { defineTool } from "@orcel/orcel/tools";
 
 import { evaluationModel } from "../testing";
 

@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 const MARKER = "authored-always-approve-resume-N4K7";
 const TOOL_NAME = "gate";

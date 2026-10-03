@@ -104,7 +104,7 @@ describe("ensureChannel", () => {
     });
 
     await expect(readFile(join(projectRoot, "agent/channels/slack.ts"), "utf8")).resolves.toBe(
-      'import { slackChannel } from "orcel/channels/slack";\n\nexport default slackChannel();\n',
+      'import { slackChannel } from "@orcel/orcel/channels/slack";\n\nexport default slackChannel();\n',
     );
     await expect(readFile(join(projectRoot, ".env.example"), "utf8")).resolves.toBe(
       "EXISTING=value\nSLACK_BOT_TOKEN=old\n\nSLACK_SIGNING_SECRET=\n",
@@ -771,7 +771,7 @@ describe("ensureChannel", () => {
     const projectPackageJson = JSON.parse(
       await readFile(join(projectRoot, "package.json"), "utf8"),
     ) as { engines?: unknown; dependencies: Record<string, string> };
-    expect(projectPackageJson.dependencies.orcel).toBe("^0.25.0");
+    expect(projectPackageJson.dependencies["@orcel/orcel"]).toBe("^0.25.0");
     expect(projectPackageJson.engines).toBeUndefined();
     expect(JSON.parse(await readFile(join(workspaceRoot, "package.json"), "utf8"))).toMatchObject({
       engines: { node: "24.x" },
@@ -888,7 +888,7 @@ describe("isNextJsProject", () => {
     const projectRoot = await createTempDir();
     await writeFile(
       join(projectRoot, "package.json"),
-      JSON.stringify({ name: "demo", dependencies: { orcel: "0.25.0" } }),
+      JSON.stringify({ name: "demo", dependencies: { "@orcel/orcel": "0.25.0" } }),
       "utf8",
     );
 
@@ -971,7 +971,7 @@ describe("hasVercelHostFramework", () => {
     const projectRoot = await createTempDir();
     await writeFile(
       join(projectRoot, "package.json"),
-      JSON.stringify({ name: "demo", dependencies: { orcel: "0.25.0" } }),
+      JSON.stringify({ name: "demo", dependencies: { "@orcel/orcel": "0.25.0" } }),
       "utf8",
     );
 
@@ -1019,7 +1019,7 @@ describe("resolveVercelHostFrameworkPreset", () => {
     const projectRoot = await createTempDir();
     await writeFile(
       join(projectRoot, "package.json"),
-      JSON.stringify({ name: "demo", dependencies: { orcel: "0.25.0" } }),
+      JSON.stringify({ name: "demo", dependencies: { "@orcel/orcel": "0.25.0" } }),
       "utf8",
     );
 
@@ -1066,7 +1066,7 @@ describe("scaffoldExtensionProject", () => {
       name: "demo-extension",
       orcel: { extension: { source: "./extension", dist: "./dist/extension" } },
       files: ["dist"],
-      peerDependencies: { orcel: "*" },
+      peerDependencies: { "@orcel/orcel": "*" },
       dependencies: { zod: "4.5.4" },
       scripts: {
         build: "orcel extension build",
@@ -1082,7 +1082,7 @@ describe("scaffoldExtensionProject", () => {
     expect(packageJson.scripts?.dev).toBeUndefined();
 
     const extensionSource = await readFile(join(projectRoot, "extension/extension.ts"), "utf8");
-    expect(extensionSource).toContain('from "orcel/extension"');
+    expect(extensionSource).toContain('from "@orcel/orcel/extension"');
     expect(extensionSource).toContain("defineExtension");
     expect(extensionSource).toContain("apiKey");
     await expect(pathExists(join(projectRoot, "extension/tools"))).resolves.toBe(false);
@@ -1165,7 +1165,7 @@ describe("scaffoldBaseProject", () => {
     expect(agentsMd).toContain("You do not need to read the framework docs");
     expect(agentsMd).toContain("preserve that file unless the user asks to change the model");
     expect(agentsMd).toContain("`agent/instructions.ts` or files under `agent/instructions/`");
-    expect(agentsMd).toContain("ls node_modules/orcel/docs");
+    expect(agentsMd).toContain("ls node_modules/@orcel/orcel/docs");
     expect(agentsMd).toContain("Start with `docs/README.md`: it maps each task");
     expect(agentsMd).toContain("Use a bounded authoring loop");
     expect(agentsMd).toContain("Stop discovery once the file location");
@@ -1268,7 +1268,7 @@ describe("scaffoldBaseProject", () => {
       overrides?: unknown;
       resolutions?: unknown;
     };
-    expect(projectPackageJson.dependencies.orcel).toBe("^0.25.0");
+    expect(projectPackageJson.dependencies["@orcel/orcel"]).toBe("^0.25.0");
     expect(projectPackageJson.engines).toBeUndefined();
     expect(projectPackageJson.overrides).toBeUndefined();
     expect(projectPackageJson.resolutions).toBeUndefined();

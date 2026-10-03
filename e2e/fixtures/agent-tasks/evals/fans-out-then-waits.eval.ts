@@ -1,5 +1,5 @@
-import { defineEval } from "orcel/evals";
-import { equals } from "orcel/evals/expect";
+import { defineEval } from "@orcel/orcel/evals";
+import { equals } from "@orcel/orcel/evals/expect";
 
 import { firstRequestOf, heldTurn, reportIdOf, settlementsOf, taskStarts } from "./task-events";
 

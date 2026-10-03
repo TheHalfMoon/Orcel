@@ -4,7 +4,7 @@
 // matter when tuning the generated AGENTS.md and the shipped docs: outcome,
 // agent cost, which docs pages the agent opened, and which grader assertions
 // failed. Docs reads are recovered from shell commands because agents read
-// `node_modules/orcel/docs` with `cat`/`sed`/`grep` rather than a read tool.
+// `node_modules/@orcel/orcel/docs` with `cat`/`sed`/`grep` rather than a read tool.
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";

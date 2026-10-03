@@ -39,7 +39,7 @@ function isUnder(path: string, root: string): boolean {
 
 function shimSource(mountId: string): string {
   return [
-    `import { defineMountedState } from "orcel/internal/mount-state";`,
+    `import { defineMountedState } from "@orcel/orcel/internal/mount-state";`,
     `export function defineState(name, initial) {`,
     `  return defineMountedState(${JSON.stringify(mountId)}, name, initial);`,
     `}`,

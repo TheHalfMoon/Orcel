@@ -58,22 +58,22 @@ Every authored directory has a typed helper. Import each from the matching subpa
 | Helper                                                          | Subpath                               | Authored Location                                |
 | --------------------------------------------------------------- | ------------------------------------- | ------------------------------------------------ |
 | `defineAgent(...)`                                              | `orcel`                                 | `agent.ts`, `subagents/<id>/agent.ts`            |
-| `defineInstructions(...)`                                       | `orcel/instructions`                    | `instructions.ts` (or `instructions.md`)         |
-| `defineTool(...)`, `defineDynamic(...)`, `disableTool(...)`     | `orcel/tools`                           | `tools/<name>.ts`                                |
+| `defineInstructions(...)`                                       | `@orcel/orcel/instructions`                    | `instructions.ts` (or `instructions.md`)         |
+| `defineTool(...)`, `defineDynamic(...)`, `disableTool(...)`     | `@orcel/orcel/tools`                           | `tools/<name>.ts`                                |
 | `bash`, `readFile`, `writeFile`, and other provided definitions | `orcel/tools/<name>`                    | `tools/<name>.ts`                                |
-| `defineSkill(...)`                                              | `orcel/skills`                          | `skills/<name>.ts` (or `skills/<name>.md`)       |
-| `defineHook(...)`                                               | `orcel/hooks`                           | `hooks/<slug>.ts`                                |
-| `defineChannel(...)`, `POST`, `GET`                             | `orcel/channels`                        | `channels/<name>.ts`                             |
-| `orcelChannel(...)`, `slackChannel(...)`, `vercelOidc(...)`       | `orcel/channels/orcel`, `/slack`, `/auth` | reused from `channels/<name>.ts`                 |
-| `defineSandbox(...)`                                            | `orcel/sandbox`                         | `sandbox.ts` (or `sandbox/sandbox.ts`)           |
-| `defineSchedule(...)`                                           | `orcel/schedules`                       | `schedules/<name>.ts` (or `schedules/<name>.md`) |
-| `defineEval(...)`, `defineEvalConfig(...)`                      | `orcel/evals`                           | `evals/<name>.eval.ts`, `evals/evals.config.ts`  |
+| `defineSkill(...)`                                              | `@orcel/orcel/skills`                          | `skills/<name>.ts` (or `skills/<name>.md`)       |
+| `defineHook(...)`                                               | `@orcel/orcel/hooks`                           | `hooks/<slug>.ts`                                |
+| `defineChannel(...)`, `POST`, `GET`                             | `@orcel/orcel/channels`                        | `channels/<name>.ts`                             |
+| `orcelChannel(...)`, `slackChannel(...)`, `vercelOidc(...)`       | `@orcel/orcel/channels/orcel`, `/slack`, `/auth` | reused from `channels/<name>.ts`                 |
+| `defineSandbox(...)`                                            | `@orcel/orcel/sandbox`                         | `sandbox.ts` (or `sandbox/sandbox.ts`)           |
+| `defineSchedule(...)`                                           | `@orcel/orcel/schedules`                       | `schedules/<name>.ts` (or `schedules/<name>.md`) |
+| `defineEval(...)`, `defineEvalConfig(...)`                      | `@orcel/orcel/evals`                           | `evals/<name>.eval.ts`, `evals/evals.config.ts`  |
 
 Runtime accessors live on the subpath that owns the concern:
 
-- `getSession()` — current session, turn, auth, parent lineage (`orcel/context`)
-- `getSandbox()` — live sandbox handle for the current agent (`orcel/sandbox`)
-- `getContext(key)`, `requireContext(key)`, `hasContext(key)`, `setContext(key)`, `ensureContext(key, factory)` — unified context helpers (`orcel/context`)
+- `getSession()` — current session, turn, auth, parent lineage (`@orcel/orcel/context`)
+- `getSandbox()` — live sandbox handle for the current agent (`@orcel/orcel/sandbox`)
+- `getContext(key)`, `requireContext(key)`, `hasContext(key)`, `setContext(key)`, `ensureContext(key, factory)` — unified context helpers (`@orcel/orcel/context`)
 
 The complete API reference, including types and lower-level runtime primitives, is in the [TypeScript API Reference](https://github.com/TheHalfMoon/orcel/docs/reference/typescript-api).
 
@@ -88,7 +88,7 @@ You are a weather-focused assistant. Be concise, accurate, and explicit when you
 `agent/tools/get_weather.ts`
 
 ```ts
-import { defineTool } from "orcel/tools";
+import { defineTool } from "@orcel/@orcel/orcel/tools";
 import { z } from "zod";
 
 export default defineTool({
@@ -109,7 +109,7 @@ export default defineTool({
 `agent/agent.ts`
 
 ```ts
-import { defineAgent } from "orcel";
+import { defineAgent } from "@orcel/orcel";
 
 export default defineAgent({
   model: "openai/gpt-5.4-mini",
@@ -119,7 +119,7 @@ export default defineAgent({
 ## Quick Start
 
 ```bash
-npx orcel@latest init my-agent
+npx @orcel/orcel@latest init my-agent
 ```
 
 `orcel init` writes a new agent with orcel's default model. Pass `--model
@@ -133,7 +133,7 @@ project or deploy the agent.
 
 CLI commands:
 
-- `orcel` (including `npx orcel`) — initialize the current directory, or start development in a Orcel project
+- `orcel` (including `npx @orcel/orcel`) — initialize the current directory, or start development in a Orcel project
 - `orcel init <name>` — create a new agent
 - `orcel info` — discovery results and compiled artifacts
 - `orcel build` — compile `.orcel/` and build the host output
@@ -149,7 +149,7 @@ orcel is built to be durable. The runtime is Nitro + Workflows. Read the [deploy
 
 ## Read Next
 
-These files ship inside the installed package at `node_modules/orcel/docs/`:
+These files ship inside the installed package at `node_modules/@orcel/orcel/docs/`:
 
 - [Full docs index](https://github.com/TheHalfMoon/orcel/docs) — recommended entry point
 - [Getting Started](https://github.com/TheHalfMoon/orcel/docs/getting-started) — install, scaffold, and run locally
@@ -179,4 +179,4 @@ and inspection. Channel-local addresses remain behind authored channel APIs.
 
 ## Changelog
 
-See [`./CHANGELOG.md`](./CHANGELOG.md) for the release history. The changelog ships inside the published package so agents can read it directly from `node_modules/orcel/CHANGELOG.md` to evaluate upgrades.
+See [`./CHANGELOG.md`](./CHANGELOG.md) for the release history. The changelog ships inside the published package so agents can read it directly from `node_modules/@orcel/orcel/CHANGELOG.md` to evaluate upgrades.

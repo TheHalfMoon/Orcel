@@ -75,7 +75,7 @@ function createGenerationMarkerToolSource(marker: string, crashOnce: boolean): s
 
   return [
     ...lifecycle,
-    'import { defineTool } from "orcel/tools";',
+    'import { defineTool } from "@orcel/orcel/tools";',
     'import { z } from "zod";',
     "",
     "export default defineTool({",
@@ -162,7 +162,7 @@ describe("orcel dev server workflow generations", () => {
           kind === "tool"
             ? createGenerationMarkerToolSource("added-tool", false)
             : [
-                'import { defineWorkflowTool } from "orcel/tools";',
+                'import { defineWorkflowTool } from "@orcel/orcel/tools";',
                 'import { z } from "zod";',
                 "export default defineWorkflowTool({",
                 '  description: "Return the added workflow marker.",',

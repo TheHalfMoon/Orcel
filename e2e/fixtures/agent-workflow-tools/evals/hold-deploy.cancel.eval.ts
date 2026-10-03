@@ -1,5 +1,5 @@
-import { defineEval } from "orcel/evals";
-import { satisfies } from "orcel/evals/expect";
+import { defineEval } from "@orcel/orcel/evals";
+import { satisfies } from "@orcel/orcel/evals/expect";
 
 /**
  * Cancelling the turn cancels the workflow tool run holding it open. The turn

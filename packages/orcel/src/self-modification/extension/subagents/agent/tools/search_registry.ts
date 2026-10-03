@@ -1,4 +1,4 @@
-import { defineTool, type ToolContext } from "orcel/tools";
+import { defineTool, type ToolContext } from "@orcel/orcel/tools";
 
 /** Registry categories an integration search can be narrowed to. */
 const CATEGORIES = ["channel", "connection", "extension", "instrumentation", "memory"] as const;

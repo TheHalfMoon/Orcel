@@ -21,13 +21,13 @@ import {
 const roots: string[] = [];
 const legacy = {
   "agent.ts":
-    'import { defineSelfModificationAgent } from "orcel/self-modification/agent";\n\nimport config from "./config";\n\nexport default defineSelfModificationAgent({\n  config,\n\n  // To use a specific model instead of orcel\'s default, add:\n  // model: "provider/model",\n});\n',
+    'import { defineSelfModificationAgent } from "@orcel/orcel/self-modification/agent";\n\nimport config from "./config";\n\nexport default defineSelfModificationAgent({\n  config,\n\n  // To use a specific model instead of orcel\'s default, add:\n  // model: "provider/model",\n});\n',
   "config.ts":
-    'import { defineSelfModificationConfig } from "orcel/self-modification/config";\n\nexport default defineSelfModificationConfig({});\n',
+    'import { defineSelfModificationConfig } from "@orcel/orcel/self-modification/config";\n\nexport default defineSelfModificationConfig({});\n',
   "sandbox.ts":
-    'import { defineSelfModificationSandbox } from "orcel/self-modification/sandbox";\n\nimport config from "./config";\n\nexport default defineSelfModificationSandbox({ config });\n',
+    'import { defineSelfModificationSandbox } from "@orcel/orcel/self-modification/sandbox";\n\nimport config from "./config";\n\nexport default defineSelfModificationSandbox({ config });\n',
   "extensions/selfmod.ts":
-    'import selfModification from "orcel/self-modification";\nimport config from "../config";\n\nexport default selfModification(config);\n',
+    'import selfModification from "@orcel/orcel/self-modification";\nimport config from "../config";\n\nexport default selfModification(config);\n',
 };
 
 async function scaffold(custom = false): Promise<string> {

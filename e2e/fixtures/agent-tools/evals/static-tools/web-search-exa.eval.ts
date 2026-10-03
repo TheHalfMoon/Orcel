@@ -1,5 +1,5 @@
-import type { HandleMessageStreamEvent } from "orcel/client";
-import { defineEval } from "orcel/evals";
+import type { HandleMessageStreamEvent } from "@orcel/orcel/client";
+import { defineEval } from "@orcel/orcel/evals";
 
 const TOOL_NAME = "web_search";
 const SEARCH_COUNT = 8;

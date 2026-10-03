@@ -4,7 +4,7 @@ description: "Define durable workflow tools that wait for people, webhooks, or t
 url: /tools/workflows
 ---
 
-A workflow tool is a static tool defined with `defineWorkflowTool` from `orcel/tools`, with
+A workflow tool is a static tool defined with `defineWorkflowTool` from `@orcel/orcel/tools`, with
 `"use workflow"` as the first statement of its executor. Each call starts a durable Workflow run. Use one when a tool must wait for a person, webhook, or timer,
 delegate work to subagents, or coordinate retryable steps over a long period.
 
@@ -29,7 +29,7 @@ as `deploy`.
 ## Define a workflow tool
 
 ```ts title="agent/tools/deploy.ts"
-import { defineWorkflowTool } from "orcel/tools";
+import { defineWorkflowTool } from "@orcel/@orcel/orcel/tools";
 import { z } from "zod";
 import { computePlan, runDeploy, type DeployPlan } from "../lib/deploy";
 
@@ -83,7 +83,7 @@ or days later, the run resumes, deploys, and returns. The model sees one tool re
   is replayed and must stay deterministic.
 - Import `createHook`, `createWebhook`, `sleep`, and `FatalError` from `workflow` in the body.
   `start`, `getRun`, and `resumeHook` from `workflow/api` belong in steps. Your app does not install
-  the SDK; for types, new projects list `orcel/workflow-modules` in the tsconfig `types`.
+  the SDK; for types, new projects list `@orcel/orcel/workflow-modules` in the tsconfig `types`.
 - In an `execute` or `task` body, `ctx` is a `WorkflowToolContext` with `session`, `callId`,
   `toolName`, `abortSignal`, `agent`, `agents`, and `ask`. A `serve` body gets a
   `WorkflowServeContext` with `session`, `toolName`,
@@ -99,7 +99,7 @@ or days later, the run resumes, deploys, and returns. The model sees one tool re
 `ctx.agent`, `ctx.agents`, and `ctx.ask` are available only on `WorkflowToolContext` and
 `WorkflowServeContext` in the workflow body.
 Ordinary tools, channel handlers, schedule handlers, and workflow steps do not receive these methods. Type
-step helpers with `WorkflowStepToolContext` from `orcel/tools` when they need step-safe context capabilities.
+step helpers with `WorkflowStepToolContext` from `@orcel/orcel/tools` when they need step-safe context capabilities.
 
 Workflow executors require `defineWorkflowTool`. Adding `"use workflow"` to `defineTool`, a bare
 tool object, a channel handler, or a schedule handler fails the build. To start a session from a
@@ -118,7 +118,7 @@ Create `agent/tools/workflow.ts` and export the provided `workflow` factory when
 supply the JavaScript program at runtime:
 
 ```ts title="agent/tools/workflow.ts"
-import { workflow } from "orcel/tools/workflow";
+import { workflow } from "@orcel/@orcel/orcel/tools/workflow";
 
 export default workflow({ maxSubagents: 20 });
 ```
@@ -154,7 +154,7 @@ The experimental uppercase `Workflow` framework tool and its exports have been r
 old sentinel:
 
 ```diff
--import { experimental_workflow } from "orcel/tools/workflow";
+-import { experimental_workflow } from "@orcel/@orcel/orcel/tools/workflow";
 -
 -export default experimental_workflow({ maxSubagents: 20 });
 ```
@@ -162,7 +162,7 @@ old sentinel:
 with the lowercase factory:
 
 ```ts
-import { workflow } from "orcel/tools/workflow";
+import { workflow } from "@orcel/@orcel/orcel/tools/workflow";
 
 export default workflow({ maxSubagents: 20 });
 ```
@@ -177,7 +177,7 @@ Replace `defineTool` with `defineWorkflowTool`, keep the executor's `"use workfl
 and replace `agent(ctx, input)` and `ask(ctx, request)` with an agent session from
 [`ctx.agent(name)`](#delegate-work-ctxagent) and `ctx.ask(request)`. The `orcel/workflow` entry point
 has been removed. Import `WorkflowToolContext`, `AgentSession`,
-`ToolInputRequest`, `ToolInputRequestOptions`, and `ToolInputResponse` from `orcel/tools` when you
+`ToolInputRequest`, `ToolInputRequestOptions`, and `ToolInputResponse` from `@orcel/orcel/tools` when you
 need explicit types.
 
 `ctx.ask` no longer accepts `dismissible`, and its `dismissed` status is now `cancelled`. A
@@ -244,7 +244,7 @@ an approval inside an `execute` call already parks durably and holds no compute,
 doesn't need a task.
 
 ```ts title="agent/tools/deploy.ts"
-import { defineWorkflowTool } from "orcel/tools";
+import { defineWorkflowTool } from "@orcel/@orcel/orcel/tools";
 import { z } from "zod";
 import { runDeploy } from "../lib/deploy";
 
@@ -284,7 +284,7 @@ as a revision request. A `serve` body runs once per task and gets its calls from
 instead of taking an input:
 
 ```ts title="agent/tools/release-plan.ts"
-import { defineWorkflowTool } from "orcel/tools";
+import { defineWorkflowTool } from "@orcel/@orcel/orcel/tools";
 import { z } from "zod";
 import { revise, type Plan } from "../lib/release-plan";
 
@@ -387,7 +387,7 @@ The provider declaration and the API request both stay inside the step:
 
 ```ts
 import { connect } from "@vercel/connect/eve";
-import type { WorkflowStepToolContext } from "orcel/tools";
+import type { WorkflowStepToolContext } from "@orcel/@orcel/orcel/tools";
 
 async function readRepository(ctx: WorkflowStepToolContext, repository: string) {
   "use step";
@@ -557,7 +557,7 @@ Use an authored workflow tool when the parent model should decide to delegate, b
 If the router may select the root-copy `agent`, author a root `description` that explains which work should stay with a copy of the root. `ctx.agents.agent` always exists in a top-level root workflow, but its `description` is an empty string when omitted from `agent.ts`. `agentRouter()` considers only entries with a non-empty description, so it does not route to an undescribed root copy.
 
 ```ts title="agent/agent.ts"
-import { defineAgent } from "orcel";
+import { defineAgent } from "@orcel/orcel";
 
 export default defineAgent({
   description: "Coordinate cross-specialist tasks that need the root agent's complete toolset.",
@@ -566,7 +566,7 @@ export default defineAgent({
 ```
 
 ```ts title="agent/subagents/researcher/agent.ts"
-import { defineAgent } from "orcel";
+import { defineAgent } from "@orcel/orcel";
 
 export default defineAgent({
   description: "Investigation, analysis, and explanation",
@@ -576,7 +576,7 @@ export default defineAgent({
 ```
 
 ```ts title="agent/subagents/operator/agent.ts"
-import { defineAgent } from "orcel";
+import { defineAgent } from "@orcel/orcel";
 
 export default defineAgent({
   description: "Execution and operational changes",
@@ -588,8 +588,8 @@ export default defineAgent({
 Define the model-visible router under `agent/tools/`. Build the Jev criteria from the subagents' effective descriptions, then pass its typed choice directly to `ctx.agent()`:
 
 ```ts title="agent/tools/agent-router.ts"
-import { evaluate } from "orcel/ai";
-import { defineWorkflowTool } from "orcel/tools";
+import { evaluate } from "@orcel/@orcel/orcel/ai";
+import { defineWorkflowTool } from "@orcel/@orcel/orcel/tools";
 import { z } from "zod";
 
 async function chooseTarget(
@@ -646,7 +646,7 @@ The evaluation runs in a step so workflow replay records its result instead of m
 To replace the model-facing `agent` tool with a router across every target in `ctx.agents`, export `agentRouter()` from the `agent` slot:
 
 ```ts title="agent/tools/agent.ts"
-import { agentRouter } from "orcel/tools/agent-router";
+import { agentRouter } from "@orcel/@orcel/orcel/tools/agent-router";
 
 export default agentRouter();
 ```
@@ -677,7 +677,7 @@ intermediate tool results. A snapshot used as the final output does enter histor
 This workflow reports progress, then suspends until its timer expires:
 
 ```ts title="agent/tools/remind_with_progress.ts"
-import { defineWorkflowTool } from "orcel/tools";
+import { defineWorkflowTool } from "@orcel/@orcel/orcel/tools";
 import { sleep } from "workflow";
 import { z } from "zod";
 
@@ -793,7 +793,7 @@ conversation, and a steering message doesn't withdraw the request. `sleep` is th
 ### Wait for an external system to call back
 
 ```ts title="agent/tools/render_video.ts"
-import { defineWorkflowTool } from "orcel/tools";
+import { defineWorkflowTool } from "@orcel/@orcel/orcel/tools";
 import { createWebhook, FatalError } from "workflow";
 import { z } from "zod";
 import { submitRender } from "../lib/render";
@@ -822,7 +822,7 @@ response, pass `respondWith: new Response(...)` to `createWebhook`.
 ### Ask now, act when answered
 
 ```ts title="agent/tools/refund_order.ts"
-import { defineWorkflowTool } from "orcel/tools";
+import { defineWorkflowTool } from "@orcel/@orcel/orcel/tools";
 import { z } from "zod";
 import { issueRefund } from "../lib/refunds";
 

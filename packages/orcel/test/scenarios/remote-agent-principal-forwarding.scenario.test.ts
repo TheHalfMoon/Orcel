@@ -29,11 +29,11 @@ const STRANGER_TOKEN = "stranger-scenario-token";
 
 const RECEIVER_DESCRIPTOR: ScenarioAppDescriptor = {
   files: {
-    "agent/agent.ts": `import { defineAgent } from "orcel";
+    "agent/agent.ts": `import { defineAgent } from "@orcel/orcel";
 
 export default defineAgent({ model: "openai/gpt-5.4-mini" });
 `,
-    "agent/channels/orcel.ts": `import { orcelChannel } from "orcel/channels/orcel";
+    "agent/channels/orcel.ts": `import { orcelChannel } from "@orcel/orcel/channels/orcel";
 
 const PRINCIPALS = {
   "Bearer ${ROUTER_TOKEN}": "router-app",

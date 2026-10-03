@@ -1,4 +1,4 @@
-import type { WorkflowToolContext } from "orcel/tools";
+import type { WorkflowToolContext } from "@orcel/orcel/tools";
 import { sleep } from "workflow";
 
 import { describePlan, hashPlan } from "@/agent/lib/plan.ts";

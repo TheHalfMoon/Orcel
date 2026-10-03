@@ -53,11 +53,11 @@ function compose(
 
 /**
  * The pre-scaffold setup guide shown after malformed coding-agent input. It
- * scaffolds from scratch, so it renders with the universal `npx orcel dev` rather
+ * scaffolds from scratch, so it renders with the universal `npx @orcel/orcel dev` rather
  * than a launcher-specific command.
  */
 export function initAgentInstructions(): string {
-  return compose(SETUP_SECTIONS, { devCommand: "npx orcel dev" });
+  return compose(SETUP_SECTIONS, { devCommand: "npx @orcel/orcel dev" });
 }
 
 /** Concise scaffold facts printed only when a coding agent launched `orcel init`. */
@@ -96,7 +96,7 @@ export function initExtensionInstructions(): string {
     "",
     "Ask the user for a package directory name, then run:",
     "",
-    "    npx orcel@latest extension init <name>",
+    "    npx @orcel/orcel@latest extension init <name>",
     "",
     "That creates the package, installs dependencies, and initializes Git. It",
     "prints what was set up and how to author, build, and mount the extension —",
@@ -126,7 +126,7 @@ export function initExtensionHandoff(options: {
     "",
     "Next:",
     "  - Add tools, skills, hooks, or connections under extension/",
-    "    (see AGENTS.md and node_modules/orcel/docs/extensions.md)",
+    "    (see AGENTS.md and node_modules/@orcel/orcel/docs/extensions.md)",
     `  - ${buildCommand}   # builds dist/extension and package exports`,
     "  - Mount from a consumer agent:",
     `      // agent/extensions/${options.packageName}.ts`,

@@ -82,7 +82,7 @@ function packageJsonTemplate(includeRootOnlyFields: boolean): string {
       typescript: "__ORCEL_INIT_TYPESCRIPT_VERSION__",
     },
     peerDependencies: {
-      orcel: "*",
+      "@orcel/orcel": "*",
     },
   };
 
@@ -92,7 +92,7 @@ function packageJsonTemplate(includeRootOnlyFields: boolean): string {
   }}\n`;
 }
 
-const EXTENSION_DECLARATION_TEMPLATE = `import { defineExtension } from "orcel/extension";
+const EXTENSION_DECLARATION_TEMPLATE = `import { defineExtension } from "@orcel/orcel/extension";
 import { z } from "zod";
 
 export default defineExtension({
@@ -136,7 +136,7 @@ connections, skills, schedules, subagents, hooks, and instruction fragments that
 mounts under \`agent/extensions/\`.
 
 Before writing code, read the Extensions guide from the installed orcel package
-docs. In most installs, those docs are at \`node_modules/orcel/docs/extensions.md\`.
+docs. In most installs, those docs are at \`node_modules/@orcel/orcel/docs/extensions.md\`.
 In workspaces or local package installs, resolve the installed \`orcel\` package
 location first and read its \`docs/extensions.md\`. If package docs are
 unavailable, use https://github.com/TheHalfMoon/orcel/docs/extensions as a fallback.

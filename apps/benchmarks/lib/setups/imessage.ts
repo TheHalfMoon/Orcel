@@ -37,7 +37,7 @@ export const imessageSetup: AuthoringSetup = {
           type: "registry:file",
           target: "agent/channels/imessage.ts",
           content:
-            'import { photonIMessageChannel } from "orcel/channels/photon";\n\nexport default photonIMessageChannel({ credentials: async () => ({ projectId: "mock-imessage-project", projectSecret: "mock-imessage-secret" }) });\n',
+            'import { photonIMessageChannel } from "@orcel/orcel/channels/photon";\n\nexport default photonIMessageChannel({ credentials: async () => ({ projectId: "mock-imessage-project", projectSecret: "mock-imessage-secret" }) });\n',
         },
       ],
       meta: {

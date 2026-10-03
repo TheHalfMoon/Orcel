@@ -35,7 +35,7 @@ async function createAppRoot(options: { traces?: boolean; logs?: boolean } = {})
   const appRoot = await mkdtemp(join(tmpdir(), "orcel-self-modification-sandbox-"));
   temporaryDirectories.push(appRoot);
   await mkdir(join(appRoot, "agent"), { recursive: true });
-  await mkdir(join(appRoot, "node_modules/orcel/docs"), { recursive: true });
+  await mkdir(join(appRoot, "node_modules/@orcel/orcel/docs"), { recursive: true });
   if (options.traces !== false) {
     await mkdir(join(appRoot, ".orcel/traces/v1/trace-1/segments"), { recursive: true });
     await writeFile(join(appRoot, ".orcel/traces/v1/trace-1/segments/span.otlp.json"), "trace\n");
@@ -44,7 +44,7 @@ async function createAppRoot(options: { traces?: boolean; logs?: boolean } = {})
     await mkdir(join(appRoot, ".orcel/logs"), { recursive: true });
     await writeFile(join(appRoot, ".orcel/logs/dev-test.log"), "diagnostic log\n");
   }
-  await writeFile(join(appRoot, "node_modules/orcel/docs/README.md"), "installed orcel docs\n");
+  await writeFile(join(appRoot, "node_modules/@orcel/orcel/docs/README.md"), "installed orcel docs\n");
   return appRoot;
 }
 

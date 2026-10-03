@@ -4,8 +4,8 @@ import {
   type OrcelEvalSession,
   type OrcelEvalToolCall,
   type OrcelEvalTurn,
-} from "orcel/evals";
-import { satisfies } from "orcel/evals/expect";
+} from "@orcel/orcel/evals";
+import { satisfies } from "@orcel/orcel/evals/expect";
 
 import { WORKSPACE_FORWARDING_MARKER, WORKSPACE_LOOKUP_MESSAGE } from "../constants";
 

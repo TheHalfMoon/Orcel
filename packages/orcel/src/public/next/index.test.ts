@@ -386,7 +386,7 @@ describe("withEve", () => {
         },
         {
           appRoot: expect.stringContaining("/agents/support"),
-          buildCommand: "node 'node_modules/orcel/bin/orcel.js' build",
+          buildCommand: "node 'node_modules/@orcel/orcel/bin/orcel.js' build",
           name: "support",
           publicRoutePrefix: "/orcel/support",
           servicePrefix: `${ORCEL_NEXT_SERVICE_PREFIX}/support`,

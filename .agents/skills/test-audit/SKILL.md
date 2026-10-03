@@ -44,7 +44,7 @@ owning boundary before landing it.
 
 Also check its cost. A scenario test that boots a dev server, installs a
 tarball, or runs a real build must need that subprocess, port, or bundler. If
-it only needs `import "orcel"` to resolve or an in-memory runtime, it belongs in
+it only needs `import "@orcel/orcel"` to resolve or an in-memory runtime, it belongs in
 integration (`useTemporaryAppRoots`, `createTestRuntime`). A test that waits
 out a real production timeout or backoff should use fake timers or an existing
 public option instead of wall-clock time; do not add a test-only seam to
@@ -103,7 +103,7 @@ Keep discovery read-only and report evidence before editing. Baseline with the
 JSON reporter so slow files and tests are visible:
 
 ```sh
-pnpm --filter orcel exec vitest run --config vitest.<tier>.config.ts \
+pnpm --filter @orcel/orcel exec vitest run --config vitest.<tier>.config.ts \
   --reporter=json --outputFile=/tmp/<tier>.json
 ```
 
@@ -172,8 +172,8 @@ Never edit source or tests while Vitest is running in the checkout.
 
 1. Run the smallest owner and sibling tests with the tier config, never bare
    `vitest run`:
-   `pnpm --filter orcel exec vitest run --config vitest.<tier>.config.ts <path>`.
-   Run `pnpm --filter orcel build:compiled` first if `#compiled/*` changed, and
+   `pnpm --filter @orcel/orcel exec vitest run --config vitest.<tier>.config.ts <path>`.
+   Run `pnpm --filter @orcel/orcel build:compiled` first if `#compiled/*` changed, and
    `pnpm build` before scenario runs.
 2. For removed source greps or invariant assertions, run the script that owns
    the real contract, such as `pnpm guard:invariants`.

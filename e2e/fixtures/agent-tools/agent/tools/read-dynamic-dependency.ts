@@ -1,5 +1,5 @@
 import { readDynamicImportMarker } from "@orcel-e2e/dynamic-import-dependency";
-import { defineTool } from "orcel/tools";
+import { defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 export default defineTool({

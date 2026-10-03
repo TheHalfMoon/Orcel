@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 const MESSAGES = ["limit alpha", "limit beta", "limit gamma", "limit delta"] as const;
 const CHILD_TOKEN = "SUBAGENT_TOKEN=echo-marker-9F2X";

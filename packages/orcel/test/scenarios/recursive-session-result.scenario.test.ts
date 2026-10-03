@@ -14,10 +14,10 @@ describe("orcel client inside an authored tool", () => {
       files: {
         "agent/agent.ts": 'export default { model: "openai/gpt-5.4-mini" };\n',
         "agent/instrumentation/otel.ts":
-          'import { otel } from "orcel/instrumentation/otel";\nexport default otel({ instrumentations: ["fetch"] });\n',
+          'import { otel } from "@orcel/orcel/instrumentation/otel";\nexport default otel({ instrumentations: ["fetch"] });\n',
         "agent/instructions.md": "Call the requested tool, or answer directly.\n",
-        "agent/tools/call_child.ts": `import { Client } from "orcel/client";
-import { defineTool } from "orcel/tools";
+        "agent/tools/call_child.ts": `import { Client } from "@orcel/orcel/client";
+import { defineTool } from "@orcel/orcel/tools";
 
 export default defineTool({
   description: "Call another session through the orcel client.",

@@ -40,7 +40,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "orcel": "workspace:^"
+    "@orcel/orcel": "workspace:^"
   },
   "devDependencies": {
     "vitest": "catalog:"

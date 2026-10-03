@@ -21,7 +21,7 @@ export const EXTENSION_AGENT_DESCRIPTOR: ScenarioAppDescriptor = {
 `,
     "agent/lib/weather/tail.mjs": `export const TOOL_TAIL = "across cjs/js/mts/mjs modules.";
 `,
-    "agent/sandbox/sandbox.cjs": `const { DefaultSandbox, defineSandbox } = require("orcel/sandbox");
+    "agent/sandbox/sandbox.cjs": `const { DefaultSandbox, defineSandbox } = require("@orcel/orcel/sandbox");
 Object.defineProperty(exports, "__esModule", { value: true });
 const environment = DefaultSandbox.environment();
 exports.environment = environment;

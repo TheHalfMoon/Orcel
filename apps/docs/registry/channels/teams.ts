@@ -1,4 +1,4 @@
-import { teamsChannel } from "orcel/channels/teams";
+import { teamsChannel } from "@orcel/orcel/channels/teams";
 
 export default teamsChannel({
   credentials: {

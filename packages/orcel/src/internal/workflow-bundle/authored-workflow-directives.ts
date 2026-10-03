@@ -76,7 +76,7 @@ export async function prepareAuthoredWorkflowDirectives(input: {
   const body = program.body ?? [];
   if (body.some((node) => node.source?.value === "orcel/workflow")) {
     throw new Error(
-      `${input.filePath}: "orcel/workflow" has been removed. Use defineWorkflowTool() from "orcel/tools" and call ctx.agent(target, input) or ctx.ask(request) in its executor.`,
+      `${input.filePath}: "orcel/workflow" has been removed. Use defineWorkflowTool() from "@orcel/orcel/tools" and call ctx.agent(target, input) or ctx.ask(request) in its executor.`,
     );
   }
   for (const statement of body) {

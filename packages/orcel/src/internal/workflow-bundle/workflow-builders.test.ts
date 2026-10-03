@@ -374,7 +374,7 @@ describe("applyWorkflowTransform for authored application modules", () => {
   const toolPath = "/app/agent/tools/deploy.ts";
   const toolSource = [
     'import { readFile } from "node:fs/promises";',
-    'import { defineWorkflowTool, type WorkflowToolContext } from "orcel/tools";',
+    'import { defineWorkflowTool, type WorkflowToolContext } from "@orcel/orcel/tools";',
     'import { sleep } from "workflow";',
     'import { z } from "zod";',
     "",
@@ -472,7 +472,7 @@ describe("applyWorkflowTransform for authored application modules", () => {
 
     // Step registrations are bundled by the app, which resolves orcel's package export.
     expect(transformed.code).toContain(
-      'import { withWorkflowStepAuthorization } from "orcel/internal/workflow-step-execution";',
+      'import { withWorkflowStepAuthorization } from "@orcel/orcel/internal/workflow-step-execution";',
     );
     expect(transformed.code).toContain(
       'registerStepFunction("step//./agent/tools/deploy//planDeploy:orcel-authorization", withWorkflowStepAuthorization(planDeploy));',

@@ -14,7 +14,7 @@ const peerConfig =
 function workspaceFiles(subagent: string) {
   return {
     // Workspace detection requires the root manifest to declare orcel.
-    "package.json": `${JSON.stringify({ dependencies: { orcel: "*" }, name: "workspace", type: "module" })}\n`,
+    "package.json": `${JSON.stringify({ dependencies: { "@orcel/orcel": "*" }, name: "workspace", type: "module" })}\n`,
     "agents/research/agent/agent.ts": peerConfig,
     "agents/support/agent/agent.ts": rootConfig,
     "agents/support/agent/instructions.md": "Support users.\n",
@@ -36,7 +36,7 @@ describe("Vercel workspace subagent compilation", () => {
     const app = await createWorkspace(
       "orcel-workspace-subagent-description-",
       [
-        'import { defineWorkspaceAgent } from "orcel";',
+        'import { defineWorkspaceAgent } from "@orcel/orcel";',
         'export default defineWorkspaceAgent({ name: "research" });',
         "",
       ].join("\n"),
@@ -52,7 +52,7 @@ describe("Vercel workspace subagent compilation", () => {
     const app = await createWorkspace(
       "orcel-workspace-subagent-description-override-",
       [
-        'import { defineWorkspaceAgent } from "orcel";',
+        'import { defineWorkspaceAgent } from "@orcel/orcel";',
         "export default defineWorkspaceAgent({",
         '  description: "Research urgent support escalations.",',
         '  name: "research",',
@@ -74,7 +74,7 @@ describe("Vercel workspace subagent compilation", () => {
     const app = await createWorkspace(
       "orcel-workspace-subagent-unknown-peer-",
       [
-        'import { defineWorkspaceAgent } from "orcel";',
+        'import { defineWorkspaceAgent } from "@orcel/orcel";',
         "export default defineWorkspaceAgent({",
         '  description: "Research urgent support escalations.",',
         '  name: "missing",',

@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.0.0",
-    "orcel": "workspace:*",
+    "@orcel/orcel": "workspace:*",
     "nuxt": "^4.0.0",
     "vue": "^3.5.0",
     "zod": "catalog:"

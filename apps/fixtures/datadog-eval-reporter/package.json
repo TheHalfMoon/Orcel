@@ -10,6 +10,6 @@
     "@orcel-e2e/config": "workspace:*",
     "@workflow/world-postgres": "catalog:",
     "dd-trace": "6.13.0",
-    "orcel": "workspace:*"
+    "@orcel/orcel": "workspace:*"
   }
 }

@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 const MEASURED_TOKENS_CASE = "[case: measured-tokens]";
 

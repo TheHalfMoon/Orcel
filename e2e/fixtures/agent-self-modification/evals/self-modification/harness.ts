@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
-import type { OrcelEvalContext, OrcelEvalLiveTurn, OrcelEvalSession, OrcelEvalTurn } from "orcel/evals";
+import type { OrcelEvalContext, OrcelEvalLiveTurn, OrcelEvalSession, OrcelEvalTurn } from "@orcel/orcel/evals";
 
 const SELF_MODIFICATION_AGENT = "self-modification__agent";
 const CLEANUP_TIMEOUT_MS = 30_000;

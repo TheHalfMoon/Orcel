@@ -20,7 +20,7 @@ pnpm dev
 
 You can start editing the agent by modifying `agent/agent.ts`. Its behavior is defined in `agent/instructions.md`, and tools live in `agent/tools/`. The agent auto-updates as you edit the files.
 
-This project uses the Orcel framework's bundled guides — see `node_modules/orcel/dist/docs/public/` after installing dependencies.
+This project uses the Orcel framework's bundled guides — see `node_modules/@orcel/orcel/dist/docs/public/` after installing dependencies.
 
 ## Learn More
 

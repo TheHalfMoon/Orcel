@@ -1,4 +1,4 @@
-import { defineDynamic } from "orcel/tools";
+import { defineDynamic } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {

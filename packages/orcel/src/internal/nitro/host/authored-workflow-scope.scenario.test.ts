@@ -41,7 +41,7 @@ describe("authored workflow scope", () => {
           "agent/agent.ts": 'export default { model: "openai/gpt-5.4" };',
           "agent/instructions.md": "Call the probe tool.",
           "agent/tools/probe.ts":
-            'import { defineWorkflowTool } from "orcel/tools"; import { describe } from "@/lib/describe"; export default defineWorkflowTool({ description: "Probe", inputSchema: {}, async execute() { "use workflow"; return describe(); } });',
+            'import { defineWorkflowTool } from "@orcel/orcel/tools"; import { describe } from "@/lib/describe"; export default defineWorkflowTool({ description: "Probe", inputSchema: {}, async execute() { "use workflow"; return describe(); } });',
           "lib/describe.ts": `export function describe() { return ${JSON.stringify(ALIAS_MARKER)}; }`,
         },
       });
@@ -85,7 +85,7 @@ describe("authored workflow scope", () => {
         "agent/agent.ts": 'export default { model: "openai/gpt-5.4" };',
         "agent/instructions.md": "Call the probe tool.",
         "agent/tools/probe.ts":
-          'import { defineWorkflowTool } from "orcel/tools"; import { run } from "../../lib/run"; export default defineWorkflowTool({ description: "Probe", inputSchema: {}, execute: run });',
+          'import { defineWorkflowTool } from "@orcel/orcel/tools"; import { run } from "../../lib/run"; export default defineWorkflowTool({ description: "Probe", inputSchema: {}, execute: run });',
         "lib/run.ts":
           'import { readMarker } from "./step"; export async function run() { "use workflow"; return readMarker(); }',
         "lib/step.ts":

@@ -1,5 +1,5 @@
 import { e2eSubagentConfig } from "@orcel-e2e/config";
-import { defineAgent, defineDynamic } from "orcel";
+import { defineAgent, defineDynamic } from "@orcel/orcel";
 
 const mockMode = process.env.ORCEL_E2E_MODEL === "mock";
 

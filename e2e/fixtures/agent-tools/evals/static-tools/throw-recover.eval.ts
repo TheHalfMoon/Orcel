@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 // An authored tool throw surfaces as a failed action result (no turn.failed),
 // and the session stays responsive for a follow-up.

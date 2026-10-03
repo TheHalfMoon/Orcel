@@ -1,4 +1,4 @@
-import type { OrcelEvalContext, OrcelEvalTurn } from "orcel/evals";
+import type { OrcelEvalContext, OrcelEvalTurn } from "@orcel/orcel/evals";
 
 import { NOTEBOOK_NAME } from "../constants";
 

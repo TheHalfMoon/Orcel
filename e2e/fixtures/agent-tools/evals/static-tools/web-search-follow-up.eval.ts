@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 import { narratedWebSearchOrder, WEB_SEARCH_TOOL_NAME } from "./web-search-ordering";
 
 /**

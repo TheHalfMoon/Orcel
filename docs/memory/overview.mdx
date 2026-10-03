@@ -12,9 +12,9 @@ offers the model. Which facts to keep, how to store them, and how to find them
 again is the provider's job.
 
 ```ts title="agent/memory/profile.ts"
-import { defineMemory } from "orcel/memory";
-import { byPrincipal } from "orcel/memory/scope";
-import { fileMemory } from "orcel/memory/file";
+import { defineMemory } from "@orcel/@orcel/orcel/memory";
+import { byPrincipal } from "@orcel/@orcel/orcel/memory/scope";
+import { fileMemory } from "@orcel/@orcel/orcel/memory/file";
 
 export default defineMemory({
   description: "Remember stable facts and preferences about the caller.",
@@ -84,7 +84,7 @@ automatically or only through explicit tool calls.
 
 ### File memory
 
-`fileMemory()` from `orcel/memory/file` keeps one bounded document per scope and
+`fileMemory()` from `@orcel/orcel/memory/file` keeps one bounded document per scope and
 gives the model `save_memory` and `remove_memory` tools. It does not extract
 facts automatically; the model decides what to save. It needs no external
 service in `orcel dev` and stores to Vercel Blob when deployed to Vercel, which
@@ -107,8 +107,8 @@ The command installs `@supermemory/eve` and writes a `supermemory` slot:
 
 ```ts title="agent/memory/supermemory.ts"
 import supermemory from "@supermemory/eve";
-import { defineMemory } from "orcel/memory";
-import { byPrincipal } from "orcel/memory/scope";
+import { defineMemory } from "@orcel/@orcel/orcel/memory";
+import { byPrincipal } from "@orcel/@orcel/orcel/memory/scope";
 
 export default defineMemory({
   description: "Recall and manage durable context for the current user.",
@@ -139,8 +139,8 @@ slot:
 
 ```ts title="agent/memory/upstash-agentkit.ts"
 import { redisMemory } from "@upstash/agentkit-eve/memory";
-import { defineMemory } from "orcel/memory";
-import { byPrincipal } from "orcel/memory/scope";
+import { defineMemory } from "@orcel/@orcel/orcel/memory";
+import { byPrincipal } from "@orcel/@orcel/orcel/memory/scope";
 
 export default defineMemory({
   description: "Recall and manage durable context for the current user.",
@@ -166,8 +166,8 @@ The command installs `@kybernesis/arcana` and writes an `arcana` slot:
 
 ```ts title="agent/memory/arcana.ts"
 import { arcanaMemory } from "@kybernesis/arcana/memory";
-import { defineMemory } from "orcel/memory";
-import { byPrincipal } from "orcel/memory/scope";
+import { defineMemory } from "@orcel/@orcel/orcel/memory";
+import { byPrincipal } from "@orcel/@orcel/orcel/memory/scope";
 
 export default defineMemory({
   description: "Recall and manage durable context for the current user.",
@@ -234,8 +234,8 @@ authentication and channel context and returns a string, a tuple of strings, or
 `null`:
 
 ```ts title="agent/memory/account.ts"
-import { defineMemory } from "orcel/memory";
-import { fileMemory } from "orcel/memory/file";
+import { defineMemory } from "@orcel/@orcel/orcel/memory";
+import { fileMemory } from "@orcel/@orcel/orcel/memory/file";
 
 export default defineMemory({
   provider: fileMemory(),
@@ -258,7 +258,7 @@ the provider and its tools and never falls back to a shared scope. In
 `orcel dev`, a diagnostic names the disabled slot without logging the resolved
 value.
 
-`byPrincipal` from `orcel/memory/scope` covers the common case. It scopes memory
+`byPrincipal` from `@orcel/orcel/memory/scope` covers the common case. It scopes memory
 to the authenticated principal from `auth.current`, disables memory for
 anonymous and runtime principals, and returns the shared `local-dev` scope
 during local development. Write a resolver when the boundary also needs a

@@ -6,7 +6,7 @@ import {
   defineInteractiveAuthorization,
   defineMcpClientConnection,
   type McpClientConnectionDefinition,
-} from "orcel/connections";
+} from "@orcel/orcel/connections";
 
 /**
  * Smoke-test fixture: a user-principal MCP client connection that

@@ -18,7 +18,7 @@ docs, prompts, comments, and headings.
 
 - `packages/orcel` — the framework and `orcel` CLI (the main package)
 - `packages/orcel-catalog` — internal, unpublished library
-- `packages/orcel-code` — `@orcel/code`, internal source of the `orcel/extensions/code` extension shipped in `orcel`
+- `packages/orcel-code` — `@orcel/code`, internal source of the `@orcel/orcel/extensions/code` extension shipped in `orcel`
 - `apps/fixtures` — shared agent fixtures used by e2e, TUI smoke tests, and local dev
 - `apps/frameworks`, `apps/templates`, `apps/docs` — framework integrations, templates, docs site
 - `docs` — published documentation content
@@ -184,12 +184,12 @@ the `vitest.<tier>.config.ts` files alias `#*` imports to `./src`; a bare
 testing stale builds. Use:
 
 ```sh
-pnpm --filter orcel exec vitest run --config vitest.unit.config.ts <path-or-pattern>
+pnpm --filter @orcel/orcel exec vitest run --config vitest.unit.config.ts <path-or-pattern>
 # or vitest.integration.config.ts / vitest.scenario.config.ts for those tiers
 ```
 
 Add `-t "<name>"` to filter by test name. If you touched anything under
-`#compiled/*`, run `pnpm --filter orcel build:compiled` first — the tier configs
+`#compiled/*`, run `pnpm --filter @orcel/orcel build:compiled` first — the tier configs
 do not rebuild it.
 
 Do not commit fixture trees under `packages/orcel/test/fixtures/` — scenario app

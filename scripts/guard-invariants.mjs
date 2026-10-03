@@ -93,7 +93,7 @@
  *             code may import only runtime facade types, and execution may use
  *             only runtime entrypoints and cancellation-state preservation.
  *   rule 38 — Workspace build scripts must not launch a nested
- *             `pnpm --filter orcel build`. Turbo owns workspace dependency
+ *             `pnpm --filter @orcel/orcel build`. Turbo owns workspace dependency
  *             ordering; nested builds race on orcel's clean-and-publish dist
  *             directory and let consumers observe a partial package.
  *   rule 43 — Reusable session plumbing stays independent of the subagent

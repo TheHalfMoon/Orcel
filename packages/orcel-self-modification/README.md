@@ -3,13 +3,13 @@
 `@orcel/self-modification` is a compatibility package. New applications should install the self-modification extension included with `orcel`:
 
 ```sh
-orcel add orcel/self-modification
+orcel add @orcel/orcel/self-modification
 ```
 
 The command creates `agent/extensions/self-modification/extension.ts`:
 
 ```ts
-import selfModification from "orcel/self-modification";
+import selfModification from "@orcel/@orcel/orcel/self-modification";
 
 export default selfModification({
   // model: "provider/model",
@@ -26,9 +26,9 @@ Older installations placed self-modification under `agent/subagents/self-modific
 Run the registry command to install the packaged extension:
 
 ```sh
-orcel add orcel/self-modification
+orcel add @orcel/orcel/self-modification
 ```
 
 When setup detects a retired scaffold, it offers to remove the entire legacy directory and selects **Yes** by default. Decline the prompt if you need to inspect those files before removing them.
 
-The legacy `orcel/self-modification/agent`, `orcel/self-modification/sandbox`, and `orcel/self-modification/config` entrypoints remain available so the standard scaffold can build during migration. Do not use the retired agent or sandbox helpers for new installations.
+The legacy `@orcel/orcel/self-modification/agent`, `@orcel/orcel/self-modification/sandbox`, and `@orcel/orcel/self-modification/config` entrypoints remain available so the standard scaffold can build during migration. Do not use the retired agent or sandbox helpers for new installations.

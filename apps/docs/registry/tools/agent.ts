@@ -1,1 +1,1 @@
-export { default } from "orcel/tools/agent";
+export { default } from "@orcel/orcel/tools/agent";

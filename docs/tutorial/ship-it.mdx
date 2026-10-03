@@ -10,14 +10,14 @@ The analytics assistant runs in the TUI. Now add a web dashboard and deploy a pr
 Step 1 scaffolded the agent without a web frontend. Add one now with `orcel add channel/web`, run from the `analytics-assistant/` directory:
 
 ```bash
-npx orcel add channel/web
+npx @orcel/orcel add channel/web
 ```
 
 This adds a Next.js app (`next.config.ts`, `app/page.tsx`, `app/_components/`) wired to the existing orcel channel, plus the chat UI components and their dependencies. Run `npm install` afterward to install the added packages. The generated `next.config.ts` wraps your config with `withEve`, which wires the orcel routes automatically:
 
 ```ts title="next.config.ts"
 import type { NextConfig } from "next";
-import { withEve } from "orcel/next";
+import { withEve } from "@orcel/@orcel/orcel/next";
 
 const nextConfig: NextConfig = {};
 
@@ -39,7 +39,7 @@ The scaffold's channel ships with `placeholderAuth()`, which rejects unauthentic
 Create `agent/lib/auth.ts`. This uses orcel's HTTP Basic verifier, which compares passwords in constant time. Missing environment variables, missing credentials, and wrong credentials all fail closed:
 
 ```ts title="agent/lib/auth.ts"
-import { verifyHttpBasic, withAuthChallenges } from "orcel/channels/auth";
+import { verifyHttpBasic, withAuthChallenges } from "@orcel/@orcel/orcel/channels/auth";
 
 export const appAuth = withAuthChallenges(
   (request: Request) => {
@@ -66,8 +66,8 @@ export const appAuth = withAuthChallenges(
 Replace `agent/channels/orcel.ts`, removing the earlier `devTeam` entry. The orcel channel checks `appAuth` for session creation, messages, controls, and streams. The remaining helpers preserve authenticated Vercel CLI access and local development:
 
 ```ts title="agent/channels/orcel.ts"
-import { orcelChannel } from "orcel/channels/orcel";
-import { localDev, vercelOidc } from "orcel/channels/auth";
+import { orcelChannel } from "@orcel/@orcel/orcel/channels/orcel";
+import { localDev, vercelOidc } from "@orcel/@orcel/orcel/channels/auth";
 import { appAuth } from "../lib/auth";
 
 export default orcelChannel({
@@ -80,7 +80,7 @@ The verified username becomes the user principal. The `growth` team selects the 
 Add `proxy.ts` at the project root so opening the dashboard triggers the browser's native username/password prompt. It protects the generated UI routes; orcel API routes keep their channel auth, so an OIDC-authenticated CLI request does not encounter a browser-only gate:
 
 ```ts title="proxy.ts"
-import { routeAuth } from "orcel/channels/auth";
+import { routeAuth } from "@orcel/@orcel/orcel/channels/auth";
 import { NextResponse } from "next/server";
 import { appAuth } from "./agent/lib/auth";
 
@@ -116,7 +116,7 @@ Open the HTTPS preview URL and enter the configured username and password. Creat
 The authenticated web app and orcel runtime share the same origin, and the sandbox runs on Vercel Sandbox. You can also smoke-test the deployment through the authenticated CLI:
 
 ```bash
-npx orcel remote connect --url https://your-analytics-app.vercel.app
+npx @orcel/orcel remote connect --url https://your-analytics-app.vercel.app
 ```
 
 For a production deployment, add the username, password, and model credential to the Production environment too, then run `npx vercel@latest deploy --prod`. Missing Basic credentials keep browser access closed.

@@ -1,4 +1,4 @@
-import type { EvalReporter } from "orcel/evals/reporters";
+import type { EvalReporter } from "@orcel/orcel/evals/reporters";
 
 const scheduled = new Set<string>();
 const completed = new Set<string>();

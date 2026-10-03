@@ -6,7 +6,7 @@ export const COMPOSED_TOOL_SCHEMAS_DESCRIPTOR: ScenarioAppDescriptor = {
   dependencies: { zod: "4.5.4" },
   files: {
     "agent/instructions.md": "Echo the input with the dispatch tool.\n",
-    "agent/lib/operation.ts": `import { defineTool } from "orcel/tools";
+    "agent/lib/operation.ts": `import { defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 export default defineTool({
@@ -16,7 +16,7 @@ export default defineTool({
   execute: async (input) => input,
 });
 `,
-    "agent/tools/dispatch.ts": `import { defineTool } from "orcel/tools";
+    "agent/tools/dispatch.ts": `import { defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 import operation from "../lib/operation.ts";
 
@@ -34,7 +34,7 @@ export default defineTool({
   execute: async (input) => ({ result: input.input }),
 });
 `,
-    "agent/channels/schema-composition.ts": `import { defineChannel, GET } from "orcel/channels";
+    "agent/channels/schema-composition.ts": `import { defineChannel, GET } from "@orcel/orcel/channels";
 import { z } from "zod";
 import dispatch from "../tools/dispatch.ts";
 
