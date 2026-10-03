@@ -51,29 +51,43 @@ export default defineChannel({
     };
   },
   routes: [
-    POST<AnchorState>("/anchor/start", async (request, { from }) => {
+    POST<AnchorState>("/anchor/start", async (request, { from, waitUntil }) => {
       const body = readBody(await request.json().catch(() => ({})));
       const anchorToken = `thread:${body.threadId}`;
-      const session = await from(`pending:${body.threadId}`).send(body.message, {
-        auth: authFor("start", body.marker),
-        state: initialState(anchorToken),
-      });
+      const initialContinuationToken = `pending:${body.threadId}`;
+      waitUntil(
+        from(initialContinuationToken).send(body.message, {
+          auth: authFor("start", body.marker),
+          state: initialState(anchorToken),
+        }),
+      );
 
-      return Response.json({
-        ok: true,
-        anchorToken,
-        initialContinuationToken: `pending:${body.threadId}`,
-        sessionId: session.id,
-      });
+      return Response.json({ ok: true, anchorToken, initialContinuationToken });
     }),
 
-    POST<AnchorState>("/anchor/reply", async (request, { from }) => {
+    POST<AnchorState>("/anchor/session", async (request, { resolveSession }) => {
+      const body = readBody(await request.json().catch(() => ({})));
+      const continuationToken = `pending:${body.threadId}`;
+      const session = await resolveSession(continuationToken);
+      return Response.json(
+        { ok: session !== undefined, sessionId: session?.id ?? null },
+        { status: session === undefined ? 202 : 200 },
+      );
+    }),
+
+    POST<AnchorState>("/anchor/reply", async (request, { from, resolveSession, waitUntil }) => {
       const body = readBody(await request.json().catch(() => ({})));
       const anchorToken = `thread:${body.threadId}`;
-      const session = await from(anchorToken).send(body.message, {
-        auth: authFor("reply", body.marker),
-        state: initialState(anchorToken),
-      });
+      const session = await resolveSession(anchorToken);
+      if (session === undefined) {
+        return Response.json({ error: "anchored session not found", ok: false }, { status: 409 });
+      }
+      waitUntil(
+        from(anchorToken).send(body.message, {
+          auth: authFor("reply", body.marker),
+          state: initialState(anchorToken),
+        }),
+      );
 
       return Response.json({ ok: true, anchorToken, sessionId: session.id });
     }),

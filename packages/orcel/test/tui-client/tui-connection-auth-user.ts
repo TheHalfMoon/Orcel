@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:net";
 import type { AddressInfo } from "node:net";
+import { setTimeout as sleep } from "node:timers/promises";
 
 import { createEmulator, type Emulator } from "emulate";
 import {
@@ -85,6 +86,27 @@ async function pickFreePort(): Promise<number> {
   });
 }
 
+async function waitForAnchoredSession(baseUrl: string, threadId: string): Promise<string> {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const response = await fetch(`${baseUrl}/anchor/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ threadId }),
+    });
+    if (response.status === 200) {
+      const body = (await response.json()) as { sessionId?: string | null };
+      if (typeof body.sessionId === "string" && body.sessionId.length > 0) return body.sessionId;
+      throw new Error(`POST /anchor/session returned no sessionId: ${JSON.stringify(body)}`);
+    }
+    if (response.status !== 202) {
+      throw new Error(`POST /anchor/session failed: ${response.status} ${await response.text()}`);
+    }
+    await sleep(50);
+  }
+  throw new Error("Timed out waiting for the anchored session owner.");
+}
+
 runEnvironment("tui-connection-auth-user", async ({ cleanup, target: resolveTarget }) => {
   const mcp = await startMcpStubServer({ marker: MARKER_TOKEN, requireBearer: true });
   console.log(theme.muted(`[oauth-user] started stub MCP server at ${mcp.url}`));
@@ -136,15 +158,23 @@ runEnvironment("tui-connection-auth-user", async ({ cleanup, target: resolveTarg
   if (!startResp.ok) {
     throw new Error(`POST /anchor/start failed: ${startResp.status} ${await startResp.text()}`);
   }
-  const startBody = (await startResp.json()) as { sessionId?: string };
-  if (!startBody.sessionId) {
-    throw new Error(`POST /anchor/start returned no sessionId: ${JSON.stringify(startBody)}`);
+  const startBody = (await startResp.json()) as { initialContinuationToken?: string };
+  const expectedInitialContinuationToken = `pending:${THREAD_ID}`;
+  if (startBody.initialContinuationToken !== expectedInitialContinuationToken) {
+    throw new Error(
+      `POST /anchor/start returned unexpected continuation token: ${JSON.stringify(startBody)}`,
+    );
   }
-  const sessionId = startBody.sessionId;
+  const sessionId = await waitForAnchoredSession(target.baseUrl, THREAD_ID);
 
   const client = new Client({ host: target.baseUrl });
   const session = client.sessions.attach(sessionId);
-  const stream = session.stream();
+  const initialAbort = new AbortController();
+  const initialTimer = setTimeout(
+    () => initialAbort.abort(new Error("Initial authorization stream timed out after 60 seconds.")),
+    60_000,
+  );
+  const stream = session.stream({ signal: initialAbort.signal });
 
   let requiredEvent: AuthorizationRequiredStreamEvent | undefined;
   let completedEvent: AuthorizationCompletedStreamEvent | undefined;
@@ -230,6 +260,7 @@ runEnvironment("tui-connection-auth-user", async ({ cleanup, target: resolveTarg
       break;
     }
   }
+  clearTimeout(initialTimer);
 
   if (requiredEvent === undefined) {
     throw new Error("Did not see authorization.required for stub-mcp-user.");
