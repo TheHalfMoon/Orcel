@@ -3,8 +3,8 @@
 
 This helper is intentionally narrow: it changes npm package identity references while
 preserving product branding, the `orcel` CLI binary, `.orcel` state paths, `/orcel`
-HTTP routes, historical changelogs/research, provenance, and external compatibility
-identifiers.
+HTTP routes, route inputs such as `orcel/support`, historical changelogs/research,
+provenance, and external compatibility identifiers.
 """
 
 from __future__ import annotations
@@ -54,9 +54,7 @@ TEXT_SUFFIXES = {
     ".yaml",
     ".yml",
 }
-# Count only actual route-shaped `/orcel/` occurrences. The scoped npm identity
-# contains the substring `/orcel/` inside `@orcel/orcel/`; there the slash is
-# preceded by the alphanumeric scope name and must not be treated as a route.
+DOC_SUFFIXES = {".md", ".mdx"}
 PUBLIC_ROUTE_PATTERN = re.compile(r"(?<![A-Za-z0-9@._-])/orcel/")
 
 
@@ -83,30 +81,63 @@ def public_route_count(text: str) -> int:
     return len(PUBLIC_ROUTE_PATTERN.findall(text))
 
 
-def replace_quoted_subpaths(text: str) -> str:
-    # A quoted `orcel/...` value is a package subpath. HTTP routes have a leading
-    # slash (`/orcel/...`) and local state has a leading dot (`.orcel/...`), so
-    # neither shape matches this boundary.
-    pattern = re.compile(r"([\"'])orcel/([^\"']+)\1")
-    text = pattern.sub(lambda m: f"{m.group(1)}{NEW}/{m.group(2)}{m.group(1)}", text)
-    text = text.replace("`orcel/", f"`{NEW}/")
-    return text
+def exported_package_subpaths() -> tuple[str, ...]:
+    payload = json.loads((ROOT / "packages/orcel/package.json").read_text(encoding="utf-8"))
+    exports = payload.get("exports", {})
+    if not isinstance(exports, dict):
+        return ()
+    values = [
+        key[2:]
+        for key in exports
+        if key.startswith("./") and "*" not in key and key != "."
+    ]
+    return tuple(sorted(values, key=lambda value: (-len(value), value)))
 
 
-def replace_bare_imports(text: str) -> str:
+def scope_package_specifier(specifier: str) -> str:
+    if specifier == OLD:
+        return NEW
+    if specifier.startswith(f"{OLD}/"):
+        return f"{NEW}/{specifier[len(OLD) + 1:]}"
+    return specifier
+
+
+def replace_import_specifiers(text: str) -> str:
+    # Real ESM/CJS package specifiers. This deliberately does not replace generic
+    # quoted strings such as normalizePublicRoutePrefix("orcel/support").
     patterns = (
-        (re.compile(r"(\bfrom\s+)([\"'])orcel\2"), rf"\1\2{NEW}\2"),
-        (re.compile(r"(\bimport\s+)([\"'])orcel\2"), rf"\1\2{NEW}\2"),
-        (re.compile(r"(\bimport\s*\(\s*)([\"'])orcel\2"), rf"\1\2{NEW}\2"),
-        (re.compile(r"(\brequire\s*\(\s*)([\"'])orcel\2"), rf"\1\2{NEW}\2"),
+        re.compile(r"(\bfrom\s+)([\"'])(orcel(?:/[^\"']+)?)(\2)"),
+        re.compile(r"(\bimport\s+)([\"'])(orcel(?:/[^\"']+)?)(\2)"),
+        re.compile(r"(\bimport\s*\(\s*)([\"'])(orcel(?:/[^\"']+)?)(\2)"),
+        re.compile(r"(\brequire\s*\(\s*)([\"'])(orcel(?:/[^\"']+)?)(\2)"),
     )
-    for pattern, replacement in patterns:
-        text = pattern.sub(replacement, text)
+
+    def replace(match: re.Match[str]) -> str:
+        return f"{match.group(1)}{match.group(2)}{scope_package_specifier(match.group(3))}{match.group(4)}"
+
+    for pattern in patterns:
+        text = pattern.sub(replace, text)
+
+    # Embedded source fixtures commonly escape their quotes. Keep this bounded to
+    # import/require syntax rather than replacing every escaped `orcel/...` string.
+    escaped_prefixes = (
+        'from \\"orcel',
+        "from \\'orcel",
+        'import \\"orcel',
+        "import \\'orcel",
+        'import(\\"orcel',
+        "import(\\'orcel",
+        'require(\\"orcel',
+        "require(\\'orcel",
+    )
+    for prefix in escaped_prefixes:
+        replacement = prefix.replace("orcel", NEW, 1)
+        text = text.replace(prefix, replacement)
     return text
 
 
 def replace_workspace_dependency_keys(text: str) -> str:
-    # Normal JSON/YAML-ish package manifests.
+    # Normal JSON/YAML-ish workspace package manifests.
     text = re.sub(
         r'"orcel"(\s*:\s*"workspace:[^"]*")',
         rf'"{NEW}"\1',
@@ -133,7 +164,6 @@ def replace_inline_dependency_object_keys(text: str) -> str:
 
 
 def replace_package_identity_guards(text: str) -> str:
-    # Central and bootstrap-only package-name constants.
     text = re.sub(
         r'(ORCEL_PACKAGE_NAME\s*=\s*)([\"\'])orcel\2',
         rf'\1\2{NEW}\2',
@@ -189,7 +219,22 @@ def replace_installation_surface(text: str) -> str:
     return text
 
 
-def migrate_text(rel: str, text: str) -> str:
+def replace_documented_export_paths(rel: str, text: str, subpaths: tuple[str, ...]) -> str:
+    # Docs should teach the new npm entrypoint while generic source strings remain
+    # untouched. Restrict this to Markdown/MDX/readme surfaces and known exports.
+    path = Path(rel)
+    is_doc = path.suffix.lower() in DOC_SUFFIXES or path.name in {"README", "README.md"}
+    if not is_doc:
+        return text
+    for subpath in subpaths:
+        old = f"orcel/{subpath}"
+        new = f"{NEW}/{subpath}"
+        pattern = re.compile(rf"(?<![A-Za-z0-9@._-]){re.escape(old)}(?![A-Za-z0-9._/-])")
+        text = pattern.sub(new, text)
+    return text
+
+
+def migrate_text(rel: str, text: str, subpaths: tuple[str, ...]) -> str:
     original_route_count = public_route_count(text)
     original_state_count = text.count(".orcel/")
 
@@ -198,10 +243,10 @@ def migrate_text(rel: str, text: str) -> str:
 
     text = replace_workspace_dependency_keys(text)
     text = replace_inline_dependency_object_keys(text)
-    text = replace_bare_imports(text)
-    text = replace_quoted_subpaths(text)
+    text = replace_import_specifiers(text)
     text = replace_package_identity_guards(text)
     text = replace_installation_surface(text)
+    text = replace_documented_export_paths(rel, text, subpaths)
 
     if rel == "scripts/assert-changeset-publish-packages.mjs":
         text = text.replace('"orcel"', f'"{NEW}"')
@@ -215,6 +260,7 @@ def migrate_text(rel: str, text: str) -> str:
 
 
 def migrate() -> list[str]:
+    subpaths = exported_package_subpaths()
     changed: list[str] = []
     for rel in tracked_files():
         if not is_active_text(rel):
@@ -224,7 +270,7 @@ def migrate() -> list[str]:
             text = path.read_bytes().decode("utf-8")
         except UnicodeDecodeError:
             continue
-        updated = migrate_text(rel, text)
+        updated = migrate_text(rel, text, subpaths)
         if updated != text:
             path.write_bytes(updated.encode("utf-8"))
             changed.append(rel)
@@ -291,6 +337,12 @@ def audit() -> None:
     if NEW not in allowlist:
         raise RuntimeError("release publish allowlist was not migrated")
 
+    route_test = (
+        ROOT / "packages/orcel/src/shared/public-route-prefix.test.ts"
+    ).read_text(encoding="utf-8")
+    if 'normalizePublicRoutePrefix("orcel/support")' not in route_test:
+        raise RuntimeError("slashless route-normalization input changed unexpectedly")
+
     assert_package_json_dependencies()
 
     failures: list[str] = []
@@ -298,12 +350,15 @@ def audit() -> None:
         r"(?:\bfrom\s+|\bimport\s+|\bimport\s*\(\s*|\brequire\s*\(\s*)"
         r"[\"']orcel(?:[/\"'])"
     )
-    quoted_subpath = re.compile(r"[\"']orcel/[^\"']+[\"']")
+    escaped_import_pattern = re.compile(
+        r"(?:\bfrom\s+|\bimport\s+|\bimport\s*\(\s*|\brequire\s*\(\s*)"
+        r"\\[\"']orcel(?:[/\\])"
+    )
     workspace_dep = re.compile(r'"orcel"\s*:\s*"workspace:')
     for rel, text in read_active_texts():
         checks = (
             (import_pattern, "unscoped import"),
-            (quoted_subpath, "unscoped quoted package subpath"),
+            (escaped_import_pattern, "unscoped escaped import"),
             (workspace_dep, "unscoped workspace dependency"),
         )
         for pattern, label in checks:
