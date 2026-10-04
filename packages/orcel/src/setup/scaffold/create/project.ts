@@ -204,7 +204,7 @@ function packageJsonTemplate(includeRootOnlyFields: boolean): string {
   "dependencies": {
     "@vercel/connect": "__ORCEL_INIT_CONNECT_VERSION__",
     "ai": "__ORCEL_INIT_AI_SDK_VERSION__",
-    "orcel": "__ORCEL_INIT_PACKAGE_VERSION__",
+    "@orcel/orcel": "__ORCEL_INIT_PACKAGE_VERSION__",
     "zod": "__ORCEL_INIT_ZOD_VERSION__"
   },
   "devDependencies": {
@@ -266,7 +266,7 @@ orcel deploy
     "target": "ES2022",
     "module": "esnext",
     "moduleResolution": "bundler",
-    "types": ["node", "orcel/workflow-modules"],
+    "types": ["node", "@orcel/orcel/workflow-modules"],
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
