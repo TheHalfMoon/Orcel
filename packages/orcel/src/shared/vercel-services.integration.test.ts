@@ -11,7 +11,7 @@ vi.mock("#shared/resolve-orcel-binary.js", async () => {
     // assertions stay deterministic without a real orcel install on disk. The
     // real resolver is exercised in resolve-orcel-binary.integration.test.ts.
     resolveOrcelBinaryPath: (appRoot: string) =>
-      join(appRoot, "node_modules", "orcel", "bin", "orcel.js"),
+      join(appRoot, "node_modules", "@orcel", "orcel", "bin", "orcel.js"),
   };
 });
 

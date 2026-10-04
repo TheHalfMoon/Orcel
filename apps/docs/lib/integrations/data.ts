@@ -433,7 +433,7 @@ export default orcelChannel();
 Point your frontend at the session routes orcel serves (\`/orcel/v1/session\`) and stream responses with the orcel web client. Next.js, Nuxt, and Svelte each have an integration that mounts those routes on your app's own origin, so there's no CORS to configure and no URL env var to keep in sync:
 
 - **Next.js.** Wrap \`next.config.ts\` with \`withEve()\` from \`orcel/next\`, then call \`useOrcelAgent()\` from \`orcel/react\`. See the [Next.js guide](/docs/guides/frontend/nextjs).
-- **Nuxt.** Add \`"orcel/nuxt"\` to \`modules\` in \`nuxt.config.ts\`; the \`useOrcelAgent()\` composable from \`orcel/vue\` is auto-imported. See the [Nuxt guide](/docs/guides/frontend/nuxt).
+- **Nuxt.** Add \`"@orcel/orcel/nuxt"\` to \`modules\` in \`nuxt.config.ts\`; the \`useOrcelAgent()\` composable from \`@orcel/orcel/vue\` is auto-imported. See the [Nuxt guide](/docs/guides/frontend/nuxt).
 - **Svelte.** Add the \`orcelSvelteKit()\` Vite plugin before \`sveltekit()\` in \`vite.config.ts\`, then call \`useOrcelAgent()\` from \`orcel/svelte\`. See the [SvelteKit guide](/docs/guides/frontend/sveltekit).
 
 On any other stack, wire it up by hand: run the agent as its own service and proxy \`/orcel/v1/**\` to it, or pass its origin as \`host\` to \`useOrcelAgent()\` and enable \`cors\` on the channel. Server-side code and custom UIs can call the routes through \`Client\` from \`orcel/client\`.`,

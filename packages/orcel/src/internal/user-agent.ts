@@ -1,9 +1,9 @@
 import { resolveInstalledPackageInfo } from "#internal/application/package.js";
 
-/** Product token for the installed package, such as `package-name/1.2.3`. */
+/** Stable HTTP product token for Orcel, independent of the npm package scope. */
 export function buildPackageUserAgent(): string {
-  const { name, version } = resolveInstalledPackageInfo();
-  return `${name}/${version}`;
+  const { version } = resolveInstalledPackageInfo();
+  return `orcel/${version}`;
 }
 
 /**

@@ -87,16 +87,16 @@ describe("workflowEntryReference", () => {
     // orcel itself has been upgraded.
     expect(workflowEntryReference.workflowId).toBe(`workflow//${packageInfo.name}//workflowEntry`);
     expect(workflowEntryReference.workflowId).not.toContain("/src/execution/");
-    expect(workflowEntryReference.workflowId).not.toContain("@");
+    expect(workflowEntryReference.workflowId).not.toContain(`@${packageInfo.version}`);
     expect(sessionTimeoutWorkflowReference.workflowId).toBe(
       `workflow//${packageInfo.name}//sessionTimeoutWorkflow`,
     );
     expect(sessionTimeoutWorkflowReference.workflowId).not.toContain("/src/execution/");
-    expect(sessionTimeoutWorkflowReference.workflowId).not.toContain("@");
+    expect(sessionTimeoutWorkflowReference.workflowId).not.toContain(`@${packageInfo.version}`);
     expect(workflowToolRunWorkflowReference.workflowId).toBe(
       `workflow//${packageInfo.name}//workflowToolRunWorkflow`,
     );
-    expect(workflowToolRunWorkflowReference.workflowId).not.toContain("@");
+    expect(workflowToolRunWorkflowReference.workflowId).not.toContain(`@${packageInfo.version}`);
   });
 });
 

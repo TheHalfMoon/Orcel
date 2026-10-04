@@ -54,7 +54,7 @@ describe("runExtensionBuildCommand", () => {
     );
     await mkdir(join(root, "node_modules"), { recursive: true });
     await symlink(
-      dirname(createRequire(import.meta.url).resolve("orcel/package.json")),
+      dirname(createRequire(import.meta.url).resolve("@orcel/orcel/package.json")),
       join(root, "node_modules", "@orcel", "orcel"),
       "dir",
     );

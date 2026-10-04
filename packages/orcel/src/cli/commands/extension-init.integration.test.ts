@@ -104,9 +104,9 @@ describe("runExtensionInitCommand", () => {
     const packageJson = JSON.parse(await readFile(join(projectPath, "package.json"), "utf8")) as {
       orcel?: { extension?: { source?: string; dist?: string } };
       files?: string[];
-      peerDependencies?: { orcel?: string };
+      peerDependencies?: Record<string, string>;
       peerDependenciesMeta?: Record<string, unknown>;
-      devDependencies?: { orcel?: string; typescript?: string };
+      devDependencies?: Record<string, string>;
       dependencies?: { zod?: string; ai?: string };
       scripts?: Record<string, string>;
     };
@@ -115,9 +115,9 @@ describe("runExtensionInitCommand", () => {
       dist: "./dist/extension",
     });
     expect(packageJson.files).toEqual(["dist"]);
-    expect(packageJson.peerDependencies?.orcel).toBe("*");
+    expect(packageJson.peerDependencies?.["@orcel/orcel"]).toBe("*");
     expect(packageJson.peerDependenciesMeta).toBeUndefined();
-    expect(packageJson.devDependencies?.orcel).toBe("0.6.0");
+    expect(packageJson.devDependencies?.["@orcel/orcel"]).toBe("0.6.0");
     expect(packageJson.dependencies?.zod).toBe("4.0.0");
     expect(packageJson.dependencies?.ai).toBeUndefined();
     expect(packageJson.scripts?.build).toBe("orcel extension build");
@@ -207,10 +207,10 @@ describe("runExtensionInitCommand", () => {
     const packageJson = JSON.parse(
       await readFile(join(parentDirectory, "my-crm", "package.json"), "utf8"),
     ) as {
-      peerDependencies?: { orcel?: string };
-      devDependencies?: { orcel?: string };
+      peerDependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
     };
-    expect(packageJson.peerDependencies?.orcel).toBe("*");
-    expect(packageJson.devDependencies?.orcel).toBe("file:/tmp/orcel-local.tgz");
+    expect(packageJson.peerDependencies?.["@orcel/orcel"]).toBe("*");
+    expect(packageJson.devDependencies?.["@orcel/orcel"]).toBe("file:/tmp/orcel-local.tgz");
   });
 });

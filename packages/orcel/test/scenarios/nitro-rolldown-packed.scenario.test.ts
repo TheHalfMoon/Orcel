@@ -15,7 +15,7 @@ import { pathToFileURL } from "node:url";
 
 const consumerRequire = createRequire(import.meta.url);
 const consumerManifest = consumerRequire("./package.json");
-const orcelManifestPath = consumerRequire.resolve("orcel/package.json");
+const orcelManifestPath = consumerRequire.resolve("@orcel/orcel/package.json");
 const orcelManifest = consumerRequire(orcelManifestPath);
 const orcelRequire = createRequire(orcelManifestPath);
 const nitroManifest = orcelRequire("nitro/package.json");

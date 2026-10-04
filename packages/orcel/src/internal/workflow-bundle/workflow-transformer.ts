@@ -139,7 +139,7 @@ export async function transformWorkflowDirectives(input: {
   // The driver bundle resolves orcel aliases itself; app-bundled step registrations need the export.
   const workflowStepImport = "#execution/tools/workflow/step.js";
   const stepExecutionImport = input.authored
-    ? "orcel/internal/workflow-step-execution"
+    ? "@orcel/orcel/internal/workflow-step-execution"
     : "#execution/tools/workflow/step-execution.js";
 
   for (const fn of functions) {
@@ -447,7 +447,11 @@ function removeOrcelDefinerDefaultExport(
   for (const node of ast.body ?? []) {
     if (node.type !== "ImportDeclaration" || node.importKind === "type") continue;
     const source = node.source?.value;
-    if (typeof source !== "string" || !/^orcel(?:\/|$)/.test(source)) continue;
+    if (
+      typeof source !== "string" ||
+      !(source === "@orcel/orcel" || source.startsWith("@orcel/orcel/"))
+    )
+      continue;
     for (const specifier of node.specifiers ?? []) {
       if (specifier.importKind === "type") continue;
       const name = specifier.local?.name;

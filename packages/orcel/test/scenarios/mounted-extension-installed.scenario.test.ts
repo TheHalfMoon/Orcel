@@ -217,7 +217,7 @@ async function buildInstalledExtensionFiles(): Promise<Record<string, string>> {
   );
   await mkdir(join(extRoot, "node_modules"), { recursive: true });
   await symlink(
-    dirname(createRequire(import.meta.url).resolve("orcel/package.json")),
+    dirname(createRequire(import.meta.url).resolve("@orcel/orcel/package.json")),
     join(extRoot, "node_modules", "orcel"),
     "dir",
   );

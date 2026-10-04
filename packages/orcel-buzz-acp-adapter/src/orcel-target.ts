@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 export function resolveBundledOrcelBin(): string {
-  const packageJson = fileURLToPath(import.meta.resolve("orcel/package.json"));
+  const packageJson = fileURLToPath(import.meta.resolve("@orcel/orcel/package.json"));
   return join(dirname(packageJson), "bin", "orcel.js");
 }
 

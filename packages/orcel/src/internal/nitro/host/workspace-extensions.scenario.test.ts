@@ -43,7 +43,7 @@ async function createWorkspaceAgent(): Promise<{ appRoot: string; packageRoot: s
   const appRoot = await realpath(await mkdtemp(join(tmpdir(), "orcel-workspace-extension-build-")));
   temporaryDirectories.push(appRoot);
   const packageRoot = join(appRoot, "packages", "alpha");
-  const orcelPackageRoot = dirname(createRequire(import.meta.url).resolve("orcel/package.json"));
+  const orcelPackageRoot = dirname(createRequire(import.meta.url).resolve("@orcel/orcel/package.json"));
 
   await writeText(join(appRoot, "package.json"), '{"name":"workspace-agent","type":"module"}\n');
   await writeText(join(appRoot, "pnpm-workspace.yaml"), "packages:\n  - packages/*\n");

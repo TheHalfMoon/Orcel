@@ -21,7 +21,7 @@ import {
 // declarations with TypeScript, so these publishing-contract checks are scenario tier.
 async function createExtensionPackage(pkg?: Record<string, unknown>): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "orcel-ext-scenario-"));
-  const orcelPackageRoot = dirname(createRequire(import.meta.url).resolve("orcel/package.json"));
+  const orcelPackageRoot = dirname(createRequire(import.meta.url).resolve("@orcel/orcel/package.json"));
   await writeFile(
     join(root, "package.json"),
     JSON.stringify({
