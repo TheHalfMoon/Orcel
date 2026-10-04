@@ -258,7 +258,7 @@ async function patchWebPackageJson(
   const dependencies = {
     ...WEB_APP_TEMPLATE_PACKAGE_JSON.dependencies,
     ai: resolveVersionToken("aiPackageVersion", options.aiPackageVersion),
-    orcel: formatOrcelDependencySpecifier(orcelPackage.version),
+    "@orcel/orcel": formatOrcelDependencySpecifier(orcelPackage.version),
     next: resolveVersionToken("nextPackageVersion", options.nextPackageVersion),
     react: resolveVersionToken("reactPackageVersion", options.reactPackageVersion),
     "react-dom": resolveVersionToken("reactDomPackageVersion", options.reactDomPackageVersion),
