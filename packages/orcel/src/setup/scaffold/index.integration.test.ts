@@ -229,7 +229,7 @@ describe("ensureChannel", () => {
     expect(result.packageJsonUpdated).toEqual([
       expect.objectContaining({
         path: join(projectRoot, "package.json"),
-        dependencies: expect.arrayContaining(["orcel", "next", "react", "react-dom"]),
+        dependencies: expect.arrayContaining(["@orcel/orcel", "next", "react", "react-dom"]),
         devDependencies: expect.arrayContaining(["typescript", "@types/react"]),
         scripts: expect.arrayContaining([
           "build",
@@ -605,7 +605,7 @@ describe("ensureChannel", () => {
     });
 
     await expect(readFile(join(projectRoot, "package.json"), "utf8")).resolves.toContain(
-      '"orcel": "latest"',
+      '"@orcel/orcel": "latest"',
     );
   });
 
@@ -1055,7 +1055,7 @@ describe("scaffoldExtensionProject", () => {
       name: string;
       orcel?: { extension?: { source?: string; dist?: string } };
       files?: string[];
-      peerDependencies?: { orcel?: string };
+      peerDependencies?: Record<string, string>;
       peerDependenciesMeta?: Record<string, unknown>;
       devDependencies?: Record<string, string>;
       dependencies?: Record<string, string>;
@@ -1075,7 +1075,7 @@ describe("scaffoldExtensionProject", () => {
       },
       engines: { node: "24.x" },
     });
-    expect(packageJson.devDependencies?.orcel).toBe("0.25.0");
+    expect(packageJson.devDependencies?.["@orcel/orcel"]).toBe("0.25.0");
     expect(packageJson.peerDependenciesMeta).toBeUndefined();
     expect(packageJson.devDependencies?.typescript).toBe("7.0.2");
     expect(packageJson.dependencies?.ai).toBeUndefined();
@@ -1127,7 +1127,7 @@ describe("scaffoldBaseProject", () => {
     expect(readme).toContain("## Deploy on Vercel");
     expect(readme).not.toContain("__ORCEL_INIT_");
     const packageJson = await readFile(join(projectRoot, "package.json"), "utf8");
-    expect(packageJson).toContain('"orcel": "^0.25.0"');
+    expect(packageJson).toContain('"@orcel/orcel": "^0.25.0"');
     // Channels added later (`orcel add channel/slack`, possibly next to a
     // running `orcel dev`) import @vercel/connect; init ships it so a later
     // channel add never introduces a missing dependency.
@@ -1155,7 +1155,7 @@ describe("scaffoldBaseProject", () => {
       compilerOptions: { types?: string[] };
       include?: string[];
     };
-    expect(tsconfig.compilerOptions.types).toEqual(["node", "orcel/workflow-modules"]);
+    expect(tsconfig.compilerOptions.types).toEqual(["node", "@orcel/orcel/workflow-modules"]);
     expect(tsconfig.include).toEqual(["agent/**/*.ts", "evals/**/*.ts"]);
     await expect(readFile(join(projectRoot, "pnpm-workspace.yaml"), "utf8")).resolves.toBe(
       PNPM_WORKSPACE_CONTENT,
@@ -1208,7 +1208,7 @@ describe("scaffoldBaseProject", () => {
       });
 
       await expect(readFile(join(projectRoot, "package.json"), "utf8")).resolves.toContain(
-        '"orcel": "^0.25.0"',
+        '"@orcel/orcel": "^0.25.0"',
       );
       await expect(readFile(join(projectRoot, "README.md"), "utf8")).resolves.toContain("orcel dev");
       await expect(pathExists(join(projectRoot, "pnpm-workspace.yaml"))).resolves.toBe(
@@ -1505,7 +1505,7 @@ describe("scaffoldBaseProject", () => {
     });
 
     await expect(readFile(join(projectRoot, "package.json"), "utf8")).resolves.toContain(
-      '"orcel": "latest"',
+      '"@orcel/orcel": "latest"',
     );
     await expect(readFile(join(projectRoot, "pnpm-workspace.yaml"), "utf8")).resolves.toBe(
       PNPM_WORKSPACE_CONTENT,
