@@ -270,7 +270,7 @@ describe("createNodeHarnessTools", () => {
     expect(agentTool?.description).toContain("non-overlapping scopes");
     expect(agentTool?.description).not.toMatch(/\beve\b/);
     expect(agentTool?.execute).toBeUndefined();
-    expect(agentTool?.workflowId).toBe("workflow//@orcel/orcel//agentToolServeWorkflow");
+    expect(agentTool?.workflowId).toBe("workflow//orcel//agentToolServeWorkflow");
   });
 
   it("keeps an authored agent tool separate from self-delegation", async () => {
@@ -317,7 +317,7 @@ describe("createNodeHarnessTools", () => {
     });
     for (const name of ["research", "reviewer"]) {
       expect(tools.get(name)?.execute).toBeUndefined();
-      expect(tools.get(name)?.workflowId).toBe("workflow//@orcel/orcel//agentToolServeWorkflow");
+      expect(tools.get(name)?.workflowId).toBe("workflow//orcel//agentToolServeWorkflow");
     }
   });
 });

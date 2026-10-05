@@ -12,6 +12,7 @@ import { HookNotFoundError } from "#compiled/@workflow/errors/index.js";
 import type { ChannelAdapter } from "#channel/adapter.js";
 import { ChannelRequestIdKey, SessionTitleKey } from "#context/keys.js";
 import { resolveInstalledPackageInfo } from "#internal/application/package.js";
+import { ORCEL_STABLE_WORKFLOW_ID_BASE } from "#internal/package-name.js";
 import {
   createWorkflowRuntime,
   waitForCommandHookOwner,
@@ -79,22 +80,22 @@ afterEach(() => {
 });
 
 describe("workflowEntryReference", () => {
-  it("uses the installed orcel package identity for the runtime workflow id", () => {
+  it("preserves the stable Orcel identity for runtime workflow ids", () => {
     const packageInfo = resolveInstalledPackageInfo();
 
     // The runtime references intentionally omit the `@<pkg.version>` stamp
     // so an explicitly targeted deployment finds the same workflow even when
     // orcel itself has been upgraded.
-    expect(workflowEntryReference.workflowId).toBe(`workflow//${packageInfo.name}//workflowEntry`);
+    expect(workflowEntryReference.workflowId).toBe(`workflow//${ORCEL_STABLE_WORKFLOW_ID_BASE}//workflowEntry`);
     expect(workflowEntryReference.workflowId).not.toContain("/src/execution/");
     expect(workflowEntryReference.workflowId).not.toContain(`@${packageInfo.version}`);
     expect(sessionTimeoutWorkflowReference.workflowId).toBe(
-      `workflow//${packageInfo.name}//sessionTimeoutWorkflow`,
+      `workflow//${ORCEL_STABLE_WORKFLOW_ID_BASE}//sessionTimeoutWorkflow`,
     );
     expect(sessionTimeoutWorkflowReference.workflowId).not.toContain("/src/execution/");
     expect(sessionTimeoutWorkflowReference.workflowId).not.toContain(`@${packageInfo.version}`);
     expect(workflowToolRunWorkflowReference.workflowId).toBe(
-      `workflow//${packageInfo.name}//workflowToolRunWorkflow`,
+      `workflow//${ORCEL_STABLE_WORKFLOW_ID_BASE}//workflowToolRunWorkflow`,
     );
     expect(workflowToolRunWorkflowReference.workflowId).not.toContain(`@${packageInfo.version}`);
   });

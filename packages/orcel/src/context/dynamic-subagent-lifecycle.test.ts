@@ -185,7 +185,7 @@ describe("dynamic subagent lifecycle", () => {
       resolvers: [resolver],
     });
     expect(buildDynamicSubagentTools(ctx)[0]?.workflowId).toBe(
-      "workflow//@orcel/orcel//agentToolServeWorkflow",
+      "workflow//orcel//agentToolServeWorkflow",
     );
 
     await dispatchDynamicSubagentEvent({
@@ -195,7 +195,7 @@ describe("dynamic subagent lifecycle", () => {
       resolvers: [resolver],
     });
     expect(buildDynamicSubagentTools(ctx)[0]?.workflowId).toBe(
-      "workflow//@orcel/orcel//agentToolServeWorkflow",
+      "workflow//orcel//agentToolServeWorkflow",
     );
   });
 
@@ -222,7 +222,7 @@ describe("dynamic subagent lifecycle", () => {
     });
 
     expect(buildDynamicSubagentTools(ctx)[0]?.workflowId).toBe(
-      "workflow//@orcel/orcel//agentToolServeWorkflow",
+      "workflow//orcel//agentToolServeWorkflow",
     );
   });
 
@@ -292,7 +292,7 @@ describe("dynamic subagent lifecycle", () => {
     });
 
     expect(buildDynamicSubagentTools(ctx)[0]?.workflowId).toBe(
-      "workflow//@orcel/orcel//agentToolServeWorkflow",
+      "workflow//orcel//agentToolServeWorkflow",
     );
   });
 
@@ -395,7 +395,7 @@ describe("dynamic subagent lifecycle", () => {
     });
 
     expect(buildDynamicSubagentTools(ctx)[0]?.workflowId).toBe(
-      "workflow//@orcel/orcel//agentToolServeWorkflow",
+      "workflow//orcel//agentToolServeWorkflow",
     );
   });
 

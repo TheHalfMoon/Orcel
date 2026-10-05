@@ -6,3 +6,6 @@
  * or module-resolution code.
  */
 export const ORCEL_PACKAGE_NAME = "@orcel/orcel";
+
+/** Stable durable-workflow identity preserved across package-coordinate migrations. */
+export const ORCEL_STABLE_WORKFLOW_ID_BASE = "orcel";

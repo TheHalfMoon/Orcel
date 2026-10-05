@@ -2,7 +2,7 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { STABLE_WORKFLOW_NAMES } from "#execution/stable-workflow-names.js";
-import { ORCEL_PACKAGE_NAME } from "#internal/package-name.js";
+import { ORCEL_PACKAGE_NAME, ORCEL_STABLE_WORKFLOW_ID_BASE } from "#internal/package-name.js";
 import { AGENT_TOOL_SERVE_WORKFLOW_NAME } from "#runtime/subagents/workflow-reference.js";
 import { prepareAuthoredWorkflowDirectives } from "#internal/workflow-bundle/authored-workflow-directives.js";
 import {
@@ -208,14 +208,14 @@ function resolveModuleSpecifier(
   if (packageBuild && pkg !== null) {
     return {
       moduleSpecifier: `${pkg.name}@${pkg.version}`,
-      stableModuleSpecifier: pkg.name === ORCEL_PACKAGE_NAME ? "orcel" : pkg.name,
+      stableModuleSpecifier: pkg.name === ORCEL_PACKAGE_NAME ? ORCEL_STABLE_WORKFLOW_ID_BASE : pkg.name,
     };
   }
 
   if (!inNodeModules && !inWorkspace) {
     return {
       moduleSpecifier: undefined,
-      stableModuleSpecifier: pkg?.name === ORCEL_PACKAGE_NAME ? "orcel" : undefined,
+      stableModuleSpecifier: pkg?.name === ORCEL_PACKAGE_NAME ? ORCEL_STABLE_WORKFLOW_ID_BASE : undefined,
     };
   }
 
@@ -230,7 +230,11 @@ function resolveModuleSpecifier(
   // routable ids.
   const base = subpath ? `${pkg.name}${subpath}` : pkg.name;
   const stableBase =
-    pkg.name === ORCEL_PACKAGE_NAME ? (subpath ? `orcel${subpath}` : "orcel") : base;
+    pkg.name === ORCEL_PACKAGE_NAME
+      ? subpath
+        ? `${ORCEL_STABLE_WORKFLOW_ID_BASE}${subpath}`
+        : ORCEL_STABLE_WORKFLOW_ID_BASE
+      : base;
 
   return {
     moduleSpecifier: `${base}@${pkg.version}`,
