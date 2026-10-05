@@ -1885,7 +1885,7 @@ describe("TerminalRenderer (inline scrollback)", () => {
                 kind: "extension" as const,
                 mountId: "extensions/self-modification",
                 namespace: "self-modification",
-                packageName: "orcel",
+                packageName: "@orcel/orcel",
               },
               name: "self-modification__agent",
               entryPath: "subagents/agent/agent.ts",

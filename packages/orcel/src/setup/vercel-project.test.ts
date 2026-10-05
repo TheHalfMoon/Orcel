@@ -767,13 +767,13 @@ describe("linkProject", () => {
       ),
     ).resolves.toEqual({ projectId: "prj_new", projectName: "my-agent" });
 
-    expect(detectFrameworkIntegrationImport).toHaveBeenCalledWith("/tmp/orcel-agent", "orcel/next");
+    expect(detectFrameworkIntegrationImport).toHaveBeenCalledWith("/tmp/orcel-agent", "@orcel/orcel/next");
     expect(mockedCaptureVercel).toHaveBeenCalledTimes(2);
   });
 
   it.each([
-    { framework: "nuxtjs", importSpecifier: "orcel/nuxt" },
-    { framework: "sveltekit", importSpecifier: "orcel/sveltekit" },
+    { framework: "nuxtjs", importSpecifier: "@orcel/orcel/nuxt" },
+    { framework: "sveltekit", importSpecifier: "@orcel/orcel/sveltekit" },
   ])("keeps a detected $framework project when $importSpecifier is present", async (testCase) => {
     mockedCaptureVercel
       .mockResolvedValueOnce(
@@ -836,7 +836,7 @@ describe("linkProject", () => {
 
     expect(single).toHaveBeenCalledWith(
       expect.objectContaining({
-        message: "Vercel detected Next.js. Is this project using orcel/next?",
+        message: "Vercel detected Next.js. Is this project using @orcel/orcel/next?",
       }),
     );
     expect(mockedCaptureVercel).toHaveBeenCalledTimes(2);
@@ -976,7 +976,7 @@ describe("linkProject", () => {
     ).resolves.toEqual({ projectId: "prj_new", projectName: "my-agent" });
 
     expect(single).not.toHaveBeenCalled();
-    expect(detectFrameworkIntegrationImport).toHaveBeenCalledWith("/tmp/orcel-agent", "orcel/next");
+    expect(detectFrameworkIntegrationImport).toHaveBeenCalledWith("/tmp/orcel-agent", "@orcel/orcel/next");
     expect(mockedCaptureVercel).toHaveBeenNthCalledWith(
       3,
       [
