@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { resolveInstalledPackageInfo } from "#internal/application/package.js";
-import { ORCEL_PACKAGE_NAME } from "#internal/package-name.js";
+import { ORCEL_FRAMEWORK_SLUG } from "#internal/package-name.js";
 import {
   createOrcelVercelOptions,
   ORCEL_WORKFLOW_FLOW_ROUTE_PATH,
@@ -17,7 +17,7 @@ describe("createOrcelVercelOptions", () => {
     expect(createOrcelVercelOptions({ agentName: "test-agent", enabled: true })?.config).toEqual({
       version: 3,
       framework: {
-        slug: ORCEL_PACKAGE_NAME,
+        slug: ORCEL_FRAMEWORK_SLUG,
         version: resolveInstalledPackageInfo().version,
       },
     });
