@@ -83,7 +83,7 @@ describe("writeCompiledArtifactsFiles", () => {
     await writeFile(
       join(agentRoot, "instrumentation", "audit.ts"),
       [
-        'import { defineInstrumentation } from "orcel/instrumentation";',
+        'import { defineInstrumentation } from "@orcel/orcel/instrumentation";',
         '(globalThis as Record<string, unknown>).__eveInstrumentationLoaded = "yes";',
         "export default defineInstrumentation({});",
         "",

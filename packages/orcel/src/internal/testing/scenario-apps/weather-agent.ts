@@ -13,7 +13,7 @@ export function createForecast(city: string) {
 }
 `;
 
-const WEATHER_AGENT_SOURCE = `import { defineAgent } from "orcel";
+const WEATHER_AGENT_SOURCE = `import { defineAgent } from "@orcel/orcel";
 import { runtimeModelId } from "./lib/model.ts";
 
 export default defineAgent({
@@ -27,7 +27,7 @@ const WEATHER_MODEL_SOURCE = `/**
 export const runtimeModelId = "openai/gpt-5.4-mini";
 `;
 
-const WEATHER_TOOL_SOURCE = `import { defineTool } from "orcel/tools";
+const WEATHER_TOOL_SOURCE = `import { defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 import { createForecast } from "../lib/weather/client.ts";
 
@@ -52,7 +52,7 @@ export default defineTool({
 });
 `;
 
-const WEATHER_CHANNEL_WEBHOOK_SOURCE = `import { defineChannel, POST } from "orcel/channels";
+const WEATHER_CHANNEL_WEBHOOK_SOURCE = `import { defineChannel, POST } from "@orcel/orcel/channels";
 
 export default defineChannel({
   routes: [
@@ -71,7 +71,7 @@ When the user asks about weather, temperature, or forecast conditions, call the 
 const WEATHER_SYSTEM_SOURCE =
   "You are a weather-focused assistant. Be concise, accurate, and explicit about when you are using the local weather tool.\n";
 
-const WEATHER_EVAL_CONFIG_SOURCE = `import { defineEvalConfig } from "orcel/evals";
+const WEATHER_EVAL_CONFIG_SOURCE = `import { defineEvalConfig } from "@orcel/orcel/evals";
 
 // Run-wide config shared by every eval. The optional \`judge\` model is the
 // default for \`t.judge(...)\` assertions, so individual evals need not repeat it.
@@ -80,8 +80,8 @@ export default defineEvalConfig({
 });
 `;
 
-const WEATHER_EVAL_SOURCE = `import { defineEval } from "orcel/evals";
-import { loadYaml } from "orcel/evals/loaders";
+const WEATHER_EVAL_SOURCE = `import { defineEval } from "@orcel/orcel/evals";
+import { loadYaml } from "@orcel/orcel/evals/loaders";
 
 interface WeatherCase {
   id: string;

@@ -784,7 +784,7 @@ describe("WorkflowBundleBuilder", () => {
         ),
         writeFile(
           join(appRoot, "package.json"),
-          `${JSON.stringify({ dependencies: { orcel: "*" }, name: "authored-app", version: "0.0.0" })}\n`,
+          `${JSON.stringify({ dependencies: { "@orcel/orcel": "*" }, name: "authored-app", version: "0.0.0" })}\n`,
         ),
         // Dependency trees are never authored modules, even with directives.
         writeFile(
@@ -809,7 +809,7 @@ describe("WorkflowBundleBuilder", () => {
         ),
         writeFile(
           join(appRoot, "agent", "tools", "imported.ts"),
-          'import { defineWorkflowTool } from "orcel/tools";\nimport { run } from "../lib/run";\nexport default defineWorkflowTool({ description: "Imported", inputSchema: {}, execute: run });',
+          'import { defineWorkflowTool } from "@orcel/orcel/tools";\nimport { run } from "../lib/run";\nexport default defineWorkflowTool({ description: "Imported", inputSchema: {}, execute: run });',
         ),
         writeFile(
           join(appRoot, "agent", "lib", "run.ts"),
@@ -818,7 +818,7 @@ describe("WorkflowBundleBuilder", () => {
         writeFile(
           toolPath,
           [
-            'import { defineWorkflowTool } from "orcel/tools";',
+            'import { defineWorkflowTool } from "@orcel/orcel/tools";',
             'import { sleep } from "workflow";',
             'import { describePlan, hashPlan } from "../lib/steps";',
             "",

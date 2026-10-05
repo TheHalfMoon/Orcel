@@ -1,4 +1,4 @@
-import type { SandboxSession } from "orcel/sandbox";
+import type { SandboxSession } from "@orcel/orcel/sandbox";
 
 import { shellQuote } from "./shell.ts";
 

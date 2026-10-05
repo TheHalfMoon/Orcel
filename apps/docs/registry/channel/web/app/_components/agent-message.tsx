@@ -6,7 +6,7 @@ import type {
   OrcelMessage,
   OrcelMessageInputRequest,
   OrcelMessagePart,
-} from "orcel/react";
+} from "@orcel/orcel/react";
 import { useState } from "react";
 import {
   ArrowRightIcon,

@@ -11,8 +11,8 @@ be a provider. Package one as a library that exports a provider factory, or
 write one directly inside an agent.
 
 ```ts title="agent/lib/notes-memory.ts"
-import { defineMemoryProvider } from "orcel/memory";
-import { defineTool } from "orcel/tools";
+import { defineMemoryProvider } from "@orcel/orcel/memory";
+import { defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 import { notes } from "./notes-db";
 
@@ -58,8 +58,8 @@ export function notesMemory() {
 Bind the provider to a slot like any other:
 
 ```ts title="agent/memory/notes.ts"
-import { defineMemory } from "orcel/memory";
-import { byPrincipal } from "orcel/memory/scope";
+import { defineMemory } from "@orcel/orcel/memory";
+import { byPrincipal } from "@orcel/orcel/memory/scope";
 import { notesMemory } from "../lib/notes-memory";
 
 export default defineMemory({

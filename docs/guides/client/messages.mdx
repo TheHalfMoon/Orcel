@@ -10,7 +10,7 @@ Create a session with its first turn, then use the returned `ClientSession` for 
 Pass a string to `send()` for plain text:
 
 ```ts
-import { Client } from "orcel/client";
+import { Client } from "@orcel/orcel/client";
 
 const client = new Client({ host: "http://127.0.0.1:2000" });
 const { session, response } = await client.sessions.create({
@@ -111,7 +111,7 @@ sandbox and prepares them for each model call.
 Tools can pause for approval or ask the user a question. The stream emits `input.requested` with one or more requests. Reply through the same session with `inputResponses`:
 
 ```ts
-import type { InputRequest } from "orcel/client";
+import type { InputRequest } from "@orcel/orcel/client";
 
 let pendingRequests: readonly InputRequest[] = [];
 

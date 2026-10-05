@@ -1,6 +1,6 @@
 import { ORCEL_INTERNAL_AGENT_WORKSPACE_MEMBER_ENV } from "#internal/application/build-output-environment.js";
 import { resolveInstalledPackageInfo } from "#internal/application/package.js";
-import { ORCEL_PACKAGE_NAME } from "#internal/package-name.js";
+import { ORCEL_FRAMEWORK_SLUG } from "#internal/package-name.js";
 import { createOrcelWorkflowQueueTrigger } from "#internal/workflow/queue-namespace.js";
 import { ORCEL_WORKFLOW_FLOW_ROUTE_PATH } from "#internal/workflow-bundle/orcel-service-route-output.js";
 import {
@@ -50,7 +50,7 @@ export function createOrcelVercelOptions(input: {
     config: {
       version: 3 as const,
       framework: {
-        slug: ORCEL_PACKAGE_NAME,
+        slug: ORCEL_FRAMEWORK_SLUG,
         version: resolveInstalledPackageInfo().version,
       },
     },

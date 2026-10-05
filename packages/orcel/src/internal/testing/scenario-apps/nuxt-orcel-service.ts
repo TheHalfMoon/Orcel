@@ -22,7 +22,7 @@ export function createNuxtOrcelServiceDescriptor(
       vue: VUE_VERSION,
     },
     files: {
-      "agent/agent.mjs": `import { defineAgent } from "orcel";
+      "agent/agent.mjs": `import { defineAgent } from "@orcel/orcel";
 
 export default defineAgent({ model: "openai/gpt-5.4" });
 `,
@@ -34,7 +34,7 @@ export default defineAgent({ model: "openai/gpt-5.4" });
       "nuxt.config.ts": `export default defineNuxtConfig({
   compatibilityDate: "2026-05-27",
   orcel: { orcelRoot: "agent" },
-  modules: ["orcel/nuxt"],
+  modules: ["@orcel/orcel/nuxt"],
   telemetry: false,
 });
 `,

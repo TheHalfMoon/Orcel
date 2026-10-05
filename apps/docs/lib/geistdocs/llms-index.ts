@@ -4,7 +4,7 @@ export const createLlmsIndex = (): string => `# orcel
 
 > orcel is a filesystem-first, Apache-2.0 framework for building durable backend AI agents that run on Vercel or self-hosted infrastructure. orcel is currently in beta.
 
-Use this file to choose the smallest relevant documentation set. Use \`/sitemap.md\` for the exhaustive page map and \`/llms-full.txt\` only for offline indexing or a large context window. For an installed project, prefer \`node_modules/orcel/docs/\`: those docs match the installed orcel version, while orcel.dev documents the latest release.
+Use this file to choose the smallest relevant documentation set. Use \`/sitemap.md\` for the exhaustive page map and \`/llms-full.txt\` only for offline indexing or a large context window. For an installed project, prefer \`node_modules/@orcel/orcel/docs/\`: those docs match the installed orcel version, while orcel.dev documents the latest release.
 
 orcel.dev publishes framework documentation. It is not a shared API, authorization server, MCP server, or A2A server. Every deployed orcel app exposes its own \`/orcel/v1\` routes and authentication policy. External API, OpenAPI, and MCP URLs in these docs describe third-party connections or examples unless stated otherwise.
 

@@ -1,4 +1,4 @@
-import type { SandboxSession } from "orcel/sandbox";
+import type { SandboxSession } from "@orcel/orcel/sandbox";
 
 import { GH_SIGNED_COMMIT_SOURCE, GH_SIGNED_COMMIT_VERSION } from "./signed-commit.ts";
 import { shellQuote } from "./shell.ts";

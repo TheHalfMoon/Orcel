@@ -1,6 +1,6 @@
 import { getToolName, isDynamicToolUIPart } from "ai";
 import type { UIMessage } from "ai";
-import type { OrcelDynamicToolPart } from "orcel/vue";
+import type { OrcelDynamicToolPart } from "@orcel/orcel/vue";
 
 export type SaveMemoryDisplayPart = {
   kind: "save_memory";

@@ -1,6 +1,6 @@
-import { OrcelAgentStore, defaultMessageReducer } from "orcel/client";
-import { defineEval } from "orcel/evals";
-import { equals } from "orcel/evals/expect";
+import { OrcelAgentStore, defaultMessageReducer } from "@orcel/orcel/client";
+import { defineEval } from "@orcel/orcel/evals";
+import { equals } from "@orcel/orcel/evals/expect";
 
 export default defineEval({
   description: "A frontend stream reconnect uses the latest send's authorization header.",

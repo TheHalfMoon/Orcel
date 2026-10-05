@@ -1,5 +1,5 @@
 import { e2eSubagentConfig } from "@orcel-e2e/config";
-import { defineAgent } from "orcel";
+import { defineAgent } from "@orcel/orcel";
 
 export default defineAgent({
   description: "Execute operational changes to systems and deployments.",

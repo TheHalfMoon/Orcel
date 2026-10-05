@@ -4,7 +4,7 @@ import {
   playScript,
   taskIdFromReceipt,
 } from "@orcel-e2e/config/mock-script";
-import type { MockModelRequest, MockModelResponse } from "orcel/evals";
+import type { MockModelRequest, MockModelResponse } from "@orcel/orcel/evals";
 
 import {
   DELEGATE_INTERIM_MESSAGE,

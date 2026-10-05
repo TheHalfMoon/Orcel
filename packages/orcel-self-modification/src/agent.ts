@@ -1,2 +1,2 @@
-export * from "orcel/self-modification/agent";
-export { default } from "orcel/self-modification/agent";
+export * from "@orcel/orcel/self-modification/agent";
+export { default } from "@orcel/orcel/self-modification/agent";

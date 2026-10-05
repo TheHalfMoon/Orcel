@@ -21,8 +21,8 @@ describe("createExtensionScopePlugin (path containment)", () => {
     expect(createExtensionScopePlugin([])).toBeNull();
   });
 
-  it("redirects orcel/context to a namespaced shim for extension-owned importers", () => {
-    const id = pathPlugin().resolveId("orcel/context", "/pkg/crm/extension/tools/budget.ts");
+  it("redirects @orcel/orcel/context to a namespaced shim for extension-owned importers", () => {
+    const id = pathPlugin().resolveId("@orcel/orcel/context", "/pkg/crm/extension/tools/budget.ts");
     expect(id).toBe("\0eve-ext-scope:context:extensions%2Fcrm");
   });
 
@@ -33,31 +33,31 @@ describe("createExtensionScopePlugin (path containment)", () => {
     ])!;
     expect(
       plugin.resolveId(
-        "orcel/context",
+        "@orcel/orcel/context",
         "/pkg/crm/extension/tools/budget.ts?orcel-mount=subagents%2Fresearch%2Fextensions%2Fcrm",
       ),
     ).toBe("\0eve-ext-scope:context:subagents%2Fresearch%2Fextensions%2Fcrm");
-    expect(() => plugin.resolveId("orcel/context", "/pkg/crm/extension/tools/budget.ts")).toThrow(
+    expect(() => plugin.resolveId("@orcel/orcel/context", "/pkg/crm/extension/tools/budget.ts")).toThrow(
       "Ambiguous extension scope",
     );
   });
 
   it("leaves orcel/extension unscoped for extension-owned importers", () => {
-    const id = pathPlugin().resolveId("orcel/extension", "/pkg/crm/extension/config.ts");
+    const id = pathPlugin().resolveId("@orcel/orcel/extension", "/pkg/crm/extension/config.ts");
     expect(id).toBeUndefined();
   });
 
   it("ignores importers outside every extension source root", () => {
-    expect(pathPlugin().resolveId("orcel/context", "/app/agent/tools/local.ts")).toBeUndefined();
+    expect(pathPlugin().resolveId("@orcel/orcel/context", "/app/agent/tools/local.ts")).toBeUndefined();
   });
 
   it("does not redirect a sibling directory that shares the source-root prefix", () => {
-    expect(pathPlugin().resolveId("orcel/context", "/pkg/crm/extras/tool.ts")).toBeUndefined();
+    expect(pathPlugin().resolveId("@orcel/orcel/context", "/pkg/crm/extras/tool.ts")).toBeUndefined();
   });
 
   it("only intercepts the scoped framework modules", () => {
     expect(
-      pathPlugin().resolveId("orcel/tools", "/pkg/crm/extension/tools/budget.ts"),
+      pathPlugin().resolveId("@orcel/orcel/tools", "/pkg/crm/extension/tools/budget.ts"),
     ).toBeUndefined();
     expect(pathPlugin().resolveId("zod", "/pkg/crm/extension/tools/budget.ts")).toBeUndefined();
   });
@@ -67,22 +67,22 @@ describe("createFixedMountScopePlugin (dev per-module)", () => {
   it("scopes every non-virtual importer to the fixed namespace", () => {
     const plugin = createFixedMountScopePlugin("extensions/crm");
     // The importer path is irrelevant in fixed mode.
-    expect(plugin.resolveId("orcel/context", "/anywhere/on/disk/tool.ts")).toBe(
+    expect(plugin.resolveId("@orcel/orcel/context", "/anywhere/on/disk/tool.ts")).toBe(
       "\0eve-ext-scope:context:extensions%2Fcrm",
     );
-    expect(plugin.resolveId("orcel/extension", "/anywhere/config.ts")).toBeUndefined();
+    expect(plugin.resolveId("@orcel/orcel/extension", "/anywhere/config.ts")).toBeUndefined();
   });
 
   it("never re-enters through virtual shim importers", () => {
     const plugin = createFixedMountScopePlugin("extensions/crm");
     expect(
-      plugin.resolveId("orcel/context", "\0eve-ext-scope:context:extensions%2Fcrm"),
+      plugin.resolveId("@orcel/orcel/context", "\0eve-ext-scope:context:extensions%2Fcrm"),
     ).toBeUndefined();
   });
 
   it("only intercepts the scoped framework modules", () => {
     const plugin = createFixedMountScopePlugin("extensions/crm");
-    expect(plugin.resolveId("orcel/tools", "/anywhere/tool.ts")).toBeUndefined();
+    expect(plugin.resolveId("@orcel/orcel/tools", "/anywhere/tool.ts")).toBeUndefined();
   });
 });
 
@@ -91,7 +91,7 @@ describe("shim baking (shared)", () => {
     const shim = createFixedMountScopePlugin("extensions/crm").load(
       "\0eve-ext-scope:context:extensions%2Fcrm",
     );
-    expect(shim?.code).toContain(`import { defineMountedState } from "orcel/internal/mount-state"`);
+    expect(shim?.code).toContain(`import { defineMountedState } from "@orcel/orcel/internal/mount-state"`);
     expect(shim?.code).toContain(`defineMountedState("extensions/crm", name, initial)`);
   });
 

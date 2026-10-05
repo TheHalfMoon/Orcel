@@ -2,7 +2,7 @@
   "extends": ["//"],
   "tasks": {
     "test:integration": {
-      "dependsOn": ["orcel#build"]
+      "dependsOn": ["@orcel/orcel#build"]
     },
     "test:scenario": {
       "dependsOn": ["^build"]

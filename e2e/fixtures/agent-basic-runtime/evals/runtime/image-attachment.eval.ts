@@ -1,6 +1,6 @@
 import { join } from "node:path";
 
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 /**
  * Core session-route runtime behavior: multimodal attachments.

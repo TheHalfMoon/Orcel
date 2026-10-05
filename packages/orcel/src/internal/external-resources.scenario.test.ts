@@ -50,14 +50,14 @@ describe("Connect manifest compiler handoff", () => {
       dependencies: { "@vercel/connect": connectVersion },
       files: {
         "agent/agent.ts": [
-          'import { defineAgent } from "orcel";',
+          'import { defineAgent } from "@orcel/orcel";',
           "",
           'export default defineAgent({ model: "openai/gpt-5-mini" });',
           "",
         ].join("\n"),
         "agent/channels/slack.ts": [
           'import { connectSlackCredentials } from "@vercel/connect/eve";',
-          'import { slackChannel } from "orcel/channels/slack";',
+          'import { slackChannel } from "@orcel/orcel/channels/slack";',
           "",
           "export default slackChannel({",
           '  credentials: connectSlackCredentials("slack/manifest-test"),',
@@ -66,7 +66,7 @@ describe("Connect manifest compiler handoff", () => {
         ].join("\n"),
         "agent/connections/linear.ts": [
           'import { connect } from "@vercel/connect/eve";',
-          'import { defineMcpClientConnection } from "orcel/connections";',
+          'import { defineMcpClientConnection } from "@orcel/orcel/connections";',
           "",
           "export default defineMcpClientConnection({",
           "  auth: connect({",

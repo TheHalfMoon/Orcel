@@ -1,5 +1,5 @@
-import { localDev, none } from "orcel/channels/auth";
-import { orcelChannel } from "orcel/channels/orcel";
+import { localDev, none } from "@orcel/orcel/channels/auth";
+import { orcelChannel } from "@orcel/orcel/channels/orcel";
 
 // This example accepts anonymous traffic so the deployed demo is clickable in
 // production. The deployment itself is gated by Vercel deployment protection.

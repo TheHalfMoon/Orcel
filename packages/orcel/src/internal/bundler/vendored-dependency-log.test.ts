@@ -19,7 +19,7 @@ describe("onVendoredDependencyLog", () => {
     ],
     [
       "orcel's published vendor modules",
-      { id: "/app/node_modules/orcel/dist/src/compiled/gray-matter/index.js" },
+      { id: "/app/node_modules/@orcel/orcel/dist/src/compiled/gray-matter/index.js" },
     ],
   ])("drops a warning raised only by %s", (_, log) => {
     expect(forwardedLogs("warn", { message: "dependency detail", ...log })).toEqual([]);
@@ -39,7 +39,7 @@ describe("onVendoredDependencyLog", () => {
         id: "/app/agent/tools/evaluate.ts",
         ids: [
           "/app/agent/tools/evaluate.ts",
-          "/app/node_modules/orcel/dist/src/compiled/vendor/index.js",
+          "/app/node_modules/@orcel/orcel/dist/src/compiled/vendor/index.js",
         ],
       },
     ],

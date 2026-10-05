@@ -43,7 +43,7 @@ async function createWorkspaceAgent(): Promise<{ appRoot: string; packageRoot: s
   const appRoot = await realpath(await mkdtemp(join(tmpdir(), "orcel-workspace-extension-build-")));
   temporaryDirectories.push(appRoot);
   const packageRoot = join(appRoot, "packages", "alpha");
-  const orcelPackageRoot = dirname(createRequire(import.meta.url).resolve("orcel/package.json"));
+  const orcelPackageRoot = dirname(createRequire(import.meta.url).resolve("@orcel/orcel/package.json"));
 
   await writeText(join(appRoot, "package.json"), '{"name":"workspace-agent","type":"module"}\n');
   await writeText(join(appRoot, "pnpm-workspace.yaml"), "packages:\n  - packages/*\n");
@@ -58,7 +58,7 @@ async function createWorkspaceAgent(): Promise<{ appRoot: string; packageRoot: s
       name: "@acme/alpha",
       type: "module",
       orcel: { extension: { source: "extension", dist: "dist/extension" } },
-      peerDependencies: { orcel: "*" },
+      peerDependencies: { "@orcel/orcel": "*" },
     })}\n`,
   );
   await writeText(
@@ -75,14 +75,14 @@ async function createWorkspaceAgent(): Promise<{ appRoot: string; packageRoot: s
   );
   await writeText(
     join(packageRoot, "extension", "extension.ts"),
-    'import { defineExtension } from "orcel/extension";\nexport default defineExtension();\n',
+    'import { defineExtension } from "@orcel/orcel/extension";\nexport default defineExtension();\n',
   );
   await writeText(
     join(packageRoot, "extension", "tools", "plan_week.ts"),
     'export default { description: "Plan the week.", async execute() { return {}; } };\n',
   );
-  await mkdir(join(packageRoot, "node_modules"), { recursive: true });
-  await symlink(orcelPackageRoot, join(packageRoot, "node_modules", "orcel"), "dir");
+  await mkdir(join(packageRoot, "node_modules", "@orcel"), { recursive: true });
+  await symlink(orcelPackageRoot, join(packageRoot, "node_modules", "@orcel", "orcel"), "dir");
 
   return { appRoot, packageRoot };
 }

@@ -1,5 +1,5 @@
-import { defineSandbox, type SandboxSession } from "orcel/sandbox";
-import { defineSandboxProvider } from "orcel/sandbox/provider";
+import { defineSandbox, type SandboxSession } from "@orcel/orcel/sandbox";
+import { defineSandboxProvider } from "@orcel/orcel/sandbox/provider";
 
 export const CUSTOM_PROVIDER_TOKEN = "custom-provider-session-ok-P7M";
 

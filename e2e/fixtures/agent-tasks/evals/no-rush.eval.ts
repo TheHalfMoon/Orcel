@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 import { firstSettlementOf, heldTurn, reportIdOf, settlementsOf, taskStarts } from "./task-events";
 

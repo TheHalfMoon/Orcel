@@ -1,7 +1,7 @@
 import { e2eAgentConfig } from "@orcel-e2e/config";
 import { latestTaskResult } from "@orcel-e2e/config/mock-script";
-import { defineAgent } from "orcel";
-import { mockModel, type MockModelRequest, type MockModelResponse } from "orcel/evals";
+import { defineAgent } from "@orcel/orcel";
+import { mockModel, type MockModelRequest, type MockModelResponse } from "@orcel/orcel/evals";
 
 import { RESEARCH_INTERIM_MESSAGE } from "../task-scenario-text.ts";
 import { respondToTaskScenario } from "./lib/task-scenarios.ts";

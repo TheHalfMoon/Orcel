@@ -308,12 +308,12 @@ importers:
 
   apps/docs:
     dependencies:
-      '@orcel/catalog':
-        specifier: workspace:*
-        version: link:../../packages/orcel-catalog
       '@icons-pack/react-simple-icons':
         specifier: 13.13.0
         version: 13.13.0(react@19.2.6)
+      '@orcel/catalog':
+        specifier: workspace:*
+        version: link:../../packages/orcel-catalog
       '@streamdown/code':
         specifier: 1.1.1
         version: 1.1.1(react@19.2.6)
@@ -389,7 +389,7 @@ importers:
     devDependencies:
       '@agent-browser/eve':
         specifier: ^0.33.0
-        version: 0.33.2(@vercel/sandbox@3.3.0)(orcel@packages+orcel)
+        version: 0.33.2(@vercel/sandbox@3.3.0)
       '@agentphone/chat-sdk-adapter':
         specifier: 0.1.0
         version: 0.1.0(ai@7.0.105(zod@4.5.4))(chat@4.41.0(ai@7.0.105(zod@4.5.4))(supports-color@10.2.2)(zod@4.5.4))(supports-color@10.2.2)(zod@4.5.4)
@@ -398,10 +398,10 @@ importers:
         version: 0.2.0(@opentelemetry/api@1.9.1)(ai@7.0.105(zod@4.5.4))(supports-color@10.2.2)(zod@4.5.4)
       '@blitzreels/eve':
         specifier: ^0.2.1
-        version: 0.2.1(orcel@packages+orcel)
+        version: 0.2.1
       '@browserbasehq/eve':
         specifier: ^0.1.0
-        version: 0.1.0(@cfworker/json-schema@4.1.1)(orcel@packages+orcel)(supports-color@10.2.2)
+        version: 0.1.0(@cfworker/json-schema@4.1.1)(supports-color@10.2.2)
       '@chat-adapter/gchat':
         specifier: 4.41.0
         version: 4.41.0(ai@7.0.105(zod@4.5.4))(supports-color@10.2.2)(zod@4.5.4)
@@ -428,16 +428,16 @@ importers:
         version: 0.2.0(ai@7.0.105(zod@4.5.4))(chat@4.41.0(ai@7.0.105(zod@4.5.4))(supports-color@10.2.2)(zod@4.5.4))(react-native@0.87.1(@babel/core@7.29.7(supports-color@10.2.2))(@types/react@19.2.15)(bufferutil@4.1.0)(react@19.2.6)(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.5.4)
       '@github-tools/eve-extension':
         specifier: ^0.1.0
-        version: 0.1.0(@vercel/connect@2.2.0(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4))(orcel@packages+orcel))(ai@7.0.105(zod@4.5.4))(orcel@packages+orcel)
+        version: 0.1.0(@vercel/connect@2.2.0(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4)))(ai@7.0.105(zod@4.5.4))
       '@jetty/eve':
         specifier: ^0.3.0
-        version: 0.3.1(orcel@packages+orcel)
+        version: 0.3.1
       '@kapso/chat-adapter':
         specifier: 0.1.1
         version: 0.1.1(ai@7.0.105(zod@4.5.4))(chat@4.41.0(ai@7.0.105(zod@4.5.4))(supports-color@10.2.2)(zod@4.5.4))(supports-color@10.2.2)(zod@4.5.4)
       '@kybernesis/arcana':
         specifier: 0.4.1
-        version: 0.4.1(orcel@packages+orcel)
+        version: 0.4.1
       '@larksuite/vercel-chat-adapter':
         specifier: 0.1.2
         version: 0.1.2(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(chat@4.41.0(ai@7.0.105(zod@4.5.4))(supports-color@10.2.2)(zod@4.5.4))(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.5.4)
@@ -449,7 +449,7 @@ importers:
         version: 0.1.0(ai@7.0.105(zod@4.5.4))(chat@4.41.0(ai@7.0.105(zod@4.5.4))(supports-color@10.2.2)(zod@4.5.4))(react@19.2.6)(supports-color@10.2.2)(zod@4.5.4)
       '@onkernel/eve-extension':
         specifier: ^0.1.3
-        version: 0.1.4(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4))(orcel@packages+orcel)
+        version: 0.1.4(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4))
       '@opentelemetry/api':
         specifier: 1.9.1
         version: 1.9.1
@@ -459,6 +459,9 @@ importers:
       '@opentelemetry/sdk-trace-base':
         specifier: 'catalog:'
         version: 2.6.1(@opentelemetry/api@1.9.1)
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../packages/orcel
       '@posthog/ai':
         specifier: 7.19.6
         version: 7.19.6(@ai-sdk/provider@3.0.16)(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@10.2.2)(zod@4.4.3))(@opentelemetry/api@1.9.1)(@opentelemetry/exporter-trace-otlp-http@0.221.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.6.1(@opentelemetry/api@1.9.1))(@smithy/signature-v4@5.7.3)(bufferutil@4.1.0)(posthog-node@5.52.4)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(supports-color@10.2.2)(ws@8.21.3(bufferutil@4.1.0))
@@ -467,10 +470,10 @@ importers:
         version: 0.2.2(@chat-adapter/shared@4.41.0(ai@7.0.105(zod@4.5.4))(supports-color@10.2.2)(zod@4.5.4))(@react-email/render@2.1.0(react-dom@19.2.6(react@19.2.6))(react@19.2.6))(bufferutil@4.1.0)(chat@4.41.0(ai@7.0.105(zod@4.5.4))(supports-color@10.2.2)(zod@4.5.4))(react-dom@19.2.6(react@19.2.6))(react@19.2.6)(supports-color@10.2.2)
       '@stripe/link-integrations-eve':
         specifier: ^0.2.0
-        version: 0.2.0(orcel@packages+orcel)
+        version: 0.2.0
       '@supermemory/eve':
         specifier: 0.1.1
-        version: 0.1.1(orcel@packages+orcel)
+        version: 0.1.1
       '@tailwindcss/postcss':
         specifier: 4.3.0
         version: 4.3.0
@@ -494,19 +497,19 @@ importers:
         version: 0.184.1
       '@upstash/agentkit-eve':
         specifier: 0.9.0
-        version: 0.9.0(@upstash/redis@1.38.4)(ai@7.0.105(zod@4.5.4))(orcel@packages+orcel)
+        version: 0.9.0(@upstash/redis@1.38.4)(ai@7.0.105(zod@4.5.4))
       '@upstash/redis':
         specifier: ^1.38.4
         version: 1.38.4
       '@vectorize-io/hindsight-eve':
         specifier: ^0.2.1
-        version: 0.2.1(orcel@packages+orcel)
+        version: 0.2.1
       '@veltdev/chat-sdk-adapter':
         specifier: 0.2.4
         version: 0.2.4(ai@7.0.105(zod@4.5.4))(chat@4.41.0(ai@7.0.105(zod@4.5.4))(supports-color@10.2.2)(zod@4.5.4))(supports-color@10.2.2)(zod@4.5.4)
       '@vercel/connect':
         specifier: 2.2.0
-        version: 2.2.0(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4))(orcel@packages+orcel)
+        version: 2.2.0(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4))
       '@vercel/otel':
         specifier: 'catalog:'
         version: 2.1.3(@opentelemetry/api-logs@0.222.0)(@opentelemetry/api@1.9.1)(@opentelemetry/instrumentation@0.219.0(@opentelemetry/api@1.9.1)(supports-color@10.2.2))(@opentelemetry/resources@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.221.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.6.1(@opentelemetry/api@1.9.1))
@@ -528,12 +531,9 @@ importers:
       chat-adapter-sendblue:
         specifier: 0.2.0
         version: 0.2.0(chat@4.41.0(ai@7.0.105(zod@4.5.4))(supports-color@10.2.2)(zod@4.5.4))
-      orcel:
-        specifier: workspace:*
-        version: link:../../packages/orcel
       eve-channel-blooio:
         specifier: 0.2.0
-        version: 0.2.0(ai@7.0.105(zod@4.5.4))(orcel@packages+orcel)
+        version: 0.2.0(ai@7.0.105(zod@4.5.4))
       portless:
         specifier: 0.15.6
         version: 0.15.6
@@ -558,7 +558,7 @@ importers:
 
   apps/fixtures/agent-tui-client:
     dependencies:
-      orcel:
+      '@orcel/orcel':
         specifier: workspace:*
         version: link:../../../packages/orcel
       zod:
@@ -577,19 +577,19 @@ importers:
       '@orcel-e2e/config':
         specifier: workspace:*
         version: link:../../../e2e/fixtures/e2e-config
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
       dd-trace:
         specifier: 6.13.0
         version: 6.13.0
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
 
   apps/fixtures/weather-agent:
     dependencies:
-      orcel:
+      '@orcel/orcel':
         specifier: workspace:*
         version: link:../../../packages/orcel
       zod:
@@ -601,15 +601,15 @@ importers:
       '@auth/core':
         specifier: 0.41.2
         version: 0.41.2
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@vercel/connect':
         specifier: 2.2.0
-        version: 2.2.0(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4))(orcel@packages+orcel)
+        version: 2.2.0(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4))
       ai:
         specifier: 'catalog:'
         version: 7.0.105(zod@4.5.4)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
       next:
         specifier: 'catalog:'
         version: 16.3.4(@babel/core@7.29.7(supports-color@10.2.2))(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
@@ -653,12 +653,12 @@ importers:
 
   apps/frameworks/next-multi-agent:
     dependencies:
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       ai:
         specifier: 'catalog:'
         version: 7.0.105(zod@4.5.4)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
       next:
         specifier: 'catalog:'
         version: 16.3.4(@babel/core@7.29.7(supports-color@10.2.2))(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
@@ -687,12 +687,12 @@ importers:
 
   apps/frameworks/nuxt:
     dependencies:
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@tailwindcss/vite':
         specifier: ^4.0.0
         version: 4.3.3(vite@8.3.1(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.1))
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
       nuxt:
         specifier: ^4.0.0
         version: 4.5.2(24c7457ca6c06a442e66ba8ec8c3a0d4)
@@ -715,6 +715,9 @@ importers:
 
   apps/frameworks/sveltekit:
     dependencies:
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@sveltejs/adapter-vercel':
         specifier: ^6.3.0
         version: 6.3.4(@sveltejs/kit@2.70.3(@opentelemetry/api@1.9.1)(@sveltejs/vite-plugin-svelte@7.3.0(svelte@5.57.0(@typescript-eslint/types@8.70.0))(vite@8.3.1(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.1)))(svelte@5.57.0(@typescript-eslint/types@8.70.0))(typescript@6.0.3)(vite@8.3.1(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.1)))(rollup@4.63.3)(supports-color@10.2.2)
@@ -724,9 +727,6 @@ importers:
       '@tailwindcss/vite':
         specifier: ^4.0.0
         version: 4.3.3(vite@8.3.1(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.1))
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
       svelte:
         specifier: ^5.0.0
         version: 5.57.0(@typescript-eslint/types@8.70.0)
@@ -747,7 +747,7 @@ importers:
         specifier: 2.4.0
         version: 2.4.0
     devDependencies:
-      orcel:
+      '@orcel/orcel':
         specifier: workspace:*
         version: link:../../packages/orcel
       vitest:
@@ -759,12 +759,12 @@ importers:
       '@orcel-e2e/config':
         specifier: workspace:*
         version: link:../e2e-config
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -778,12 +778,12 @@ importers:
       '@orcel-e2e/config':
         specifier: workspace:*
         version: link:../e2e-config
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
       zod:
         specifier: 'catalog:'
         version: 4.5.4
@@ -800,12 +800,12 @@ importers:
       '@orcel-e2e/config':
         specifier: workspace:*
         version: link:../e2e-config
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
       zod:
         specifier: 'catalog:'
         version: 4.5.4
@@ -822,12 +822,12 @@ importers:
       '@orcel-e2e/config':
         specifier: workspace:*
         version: link:../e2e-config
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
       zod:
         specifier: 'catalog:'
         version: 4.5.4
@@ -844,12 +844,12 @@ importers:
       '@orcel-e2e/config':
         specifier: workspace:*
         version: link:../e2e-config
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
       zod:
         specifier: 'catalog:'
         version: 4.5.4
@@ -866,12 +866,12 @@ importers:
       '@orcel-e2e/config':
         specifier: workspace:*
         version: link:../e2e-config
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -885,12 +885,12 @@ importers:
       '@orcel-e2e/config':
         specifier: workspace:*
         version: link:../e2e-config
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -904,12 +904,12 @@ importers:
       '@orcel-e2e/config':
         specifier: workspace:*
         version: link:../e2e-config
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
       zod:
         specifier: 'catalog:'
         version: 4.5.4
@@ -926,12 +926,12 @@ importers:
       '@orcel-e2e/config':
         specifier: workspace:*
         version: link:../e2e-config
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
       zod:
         specifier: 'catalog:'
         version: 4.5.4
@@ -948,15 +948,15 @@ importers:
       '@orcel-e2e/config':
         specifier: workspace:*
         version: link:../e2e-config
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
       ai:
         specifier: 'catalog:'
         version: 7.0.105(zod@4.5.4)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -970,12 +970,12 @@ importers:
       '@orcel-e2e/config':
         specifier: workspace:*
         version: link:../e2e-config
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
       zod:
         specifier: 'catalog:'
         version: 4.5.4
@@ -992,12 +992,12 @@ importers:
       '@orcel-e2e/config':
         specifier: workspace:*
         version: link:../e2e-config
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
       microsandbox:
         specifier: 0.5.5
         version: 0.5.5
@@ -1017,12 +1017,12 @@ importers:
       '@orcel-e2e/config':
         specifier: workspace:*
         version: link:../e2e-config
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -1036,12 +1036,12 @@ importers:
       '@orcel-e2e/config':
         specifier: workspace:*
         version: link:../e2e-config
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -1055,12 +1055,12 @@ importers:
       '@orcel-e2e/config':
         specifier: workspace:*
         version: link:../e2e-config
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
       zod:
         specifier: 'catalog:'
         version: 4.5.4
@@ -1077,12 +1077,12 @@ importers:
       '@orcel-e2e/config':
         specifier: workspace:*
         version: link:../e2e-config
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
       zod:
         specifier: 'catalog:'
         version: 4.5.4
@@ -1099,12 +1099,12 @@ importers:
       '@orcel-e2e/config':
         specifier: workspace:*
         version: link:../e2e-config
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -1118,12 +1118,12 @@ importers:
       '@orcel-e2e/config':
         specifier: workspace:*
         version: link:../e2e-config
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
       zod:
         specifier: 'catalog:'
         version: 4.5.4
@@ -1140,15 +1140,15 @@ importers:
       '@orcel-e2e/config':
         specifier: workspace:*
         version: link:../e2e-config
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@vercel/connect':
         specifier: 2.2.0
-        version: 2.2.0(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4))(orcel@packages+orcel)
+        version: 2.2.0(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4))
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
       just-bash:
         specifier: 3.1.0
         version: 3.1.0(supports-color@10.2.2)
@@ -1168,12 +1168,12 @@ importers:
       '@orcel-e2e/config':
         specifier: workspace:*
         version: link:../e2e-config
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
       zod:
         specifier: 'catalog:'
         version: 4.5.4
@@ -1190,12 +1190,12 @@ importers:
       '@orcel-e2e/config':
         specifier: workspace:*
         version: link:../e2e-config
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -1209,12 +1209,12 @@ importers:
       '@orcel-e2e/config':
         specifier: workspace:*
         version: link:../e2e-config
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -1231,12 +1231,12 @@ importers:
       '@orcel-e2e/config':
         specifier: workspace:*
         version: link:../e2e-config
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
       zod:
         specifier: 'catalog:'
         version: 4.5.4
@@ -1253,12 +1253,12 @@ importers:
       '@orcel-e2e/config':
         specifier: workspace:*
         version: link:../e2e-config
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
       zod:
         specifier: 'catalog:'
         version: 4.5.4
@@ -1275,12 +1275,12 @@ importers:
       '@orcel-e2e/config':
         specifier: workspace:*
         version: link:../e2e-config
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
       zod:
         specifier: 'catalog:'
         version: 4.5.4
@@ -1300,12 +1300,12 @@ importers:
       '@orcel-e2e/dynamic-import-dependency':
         specifier: file:./fixtures/dynamic-import-dependency
         version: file:e2e/fixtures/agent-tools/fixtures/dynamic-import-dependency
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
       zod:
         specifier: 'catalog:'
         version: 4.5.4
@@ -1322,12 +1322,12 @@ importers:
       '@orcel-e2e/config':
         specifier: workspace:*
         version: link:../e2e-config
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
       zod:
         specifier: 'catalog:'
         version: 4.5.4
@@ -1344,12 +1344,12 @@ importers:
       '@orcel-e2e/config':
         specifier: workspace:*
         version: link:../e2e-config
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
       zod:
         specifier: 'catalog:'
         version: 4.5.4
@@ -1366,12 +1366,12 @@ importers:
       '@orcel-e2e/config':
         specifier: workspace:*
         version: link:../e2e-config
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
       zod:
         specifier: 'catalog:'
         version: 4.5.4
@@ -1388,12 +1388,12 @@ importers:
       '@orcel-e2e/config':
         specifier: workspace:*
         version: link:../e2e-config
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -1407,12 +1407,12 @@ importers:
       '@orcel-e2e/config':
         specifier: workspace:*
         version: link:../e2e-config
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
       zod:
         specifier: 'catalog:'
         version: 4.5.4
@@ -1429,18 +1429,18 @@ importers:
       '@orcel-e2e/config':
         specifier: workspace:*
         version: link:../e2e-config
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
       gadget-extension:
         specifier: file:../gadget-extension
-        version: file:e2e/fixtures/gadget-extension(orcel@packages+orcel)
+        version: file:e2e/fixtures/gadget-extension(@orcel/orcel@packages+orcel)
       gizmo-extension:
         specifier: file:../gizmo-extension
-        version: file:e2e/fixtures/gizmo-extension(orcel@packages+orcel)
+        version: file:e2e/fixtures/gizmo-extension(@orcel/orcel@packages+orcel)
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -1457,12 +1457,12 @@ importers:
       '@opentelemetry/sdk-trace-base':
         specifier: 'catalog:'
         version: 2.6.1(@opentelemetry/api@1.9.1)
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@vercel/otel':
         specifier: 'catalog:'
         version: 2.1.3(@opentelemetry/api-logs@0.222.0)(@opentelemetry/api@1.9.1)(@opentelemetry/instrumentation@0.219.0(@opentelemetry/api@1.9.1)(supports-color@10.2.2))(@opentelemetry/resources@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.221.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.6.1(@opentelemetry/api@1.9.1))
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -1476,12 +1476,12 @@ importers:
       '@orcel-e2e/config':
         specifier: workspace:*
         version: link:../e2e-config
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@workflow/world-postgres':
         specifier: 'catalog:'
         version: 5.0.0-beta.47(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(@upstash/redis@1.38.4)(sql.js@1.14.2)(supports-color@10.2.2)(typescript@7.0.2)
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
       gizmo-extension:
         specifier: workspace:*
         version: link:../gizmo-extension
@@ -1511,12 +1511,12 @@ importers:
         specifier: 4.5.4
         version: 4.5.4
     devDependencies:
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@types/node':
         specifier: 'catalog:'
         version: 24.13.3
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -1527,12 +1527,12 @@ importers:
         specifier: 4.5.4
         version: 4.5.4
     devDependencies:
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@types/node':
         specifier: 'catalog:'
         version: 24.13.3
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -1543,12 +1543,12 @@ importers:
         specifier: 'catalog:'
         version: 4.5.4
     devDependencies:
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@types/node':
         specifier: 'catalog:'
         version: 24.13.3
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -1559,12 +1559,12 @@ importers:
         specifier: 'catalog:'
         version: 4.5.4
     devDependencies:
+      '@orcel/orcel':
+        specifier: workspace:*
+        version: link:../../../packages/orcel
       '@types/node':
         specifier: 'catalog:'
         version: 24.13.3
-      orcel:
-        specifier: workspace:*
-        version: link:../../../packages/orcel
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -1626,9 +1626,6 @@ importers:
       '@clack/core':
         specifier: 1.3.1
         version: 1.3.1
-      '@orcel/catalog':
-        specifier: workspace:*
-        version: link:../orcel-catalog
       '@linqapp/chat-sdk-adapter':
         specifier: ^0.5.1
         version: 0.5.1(chat@4.41.0(ai@7.0.105(zod@4.5.4))(supports-color@10.2.2)(zod@4.5.4))
@@ -1653,6 +1650,9 @@ importers:
       '@opentelemetry/sdk-trace-base':
         specifier: 'catalog:'
         version: 2.6.1(@opentelemetry/api@1.9.1)
+      '@orcel/catalog':
+        specifier: workspace:*
+        version: link:../orcel-catalog
       '@photon-ai/chat-adapter-imessage':
         specifier: 3.2.0
         version: 3.2.0(ai@7.0.105(zod@4.5.4))(chat@4.41.0(ai@7.0.105(zod@4.5.4))(supports-color@10.2.2)(zod@4.5.4))(supports-color@10.2.2)(typescript@7.0.2)(zod@4.5.4)
@@ -1679,7 +1679,7 @@ importers:
         version: 2.8.0
       '@vercel/connect':
         specifier: 'catalog:'
-        version: 2.3.3(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.41.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.5.4))(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4))(orcel@0.65.0(@opentelemetry/api@1.9.1)(ai@7.0.105(zod@4.5.4))(braintrust@3.29.0(@aws-sdk/credential-provider-web-identity@3.972.49)(supports-color@10.2.2)(zod@4.5.4))(chat@4.41.0(ai@7.0.105(zod@4.5.4))(supports-color@10.2.2)(zod@4.5.4))(dd-trace@6.13.0)(just-bash@3.1.0(supports-color@10.2.2))(microsandbox@0.5.5))
+        version: 2.3.3(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.41.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.5.4))(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4))
       '@vercel/detect-agent':
         specifier: 1.2.3
         version: 1.2.3
@@ -1803,7 +1803,7 @@ importers:
 
   packages/orcel-buzz-acp-adapter:
     dependencies:
-      orcel:
+      '@orcel/orcel':
         specifier: workspace:^
         version: link:../orcel
     devDependencies:
@@ -1819,12 +1819,12 @@ importers:
 
   packages/orcel-code:
     dependencies:
-      '@vercel/connect':
-        specifier: 'catalog:'
-        version: 2.3.3(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(supports-color@10.2.2)(zod@4.5.4))(@modelcontextprotocol/sdk@1.30.0(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4))(orcel@packages+orcel)
-      orcel:
+      '@orcel/orcel':
         specifier: workspace:*
         version: link:../orcel
+      '@vercel/connect':
+        specifier: 'catalog:'
+        version: 2.3.3(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(supports-color@10.2.2)(zod@4.5.4))(@modelcontextprotocol/sdk@1.30.0(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4))
       zod:
         specifier: 'catalog:'
         version: 4.5.4
@@ -1841,7 +1841,7 @@ importers:
 
   packages/orcel-computer-use:
     dependencies:
-      orcel:
+      '@orcel/orcel':
         specifier: workspace:*
         version: link:../orcel
       zod:
@@ -1860,7 +1860,7 @@ importers:
 
   packages/orcel-self-modification:
     dependencies:
-      orcel:
+      '@orcel/orcel':
         specifier: workspace:*
         version: link:../orcel
     devDependencies:
@@ -1874,7 +1874,7 @@ packages:
     resolution: {integrity: sha512-9i+YbKEvIYFubkM/iE52IakEis8wCZB5/9mvewzhzFJRJhX2NuvycpiZiGIeoV8kMqU4yD2o556b6fYQZlbS9g==}
     engines: {node: '>=24.0.0'}
     peerDependencies:
-      orcel: '>=0.25.1'
+      eve: '>=0.25.1'
 
   '@agent-browser/sandbox@0.33.2':
     resolution: {integrity: sha512-xszrdrHh3OLWMe4TF56d9/ZrETd9FueHiQKoYsNMit78Mo5q72xJF+vytdJKXmW5cduEpR8I/p3BJL6m0gEvwg==}
@@ -2308,7 +2308,7 @@ packages:
     resolution: {integrity: sha512-mgw/0YpDb+Skc0jyH41+EiUxHwKRD/46OkarfQyC85TmeoQm7h+PXQftjVTIo5i5eImVNFAcQBAxuMq3eRjsXQ==}
     engines: {node: '>=24'}
     peerDependencies:
-      orcel: '*'
+      eve: '*'
 
   '@blitzreels/sdk@0.2.18':
     resolution: {integrity: sha512-dGJS/yW390pBzVuy8YaHvx6NEq5HzebvX95u9fS9QvpNCBLkXvXtZ7gCsAk+T55E/JdC3OJgUkwiWB8vJ1KXWA==}
@@ -2339,7 +2339,7 @@ packages:
     resolution: {integrity: sha512-zKv0sbKjP5edfphVXARwHUyxuUty8O2wn7Fptz5CaoJOUiV075CVHDrjEnwubioUR3iZL3+aiV3VLJBnZubXSw==}
     engines: {node: '>=24'}
     peerDependencies:
-      orcel: '*'
+      eve: '*'
 
   '@browserbasehq/sdk@2.16.0':
     resolution: {integrity: sha512-mPAuLRU9jWR7o0KJi9+gQnOBDUSIkoKbbFv4HjrA+80qWVcFacrNPlZmf4mguQnfZ0oP2t5c3ws6yuFyAX9vpA==}
@@ -3084,9 +3084,6 @@ packages:
     resolution: {integrity: sha512-IkO+/KEUvwbVpiURZg+P7zF74z5Jxe0UgJxVni+RtoHQ6IZieXaO02kmadomap/q+l6bc/jdPGGqTjhuZnuz1Q==}
     engines: {node: ^20.19.0 || ^22.13.0 || >=24}
 
-  '@orcel-e2e/dynamic-import-dependency@file:e2e/fixtures/agent-tools/fixtures/dynamic-import-dependency':
-    resolution: {directory: e2e/fixtures/agent-tools/fixtures/dynamic-import-dependency, type: directory}
-
   '@fastify/busboy@2.1.1':
     resolution: {integrity: sha512-vBZP4NlzfOlerQTnba4aqZoMhE/a9HY7HRqoOPaETQcSQuWEIyZMHGfVu6w9wGtGK5fED5qRs2DteVCjOH60sA==}
     engines: {node: '>=14'}
@@ -3123,7 +3120,7 @@ packages:
     engines: {node: 24.x}
     peerDependencies:
       '@vercel/connect': '>=0.3.2'
-      orcel: '*'
+      eve: '*'
     peerDependenciesMeta:
       '@vercel/connect':
         optional: true
@@ -3135,7 +3132,7 @@ packages:
       '@vercel/connect': '>=0.3.2'
       '@workflow/ai': ^4.1.2
       ai: ^6.0.97 || ^7.0.0
-      orcel: '>=0.19.0'
+      eve: '>=0.19.0'
       workflow: ^4.5.0
       zod: ^4.3.6
     peerDependenciesMeta:
@@ -3145,7 +3142,7 @@ packages:
         optional: true
       '@workflow/ai':
         optional: true
-      orcel:
+      eve:
         optional: true
       workflow:
         optional: true
@@ -3415,7 +3412,7 @@ packages:
     resolution: {integrity: sha512-7qEvGnhrp7o8TsNMQyE3suSOwd2TxT4eJh95K3uNXi1ZNiis01FypriKHPwijWWo9uvOlDw7JoA8eZMl7udUfA==}
     engines: {node: '>=24'}
     peerDependencies:
-      orcel: '*'
+      eve: '*'
 
   '@jetty/sdk@0.4.0':
     resolution: {integrity: sha512-RE3u49DoDXCPsI9kQeuyjRozgvREqWzY0syX0aM+JsEFmWus/n7GD8//jzK0k/HwECpKo3A66YP1v6hYuMlbSg==}
@@ -3478,7 +3475,7 @@ packages:
     resolution: {integrity: sha512-UrHefmb7ZWSiKwb42wbDJsu+HS63FEHR8QQGbELdKi2cUpbcbJStqfoyO6BoKrZhubuZTOAWMRQA3lgdFSWxFw==}
     engines: {node: 24.x}
     peerDependencies:
-      orcel: '>=0.49.0 <0.50.0'
+      eve: '>=0.49.0 <0.50.0'
 
   '@langchain/core@1.2.11':
     resolution: {integrity: sha512-8yuWLLloTSYA453akm2JSadOVa8kGDY8v+kTzQ6kTY6aIETTEIxgysjZWyKrWQLo3UazctsSoGJ8JrdCGFL4/w==}
@@ -3947,7 +3944,7 @@ packages:
     resolution: {integrity: sha512-aZ4+ETq9AsEFXKVrroFum5iQXxV5QkFj1XRGmw/4uD133qDXW3RqtNhM2rLvbrJKBLbsEJV6IUK3fqLIlD1nzw==}
     engines: {node: '>=24'}
     peerDependencies:
-      orcel: '>=0.25'
+      eve: '>=0.25'
 
   '@opentelemetry/api-logs@0.214.0':
     resolution: {integrity: sha512-40lSJeqYO8Uz2Yj7u94/SJWE/wONa7rmMKjI1ZcIjgf3MHNHv1OZUCrCETGuaRF62d5pQD1wKIW+L4lmSMTzZA==}
@@ -4186,6 +4183,9 @@ packages:
   '@orama/tokenizers@3.1.18':
     resolution: {integrity: sha512-Ra4dFddWZ7hCGPAehnd/6QZjlzQvczYSt1y1Fq4HteJqRu2yvfR6fXvxiUnKi+HIgJYPxKhebJEjvJdF8LYQWg==}
     engines: {node: '>= 20.0.0'}
+
+  '@orcel-e2e/dynamic-import-dependency@file:e2e/fixtures/agent-tools/fixtures/dynamic-import-dependency':
+    resolution: {directory: e2e/fixtures/agent-tools/fixtures/dynamic-import-dependency, type: directory}
 
   '@oxc-parser/binding-android-arm-eabi@0.132.0':
     resolution: {integrity: sha512-KrLaPWa5c9Y7LkW+rKkaUE3y7DBDrQtaf7rlsSDfv6KAHUjgzAIRA761Lrrp6//Yd/Rlie/yEOt9YENCoJnOcw==}
@@ -6309,7 +6309,7 @@ packages:
     resolution: {integrity: sha512-ODNAfSodbtg9HKAjS//BZ/qWTLAcuRJ7Dsp9CL+I+DcDn65YQiVq/MSbDN6D4fIJpLGUmtzfYA+H+KqzhFlKUA==}
     engines: {node: '>=24'}
     peerDependencies:
-      orcel: '*'
+      eve: '*'
 
   '@stripe/link-sdk@0.9.0':
     resolution: {integrity: sha512-z3qvCYMkPl2JcA2rE3qSy+/uPthI+k3gSGdJIvkf8GHMcy/vG4O70OsWjC71yxyQD/BlyjkpwDvfkdU/Rq4a/g==}
@@ -6319,7 +6319,7 @@ packages:
     resolution: {integrity: sha512-m55U9+q0gxJH2vxF9vlcYk2/XRSwTMrpE+CRE05Hm+ytwZp1ec8gvUoxDNKrfC0EYikrCq6sF0Lkao64yemiCw==}
     engines: {node: '>=24'}
     peerDependencies:
-      orcel: ^0.47.3
+      eve: ^0.47.3
 
   '@superradcompany/microsandbox-darwin-arm64@0.5.5':
     resolution: {integrity: sha512-Yy7b2Ak+/WT+Ho3yRrcKclSl+hNVwcEAqtrWFLIQoGIjSCYEsL30r9S21zKFgd7z5o/FMdaGt/sNqWsV47Ar5g==}
@@ -7265,7 +7265,7 @@ packages:
     peerDependencies:
       '@upstash/box': '>=0.5.0'
       '@upstash/redis': '>=1.38.4'
-      orcel: '>=0.32.0'
+      eve: '>=0.32.0'
     peerDependenciesMeta:
       '@upstash/box':
         optional: true
@@ -7291,7 +7291,7 @@ packages:
     resolution: {integrity: sha512-dFrCRgX/fXNV7bCCXfifmKTEQnj4insbxOQ79GU9mHMwZ9XfjQ1Oq8679C9xHwpItCtx6cDPqWZkluq8iY+qNg==}
     engines: {node: '>=24'}
     peerDependencies:
-      orcel: '>=0.11.0'
+      eve: '>=0.11.0'
 
   '@veltdev/chat-sdk-adapter@0.2.4':
     resolution: {integrity: sha512-Amzn9rMKpkDjpC1uxpn9ztsIdFSF6sC+6KOUhyIPkQhinKCS5AUI1XCO8aLZTlolyDObPt4Gmib8XSmSg9Uclg==}
@@ -7388,7 +7388,7 @@ packages:
       '@chat-adapter/slack': ^4.0.0
       ai: ^6 || ^7.0.0-beta.0
       better-auth: '>=1.5.0'
-      orcel: '>=0.13.7'
+      eve: '>=0.13.7'
     peerDependenciesMeta:
       '@ai-sdk/mcp':
         optional: true
@@ -7400,7 +7400,7 @@ packages:
         optional: true
       better-auth:
         optional: true
-      orcel:
+      eve:
         optional: true
 
   '@vercel/connect@2.2.0':
@@ -7411,7 +7411,7 @@ packages:
       '@chat-adapter/slack': ^4.0.0
       ai: ^6 || ^7.0.0-beta.0
       better-auth: '>=1.5.0'
-      orcel: '>=0.13.7'
+      eve: '>=0.13.7'
     peerDependenciesMeta:
       '@ai-sdk/mcp':
         optional: true
@@ -7423,7 +7423,7 @@ packages:
         optional: true
       better-auth:
         optional: true
-      orcel:
+      eve:
         optional: true
 
   '@vercel/connect@2.3.3':
@@ -7435,7 +7435,7 @@ packages:
       '@modelcontextprotocol/sdk': ^1.29.0
       ai: ^6 || ^7.0.0-beta.0
       better-auth: '>=1.5.0'
-      orcel: '>=0.39.1'
+      eve: '>=0.39.1'
     peerDependenciesMeta:
       '@ai-sdk/mcp':
         optional: true
@@ -7449,7 +7449,7 @@ packages:
         optional: true
       better-auth:
         optional: true
-      orcel:
+      eve:
         optional: true
 
   '@vercel/detect-agent@1.2.3':
@@ -9583,33 +9583,7 @@ packages:
     engines: {node: '>=20'}
     peerDependencies:
       ai: '>=7.0.0-beta.178'
-      orcel: '>=0.11.0'
-
-  orcel@0.65.0:
-    resolution: {integrity: sha512-16dcyvpucnMp6f1TKZROvRrDAYWIlV7ulZfEMK+IuK1AVXMQPoLLOrGuLT/qI1TjIkxZt9g1JcXXOv/uu3yjdQ==}
-    engines: {node: '>=24'}
-    hasBin: true
-    peerDependencies:
-      '@opentelemetry/api': ^1.0.0
-      ai: ^7.0.105
-      braintrust: ^3.0.0
-      chat: ^4.41.0
-      dd-trace: ^6.13.0
-      just-bash: ^3.1.0
-      microsandbox: ^0.5.0
-    peerDependenciesMeta:
-      '@opentelemetry/api':
-        optional: true
-      braintrust:
-        optional: true
-      chat:
-        optional: true
-      dd-trace:
-        optional: true
-      just-bash:
-        optional: true
-      microsandbox:
-        optional: true
+      eve: '>=0.11.0'
 
   event-target-shim@5.0.1:
     resolution: {integrity: sha512-i/2XbnSz/uxRCU6+NdVJgKWDTM427+MqYbkQzD321DuCQJUqOuJKIA0IM2+W2xtYHdKOmZ4dR6fExsd4SXL+WQ==}
@@ -10010,7 +9984,7 @@ packages:
   gadget-extension@file:e2e/fixtures/gadget-extension:
     resolution: {directory: e2e/fixtures/gadget-extension, type: directory}
     peerDependencies:
-      orcel: '*'
+      '@orcel/orcel': '*'
 
   gaxios@7.1.3:
     resolution: {integrity: sha512-YGGyuEdVIjqxkxVH1pUTMY/XtmmsApXrCVv5EU25iX6inEPbV+VakJfLealkBtJN69AQmh1eGOdCl9Sm1UP6XQ==}
@@ -10099,7 +10073,7 @@ packages:
   gizmo-extension@file:e2e/fixtures/gizmo-extension:
     resolution: {directory: e2e/fixtures/gizmo-extension, type: directory}
     peerDependencies:
-      orcel: '*'
+      '@orcel/orcel': '*'
 
   glob-parent@5.1.2:
     resolution: {integrity: sha512-AOIgSQCepiJYwP3ARnGx+5VnTu2HBYdzbGP45eLw1vr3zB3vZLeyed1sC9hnbcOc9/SrMyM5RPQrkGz4aS9Zow==}
@@ -14878,10 +14852,9 @@ ignoredOptionalDependencies:
 
 snapshots:
 
-  '@agent-browser/eve@0.33.2(@vercel/sandbox@3.3.0)(orcel@packages+orcel)':
+  '@agent-browser/eve@0.33.2(@vercel/sandbox@3.3.0)':
     dependencies:
       '@agent-browser/sandbox': 0.33.2(@vercel/sandbox@3.3.0)
-      orcel: link:packages/orcel
       zod: 4.4.3
     transitivePeerDependencies:
       - '@vercel/sandbox'
@@ -15473,10 +15446,9 @@ snapshots:
     dependencies:
       zod: 4.4.3
 
-  '@blitzreels/eve@0.2.1(orcel@packages+orcel)':
+  '@blitzreels/eve@0.2.1':
     dependencies:
       '@blitzreels/sdk': 0.2.18
-      orcel: link:packages/orcel
       zod: 4.4.3
 
   '@blitzreels/sdk@0.2.18':
@@ -15492,11 +15464,10 @@ snapshots:
 
   '@braintree/sanitize-url@7.1.2': {}
 
-  '@browserbasehq/eve@0.1.0(@cfworker/json-schema@4.1.1)(orcel@packages+orcel)(supports-color@10.2.2)':
+  '@browserbasehq/eve@0.1.0(@cfworker/json-schema@4.1.1)(supports-color@10.2.2)':
     dependencies:
       '@browserbasehq/sdk': 2.16.0
       '@browserbasehq/stagehand': 3.7.0(@cfworker/json-schema@4.1.1)(supports-color@10.2.2)(zod@4.4.3)
-      orcel: link:packages/orcel
       zod: 4.4.3
     transitivePeerDependencies:
       - '@cfworker/json-schema'
@@ -16228,8 +16199,6 @@ snapshots:
       '@eslint/core': 1.2.1
       levn: 0.4.1
 
-  '@orcel-e2e/dynamic-import-dependency@file:e2e/fixtures/agent-tools/fixtures/dynamic-import-dependency': {}
-
   '@fastify/busboy@2.1.1': {}
 
   '@floating-ui/core@1.8.0':
@@ -16275,27 +16244,25 @@ snapshots:
       - react-native
       - supports-color
 
-  '@github-tools/eve-extension@0.1.0(@vercel/connect@2.2.0(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4))(orcel@packages+orcel))(ai@7.0.105(zod@4.5.4))(orcel@packages+orcel)':
+  '@github-tools/eve-extension@0.1.0(@vercel/connect@2.2.0(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4)))(ai@7.0.105(zod@4.5.4))':
     dependencies:
-      '@github-tools/sdk': 1.8.2(@vercel/connect@2.2.0(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4))(orcel@packages+orcel))(ai@7.0.105(zod@4.5.4))(orcel@packages+orcel)(zod@4.5.4)
-      orcel: link:packages/orcel
+      '@github-tools/sdk': 1.8.2(@vercel/connect@2.2.0(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4)))(ai@7.0.105(zod@4.5.4))(zod@4.5.4)
       zod: 4.5.4
     optionalDependencies:
-      '@vercel/connect': 2.2.0(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4))(orcel@packages+orcel)
+      '@vercel/connect': 2.2.0(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4))
     transitivePeerDependencies:
       - '@ai-sdk/workflow'
       - '@workflow/ai'
       - ai
       - workflow
 
-  '@github-tools/sdk@1.8.2(@vercel/connect@2.2.0(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4))(orcel@packages+orcel))(ai@7.0.105(zod@4.5.4))(orcel@packages+orcel)(zod@4.5.4)':
+  '@github-tools/sdk@1.8.2(@vercel/connect@2.2.0(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4)))(ai@7.0.105(zod@4.5.4))(zod@4.5.4)':
     dependencies:
       ai: 7.0.105(zod@4.5.4)
       octokit: 5.0.5
       zod: 4.5.4
     optionalDependencies:
-      '@vercel/connect': 2.2.0(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4))(orcel@packages+orcel)
-      orcel: link:packages/orcel
+      '@vercel/connect': 2.2.0(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4))
 
   '@google/genai@1.52.0(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@10.2.2)(zod@4.4.3))(bufferutil@4.1.0)(supports-color@10.2.2)':
     dependencies:
@@ -16514,10 +16481,9 @@ snapshots:
       '@types/yargs': 17.0.35
       chalk: 4.1.2
 
-  '@jetty/eve@0.3.1(orcel@packages+orcel)':
+  '@jetty/eve@0.3.1':
     dependencies:
       '@jetty/sdk': 0.4.0
-      orcel: link:packages/orcel
       zod: 4.5.4
 
   '@jetty/sdk@0.4.0': {}
@@ -16589,9 +16555,8 @@ snapshots:
 
   '@kwsites/promise-deferred@1.1.1': {}
 
-  '@kybernesis/arcana@0.4.1(orcel@packages+orcel)':
+  '@kybernesis/arcana@0.4.1':
     dependencies:
-      orcel: link:packages/orcel
       zod: 4.4.3
 
   '@langchain/core@1.2.11(@opentelemetry/api@1.9.1)(@opentelemetry/sdk-trace-base@2.6.1(@opentelemetry/api@1.9.1))(openai@6.49.0(@smithy/signature-v4@5.7.3)(ws@8.21.3(bufferutil@4.1.0))(zod@4.5.4))(ws@8.21.3(bufferutil@4.1.0))':
@@ -17715,10 +17680,9 @@ snapshots:
       '@octokit/request-error': 7.1.2
       '@octokit/webhooks-methods': 6.0.0
 
-  '@onkernel/eve-extension@0.1.4(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4))(orcel@packages+orcel)':
+  '@onkernel/eve-extension@0.1.4(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4))':
     dependencies:
-      '@vercel/connect': 0.4.3(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4))(orcel@packages+orcel)
-      orcel: link:packages/orcel
+      '@vercel/connect': 0.4.3(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4))
       zod: 4.4.3
     transitivePeerDependencies:
       - '@ai-sdk/mcp'
@@ -17990,6 +17954,8 @@ snapshots:
   '@orama/tokenizers@3.1.18':
     dependencies:
       '@orama/orama': 3.1.18
+
+  '@orcel-e2e/dynamic-import-dependency@file:e2e/fixtures/agent-tools/fixtures/dynamic-import-dependency': {}
 
   '@oxc-parser/binding-android-arm-eabi@0.132.0':
     optional: true
@@ -19948,19 +19914,17 @@ snapshots:
       react: 19.2.6
       shiki: 3.23.0
 
-  '@stripe/link-integrations-eve@0.2.0(orcel@packages+orcel)':
+  '@stripe/link-integrations-eve@0.2.0':
     dependencies:
       '@stripe/link-sdk': 0.9.0
-      orcel: link:packages/orcel
       zod: 4.5.4
 
   '@stripe/link-sdk@0.9.0':
     dependencies:
       zod: 4.5.4
 
-  '@supermemory/eve@0.1.1(orcel@packages+orcel)':
+  '@supermemory/eve@0.1.1':
     dependencies:
-      orcel: link:packages/orcel
       supermemory: 4.25.4
       zod: 4.4.3
 
@@ -20805,12 +20769,11 @@ snapshots:
       ai: 7.0.105(zod@4.5.4)
       zod: 4.5.4
 
-  '@upstash/agentkit-eve@0.9.0(@upstash/redis@1.38.4)(ai@7.0.105(zod@4.5.4))(orcel@packages+orcel)':
+  '@upstash/agentkit-eve@0.9.0(@upstash/redis@1.38.4)(ai@7.0.105(zod@4.5.4))':
     dependencies:
       '@upstash/agentkit-ai-sdk': 0.9.0(ai@7.0.105(zod@4.5.4))
       '@upstash/agentkit-sdk': 0.9.0(@upstash/redis@1.38.4)
       '@upstash/redis': 1.38.4
-      orcel: link:packages/orcel
       zod: 4.5.4
     transitivePeerDependencies:
       - ai
@@ -20834,9 +20797,7 @@ snapshots:
     dependencies:
       uncrypto: 0.1.3
 
-  '@vectorize-io/hindsight-eve@0.2.1(orcel@packages+orcel)':
-    dependencies:
-      orcel: link:packages/orcel
+  '@vectorize-io/hindsight-eve@0.2.1': {}
 
   '@veltdev/chat-sdk-adapter@0.2.4(ai@7.0.105(zod@4.5.4))(chat@4.41.0(ai@7.0.105(zod@4.5.4))(supports-color@10.2.2)(zod@4.5.4))(supports-color@10.2.2)(zod@4.5.4)':
     dependencies:
@@ -20936,7 +20897,7 @@ snapshots:
     dependencies:
       execa: 5.1.1
 
-  '@vercel/connect@0.4.3(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4))(orcel@packages+orcel)':
+  '@vercel/connect@0.4.3(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4))':
     dependencies:
       '@vercel/oidc': 3.8.1
     optionalDependencies:
@@ -20944,9 +20905,8 @@ snapshots:
       '@auth/core': 0.41.2
       '@chat-adapter/slack': 4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.5.4)
       ai: 7.0.105(zod@4.5.4)
-      orcel: link:packages/orcel
 
-  '@vercel/connect@2.2.0(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4))(orcel@packages+orcel)':
+  '@vercel/connect@2.2.0(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4))':
     dependencies:
       '@vercel/oidc': 3.8.8
     optionalDependencies:
@@ -20954,9 +20914,8 @@ snapshots:
       '@auth/core': 0.41.2
       '@chat-adapter/slack': 4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.5.4)
       ai: 7.0.105(zod@4.5.4)
-      orcel: link:packages/orcel
 
-  '@vercel/connect@2.3.3(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(supports-color@10.2.2)(zod@4.5.4))(@modelcontextprotocol/sdk@1.30.0(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4))(orcel@packages+orcel)':
+  '@vercel/connect@2.3.3(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(supports-color@10.2.2)(zod@4.5.4))(@modelcontextprotocol/sdk@1.30.0(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4))':
     dependencies:
       '@vercel/oidc': 3.8.9
     optionalDependencies:
@@ -20965,9 +20924,8 @@ snapshots:
       '@chat-adapter/slack': 4.34.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.5.4)
       '@modelcontextprotocol/sdk': 1.30.0(@cfworker/json-schema@4.1.1)(supports-color@10.2.2)(zod@4.5.4)
       ai: 7.0.105(zod@4.5.4)
-      orcel: link:packages/orcel
 
-  '@vercel/connect@2.3.3(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.41.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.5.4))(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4))(orcel@0.65.0(@opentelemetry/api@1.9.1)(ai@7.0.105(zod@4.5.4))(braintrust@3.29.0(@aws-sdk/credential-provider-web-identity@3.972.49)(supports-color@10.2.2)(zod@4.5.4))(chat@4.41.0(ai@7.0.105(zod@4.5.4))(supports-color@10.2.2)(zod@4.5.4))(dd-trace@6.13.0)(just-bash@3.1.0(supports-color@10.2.2))(microsandbox@0.5.5))':
+  '@vercel/connect@2.3.3(@ai-sdk/mcp@2.0.52(zod@4.5.4))(@auth/core@0.41.2)(@chat-adapter/slack@4.41.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.5.4))(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(supports-color@10.2.2)(zod@4.5.4))(ai@7.0.105(zod@4.5.4))':
     dependencies:
       '@vercel/oidc': 3.8.9
     optionalDependencies:
@@ -20976,7 +20934,6 @@ snapshots:
       '@chat-adapter/slack': 4.41.0(ai@7.0.105(zod@4.5.4))(bufferutil@4.1.0)(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.5.4)
       '@modelcontextprotocol/sdk': 1.30.0(@cfworker/json-schema@4.1.1)(supports-color@10.2.2)(zod@4.5.4)
       ai: 7.0.105(zod@4.5.4)
-      orcel: 0.65.0(@opentelemetry/api@1.9.1)(ai@7.0.105(zod@4.5.4))(braintrust@3.29.0(@aws-sdk/credential-provider-web-identity@3.972.49)(supports-color@10.2.2)(zod@4.5.4))(chat@4.41.0(ai@7.0.105(zod@4.5.4))(supports-color@10.2.2)(zod@4.5.4))(dd-trace@6.13.0)(just-bash@3.1.0(supports-color@10.2.2))(microsandbox@0.5.5)
 
   '@vercel/detect-agent@1.2.3': {}
 
@@ -23603,24 +23560,9 @@ snapshots:
 
   etag@1.8.1: {}
 
-  eve-channel-blooio@0.2.0(ai@7.0.105(zod@4.5.4))(orcel@packages+orcel):
+  eve-channel-blooio@0.2.0(ai@7.0.105(zod@4.5.4)):
     dependencies:
       ai: 7.0.105(zod@4.5.4)
-      orcel: link:packages/orcel
-
-  orcel@0.65.0(@opentelemetry/api@1.9.1)(ai@7.0.105(zod@4.5.4))(braintrust@3.29.0(@aws-sdk/credential-provider-web-identity@3.972.49)(supports-color@10.2.2)(zod@4.5.4))(chat@4.41.0(ai@7.0.105(zod@4.5.4))(supports-color@10.2.2)(zod@4.5.4))(dd-trace@6.13.0)(just-bash@3.1.0(supports-color@10.2.2))(microsandbox@0.5.5):
-    dependencies:
-      ai: 7.0.105(zod@4.5.4)
-      nitro: 3.0.260903-beta
-      undici: 8.9.0
-    optionalDependencies:
-      '@opentelemetry/api': 1.9.1
-      braintrust: 3.29.0(@aws-sdk/credential-provider-web-identity@3.972.49)(supports-color@10.2.2)(zod@4.5.4)
-      chat: 4.41.0(ai@7.0.105(zod@4.5.4))(supports-color@10.2.2)(zod@4.5.4)
-      dd-trace: 6.13.0
-      just-bash: 3.1.0(supports-color@10.2.2)
-      microsandbox: 0.5.5
-    optional: true
 
   event-target-shim@5.0.1: {}
 
@@ -24160,9 +24102,9 @@ snapshots:
 
   fzf@0.5.2: {}
 
-  gadget-extension@file:e2e/fixtures/gadget-extension(orcel@packages+orcel):
+  gadget-extension@file:e2e/fixtures/gadget-extension(@orcel/orcel@packages+orcel):
     dependencies:
-      orcel: link:packages/orcel
+      '@orcel/orcel': link:packages/orcel
       slugify: 1.6.6
       zod: 4.5.4
 
@@ -24266,9 +24208,9 @@ snapshots:
 
   github-slugger@2.0.0: {}
 
-  gizmo-extension@file:e2e/fixtures/gizmo-extension(orcel@packages+orcel):
+  gizmo-extension@file:e2e/fixtures/gizmo-extension(@orcel/orcel@packages+orcel):
     dependencies:
-      orcel: link:packages/orcel
+      '@orcel/orcel': link:packages/orcel
       zod: 4.5.4
 
   glob-parent@5.1.2:

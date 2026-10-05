@@ -11,7 +11,7 @@ vi.mock("#shared/resolve-orcel-binary.js", async () => {
     // assertions stay deterministic without a real orcel install on disk. The
     // real resolver is exercised in resolve-orcel-binary.integration.test.ts.
     resolveOrcelBinaryPath: (appRoot: string) =>
-      join(appRoot, "node_modules", "orcel", "bin", "orcel.js"),
+      join(appRoot, "node_modules", "@orcel", "orcel", "bin", "orcel.js"),
   };
 });
 
@@ -48,7 +48,7 @@ describe("ensureOrcelVercelServicesConfig", () => {
       services: {
         orcel: {
           buildCommand:
-            "cd '../../..' && export ORCEL_INTERNAL_BUILD_OUTPUT_DIRECTORY='.orcel/vercel-services/orcel/.vercel/output' && export ORCEL_INTERNAL_HOST_BUILD_OUTPUT_DIRECTORY='.vercel/output' && node 'node_modules/orcel/bin/orcel.js' build",
+            "cd '../../..' && export ORCEL_INTERNAL_BUILD_OUTPUT_DIRECTORY='.orcel/vercel-services/orcel/.vercel/output' && export ORCEL_INTERNAL_HOST_BUILD_OUTPUT_DIRECTORY='.vercel/output' && node 'node_modules/@orcel/orcel/bin/orcel.js' build",
           framework: "eve",
           outputDirectory: ".vercel/output",
           routes: [
@@ -109,7 +109,7 @@ describe("ensureOrcelVercelServicesConfig", () => {
     });
 
     expect(result.mode === "generated" && result.services.orcel?.buildCommand).toBe(
-      "cd '../../../agent' && export ORCEL_INTERNAL_BUILD_OUTPUT_DIRECTORY='../.orcel/vercel-services/orcel/.vercel/output' && export ORCEL_INTERNAL_HOST_BUILD_OUTPUT_DIRECTORY='../.vercel/output' && node '../node_modules/orcel/bin/orcel.js' build",
+      "cd '../../../agent' && export ORCEL_INTERNAL_BUILD_OUTPUT_DIRECTORY='../.orcel/vercel-services/orcel/.vercel/output' && export ORCEL_INTERNAL_HOST_BUILD_OUTPUT_DIRECTORY='../.vercel/output' && node '../node_modules/@orcel/orcel/bin/orcel.js' build",
     );
   });
 

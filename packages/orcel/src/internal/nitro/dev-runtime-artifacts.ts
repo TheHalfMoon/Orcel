@@ -19,6 +19,7 @@ import {
 } from "#internal/nitro/dev-runtime-artifacts-retention.js";
 import { renameWithTransientBusyRetry } from "#shared/rename-with-retry.js";
 import { resolvePackageRoot } from "#internal/application/package.js";
+import { ORCEL_PACKAGE_NAME } from "#internal/package-name.js";
 import { resolveDevelopmentRuntimeArtifactsSnapshotsDirectory } from "#internal/nitro/dev-runtime-generation-metadata.js";
 
 const DEV_RUNTIME_ARTIFACTS_DIRECTORY = "dev-runtime";
@@ -151,7 +152,7 @@ export async function stageDevelopmentRuntimeArtifactsSnapshot(
 }
 
 async function mountFrameworkPackage(runtimeAppRoot: string): Promise<void> {
-  const mountPath = join(runtimeAppRoot, "node_modules", "orcel");
+  const mountPath = join(runtimeAppRoot, "node_modules", ...ORCEL_PACKAGE_NAME.split("/"));
   await mkdir(dirname(mountPath), { recursive: true });
   await rm(mountPath, { force: true, recursive: true });
   await symlink(resolvePackageRoot(), mountPath, "junction");

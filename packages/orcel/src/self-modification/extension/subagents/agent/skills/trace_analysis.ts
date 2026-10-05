@@ -1,4 +1,4 @@
-import { defineSkill } from "orcel/skills";
+import { defineSkill } from "@orcel/orcel/skills";
 
 import type { ResolvedSelfModificationConfig } from "../../../../config.js";
 import { defineLocalOnlyDynamic, resolveLocalOnly } from "../../../local-only.js";

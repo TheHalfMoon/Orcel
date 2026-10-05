@@ -1,6 +1,6 @@
-import type { SandboxSession } from "orcel/sandbox";
-import { defineTool } from "orcel/tools";
-import { never } from "orcel/tools/approval";
+import type { SandboxSession } from "@orcel/orcel/sandbox";
+import { defineTool } from "@orcel/orcel/tools";
+import { never } from "@orcel/orcel/tools/approval";
 import { z } from "zod";
 
 import {

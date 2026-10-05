@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 import { PREFIX_REQUEST } from "../../agent/lib/prompt-prefix";
 
 export default defineEval({

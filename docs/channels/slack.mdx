@@ -24,7 +24,7 @@ The generated channel resolves credentials at runtime:
 
 ```ts title="agent/channels/slack.ts"
 import { connectSlackCredentials } from "@vercel/connect/eve";
-import { slackChannel } from "orcel/channels/slack";
+import { slackChannel } from "@orcel/orcel/channels/slack";
 
 export default slackChannel({
   credentials: connectSlackCredentials("slack/my-agent"),
@@ -36,7 +36,7 @@ export default slackChannel({
 Function-form bot tokens receive `{ teamId }` when Slack supplies the app installation workspace. Use it to select an installation in a self-managed multi-workspace app. The id can differ from the actor or content workspace for Slack Connect events:
 
 ```ts title="agent/channels/slack.ts"
-import { slackChannel } from "orcel/channels/slack";
+import { slackChannel } from "@orcel/orcel/channels/slack";
 
 export default slackChannel({
   credentials: {
@@ -93,7 +93,7 @@ Select the matching connector at runtime instead of leaving the generated produc
 
 ```ts title="agent/channels/slack.ts"
 import { connectSlackCredentials } from "@vercel/connect/eve";
-import { slackChannel } from "orcel/channels/slack";
+import { slackChannel } from "@orcel/orcel/channels/slack";
 
 const connectorUid =
   process.env.VERCEL_ENV === "preview" ? "slack/your-agent-preview" : "slack/my-agent";
@@ -173,7 +173,7 @@ Use `onShortcut(shortcut, ctx)` for message shortcuts and global shortcuts confi
 Use `onSlashCommand(command, ctx)` for commands configured under **Slash Commands** in your Slack app. The handler receives the command name, argument text, invoking user, channel, workspace, trigger ID, and response URL. It also receives workspace-scoped Slack API access. orcel acknowledges slash commands immediately with an empty `200 OK` response and keeps the handler alive in the background:
 
 ```ts title="agent/channels/slack.ts"
-import { slackChannel } from "orcel/channels/slack";
+import { slackChannel } from "@orcel/orcel/channels/slack";
 
 export default slackChannel({
   async onSlashCommand(command, ctx) {
@@ -197,7 +197,7 @@ A valid Slack signature proves that Slack sent the event. It does not decide whi
 
 ```ts title="agent/channels/slack.ts"
 import { connectSlackCredentials } from "@vercel/connect/eve";
-import { defaultSlackAuth, slackChannel, type SlackMessage } from "orcel/channels/slack";
+import { defaultSlackAuth, slackChannel, type SlackMessage } from "@orcel/orcel/channels/slack";
 
 const allowedConversations = new Set(["C01234567", "D01234567"]);
 const allowedUsers = new Set(["U01234567"]);
@@ -277,7 +277,7 @@ Like `threadContext`, this helper calls `conversations.replies` and requires the
 You get the triggering mention by default, but not the earlier replies in the thread. Enable `threadContext` to fetch and inject them with every message attributed by stable Slack user id. Use `since: "last-agent-reply"` so repeated mentions inject only what is new:
 
 ```ts
-import { slackChannel } from "orcel/channels/slack";
+import { slackChannel } from "@orcel/orcel/channels/slack";
 import { connectSlackCredentials } from "@vercel/connect/eve";
 
 export default slackChannel({
@@ -353,7 +353,7 @@ Use `onEvent` for subscribed events such as `reaction_added`, `team_join`, or `c
 
 ```ts title="agent/channels/slack.ts"
 import { connectSlackCredentials } from "@vercel/connect/eve";
-import { slackChannel } from "orcel/channels/slack";
+import { slackChannel } from "@orcel/orcel/channels/slack";
 
 const onboardingChannels = ["C0123ABC", "C0456DEF"];
 
@@ -404,7 +404,7 @@ messages, for example, has no inbound Slack request. For that, call the
 same primitive the handle uses directly:
 
 ```ts
-import { callSlackApi } from "orcel/channels/slack";
+import { callSlackApi } from "@orcel/orcel/channels/slack";
 import { connectSlackCredentials } from "@vercel/connect/eve";
 
 const { botToken } = connectSlackCredentials("slack/my-agent");
@@ -500,7 +500,7 @@ Call `next()` to run the rest of the chain, ending with orcel's default. Call it
 
 ```ts title="agent/channels/slack.ts"
 import { connectSlackCredentials } from "@vercel/connect/eve";
-import { defineSlackRenderer, slackChannel } from "orcel/channels/slack";
+import { defineSlackRenderer, slackChannel } from "@orcel/orcel/channels/slack";
 
 const feedback = defineSlackRenderer({
   events: {
@@ -560,7 +560,7 @@ Renderers run in the order you list them, and the first one is outermost. `onInt
 A renderer can draw any of the turn's tool calls from their input. For example, give the agent a `plan` tool that records a checklist, and show the checklist ahead of orcel's task rows:
 
 ```ts title="agent/tools/plan.ts"
-import { defineTool } from "orcel/tools";
+import { defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 export default defineTool({
@@ -581,7 +581,7 @@ export default defineTool({
 ```
 
 ```ts title="agent/channels/slack.ts"
-import { type BlockKitBlock, defineSlackRenderer, slackChannel } from "orcel/channels/slack";
+import { type BlockKitBlock, defineSlackRenderer, slackChannel } from "@orcel/orcel/channels/slack";
 
 interface PlanItem {
   readonly status: "pending" | "working" | "completed" | "failed";
@@ -630,7 +630,7 @@ HITL renders as Slack buttons and selects. Fixed-choice actions and freeform mod
 Set `approvalChannel` to choose where each input request appears, including tool approvals and questions from `ctx.ask()`. Return `"direct-message"` when the request must be visible only to the Slack user who triggered the turn, or `"thread"` for the normal shared thread.
 
 ```ts title="agent/channels/slack.ts"
-import { slackChannel } from "orcel/channels/slack";
+import { slackChannel } from "@orcel/orcel/channels/slack";
 
 export default slackChannel({
   approvalChannel: (request) =>
@@ -645,7 +645,7 @@ The callback receives the `InputRequest` and current `SessionContext`, so it can
 A renderer's `input.requested` handler can extend delivery and then hand the requests on to orcel with `next()`. For example, an application can add non-sensitive context to the Slack thread before orcel renders the actionable controls. The configured `approvalChannel` still sends sensitive reviews to a DM and keeps ordinary requests in the thread:
 
 ```ts title="agent/channels/slack.ts"
-import { slackChannel } from "orcel/channels/slack";
+import { slackChannel } from "@orcel/orcel/channels/slack";
 import { isPrivate } from "../lib/review-policy";
 
 export default slackChannel({

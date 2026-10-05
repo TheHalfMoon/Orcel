@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { SandboxNetworkPolicy, SandboxSession } from "orcel/sandbox";
+import type { SandboxNetworkPolicy, SandboxSession } from "@orcel/orcel/sandbox";
 
 type NetworkPolicySandboxSession = SandboxSession & {
   setNetworkPolicy(policy: SandboxNetworkPolicy): Promise<void>;

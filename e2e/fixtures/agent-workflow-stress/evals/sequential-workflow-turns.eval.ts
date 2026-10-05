@@ -1,5 +1,5 @@
-import { defineEval, type OrcelEvalSession } from "orcel/evals";
-import { equals } from "orcel/evals/expect";
+import { defineEval, type OrcelEvalSession } from "@orcel/orcel/evals";
+import { equals } from "@orcel/orcel/evals/expect";
 
 const TURN_COUNT = 100;
 const PERFORMANCE_LOG_PREFIX = "ORCEL_WORKFLOW_STRESS_METRIC=";

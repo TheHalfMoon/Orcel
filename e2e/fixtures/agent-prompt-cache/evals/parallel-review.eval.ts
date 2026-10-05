@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { defineEval, type OrcelEvalContext, type OrcelEvalTurn } from "orcel/evals";
-import { satisfies } from "orcel/evals/expect";
+import { defineEval, type OrcelEvalContext, type OrcelEvalTurn } from "@orcel/orcel/evals";
+import { satisfies } from "@orcel/orcel/evals/expect";
 import { z } from "zod";
 import { purchasingSheets } from "../purchasing-sheets";
 

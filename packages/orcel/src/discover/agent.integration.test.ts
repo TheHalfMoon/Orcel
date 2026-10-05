@@ -1295,7 +1295,7 @@ describe("discoverAgent (memory)", () => {
         "node_modules/@acme/crm/package.json": JSON.stringify({
           name: "@acme/crm",
           orcel: { extension: { source: "source", dist: "extension" } },
-          peerDependencies: { orcel: "*" },
+          peerDependencies: { "@orcel/orcel": "*" },
         }),
         "node_modules/@acme/crm/extension/_manifest.json": JSON.stringify({
           kind: "orcel-extension",
@@ -1335,7 +1335,7 @@ describe("discoverAgent (memory)", () => {
         "node_modules/@acme/crm/package.json": JSON.stringify({
           name: "@acme/crm",
           orcel: { extension: { source: "source", dist: "extension" } },
-          peerDependencies: { orcel: "^2" },
+          peerDependencies: { "@orcel/orcel": "^2" },
         }),
         "node_modules/@acme/crm/extension/_manifest.json": EXTENSION_COMPATIBILITY_MANIFEST,
         "node_modules/@acme/crm/extension/extension.ts": "export default {};\n",

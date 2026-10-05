@@ -9,7 +9,7 @@ describe("sandbox compilation", () => {
     const app = await createAppRoot("orcel-sandbox-environment-", {
       files: {
         "agent/sandbox.ts": [
-          'import { DefaultSandbox, defineSandbox } from "orcel/sandbox";',
+          'import { DefaultSandbox, defineSandbox } from "@orcel/orcel/sandbox";',
           "export const environment = DefaultSandbox.environment();",
           "export default defineSandbox(() => environment.open());",
         ].join("\n"),
@@ -32,7 +32,7 @@ describe("sandbox compilation", () => {
           "export default { description: 'foo', model: 'openai/gpt-5.4' };",
         "agent/subagents/foo/description.md": "foo\n",
         "agent/subagents/foo/sandbox/sandbox.ts":
-          'import { defineParentSandbox } from "orcel/sandbox"; export default defineParentSandbox();',
+          'import { defineParentSandbox } from "@orcel/orcel/sandbox"; export default defineParentSandbox();',
         "agent/subagents/foo/sandbox/workspace/bar.txt": "child seed\n",
       },
     });

@@ -5,6 +5,6 @@ export function workflowToolContextErrorMessage(helper: "agent" | "ask"): string
 export function workflowCallbackErrorMessage(kind: "channel" | "schedule"): string {
   return (
     `"use workflow" is not supported on ${kind} callbacks. ` +
-    'Use defineWorkflowTool() from "orcel/tools" to author a workflow tool.'
+    'Use defineWorkflowTool() from "@orcel/orcel/tools" to author a workflow tool.'
   );
 }

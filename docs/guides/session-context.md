@@ -18,7 +18,7 @@ These APIs work only during orcel-managed runtime execution. Calling them during
 `ctx.session` describes the durable session and active turn:
 
 ```ts title="agent/tools/who_called_me.ts"
-import { defineTool } from "orcel/tools";
+import { defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 export default defineTool({
@@ -73,7 +73,7 @@ The environment must be the one configured for the current sandbox. orcel reject
 
 ## Custom state with `defineState`
 
-Use `defineState` for durable per-session values that tools, hooks, and channel handlers share. Unlike the `ctx` accessors, import it from `orcel/context` and declare the handle at module scope. Its `get()` and `update()` methods still require active orcel execution. See [State](../concepts/state) for the read, update, reset, and subagent-isolation model.
+Use `defineState` for durable per-session values that tools, hooks, and channel handlers share. Unlike the `ctx` accessors, import it from `@orcel/orcel/context` and declare the handle at module scope. Its `get()` and `update()` methods still require active orcel execution. See [State](../concepts/state) for the read, update, reset, and subagent-isolation model.
 
 ## Where these APIs work
 

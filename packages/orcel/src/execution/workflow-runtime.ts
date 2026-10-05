@@ -25,7 +25,7 @@ import {
   buildSubagentRootAttributes,
   readParentLineage,
 } from "#execution/orcel-workflow-attributes.js";
-import { resolveInstalledPackageInfo } from "#internal/application/package.js";
+import { ORCEL_STABLE_WORKFLOW_ID_BASE } from "#internal/package-name.js";
 import { createLogger, logError } from "#internal/logging.js";
 import {
   getHookByToken,
@@ -76,10 +76,9 @@ import {
   WORKFLOW_TOOL_RUN_WORKFLOW_NAME,
   WORKFLOW_ENTRY_NAME,
 } from "#execution/stable-workflow-names.js";
-const ORCEL_PACKAGE_INFO = resolveInstalledPackageInfo();
 const COMMAND_HOOK_READY_TIMEOUT_MS = 30_000;
 
-const STABLE_ID_BASE = ORCEL_PACKAGE_INFO.name;
+const STABLE_ID_BASE = ORCEL_STABLE_WORKFLOW_ID_BASE;
 
 const log = createLogger("execution.workflow-runtime");
 

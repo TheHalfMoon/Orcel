@@ -1,6 +1,6 @@
 import { MOCK_MODEL_SENTINEL } from "@orcel-e2e/config";
-import { defineEval } from "orcel/evals";
-import { satisfies } from "orcel/evals/expect";
+import { defineEval } from "@orcel/orcel/evals";
+import { satisfies } from "@orcel/orcel/evals/expect";
 
 const TOOL_NAME = "wait-for-cancellation";
 const requestedModel = process.env.ORCEL_E2E_MODEL;

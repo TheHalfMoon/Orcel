@@ -22,12 +22,12 @@ export const evaluationModel = {
   supportedQuestionTypes: ["choice"],
   async doEvaluate() { throw new Error("Build must not evaluate models."); },
 } satisfies Exclude<Experimental_EvaluationModel, string>;`,
-      "agent/agent.ts": `import { defineAgent } from "orcel";
-import { auto } from "orcel/models";
-import { anthropic } from "orcel/models/anthropic";
+      "agent/agent.ts": `import { defineAgent } from "@orcel/orcel";
+import { auto } from "@orcel/orcel/models";
+import { anthropic } from "@orcel/orcel/models/anthropic";
 export default defineAgent({ model: auto({ options: { "openai/gpt-5.6-sol": "Investigations", my_secret_model: { model: anthropic("sonnet-5"), reasoning: "low", description: "Routine work" } } }) });`,
-      "agent/tools/classify.ts": `import { defineTool } from "orcel/tools";
-import { evaluate } from "orcel/ai";
+      "agent/tools/classify.ts": `import { defineTool } from "@orcel/orcel/tools";
+import { evaluate } from "@orcel/orcel/ai";
 export default defineTool({
   description: "Classify an incident",
   inputSchema: { type: "object", properties: {}, additionalProperties: false },
@@ -41,9 +41,9 @@ export default defineTool({
   },
 });`,
       "agent/subagents/worker/instructions.md": "Review the assigned evidence.",
-      "agent/subagents/worker/agent.ts": `import { defineAgent } from "orcel";
-import { auto } from "orcel/models";
-import { anthropic } from "orcel/models/anthropic";
+      "agent/subagents/worker/agent.ts": `import { defineAgent } from "@orcel/orcel";
+import { auto } from "@orcel/orcel/models";
+import { anthropic } from "@orcel/orcel/models/anthropic";
 import { evaluationModel } from "../../evaluation";
 export default defineAgent({ description: "Review evidence", model: auto({ model: evaluationModel, options: { reviewer: { model: anthropic("sonnet-5"), reasoning: "low", description: "Investigations" } } }) });`,
     },
@@ -60,5 +60,5 @@ export default defineAgent({ description: "Review evidence", model: auto({ model
   });
   expect(built.stdout).toContain("built output");
   await access(join(app.appRoot, ".output/server/index.mjs"));
-  await expect(access(join(app.appRoot, "node_modules/orcel/src"))).rejects.toThrow();
+  await expect(access(join(app.appRoot, "node_modules/@orcel/orcel/src"))).rejects.toThrow();
 });

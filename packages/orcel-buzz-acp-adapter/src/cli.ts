@@ -5,7 +5,7 @@ import { access } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createPrompter, WizardCancelledError } from "orcel/setup";
+import { createPrompter, WizardCancelledError } from "@orcel/orcel/setup";
 import { SHARED_PRINCIPAL_OPT_IN } from "./environment.js";
 import { readOrcelTargetInfo, resolveBundledOrcelBin } from "./orcel-target.js";
 import {

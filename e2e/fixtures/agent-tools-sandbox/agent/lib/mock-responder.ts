@@ -1,4 +1,4 @@
-import type { MockModelRequest, MockModelResponse } from "orcel/evals";
+import type { MockModelRequest, MockModelResponse } from "@orcel/orcel/evals";
 
 const SUBAGENT_DIRECTIVE = /ask the `([^`]+)` subagent with message:\s*([\s\S]+)/iu;
 const BASH_DIRECTIVE = /run the bash command `([^`]+)`/iu;

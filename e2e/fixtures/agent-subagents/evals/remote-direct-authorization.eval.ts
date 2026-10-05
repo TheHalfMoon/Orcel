@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 import { DIRECT_AUTHORIZATION } from "../agent/lib/remote-direct-hitl-script.js";
 
 /** Alice's fixture principal; the remote hop itself runs as the `router-app` service. */

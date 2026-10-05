@@ -1,5 +1,5 @@
-import { DefaultSandbox, defineSandbox, type SandboxSession } from "orcel/sandbox";
-import { VercelSandbox } from "orcel/sandbox/vercel";
+import { DefaultSandbox, defineSandbox, type SandboxSession } from "@orcel/orcel/sandbox";
+import { VercelSandbox } from "@orcel/orcel/sandbox/vercel";
 
 /**
  * Sandbox lifecycle fixture exercising the surfaces an agent author relies

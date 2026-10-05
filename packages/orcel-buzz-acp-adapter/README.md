@@ -56,7 +56,7 @@ orcel-buzz-acp-adapter doctor ./path/to/orcel-app
 From the orcel repository:
 
 ```sh
-pnpm --filter orcel build
+pnpm --filter @orcel/orcel build
 pnpm --filter @orcel/buzz-acp-adapter build
 node packages/orcel-buzz-acp-adapter/dist/cli.js install apps/fixtures/weather-agent
 ```

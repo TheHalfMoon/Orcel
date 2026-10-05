@@ -1,1 +1,1 @@
-export { default } from "orcel/self-modification/sandbox";
+export { default } from "@orcel/orcel/self-modification/sandbox";

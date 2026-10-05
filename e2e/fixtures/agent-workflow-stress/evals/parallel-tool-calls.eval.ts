@@ -1,5 +1,5 @@
-import type { MessageStreamEvent } from "orcel/client";
-import { defineEval } from "orcel/evals";
+import type { MessageStreamEvent } from "@orcel/orcel/client";
+import { defineEval } from "@orcel/orcel/evals";
 
 import { FANOUT_LABELS, FANOUT_REPLY, FANOUT_TOOL_NAME } from "../agent/lib/fanout";
 

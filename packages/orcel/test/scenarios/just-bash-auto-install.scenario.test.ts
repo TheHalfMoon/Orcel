@@ -23,15 +23,15 @@ describe("just-bash automatic installation", () => {
         "agent/agent.ts": 'export default { model: "openai/gpt-5.4-mini" };\n',
         "agent/instructions.md": "Help with everyday tasks.\n",
         "agent/tools/check_shell.ts": [
-          'import { defineTool } from "orcel/tools";',
+          'import { defineTool } from "@orcel/orcel/tools";',
           'import { z } from "zod";',
           'export default defineTool({ description: "Check the shell", inputSchema: z.object({}),',
           '  async execute(_input, ctx) { const sandbox = await ctx.getSandbox(); return await sandbox.run({ command: "echo lazy-ready" }); },',
           "});",
         ].join("\n"),
         "agent/sandbox/sandbox.ts": [
-          'import { defineSandbox } from "orcel/sandbox";',
-          'import { JustBashSandbox } from "orcel/sandbox/just-bash";',
+          'import { defineSandbox } from "@orcel/orcel/sandbox";',
+          'import { JustBashSandbox } from "@orcel/orcel/sandbox/just-bash";',
           "export const environment = JustBashSandbox.environment({",
           "  prepare: async (sandbox) => {",
           '    const result = await sandbox.run({ command: "echo ready" });',

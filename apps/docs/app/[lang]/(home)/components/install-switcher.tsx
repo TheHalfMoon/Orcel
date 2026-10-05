@@ -16,7 +16,7 @@ import type { JSX } from "react";
 import { analyticsEvents } from "@/lib/analytics/events";
 import { cn } from "@/lib/utils";
 
-const HUMAN_COMMAND = "npx orcel@latest init my-agent";
+const HUMAN_COMMAND = "npx @orcel/orcel@latest init my-agent";
 const AGENT_COMMAND = "npx skills add vercel/orcel";
 
 export type InstallAudience = "humans" | "agents";

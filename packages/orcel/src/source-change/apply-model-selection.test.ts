@@ -5,7 +5,7 @@ import {
   readModelSelectionFromSource,
 } from "./apply-model-selection.js";
 
-const SCAFFOLD = `import { defineAgent } from "orcel";
+const SCAFFOLD = `import { defineAgent } from "@orcel/orcel";
 
 export default defineAgent({
   model: "anthropic/claude-sonnet-5",
@@ -14,24 +14,24 @@ export default defineAgent({
 
 describe("applyModelSelectionToSource", () => {
   it("switches a Gateway string to chatgpt() and adds its import", async () => {
-    const source = `import { defineAgent } from "orcel";\n\nexport default defineAgent({\n  model: "openai/gpt-5.5",\n});\n`;
+    const source = `import { defineAgent } from "@orcel/orcel";\n\nexport default defineAgent({\n  model: "openai/gpt-5.5",\n});\n`;
 
     const result = await applyModelSelectionToSource(source, "chatgpt/gpt-5.6-sol");
 
     expect(result.kind).toBe("applied");
     if (result.kind !== "applied") return;
-    expect(result.nextSource).toContain('import { chatgpt } from "orcel/models/openai";');
+    expect(result.nextSource).toContain('import { chatgpt } from "@orcel/orcel/models/openai";');
     expect(result.nextSource).toContain('model: chatgpt("gpt-5.6-sol")');
   });
 
   it("switches chatgpt() back to a Gateway string and removes its sole import", async () => {
-    const source = `import { defineAgent } from "orcel";\nimport { chatgpt } from "orcel/models/openai";\n\nexport default defineAgent({\n  model: chatgpt("gpt-5.6-sol"),\n});\n`;
+    const source = `import { defineAgent } from "@orcel/orcel";\nimport { chatgpt } from "@orcel/orcel/models/openai";\n\nexport default defineAgent({\n  model: chatgpt("gpt-5.6-sol"),\n});\n`;
 
     const result = await applyModelSelectionToSource(source, "anthropic/claude-sonnet-5");
 
     expect(result.kind).toBe("applied");
     if (result.kind !== "applied") return;
-    expect(result.nextSource).not.toContain("orcel/models/openai");
+    expect(result.nextSource).not.toContain("@orcel/orcel/models/openai");
     expect(result.nextSource).toContain('model: "anthropic/claude-sonnet-5"');
   });
 
@@ -41,7 +41,7 @@ describe("applyModelSelectionToSource", () => {
   ])(
     "resolves the no-argument %s() default when switching back to Gateway",
     async (helper, selection) => {
-      const source = `import { defineAgent } from "orcel";\nimport { ${helper} } from "orcel/models/openai";\n\nexport default defineAgent({ model: ${helper}(), reasoning: "low" });\n`;
+      const source = `import { defineAgent } from "@orcel/orcel";\nimport { ${helper} } from "@orcel/orcel/models/openai";\n\nexport default defineAgent({ model: ${helper}(), reasoning: "low" });\n`;
 
       expect(await readModelSelectionFromSource(source)).toBe(selection);
       const result = await applyModelSelectionToSource(source, "openai/gpt-5.5");
@@ -49,14 +49,14 @@ describe("applyModelSelectionToSource", () => {
       expect(result.kind).toBe("applied");
       if (result.kind !== "applied") return;
       expect(result.from).toBe(selection);
-      expect(result.nextSource).not.toContain("orcel/models/openai");
+      expect(result.nextSource).not.toContain("@orcel/orcel/models/openai");
       expect(result.nextSource).toContain('model: "openai/gpt-5.5"');
       expect(result.nextSource).toContain('reasoning: "low"');
     },
   );
 
   it("normalizes an openai-prefixed chatgpt() argument when changing models", async () => {
-    const source = `import { chatgpt } from "orcel/models/openai";\nexport default defineAgent({ model: chatgpt("openai/gpt-5.5") });\n`;
+    const source = `import { chatgpt } from "@orcel/orcel/models/openai";\nexport default defineAgent({ model: chatgpt("openai/gpt-5.5") });\n`;
 
     const result = await applyModelSelectionToSource(source, "chatgpt/gpt-5.6-sol");
 
@@ -67,23 +67,23 @@ describe("applyModelSelectionToSource", () => {
   });
 
   it("preserves other imports from orcel/models/openai", async () => {
-    const source = `import { defineAgent } from "orcel";\nimport { chatgpt, other } from "orcel/models/openai";\nexport default defineAgent({ model: chatgpt("gpt-5.6-sol") });\n`;
+    const source = `import { defineAgent } from "@orcel/orcel";\nimport { chatgpt, other } from "@orcel/orcel/models/openai";\nexport default defineAgent({ model: chatgpt("gpt-5.6-sol") });\n`;
 
     const result = await applyModelSelectionToSource(source, "openai/gpt-5.5");
 
     expect(result.kind).toBe("applied");
     if (result.kind !== "applied") return;
-    expect(result.nextSource).toContain('import { other } from "orcel/models/openai";');
+    expect(result.nextSource).toContain('import { other } from "@orcel/orcel/models/openai";');
   });
 
   it("keeps the chatgpt import when another call still uses it", async () => {
-    const source = `import { chatgpt } from "orcel/models/openai";\nconst fallback = chatgpt("gpt-5.5");\nexport default defineAgent({ model: chatgpt() });\n`;
+    const source = `import { chatgpt } from "@orcel/orcel/models/openai";\nconst fallback = chatgpt("gpt-5.5");\nexport default defineAgent({ model: chatgpt() });\n`;
 
     const result = await applyModelSelectionToSource(source, "openai/gpt-5.5");
 
     expect(result.kind).toBe("applied");
     if (result.kind !== "applied") return;
-    expect(result.nextSource).toContain('import { chatgpt } from "orcel/models/openai";');
+    expect(result.nextSource).toContain('import { chatgpt } from "@orcel/orcel/models/openai";');
   });
 
   it("rewrites Gateway strings without changing surrounding source", async () => {
@@ -140,11 +140,11 @@ describe("applyModelSelectionToSource", () => {
 });
 
 it.each([
-  ["openai-api/gpt-5.6-luna-fast", "openai", "orcel/models/openai"],
-  ["anthropic-api/claude-sonnet-5", "anthropic", "orcel/models/anthropic"],
+  ["openai-api/gpt-5.6-luna-fast", "openai", "@orcel/orcel/models/openai"],
+  ["anthropic-api/claude-sonnet-5", "anthropic", "@orcel/orcel/models/anthropic"],
 ])("switches a Gateway string to %s and back safely", async (selection, helper, module) => {
   const source =
-    'import { defineAgent } from "orcel";\nexport default defineAgent({ model: "openai/gpt-5.6-luna-fast" });';
+    'import { defineAgent } from "@orcel/orcel";\nexport default defineAgent({ model: "openai/gpt-5.6-luna-fast" });';
   const result = await applyModelSelectionToSource(source, selection);
   expect(result.kind).toBe("applied");
   if (result.kind !== "applied") return;
@@ -164,7 +164,7 @@ it("refuses to shadow a custom provider import", async () => {
 
 it("does not recognize a commented import as an orcel helper", async () => {
   const source =
-    '// import { openai } from "orcel/models/openai";\nconst openai = customProvider;\nexport default defineAgent({ model: openai("example") });';
+    '// import { openai } from "@orcel/orcel/models/openai";\nconst openai = customProvider;\nexport default defineAgent({ model: openai("example") });';
   expect((await applyModelSelectionToSource(source, "anthropic/claude-sonnet-5")).kind).toBe(
     "bail",
   );
@@ -174,7 +174,7 @@ it.each(["openai", "anthropic"])(
   "distinguishes orcel's %s helper from a foreign provider import",
   async (helper) => {
     const config = `export default defineAgent({model: ${helper}("custom-model")});`;
-    const module = helper === "openai" ? "orcel/models/openai" : "orcel/models/anthropic";
+    const module = helper === "openai" ? "@orcel/orcel/models/openai" : "@orcel/orcel/models/anthropic";
     await expect(
       readModelSelectionFromSource(`import { ${helper} } from "${module}"; ${config}`),
     ).resolves.toBe(`${helper}-api/custom-model`);

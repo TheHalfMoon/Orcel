@@ -31,8 +31,8 @@ describe("relocated production applications", () => {
         "apps/service/agent/skills/probe.md":
           "---\ndescription: Probe the sandbox.\n---\nProbe content.",
         "apps/service/agent/sandbox/sandbox.ts": [
-          'import { defineSandbox } from "orcel/sandbox";',
-          'import { JustBashSandbox } from "orcel/sandbox/just-bash";',
+          'import { defineSandbox } from "@orcel/orcel/sandbox";',
+          'import { JustBashSandbox } from "@orcel/orcel/sandbox/just-bash";',
           'import { marker } from "@/marker";',
           "export const environment = JustBashSandbox.environment({",
           "  prepare: async (sandbox) => {",
@@ -55,7 +55,7 @@ describe("relocated production applications", () => {
         }),
         "packages/extension/lib/marker.ts": 'export const marker = "extension-tool";',
         "packages/extension/extension/extension.ts":
-          'import { defineExtension } from "orcel/extension"; export default defineExtension();',
+          'import { defineExtension } from "@orcel/orcel/extension"; export default defineExtension();',
         "packages/extension/extension/tools/probe.ts": [
           'import { marker } from "@/marker";',
           'if (marker !== "extension-tool") throw new Error("Wrong extension alias");',

@@ -40,7 +40,7 @@ describe("development extensions", () => {
         mountLogicalPath: "extensions/self-modification.ts",
         mountId: "extensions/self-modification",
         namespace: "self-modification",
-        packageName: "orcel",
+        packageName: "@orcel/orcel",
       },
     ]);
     expect(subagent.owner).toMatchObject({ mountId: "extensions/self-modification" });
@@ -61,7 +61,9 @@ describe("development extensions", () => {
       manifest: compiled,
       moduleMapPath: "/virtual/source-test/.orcel/compile/module-map.mjs",
     });
-    expect(generated).toContain("orcel/self-modification?orcel-mount=extensions%2Fself-modification");
+    expect(generated).toContain(
+      "@orcel/orcel/self-modification?orcel-mount=extensions%2Fself-modification",
+    );
   });
 
   it("does not replace an authored self-modification mount", async () => {

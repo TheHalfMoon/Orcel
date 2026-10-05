@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 // The `run_python` authored tool grabs a live sandbox via `ctx.getSandbox()`,
 // writes a generated script with `writeTextFile`, and executes it with `run`.

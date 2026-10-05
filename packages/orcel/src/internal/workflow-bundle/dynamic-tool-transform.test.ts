@@ -114,7 +114,7 @@ beforeEach(() => {
 describe("transformDynamicToolExecute — evaluation", () => {
   it("stamps independent durable descriptors for every callback phase", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -198,7 +198,7 @@ export default defineDynamic({
 
   it("preserves top-level function-form approval properties", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 function referencedApproval() {
   return "user-approval";
@@ -248,7 +248,7 @@ export default defineDynamic({
 
   it("wrapper calls hoisted function with correct closure vars", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -286,7 +286,7 @@ export default defineDynamic({
 
   it("forwards destructured parameters with defaults", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -322,7 +322,7 @@ export default defineDynamic({
 
   it("__closureVars captures a snapshot at resolver return time", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -354,7 +354,7 @@ export default defineDynamic({
 
   it("stamped execute callback is callable with snapshotted vars", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -387,7 +387,7 @@ export default defineDynamic({
 
   it("replay path: step function + stored closure vars produce correct result", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -426,7 +426,7 @@ export default defineDynamic({
 
   it("multiple tools in same resolver each get independent wrappers", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -474,7 +474,7 @@ export default defineDynamic({
 
   it("does not capture object keys or text from string literals", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -529,7 +529,7 @@ export default defineDynamic({
 
   it("captures computed keys and defaults inside binding patterns", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -566,7 +566,7 @@ export default defineDynamic({
 
   it("captures a direct identifier in an arrow expression body", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -594,7 +594,7 @@ export default defineDynamic({
 
   it("captures runtime references inside TypeScript expressions", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -630,7 +630,7 @@ export default defineDynamic({
 
   it("async execute preserves await semantics", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -663,7 +663,7 @@ export default defineDynamic({
 
   it("for-of loop tools each capture their iteration variable", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -706,7 +706,7 @@ export default defineDynamic({
 
   it("for-of with array destructuring and derived vars captures closure correctly", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -741,7 +741,7 @@ export default defineDynamic({
 
   it("for-of with defineTool() wrapper and action.result event captures closure correctly", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 function defineTool(entry) {
   return Object.assign(entry, { [Symbol.for("orcel:tool-brand")]: true });
@@ -782,7 +782,7 @@ export default defineDynamic({
 
   it("execute inside defineTool() inside a helper function captures closure vars", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -837,7 +837,7 @@ export default defineDynamic({
 
   it("description computed by a function is captured at event time, not re-evaluated", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -882,7 +882,7 @@ export default defineDynamic({
 
   it("if/else branches each produce a working tool", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -918,7 +918,7 @@ export default defineDynamic({
 
   it("expression-body arrow execute returns correct value", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -945,7 +945,7 @@ export default defineDynamic({
 
   it("execute with no params works", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -972,7 +972,7 @@ export default defineDynamic({
 
   it("switch/case correctly hoists execute from each branch", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -1010,7 +1010,7 @@ export default defineDynamic({
 
   it("try/catch hoists execute from both branches", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -1049,7 +1049,7 @@ export default defineDynamic({
 
   it("replay simulation: JSON round-trip of closure vars produces same result", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -1102,7 +1102,7 @@ export default defineDynamic({
 
   it("handler returning null produces no tools and no crash", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -1120,7 +1120,7 @@ export default defineDynamic({
 
   it("handler conditionally returning null vs tools works for the tools branch", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -1148,7 +1148,7 @@ export default defineDynamic({
 
   it("handler conditionally returning null actually returns null when condition is false", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -1179,7 +1179,7 @@ export default defineDynamic({
     // returns null. The transform still hoists the execute for the
     // non-null branch.
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -1224,7 +1224,7 @@ export default defineDynamic({
 
   it("preserves non-serializable captures for strict lifecycle validation", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -1265,7 +1265,7 @@ export default defineDynamic({
     // `ctx`. The hoisted function must destructure __vars without shadowing
     // the execute's own `ctx` parameter.
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -1303,7 +1303,7 @@ export default defineDynamic({
     // The execute body uses `name` — it should get the INNER value
     // (the helper's param), not the handler's var.
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -1336,7 +1336,7 @@ export default defineDynamic({
     // These are different objects — verify the resolver snapshot is
     // preserved independently of the execute-time context.
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -1379,7 +1379,7 @@ export default defineDynamic({
 
   it("block-scoped variables (let in if/for) are captured correctly", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -1413,7 +1413,7 @@ export default defineDynamic({
 
   it("deeply nested scope chain: handler → helper → inner helper", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -1462,7 +1462,7 @@ export default defineDynamic({
 describe("transformDynamicToolExecute — safety boundaries", () => {
   it("hoists execute inside a nested helper function with correct scope", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -1491,7 +1491,7 @@ export default defineDynamic({
 
   it("hoists execute inside an arrow function helper", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -1519,7 +1519,7 @@ export default defineDynamic({
 
   it("hoists execute inside a .map() callback", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -1551,7 +1551,7 @@ export default defineDynamic({
 
   it("hoists execute inside an IIFE", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -1581,7 +1581,7 @@ export default defineDynamic({
 
   it("hoists execute inside a .reduce() callback", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -1615,7 +1615,7 @@ export default defineDynamic({
 
   it("hoists execute inside doubly-nested helpers", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -1645,7 +1645,7 @@ export default defineDynamic({
 
   it("helper result stored in variable, other work done, then returned", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -1679,7 +1679,7 @@ export default defineDynamic({
 
   it("helper result passed through a wrapper function before return", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -1712,7 +1712,7 @@ export default defineDynamic({
 
   it("helper result stored in variable, mutated, then returned", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -1748,7 +1748,7 @@ export default defineDynamic({
 
   it("helper result stored in variable with replay round-trip", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -1789,7 +1789,7 @@ export default defineDynamic({
 
   it("nested helper replay: JSON round-trip produces same result", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -1827,7 +1827,7 @@ export default defineDynamic({
 
   it("returns null when execute value is a variable reference (not inline function)", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -1855,7 +1855,7 @@ export default defineDynamic({
 
   it("returns null when execute value is a factory return", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -1884,7 +1884,7 @@ export default defineDynamic({
 
   it("returns null when execute value is a method call (e.g. .bind())", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -1910,7 +1910,7 @@ export default defineDynamic({
 
   it("stamps defineTool callbacks independently of the containing module shape", async () => {
     const source = `
-import { defineTool } from "orcel/tools";
+import { defineTool } from "@orcel/orcel/tools";
 
 export default defineTool({
   description: "Get weather",
@@ -1926,7 +1926,7 @@ export default defineTool({
 
   it("transforms aliased defineTool imports", async () => {
     const source = `
-import { defineDynamic, defineTool as tool } from "orcel/tools";
+import { defineDynamic, defineTool as tool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -1948,7 +1948,7 @@ export default defineDynamic({
 
   it("supports module-level function references", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 function executeMarker(input) {
   return "module:" + input.value;
@@ -1978,7 +1978,7 @@ export default defineDynamic({
 
   it("preserves async generator callbacks", async () => {
     const source = `
-import { defineTool } from "orcel/tools";
+import { defineTool } from "@orcel/orcel/tools";
 export default defineTool({
   description: "Stream markers",
   inputSchema: {},
@@ -2001,7 +2001,7 @@ export default defineTool({
 
   it("returns null for defineDynamic without execute", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -2020,7 +2020,7 @@ export default defineDynamic({
       // The shape the directive transform hands over: bodies hoisted to
       // top-level declarations (here already stubbed) and referenced by name.
       let source = `
-import { defineWorkflowTool } from "orcel/tools";
+import { defineWorkflowTool } from "@orcel/orcel/tools";
 
 async function execute(input) {
   throw new Error("stub");
@@ -2069,7 +2069,7 @@ export const referenced = defineWorkflowTool({
 describe("transformDynamicToolExecute — structural invariants", () => {
   it("keeps callback ids stable when an unrelated module is transformed", async () => {
     const target = `
-import { defineTool } from "orcel/tools";
+import { defineTool } from "@orcel/orcel/tools";
 export default defineTool({
   description: "Target",
   inputSchema: {},
@@ -2077,7 +2077,7 @@ export default defineTool({
 });
 `;
     const unrelated = `
-import { defineTool } from "orcel/tools";
+import { defineTool } from "@orcel/orcel/tools";
 export default defineTool({
   description: "Unrelated",
   inputSchema: {},
@@ -2094,7 +2094,7 @@ export default defineTool({
 
   it("every hoisted function has balanced braces", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -2142,7 +2142,7 @@ export default defineDynamic({
 
   it("every execute replacement is stamped with its hoisted implementation", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -2169,7 +2169,7 @@ export default defineDynamic({
 
   it("stamped wrappers reference hoisted implementations", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -2203,7 +2203,7 @@ export default defineDynamic({
 
   it("only vars referenced in execute body are captured in __vars", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -2242,7 +2242,7 @@ export default defineDynamic({
 
   it("no duplicate __vars bindings when execute has no overlapping params", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -2286,7 +2286,7 @@ export default defineDynamic({
 
   it("handles defineDynamic with single-tool return", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -2310,7 +2310,7 @@ export default defineDynamic({
 
   it("preserves imports and module-level declarations", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 const MODULE_CONSTANT = "hello";
 
@@ -2331,13 +2331,13 @@ export default defineDynamic({
 
     const result = await transformDynamicToolExecute("tools/preserve.ts", source);
     expect(result).not.toBeNull();
-    expect(result!.code).toContain('import { defineDynamic, defineTool } from "orcel/tools"');
+    expect(result!.code).toContain('import { defineDynamic, defineTool } from "@orcel/orcel/tools"');
     expect(result!.code).toContain('const MODULE_CONSTANT = "hello"');
   });
 
   it("captures for-of loop iteration variables", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -2369,7 +2369,7 @@ export default defineDynamic({
 
   it("handles both session.started and step.started handlers", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -2401,7 +2401,7 @@ export default defineDynamic({
 
   it("the dynamic-ctx fixture pattern works end-to-end", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -2440,7 +2440,7 @@ export default defineDynamic({
 
   it("typed params with generic commas (Record<string, unknown>) are handled correctly", async () => {
     const source = `
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 export default defineDynamic({
   events: {
@@ -2450,7 +2450,7 @@ export default defineDynamic({
         tool: defineTool({
           description: "T",
           inputSchema: { type: "object" },
-          execute(_input: Record<string, unknown>, ctx: import("orcel/tools").ToolContext) {
+          execute(_input: Record<string, unknown>, ctx: import("@orcel/orcel/tools").ToolContext) {
             return { tag, input: _input, hasCtx: ctx !== undefined };
           },
         }),
@@ -2474,7 +2474,7 @@ describe("approvalKey callbacks", () => {
     const { callHandler } = await transformAndEval(
       "tools/scoped.ts",
       `
-      import { defineDynamic, defineTool } from "orcel";
+      import { defineDynamic, defineTool } from "@orcel/orcel";
       export default defineDynamic({ events: { "step.started": () => {
         const prefix = "repo";
         return { write: defineTool({
@@ -2503,7 +2503,7 @@ describe("durable schema expression transform", () => {
     const { callHandler } = await transformAndEval(
       "schema.ts",
       `
-      import { defineTool, defineDynamic } from "orcel/tools";
+      import { defineTool, defineDynamic } from "@orcel/orcel/tools";
       import { z } from "zod";
       const output = z.object({ value: z.string().trim() });
       export default defineDynamic({ events: { "session.started": (_event, ctx) => {
@@ -2535,7 +2535,7 @@ describe("durable schema expression transform", () => {
     const result = await transformDynamicToolExecute(
       "schema.ts",
       `
-      import { defineTool, defineDurableSchema as durable } from "orcel/tools";
+      import { defineTool, defineDurableSchema as durable } from "@orcel/orcel/tools";
       import { z } from "zod";
       export function tool(limit) {
         return defineTool({ inputSchema: durable({ closure: { limit }, schema: ({ limit }) => z.number().max(limit) }), execute: () => null });

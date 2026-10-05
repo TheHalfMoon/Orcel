@@ -1,6 +1,6 @@
 import { e2eSubagentConfig } from "@orcel-e2e/config";
-import { defineAgent } from "orcel";
-import type { MockModelRequest, MockModelResponse } from "orcel/evals";
+import { defineAgent } from "@orcel/orcel";
+import type { MockModelRequest, MockModelResponse } from "@orcel/orcel/evals";
 
 import { respond as respondToDirective } from "../../lib/mock-responder.js";
 

@@ -93,7 +93,7 @@ export function buildMemoryAgentProject(input: MemoryAgentProjectInput = {}): Me
 
   if (input.omitPackageJson !== true) {
     files[posix.join(appRoot, "package.json")] = JSON.stringify({
-      dependencies: { orcel: "*" },
+      dependencies: { "@orcel/orcel": "*" },
       name: input.packageName ?? DEFAULT_PACKAGE_NAME,
     });
   }

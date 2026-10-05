@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => {
   const activeGeneration = {
     appRoot: "/app/.orcel/dev-runtime/snapshots/active/runtime",
     kind: "disk" as const,
-    moduleMapLoaderPath: "/app/node_modules/orcel/module-map-loader.js",
+    moduleMapLoaderPath: "/app/node_modules/@orcel/orcel/module-map-loader.js",
     sandboxAppRoot: "/app",
   };
   return {
@@ -52,7 +52,7 @@ const ARTIFACTS_CONFIG = {
   appRoot: "/app",
   devRuntimeArtifactsPointerPath: "/app/.orcel/dev-runtime/current.json",
   kind: "development",
-  moduleMapLoaderPath: "/app/node_modules/orcel/module-map-loader.js",
+  moduleMapLoaderPath: "/app/node_modules/@orcel/orcel/module-map-loader.js",
 } as const;
 
 beforeEach(() => {

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { defineWorkflowTool } from "orcel/tools";
+import { defineWorkflowTool } from "@orcel/orcel/tools";
 import { sleep } from "workflow";
 import { z } from "zod";
 

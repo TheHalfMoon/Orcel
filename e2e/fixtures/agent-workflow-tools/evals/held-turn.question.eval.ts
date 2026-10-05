@@ -1,5 +1,5 @@
-import { defineEval } from "orcel/evals";
-import { equals, includes } from "orcel/evals/expect";
+import { defineEval } from "@orcel/orcel/evals";
+import { equals, includes } from "@orcel/orcel/evals/expect";
 
 import { staysInOneTurn } from "./held-turn.shared";
 

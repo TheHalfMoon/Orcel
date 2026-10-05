@@ -1,4 +1,4 @@
-import type { ToolContext } from "orcel/tools";
+import type { ToolContext } from "@orcel/orcel/tools";
 
 import { parseLocalTraceSegment, type LocalTraceSpan } from "#tracing/local-trace-reader.js";
 

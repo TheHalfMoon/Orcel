@@ -2,7 +2,7 @@ import type { ScenarioAppDescriptor } from "#internal/testing/scenario-app.js";
 
 export const CUSTOM_CHANNEL_PORTABILITY_DESCRIPTOR: ScenarioAppDescriptor = {
   files: {
-    "agent/channels/dashboard.ts": `import { defineChannel, POST, GET } from "orcel/channels";
+    "agent/channels/dashboard.ts": `import { defineChannel, POST, GET } from "@orcel/orcel/channels";
 
 export default defineChannel({
   state: { lastSender: "" },

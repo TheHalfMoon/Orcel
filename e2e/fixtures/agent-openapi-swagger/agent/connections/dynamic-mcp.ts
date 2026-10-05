@@ -1,4 +1,4 @@
-import { defineDynamic, defineMcpClientConnection } from "orcel/connections";
+import { defineDynamic, defineMcpClientConnection } from "@orcel/orcel/connections";
 
 export default defineDynamic({
   events: {

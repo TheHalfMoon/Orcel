@@ -1,4 +1,4 @@
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 export const DYNAMIC_ECHO_TOKEN = "dynamic-echo-ok-X7R2";

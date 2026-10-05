@@ -1,5 +1,5 @@
 import slugify from "slugify";
-import { defineTool } from "orcel/tools";
+import { defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 export default defineTool({

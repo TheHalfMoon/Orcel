@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 const model = process.env.ORCEL_E2E_MODEL ?? "openai/gpt-6-sol";
 

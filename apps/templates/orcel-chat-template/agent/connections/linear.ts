@@ -1,5 +1,5 @@
 import { connect } from "@vercel/connect/eve";
-import { defineMcpClientConnection } from "orcel/connections";
+import { defineMcpClientConnection } from "@orcel/orcel/connections";
 
 // LINEAR_CONNECTOR is the UID returned by Vercel Connect. For local setup,
 // create a connector with `vercel connect create https://mcp.linear.app/mcp --name linear`.

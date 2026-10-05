@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 // Tools generated inside a for loop keep their per-iteration closures.
 export default defineEval({

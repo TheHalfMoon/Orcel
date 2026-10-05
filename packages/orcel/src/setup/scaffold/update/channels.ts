@@ -258,7 +258,7 @@ async function patchWebPackageJson(
   const dependencies = {
     ...WEB_APP_TEMPLATE_PACKAGE_JSON.dependencies,
     ai: resolveVersionToken("aiPackageVersion", options.aiPackageVersion),
-    orcel: formatOrcelDependencySpecifier(orcelPackage.version),
+    "@orcel/orcel": formatOrcelDependencySpecifier(orcelPackage.version),
     next: resolveVersionToken("nextPackageVersion", options.nextPackageVersion),
     react: resolveVersionToken("reactPackageVersion", options.reactPackageVersion),
     "react-dom": resolveVersionToken("reactDomPackageVersion", options.reactDomPackageVersion),
@@ -364,7 +364,7 @@ function buildSlackConnectTemplate(connectorUid: string): string {
     throw new Error(`Invalid Slack connector UID "${connectorUid}".`);
   }
   return `import { connectSlackCredentials } from "@vercel/connect/eve";
-import { slackChannel } from "orcel/channels/slack";
+import { slackChannel } from "@orcel/orcel/channels/slack";
 
 export default slackChannel({
   credentials: connectSlackCredentials(${JSON.stringify(connectorUid)}),
@@ -372,7 +372,7 @@ export default slackChannel({
 `;
 }
 
-const SLACK_ENV_TEMPLATE = `import { slackChannel } from "orcel/channels/slack";
+const SLACK_ENV_TEMPLATE = `import { slackChannel } from "@orcel/orcel/channels/slack";
 
 export default slackChannel();
 `;

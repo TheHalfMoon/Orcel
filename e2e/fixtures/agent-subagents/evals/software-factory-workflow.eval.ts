@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 
-import { defineEval } from "orcel/evals";
-import { equals } from "orcel/evals/expect";
+import { defineEval } from "@orcel/orcel/evals";
+import { equals } from "@orcel/orcel/evals/expect";
 
 const TRIAGE = "ticket-triage";
 const REVIEW = "ticket-review";

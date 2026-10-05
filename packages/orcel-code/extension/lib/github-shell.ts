@@ -1,6 +1,6 @@
 import { posix } from "node:path";
 import { getToken, type ConnectTokenParams } from "@vercel/connect";
-import type { SandboxSession } from "orcel/sandbox";
+import type { SandboxSession } from "@orcel/orcel/sandbox";
 
 import { validateRepositoryRoot } from "./repository-root.ts";
 import { shellQuote } from "./shell.ts";

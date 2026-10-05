@@ -196,7 +196,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PUBLISHED_PACKAGES: ${{ steps.changesets.outputs.published-packages }}
         run: |
-          version="$(jq -r '.[] | select(.name == "orcel") | .version' <<< "$PUBLISHED_PACKAGES")"
+          version="$(jq -r '.[] | select(.name == "@orcel/orcel") | .version' <<< "$PUBLISHED_PACKAGES")"
           if [[ -n "$version" ]]; then
-            gh release edit "orcel@$version" --latest
+            gh release edit "@orcel/orcel@$version" --latest
           fi

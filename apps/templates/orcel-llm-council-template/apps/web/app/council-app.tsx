@@ -1,8 +1,8 @@
 "use client";
 
 import { MarkdownClient } from "@comark/react";
-import { Client, type MessageStreamEvent } from "orcel/client";
-import { useOrcelAgent } from "orcel/react";
+import { Client, type MessageStreamEvent } from "@orcel/orcel/client";
+import { useOrcelAgent } from "@orcel/orcel/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { councilResultSchema, type CouncilResult, type MemberId } from "../../../agent/lib/schemas";
 

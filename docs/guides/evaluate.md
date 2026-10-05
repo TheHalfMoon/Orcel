@@ -3,10 +3,10 @@ title: Automatic Model Selection
 description: "Choose agent models automatically or evaluate typed questions in your tools and application code."
 ---
 
-Use `auto` from `orcel/models` to choose an agent model from an allowlist before
+Use `auto` from `@orcel/orcel/models` to choose an agent model from an allowlist before
 inference begins. It uses the [AI SDK evaluation API](https://ai-sdk.dev/docs/ai-sdk-core/evaluation),
 so the evaluator can be a Vercel AI Gateway model ID or an evaluation model from
-an installed provider. Use `evaluate` from `orcel/ai` to ask typed questions in
+an installed provider. Use `evaluate` from `@orcel/orcel/ai` to ask typed questions in
 your own tools or application code.
 
 The AI SDK evaluation model specification is experimental and can change in
@@ -20,8 +20,8 @@ model strings, it uses Vercel AI Gateway unless the application has configured a
 different global default provider.
 
 ```ts title="agent/agent.ts"
-import { defineAgent } from "orcel";
-import { auto } from "orcel/models";
+import { defineAgent } from "@orcel/orcel";
+import { auto } from "@orcel/orcel/models";
 
 export default defineAgent({
   model: auto({
@@ -46,8 +46,8 @@ returns an error. The fallback can be a Gateway model ID, an AI SDK language
 model instance, or an object with `model` and a `reasoning` override:
 
 ```ts title="agent/agent.ts"
-import { defineAgent } from "orcel";
-import { auto } from "orcel/models";
+import { defineAgent } from "@orcel/orcel";
+import { auto } from "@orcel/orcel/models";
 
 export default defineAgent({
   model: auto({
@@ -77,8 +77,8 @@ pnpm add @ai-sdk/typesafe-ai
 
 ```ts title="agent/agent.ts"
 import { typeSafeAi } from "@ai-sdk/typesafe-ai";
-import { defineAgent } from "orcel";
-import { auto } from "orcel/models";
+import { defineAgent } from "@orcel/orcel";
+import { auto } from "@orcel/orcel/models";
 
 export default defineAgent({
   model: auto({
@@ -102,8 +102,8 @@ a provider instance, an alias, or needs a reasoning override.
 
 ```ts title="agent/agent.ts"
 import { anthropic } from "@ai-sdk/anthropic";
-import { defineAgent } from "orcel";
-import { auto } from "orcel/models";
+import { defineAgent } from "@orcel/orcel";
+import { auto } from "@orcel/orcel/models";
 
 export default defineAgent({
   reasoning: "medium",
@@ -138,8 +138,8 @@ Pass `model` to use another evaluation model ID or a provider instance. A config
 AI SDK default provider takes precedence over the local Gateway connection.
 
 ```ts title="agent/tools/classify-request.ts"
-import { evaluate } from "orcel/ai";
-import { defineTool } from "orcel/tools";
+import { evaluate } from "@orcel/orcel/ai";
+import { defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 export default defineTool({
@@ -189,8 +189,8 @@ AI SDK evaluation model strings and provider instances described above and
 defaults to `typesafe-ai/jev`:
 
 ```ts title="agent/tools/deploy.ts"
-import { defineTool } from "orcel/tools";
-import { auto } from "orcel/tools/approval";
+import { defineTool } from "@orcel/orcel/tools";
+import { auto } from "@orcel/orcel/tools/approval";
 import { z } from "zod";
 
 export default defineTool({

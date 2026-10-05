@@ -1,6 +1,6 @@
 import { setTimeout as sleep } from "node:timers/promises";
 
-import { ClientSession, MessageResponse, type MessageStreamEvent } from "orcel/client";
+import { ClientSession, MessageResponse, type MessageStreamEvent } from "@orcel/orcel/client";
 import type { UnstampedMessageStreamEvent } from "#protocol/message.js";
 import { OrcelTUIRunner, MockScreen, MockUserInput } from "./lib/tui.ts";
 

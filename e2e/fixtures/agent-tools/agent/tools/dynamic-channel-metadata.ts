@@ -1,5 +1,5 @@
-import { isChannel } from "orcel/channels";
-import { defineDynamic, defineTool } from "orcel/tools";
+import { isChannel } from "@orcel/orcel/channels";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 import metadataProvider from "../channels/metadata-provider";
 

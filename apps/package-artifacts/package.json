@@ -12,7 +12,7 @@
     "@vercel/blob": "2.4.0"
   },
   "devDependencies": {
-    "orcel": "workspace:*",
+    "@orcel/orcel": "workspace:*",
     "vitest": "catalog:"
   }
 }

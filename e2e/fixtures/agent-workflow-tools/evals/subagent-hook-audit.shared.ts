@@ -1,5 +1,5 @@
-import type { MessageStreamEvent } from "orcel/client";
-import type { OrcelEvalTurn } from "orcel/evals";
+import type { MessageStreamEvent } from "@orcel/orcel/client";
+import type { OrcelEvalTurn } from "@orcel/orcel/evals";
 
 import type { SubagentHookObservation } from "../subagent-hook-audit";
 

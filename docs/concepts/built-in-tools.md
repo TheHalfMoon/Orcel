@@ -14,7 +14,7 @@ Default tools require no imports. The exact set depends on the agent and session
 Optional default tools are enabled unless you set `defaultTools: false` in `agent/agent.ts`:
 
 ```ts title="agent/agent.ts"
-import { defineAgent } from "orcel";
+import { defineAgent } from "@orcel/orcel";
 
 export default defineAgent({
   defaultTools: false,
@@ -35,14 +35,14 @@ orcel add tool/bash
 ```
 
 ```ts title="agent/tools/bash.ts"
-export { default } from "orcel/tools/bash";
+export { default } from "@orcel/orcel/tools/bash";
 ```
 
 Override its description, approval policy, or executor by wrapping the exported definition:
 
 ```ts title="agent/tools/bash.ts"
-import { defineTool } from "orcel/tools";
-import { bash } from "orcel/tools/bash";
+import { defineTool } from "@orcel/orcel/tools";
+import { bash } from "@orcel/orcel/tools/bash";
 
 export default defineTool({
   ...bash,
@@ -57,7 +57,7 @@ export default defineTool({
 Disable only `bash`:
 
 ```ts title="agent/tools/bash.ts"
-import { disableTool } from "orcel/tools";
+import { disableTool } from "@orcel/orcel/tools";
 
 export default disableTool();
 ```
@@ -71,14 +71,14 @@ orcel add tool/read_file
 ```
 
 ```ts title="agent/tools/read_file.ts"
-export { default } from "orcel/tools/read_file";
+export { default } from "@orcel/orcel/tools/read_file";
 ```
 
 Override it:
 
 ```ts title="agent/tools/read_file.ts"
-import { defineTool } from "orcel/tools";
-import { readFile } from "orcel/tools/read_file";
+import { defineTool } from "@orcel/orcel/tools";
+import { readFile } from "@orcel/orcel/tools/read_file";
 
 export default defineTool({
   ...readFile,
@@ -89,7 +89,7 @@ export default defineTool({
 Disable it:
 
 ```ts title="agent/tools/read_file.ts"
-import { disableTool } from "orcel/tools";
+import { disableTool } from "@orcel/orcel/tools";
 
 export default disableTool();
 ```
@@ -103,14 +103,14 @@ orcel add tool/write_file
 ```
 
 ```ts title="agent/tools/write_file.ts"
-export { default } from "orcel/tools/write_file";
+export { default } from "@orcel/orcel/tools/write_file";
 ```
 
 Override it:
 
 ```ts title="agent/tools/write_file.ts"
-import { defineTool } from "orcel/tools";
-import { writeFile } from "orcel/tools/write_file";
+import { defineTool } from "@orcel/orcel/tools";
+import { writeFile } from "@orcel/orcel/tools/write_file";
 
 export default defineTool({
   ...writeFile,
@@ -127,7 +127,7 @@ export default defineTool({
 Disable it:
 
 ```ts title="agent/tools/write_file.ts"
-import { disableTool } from "orcel/tools";
+import { disableTool } from "@orcel/orcel/tools";
 
 export default disableTool();
 ```
@@ -141,14 +141,14 @@ orcel add tool/web_fetch
 ```
 
 ```ts title="agent/tools/web_fetch.ts"
-export { default } from "orcel/tools/web_fetch";
+export { default } from "@orcel/orcel/tools/web_fetch";
 ```
 
 Override it:
 
 ```ts title="agent/tools/web_fetch.ts"
-import { defineTool } from "orcel/tools";
-import { webFetch } from "orcel/tools/web_fetch";
+import { defineTool } from "@orcel/orcel/tools";
+import { webFetch } from "@orcel/orcel/tools/web_fetch";
 
 export default defineTool({
   ...webFetch,
@@ -166,7 +166,7 @@ export default defineTool({
 Disable it:
 
 ```ts title="agent/tools/web_fetch.ts"
-import { disableTool } from "orcel/tools";
+import { disableTool } from "@orcel/orcel/tools";
 
 export default disableTool();
 ```
@@ -180,13 +180,13 @@ orcel add tool/web_search
 ```
 
 ```ts title="agent/tools/web_search.ts"
-export { default } from "orcel/tools/web_search";
+export { default } from "@orcel/orcel/tools/web_search";
 ```
 
 Override the provider-managed configuration for AI Gateway:
 
 ```ts title="agent/tools/web_search.ts"
-import { webSearch } from "orcel/tools/web_search";
+import { webSearch } from "@orcel/orcel/tools/web_search";
 
 export default webSearch({ provider: "parallel" });
 ```
@@ -194,7 +194,7 @@ export default webSearch({ provider: "parallel" });
 Replace provider-managed search with an authored implementation:
 
 ```ts title="agent/tools/web_search.ts"
-import { defineTool } from "orcel/tools";
+import { defineTool } from "@orcel/orcel/tools";
 
 export default defineTool({
   description: "Search the internal documentation index.",
@@ -208,7 +208,7 @@ export default defineTool({
 Disable it:
 
 ```ts title="agent/tools/web_search.ts"
-import { disableTool } from "orcel/tools";
+import { disableTool } from "@orcel/orcel/tools";
 
 export default disableTool();
 ```
@@ -222,13 +222,13 @@ orcel add tool/agent
 ```
 
 ```ts title="agent/tools/agent.ts"
-export { default } from "orcel/tools/agent";
+export { default } from "@orcel/orcel/tools/agent";
 ```
 
 An authored tool at `agent/tools/agent.ts` replaces the framework behavior. Re-export the definition above to restore direct root-copy delegation, export another tool such as `agentRouter()` to change the model-facing behavior, or disable the slot. `agentRouter()` runs each call as a [task](/docs/tools/workflows#run-calls-as-tasks-task), which adds `task_wait` and `task_cancel`:
 
 ```ts title="agent/tools/agent.ts"
-import { disableTool } from "orcel/tools";
+import { disableTool } from "@orcel/orcel/tools";
 
 export default disableTool();
 ```
@@ -242,14 +242,14 @@ orcel add tool/load_skill
 ```
 
 ```ts title="agent/tools/load_skill.ts"
-export { default } from "orcel/tools/load_skill";
+export { default } from "@orcel/orcel/tools/load_skill";
 ```
 
 Override it:
 
 ```ts title="agent/tools/load_skill.ts"
-import { defineTool } from "orcel/tools";
-import { loadSkill } from "orcel/tools/load_skill";
+import { defineTool } from "@orcel/orcel/tools";
+import { loadSkill } from "@orcel/orcel/tools/load_skill";
 
 export default defineTool({
   ...loadSkill,
@@ -260,7 +260,7 @@ export default defineTool({
 Disable it:
 
 ```ts title="agent/tools/load_skill.ts"
-import { disableTool } from "orcel/tools";
+import { disableTool } from "@orcel/orcel/tools";
 
 export default disableTool();
 ```
@@ -269,7 +269,7 @@ export default disableTool();
 
 `connection_search` discovers tools across declared [connections](../connections) and makes matches directly callable by qualified name, such as `linear__list_issues`. orcel adds it automatically when connections exist, even when `defaultTools` is `false`, so there is no add command.
 
-An authored `agent/tools/connection_search.ts` replaces the framework behavior. Import the framework definition from `orcel/tools/connection_search` when you need to reference it directly. Exporting `disableTool()` from this slot is an error because agents with connections require connection discovery.
+An authored `agent/tools/connection_search.ts` replaces the framework behavior. Import the framework definition from `@orcel/orcel/tools/connection_search` when you need to reference it directly. Exporting `disableTool()` from this slot is an error because agents with connections require connection discovery.
 
 ### `task_wait` and `task_cancel`
 
@@ -295,7 +295,7 @@ orcel add tool/ask_question
 ```
 
 ```ts title="agent/tools/ask_question.ts"
-import { askQuestion } from "orcel/tools/ask_question";
+import { askQuestion } from "@orcel/orcel/tools/ask_question";
 
 export default askQuestion();
 ```
@@ -311,14 +311,14 @@ orcel add tool/glob
 ```
 
 ```ts title="agent/tools/glob.ts"
-export { default } from "orcel/tools/glob";
+export { default } from "@orcel/orcel/tools/glob";
 ```
 
 Customize it by wrapping the framework definition:
 
 ```ts title="agent/tools/glob.ts"
-import { defineTool } from "orcel/tools";
-import { glob } from "orcel/tools/glob";
+import { defineTool } from "@orcel/orcel/tools";
+import { glob } from "@orcel/orcel/tools/glob";
 
 export default defineTool({
   ...glob,
@@ -337,14 +337,14 @@ orcel add tool/grep
 ```
 
 ```ts title="agent/tools/grep.ts"
-export { default } from "orcel/tools/grep";
+export { default } from "@orcel/orcel/tools/grep";
 ```
 
 Customize it by wrapping the framework definition:
 
 ```ts title="agent/tools/grep.ts"
-import { defineTool } from "orcel/tools";
-import { grep } from "orcel/tools/grep";
+import { defineTool } from "@orcel/orcel/tools";
+import { grep } from "@orcel/orcel/tools/grep";
 
 export default defineTool({
   ...grep,
@@ -363,7 +363,7 @@ orcel add tool/sleep
 ```
 
 ```ts title="agent/tools/sleep.ts"
-import { sleep } from "orcel/tools/sleep";
+import { sleep } from "@orcel/orcel/tools/sleep";
 
 export default sleep();
 ```
@@ -371,8 +371,8 @@ export default sleep();
 Customize it by wrapping the framework definition:
 
 ```ts title="agent/tools/sleep.ts"
-import { defineWorkflowTool } from "orcel/tools";
-import { sleep } from "orcel/tools/sleep";
+import { defineWorkflowTool } from "@orcel/orcel/tools";
+import { sleep } from "@orcel/orcel/tools/sleep";
 
 export default defineWorkflowTool({
   ...sleep(),

@@ -1,5 +1,5 @@
 /** Consumer-facing helpers exported as `orcel/extensions/code/sandbox`. */
-import type { SandboxSession } from "orcel/sandbox";
+import type { SandboxSession } from "@orcel/orcel/sandbox";
 
 import { commandFailureDetail } from "./command-failure.ts";
 import {
@@ -92,7 +92,7 @@ export {
   COMPUTER_USE_REVALIDATION_KEY,
   installComputerUse,
   startComputerUse,
-} from "orcel/computer-use/sandbox";
+} from "@orcel/orcel/computer-use/sandbox";
 
 export {
   executeGitHubShell,

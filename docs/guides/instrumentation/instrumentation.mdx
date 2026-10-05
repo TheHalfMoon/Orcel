@@ -27,7 +27,7 @@ This instrumentation records action timing and identity without receiving tool
 arguments or results:
 
 ```ts title="agent/instrumentation/audit.ts"
-import { defineInstrumentation } from "orcel/instrumentation";
+import { defineInstrumentation } from "@orcel/orcel/instrumentation";
 
 export default defineInstrumentation({
   events: {
@@ -64,7 +64,7 @@ whether its events include input or output content. OpenTelemetry destinations
 share the process-wide policy declared by `otel(...)`.
 
 ```ts title="agent/instrumentation/audit.ts"
-import { defineInstrumentation } from "orcel/instrumentation";
+import { defineInstrumentation } from "@orcel/orcel/instrumentation";
 
 export default defineInstrumentation({
   tracePolicy: ({ audience, environment }) => ({
@@ -114,7 +114,7 @@ Lifecycle events are immutable snapshots. Copy the fields you need into a
 destination-specific payload and redact that copy before sending it:
 
 ```ts title="agent/instrumentation/audit.ts"
-import { defineInstrumentation } from "orcel/instrumentation";
+import { defineInstrumentation } from "@orcel/orcel/instrumentation";
 
 export default defineInstrumentation({
   tracePolicy: () => ({

@@ -237,7 +237,7 @@ export interface ChatSdkChannelBridge<TAdapters extends ChatSdkAdapters = ChatSd
  * ```ts
  * import { createSlackAdapter } from "@chat-adapter/slack";
  * import { createMemoryState } from "@chat-adapter/state-memory";
- * import { chatSdkChannel } from "orcel/channels/chat-sdk";
+ * import { chatSdkChannel } from "@orcel/orcel/channels/chat-sdk";
  *
  * export const { bot, channel, send } = chatSdkChannel({
  *   userName: "acme",

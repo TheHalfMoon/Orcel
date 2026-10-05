@@ -1,4 +1,4 @@
-import { defineDynamic, defineSkill } from "orcel/skills";
+import { defineDynamic, defineSkill } from "@orcel/orcel/skills";
 
 export default defineDynamic({
   events: {

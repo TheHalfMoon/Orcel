@@ -10,7 +10,7 @@ import {
   type AuthorizationCompletedStreamEvent,
   type AuthorizationRequiredStreamEvent,
   type MessageStreamEvent,
-} from "orcel/client";
+} from "@orcel/orcel/client";
 
 import { startMcpStubServer } from "./lib/mcp-stub-server.ts";
 import { runEnvironment } from "./lib/run.ts";

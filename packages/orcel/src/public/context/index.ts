@@ -6,7 +6,7 @@
  *
  * @example
  * ```ts
- * import { defineState } from "orcel/context";
+ * import { defineState } from "@orcel/orcel/context";
  * ```
  */
 

@@ -1,4 +1,4 @@
-import { defineAgent } from "orcel";
+import { defineAgent } from "@orcel/orcel";
 
 import { fixtureModel, routing } from "../../testing";
 

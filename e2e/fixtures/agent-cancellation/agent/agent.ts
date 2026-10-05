@@ -1,6 +1,6 @@
 import { e2eAgentConfig } from "@orcel-e2e/config";
-import { defineAgent } from "orcel";
-import type { MockModelRequest, MockModelResponse } from "orcel/evals";
+import { defineAgent } from "@orcel/orcel";
+import type { MockModelRequest, MockModelResponse } from "@orcel/orcel/evals";
 
 const HITL_REQUEST = "GENERATED-PROGRAM-CHILD-HITL";
 const AGENT_TASK_CANCEL = "AGENT-TASK-CANCEL";

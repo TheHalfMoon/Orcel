@@ -23,7 +23,7 @@ Start with one agent in `agent/`.
 Run `orcel init` with a project name:
 
 ```bash
-npx orcel@latest init my-agent
+npx @orcel/orcel@latest init my-agent
 ```
 
 The command creates the project, installs dependencies, initializes Git, and opens the terminal UI. orcel reuses an available model connection or opens `/login`. Once connected, type your first message. Channel and integration setup is optional; use `/add` when you need it.
@@ -35,7 +35,7 @@ During startup, the status line shows what orcel is waiting for. If you choose a
 To add orcel to a project that already has a `package.json`, run this command from its root before you create any `agent/` files:
 
 ```bash
-npx orcel@latest init .
+npx @orcel/orcel@latest init .
 ```
 
 orcel adds the missing `orcel`, `ai`, and `zod` dependencies without changing files the project already owns.
@@ -45,7 +45,7 @@ orcel adds the missing `orcel`, `ai`, and `zod` dependencies without changing fi
 To initialize the agent with a different AI Gateway model or reasoning effort, pass `--model` or `--reasoning`:
 
 ```bash
-npx orcel@latest init my-agent --model openai/gpt-6-luna --reasoning high
+npx @orcel/orcel@latest init my-agent --model openai/gpt-6-luna --reasoning high
 ```
 
 ## Run the agent
@@ -79,7 +79,7 @@ See [Project Structure](/docs/concepts/project-structure) when adding another ro
 If you do not want to use the scaffold, install the runtime dependencies:
 
 ```bash
-npm install orcel@latest ai zod
+npm install @orcel/orcel@latest ai zod
 ```
 
 Declare Node.js 24 in `package.json`, then create `agent/instructions.md` and, when you need runtime configuration, `agent/agent.ts`.

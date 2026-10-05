@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 import { GUARDED_SLOW_ECHO_TOKEN } from "./shared.js";
 

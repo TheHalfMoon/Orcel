@@ -1,6 +1,6 @@
-import { getLocalDevCapability, type LocalDevCapability } from "orcel/local-dev";
-import { defineDynamic, defineTool, type ToolContext } from "orcel/tools";
-import { once } from "orcel/tools/approval";
+import { getLocalDevCapability, type LocalDevCapability } from "@orcel/orcel/local-dev";
+import { defineDynamic, defineTool, type ToolContext } from "@orcel/orcel/tools";
+import { once } from "@orcel/orcel/tools/approval";
 
 import {
   resolveSelfModificationConfig,

@@ -107,7 +107,7 @@ const ASK_QUESTION_OUTPUT_SCHEMA = defineJsonSchema<AskQuestionOutput>({
  * Export it from `agent/tools/ask_question.ts`:
  *
  * ```ts
- * import { askQuestion } from "orcel/tools/ask_question";
+ * import { askQuestion } from "@orcel/orcel/tools/ask_question";
  *
  * export default askQuestion();
  * ```

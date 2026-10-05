@@ -48,7 +48,7 @@ const defaultDeps: PhotonSetupDeps = {
   writeTextFile,
 };
 
-const PORTABLE_TEMPLATE = `import { photonIMessageChannel } from "orcel/channels/photon";
+const PORTABLE_TEMPLATE = `import { photonIMessageChannel } from "@orcel/orcel/channels/photon";
 
 async function photonCredentials() {
   const projectId = process.env.IMESSAGE_PROJECT_ID;
@@ -65,7 +65,7 @@ export default photonIMessageChannel({
 
 function connectTemplate(connectorUid: string): string {
   return `import { connectPhotonCredentials } from "@vercel/connect/eve";
-import { photonIMessageChannel } from "orcel/channels/photon";
+import { photonIMessageChannel } from "@orcel/orcel/channels/photon";
 
 export default photonIMessageChannel({
   credentials: connectPhotonCredentials(${JSON.stringify(connectorUid)}),

@@ -2,7 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { IFileSystem } from "just-bash";
 
-import { getLocalDevCapability } from "orcel/local-dev";
+import { getLocalDevCapability } from "@orcel/orcel/local-dev";
 
 export async function createSelfModificationFilesystem(input: {
   readonly appRoot?: string;
@@ -57,7 +57,7 @@ export async function createSelfModificationFilesystem(input: {
         filesystem: new OverlayFs({
           mountPoint: "/",
           readOnly: true,
-          root: resolve(appRoot, "node_modules/orcel/docs"),
+          root: resolve(appRoot, "node_modules/@orcel/orcel/docs"),
         }),
         mountPoint: "/orcel-docs",
       },

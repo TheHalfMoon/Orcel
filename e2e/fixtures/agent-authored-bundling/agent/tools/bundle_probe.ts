@@ -1,4 +1,4 @@
-import { defineTool } from "orcel/tools";
+import { defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 import binaryAsset from "../../authored-assets/runtime.bin";

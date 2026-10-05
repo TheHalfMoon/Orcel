@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 const INITIAL_TARGET = "005INITIALTARGET";
 const CORRECTED_TARGET = "005CORRECTEDTARGET";

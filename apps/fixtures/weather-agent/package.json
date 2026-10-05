@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "orcel": "workspace:*",
+    "@orcel/orcel": "workspace:*",
     "zod": "catalog:"
   }
 }

@@ -1,4 +1,4 @@
-import { withEve } from "orcel/vercel";
+import { withEve } from "@orcel/orcel/vercel";
 
 export default await withEve({
   services: {

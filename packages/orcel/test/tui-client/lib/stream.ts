@@ -1,4 +1,4 @@
-import type { MessageStreamEvent, InputRequest } from "orcel/client";
+import type { MessageStreamEvent, InputRequest } from "@orcel/orcel/client";
 
 import { theme } from "./theme.ts";
 

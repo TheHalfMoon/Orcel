@@ -1,4 +1,4 @@
-import { Client } from "orcel/client";
+import { Client } from "@orcel/orcel/client";
 import {
   AUTHORED_ARTIFACTS_UPDATED_LOG_LINE,
   OrcelTUIRunner,

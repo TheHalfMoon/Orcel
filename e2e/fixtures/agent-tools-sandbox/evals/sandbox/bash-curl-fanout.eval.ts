@@ -1,5 +1,5 @@
-import type { MessageStreamEvent } from "orcel/client";
-import { defineEval } from "orcel/evals";
+import type { MessageStreamEvent } from "@orcel/orcel/client";
+import { defineEval } from "@orcel/orcel/evals";
 
 import { FANOUT_BARRIER_SERVER_URL } from "./shared";
 

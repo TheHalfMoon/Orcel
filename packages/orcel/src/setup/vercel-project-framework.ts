@@ -28,10 +28,10 @@ interface OrcelFrameworkIntegration {
 }
 
 const ORCEL_FRAMEWORK_INTEGRATIONS: Readonly<Record<string, OrcelFrameworkIntegration>> = {
-  nextjs: { label: "Next.js", importSpecifier: "orcel/next" },
-  nuxt: { label: "Nuxt", importSpecifier: "orcel/nuxt" },
-  nuxtjs: { label: "Nuxt", importSpecifier: "orcel/nuxt" },
-  sveltekit: { label: "SvelteKit", importSpecifier: "orcel/sveltekit" },
+  nextjs: { label: "Next.js", importSpecifier: "@orcel/orcel/next" },
+  nuxt: { label: "Nuxt", importSpecifier: "@orcel/orcel/nuxt" },
+  nuxtjs: { label: "Nuxt", importSpecifier: "@orcel/orcel/nuxt" },
+  sveltekit: { label: "SvelteKit", importSpecifier: "@orcel/orcel/sveltekit" },
 };
 
 const FRAMEWORK_INTEGRATION_SOURCE_EXTENSIONS = new Set([

@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@vercel/connect": "catalog:",
-    "orcel": "workspace:*",
+    "@orcel/orcel": "workspace:*",
     "zod": "catalog:"
   },
   "devDependencies": {

@@ -1,4 +1,4 @@
-import { defineChannel, GET } from "orcel/channels";
+import { defineChannel, GET } from "@orcel/orcel/channels";
 
 export default defineChannel({
   routes: [

@@ -1,5 +1,5 @@
 import { connect } from "@vercel/connect/eve";
-import { defineMcpClientConnection } from "orcel/connections";
+import { defineMcpClientConnection } from "@orcel/orcel/connections";
 
 export default defineMcpClientConnection({
   url: "https://mcp.natural.com/mcp",
@@ -9,5 +9,5 @@ export default defineMcpClientConnection({
 
   // Natural moves real money. To require human approval for every
   // tool call, add:
-  // approval: always(),  // from "orcel/tools/approval"
+  // approval: always(),  // from "@orcel/orcel/tools/approval"
 });

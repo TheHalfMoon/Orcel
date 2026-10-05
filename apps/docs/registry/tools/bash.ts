@@ -1,1 +1,1 @@
-export { default } from "orcel/tools/bash";
+export { default } from "@orcel/orcel/tools/bash";

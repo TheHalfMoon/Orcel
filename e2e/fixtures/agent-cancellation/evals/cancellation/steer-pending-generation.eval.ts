@@ -1,5 +1,5 @@
-import { defineEval } from "orcel/evals";
-import { satisfies } from "orcel/evals/expect";
+import { defineEval } from "@orcel/orcel/evals";
+import { satisfies } from "@orcel/orcel/evals/expect";
 
 export default defineEval({
   description:

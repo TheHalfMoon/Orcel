@@ -17,7 +17,7 @@
     "@ai-sdk/openai": "catalog:",
     "@opentelemetry/sdk-trace-base": "catalog:",
     "@vercel/otel": "catalog:",
-    "orcel": "workspace:*"
+    "@orcel/orcel": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "catalog:",

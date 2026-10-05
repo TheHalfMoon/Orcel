@@ -63,7 +63,7 @@
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.scaffold.json --noEmit"
   },
   "dependencies": {
-    "orcel": "workspace:*"
+    "@orcel/orcel": "workspace:*"
   },
   "devDependencies": {
     "typescript": "catalog:"

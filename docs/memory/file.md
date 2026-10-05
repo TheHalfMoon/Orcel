@@ -3,7 +3,7 @@ title: "File Memory"
 description: "Configure the built-in fileMemory() provider: a bounded, model-maintained document per scope with save and remove tools."
 ---
 
-`fileMemory()` from `orcel/memory/file` is the memory provider built into orcel.
+`fileMemory()` from `@orcel/orcel/memory/file` is the memory provider built into orcel.
 It keeps one small document per resolved scope, recalls that document before
 each turn and after compaction, and gives the model two tools to maintain it.
 Use it when a short list of durable facts and preferences is enough; use
@@ -26,9 +26,9 @@ function region, falling back to `iad1`. Blob usage may incur charges.
 The registry writes:
 
 ```ts title="agent/memory/file.ts"
-import { defineMemory } from "orcel/memory";
-import { byPrincipal } from "orcel/memory/scope";
-import { fileMemory } from "orcel/memory/file";
+import { defineMemory } from "@orcel/orcel/memory";
+import { byPrincipal } from "@orcel/orcel/memory/scope";
+import { fileMemory } from "@orcel/orcel/memory/file";
 
 export default defineMemory({
   description: "Remember stable facts and preferences about the caller.",
@@ -89,7 +89,7 @@ Pass a fresh in-memory backend for tests or throwaway environments. It loses
 its contents when the backend instance or process is replaced:
 
 ```ts
-import { fileMemory, inMemory } from "orcel/memory/file";
+import { fileMemory, inMemory } from "@orcel/orcel/memory/file";
 
 provider: fileMemory({ backend: inMemory() });
 ```
@@ -131,12 +131,12 @@ or incompatible store. If the linked project later moves to another primary
 region, setup preserves the existing memory store and warns about the drift
 instead of risking data loss.
 
-Use `vercelBlob()` from `orcel/memory/file/vercel` to configure credentials or an
+Use `vercelBlob()` from `@orcel/orcel/memory/file/vercel` to configure credentials or an
 object prefix explicitly instead of relying on environment detection:
 
 ```ts
-import { fileMemory } from "orcel/memory/file";
-import { vercelBlob } from "orcel/memory/file/vercel";
+import { fileMemory } from "@orcel/orcel/memory/file";
+import { vercelBlob } from "@orcel/orcel/memory/file/vercel";
 
 provider: fileMemory({
   backend: vercelBlob({ prefix: "orcel/memory/support-agent" }),
@@ -144,18 +144,18 @@ provider: fileMemory({
 ```
 
 `vercelBlob()` accepts `token`, `oidcToken`, `storeId`, and `prefix`. The
-default prefix is `orcel/memory/file`; documents are stored privately under
+default prefix is `@orcel/orcel/memory/file`; documents are stored privately under
 `<prefix>/<scope key>/MEMORY.md`. Passing these options continues to override
 the generic environment defaults directly. Leave `oidcToken` unset on Vercel
 so the Blob SDK can manage token refresh.
 
 ### Custom backend
 
-Implement `MemoryDocumentBackend` from `orcel/memory/file` to keep the document in
+Implement `MemoryDocumentBackend` from `@orcel/orcel/memory/file` to keep the document in
 another store:
 
 ```ts
-import { MemoryDocumentConflictError, type MemoryDocumentBackend } from "orcel/memory/file";
+import { MemoryDocumentConflictError, type MemoryDocumentBackend } from "@orcel/orcel/memory/file";
 
 export function kvBackend(store: KvStore): MemoryDocumentBackend {
   return {

@@ -21,7 +21,7 @@ Tenant policy storage remains yours. It might be a few columns in PostgreSQL, a 
 The current caller and initiating caller are both available on the session. This example requires them to belong to the same tenant before consulting policy:
 
 ```ts title="agent/lib/tenant-approval.ts"
-import type { ApprovalContext, ApprovalStatus } from "orcel/tools/approval";
+import type { ApprovalContext, ApprovalStatus } from "@orcel/orcel/tools/approval";
 import { approvalPolicies } from "./approval-policies";
 
 type Surface = "connection" | "tool";
@@ -75,7 +75,7 @@ The callback deliberately does not treat `approvedTools` as a session-wide grant
 Approval runs before `execute`. The executor must still derive and enforce tenancy again because approval is a gate, not authorization:
 
 ```ts title="agent/tools/transfer_funds.ts"
-import { defineTool } from "orcel/tools";
+import { defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 import { transferFunds } from "../../lib/payments";
 import { decideTenantApproval } from "../lib/tenant-approval";
@@ -110,7 +110,7 @@ Use an application idempotency key for side effects. Human approval and replay s
 The same callback gates every generated operation. The qualified operation name lets tenant policy distinguish reads from writes:
 
 ```ts title="agent/connections/billing.ts"
-import { defineOpenAPIConnection } from "orcel/connections";
+import { defineOpenAPIConnection } from "@orcel/orcel/connections";
 import { decideTenantApproval } from "../lib/tenant-approval";
 
 export default defineOpenAPIConnection({
@@ -134,7 +134,7 @@ The allow-list limits what the model can discover. Approval independently decide
 ## Apply it to an MCP connection
 
 ```ts title="agent/connections/support.ts"
-import { defineMcpClientConnection } from "orcel/connections";
+import { defineMcpClientConnection } from "@orcel/orcel/connections";
 import { decideTenantApproval } from "../lib/tenant-approval";
 
 export default defineMcpClientConnection({

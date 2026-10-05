@@ -2,7 +2,7 @@
 
 Work from the project directory. Once orcel is installed, the full docs are bundled
 with the installed package and match its version exactly. In most installs, they
-are at `node_modules/orcel/docs/`. In workspaces or local package installs, resolve
+are at `node_modules/@orcel/orcel/docs/`. In workspaces or local package installs, resolve
 the installed `orcel` package location first and read its `docs/` directory. If
 package docs are unavailable, use https://github.com/TheHalfMoon/orcel/docs as a fallback. Read
 `README.md` in the package docs first, then the guide for what you're adding,
@@ -16,7 +16,7 @@ Before implementing an integration yourself, use `orcel registry search <query>`
 - Put the purpose in `agent/instructions.md` (the always-on system prompt),
   replacing the scaffold's placeholder with what the user said the agent should
   do.
-- Add a first typed tool under `agent/tools/` with `defineTool` from `orcel/tools`
+- Add a first typed tool under `agent/tools/` with `defineTool` from `@orcel/orcel/tools`
   and a Zod `inputSchema`.
 
 `{{devCommand}}` starts orcel's HMR development server and opens the agent's

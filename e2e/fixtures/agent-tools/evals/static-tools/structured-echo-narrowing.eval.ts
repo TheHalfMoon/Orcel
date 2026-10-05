@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 // The action.result must carry the structured object (not a JSON
 // string), and the fixture's tool-result-narrowing hook matches it via

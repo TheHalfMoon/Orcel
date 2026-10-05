@@ -1,5 +1,5 @@
 import { e2eAgentConfig } from "@orcel-e2e/config";
-import { defineAgent } from "orcel";
+import { defineAgent } from "@orcel/orcel";
 
 import { fixtureModel, routing } from "./testing";
 

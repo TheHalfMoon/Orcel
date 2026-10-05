@@ -1,4 +1,4 @@
-import { telegramChannel } from "orcel/channels/telegram";
+import { telegramChannel } from "@orcel/orcel/channels/telegram";
 
 export default telegramChannel({
   credentials: { botToken: () => process.env.TELEGRAM_BOT_TOKEN! },

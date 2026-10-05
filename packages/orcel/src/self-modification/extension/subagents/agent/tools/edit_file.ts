@@ -1,4 +1,4 @@
-import { defineTool } from "orcel/tools";
+import { defineTool } from "@orcel/orcel/tools";
 
 const replacementSchema = {
   type: "object",

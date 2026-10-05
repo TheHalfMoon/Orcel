@@ -219,7 +219,7 @@ if (mode === "--write") {
   const current = await readFile(OUTPUT_PATH, "utf8");
   if (current !== generated) {
     process.stderr.write(
-      "packages/orcel/src/setup/scaffold/create/web-template.ts is stale. Run `pnpm --filter orcel generate:web-template`.\n",
+      "packages/orcel/src/setup/scaffold/create/web-template.ts is stale. Run `pnpm --filter @orcel/orcel generate:web-template`.\n",
     );
     process.exitCode = 1;
   }

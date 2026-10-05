@@ -1,4 +1,4 @@
-import { orcelChannel } from "orcel/channels/orcel";
+import { orcelChannel } from "@orcel/orcel/channels/orcel";
 
 /** Fixture-only authentication for interactive authorization evals. */
 export default orcelChannel({

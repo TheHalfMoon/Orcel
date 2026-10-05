@@ -121,7 +121,7 @@ beforeEach(() => {
     vi.fn(async () => new Response(JSON.stringify(INDEX), { status: 200 })),
   );
   // The orcel bin is resolved from the app's own dependency graph, never PATH.
-  findPackageJSON.mockReturnValue(`${APP_ROOT}/node_modules/orcel/package.json`);
+  findPackageJSON.mockReturnValue(`${APP_ROOT}/node_modules/@orcel/orcel/package.json`);
   readFile.mockResolvedValue(JSON.stringify({ name: "orcel", bin: { orcel: "./bin/orcel.js" } }));
 });
 

@@ -1,5 +1,5 @@
 import { connect } from "@vercel/connect/eve";
-import { defineMcpClientConnection } from "orcel/connections";
+import { defineMcpClientConnection } from "@orcel/orcel/connections";
 
 // NOTION_CONNECTOR is provisioned by the "Deploy with Vercel" flow. For local
 // setup, create a connector with `vercel connect create mcp.notion.com --name notion`.

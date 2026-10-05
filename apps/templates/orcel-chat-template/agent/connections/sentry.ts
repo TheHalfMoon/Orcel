@@ -1,5 +1,5 @@
 import { connect } from "@vercel/connect/eve";
-import { defineMcpClientConnection } from "orcel/connections";
+import { defineMcpClientConnection } from "@orcel/orcel/connections";
 
 // SENTRY_CONNECTOR is the UID returned by Vercel Connect. For local setup,
 // create a connector with `vercel connect create https://mcp.sentry.dev/mcp --name sentry`.

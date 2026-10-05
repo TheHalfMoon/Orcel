@@ -1,4 +1,4 @@
-import { defineChannel, GET, POST } from "orcel/channels";
+import { defineChannel, GET, POST } from "@orcel/orcel/channels";
 import { z } from "zod";
 
 const rpcRequest = z.object({

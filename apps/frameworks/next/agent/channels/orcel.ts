@@ -1,5 +1,5 @@
-import { type AuthFn, localDev, vercelOidc } from "orcel/channels/auth";
-import { orcelChannel } from "orcel/channels/orcel";
+import { type AuthFn, localDev, vercelOidc } from "@orcel/orcel/channels/auth";
+import { orcelChannel } from "@orcel/orcel/channels/orcel";
 import { getAuthJsSession } from "@/lib/auth";
 
 function authjsSession(): AuthFn<Request> {

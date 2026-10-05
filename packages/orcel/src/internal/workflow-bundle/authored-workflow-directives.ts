@@ -68,15 +68,24 @@ export async function prepareAuthoredWorkflowDirectives(input: {
   readonly filePath: string;
   readonly source: string;
 }): Promise<AuthoredWorkflowDirectiveSource> {
-  if (!mayContainWorkflowDirective(input.source) && !input.source.includes("orcel/workflow")) {
+  if (
+    !mayContainWorkflowDirective(input.source) &&
+    !input.source.includes("orcel/workflow") &&
+    !input.source.includes("@orcel/orcel/workflow")
+  ) {
     return { hasDirectives: false, hasWorkflowDirective: false, source: input.source };
   }
   const parsePath = /\.[cm]?js$/.test(input.filePath) ? `${input.filePath}.jsx` : input.filePath;
   const program = (await parseWithNitroRolldownAst(parsePath, input.source)) as AstProgram;
   const body = program.body ?? [];
-  if (body.some((node) => node.source?.value === "orcel/workflow")) {
+  if (
+    body.some(
+      (node) =>
+        node.source?.value === "orcel/workflow" || node.source?.value === "@orcel/orcel/workflow",
+    )
+  ) {
     throw new Error(
-      `${input.filePath}: "orcel/workflow" has been removed. Use defineWorkflowTool() from "orcel/tools" and call ctx.agent(target, input) or ctx.ask(request) in its executor.`,
+      `${input.filePath}: "orcel/workflow" has been removed. Use defineWorkflowTool() from "@orcel/orcel/tools" and call ctx.agent(target, input) or ctx.ask(request) in its executor.`,
     );
   }
   for (const statement of body) {

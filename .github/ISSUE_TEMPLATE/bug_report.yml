@@ -15,7 +15,7 @@ body:
     attributes:
       label: Link to a minimal reproduction
       description: |
-        A link to a **public** GitHub repository that reproduces the issue. Create it with `npx orcel@latest init` and include **only** the changes that contribute to the bug — no unrelated tools, connections, or app code.
+        A link to a **public** GitHub repository that reproduces the issue. Create it with `npx @orcel/orcel@latest init` and include **only** the changes that contribute to the bug — no unrelated tools, connections, or app code.
 
         A minimal reproduction is the single most useful thing you can give us. **Issues without a valid reproduction link may be closed as not actionable.**
       placeholder: "https://github.com/user/my-orcel-bug-reproduction"

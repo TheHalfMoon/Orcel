@@ -1,5 +1,5 @@
-import { defineAgent } from "orcel";
-import { mockModel } from "orcel/evals";
+import { defineAgent } from "@orcel/orcel";
+import { mockModel } from "@orcel/orcel/evals";
 
 export default defineAgent({
   description: "Exercise a deterministic interactive-authorization child tool.",

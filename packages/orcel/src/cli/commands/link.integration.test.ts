@@ -31,7 +31,7 @@ async function createWorkspaceProject(): Promise<string> {
   await mkdir(join(projectRoot, "agents/support/agent"), { recursive: true });
   await writeFile(
     join(projectRoot, "package.json"),
-    JSON.stringify({ dependencies: { orcel: "*" }, private: true }),
+    JSON.stringify({ dependencies: { "@orcel/orcel": "*" }, private: true }),
     "utf8",
   );
   return projectRoot;
@@ -43,7 +43,7 @@ async function createAgentProject(): Promise<string> {
   await writeFile(join(projectRoot, "agent/agent.ts"), "export default {};\n", "utf8");
   await writeFile(
     join(projectRoot, "package.json"),
-    `${JSON.stringify({ name: "my-agent", dependencies: { orcel: "*" } }, null, 2)}\n`,
+    `${JSON.stringify({ name: "my-agent", dependencies: { "@orcel/orcel": "*" } }, null, 2)}\n`,
     "utf8",
   );
   return projectRoot;

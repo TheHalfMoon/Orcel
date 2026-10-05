@@ -1,4 +1,4 @@
-import type { OrcelEvalTargetHandle } from "orcel/evals";
+import type { OrcelEvalTargetHandle } from "@orcel/orcel/evals";
 
 const MCP_PATH = "/orcel/v1/mcp";
 const MCP_PROTOCOL_VERSION = "2026-07-28";

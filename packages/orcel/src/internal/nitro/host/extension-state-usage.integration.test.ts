@@ -20,7 +20,7 @@ describe("extensionUsesState", () => {
   it("detects a direct aliased import", async () => {
     const sourceRoot = await createSourceTree({
       "lib/budget.ts": [
-        'import { defineState as state } from "orcel/context";',
+        'import { defineState as state } from "@orcel/orcel/context";',
         'export const budget = state("budget", () => 1);',
         "",
       ].join("\n"),
@@ -30,7 +30,7 @@ describe("extensionUsesState", () => {
 
   it("detects usage through a local re-export barrel", async () => {
     const sourceRoot = await createSourceTree({
-      "lib/orcel.ts": 'export { defineState } from "orcel/context";\n',
+      "lib/orcel.ts": 'export { defineState } from "@orcel/orcel/context";\n',
       "tools/budget.ts": [
         'import { defineState } from "../lib/orcel";',
         'export const budget = defineState("budget", () => 1);',
@@ -42,7 +42,7 @@ describe("extensionUsesState", () => {
 
   it("detects usage through an aliased multi-hop barrel chain", async () => {
     const sourceRoot = await createSourceTree({
-      "lib/deep.ts": 'export { defineState as state } from "orcel/context";\n',
+      "lib/deep.ts": 'export { defineState as state } from "@orcel/orcel/context";\n',
       "lib/orcel.ts": 'export { state } from "./deep";\n',
       "tools/budget.ts": [
         'import { state } from "../lib/orcel";',
@@ -55,7 +55,7 @@ describe("extensionUsesState", () => {
 
   it("detects usage through an `export *` barrel and a namespace import", async () => {
     const sourceRoot = await createSourceTree({
-      "lib/orcel.ts": 'export * from "orcel/context";\n',
+      "lib/orcel.ts": 'export * from "@orcel/orcel/context";\n',
       "tools/budget.ts": [
         'import * as ctx from "../lib/orcel";',
         'export const budget = ctx.defineState("budget", () => 1);',
@@ -68,7 +68,7 @@ describe("extensionUsesState", () => {
   it("detects an import-then-re-export barrel", async () => {
     const sourceRoot = await createSourceTree({
       "lib/orcel.ts": [
-        'import { defineState } from "orcel/context";',
+        'import { defineState } from "@orcel/orcel/context";',
         "export { defineState as state };",
         "",
       ].join("\n"),
@@ -83,7 +83,7 @@ describe("extensionUsesState", () => {
 
   it("ignores an imported defineState that is never called", async () => {
     const sourceRoot = await createSourceTree({
-      "lib/orcel.ts": 'export { defineState } from "orcel/context";\n',
+      "lib/orcel.ts": 'export { defineState } from "@orcel/orcel/context";\n',
       "tools/idle.ts": [
         'import { defineState } from "../lib/orcel";',
         "export const unused = defineState;",
@@ -107,7 +107,7 @@ describe("extensionUsesState", () => {
   it("returns false for a tree without state", async () => {
     const sourceRoot = await createSourceTree({
       "extension.ts":
-        'import { defineExtension } from "orcel/extension";\nexport default defineExtension();\n',
+        'import { defineExtension } from "@orcel/orcel/extension";\nexport default defineExtension();\n',
     });
     await expect(extensionUsesState(sourceRoot)).resolves.toBe(false);
   });

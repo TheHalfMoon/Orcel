@@ -1,4 +1,4 @@
-import { defineHook } from "orcel/hooks";
+import { defineHook } from "@orcel/orcel/hooks";
 
 const STOP_SANDBOX_TOKEN = "sandbox-stop-hook-ready-R7V";
 const STOP_SANDBOX_MARKER_PATH = "/workspace/stopped-by-hook.txt";

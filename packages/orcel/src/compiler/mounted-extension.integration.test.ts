@@ -54,7 +54,7 @@ describe("mounted extension via authored-source loader", () => {
           'import ext from "@acme/crm"; export default ext({ account: "one" });',
         "agent/extensions/one/tools/account.mjs": [
           'import ext from "@acme/crm";',
-          'import { defineState } from "orcel/context";',
+          'import { defineState } from "@orcel/orcel/context";',
           'const count = defineState("override-count", () => 0);',
           'export default { description: "Read overridden account", inputSchema: {}, execute: () => { count.update(n => n + 1); return { account: ext.config.account, count: count.get() }; } };',
         ].join("\n"),
@@ -84,7 +84,7 @@ describe("mounted extension via authored-source loader", () => {
           config: 1,
         }),
         "node_modules/@acme/crm/extension/extension.mjs": [
-          'import { defineExtension } from "orcel/extension";',
+          'import { defineExtension } from "@orcel/orcel/extension";',
           "const config = { '~standard': { version: 1, vendor: 'test', validate: value => ({ value }) } };",
           "export default defineExtension({ config });",
         ].join("\n"),
@@ -240,9 +240,9 @@ describe("mounted extension via authored-source loader", () => {
         "agent/agent.mjs": 'export default { model: "openai/gpt-5.4" };',
         "agent/instructions.md": "Work with the available tools.",
         "agent/extensions/one.mjs":
-          'import code from "orcel/extensions/code"; export default code({ worker: { model: "openai/gpt-5.4", reasoning: "high" } });',
+          'import code from "@orcel/orcel/extensions/code"; export default code({ worker: { model: "openai/gpt-5.4", reasoning: "high" } });',
         "agent/extensions/two.mjs":
-          'import code from "orcel/extensions/code"; export default code({ worker: { model: "openai/gpt-5.4", reasoning: "low" } });',
+          'import code from "@orcel/orcel/extensions/code"; export default code({ worker: { model: "openai/gpt-5.4", reasoning: "low" } });',
       },
     });
     const { manifest, moduleMap } = await compileRuntimeGraph(app.appRoot);
@@ -292,7 +292,7 @@ describe("mounted extension via authored-source loader", () => {
         }),
         "node_modules/@acme/crm/extension/extension.mjs": "export default {};",
         "node_modules/@acme/crm/extension/tools/count.mjs": [
-          'import { defineState } from "orcel/context";',
+          'import { defineState } from "@orcel/orcel/context";',
           'const count = defineState("requests", () => 0);',
           'export default { description: "Count", inputSchema: {}, execute: () => { count.update(n => n + 1); return count.get(); } };',
         ].join("\n"),
@@ -344,7 +344,7 @@ describe("mounted extension via authored-source loader", () => {
         "agent/instructions.md": "Work with the available tools.",
         "agent/extensions/crm.mjs": 'export { default } from "@acme/crm";',
         "agent/tools/intrude.mjs": [
-          'import { defineState } from "orcel/context";',
+          'import { defineState } from "@orcel/orcel/context";',
           'defineState("orcel:mount.v1:extensions%2Fcrm:requests", () => 0);',
           'export default { description: "Read state", inputSchema: {}, execute: () => 0 };',
         ].join("\n"),
@@ -360,7 +360,7 @@ describe("mounted extension via authored-source loader", () => {
         }),
         "node_modules/@acme/crm/extension/extension.mjs": "export default {};",
         "node_modules/@acme/crm/extension/tools/count.mjs": [
-          'import { defineState } from "orcel/context";',
+          'import { defineState } from "@orcel/orcel/context";',
           'const count = defineState("requests", () => 0);',
           'export default { description: "Count", inputSchema: {}, execute: () => count.get() };',
         ].join("\n"),
@@ -470,14 +470,14 @@ describe("mounted extension via authored-source loader", () => {
           config: 1,
         }),
         "node_modules/@acme/crm/extension/extension.mjs": [
-          'import { defineExtension } from "orcel/extension";',
+          'import { defineExtension } from "@orcel/orcel/extension";',
           // Minimal pass-through Standard Schema — this scenario tests binding, not validation.
           "const config = { '~standard': { version: 1, vendor: 'scenario', validate: (value) => ({ value }) } };",
           "export default defineExtension({ config });",
           "",
         ].join("\n"),
         "node_modules/@acme/crm/extension/tools/crm_echo.mjs": [
-          'import { defineTool } from "orcel/tools";',
+          'import { defineTool } from "@orcel/orcel/tools";',
           'import extension from "../extension.mjs";',
           "export default defineTool({",
           '  description: "Echo the configured API key.",',
@@ -524,12 +524,12 @@ describe("mounted extension without config", () => {
           tool: 1,
         }),
         "node_modules/@acme/widget/extension/extension.mjs": [
-          'import { defineExtension } from "orcel/extension";',
+          'import { defineExtension } from "@orcel/orcel/extension";',
           "export default defineExtension();",
           "",
         ].join("\n"),
         "node_modules/@acme/widget/extension/tools/widget_ping.mjs": [
-          'import { defineTool } from "orcel/tools";',
+          'import { defineTool } from "@orcel/orcel/tools";',
           "export default defineTool({",
           '  description: "Return a fixed widget token.",',
           "  inputSchema: { type: 'object', properties: {}, additionalProperties: false },",
@@ -571,7 +571,7 @@ describe("mounted extension via directory form with override", () => {
         ].join("\n"),
         // Co-located override: shadows the extension's own crm_status.
         "agent/extensions/crm/tools/crm_status.mjs": [
-          'import { defineTool } from "orcel/tools";',
+          'import { defineTool } from "@orcel/orcel/tools";',
           "export default defineTool({",
           '  description: "Report the consumer status.",',
           "  inputSchema: { type: 'object', properties: {}, additionalProperties: false },",
@@ -583,13 +583,13 @@ describe("mounted extension via directory form with override", () => {
         ].join("\n"),
         // Co-located override: opts out of the extension's own crm_legacy.
         "agent/extensions/crm/tools/crm_legacy.mjs": [
-          'import { disableTool } from "orcel/tools";',
+          'import { disableTool } from "@orcel/orcel/tools";',
           "export default disableTool();",
           "",
         ].join("\n"),
         // Co-located override: opts out of the extension's dynamic crm_pulse.
         "agent/extensions/crm/tools/crm_pulse.mjs": [
-          'import { disableTool } from "orcel/tools";',
+          'import { disableTool } from "@orcel/orcel/tools";',
           "export default disableTool();",
           "",
         ].join("\n"),
@@ -606,13 +606,13 @@ describe("mounted extension via directory form with override", () => {
           config: 1,
         }),
         "node_modules/@acme/crm/extension/extension.mjs": [
-          'import { defineExtension } from "orcel/extension";',
+          'import { defineExtension } from "@orcel/orcel/extension";',
           "const config = { '~standard': { version: 1, vendor: 'scenario', validate: (value) => ({ value }) } };",
           "export default defineExtension({ config });",
           "",
         ].join("\n"),
         "node_modules/@acme/crm/extension/tools/crm_echo.mjs": [
-          'import { defineTool } from "orcel/tools";',
+          'import { defineTool } from "@orcel/orcel/tools";',
           'import extension from "../extension.mjs";',
           "export default defineTool({",
           '  description: "Echo the configured API key.",',
@@ -624,7 +624,7 @@ describe("mounted extension via directory form with override", () => {
           "",
         ].join("\n"),
         "node_modules/@acme/crm/extension/tools/crm_status.mjs": [
-          'import { defineTool } from "orcel/tools";',
+          'import { defineTool } from "@orcel/orcel/tools";',
           "export default defineTool({",
           '  description: "Report the extension status.",',
           "  inputSchema: { type: 'object', properties: {}, additionalProperties: false },",
@@ -635,7 +635,7 @@ describe("mounted extension via directory form with override", () => {
           "",
         ].join("\n"),
         "node_modules/@acme/crm/extension/tools/crm_legacy.mjs": [
-          'import { defineTool } from "orcel/tools";',
+          'import { defineTool } from "@orcel/orcel/tools";',
           "export default defineTool({",
           '  description: "A legacy tool the consumer opts out of.",',
           "  inputSchema: { type: 'object', properties: {}, additionalProperties: false },",
@@ -646,7 +646,7 @@ describe("mounted extension via directory form with override", () => {
           "",
         ].join("\n"),
         "node_modules/@acme/crm/extension/tools/crm_pulse.mjs": [
-          'import { defineDynamic, defineTool } from "orcel/tools";',
+          'import { defineDynamic, defineTool } from "@orcel/orcel/tools";',
           "export default defineDynamic({",
           "  events: {",
           '    "session.started": async () =>',
@@ -698,7 +698,7 @@ describe("mounted extension via directory form with override", () => {
           "",
         ].join("\n"),
         "agent/extensions/crm/subagents/weather.mjs": [
-          'import { defineRemoteAgent } from "orcel";',
+          'import { defineRemoteAgent } from "@orcel/orcel";',
           "export default defineRemoteAgent({",
           '  description: "Use the remote weather agent.",',
           '  url: "https://weather.example.com",',
@@ -706,7 +706,7 @@ describe("mounted extension via directory form with override", () => {
           "",
         ].join("\n"),
         "agent/extensions/crm/subagents/alerts.mjs": [
-          'import { defineRemoteAgent } from "orcel";',
+          'import { defineRemoteAgent } from "@orcel/orcel";',
           "export default defineRemoteAgent({",
           '  description: "Use the consumer alerts agent.",',
           '  url: "https://consumer-alerts.example.com",',
@@ -724,7 +724,7 @@ describe("mounted extension via directory form with override", () => {
           subagent: 6,
         }),
         "node_modules/@acme/crm/extension/extension.mjs": [
-          'import { defineExtension } from "orcel/extension";',
+          'import { defineExtension } from "@orcel/orcel/extension";',
           "export default defineExtension({});",
           "",
         ].join("\n"),
@@ -736,7 +736,7 @@ describe("mounted extension via directory form with override", () => {
           "",
         ].join("\n"),
         "node_modules/@acme/crm/extension/subagents/alerts.mjs": [
-          'import { defineRemoteAgent } from "orcel";',
+          'import { defineRemoteAgent } from "@orcel/orcel";',
           "export default defineRemoteAgent({",
           '  description: "Use the extension alerts agent.",',
           '  url: "https://extension-alerts.example.com",',
@@ -788,7 +788,7 @@ describe("mounted extension subagent resources", () => {
           subagent: 6,
         }),
         "node_modules/@acme/crm/extension/extension.mjs": [
-          'import { defineExtension } from "orcel/extension";',
+          'import { defineExtension } from "@orcel/orcel/extension";',
           "export default defineExtension();",
           "",
         ].join("\n"),
@@ -800,7 +800,7 @@ describe("mounted extension subagent resources", () => {
           "",
         ].join("\n"),
         "node_modules/@acme/crm/extension/subagents/reviewer/tools/review.mjs": [
-          'import { defineTool } from "orcel/tools";',
+          'import { defineTool } from "@orcel/orcel/tools";',
           'export default defineTool({ description: "Review notes.", inputSchema: { type: "object" }, execute: async () => ({ ok: true }) });',
           "",
         ].join("\n"),

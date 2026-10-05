@@ -1,6 +1,6 @@
-import { defineTool } from "orcel/tools";
-import { always } from "orcel/tools/approval";
-import { defineState } from "orcel/context";
+import { defineTool } from "@orcel/orcel/tools";
+import { always } from "@orcel/orcel/tools/approval";
+import { defineState } from "@orcel/orcel/context";
 import { z } from "zod";
 
 const executions = defineState("change-b.executions", () => 0);

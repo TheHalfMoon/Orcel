@@ -6,7 +6,7 @@ const FILE = "/app/agent/tools/deploy.ts";
 
 function toolModule(execute: string): string {
   return [
-    'import { defineWorkflowTool } from "orcel/tools";',
+    'import { defineWorkflowTool } from "@orcel/orcel/tools";',
     'import { z } from "zod";',
     "",
     "export default defineWorkflowTool({",
@@ -123,8 +123,8 @@ return inner();
   );
 
   it.each([
-    ['import { defineWorkflowTool as durable } from "orcel/tools";', "durable"],
-    ['import * as tools from "orcel/tools";', "tools.defineWorkflowTool"],
+    ['import { defineWorkflowTool as durable } from "@orcel/orcel/tools";', "durable"],
+    ['import * as tools from "@orcel/orcel/tools";', "tools.defineWorkflowTool"],
   ])("recognizes imported aliases: %s", async (binding, definer) => {
     const source = `${binding}\nexport default ${definer}({ async execute(input) {\n"use workflow";\nreturn input; } });`;
     await expect(
@@ -134,7 +134,7 @@ return inner();
 
   it("keeps a referenced top-level workflow function as is", async () => {
     const source = [
-      'import { defineWorkflowTool } from "orcel/tools";',
+      'import { defineWorkflowTool } from "@orcel/orcel/tools";',
       'export default defineWorkflowTool({ description: "d", inputSchema: {}, execute: deploy });',
       "async function deploy(input: unknown) {",
       '  "use workflow";',
@@ -151,8 +151,8 @@ return inner();
   });
 
   it("rejects the removed orcel/workflow import", async () => {
-    const source = `import { defineTool } from "orcel/tools";
-import { agent } from "orcel/workflow";
+    const source = `import { defineTool } from "@orcel/orcel/tools";
+import { agent } from "@orcel/orcel/workflow";
 export default defineTool({ async execute(input, ctx) { return agent(ctx, input); } });`;
     await expect(prepareAuthoredWorkflowDirectives({ filePath: FILE, source })).rejects.toThrow(
       /"orcel\/workflow" has been removed/u,

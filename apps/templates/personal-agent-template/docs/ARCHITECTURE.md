@@ -157,4 +157,4 @@ Global middleware: [`apps/web/app/middleware/auth.global.ts`](../apps/web/app/mi
 
 ## Orcel docs
 
-For channels, tools, connections, and deployment details, read Orcel guides in `node_modules/orcel/dist/docs/public/`.
+For channels, tools, connections, and deployment details, read Orcel guides in `node_modules/@orcel/orcel/dist/docs/public/`.

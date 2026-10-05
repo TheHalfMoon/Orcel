@@ -1,5 +1,5 @@
-import { defineSandbox } from "orcel/sandbox";
-import { MicrosandboxSandbox } from "orcel/sandbox/microsandbox";
+import { defineSandbox } from "@orcel/orcel/sandbox";
+import { MicrosandboxSandbox } from "@orcel/orcel/sandbox/microsandbox";
 
 export const environment = MicrosandboxSandbox.dockerfile({
   setup: { autoInstall: false },

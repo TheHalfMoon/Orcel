@@ -13,7 +13,7 @@ Create one file under `agent/connections/`. The filename becomes the runtime con
 
 ```ts title="agent/connections/linear.ts"
 import { connect } from "@vercel/connect/eve";
-import { defineMcpClientConnection } from "orcel/connections";
+import { defineMcpClientConnection } from "@orcel/orcel/connections";
 
 export default defineMcpClientConnection({
   url: "https://mcp.linear.app/mcp",
@@ -53,7 +53,7 @@ MCP connections accept the shared connection `auth` and `headers` options. Use `
 Some MCP servers require arguments that belong to the application rather than the model. For example, UCP servers expect the agent profile in `arguments.meta` on every tool call. Configure those values with `toolCall.providedArguments`:
 
 ```ts title="agent/connections/storefront.ts"
-import { defineMcpClientConnection } from "orcel/connections";
+import { defineMcpClientConnection } from "@orcel/orcel/connections";
 
 const profileUrl = "https://agent.example.com/.well-known/ucp";
 
@@ -86,7 +86,7 @@ MCP servers can expose broad read and write surfaces. Narrow what the model can 
 
 ```ts title="agent/connections/linear.ts"
 import { connect } from "@vercel/connect/eve";
-import { defineMcpClientConnection } from "orcel/connections";
+import { defineMcpClientConnection } from "@orcel/orcel/connections";
 
 export default defineMcpClientConnection({
   url: "https://mcp.linear.app/mcp",
@@ -109,7 +109,7 @@ A remote MCP server usually mixes read tools with destructive or publishing ones
 This connection always gates deletes, gates a publish only when the call actually schedules a post, and lets everything else through:
 
 ```ts title="agent/connections/social.ts"
-import { defineMcpClientConnection } from "orcel/connections";
+import { defineMcpClientConnection } from "@orcel/orcel/connections";
 
 // Bare tool names whose effects are irreversible — always gate these.
 const DELETE_TOOLS = ["delete_draft", "delete_thread"];

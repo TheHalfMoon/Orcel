@@ -12,7 +12,7 @@ A skill is an on-demand procedure. The model pulls it in with `load_skill` only 
 `ctx.session.auth.current` holds the most recent caller, or `null` if there isn't one. Its `attributes` are the claims your auth layer stamped on, including the team. Read the team, look up that team's playbook, and emit a skill for it:
 
 ```ts title="agent/skills/team-playbook.ts"
-import { defineDynamic, defineSkill } from "orcel/skills";
+import { defineDynamic, defineSkill } from "@orcel/orcel/skills";
 
 const PLAYBOOKS: Record<string, { title: string; markdown: string }> = {
   growth: {
@@ -55,8 +55,8 @@ export default defineDynamic({
 The team comes from authenticated claims, which the auth layer stamps on in [Step 8](./ship-it). Until then `ctx.session.auth.current` has no `team`, so the resolver returns `null` and no playbook loads. To verify routing now, stamp a team in local dev. Add a dev-only entry to `agent/channels/orcel.ts` ahead of `localDev()`, and remove it before Step 8 wires real auth:
 
 ```ts title="agent/channels/orcel.ts"
-import { orcelChannel } from "orcel/channels/orcel";
-import { localDev, placeholderAuth, vercelOidc, type AuthFn } from "orcel/channels/auth";
+import { orcelChannel } from "@orcel/orcel/channels/orcel";
+import { localDev, placeholderAuth, vercelOidc, type AuthFn } from "@orcel/orcel/channels/auth";
 
 // Dev-only: stamp a team so Step 6's playbook resolver has something to read.
 // Remove before Step 8.

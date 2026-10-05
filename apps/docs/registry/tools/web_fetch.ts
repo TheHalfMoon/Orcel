@@ -1,1 +1,1 @@
-export { default } from "orcel/tools/web_fetch";
+export { default } from "@orcel/orcel/tools/web_fetch";

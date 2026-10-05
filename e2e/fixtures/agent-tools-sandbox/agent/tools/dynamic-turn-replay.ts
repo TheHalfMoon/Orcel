@@ -1,4 +1,4 @@
-import { defineDynamic, defineTool } from "orcel/tools";
+import { defineDynamic, defineTool } from "@orcel/orcel/tools";
 
 const TOKEN = "dynamic-turn-replay-ok-V6N";
 

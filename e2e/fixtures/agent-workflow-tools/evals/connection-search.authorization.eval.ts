@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 import { z } from "zod";
 
 import { fixtureAuthorizationCallback } from "../agent/lib/fake-service.ts";

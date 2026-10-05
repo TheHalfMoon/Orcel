@@ -1,4 +1,4 @@
-import { defineHook } from "orcel/hooks";
+import { defineHook } from "@orcel/orcel/hooks";
 import { recordSubagentHook } from "../../subagent-hook-audit";
 
 export default defineHook({

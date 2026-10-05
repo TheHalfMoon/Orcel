@@ -1,5 +1,5 @@
-import { defineEval } from "orcel/evals";
-import { equals, satisfies } from "orcel/evals/expect";
+import { defineEval } from "@orcel/orcel/evals";
+import { equals, satisfies } from "@orcel/orcel/evals/expect";
 
 // Token returned by agent/tools/record-heartbeat.ts; mirrored here because the
 // agent tree compiles independently of the eval tree.

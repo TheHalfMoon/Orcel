@@ -16,19 +16,19 @@ if (!Number.isInteger(toolCount) || toolCount < 0 || toolCount > 1000)
 const root = await mkdtemp(join(tmpdir(), "orcel-startup-benchmark-"));
 await mkdir(join(root, "agent", "channels"), { recursive: true });
 await mkdir(join(root, "node_modules"));
-await symlink(packageRoot, join(root, "node_modules", "orcel"), "junction");
+await symlink(packageRoot, join(root, "node_modules", "@orcel", "orcel"), "junction");
 await writeFile(
   join(root, "package.json"),
-  JSON.stringify({ private: true, type: "module", dependencies: { orcel: "*" } }),
+  JSON.stringify({ private: true, type: "module", dependencies: { "@orcel/orcel": "*" } }),
 );
 await writeFile(join(root, "agent", "instructions.md"), "You are a helpful assistant.\n");
 await writeFile(
   join(root, "agent", "agent.ts"),
-  'import { defineAgent } from "orcel";\nexport default defineAgent({ model: "openai/gpt-5.4-mini" });\n',
+  'import { defineAgent } from "@orcel/orcel";\nexport default defineAgent({ model: "openai/gpt-5.4-mini" });\n',
 );
 await writeFile(
   join(root, "agent", "channels", "orcel.ts"),
-  'import { orcelChannel } from "orcel/channels/orcel";\nimport { localDev } from "orcel/channels/auth";\nexport default orcelChannel({ auth: [localDev()] });\n',
+  'import { orcelChannel } from "@orcel/orcel/channels/orcel";\nimport { localDev } from "@orcel/orcel/channels/auth";\nexport default orcelChannel({ auth: [localDev()] });\n',
 );
 if (toolCount > 0) {
   await mkdir(join(root, "agent", "tools"));

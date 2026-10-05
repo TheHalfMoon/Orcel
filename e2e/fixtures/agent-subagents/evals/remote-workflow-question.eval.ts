@@ -1,4 +1,4 @@
-import { defineEval, type OrcelEvalContext, type OrcelEvalSession } from "orcel/evals";
+import { defineEval, type OrcelEvalContext, type OrcelEvalSession } from "@orcel/orcel/evals";
 import { REMOTE_QUESTION_DIRECTIVE } from "../agent/lib/remote-question-script.js";
 
 export default defineEval({

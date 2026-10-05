@@ -3,7 +3,7 @@ title: "useOrcelAgent (Svelte)"
 description: "Use the orcel Svelte binding and its Svelte-specific reactive interface."
 ---
 
-`useOrcelAgent()` from `orcel/svelte` exposes the shared orcel frontend client through Svelte 5 reactive getters and methods. Read the [frontend overview](./overview) for session behavior, messages, human input, authorization, callbacks, reducers, and persistence. This page covers the Svelte-specific interface.
+`useOrcelAgent()` from `@orcel/orcel/svelte` exposes the shared orcel frontend client through Svelte 5 reactive getters and methods. Read the [frontend overview](./overview) for session behavior, messages, human input, authorization, callbacks, reducers, and persistence. This page covers the Svelte-specific interface.
 
 On SvelteKit, register the [`orcelSvelteKit` Vite plugin](./sveltekit) to mount the agent routes on the application origin.
 
@@ -13,7 +13,7 @@ Call the binding once for a conversation and read its reactive getters directly.
 
 ```svelte
 <script lang="ts">
-  import { useOrcelAgent } from "orcel/svelte";
+  import { useOrcelAgent } from "@orcel/orcel/svelte";
 
   const agent = useOrcelAgent();
   let message = $state("");
@@ -66,7 +66,7 @@ Pending requests appear in `agent.data.messages`. Use the Svelte exports when na
 
 ```svelte
 <script lang="ts">
-  import { useOrcelAgent } from "orcel/svelte";
+  import { useOrcelAgent } from "@orcel/orcel/svelte";
 
   const agent = useOrcelAgent();
   const pendingRequests = $derived(
@@ -128,7 +128,7 @@ Pass `onEvent`, `onError`, `onFinish`, or `onSessionChange` when the application
 
 ## Custom reducer
 
-Import `OrcelAgentReducer` from `orcel/svelte` when projecting events into application-specific state. The resulting `agent.data` uses the reducer's `TData` type. See [Custom reducer](./overview#custom-reducer) for the reducer contract and client projection events.
+Import `OrcelAgentReducer` from `@orcel/orcel/svelte` when projecting events into application-specific state. The resulting `agent.data` uses the reducer's `TData` type. See [Custom reducer](./overview#custom-reducer) for the reducer contract and client projection events.
 
 ## What to read next
 

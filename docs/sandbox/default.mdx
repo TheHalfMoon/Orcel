@@ -6,7 +6,7 @@ description: "Let orcel select the sandbox provider for the current environment.
 `DefaultSandbox.environment()` preserves orcel's standard behavior without exposing provider-specific live creation options.
 
 ```ts
-import { DefaultSandbox, defineSandbox } from "orcel/sandbox";
+import { DefaultSandbox, defineSandbox } from "@orcel/orcel/sandbox";
 
 export const environment = DefaultSandbox.environment();
 export default defineSandbox(() => environment.open());

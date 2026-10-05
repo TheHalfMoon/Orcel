@@ -7,7 +7,7 @@ export const GITHUB_ROUTE_PORTABILITY_DESCRIPTOR: ScenarioAppDescriptor = {
   type GitHubCheckRunEvent,
   type GitHubCheckSuiteEvent,
   type GitHubWorkflowRunEvent,
-} from "orcel/channels/github";
+} from "@orcel/orcel/channels/github";
 
 const ignore = <T>(_event: T): null => null;
 

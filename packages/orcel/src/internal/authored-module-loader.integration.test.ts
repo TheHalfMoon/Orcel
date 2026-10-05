@@ -34,7 +34,7 @@ describe("loadAuthoredModuleNamespace", () => {
       const app = await createApp({
         files: {
           "agent/agent.ts": 'export default { model: "openai/gpt-5.4" };',
-          "agent/tools/probe.ts": `import { defineTool } from "orcel/tools";\nexport default ${kind === "defineTool" ? `defineTool(${definition})` : definition};`,
+          "agent/tools/probe.ts": `import { defineTool } from "@orcel/orcel/tools";\nexport default ${kind === "defineTool" ? `defineTool(${definition})` : definition};`,
         },
         name: "legacy-workflow-tool",
       });
@@ -52,7 +52,7 @@ describe("loadAuthoredModuleNamespace", () => {
     const app = await createApp({
       files: {
         "agent/agent.ts": 'export default { model: "openai/gpt-5.4" };\n',
-        "agent/channels/probe.ts": `import { defineChannel, POST } from "orcel/channels";
+        "agent/channels/probe.ts": `import { defineChannel, POST } from "@orcel/orcel/channels";
 export default defineChannel({ routes: [POST("/probe", handler)] });
 async function handler() {
   "use workflow";
@@ -87,7 +87,7 @@ async function handler() {
       const app = await createApp({
         files: {
           "agent/agent.ts": 'export default { model: "openai/gpt-5.4" };',
-          "agent/tools/probe.ts": `import { defineWorkflowTool } from "orcel/tools";
+          "agent/tools/probe.ts": `import { defineWorkflowTool } from "@orcel/orcel/tools";
 export default defineWorkflowTool({ description: "Probe", inputSchema: {}, ${execute} });
 ${helper}`,
         },
@@ -104,8 +104,8 @@ ${helper}`,
   );
 
   it.each([
-    ['import { defineWorkflowTool as durable } from "orcel/tools";', "durable"],
-    ['import * as tools from "orcel/tools";', "tools.defineWorkflowTool"],
+    ['import { defineWorkflowTool as durable } from "@orcel/orcel/tools";', "durable"],
+    ['import * as tools from "@orcel/orcel/tools";', "tools.defineWorkflowTool"],
   ])("validates a workflow tool through its compiled definition: %s", async (binding, definer) => {
     const app = await createApp({
       files: {
@@ -133,7 +133,7 @@ export default ${definer}({ description: "Probe", inputSchema: {}, execute: run 
     const app = await createApp({
       files: {
         "agent/agent.ts": 'export default { model: "openai/gpt-5.4" };\n',
-        "agent/tools/probe.ts": `import { defineWorkflowTool } from "orcel/tools";
+        "agent/tools/probe.ts": `import { defineWorkflowTool } from "@orcel/orcel/tools";
 import { delegate } from "../lib/delegate";
 export default defineWorkflowTool({ description: "Probe", inputSchema: { type: "object" }, async execute(input, ctx) {
   "use workflow";
@@ -154,13 +154,13 @@ export default defineWorkflowTool({ description: "Probe", inputSchema: { type: "
     [
       "channels/probe.ts",
       "channel",
-      'import { defineChannel, POST } from "orcel/channels";',
+      'import { defineChannel, POST } from "@orcel/orcel/channels";',
       'defineChannel({ routes: [POST("/probe", handler)] })',
     ],
     [
       "schedules/probe.ts",
       "schedule",
-      'import { defineSchedule } from "orcel/schedules";',
+      'import { defineSchedule } from "@orcel/orcel/schedules";',
       'defineSchedule({ cron: "* * * * *", run: handler })',
     ],
   ])(
@@ -192,7 +192,7 @@ export default defineWorkflowTool({ description: "Probe", inputSchema: { type: "
       files: {
         "agent/agent.ts": 'export default { model: "openai/gpt-5.4" };\n',
         "agent/tools/dynamic.ts": [
-          'import { defineDynamic, defineTool } from "orcel/tools";',
+          'import { defineDynamic, defineTool } from "@orcel/orcel/tools";',
           "",
           "const marker = defineTool({",
           '  description: "Return a marker.",',

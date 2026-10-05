@@ -1,6 +1,6 @@
 "use client";
 
-import { Client } from "orcel/client";
+import { Client } from "@orcel/orcel/client";
 import type {
   AuthorizationRequiredStreamEvent,
   ClientSession,
@@ -11,9 +11,9 @@ import type {
   RespondTurnOptions,
   SendTurnInput,
   SendTurnOptions,
-} from "orcel/client";
-import type { OrcelMessage } from "orcel/react";
-import { defaultMessageReducer, useOrcelAgent } from "orcel/react";
+} from "@orcel/orcel/client";
+import type { OrcelMessage } from "@orcel/orcel/react";
+import { defaultMessageReducer, useOrcelAgent } from "@orcel/orcel/react";
 import {
   AlertCircleIcon,
   ChevronDownIcon,

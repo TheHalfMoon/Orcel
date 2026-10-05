@@ -1,4 +1,4 @@
-import type { MockModelRequest, MockModelResponse, MockModelToolCall } from "orcel/evals";
+import type { MockModelRequest, MockModelResponse, MockModelToolCall } from "@orcel/orcel/evals";
 
 const read = (id: string): MockModelToolCall => ({
   id,

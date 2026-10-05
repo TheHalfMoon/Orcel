@@ -1,4 +1,4 @@
-import { Client } from "orcel/client";
+import { Client } from "@orcel/orcel/client";
 import {
   OrcelTUIRunner,
   MockScreen,

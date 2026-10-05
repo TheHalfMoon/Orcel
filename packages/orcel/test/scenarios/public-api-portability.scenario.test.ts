@@ -42,7 +42,7 @@ const PORTABILITY_CASES: readonly PortabilityCase[] = [
   {
     descriptor: {
       files: {
-        "agent/vercel.ts": `import { withEve, type OrcelVercelConfig } from "orcel/vercel";
+        "agent/vercel.ts": `import { withEve, type OrcelVercelConfig } from "@orcel/orcel/vercel";
 
 const config = {
   routes: [{ destination: { service: "web", type: "service" }, src: "^(.*)$" }],
@@ -65,12 +65,12 @@ export default withEve(config);
   {
     descriptor: {
       files: {
-        "agent/sandbox.ts": `import { DefaultSandbox, defineSandbox } from "orcel/sandbox";
-import { defineSandboxProvider } from "orcel/sandbox/provider";
-import { DockerSandbox } from "orcel/sandbox/docker";
-import { JustBashSandbox } from "orcel/sandbox/just-bash";
-import { MicrosandboxSandbox } from "orcel/sandbox/microsandbox";
-import { Drive, VercelSandbox } from "orcel/sandbox/vercel";
+        "agent/sandbox.ts": `import { DefaultSandbox, defineSandbox } from "@orcel/orcel/sandbox";
+import { defineSandboxProvider } from "@orcel/orcel/sandbox/provider";
+import { DockerSandbox } from "@orcel/orcel/sandbox/docker";
+import { JustBashSandbox } from "@orcel/orcel/sandbox/just-bash";
+import { MicrosandboxSandbox } from "@orcel/orcel/sandbox/microsandbox";
+import { Drive, VercelSandbox } from "@orcel/orcel/sandbox/vercel";
 
 const custom = defineSandboxProvider({
   name: "custom",
@@ -136,13 +136,13 @@ export default defineSandbox(() => environment.open());
   {
     descriptor: {
       files: {
-        "agent/memory/user.ts": `import { defineMemory } from "orcel/memory";
+        "agent/memory/user.ts": `import { defineMemory } from "@orcel/orcel/memory";
 import {
   fileMemory,
   inMemory,
   type MemoryDocumentBackend,
-} from "orcel/memory/file";
-import { vercelBlob, type VercelBlobBackendOptions } from "orcel/memory/file/vercel";
+} from "@orcel/orcel/memory/file";
+import { vercelBlob, type VercelBlobBackendOptions } from "@orcel/orcel/memory/file/vercel";
 
 const blobOptions: VercelBlobBackendOptions = { prefix: "portable/memory" };
 const backend: MemoryDocumentBackend = process.env.VERCEL
@@ -319,8 +319,8 @@ async function expectPortableFixtureToTypecheck(testCase: PortabilityCase): Prom
     appRoot,
     descriptor: testCase.descriptor,
   });
-  await mkdir(join(appRoot, "node_modules"), { recursive: true });
-  await cp(emittedPackageRoot, join(appRoot, "node_modules", "orcel"), {
+  await mkdir(join(appRoot, "node_modules", "@orcel"), { recursive: true });
+  await cp(emittedPackageRoot, join(appRoot, "node_modules", "@orcel", "orcel"), {
     recursive: true,
   });
   await writeFile(

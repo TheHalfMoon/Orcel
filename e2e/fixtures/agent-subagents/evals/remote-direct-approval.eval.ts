@@ -1,4 +1,4 @@
-import { defineEval, type OrcelEvalContext, type OrcelEvalSession } from "orcel/evals";
+import { defineEval, type OrcelEvalContext, type OrcelEvalSession } from "@orcel/orcel/evals";
 import { DIRECT_APPROVAL } from "../agent/lib/remote-direct-hitl-script.js";
 
 export default defineEval({

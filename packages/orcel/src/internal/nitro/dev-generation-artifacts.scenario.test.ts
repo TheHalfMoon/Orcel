@@ -198,7 +198,7 @@ describe("development generation artifacts", () => {
         ].join("\n"),
         "agent/instructions.md": "Use the available tools.",
         "packages/shared-graph-extension/extension/extension.mjs": [
-          'import { defineExtension } from "orcel/extension";',
+          'import { defineExtension } from "@orcel/orcel/extension";',
           "const schema = {",
           '  "~standard": { version: 1, vendor: "fixture", validate: (value) => ({ value }) },',
           "};",
@@ -231,7 +231,8 @@ describe("development generation artifacts", () => {
     });
     const packageRoot = join(app.appRoot, "packages", "shared-graph-extension");
     await mkdir(join(app.appRoot, "node_modules", "@acme"), { recursive: true });
-    await symlink(resolvePackageRoot(), join(app.appRoot, "node_modules", "orcel"), "junction");
+    await mkdir(join(app.appRoot, "node_modules", "@orcel"), { recursive: true });
+    await symlink(resolvePackageRoot(), join(app.appRoot, "node_modules", "@orcel", "orcel"), "junction");
     await symlink(
       packageRoot,
       join(app.appRoot, "node_modules", "@acme", "shared-graph-extension"),
@@ -265,7 +266,7 @@ describe("development generation artifacts", () => {
           "agent/agent.mjs": 'export default { model: "openai/gpt-5.4" };\n',
           "agent/instructions.md": "Use the available tools.",
           "agent/extensions/self-modification.mjs": [
-            'import selfModification from "orcel/self-modification";',
+            'import selfModification from "@orcel/orcel/self-modification";',
             "export default selfModification({ local: { enabled: false } });",
             "",
           ].join("\n"),
@@ -273,7 +274,8 @@ describe("development generation artifacts", () => {
         name: "disabled-local-self-modification-generation",
       });
       await mkdir(join(app.appRoot, "node_modules"), { recursive: true });
-      await symlink(resolvePackageRoot(), join(app.appRoot, "node_modules", "orcel"), "junction");
+      await mkdir(join(app.appRoot, "node_modules", "@orcel"), { recursive: true });
+      await symlink(resolvePackageRoot(), join(app.appRoot, "node_modules", "@orcel", "orcel"), "junction");
 
       const compileResult = await compileAgent({ startPath: app.appRoot });
       const snapshot = await stageDevelopmentGeneration(compileResult);
@@ -340,7 +342,7 @@ describe("development generation artifacts", () => {
     );
     await writeFile(
       join(packageRoot, "extension", "extension.mjs"),
-      'import { defineExtension } from "orcel/extension";\nexport default defineExtension();\n',
+      'import { defineExtension } from "@orcel/orcel/extension";\nexport default defineExtension();\n',
     );
     await writeFile(
       join(packageRoot, "extension", "tools", "read_marker.mjs"),
@@ -353,7 +355,8 @@ describe("development generation artifacts", () => {
       ].join("\n"),
     );
     await mkdir(join(app.appRoot, "node_modules"), { recursive: true });
-    await symlink(resolvePackageRoot(), join(app.appRoot, "node_modules", "orcel"), "junction");
+    await mkdir(join(app.appRoot, "node_modules", "@orcel"), { recursive: true });
+    await symlink(resolvePackageRoot(), join(app.appRoot, "node_modules", "@orcel", "orcel"), "junction");
 
     const compileResult = await compileAgent({ startPath: app.appRoot });
     const snapshot = await stageDevelopmentGeneration(compileResult);
@@ -529,7 +532,7 @@ describe("development generation artifacts", () => {
       files: {
         "agent/agent.mjs": 'export default { model: "openai/gpt-5.4" };\n',
         "agent/instrumentation/audit.mjs": [
-          'import { defineInstrumentation } from "orcel/instrumentation";',
+          'import { defineInstrumentation } from "@orcel/orcel/instrumentation";',
           'const marker = "one";',
           "export default defineInstrumentation({",
           "  setup() {",
@@ -589,7 +592,7 @@ describe("development generation artifacts", () => {
     await writeFile(
       join(app.appRoot, "agent", "instrumentation", "audit.mjs"),
       [
-        'import { defineInstrumentation } from "orcel/instrumentation";',
+        'import { defineInstrumentation } from "@orcel/orcel/instrumentation";',
         'const marker = "two";',
         "export default defineInstrumentation({",
         "  setup() {",
@@ -623,7 +626,7 @@ describe("development generation artifacts", () => {
         "agent/instructions.md": "Use the available tools.",
         "agent/lib/plan.mjs": 'export const PLAN_PREFIX = "plan:";\n',
         "agent/tools/deploy.mjs": [
-          'import { defineWorkflowTool } from "orcel/tools";',
+          'import { defineWorkflowTool } from "@orcel/orcel/tools";',
           'import { PLAN_PREFIX } from "../lib/plan.mjs";',
           "",
           "export default defineWorkflowTool({",
@@ -707,7 +710,7 @@ describe("development generation artifacts", () => {
         "agents/assistant/agent/agent.mjs": 'export default { model: "openai/gpt-5.4" };\n',
         "agents/assistant/agent/instructions.md": "Use the mission plan tool.",
         "agents/assistant/agent/tools/request_mission_plan.mjs": [
-          'import { defineWorkflowTool } from "orcel/tools";',
+          'import { defineWorkflowTool } from "@orcel/orcel/tools";',
           "",
           "export default defineWorkflowTool({",
           '  description: "Run a mission plan.",',

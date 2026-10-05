@@ -10,7 +10,7 @@ const scaffoldedSourcePaths = new Set(
 function isSelfModification(source: AgentInfoSource): boolean {
   return (
     source.owner.kind === "extension" &&
-    source.owner.packageName === "orcel" &&
+    source.owner.packageName === "@orcel/orcel" &&
     source.owner.namespace === "self-modification"
   );
 }

@@ -1,4 +1,4 @@
-import type { OrcelEvalTargetHandle } from "orcel/evals";
+import type { OrcelEvalTargetHandle } from "@orcel/orcel/evals";
 
 /**
  * Shared helpers for the channel-metadata smoke evals. These cases verify

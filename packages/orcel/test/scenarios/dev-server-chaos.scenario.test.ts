@@ -30,7 +30,7 @@ const CHAOS_SCENARIO_TIMEOUT_MS = 360_000;
 
 const CHAOS_CHANNEL_SOURCE = [
   'import { randomUUID } from "node:crypto";',
-  'import { defineChannel, GET } from "orcel/channels";',
+  'import { defineChannel, GET } from "@orcel/orcel/channels";',
   "",
   "const workerId = randomUUID();",
   "",
@@ -73,7 +73,7 @@ const CHAOS_DESCRIPTOR: ScenarioAppDescriptor = {
 
 function toolSource(marker: string): string {
   return [
-    'import { defineTool } from "orcel/tools";',
+    'import { defineTool } from "@orcel/orcel/tools";',
     'import { z } from "zod";',
     "",
     "export default defineTool({",

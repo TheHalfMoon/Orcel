@@ -12,7 +12,7 @@ const runtimeAssetDirs = ["src/cli/commands/agent-prompt"];
 const extensionAssetDirs = ["src/extensions/code/extension", "src/computer-use/extension"];
 // Hand-written declaration files are tsc inputs, not outputs. The ambient
 // `workflow` module types are referenced from `orcel/tools` and exported as
-// `orcel/workflow-modules`, so they ship beside the emitted declarations.
+// `@orcel/orcel/workflow-modules`, so they ship beside the emitted declarations.
 const runtimeAssetFiles = ["src/public/workflow-modules.d.ts"];
 
 export async function copyRuntimeAssets() {

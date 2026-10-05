@@ -130,7 +130,7 @@ describe("orcel init smoke", () => {
       pnpmfile,
       [
         "module.exports = { hooks: { updateConfig(config) {",
-        `  return { ...config, overrides: { ...config.overrides, orcel: ${JSON.stringify(orcelTarball)} } };`,
+        `  return { ...config, overrides: { ...config.overrides, "@orcel/orcel": ${JSON.stringify(orcelTarball)} } };`,
         "} } };\n",
       ].join("\n"),
     );
@@ -185,7 +185,7 @@ describe("orcel init smoke", () => {
     const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
       dependencies: Record<string, string>;
     };
-    manifest.dependencies.orcel = "0.0.0-orcel-init-unpublished";
+    manifest.dependencies["@orcel/orcel"] = "0.0.0-orcel-init-unpublished";
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
     await expect(
       runFile(
@@ -203,7 +203,7 @@ describe("orcel init smoke", () => {
     const lockfile = (await loadYaml(join(projectDir, "pnpm-lock.yaml"))) as {
       overrides?: Record<string, string>;
     };
-    expect(lockfile.overrides?.orcel).toBe(orcelTarball);
+    expect(lockfile.overrides?.["@orcel/orcel"]).toBe(orcelTarball);
   });
 
   it("creates the base template with the default model and no Vercel state", async () => {

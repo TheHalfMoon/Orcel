@@ -1,4 +1,4 @@
-import { defineMcpClientConnection } from "orcel/connections";
+import { defineMcpClientConnection } from "@orcel/orcel/connections";
 
 const SHOPIFY_EXAMPLE_PROFILE =
   "https://shopify.dev/ucp/agent-profiles/examples/2026-08-25/valid-with-capabilities.json";

@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 const HOUSE_RULES_OVERRIDE_TOKEN = "house-rules-dynamic-ok-M5T8";
 

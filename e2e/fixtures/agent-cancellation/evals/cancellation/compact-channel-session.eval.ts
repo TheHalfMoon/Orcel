@@ -1,5 +1,5 @@
-import { defineEval, type OrcelEvalTargetHandle } from "orcel/evals";
-import { satisfies } from "orcel/evals/expect";
+import { defineEval, type OrcelEvalTargetHandle } from "@orcel/orcel/evals";
+import { satisfies } from "@orcel/orcel/evals/expect";
 
 interface MessageResponse {
   readonly ok: boolean;

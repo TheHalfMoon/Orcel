@@ -13,7 +13,7 @@
   "dependencies": {
     "@orcel-e2e/config": "workspace:*",
     "@workflow/world-postgres": "catalog:",
-    "orcel": "workspace:*",
+    "@orcel/orcel": "workspace:*",
     "gizmo-extension": "workspace:*",
     "js-only-extension": "workspace:*",
     "toolkit-extension": "workspace:*",

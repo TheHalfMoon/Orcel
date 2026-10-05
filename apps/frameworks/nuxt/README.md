@@ -1,10 +1,10 @@
 # Nuxt with orcel demo
 
-A Nuxt 4 app with an embedded orcel agent, integrated through the `orcel/nuxt` module:
+A Nuxt 4 app with an embedded orcel agent, integrated through the `@orcel/orcel/nuxt` module:
 
 ```ts
 export default defineNuxtConfig({
-  modules: ["orcel/nuxt"],
+  modules: ["@orcel/orcel/nuxt"],
 });
 ```
 

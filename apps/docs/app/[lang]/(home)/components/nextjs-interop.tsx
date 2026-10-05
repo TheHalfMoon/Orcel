@@ -16,7 +16,7 @@ const FILES: InteropFile[] = [
   {
     fileName: "next.config.ts",
     lang: "typescript",
-    code: `import { withEve } from "orcel/next";
+    code: `import { withEve } from "@orcel/orcel/next";
 
 const nextConfig = {};
 
@@ -27,7 +27,7 @@ export default withEve(nextConfig);`,
     fileName: "app/chat.tsx",
     lang: "tsx",
     code: `"use client";
-import { useOrcelAgent } from "orcel/react";
+import { useOrcelAgent } from "@orcel/orcel/react";
 
 export function Chat() {
   // Same-origin routes, found automatically.

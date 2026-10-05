@@ -29,7 +29,7 @@ describe("self-modification proposal capture", () => {
       ".env.production",
       ".envrc",
       ".turbo/cache/state.json",
-      "node_modules/orcel/index.js",
+      "node_modules/@orcel/orcel/index.js",
       "agent/subagents/self-modification/agent.ts",
       "agent/extensions/self-modification/extension.ts",
       "agent/extensions/self-modification.ts",

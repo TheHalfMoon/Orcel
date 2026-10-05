@@ -19,7 +19,7 @@ export const DEV_SERVER_AGENT_DESCRIPTOR: ScenarioAppDescriptor = {
       ),
     ),
     "agent/channels/dev-generation.ts": [
-      'import { defineChannel, GET } from "orcel/channels";',
+      'import { defineChannel, GET } from "@orcel/orcel/channels";',
       "",
       "export default defineChannel({",
       '  routes: [GET("/dev-generation", () => new Response(process.env.ORCEL_SCENARIO_RELOAD ?? process.env.ORCEL_WEBSOCKET_RELOAD ?? "initial"))],',
@@ -40,7 +40,7 @@ export const TRANSACTIONAL_REBUILD_DESCRIPTOR: ScenarioAppDescriptor = {
 
 export function createInstrumentationSource(marker: string): string {
   return [
-    'import { defineInstrumentation } from "orcel/instrumentation";',
+    'import { defineInstrumentation } from "@orcel/orcel/instrumentation";',
     "",
     "declare global {",
     "  var __ORCEL_INSTRUMENTATION_MARKER__: string | undefined;",
@@ -62,7 +62,7 @@ export function createTransactionalRouteSource(): string {
 export function createTransactionalChannelSource(routeLines: readonly string[]): string {
   return [
     'import { threadId } from "node:worker_threads";',
-    'import { defineChannel, GET } from "orcel/channels";',
+    'import { defineChannel, GET } from "@orcel/orcel/channels";',
     "",
     "export default defineChannel({",
     "  routes: [",

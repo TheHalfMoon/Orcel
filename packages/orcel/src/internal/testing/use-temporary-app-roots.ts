@@ -87,8 +87,12 @@ export function useTemporaryAppRoots(): (
       await writeFile(destinationPath, contents, "utf8");
     }
 
-    await mkdir(join(appRoot, "node_modules"), { recursive: true });
-    await symlink(resolvePackageRoot(), join(appRoot, "node_modules", "orcel"), "junction");
+    await mkdir(join(appRoot, "node_modules", "@orcel"), { recursive: true });
+    await symlink(
+      resolvePackageRoot(),
+      join(appRoot, "node_modules", "@orcel", "orcel"),
+      "junction",
+    );
 
     return {
       agentRoot,

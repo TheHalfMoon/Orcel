@@ -1,5 +1,5 @@
 import { latestTaskResult, playScript } from "@orcel-e2e/config/mock-script";
-import type { MockModelRequest, MockModelResponse } from "orcel/evals";
+import type { MockModelRequest, MockModelResponse } from "@orcel/orcel/evals";
 
 export const NESTED_APPROVALS = "REMOTE-NESTED-APPROVALS-8H4N";
 export const NESTED_AUTHORIZATION = "REMOTE-NESTED-AUTHORIZATION-8H4N";

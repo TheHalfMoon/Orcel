@@ -1,6 +1,6 @@
 import { latestTaskResult, playScript } from "@orcel-e2e/config/mock-script";
-import { defineAgent } from "orcel";
-import { mockModel, type MockModelRequest, type MockModelResponse } from "orcel/evals";
+import { defineAgent } from "@orcel/orcel";
+import { mockModel, type MockModelRequest, type MockModelResponse } from "@orcel/orcel/evals";
 
 import { STAGER_INTERIM_MESSAGE } from "../../../task-scenario-text.ts";
 

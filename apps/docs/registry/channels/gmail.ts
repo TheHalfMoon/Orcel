@@ -1,7 +1,7 @@
 import { createGmailAdapter } from "@chat-adapter/gmail";
 import { createRedisState } from "@chat-adapter/state-redis";
 import type { Message, Thread } from "chat";
-import { chatSdkChannel } from "orcel/channels/chat-sdk";
+import { chatSdkChannel } from "@orcel/orcel/channels/chat-sdk";
 
 export const gmail = createGmailAdapter();
 

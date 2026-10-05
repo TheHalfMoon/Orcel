@@ -1,6 +1,6 @@
 import { SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { PostHogTraceExporter } from "@posthog/ai/otel";
-import { otelIntegration } from "orcel/instrumentation/otel";
+import { otelIntegration } from "@orcel/orcel/instrumentation/otel";
 
 export default otelIntegration({
   exportPolicy: {

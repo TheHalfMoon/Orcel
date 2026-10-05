@@ -1,5 +1,5 @@
-import type { AgentDefinition, AgentStaticModelDefinition } from "orcel";
-import { mockModel, type MockModelResponder } from "orcel/evals";
+import type { AgentDefinition, AgentStaticModelDefinition } from "@orcel/orcel";
+import { mockModel, type MockModelResponder } from "@orcel/orcel/evals";
 
 export { e2eJudgeModel } from "./judge.js";
 

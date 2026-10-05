@@ -30,7 +30,7 @@ The generated channel looks like this:
 
 ```ts title="agent/channels/discord.ts"
 import { connectDiscordCredentials } from "@vercel/connect/eve";
-import { discordChannel } from "orcel/channels/discord";
+import { discordChannel } from "@orcel/orcel/channels/discord";
 
 export default discordChannel({
   credentials: connectDiscordCredentials("discord/my-agent"),
@@ -63,7 +63,7 @@ The model-visible `<discord_context>` includes `user_id` and the receiving appli
 Event handlers receive `(eventData, channel, ctx)`, with Discord platform handles on `channel.discord`:
 
 ```ts
-import { discordChannel } from "orcel/channels/discord";
+import { discordChannel } from "@orcel/orcel/channels/discord";
 
 export default discordChannel({
   onCommand: (ctx, interaction) => ({

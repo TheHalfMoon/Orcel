@@ -10,7 +10,7 @@ An orcel app has one root agent assembled from the files under `agent/`. Its opt
 A typical config selects a model:
 
 ```ts title="agent/agent.ts"
-import { defineAgent } from "orcel";
+import { defineAgent } from "@orcel/orcel";
 
 export default defineAgent({
   model: "anthropic/claude-opus-5.5",
@@ -31,17 +31,17 @@ A config that selects a static Gateway model is compile-only. A config that cont
 Use orcel's helpers for direct OpenAI or Anthropic access without installing another provider package:
 
 ```ts title="agent/agent.ts"
-import { defineAgent } from "orcel";
-import { anthropic } from "orcel/models/anthropic";
+import { defineAgent } from "@orcel/orcel";
+import { anthropic } from "@orcel/orcel/models/anthropic";
 
 export default defineAgent({
   model: anthropic(), // claude-sonnet-5
 });
 ```
 
-`openai()` from `orcel/models/openai` defaults to `gpt-6-luna-fast`. Both helpers accept an optional native provider model ID and use `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. During local development they can also use credentials saved through `/login`. Deployments require their API key in the server environment.
+`openai()` from `@orcel/orcel/models/openai` defaults to `gpt-6-luna-fast`. Both helpers accept an optional native provider model ID and use `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. During local development they can also use credentials saved through `/login`. Deployments require their API key in the server environment.
 
-For a local ChatGPT subscription, use `chatgpt()` from `orcel/models/openai` and sign in with `/login`. It defaults to `gpt-6-luna-fast` and cannot run in a deployment.
+For a local ChatGPT subscription, use `chatgpt()` from `@orcel/orcel/models/openai` and sign in with `/login`. It defaults to `gpt-6-luna-fast` and cannot run in a deployment.
 
 `/login` can switch a static Gateway string to an orcel helper and manage its import. `/model` changes the selected model and settings immediately. Custom provider SDK calls and dynamic expressions retain their authored behavior and require manual source edits. You can still install an AI SDK provider package and pass its `LanguageModel` when you need provider-specific configuration.
 
@@ -70,14 +70,14 @@ takes precedence; AI Gateway hashes IDs longer than 256 characters.
 ### Choose the model dynamically
 
 To select a model from the incoming prompt with an AI SDK evaluation model, use
-[`auto` from `orcel/models`](./guides/evaluate).
+[`auto` from `@orcel/orcel/models`](./guides/evaluate).
 
 `model` also accepts `defineDynamic({ events })`. Each matching handler must
 return the concrete model for its scope; a dynamic model has no compiled
 default.
 
 ```ts title="agent/agent.ts"
-import { defineAgent, defineDynamic } from "orcel";
+import { defineAgent, defineDynamic } from "@orcel/orcel";
 
 export default defineAgent({
   model: defineDynamic({
@@ -255,7 +255,7 @@ self-hosted deployments can select the Workflow world package to use from the
 root `agent.ts`:
 
 ```ts title="agent/agent.ts"
-import { defineAgent } from "orcel";
+import { defineAgent } from "@orcel/orcel";
 
 export default defineAgent({
   model: "anthropic/claude-opus-5.5",
@@ -291,7 +291,7 @@ inline tool calls. You can experimentally let one Workflow step run several
 sequential model calls:
 
 ```ts title="agent/agent.ts"
-import { defineAgent } from "orcel";
+import { defineAgent } from "@orcel/orcel";
 
 export default defineAgent({
   model: "anthropic/claude-opus-5.5",
@@ -329,7 +329,7 @@ them is the World's decision, and on Vercel that follows your team's plan. Set
 finishes instead:
 
 ```ts title="agent/agent.ts"
-import { defineAgent } from "orcel";
+import { defineAgent } from "@orcel/orcel";
 
 export default defineAgent({
   model: "anthropic/claude-opus-5.5",

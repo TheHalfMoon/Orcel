@@ -16,7 +16,7 @@ import {
 const externalizeOrcelPlugin = {
   name: "test-externalize-orcel",
   resolveId(source: string) {
-    return source.startsWith("orcel/") ? { id: source, external: true } : undefined;
+    return source.startsWith("@orcel/orcel/") ? { id: source, external: true } : undefined;
   },
 };
 
@@ -44,7 +44,7 @@ async function bundle(input: string, plugins: unknown[]): Promise<string> {
 }
 
 const STATE_MODULE = [
-  'import { defineState } from "orcel/context";',
+  'import { defineState } from "@orcel/orcel/context";',
   'export const budget = defineState("budget", () => ({ count: 0 }));',
   "",
 ].join("\n");

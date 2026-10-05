@@ -17,8 +17,8 @@ const REMOTE_TOKEN = "layer-3-scenario-token";
 const REMOTE_DESCRIPTOR: ScenarioAppDescriptor = {
   dependencies: { zod: "^4.3.6" },
   files: {
-    "agent/agent.ts": `import { defineAgent } from "orcel";
-import { mockModel } from "orcel/evals";
+    "agent/agent.ts": `import { defineAgent } from "@orcel/orcel";
+import { mockModel } from "@orcel/orcel/evals";
 
 export default defineAgent({
   model: mockModel(({ lastUserMessage }) =>
@@ -29,7 +29,7 @@ export default defineAgent({
   modelContextWindowTokens: 32_000,
 });
 `,
-    "agent/channels/orcel.ts": `import { orcelChannel } from "orcel/channels/orcel";
+    "agent/channels/orcel.ts": `import { orcelChannel } from "@orcel/orcel/channels/orcel";
 
 export default orcelChannel({
   auth(request) {
@@ -44,7 +44,7 @@ export default orcelChannel({
 });
 `,
     "agent/instructions.md": "Call explicitly requested tools.\n",
-    "agent/tools/wait-for-cancel.ts": `import { defineTool } from "orcel/tools";
+    "agent/tools/wait-for-cancel.ts": `import { defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 export default defineTool({
@@ -71,8 +71,8 @@ function createParentDescriptor(
   return {
     dependencies: { zod: "^4.3.6" },
     files: {
-      "agent/agent.ts": `import { defineAgent } from "orcel";
-import { mockModel } from "orcel/evals";
+      "agent/agent.ts": `import { defineAgent } from "@orcel/orcel";
+import { mockModel } from "@orcel/orcel/evals";
 
 const model = mockModel((request) => {
   const message = request.lastUserMessage ?? "";
@@ -105,12 +105,12 @@ export default defineAgent({
 });
 `,
       "agent/instructions.md": "Delegate cancellation waits as requested.\n",
-      "agent/tools/workflow.ts": `import { workflow } from "orcel/tools/workflow";
+      "agent/tools/workflow.ts": `import { workflow } from "@orcel/orcel/tools/workflow";
 
 export default workflow();
 `,
-      "agent/subagents/local-sleeper/agent.ts": `import { defineAgent } from "orcel";
-import { mockModel } from "orcel/evals";
+      "agent/subagents/local-sleeper/agent.ts": `import { defineAgent } from "@orcel/orcel";
+import { mockModel } from "@orcel/orcel/evals";
 
 export default defineAgent({
   description: "Runs the wait-for-cancel tool and waits for cancellation.",
@@ -124,7 +124,7 @@ export default defineAgent({
 `,
       "agent/subagents/local-sleeper/instructions.md":
         "Call wait-for-cancel immediately and do nothing else.\n",
-      "agent/subagents/local-sleeper/tools/wait-for-cancel.ts": `import { defineTool } from "orcel/tools";
+      "agent/subagents/local-sleeper/tools/wait-for-cancel.ts": `import { defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 export default defineTool({
@@ -139,8 +139,8 @@ export default defineTool({
   },
 });
 `,
-      "agent/subagents/remote-sleeper.ts": `import { defineRemoteAgent } from "orcel";
-import { bearer } from "orcel/agents/auth";
+      "agent/subagents/remote-sleeper.ts": `import { defineRemoteAgent } from "@orcel/orcel";
+import { bearer } from "@orcel/orcel/agents/auth";
 
 export default defineRemoteAgent({
   auth: bearer("${REMOTE_TOKEN}"),

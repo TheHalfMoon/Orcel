@@ -17,7 +17,7 @@ describe("resolveDiscoveryProject (memory)", () => {
     async ({ appRoot, layout }) => {
       const agentRoot = layout === "nested" ? join(appRoot, "agent") : appRoot;
       const instructionsPath = join(agentRoot, "instructions.md");
-      const manifest = JSON.stringify({ dependencies: { orcel: "*" } });
+      const manifest = JSON.stringify({ dependencies: { "@orcel/orcel": "*" } });
       const source = createMemoryProjectSource({
         files: {
           "/memory/app/package.json": manifest,

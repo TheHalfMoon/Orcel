@@ -22,7 +22,7 @@ export function createSvelteKitOrcelServiceDescriptor(
       vite: VITE_VERSION,
     },
     files: {
-      "agent/agent.mjs": `import { defineAgent } from "orcel";
+      "agent/agent.mjs": `import { defineAgent } from "@orcel/orcel";
 
 export default defineAgent({ model: "openai/gpt-5.4" });
 `,
@@ -43,7 +43,7 @@ export default defineAgent({ model: "openai/gpt-5.4" });
 export default { kit: { adapter: adapter() } };
 `,
       "vite.config.js": `import { sveltekit } from "@sveltejs/kit/vite";
-import { orcelSvelteKit } from "orcel/sveltekit";
+import { orcelSvelteKit } from "@orcel/orcel/sveltekit";
 import { defineConfig } from "vite";
 
 export default defineConfig({ plugins: [orcelSvelteKit({ orcelRoot: "agent" }), sveltekit()] });

@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 import { CONTENT_OUTPUT_COMPACTION_MARKER } from "../constants";
 

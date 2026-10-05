@@ -1,5 +1,5 @@
-import { defineAgent, defineDynamic } from "orcel";
-import { mockModel } from "orcel/evals";
+import { defineAgent, defineDynamic } from "@orcel/orcel";
+import { mockModel } from "@orcel/orcel/evals";
 import { playScript } from "@orcel-e2e/config/mock-script";
 
 const workerModel = mockModel({

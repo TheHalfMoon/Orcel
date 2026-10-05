@@ -13,7 +13,7 @@ export const VERBOSE_BUNDLING_DESCRIPTOR: ScenarioAppDescriptor = {
   files: {
     ".gitignore": `.vercel
 `,
-    "agent/agent.ts": `import { defineAgent } from "orcel";
+    "agent/agent.ts": `import { defineAgent } from "@orcel/orcel";
 
 export default defineAgent({
   build: {
@@ -26,8 +26,8 @@ export default defineAgent({
 `,
     "agent/alias-root/shared/alias-route.ts": `export const rootAliasRoute = "@/shared/alias-route.ts";
 `,
-    "agent/channels/orcel.ts": `import { none } from "orcel/channels/auth";
-import { orcelChannel } from "orcel/channels/orcel";
+    "agent/channels/orcel.ts": `import { none } from "@orcel/orcel/channels/auth";
+import { orcelChannel } from "@orcel/orcel/channels/orcel";
 
 export default orcelChannel({ auth: none() });
 `,
@@ -35,7 +35,7 @@ export default orcelChannel({ auth: none() });
 `,
     "agent/instructions.md": `You are a bundling diagnostics assistant. Use local tools and return exact, structured results.
 `,
-    "agent/tools/check_alias_paths.ts": `import { defineTool } from "orcel/tools";
+    "agent/tools/check_alias_paths.ts": `import { defineTool } from "@orcel/orcel/tools";
 import { libAliasRoute } from "@/lib/alias/lib-route.ts";
 import { rootAliasRoute } from "@/shared/alias-route.ts";
 
@@ -49,7 +49,7 @@ export default defineTool({
   },
 });
 `,
-    "agent/tools/inspect_snowflake_module.ts": `import { defineTool } from "orcel/tools";
+    "agent/tools/inspect_snowflake_module.ts": `import { defineTool } from "@orcel/orcel/tools";
 import * as snowflake from "snowflake-sdk";
 import { z } from "zod";
 

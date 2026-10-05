@@ -1,5 +1,5 @@
-import { defineDynamic, defineInstructions } from "orcel/instructions";
-import type { DynamicResolveContext } from "orcel/instructions";
+import { defineDynamic, defineInstructions } from "@orcel/orcel/instructions";
+import type { DynamicResolveContext } from "@orcel/orcel/instructions";
 import { BASE_INSTRUCTIONS } from "./lib/base-instructions.js";
 import { buildUserContextPrompt, fetchUserContext } from "./lib/memory-internal.js";
 

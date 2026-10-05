@@ -2,7 +2,7 @@ import type { ScenarioAppDescriptor } from "#internal/testing/scenario-app.js";
 
 export const DISCORD_ROUTE_PORTABILITY_DESCRIPTOR: ScenarioAppDescriptor = {
   files: {
-    "agent/channels/discord.ts": `import { discordChannel } from "orcel/channels/discord";
+    "agent/channels/discord.ts": `import { discordChannel } from "@orcel/orcel/channels/discord";
 
 export default discordChannel();
 `,

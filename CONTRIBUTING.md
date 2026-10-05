@@ -111,8 +111,7 @@ retains the previous epoch, and scaffolds the required fixture under
 representative example of the retained authoring contract, then rerun
 `pnpm update:extension-contracts` to generate the new epoch report. If the
 change cannot be classified automatically, pass `--retain` after verifying
-runtime compatibility. To stop accepting the previous epoch, pass
-`--drop "why the old contract cannot run"`; this bumps the capability and
+runtime compatibility. To stop accepting the previous epoch, pass `--drop "why the old contract cannot run"`; this bumps the capability and
 records the reason.
 
 Every historical epoch must be classified exactly once as supported or dropped.

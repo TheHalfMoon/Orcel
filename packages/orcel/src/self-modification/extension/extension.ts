@@ -1,4 +1,4 @@
-import { defineExtension } from "orcel/extension";
+import { defineExtension } from "@orcel/orcel/extension";
 
 import type { StandardSchemaV1 } from "#compiled/@standard-schema/spec/index.js";
 import type { SelfModificationExtensionConfig } from "../config.js";

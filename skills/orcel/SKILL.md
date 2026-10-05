@@ -16,12 +16,12 @@ skill for guidance — always read the bundled docs, which match the installed
 version exactly:
 
 ```
-node_modules/orcel/docs/
+node_modules/@orcel/orcel/docs/
 ```
 
-Start with `node_modules/orcel/docs/README.md`. It contains the full
+Start with `node_modules/@orcel/orcel/docs/README.md`. It contains the full
 index and recommended reading order. Before writing any orcel code, read the
 relevant guide there first.
 
-If `orcel` is not installed yet, install it (`npm install orcel`) or scaffold a new
-agent with `npx orcel init <agent-name>`, then read the bundled docs.
+If `orcel` is not installed yet, install it (`npm install @orcel/orcel`) or scaffold a new
+agent with `npx @orcel/orcel init <agent-name>`, then read the bundled docs.

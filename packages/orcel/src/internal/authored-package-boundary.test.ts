@@ -31,14 +31,14 @@ describe("createGenerationPackageBoundaryPlugin", () => {
     };
 
     await expect(
-      resolveId.call(context, "orcel/tools", join(PACKAGE_ROOT, "agent/tools/probe.ts"), {
+      resolveId.call(context, "@orcel/orcel/tools", join(PACKAGE_ROOT, "agent/tools/probe.ts"), {
         kind: "import-statement",
       }),
-    ).resolves.toEqual({ external: true, id: "orcel/tools" });
+    ).resolves.toEqual({ external: true, id: "@orcel/orcel/tools" });
     await expect(
       resolveId.call(
         context,
-        "orcel/self-modification",
+        "@orcel/orcel/self-modification",
         join(PACKAGE_ROOT, "agent/extensions/edit.ts"),
         {
           kind: "import-statement",
@@ -98,7 +98,7 @@ describe("createRuntimeLoaderPackageBoundaryPlugin", () => {
     await expect(
       resolveId.call(
         context,
-        "orcel/tools",
+        "@orcel/orcel/tools",
         join(
           PACKAGE_ROOT,
           "dist/src/self-modification/extension/subagents/agent/tools/edit_file.js",
@@ -107,7 +107,7 @@ describe("createRuntimeLoaderPackageBoundaryPlugin", () => {
       ),
     ).resolves.toEqual({
       external: true,
-      id: resolvePackageDependencyPath("orcel/tools"),
+      id: resolvePackageDependencyPath("@orcel/orcel/tools"),
     });
   });
 

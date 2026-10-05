@@ -1,5 +1,5 @@
 import { connectSlackCredentials } from "@vercel/connect/eve";
-import { slackChannel } from "orcel/channels/slack";
+import { slackChannel } from "@orcel/orcel/channels/slack";
 
 // SLACK_CONNECTOR is provisioned by the "Deploy with Vercel" button. To set it
 // up yourself, create a connector with `vercel connect create slack --triggers`

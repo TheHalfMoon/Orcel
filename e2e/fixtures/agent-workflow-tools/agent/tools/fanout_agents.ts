@@ -1,4 +1,4 @@
-import { defineWorkflowTool } from "orcel/tools";
+import { defineWorkflowTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 import { replyFrom } from "../lib/agent-reply.ts";

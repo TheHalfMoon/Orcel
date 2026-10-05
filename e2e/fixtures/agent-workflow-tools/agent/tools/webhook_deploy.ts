@@ -1,4 +1,4 @@
-import { defineWorkflowTool } from "orcel/tools";
+import { defineWorkflowTool } from "@orcel/orcel/tools";
 import { createWebhook } from "workflow";
 import { z } from "zod";
 

@@ -14,15 +14,15 @@ const CHILD_RESULT = `CHILD_APPROVED=${ANSWER}`;
 const PARENT_RESULT = `REMOTE_HITL_RESULT=${ANSWER}`;
 const TIMEOUT = 120_000;
 
-const channel = `import { none } from "orcel/channels/auth"; import { orcelChannel } from "orcel/channels/orcel"; export default orcelChannel({ auth: none() });`;
-const remoteChannel = `import { orcelChannel } from "orcel/channels/orcel"; export default orcelChannel({ trustedForwarders: (f) => f.principalId === "remote-parent", auth(request) { if (request.headers.get("authorization") !== "Bearer ${TOKEN}") return null; return { attributes: {}, authenticator: "scenario", principalId: "remote-parent", principalType: "service" }; } });`;
+const channel = `import { none } from "@orcel/orcel/channels/auth"; import { orcelChannel } from "@orcel/orcel/channels/orcel"; export default orcelChannel({ auth: none() });`;
+const remoteChannel = `import { orcelChannel } from "@orcel/orcel/channels/orcel"; export default orcelChannel({ trustedForwarders: (f) => f.principalId === "remote-parent", auth(request) { if (request.headers.get("authorization") !== "Bearer ${TOKEN}") return null; return { attributes: {}, authenticator: "scenario", principalId: "remote-parent", principalType: "service" }; } });`;
 
-const childTool = `import { defineWorkflowTool } from "orcel/tools";
+const childTool = `import { defineWorkflowTool } from "@orcel/orcel/tools";
 export default defineWorkflowTool({ description: "Ask the parent.", inputSchema: {}, async execute(_input, ctx) { "use workflow"; const answer = await ctx.ask({ prompt: "What is the approval word?", allowFreeform: true }); return answer.text ?? answer.optionId ?? "NO_ANSWER"; } });`;
-const childAgent = `import { defineAgent } from "orcel"; import { mockModel } from "orcel/evals";
+const childAgent = `import { defineAgent } from "@orcel/orcel"; import { mockModel } from "@orcel/orcel/evals";
 const model = mockModel((request) => { const result = request.toolResults.find((entry) => entry.id === "ask-parent"); if (result) return "${CHILD_RESULT}".replace("${ANSWER}", String(result.output)); return { toolCalls: [{ id: "ask-parent", name: "ask-parent", input: {} }] }; });
 export default defineAgent({ model, modelContextWindowTokens: 32000 });`;
-const concurrentChildAgent = `import { defineAgent } from "orcel"; import { mockModel } from "orcel/evals";
+const concurrentChildAgent = `import { defineAgent } from "@orcel/orcel"; import { mockModel } from "@orcel/orcel/evals";
 const model = mockModel((request) => {
   const results = request.toolResults;
   if (results.some((entry) => entry.id === "ask-alice" && entry.output === "alice-lantern") &&
@@ -31,7 +31,7 @@ const model = mockModel((request) => {
   return { toolCalls: [{ id: "ask-alice", name: "ask-alice", input: {} }, { id: "ask-bob", name: "ask-bob", input: {} }] };
 });
 export default defineAgent({ model, modelContextWindowTokens: 32000 });`;
-const askTool = (person: string) => `import { defineWorkflowTool } from "orcel/tools";
+const askTool = (person: string) => `import { defineWorkflowTool } from "@orcel/orcel/tools";
 export default defineWorkflowTool({ description: "Ask for ${person}'s approval word.", inputSchema: {}, async execute(_input, ctx) { "use workflow"; const answer = await ctx.ask({ prompt: "Word for ${person}?", allowFreeform: true }); return answer.text ?? "NO_ANSWER"; } });`;
 
 const childDescriptor: ScenarioAppDescriptor = {
@@ -49,7 +49,7 @@ const memoryChildDescriptor: ScenarioAppDescriptor = {
   name: "remote-memory-child",
   installDependencies: true,
   files: {
-    "agent/agent.ts": `import { defineAgent } from "orcel"; import { mockModel } from "orcel/evals";
+    "agent/agent.ts": `import { defineAgent } from "@orcel/orcel"; import { mockModel } from "@orcel/orcel/evals";
 const model = mockModel((request) => {
   if (request.userMessageCount === 1) return request.lastUserMessage?.includes("LANTERN-COMET-7319") ? "STORED" : "MISSING_CODEWORD";
   if (request.userMessageCount === 2) return request.userMessages[0]?.includes("LANTERN-COMET-7319") ? "LANTERN-COMET-7319" : "CONTEXT_LOST";
@@ -78,12 +78,12 @@ function parentDescriptor(url: string, concurrent = false): ScenarioAppDescripto
   const expectedParentResult = concurrent
     ? "REMOTE_HITL_RESULT=alice-lantern,bob-comet"
     : PARENT_RESULT;
-  const parentAgent = `import { defineAgent } from "orcel"; import { mockModel } from "orcel/evals";
+  const parentAgent = `import { defineAgent } from "@orcel/orcel"; import { mockModel } from "@orcel/orcel/evals";
 const model = mockModel((request) => { const text = request.messages.map((m) => m.text).join("\\n"); if (text.includes("<task_result") && text.includes("${expectedChildResult}")) return "${expectedParentResult}"; if (request.toolResults.some((r) => r.id === "delegate")) return { toolCalls: [{ id: "wait", name: "task_wait", input: {} }] }; return { toolCalls: [{ id: "delegate", name: "delegate-approval", input: {} }] }; });
 export default defineAgent({ model, modelContextWindowTokens: 32000 });`;
-  const tool = `import { defineWorkflowTool } from "orcel/tools";
+  const tool = `import { defineWorkflowTool } from "@orcel/orcel/tools";
 export default defineWorkflowTool({ description: "Delegate approval.", inputSchema: {}, async task(_input, ctx) { "use workflow"; const result = await ctx.agent("remote-hitl-child").send("Ask the parent for approval."); return (await result.result()).message; } });`;
-  const remote = `import { defineRemoteAgent } from "orcel"; import { bearer } from "orcel/agents/auth"; export default defineRemoteAgent({ auth: bearer(${JSON.stringify(TOKEN)}), description: "Ask parent", url: ${JSON.stringify(url)} });`;
+  const remote = `import { defineRemoteAgent } from "@orcel/orcel"; import { bearer } from "@orcel/orcel/agents/auth"; export default defineRemoteAgent({ auth: bearer(${JSON.stringify(TOKEN)}), description: "Ask parent", url: ${JSON.stringify(url)} });`;
   return {
     name: "remote-input-parent",
     installDependencies: true,
@@ -98,7 +98,7 @@ export default defineWorkflowTool({ description: "Delegate approval.", inputSche
 }
 
 function memoryParentDescriptor(url: string): ScenarioAppDescriptor {
-  const parentAgent = `import { defineAgent } from "orcel"; import { mockModel } from "orcel/evals";
+  const parentAgent = `import { defineAgent } from "@orcel/orcel"; import { mockModel } from "@orcel/orcel/evals";
 const model = mockModel((request) => {
   const text = request.messages.map((message) => message.text).join("\\n");
   if (text.includes("MEMORY_RECALLED=LANTERN-COMET-7319")) return "PARENT_RECALLED=LANTERN-COMET-7319";
@@ -107,7 +107,7 @@ const model = mockModel((request) => {
   return { toolCalls: [{ id: "remember", name: "remember", input: {} }] };
 });
 export default defineAgent({ model, modelContextWindowTokens: 32000 });`;
-  const tool = `import { defineWorkflowTool } from "orcel/tools";
+  const tool = `import { defineWorkflowTool } from "@orcel/orcel/tools";
 export default defineWorkflowTool({ description: "Remember and recall a codeword in one remote session.", inputSchema: {}, async task(_input, ctx) { "use workflow";
   const agent = ctx.agent("remote-memory-child");
   const first = await (await agent.send("Remember the codeword LANTERN-COMET-7319.")).result();
@@ -115,7 +115,7 @@ export default defineWorkflowTool({ description: "Remember and recall a codeword
   const second = await (await agent.send("What codeword did I ask you to remember?")).result();
   return "MEMORY_RECALLED=" + second.message;
 } });`;
-  const remote = `import { defineRemoteAgent } from "orcel"; import { bearer } from "orcel/agents/auth"; export default defineRemoteAgent({ auth: bearer(${JSON.stringify(TOKEN)}), description: "Remember a codeword", url: ${JSON.stringify(url)} });`;
+  const remote = `import { defineRemoteAgent } from "@orcel/orcel"; import { bearer } from "@orcel/orcel/agents/auth"; export default defineRemoteAgent({ auth: bearer(${JSON.stringify(TOKEN)}), description: "Remember a codeword", url: ${JSON.stringify(url)} });`;
   return {
     name: "remote-memory-parent",
     installDependencies: true,
@@ -299,7 +299,7 @@ async function startScriptedOrcelDev(root: string): Promise<RunningServer> {
   const child = spawn(
     process.execPath,
     [
-      join(root, "node_modules/orcel/bin/orcel.js"),
+      join(root, "node_modules/@orcel/orcel/bin/orcel.js"),
       "dev",
       "--no-ui",
       "--host",

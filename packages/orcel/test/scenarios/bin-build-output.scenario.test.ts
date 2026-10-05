@@ -78,7 +78,7 @@ async function createTemporaryAppRoot(input: {
     join(appRoot, "package.json"),
     `${JSON.stringify(
       {
-        dependencies: { orcel: "*" },
+        dependencies: { "@orcel/orcel": "*" },
         name: "orcel-bin-build-output-test",
         private: true,
         type: "module",
@@ -272,7 +272,7 @@ describe("orcel build process output", () => {
     await writeFile(
       join(appRoot, "agent", "tools", "deploy_service.mjs"),
       [
-        'import { defineWorkflowTool } from "orcel/tools";',
+        'import { defineWorkflowTool } from "@orcel/orcel/tools";',
         'import { sleep } from "workflow";',
         'import { hashPlan } from "../lib/plan.mjs";',
         "",

@@ -38,7 +38,7 @@ your application renders chat history.
 Attach a fixed handle to the saved ID and restore its cursor:
 
 ```ts
-import type { ClientSessionState } from "orcel/client";
+import type { ClientSessionState } from "@orcel/orcel/client";
 
 const saved = (await loadSessionState()) as ClientSessionState;
 const session = client.sessions.attach(saved.sessionId, {

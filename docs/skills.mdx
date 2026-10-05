@@ -42,10 +42,10 @@ key facts and the remaining uncertainty.
 
 orcel reads `description`, optional `license`, and string `metadata`; other `SKILL.md` frontmatter is accepted as a no-op.
 
-When markdown can't express what you need (typed values, generated content, or inline sibling files), author the skill in TypeScript with `defineSkill` from `orcel/skills`:
+When markdown can't express what you need (typed values, generated content, or inline sibling files), author the skill in TypeScript with `defineSkill` from `@orcel/orcel/skills`:
 
 ```ts title="agent/skills/research.ts"
-import { defineSkill } from "orcel/skills";
+import { defineSkill } from "@orcel/orcel/skills";
 
 export default defineSkill({
   description: "Research unfamiliar topics before answering with confidence.",

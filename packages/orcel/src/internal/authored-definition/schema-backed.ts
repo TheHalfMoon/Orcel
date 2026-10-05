@@ -114,7 +114,7 @@ export function normalizeToolDefinition(value: unknown, message: string): Normal
     : undefined;
   if (workflow === undefined && readWorkflowFunctionId(record.execute) !== undefined) {
     throw new Error(
-      `${message} Workflow executors require defineWorkflowTool() from "orcel/tools". Replace defineTool() or the bare tool object with defineWorkflowTool().`,
+      `${message} Workflow executors require defineWorkflowTool() from "@orcel/orcel/tools". Replace defineTool() or the bare tool object with defineWorkflowTool().`,
     );
   }
   expectOnlyKnownKeys(

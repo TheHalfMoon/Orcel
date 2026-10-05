@@ -169,7 +169,7 @@ async function createScenarioAppRoot(
 
 function preparedSandboxSource(command: string): string {
   return [
-    'import { DefaultSandbox, defineSandbox } from "orcel/sandbox";',
+    'import { DefaultSandbox, defineSandbox } from "@orcel/orcel/sandbox";',
     "export const environment = DefaultSandbox.environment({",
     "  prepare: async (sandbox) => {",
     `    await sandbox.run({ command: ${JSON.stringify(command)} });`,

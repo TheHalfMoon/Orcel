@@ -1,4 +1,4 @@
-import type { AuthFn } from "orcel/channels/auth";
+import type { AuthFn } from "@orcel/orcel/channels/auth";
 import { auth } from "./auth";
 import { getPasswordSessionFromHeaders } from "./password-auth";
 import { getSetupStatus } from "./setup";

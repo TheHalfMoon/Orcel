@@ -10,7 +10,7 @@ Every orcel agent has one sandbox rooted at `/workspace`. The built-in `bash`, `
 Authored tools and callbacks access the live sandbox with `ctx.getSandbox()`:
 
 ```ts title="agent/tools/run_analysis.ts"
-import { defineTool } from "orcel/tools";
+import { defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 export default defineTool({
@@ -44,7 +44,7 @@ For example, a Vercel environment returns a handle with `setNetworkPolicy()`. Th
 A sandbox module exports an environment and returns a sandbox from `defineSandbox()`:
 
 ```ts title="agent/sandbox.ts"
-import { DefaultSandbox, defineSandbox } from "orcel/sandbox";
+import { DefaultSandbox, defineSandbox } from "@orcel/orcel/sandbox";
 
 export const environment = DefaultSandbox.environment();
 export default defineSandbox(() => environment.open());
@@ -55,8 +55,8 @@ export default defineSandbox(() => environment.open());
 Pass options for the live sandbox to `open()`, then configure the returned sandbox before returning it. This initialization runs once for a successfully started durable sandbox:
 
 ```ts
-import { defineSandbox } from "orcel/sandbox";
-import { VercelSandbox } from "orcel/sandbox/vercel";
+import { defineSandbox } from "@orcel/orcel/sandbox";
+import { VercelSandbox } from "@orcel/orcel/sandbox/vercel";
 
 export const environment = VercelSandbox.environment();
 
@@ -74,8 +74,8 @@ The environment export is required because `orcel build` prepares immutable envi
 Use the environment's `prepare` option for setup every new sandbox inherits:
 
 ```ts
-import { defineSandbox } from "orcel/sandbox";
-import { VercelSandbox } from "orcel/sandbox/vercel";
+import { defineSandbox } from "@orcel/orcel/sandbox";
+import { VercelSandbox } from "@orcel/orcel/sandbox/vercel";
 
 export const environment = VercelSandbox.environment({
   prepare: async (sandbox) => {
@@ -104,7 +104,7 @@ Built-in environments do not expose cross-session sharing. To reuse native compu
 A declared subagent can use its dispatching parent's sandbox explicitly:
 
 ```ts title="agent/subagents/reviewer/sandbox.ts"
-import { defineParentSandbox } from "orcel/sandbox";
+import { defineParentSandbox } from "@orcel/orcel/sandbox";
 
 export default defineParentSandbox();
 ```
@@ -151,11 +151,11 @@ Docker and microsandbox mount the compiled trees read-only under `/orcel/resourc
 
 ## Custom providers
 
-Define a provider with `defineSandboxProvider()` from `orcel/sandbox/provider`. The five generic parameters describe environment options, live options, the prepared artifact, minimal serialized session state, and the provider-specific sandbox session type:
+Define a provider with `defineSandboxProvider()` from `@orcel/orcel/sandbox/provider`. The five generic parameters describe environment options, live options, the prepared artifact, minimal serialized session state, and the provider-specific sandbox session type:
 
 ```ts
-import type { SandboxSession } from "orcel/sandbox";
-import { defineSandboxProvider } from "orcel/sandbox/provider";
+import type { SandboxSession } from "@orcel/orcel/sandbox";
+import { defineSandboxProvider } from "@orcel/orcel/sandbox/provider";
 
 export const AcmeSandbox = defineSandboxProvider<
   { image: string; prepare?: (sandbox: SandboxSession) => Promise<void> },

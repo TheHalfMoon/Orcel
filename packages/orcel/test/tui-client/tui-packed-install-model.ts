@@ -81,7 +81,7 @@ void (async () => {
           name: "orcel-packed-install-consumer",
           private: true,
           type: "module",
-          dependencies: { orcel: `file:${tarballPath}` },
+          dependencies: { "@orcel/orcel": `file:${tarballPath}` },
         },
         null,
         2,
@@ -105,7 +105,7 @@ void (async () => {
     await Promise.all([
       writeFile(
         join(agentRoot, "agent.ts"),
-        'import { defineAgent } from "orcel";\n\nexport default defineAgent({\n  model: "spacexai/grok-4.7",\n});\n',
+        'import { defineAgent } from "@orcel/orcel";\n\nexport default defineAgent({\n  model: "spacexai/grok-4.7",\n});\n',
       ),
       writeFile(join(agentRoot, "instructions.md"), "Help Alice with her questions.\n"),
     ]);
@@ -113,7 +113,7 @@ void (async () => {
     // Imported by file URL: the harness is not on the package's `exports`
     // map, and the point is to load the *installed* module graph — every
     // bare specifier in it resolves against the consumer's node_modules.
-    const harnessPath = join(consumerRoot, "node_modules/orcel/dist/src/cli/dev/tui/test/index.js");
+    const harnessPath = join(consumerRoot, "node_modules/@orcel/orcel/dist/src/cli/dev/tui/test/index.js");
     const { OrcelTUIRunner, MockScreen, MockUserInput, createPromptCommandHandler } = (await import(
       pathToFileURL(harnessPath).href
     )) as PackedTuiHarness;

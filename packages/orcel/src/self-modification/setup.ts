@@ -18,8 +18,8 @@ import { SELF_MODIFICATION_CONFIG_PATH } from "./git-workspace.js";
 const runFile = promisify(execFile);
 const GENERATED_MARKER = "// orcel-self-modification: generated-v1";
 const LEGACY_LOCAL_CONFIG =
-  'import { defineSelfModificationConfig } from "orcel/self-modification/config";\n\nexport default defineSelfModificationConfig({});\n';
-const DEFAULT_EXTENSION = `import selfModification from "orcel/self-modification";\n\nexport default selfModification({\n  // model: "provider/model",\n  // reasoning: "high",\n});\n`;
+  'import { defineSelfModificationConfig } from "@orcel/orcel/self-modification/config";\n\nexport default defineSelfModificationConfig({});\n';
+const DEFAULT_EXTENSION = `import selfModification from "@orcel/orcel/self-modification";\n\nexport default selfModification({\n  // model: "provider/model",\n  // reasoning: "high",\n});\n`;
 
 export interface SelfModificationSetupValues {
   readonly branch: string;
@@ -87,7 +87,7 @@ export function renderSelfModificationConfig(values?: SelfModificationSetupValue
   const switchCases = `${httpCase}${channelCases}`;
   const credentialErrorMessage = `Self-modification could not obtain a GitHub credential from Vercel Connect for ${values.connector}. Install and attach the configured GitHub connector to this Vercel project, install the managed GitHub App for the configured repository, then retry.`;
   const body = `import { getToken } from "@vercel/connect";
-import selfModification from "orcel/self-modification";
+import selfModification from "@orcel/orcel/self-modification";
 
 export default selfModification({
   deployed: {

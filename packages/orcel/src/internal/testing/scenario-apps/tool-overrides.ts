@@ -12,7 +12,7 @@ export const TOOL_OVERRIDES_DESCRIPTOR: ScenarioAppDescriptor = {
   files: {
     ".gitignore": `.vercel
 `,
-    "agent/agent.ts": `import { defineAgent } from "orcel";
+    "agent/agent.ts": `import { defineAgent } from "@orcel/orcel";
 
 export default defineAgent({
   model: "openai/gpt-5.4-mini",
@@ -20,14 +20,14 @@ export default defineAgent({
 `,
     "agent/instructions.md": `A fixture agent that exercises every framework-tool override pattern: wrap, disable, and replace.
 `,
-    "agent/tools/agent.ts": `import { disableTool } from "orcel/tools";
+    "agent/tools/agent.ts": `import { disableTool } from "@orcel/orcel/tools";
 
 // Removes the root-only recursive self-copy tool.
 export default disableTool();
 `,
-    "agent/tools/bash.ts": `import { defineTool } from "orcel/tools";
-import { always } from "orcel/tools/approval";
-import { bash } from "orcel/tools/bash";
+    "agent/tools/bash.ts": `import { defineTool } from "@orcel/orcel/tools";
+import { always } from "@orcel/orcel/tools/approval";
+import { bash } from "@orcel/orcel/tools/bash";
 
 // Wraps the framework \`bash\` tool: spread the default and replace \`execute\`
 // with a thin pre-hook that delegates to the original. The framework's
@@ -41,8 +41,8 @@ export default defineTool({
   },
 });
 `,
-    "agent/tools/write_file.ts": `import { defineState } from "orcel/context";
-import { defineTool } from "orcel/tools";
+    "agent/tools/write_file.ts": `import { defineState } from "@orcel/orcel/context";
+import { defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 interface NoteListState {
@@ -66,14 +66,14 @@ export default defineTool({
   },
 });
 `,
-    "agent/tools/web_fetch.ts": `import { disableTool } from "orcel/tools";
+    "agent/tools/web_fetch.ts": `import { disableTool } from "@orcel/orcel/tools";
 
 // Removes the framework \`web_fetch\` tool from this agent's resolved tool set.
 // The compiler reads the filename slug ("web_fetch") to determine which
 // framework default this sentinel disables.
 export default disableTool();
 `,
-    "agent/tools/web_search.ts": `import { disableTool } from "orcel/tools";
+    "agent/tools/web_search.ts": `import { disableTool } from "@orcel/orcel/tools";
 
 // Removes the framework \`web_search\` tool from this agent's resolved tool set.
 // The compiler reads the filename slug ("web_search") to determine which

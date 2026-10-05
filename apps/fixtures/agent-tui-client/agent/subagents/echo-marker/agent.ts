@@ -1,4 +1,4 @@
-import { defineAgent } from "orcel";
+import { defineAgent } from "@orcel/orcel";
 
 /**
  * Smoke-test fixture: a leaf subagent whose only purpose is to emit a

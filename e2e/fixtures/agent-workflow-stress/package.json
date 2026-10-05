@@ -13,7 +13,7 @@
   "dependencies": {
     "@orcel-e2e/config": "workspace:*",
     "@workflow/world-postgres": "catalog:",
-    "orcel": "workspace:*"
+    "@orcel/orcel": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "catalog:",

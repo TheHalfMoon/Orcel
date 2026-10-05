@@ -53,7 +53,7 @@ export function createExtensionMountPlugin(
       source: string,
       importer?: string,
     ) {
-      if (source === "orcel/context") return undefined;
+      if (source === "@orcel/orcel/context") return undefined;
       const query = source.indexOf(MOUNT_QUERY);
       const tagged =
         query >= 0 ? decodeURIComponent(source.slice(query + MOUNT_QUERY.length)) : undefined;

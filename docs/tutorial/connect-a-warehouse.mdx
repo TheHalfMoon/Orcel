@@ -43,7 +43,7 @@ Create `agent/connections/warehouse.ts`. Replace both the endpoint URL and conne
 
 ```ts title="agent/connections/warehouse.ts"
 import { connect } from "@vercel/connect/eve";
-import { defineMcpClientConnection } from "orcel/connections";
+import { defineMcpClientConnection } from "@orcel/orcel/connections";
 
 export default defineMcpClientConnection({
   url: "https://your-warehouse.example/mcp",

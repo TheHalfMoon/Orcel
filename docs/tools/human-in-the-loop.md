@@ -15,11 +15,11 @@ An approval ends the turn and the session parks at `session.waiting`. A question
 
 Approval is a property of a [tool](/docs/tools) that gates it before it runs. This includes [workflow tools](/docs/tools/workflows): a call waiting for approval does not start its workflow, and a call denied by a policy or person never runs. Other calls from the same model response that do not require approval can proceed while it waits.
 
-The policy can decide automatically or pause for a person. Set `approval` with the helpers from `orcel/tools/approval`:
+The policy can decide automatically or pause for a person. Set `approval` with the helpers from `@orcel/orcel/tools/approval`:
 
 ```ts title="agent/tools/refund_charge.ts"
-import { defineTool } from "orcel/tools";
-import { auto } from "orcel/tools/approval";
+import { defineTool } from "@orcel/orcel/tools";
+import { auto } from "@orcel/orcel/tools/approval";
 import { z } from "zod";
 
 export default defineTool({
@@ -78,7 +78,7 @@ approval: ({ session, toolInput }) => {
 
 For compatibility with the previous predicate shape, policies may return booleans: `true` is treated as `"user-approval"` and `false` as `"not-applicable"`. Boolean promises are supported too.
 
-Policies can also return `"approved"` or `"denied"` to decide automatically. Use `{ type: "approved" | "denied", reason }` when the model should receive a reason. The `Approval`, `ApprovalContext`, and `ApprovalStatus` types are exported from `orcel/tools/approval`.
+Policies can also return `"approved"` or `"denied"` to decide automatically. Use `{ type: "approved" | "denied", reason }` when the model should receive a reason. The `Approval`, `ApprovalContext`, and `ApprovalStatus` types are exported from `@orcel/orcel/tools/approval`.
 
 Gating a side effect on approval is also how you make non-idempotent work safe across replays: a charge or email that sits behind `always()` can't fire from a re-run step without a fresh human decision.
 
@@ -87,8 +87,8 @@ Gating a side effect on approval is also how you make non-idempotent work safe a
 You may also define an approval response policy that decides whether the authenticated person who selects **Approve** or **Cancel** may settle that specific call:
 
 ```ts title="agent/tools/refund_charge.ts"
-import { defineTool } from "orcel/tools";
-import { always } from "orcel/tools/approval";
+import { defineTool } from "@orcel/orcel/tools";
+import { always } from "@orcel/orcel/tools/approval";
 import { z } from "zod";
 
 export default defineTool({
@@ -125,9 +125,9 @@ Return `{ status: "allowed" }` to accept the decision. Return `{ status: "reject
 `session.initiator` is the person who started the session, and `request.principal` is the person who asked for this call. In a shared thread they can differ. Compare the full identity of `response.principal` with `request.principal` to let only the requester settle the call:
 
 ```ts title="agent/tools/publish_release.ts"
-import { defineTool } from "orcel/tools";
-import type { SessionAuthContext } from "orcel/context";
-import { always } from "orcel/tools/approval";
+import { defineTool } from "@orcel/orcel/tools";
+import type { SessionAuthContext } from "@orcel/orcel/context";
+import { always } from "@orcel/orcel/tools/approval";
 import { z } from "zod";
 
 function samePrincipal(a: SessionAuthContext, b: SessionAuthContext): boolean {
@@ -163,7 +163,7 @@ When a response is refused without starting a turn, the session returns to `sess
 `session.auth.current` identifies the caller of this turn. Markdown schedules use the app principal (`authenticator: "app"`, `principalId: "orcel:app"`, `principalType: "runtime"`) automatically. A `run` schedule must pass its `appAuth` to `send(...)` for the child session to use that principal. Match all three fields to skip approval for automated turns while still prompting when a person calls the same tool:
 
 ```ts title="agent/tools/refund_charge.ts"
-import { defineTool } from "orcel/tools";
+import { defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 export default defineTool({
@@ -197,7 +197,7 @@ The user can always type their own answer instead of picking an option, so the m
 `ask_question` is an [opt-in framework tool](/docs/concepts/built-in-tools#ask_question). Add it with `orcel add tool/ask_question`, which creates this file:
 
 ```ts title="agent/tools/ask_question.ts"
-import { askQuestion } from "orcel/tools/ask_question";
+import { askQuestion } from "@orcel/orcel/tools/ask_question";
 
 export default askQuestion();
 ```

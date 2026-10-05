@@ -7,7 +7,7 @@ vi.mock("#shared/resolve-orcel-binary.js", async () => {
     // build-command assertion is deterministic without touching the
     // filesystem. The real resolver is covered by its own integration test.
     resolveOrcelBinaryPath: (nextRoot: string) =>
-      join(nextRoot, "node_modules", "orcel", "bin", "orcel.js"),
+      join(nextRoot, "node_modules", "@orcel", "orcel", "bin", "orcel.js"),
   };
 });
 
@@ -386,7 +386,7 @@ describe("withEve", () => {
         },
         {
           appRoot: expect.stringContaining("/agents/support"),
-          buildCommand: "node 'node_modules/orcel/bin/orcel.js' build",
+          buildCommand: "node 'node_modules/@orcel/orcel/bin/orcel.js' build",
           name: "support",
           publicRoutePrefix: "/orcel/support",
           servicePrefix: `${ORCEL_NEXT_SERVICE_PREFIX}/support`,

@@ -7,12 +7,12 @@ import {
 } from "#discover/filesystem.js";
 import { parseWithNitroRolldownAst } from "#internal/bundler/nitro-rolldown.js";
 
-const STATE_MODULE = "orcel/context";
+const STATE_MODULE = "@orcel/orcel/context";
 const STATE_EXPORT = "defineState";
 
 /**
  * Detects whether emitted extension modules call `defineState` from
- * `orcel/context`. Usage is followed through local re-export barrels — aliased
+ * `@orcel/orcel/context`. Usage is followed through local re-export barrels — aliased
  * re-exports, `export *`, and import-then-re-export chains — so indirect
  * usage still stamps the `state` capability requirement.
  */
@@ -177,7 +177,7 @@ function analyzeModule(ast: StateAstNode): ModuleStateShape {
 
 /**
  * Fixpoint over local modules: which of each module's exports resolve back to
- * `orcel/context`'s `defineState`, under whatever names the barrels chose.
+ * `@orcel/orcel/context`'s `defineState`, under whatever names the barrels chose.
  */
 function computeStateExports(
   shapes: ReadonlyMap<string, ModuleStateShape>,

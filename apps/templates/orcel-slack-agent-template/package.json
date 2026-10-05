@@ -15,8 +15,8 @@
   "dependencies": {
     "@vercel/connect": "2.3.3",
     "ai": "7.0.105",
-    "eve": "npm:orcel@^0.66.3",
-    "orcel": "^0.66.3",
+    "eve": "npm:@orcel/orcel@^0.66.3",
+    "@orcel/orcel": "^0.66.3",
     "zod": "4.4.3"
   },
   "devDependencies": {

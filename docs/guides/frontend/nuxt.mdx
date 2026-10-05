@@ -1,13 +1,13 @@
 ---
 title: "Nuxt"
-description: "Run an orcel agent and a Nuxt app as one project with the orcel/nuxt module."
+description: "Run an orcel agent and a Nuxt app as one project with the @orcel/orcel/nuxt module."
 ---
 
-The `orcel/nuxt` module runs a Nuxt frontend and an orcel agent as a single project from one dev server and one Vercel deploy. The auto-imported [`useOrcelAgent`](./use-orcel-agent-vue) composable finds the mounted routes on its own, so there's no CORS to configure and no URL env vars to keep in sync.
+The `@orcel/orcel/nuxt` module runs a Nuxt frontend and an orcel agent as a single project from one dev server and one Vercel deploy. The auto-imported [`useOrcelAgent`](./use-orcel-agent-vue) composable finds the mounted routes on its own, so there's no CORS to configure and no URL env vars to keep in sync.
 
 ## Prerequisites
 
-- The `orcel` package installed in your project (`npm install orcel@latest`).
+- The `orcel` package installed in your project (`npm install @orcel/orcel@latest`).
 - An existing orcel agent directory. If you don't have one, start from [Getting started](../../getting-started).
 - A Nuxt app to mount the agent in.
 
@@ -15,7 +15,7 @@ The `orcel/nuxt` module runs a Nuxt frontend and an orcel agent as a single proj
 
 ```ts title="nuxt.config.ts"
 export default defineNuxtConfig({
-  modules: ["orcel/nuxt"],
+  modules: ["@orcel/orcel/nuxt"],
 });
 ```
 
@@ -23,7 +23,7 @@ The module looks for an `agent/` folder in the Nuxt project root. Pass `orcelRoo
 
 ```ts
 export default defineNuxtConfig({
-  modules: ["orcel/nuxt"],
+  modules: ["@orcel/orcel/nuxt"],
   orcel: {
     orcelRoot: "../my-agent",
   },
@@ -34,7 +34,7 @@ The `orcel` key accepts only two options, `orcelRoot` and `orcelBuildCommand`.
 
 ## Call the composable
 
-`useOrcelAgent` (`orcel/vue`) is auto-imported, so a component calls it without an explicit import and without naming a host:
+`useOrcelAgent` (`@orcel/orcel/vue`) is auto-imported, so a component calls it without an explicit import and without naming a host:
 
 ```vue
 <script setup lang="ts">
@@ -70,7 +70,7 @@ The browser still needs a production authentication policy. See [Authenticate br
 
   ```ts
   export default defineNuxtConfig({
-    modules: ["orcel/nuxt"],
+    modules: ["@orcel/orcel/nuxt"],
     orcel: {
       orcelBuildCommand: "npm run build:orcel",
     },

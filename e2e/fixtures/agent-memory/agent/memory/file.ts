@@ -1,5 +1,5 @@
-import { defineMemory } from "orcel/memory";
-import { fileMemory, inMemory } from "orcel/memory/file";
+import { defineMemory } from "@orcel/orcel/memory";
+import { fileMemory, inMemory } from "@orcel/orcel/memory/file";
 
 const provider = process.env.VERCEL
   ? fileMemory()

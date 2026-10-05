@@ -93,8 +93,8 @@ function authBlock(auth: ConnectionAuthSpec): string {
 function renderMcpTemplate(endpoint: McpEndpoint, description: string, auth: ConnectionAuthSpec) {
   const imports =
     auth.kind === "connect"
-      ? `import { connect } from "@vercel/connect/eve";\nimport { defineMcpClientConnection } from "orcel/connections";\n`
-      : `import { defineMcpClientConnection } from "orcel/connections";\n`;
+      ? `import { connect } from "@vercel/connect/eve";\nimport { defineMcpClientConnection } from "@orcel/orcel/connections";\n`
+      : `import { defineMcpClientConnection } from "@orcel/orcel/connections";\n`;
   return `${imports}
 export default defineMcpClientConnection({
   url: "${endpoint.url}",
@@ -110,8 +110,8 @@ function renderOpenApiTemplate(
 ) {
   const imports =
     auth.kind === "connect"
-      ? `import { connect } from "@vercel/connect/eve";\nimport { defineOpenAPIConnection } from "orcel/connections";\n`
-      : `import { defineOpenAPIConnection } from "orcel/connections";\n`;
+      ? `import { connect } from "@vercel/connect/eve";\nimport { defineOpenAPIConnection } from "@orcel/orcel/connections";\n`
+      : `import { defineOpenAPIConnection } from "@orcel/orcel/connections";\n`;
   const baseUrlLine = endpoint.baseUrl ? `  baseUrl: "${endpoint.baseUrl}",\n` : "";
   return `${imports}
 export default defineOpenAPIConnection({

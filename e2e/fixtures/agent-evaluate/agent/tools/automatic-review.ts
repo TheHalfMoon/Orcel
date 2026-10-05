@@ -1,5 +1,5 @@
-import { defineTool } from "orcel/tools";
-import { auto } from "orcel/tools/approval";
+import { defineTool } from "@orcel/orcel/tools";
+import { auto } from "@orcel/orcel/tools/approval";
 
 import { permissionEvaluationModel } from "../testing";
 

@@ -1,4 +1,4 @@
-import { defineTool } from "orcel/tools";
+import { defineTool } from "@orcel/orcel/tools";
 
 import { AI_GATEWAY_MODELS_URL } from "#internal/gateway.js";
 import { DEFAULT_AGENT_MODEL_ID } from "#shared/default-agent-model.js";

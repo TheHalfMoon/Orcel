@@ -1,4 +1,4 @@
-import { defineEval, type OrcelEvalSession } from "orcel/evals";
+import { defineEval, type OrcelEvalSession } from "@orcel/orcel/evals";
 
 export default defineEval({
   description: "Parallel child agents select models from their own prompts and isolated state.",

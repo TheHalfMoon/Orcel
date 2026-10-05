@@ -1,4 +1,4 @@
-import type { OrcelMessageData } from "orcel/vue";
+import type { OrcelMessageData } from "@orcel/orcel/vue";
 import type { MaybeRefOrGetter } from "vue";
 import { computed, toValue } from "vue";
 import type { AgentInputResponse } from "~/components/AgentInputRequest.vue";

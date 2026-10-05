@@ -78,11 +78,11 @@ function packageJsonTemplate(includeRootOnlyFields: boolean): string {
     },
     devDependencies: {
       "@types/node": "__ORCEL_INIT_TYPES_NODE_VERSION__",
-      orcel: "__ORCEL_INIT_PACKAGE_VERSION__",
+      "@orcel/orcel": "__ORCEL_INIT_PACKAGE_VERSION__",
       typescript: "__ORCEL_INIT_TYPESCRIPT_VERSION__",
     },
     peerDependencies: {
-      orcel: "*",
+      "@orcel/orcel": "*",
     },
   };
 
@@ -92,7 +92,7 @@ function packageJsonTemplate(includeRootOnlyFields: boolean): string {
   }}\n`;
 }
 
-const EXTENSION_DECLARATION_TEMPLATE = `import { defineExtension } from "orcel/extension";
+const EXTENSION_DECLARATION_TEMPLATE = `import { defineExtension } from "@orcel/orcel/extension";
 import { z } from "zod";
 
 export default defineExtension({
@@ -136,15 +136,15 @@ connections, skills, schedules, subagents, hooks, and instruction fragments that
 mounts under \`agent/extensions/\`.
 
 Before writing code, read the Extensions guide from the installed orcel package
-docs. In most installs, those docs are at \`node_modules/orcel/docs/extensions.md\`.
-In workspaces or local package installs, resolve the installed \`orcel\` package
+docs. In most installs, those docs are at \`node_modules/@orcel/orcel/docs/extensions.md\`.
+In workspaces or local package installs, resolve the installed \`@orcel/orcel\` package
 location first and read its \`docs/extensions.md\`. If package docs are
 unavailable, use https://github.com/TheHalfMoon/orcel/docs/extensions as a fallback.
 
 ## Authoring
 
 - Declare the extension in \`extension/extension.ts\` with \`defineExtension\` from
-  \`orcel/extension\`. Config is optional; read bound values via the handle's
+  \`@orcel/orcel/extension\`. Config is optional; read bound values via the handle's
   \`.config\` in tools, channels, schedules, hooks, and tools inside contributed subagents.
 - Add contributions under \`extension/\` the same way as in an agent:
   \`tools/\`, \`channels/\`, \`connections/\`, \`skills/\`, \`schedules/\`, \`subagents/\`, \`hooks/\`, and
@@ -159,10 +159,10 @@ unavailable, use https://github.com/TheHalfMoon/orcel/docs/extensions as a fallb
 \`orcel extension build\` (wired to \`build\`/\`prepare\`) transforms the complete
 agent-shaped source tree into \`dist/extension/\`, emits type declarations and a
 compatibility manifest, and fills the package \`exports\` map. Ship \`dist/\` only.
-Keep \`orcel\` as a required wildcard peer so the consumer's orcel is the one that runs;
-orcel validates extension compatibility from the generated manifest. Keep the orcel
+Keep \`@orcel/orcel\` as a required wildcard peer so the consumer's Orcel package is the one that runs;
+Orcel validates extension compatibility from the generated manifest. Keep the \`@orcel/orcel\`
 development dependency pinned exactly so builds remain reproducible. Upgrade it
-when the extension intentionally adopts a newer orcel authoring API.
+when the extension intentionally adopts a newer Orcel authoring API.
 `;
 
 const CLAUDE_MD_TEMPLATE = `@AGENTS.md
@@ -222,7 +222,7 @@ export interface ScaffoldExtensionProjectOptions {
 
 /**
  * Scaffolds a standalone orcel extension package: `extension/extension.ts`, package
- * metadata (`orcel.extension`, peer+dev `orcel`, zod), and TypeScript config. Does
+ * metadata (`orcel.extension`, peer+dev `@orcel/orcel`, zod), and TypeScript config. Does
  * not write sample tools — authors add contributions under `extension/` themselves.
  */
 export async function scaffoldExtensionProject(

@@ -13,9 +13,9 @@ describe("hostless agent workspace", () => {
   it("assembles every direct child as a peer Vercel service", async () => {
     const app = await scenarioApp({
       files: {
-        "agents/research/agent/agent.mjs": `import { defineAgent } from "orcel";\nexport default defineAgent({ model: "openai/gpt-5.4" });\n`,
+        "agents/research/agent/agent.mjs": `import { defineAgent } from "@orcel/orcel";\nexport default defineAgent({ model: "openai/gpt-5.4" });\n`,
         "agents/research/agent/instructions.md": "You are the research agent.\n",
-        "agents/support/agent/agent.mjs": `import { defineAgent } from "orcel";\nexport default defineAgent({ model: "openai/gpt-5.4" });\n`,
+        "agents/support/agent/agent.mjs": `import { defineAgent } from "@orcel/orcel";\nexport default defineAgent({ model: "openai/gpt-5.4" });\n`,
         "agents/support/agent/instructions.md": "You are the support agent.\n",
         ".vercel/project.json": `${JSON.stringify(
           {

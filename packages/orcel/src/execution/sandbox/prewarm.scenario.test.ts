@@ -32,8 +32,8 @@ describe("prewarmAppSandboxes", () => {
     await writeFile(
       join(agentRoot, "sandbox", "sandbox.ts"),
       [
-        'import { defineSandbox } from "orcel/sandbox";',
-        'import { MicrosandboxSandbox } from "orcel/sandbox/microsandbox";',
+        'import { defineSandbox } from "@orcel/orcel/sandbox";',
+        'import { MicrosandboxSandbox } from "@orcel/orcel/sandbox/microsandbox";',
         "export const environment = MicrosandboxSandbox.dockerfile();",
         "export default defineSandbox(() => environment.open());",
       ].join("\n"),
@@ -119,7 +119,7 @@ describe("prewarmAppSandboxes", () => {
 
 function preparedSandboxSource(command: string): string {
   return [
-    'import { DefaultSandbox, defineSandbox } from "orcel/sandbox";',
+    'import { DefaultSandbox, defineSandbox } from "@orcel/orcel/sandbox";',
     "export const environment = DefaultSandbox.environment({",
     "  prepare: async (sandbox) => {",
     `    await sandbox.run({ command: ${JSON.stringify(command)} });`,

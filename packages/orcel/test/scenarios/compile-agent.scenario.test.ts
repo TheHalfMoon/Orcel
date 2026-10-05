@@ -65,14 +65,14 @@ describe("compiler artifacts", () => {
     await mkdir(join(agentRoot, "memory"), { recursive: true });
     await writeFile(
       join(agentRoot, "agent.mjs"),
-      'import { defineAgent } from "orcel";\nexport default defineAgent({ model: "openai/gpt-5.4" });\n',
+      'import { defineAgent } from "@orcel/orcel";\nexport default defineAgent({ model: "openai/gpt-5.4" });\n',
     );
     await writeFile(join(agentRoot, "instructions.md"), "Remember durable preferences.");
     await writeFile(
       join(agentRoot, "memory", "profile.mjs"),
       [
-        'import { defineMemory } from "orcel/memory";',
-        'import { defineTool } from "orcel/tools";',
+        'import { defineMemory } from "@orcel/orcel/memory";',
+        'import { defineTool } from "@orcel/orcel/tools";',
         "export default () => {",
         "  globalThis.__memoryFactoryCalls = (globalThis.__memoryFactoryCalls ?? 0) + 1;",
         "  return defineMemory({",
@@ -174,7 +174,7 @@ describe("compiler artifacts", () => {
     await writeFile(join(agentRoot, "instructions.md"), "Wait when requested.");
     await writeFile(
       join(agentRoot, "tools", "sleep.mjs"),
-      'import { sleep } from "orcel/tools/sleep";\nexport default sleep();\n',
+      'import { sleep } from "@orcel/orcel/tools/sleep";\nexport default sleep();\n',
     );
 
     const result = await compileAgent({ startPath: appRoot });
@@ -619,7 +619,7 @@ describe("compileAgent", () => {
       files: {
         "agent/agent.mjs": 'export default { model: "openai/gpt-5.4" };\n',
         "agent/channels/support.ts": [
-          'import { defineChannel, POST } from "orcel/channels";',
+          'import { defineChannel, POST } from "@orcel/orcel/channels";',
           "",
           "export default defineChannel({",
           "  state: { queueId: null as string | null },",
@@ -630,8 +630,8 @@ describe("compileAgent", () => {
         ].join("\n"),
         "agent/instructions.md": "You are a precise assistant.\n",
         "agent/instrumentation/support.ts": [
-          'import { isChannel } from "orcel/instrumentation";',
-          'import { otelIntegration } from "orcel/instrumentation/otel";',
+          'import { isChannel } from "@orcel/orcel/instrumentation";',
+          'import { otelIntegration } from "@orcel/orcel/instrumentation/otel";',
           'import supportChannel from "../channels/support.js";',
           "",
           "export default otelIntegration({",
@@ -1276,7 +1276,7 @@ describe("compileAgent", () => {
     await writeFile(
       join(subagentRoot, "sandbox", "sandbox.mjs"),
       [
-        'import { DefaultSandbox, defineSandbox } from "orcel/sandbox";',
+        'import { DefaultSandbox, defineSandbox } from "@orcel/orcel/sandbox";',
         "export const environment = DefaultSandbox.environment();",
         "export default defineSandbox(async () => {",
         "  const sandbox = await environment.open();",

@@ -1,4 +1,4 @@
-import { defineSchedule } from "orcel/schedules";
+import { defineSchedule } from "@orcel/orcel/schedules";
 
 /**
  * Fired on demand by `evals/held-turn.schedule.eval.ts`. The directive runs

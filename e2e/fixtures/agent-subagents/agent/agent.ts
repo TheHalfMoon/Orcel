@@ -1,6 +1,6 @@
 import { e2eAgentConfig } from "@orcel-e2e/config";
-import { defineAgent, defineDynamic } from "orcel";
-import { mockModel } from "orcel/evals";
+import { defineAgent, defineDynamic } from "@orcel/orcel";
+import { mockModel } from "@orcel/orcel/evals";
 
 import { WORKSPACE_FORWARDING_MARKER, WORKSPACE_LOOKUP_MESSAGE } from "../constants";
 import {

@@ -1,4 +1,4 @@
-import { defineState } from "orcel/context";
+import { defineState } from "@orcel/orcel/context";
 
 import { repoFullName } from "./prwatch-github.ts";
 

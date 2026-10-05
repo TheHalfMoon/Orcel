@@ -1,5 +1,5 @@
-import { defineEval } from "orcel/evals";
-import { satisfies } from "orcel/evals/expect";
+import { defineEval } from "@orcel/orcel/evals";
+import { satisfies } from "@orcel/orcel/evals/expect";
 const FIRST_CLIENT_CONTEXT_TOKEN = "clientctx-first-W7R2";
 const SECOND_CLIENT_CONTEXT_TOKEN = "clientctx-second-P9K4";
 const CLIENT_CONTEXT_TOKEN_PATTERN = /\bclientctx-[A-Za-z0-9-]+\b/g;

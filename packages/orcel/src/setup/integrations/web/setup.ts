@@ -13,7 +13,7 @@ import {
 } from "../types.js";
 
 const NEXT_HOSTED_CONFIG = `import type { NextConfig } from "next";
-import { withEve } from "orcel/next";
+import { withEve } from "@orcel/orcel/next";
 import { fileURLToPath } from "node:url";
 
 const nextConfig: NextConfig = {};
@@ -27,7 +27,7 @@ const nextConfig: NextConfig = {};
 
 export default nextConfig;
 `;
-const PEER_SERVICE_VERCEL_CONFIG = `import { withEve } from "orcel/vercel";
+const PEER_SERVICE_VERCEL_CONFIG = `import { withEve } from "@orcel/orcel/vercel";
 
 export default await withEve({
   services: {
@@ -163,7 +163,7 @@ export async function applyWebSetup(
   );
   const nextConfigPath = join(webRoot, "next.config.ts");
   const registryNextConfig = `import type { NextConfig } from "next";
-import { withEve } from "orcel/next";
+import { withEve } from "@orcel/orcel/next";
 
 const nextConfig: NextConfig = {};
 

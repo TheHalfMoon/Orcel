@@ -107,7 +107,7 @@ const orcelNuxtModule: NuxtModule<OrcelNuxtModuleOptions> = defineNuxtModule<Orc
 
     // Auto-import the Vue composable so app code can call `useOrcelAgent()`
     // without an explicit import, matching Nuxt's composable conventions.
-    addImports({ name: "useOrcelAgent", from: "orcel/vue" });
+    addImports({ name: "useOrcelAgent", from: "@orcel/orcel/vue" });
 
     // On Vercel the orcel app deploys as a sibling service. A Nitro runtime
     // `proxy` rule can't reach it — the proxied request loops back into the

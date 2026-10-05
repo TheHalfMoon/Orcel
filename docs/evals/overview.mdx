@@ -26,8 +26,8 @@ my-agent/
 An eval is a single `async test(t)` function. You drive the agent with `t` and assert on the run with the same `t`:
 
 ```ts title="evals/weather/brooklyn-forecast.eval.ts"
-import { defineEval } from "orcel/evals";
-import { includes } from "orcel/evals/expect";
+import { defineEval } from "@orcel/orcel/evals";
+import { includes } from "@orcel/orcel/evals/expect";
 
 export default defineEval({
   description: "Basic message and tool-usage coverage for the weather agent.",
@@ -47,8 +47,8 @@ export default defineEval({
 Every `evals/` directory needs exactly one `evals.config.ts` at its root. It declares the defaults every eval shares:
 
 ```ts title="evals/evals.config.ts"
-import { defineEvalConfig } from "orcel/evals";
-import { Braintrust } from "orcel/evals/reporters";
+import { defineEvalConfig } from "@orcel/orcel/evals";
+import { Braintrust } from "@orcel/orcel/evals/reporters";
 
 export default defineEvalConfig({
   judge: { model: "typesafe-ai/jev" },
@@ -63,7 +63,7 @@ Everything is optional. `judge` sets the default model for [LLM-as-judge](./judg
 Use `setup` to start shared resources or run migrations before orcel starts the local agent server. Return shared context directly from `setup`, then release resources in `teardown`:
 
 ```ts title="evals/evals.config.ts"
-import { defineEvalConfig } from "orcel/evals";
+import { defineEvalConfig } from "@orcel/orcel/evals";
 import { startTestDatabase } from "./database.js";
 
 export default defineEvalConfig({
@@ -80,8 +80,8 @@ export default defineEvalConfig({
 `context` is inferred from the setup return value. To use that type in an eval file, pass the config's type to `defineEval`:
 
 ```ts title="evals/database.eval.ts"
-import { defineEval } from "orcel/evals";
-import { equals } from "orcel/evals/expect";
+import { defineEval } from "@orcel/orcel/evals";
+import { equals } from "@orcel/orcel/evals/expect";
 import type config from "./evals.config.js";
 
 export default defineEval<typeof config>({
@@ -106,8 +106,8 @@ Setup, eval bodies, and teardown share the same context object in the runner pro
 Use `mockModel` when an eval fixture needs to exercise orcel's runtime without calling a model provider. A static fixture can be one line:
 
 ```ts title="agent/agent.ts"
-import { defineAgent } from "orcel";
-import { mockModel } from "orcel/evals";
+import { defineAgent } from "@orcel/orcel";
+import { mockModel } from "@orcel/orcel/evals";
 
 export default defineAgent({
   model: mockModel("A deterministic reply"),
@@ -151,7 +151,7 @@ model: mockModel({
 Each surface matches a genuinely different kind of judgment:
 
 - **Scoped methods** read the final whole run on `t`, snapshot one independent session when invoked there, or inspect one immutable `OrcelEvalTurn`. See [Assertions](./assertions).
-- **`t.check(value, assertion)`** grades an explicit value with a deterministic builder from `orcel/evals/expect`, such as `t.check(turn.message, includes("sunny"))`. Grade `turn.message`, an intermediate draft, parsed JSON, or anything else. See [Assertions](./assertions).
+- **`t.check(value, assertion)`** grades an explicit value with a deterministic builder from `@orcel/orcel/evals/expect`, such as `t.check(turn.message, includes("sunny"))`. Grade `turn.message`, an intermediate draft, parsed JSON, or anything else. See [Assertions](./assertions).
 - **`t.judge(...)`** is the LLM-as-judge surface, like `t.judge("cites a source")`. It grades the most recently settled turn’s assistant message by default; pass `{ on: turn.session.transcript }` to grade a multi-turn conversation. The judge uses the configured judge model, never the agent under test. See [Judge](./judge).
 
 ## Gate vs soft

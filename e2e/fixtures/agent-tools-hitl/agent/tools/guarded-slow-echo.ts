@@ -1,5 +1,5 @@
-import { defineTool } from "orcel/tools";
-import { once } from "orcel/tools/approval";
+import { defineTool } from "@orcel/orcel/tools";
+import { once } from "@orcel/orcel/tools/approval";
 import { z } from "zod";
 
 export const GUARDED_SLOW_ECHO_TOKEN = "guarded-slow-echo-ok-V7K2";

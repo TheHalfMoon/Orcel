@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import type { AgentInfoResult } from "orcel/client";
-import { createHeadlessPrompter } from "orcel/setup";
+import type { AgentInfoResult } from "@orcel/orcel/client";
+import { createHeadlessPrompter } from "@orcel/orcel/setup";
 import { readOrcelTargetInfo } from "./orcel-target.js";
 import { readInstallTargetInfo } from "./remote-target-auth.js";
 

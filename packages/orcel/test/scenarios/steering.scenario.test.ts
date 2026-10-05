@@ -13,8 +13,8 @@ describe("durable generation steering", () => {
       installDependencies: true,
       files: {
         "agent/instructions.md": "Delegate the five work items.\n",
-        "agent/agent.ts": `import { defineAgent } from "orcel";
-import { mockModel } from "orcel/evals";
+        "agent/agent.ts": `import { defineAgent } from "@orcel/orcel";
+import { mockModel } from "@orcel/orcel/evals";
 export default defineAgent({
   model: mockModel(async ({ toolResults }) => {
     if (toolResults.length === 0) return { toolCalls: Array.from({ length: 5 }, (_, i) => ({
@@ -26,8 +26,8 @@ export default defineAgent({
   modelContextWindowTokens: 32000,
 });`,
         "agent/subagents/worker/instructions.md": "Complete the work item.\n",
-        "agent/subagents/worker/agent.ts": `import { defineAgent } from "orcel";
-import { mockModel } from "orcel/evals";
+        "agent/subagents/worker/agent.ts": `import { defineAgent } from "@orcel/orcel";
+import { mockModel } from "@orcel/orcel/evals";
 export default defineAgent({
   description: "Complete a work item.",
   model: mockModel(async () => {
@@ -76,8 +76,8 @@ export default defineAgent({
       installDependencies: true,
       files: {
         "agent/instructions.md": "Answer the latest request.\n",
-        "agent/agent.ts": `import { defineAgent } from "orcel";
-import { mockModel } from "orcel/evals";
+        "agent/agent.ts": `import { defineAgent } from "@orcel/orcel";
+import { mockModel } from "@orcel/orcel/evals";
 export default defineAgent({
   model: mockModel(async ({ lastUserMessage }) => {
     if (lastUserMessage?.includes("Actually 2025")) return "Corrected 2025 answer";

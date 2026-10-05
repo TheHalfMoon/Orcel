@@ -181,7 +181,7 @@ function isExternalPackageSpecifier(source) {
   // Public self-imports must remain bare in the published package. Resolving
   // them during a clean build would target output that does not exist yet;
   // resolving them during an incremental build could consume stale output.
-  if (source === "orcel" || source.startsWith("orcel/")) {
+  if (source === "@orcel/orcel" || source.startsWith("@orcel/orcel/")) {
     return true;
   }
 

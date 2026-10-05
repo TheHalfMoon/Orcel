@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import type { SandboxSession } from "orcel/sandbox";
+import type { SandboxSession } from "@orcel/orcel/sandbox";
 
 import { shellQuote } from "#shared/shell-quote.js";
 

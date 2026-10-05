@@ -1,5 +1,5 @@
-import type { MessageStreamEvent } from "orcel/client";
-import { defineEval } from "orcel/evals";
+import type { MessageStreamEvent } from "@orcel/orcel/client";
+import { defineEval } from "@orcel/orcel/evals";
 
 const SUBAGENT_TOKEN = "SUBAGENT_TOKEN=echo-marker-9F2X";
 const DOUBLE_SUBAGENT_TOKEN = new RegExp(`${SUBAGENT_TOKEN}.*${SUBAGENT_TOKEN}`, "s");

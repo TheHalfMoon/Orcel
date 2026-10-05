@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 // A dynamic resolver (override-provider.ts) emits a tool named `override-target`,
 // the same name as an authored tool. The dynamic tool must win: calling

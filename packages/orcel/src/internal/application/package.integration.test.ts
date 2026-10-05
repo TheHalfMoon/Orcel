@@ -38,9 +38,9 @@ async function writePackageManifest(packageRoot: string, name: string): Promise<
 }
 
 async function writeInstalledOrcelPackage(appRoot: string): Promise<string> {
-  const packageRoot = join(appRoot, "node_modules", "orcel");
+  const packageRoot = join(appRoot, "node_modules", "@orcel", "orcel");
 
-  await writePackageManifest(packageRoot, "orcel");
+  await writePackageManifest(packageRoot, "@orcel/orcel");
   await mkdir(join(packageRoot, "dist"), { recursive: true });
   return packageRoot;
 }
@@ -68,7 +68,7 @@ describe("resolvePackageLocationFromModulePath", () => {
 
   it("keeps source checkouts on package source files", async () => {
     const packageRoot = await createScratchDirectory("orcel-package-location-source-");
-    await writePackageManifest(packageRoot, "orcel");
+    await writePackageManifest(packageRoot, "@orcel/orcel");
     const modulePath = join(packageRoot, "src", "internal", "application", "package.ts");
     await writeFixtureFile(modulePath, "export {};\n");
     const canonicalPackageRoot = canonicalize(packageRoot);
@@ -81,7 +81,7 @@ describe("resolvePackageLocationFromModulePath", () => {
 
   it("keeps direct dist execution on built package files", async () => {
     const packageRoot = await createScratchDirectory("orcel-package-location-dist-");
-    await writePackageManifest(packageRoot, "orcel");
+    await writePackageManifest(packageRoot, "@orcel/orcel");
     await writeFixtureFile(
       join(packageRoot, "src", "internal", "application", "package.ts"),
       "export {};\n",
@@ -112,7 +112,7 @@ describe("resolvePackageLocationFromModulePath", () => {
 
   it("falls back to a surrounding verified package when module resolution fails", async () => {
     const packageRoot = await createScratchDirectory("orcel-package-location-fallback-");
-    await writePackageManifest(packageRoot, "orcel");
+    await writePackageManifest(packageRoot, "@orcel/orcel");
     await mkdir(join(packageRoot, "dist"), { recursive: true });
     const bundlePath = await writeBundle(packageRoot);
     const canonicalPackageRoot = canonicalize(packageRoot);

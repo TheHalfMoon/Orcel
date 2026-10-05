@@ -46,7 +46,7 @@ function validateCommandName(value: string): string | null {
 
 function connectTemplate(uid: string): string {
   return `import { connectDiscordCredentials } from "@vercel/connect/eve";
-import { discordChannel } from "orcel/channels/discord";
+import { discordChannel } from "@orcel/orcel/channels/discord";
 
 export default discordChannel({
   credentials: connectDiscordCredentials(${JSON.stringify(uid)}),

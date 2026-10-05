@@ -14,7 +14,7 @@ This example posts to Slack and requires `SLACK_REVIEW_CHANNEL_ID` and `SLACK_BO
 Attach a platform-specific side effect to that platform's channel rather than filtering a global hook. This GitHub channel records one Slack notification per completed GitHub turn:
 
 ```ts title="agent/channels/github.ts"
-import { githubChannel } from "orcel/channels/github";
+import { githubChannel } from "@orcel/orcel/channels/github";
 
 import { notificationOutbox } from "../lib/notification-outbox";
 
@@ -44,8 +44,8 @@ A channel's `events` handlers run only for sessions owned by that channel. On bu
 Use one handler-form schedule as the dispatcher. Claim rows with a lease, call the provider API, then mark each row complete:
 
 ```ts title="agent/schedules/notification-outbox.ts"
-import { callSlackApi } from "orcel/channels/slack";
-import { defineSchedule } from "orcel/schedules";
+import { callSlackApi } from "@orcel/orcel/channels/slack";
+import { defineSchedule } from "@orcel/orcel/schedules";
 
 import { notificationOutbox } from "../lib/notification-outbox";
 

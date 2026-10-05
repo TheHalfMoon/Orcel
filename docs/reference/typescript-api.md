@@ -10,13 +10,13 @@ Identity comes from the filesystem, not a field you set. A tool at `agent/tools/
 Most files look the same: import a helper, default-export the result.
 
 ```ts title="agent/agent.ts"
-import { defineAgent } from "orcel";
+import { defineAgent } from "@orcel/orcel";
 
 export default defineAgent({ model: "anthropic/claude-opus-5.5" });
 ```
 
 ```ts title="agent/tools/get_weather.ts"
-import { defineTool } from "orcel/tools";
+import { defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 export default defineTool({
@@ -33,37 +33,37 @@ export default defineTool({
 | Helper                                                | Import from                                                             | Authored at                                                                            | Guide                                                  |
 | ----------------------------------------------------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------ |
 | `defineAgent`                                         | `orcel`                                                                   | `agent/agent.ts`                                                                       | [agent.ts](../agent-config)                            |
-| `defineTool`                                          | `orcel/tools`                                                             | `agent/tools/<name>.ts`                                                                | [Tools](../tools)                                      |
-| `defineDurableCallback`                               | `orcel/tools`                                                             | provider-package dynamic tool factories                                                | [Dynamic capabilities](../guides/dynamic-capabilities) |
-| `defineDurableSchema`                                 | `orcel/tools`                                                             | provider-package dynamic input and output schemas                                      | [Dynamic capabilities](../guides/dynamic-capabilities) |
-| `defineWorkflowTool`                                  | `orcel/tools`                                                             | `agent/tools/<name>.ts`                                                                | [Workflow tools](../tools/workflows)                   |
-| `defineDynamic`                                       | `orcel`, `orcel/tools`, `orcel/skills`, `orcel/instructions`, `orcel/connections` | dynamic model or subagent `agent.ts`; `agent/{tools,skills,instructions,connections}/` | [Dynamic capabilities](../guides/dynamic-capabilities) |
-| `defineMcpClientConnection`                           | `orcel/connections`                                                       | `agent/connections/<name>.ts`                                                          | [MCP connections](../connections/mcp)                  |
-| `defineOpenAPIConnection`                             | `orcel/connections`                                                       | `agent/connections/<name>.ts`                                                          | [OpenAPI connections](../connections/openapi)          |
-| `defineChannel`                                       | `orcel/channels`                                                          | `agent/channels/<name>.ts`                                                             | [Custom channels](../channels/custom)                  |
+| `defineTool`                                          | `@orcel/orcel/tools`                                                             | `agent/tools/<name>.ts`                                                                | [Tools](../tools)                                      |
+| `defineDurableCallback`                               | `@orcel/orcel/tools`                                                             | provider-package dynamic tool factories                                                | [Dynamic capabilities](../guides/dynamic-capabilities) |
+| `defineDurableSchema`                                 | `@orcel/orcel/tools`                                                             | provider-package dynamic input and output schemas                                      | [Dynamic capabilities](../guides/dynamic-capabilities) |
+| `defineWorkflowTool`                                  | `@orcel/orcel/tools`                                                             | `agent/tools/<name>.ts`                                                                | [Workflow tools](../tools/workflows)                   |
+| `defineDynamic`                                       | `orcel`, `@orcel/orcel/tools`, `@orcel/orcel/skills`, `@orcel/orcel/instructions`, `@orcel/orcel/connections` | dynamic model or subagent `agent.ts`; `agent/{tools,skills,instructions,connections}/` | [Dynamic capabilities](../guides/dynamic-capabilities) |
+| `defineMcpClientConnection`                           | `@orcel/orcel/connections`                                                       | `agent/connections/<name>.ts`                                                          | [MCP connections](../connections/mcp)                  |
+| `defineOpenAPIConnection`                             | `@orcel/orcel/connections`                                                       | `agent/connections/<name>.ts`                                                          | [OpenAPI connections](../connections/openapi)          |
+| `defineChannel`                                       | `@orcel/orcel/channels`                                                          | `agent/channels/<name>.ts`                                                             | [Custom channels](../channels/custom)                  |
 | `orcelChannel`, `slackChannel`, and the other platforms | `orcel/channels/<platform>`                                               | `agent/channels/<platform>.ts`                                                         | [Channels](../channels/overview)                       |
-| `defineSkill`                                         | `orcel/skills`                                                            | `agent/skills/<name>.ts`                                                               | [Skills](../skills)                                    |
-| `defineInstructions`                                  | `orcel/instructions`                                                      | `agent/instructions.ts`                                                                | [Instructions](../instructions)                        |
-| `defineMemory`, `defineMemoryProvider`                | `orcel/memory`                                                            | `agent/memory.ts` or `agent/memory/<slot>.ts`                                          | [Memory](../memory)                                    |
-| `defineHook`                                          | `orcel/hooks`                                                             | `agent/hooks/<slug>.ts`                                                                | [Hooks](../guides/hooks)                               |
-| `defineSchedule`                                      | `orcel/schedules`                                                         | `agent/schedules/<name>.ts`                                                            | [Schedules](../schedules)                              |
-| `defineState`                                         | `orcel/context`                                                           | tools, hooks, lifecycle                                                                | [Session context](../guides/session-context)           |
-| `defineSandbox`                                       | `orcel/sandbox`                                                           | `agent/sandbox.ts`                                                                     | [Sandbox](../sandbox)                                  |
-| `defineInstrumentation`                               | `orcel/instrumentation`                                                   | `agent/instrumentation/<name>.ts`                                                      | [Instrumentation](../observability/instrumentation)    |
-| `otel`, `otelIntegration`                             | `orcel/instrumentation/otel`                                              | `agent/instrumentation/<destination>.ts`                                               | [OpenTelemetry](../observability/otel)                 |
+| `defineSkill`                                         | `@orcel/orcel/skills`                                                            | `agent/skills/<name>.ts`                                                               | [Skills](../skills)                                    |
+| `defineInstructions`                                  | `@orcel/orcel/instructions`                                                      | `agent/instructions.ts`                                                                | [Instructions](../instructions)                        |
+| `defineMemory`, `defineMemoryProvider`                | `@orcel/orcel/memory`                                                            | `agent/memory.ts` or `agent/memory/<slot>.ts`                                          | [Memory](../memory)                                    |
+| `defineHook`                                          | `@orcel/orcel/hooks`                                                             | `agent/hooks/<slug>.ts`                                                                | [Hooks](../guides/hooks)                               |
+| `defineSchedule`                                      | `@orcel/orcel/schedules`                                                         | `agent/schedules/<name>.ts`                                                            | [Schedules](../schedules)                              |
+| `defineState`                                         | `@orcel/orcel/context`                                                           | tools, hooks, lifecycle                                                                | [Session context](../guides/session-context)           |
+| `defineSandbox`                                       | `@orcel/orcel/sandbox`                                                           | `agent/sandbox.ts`                                                                     | [Sandbox](../sandbox)                                  |
+| `defineInstrumentation`                               | `@orcel/orcel/instrumentation`                                                   | `agent/instrumentation/<name>.ts`                                                      | [Instrumentation](../observability/instrumentation)    |
+| `otel`, `otelIntegration`                             | `@orcel/orcel/instrumentation/otel`                                              | `agent/instrumentation/<destination>.ts`                                               | [OpenTelemetry](../observability/otel)                 |
 | `defineRemoteAgent`                                   | `orcel`                                                                   | `agent/subagents/<id>/agent.ts`                                                        | [Remote agents](../guides/remote-agents)               |
-| `defineEval`                                          | `orcel/evals`                                                             | `evals/*.eval.ts`                                                                      | [Evals](../evals/overview)                             |
-| `defineEvalConfig`                                    | `orcel/evals`                                                             | `evals/evals.config.ts`                                                                | [Evals](../evals/overview)                             |
-| `mockModel`                                           | `orcel/evals`                                                             | Deterministic fixture agent models                                                     | [Evals](../evals/overview)                             |
-| `useOrcelAgent`                                         | `orcel/react`, `orcel/vue`, `orcel/svelte`                                    | frontend                                                                               | [Frontend](../guides/frontend/overview)                |
+| `defineEval`                                          | `@orcel/orcel/evals`                                                             | `evals/*.eval.ts`                                                                      | [Evals](../evals/overview)                             |
+| `defineEvalConfig`                                    | `@orcel/orcel/evals`                                                             | `evals/evals.config.ts`                                                                | [Evals](../evals/overview)                             |
+| `mockModel`                                           | `@orcel/orcel/evals`                                                             | Deterministic fixture agent models                                                     | [Evals](../evals/overview)                             |
+| `useOrcelAgent`                                         | `@orcel/orcel/react`, `@orcel/orcel/vue`, `@orcel/orcel/svelte`                                    | frontend                                                                               | [Frontend](../guides/frontend/overview)                |
 
-Tool-wide authoring helpers and types such as `defineTool`, `defineWorkflowTool`, `defineDurableCallback`, `defineDurableSchema`, `defineDynamic`, `disableTool`, and `ToolLabelDefinition` come from `orcel/tools`. Capability-specific definitions and helpers use their own subpaths (see [Built-in tools](../concepts/built-in-tools)): reusable definitions such as `bash` and `glob` come from `orcel/tools/<name>`, `webSearch` comes from `orcel/tools/web_search`, `agentRouter` comes from `orcel/tools/agent-router`, `sleep` comes from `orcel/tools/sleep`, and approval policies and types come from `orcel/tools/approval`. The route verbs `GET`/`HEAD`/`POST`/`PUT`/`PATCH`/`DELETE`/`OPTIONS`/`WS` plus `disableRoute` come from `orcel/channels`, and the channel auth helpers `localDev`/`vercelOidc`/`placeholderAuth` come from `orcel/channels/auth`.
+Tool-wide authoring helpers and types such as `defineTool`, `defineWorkflowTool`, `defineDurableCallback`, `defineDurableSchema`, `defineDynamic`, `disableTool`, and `ToolLabelDefinition` come from `@orcel/orcel/tools`. Capability-specific definitions and helpers use their own subpaths (see [Built-in tools](../concepts/built-in-tools)): reusable definitions such as `bash` and `glob` come from `orcel/tools/<name>`, `webSearch` comes from `@orcel/orcel/tools/web_search`, `agentRouter` comes from `@orcel/orcel/tools/agent-router`, `sleep` comes from `@orcel/orcel/tools/sleep`, and approval policies and types come from `@orcel/orcel/tools/approval`. The route verbs `GET`/`HEAD`/`POST`/`PUT`/`PATCH`/`DELETE`/`OPTIONS`/`WS` plus `disableRoute` come from `@orcel/orcel/channels`, and the channel auth helpers `localDev`/`vercelOidc`/`placeholderAuth` come from `@orcel/orcel/channels/auth`.
 
-`AgentReasoningDefinition` is exported from `orcel` for the top-level `defineAgent({ reasoning })` setting. `AgentLimitsDefinition` is exported for `defineAgent({ limits })`. `AgentWorkflowDefinition`, `AgentWorkflowRetentionDefinition`, and `AgentWorkflowWorldDefinition` are exported from `orcel` for the `defineAgent({ experimental: { workflow } })` config shape. `WebSearchToolInput` and `WebSearchProvider` are exported from `orcel/tools/web_search`.
+`AgentReasoningDefinition` is exported from `orcel` for the top-level `defineAgent({ reasoning })` setting. `AgentLimitsDefinition` is exported for `defineAgent({ limits })`. `AgentWorkflowDefinition`, `AgentWorkflowRetentionDefinition`, and `AgentWorkflowWorldDefinition` are exported from `orcel` for the `defineAgent({ experimental: { workflow } })` config shape. `WebSearchToolInput` and `WebSearchProvider` are exported from `@orcel/orcel/tools/web_search`.
 
-`defineInstructions` accepts `{ content: string, role?: "system" | "user" }`; omitted `role` means `"system"`. Its `orcel/instructions` version of `defineDynamic` accepts only `session.started` and `turn.started` handlers returning `defineInstructions(...)` or `null`. The legacy `{ markdown: string }` definition remains available as a deprecated system-role form.
+`defineInstructions` accepts `{ content: string, role?: "system" | "user" }`; omitted `role` means `"system"`. Its `@orcel/orcel/instructions` version of `defineDynamic` accepts only `session.started` and `turn.started` handlers returning `defineInstructions(...)` or `null`. The legacy `{ markdown: string }` definition remains available as a deprecated system-role form.
 
-The `orcel/connections` version of `defineDynamic` accepts `session.started` and
+The `@orcel/orcel/connections` version of `defineDynamic` accepts `session.started` and
 `turn.started` handlers returning one MCP or OpenAPI connection definition, a
 map of connection definitions, or `null`. Its resolver context exposes
 authenticated session identity and `channel.kind`, but not conversation history,
@@ -115,58 +115,58 @@ Tool definitions accept `availableInSubagents: false` to restrict the tool to to
 | Import                                                                 | Holds                                                                                                                          |
 | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | `orcel`                                                                  | `defineAgent`, `defineRemoteAgent`, `defineDynamic`, agent config types                                                        |
-| `orcel/tools`                                                            | `defineTool`, `defineWorkflowTool`, `defineDurableCallback`, `defineDurableSchema`, `defineDynamic`, `disableTool`, tool types |
+| `@orcel/orcel/tools`                                                            | `defineTool`, `defineWorkflowTool`, `defineDurableCallback`, `defineDurableSchema`, `defineDynamic`, `disableTool`, tool types |
 | `orcel/tools/{bash,read_file,write_file,web_fetch,load_skill,glob,grep}` | Individual reusable tool definitions                                                                                           |
-| `orcel/tools/approval`                                                   | Approval types and `auto`, `always`, `once`, `never`                                                                           |
-| `orcel/tools/ask_question`                                               | Opt-in `askQuestion` tool factory                                                                                              |
-| `orcel/tools/web_search`                                                 | Provider-managed `webSearch` configuration                                                                                     |
-| `orcel/tools/workflow`                                                   | Runtime-generated `workflow` tool factory                                                                                      |
-| `orcel/tools/sleep`                                                      | Opt-in durable `sleep` tool                                                                                                    |
-| `orcel/connections`                                                      | `defineMcpClientConnection`, `defineOpenAPIConnection`, `defineDynamic`                                                        |
-| `orcel/channels`                                                         | `defineChannel`, `disableRoute`, route verbs                                                                                   |
-| `orcel/channels/orcel`                                                     | `orcelChannel`                                                                                                                   |
-| `orcel/channels/auth`                                                    | `localDev`, `vercelOidc`, `placeholderAuth`                                                                                    |
+| `@orcel/orcel/tools/approval`                                                   | Approval types and `auto`, `always`, `once`, `never`                                                                           |
+| `@orcel/orcel/tools/ask_question`                                               | Opt-in `askQuestion` tool factory                                                                                              |
+| `@orcel/orcel/tools/web_search`                                                 | Provider-managed `webSearch` configuration                                                                                     |
+| `@orcel/orcel/tools/workflow`                                                   | Runtime-generated `workflow` tool factory                                                                                      |
+| `@orcel/orcel/tools/sleep`                                                      | Opt-in durable `sleep` tool                                                                                                    |
+| `@orcel/orcel/connections`                                                      | `defineMcpClientConnection`, `defineOpenAPIConnection`, `defineDynamic`                                                        |
+| `@orcel/orcel/channels`                                                         | `defineChannel`, `disableRoute`, route verbs                                                                                   |
+| `@orcel/orcel/channels/orcel`                                                     | `orcelChannel`                                                                                                                   |
+| `@orcel/orcel/channels/auth`                                                    | `localDev`, `vercelOidc`, `placeholderAuth`                                                                                    |
 | `orcel/channels/{slack,discord,teams,telegram,twilio,github}`            | platform channel factories                                                                                                     |
-| `orcel/hooks`                                                            | `defineHook`                                                                                                                   |
-| `orcel/schedules`                                                        | `defineSchedule`                                                                                                               |
-| `orcel/skills`                                                           | `defineSkill`, `defineDynamic`                                                                                                 |
-| `orcel/instructions`                                                     | `defineInstructions`, `defineDynamic`                                                                                          |
-| `orcel/memory`                                                           | `defineMemory`, `defineMemoryProvider`, provider and lifecycle types                                                           |
-| `orcel/memory/scope`                                                     | `byPrincipal` and memory scope helpers                                                                                         |
-| `orcel/memory/file`                                                      | `fileMemory`, `inMemory`, and the conditional document backend contract                                                        |
-| `orcel/memory/file/vercel`                                               | `vercelBlob` and Vercel Blob backend options                                                                                   |
-| `orcel/context`                                                          | `defineState`, session and state types                                                                                         |
-| `orcel/sandbox`                                                          | `defineSandbox`, provider environments, and sandbox session types                                                              |
-| `orcel/instrumentation`                                                  | `defineInstrumentation`, `disableInstrumentation`, `isChannel`, lifecycle provider types                                       |
-| `orcel/instrumentation/otel`                                             | `otel`, `otelIntegration`, `localTraces`, `agentRuns`, OpenTelemetry policy types                                              |
-| `orcel/local-dev`                                                        | `getLocalDevCapability`, `LocalDevCapability`                                                                                  |
-| [`orcel/models`](../guides/evaluate)                                     | Automatic model selection with `auto`                                                                                          |
-| `orcel/models/openai`                                                    | `openai`, `chatgpt`, deprecated `experimental_chatgpt`                                                                         |
-| `orcel/models/anthropic`                                                 | `anthropic`                                                                                                                    |
-| [`orcel/ai`](../guides/evaluate#evaluate-inside-a-tool)                  | Standalone `evaluate`                                                                                                          |
-| `orcel/evals`                                                            | `defineEval`, `defineEvalConfig`, `mockModel`, eval types                                                                      |
-| `orcel/evals/expect`                                                     | `includes`, `equals`, `matches`, `similarity`                                                                                  |
-| `orcel/evals/reporters`                                                  | `Braintrust`, `JUnit`, `EvalReporter`                                                                                          |
-| `orcel/evals/loaders`                                                    | `loadJson`, `loadYaml`                                                                                                         |
-| `orcel/react`, `orcel/vue`, `orcel/svelte`                                   | `useOrcelAgent`                                                                                                                  |
-| `orcel/next`, `orcel/nuxt`, `orcel/sveltekit`                                | framework bundler plugins                                                                                                      |
-| [`orcel/client`](../guides/client/overview)                              | `Client`, `ClientSession`, health and agent-info schemas, response errors                                                      |
+| `@orcel/orcel/hooks`                                                            | `defineHook`                                                                                                                   |
+| `@orcel/orcel/schedules`                                                        | `defineSchedule`                                                                                                               |
+| `@orcel/orcel/skills`                                                           | `defineSkill`, `defineDynamic`                                                                                                 |
+| `@orcel/orcel/instructions`                                                     | `defineInstructions`, `defineDynamic`                                                                                          |
+| `@orcel/orcel/memory`                                                           | `defineMemory`, `defineMemoryProvider`, provider and lifecycle types                                                           |
+| `@orcel/orcel/memory/scope`                                                     | `byPrincipal` and memory scope helpers                                                                                         |
+| `@orcel/orcel/memory/file`                                                      | `fileMemory`, `inMemory`, and the conditional document backend contract                                                        |
+| `@orcel/orcel/memory/file/vercel`                                               | `vercelBlob` and Vercel Blob backend options                                                                                   |
+| `@orcel/orcel/context`                                                          | `defineState`, session and state types                                                                                         |
+| `@orcel/orcel/sandbox`                                                          | `defineSandbox`, provider environments, and sandbox session types                                                              |
+| `@orcel/orcel/instrumentation`                                                  | `defineInstrumentation`, `disableInstrumentation`, `isChannel`, lifecycle provider types                                       |
+| `@orcel/orcel/instrumentation/otel`                                             | `otel`, `otelIntegration`, `localTraces`, `agentRuns`, OpenTelemetry policy types                                              |
+| `@orcel/orcel/local-dev`                                                        | `getLocalDevCapability`, `LocalDevCapability`                                                                                  |
+| [`@orcel/orcel/models`](../guides/evaluate)                                     | Automatic model selection with `auto`                                                                                          |
+| `@orcel/orcel/models/openai`                                                    | `openai`, `chatgpt`, deprecated `experimental_chatgpt`                                                                         |
+| `@orcel/orcel/models/anthropic`                                                 | `anthropic`                                                                                                                    |
+| [`@orcel/orcel/ai`](../guides/evaluate#evaluate-inside-a-tool)                  | Standalone `evaluate`                                                                                                          |
+| `@orcel/orcel/evals`                                                            | `defineEval`, `defineEvalConfig`, `mockModel`, eval types                                                                      |
+| `@orcel/orcel/evals/expect`                                                     | `includes`, `equals`, `matches`, `similarity`                                                                                  |
+| `@orcel/orcel/evals/reporters`                                                  | `Braintrust`, `JUnit`, `EvalReporter`                                                                                          |
+| `@orcel/orcel/evals/loaders`                                                    | `loadJson`, `loadYaml`                                                                                                         |
+| `@orcel/orcel/react`, `@orcel/orcel/vue`, `@orcel/orcel/svelte`                                   | `useOrcelAgent`                                                                                                                  |
+| `@orcel/orcel/next`, `@orcel/orcel/nuxt`, `@orcel/orcel/sveltekit`                                | framework bundler plugins                                                                                                      |
+| [`@orcel/orcel/client`](../guides/client/overview)                              | `Client`, `ClientSession`, health and agent-info schemas, response errors                                                      |
 
-Exported types ship from the same entrypoint as the helper they describe (for example `ToolDefinition` and `ToolContext` from `orcel/tools`). The `exports` field in `packages/orcel/package.json` lists every public entrypoint.
+Exported types ship from the same entrypoint as the helper they describe (for example `ToolDefinition` and `ToolContext` from `@orcel/orcel/tools`). The `exports` field in `packages/@orcel/orcel/package.json` lists every public entrypoint.
 
 ## Direct provider models
 
-`openai(model?)` from `orcel/models/openai` and `anthropic(model?)` from `orcel/models/anthropic` return orcel-owned model instances using the vendored providers. They accept only an optional model ID. Defaults are `gpt-6-luna-fast` and `claude-sonnet-5`, respectively.
+`openai(model?)` from `@orcel/orcel/models/openai` and `anthropic(model?)` from `@orcel/orcel/models/anthropic` return orcel-owned model instances using the vendored providers. They accept only an optional model ID. Defaults are `gpt-6-luna-fast` and `claude-sonnet-5`, respectively.
 
 Use `/login` for local credentials, or set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. Local secret-store discovery is disabled in deployments; provision server credentials explicitly. See [Set the model](../agent-config#set-the-model) for an example.
 
 ## ChatGPT subscription models
 
-`chatgpt()` from `orcel/models/openai` serves an OpenAI model through your local ChatGPT login and bills the ChatGPT subscription. With no argument, it selects `gpt-6-luna-fast`:
+`chatgpt()` from `@orcel/orcel/models/openai` serves an OpenAI model through your local ChatGPT login and bills the ChatGPT subscription. With no argument, it selects `gpt-6-luna-fast`:
 
 ```ts title="agent/agent.ts"
-import { defineAgent } from "orcel";
-import { chatgpt } from "orcel/models/openai";
+import { defineAgent } from "@orcel/orcel";
+import { chatgpt } from "@orcel/orcel/models/openai";
 
 export default defineAgent({
   model: chatgpt(),

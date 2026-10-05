@@ -1,5 +1,5 @@
-import { defineAgent } from "orcel";
-import { mockModel } from "orcel/evals";
+import { defineAgent } from "@orcel/orcel";
+import { mockModel } from "@orcel/orcel/evals";
 
 const MARKER = "PROXIED-ASK-APPROVED-6R9K";
 

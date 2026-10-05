@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 import { SANDBOX_CLI_NAME, SANDBOX_CLI_TOKEN } from "./shared";
 

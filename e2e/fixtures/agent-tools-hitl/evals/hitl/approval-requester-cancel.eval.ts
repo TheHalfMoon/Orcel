@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 const ALICE = { "x-orcel-fixture-user": "alice", "x-orcel-fixture-model": "continuation" };
 const BOB = { "x-orcel-fixture-user": "bob", "x-orcel-fixture-model": "continuation" };

@@ -1,4 +1,4 @@
-import { otel } from "orcel/instrumentation/otel";
+import { otel } from "@orcel/orcel/instrumentation/otel";
 
 export default otel({
   traceChannelRequests: true,

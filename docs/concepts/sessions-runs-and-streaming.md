@@ -294,7 +294,7 @@ The lookup is opt-in; requests without the parameter get no header. The TypeScri
 
 ## Use the client from TypeScript
 
-For scripts, server-to-server calls, tests, evals, and custom UIs, `orcel/client` wraps these routes in a typed client so you don't hand-roll the POST and NDJSON stream loop.
+For scripts, server-to-server calls, tests, evals, and custom UIs, `@orcel/orcel/client` wraps these routes in a typed client so you don't hand-roll the POST and NDJSON stream loop.
 
 Start with the [Client SDK](../guides/client/overview) guide. It covers basic usage, sending messages, session state, streaming, and per-turn `outputSchema` results.
 

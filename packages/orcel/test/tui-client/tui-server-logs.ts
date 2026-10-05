@@ -1,4 +1,4 @@
-import { Client } from "orcel/client";
+import { Client } from "@orcel/orcel/client";
 import { OrcelTUIRunner, MockScreen, MockUserInput, TerminalRenderer } from "./lib/tui.ts";
 
 import { theme } from "./lib/theme.ts";

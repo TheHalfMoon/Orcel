@@ -1,4 +1,4 @@
-import { defineExtension } from "orcel/extension";
+import { defineExtension } from "@orcel/orcel/extension";
 import { z } from "zod";
 
 export default defineExtension({

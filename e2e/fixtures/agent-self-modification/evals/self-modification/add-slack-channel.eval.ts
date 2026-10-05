@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 import { withSelfModification } from "./harness";
 import { verifyRegistryHandoff } from "./registry-install";

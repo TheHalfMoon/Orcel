@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 const TOOLKIT_INCIDENT_TOKEN = "toolkit-incident-dynamic-ok-7T2X";
 

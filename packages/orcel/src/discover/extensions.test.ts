@@ -19,13 +19,13 @@ describe("locateExtensionMountPackage", () => {
   it("resolves a package-local built-in extension without a compatibility manifest", async () => {
     const appRoot = "/repo/apps/agent";
     const agentRoot = `${appRoot}/agent`;
-    const packageRoot = `${appRoot}/node_modules/orcel`;
+    const packageRoot = `${appRoot}/node_modules/@orcel/orcel`;
     const source = createMemoryProjectSource({
       files: {
         [`${agentRoot}/extensions/selfmod.ts`]:
-          'export { default } from "orcel/self-modification";\n',
+          'export { default } from "@orcel/orcel/self-modification";\n',
         [`${packageRoot}/package.json`]: JSON.stringify({
-          name: "orcel",
+          name: "@orcel/orcel",
           orcel: {
             builtInExtensions: {
               "./self-modification": { dist: "dist/src/self-modification/extension" },
@@ -45,10 +45,10 @@ describe("locateExtensionMountPackage", () => {
 
     expect(result.diagnostics).toEqual([]);
     expect(result.location).toMatchObject({
-      packageName: "orcel",
+      packageName: "@orcel/orcel",
       packageRoot,
       sourceRoot: `${packageRoot}/dist/src/self-modification/extension`,
-      specifier: "orcel/self-modification",
+      specifier: "@orcel/orcel/self-modification",
     });
   });
 

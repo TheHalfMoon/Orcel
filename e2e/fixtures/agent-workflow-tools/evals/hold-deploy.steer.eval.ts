@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 /**
  * `hold_deploy` rejects once its `abortSignal` aborts. A steering message

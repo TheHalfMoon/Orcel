@@ -1,5 +1,5 @@
-import { defineState } from "orcel/context";
-import type { DynamicResolveContext } from "orcel/skills";
+import { defineState } from "@orcel/orcel/context";
+import type { DynamicResolveContext } from "@orcel/orcel/skills";
 
 function snapshot(ctx: DynamicResolveContext) {
   return {

@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 const DYNAMIC_MULTI_ALPHA_TOKEN = "dynamic-multi-alpha-Q8V3";
 

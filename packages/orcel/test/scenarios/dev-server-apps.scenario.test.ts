@@ -51,7 +51,7 @@ const WORKFLOW_TOOL_DESCRIPTOR: ScenarioAppDescriptor = {
     ...WEATHER_AGENT_DESCRIPTOR.files,
     "agent/lib/deploy/plan.ts": [
       'import { createHash } from "node:crypto";',
-      'import type { WorkflowToolContext } from "orcel/tools";',
+      'import type { WorkflowToolContext } from "@orcel/orcel/tools";',
       "",
       "export function describePlan(service: string): string {",
       "  return `deploy ${service}`;",
@@ -65,7 +65,7 @@ const WORKFLOW_TOOL_DESCRIPTOR: ScenarioAppDescriptor = {
       "",
     ].join("\n"),
     "agent/tools/deploy_service.ts": [
-      'import { defineWorkflowTool } from "orcel/tools";',
+      'import { defineWorkflowTool } from "@orcel/orcel/tools";',
       'import { sleep } from "workflow";',
       'import { z } from "zod";',
       'import { describePlan, hashPlan } from "../lib/deploy/plan.ts";',
@@ -95,7 +95,7 @@ const WORKSPACE_EXTENSION_HMR_DESCRIPTOR: ScenarioAppDescriptor = {
     "agent/extensions/workspace.mjs": 'export { default } from "@acme/workspace-extension";\n',
     "agent/instructions.md": "Test workspace extension development.\n",
     "packages/workspace-extension/extension/extension.ts": [
-      'import { defineExtension } from "orcel/extension";',
+      'import { defineExtension } from "@orcel/orcel/extension";',
       "export default defineExtension();",
       "",
     ].join("\n"),
@@ -109,7 +109,7 @@ const WORKSPACE_EXTENSION_HMR_DESCRIPTOR: ScenarioAppDescriptor = {
         type: "module",
         orcel: { extension: { source: "extension", dist: "dist/extension" } },
         devDependencies: { typescript: TYPESCRIPT_VERSION },
-        peerDependencies: { orcel: "*" },
+        peerDependencies: { "@orcel/orcel": "*" },
       },
       null,
       2,
@@ -137,7 +137,7 @@ const WORKSPACE_EXTENSION_HMR_DESCRIPTOR: ScenarioAppDescriptor = {
 
 function createWorkspaceExtensionToolSource(description: string): string {
   return [
-    'import { defineTool } from "orcel/tools";',
+    'import { defineTool } from "@orcel/orcel/tools";',
     "",
     "export default defineTool({",
     `  description: ${JSON.stringify(description)},`,

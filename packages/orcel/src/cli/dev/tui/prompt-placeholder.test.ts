@@ -49,7 +49,7 @@ function scaffold(): AgentInfoResult {
             kind: "extension",
             mountId: "extensions/self-modification",
             namespace: "self-modification",
-            packageName: "orcel",
+            packageName: "@orcel/orcel",
           },
           name: "self-modification__agent",
           entryPath: "subagents/agent/agent.ts",

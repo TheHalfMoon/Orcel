@@ -1,5 +1,5 @@
-import { defineEval, type OrcelEvalTargetHandle, type OrcelEvalTurn } from "orcel/evals";
-import { equals } from "orcel/evals/expect";
+import { defineEval, type OrcelEvalTargetHandle, type OrcelEvalTurn } from "@orcel/orcel/evals";
+import { equals } from "@orcel/orcel/evals/expect";
 import type { DynamicSkillContextObservation } from "../dynamic-skill-context-audit";
 
 async function send(

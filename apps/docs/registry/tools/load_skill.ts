@@ -1,1 +1,1 @@
-export { default } from "orcel/tools/load_skill";
+export { default } from "@orcel/orcel/tools/load_skill";

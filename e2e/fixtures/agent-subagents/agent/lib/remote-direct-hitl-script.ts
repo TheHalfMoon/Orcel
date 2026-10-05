@@ -1,5 +1,5 @@
 import { latestTaskResult, playScript } from "@orcel-e2e/config/mock-script";
-import type { MockModelRequest, MockModelResponse } from "orcel/evals";
+import type { MockModelRequest, MockModelResponse } from "@orcel/orcel/evals";
 
 export const DIRECT_APPROVAL = "REMOTE-DIRECT-APPROVAL-9Q3P";
 export const DIRECT_AUTHORIZATION = "REMOTE-DIRECT-AUTHORIZATION-9Q3P";

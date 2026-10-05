@@ -84,7 +84,7 @@ function connectTemplate(
   const defaultAuthImport = handlers.length > 0 ? ", defaultGitHubAuth" : "";
   const handlerBlock = handlers.length > 0 ? `\n${handlers.join("\n")}` : "";
   return `import { connectGitHubCredentials } from "@vercel/connect/eve";
-import { githubChannel${defaultAuthImport} } from "orcel/channels/github";
+import { githubChannel${defaultAuthImport} } from "@orcel/orcel/channels/github";
 
 export default githubChannel({
   botName: ${JSON.stringify(appSlug)},

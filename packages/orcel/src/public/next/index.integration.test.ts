@@ -11,7 +11,7 @@ vi.mock("#shared/resolve-orcel-binary.js", async () => {
     // assertions stay deterministic without a real orcel install on disk. The
     // real resolver is exercised in resolve-orcel-binary.integration.test.ts.
     resolveOrcelBinaryPath: (nextRoot: string) =>
-      join(nextRoot, "node_modules", "orcel", "bin", "orcel.js"),
+      join(nextRoot, "node_modules", "@orcel", "orcel", "bin", "orcel.js"),
   };
 });
 
@@ -82,7 +82,7 @@ describe("withEve Vercel config", () => {
       services: {
         orcel: {
           buildCommand:
-            "cd '../../..' && export ORCEL_INTERNAL_BUILD_OUTPUT_DIRECTORY='.orcel/vercel-services/orcel/.vercel/output' && export ORCEL_INTERNAL_HOST_BUILD_OUTPUT_DIRECTORY='.vercel/output' && node 'node_modules/orcel/bin/orcel.js' build",
+            "cd '../../..' && export ORCEL_INTERNAL_BUILD_OUTPUT_DIRECTORY='.orcel/vercel-services/orcel/.vercel/output' && export ORCEL_INTERNAL_HOST_BUILD_OUTPUT_DIRECTORY='.vercel/output' && node 'node_modules/@orcel/orcel/bin/orcel.js' build",
           framework: "eve",
           outputDirectory: ".vercel/output",
           routes: [
@@ -122,7 +122,7 @@ describe("withEve Vercel config", () => {
       services: {
         orcel: {
           buildCommand:
-            "cd '../../..' && export ORCEL_INTERNAL_BUILD_OUTPUT_DIRECTORY='.orcel/vercel-services/orcel/.vercel/output' && export ORCEL_INTERNAL_HOST_BUILD_OUTPUT_DIRECTORY='.vercel/output' && node 'node_modules/orcel/bin/orcel.js' build",
+            "cd '../../..' && export ORCEL_INTERNAL_BUILD_OUTPUT_DIRECTORY='.orcel/vercel-services/orcel/.vercel/output' && export ORCEL_INTERNAL_HOST_BUILD_OUTPUT_DIRECTORY='.vercel/output' && node 'node_modules/@orcel/orcel/bin/orcel.js' build",
           root: ".orcel/vercel-services/orcel",
         },
       },
@@ -162,7 +162,7 @@ describe("withEve Vercel config", () => {
       services: {
         orcel: {
           buildCommand:
-            "cd '../../..' && export ORCEL_INTERNAL_BUILD_OUTPUT_DIRECTORY='.orcel/vercel-services/orcel/.vercel/output' && export ORCEL_INTERNAL_HOST_BUILD_OUTPUT_DIRECTORY='.vercel/output' && node 'node_modules/orcel/bin/orcel.js' build",
+            "cd '../../..' && export ORCEL_INTERNAL_BUILD_OUTPUT_DIRECTORY='.orcel/vercel-services/orcel/.vercel/output' && export ORCEL_INTERNAL_HOST_BUILD_OUTPUT_DIRECTORY='.vercel/output' && node 'node_modules/@orcel/orcel/bin/orcel.js' build",
           framework: "eve",
           outputDirectory: ".vercel/output",
           routes: [
@@ -301,7 +301,7 @@ describe("withEve Vercel config", () => {
     await Promise.all([
       mkdir(join(appRoot, "agents", "support", "agent"), { recursive: true }),
       mkdir(join(appRoot, "agents", "research", "agent"), { recursive: true }),
-      writeFile(join(appRoot, "package.json"), JSON.stringify({ dependencies: { orcel: "*" } })),
+      writeFile(join(appRoot, "package.json"), JSON.stringify({ dependencies: { "@orcel/orcel": "*" } })),
     ]);
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("VERCEL", "1");
@@ -353,7 +353,7 @@ describe("withEve Vercel config", () => {
       mkdir(nextRoot, { recursive: true }),
       writeFile(
         join(workspaceRoot, "package.json"),
-        JSON.stringify({ dependencies: { orcel: "*" } }),
+        JSON.stringify({ dependencies: { "@orcel/orcel": "*" } }),
       ),
     ]);
     process.chdir(nextRoot);
@@ -412,7 +412,7 @@ describe("withEve Vercel config", () => {
     await mkdir(join(appRoot, "agents", "b", "agent"), { recursive: true });
     await writeFile(
       join(appRoot, "package.json"),
-      `${JSON.stringify({ dependencies: { orcel: "0.0.0" } })}\n`,
+      `${JSON.stringify({ dependencies: { "@orcel/orcel": "0.0.0" } })}\n`,
     );
     await writeFile(join(appRoot, "agents", "a", "agent", "agent.ts"), "export default {};\n");
     await writeFile(join(appRoot, "agents", "b", "agent", "agent.ts"), "export default {};\n");
@@ -492,7 +492,7 @@ describe("withEve Vercel config", () => {
         },
         "orcel-support": {
           buildCommand:
-            "cd '../../../agents/support' && export ORCEL_INTERNAL_BUILD_OUTPUT_DIRECTORY='../../.orcel/vercel-services/orcel-support/.vercel/output' && export ORCEL_INTERNAL_HOST_BUILD_OUTPUT_DIRECTORY='../../.vercel/output' && export ORCEL_PUBLIC_ROUTE_PREFIX='/orcel/support' && node 'node_modules/orcel/bin/orcel.js' build",
+            "cd '../../../agents/support' && export ORCEL_INTERNAL_BUILD_OUTPUT_DIRECTORY='../../.orcel/vercel-services/orcel-support/.vercel/output' && export ORCEL_INTERNAL_HOST_BUILD_OUTPUT_DIRECTORY='../../.vercel/output' && export ORCEL_PUBLIC_ROUTE_PREFIX='/orcel/support' && node 'node_modules/@orcel/orcel/bin/orcel.js' build",
           framework: "eve",
           outputDirectory: ".vercel/output",
           routes: [
@@ -592,7 +592,7 @@ describe("withEve Vercel config", () => {
       services: {
         "orcel-billing": {
           buildCommand:
-            "cd '../../../agents/billing' && export ORCEL_INTERNAL_BUILD_OUTPUT_DIRECTORY='../../.orcel/vercel-services/orcel-billing/.vercel/output' && export ORCEL_INTERNAL_HOST_BUILD_OUTPUT_DIRECTORY='../../.vercel/output' && export ORCEL_PUBLIC_ROUTE_PREFIX='/orcel/billing' && node 'node_modules/orcel/bin/orcel.js' build",
+            "cd '../../../agents/billing' && export ORCEL_INTERNAL_BUILD_OUTPUT_DIRECTORY='../../.orcel/vercel-services/orcel-billing/.vercel/output' && export ORCEL_INTERNAL_HOST_BUILD_OUTPUT_DIRECTORY='../../.vercel/output' && export ORCEL_PUBLIC_ROUTE_PREFIX='/orcel/billing' && node 'node_modules/@orcel/orcel/bin/orcel.js' build",
           framework: "eve",
           outputDirectory: ".vercel/output",
           routes: [

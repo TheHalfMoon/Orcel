@@ -6,6 +6,7 @@
  */
 
 import { parseWithNitroRolldownAst } from "#internal/bundler/nitro-rolldown.js";
+import { ORCEL_PACKAGE_NAME } from "#internal/package-name.js";
 import {
   collectReferencedIdentifierNames,
   findProperty,
@@ -103,7 +104,12 @@ function findDefineToolAliases(
   walkNode(ast, (node) => {
     if (node.type !== "ImportDeclaration") return true;
     const source = node.source?.value;
-    if (typeof source !== "string" || (source !== "orcel" && !source.startsWith("orcel/"))) {
+    if (
+      typeof source !== "string" ||
+      (source !== "orcel" &&
+        source !== ORCEL_PACKAGE_NAME &&
+        !source.startsWith(`${ORCEL_PACKAGE_NAME}/`))
+    ) {
       return false;
     }
     for (const specifier of node.specifiers ?? []) {
@@ -402,7 +408,7 @@ function applyTransform(source: string, callbacks: readonly CallbackInfo[]): { c
     ...(callbacks.some(
       (callback) => callback.phase === "inputSchema" || callback.phase === "outputSchema",
     )
-      ? ['import { defineDurableSchema as __eveDefineDurableSchema } from "orcel/tools";']
+      ? ['import { defineDurableSchema as __eveDefineDurableSchema } from "@orcel/orcel/tools";']
       : []),
     `var __eveDurableCallbackSym = Symbol.for("orcel:durable-dynamic-callback");`,
     `function __eveStampDynamicCallback(callback, impl, closure) {`,

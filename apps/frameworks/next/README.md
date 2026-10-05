@@ -6,7 +6,7 @@ To run locally, call
 pnpm --filter framework-next dev
 ```
 
-The Next.js config uses `withEve()` from `orcel/next`. In local
+The Next.js config uses `withEve()` from `@orcel/orcel/next`. In local
 development it starts orcel on a random available port and rewrites same-origin
 orcel endpoints like `/orcel/v1/session` to that server.
 

@@ -21,8 +21,8 @@ function evaluateGeneratedConfig(source: string, getToken = vi.fn()) {
   return runInNewContext(
     source
       .replace('import { getToken } from "@vercel/connect";', "")
-      .replace('import { defineSelfModificationConfig } from "orcel/self-modification/config";', "")
-      .replace('import selfModification from "orcel/self-modification";', "")
+      .replace('import { defineSelfModificationConfig } from "@orcel/orcel/self-modification/config";', "")
+      .replace('import selfModification from "@orcel/orcel/self-modification";', "")
       .replace("export default ", "")
       .replace("selfModification(", "defineSelfModificationConfig("),
     {
@@ -36,13 +36,13 @@ function evaluateGeneratedConfig(source: string, getToken = vi.fn()) {
 describe("self-modification setup", () => {
   it("recognizes default local configurations", () => {
     expect(renderSelfModificationConfig()).toContain(
-      'import selfModification from "orcel/self-modification";',
+      'import selfModification from "@orcel/orcel/self-modification";',
     );
     expect(renderSelfModificationConfig()).toContain('// model: "provider/model"');
     expect(classifySelfModificationConfig(renderSelfModificationConfig())).toBe("local");
     expect(
       classifySelfModificationConfig(
-        'import { defineSelfModificationConfig } from "orcel/self-modification/config";\n\nexport default defineSelfModificationConfig({});\n',
+        'import { defineSelfModificationConfig } from "@orcel/orcel/self-modification/config";\n\nexport default defineSelfModificationConfig({});\n',
       ),
     ).toBe("local");
   });
@@ -60,7 +60,7 @@ describe("self-modification setup", () => {
     expect(source).toContain('directory: "apps/support"');
     expect(source).toContain('target: { branch: "release/production" }');
     expect(source).toContain('import { getToken } from "@vercel/connect"');
-    expect(source).toContain('import selfModification from "orcel/self-modification"');
+    expect(source).toContain('import selfModification from "@orcel/orcel/self-modification"');
     expect(source).toContain('return await getToken("github/selfmod-acme-agents"');
     expect(source).toContain("async resolve({ capability, repository })");
     expect(source).toContain('case "http"');

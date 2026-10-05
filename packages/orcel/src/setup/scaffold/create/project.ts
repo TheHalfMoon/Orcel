@@ -115,7 +115,7 @@ function renderAgentTemplate(
 ): string {
   const chatGptModelId = parseChatGptModelSelection(model);
   if (chatGptModelId !== undefined) {
-    return `import { defineAgent } from "orcel";\nimport { chatgpt } from "orcel/models/openai";\n\nexport default defineAgent({\n  model: chatgpt(${JSON.stringify(chatGptModelId)}),\n${reasoningTemplateLine(reasoning)}});\n`;
+    return `import { defineAgent } from "@orcel/orcel";\nimport { chatgpt } from "@orcel/orcel/models/openai";\n\nexport default defineAgent({\n  model: chatgpt(${JSON.stringify(chatGptModelId)}),\n${reasoningTemplateLine(reasoning)}});\n`;
   }
   return BASE_AGENT_TEMPLATE.replaceAll("__ORCEL_INIT_MODEL__", model).replaceAll(
     "__ORCEL_INIT_REASONING__",
@@ -154,7 +154,7 @@ export function formatOrcelDependencySpecifier(versionOrSpecifier: string): stri
     : versionOrSpecifier;
 }
 
-const BASE_AGENT_TEMPLATE = `import { defineAgent } from "orcel";
+const BASE_AGENT_TEMPLATE = `import { defineAgent } from "@orcel/orcel";
 
 export default defineAgent({
   model: "__ORCEL_INIT_MODEL__",
@@ -167,7 +167,7 @@ __ORCEL_INIT_REASONING__});
 // quoted because provider slugs (e.g. hyphenated ones) need not be valid
 // identifiers. The `process.env` access is typed by `@types/node`, which every
 // scaffold ships (see `packageJsonTemplate`).
-const BYOK_AGENT_TEMPLATE = `import { defineAgent } from "orcel";
+const BYOK_AGENT_TEMPLATE = `import { defineAgent } from "@orcel/orcel";
 
 export default defineAgent({
   model: "__ORCEL_INIT_MODEL__",
@@ -204,7 +204,7 @@ function packageJsonTemplate(includeRootOnlyFields: boolean): string {
   "dependencies": {
     "@vercel/connect": "__ORCEL_INIT_CONNECT_VERSION__",
     "ai": "__ORCEL_INIT_AI_SDK_VERSION__",
-    "orcel": "__ORCEL_INIT_PACKAGE_VERSION__",
+    "@orcel/orcel": "__ORCEL_INIT_PACKAGE_VERSION__",
     "zod": "__ORCEL_INIT_ZOD_VERSION__"
   },
   "devDependencies": {
@@ -266,7 +266,7 @@ orcel deploy
     "target": "ES2022",
     "module": "esnext",
     "moduleResolution": "bundler",
-    "types": ["node", "orcel/workflow-modules"],
+    "types": ["node", "@orcel/orcel/workflow-modules"],
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -305,7 +305,7 @@ For a content-only change to the root agent's identity, purpose, tone, or respon
 ## Read the docs before writing code
 
 \`\`\`sh
-ls node_modules/orcel/docs
+ls node_modules/@orcel/orcel/docs
 \`\`\`
 
 Start with \`docs/README.md\`: it maps each task to the page that covers it. Read that page before authoring tools, connections, channels, skills, subagents, schedules, or deployment. In a workspace or local package install, resolve the installed \`orcel\` package location first. If the package docs are missing, use https://github.com/TheHalfMoon/orcel/docs.

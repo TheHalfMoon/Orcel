@@ -1,4 +1,4 @@
-import { defineTool } from "orcel/tools";
+import { defineTool } from "@orcel/orcel/tools";
 
 import { context, trace } from "#compiled/@opentelemetry/api/index.js";
 import { queryLocalTraceSummaries, type LocalTraceSortBy } from "#tracing/local-trace-query.js";

@@ -123,8 +123,8 @@ for (const relative of [
 ]) {
   assertFile(
     relative,
-    (text) => /"eve"\s*:\s*"npm:orcel@/.test(text),
-    "@vercel/connect compatibility alias must point historical Eve name at Orcel",
+    (text) => /"eve"\s*:\s*"npm:@orcel\/orcel@/.test(text),
+    "@vercel/connect compatibility alias must point historical Eve name at the scoped Orcel package",
   );
 }
 

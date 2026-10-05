@@ -1,5 +1,5 @@
-import { orcelChannel } from "orcel/channels/orcel";
-import { localDev, type AuthFn, vercelOidc } from "orcel/channels/auth";
+import { orcelChannel } from "@orcel/orcel/channels/orcel";
+import { localDev, type AuthFn, vercelOidc } from "@orcel/orcel/channels/auth";
 import { auth } from "@/lib/auth";
 
 const betterAuthSession: AuthFn<Request> = async (request) => {

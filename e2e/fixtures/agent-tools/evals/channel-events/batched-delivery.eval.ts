@@ -1,5 +1,5 @@
-import { defineEval } from "orcel/evals";
-import { equals } from "orcel/evals/expect";
+import { defineEval } from "@orcel/orcel/evals";
+import { equals } from "@orcel/orcel/evals/expect";
 
 // @ts-ignore TS6059: this eval intentionally exercises the workspace source implementation.
 import { coalesceDeliverPayloads } from "../../../../../packages/orcel/src/execution/deliver-payloads.js";

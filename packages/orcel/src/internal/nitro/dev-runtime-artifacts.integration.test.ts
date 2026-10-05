@@ -68,11 +68,11 @@ async function createNextStyleImportSnapshotFixture(): Promise<{ readonly appRoo
 
   await mkdir(agentRoot, { recursive: true });
   await mkdir(join(agentRoot, "tools"), { recursive: true });
-  await mkdir(join(appRoot, "node_modules"), { recursive: true });
+  await mkdir(join(appRoot, "node_modules", "@orcel"), { recursive: true });
   await mkdir(join(appRoot, "src", "features", "editor", "orcel"), { recursive: true });
   await mkdir(compileDirectoryPath, { recursive: true });
   await writeFile(join(appRoot, "package.json"), '{"name":"next-agent","type":"module"}\n');
-  await symlink(resolve(import.meta.dirname, "../../.."), join(appRoot, "node_modules", "orcel"));
+  await symlink(resolve(import.meta.dirname, "../../.."), join(appRoot, "node_modules", "@orcel", "orcel"));
   await writeFile(
     join(appRoot, "tsconfig.json"),
     `${JSON.stringify(
@@ -108,7 +108,7 @@ async function createNextStyleImportSnapshotFixture(): Promise<{ readonly appRoo
   await writeFile(
     join(agentRoot, "tools", "routed.ts"),
     [
-      'import { defineTool } from "orcel/tools";',
+      'import { defineTool } from "@orcel/orcel/tools";',
       'import { createOrcelModelRouter } from "../model-router";',
       'import { authSessionAuth } from "@/features/editor/orcel/auth-session";',
       "",
@@ -278,7 +278,7 @@ describe("development runtime artifact snapshots", () => {
     );
     expect(existsSync(join(snapshot.runtimeAppRoot, "agent"))).toBe(false);
     expect(existsSync(join(snapshot.runtimeAppRoot, ".devtools"))).toBe(false);
-    expect(existsSync(join(snapshot.runtimeAppRoot, "node_modules", "orcel"))).toBe(true);
+    expect(existsSync(join(snapshot.runtimeAppRoot, "node_modules", "@orcel", "orcel"))).toBe(true);
     expect(existsSync(join(snapshot.runtimeAppRoot, "node_modules", "heavy-package"))).toBe(false);
     expect(existsSync(join(snapshot.runtimeAppRoot, ".env"))).toBe(false);
     expect(existsSync(join(snapshot.runtimeAppRoot, ".env.local"))).toBe(false);

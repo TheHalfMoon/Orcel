@@ -1,4 +1,4 @@
-import { defineDynamic, defineInstructions } from "orcel/instructions";
+import { defineDynamic, defineInstructions } from "@orcel/orcel/instructions";
 
 import { resolveSelfModificationConfig } from "../../../config.js";
 import { resolveSelfModificationMode } from "../../../mode.js";

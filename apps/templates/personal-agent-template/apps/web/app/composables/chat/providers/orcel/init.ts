@@ -1,4 +1,4 @@
-import { type OrcelMessageData, type UseOrcelAgentReturn, useOrcelAgent } from "orcel/vue";
+import { type OrcelMessageData, type UseOrcelAgentReturn, useOrcelAgent } from "@orcel/orcel/vue";
 import type { ChatSessionOptions } from "~/composables/chat/types";
 import { recordAuthorizationEvent } from "~/composables/chat/useAuthorizationChallenges";
 import { persistThreadState } from "./thread-state";

@@ -1,4 +1,4 @@
-import { defineHook } from "orcel/hooks";
+import { defineHook } from "@orcel/orcel/hooks";
 
 import extension from "../extension.ts";
 import { authenticateTurn } from "../lib/connect-authentication.ts";

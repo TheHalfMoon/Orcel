@@ -1,6 +1,6 @@
 import { setTimeout as sleep } from "node:timers/promises";
 
-import { Client } from "orcel/client";
+import { Client } from "@orcel/orcel/client";
 import { OrcelTUIRunner, MockScreen, MockUserInput } from "./lib/tui.ts";
 
 // Note: the apps/fixtures/agent-tui-client's echo-marker subagent is the source of every child

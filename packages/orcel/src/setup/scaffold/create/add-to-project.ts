@@ -142,7 +142,7 @@ export async function addAgentToProject(
   const wanted: Record<string, string> = {
     "@vercel/connect": connectVersion,
     ai: aiVersion,
-    orcel: formatOrcelDependencySpecifier(orcelPackage.version),
+    "@orcel/orcel": formatOrcelDependencySpecifier(orcelPackage.version),
     zod: zodVersion,
   };
   const additions: Record<string, string> = {};

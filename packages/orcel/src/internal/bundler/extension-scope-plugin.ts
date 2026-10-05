@@ -39,7 +39,7 @@ function isUnder(path: string, root: string): boolean {
 
 function shimSource(mountId: string): string {
   return [
-    `import { defineMountedState } from "orcel/internal/mount-state";`,
+    `import { defineMountedState } from "@orcel/orcel/internal/mount-state";`,
     `export function defineState(name, initial) {`,
     `  return defineMountedState(${JSON.stringify(mountId)}, name, initial);`,
     `}`,
@@ -59,7 +59,7 @@ function scopeHooks(
   return {
     name,
     resolveId(source: string, importer: string | undefined) {
-      if (source !== "orcel/context" || importer === undefined || importer.startsWith("\0")) {
+      if (source !== "@orcel/orcel/context" || importer === undefined || importer.startsWith("\0")) {
         return undefined;
       }
       const mountId = mountFor(importer);
@@ -82,7 +82,7 @@ function scopeHooks(
 /**
  * Path-containment scope plugin for the whole-application bundle (the production
  * build). Any module physically under an extension's source root has its
- * `orcel/context` imports redirected to a mount-owned state shim.
+ * `@orcel/orcel/context` imports redirected to a mount-owned state shim.
  *
  * Returns `null` when there are no extensions, so consumer-only builds carry no
  * extra plugin and their output is byte-identical to a non-extension build.

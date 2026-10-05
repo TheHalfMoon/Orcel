@@ -1,4 +1,4 @@
-import type { SandboxSession } from "orcel/sandbox";
+import type { SandboxSession } from "@orcel/orcel/sandbox";
 
 import { gitHubGitBrokerNetworkPolicy } from "#shared/git.js";
 import type { SandboxNetworkPolicy } from "#shared/sandbox-network-policy.js";

@@ -20,7 +20,7 @@ Keep this file to stable behavior such as identity, tone, and standing rules.
 A static system prompt belongs in markdown (`agent/instructions.md`). Switch to a TypeScript module (`agent/instructions.ts`) when you need typed composition, `lib/` code, build-time values, or a user-role message.
 
 ```ts title="agent/instructions.ts"
-import { defineInstructions } from "orcel/instructions";
+import { defineInstructions } from "@orcel/orcel/instructions";
 import { buildInstructionsPrompt } from "./lib/prompts";
 
 export default defineInstructions({
@@ -31,7 +31,7 @@ export default defineInstructions({
 `defineInstructions` takes `content` and an optional `role`:
 
 ```ts title="agent/instructions/brief.ts"
-import { defineInstructions } from "orcel/instructions";
+import { defineInstructions } from "@orcel/orcel/instructions";
 import { buildCustomerBrief } from "../lib/customer";
 
 export default defineInstructions({

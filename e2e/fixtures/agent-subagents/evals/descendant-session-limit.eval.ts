@@ -1,5 +1,5 @@
-import { defineEval, type OrcelEvalContext, type OrcelEvalSession, type OrcelEvalTurn } from "orcel/evals";
-import { equals, satisfies } from "orcel/evals/expect";
+import { defineEval, type OrcelEvalContext, type OrcelEvalSession, type OrcelEvalTurn } from "@orcel/orcel/evals";
+import { equals, satisfies } from "@orcel/orcel/evals/expect";
 
 const CHILD_TOKEN = "CHILD_LIMIT_CONTINUED";
 const ROOT_RECOVERY_TOKEN = "ROOT_AFTER_DESCENDANT_STOP";

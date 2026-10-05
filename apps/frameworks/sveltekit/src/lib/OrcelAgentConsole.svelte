@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import { useOrcelAgent, type OrcelMessagePart } from "orcel/svelte";
+  import { useOrcelAgent, type OrcelMessagePart } from "@orcel/orcel/svelte";
 
   import ReasoningBlock from "$lib/ReasoningBlock.svelte";
   import StatusDot from "$lib/StatusDot.svelte";

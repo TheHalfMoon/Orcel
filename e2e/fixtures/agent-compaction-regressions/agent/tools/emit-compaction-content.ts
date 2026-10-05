@@ -1,4 +1,4 @@
-import { defineTool, toolOutput, toolOutputPart } from "orcel/tools";
+import { defineTool, toolOutput, toolOutputPart } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 import {

@@ -1,5 +1,5 @@
 import { latestTaskResult } from "@orcel-e2e/config/mock-script";
-import type { MockModelRequest, MockModelResponse } from "orcel/evals";
+import type { MockModelRequest, MockModelResponse } from "@orcel/orcel/evals";
 
 export const REMOTE_QUESTION_DIRECTIVE = "REMOTE-WORKFLOW-QUESTION-7K2M";
 

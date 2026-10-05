@@ -29,7 +29,7 @@ interface LinqSetupPlan {
   signingSecret?: string;
 }
 
-const portableTemplate = `import { linqChannel } from "orcel/channels/linq";
+const portableTemplate = `import { linqChannel } from "@orcel/orcel/channels/linq";
 
 export default linqChannel({
   credentials: {
@@ -41,7 +41,7 @@ export default linqChannel({
 
 function connectTemplate(uid: string): string {
   return `import { connectLinqCredentials } from "@vercel/connect/eve";
-import { linqChannel } from "orcel/channels/linq";
+import { linqChannel } from "@orcel/orcel/channels/linq";
 
 export default linqChannel({
   credentials: connectLinqCredentials(${JSON.stringify(uid)}),

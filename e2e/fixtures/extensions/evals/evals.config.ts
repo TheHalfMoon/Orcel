@@ -1,5 +1,5 @@
 import { e2eJudgeModel } from "@orcel-e2e/config";
-import { defineEvalConfig } from "orcel/evals";
+import { defineEvalConfig } from "@orcel/orcel/evals";
 
 /** Resource shared by setup, evals, and teardown. */
 export class SetupResource {

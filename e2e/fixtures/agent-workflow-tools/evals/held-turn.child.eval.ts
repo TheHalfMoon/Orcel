@@ -1,4 +1,4 @@
-import { defineEval } from "orcel/evals";
+import { defineEval } from "@orcel/orcel/evals";
 
 import { STAGER_INTERIM_MESSAGE } from "../task-scenario-text";
 

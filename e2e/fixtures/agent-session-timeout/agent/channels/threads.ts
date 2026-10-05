@@ -1,4 +1,4 @@
-import { defineChannel, POST } from "orcel/channels";
+import { defineChannel, POST } from "@orcel/orcel/channels";
 
 const AUTH = {
   attributes: { source: "session-timeout-eval" },

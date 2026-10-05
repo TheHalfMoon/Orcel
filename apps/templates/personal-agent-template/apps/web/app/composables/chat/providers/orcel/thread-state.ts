@@ -1,4 +1,4 @@
-import type { OrcelMessageData, UseOrcelAgentSnapshot } from "orcel/vue";
+import type { OrcelMessageData, UseOrcelAgentSnapshot } from "@orcel/orcel/vue";
 import type { ThreadRecord, ThreadState } from "#orcel/types/thread";
 import type { ChatSessionOptions, OrcelStreamEvent } from "~/composables/chat/types";
 import { refreshThreadList } from "~/composables/chat/navigation";

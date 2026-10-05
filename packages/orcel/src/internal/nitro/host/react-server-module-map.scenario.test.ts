@@ -22,7 +22,7 @@ describe("react-server module maps", () => {
         "agent/agent.ts": 'export default { model: "openai/gpt-5.4" };',
         "agent/instructions.md": "Reply concisely.",
         "agent/channels/probe.ts":
-          'import "server-only"; import { defineChannel, GET } from "orcel/channels"; export default defineChannel({ routes: [GET("/probe", () => new Response("server-only-ready"))] });',
+          'import "server-only"; import { defineChannel, GET } from "@orcel/orcel/channels"; export default defineChannel({ routes: [GET("/probe", () => new Response("server-only-ready"))] });',
         "check.mjs": [
           'import { createServer } from "node:net";',
           'import { spawn } from "node:child_process";',
@@ -44,7 +44,7 @@ describe("react-server module maps", () => {
     });
     await execFileAsync(
       process.execPath,
-      ["--conditions=react-server", join(app.appRoot, "node_modules/orcel/bin/orcel.js"), "build"],
+      ["--conditions=react-server", join(app.appRoot, "node_modules/@orcel/orcel/bin/orcel.js"), "build"],
       {
         cwd: app.appRoot,
         timeout: 90_000,

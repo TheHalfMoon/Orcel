@@ -11,7 +11,7 @@ A tool is a typed action the agent can call, such as hitting an API, running a q
 The filename is the tool name the model sees. A file at `agent/tools/get_weather.ts` is exposed as `get_weather`.
 
 ```ts title="agent/tools/get_weather.ts"
-import { defineTool } from "orcel/tools";
+import { defineTool } from "@orcel/orcel/tools";
 import { z } from "zod";
 
 export default defineTool({
@@ -167,7 +167,7 @@ selected by the rules above becomes the tool result.
 
 ### Workflows as tools
 
-Use `defineWorkflowTool` from `orcel/tools` to run each call as a durable Workflow run. Its
+Use `defineWorkflowTool` from `@orcel/orcel/tools` to run each call as a durable Workflow run. Its
 executor must start with `"use workflow"` and receives `ctx.agent` and `ctx.ask`. The tool can
 wait for a person, webhook, or timer without holding compute, then return its result to the model. See [Workflows as tools](/docs/tools/workflows) for the authoring rules and
 examples.
@@ -203,11 +203,11 @@ See [Execution model and durability](/docs/concepts/execution-model-and-durabili
 
 ## Gate a tool on human approval
 
-A tool can require a person to sign off before it runs. Set `approval` with the helpers from `orcel/tools/approval`:
+A tool can require a person to sign off before it runs. Set `approval` with the helpers from `@orcel/orcel/tools/approval`:
 
 ```ts title="agent/tools/refund_charge.ts"
-import { defineTool } from "orcel/tools";
-import { always } from "orcel/tools/approval";
+import { defineTool } from "@orcel/orcel/tools";
+import { always } from "@orcel/orcel/tools/approval";
 import { z } from "zod";
 
 export default defineTool({
@@ -238,10 +238,10 @@ Tool outputs must be JSON-serializable. Return plain objects, arrays, strings, n
 
 ### Send images to the model with content parts
 
-A tool that produces an image — a screenshot, a rendered chart — can hand the pixels to a vision-capable model by returning a `content` output from `toModelOutput`. Build outputs with the `toolOutput` helpers and parts with the `toolOutputPart` helpers, both from `orcel/tools`:
+A tool that produces an image — a screenshot, a rendered chart — can hand the pixels to a vision-capable model by returning a `content` output from `toModelOutput`. Build outputs with the `toolOutput` helpers and parts with the `toolOutputPart` helpers, both from `@orcel/orcel/tools`:
 
 ```ts
-import { defineTool, toolOutput, toolOutputPart } from "orcel/tools";
+import { defineTool, toolOutput, toolOutputPart } from "@orcel/orcel/tools";
 
 export default defineTool({
   description: "Capture a screenshot of the current page",

@@ -22,7 +22,7 @@ The generated channel uses Connect-managed credentials:
 
 ```ts title="agent/channels/github.ts"
 import { connectGitHubCredentials } from "@vercel/connect/eve";
-import { githubChannel } from "orcel/channels/github";
+import { githubChannel } from "@orcel/orcel/channels/github";
 
 export default githubChannel({
   botName: "my-agent",
@@ -37,7 +37,7 @@ export default githubChannel({
 To run a GitHub App you manage yourself, pass its credentials directly instead:
 
 ```ts title="agent/channels/github.ts"
-import { githubChannel } from "orcel/channels/github";
+import { githubChannel } from "@orcel/orcel/channels/github";
 
 export default githubChannel({
   botName: "my-agent",
@@ -71,7 +71,7 @@ Inbound hooks return `{ auth }` to dispatch, or `null` to ignore. Return `title`
 The model-visible `<github_context>` includes `sender`, `bot_name` when resolved, and `is_mentioned` for comments. orcel computes `is_mentioned` before removing the invocation token.
 
 ```ts
-import { defaultGitHubAuth, githubChannel } from "orcel/channels/github";
+import { defaultGitHubAuth, githubChannel } from "@orcel/orcel/channels/github";
 
 export default githubChannel({
   botName: "my-agent",

@@ -1,4 +1,4 @@
-import { linearChannel } from "orcel/channels/linear";
+import { linearChannel } from "@orcel/orcel/channels/linear";
 
 export default linearChannel({
   credentials: {

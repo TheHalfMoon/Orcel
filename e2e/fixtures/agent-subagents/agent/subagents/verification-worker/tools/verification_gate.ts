@@ -2,7 +2,7 @@ import {
   defineWorkflowTool,
   type WorkflowToolContext,
   type WorkflowToolDefinition,
-} from "orcel/tools";
+} from "@orcel/orcel/tools";
 import { createHook, FatalError, getWorkflowMetadata, sleep } from "workflow";
 import { z } from "zod";
 import { publishVerificationGate } from "../../../lib/verification-gate.js";

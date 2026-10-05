@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type ComponentProps } from "react";
-import { useOrcelAgent } from "orcel/react";
+import { useOrcelAgent } from "@orcel/orcel/react";
 
 const AGENTS = [
   {

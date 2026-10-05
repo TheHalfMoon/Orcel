@@ -8,7 +8,7 @@ Hooks are orcel's authored extension points for the runtime event stream. A hook
 ## Define a hook
 
 ```ts title="agent/hooks/audit.ts"
-import { defineHook } from "orcel/hooks";
+import { defineHook } from "@orcel/orcel/hooks";
 
 export default defineHook({
   events: {
@@ -24,7 +24,7 @@ export default defineHook({
 
 The slug is the path-relative basename. `agent/hooks/audit.ts` becomes `"audit"`, and `agent/hooks/auth/load-profile.ts` becomes `"auth/load-profile"`.
 
-`defineHook`, `HookDefinition`, and `HookContext` live on `orcel/hooks`.
+`defineHook`, `HookDefinition`, and `HookContext` live on `@orcel/orcel/hooks`.
 
 A hook file declares stream-event subscribers under the `events` map, keyed by event type, with `*` matching every event. Subscribe to any event in the runtime stream vocabulary documented in [Sessions, runs and streaming](../concepts/sessions-runs-and-streaming), including the lifecycle events `session.started`, `turn.completed`, `message.completed`, `action.partial`, and `action.result`. Handlers are observe-only. They cannot inject model context. To contribute runtime model messages, use `defineDynamic` and `defineInstructions` in `agent/instructions/`.
 
@@ -33,7 +33,7 @@ A hook file declares stream-event subscribers under the `events` map, keyed by e
 A hook under `agent/hooks/` observes matching events from every channel on the root agent. `defineHook` has no channel filter. Use a channel's `events` configuration when a handler assumes a specific platform or should run only for sessions owned by that channel:
 
 ```ts title="agent/channels/github.ts"
-import { githubChannel } from "orcel/channels/github";
+import { githubChannel } from "@orcel/orcel/channels/github";
 
 export default githubChannel({
   events: {
@@ -69,7 +69,7 @@ That means a hook can access the current sandbox and release its backing
 compute at an application-defined boundary:
 
 ```ts title="agent/hooks/stop-after-turn.ts"
-import { defineHook } from "orcel/hooks";
+import { defineHook } from "@orcel/orcel/hooks";
 
 export default defineHook({
   events: {
@@ -97,11 +97,11 @@ when the parent's current model step ends if one is running.
 
 ### Narrowing tool results
 
-`toolResultFrom` narrows an `action.result` event to a specific authored tool or MCP connection and returns typed output. Import it from `orcel/tools`:
+`toolResultFrom` narrows an `action.result` event to a specific authored tool or MCP connection and returns typed output. Import it from `@orcel/orcel/tools`:
 
 ```ts
-import { defineHook } from "orcel/hooks";
-import { toolResultFrom } from "orcel/tools";
+import { defineHook } from "@orcel/orcel/hooks";
+import { toolResultFrom } from "@orcel/orcel/tools";
 import getWeather from "../tools/get-weather";
 import linear from "../connections/linear";
 
@@ -140,7 +140,7 @@ const crmSearch = toolResultFrom(event.data.result, search); // typed; matches c
 Every event carries a `meta` envelope with `meta.id`, a unique, sortable identifier for that event. It makes a natural primary key for an events table:
 
 ```ts title="agent/hooks/persist.ts"
-import { defineHook } from "orcel/hooks";
+import { defineHook } from "@orcel/orcel/hooks";
 
 export default defineHook({
   events: {
@@ -195,7 +195,7 @@ A hook failure does not trigger a retry. State changes and external side effects
 Call `ctx.cancel()` when a hook finds that the turn cannot proceed. For example, a `turn.started` hook that cannot load the caller's credentials can stop the turn before the model runs, instead of letting every tool call fail:
 
 ```ts title="agent/hooks/require-credentials.ts"
-import { defineHook } from "orcel/hooks";
+import { defineHook } from "@orcel/orcel/hooks";
 import { loadWorkspaceCredentials } from "../lib/credentials";
 
 export default defineHook({

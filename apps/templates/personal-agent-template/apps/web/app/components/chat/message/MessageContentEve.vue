@@ -7,7 +7,7 @@ import {
   isToolUIPart,
 } from "ai";
 import type { UIMessage } from "ai";
-import type { OrcelDynamicToolPart } from "orcel/vue";
+import type { OrcelDynamicToolPart } from "@orcel/orcel/vue";
 import { isPartStreaming, isToolStreaming } from "@nuxt/ui/utils/ai";
 import type { AgentInputResponse } from "~/components/AgentInputRequest.vue";
 import type { ChatStatus } from "~/composables/chat/types";

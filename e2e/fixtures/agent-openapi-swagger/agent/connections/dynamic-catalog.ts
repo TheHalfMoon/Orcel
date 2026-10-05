@@ -1,4 +1,4 @@
-import { defineDynamic, defineOpenAPIConnection } from "orcel/connections";
+import { defineDynamic, defineOpenAPIConnection } from "@orcel/orcel/connections";
 
 export default defineDynamic({
   events: {

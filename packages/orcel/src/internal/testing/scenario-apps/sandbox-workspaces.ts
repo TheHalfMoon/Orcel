@@ -7,7 +7,7 @@ import type { ScenarioAppDescriptor } from "#internal/testing/scenario-app.js";
  */
 export const SANDBOX_WORKSPACES_DESCRIPTOR: ScenarioAppDescriptor = {
   files: {
-    "agent/sandbox/sandbox.ts": `import { DefaultSandbox, defineSandbox } from "orcel/sandbox";
+    "agent/sandbox/sandbox.ts": `import { DefaultSandbox, defineSandbox } from "@orcel/orcel/sandbox";
 
 export const environment = DefaultSandbox.environment();
 export default defineSandbox(() => environment.open());

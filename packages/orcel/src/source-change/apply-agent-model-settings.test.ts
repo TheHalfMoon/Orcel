@@ -7,7 +7,7 @@ const keep = { kind: "keep" } as const;
 const remove = { kind: "remove" } as const;
 const set = <T>(value: T): FieldPatch<T> => ({ kind: "set", value });
 
-const SCAFFOLD = `import { defineAgent } from "orcel";
+const SCAFFOLD = `import { defineAgent } from "@orcel/orcel";
 
 export default defineAgent({
   model: "anthropic/claude-sonnet-5",

@@ -1,5 +1,5 @@
 import { createOpenAI } from "@ai-sdk/openai";
-import type { OrcelEvalJudgeConfig } from "orcel/evals";
+import type { OrcelEvalJudgeConfig } from "@orcel/orcel/evals";
 
 /** Shared fixture judge, independent of the agent matrix, until CI has access to Jev. */
 export function e2eJudgeModel(): Exclude<OrcelEvalJudgeConfig["model"], string | undefined> {
