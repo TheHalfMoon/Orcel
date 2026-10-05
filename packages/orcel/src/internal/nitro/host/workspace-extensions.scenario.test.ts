@@ -81,8 +81,8 @@ async function createWorkspaceAgent(): Promise<{ appRoot: string; packageRoot: s
     join(packageRoot, "extension", "tools", "plan_week.ts"),
     'export default { description: "Plan the week.", async execute() { return {}; } };\n',
   );
-  await mkdir(join(packageRoot, "node_modules"), { recursive: true });
-  await symlink(orcelPackageRoot, join(packageRoot, "node_modules", "orcel"), "dir");
+  await mkdir(join(packageRoot, "node_modules", "@orcel"), { recursive: true });
+  await symlink(orcelPackageRoot, join(packageRoot, "node_modules", "@orcel", "orcel"), "dir");
 
   return { appRoot, packageRoot };
 }

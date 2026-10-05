@@ -219,7 +219,7 @@ function spawnOrcelDev(
   appRoot: string,
   options: StartOrcelDevOptions,
 ): ChildProcessByStdio<null, Readable, Readable> {
-  const orcelBinPath = join(appRoot, "node_modules", "orcel", "bin", "orcel.js");
+  const orcelBinPath = join(appRoot, "node_modules", "@orcel", "orcel", "bin", "orcel.js");
   const command = options.runtime === "bun" ? "bun" : process.execPath;
 
   const args = [orcelBinPath, "dev", "--no-ui", "--host", "127.0.0.1", "--port", "0"];

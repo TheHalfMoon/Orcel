@@ -319,8 +319,8 @@ async function expectPortableFixtureToTypecheck(testCase: PortabilityCase): Prom
     appRoot,
     descriptor: testCase.descriptor,
   });
-  await mkdir(join(appRoot, "node_modules"), { recursive: true });
-  await cp(emittedPackageRoot, join(appRoot, "node_modules", "orcel"), {
+  await mkdir(join(appRoot, "node_modules", "@orcel"), { recursive: true });
+  await cp(emittedPackageRoot, join(appRoot, "node_modules", "@orcel", "orcel"), {
     recursive: true,
   });
   await writeFile(

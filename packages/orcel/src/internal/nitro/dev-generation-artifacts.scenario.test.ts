@@ -231,7 +231,8 @@ describe("development generation artifacts", () => {
     });
     const packageRoot = join(app.appRoot, "packages", "shared-graph-extension");
     await mkdir(join(app.appRoot, "node_modules", "@acme"), { recursive: true });
-    await symlink(resolvePackageRoot(), join(app.appRoot, "node_modules", "orcel"), "junction");
+    await mkdir(join(app.appRoot, "node_modules", "@orcel"), { recursive: true });
+    await symlink(resolvePackageRoot(), join(app.appRoot, "node_modules", "@orcel", "orcel"), "junction");
     await symlink(
       packageRoot,
       join(app.appRoot, "node_modules", "@acme", "shared-graph-extension"),
@@ -273,7 +274,8 @@ describe("development generation artifacts", () => {
         name: "disabled-local-self-modification-generation",
       });
       await mkdir(join(app.appRoot, "node_modules"), { recursive: true });
-      await symlink(resolvePackageRoot(), join(app.appRoot, "node_modules", "orcel"), "junction");
+      await mkdir(join(app.appRoot, "node_modules", "@orcel"), { recursive: true });
+      await symlink(resolvePackageRoot(), join(app.appRoot, "node_modules", "@orcel", "orcel"), "junction");
 
       const compileResult = await compileAgent({ startPath: app.appRoot });
       const snapshot = await stageDevelopmentGeneration(compileResult);
@@ -353,7 +355,8 @@ describe("development generation artifacts", () => {
       ].join("\n"),
     );
     await mkdir(join(app.appRoot, "node_modules"), { recursive: true });
-    await symlink(resolvePackageRoot(), join(app.appRoot, "node_modules", "orcel"), "junction");
+    await mkdir(join(app.appRoot, "node_modules", "@orcel"), { recursive: true });
+    await symlink(resolvePackageRoot(), join(app.appRoot, "node_modules", "@orcel", "orcel"), "junction");
 
     const compileResult = await compileAgent({ startPath: app.appRoot });
     const snapshot = await stageDevelopmentGeneration(compileResult);

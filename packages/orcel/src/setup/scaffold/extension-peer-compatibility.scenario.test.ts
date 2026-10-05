@@ -50,7 +50,7 @@ describe("extension orcel peer compatibility", () => {
       );
 
       const installed = JSON.parse(
-        await readFile(join(appRoot, "node_modules", "orcel", "package.json"), "utf8"),
+        await readFile(join(appRoot, "node_modules", "@orcel", "orcel", "package.json"), "utf8"),
       ) as { version?: string };
       expect(installed.version).toBe(orcelVersion);
     },

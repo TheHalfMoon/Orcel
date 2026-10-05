@@ -52,7 +52,7 @@ describe("runExtensionBuildCommand", () => {
       )}\n`,
       "utf8",
     );
-    await mkdir(join(root, "node_modules"), { recursive: true });
+    await mkdir(join(root, "node_modules", "@orcel"), { recursive: true });
     await symlink(
       dirname(createRequire(import.meta.url).resolve("@orcel/orcel/package.json")),
       join(root, "node_modules", "@orcel", "orcel"),

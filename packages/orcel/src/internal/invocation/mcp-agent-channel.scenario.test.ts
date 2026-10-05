@@ -290,7 +290,7 @@ interface RunningOrcelDev {
 }
 
 async function startOrcelDev(appRoot: string): Promise<RunningOrcelDev> {
-  const orcelBinPath = join(appRoot, "node_modules", "orcel", "bin", "orcel.js");
+  const orcelBinPath = join(appRoot, "node_modules", "@orcel", "orcel", "bin", "orcel.js");
   const child = spawn(
     process.execPath,
     [orcelBinPath, "dev", "--no-ui", "--host", "127.0.0.1", "--port", "0"],

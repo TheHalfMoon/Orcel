@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("#shared/resolve-orcel-binary.js", () => ({
-  resolveOrcelBinaryPath: (root: string) => join(root, "node_modules", "orcel", "bin", "orcel.js"),
+  resolveOrcelBinaryPath: (root: string) => join(root, "node_modules", "@orcel", "orcel", "bin", "orcel.js"),
 }));
 
 import { withEve } from "./index.js";

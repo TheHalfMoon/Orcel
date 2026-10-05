@@ -208,14 +208,14 @@ function resolveModuleSpecifier(
   if (packageBuild && pkg !== null) {
     return {
       moduleSpecifier: `${pkg.name}@${pkg.version}`,
-      stableModuleSpecifier: pkg.name,
+      stableModuleSpecifier: pkg.name === ORCEL_PACKAGE_NAME ? "orcel" : pkg.name,
     };
   }
 
   if (!inNodeModules && !inWorkspace) {
     return {
       moduleSpecifier: undefined,
-      stableModuleSpecifier: pkg?.name === ORCEL_PACKAGE_NAME ? ORCEL_PACKAGE_NAME : undefined,
+      stableModuleSpecifier: pkg?.name === ORCEL_PACKAGE_NAME ? "orcel" : undefined,
     };
   }
 
@@ -229,10 +229,12 @@ function resolveModuleSpecifier(
   // {@link STABLE_WORKFLOW_NAMES} functions emit cross-deployment
   // routable ids.
   const base = subpath ? `${pkg.name}${subpath}` : pkg.name;
+  const stableBase =
+    pkg.name === ORCEL_PACKAGE_NAME ? (subpath ? `orcel${subpath}` : "orcel") : base;
 
   return {
     moduleSpecifier: `${base}@${pkg.version}`,
-    stableModuleSpecifier: base,
+    stableModuleSpecifier: stableBase,
   };
 }
 

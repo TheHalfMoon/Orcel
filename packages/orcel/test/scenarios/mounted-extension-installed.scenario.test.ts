@@ -215,10 +215,10 @@ async function buildInstalledExtensionFiles(): Promise<Record<string, string>> {
     )}\n`,
     "utf8",
   );
-  await mkdir(join(extRoot, "node_modules"), { recursive: true });
+  await mkdir(join(extRoot, "node_modules", "@orcel"), { recursive: true });
   await symlink(
     dirname(createRequire(import.meta.url).resolve("@orcel/orcel/package.json")),
-    join(extRoot, "node_modules", "orcel"),
+    join(extRoot, "node_modules", "@orcel", "orcel"),
     "dir",
   );
   for (const [path, contents] of Object.entries(EXT_TREE)) {

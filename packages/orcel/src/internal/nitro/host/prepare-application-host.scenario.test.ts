@@ -101,7 +101,7 @@ describe("application host preparation", () => {
     const subagent = manifest.subagents.find((node) => node.name === "self-modification__agent");
     expect(subagent).toBeDefined();
     expect(subagent!.agent.appRoot).toBe(
-      join(host.generation.runtimeAppRoot, "node_modules", "orcel"),
+      join(host.generation.runtimeAppRoot, "node_modules", "@orcel", "orcel"),
     );
     expect(subagent!.agent.agentRoot.startsWith(`${subagent!.agent.appRoot}/`)).toBe(true);
   });

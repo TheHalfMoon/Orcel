@@ -31,7 +31,7 @@ describe("applyModelSelectionToSource", () => {
 
     expect(result.kind).toBe("applied");
     if (result.kind !== "applied") return;
-    expect(result.nextSource).not.toContain("orcel/models/openai");
+    expect(result.nextSource).not.toContain("@orcel/orcel/models/openai");
     expect(result.nextSource).toContain('model: "anthropic/claude-sonnet-5"');
   });
 
@@ -49,7 +49,7 @@ describe("applyModelSelectionToSource", () => {
       expect(result.kind).toBe("applied");
       if (result.kind !== "applied") return;
       expect(result.from).toBe(selection);
-      expect(result.nextSource).not.toContain("orcel/models/openai");
+      expect(result.nextSource).not.toContain("@orcel/orcel/models/openai");
       expect(result.nextSource).toContain('model: "openai/gpt-5.5"');
       expect(result.nextSource).toContain('reasoning: "low"');
     },
@@ -140,8 +140,8 @@ describe("applyModelSelectionToSource", () => {
 });
 
 it.each([
-  ["openai-api/gpt-5.6-luna-fast", "openai", "orcel/models/openai"],
-  ["anthropic-api/claude-sonnet-5", "anthropic", "orcel/models/anthropic"],
+  ["openai-api/gpt-5.6-luna-fast", "openai", "@orcel/orcel/models/openai"],
+  ["anthropic-api/claude-sonnet-5", "anthropic", "@orcel/orcel/models/anthropic"],
 ])("switches a Gateway string to %s and back safely", async (selection, helper, module) => {
   const source =
     'import { defineAgent } from "@orcel/orcel";\nexport default defineAgent({ model: "openai/gpt-5.6-luna-fast" });';
@@ -174,7 +174,7 @@ it.each(["openai", "anthropic"])(
   "distinguishes orcel's %s helper from a foreign provider import",
   async (helper) => {
     const config = `export default defineAgent({model: ${helper}("custom-model")});`;
-    const module = helper === "openai" ? "orcel/models/openai" : "orcel/models/anthropic";
+    const module = helper === "openai" ? "@orcel/orcel/models/openai" : "@orcel/orcel/models/anthropic";
     await expect(
       readModelSelectionFromSource(`import { ${helper} } from "${module}"; ${config}`),
     ).resolves.toBe(`${helper}-api/custom-model`);

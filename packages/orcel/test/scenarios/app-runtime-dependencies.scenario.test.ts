@@ -405,8 +405,8 @@ describe("app runtime dependency tracing", () => {
         // The compiled sandbox config is the opt-in signal. Authored
         // modules resolve `orcel/sandbox` through the app's node_modules,
         // so link the workspace package into the scratch app.
-        await mkdir(join(appRoot, "node_modules"), { recursive: true });
-        await symlink(ORCEL_PACKAGE_ROOT, join(appRoot, "node_modules", "orcel"), "dir");
+        await mkdir(join(appRoot, "node_modules", "@orcel"), { recursive: true });
+        await symlink(ORCEL_PACKAGE_ROOT, join(appRoot, "node_modules", "@orcel", "orcel"), "dir");
         await writeFile(
           join(appRoot, "agent", "sandbox.ts"),
           [

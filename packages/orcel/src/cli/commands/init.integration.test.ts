@@ -426,7 +426,7 @@ describe("runInitCommand", () => {
       await mkdir(join(workspaceRoot, "agents", "support", "agent"), { recursive: true });
       await writeFile(
         join(workspaceRoot, "package.json"),
-        '{"name":"workspace","dependencies":{"orcel":"*"}}\n',
+        '{"name":"workspace","dependencies":{"@orcel/orcel":"*"}}\n',
       );
       const beforePackageJson = await readFile(join(workspaceRoot, "package.json"), "utf8");
       const output = logger();
@@ -459,7 +459,7 @@ describe("runInitCommand", () => {
     await mkdir(join(workspaceRoot, "agents", "support", "agent"), { recursive: true });
     await writeFile(
       join(workspaceRoot, "package.json"),
-      '{"name":"workspace","dependencies":{"orcel":"*"}}\n',
+      '{"name":"workspace","dependencies":{"@orcel/orcel":"*"}}\n',
     );
     const output = logger();
     const deps = dependencies();
@@ -492,7 +492,7 @@ describe("runInitCommand", () => {
     await writeFile(join(workspaceRoot, "agents", "support", "agent", "agent.ts"), "export {};\n");
     await writeFile(
       join(workspaceRoot, "package.json"),
-      '{"name":"workspace","dependencies":{"orcel":"*"}}\n',
+      '{"name":"workspace","dependencies":{"@orcel/orcel":"*"}}\n',
     );
     const output = logger();
     const deps = dependencies();
@@ -524,7 +524,7 @@ describe("runInitCommand", () => {
     expect(agentSource).toContain('model: "openai/gpt-6-luna-fast"');
     expect(agentSource).toContain('reasoning: "high"');
     const manifest = await readFile(join(projectPath, "package.json"), "utf8");
-    expect(manifest).toContain('"orcel": "^0.6.0"');
+    expect(manifest).toContain('"@orcel/orcel": "^0.6.0"');
     const packageJson: unknown = JSON.parse(manifest);
     expect(packageJson).not.toHaveProperty("overrides");
     expect(packageJson).not.toHaveProperty("resolutions");
@@ -1118,7 +1118,7 @@ describe("runInitCommand", () => {
     expect(await readFile(join(projectPath, "next.config.ts"), "utf8")).toContain(
       "export default withEve(nextConfig);",
     );
-    expect(await readFile(join(projectPath, "package.json"), "utf8")).toContain('"orcel": "^0.6.0"');
+    expect(await readFile(join(projectPath, "package.json"), "utf8")).toContain('"@orcel/orcel": "^0.6.0"');
     expect(deps.runPackageManagerInstall).toHaveBeenCalledWith(
       "pnpm",
       projectPath,
@@ -1183,7 +1183,7 @@ describe("runInitCommand", () => {
     // A node engine is declared so Vercel builds on a supported Node rather
     // than a stale dashboard pin.
     expect(JSON.parse(await readFile(join(projectRoot, "package.json"), "utf8"))).toMatchObject({
-      dependencies: { "@vercel/connect": "0.2.2", ai: "7.0.0", orcel: "^0.6.0", zod: "^3.25.0" },
+      dependencies: { "@vercel/connect": "0.2.2", ai: "7.0.0", "@orcel/orcel": "^0.6.0", zod: "^3.25.0" },
       engines: { node: "24.x" },
     });
     expect(deps.runPackageManagerInstall).toHaveBeenCalledWith(
@@ -1204,7 +1204,7 @@ describe("runInitCommand", () => {
     expect(printed).toContain("Updated existing project:");
     expect(printed).toContain("Created agent/agent.ts");
     expect(printed).toContain("Created agent/instructions.md");
-    expect(printed).toContain("Added dependencies: @vercel/connect, ai, orcel");
+    expect(printed).toContain("Added dependencies: @orcel/orcel, @vercel/connect, ai");
     expect(printed).toContain(`Updated ${join(projectRoot, "package.json")}`);
     expect(printed).toContain(`Updated ${join(projectRoot, "pnpm-workspace.yaml")}`);
     expect(printed).not.toContain("Overrode package.json engines.node");
@@ -1622,7 +1622,7 @@ describe("runInitCommand", () => {
     expect(output.messages.join("\n")).toContain("Updated existing project:");
     expect(output.messages.join("\n")).toContain("Created agent/agent.ts");
     expect(output.messages.join("\n")).toContain(
-      "Added dependencies: @vercel/connect, ai, orcel, zod",
+      "Added dependencies: @orcel/orcel, @vercel/connect, ai, zod",
     );
   });
 

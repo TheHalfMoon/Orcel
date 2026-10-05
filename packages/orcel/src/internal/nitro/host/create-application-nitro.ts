@@ -62,8 +62,8 @@ const WORKFLOW_ALIAS_SPECIFIERS = [
   "workflow/runtime",
 ] as const;
 const INSTRUMENTATION_ALIAS_PATHS = {
-  "orcel/instrumentation": "src/public/instrumentation/index.ts",
-  "orcel/instrumentation/otel": "src/public/instrumentation/otel.ts",
+  "@orcel/orcel/instrumentation": "src/public/instrumentation/index.ts",
+  "@orcel/orcel/instrumentation/otel": "src/public/instrumentation/otel.ts",
 } as const;
 const WORKFLOW_TRANSFORM_PATCHED = Symbol("orcel.workflow-transform-patched");
 const WORKFLOW_CACHE_PATH_FRAGMENT = "/.orcel/workflow-cache/";

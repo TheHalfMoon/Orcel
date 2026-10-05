@@ -1,19 +1,19 @@
 export const MODEL_CONNECTION_ENV = "ORCEL_MODEL_CONNECTION";
 export const MODEL_HELPERS = {
   chatgpt: {
-    module: "orcel/models/openai",
+    module: "@orcel/orcel/models/openai",
     prefix: "chatgpt/",
     defaultModel: "gpt-6-luna-fast",
     provider: "codex",
   },
   openai: {
-    module: "orcel/models/openai",
+    module: "@orcel/orcel/models/openai",
     prefix: "openai-api/",
     defaultModel: "gpt-6-luna-fast",
     provider: "openai",
   },
   anthropic: {
-    module: "orcel/models/anthropic",
+    module: "@orcel/orcel/models/anthropic",
     prefix: "anthropic-api/",
     defaultModel: "claude-sonnet-5",
     provider: "anthropic",

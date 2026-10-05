@@ -39,7 +39,7 @@ function startOrcelProcess(input: {
   readonly appRoot: string;
   readonly args: readonly string[];
 }): RunningProcess {
-  const orcelBinPath = join(input.appRoot, "node_modules", "orcel", "bin", "orcel.js");
+  const orcelBinPath = join(input.appRoot, "node_modules", "@orcel", "orcel", "bin", "orcel.js");
   const child = spawn(process.execPath, [orcelBinPath, ...input.args], {
     cwd: input.appRoot,
     env: {

@@ -34,7 +34,7 @@ async function createExtensionPackage(pkg?: Record<string, unknown>): Promise<st
     }),
     "utf8",
   );
-  await mkdir(join(root, "node_modules"), { recursive: true });
+  await mkdir(join(root, "node_modules", "@orcel"), { recursive: true });
   await symlink(orcelPackageRoot, join(root, "node_modules", "@orcel", "orcel"), "dir");
   await mkdir(join(root, "extension", "tools"), { recursive: true });
   await writeFile(
@@ -113,9 +113,9 @@ describe("extension build output", () => {
     const index = await readFile(join(outDir, "index.mjs"), "utf8");
     expect(index).toMatch(/from\s+["']\.\/extension\/extension\.mjs["']/);
 
-    // `orcel/*` stays external so the mount resolves to the consumer's orcel.
+    // `@orcel/orcel/*` stays external so the mount resolves to the consumer's Orcel.
     const extensionModule = await readFile(join(outDir, "extension", "extension.mjs"), "utf8");
-    expect(extensionModule).toMatch(/from\s+["']orcel\/extension["']/);
+    expect(extensionModule).toMatch(/from\s+["']@orcel\/orcel\/extension["']/);
 
     const toolsIndex = await readFile(join(outDir, "tools", "index.mjs"), "utf8");
     expect(toolsIndex).toMatch(/from\s+["']\.\.\/extension\/tools\/crm_search\.mjs["']/);
@@ -370,7 +370,7 @@ export default defineHook({ events: { "turn.started": async () => {
 
     const declaration = await readFile(join(outDir, "extension", "hooks", "audit.d.ts"), "utf8");
     expect(declaration).toMatch(
-      /import\(["']orcel\/hooks["']\)\.HookDefinition<["']action\.result["']>/,
+      /import\(["']@orcel\/orcel\/hooks["']\)\.HookDefinition<["']action\.result["']>/,
     );
     expect(declaration).not.toContain("protocol/message");
   });
@@ -451,7 +451,7 @@ export default defineHook({ events: { "turn.started": async () => {
       join(outDir, "extension", "tools", "crm_search.d.ts"),
       "utf8",
     );
-    expect(dynamicToolDeclaration).toMatch(/import\("orcel(?:\/tools)?"\)\.DynamicSentinel/u);
+    expect(dynamicToolDeclaration).toMatch(/import\("@orcel\/orcel(?:\/tools)?"\)\.DynamicSentinel/u);
     expect(dynamicToolDeclaration).not.toContain("node_modules");
     expect(
       await readFile(
