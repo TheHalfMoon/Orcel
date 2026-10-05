@@ -34,7 +34,7 @@ describe("writeNitroStepEntrypoint", () => {
 
     try {
       await writeNitroStepEntrypoint({
-        builtinsPath: "G:\\projects\\orcel\\node_modules\\orcel\\dist\\builtins.js",
+        builtinsPath: "G:\\projects\\orcel\\node_modules\\@orcel\\orcel\\dist\\builtins.js",
         discoveredEntries: {
           discoveredSerdeFiles: [],
           discoveredSteps: [],

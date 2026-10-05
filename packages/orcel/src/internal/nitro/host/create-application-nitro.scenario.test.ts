@@ -620,7 +620,7 @@ describe("application Nitro creation", () => {
     preparedHost.compileResult.manifest.config = {
       ...preparedHost.compileResult.manifest.config,
       build: {
-        externalDependencies: ["fixture-external", "sharp", "orcel"],
+        externalDependencies: ["fixture-external", "sharp", "@orcel/orcel"],
       },
     } as typeof preparedHost.compileResult.manifest.config;
 
@@ -631,7 +631,7 @@ describe("application Nitro creation", () => {
     expect(traceDeps.filter((dependencyName: string) => dependencyName === "sharp")).toHaveLength(
       1,
     );
-    expect(traceDeps).not.toContain("orcel");
+    expect(traceDeps).not.toContain("@orcel/orcel");
   });
 
   it("fully traces dependencies requested by mounted extensions", async () => {

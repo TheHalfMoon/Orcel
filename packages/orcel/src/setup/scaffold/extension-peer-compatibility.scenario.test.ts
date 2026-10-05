@@ -23,7 +23,7 @@ describe("extension orcel peer compatibility", () => {
       const appRoot = join(root, "app");
       await Promise.all([mkdir(orcelRoot), mkdir(extensionRoot), mkdir(appRoot)]);
       await Promise.all([
-        writePackageJson(orcelRoot, { name: "orcel", version: orcelVersion }),
+        writePackageJson(orcelRoot, { name: "@orcel/orcel", version: orcelVersion }),
         writePackageJson(extensionRoot, {
           name: "@acme/extension-peer-test",
           version: "1.0.0",
@@ -43,7 +43,7 @@ describe("extension orcel peer compatibility", () => {
           "--ignore-scripts",
           "--no-audit",
           "--no-package-lock",
-          join(root, `orcel-${orcelVersion}.tgz`),
+          join(root, `orcel-orcel-${orcelVersion}.tgz`),
           join(root, "acme-extension-peer-test-1.0.0.tgz"),
         ],
         appRoot,
