@@ -6,8 +6,7 @@ const binaryExts = new Set([
   ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".pdf", ".zip", ".gz", ".tgz",
   ".woff", ".woff2", ".ttf", ".eot", ".wasm", ".mp3", ".mp4", ".mov", ".webm", ".lockb",
 ]);
-const kafIdentity = /\b(?:kaf|Kaf|KAF)\b|\b(?:kaf|Kaf)(?=[A-Z0-9_])|\bKAF(?=_|[A-Z][a-z]|\d)|(?<=[a-z0-9_])Kaf(?=[A-Z0-9_]|$)|(?<=_)(?:kaf|Kaf|KAF)(?=[A-Za-z0-9_]|$)|%3[aA](?:kaf|Kaf|KAF)(?=%3[aA]|[A-Za-z0-9_]|$)|%20(?:kaf|Kaf|KAF)(?=[/%]|[A-Za-z0-9_]|$)|\\u[0-9a-fA-F]{4}(?:kaf|Kaf|KAF)(?=\\u[0-9a-fA-F]{4}|[A-Za-z0-9_]|$)/g;
-const kafPathToken = /(^|[-_.])(?:kaf|Kaf|KAF)(?=$|[-_.])|^(?:kaf|Kaf|KAF)(?=[A-Z0-9_])/;
+import { kafIdentity, kafPathToken } from "./kaf-identity-patterns.mjs";
 
 function isTextFile(file, buffer) {
   if (binaryExts.has(path.extname(file).toLowerCase())) return false;
