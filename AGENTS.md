@@ -72,6 +72,25 @@ typo fixes, small code reorganizations, and similar non-behavioral changes can
 proceed without local integration or scenario runs. CI is always the official
 line of defense, and every required check must pass before merge.
 
+## Graft context layer
+
+Use [Graft](https://github.com/trailhq/Graft) (`@nanonets/graft`) as the default
+codebase context and navigation layer for coding agents. Before broad source
+exploration, prefer `graft check`, `graft map`, `graft ask "<question>"`,
+`graft skeleton <file>`, `graft callers <symbol>`, and `graft grep "<regex>"`
+when they fit the task.
+
+If the local `graft/` graph is absent, run `graft build`. Use
+`graft init --dry-run` before wiring new agent integrations, and only run
+`graft init` when those repository-side wiring changes are intentional. Treat
+`graft/` as a local, regenerable cache and never commit it. Plain structural
+Graft commands are the zero-cost path; do not introduce paid model or API usage
+as a project requirement.
+
+Graft is context and navigation, not correctness or qualification evidence.
+Repository tests, Jev, Alibaba Open Code Review, CI, security checks, and
+exact-head evidence remain authoritative. Never fabricate Graft output or claim
+a graph was refreshed unless the command actually ran.
 ## Agent-ready product principles
 
 1. **Docs is priority #1.** Agents read your docs before they ever touch your
