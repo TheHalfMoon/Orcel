@@ -1,10 +1,12 @@
 ---
 issue: https://github.com/TheHalfMoon/orcel/pull/2690
-status: in-progress
-last_updated: "2026-09-02"
+status: superseded
+last_updated: "2026-10-06"
 ---
 
 # Subagent execution boundaries
+
+> **Superseded (2026-10-06):** Superseded by the unified Tasks model and current execution boundaries documented in `docs/tools/tasks.md`, `docs/tools/workflows.mdx`, and `docs/subagents/index.mdx`. The unfinished background-tool/subagent projection architecture described here no longer matches the shipped task, receipt, and child-session model. The historical proposal is preserved below.
 
 ## Scope of the current PR
 

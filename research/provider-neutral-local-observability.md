@@ -1,10 +1,12 @@
 ---
 issue: TBD
-status: in-progress
-last_updated: "2026-08-28"
+status: superseded
+last_updated: "2026-10-06"
 ---
 
 # Provider-neutral local observability
+
+> **Superseded (2026-10-06):** Superseded by Orcel's current path-authored instrumentation/provider architecture: `defineInstrumentation(...)` lifecycle providers, per-provider `tracePolicy`, OTel destinations, Agent Runs, and the instrumentation migration guidance. The current trace schema uses per-activation `invoke_agent` spans linked/grouped by conversation identity rather than the historical `agent.session` root-span design. The historical proposal is preserved below.
 
 ## Summary
 

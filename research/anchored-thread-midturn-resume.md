@@ -1,10 +1,12 @@
 ---
 issue: https://github.com/TheHalfMoon/orcel/issues/982
-status: proposed
-last_updated: "2026-07-20"
+status: superseded
+last_updated: "2026-10-06"
 ---
 
 # Anchored threads must resume across the whole turn
+
+> **Superseded (2026-10-06):** Superseded by the durable session-inbox and continuation-alias ownership model documented in `docs/channels/custom.mdx` and `docs/concepts/execution-model-and-durability.mdx`, with implementation under `packages/orcel/src/execution/session-inbox/**` and session entry. Addresses remain claimed by one live session across the turn, replacing the rotating-hook design described here. The historical proposal is preserved below.
 
 A follow-up delivered to an anchored channel thread while the session's
 turn is still running forks a new session instead of resuming, and the
