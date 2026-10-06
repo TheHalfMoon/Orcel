@@ -1,10 +1,12 @@
 ---
 issue: TBD
-status: draft
-last_updated: "2026-09-16"
+status: implemented
+last_updated: "2026-10-06"
 ---
 
 # Sandbox environments and provider sessions
+
+> **Implementation status (2026-10-06):** Implemented on canonical `main`. `environment.open(...)`, provider `prepare`/`start`/`resume`, provider session state and lifecycle hooks, `DefaultSandbox.environment()`, public docs, provider bindings, and integration tests ship the designed contract.
 
 ## Decision
 

@@ -1,10 +1,12 @@
 ---
 issue: https://github.com/TheHalfMoon/orcel/issues/456
-status: proposed
-last_updated: "2026-07-27"
+status: implemented
+last_updated: "2026-10-06"
 ---
 
 # Tool model output content parts
+
+> **Implementation status (2026-10-06):** Implemented on canonical `main`. Public `ToolModelOutputPart` text/file content, the `ToolModelOutput` content variant, `toolOutput.content` and part builders, harness normalization, public docs, and vision-content E2E coverage are shipped.
 
 ## Summary
 

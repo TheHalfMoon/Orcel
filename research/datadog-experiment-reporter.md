@@ -1,10 +1,12 @@
 ---
 issue: "TBD (Datadog Experiments reporter partner request)"
-status: proposed
-last_updated: "2026-09-01"
+status: implemented
+last_updated: "2026-10-06"
 ---
 
 # Datadog Experiments reporter for orcel evals
+
+> **Implementation status (2026-10-06):** Implemented on canonical `main`. The public `Datadog(...)` eval reporter publishes to Datadog Experiments through the external client, with unit tests, a credentialed fixture, public docs, and changelog evidence.
 
 Add a reporter that publishes an orcel eval run to Datadog LLM Observability
 Experiments without asking the Datadog SDK to rerun the task.

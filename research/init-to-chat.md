@@ -1,10 +1,12 @@
 ---
 issue: TBD
-status: in-progress
-last_updated: "2026-09-16"
+status: implemented
+last_updated: "2026-10-06"
 ---
 
 # From init to chat
+
+> **Implementation status (2026-10-06):** Implemented on canonical `main`. Interactive `orcel init` opens the TUI and current setup uses `/login`, `/model`, and `/add`; projectless Gateway routing and credential-refresh behavior are shipped and covered. The research below preserves its historical `gpt-5.6-luna-fast` default; the product later advanced the default to `gpt-6-luna-fast`.
 
 Interactive `orcel init` scaffolds and opens the TUI. Connection readiness replaces the model, channels, integrations, and review interview. `/login` connects; `/model` selects models and settings; `/add` searches and installs one addition immediately.
 

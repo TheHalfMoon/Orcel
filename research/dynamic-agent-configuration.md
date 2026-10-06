@@ -1,10 +1,12 @@
 ---
 issue: "1945"
-status: proposed
-last_updated: "2026-08-11"
+status: implemented
+last_updated: "2026-10-06"
 ---
 
 # Dynamic agent configuration without fallbacks or placeholders
+
+> **Implementation status (2026-10-06):** Implemented on canonical `main`. Resolver-only `defineDynamic({ events })`, dynamic model/subagent resolution without compiled fallbacks, runtime normalization/resource composition, public docs, E2E coverage, and changelog evidence ship the proposed contract.
 
 ## Decision
 

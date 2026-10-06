@@ -1,10 +1,12 @@
 ---
 issue: https://github.com/TheHalfMoon/orcel/issues/1510
-status: proposed
-last_updated: "2026-09-01"
+status: implemented
+last_updated: "2026-10-06"
 ---
 
 # First-class memory
+
+> **Implementation status (2026-10-06):** Implemented on canonical `main` for the bounded first-class memory design recorded here. Public memory/provider APIs, locked scopes, recall/capture/tools lifecycle, built-in `fileMemory()`, provider backends, public docs, registry/templates, E2E coverage, and the completed checklist ship the proposed boundary.
 
 ## Proposal
 

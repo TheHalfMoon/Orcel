@@ -1,10 +1,12 @@
 ---
 issue: https://github.com/TheHalfMoon/orcel/issues/1084
-status: draft
-last_updated: "2026-09-28"
+status: implemented
+last_updated: "2026-10-06"
 ---
 
 # orcel tasks
+
+> **Implementation status (2026-10-06):** Implemented on canonical `main`. Workflow `execute`/`task`/`serve`, resumable `serve(receive, ctx)`, `task_wait`, `task_cancel`, task results and receipts, held-turn semantics, agent delegation, and lifecycle events are shipped and documented/tested.
 
 This plan replaces background tasks as shipped in orcel 0.66 with one task model. It specifies the
 authoring API, the model's tools, and the observable semantics, then the runtime invariants and a
