@@ -1,10 +1,12 @@
 ---
 issue: "None (follows hook failure isolation from PR #3684, which removed the turn veto added in #3091)"
-status: in-progress
-last_updated: "2026-09-23"
+status: implemented
+last_updated: "2026-10-06"
 ---
 
 # Hook turn cancellation
+
+> **Implementation status (2026-10-06):** Implemented on canonical `main`. Public `HookContext.cancel()` is the explicit cancellation path; hook exceptions remain isolated observers, while lifecycle, integration, and turn-step tests cover active and late cancellation semantics.
 
 ## Summary
 

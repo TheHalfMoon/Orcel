@@ -1,10 +1,12 @@
 ---
 issue: https://github.com/TheHalfMoon/orcel/issues/1159
-status: in-progress
-last_updated: "2026-09-15"
+status: implemented
+last_updated: "2026-10-06"
 ---
 
 # Leased session stream responses
+
+> **Implementation status (2026-10-06):** Implemented on canonical `main`. The additive `streamControlVersion=1` capability and `stream.lease-ended` control records ship in the protocol, with current client/frontend tests requesting leased stream control while older peers remain compatible.
 
 ## Purpose
 

@@ -1,10 +1,12 @@
 ---
 issue: TBD
-status: in-progress
-last_updated: "2026-09-18"
+status: implemented
+last_updated: "2026-10-06"
 ---
 
 # Subagent tool projection
+
+> **Implementation status (2026-10-06):** Implemented on canonical `main`. Callable-agent registration is separate from model-tool projection: `tool: false` and `availableInSubagents: false` are shipped, while `ctx.agent()`, replay-stable `ctx.agents`, and `agentRouter()` remain available and are covered by public docs, tests, and changelog evidence.
 
 ## Summary
 

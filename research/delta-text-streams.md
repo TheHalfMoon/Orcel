@@ -1,10 +1,12 @@
 ---
 issue: TBD
-status: prototype
-last_updated: "2026-09-02"
+status: implemented
+last_updated: "2026-10-06"
 ---
 
 # Delta text streams
+
+> **Implementation status (2026-10-06):** Implemented on canonical `main`. Stream v25 introduced delta-only append events; v26 preserves that contract, legacy v21-v24 streams are normalized for compatibility, and current public streaming docs and tests exercise the behavior.
 
 ## Summary
 

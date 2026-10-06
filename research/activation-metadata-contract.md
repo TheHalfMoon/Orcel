@@ -1,10 +1,12 @@
 ---
 issue: "None (maintainer-requested in PR #3338)"
-status: in-progress
-last_updated: "2026-09-14"
+status: implemented
+last_updated: "2026-10-06"
 ---
 
 # Activation metadata contract
+
+> **Implementation status (2026-10-06):** Implemented on canonical `main`. Schema-v4 `invoke_agent` spans expose queryable activation metadata, channel/schedule/audience/content-policy attributes are attached before sampling, and tests cover sampler/export consistency.
 
 ## Summary
 
