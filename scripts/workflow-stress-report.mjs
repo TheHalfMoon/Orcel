@@ -309,6 +309,7 @@ async function main() {
   const report = createWorkflowStressReport(metrics, {
     attempt: process.env.GITHUB_RUN_ATTEMPT,
     model: process.env.ORCEL_E2E_MODEL,
+    deploymentId: process.env.ORCEL_STRESS_DEPLOYMENT_URL,
     runId: process.env.GITHUB_RUN_ID,
     sha: process.env.GITHUB_SHA,
   });
