@@ -382,13 +382,14 @@ describe("orcel dev server live connections", () => {
       const server = await startOrcelDev(app.appRoot);
       const socketUrl = new URL("/socket", server.url);
       socketUrl.protocol = "ws:";
-      const socket = new WebSocket(socketUrl);
+      let socket: WebSocket | undefined;
 
       try {
         await expect(fetch(new URL("/socket", server.url)).then(async (response) => await response.text())).resolves.toBe(
           "http",
         );
 
+        socket = new WebSocket(socketUrl);
         await waitForWebSocketOpen(socket);
         const firstMessage = waitForWebSocketMessage(socket);
         socket.send("before");
@@ -408,7 +409,7 @@ describe("orcel dev server live connections", () => {
         socket.send("after");
         await expect(nextMessage).resolves.toBe("hidden:127.0.0.1:after");
       } finally {
-        if (socket.readyState === WebSocket.OPEN) {
+        if (socket !== undefined && socket.readyState === WebSocket.OPEN) {
           const closed = waitForWebSocketClose(socket);
           socket.close();
           await closed;

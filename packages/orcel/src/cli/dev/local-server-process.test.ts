@@ -134,6 +134,28 @@ describe("createDevelopmentServer", () => {
     }
   });
 
+  it("escalates startup shutdown before the worker is ready", async () => {
+    vi.useFakeTimers();
+    try {
+      const server = createDevelopmentServer("/tmp/app");
+      const starting = server.start();
+      void starting.catch(() => undefined);
+      await vi.advanceTimersByTimeAsync(0);
+
+      const closing = server.close();
+      await vi.advanceTimersByTimeAsync(400);
+      expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+      await vi.advanceTimersByTimeAsync(150);
+      expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+
+      child.emit("exit", null, "SIGKILL");
+      await closing;
+      await expect(starting).rejects.toThrow("exited during startup");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.skipIf(process.platform === "win32")(
     "terminates surviving descendants after the server child exits",
     async () => {

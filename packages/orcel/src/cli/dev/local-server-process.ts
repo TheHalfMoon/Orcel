@@ -43,6 +43,9 @@ type ChildMessage =
 const childPath = fileURLToPath(new URL("./local-server-child.js", import.meta.url));
 
 // close() escalation stages. Their sum is DEV_SERVER_CLOSE_BUDGET_MS.
+const IPC_STARTUP_SHUTDOWN_GRACE_MS = 400;
+const SIGTERM_STARTUP_GRACE_MS = 150;
+const SIGKILL_STARTUP_REAP_MS = 100;
 const IPC_SHUTDOWN_GRACE_MS = 35_000;
 const SIGTERM_GRACE_MS = 2_000;
 const SIGKILL_REAP_MS = 1_000;
@@ -69,6 +72,7 @@ export function createDevelopmentServer(
   let handoff: Promise<void> | undefined;
   let expectedExit = false;
   let childExited = false;
+  let started = false;
   const exited = Promise.withResolvers<void>();
   const terminated = Promise.withResolvers<void>();
   void exited.promise.catch(() => undefined);
@@ -142,6 +146,7 @@ export function createDevelopmentServer(
         if (message.type === "progress") options.onBootProgress?.(message.event);
         if (message.type === "started" && !settled) {
           settled = true;
+          started = true;
           resolve(message.handle);
           if (message.handle.kind === "existing") {
             expectedExit = true;
@@ -165,6 +170,9 @@ export function createDevelopmentServer(
       const active = child;
       if (active === undefined) return Promise.resolve();
       expectedExit = true;
+      const ipcGraceMs = started ? IPC_SHUTDOWN_GRACE_MS : IPC_STARTUP_SHUTDOWN_GRACE_MS;
+      const sigtermGraceMs = started ? SIGTERM_GRACE_MS : SIGTERM_STARTUP_GRACE_MS;
+      const reapMs = started ? SIGKILL_REAP_MS : SIGKILL_STARTUP_REAP_MS;
       handoff = (async () => {
         if (active.connected) active.send({ type: "shutdown" });
         if (
@@ -172,15 +180,15 @@ export function createDevelopmentServer(
             active,
             terminated.promise,
             () => childExited,
-            IPC_SHUTDOWN_GRACE_MS,
+            ipcGraceMs,
           )
         )
           return;
         signalProcessGroup(active, "SIGTERM");
-        if (await terminatesWithin(active, terminated.promise, () => childExited, SIGTERM_GRACE_MS))
+        if (await terminatesWithin(active, terminated.promise, () => childExited, sigtermGraceMs))
           return;
         signalProcessGroup(active, "SIGKILL");
-        await terminatesWithin(active, terminated.promise, () => childExited, SIGKILL_REAP_MS);
+        await terminatesWithin(active, terminated.promise, () => childExited, reapMs);
         release();
       })();
       return handoff;

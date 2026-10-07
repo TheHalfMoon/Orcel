@@ -16,7 +16,7 @@ import { stampDevelopmentClientAddress } from "#internal/nitro/dev-client-addres
 import { toErrorMessage } from "#shared/errors.js";
 
 const RUNNER_READY_TIMEOUT_MS = 60_000;
-const SHUTDOWN_EXCHANGE_DRAIN_TIMEOUT_MS = 15_000;
+const SHUTDOWN_EXCHANGE_DRAIN_TIMEOUT_MS = 5_000;
 
 export interface DrainedDevServerListener {
   close(): Promise<void>;
