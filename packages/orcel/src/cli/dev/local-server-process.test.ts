@@ -7,7 +7,7 @@ import {
   createDevelopmentServer,
   DEV_SERVER_CLOSE_BUDGET_MS,
 } from "#cli/dev/local-server-process.js";
-import { FORCED_EXIT_BACKSTOP_MS } from "#cli/shutdown.js";
+import { LOCAL_DEV_FORCED_EXIT_BACKSTOP_MS } from "#cli/shutdown.js";
 
 const mocks = vi.hoisted(() => ({ fork: vi.fn(), loadEnv: vi.fn() }));
 vi.mock("node:child_process", () => ({ fork: mocks.fork }));
@@ -36,7 +36,7 @@ describe("createDevelopmentServer", () => {
   });
 
   it("finishes the close escalation inside the CLI forced-exit backstop", () => {
-    expect(DEV_SERVER_CLOSE_BUDGET_MS).toBeLessThan(FORCED_EXIT_BACKSTOP_MS);
+    expect(DEV_SERVER_CLOSE_BUDGET_MS).toBeLessThan(LOCAL_DEV_FORCED_EXIT_BACKSTOP_MS);
   });
 
   it("passes development extension selection to the child", async () => {
@@ -121,9 +121,9 @@ describe("createDevelopmentServer", () => {
       await started;
 
       const closing = server.close();
-      await vi.advanceTimersByTimeAsync(550);
+      await vi.advanceTimersByTimeAsync(35_000);
       expect(child.kill).toHaveBeenCalledWith("SIGTERM");
-      await vi.advanceTimersByTimeAsync(150);
+      await vi.advanceTimersByTimeAsync(2_000);
       expect(child.kill).toHaveBeenCalledWith("SIGKILL");
       child.emit("exit", null, "SIGKILL");
 
@@ -134,7 +134,9 @@ describe("createDevelopmentServer", () => {
     }
   });
 
-  it("terminates surviving descendants after the server child exits", async () => {
+  it.skipIf(process.platform === "win32")(
+    "terminates surviving descendants after the server child exits",
+    async () => {
     vi.useFakeTimers();
     child.pid = 4321;
     let groupAlive = true;
@@ -156,7 +158,7 @@ describe("createDevelopmentServer", () => {
 
       const closing = server.close();
       child.emit("exit", 0, null);
-      await vi.advanceTimersByTimeAsync(550);
+      await vi.advanceTimersByTimeAsync(35_025);
       await closing;
 
       expect(kill).toHaveBeenCalledWith(-4321, "SIGTERM");

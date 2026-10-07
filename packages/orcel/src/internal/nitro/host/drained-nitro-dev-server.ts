@@ -16,6 +16,7 @@ import { stampDevelopmentClientAddress } from "#internal/nitro/dev-client-addres
 import { toErrorMessage } from "#shared/errors.js";
 
 const RUNNER_READY_TIMEOUT_MS = 60_000;
+const SHUTDOWN_EXCHANGE_DRAIN_TIMEOUT_MS = 15_000;
 
 export interface DrainedDevServerListener {
   close(): Promise<void>;
@@ -58,7 +59,11 @@ interface DevServerLogger {
 export class DrainedNitroDevServer {
   readonly #createRunner: DevelopmentRunnerFactory;
   readonly #draining = new Set<RunnerSlot>();
-  readonly #listeners = new Set<{ beginClose(): Promise<void>; destroySockets(): void }>();
+  readonly #listeners = new Set<{
+    beginClose(): Promise<void>;
+    closeUpgrades(): void;
+    destroySockets(): void;
+  }>();
   readonly #logger: DevServerLogger;
   #active: RunnerSlot | undefined;
   #activeWaiters: Array<() => void> = [];
@@ -160,14 +165,19 @@ export class DrainedNitroDevServer {
     }
 
     const sockets = new Set<Socket>();
+    const upgradedSockets = new Set<Socket>();
     const server = createServer((request, response) => {
       void this.#handleRequest(request, response);
     });
     server.on("connection", (socket) => {
       sockets.add(socket);
-      socket.once("close", () => sockets.delete(socket));
+      socket.once("close", () => {
+        sockets.delete(socket);
+        upgradedSockets.delete(socket);
+      });
     });
     server.on("upgrade", (request, socket, head) => {
+      upgradedSockets.add(socket as Socket);
       void this.#handleUpgrade(request, socket as Socket, head);
     });
 
@@ -200,6 +210,11 @@ export class DrainedNitroDevServer {
           this.#listeners.delete(listenerState);
         });
         return closePromise;
+      },
+      closeUpgrades: () => {
+        for (const socket of upgradedSockets) {
+          socket.destroy();
+        }
       },
       destroySockets: () => {
         for (const socket of sockets) {
@@ -248,6 +263,12 @@ export class DrainedNitroDevServer {
     this.#closed = true;
     this.#wakeActiveWaiters();
 
+    const listeners = [...this.#listeners];
+    const listenerClosePromises = listeners.map((listener) => listener.beginClose());
+    for (const listener of listeners) {
+      listener.closeUpgrades();
+    }
+
     // Terminate a candidate still waiting on readiness so the replace chain
     // settles within a bounded interval instead of the readiness timeout.
     await this.#pendingSlot?.runner
@@ -255,20 +276,49 @@ export class DrainedNitroDevServer {
       .catch(() => undefined);
     await this.#replaceChain.catch(() => undefined);
 
-    const listeners = [...this.#listeners];
-    const listenerClosePromises = listeners.map((listener) => listener.beginClose());
-
     const slots = [this.#active, ...this.#draining].filter(
       (slot): slot is RunnerSlot => slot !== undefined,
     );
     this.#active = undefined;
     this.#draining.clear();
+
+    const drained = await Promise.all(
+      slots.map(
+        async (slot) =>
+          await this.#waitForQuiet(slot, SHUTDOWN_EXCHANGE_DRAIN_TIMEOUT_MS),
+      ),
+    );
+    if (drained.some((isQuiet) => !isQuiet)) {
+      for (const listener of listeners) {
+        listener.destroySockets();
+      }
+    }
     await Promise.all(slots.map(async (slot) => await this.#releaseSlot(slot)));
 
     for (const listener of listeners) {
       listener.destroySockets();
     }
     await Promise.all(listenerClosePromises);
+  }
+
+  async #waitForQuiet(slot: RunnerSlot, timeoutMs: number): Promise<boolean> {
+    if (slot.activeExchanges === 0) {
+      return true;
+    }
+
+    return await new Promise<boolean>((resolve) => {
+      let timer: NodeJS.Timeout | undefined;
+      const onQuiet = () => {
+        if (timer !== undefined) clearTimeout(timer);
+        resolve(true);
+      };
+      slot.quietListeners.push(onQuiet);
+      timer = setTimeout(() => {
+        const listenerIndex = slot.quietListeners.indexOf(onQuiet);
+        if (listenerIndex >= 0) slot.quietListeners.splice(listenerIndex, 1);
+        resolve(false);
+      }, timeoutMs);
+    });
   }
 
   #releaseSlot(slot: RunnerSlot): Promise<void> {

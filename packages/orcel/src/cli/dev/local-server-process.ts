@@ -43,9 +43,9 @@ type ChildMessage =
 const childPath = fileURLToPath(new URL("./local-server-child.js", import.meta.url));
 
 // close() escalation stages. Their sum is DEV_SERVER_CLOSE_BUDGET_MS.
-const IPC_SHUTDOWN_GRACE_MS = 550;
-const SIGTERM_GRACE_MS = 150;
-const SIGKILL_REAP_MS = 100;
+const IPC_SHUTDOWN_GRACE_MS = 35_000;
+const SIGTERM_GRACE_MS = 2_000;
+const SIGKILL_REAP_MS = 1_000;
 
 /**
  * Worst-case close() duration. Must stay below the forced-exit backstop the

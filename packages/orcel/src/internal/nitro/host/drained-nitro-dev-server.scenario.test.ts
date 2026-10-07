@@ -182,6 +182,50 @@ describe("drained Nitro dev server", () => {
     await server.close();
   });
 
+  it("drains an admitted response before closing its worker and listener", async () => {
+    let releaseResponse: (() => void) | undefined;
+    const { createRunner, runners } = createRunnerFactory(async () => {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("started\n"));
+          releaseResponse = () => controller.close();
+        },
+      });
+      return new Response(body);
+    });
+    const server = new DrainedNitroDevServer(LOGGER, createRunner);
+    const listener = await listen(server);
+    await server.replaceWorker(replacement("/tmp/first.mjs"));
+
+    const response = await fetch(new URL("/", listener.url));
+    const reader = response.body?.getReader();
+    await expect(reader?.read()).resolves.toMatchObject({ done: false });
+
+    const closing = server.close();
+    const closeState = await Promise.race([
+      closing.then(() => "closed" as const),
+      new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 25)),
+    ]);
+
+    expect(closeState).toBe("pending");
+    expect(runners[0]?.closeMock).not.toHaveBeenCalled();
+
+    releaseResponse?.();
+    await withinDeadline(
+      (async () => {
+        for (;;) {
+          const result = await reader?.read();
+          if (result === undefined || result.done) {
+            return;
+          }
+        }
+      })(),
+      "Timed out waiting for the admitted response to drain during shutdown.",
+    );
+    await withinDeadline(closing, "Timed out waiting for the drained server to close.");
+    expect(runners[0]?.closeMock).toHaveBeenCalledOnce();
+  });
+
   it("waits for an already-releasing retired worker before close resolves", async () => {
     const { createRunner } = createRunnerFactory(async () => new Response("ok"));
     const server = new DrainedNitroDevServer(LOGGER, createRunner);
