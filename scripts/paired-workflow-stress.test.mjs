@@ -35,8 +35,8 @@ function metrics(offset = 0) {
         scenario: "sequential",
         fixture: "agent-workflow-stress",
         unit: "milliseconds",
-        samples: [10, 12, 14, 16].map((durationMs, index) => ({
-          durationMs: durationMs + offset,
+        samples: Array.from({ length: 100 }, (_, index) => ({
+          durationMs: 10 + 2 * index + offset,
           turnNumber: index + 1,
         })),
       },
@@ -52,18 +52,18 @@ function metrics(offset = 0) {
           {
             turnNumber: 1,
             batchDurationMs: 20 + offset,
-            samples: [
-              { sessionNumber: 1, durationMs: 17 + offset },
-              { sessionNumber: 2, durationMs: 18 + offset },
-            ],
+            samples: Array.from({ length: 50 }, (_, index) => ({
+              sessionNumber: index + 1,
+              durationMs: 17 + offset,
+            })),
           },
           {
             turnNumber: 2,
             batchDurationMs: 22 + offset,
-            samples: [
-              { sessionNumber: 1, durationMs: 19 + offset },
-              { sessionNumber: 2, durationMs: 20 + offset },
-            ],
+            samples: Array.from({ length: 50 }, (_, index) => ({
+              sessionNumber: index + 1,
+              durationMs: 19 + offset,
+            })),
           },
         ],
       },
@@ -79,7 +79,7 @@ function captures() {
 
 test("captures all raw per-case evidence and explicit phase/topology unknowns", () => {
   const [capture] = captures();
-  assert.equal(capture.cases.length, 8);
+  assert.equal(capture.cases.length, 200);
   assert.equal(capture.batches.length, 2);
   assert.equal(capture.cases[0].turnDepth, 0);
   assert.equal(capture.cases[3].turnDepth, 3);
@@ -95,7 +95,7 @@ test("paired statistics are reproducible, including a deterministic 95% CI and d
   const [base, head] = captures();
   const result = createPairedWorkflowReport(base, head, { bootstrapDraws: 200 });
   assert.deepEqual(result, createPairedWorkflowReport(base, head, { bootstrapDraws: 200 }));
-  assert.equal(result.pairCount, 8);
+  assert.equal(result.pairCount, 200);
   assert.equal(result.statistics.pairedMeanDeltaMs, 5);
   assert.equal(result.statistics.pairedMeanDelta95CiMs.lowerMs, 5);
   assert.equal(result.statistics.pairedMeanDelta95CiMs.upperMs, 5);
@@ -117,8 +117,8 @@ test("rejects missing, duplicated, unmatched, or tampered per-case raw evidence"
   assert.throws(() => validateCapture(duplicate), /Missing sequential or concurrent/);
   const unmatched = structuredClone(head);
   unmatched.rawMetrics.sequential.samples.pop();
-  unmatched.cases = unmatched.cases.filter((item) => item.caseId !== "sequential/0004");
-  assert.throws(() => createPairedWorkflowReport(base, unmatched), /Unpaired/);
+  unmatched.cases = unmatched.cases.filter((item) => item.caseId !== "sequential/0100");
+  assert.throws(() => createPairedWorkflowReport(base, unmatched), /Missing sequential/);
   const bad = structuredClone(base);
   bad.rawMetrics.sequential.samples[1].durationMs = Number.NaN;
   assert.throws(() => validateCapture(bad), /Invalid sequential duration/);
@@ -203,7 +203,7 @@ test("CLI captures authenticated report inputs and reproduces exact summary from
     ];
     await main(args);
     const saved = JSON.parse(await readFile(captured, "utf8"));
-    assert.equal(saved.cases.length, 8);
+    assert.equal(saved.cases.length, 200);
     const head = captureWorkflowStressRun(metrics(5), identity(headSha, "203"));
     const headPath = join(root, "head.json");
     await writeFile(headPath, JSON.stringify(head));
@@ -260,5 +260,42 @@ test("preserves genuine per-case phase and durable topology observations without
   assert.throws(
     () => captureWorkflowStressRun(observed, identity(baseSha)),
     /Phase exceeds turn duration/,
+  );
+});
+
+test("refuses truncated, reordered, or duplicate stress fixture samples", () => {
+  const truncatedSequential = metrics();
+  truncatedSequential.sequential.metric.samples.pop();
+  assert.throws(
+    () => captureWorkflowStressRun(truncatedSequential, identity(baseSha)),
+    /Missing sequential or concurrent/,
+  );
+  const missingConcurrent = metrics();
+  missingConcurrent.concurrent.metric.batches[0].samples.pop();
+  assert.throws(
+    () => captureWorkflowStressRun(missingConcurrent, identity(baseSha)),
+    /Malformed concurrent batch/,
+  );
+  const swappedSequential = metrics();
+  [swappedSequential.sequential.metric.samples[1], swappedSequential.sequential.metric.samples[2]] =
+    [
+      swappedSequential.sequential.metric.samples[2],
+      swappedSequential.sequential.metric.samples[1],
+    ];
+  assert.throws(
+    () => captureWorkflowStressRun(swappedSequential, identity(baseSha)),
+    /Invalid sequential turn depth/,
+  );
+  const duplicateSession = metrics();
+  duplicateSession.concurrent.metric.batches[1].samples[49].sessionNumber = 1;
+  assert.throws(
+    () => captureWorkflowStressRun(duplicateSession, identity(baseSha)),
+    /Invalid session number/,
+  );
+  const missingBatch = metrics();
+  missingBatch.concurrent.metric.batches.pop();
+  assert.throws(
+    () => captureWorkflowStressRun(missingBatch, identity(baseSha)),
+    /Missing sequential or concurrent/,
   );
 });

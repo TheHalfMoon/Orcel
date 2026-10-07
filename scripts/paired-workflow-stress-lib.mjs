@@ -81,18 +81,18 @@ function extractCases(rawMetrics) {
   const con = rawMetrics?.concurrent;
   if (
     !Array.isArray(seq?.samples) ||
-    seq.samples.length < 2 ||
+    seq.samples.length !== 100 ||
     !Array.isArray(con?.batches) ||
-    con.batches.length < 1
+    con.batches.length !== 2
   ) {
     throw new Error("Missing sequential or concurrent raw Workflow stress samples");
   }
   const cases = [];
   let priorDepth = -1;
   const seen = new Set();
-  for (const sample of seq.samples) {
+  for (const [index, sample] of seq.samples.entries()) {
     const depth = sample.turnNumber - 1;
-    if (!Number.isSafeInteger(depth) || depth < 0 || depth <= priorDepth)
+    if (!Number.isSafeInteger(depth) || sample.turnNumber !== index + 1 || depth <= priorDepth)
       throw new Error("Invalid sequential turn depth");
     priorDepth = depth;
     finiteNonnegative(sample.durationMs, "sequential duration");
@@ -106,20 +106,20 @@ function extractCases(rawMetrics) {
     });
   }
   const batches = [];
-  for (const batch of con.batches) {
+  for (const [batchIndex, batch] of con.batches.entries()) {
     if (
       !Number.isSafeInteger(batch.turnNumber) ||
-      batch.turnNumber < 1 ||
+      batch.turnNumber !== batchIndex + 1 ||
       !Array.isArray(batch.samples) ||
-      batch.samples.length === 0
+      batch.samples.length !== 50
     ) {
       throw new Error("Malformed concurrent batch");
     }
     finiteNonnegative(batch.batchDurationMs, "concurrent makespan");
     const batchId = "concurrent/batch-" + batch.turnNumber;
     batches.push({ batchId, makespanMs: batch.batchDurationMs });
-    for (const sample of batch.samples) {
-      if (!Number.isSafeInteger(sample.sessionNumber) || sample.sessionNumber < 1)
+    for (const [sessionIndex, sample] of batch.samples.entries()) {
+      if (!Number.isSafeInteger(sample.sessionNumber) || sample.sessionNumber !== sessionIndex + 1)
         throw new Error("Invalid session number");
       finiteNonnegative(sample.durationMs, "concurrent duration");
       cases.push({
