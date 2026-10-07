@@ -232,3 +232,33 @@ test("CLI captures authenticated report inputs and reproduces exact summary from
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("preserves genuine per-case phase and durable topology observations without inventing other counters", () => {
+  const observed = metrics();
+  observed.sequential.metric.samples[0].phases = {
+    requestAcceptanceMs: 1,
+    sessionHookReadyMs: 2,
+    turnModelStepStartMs: 4,
+    turnSettlementMs: 10,
+  };
+  observed.sequential.metric.samples[0].topology = {
+    stepCount: 5,
+    hookResumeCount: 2,
+    streamEventCount: 9,
+    serializedInputBytes: 120,
+    serializedOutputBytes: 88,
+  };
+  const base = captureWorkflowStressRun(observed, identity(baseSha));
+  const head = captureWorkflowStressRun(metrics(5), identity(headSha, "203"));
+  const report = createPairedWorkflowReport(base, head);
+  assert.equal(base.cases[0].phases.requestAcceptanceMs, 1);
+  assert.equal(base.cases[0].topology.stepCount, 5);
+  assert.equal(base.cases[1].phases.requestAcceptanceMs, null);
+  assert.deepEqual(report.phaseCoverage.requestAcceptanceMs, { base: 1, head: 0 });
+  assert.deepEqual(report.topologyCoverage.stepCount, { base: 1, head: 0 });
+  observed.sequential.metric.samples[0].phases.turnModelStepStartMs = 99;
+  assert.throws(
+    () => captureWorkflowStressRun(observed, identity(baseSha)),
+    /Phase exceeds turn duration/,
+  );
+});
