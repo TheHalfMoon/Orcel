@@ -38,6 +38,11 @@ describe("registerChannelVirtualHandlers", () => {
         method: "OPTIONS",
         route: "/orcel/v1/session",
       },
+      {
+        handler: "#nitro/virtual/orcel-channel/WEBSOCKET-REJECT /orcel/v1/session",
+        method: "GET",
+        route: "/orcel/v1/session",
+      },
     ]);
     expect(nitro.options.virtual["#nitro/virtual/orcel-channel/POST /orcel/v1/session"]).toContain(
       "handleCors",
@@ -92,6 +97,35 @@ describe("registerChannelVirtualHandlers", () => {
     ).toHaveLength(1);
   });
 
+  it("combines GET and websocket handlers that share a path", () => {
+    const nitro = {
+      options: {
+        handlers: [] as any[],
+        virtual: {} as Record<string, string>,
+      },
+    };
+
+    registerChannelVirtualHandlers(nitro, {
+      artifactsConfig: createDevelopmentNitroArtifactsConfig({ appRoot: "/app" }),
+      routes: [
+        { kind: "channel", method: "GET", path: "/shared" },
+        { kind: "channel", method: "WEBSOCKET", path: "/shared" },
+      ],
+    });
+
+    expect(nitro.options.handlers).toEqual([
+      {
+        handler: "#nitro/virtual/orcel-channel/GET+WEBSOCKET /shared",
+        method: "GET",
+        route: "/shared",
+      },
+    ]);
+    const source = nitro.options.virtual["#nitro/virtual/orcel-channel/GET+WEBSOCKET /shared"];
+    expect(source).toContain("defineWebSocketHandler");
+    expect(source).toContain("dispatchChannelRequest");
+    expect(source).toContain("dispatchChannelWebSocketRequest");
+  });
+
   it("registers websocket routes with the websocket dispatcher", () => {
     const nitro = {
       options: {
@@ -110,6 +144,7 @@ describe("registerChannelVirtualHandlers", () => {
     expect(nitro.options.handlers).toEqual([
       {
         handler: "#nitro/virtual/orcel-channel/WEBSOCKET /voice",
+        method: "GET",
         route: "/voice",
       },
     ]);

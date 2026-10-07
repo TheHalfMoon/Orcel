@@ -33,10 +33,12 @@ const WEBSOCKET_DEV_SERVER_DESCRIPTOR: ScenarioAppDescriptor = {
   files: {
     ...DEV_SERVER_AGENT_DESCRIPTOR.files,
     "agent/channels/socket.ts": [
-      'import { defineChannel, WS } from "@orcel/orcel/channels";',
+      'import { defineChannel, GET, WS } from "@orcel/orcel/channels";',
       "",
       "export default defineChannel({",
-      '  routes: [WS("/socket", () => ({',
+      "  routes: [",
+      '    GET("/socket", () => new Response("http")),',
+      '    WS("/socket", () => ({',
       "    message(peer, message) {",
       '      const transportHeader = peer.request.headers.has("x-orcel-dev-workflow-delivery") ? "exposed" : "hidden";',
       '      peer.send(`${transportHeader}:${peer.remoteAddress ?? "missing"}:${message.text()}`);',
@@ -47,6 +49,49 @@ const WEBSOCKET_DEV_SERVER_DESCRIPTOR: ScenarioAppDescriptor = {
     ].join("\n"),
   },
 };
+const SHUTDOWN_DRAIN_DESCRIPTOR: ScenarioAppDescriptor = {
+  ...DEV_SERVER_AGENT_DESCRIPTOR,
+  files: {
+    ...DEV_SERVER_AGENT_DESCRIPTOR.files,
+    "agent/channels/shutdown-drain.ts": [
+      'import { existsSync, watch, writeFileSync } from "node:fs";',
+      'import { join } from "node:path";',
+      'import { defineChannel, GET } from "@orcel/orcel/channels";',
+      "",
+      "export default defineChannel({",
+      "  routes: [",
+      '    GET("/shutdown-drain", (_request, ctx) => {',
+      '      const startedPath = join(process.cwd(), ".shutdown-background-started");',
+      '      const releasePath = join(process.cwd(), ".shutdown-background-release");',
+      '      const donePath = join(process.cwd(), ".shutdown-background-done");',
+      "      ctx.waitUntil((async () => {",
+      '        writeFileSync(startedPath, "started");',
+      "        await new Promise<void>((resolve) => {",
+      "          let releaseWatcher: ReturnType<typeof watch> | undefined;",
+      "          const finish = () => {",
+      "            releaseWatcher?.close();",
+      "            resolve();",
+      "          };",
+      "          if (existsSync(releasePath)) {",
+      "            finish();",
+      "            return;",
+      "          }",
+      "          releaseWatcher = watch(process.cwd(), (_event, filename) => {",
+      '            if (filename === ".shutdown-background-release") finish();',
+      "          });",
+      "          if (existsSync(releasePath)) finish();",
+      "        });",
+      '        writeFileSync(donePath, "done");',
+      "      })());",
+      '      return new Response("accepted");',
+      "    }),",
+      "  ],",
+      "});",
+      "",
+    ].join("\n"),
+  },
+};
+
 const STREAM_PROMOTION_DESCRIPTOR: ScenarioAppDescriptor = {
   ...TRANSACTIONAL_REBUILD_DESCRIPTOR,
   files: {
@@ -138,6 +183,33 @@ async function waitForWebSocketClose(socket: WebSocket): Promise<void> {
   await waitForWebSocketEvent(socket, "close", () => undefined);
 }
 
+async function waitForWebSocketRejection(socket: WebSocket): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const deadline = setTimeout(() => {
+      cleanup();
+      reject(new Error("Timed out waiting for WebSocket rejection."));
+    }, 10_000);
+    const cleanup = () => {
+      clearTimeout(deadline);
+      socket.removeEventListener("close", onRejected);
+      socket.removeEventListener("error", onRejected);
+      socket.removeEventListener("open", onOpen);
+    };
+    const onRejected = () => {
+      cleanup();
+      resolve();
+    };
+    const onOpen = () => {
+      cleanup();
+      socket.close();
+      reject(new Error("WebSocket upgrade unexpectedly opened."));
+    };
+    socket.addEventListener("close", onRejected, { once: true });
+    socket.addEventListener("error", onRejected, { once: true });
+    socket.addEventListener("open", onOpen, { once: true });
+  });
+}
+
 async function waitForWebSocketEvent<T>(
   socket: WebSocket,
   eventName: "close" | "message" | "open",
@@ -167,6 +239,39 @@ async function waitForWebSocketEvent<T>(
 }
 
 describe("orcel dev server live connections", () => {
+  it(
+    "drains transitive waitUntil work before full shutdown completes",
+    async () => {
+      const app = await scenarioApp(SHUTDOWN_DRAIN_DESCRIPTOR);
+      const server = await startOrcelDev(app.appRoot);
+      const startedPath = join(app.appRoot, ".shutdown-background-started");
+      const releasePath = join(app.appRoot, ".shutdown-background-release");
+      const donePath = join(app.appRoot, ".shutdown-background-done");
+      let stopPromise: Promise<void> | undefined;
+
+      try {
+        const response = await fetch(new URL("/shutdown-drain", server.url));
+        await expect(response.text()).resolves.toBe("accepted");
+        await waitForPath(startedPath);
+
+        stopPromise = server.stop();
+        const closeState = await Promise.race([
+          stopPromise.then(() => "closed" as const),
+          new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 150)),
+        ]);
+        expect(closeState).toBe("pending");
+
+        await writeFile(releasePath, "release");
+        await withinDeadline(stopPromise, "Timed out waiting for waitUntil-aware shutdown.");
+        await waitForPath(donePath);
+      } finally {
+        await writeFile(releasePath, "release").catch(() => undefined);
+        await server.stop();
+      }
+    },
+    DEV_SERVER_SCENARIO_TIMEOUT_MS,
+  );
+
   it(
     "keeps streams and parent control routes alive while a structural candidate is prepared",
     async () => {
@@ -277,13 +382,22 @@ describe("orcel dev server live connections", () => {
       const server = await startOrcelDev(app.appRoot);
       const socketUrl = new URL("/socket", server.url);
       socketUrl.protocol = "ws:";
-      const socket = new WebSocket(socketUrl);
+      let socket: WebSocket | undefined;
 
       try {
+        await expect(fetch(new URL("/socket", server.url)).then(async (response) => await response.text())).resolves.toBe(
+          "http",
+        );
+
+        socket = new WebSocket(socketUrl);
         await waitForWebSocketOpen(socket);
         const firstMessage = waitForWebSocketMessage(socket);
         socket.send("before");
         await expect(firstMessage).resolves.toBe("hidden:127.0.0.1:before");
+
+        const httpOnlySocketUrl = new URL("/dev-generation", server.url);
+        httpOnlySocketUrl.protocol = "ws:";
+        await waitForWebSocketRejection(new WebSocket(httpOnlySocketUrl));
 
         await writeFile(join(app.appRoot, ".env.local"), "ORCEL_WEBSOCKET_RELOAD=1\n");
         await waitForCondition(async () => {
@@ -295,7 +409,7 @@ describe("orcel dev server live connections", () => {
         socket.send("after");
         await expect(nextMessage).resolves.toBe("hidden:127.0.0.1:after");
       } finally {
-        if (socket.readyState === WebSocket.OPEN) {
+        if (socket !== undefined && socket.readyState === WebSocket.OPEN) {
           const closed = waitForWebSocketClose(socket);
           socket.close();
           await closed;

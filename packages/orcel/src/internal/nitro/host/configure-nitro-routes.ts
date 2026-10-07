@@ -253,14 +253,15 @@ function registerApplicationRoutes(
   artifactsConfig: NitroArtifactsConfig,
   registry: ApplicationRouteRegistry,
 ): void {
+  registerChannelVirtualHandlers(nitro, {
+    artifactsConfig,
+    routes: registry.channelRoutes,
+  });
+
   for (const route of registry.routes) {
     switch (route.kind) {
       case "channel":
       case "channel-preflight": {
-        registerChannelVirtualHandlers(nitro, {
-          artifactsConfig,
-          routes: [route],
-        });
         break;
       }
       case "development-artifacts": {

@@ -3,7 +3,11 @@ import type { CliApplicationContext } from "#cli/application-command.js";
 import { agentCommand } from "#cli/agent-command.js";
 import { inspectVerifiedRemoteAgent } from "#setup/verified-remote-agent.js";
 import { orcelCliBanner } from "#cli/banner.js";
-import { FORCED_EXIT_BACKSTOP_MS, installShutdownSignal } from "#cli/shutdown.js";
+import {
+  FORCED_EXIT_BACKSTOP_MS,
+  installShutdownSignal,
+  LOCAL_DEV_FORCED_EXIT_BACKSTOP_MS,
+} from "#cli/shutdown.js";
 import { startCliLiveRow } from "#cli/ui/live-row.js";
 import { createCliTheme, renderCliTaggedLine } from "#cli/ui/output.js";
 import type { OrcelCliTelemetry } from "#cli/telemetry/index.js";
@@ -250,7 +254,7 @@ export function registerDevelopmentCommand(input: {
         return closePromise;
       };
       const lifecycle = installShutdownSignal({
-        exitAfterMs: FORCED_EXIT_BACKSTOP_MS,
+        exitAfterMs: LOCAL_DEV_FORCED_EXIT_BACKSTOP_MS,
         onStop: () => {
           void closeServer();
         },

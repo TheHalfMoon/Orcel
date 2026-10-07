@@ -6,6 +6,13 @@
  */
 export const FORCED_EXIT_BACKSTOP_MS = 900;
 
+/**
+ * Local `orcel dev` owns a child whose bounded shutdown includes the outer
+ * request drain plus the worker fallback. Keep this above
+ * `DEV_SERVER_CLOSE_BUDGET_MS` without extending unrelated command backstops.
+ */
+export const LOCAL_DEV_FORCED_EXIT_BACKSTOP_MS = 40_000;
+
 export interface CommandLifecycle {
   readonly signal: AbortSignal;
   readonly stopped: Promise<NodeJS.Signals | undefined>;
