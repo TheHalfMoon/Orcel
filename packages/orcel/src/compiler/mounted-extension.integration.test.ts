@@ -30,13 +30,29 @@ function compatibilityManifest(requires: Readonly<Record<string, number>>): stri
  * `orcel eval` / `orcel dev` path.
  */
 async function compileRuntimeGraph(appRoot: string) {
+  const startedAt = performance.now();
   await compileAgent({ startPath: appRoot });
+  const compiledAt = performance.now();
   const compiledArtifactsSource = createDiskRuntimeCompiledArtifactsSource(appRoot);
   const [manifest, moduleMap] = await Promise.all([
     loadCompiledManifest({ compiledArtifactsSource }),
     loadCompiledModuleMapFromAuthoredSource({ compiledArtifactsSource }),
   ]);
-  return { graph: await resolveRuntimeAgentGraph({ manifest, moduleMap }), manifest, moduleMap };
+  const hydratedAt = performance.now();
+  const graph = await resolveRuntimeAgentGraph({ manifest, moduleMap });
+  if (process.env.ORCEL_MOUNT_PHASE_PROFILE === "1") {
+    const resolvedAt = performance.now();
+    console.info(
+      "ORCEL_MOUNT_PHASE_PROFILE",
+      JSON.stringify({
+        compileMs: Math.round(compiledAt - startedAt),
+        hydrateMs: Math.round(hydratedAt - compiledAt),
+        resolveMs: Math.round(resolvedAt - hydratedAt),
+        totalMs: Math.round(resolvedAt - startedAt),
+      }),
+    );
+  }
+  return { graph, manifest, moduleMap };
 }
 
 /**
