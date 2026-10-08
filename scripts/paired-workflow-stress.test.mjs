@@ -18,7 +18,8 @@ function identity(sha, runId = "202") {
     sha,
     orcelVersion: "0.25.0",
     workflowCoreVersion: "5.0.0-beta.57",
-    workflowWorldVersion: "5.0.0-beta.57",
+    workflowWorldVersion: "5.0.0-beta.39",
+    workflowHostWorldVersion: "5.0.0-beta.52",
     deploymentId: "deployment-" + sha.slice(0, 8),
     runId,
     runAttempt: "1",
@@ -175,6 +176,10 @@ test("CLI captures authenticated report inputs and reproduces exact summary from
           runId: "202",
           attempt: "1",
           model: "mock",
+          orcelVersion: "0.25.0",
+          workflowCoreVersion: "5.0.0-beta.57",
+          workflowWorldVersion: "5.0.0-beta.39",
+          workflowHostWorldVersion: "5.0.0-beta.52",
           deploymentId: "deployment-" + baseSha.slice(0, 8),
         },
       }),
@@ -191,11 +196,15 @@ test("CLI captures authenticated report inputs and reproduces exact summary from
       "--workflow-core-version",
       "5.0.0-beta.57",
       "--workflow-world-version",
-      "5.0.0-beta.57",
+      "5.0.0-beta.39",
+      "--workflow-host-world-version",
+      "5.0.0-beta.52",
       "--deployment-id",
       identity(baseSha).deploymentId,
       "--run-id",
       "202",
+      "--run-attempt",
+      "1",
       "--report",
       report,
       "--output",
@@ -228,6 +237,19 @@ test("CLI captures authenticated report inputs and reproduces exact summary from
     const broken = [...args];
     broken[broken.indexOf("--sha") + 1] = headSha;
     await assert.rejects(main(broken), /provenance/);
+    const forgedAttempt = [...args];
+    forgedAttempt[forgedAttempt.indexOf("--run-attempt") + 1] = "2";
+    await assert.rejects(main(forgedAttempt), /provenance/);
+    const forgedVersion = [...args];
+    forgedVersion[forgedVersion.indexOf("--orcel-version") + 1] = "99.99.99";
+    await assert.rejects(main(forgedVersion), /version disagrees/);
+    const forgedWorld = [...args];
+    forgedWorld[forgedWorld.indexOf("--workflow-host-world-version") + 1] = "99.99.99";
+    await assert.rejects(main(forgedWorld), /version disagrees/);
+    const missingVersion = JSON.parse(await readFile(report, "utf8"));
+    delete missingVersion.metadata.workflowCoreVersion;
+    await writeFile(report, JSON.stringify(missingVersion));
+    await assert.rejects(main(args), /version disagrees/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -298,4 +320,96 @@ test("refuses truncated, reordered, or duplicate stress fixture samples", () => 
     () => captureWorkflowStressRun(missingBatch, identity(baseSha)),
     /Missing sequential or concurrent/,
   );
+});
+
+test("hosted reporter sources package versions from checkout and capture enforces them", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const { fileURLToPath } = await import("node:url");
+  const root = await mkdtemp(join(tmpdir(), "orcel-paired-versions-"));
+  try {
+    const artifactRoot = join(root, "eval-artifacts");
+    const evalRoot = join(artifactRoot, "test-run", "evals");
+    await mkdir(evalRoot, { recursive: true });
+    const fixture = metrics();
+    for (const scenario of ["sequential", "concurrent"]) {
+      await writeFile(
+        join(evalRoot, scenario + ".json"),
+        JSON.stringify({
+          result: {
+            logs: ["ORCEL_WORKFLOW_STRESS_METRIC=" + JSON.stringify(fixture[scenario].metric)],
+          },
+        }),
+      );
+    }
+    const sourcePackage = JSON.parse(
+      await readFile(new URL("../packages/orcel/package.json", import.meta.url), "utf8"),
+    );
+    const report = join(root, "source-report.json");
+    const deploymentId = "https://immutable-benchmark-example.vercel.app";
+    execFileSync(
+      process.execPath,
+      [
+        fileURLToPath(new URL("./workflow-stress-report.mjs", import.meta.url)),
+        "--artifacts",
+        artifactRoot,
+        "--json",
+        report,
+      ],
+      {
+        env: {
+          ...process.env,
+          GITHUB_SHA: baseSha,
+          GITHUB_RUN_ID: "202",
+          GITHUB_RUN_ATTEMPT: "1",
+          ORCEL_E2E_MODEL: "mock",
+          ORCEL_STRESS_DEPLOYMENT_URL: deploymentId,
+        },
+        stdio: "pipe",
+      },
+    );
+    const reportJson = JSON.parse(await readFile(report, "utf8"));
+    assert.equal(reportJson.metadata.orcelVersion, sourcePackage.version);
+    assert.equal(
+      reportJson.metadata.workflowCoreVersion,
+      sourcePackage.devDependencies["@workflow/core"],
+    );
+    assert.equal(
+      reportJson.metadata.workflowWorldVersion,
+      sourcePackage.devDependencies["@workflow/world"],
+    );
+    assert.equal(
+      reportJson.metadata.workflowHostWorldVersion,
+      sourcePackage.devDependencies["@workflow/world-vercel"],
+    );
+    const output = join(root, "captured.json");
+    const args = [
+      "capture",
+      "--artifacts",
+      artifactRoot,
+      "--sha",
+      baseSha,
+      "--orcel-version",
+      sourcePackage.version,
+      "--workflow-core-version",
+      sourcePackage.devDependencies["@workflow/core"],
+      "--workflow-world-version",
+      sourcePackage.devDependencies["@workflow/world"],
+      "--workflow-host-world-version",
+      sourcePackage.devDependencies["@workflow/world-vercel"],
+      "--deployment-id",
+      deploymentId,
+      "--run-id",
+      "202",
+      "--run-attempt",
+      "1",
+      "--report",
+      report,
+      "--output",
+      output,
+    ];
+    await main(args);
+    assert.equal(JSON.parse(await readFile(output, "utf8")).cases.length, 200);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

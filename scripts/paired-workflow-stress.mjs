@@ -26,8 +26,10 @@ function parseArgs(argv) {
           "orcel-version",
           "workflow-core-version",
           "workflow-world-version",
+          "workflow-host-world-version",
           "deployment-id",
           "run-id",
+          "run-attempt",
           "report",
           "output",
         ]
@@ -55,7 +57,8 @@ export async function main(argv) {
     const originalReport = await readJson(options.report);
     if (
       originalReport?.metadata?.sha !== options.sha ||
-      String(originalReport?.metadata?.runId) !== options["run-id"]
+      String(originalReport?.metadata?.runId) !== options["run-id"] ||
+      String(originalReport?.metadata?.attempt) !== options["run-attempt"]
     ) {
       throw new Error("Hosted report provenance does not match requested SHA and run ID");
     }
@@ -69,11 +72,9 @@ export async function main(argv) {
       ["orcelVersion", "orcel-version"],
       ["workflowCoreVersion", "workflow-core-version"],
       ["workflowWorldVersion", "workflow-world-version"],
+      ["workflowHostWorldVersion", "workflow-host-world-version"],
     ]) {
-      if (
-        originalReport.metadata[source] &&
-        originalReport.metadata[source] !== options[requested]
-      ) {
+      if (originalReport.metadata[source] !== options[requested]) {
         throw new Error("Hosted version disagrees with report provenance: " + source);
       }
     }
@@ -83,9 +84,10 @@ export async function main(argv) {
       orcelVersion: options["orcel-version"],
       workflowCoreVersion: options["workflow-core-version"],
       workflowWorldVersion: options["workflow-world-version"],
+      workflowHostWorldVersion: options["workflow-host-world-version"],
       deploymentId: options["deployment-id"],
       runId: options["run-id"],
-      runAttempt: String(originalReport.metadata.attempt),
+      runAttempt: options["run-attempt"],
       model: "mock",
     };
     const capture = captureWorkflowStressRun(metrics, identity);

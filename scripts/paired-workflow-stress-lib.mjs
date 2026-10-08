@@ -35,6 +35,7 @@ export function validateIdentity(identity) {
     "orcelVersion",
     "workflowCoreVersion",
     "workflowWorldVersion",
+    "workflowHostWorldVersion",
     "deploymentId",
     "runId",
   ]) {
@@ -283,7 +284,8 @@ export function createPairedWorkflowReport(
   if (
     base.identity.model !== head.identity.model ||
     base.identity.workflowCoreVersion !== head.identity.workflowCoreVersion ||
-    base.identity.workflowWorldVersion !== head.identity.workflowWorldVersion
+    base.identity.workflowWorldVersion !== head.identity.workflowWorldVersion ||
+    base.identity.workflowHostWorldVersion !== head.identity.workflowHostWorldVersion
   ) {
     throw new Error("Incompatible benchmark model or Workflow dependencies");
   }

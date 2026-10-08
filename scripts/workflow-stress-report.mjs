@@ -306,7 +306,14 @@ async function writeOutput(path, value) {
 async function main() {
   const options = parseArguments(process.argv.slice(2));
   const metrics = await collectWorkflowStressMetrics(options.artifacts);
+  const orcelPackage = JSON.parse(
+    await readFile(new URL("../packages/orcel/package.json", import.meta.url), "utf8"),
+  );
   const report = createWorkflowStressReport(metrics, {
+    orcelVersion: orcelPackage.version,
+    workflowCoreVersion: orcelPackage.devDependencies["@workflow/core"],
+    workflowWorldVersion: orcelPackage.devDependencies["@workflow/world"],
+    workflowHostWorldVersion: orcelPackage.devDependencies["@workflow/world-vercel"],
     attempt: process.env.GITHUB_RUN_ATTEMPT,
     model: process.env.ORCEL_E2E_MODEL,
     deploymentId: process.env.ORCEL_STRESS_DEPLOYMENT_URL,

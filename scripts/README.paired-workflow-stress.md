@@ -15,9 +15,10 @@ Dispatch **Paired Workflow Performance Evidence** with these required inputs:
 - base_run_id, head_run_id: existing GitHub Actions runs that each uploaded workflow-stress-performance
 - base_sha, head_sha: full 40-character Git commit IDs
 - base_deployment_id, head_deployment_id: immutable URLs recorded inside each stress report
-- orcel_version, workflow_core_version, workflow_world_version: explicit versions for both arms
+- base_orcel_version, head_orcel_version: independently pinned Orcel package versions from the respective deployed commits
+- workflow_core_version, workflow_world_version, workflow_host_world_version: the declared @workflow/core, @workflow/world, and @workflow/world-vercel versions, respectively. The Workflow versions must match across arms.
 
-GitHub verifies each run against its requested SHA. Capture rejects a mismatched run ID, SHA, deployment URL, or non-mock-model run. Workflow versions are declared inputs checked for equality between arms; a missing authoritative version in an old artifact is **not** proof of the version. Record independently inspected version evidence before drawing causal conclusions.
+GitHub verifies that each source is a successful manually dispatched Vercel E2E run; its run ID, SHA and run attempt must agree with the source report. Each new hosted stress report records the package versions directly from its checked-out packages/orcel/package.json. Capture rejects a mismatched run ID, SHA, deployment URL, non-mock-model run, or any version missing from or inconsistent with the source report. A legacy report without the source-backed version fields fails closed; it cannot qualify a claimed version. Workflow versions must match across arms before statistical comparison. Orcel versions may differ when comparing two commits. The workflow records the run attempt from the original report.
 
 The workflow downloads existing hosted eval evidence and **does not deploy anything**. It retains the self-contained raw base/head captures, JSON and Markdown summary for 30 days. Every summary is recomputed from the original captures; the summary is not an independent source of truth.
 
@@ -29,9 +30,11 @@ From a repository with Node.js 24 or later:
 
     node scripts/paired-workflow-stress.mjs capture \
       --artifacts /path/to/base/e2e/fixtures/agent-workflow-stress/.orcel/evals \
-      --sha BASE_SHA --run-id BASE_RUN_ID \
+      --sha BASE_SHA --run-id BASE_RUN_ID --run-attempt BASE_RUN_ATTEMPT \
       --orcel-version ORCEL_VERSION --workflow-core-version WORKFLOW_VERSION \
-      --workflow-world-version WORLD_VERSION --deployment-id DEPLOYMENT_URL \
+      --workflow-world-version WORLD_VERSION \
+      --workflow-host-world-version WORKFLOW_VERCEL_VERSION \
+      --deployment-id DEPLOYMENT_URL \
       --report /path/to/base/.artifacts/workflow-stress-report.json \
       --output base-capture.json
 
@@ -46,7 +49,7 @@ Do not invent placeholder values.
 ## Artifact semantics
 
 - Each capture includes immutable run identity, raw stress metrics, stable per-case IDs, sequential turn depth (the observed preceding turns in that fixture's session), concurrent batch makespan, and explicit phase and topology fields.
-- Statistics are informational: mean, p50, p95, concurrent makespan, slope against **observed fixture turn depth**, paired mean delta, and deterministic paired bootstrap 95% confidence interval. The bootstrap seed derives from both SHAs.
+- Statistics are informational: mean, p50, p95, concurrent makespan, a slope against **the observed sequential turn number** (confounded with elapsed time and queue/warming effects; not a causal history-depth coefficient), paired mean delta, and deterministic paired bootstrap 95% confidence interval. The bootstrap seed derives from both SHAs.
 - turnSettlementMs is currently the **client-observed send-to-ack** duration, _not_ whole Workflow tail completion. Server acceptance, session/hook readiness, and model-step-start phase timings are null until supported instrumentation provides genuine timestamps.
 - Exact durable step, hook/resume, stream-event and serialized byte counters are null unless the original sample explicitly carries an observed count. **Null does not mean zero**. Coverage reports distinguish missing metrics.
 - Validation rejects missing modalities, duplicate or unmatched case IDs, incomplete capture structure, non-finite measurements, values altered relative to raw metrics, forged provenance, model mismatches and Workflow version mismatch.
