@@ -1,8 +1,8 @@
 import { readFile, mkdir, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname, parse, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-export const SERVER_PHASE_LOG_PREFIX = "ORCEL_BENCH_SERVER_PHASE=";
+export const SERVER_PHASE_LOG_PREFIX = "WORKFLOW_STRESS_SERVER_PHASE=";
 const EVENTS = new Set([
   "turn.started",
   "model.call.started",
@@ -61,6 +61,19 @@ export function validateServerPhaseObservation(row) {
   )
     throw new Error("Invalid model attempt identity");
   return row;
+}
+
+export function decodeServerPhaseLog(bytes) {
+  const buffer = Buffer.from(bytes);
+  const utf16le = buffer[0] === 0xff && buffer[1] === 0xfe;
+  if (buffer[0] === 0xfe && buffer[1] === 0xff) {
+    throw new Error("Unsupported UTF-16BE server log encoding");
+  }
+  const text = utf16le ? buffer.subarray(2).toString("utf16le") : buffer.toString("utf8");
+  if (text.includes("\u0000")) {
+    throw new Error("Malformed server log encoding");
+  }
+  return text;
 }
 
 export function parseServerPhaseLog(text) {
@@ -179,9 +192,10 @@ export function createServerPhaseReport(rows) {
 export async function main(argv) {
   if (argv.length !== 4 || argv[0] !== "--logs" || argv[2] !== "--output" || !argv[1] || !argv[3])
     throw new Error("Expected --logs PATH --output PATH");
-  const rows = parseServerPhaseLog(await readFile(argv[1], "utf8"));
+  const rows = parseServerPhaseLog(decodeServerPhaseLog(await readFile(argv[1])));
   const report = createServerPhaseReport(rows);
-  await mkdir(dirname(resolve(argv[3])), { recursive: true });
+  const parent = dirname(resolve(argv[3]));
+  if (parent !== parse(parent).root) await mkdir(parent, { recursive: true });
   await writeFile(argv[3], JSON.stringify(report, null, 2) + "\n");
   return report;
 }

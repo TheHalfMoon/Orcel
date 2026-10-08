@@ -166,3 +166,27 @@ test("CLI writes only JSON evidence from a real observer output, without hidden 
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("PowerShell UTF-16LE logs retain authentic phase evidence without crossing encodings", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "orcel-utf16-server-phase-"));
+  try {
+    const rows = [];
+    const observer = makeObserver("windows-process-domain", [100, 115, 130], rows);
+    observer.observe(turn("turn.started"));
+    observer.observe(turn("model.call.started"));
+    observer.observe(turn("turn.completed"));
+    const lines = rows.map((row) => SERVER_PHASE_LOG_PREFIX + JSON.stringify(row)).join("\r\n");
+    const bytes = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(lines, "utf16le")]);
+    const log = join(dir, "powershell.log");
+    const output = join(dir, "verified.json");
+    await writeFile(log, bytes);
+    await main(["--logs", log, "--output", output]);
+    const evidence = JSON.parse(await readFile(output, "utf8"));
+    assert.equal(evidence.cases.length, 1);
+    assert.equal(evidence.sourceEventCount, 3);
+    assert.equal(evidence.cases[0].turnStartToFirstModelHandlerMs, 15);
+    assert.equal(evidence.cases[0].turnStartToTerminalHandlerMs, 30);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

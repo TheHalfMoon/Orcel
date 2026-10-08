@@ -11,10 +11,10 @@ let observer: ReturnType<typeof createServerPhaseObserver> | undefined;
 
 export default defineInstrumentation({
   setup() {
-    if (process.env.ORCEL_BENCH_SERVER_PHASES !== "1") return;
+    if (process.env.WORKFLOW_STRESS_SERVER_PHASES !== "1") return;
     observer = createServerPhaseObserver({
       emit(row) {
-        process.stdout.write(`ORCEL_BENCH_SERVER_PHASE=${JSON.stringify(row)}\n`);
+        process.stdout.write(`WORKFLOW_STRESS_SERVER_PHASE=${JSON.stringify(row)}\n`);
       },
     });
   },

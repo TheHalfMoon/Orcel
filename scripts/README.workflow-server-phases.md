@@ -12,13 +12,13 @@ are patched. No provider, paid exporter, or external service is required.
 
 For a **local** stress fixture execution, explicitly set:
 
-    ORCEL_BENCH_SERVER_PHASES=1
+    WORKFLOW_STRESS_SERVER_PHASES=1
 
 Without this variable, the provider emits no rows and retains no timing state.
 With it enabled, the fixture's authored provider observes supported lifecycle
 callbacks using the **server process's own** `performance.now()` clock and a
 random clock-domain ID generated for that module instance. Each log line is
-prefixed `ORCEL_BENCH_SERVER_PHASE=` and contains _only_ the event name, opaque
+prefixed `WORKFLOW_STRESS_SERVER_PHASE=` and contains _only_ the event name, opaque
 session/turn/attempt correlation IDs, a local sequence, a local monotonic
 timestamp, and clock-domain provenance. No prompts, model responses, event
 input, PHI, tokens, traces or secrets are recorded by this probe. Treat opaque
