@@ -10,7 +10,11 @@ export default defineEval({
 
   async test(t) {
     let session: OrcelEvalSession | undefined;
-    const samples: Array<{ durationMs: number; turnNumber: number }> = [];
+    const samples: Array<{
+      durationMs: number;
+      turnNumber: number;
+      topology: { streamEventCount: number };
+    }> = [];
 
     for (let turnNumber = 1; turnNumber <= TURN_COUNT; turnNumber += 1) {
       const marker = `sequential-turn-${String(turnNumber).padStart(3, "0")}`;
@@ -19,15 +23,18 @@ export default defineEval({
       const durationMs = performance.now() - startedAt;
       const elapsedSeconds = durationMs / 1_000;
 
-      samples.push({ durationMs, turnNumber });
+      const turn = result.expectOk();
+      samples.push({
+        durationMs,
+        turnNumber,
+        topology: { streamEventCount: turn.events.length },
+      });
 
       t.log(
         `turn ${String(turnNumber).padStart(3, "0")}/${TURN_COUNT} completed in ${elapsedSeconds.toFixed(3)}s`,
       );
 
       session ??= result.session;
-
-      const turn = result.expectOk();
 
       await t.require(turn.sessionId, equals(session.sessionId));
       await t.require(turn.message, equals(`stress-ack:${turnNumber}:${marker}`));

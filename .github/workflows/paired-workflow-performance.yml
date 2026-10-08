@@ -1,0 +1,146 @@
+name: Paired Workflow Performance Evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_run_id:
+        description: "Existing successful hosted Workflow stress GitHub Actions run ID"
+        type: string
+        required: true
+      head_run_id:
+        description: "Second hosted Workflow stress GitHub Actions run ID"
+        type: string
+        required: true
+      base_sha:
+        description: "Immutable 40-character base commit SHA"
+        type: string
+        required: true
+      head_sha:
+        description: "Immutable 40-character head commit SHA"
+        type: string
+        required: true
+      base_deployment_id:
+        description: "Exact base Vercel deployment URL recorded in stress artifact"
+        type: string
+        required: true
+      head_deployment_id:
+        description: "Exact head Vercel deployment URL recorded in stress artifact"
+        type: string
+        required: true
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  paired-workflow-evidence:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the analysis tool
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Validate raw-analysis implementation
+        run: node --test scripts/workflow-stress-report.test.mjs scripts/paired-workflow-stress.test.mjs
+
+      - name: Fetch and verify immutable hosted evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_RUN_ID: ${{ inputs.base_run_id }}
+          HEAD_RUN_ID: ${{ inputs.head_run_id }}
+          BASE_SHA: ${{ inputs.base_sha }}
+          HEAD_SHA: ${{ inputs.head_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "Invalid base SHA" >&2; exit 1; }
+          [[ "$HEAD_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "Invalid head SHA" >&2; exit 1; }
+          for arm in base head; do
+            if [ "$arm" = base ]; then
+              run_id="$BASE_RUN_ID"
+              expected_sha="$BASE_SHA"
+            else
+              run_id="$HEAD_RUN_ID"
+              expected_sha="$HEAD_SHA"
+            fi
+            [[ "$run_id" =~ ^[0-9]+$ ]] || { echo "Invalid $arm run id" >&2; exit 1; }
+            run_metadata="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")"
+            actual_sha="$(jq -r '.head_sha' <<<"$run_metadata")"
+            run_attempt="$(jq -r '.run_attempt' <<<"$run_metadata")"
+            run_status="$(jq -r '.conclusion' <<<"$run_metadata")"
+            run_event="$(jq -r '.event' <<<"$run_metadata")"
+            run_workflow="$(jq -r '.name' <<<"$run_metadata")"
+            [ "$actual_sha" = "$expected_sha" ] || {
+              echo "$arm run SHA does not match the immutable commit" >&2
+              exit 1
+            }
+            [ "$run_status" = success ] && [ "$run_event" = workflow_dispatch ] && \
+              [ "$run_workflow" = 'E2E Tests (Vercel)' ] || {
+              echo "$arm is not a successful manually dispatched hosted stress run" >&2
+              exit 1
+            }
+            [[ "$run_attempt" =~ ^[1-9][0-9]*$ ]] || {
+              echo "$arm GitHub run attempt is invalid" >&2
+              exit 1
+            }
+            if [ "$arm" = base ]; then
+              echo "BASE_RUN_ATTEMPT=$run_attempt" >> "$GITHUB_ENV"
+            else
+              echo "HEAD_RUN_ATTEMPT=$run_attempt" >> "$GITHUB_ENV"
+            fi
+            gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
+              --name workflow-stress-performance --dir "$RUNNER_TEMP/$arm"
+          done
+
+      - name: Recompute paired report from original eval evidence
+        env:
+          BASE_RUN_ID: ${{ inputs.base_run_id }}
+          HEAD_RUN_ID: ${{ inputs.head_run_id }}
+          BASE_SHA: ${{ inputs.base_sha }}
+          HEAD_SHA: ${{ inputs.head_sha }}
+          BASE_DEPLOYMENT: ${{ inputs.base_deployment_id }}
+          HEAD_DEPLOYMENT: ${{ inputs.head_deployment_id }}
+        run: |
+          set -euo pipefail
+          for arm in base head; do
+            if [ "$arm" = base ]; then
+              run_id="$BASE_RUN_ID"
+              sha="$BASE_SHA"
+              deployment="$BASE_DEPLOYMENT"
+              run_attempt="$BASE_RUN_ATTEMPT"
+            else
+              run_id="$HEAD_RUN_ID"
+              sha="$HEAD_SHA"
+              deployment="$HEAD_DEPLOYMENT"
+              run_attempt="$HEAD_RUN_ATTEMPT"
+            fi
+            node scripts/paired-workflow-stress.mjs capture \
+              --artifacts "$RUNNER_TEMP/$arm/e2e/fixtures/agent-workflow-stress/.orcel/evals" \
+              --sha "$sha" \
+              --deployment-id "$deployment" \
+              --run-id "$run_id" \
+              --run-attempt "$run_attempt" \
+              --report "$RUNNER_TEMP/$arm/.artifacts/workflow-stress-report.json" \
+              --output ".artifacts/paired-workflow-$arm.json"
+          done
+          node scripts/paired-workflow-stress.mjs compare \
+            --base .artifacts/paired-workflow-base.json \
+            --head .artifacts/paired-workflow-head.json \
+            --summary .artifacts/paired-workflow-summary.json \
+            --markdown .artifacts/paired-workflow-summary.md
+          cat .artifacts/paired-workflow-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Retain raw evidence and independently reproducible summary
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: paired-workflow-evidence
+          path: |
+            .artifacts/paired-workflow-*.json
+            .artifacts/paired-workflow-summary.md
+          if-no-files-found: error
+          retention-days: 30

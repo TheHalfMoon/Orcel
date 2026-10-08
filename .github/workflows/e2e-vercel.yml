@@ -230,6 +230,9 @@ jobs:
             return 1
           }
 
+          if [ "${{ matrix.name }}" = "agent-workflow-stress" ]; then
+            echo "ORCEL_STRESS_DEPLOYMENT_URL=$DEPLOYMENT_URL" >> "$GITHUB_ENV"
+          fi
           wait_for_target "$DEPLOYMENT_URL"
           npx orcel eval --strict --verbose --exclude-tag real-model \
             --url "$DEPLOYMENT_URL" \
