@@ -1,3 +1,9 @@
+---
+issue: https://github.com/TheHalfMoon/Orcel/issues/25
+status: qualified-local
+last_updated: "2026-10-08"
+---
+
 # Issue #25 — Windows local mock server-phase probe evidence (2026-10-08)
 
 Issue: https://github.com/TheHalfMoon/Orcel/issues/25
