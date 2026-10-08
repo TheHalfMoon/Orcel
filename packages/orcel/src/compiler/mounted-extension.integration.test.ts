@@ -234,6 +234,8 @@ describe("mounted extension via authored-source loader", () => {
     ).toHaveLength(2);
   });
 
+  // Full authored-source graph compilation may exceed 30s under Windows CI contention (see #31).
+  // Preserve assertions; bound only this case rather than raising the suite-wide timeout.
   it("isolates configured built-in extension mounts", async () => {
     const app = await createAppRoot("orcel-built-in-mounts-", {
       files: {
@@ -271,7 +273,7 @@ describe("mounted extension via authored-source loader", () => {
       return definition.model.events["session.started"]().reasoning;
     });
     expect(secondReasoning).toEqual(["high", "low"]);
-  });
+  }, 60_000);
 
   it("keeps state independent across mounts and context restoration", async () => {
     const app = await createAppRoot("orcel-mount-state-", {
@@ -367,7 +369,9 @@ describe("mounted extension via authored-source loader", () => {
       },
     });
     await expect(compileAgent({ startPath: app.appRoot })).rejects.toMatchObject({
-      cause: expect.objectContaining({ message: expect.stringMatching(/reserved "orcel:mount\."/) }),
+      cause: expect.objectContaining({
+        message: expect.stringMatching(/reserved "orcel:mount\."/),
+      }),
     });
   });
 
