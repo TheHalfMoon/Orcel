@@ -1,10 +1,33 @@
 ---
 issue: https://github.com/TheHalfMoon/orcel/issues/2055
-status: in-progress
-last_updated: "2026-08-13"
+status: implemented
+last_updated: "2026-10-08"
 ---
 
 # Nitro-first build and runtime integration
+
+## Current-pass closeout (2026-10-08)
+
+The Orcel-owned acceptance work for the current Nitro integration pass is now qualified and merged.
+[Issue #16](https://github.com/TheHalfMoon/Orcel/issues/16) was closed by
+[PR #20](https://github.com/TheHalfMoon/Orcel/pull/20) with exact-head commit
+`21075bbedbe217d30604976a4ca186c520d94a06` and normal merge commit
+`91954ec791c8ff3bc21658e1d8ec1acd9ea4f096`. The exact-head CI, import,
+local, Postgres and Vercel E2E workflows passed; after merging, CI
+[run 37700752618](https://github.com/TheHalfMoon/Orcel/actions/runs/37700752618)
+and Release [run 37700752451](https://github.com/TheHalfMoon/Orcel/actions/runs/37700752451)
+completed successfully. This is acceptance of the **current pass**, not a claim that
+upstream Nitro packaging or unrelated future performance work is finished.
+
+The admitted HTTP response and transitive `waitUntil` shutdown regressions were proven red before
+repair, and the exact-head scenario tests then passed. The route integration retains Nitro as host,
+uses Nitro/H3 public handler seams for GET/WS coexistence and rejecting unmatched upgrades, and
+reconciles the parent/worker grace periods. The existing test suites continue to cover schedules,
+signals, worker replacement and the Nitro presets. No independent Orcel host/router was added.
+
+The external upstream Nitro core/package and public Rolldown peer boundary are **not** closed by
+this pass; their future migration conditions are still documented below. Likewise,
+[turn performance](./turn-performance.md) remains a separate measurement/optimization program.
 
 ## Decision
 
@@ -93,18 +116,19 @@ The following changes do not require a new host:
 
 - Preserve authored warnings while filtering warnings that come only from orcel's compiled vendor
   artifacts. A warning involving both authored and vendor modules must remain visible.
-- Reject WebSocket upgrades unless a WebSocket handler matched, and cover an HTTP handler and a
-  WebSocket handler sharing one path. Fix this through Nitro configuration or upstream Nitro rather
-  than a parallel router. Nitro's current upgrade resolver falls back to empty CrossWS hooks when
-  the selected HTTP response has no WebSocket hooks, and its handler model cannot distinguish a GET
-  route from a WebSocket route at the same path. Nitro therefore needs protocol-typed route entries
-  or a public resolver that can return either WebSocket hooks or a rejected upgrade response.
+- Reject WebSocket upgrades unless a WebSocket handler matched, including when an HTTP handler and a
+  WebSocket handler share the same path. The pre-#16 Nitro upgrade resolver could accept unmatched
+  upgrades by falling back to empty CrossWS hooks. PR #20 fixes this through the supported Nitro/H3
+  handler boundary: GET and WebSocket handlers for one path are combined, HTTP-only routes explicitly
+  reject WebSocket upgrades, and route precedence remains governed by the typed Orcel registry.
+  No independent router or private Nitro fork was introduced.
 - Retain explicit development-worker shutdown and fallback termination, and test request and
   `waitUntil` draining at the orcel-owned outer server boundary.
-- Do not claim end-to-end shutdown draining from the worker handshake alone. The current CLI parent
-  gives its server child a shorter grace period than the worker fallback, and full outer-server
-  shutdown releases workers before admitted requests and transitive `waitUntil` work are proven
-  drained. Reconcile those budgets and add full-shutdown coverage before making a drain guarantee.
+- Do not claim end-to-end shutdown draining from the worker handshake alone. Before PR #20 the CLI
+  parent could terminate its server child before the worker drain fallback and would release workers
+  while admitted responses and transitive `waitUntil` work were still pending. PR #20 introduces a
+  bounded 35-second running-server IPC grace, retains short startup-failure fallback, and proves
+  admitted response and transitive work lifetime through regression scenarios.
 - Keep schedule lifecycle tests around admission, overlap, and shutdown while using Nitro's task
   runtime.
 - Remove nested package builds that can race the package's destructive `dist` clean.
