@@ -98,8 +98,8 @@ jobs:
       - name: Test workflow helpers
         run: node --test .github/scripts/*.test.mjs
 
-      - name: Test paired Workflow stress reporting
-        run: node --test scripts/workflow-stress-report.test.mjs scripts/paired-workflow-stress.test.mjs
+      - name: Test Workflow stress evidence and server-phase clock boundaries
+        run: node --test scripts/workflow-stress-report.test.mjs scripts/paired-workflow-stress.test.mjs scripts/workflow-server-phase-report.test.mjs
 
   test-integration:
     name: test-integration (${{ matrix.os }})
