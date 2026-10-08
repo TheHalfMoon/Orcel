@@ -261,6 +261,7 @@ test("preserves genuine per-case phase and durable topology observations without
   const report = createPairedWorkflowReport(base, head);
   assert.equal(base.cases[0].phases.requestAcceptanceMs, 1);
   assert.equal(base.cases[0].topology.stepCount, 5);
+  assert.equal(base.cases[0].topology.streamEventCount, 9);
   assert.equal(base.cases[1].phases.requestAcceptanceMs, null);
   assert.deepEqual(report.phaseCoverage.requestAcceptanceMs, { base: 1, head: 0 });
   assert.deepEqual(report.topologyCoverage.stepCount, { base: 1, head: 0 });

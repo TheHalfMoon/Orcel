@@ -59,17 +59,19 @@ export default defineEval({
         batches: [
           {
             batchDurationMs: firstBatchDurationMs,
-            samples: firstTurns.map(({ durationMs, sessionNumber }) => ({
+            samples: firstTurns.map(({ durationMs, sessionNumber, result }) => ({
               durationMs,
               sessionNumber,
+              topology: { streamEventCount: result.events.length },
             })),
             turnNumber: 1,
           },
           {
             batchDurationMs: secondBatchDurationMs,
-            samples: secondTurns.map(({ durationMs, sessionNumber }) => ({
+            samples: secondTurns.map(({ durationMs, sessionNumber, result }) => ({
               durationMs,
               sessionNumber,
+              topology: { streamEventCount: result.events.length },
             })),
             turnNumber: 2,
           },
