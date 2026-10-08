@@ -59,10 +59,42 @@ independently attested exact-head hosted trials. There is no paired base/head
 deployment or A/A statistical calibration claim. The raw evidence remains
 local and is not exposed publicly in source control.
 
+## Clean-runtime qualification on signed implementation head
+
+After preserving the previous `dev-runtime`, `dev-hosts`, and `.workflow-data`
+directories outside the repository, a new genuine local fixture run executed
+the signed implementation SHA
+`04021076986783cdb0694b097e6fb8ca9fffbaf7` with
+`WORKFLOW_STRESS_SERVER_PHASES=1`, the deterministic mock model, Node 24,
+and zero paid services. The local test runner reported:
+
+- **Both evals passed (2/2)**; **all 361 assertion gates passed (361/361)**.
+- `EVAL_EXIT=0`; no stale-runtime retirement warnings.
+- **600** source-backed server lifecycle events across **200** unique turn
+  cases and **one** actual process-local monotonic clock domain.
+- The analyzer measured **200/200** start-to-first-model-handler deltas
+  and **200/200** start-to-terminal-handler deltas, with zero missing in
+  these two observation categories.
+- Raw UTF-16LE server logfile SHA-256:
+  `8B4C5B163DB0BAB455B67C0DAA64669F2A611CEED2368B0792A00CCD9F4399BA`.
+- Source-derived JSON report SHA-256:
+  `E75770EE9A1C7D0375ECA5F46F53A0795BDB38FC4A325BEC846B38158520458D`.
+
+The raw logfile (`D:\\Orcel-Issue25-ExactHead-Fresh.log`) and derived JSON
+(`D:\\Orcel-Issue25-ExactHead-Fresh-report.json`) are retained on the
+authorized Windows machine, outside Git. They contain session/turn
+correlation identifiers and must not be committed or published. The exact
+durations remain **handler-observation deltas only**, not HTTP ingress,
+actual provider execution, durable Workflow completion, or a claim about
+faster performance. This clean successful run does not erase or recast the
+earlier failed scenario; both outcomes are preserved here.
+
 ## Remaining acceptance before closing Issue #25
 
-Re-run the full real fixture at the exact **final signed commit**, confirm both
-evals and all gates pass without transient runtime warnings, retain raw logs,
-correlate sessions across worker domains, and document any unsupported
-cross-worker event boundaries. Obtain exact-head CI, host review, normal merge,
-and post-merge qualification; do not conceal or waive any failed scenario.
+The final documentation-only evidence commit must still pass exact-head
+GitHub CI, import qualification and the other required review gates before
+normal merge. Post-merge `main` CI and Release must be verified explicitly.
+Multiple real server processes were **not** present in this local run; cross-
+domain and restart cases are fail-closed unit tests only. Hosted production
+clock-domain coverage and A/A calibrated inference are future optional
+external evaluations, not asserted scientific results of this work.

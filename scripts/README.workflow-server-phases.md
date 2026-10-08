@@ -66,15 +66,23 @@ delivery, restarts, clock resets and refusal of content-bearing records.
 Those tests are not evidence that production Workflow worker logs are
 correlated or that a real hosted benchmark ran.
 
-## Additional qualification still required
+## Local qualification and remaining scientific limits
 
-Before claiming complete Issue #25 qualification, collect **one genuine local
-mock-model stress run** with the new provider enabled and retain its raw logs,
-the resulting report and the actual running commit identity. Verify that the
-author-defined provider runs in the same hosted/worker contexts as the
-relevant Orcel event types. The current client eval samples do not attest
-their turn IDs into paired capture rows, so this separate report must **not**
-be silently joined to per-case client timings. That join requires explicit,
-verified correlation. Hosted acquisition remains a separate credential,
-zero-cost and privacy boundary. Do not derive cross-machine intervals or a
-speedup from these observations.
+The Windows local deterministic mock-model fixture was executed with the
+opt-in enabled at signed implementation SHA
+`04021076986783cdb0694b097e6fb8ca9fffbaf7`: both stress evals passed
+(2/2, 361/361 assertion gates). The raw log contains 600 actual handler
+observations covering 200 turn identities; the report verifies both
+source-backed local deltas for all 200 cases within one real clock domain.
+See `research/evidence/issue-25-local-server-phase-2026-10-08.md` for
+the immutable raw-log/report hashes, exact command scope, and the prior
+failed attempt, which is **not** silently erased.
+
+This does not establish that the authored provider executes in all
+hosted/worker contexts, nor does it qualify multiple real-process clock
+domains. The client eval samples do not attest their turn IDs into paired
+capture rows, so this server report must **not** be silently joined to
+per-case client timings; such a join needs explicit verified correlation.
+Hosted acquisition remains a separate credential, zero-cost and privacy
+boundary. Do not derive cross-machine intervals, a speedup, or inferential
+significance from these observations.
