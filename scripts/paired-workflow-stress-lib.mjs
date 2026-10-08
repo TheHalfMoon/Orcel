@@ -275,12 +275,30 @@ function topologyCoverage(rows) {
 export function createPairedWorkflowReport(
   baseCapture,
   headCapture,
-  { bootstrapDraws = 2000 } = {},
+  { bootstrapDraws = 2000, comparisonMode = "base-head" } = {},
 ) {
   const base = validateCapture(baseCapture);
   const head = validateCapture(headCapture);
-  if (base.identity.sha === head.identity.sha)
+  if (!["base-head", "aa"].includes(comparisonMode)) {
+    throw new Error("Unsupported comparison mode");
+  }
+  if (comparisonMode === "base-head" && base.identity.sha === head.identity.sha) {
     throw new Error("Base and head must have distinct immutable SHAs");
+  }
+  if (comparisonMode === "aa") {
+    if (base.identity.sha !== head.identity.sha) {
+      throw new Error("A/A calibration requires an identical immutable SHA");
+    }
+    if (base.identity.orcelVersion !== head.identity.orcelVersion) {
+      throw new Error("A/A calibration requires an identical Orcel version");
+    }
+    if (
+      base.identity.runId === head.identity.runId &&
+      base.identity.runAttempt === head.identity.runAttempt
+    ) {
+      throw new Error("A/A calibration requires independently identifiable runs");
+    }
+  }
   if (
     base.identity.model !== head.identity.model ||
     base.identity.workflowCoreVersion !== head.identity.workflowCoreVersion ||
@@ -306,6 +324,17 @@ export function createPairedWorkflowReport(
   const s1 = sequentialRows.map(([, b]) => [b.turnDepth, b.durationMs]);
   return {
     schemaVersion: 1,
+    comparisonMode,
+    inference: {
+      classification: "exploratory-uncalibrated",
+      isPerformanceGate: false,
+      isIndependentRunConfidenceInterval: false,
+      dependentObservations:
+        "100 sequential turns share one session; concurrent turns share sessions and batches.",
+      interpretation:
+        "The per-turn bootstrap interval is descriptive only. Independent interleaved run blocks and A/A noise-floor calibration are required before inferential performance claims.",
+      deploymentIdentityMatches: base.identity.deploymentId === head.identity.deploymentId,
+    },
     base: base.identity,
     head: head.identity,
     pairCount: rows.length,
@@ -339,9 +368,21 @@ export function createPairedWorkflowReport(
 export function renderPairedWorkflowMarkdown(report) {
   const s = report.statistics;
   const lines = [
-    "## Paired Workflow stress benchmark",
+    report.comparisonMode === "aa"
+      ? "## Workflow stress A/A calibration trial"
+      : "## Paired Workflow stress benchmark",
     "",
-    "> Informational only; the captures are run-specific and immutable. Null counters mean unobserved, not zero.",
+    "> Exploratory only. This is a per-turn sample-resampling interval, not an independent-run confidence interval, performance gate, or proof of a runtime speedup.",
+    "",
+    "> The 100 sequential turns share one session; concurrent turns share sessions and batches. Calibration requires independently replicated, balanced hosted trials. Null counters mean unobserved, not zero.",
+    "",
+    "Comparison mode: " +
+      report.comparisonMode +
+      ". Different deployment URLs: " +
+      (report.inference.deploymentIdentityMatches
+        ? "no"
+        : "yes (deployment noise is not separated)") +
+      ".",
     "",
     "| Metric | Base | Head |",
     "| --- | ---: | ---: |",
@@ -372,7 +413,7 @@ export function renderPairedWorkflowMarkdown(report) {
       .flat(),
     "",
     "Paired mean delta (head - base): " + s.pairedMeanDeltaMs.toFixed(2) + " ms.",
-    "95% deterministic paired bootstrap CI: [" +
+    "Exploratory 95% per-turn bootstrap interval (not a run-level CI): [" +
       s.pairedMeanDelta95CiMs.lowerMs.toFixed(2) +
       ", " +
       s.pairedMeanDelta95CiMs.upperMs.toFixed(2) +

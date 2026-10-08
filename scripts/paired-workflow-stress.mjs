@@ -21,12 +21,21 @@ function parseArgs(argv) {
   const expected =
     command === "capture"
       ? ["artifacts", "sha", "deployment-id", "run-id", "run-attempt", "report", "output"]
-      : ["base", "head", "summary", "markdown"];
+      : ["base", "head", "summary", "markdown", "comparison-mode"];
+  const required =
+    command === "capture" ? expected : expected.filter((key) => key !== "comparison-mode");
   if (
-    expected.some((key) => !options[key]) ||
+    required.some((key) => !options[key]) ||
     Object.keys(options).some((key) => !expected.includes(key))
   ) {
     throw new Error("Missing or unsupported " + command + " arguments: " + expected.join(", "));
+  }
+  if (
+    command === "compare" &&
+    options["comparison-mode"] &&
+    !["base-head", "aa"].includes(options["comparison-mode"])
+  ) {
+    throw new Error("Unsupported comparison mode");
   }
   return { command, options };
 }
@@ -74,7 +83,9 @@ export async function main(argv) {
   }
   const base = await readJson(options.base);
   const head = await readJson(options.head);
-  const summary = createPairedWorkflowReport(base, head);
+  const summary = createPairedWorkflowReport(base, head, {
+    comparisonMode: options["comparison-mode"] ?? "base-head",
+  });
   await writeJson(options.summary, summary);
   await mkdir(dirname(resolve(options.markdown)), { recursive: true });
   await writeFile(options.markdown, renderPairedWorkflowMarkdown(summary) + "\n");

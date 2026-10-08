@@ -225,7 +225,7 @@ test("CLI captures authenticated report inputs and reproduces exact summary from
     const first = await readFile(summary, "utf8");
     await main(cmp);
     assert.equal(await readFile(summary, "utf8"), first);
-    assert.match(await readFile(markdown, "utf8"), /paired bootstrap/i);
+    assert.match(await readFile(markdown, "utf8"), /Exploratory 95% per-turn bootstrap interval/i);
     const broken = [...args];
     broken[broken.indexOf("--sha") + 1] = headSha;
     await assert.rejects(main(broken), /provenance/);
@@ -388,6 +388,106 @@ test("hosted reporter sources package versions from checkout and capture enforce
     ];
     await main(args);
     assert.equal(JSON.parse(await readFile(output, "utf8")).cases.length, 200);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("A/A calibration is explicit, run-distinct, reproducible, and never inferential", () => {
+  const base = captureWorkflowStressRun(metrics(), identity(baseSha, "202"));
+  const repeat = captureWorkflowStressRun(metrics(3), identity(baseSha, "203"));
+  assert.throws(() => createPairedWorkflowReport(base, repeat), /distinct immutable SHAs/);
+  const report = createPairedWorkflowReport(base, repeat, {
+    bootstrapDraws: 200,
+    comparisonMode: "aa",
+  });
+  assert.deepEqual(
+    report,
+    createPairedWorkflowReport(base, repeat, {
+      bootstrapDraws: 200,
+      comparisonMode: "aa",
+    }),
+  );
+  assert.equal(report.comparisonMode, "aa");
+  assert.equal(report.statistics.pairedMeanDeltaMs, 3);
+  assert.equal(report.inference.isPerformanceGate, false);
+  assert.equal(report.inference.isIndependentRunConfidenceInterval, false);
+  assert.equal(report.inference.deploymentIdentityMatches, true);
+  assert.match(renderPairedWorkflowMarkdown(report), /A\/A calibration trial/);
+  assert.match(renderPairedWorkflowMarkdown(report), /not a run-level CI/);
+  const separateDeployment = structuredClone(repeat);
+  separateDeployment.identity.deploymentId = "independent-immutable-deployment";
+  const mixedDeploymentAa = createPairedWorkflowReport(base, separateDeployment, {
+    comparisonMode: "aa",
+  });
+  assert.equal(mixedDeploymentAa.inference.deploymentIdentityMatches, false);
+  assert.match(
+    renderPairedWorkflowMarkdown(mixedDeploymentAa),
+    /deployment noise is not separated/,
+  );
+
+  assert.throws(
+    () => createPairedWorkflowReport(base, repeat, { comparisonMode: "unsupported" }),
+    /Unsupported comparison mode/,
+  );
+  const duplicateRun = structuredClone(repeat);
+  duplicateRun.identity.runId = base.identity.runId;
+  assert.throws(
+    () => createPairedWorkflowReport(base, duplicateRun, { comparisonMode: "aa" }),
+    /independently identifiable runs/,
+  );
+  duplicateRun.identity.runAttempt = "2";
+  assert.equal(
+    createPairedWorkflowReport(base, duplicateRun, { comparisonMode: "aa" }).comparisonMode,
+    "aa",
+  );
+  const differentPackage = structuredClone(repeat);
+  differentPackage.identity.orcelVersion = "99.0.0";
+  assert.throws(
+    () => createPairedWorkflowReport(base, differentPackage, { comparisonMode: "aa" }),
+    /identical Orcel version/,
+  );
+  const [otherCommit] = captures();
+  const differentSha = captureWorkflowStressRun(metrics(3), identity(headSha, "203"));
+  assert.throws(
+    () => createPairedWorkflowReport(otherCommit, differentSha, { comparisonMode: "aa" }),
+    /identical immutable SHA/,
+  );
+});
+
+test("CLI A/A output is reproducible and mismatched modes fail closed", async () => {
+  const root = await mkdtemp(join(tmpdir(), "orcel-aa-calibration-"));
+  try {
+    const base = join(root, "base.json");
+    const head = join(root, "head.json");
+    const summary = join(root, "summary.json");
+    const markdown = join(root, "summary.md");
+    await writeFile(
+      base,
+      JSON.stringify(captureWorkflowStressRun(metrics(), identity(baseSha, "202"))),
+    );
+    await writeFile(
+      head,
+      JSON.stringify(captureWorkflowStressRun(metrics(0.5), identity(baseSha, "203"))),
+    );
+    const args = [
+      "compare",
+      "--base",
+      base,
+      "--head",
+      head,
+      "--summary",
+      summary,
+      "--markdown",
+      markdown,
+      "--comparison-mode",
+      "aa",
+    ];
+    await main(args);
+    assert.equal(JSON.parse(await readFile(summary, "utf8")).comparisonMode, "aa");
+    assert.match(await readFile(markdown, "utf8"), /Exploratory/);
+    await assert.rejects(main(args.slice(0, -2)), /distinct immutable SHAs/);
+    await assert.rejects(main([...args.slice(0, -1), "broken"]), /Unsupported comparison mode/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
