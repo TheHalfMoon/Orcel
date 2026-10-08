@@ -3,6 +3,14 @@ name: Paired Workflow Performance Evidence
 on:
   workflow_dispatch:
     inputs:
+      comparison_mode:
+        description: "Normal base/head trial or same-code A/A diagnostic"
+        type: choice
+        required: true
+        default: base-head
+        options:
+          - base-head
+          - aa
       base_run_id:
         description: "Existing successful hosted Workflow stress GitHub Actions run ID"
         type: string
@@ -56,10 +64,18 @@ jobs:
           HEAD_RUN_ID: ${{ inputs.head_run_id }}
           BASE_SHA: ${{ inputs.base_sha }}
           HEAD_SHA: ${{ inputs.head_sha }}
+          COMPARISON_MODE: ${{ inputs.comparison_mode }}
         run: |
           set -euo pipefail
           [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "Invalid base SHA" >&2; exit 1; }
           [[ "$HEAD_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "Invalid head SHA" >&2; exit 1; }
+          [ "$COMPARISON_MODE" = aa ] || [ "$COMPARISON_MODE" = base-head ] || { echo "Invalid comparison mode" >&2; exit 1; }
+          if [ "$COMPARISON_MODE" = aa ]; then
+            [ "$BASE_SHA" = "$HEAD_SHA" ] || { echo "A/A requires equal SHAs" >&2; exit 1; }
+            [ "$BASE_RUN_ID" != "$HEAD_RUN_ID" ] || { echo "A/A requires distinct completed GitHub runs" >&2; exit 1; }
+          else
+            [ "$BASE_SHA" != "$HEAD_SHA" ] || { echo "Base/head requires different SHAs" >&2; exit 1; }
+          fi
           for arm in base head; do
             if [ "$arm" = base ]; then
               run_id="$BASE_RUN_ID"
@@ -105,6 +121,7 @@ jobs:
           HEAD_SHA: ${{ inputs.head_sha }}
           BASE_DEPLOYMENT: ${{ inputs.base_deployment_id }}
           HEAD_DEPLOYMENT: ${{ inputs.head_deployment_id }}
+          COMPARISON_MODE: ${{ inputs.comparison_mode }}
         run: |
           set -euo pipefail
           for arm in base head; do
@@ -132,7 +149,8 @@ jobs:
             --base .artifacts/paired-workflow-base.json \
             --head .artifacts/paired-workflow-head.json \
             --summary .artifacts/paired-workflow-summary.json \
-            --markdown .artifacts/paired-workflow-summary.md
+            --markdown .artifacts/paired-workflow-summary.md \
+            --comparison-mode "$COMPARISON_MODE"
           cat .artifacts/paired-workflow-summary.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Retain raw evidence and independently reproducible summary
