@@ -191,14 +191,6 @@ test("CLI captures authenticated report inputs and reproduces exact summary from
       output,
       "--sha",
       baseSha,
-      "--orcel-version",
-      "0.25.0",
-      "--workflow-core-version",
-      "5.0.0-beta.57",
-      "--workflow-world-version",
-      "5.0.0-beta.39",
-      "--workflow-host-world-version",
-      "5.0.0-beta.52",
       "--deployment-id",
       identity(baseSha).deploymentId,
       "--run-id",
@@ -240,16 +232,10 @@ test("CLI captures authenticated report inputs and reproduces exact summary from
     const forgedAttempt = [...args];
     forgedAttempt[forgedAttempt.indexOf("--run-attempt") + 1] = "2";
     await assert.rejects(main(forgedAttempt), /provenance/);
-    const forgedVersion = [...args];
-    forgedVersion[forgedVersion.indexOf("--orcel-version") + 1] = "99.99.99";
-    await assert.rejects(main(forgedVersion), /version disagrees/);
-    const forgedWorld = [...args];
-    forgedWorld[forgedWorld.indexOf("--workflow-host-world-version") + 1] = "99.99.99";
-    await assert.rejects(main(forgedWorld), /version disagrees/);
     const missingVersion = JSON.parse(await readFile(report, "utf8"));
     delete missingVersion.metadata.workflowCoreVersion;
     await writeFile(report, JSON.stringify(missingVersion));
-    await assert.rejects(main(args), /version disagrees/);
+    await assert.rejects(main(args), /Missing workflowCoreVersion/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -388,14 +374,6 @@ test("hosted reporter sources package versions from checkout and capture enforce
       artifactRoot,
       "--sha",
       baseSha,
-      "--orcel-version",
-      sourcePackage.version,
-      "--workflow-core-version",
-      sourcePackage.devDependencies["@workflow/core"],
-      "--workflow-world-version",
-      sourcePackage.devDependencies["@workflow/world"],
-      "--workflow-host-world-version",
-      sourcePackage.devDependencies["@workflow/world-vercel"],
       "--deployment-id",
       deploymentId,
       "--run-id",

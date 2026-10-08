@@ -15,10 +15,9 @@ Dispatch **Paired Workflow Performance Evidence** with these required inputs:
 - base_run_id, head_run_id: existing GitHub Actions runs that each uploaded workflow-stress-performance
 - base_sha, head_sha: full 40-character Git commit IDs
 - base_deployment_id, head_deployment_id: immutable URLs recorded inside each stress report
-- base_orcel_version, head_orcel_version: independently pinned Orcel package versions from the respective deployed commits
-- workflow_core_version, workflow_world_version, workflow_host_world_version: the declared @workflow/core, @workflow/world, and @workflow/world-vercel versions, respectively. The Workflow versions must match across arms.
+- No manual version inputs: each capture derives the Orcel, @workflow/core, @workflow/world and @workflow/world-vercel versions from the source report, which records its own checked-out package manifest.
 
-GitHub verifies that each source is a successful manually dispatched Vercel E2E run; its run ID, SHA and run attempt must agree with the source report. Each new hosted stress report records the package versions directly from its checked-out packages/orcel/package.json. Capture rejects a mismatched run ID, SHA, deployment URL, non-mock-model run, or any version missing from or inconsistent with the source report. A legacy report without the source-backed version fields fails closed; it cannot qualify a claimed version. Workflow versions must match across arms before statistical comparison. Orcel versions may differ when comparing two commits. The workflow records the run attempt from the original report.
+GitHub verifies that each source is a successful manually dispatched Vercel E2E run; its run ID, SHA and run attempt must agree with the source report. Each new hosted stress report records the package versions directly from its checked-out packages/orcel/package.json. Capture rejects a mismatched run ID, SHA, deployment URL, non-mock-model run, or a missing source-backed version. Metadata versions are never overridden by manually typed values. A legacy report without the source-backed version fields fails closed; it cannot qualify a claimed version. Workflow versions must match across arms before statistical comparison. Orcel versions may differ when comparing two commits. The workflow records the run attempt from the original report.
 
 The workflow downloads existing hosted eval evidence and **does not deploy anything**. It retains the self-contained raw base/head captures, JSON and Markdown summary for 30 days. Every summary is recomputed from the original captures; the summary is not an independent source of truth.
 
@@ -31,9 +30,6 @@ From a repository with Node.js 24 or later:
     node scripts/paired-workflow-stress.mjs capture \
       --artifacts /path/to/base/e2e/fixtures/agent-workflow-stress/.orcel/evals \
       --sha BASE_SHA --run-id BASE_RUN_ID --run-attempt BASE_RUN_ATTEMPT \
-      --orcel-version ORCEL_VERSION --workflow-core-version WORKFLOW_VERSION \
-      --workflow-world-version WORLD_VERSION \
-      --workflow-host-world-version WORKFLOW_VERCEL_VERSION \
       --deployment-id DEPLOYMENT_URL \
       --report /path/to/base/.artifacts/workflow-stress-report.json \
       --output base-capture.json

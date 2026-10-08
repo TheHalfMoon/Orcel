@@ -20,19 +20,7 @@ function parseArgs(argv) {
   }
   const expected =
     command === "capture"
-      ? [
-          "artifacts",
-          "sha",
-          "orcel-version",
-          "workflow-core-version",
-          "workflow-world-version",
-          "workflow-host-world-version",
-          "deployment-id",
-          "run-id",
-          "run-attempt",
-          "report",
-          "output",
-        ]
+      ? ["artifacts", "sha", "deployment-id", "run-id", "run-attempt", "report", "output"]
       : ["base", "head", "summary", "markdown"];
   if (
     expected.some((key) => !options[key]) ||
@@ -68,23 +56,13 @@ export async function main(argv) {
     if (originalReport.metadata.deploymentId !== options["deployment-id"]) {
       throw new Error("Hosted deployment ID disagrees with report provenance or is missing");
     }
-    for (const [source, requested] of [
-      ["orcelVersion", "orcel-version"],
-      ["workflowCoreVersion", "workflow-core-version"],
-      ["workflowWorldVersion", "workflow-world-version"],
-      ["workflowHostWorldVersion", "workflow-host-world-version"],
-    ]) {
-      if (originalReport.metadata[source] !== options[requested]) {
-        throw new Error("Hosted version disagrees with report provenance: " + source);
-      }
-    }
     const metrics = await collectWorkflowStressMetrics(options.artifacts);
     const identity = {
       sha: options.sha,
-      orcelVersion: options["orcel-version"],
-      workflowCoreVersion: options["workflow-core-version"],
-      workflowWorldVersion: options["workflow-world-version"],
-      workflowHostWorldVersion: options["workflow-host-world-version"],
+      orcelVersion: originalReport.metadata.orcelVersion,
+      workflowCoreVersion: originalReport.metadata.workflowCoreVersion,
+      workflowWorldVersion: originalReport.metadata.workflowWorldVersion,
+      workflowHostWorldVersion: originalReport.metadata.workflowHostWorldVersion,
       deploymentId: options["deployment-id"],
       runId: options["run-id"],
       runAttempt: options["run-attempt"],

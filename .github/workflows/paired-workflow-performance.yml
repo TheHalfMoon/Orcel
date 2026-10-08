@@ -27,26 +27,6 @@ on:
         description: "Exact head Vercel deployment URL recorded in stress artifact"
         type: string
         required: true
-      base_orcel_version:
-        description: "Orcel package version of base deployment"
-        type: string
-        required: true
-      head_orcel_version:
-        description: "Orcel package version of head deployment"
-        type: string
-        required: true
-      workflow_core_version:
-        description: "Pinned @workflow/core version"
-        type: string
-        required: true
-      workflow_world_version:
-        description: "Pinned @workflow/world version"
-        type: string
-        required: true
-      workflow_host_world_version:
-        description: "Pinned @workflow/world-vercel version"
-        type: string
-        required: true
 
 permissions:
   actions: read
@@ -125,11 +105,6 @@ jobs:
           HEAD_SHA: ${{ inputs.head_sha }}
           BASE_DEPLOYMENT: ${{ inputs.base_deployment_id }}
           HEAD_DEPLOYMENT: ${{ inputs.head_deployment_id }}
-          BASE_ORCEL_VERSION: ${{ inputs.base_orcel_version }}
-          HEAD_ORCEL_VERSION: ${{ inputs.head_orcel_version }}
-          WORKFLOW_CORE_VERSION: ${{ inputs.workflow_core_version }}
-          WORKFLOW_WORLD_VERSION: ${{ inputs.workflow_world_version }}
-          WORKFLOW_HOST_WORLD_VERSION: ${{ inputs.workflow_host_world_version }}
         run: |
           set -euo pipefail
           for arm in base head; do
@@ -137,22 +112,16 @@ jobs:
               run_id="$BASE_RUN_ID"
               sha="$BASE_SHA"
               deployment="$BASE_DEPLOYMENT"
-              orcel_version="$BASE_ORCEL_VERSION"
               run_attempt="$BASE_RUN_ATTEMPT"
             else
               run_id="$HEAD_RUN_ID"
               sha="$HEAD_SHA"
               deployment="$HEAD_DEPLOYMENT"
-              orcel_version="$HEAD_ORCEL_VERSION"
               run_attempt="$HEAD_RUN_ATTEMPT"
             fi
             node scripts/paired-workflow-stress.mjs capture \
               --artifacts "$RUNNER_TEMP/$arm/e2e/fixtures/agent-workflow-stress/.orcel/evals" \
               --sha "$sha" \
-              --orcel-version "$orcel_version" \
-              --workflow-core-version "$WORKFLOW_CORE_VERSION" \
-              --workflow-world-version "$WORKFLOW_WORLD_VERSION" \
-              --workflow-host-world-version "$WORKFLOW_HOST_WORLD_VERSION" \
               --deployment-id "$deployment" \
               --run-id "$run_id" \
               --run-attempt "$run_attempt" \
