@@ -53,4 +53,27 @@ describe("pinned Workflow SDK experimental force-claim local probe (#32)", () =>
       await releaseIfLive(victim);
     }
   });
+
+  it("routes a repeated force-claim to the latest live owner", async () => {
+    const token = "force-claim-chain:" + randomUUID();
+    const original = await start(forceClaimResearchVictim, [{ token }]);
+    let first: Awaited<ReturnType<typeof start>> | undefined;
+    let second: Awaited<ReturnType<typeof start>> | undefined;
+    try {
+      await waitForHook(original, { token });
+      first = await start(forceClaimResearchSuccessor, [{ token }]);
+      await waitForHook(first, { token });
+      second = await start(forceClaimResearchSuccessor, [{ token }]);
+      await waitForHook(second, { token });
+
+      await resumeHook(token, "latest-owner");
+      await expect(second.returnValue).resolves.toBe("latest-owner");
+      await expect(first.returnValue).rejects.toThrow("was force-claimed by another workflow");
+      await expect(original.returnValue).rejects.toThrow("was force-claimed by another workflow");
+    } finally {
+      if (second) await releaseIfLive(second);
+      if (first) await releaseIfLive(first);
+      await releaseIfLive(original);
+    }
+  });
 });
