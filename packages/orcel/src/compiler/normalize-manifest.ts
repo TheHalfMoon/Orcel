@@ -123,7 +123,7 @@ export async function compileAgentManifest(
     registries,
   };
   const diagnostics = options.diagnostics ?? [];
-  const prepareStartedAt = performance.now();
+  const prepareStartedAt = options.phaseObserver ? performance.now() : 0;
   const developmentExtensions = await prepareDevelopmentExtensions({
     diagnostics,
     manifest,
@@ -173,14 +173,14 @@ class AgentGraphCompiler {
   }
 
   async compileStaticNode(input: NodeCompileInput): Promise<CompiledLocalNodeResult> {
-    const phaseOneStartedAt = performance.now();
+    const phaseOneStartedAt = input.isRoot && this.phaseObserver ? performance.now() : 0;
     const phaseOne = await this.createPhaseOneNodeSourceState(
       input,
       input.inheritedExternalDependencies,
     );
     if (input.isRoot)
       this.phaseObserver?.("rootCreatePhaseOne", performance.now() - phaseOneStartedAt);
-    const configStartedAt = performance.now();
+    const configStartedAt = input.isRoot && this.phaseObserver ? performance.now() : 0;
     let config = await compileAgentConfig(input.manifest, this.context, {
       binding: phaseOne.selectedConfig.binding,
       definition: phaseOne.selectedConfig.definition,
@@ -205,11 +205,11 @@ class AgentGraphCompiler {
     }
     const state = finalizeNodeSourceState(phaseOne, externalDependencies);
     markConfigRuntimeEntries(config, state.evaluation);
-    const resourcesStartedAt = performance.now();
+    const resourcesStartedAt = input.isRoot && this.phaseObserver ? performance.now() : 0;
     const resources = await this.compileResources(input, state);
     if (input.isRoot)
       this.phaseObserver?.("rootCompileResources", performance.now() - resourcesStartedAt);
-    const childrenStartedAt = performance.now();
+    const childrenStartedAt = input.isRoot && this.phaseObserver ? performance.now() : 0;
     const children = await this.compileChildren(input, state, externalDependencies);
     if (input.isRoot)
       this.phaseObserver?.("rootCompileChildren", performance.now() - childrenStartedAt);

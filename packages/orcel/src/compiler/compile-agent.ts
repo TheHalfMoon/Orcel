@@ -124,10 +124,10 @@ async function discoverAgentForCompilation(
   input: CompileAgentInput,
 ): Promise<DiscoveredAgentCompilation> {
   const source = input.source ?? createDiskProjectSource();
-  const projectStartedAt = performance.now();
+  const projectStartedAt = input.phaseObserver ? performance.now() : 0;
   const project = await resolveDiscoveryProject(input.startPath, { source });
   input.phaseObserver?.("resolveDiscoveryProject", performance.now() - projectStartedAt);
-  const discoverStartedAt = performance.now();
+  const discoverStartedAt = input.phaseObserver ? performance.now() : 0;
   const discoveryResult = await discoverAgent({ ...project, source });
   input.phaseObserver?.("discoverAgent", performance.now() - discoverStartedAt);
 

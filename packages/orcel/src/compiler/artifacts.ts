@@ -245,20 +245,20 @@ export async function writeCompilerArtifacts(
   const diagnostics = input.diagnostics.map((diagnostic) =>
     projectDiscoverDiagnostic(diagnostic, ROOT_COMPILED_AGENT_NODE_ID),
   );
-  const compileStartedAt = performance.now();
+  const compileStartedAt = input.phaseObserver ? performance.now() : 0;
   const normalizedManifest = await compileAgentManifest(input.manifest, {
     developmentExtensions: input.developmentExtensions,
     diagnostics,
     phaseObserver: input.phaseObserver,
   });
   input.phaseObserver?.("compileAgentManifest", performance.now() - compileStartedAt);
-  const materializeStartedAt = performance.now();
+  const materializeStartedAt = input.phaseObserver ? performance.now() : 0;
   const compiledManifest = await materializeWorkspaceResources({
     compileDirectoryPath: paths.compileDirectoryPath,
     manifest: normalizedManifest,
   });
   input.phaseObserver?.("materializeWorkspaceResources", performance.now() - materializeStartedAt);
-  const prepareStartedAt = performance.now();
+  const prepareStartedAt = input.phaseObserver ? performance.now() : 0;
   const diagnosticsArtifact = createCompilerDiagnosticsArtifact(diagnostics);
   const compiledManifestJson = serializeArtifactJson(compiledManifest);
   const discoveryManifestJson = serializeArtifactJson(input.manifest);
@@ -281,7 +281,7 @@ export async function writeCompilerArtifacts(
     createSandboxPreparedArtifactsManifest([]),
   );
   input.phaseObserver?.("prepareCompilerArtifacts", performance.now() - prepareStartedAt);
-  const writeStartedAt = performance.now();
+  const writeStartedAt = input.phaseObserver ? performance.now() : 0;
 
   await mkdir(paths.discoveryDirectoryPath, {
     recursive: true,

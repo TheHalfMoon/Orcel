@@ -65,6 +65,21 @@ research instrumentation.
 | Vitest file duration | 65.04 s | 55.49 s |
 | Result | 1 passed, 10 filtered, exit 0 | 1 passed, 10 filtered, exit 0 |
 
+An additional Windows confirmation after **gating the timer starts on the
+presence of the optional phase observer** passed the same single-fork
+filtered test (1 passed, 10 skipped, exit 0; Vitest file duration 59.62s).
+It measured `compileAgent=28,717ms`,
+`compileAgentManifest=28,453ms`,
+`rootCompileResources=17,813ms`,
+`rootCompileChildren=10,421ms`,
+`materializeWorkspaceResources=121ms`,
+`writeCompilerArtifactFiles=7ms`,
+`hydrateMs=4,261ms`, and `resolveMs=43ms`. The observed spread across
+these three runs is **not** a controlled performance improvement. When
+the observer is omitted, initial `performance.now()` calls are now
+avoided even on internal production compiler paths. The observer and
+test assertions remain unchanged.
+
 The first split measured `compileAgentManifest` before the internal
 root-stage observer was added; the nested sample used that observer.
 Measured root-stage spans do not claim to be a full CPU profile,
