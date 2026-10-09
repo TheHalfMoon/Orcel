@@ -1,3 +1,9 @@
+---
+issue: https://github.com/TheHalfMoon/Orcel/issues/41
+status: diagnostic-candidate
+last_updated: "2026-10-09"
+---
+
 # Issue #41: bounded `sleep.steer` stage diagnostics (2026-10-09)
 
 ## Observed baseline and limit
