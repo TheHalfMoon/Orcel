@@ -8,8 +8,19 @@ import { defineEval } from "@orcel/orcel/evals";
 export default defineEval({
   description: "Steering ends a sleep early without cancelling the turn.",
   async test(t) {
+    // Keep the last completed stage in the eval's captured logs if its deadline aborts.
+    // These monotonic timings contain no session IDs, messages, or event payloads.
+    const startedAt = performance.now();
+    const logStage = (stage: string) =>
+      t.log(`sleep.steer stage=${stage} elapsedMs=${Math.round(performance.now() - startedAt)}`);
+
+    logStage("session.create.start");
     const session = await t.session();
+    logStage("session.create.done");
+    logStage("initial-turn.start");
     const live = await session.start("WORKFLOW-SLEEP-START");
+    logStage("initial-turn.started");
+    logStage("sleep-action.wait");
     await live.waitForEvent("actions.requested", {
       data: {
         actions: (actions) =>
@@ -17,14 +28,21 @@ export default defineEval({
       },
     });
 
+    logStage("sleep-action.observed");
+    logStage("steering-turn.start");
     const update = await live.session.start(
       "Alice has the numbers now, so there is no need to wait.",
       {
         turnPolicy: "steer",
       },
     );
+    logStage("steering-turn.started");
+    logStage("initial-turn.result.wait");
     const turn = await live.result();
+    logStage("initial-turn.result.done");
+    logStage("steering-turn.result.wait");
     await update.result();
+    logStage("steering-turn.result.done");
 
     turn.calledTool("sleep", { count: 1, output: { interrupted: true } });
     turn.event("message.received", { count: 2 });
