@@ -38,9 +38,13 @@ describe("pinned Workflow SDK experimental force-claim local probe (#32)", () =>
       claimant = await start(forceClaimResearchSuccessor, [{ token }]);
       // A running protocol-7 owner must not be displaced by a forced claimant.
       await expect(claimant.returnValue).rejects.toMatchObject({
-        name: "HookConflictError",
-        token,
-        conflictingRunId: victim.runId,
+        name: "WorkflowRunFailedError",
+        runId: claimant.runId,
+        cause: {
+          name: "HookConflictError",
+          token,
+          conflictingRunId: victim.runId,
+        },
       });
       await resumeHook(token, "still-owned-by-legacy-victim");
       await expect(victim.returnValue).resolves.toBe("still-owned-by-legacy-victim");
