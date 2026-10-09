@@ -70,7 +70,7 @@ async function emitDeclarations(tempRoot, configuration, { contractRoot, orcelRo
     JSON.stringify({
       extends: join(contractRoot, "tsconfig.json"),
       include: [
-        join(contractRoot, "entrypoints/**/*.ts"),
+        toPosix(join(contractRoot, "entrypoints/**/*.ts")),
         ...Object.entries(configuration.contracts ?? {}).flatMap(([capability, contract]) =>
           contract.supported
             .filter((version) => version < contract.current)
