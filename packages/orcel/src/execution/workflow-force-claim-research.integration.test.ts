@@ -29,4 +29,24 @@ describe("pinned Workflow SDK experimental force-claim local probe (#32)", () =>
       await releaseIfLive(victim);
     }
   });
+  it("declines takeover of a running pre-v8 victim without taking its token", async () => {
+    const token = "force-claim-legacy-victim:" + randomUUID();
+    const victim = await start(forceClaimResearchVictim, [{ token }], { specVersion: 7 });
+    let claimant: Awaited<ReturnType<typeof start>> | undefined;
+    try {
+      await waitForHook(victim, { token });
+      claimant = await start(forceClaimResearchSuccessor, [{ token }]);
+      // A running protocol-7 owner must not be displaced by a forced claimant.
+      await expect(claimant.returnValue).rejects.toMatchObject({
+        name: "HookConflictError",
+        token,
+        conflictingRunId: victim.runId,
+      });
+      await resumeHook(token, "still-owned-by-legacy-victim");
+      await expect(victim.returnValue).resolves.toBe("still-owned-by-legacy-victim");
+    } finally {
+      if (claimant) await releaseIfLive(claimant);
+      await releaseIfLive(victim);
+    }
+  });
 });
