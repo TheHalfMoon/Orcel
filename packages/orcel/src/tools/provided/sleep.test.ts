@@ -21,6 +21,28 @@ describe("sleep", () => {
     expect(definition.execute).toBeTypeOf("function");
   });
 
+  it("returns interrupted when the signal was already aborted before execution", async () => {
+    vi.mocked(workflowSleep).mockImplementation(() => new Promise<void>(() => {}));
+    const definition = sleep();
+    const output = definition.execute({ seconds: 600 }, {
+      abortSignal: AbortSignal.abort(),
+    } as never);
+
+    // An already-aborted call must not start a durable ten-minute timer.
+    expect(workflowSleep).not.toHaveBeenCalled();
+    await expect(output).resolves.toEqual({ interrupted: true });
+  });
+
+  it("returns interrupted when aborted while the durable sleep is pending", async () => {
+    vi.mocked(workflowSleep).mockImplementation(() => new Promise<void>(() => {}));
+    const controller = new AbortController();
+    const output = sleep().execute({ seconds: 600 }, { abortSignal: controller.signal } as never);
+
+    expect(workflowSleep).toHaveBeenCalledExactlyOnceWith(600_000);
+    controller.abort();
+    await expect(output).resolves.toEqual({ interrupted: true });
+  });
+
   it("waits for the requested number of seconds in its workflow body", async () => {
     let wake: (() => void) | undefined;
     vi.mocked(workflowSleep).mockImplementation(

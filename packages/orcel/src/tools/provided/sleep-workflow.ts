@@ -10,6 +10,10 @@ export async function executeSleepTool(
 ): Promise<SleepToolOutput> {
   "use workflow";
 
+  // Abort events are not replayed to listeners registered after an abort.
+  // Avoid starting a durable timer when steering already interrupted this call.
+  if (ctx.abortSignal.aborted) return { interrupted: true };
+
   const interrupted = new Promise<"interrupted">((resolve) =>
     ctx.abortSignal.addEventListener("abort", () => resolve("interrupted"), { once: true }),
   );
