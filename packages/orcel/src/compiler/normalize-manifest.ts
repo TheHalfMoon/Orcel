@@ -104,6 +104,7 @@ import type {
   CompileAgentManifestOptions,
   NodeCompileInput,
 } from "#compiler/normalize-manifest-types.js";
+import type { CompilerPhaseObserver } from "#compiler/artifacts.js";
 export type { CompileAgentManifestOptions } from "#compiler/normalize-manifest-types.js";
 
 interface CompiledLocalNodeResult {
@@ -122,13 +123,15 @@ export async function compileAgentManifest(
     registries,
   };
   const diagnostics = options.diagnostics ?? [];
+  const prepareStartedAt = performance.now();
   const developmentExtensions = await prepareDevelopmentExtensions({
     diagnostics,
     manifest,
     nodeId: ROOT_COMPILED_AGENT_NODE_ID,
     selection: options.developmentExtensions ?? noDevelopmentExtensions(),
   });
-  const compiler = new AgentGraphCompiler(context, registries, diagnostics);
+  options.phaseObserver?.("prepareDevelopmentExtensions", performance.now() - prepareStartedAt);
+  const compiler = new AgentGraphCompiler(context, registries, diagnostics, options.phaseObserver);
   const root = await compiler.compileStaticNode({
     developmentExtensionCandidates: developmentExtensions.candidates,
     inheritedExternalDependencies: [],
@@ -153,6 +156,7 @@ class AgentGraphCompiler {
   private readonly context: ManifestCompileContext;
   private readonly registries: readonly AgentSourceRegistry[];
   private readonly diagnostics: CompilerDiagnostic[];
+  private readonly phaseObserver: CompilerPhaseObserver | undefined;
   private readonly mounts = new Map<string, ExtensionCompileMount>();
   private readonly evaluationId = randomUUID();
 
@@ -160,22 +164,30 @@ class AgentGraphCompiler {
     context: ManifestCompileContext,
     registries: readonly AgentSourceRegistry[],
     diagnostics: CompilerDiagnostic[],
+    phaseObserver?: CompilerPhaseObserver,
   ) {
     this.context = context;
     this.registries = registries;
     this.diagnostics = diagnostics;
+    this.phaseObserver = phaseObserver;
   }
 
   async compileStaticNode(input: NodeCompileInput): Promise<CompiledLocalNodeResult> {
+    const phaseOneStartedAt = performance.now();
     const phaseOne = await this.createPhaseOneNodeSourceState(
       input,
       input.inheritedExternalDependencies,
     );
+    if (input.isRoot)
+      this.phaseObserver?.("rootCreatePhaseOne", performance.now() - phaseOneStartedAt);
+    const configStartedAt = performance.now();
     let config = await compileAgentConfig(input.manifest, this.context, {
       binding: phaseOne.selectedConfig.binding,
       definition: phaseOne.selectedConfig.definition,
       source: phaseOne.selectedConfig.source,
     });
+    if (input.isRoot)
+      this.phaseObserver?.("rootCompileAgentConfig", performance.now() - configStartedAt);
     assertRootOnlyConfig(config, input.isRoot, input.manifest.agentId);
     applyAgentToolPolicy(phaseOne, config);
     applyDefaultToolPolicy(phaseOne, config);
@@ -193,8 +205,14 @@ class AgentGraphCompiler {
     }
     const state = finalizeNodeSourceState(phaseOne, externalDependencies);
     markConfigRuntimeEntries(config, state.evaluation);
+    const resourcesStartedAt = performance.now();
     const resources = await this.compileResources(input, state);
+    if (input.isRoot)
+      this.phaseObserver?.("rootCompileResources", performance.now() - resourcesStartedAt);
+    const childrenStartedAt = performance.now();
     const children = await this.compileChildren(input, state, externalDependencies);
+    if (input.isRoot)
+      this.phaseObserver?.("rootCompileChildren", performance.now() - childrenStartedAt);
     const manifest = createCompiledAgentNodeManifest({
       ...resources,
       config,

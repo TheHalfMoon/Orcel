@@ -31,7 +31,17 @@ function compatibilityManifest(requires: Readonly<Record<string, number>>): stri
  */
 async function compileRuntimeGraph(appRoot: string) {
   const startedAt = performance.now();
-  await compileAgent({ startPath: appRoot });
+  const compilerPhaseMs: Record<string, number> = {};
+  await compileAgent({
+    startPath: appRoot,
+    ...(process.env.ORCEL_MOUNT_PHASE_PROFILE === "1"
+      ? {
+          phaseObserver: (phase: string, durationMs: number) => {
+            compilerPhaseMs[phase] = Math.round(durationMs);
+          },
+        }
+      : {}),
+  });
   const compiledAt = performance.now();
   const compiledArtifactsSource = createDiskRuntimeCompiledArtifactsSource(appRoot);
   const [manifest, moduleMap] = await Promise.all([
@@ -46,6 +56,7 @@ async function compileRuntimeGraph(appRoot: string) {
       "ORCEL_MOUNT_PHASE_PROFILE",
       JSON.stringify({
         compileMs: Math.round(compiledAt - startedAt),
+        compilerPhaseMs,
         hydrateMs: Math.round(hydratedAt - compiledAt),
         resolveMs: Math.round(resolvedAt - hydratedAt),
         totalMs: Math.round(resolvedAt - startedAt),
