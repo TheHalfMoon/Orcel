@@ -200,6 +200,30 @@ describe("executeTask", () => {
     expect(outcome.error).toMatch(/timed out|timeout/i);
   });
 
+  it("retains completed diagnostic logs when an eval aborts at its deadline", async () => {
+    const onLog = vi.fn();
+    const outcome = await executeTask({
+      client: new Client({ host: target.url }),
+      target,
+      onLog,
+      evaluation: createTestEval(async (t) => {
+        t.log("hold-deploy.steer stage=initial-turn.result.wait elapsedMs=12");
+        await new Promise<void>(() => {
+          // Simulate a hung stage without a network request or real workflow.
+        });
+      }, "stage-log-timeout"),
+      timeoutMs: 10,
+    });
+
+    expect(outcome.error).toMatch(/timed out|timeout/i);
+    expect(outcome.result.logs).toEqual([
+      "hold-deploy.steer stage=initial-turn.result.wait elapsedMs=12",
+    ]);
+    expect(onLog).toHaveBeenCalledExactlyOnceWith(
+      "hold-deploy.steer stage=initial-turn.result.wait elapsedMs=12",
+    );
+  });
+
   it("resets each distinct known session after a configured timeout", async () => {
     const reset = vi.spyOn(ClientSession.prototype, "reset").mockResolvedValue({
       previousSessionId: "ignored-by-runner",
