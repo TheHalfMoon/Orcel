@@ -104,6 +104,7 @@ import type {
   CompileAgentManifestOptions,
   NodeCompileInput,
 } from "#compiler/normalize-manifest-types.js";
+import type { CompilerPhaseObserver } from "#compiler/artifacts.js";
 export type { CompileAgentManifestOptions } from "#compiler/normalize-manifest-types.js";
 
 interface CompiledLocalNodeResult {
@@ -122,13 +123,15 @@ export async function compileAgentManifest(
     registries,
   };
   const diagnostics = options.diagnostics ?? [];
+  const prepareStartedAt = options.phaseObserver ? performance.now() : 0;
   const developmentExtensions = await prepareDevelopmentExtensions({
     diagnostics,
     manifest,
     nodeId: ROOT_COMPILED_AGENT_NODE_ID,
     selection: options.developmentExtensions ?? noDevelopmentExtensions(),
   });
-  const compiler = new AgentGraphCompiler(context, registries, diagnostics);
+  options.phaseObserver?.("prepareDevelopmentExtensions", performance.now() - prepareStartedAt);
+  const compiler = new AgentGraphCompiler(context, registries, diagnostics, options.phaseObserver);
   const root = await compiler.compileStaticNode({
     developmentExtensionCandidates: developmentExtensions.candidates,
     inheritedExternalDependencies: [],
@@ -153,6 +156,7 @@ class AgentGraphCompiler {
   private readonly context: ManifestCompileContext;
   private readonly registries: readonly AgentSourceRegistry[];
   private readonly diagnostics: CompilerDiagnostic[];
+  private readonly phaseObserver: CompilerPhaseObserver | undefined;
   private readonly mounts = new Map<string, ExtensionCompileMount>();
   private readonly evaluationId = randomUUID();
 
@@ -160,22 +164,30 @@ class AgentGraphCompiler {
     context: ManifestCompileContext,
     registries: readonly AgentSourceRegistry[],
     diagnostics: CompilerDiagnostic[],
+    phaseObserver?: CompilerPhaseObserver,
   ) {
     this.context = context;
     this.registries = registries;
     this.diagnostics = diagnostics;
+    this.phaseObserver = phaseObserver;
   }
 
   async compileStaticNode(input: NodeCompileInput): Promise<CompiledLocalNodeResult> {
+    const phaseOneStartedAt = input.isRoot && this.phaseObserver ? performance.now() : 0;
     const phaseOne = await this.createPhaseOneNodeSourceState(
       input,
       input.inheritedExternalDependencies,
     );
+    if (input.isRoot)
+      this.phaseObserver?.("rootCreatePhaseOne", performance.now() - phaseOneStartedAt);
+    const configStartedAt = input.isRoot && this.phaseObserver ? performance.now() : 0;
     let config = await compileAgentConfig(input.manifest, this.context, {
       binding: phaseOne.selectedConfig.binding,
       definition: phaseOne.selectedConfig.definition,
       source: phaseOne.selectedConfig.source,
     });
+    if (input.isRoot)
+      this.phaseObserver?.("rootCompileAgentConfig", performance.now() - configStartedAt);
     assertRootOnlyConfig(config, input.isRoot, input.manifest.agentId);
     applyAgentToolPolicy(phaseOne, config);
     applyDefaultToolPolicy(phaseOne, config);
@@ -193,8 +205,14 @@ class AgentGraphCompiler {
     }
     const state = finalizeNodeSourceState(phaseOne, externalDependencies);
     markConfigRuntimeEntries(config, state.evaluation);
+    const resourcesStartedAt = input.isRoot && this.phaseObserver ? performance.now() : 0;
     const resources = await this.compileResources(input, state);
+    if (input.isRoot)
+      this.phaseObserver?.("rootCompileResources", performance.now() - resourcesStartedAt);
+    const childrenStartedAt = input.isRoot && this.phaseObserver ? performance.now() : 0;
     const children = await this.compileChildren(input, state, externalDependencies);
+    if (input.isRoot)
+      this.phaseObserver?.("rootCompileChildren", performance.now() - childrenStartedAt);
     const manifest = createCompiledAgentNodeManifest({
       ...resources,
       config,
@@ -220,7 +238,11 @@ class AgentGraphCompiler {
     const subagents = state.projected.subagents.filter((source) =>
       selectedSourceIds.has(source.candidate.sourceId),
     );
-    for (const projected of subagents) {
+    for (const [childIndex, projected] of subagents.entries()) {
+      const childStartedAt = input.isRoot && this.phaseObserver ? performance.now() : 0;
+      if (input.isRoot && this.phaseObserver) {
+        this.phaseObserver(`rootChild.${childIndex}.start`, 0);
+      }
       const source = projected.source;
       const nodeId = createCompiledSubagentNodeId(input.nodeId, source.sourceId);
       const childInput: NodeCompileInput = {
@@ -274,6 +296,9 @@ class AgentGraphCompiler {
             sourceRef: phaseOne.selectedConfig.source,
           }),
         );
+        if (input.isRoot) {
+          this.phaseObserver?.(`rootChild.${childIndex}.done`, performance.now() - childStartedAt);
+        }
         continue;
       }
 
@@ -349,6 +374,9 @@ class AgentGraphCompiler {
         };
       }
       nodes.push(node, ...children.nodes);
+      if (input.isRoot) {
+        this.phaseObserver?.(`rootChild.${childIndex}.done`, performance.now() - childStartedAt);
+      }
     }
 
     return { nodes, remoteAgents };
@@ -481,11 +509,19 @@ class AgentGraphCompiler {
     let sandbox: CompiledSandboxDefinition | undefined;
     const selectedSourceIds = collectSelectedSourceIds(state.composed);
     const loadNamespace = state.evaluation.loadNamespace;
+    let resourceIndex = 0;
 
     for (const candidate of state.orderedCandidates) {
       if (!selectedSourceIds.has(candidate.sourceId)) continue;
       const entry = state.sourcesBySourceId.get(candidate.sourceId);
       if (entry === undefined) continue;
+      // Only the opt-in test observer sees bounded type/ordinal timings. Never
+      // emit project paths, extension names, source IDs or evaluated payloads.
+      const resourceStartedAt = input.isRoot && this.phaseObserver ? performance.now() : 0;
+      const ordinal = input.isRoot && this.phaseObserver ? resourceIndex++ : -1;
+      if (input.isRoot && this.phaseObserver) {
+        this.phaseObserver(`rootResource.${entry.kind}.${ordinal}.start`, 0);
+      }
       const binding = state.bindings[candidate.sourceId];
       const options = {
         binding,
@@ -609,6 +645,12 @@ class AgentGraphCompiler {
           }
           break;
         }
+      }
+      if (input.isRoot) {
+        this.phaseObserver?.(
+          `rootResource.${entry.kind}.${ordinal}.done`,
+          performance.now() - resourceStartedAt,
+        );
       }
     }
 

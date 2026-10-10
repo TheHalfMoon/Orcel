@@ -31,7 +31,35 @@ function compatibilityManifest(requires: Readonly<Record<string, number>>): stri
  */
 async function compileRuntimeGraph(appRoot: string) {
   const startedAt = performance.now();
-  await compileAgent({ startPath: appRoot });
+  const profiling = process.env.ORCEL_MOUNT_PHASE_PROFILE === "1";
+  const compilerPhaseMs: Record<string, number> = {};
+  // Emit progress before and during compilation, not only after the final
+  // hydration: Vitest timeouts can prevent the completed summary from printing.
+  if (profiling) {
+    console.info(
+      "ORCEL_MOUNT_PHASE_PROGRESS",
+      JSON.stringify({ phase: "compileAgent.start", elapsedMs: 0 }),
+    );
+  }
+  await compileAgent({
+    startPath: appRoot,
+    ...(profiling
+      ? {
+          phaseObserver: (phase: string, durationMs: number) => {
+            const phaseMs = Math.round(durationMs);
+            compilerPhaseMs[phase] = phaseMs;
+            console.info(
+              "ORCEL_MOUNT_PHASE_PROGRESS",
+              JSON.stringify({
+                phase,
+                phaseMs,
+                elapsedMs: Math.round(performance.now() - startedAt),
+              }),
+            );
+          },
+        }
+      : {}),
+  });
   const compiledAt = performance.now();
   const compiledArtifactsSource = createDiskRuntimeCompiledArtifactsSource(appRoot);
   const [manifest, moduleMap] = await Promise.all([
@@ -40,12 +68,13 @@ async function compileRuntimeGraph(appRoot: string) {
   ]);
   const hydratedAt = performance.now();
   const graph = await resolveRuntimeAgentGraph({ manifest, moduleMap });
-  if (process.env.ORCEL_MOUNT_PHASE_PROFILE === "1") {
+  if (profiling) {
     const resolvedAt = performance.now();
     console.info(
       "ORCEL_MOUNT_PHASE_PROFILE",
       JSON.stringify({
         compileMs: Math.round(compiledAt - startedAt),
+        compilerPhaseMs,
         hydrateMs: Math.round(hydratedAt - compiledAt),
         resolveMs: Math.round(resolvedAt - hydratedAt),
         totalMs: Math.round(resolvedAt - startedAt),

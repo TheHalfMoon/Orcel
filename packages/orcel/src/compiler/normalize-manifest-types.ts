@@ -1,4 +1,5 @@
 import type { CompilerDiagnostic } from "#compiler/diagnostics.js";
+import type { CompilerPhaseObserver } from "#compiler/artifacts.js";
 import type {
   AgentModuleCandidate,
   AgentSourceLayer,
@@ -9,6 +10,7 @@ import type { DevelopmentExtensionSelection } from "#compiler/development-extens
 import type { AgentSourceManifest } from "#discover/manifest.js";
 
 export interface CompileAgentManifestOptions {
+  readonly phaseObserver?: CompilerPhaseObserver;
   readonly developmentExtensions?: DevelopmentExtensionSelection;
   readonly diagnostics?: CompilerDiagnostic[];
   readonly sourceRegistries?: readonly AgentSourceRegistry[];

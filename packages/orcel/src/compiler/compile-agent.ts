@@ -8,6 +8,7 @@ import { createDiskProjectSource, type ProjectSource } from "#discover/project-s
 import type { AgentSourceManifest } from "#discover/manifest.js";
 import {
   type CompileMetadata,
+  type CompilerPhaseObserver,
   type CompilerArtifactLocations,
   type CompilerArtifactPaths,
   writeCompilerArtifacts,
@@ -21,6 +22,8 @@ import type { DevelopmentExtensionSelection } from "#compiler/development-extens
  * discovery artifacts.
  */
 interface CompileAgentInput {
+  /** Optional local timing observer, inactive unless explicitly provided. */
+  phaseObserver?: CompilerPhaseObserver;
   /** Development-only source extensions applied before source composition. */
   developmentExtensions?: DevelopmentExtensionSelection;
   /**
@@ -79,10 +82,14 @@ export class CompileAgentError extends Error {
 export async function compileAgent(input: CompileAgentInput = {}): Promise<CompileAgentResult> {
   const discovered = await discoverAgentForCompilation(input);
   const artifactsRoot = join(discovered.project.appRoot, ".orcel");
-  const result = await writeAgentCompilation(discovered, {
-    publishedRoot: artifactsRoot,
-    writeRoot: artifactsRoot,
-  });
+  const result = await writeAgentCompilation(
+    discovered,
+    {
+      publishedRoot: artifactsRoot,
+      writeRoot: artifactsRoot,
+    },
+    input.phaseObserver,
+  );
 
   return finishAgentCompilation(result, CompileAgentError.fromDurableArtifacts);
 }
@@ -117,8 +124,12 @@ async function discoverAgentForCompilation(
   input: CompileAgentInput,
 ): Promise<DiscoveredAgentCompilation> {
   const source = input.source ?? createDiskProjectSource();
+  const projectStartedAt = input.phaseObserver ? performance.now() : 0;
   const project = await resolveDiscoveryProject(input.startPath, { source });
+  input.phaseObserver?.("resolveDiscoveryProject", performance.now() - projectStartedAt);
+  const discoverStartedAt = input.phaseObserver ? performance.now() : 0;
   const discoveryResult = await discoverAgent({ ...project, source });
+  input.phaseObserver?.("discoverAgent", performance.now() - discoverStartedAt);
 
   return {
     developmentExtensions: input.developmentExtensions,
@@ -131,8 +142,10 @@ async function discoverAgentForCompilation(
 async function writeAgentCompilation(
   discovered: DiscoveredAgentCompilation,
   artifactLocations: CompilerArtifactLocations,
+  phaseObserver?: CompilerPhaseObserver,
 ): Promise<CompileAgentResult> {
   const writtenArtifacts = await writeCompilerArtifacts({
+    phaseObserver,
     appRoot: discovered.project.appRoot,
     artifactLocations,
     diagnostics: discovered.diagnostics,

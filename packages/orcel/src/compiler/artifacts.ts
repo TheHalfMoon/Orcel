@@ -19,6 +19,36 @@ import type { DevelopmentExtensionSelection } from "#compiler/development-extens
 import { materializeWorkspaceResources } from "#compiler/workspace-resources.js";
 import { createSandboxPreparedArtifactsManifest } from "#shared/sandbox-prepared-artifacts.js";
 
+export type CompilerPhaseName =
+  | "resolveDiscoveryProject"
+  | "discoverAgent"
+  | "compileAgentManifest"
+  | "prepareDevelopmentExtensions"
+  | "rootCreatePhaseOne"
+  | "rootCompileAgentConfig"
+  | "rootCompileResources"
+  | "rootCompileChildren"
+  // Bounded opt-in compiler diagnostics: generic source kinds and numeric
+  // ordinal only. Never include source identifiers, paths, or agent content.
+  | `rootChild.${number}.${"start" | "done"}`
+  | `rootResource.${
+      | "config"
+      | "extension"
+      | "channel"
+      | "connection"
+      | "hook"
+      | "instructions"
+      | "memory"
+      | "sandbox"
+      | "schedule"
+      | "skill"
+      | "tool"}.${number}.${"start" | "done"}`
+  | "materializeWorkspaceResources"
+  | "prepareCompilerArtifacts"
+  | "writeCompilerArtifactFiles";
+
+export type CompilerPhaseObserver = (phase: CompilerPhaseName, durationMs: number) => void;
+
 /**
  * Stable diagnostics artifact kind emitted by the compiler.
  */
@@ -104,6 +134,7 @@ export interface CompilerArtifactLocations {
  * Input for writing compiler-owned source and diagnostic artifacts.
  */
 interface WriteCompilerArtifactsInput {
+  phaseObserver?: CompilerPhaseObserver;
   appRoot: string;
   developmentExtensions?: DevelopmentExtensionSelection;
   artifactLocations: CompilerArtifactLocations;
@@ -229,13 +260,20 @@ export async function writeCompilerArtifacts(
   const diagnostics = input.diagnostics.map((diagnostic) =>
     projectDiscoverDiagnostic(diagnostic, ROOT_COMPILED_AGENT_NODE_ID),
   );
+  const compileStartedAt = input.phaseObserver ? performance.now() : 0;
+  const normalizedManifest = await compileAgentManifest(input.manifest, {
+    developmentExtensions: input.developmentExtensions,
+    diagnostics,
+    phaseObserver: input.phaseObserver,
+  });
+  input.phaseObserver?.("compileAgentManifest", performance.now() - compileStartedAt);
+  const materializeStartedAt = input.phaseObserver ? performance.now() : 0;
   const compiledManifest = await materializeWorkspaceResources({
     compileDirectoryPath: paths.compileDirectoryPath,
-    manifest: await compileAgentManifest(input.manifest, {
-      developmentExtensions: input.developmentExtensions,
-      diagnostics,
-    }),
+    manifest: normalizedManifest,
   });
+  input.phaseObserver?.("materializeWorkspaceResources", performance.now() - materializeStartedAt);
+  const prepareStartedAt = input.phaseObserver ? performance.now() : 0;
   const diagnosticsArtifact = createCompilerDiagnosticsArtifact(diagnostics);
   const compiledManifestJson = serializeArtifactJson(compiledManifest);
   const discoveryManifestJson = serializeArtifactJson(input.manifest);
@@ -257,6 +295,8 @@ export async function writeCompilerArtifacts(
   const sandboxPreparedArtifactsJson = serializeArtifactJson(
     createSandboxPreparedArtifactsManifest([]),
   );
+  input.phaseObserver?.("prepareCompilerArtifacts", performance.now() - prepareStartedAt);
+  const writeStartedAt = input.phaseObserver ? performance.now() : 0;
 
   await mkdir(paths.discoveryDirectoryPath, {
     recursive: true,
@@ -272,6 +312,7 @@ export async function writeCompilerArtifacts(
     writeFile(paths.compileMetadataPath, metadataJson),
     writeFile(paths.sandboxPreparedArtifactsPath, sandboxPreparedArtifactsJson),
   ]);
+  input.phaseObserver?.("writeCompilerArtifactFiles", performance.now() - writeStartedAt);
 
   return {
     compiledManifest,
