@@ -133,3 +133,50 @@ nor a general data-exposure audit. It does not change retry budgets,
 production topology, Workflow SDK, or solve cross-process atomic successor
 handoff. Prior exact-head CI results apply only to the **older** SHA and
 must be repeated after this signed follow-up commit.
+
+## Found-owner metadata lookup error boundary (2026-10-10)
+
+On previous signed PR #47 SHA 19432603b85927a4d3f34a33cfb052f41e6c0116,
+resolveSessionInbox caught both getHookByToken and subsequent hook.metadata
+hydration in one try/catch. A physically present owner whose metadata
+hydration raised SDK HookNotFoundError could be mistaken for a missing hook
+and fall through to legacy session lookup. Even after splitting these
+operations, createWorkflowRuntime.resolveContinuation converted the raw
+metadata HookNotFoundError into undefined, as if the entire session did
+not exist. Either outcome could cause a channel to try starting another
+session despite an existing inbox owner.
+
+**Canonical Mac test-first qualification:**
+
+- A new regression test first FAILED 1/1 against the unmodified signed PR
+  head because the lookup incorrectly attempted a marker or legacy lookup
+  instead of forwarding the found owner's metadata failure. Preliminary
+  separated-lookup source passed the entire inbox unit suite 9/9 and
+  Local World integration 1/1, but was NOT published.
+- Two new focused tests then FAILED 2/2 against that preliminary source:
+  a found-owner metadata error was still raw HookNotFoundError, and the
+  public resolveContinuation returned undefined rather than failing closed.
+- Final bounded code wraps ONLY an SDK-branded HookNotFoundError from
+  identity metadata AFTER a hook is found into a separate
+  SessionIdentityUnavailableError. It has a fixed identifier-free message
+  and preserves the original as cause. Public resolveContinuation rethrows
+  this identity-unavailable result, bypassing its structured
+  continuationToken error log for this expected condition. Genuine absence
+  of the hook still returns undefined; generic unrecognized errors,
+  handoff retry windows, legacy fallback and other delivery remain intact.
+- The complete TWO official-config unit files PASSED 57/57 (9 inbox,
+  48 runtime), no failures (1.11s); the unchanged real pinned Local World
+  alias-handoff integration PASSED 1/1, four other cases filtered,
+  original deadline (13.14s file duration). Source-package TypeScript,
+  Oxlint/Oxfmt, mechanical invariant guard and git diff checks PASSED.
+  Offline frozen pnpm packages restored from the existing local Mac cache
+  with zero downloads. No paid model, Windows PC, SDK upgrade, deadline
+  extension, production successor refactor or migration.
+
+This is a local mock-backed error-classification regression and existing
+in-process handoff integration, NOT a reproduced real metadata-store
+outage, global privacy proof, backend crash/replay recovery or distributed
+atomic successor/fencing contract. Keep issue #32 OPEN and proposed
+successor architecture production NO-GO. PR #47 remains DRAFT/NO MERGE
+pending genuine independent Alibaba OCR model review, fresh exact-head CI
+and repository governance.

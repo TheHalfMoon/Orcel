@@ -97,6 +97,28 @@ describe("session inbox resume", () => {
     expect(getHookByTokenMock).not.toHaveBeenCalledWith(token);
   });
 
+  it("does not mistake owner metadata failure for an absent live hook", async () => {
+    const token = "channel:metadata-read-failure";
+    const physical = sessionInboxHookToken(token);
+    const metadataFailure = new HookNotFoundError("Current owner metadata unavailable");
+    getHookByTokenMock.mockImplementation(async (target: string) => {
+      if (target !== physical) throw new Error("Never try a marker or legacy fallback");
+      return {
+        runId: "current-owner",
+        get metadata() {
+          return Promise.reject(metadataFailure);
+        },
+      };
+    });
+
+    await expect(resolveSessionInbox(token)).rejects.toMatchObject({
+      name: "SessionIdentityUnavailableError",
+      cause: metadataFailure,
+    });
+    // The owner exists: no alternate legacy run, token or transfer marker is admissible.
+    expect(getHookByTokenMock).toHaveBeenCalledExactlyOnceWith(physical);
+  });
+
   it("fails closed when a handoff marker outlives the retry window", async () => {
     const token = "channel:stalled-handoff";
     const marker = sessionHandoffMarkerToken(token);

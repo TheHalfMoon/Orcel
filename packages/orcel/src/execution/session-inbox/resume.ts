@@ -78,6 +78,14 @@ export class SessionHandoffPendingError extends Error {
   }
 }
 
+/** A present inbox with unreadable identity must never appear missing. */
+export class SessionIdentityUnavailableError extends Error {
+  constructor(cause: unknown) {
+    super("Session inbox exists, but its session identity is unavailable.", { cause });
+    this.name = "SessionIdentityUnavailableError";
+  }
+}
+
 export class AcceptedSessionIdentityError extends Error {
   constructor(cause: unknown) {
     super("Session command accepted, but its session identity could not be resolved.", { cause });
@@ -95,14 +103,24 @@ export function requireSessionId(metadata: unknown): string {
 export async function resolveSessionInbox(token: string): Promise<{ sessionId: string }> {
   const deadline = Date.now() + HANDOFF_RETRY_WINDOW_MS;
   while (true) {
+    let hook;
     try {
-      const hook = await getHookByToken(sessionInboxHookToken(token));
-      return { sessionId: requireSessionId(await hook.metadata) };
+      hook = await getHookByToken(sessionInboxHookToken(token));
     } catch (error) {
       if (!HookNotFoundError.is(error)) throw error;
       if (await isHandoffInProgress(token, deadline)) continue;
       const target = await resolveLegacyInbox(token);
       return { sessionId: target.sessionId };
+    }
+    // Once the owner was located, a metadata failure is an identity error,
+    // not proof that the hook vanished. Never fall back to another session.
+    try {
+      return { sessionId: requireSessionId(await hook.metadata) };
+    } catch (cause) {
+      // The hook was found. A missing SDK metadata record is not a missing
+      // inbox; reporting HookNotFoundError here could create a second session.
+      if (HookNotFoundError.is(cause)) throw new SessionIdentityUnavailableError(cause);
+      throw cause;
     }
   }
 }
