@@ -28,6 +28,21 @@ export type CompilerPhaseName =
   | "rootCompileAgentConfig"
   | "rootCompileResources"
   | "rootCompileChildren"
+  // Bounded opt-in compiler diagnostics: generic source kinds and numeric
+  // ordinal only. Never include source identifiers, paths, or agent content.
+  | `rootChild.${number}.${"start" | "done"}`
+  | `rootResource.${
+      | "config"
+      | "extension"
+      | "channel"
+      | "connection"
+      | "hook"
+      | "instructions"
+      | "memory"
+      | "sandbox"
+      | "schedule"
+      | "skill"
+      | "tool"}.${number}.${"start" | "done"}`
   | "materializeWorkspaceResources"
   | "prepareCompilerArtifacts"
   | "writeCompilerArtifactFiles";

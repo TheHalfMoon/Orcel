@@ -210,3 +210,67 @@ including two earlier unchanged-head 60-second failures. A future
 post-change timeout is still required to demonstrate the precise stage
 markers preserved when a run aborts mid-compiler, and repeated paired
 measurements would be required to attribute a speedup or root cause.
+
+## Mac per-kind resource and per-child opt-in timings (2026-10-10)
+
+An additional bounded diagnostic grain on top of signed PR #36 head
+`e14b81e192dde02f2c2f34abe29e04d119e47911` extends the **existing
+optional** `CompilerPhaseObserver` names for root-node resources and immediate
+root-child subagents. Each completed resource gets a paired start and completion
+marker of the form `rootResource.<static-kind>.<ordinal>.<start|done>`; each
+immediate root child gets `rootChild.<ordinal>.<start|done>`. Every completion
+records a numeric duration in milliseconds and the previously implemented
+`ORCEL_MOUNT_PHASE_PROGRESS` logger supplies total elapsed milliseconds.
+This does **not** log source identifiers, extension names, filesystem paths,
+agent content, model requests, tokens or tool payloads. The phase name type is
+restricted to statically enumerated resource kinds and numeric ordinals;
+no arbitrary observer-supplied strings are introduced. Calls are gated on
+`input.isRoot` and a supplied optional phase observer; ordinary compilation
+without an observer has no new callbacks or timestamp reads.
+
+### Mac execution and observed results
+
+In an isolated macOS Git worktree with exact original PR branch, Node v24.15.0,
+frozen offline dependencies reused from the local pnpm store and the compiled
+package, the existing `isolates configured built-in extension mounts` case
+**PASSED**, 1 passed / 10 filtered, unchanged **60,000ms** deadline and a
+single Vitest fork. Total Vitest file duration: **22.13 seconds**. All 82
+incremental progress records and the final diagnostic summary were emitted:
+**66** root resource start/done records (33 root resources), **4** root-child
+start/done records (2 root children), plus 12 existing broad phase records.
+
+| Root resource kind | Count | Sum of individually completed durations (ms) | Largest individual (ms) |
+| ------------------ | ----: | -------------------------------------------: | ----------------------: |
+| tool               |    14 |                                        2,595 |                     628 |
+| hook               |     2 |                                        1,572 |                   1,033 |
+| sandbox            |     1 |                                          627 |                     627 |
+| channel            |     2 |                                          239 |                     232 |
+| config             |     1 |                                            0 |                       0 |
+| extension          |     2 |                                            0 |                       0 |
+| instructions       |     3 |                                            0 |                       0 |
+| skill              |     8 |                                            0 |                       0 |
+
+The two immediate root-child durations were **1,612ms** and **2,949ms**.
+Those child figures include nested work; do not add them to root resource
+elapsed time to infer CPU consumption. The recorded root resource `phaseMs`
+values are wall-time spans for serial candidate handling, not exclusive CPU
+samples. Zero values mean rounded milliseconds, not proven zero work. These
+numbers are **single-run exploratory evidence, not a stable baseline or
+measured optimization**; earlier unchanged-head Mac runs failed at the same
+60-second deadline.
+
+A separate existing smaller root-mount test (`keeps state independent across
+mounts and context restoration`) also **PASSED**, 1 passed / 10 filtered,
+with the optional resource-kind timing enabled (7.60s file duration).
+With `ORCEL_MOUNT_PHASE_PROFILE` unset, the same smaller test **PASSED**,
+1 passed / 10 filtered (10.38s file duration), and emitted **no**
+`ORCEL_MOUNT_PHASE_PROGRESS` or final profiler lines. These unpaired
+wall-time results are **not** evidence of a speedup or overhead measurement.
+
+Original assertions, workspace extension isolation, mount owner bindings,
+normal build/public artifacts, timeout, and GitHub workflow declarations are
+unchanged. A future timed-out profiled run can now report the **last started
+resource kind and ordinal** without exposing sensitive app source material,
+but we do not claim such a post-change failure was observed in this grain.
+Do not mark issue #31 resolved or interpret the observations as a proved
+compiler performance defect or repair.

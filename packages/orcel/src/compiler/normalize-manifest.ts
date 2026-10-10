@@ -238,7 +238,11 @@ class AgentGraphCompiler {
     const subagents = state.projected.subagents.filter((source) =>
       selectedSourceIds.has(source.candidate.sourceId),
     );
-    for (const projected of subagents) {
+    for (const [childIndex, projected] of subagents.entries()) {
+      const childStartedAt = input.isRoot && this.phaseObserver ? performance.now() : 0;
+      if (input.isRoot && this.phaseObserver) {
+        this.phaseObserver(`rootChild.${childIndex}.start`, 0);
+      }
       const source = projected.source;
       const nodeId = createCompiledSubagentNodeId(input.nodeId, source.sourceId);
       const childInput: NodeCompileInput = {
@@ -292,6 +296,9 @@ class AgentGraphCompiler {
             sourceRef: phaseOne.selectedConfig.source,
           }),
         );
+        if (input.isRoot) {
+          this.phaseObserver?.(`rootChild.${childIndex}.done`, performance.now() - childStartedAt);
+        }
         continue;
       }
 
@@ -367,6 +374,9 @@ class AgentGraphCompiler {
         };
       }
       nodes.push(node, ...children.nodes);
+      if (input.isRoot) {
+        this.phaseObserver?.(`rootChild.${childIndex}.done`, performance.now() - childStartedAt);
+      }
     }
 
     return { nodes, remoteAgents };
@@ -499,11 +509,19 @@ class AgentGraphCompiler {
     let sandbox: CompiledSandboxDefinition | undefined;
     const selectedSourceIds = collectSelectedSourceIds(state.composed);
     const loadNamespace = state.evaluation.loadNamespace;
+    let resourceIndex = 0;
 
     for (const candidate of state.orderedCandidates) {
       if (!selectedSourceIds.has(candidate.sourceId)) continue;
       const entry = state.sourcesBySourceId.get(candidate.sourceId);
       if (entry === undefined) continue;
+      // Only the opt-in test observer sees bounded type/ordinal timings. Never
+      // emit project paths, extension names, source IDs or evaluated payloads.
+      const resourceStartedAt = input.isRoot && this.phaseObserver ? performance.now() : 0;
+      const ordinal = input.isRoot && this.phaseObserver ? resourceIndex++ : -1;
+      if (input.isRoot && this.phaseObserver) {
+        this.phaseObserver(`rootResource.${entry.kind}.${ordinal}.start`, 0);
+      }
       const binding = state.bindings[candidate.sourceId];
       const options = {
         binding,
@@ -627,6 +645,12 @@ class AgentGraphCompiler {
           }
           break;
         }
+      }
+      if (input.isRoot) {
+        this.phaseObserver?.(
+          `rootResource.${entry.kind}.${ordinal}.done`,
+          performance.now() - resourceStartedAt,
+        );
       }
     }
 
