@@ -474,6 +474,7 @@ describe("workflowEntry integration", () => {
         // make ingress wait for the successor instead of reporting the session
         // gone (which would let the channel start a replacement session).
         let gapDelivery: Promise<unknown> | undefined;
+        let gapResolution: Promise<{ sessionId: string } | undefined> | undefined;
         const createBatch = world.events.createBatch;
         world.events.createBatch = undefined;
         const createEvent = world.events.create.bind(world.events);
@@ -490,6 +491,8 @@ describe("workflowEntry integration", () => {
               command: handoffFollowUp("dpl_b", "Alice writes during the gap.", "delivery-gap"),
               continuationToken,
             });
+            // Lookup must not treat this still-marked gap as an absent session.
+            gapResolution = workflowRuntime.resolveContinuation(continuationToken);
           }
           return created;
         });
@@ -514,6 +517,8 @@ describe("workflowEntry integration", () => {
           ).toBe(true);
           spy.mockRestore();
           expect(gapDelivery).toBeDefined();
+          expect(gapResolution).toBeDefined();
+          await expect(gapResolution).resolves.toEqual({ sessionId: anchor.runId });
           await expect(gapDelivery).resolves.toMatchObject({
             sessionId: anchor.runId,
             status: "accepted",
