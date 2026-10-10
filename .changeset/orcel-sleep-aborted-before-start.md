@@ -2,4 +2,4 @@
 "@orcel/orcel": patch
 ---
 
-Return an interrupted result without scheduling a durable sleep when a workflow tool call starts with an already-aborted signal.
+Avoid scheduling a durable sleep for an already-aborted tool call, and release the abort listener after a sleep finishes or is interrupted.

@@ -36,11 +36,35 @@ describe("sleep", () => {
   it("returns interrupted when aborted while the durable sleep is pending", async () => {
     vi.mocked(workflowSleep).mockImplementation(() => new Promise<void>(() => {}));
     const controller = new AbortController();
+    const added = vi.spyOn(controller.signal, "addEventListener");
+    const removed = vi.spyOn(controller.signal, "removeEventListener");
     const output = sleep().execute({ seconds: 600 }, { abortSignal: controller.signal } as never);
 
     expect(workflowSleep).toHaveBeenCalledExactlyOnceWith(600_000);
     controller.abort();
     await expect(output).resolves.toEqual({ interrupted: true });
+    expect(removed).toHaveBeenCalledExactlyOnceWith("abort", added.mock.calls[0]![1]);
+  });
+
+  it("removes the abort listener after a normally completed durable sleep", async () => {
+    let wake: (() => void) | undefined;
+    vi.mocked(workflowSleep).mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          wake = resolve;
+        }),
+    );
+    const controller = new AbortController();
+    const added = vi.spyOn(controller.signal, "addEventListener");
+    const removed = vi.spyOn(controller.signal, "removeEventListener");
+
+    const output = sleep().execute({ seconds: 2 }, { abortSignal: controller.signal } as never);
+    expect(workflowSleep).toHaveBeenCalledExactlyOnceWith(2_000);
+    expect(added).toHaveBeenCalledTimes(1);
+    expect(added).toHaveBeenCalledWith("abort", expect.any(Function), { once: true });
+    wake?.();
+    await expect(output).resolves.toEqual({ waitedSeconds: 2 });
+    expect(removed).toHaveBeenCalledExactlyOnceWith("abort", added.mock.calls[0]![1]);
   });
 
   it("waits for the requested number of seconds in its workflow body", async () => {
