@@ -1,17 +1,25 @@
-import { sessionInboxHookToken } from "#execution/session-inbox/address.js";
+import {
+  sessionHandoffMarkerToken,
+  sessionInboxHookToken,
+} from "#execution/session-inbox/address.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { HookNotFoundError } from "#compiled/@workflow/errors/index.js";
 import { sessionCommandHookToken } from "#execution/session-inbox/address.js";
-import { resumeSessionInbox } from "#execution/session-inbox/resume.js";
+import { resolveSessionInbox, resumeSessionInbox } from "#execution/session-inbox/resume.js";
 
 const resumeHookMock = vi.fn();
+const getHookByTokenMock = vi.fn();
 
 vi.mock("#internal/workflow/runtime.js", () => ({
   resumeHook: (...args: unknown[]) => resumeHookMock(...args),
+  getHookByToken: (...args: unknown[]) => getHookByTokenMock(...args),
 }));
 
 afterEach(() => {
   resumeHookMock.mockReset();
+  getHookByTokenMock.mockReset();
+  vi.restoreAllMocks();
 });
 
 describe("session inbox resume", () => {
@@ -66,6 +74,88 @@ describe("session inbox resume", () => {
     });
     const receipt = await resumeSessionInbox({ sessionId: "anchor" }, { kind: "clear" });
     await expect(receipt.sessionId).resolves.toBe("anchor");
+  });
+
+  it("resolves the original session through an in-progress handoff gap", async () => {
+    const token = "channel:handoff-alias";
+    const physical = sessionInboxHookToken(token);
+    const marker = sessionHandoffMarkerToken(token);
+    let ownerLookups = 0;
+    getHookByTokenMock.mockImplementation(async (target: string) => {
+      if (target === marker) return { runId: "old-owner" };
+      if (target !== physical) throw new HookNotFoundError("Unexpected legacy lookup");
+      ownerLookups += 1;
+      if (ownerLookups === 1) throw new HookNotFoundError("Owner is releasing the hook");
+      return sessionHook("successor", physical, { sessionId: "original-session" });
+    });
+
+    await expect(resolveSessionInbox(token)).resolves.toEqual({
+      sessionId: "original-session",
+    });
+    expect(ownerLookups).toBe(2);
+    expect(getHookByTokenMock).toHaveBeenCalledWith(marker);
+    expect(getHookByTokenMock).not.toHaveBeenCalledWith(token);
+  });
+
+  it("does not mistake owner metadata failure for an absent live hook", async () => {
+    const token = "channel:metadata-read-failure";
+    const physical = sessionInboxHookToken(token);
+    const metadataFailure = new HookNotFoundError("Current owner metadata unavailable");
+    getHookByTokenMock.mockImplementation(async (target: string) => {
+      if (target !== physical) throw new Error("Never try a marker or legacy fallback");
+      return {
+        runId: "current-owner",
+        get metadata() {
+          return Promise.reject(metadataFailure);
+        },
+      };
+    });
+
+    await expect(resolveSessionInbox(token)).rejects.toMatchObject({
+      name: "SessionIdentityUnavailableError",
+      cause: metadataFailure,
+    });
+    // The owner exists: no alternate legacy run, token or transfer marker is admissible.
+    expect(getHookByTokenMock).toHaveBeenCalledExactlyOnceWith(physical);
+  });
+
+  it("fails closed when a handoff marker outlives the retry window", async () => {
+    const token = "channel:stalled-handoff";
+    const marker = sessionHandoffMarkerToken(token);
+    const physical = sessionInboxHookToken(token);
+    const clock = vi.spyOn(Date, "now").mockReturnValueOnce(1_000).mockReturnValue(6_001);
+    getHookByTokenMock.mockImplementation(async (target: string) => {
+      if (target === marker) return { runId: "old-owner" };
+      if (target === physical) throw new HookNotFoundError("No live hook yet");
+      throw new HookNotFoundError("Unexpected legacy lookup");
+    });
+
+    await expect(resolveSessionInbox(token)).rejects.toMatchObject({
+      name: "SessionHandoffPendingError",
+    });
+    expect(clock).toHaveBeenCalled();
+    expect(getHookByTokenMock).toHaveBeenCalledWith(marker);
+    expect(getHookByTokenMock).not.toHaveBeenCalledWith(token);
+  });
+
+  it("does not retry a missing hook into legacy while an expired handoff marker exists", async () => {
+    const token = "channel:stalled-delivery";
+    const marker = sessionHandoffMarkerToken(token);
+    const physical = sessionInboxHookToken(token);
+    vi.spyOn(Date, "now").mockReturnValueOnce(1_000).mockReturnValue(6_001);
+    resumeHookMock.mockRejectedValue(new HookNotFoundError("Unclaimed during handoff"));
+    getHookByTokenMock.mockImplementation(async (target: string) => {
+      if (target === marker) return { runId: "prior-owner" };
+      if (target === physical) throw new HookNotFoundError("No new owner yet");
+      throw new HookNotFoundError("Unexpected legacy lookup");
+    });
+
+    await expect(resumeSessionInbox(token, { kind: "clear" })).rejects.toMatchObject({
+      name: "SessionHandoffPendingError",
+    });
+    expect(resumeHookMock).toHaveBeenCalledOnce();
+    expect(getHookByTokenMock).toHaveBeenCalledWith(marker);
+    expect(getHookByTokenMock).not.toHaveBeenCalledWith(token);
   });
 
   it("does not substitute the executor for missing session identity", async () => {

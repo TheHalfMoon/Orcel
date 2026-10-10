@@ -70,6 +70,22 @@ export async function resumeSessionInbox(
   }
 }
 
+/** A still-marked handoff must not be mistaken for an absent session. */
+export class SessionHandoffPendingError extends Error {
+  constructor() {
+    super("Session handoff is still pending; retry the existing session.");
+    this.name = "SessionHandoffPendingError";
+  }
+}
+
+/** A present inbox with unreadable identity must never appear missing. */
+export class SessionIdentityUnavailableError extends Error {
+  constructor(cause: unknown) {
+    super("Session inbox exists, but its session identity is unavailable.", { cause });
+    this.name = "SessionIdentityUnavailableError";
+  }
+}
+
 export class AcceptedSessionIdentityError extends Error {
   constructor(cause: unknown) {
     super("Session command accepted, but its session identity could not be resolved.", { cause });
@@ -85,13 +101,27 @@ export function requireSessionId(metadata: unknown): string {
 }
 
 export async function resolveSessionInbox(token: string): Promise<{ sessionId: string }> {
-  try {
-    const hook = await getHookByToken(sessionInboxHookToken(token));
-    return { sessionId: requireSessionId(await hook.metadata) };
-  } catch (error) {
-    if (!HookNotFoundError.is(error)) throw error;
-    const target = await resolveLegacyInbox(token);
-    return { sessionId: target.sessionId };
+  const deadline = Date.now() + HANDOFF_RETRY_WINDOW_MS;
+  while (true) {
+    let hook;
+    try {
+      hook = await getHookByToken(sessionInboxHookToken(token));
+    } catch (error) {
+      if (!HookNotFoundError.is(error)) throw error;
+      if (await isHandoffInProgress(token, deadline)) continue;
+      const target = await resolveLegacyInbox(token);
+      return { sessionId: target.sessionId };
+    }
+    // Once the owner was located, a metadata failure is an identity error,
+    // not proof that the hook vanished. Never fall back to another session.
+    try {
+      return { sessionId: requireSessionId(await hook.metadata) };
+    } catch (cause) {
+      // The hook was found. A missing SDK metadata record is not a missing
+      // inbox; reporting HookNotFoundError here could create a second session.
+      if (HookNotFoundError.is(cause)) throw new SessionIdentityUnavailableError(cause);
+      throw cause;
+    }
   }
 }
 
@@ -110,13 +140,15 @@ function logicalToken(address: string | SessionInboxAddress): string {
 
 /** Waits one retry interval when a handoff marker exists; false once the window closes or no marker exists. */
 async function isHandoffInProgress(token: string, deadline: number): Promise<boolean> {
-  if (Date.now() >= deadline) return false;
   try {
     await getHookByToken(sessionHandoffMarkerToken(token));
   } catch (error) {
     if (HookNotFoundError.is(error)) return false;
     throw error;
   }
+  // Even after the bounded wait expires, a live marker means the session is
+  // transitioning, not missing. Fail closed instead of starting a replacement.
+  if (Date.now() >= deadline) throw new SessionHandoffPendingError();
   await new Promise<void>((resolve) => setTimeout(resolve, HANDOFF_RETRY_INTERVAL_MS));
   return true;
 }

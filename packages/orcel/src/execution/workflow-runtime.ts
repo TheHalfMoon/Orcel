@@ -67,6 +67,8 @@ import {
   AcceptedSessionIdentityError,
   resolveSessionInbox,
   resumeSessionInbox,
+  SessionHandoffPendingError,
+  SessionIdentityUnavailableError,
 } from "#execution/session-inbox/resume.js";
 import type { SessionInboxAddress } from "#execution/session-inbox/address.js";
 import type { DynamicSubagentAgentConfig } from "#runtime/subagents/dynamic-agent-config.js";
@@ -257,6 +259,13 @@ export function createWorkflowRuntime(config: {
         if (HookNotFoundError.is(error)) {
           return undefined;
         }
+        // A live handoff is expected contention, not a missing session.
+        // Logging its alias here could disclose private channel identifiers.
+        if (
+          error instanceof SessionHandoffPendingError ||
+          error instanceof SessionIdentityUnavailableError
+        )
+          throw error;
         logError(log, "failed to resolve session by continuation token", error, {
           continuationToken,
         });
