@@ -86,7 +86,9 @@ describe("workflowEntryReference", () => {
     // The runtime references intentionally omit the `@<pkg.version>` stamp
     // so an explicitly targeted deployment finds the same workflow even when
     // orcel itself has been upgraded.
-    expect(workflowEntryReference.workflowId).toBe(`workflow//${ORCEL_STABLE_WORKFLOW_ID_BASE}//workflowEntry`);
+    expect(workflowEntryReference.workflowId).toBe(
+      `workflow//${ORCEL_STABLE_WORKFLOW_ID_BASE}//workflowEntry`,
+    );
     expect(workflowEntryReference.workflowId).not.toContain("/src/execution/");
     expect(workflowEntryReference.workflowId).not.toContain(`@${packageInfo.version}`);
     expect(sessionTimeoutWorkflowReference.workflowId).toBe(
@@ -316,7 +318,11 @@ describe("createWorkflowRuntime command dispatch", () => {
 
   it("acknowledges the exact delivery accepted by the session inbox", async () => {
     resumeHookMock.mockResolvedValue({ runId: "session-1" });
-    const delivery = { channelKind: "orcel", channelName: "orcel", deliveryId: "accepted-delivery" };
+    const delivery = {
+      channelKind: "orcel",
+      channelName: "orcel",
+      deliveryId: "accepted-delivery",
+    };
     const result = await buildRuntime().dispatchSession({
       command: { kind: "send", payload: { message: "hello" }, delivery },
       sessionId: "session-1",
@@ -478,6 +484,35 @@ describe("createWorkflowRuntime#resolveContinuation", () => {
     getHookByTokenMock.mockRejectedValue(new HookNotFoundError("test:token"));
 
     await expect(buildRuntime().resolveContinuation("test:token")).resolves.toBeUndefined();
+  });
+
+  it("does not log private continuation tokens for an expected pending handoff", async () => {
+    const runtime = buildRuntime();
+    const logs = captureLogRecords();
+    const token = "slack:private-channel:thread-123";
+    getHookByTokenMock.mockImplementation(async (target: string) => {
+      if (target === sessionInboxHookToken(token)) {
+        throw new HookNotFoundError("Session ownership is transitioning");
+      }
+      if (target === sessionHandoffMarkerToken(token)) return currentSessionHook(target);
+      throw new HookNotFoundError("Unexpected legacy lookup");
+    });
+    const clock = vi.spyOn(Date, "now").mockReturnValueOnce(1_000).mockReturnValue(6_001);
+    try {
+      await expect(runtime.resolveContinuation(token)).rejects.toMatchObject({
+        name: "SessionHandoffPendingError",
+      });
+      // Expected handoff contention must not create an error log containing
+      // an address that may include private channel/user identifiers.
+      expect(
+        logs.records.filter(
+          (record) => record.message === "failed to resolve session by continuation token",
+        ),
+      ).toEqual([]);
+      expect(getHookByTokenMock).not.toHaveBeenCalledWith(token);
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it("rethrows unexpected lookup failures", async () => {

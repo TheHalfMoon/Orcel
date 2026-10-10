@@ -101,3 +101,35 @@ Independent review, signed+DCO commit, exact-head CI and post-main release
 checks remain gates; the successor architecture stays **PRODUCTION NO-GO**
 and issue #32 stays OPEN. Do not silently merge this change solely because
 unit/E2E tests pass.
+
+## Expected pending-handoff log privacy follow-up (2026-10-10)
+
+An additional risk was found by inspecting the **public**
+`createWorkflowRuntime.resolveContinuation` catch path: before this fix, it
+logged every error other than `HookNotFoundError` with a structured
+`continuationToken` field. The new `SessionHandoffPendingError` is an
+**expected transient contention outcome**; logging the associated stable
+channel alias could reveal channel/thread/user identifiers even though the
+new error's own message contains no identifier.
+
+A test was first added to the checked-in `workflow-runtime.test.ts`, with a
+real session pending error induced through the existing mocked Workflow SDK
+hook interface and a still-live marker after the unchanged 5-second window.
+The test captures structured logs and asserts the expected pending error is
+**propagated** with no `failed to resolve session by continuation token`
+error record. **Test-first RED:** against unchanged signed PR #47 source,
+the focused test **FAILED 1/1** because the runtime wrote exactly that error
+record; 46 other cases were filtered out. **GREEN:** the runtime catch now
+explicitly rethrows `SessionHandoffPendingError` _before_ the generic logging
+path. Unexpected backing-store errors still follow the preexisting logging
+path; missing-session `HookNotFoundError` still returns `undefined`.
+
+The complete canonical `workflow-runtime.test.ts` file **PASSED 47/47** after
+the fix, original per-test deadline unchanged, Vitest file duration
+**7.16s**. Source TypeScript and changed-file Oxlint **PASSED**. This
+qualifies only the local expected-error logging contract and does not claim
+that upstream host/HTTP proxies will never log request URLs or metadata,
+nor a general data-exposure audit. It does not change retry budgets,
+production topology, Workflow SDK, or solve cross-process atomic successor
+handoff. Prior exact-head CI results apply only to the **older** SHA and
+must be repeated after this signed follow-up commit.
