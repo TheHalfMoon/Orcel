@@ -90,6 +90,30 @@ describe("pinned Workflow SDK experimental force-claim local probe (#32)", () =>
     }
   });
 
+  it("does not silently acknowledge replay after a resolved forced-claim token", async () => {
+    const token = "force-claim-resume-replay:" + randomUUID();
+    const victim = await start(forceClaimResearchVictim, [{ token }]);
+    let claimant: Awaited<ReturnType<typeof start>> | undefined;
+    try {
+      await waitForHook(victim, { token });
+      claimant = await start(forceClaimResearchSuccessor, [{ token }]);
+      await waitForHook(claimant, { token });
+
+      // Simulate a client that lost the successful resume acknowledgment. The
+      // SDK has no application-level handoff ID or outcome journal in this call.
+      await resumeHook(token, "original-payload");
+      await expect(claimant.returnValue).resolves.toBe("original-payload");
+      await expect(victim.returnValue).rejects.toThrow("was force-claimed by another workflow");
+      await expect(resumeHook(token, "original-payload")).rejects.toMatchObject({
+        name: "HookNotFoundError",
+        token,
+      });
+    } finally {
+      if (claimant) await releaseIfLive(claimant);
+      await releaseIfLive(victim);
+    }
+  });
+
   it("routes a repeated force-claim to the latest live owner", async () => {
     const token = "force-claim-chain:" + randomUUID();
     const original = await start(forceClaimResearchVictim, [{ token }]);
