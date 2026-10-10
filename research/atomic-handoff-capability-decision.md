@@ -1,7 +1,7 @@
 ---
 issue: https://github.com/TheHalfMoon/Orcel/issues/32
 status: blocked-upstream
-last_updated: "2026-10-09"
+last_updated: "2026-10-10"
 scope: installed-public-api-and-contract
 ---
 
@@ -15,7 +15,7 @@ Source-of-truth: `research/turn-performance.md` (successor feasibility, no-owner
 
 ## Capability delta: experimental force-claim in the pinned SDK (2026-10-09)
 
-The earlier public-*name* inventory below is historically accurate within its
+The earlier public-_name_ inventory below is historically accurate within its
 scope but **incomplete for options on existing functions**. Upstream
 [vercel/workflow PR #4193](https://github.com/vercel/workflow/pull/4193)
 merged on 2026-09-23, exposing
@@ -26,7 +26,7 @@ buffered deliveries, and resume redirects with stable `resumeId` for bounded
 races. This is a specific experimental hook ownership feature, **not an
 atomic successor-session protocol for all Orcel state**.
 
-The *already installed and pinned*, un-upgraded Orcel packages are
+The _already installed and pinned_, un-upgraded Orcel packages are
 `@workflow/core@5.0.0-beta.57`,
 `@workflow/errors@5.0.0-beta.24`,
 `@workflow/world@5.0.0-beta.39`, and
@@ -34,8 +34,8 @@ The *already installed and pinned*, un-upgraded Orcel packages are
 declarations show `HookOptions.experimental_force?: boolean` in
 `@workflow/core`, `HookForceClaimedError` in `@workflow/errors`,
 and `hookForceClaim?: boolean` in `@workflow/world`. The expanded
-`scripts/workflow-public-api-capabilities.test.mjs` checks these *published
-declarations*, in addition to the previous 2 exported-symbol tests; this
+`scripts/workflow-public-api-capabilities.test.mjs` checks these _published
+declarations_, in addition to the previous 2 exported-symbol tests; this
 is **not by itself a behavioral test**. The separate local-only
 `packages/orcel/src/execution/workflow-force-claim-research.integration.test.ts`
 now demonstrates a minimal pinned Local World forced-claim path: the old
@@ -71,6 +71,54 @@ refusal, concurrent claims, same-payload retries and crash/replay), followed
 by explicit design validation of the remaining inbox and stream contracts.
 No existing production topology is changed.
 
+## Pinned PostgreSQL World hook-resume contract correction (2026-10-10)
+
+**Correction to earlier upstream-version interpretation:** Orcel's **actually
+installed** `@workflow/world-postgres@5.0.0-beta.47` is NOT a World that leaves
+`hookResumeDedup` unset. This package is available in the pinned offline pnpm
+store for Orcel's PostgreSQL E2E fixture; it is **not** a direct dependency of
+the core `@orcel/orcel` package. Record its runtime capabilities independently
+of the core package's pinned `@workflow/world@5.0.0-beta.39` interface.
+
+Read-only inspection on the authorized Mac of the installed published
+`@workflow/world-postgres/dist/index.js` finds `createWorld()` declaring
+both **`hookResumeDedup: true`** and **`hookForceClaim: true`**. The **exact
+installed** `@workflow/world/dist/interfaces.d.ts` explicitly describes
+`world-postgres` as transactionally enforcing `(runId, resumeId)` and declaring
+the corresponding capability statically. In the same pinned PostgreSQL World,
+`dist/storage.js`'s `createHookResume` enters a Drizzle transaction, locks the
+run row (`FOR UPDATE`), looks up an existing `hook_received` event by
+`(runId, resumeId)`, and returns a canonical prior event when the token,
+hook identity and SHA-256 payload digest match. A repeated resume identity
+with divergent contents raises a **422 conflict**. These are inspected
+implementation details and capability declarations, **not** an Orcel
+multi-process crash/replay conformance PASS. Revalidate after any SDK upgrade.
+
+The separate public API inventory probe
+`node --test scripts/workflow-public-api-capabilities.test.mjs` **PASSED 3/3**
+with installed `@workflow/core@5.0.0-beta.57`,
+`@workflow/world@5.0.0-beta.39`,
+`@workflow/errors@5.0.0-beta.24`, and
+`@workflow/world-local@5.0.0-beta.48`. **Its three checks do not exercise
+PostgreSQL World**; source inspection of the separately installed Postgres
+fixture package is the evidence for the PostgreSQL assertions above. Do
+**not** infer runtime cross-process guarantees from those three public-name
+and TypeScript-declaration tests.
+
+**Capability boundary:** backend event-level hook resume deduplication is
+**PRESENT IN PINNED POSTGRES IMPLEMENTATION**. The documented experimental
+forced hook claim is a separate available building block. Neither constitutes
+Orcel's **one** generation-fenced atomic handoff commit with all stable
+addresses, original run/stream/cursor, authenticated target deployment,
+checkpoint, continuous FIFO inbox admission, durable `handoffId` receipt,
+external model/tool side-effect deduplication and crash recovery. The
+**proposed successor topology remains PRODUCTION NO-GO**, even though
+PR #44's Local World duplicate acknowledgments and PR #47's existing
+handoff hardening have green exact-head CI. The no-merge governance and
+independent-model-review limitations remain unchanged. The source-linked
+correction is also recorded in
+[issue #32](https://github.com/TheHalfMoon/Orcel/issues/32#issuecomment-6099846324).
+
 ## Reproducible zero-cost public entrypoint inventory
 
 On the authorized local Windows workstation, at canonical baseline `e5fdcbdc25a117a48d9b4cc9372cb8fbffc83158`, installed dependencies from the frozen pnpm lockfile with `pnpm install --offline --frozen-lockfile --filter '@orcel/orcel...'` (zero downloads). Executed:
@@ -79,25 +127,26 @@ On the authorized local Windows workstation, at canonical baseline `e5fdcbdc25a1
 node --test scripts/workflow-public-api-capabilities.test.mjs
 ```
 
-**Result: 2/2 PASS;** `@workflow/core@5.0.0-beta.57`, `@workflow/world-local@5.0.0-beta.48` match the Orcel manifest. The root public entrypoint exposed `createHook`, `createWebhook`, `defineHook`. The public `@workflow/core/runtime` entrypoint exposed `getHookByToken`, `resumeHook`, `resumeWebhook`, `start`. Neither inspected entrypoint exposed a named transfer/handoff/atomic-claim function. The SDK package declares other export paths, including `./runtime/resume-hook`, `./runtime/start` and `./runtime/lifecycle-hooks`; the original probe did not inspect options on those entrypoints, private implementations, or takeover behaviors. The *separate* declaration probe above corrects that omission without claiming behavioral qualification.
+**Result: 2/2 PASS;** `@workflow/core@5.0.0-beta.57`, `@workflow/world-local@5.0.0-beta.48` match the Orcel manifest. The root public entrypoint exposed `createHook`, `createWebhook`, `defineHook`. The public `@workflow/core/runtime` entrypoint exposed `getHookByToken`, `resumeHook`, `resumeWebhook`, `start`. Neither inspected entrypoint exposed a named transfer/handoff/atomic-claim function. The SDK package declares other export paths, including `./runtime/resume-hook`, `./runtime/start` and `./runtime/lifecycle-hooks`; the original probe did not inspect options on those entrypoints, private implementations, or takeover behaviors. The _separate_ declaration probe above corrects that omission without claiming behavioral qualification.
 
 Results are **a public-name inventory**, not a behavioral proof that an atomic operation is missing everywhere. Prior source-backed interrupted-handoff experiments supply the stronger observable negative result. The test deliberately exercises no unsafe state transition, network call, model or paid API, and it prints no tokens, user content or credentials. Re-run this probe against any prospective SDK upgrade before designing a new protocol.
 
 ## Capability matrix: supported means supported at the stated boundary
 
-| Required primitive or guarantee                                          | Evidence status                   | Boundary                                                                                              |
-| ------------------------------------------------------------------------ | --------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Single hook creation and resume                                          | SUPPORTED (local)                 | PR #28, two real local-world tests; no cross-process semantics                                        |
-| Parent and child Workflow run with two ordered acknowledgments           | SUPPORTED (local)                 | PR #30, two independent local test runs; hooks always parent-owned                                    |
-| Starting a separate Workflow run                                         | SUPPORTED (local)                 | PR #30 child identity differs from parent                                                             |
-| Successor start targeted to a deployment                                 | PROTOTYPED only                   | Historical `turn-performance.md` proof; production Orcel rejects an unauthenticated `latest` selector |
-| Stream continuity across bounded runs                                    | PROTOTYPED only                   | Prior sequencer experiment; no production cancellation/authorization evidence                         |
-| Atomic, replay-idempotent successor activation plus hook transfer        | PARTIAL SDK CAPABILITY / UNPROVEN ORCEL CONTRACT | Experimental forced token claim is declared; successor activation, inbox sequence, stream/cancel and crash semantics remain unqualified |
-| No `HookNotFoundError` interval at stable ingress token during transfer  | UPSTREAM CLAIM / UNTESTED FOR ORCEL | Upstream forced-claim redirects are documented; prior non-force disposal/claim gap remains valid |
-| Fencing + monotonic FIFO inbox sequence as one SDK commit                | NOT SUPPORTED by present evidence | External CAS/inbox is a separate unimplemented protocol                                               |
-| Cross-process crash/retry, duplicate dispatch and idempotent replay      | UNTESTED                          | Neither local PR #28 nor #30 establishes this                                                         |
-| Authorization, cancellation, HITL, task/subagent, timeout, stream cursor | UNTESTED for successor mode       | Preserve existing driver/child production paths                                                       |
-| Hosted paired benchmark and causal performance gain                      | NOT MEASURED                      | `research/turn-performance.md` remains `proposed`                                                     |
+| Required primitive or guarantee                                          | Evidence status                                  | Boundary                                                                                                                                                          |
+| ------------------------------------------------------------------------ | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Single hook creation and resume                                          | SUPPORTED (local)                                | PR #28, two real local-world tests; no cross-process semantics                                                                                                    |
+| Parent and child Workflow run with two ordered acknowledgments           | SUPPORTED (local)                                | PR #30, two independent local test runs; hooks always parent-owned                                                                                                |
+| Starting a separate Workflow run                                         | SUPPORTED (local)                                | PR #30 child identity differs from parent                                                                                                                         |
+| Successor start targeted to a deployment                                 | PROTOTYPED only                                  | Historical `turn-performance.md` proof; production Orcel rejects an unauthenticated `latest` selector                                                             |
+| Stream continuity across bounded runs                                    | PROTOTYPED only                                  | Prior sequencer experiment; no production cancellation/authorization evidence                                                                                     |
+| Atomic, replay-idempotent successor activation plus hook transfer        | PARTIAL SDK CAPABILITY / UNPROVEN ORCEL CONTRACT | Experimental forced token claim is declared; successor activation, inbox sequence, stream/cancel and crash semantics remain unqualified                           |
+| No `HookNotFoundError` interval at stable ingress token during transfer  | UPSTREAM CLAIM / UNTESTED FOR ORCEL              | Upstream forced-claim redirects are documented; prior non-force disposal/claim gap remains valid                                                                  |
+| Fencing + monotonic FIFO inbox sequence as one SDK commit                | NOT SUPPORTED by present evidence                | External CAS/inbox is a separate unimplemented protocol                                                                                                           |
+| PostgreSQL `hook_received` `(runId, resumeId)` event deduplication       | DECLARED + PINNED IMPLEMENTATION PRESENT         | `@workflow/world-postgres@5.0.0-beta.47` advertises `hookResumeDedup` and uses a transactional canonical-event/digest path; cross-process fault-injection NOT RUN |
+| Cross-process crash/retry, duplicate dispatch and idempotent replay      | UNTESTED                                         | Neither local PR #28 nor #30 establishes this                                                                                                                     |
+| Authorization, cancellation, HITL, task/subagent, timeout, stream cursor | UNTESTED for successor mode                      | Preserve existing driver/child production paths                                                                                                                   |
+| Hosted paired benchmark and causal performance gain                      | NOT MEASURED                                     | `research/turn-performance.md` remains `proposed`                                                                                                                 |
 
 ## Upstream capability contract (proposal, NOT an SDK API)
 
