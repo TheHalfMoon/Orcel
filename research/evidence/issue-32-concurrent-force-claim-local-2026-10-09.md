@@ -84,3 +84,87 @@ selected **0/2 files for native review** (integration test excluded by default
 path policy, Markdown unsupported). Therefore **no native independent
 LLM-backed code review is claimed**. These tools cannot replace a real
 reviewer or the missing durable CAS, FIFO, crash/retry and stream gates.
+
+## Simultaneous identical resume requests with a live forced claimant (2026-10-10)
+
+This bounded extension tests **two simultaneous public** `resumeHook` calls with
+**identical** token and payload against a single live, experimentally
+force-claimed hook on the **pinned single-process Local World SDK**. It is
+separate from the earlier **post-completion** repeat, which returns
+`HookNotFoundError`. The test starts a victim, waits for its stable hook,
+starts a forced claimant, waits for that claim's hook, issues both resumes
+before awaiting either result via `Promise.allSettled`, and checks both call
+outcomes, the claimant's returned payload and the former owner's expected
+force-claim rejection. It cancels any still-live runs in `finally`.
+
+**Important initial negative attempt and reproducibility:** An initial
+exploratory test incorrectly required exactly **one** successful public resume
+response. It **FAILED 1/1**, because **both** simultaneous duplicate calls
+returned `fulfilled` on that run. The follow-up exploratory run of two cases
+(identical plus _different_ simultaneous payloads) **FAILED 2/2 due to the
+original 30-second per-test timeouts**; no reliable divergent-payload result
+was established and that extra case was **discarded**. A subsequent
+instrumented identical-payload attempt also timed out; the completed output
+contained no evidence that both resume calls had been reached, so those
+timeouts do **not** establish a second result for concurrent delivery. The
+existing prior-force-claim control ran independently **PASS 1/1** in the same
+checkout (file 15.94s). A final focused instrumented identical-resume run
+**PASSED 1/1**, 6 filtered, file duration **15.80s**: both resumes were
+`fulfilled`, the claimant was initially running, and its return value was
+`identical-resume-payload`; the displaced owner rejected as expected.
+
+The committed test removes all exploratory stage logging and the unqualified
+divergent-payload scenario. On the same authorized Mac (Node v24.15.0,
+original test deadlines and one Vitest fork, no paid model/cloud), the **full
+six-case research integration file PASSED 6/6** (0 failed, Vitest file duration
+**24.67s**). The new assertion is deliberately a pinned-SDK **observed
+acknowledgment behavior**, not an approval for production exactly-once
+execution. Two API calls returning successfully do **not** prove two tool or
+model side effects occurred; neither test establishes any durable
+application-level idempotency key, status journal, atomic owner/inbox CAS,
+exact FIFO, cross-process recovery or original stream cursor. The new
+expectation may need to change if an SDK upgrade intentionally adds a
+stronger duplicate-request conflict policy. Do not generalize these local
+observations to other adapters, crash states or all interleavings.
+
+Only a **research integration test and its issue-linked evidence** are changed.
+Workflow SDK dependencies, Orcel production code, protocol, timeout, host
+configuration and release surface are unchanged. The proposed production
+successor admission remains **NO-GO**, issue #32 stays OPEN and PR #44 must
+remain DRAFT until genuinely qualified independent review and fresh exact-head
+CI complete.
+
+### Exact-grain tool and authoring-gate qualification (2026-10-10)
+
+The new test satisfies orcel's `test-audit` authoring gate: it checks the
+**actual observable public SDK `resumeHook` acknowledgment behavior under
+simultaneous duplicates**, which the earlier serial after-completion
+`HookNotFoundError` test cannot reach. A credible change to Local World hook
+claim/resume conflict semantics changes the result. The integration tier is
+the narrowest existing tier with a real unmocked pinned SDK World. It needs no
+production-only injection point, fake response, unpublished API or duplicate
+higher-tier E2E. It is intentionally pinned-SDK characterization rather than
+a product requirement that both acknowledgments _ought_ to succeed.
+
+- Source package `tsc -p tsconfig.json --noEmit`: **PASS**.
+- `node scripts/guard-invariants.mjs`: **PASS**.
+- Touched test/research Oxfmt/Oxlint and `git diff --check`: **PASS**.
+- Real Graft **0.21.1** wiring graph build: **4,536 files, 24,717 nodes and
+  61,798 edges**, seeded from the unchanged original Mac worktree;
+  `graft check`: **OK**. Its deeper semantic/meaning layer is **not built**.
+- Genuine authenticated Jev **1.13.0** `noul` returned `ok=true`,
+  `noul=0.02` to whether these Local World outcomes prove safe cross-process
+  replay-idempotent successor handoff. This is advisory risk calibration,
+  **not** a proof or endorsement of production handoff.
+- Alibaba OpenCodeReview **1.12.13** delegated diff preview: **0 of 2**
+  changed test/research files eligible under default native selection
+  (integration test excluded by `default_path`, Markdown by
+  `unsupported_ext`). **No native independent model-backed review completed
+  for this test grain**; a CI job named Review Gates does not supply one.
+- PStack not installed on this Mac; **not run**. No paid model, cloud, Docker,
+  SDK upgrade or host-device migration was used in this grain.
+
+**Do not merge automatically.** Preserve the PR as DRAFT until exact new-head
+CI and the independent review/governance gate genuinely qualify; even a green
+research merge would not make the proposed successor production-safe or close
+issue #32.

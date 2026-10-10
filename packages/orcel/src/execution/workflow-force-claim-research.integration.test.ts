@@ -114,6 +114,30 @@ describe("pinned Workflow SDK experimental force-claim local probe (#32)", () =>
     }
   });
 
+  it("acknowledges concurrent identical resumes without an idempotency key", async () => {
+    const token = "force-claim-concurrent-resume:" + randomUUID();
+    const victim = await start(forceClaimResearchVictim, [{ token }]);
+    let claimant: Awaited<ReturnType<typeof start>> | undefined;
+    try {
+      await waitForHook(victim, { token });
+      claimant = await start(forceClaimResearchSuccessor, [{ token }]);
+      await waitForHook(claimant, { token });
+
+      // A successful acknowledgment of each call is not an exactly-once
+      // commit, stable outcome journal or cross-process recovery guarantee.
+      const results = await Promise.allSettled([
+        resumeHook(token, "identical-resume-payload"),
+        resumeHook(token, "identical-resume-payload"),
+      ]);
+      expect(results).toMatchObject([{ status: "fulfilled" }, { status: "fulfilled" }]);
+      await expect(claimant.returnValue).resolves.toBe("identical-resume-payload");
+      await expect(victim.returnValue).rejects.toThrow("was force-claimed by another workflow");
+    } finally {
+      if (claimant) await releaseIfLive(claimant);
+      await releaseIfLive(victim);
+    }
+  });
+
   it("routes a repeated force-claim to the latest live owner", async () => {
     const token = "force-claim-chain:" + randomUUID();
     const original = await start(forceClaimResearchVictim, [{ token }]);
