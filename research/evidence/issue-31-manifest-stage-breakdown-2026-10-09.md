@@ -45,25 +45,25 @@ pnpm v12.7.0 from Corepack, Vitest v5.0.2; checked-out baseline
 `11d5a892b26230f457ca07f2ebf01802fd418440` plus only this
 research instrumentation.
 
-| Stage | First visible split | Nested stage sample |
-| --- | ---: | ---: |
-| `compileAgent` elapsed | 34,088 ms | 27,426 ms |
-| `resolveDiscoveryProject` | 3 ms | 2 ms |
-| `discoverAgent` | 148 ms | 118 ms |
-| `compileAgentManifest` | 33,763 ms | 27,172 ms |
-| `prepareDevelopmentExtensions` | Not measured | 1 ms |
-| `rootCreatePhaseOne` | Not measured | 194 ms |
-| `rootCompileAgentConfig` | Not measured | 3 ms |
-| `rootCompileResources` | Not measured | 15,824 ms |
-| `rootCompileChildren` | Not measured | 11,142 ms |
-| `materializeWorkspaceResources` | 154 ms | 117 ms |
-| `prepareCompilerArtifacts` | 10 ms | 8 ms |
-| `writeCompilerArtifactFiles` | 7 ms | 7 ms |
-| Authored module-map hydration | 4,787 ms | 3,956 ms |
-| Runtime graph resolve | 33 ms | 26 ms |
-| Total `compileRuntimeGraph` | 38,908 ms | 31,408 ms |
-| Vitest file duration | 65.04 s | 55.49 s |
-| Result | 1 passed, 10 filtered, exit 0 | 1 passed, 10 filtered, exit 0 |
+| Stage                           |           First visible split |           Nested stage sample |
+| ------------------------------- | ----------------------------: | ----------------------------: |
+| `compileAgent` elapsed          |                     34,088 ms |                     27,426 ms |
+| `resolveDiscoveryProject`       |                          3 ms |                          2 ms |
+| `discoverAgent`                 |                        148 ms |                        118 ms |
+| `compileAgentManifest`          |                     33,763 ms |                     27,172 ms |
+| `prepareDevelopmentExtensions`  |                  Not measured |                          1 ms |
+| `rootCreatePhaseOne`            |                  Not measured |                        194 ms |
+| `rootCompileAgentConfig`        |                  Not measured |                          3 ms |
+| `rootCompileResources`          |                  Not measured |                     15,824 ms |
+| `rootCompileChildren`           |                  Not measured |                     11,142 ms |
+| `materializeWorkspaceResources` |                        154 ms |                        117 ms |
+| `prepareCompilerArtifacts`      |                         10 ms |                          8 ms |
+| `writeCompilerArtifactFiles`    |                          7 ms |                          7 ms |
+| Authored module-map hydration   |                      4,787 ms |                      3,956 ms |
+| Runtime graph resolve           |                         33 ms |                         26 ms |
+| Total `compileRuntimeGraph`     |                     38,908 ms |                     31,408 ms |
+| Vitest file duration            |                       65.04 s |                       55.49 s |
+| Result                          | 1 passed, 10 filtered, exit 0 | 1 passed, 10 filtered, exit 0 |
 
 An additional Windows confirmation after **gating the timer starts on the
 presence of the optional phase observer** passed the same single-fork
@@ -150,3 +150,63 @@ measured internal compiler spans.
 4. Require real Jev, Alibaba OCR, Graft, static checks, exact-head
    CI, and independent main CI+Release before closing Issue #31.
 5. Keep the separate hosted turn-latency proposal `proposed`.
+
+## Mac reproducibility and timeout-safe incremental phase evidence (2026-10-10)
+
+Authorized `macbook`, macOS, pinned Node v24.15.0, PR #36 exact prior
+head `8dec9712e402f6e50b2f94c18120ceee3ed9fd26` in a separate clean
+worktree, frozen workspace dependencies reused from the local pnpm store
+(2,382 packages; no network downloads) and `@orcel/orcel` JS built.
+The existing `isolates configured built-in extension mounts` case was run
+_twice_ sequentially with `ORCEL_MOUNT_PHASE_PROFILE=1`, one Vitest fork,
+and the checked-in **60-second** case deadline, no timeout overrides.
+
+| macOS attempt                     | Result                               | Case time | Vitest file duration |
+| --------------------------------- | ------------------------------------ | --------: | -------------------: |
+| First, freshly prepared worktree  | 1 failed / 10 filtered, case timeout | 61,901 ms |              86.12 s |
+| Second, same worktree after first | 1 failed / 10 filtered, case timeout | 60,223 ms |             207.14 s |
+
+Both runs returned exit 1 with `Test timed out in 60000ms`. The second
+invocation did **not** demonstrate warm-cache improvement; its file-level
+report also included substantial module transform and setup overhead.
+Vitest durations are **not** equivalent to compiler stage timings. Rolldown
+hook spans can overlap. These runs add cross-platform failure evidence but
+do not identify an underlying compiler, host, or filesystem root cause.
+
+The prior helper recorded completed `phaseObserver` results only in an
+in-memory map, then printed **one** `ORCEL_MOUNT_PHASE_PROFILE` summary
+_after_ `compileAgent`, module-map hydration and graph resolution finished.
+Neither timed-out run reached this final report. To preserve bounded evidence
+from incomplete runs, the test helper now emits
+`ORCEL_MOUNT_PHASE_PROGRESS` when compiler invocation begins and for each
+**completed** compiler phase callback, with a static phase name and numeric
+phase duration / elapsed milliseconds. This logger is present **only when the
+original environment opt-in flag is enabled**; ordinary production compiler
+calls and default test paths do not enable it. No filesystem paths, agent
+content, payloads or model data enter the new logs.
+
+Partial phases remain just that: a missing completion marker **cannot**
+prove whether work never began, is CPU-bound or blocked in I/O. Logging has a
+small opt-in cost and is not a performance optimization or paired benchmark.
+The test assertions, extension mount isolation semantics, 60-second deadline,
+production loader behavior and release surface are unchanged. The first post-change **same original isolation case** with the profiler
+enabled **PASSED** (1 pass / 10 filtered, exit 0), Vitest file duration
+**14.86 seconds**. It emitted `ORCEL_MOUNT_PHASE_PROGRESS` from
+`compileAgent.start` through `writeCompilerArtifactFiles`, followed by
+`ORCEL_MOUNT_PHASE_PROFILE`. Rounded timings: `compileMs=7262`,
+`compileAgentManifest=7233`, `rootCompileResources=3778`,
+`rootCompileChildren=3419`, `writeCompilerArtifactFiles=1`,
+`hydrateMs=1278`, `resolveMs=14`, `totalMs=8553` milliseconds. An
+additional independent existing **smaller fixture** (`keeps state
+independent across mounts and context restoration`) also **PASSED** in
+profiling mode with phase markers, 10.34 seconds file duration. Running that
+same smaller fixture with profiling **disabled** **PASSED** (1 pass / 10
+filtered; 6.32 seconds file duration) and emitted **no** new phase or
+profile marker.
+
+These successful post-change invocations are **not a performance win**:
+separate unpaired runs observed major test/host scheduling variability,
+including two earlier unchanged-head 60-second failures. A future
+post-change timeout is still required to demonstrate the precise stage
+markers preserved when a run aborts mid-compiler, and repeated paired
+measurements would be required to attribute a speedup or root cause.
