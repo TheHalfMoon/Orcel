@@ -733,7 +733,8 @@
         "Port the 40-cell shared-web catalog to orcel-computer-host/2 requests; each cell asserts fixture state plus focus/z-order/cursor/no-input-leak oracles.",
         "Linux CI: Xvfb+Openbox and headless Sway jobs.",
         "macOS: workflow_dispatch job on label 'self-hosted-macos' (FD-05); results attached to the PR.",
-        "Report format: one JSON row per cell {os, window_system, harness, targeting, delivery, oracle, status, observed} matching Cua's dimensions."
+        "Report format: one JSON row per cell {os, window_system, harness, targeting, delivery, oracle, status, observed} matching Cua's dimensions.",
+        "CI follow-up from the #348 judge: set ORCEL_COMPUTER_HOST_BIN to the freshly built Go host in the Windows CI job so the Rust adapter's configured_host_handshake_is_exact test exercises the live /2 negotiation, and do the same with orcel-native-host on macOS and Linux."
       ],
       "interfaces": "Test-only",
       "platforms": {
@@ -761,7 +762,8 @@
       ],
       "acceptance": [
         "report JSON produced for X11 and Sway in CI",
-        "macOS report attached when FD-05 is available"
+        "macOS report attached when FD-05 is available",
+        "Rust adapter /2 negotiation test runs against the live host binary on every OS in CI"
       ],
       "done": "Merged; BENCHMARK_AND_E2E.md references the report schema.",
       "rollback": "Disable the workflow.",
@@ -3824,7 +3826,8 @@
       "steps": [
         "COPY_ADAPT the cua-bench Python runner as test-only tooling (no PORT to another language; Python never ships in the product).",
         "COPY the cua-driver-bench taskpack with a provenance manifest per task file, then add Orcel-owned tasks per OS.",
-        "Runner records BENCHMARK_REPORT_1 rows; never --on cloud."
+        "Runner records BENCHMARK_REPORT_1 rows; never --on cloud.",
+        "Follow-up from the #347 judge: extend the credential-prefix guard to machine.cpu and to every path segment of evidence (today only the first segment is checked), with tests, before the first real report is accepted."
       ],
       "interfaces": "n/a",
       "platforms": {

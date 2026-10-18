@@ -400,6 +400,7 @@ Gates every task inherits:
   3. Linux CI: Xvfb+Openbox and headless Sway jobs.
   4. macOS: workflow_dispatch job on label 'self-hosted-macos' (FD-05); results attached to the PR.
   5. Report format: one JSON row per cell {os, window_system, harness, targeting, delivery, oracle, status, observed} matching Cua's dimensions.
+  6. CI follow-up from the #348 judge: set ORCEL_COMPUTER_HOST_BIN to the freshly built Go host in the Windows CI job so the Rust adapter's configured_host_handshake_is_exact test exercises the live /2 negotiation, and do the same with orcel-native-host on macOS and Linux.
 - **Tests.**
   - positive: observation cells green after XP-06/07
   - negative: action cells report 'refused' until XP-11/12 land
@@ -411,6 +412,7 @@ Gates every task inherits:
 - **Acceptance.**
   - report JSON produced for X11 and Sway in CI
   - macOS report attached when FD-05 is available
+  - Rust adapter /2 negotiation test runs against the live host binary on every OS in CI
 - **Definition of done.** Merged; BENCHMARK_AND_E2E.md references the report schema.
 - **Rollback.** Disable the workflow.
 - **Reuse review (2026-10-18).** COPY → COPY; ESTIMATE 4-6 days if built new, 4-6 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
@@ -1765,6 +1767,7 @@ Gates every task inherits:
   1. COPY_ADAPT the cua-bench Python runner as test-only tooling (no PORT to another language; Python never ships in the product).
   2. COPY the cua-driver-bench taskpack with a provenance manifest per task file, then add Orcel-owned tasks per OS.
   3. Runner records BENCHMARK_REPORT_1 rows; never --on cloud.
+  4. Follow-up from the #347 judge: extend the credential-prefix guard to machine.cpu and to every path segment of evidence (today only the first segment is checked), with tests, before the first real report is accepted.
 - **Tests.**
   - positive: oracle-only dry run
   - negative: none required

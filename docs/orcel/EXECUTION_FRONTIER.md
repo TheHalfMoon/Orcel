@@ -34,7 +34,7 @@ The founder adopted the Sol app-first revision of the Opus plan on 2026-10-09. W
 | F4 · Core MVP qualification | NOT STARTED | F2 + F3, one real MCP client, installer < 400 MB |
 | SG-000096 privileged shell (#260) | GRAIN (spec state) | #278 prerequisite removed; T02 hardening records in `docs/p20/`; T02–T05 issues #264–#267 and #271 open; Full User shell stays unarmed |
 | F5–F8 | NOT STARTED | See roadmap dependencies |
-| Cross-platform track (X0–X6) | ADOPTED (planning); grain SG-000109 not yet activated | `docs/orcel/implementation-readiness/ROADMAP.md`; XP-01 PR #345, XP-02 PR #346; parallel with SG-000096/108 approved (FD-02) |
+| Cross-platform track (X0–X6) | ADOPTED (planning); grain SG-000109 not yet activated | `docs/orcel/implementation-readiness/ROADMAP.md`; XP-02 merged (#346 → `564e0fe`); XP-01 #345, BM-01 #347, XP-04 #348 reviewed and passing; parallel with SG-000096/108 approved (FD-02) |
 
 ## Next executable grain
 
