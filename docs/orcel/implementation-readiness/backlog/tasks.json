@@ -706,7 +706,6 @@
         "STRONG: polkit CheckAuthorization for action ai.orcel.approve.strong with auth_self (never auth_self_keep, never allow_active=yes) and AllowUserInteraction; details carry the digest.",
         "SOFT: broker-spawned GTK4 helper shows the same body; default Deny; returns over an inherited pipe with the nonce.",
         "Headless or no polkit agent -> unavailable.",
-        "Package the polkit action file in XP-17.",
         "Development installs the polkit action file with a documented one-line sudo script in tests only; XP-17 packages it."
       ],
       "interfaces": "impl PresenceVerifier for PolkitPresenceVerifier; platform_prompt(cfg(target_os=\"linux\"))",

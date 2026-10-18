@@ -421,8 +421,7 @@ Gates every task inherits:
   1. STRONG: polkit CheckAuthorization for action ai.orcel.approve.strong with auth_self (never auth_self_keep, never allow_active=yes) and AllowUserInteraction; details carry the digest.
   2. SOFT: broker-spawned GTK4 helper shows the same body; default Deny; returns over an inherited pipe with the nonce.
   3. Headless or no polkit agent -> unavailable.
-  4. Package the polkit action file in XP-17.
-  5. Development installs the polkit action file with a documented one-line sudo script in tests only; XP-17 packages it.
+  4. Development installs the polkit action file with a documented one-line sudo script in tests only; XP-17 packages it.
 - **Tests.**
   - positive: unit tests with test-support; scripted D-Bus polkit test double returns authorized
   - negative: polkit returns challenge/denied -> denied; no agent -> unavailable

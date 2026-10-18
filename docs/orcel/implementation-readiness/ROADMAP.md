@@ -25,7 +25,7 @@ Tracks A and X touch different files (A: `crates/orcel-browser-host`, `apps/orce
 | X1 observe | XP-05, XP-06, XP-07, XP-08, CR-02, (CR-03 after FD-03) | macOS + X11 + Sway observation and capture conformance reports; Control Room shows real status | 18-27 without CR-03; 26-39 with it |
 | X2 approve | XP-09, XP-10, RJ-01 | #278 regressions and ledger tests pass on macOS/Linux; real prompts recorded | 10-15 |
 | X3 act | XP-11, XP-12, RJ-02, RJ-03 | semantic and input cells green; crash-at-each-transition suite | 19-28 |
-| X4 parity | XP-13, XP-14, XP-15 | process, browser, clipboard suites on three OSes | 15-24 |
+| X4 parity | XP-13, XP-14 | process and browser suites on three OSes | 14-22 |
 | X5 ship | XP-16, XP-17, XP-18, XP-19 | clean installs on macOS 15/26, Ubuntu 24.04, Fedora 41; pairing works | 16-25 |
 | B1/B2/B3 browser | BR-01..08 | M-BR metrics vs baseline | 27-37 |
 | W web | WI-01..06 | M-WI metrics; fixture crawl/map/extract | 15-21 |
