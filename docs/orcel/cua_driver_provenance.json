@@ -22,7 +22,12 @@
       "tree_sha": "ad71d18fb2cdd257c86e861e1acf13ead4ebf787",
       "destination": "apps/orcel-native-host/third_party/cua-driver/crates/platform-macos",
       "files": 99,
-      "patched_files": []
+      "patched_files": [
+        {
+          "path": "Cargo.toml",
+          "upstream_blob_sha": "8d429484aa477f95a1cc6af5dde832cfc019db0e"
+        }
+      ]
     },
     {
       "matrix_id": "T-CUA-02",
@@ -31,7 +36,12 @@
       "tree_sha": "131729601863cac56d291657e58ac5b7ec931210",
       "destination": "apps/orcel-native-host/third_party/cua-driver/crates/platform-linux",
       "files": 94,
-      "patched_files": []
+      "patched_files": [
+        {
+          "path": "Cargo.toml",
+          "upstream_blob_sha": "dfb5ec0fdc3f971970dfd9e05a244ac8099fa87b"
+        }
+      ]
     },
     {
       "matrix_id": "T-CUA-03",

@@ -27,3 +27,24 @@ Known out-of-tree reference left as is: the `#[cfg(test)]` module of
 `platform-linux/src/wayland/shell_helper.rs` includes
 `../../../../../wayland-helper/winrects@cua/*`, the GNOME Shell helper that
 XP-12 vendors. XP-05 builds no platform-linux test target, so nothing reads it.
+
+## P-01: workspace wiring
+
+Orcel side: `apps/orcel-native-host/Cargo.toml` is a standalone workspace
+(the root workspace does not list it, so orceld's `Cargo.lock` is unchanged).
+It carries the `[workspace.package]` and `[workspace.dependencies]` entries
+the vendored manifests inherit, copied from upstream's
+`libs/cua-driver/rust/Cargo.toml`. `Cargo.lock` started as upstream's lockfile,
+and Cargo pruned it to this graph, so every shared crate keeps the version
+upstream tested.
+
+The vendored crate layout keeps upstream's relative paths, so no source path
+needed rewriting. One manifest line changes in each of two files, so the
+workspace's `cua-driver-core` `default-features = false` survives feature
+unification. Without it, upstream's defaults `yaml`, `rego` and `script` (the
+QuickJS `run_script` engine) come back:
+
+- `platform-macos/Cargo.toml`: `cua-driver-core = { path = "../cua-driver-core", default-features = false }`
+- `platform-linux/Cargo.toml`: the same.
+
+`cursor-overlay` already declares `default-features = false` upstream.
