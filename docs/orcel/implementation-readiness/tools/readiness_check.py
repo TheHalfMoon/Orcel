@@ -212,6 +212,9 @@ def check_donor_paths(donors_dir: Path, donors: dict, matrix: dict, tasks: dict,
         except subprocess.CalledProcessError:
             rep.err(f"matrix: {r['id']} path absent at {want[:12]}: {r['path']}")
             continue
+        recorded = r.get("object")
+        if recorded and recorded != obj and not write:
+            rep.err(f"matrix: {r['id']} recorded object {recorded[:12]} differs from {obj[:12]} at the pin")
         r["object"] = obj
         rep.note(f"matrix: {r['id']} {obj} {r['path']}")
     if write:

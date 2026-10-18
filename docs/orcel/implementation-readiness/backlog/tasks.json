@@ -263,7 +263,7 @@
       "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
       "donor_files": [
         "libs/cua-driver/rust/crates/platform-linux/src/proc_fs.rs (process_instance_id, is_process_live)",
-        "libs/cua/crates/cua-daemon/src/lib.rs (peer-credential section near line 736: LOCAL_PEERPID / SO_PEERCRED)"
+        "libs/cua/crates/cua-daemon/src/lib.rs (getsockopt pattern near line 736: LOCAL_PEERPID / SO_PEERCRED; pattern only)"
       ],
       "method": "COPY_ADAPT",
       "orcel_files": {
@@ -281,7 +281,7 @@
       "steps": [
         "process::start_generation(pid): Linux = COPY_ADAPT Cua proc_fs.rs process_instance_id (starttime after the final ')' of /proc/<pid>/stat) combined with /proc/sys/kernel/random/boot_id; macOS = proc_pidinfo(PROC_PIDTBSDINFO) pbi_start_tvsec/usec (new, ~40 lines; Cua has no macOS equivalent); Windows delegates to the existing implementation.",
         "session::current(): uid + login session (Linux: /proc/self/sessionid and XDG_SESSION_ID cross-checked; macOS: audit session id via getaudit_addr); Windows unchanged.",
-        "peer::verify_unix_peer: COPY_ADAPT the getsockopt section of Cua cua-daemon lib.rs (LOCAL_PEERPID on macOS, SO_PEERCRED on Linux) plus getpeereid on macOS; refuse when uid differs. CR-01 extends this with code identity.",
+        "peer::verify_unix_peer: the getsockopt pattern (about 40 lines) in Cua cua-daemon lib.rs near line 736 is a client-side probe that yields only a pid on macOS (LOCAL_PEERPID); reuse that pattern and add getpeereid for the uid on macOS and SO_PEERCRED on Linux; refuse when uid differs. CR-01 extends this with code identity.",
         "Unit tests with the current process; reuse-of-pid test spawns a child, records generation, waits, and checks a different generation is reported for a recycled pid when observable."
       ],
       "interfaces": "pub struct ProcessGeneration { pid: u32, generation: u64, source: &'static str }; pub fn start_generation(pid) -> Result<ProcessGeneration, PlatformError>; pub fn verify_unix_peer(&UnixStream) -> Result<PeerIdentity, PlatformError>",
@@ -809,7 +809,7 @@
       },
       "dependencies": "objc2 + LocalAuthentication bindings as used by the donor; security-framework or the donor's raw Security.framework externs; CoreFoundation for CFUserNotification.",
       "steps": [
-        "STRONG: COPY_ADAPT Cua cua-teleport biometric.rs macOS path (LAContext evaluatePolicy LAPolicyDeviceOwnerAuthentication) into crates/orcel-approval/src/presence_unix.rs behind the existing PresenceVerifier trait. Delete the CUA_ENV_ALLOW_UNVERIFIED_SENSITIVE_EXPORT override: no environment variable may bypass STRONG.",
+        "STRONG: COPY_ADAPT Cua cua-teleport biometric.rs macOS path (LAContext evaluatePolicy LAPolicyDeviceOwnerAuthentication) into crates/orcel-approval/src/presence_unix.rs behind the existing PresenceVerifier trait. Delete both donor bypasses: CUA_ENV_SKIP_SENSITIVE_AUTH (skips the gate entirely in any debug build, including cargo test) and CUA_ENV_ALLOW_UNVERIFIED_SENSITIVE_EXPORT. No environment variable may bypass or weaken STRONG.",
         "If LocalAuthentication must run in a GUI-capable signed helper, verify the helper with the SecCode requirement check copied from cua-keyvault macos.rs (T-CUA-27) before trusting its answer.",
         "SOFT: CFUserNotificationDisplayAlert with caution level, default button Deny, the same body text as the Windows prompt. BUILD_NEW (no donor presents an approval-style system modal; Cua's consent modules automate Chrome's own dialog).",
         "Fail closed with no GUI session (launchd background, SSH): unavailable, never SOFT downgrade of STRONG.",
@@ -830,7 +830,8 @@
         "negative": [
           "no GUI session -> unavailable",
           "helper with wrong signature refused",
-          "STRONG never downgrades"
+          "STRONG never downgrades",
+          "debug and release builds: setting CUA_ENV_SKIP_SENSITIVE_AUTH or CUA_ENV_ALLOW_UNVERIFIED_SENSITIVE_EXPORT changes no STRONG outcome"
         ],
         "recovery": [
           "helper killed mid-prompt -> denied, ledger consistent"
@@ -862,7 +863,7 @@
         "runtime_overhead": "one LocalAuthentication prompt per STRONG approval (unchanged user cost)",
         "maintenance": "Orcel owns the copied FSL file; rebase only on security fixes",
         "risks": [
-          "donor override variable must be removed and a test must prove no env var bypasses STRONG"
+          "both donor bypass variables must be removed; a debug-build test enforces it"
         ],
         "matrix_rows": [
           "T-CUA-20",
@@ -882,7 +883,8 @@
       ],
       "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
       "donor_files": [
-        "libs/cua/crates/cua-teleport/src/biometric.rs (Linux polkit pkcheck auth_self path, POLKIT_ACTION)"
+        "libs/cua/crates/cua-teleport/src/biometric.rs (Linux polkit pkcheck auth_self path, POLKIT_ACTION)",
+        "apps/cua-spaces-desktop/packaging/ai.cua.spaces.policy (polkit action template, FSL, FD-04)"
       ],
       "method": "COPY_ADAPT",
       "orcel_files": {
@@ -897,10 +899,11 @@
       },
       "dependencies": "None new for STRONG (pkcheck subprocess); gtk4-rs (MIT) in the SOFT helper only.",
       "steps": [
-        "STRONG: COPY_ADAPT Cua biometric.rs Linux path (pkcheck with the desktop authentication agent, auth_self every time; no polkit, no agent or no installed action is Unavailable) with Orcel's action id ai.orcel.approve.strong; delete the override variable. Prefer the donor's pkcheck subprocess (pinned /usr/bin/pkcheck, verified owner root) over a new zbus client unless measurement shows a problem.",
+        "STRONG: COPY_ADAPT Cua biometric.rs Linux path (pkcheck with the desktop authentication agent, auth_self every time; no polkit, no agent or no installed action is Unavailable) with Orcel's action id ai.orcel.approve.strong; delete both donor bypasses (CUA_ENV_SKIP_SENSITIVE_AUTH and CUA_ENV_ALLOW_UNVERIFIED_SENSITIVE_EXPORT). Prefer the donor's pkcheck subprocess (pinned /usr/bin/pkcheck, verified owner root) over a new zbus client unless measurement shows a problem.",
         "SOFT: broker-spawned GTK4 helper shows the same body; default Deny; returns over an inherited pipe with the nonce.",
         "Headless or no polkit agent -> unavailable.",
-        "Development installs the polkit action file with a documented one-line sudo script in tests only; XP-17 packages it."
+        "Development installs the polkit action file with a documented one-line sudo script in tests only; XP-17 packages it.",
+        "polkit accepts --detail only from root, so the STRONG prompt can show only the action's static message, not the digest. The STRONG check therefore always follows the SOFT helper, which shows the full body (workspace, action, target, digest, nonce); the residual risk (an agent prompt that cannot name the action) is recorded under S-04."
       ],
       "interfaces": "impl PresenceVerifier for PolkitPresenceVerifier; platform_prompt(cfg(target_os=\"linux\"))",
       "platforms": {
@@ -916,7 +919,8 @@
         ],
         "negative": [
           "polkit returns challenge/denied -> denied",
-          "no agent -> unavailable"
+          "no agent -> unavailable",
+          "debug and release builds: setting CUA_ENV_SKIP_SENSITIVE_AUTH or CUA_ENV_ALLOW_UNVERIFIED_SENSITIVE_EXPORT changes no STRONG outcome"
         ],
         "recovery": [
           "helper crash -> denied"
@@ -946,7 +950,8 @@
         "runtime_overhead": "one pkcheck subprocess per STRONG approval",
         "maintenance": "none beyond normal",
         "risks": [
-          "SOFT GTK4 helper remains new code: no donor ships a Linux approval dialog"
+          "SOFT GTK4 helper remains new code: no donor ships a Linux approval dialog",
+          "both donor bypass variables must be removed; a debug-build test enforces it"
         ],
         "matrix_rows": [
           "T-CUA-20"
@@ -1149,23 +1154,26 @@
       "method": "COPY_ADAPT",
       "orcel_files": {
         "create": [
-          "crates/orcel-contain/Cargo.toml",
-          "crates/orcel-contain/src/lib.rs",
-          "crates/orcel-contain/src/linux.rs",
-          "crates/orcel-contain/src/macos.rs",
-          "crates/orcel-contain/src/unix.rs",
-          "crates/orcel-contain/src/windows.rs",
-          "crates/orcel-provider-process/src/unix.rs"
+          "apps/orcel-contain/Cargo.toml",
+          "apps/orcel-contain/Cargo.lock",
+          "apps/orcel-contain/src/main.rs",
+          "apps/orcel-contain/src/containment.rs",
+          "apps/orcel-contain/src/linux.rs",
+          "apps/orcel-contain/src/macos.rs",
+          "apps/orcel-contain/src/unix.rs",
+          "apps/orcel-contain/src/windows.rs",
+          "crates/orcel-provider-process/src/unix.rs",
+          "crates/orcel-provider-process/src/contained.rs"
         ],
         "change": [
           "crates/orcel-provider-process/src/lib.rs",
           "crates/orcel-provider-process/Cargo.toml"
         ]
       },
-      "dependencies": "libc; windows-sys features as the donor's windows.rs needs (check against Orcel's windows-sys 0.52 and windows 0.58; admit any new feature).",
+      "dependencies": "Inside apps/orcel-contain only: tokio (as the donor uses it), libc, and the windows-sys features the donor's windows.rs needs, admitted with cargo-deny and cargo-audit on that workspace. Kernel side: std only.",
       "steps": [
-        "Create crates/orcel-contain by COPY_ADAPT of Cua's perception containment (MIT): keep the capability-reporting contract (spawn refuses when any advertised boundary cannot be installed), Linux Landlock + seccomp + rlimits + PDEATHSIG + NO_NEW_PRIVS, macOS Seatbelt + rlimits + sentinel, Windows AppContainer + Job Object + private desktop. Replace tokio::process with std::process and the donor error type with Orcel's.",
-        "This 'contained' tier (no network, exact read/write allowlist, no fork) is used for parsers and helpers (WI-05) and as an opt-in policy tier for registered executables.",
+        "Create apps/orcel-contain as its own Cargo workspace (like apps/orcel-native-host), by COPY_ADAPT of Cua's perception containment (MIT). The donor code uses tokio (containment.rs AsyncReadExt and tokio::time::timeout; linux.rs tokio::process ChildStdin/ChildStdout), so it stays async inside this helper and tokio never enters the kernel's 62-package lockfile (AD-16). Keep the capability-reporting contract (refuse to spawn when any advertised boundary cannot be installed): Linux Landlock + seccomp + rlimits + PDEATHSIG + NO_NEW_PRIVS, macOS Seatbelt + rlimits + sentinel, Windows AppContainer + Job Object + private desktop. The helper is a one-shot launcher: orceld (or the browser host) passes a closed, bounded spec over stdin (executable, argv, read/write allowlist, limits), the helper installs every boundary, runs the child, relays bounded stdout/stderr and exit status, and exits. No listener.",
+        "crates/orcel-provider-process/src/contained.rs is the kernel-side client of that helper (std only): it pins the helper binary, writes the spec and reads a bounded result. The 'contained' tier (no network, exact read/write allowlist, no fork) serves parsers and helpers (WI-05) and is an opt-in tier for registered executables.",
         "Safe registered-executable parity on Linux/macOS (needs fork and sometimes network, so it cannot use the contained tier): process group, PR_SET_PDEATHSIG, pidfd (Linux) or kqueue EVFILT_PROC (macOS), rlimits, cgroup v2 child when delegated; kill the group on drop. This glue is BUILD_NEW but reuses unix.rs helpers from the copied crate.",
         "Same registered-executable rules and output bounds; SG-000096 shell semantics are not ported here."
       ],
@@ -1199,19 +1207,20 @@
       ],
       "done": "Merged.",
       "rollback": "process_spawn reported unavailable on that OS.",
-      "estimate": "3-5",
-      "authority_delta": "Existing Safe process tool on two more OSes.",
+      "estimate": "4-7",
+      "authority_delta": "Existing Safe process tool on two more OSes; a new pinned helper binary with no listener.",
       "proposed_grain": "SG-000114",
       "reuse": {
         "before": "BUILD_NEW",
         "after": "COPY_ADAPT",
-        "estimate_build_new_days": "6-10 (plus 6-9 if WI-05 had to build its own sandbox)",
-        "estimate_with_reuse_days": "3-5",
-        "runtime_overhead": "contained spawn adds Landlock/seccomp or Seatbelt setup per process (ESTIMATE: milliseconds; measure)",
+        "estimate_build_new_days": "6-10",
+        "estimate_with_reuse_days": "4-7",
+        "runtime_overhead": "one extra helper process per contained run (launcher, then child), with Landlock/seccomp or Seatbelt setup (ESTIMATE: milliseconds; measure in M-NAT-04)",
         "maintenance": "Orcel owns the copy; security fixes from upstream reviewed per pin bump",
         "risks": [
           "macOS sandbox-exec is deprecated by Apple (S-25)",
-          "seccomp filter is architecture-specific; unsupported arch must be refused, as the donor does"
+          "seccomp filter is architecture-specific; unsupported arch must be refused, as the donor does",
+          "the helper binary is a new trusted component and must be pinned and verified like the native host"
         ],
         "matrix_rows": [
           "T-CUA-21",
@@ -1233,7 +1242,7 @@
       ],
       "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
       "donor_files": [
-        "libs/cua/crates/cua-keyvault/src/macos.rs (SecCode requirement and signing-info bindings)",
+        "libs/cua/crates/cua-keyvault/src/macos.rs (SecCode signing-info and requirement plumbing, adapted to SecStaticCode for binaries on disk; Keychain-protector code excluded)",
         "packages/playwright-core/src/server/registry/index.ts at playwright 1b025d7e (stable-channel install paths; PORT of a 20-line table)"
       ],
       "method": "COPY_ADAPT",
@@ -1252,7 +1261,7 @@
       },
       "dependencies": "security-framework (MIT/Apache) for SecStaticCode on macOS.",
       "steps": [
-        "Discovery: port Playwright 1.63.0 registry stable-channel paths for chrome and msedge on darwin and linux into discovery.rs. Verification: macOS = COPY_ADAPT cua-keyvault macos.rs SecCode bindings and check 'anchor apple generic and certificate leaf[subject.OU] = <Google EQHXZ8M8AV | Microsoft UBF8T346G9>'; Linux = owning package via dpkg -S / rpm -qf plus package signature status (BUILD_NEW, no donor verifies Linux browser binaries); record that Linux verification is weaker.",
+        "Discovery: port Playwright 1.63.0 registry stable-channel paths for chrome and msedge on darwin and linux into discovery.rs. Verification: macOS = adapt the SecCode signing-info and requirement plumbing from cua-keyvault macos.rs to SecStaticCode (it checks running peers, not binaries, and has no browser logic; leave its Keychain code behind) and check 'anchor apple generic and certificate leaf[subject.OU] = <Google EQHXZ8M8AV | Microsoft UBF8T346G9>'; Linux = owning package via dpkg -S / rpm -qf plus package signature status (BUILD_NEW, no donor verifies Linux browser binaries); record that Linux verification is weaker.",
         "Replace NO_ROUTE_PROXY on Unix with a host-owned sink: the host binds 127.0.0.1:0, never accepts payload (accept then close), and passes that exact port; this removes the 0.0.0.0-is-loopback hole.",
         "Supervision: process group + pidfd (Linux) / kqueue (macOS) instead of Job Objects; profile files held via O_NOFOLLOW opens.",
         "Network-leak probes (existing native tests) ported to the new OSes."
@@ -1397,7 +1406,8 @@
         "libs/cua-driver/rust/scripts/CuaDriverBundle (Info.plist app-bundle skeleton for TCC identity)",
         "libs/cua-driver/rust/scripts/CuaDriver.entitlements",
         "apps/cua-spaces-macos/scripts/notarize.sh",
-        ".github/scripts/macos-review-codesign.sh"
+        ".github/scripts/macos-review-codesign.sh",
+        "apps/cua-spaces-macos/scripts/retry-apple.sh (called by notarize.sh)"
       ],
       "method": "COPY_ADAPT",
       "orcel_files": {
@@ -1407,7 +1417,8 @@
           "distribution/macos/ai.orcel.orceld.plist",
           "distribution/macos/entitlements.plist",
           "scripts/macos/notarize.sh",
-          "scripts/macos/review-codesign.sh"
+          "scripts/macos/review-codesign.sh",
+          "scripts/macos/retry-apple.sh"
         ],
         "change": [
           "crates/orcel-lifecycle/src/layout.rs",
@@ -1421,7 +1432,8 @@
         "Host binary inside a minimal .app bundle (bundle id ai.orcel.computer-host) so TCC grants attach to a stable signature.",
         "LaunchAgent for orceld (per-user, no root).",
         "notarytool in release workflow when FD-05 is approved; unsigned dev builds are labeled and never published.",
-        "Replace XP-09's development signature pin with the Developer ID designated requirement."
+        "Replace XP-09's development signature pin with the Developer ID designated requirement.",
+        "Entitlements: justify or drop com.apple.security.automation.apple-events (the host does not send Apple Events in the adopted allowlist); keep only what the allowlisted tools need."
       ],
       "interfaces": "orcel install/update/rollback/doctor on macOS",
       "platforms": {
@@ -1471,7 +1483,8 @@
           "T-CUA-28",
           "T-CUA-29",
           "T-CUA-30",
-          "T-CUA-31"
+          "T-CUA-31",
+          "T-CUA-37"
         ]
       }
     },
@@ -1485,8 +1498,11 @@
       "existing_orcel": [
         "crates/orcel-lifecycle (Windows-only layout)"
       ],
-      "donor": null,
-      "donor_files": [],
+      "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "donor_files": [
+        "apps/cua-spaces-desktop/packaging/ai.cua.spaces.policy (polkit action template)",
+        "libs/images/omarchy/files/systemd-user/cua-driver.service (systemd user unit, REFERENCE)"
+      ],
       "method": "BUILD_NEW",
       "orcel_files": {
         "create": [
@@ -1545,8 +1561,11 @@
         "runtime_overhead": "negligible",
         "maintenance": "none beyond normal",
         "risks": [],
-        "matrix_rows": [],
-        "build_new_justification": "No donor ships per-user Linux packaging without Nix or Electron (Cua uses Nix and electron-builder; Spaces' .deb installs to /opt as root). nfpm config plus a systemd user unit is small."
+        "matrix_rows": [
+          "T-CUA-35",
+          "T-CUA-36"
+        ],
+        "build_new_justification": "No donor ships per-user Linux packaging without Nix or Electron. Two small templates are reused: Cua's polkit action file (COPY_ADAPT) and a systemd user unit (REFERENCE); the nfpm config and lifecycle code are new."
       }
     },
     {
@@ -1637,9 +1656,11 @@
       "method": "WRAP",
       "orcel_files": {
         "create": [
+          "crates/orceld/src/secret_store.rs",
           "apps/orcel-mcp/src/secret_store.ts"
         ],
         "change": [
+          "crates/orceld/Cargo.toml",
           "apps/orcel-mcp/src/device_identity.ts"
         ]
       },
@@ -1786,7 +1807,7 @@
           "crates/orcel-platform/src/peer.rs"
         ]
       },
-      "dependencies": "none (std + existing windows-sys features)",
+      "dependencies": "macOS: security-framework and core-foundation (as the copied caller.rs uses). Windows: windows-sys features Win32_Security_WinTrust, Win32_Security_Cryptography (and sub-features the donor uses) and Win32_System_Pipes, admitted for orceld. Linux: libc only.",
       "steps": [
         "Frame: JSON lines, 64 KiB max, versioned 'orcel-app-api/1'.",
         "Methods (read-only): status.get, capabilities.get, devices.list (paginated), events.subscribe {after_seq} -> snapshot when gap, task.get, task.list.",
@@ -1953,7 +1974,7 @@
       },
       "dependencies": "tauri 2.x (MIT/Apache), React 18 (MIT); pinned lockfiles; no updater plugin (lifecycle owns updates).",
       "steps": [
-        "Start from Cua Spaces' src-tauri scaffolding (FSL, FD-04) for window, capability and CSP structure; tighten the CSP (no 'wasm-unsafe-eval', no ws:/wss:, no remote connect-src) and delete the updater plugin. Start the front end from Agent-Native Toolkit's AgentKit React root, context, stop button and streaming text (MIT); do not take components.tsx (5,618 lines on assistant-ui, Radix, CodeMirror).",
+        "Start from Cua Spaces' src-tauri scaffolding (FSL, FD-04) for window, capability and CSP structure; tighten the CSP (no 'wasm-unsafe-eval', no ws:/wss:, no remote connect-src) and delete the updater plugin, bundle.createUpdaterArtifacts, process:allow-restart and macOSPrivateApi. Start the front end from Agent-Native Toolkit's AgentKit React root, context, stop button and streaming text (MIT; stop-button.tsx pulls in @tabler/icons-react, admitted with the front end); do not take components.tsx (5,618 lines on assistant-ui, Radix, CodeMirror).",
         "Rust side: one Tauri command 'app_api_call' proxying only the CR-01 read-only methods by name allowlist.",
         "Front end: compact task view, device selector, timeline, capability panel with explicit unavailable reasons, Stop button wired to the existing emergency stop path only when CR-01 exposes it.",
         "Accessibility: keyboard-only, screen reader names, RTL with Arabic strings, 100/150/200% scaling.",
@@ -3187,7 +3208,7 @@
       },
       "dependencies": "pdf-inspector 1.21 and anydoc 0.2.2: licenses to be verified at admission (not inspected here); zip with deflate only.",
       "steps": [
-        "Parser process launched through crates/orcel-contain (XP-13, copied from Cua containment): no network, read only its input file, write only its output pipe, no fork, rlimits; stdin bytes ≤50 MiB, stdout Markdown bounded; 30 s timeout.",
+        "Parser process launched through the apps/orcel-contain helper (XP-13, copied from Cua containment): no network, read only its input file, write only its output pipe, no fork, rlimits; stdin bytes ≤50 MiB, stdout Markdown bounded; 30 s timeout.",
         "Macros and external links never evaluated."
       ],
       "interfaces": "orcel-doc-parser/1 frames",
@@ -3228,7 +3249,9 @@
         "estimate_with_reuse_days": "2-3",
         "runtime_overhead": "negligible",
         "maintenance": "none beyond normal",
-        "risks": [],
+        "risks": [
+          "WI-05's sandbox saving is counted here (4-6 → 2-3), not again under XP-13"
+        ],
         "matrix_rows": [
           "T-FC-06",
           "T-FC-07",

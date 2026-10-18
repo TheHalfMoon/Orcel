@@ -153,14 +153,14 @@ Detail and estimates: REUSE_REVIEW.md. Matrix rows T-CUA-20..34.
 | Source | License | Orcel use | Task |
 |---|---|---|---|
 | `libs/cua/crates/cua-teleport/src/biometric.rs` | FSL (FD-04) | STRONG presence on macOS (LocalAuthentication) and Linux (polkit `auth_self`); override variable removed | XP-09, XP-10 |
-| `cua-driver-core/src/perception_client/containment*` | MIT | `crates/orcel-contain`: three-OS sandbox for untrusted helpers | XP-13, WI-05 |
+| `cua-driver-core/src/perception_client/containment*` | MIT | `apps/orcel-contain` (own workspace; the donor uses tokio): pinned one-shot sandbox helper for untrusted processes | XP-13, WI-05 |
 | `platform-linux/src/proc_fs.rs`, `cua-daemon/src/lib.rs` (peer section) | MIT | process generation, Unix peer credentials | XP-03 |
 | `cua-keyvault/src/caller.rs`, `winpeer.rs`, `macos.rs` | FSL (FD-04) | kernel-derived peer identity; macOS code-requirement checks for the browser engine and the approval helper | CR-01, XP-14, XP-09 |
 | `rust/scripts/CuaDriverBundle`, `CuaDriver.entitlements`, `.github/scripts/macos-review-codesign.sh` (MIT); `apps/cua-spaces-macos/scripts/notarize.sh` (FSL) | mixed | macOS bundle identity, entitlements, codesign review, notarization | XP-16 |
 | `apps/cua-spaces/src-tauri/tauri.conf.json`, `capabilities/` | FSL (FD-04) | Control Room shell scaffolding with a tightened CSP | CR-03 |
 | `libs/cua-bench/cua_bench` (MIT), `benchmarks/cua-driver-bench/taskpack` (FSL) | mixed | benchmark runner (test-only Python) and starting task set | BM-02 |
 
-Patch P-03 still compiles `perception_client` out of the native host; containment is copied into its own Orcel crate instead, so the kernel does not depend on the vendored tree.
+Patch P-03 still compiles `perception_client` out of the native host; containment is copied into its own helper workspace, `apps/orcel-contain`, so neither the vendored tree nor tokio enters the kernel.
 
 ## 11. Exit gate for the integration
 

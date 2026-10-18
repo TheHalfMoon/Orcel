@@ -241,26 +241,26 @@
       "method": "COPY_ADAPT",
       "task": "XP-09",
       "object": "3fa6cc4132ef2d57ce8b57740fbeb9fb8b6f37cf",
-      "notes": "FSL-1.1-MIT (FD-04 authorized). STRONG presence: macOS LAContext deviceOwnerAuthentication, Linux polkit pkcheck auth_self. Remove the CUA_ENV_ALLOW_UNVERIFIED_SENSITIVE_EXPORT override entirely (Orcel never downgrades STRONG). Windows branch (Hello + CredUI password fallback) not taken: Orcel's qualified Hello verifier stays; adding a password fallback would change Windows STRONG semantics."
+      "notes": "FSL-1.1-MIT (FD-04 authorized). STRONG presence: macOS LAContext deviceOwnerAuthentication, Linux polkit pkcheck auth_self. Remove both donor bypasses entirely: CUA_ENV_SKIP_SENSITIVE_AUTH (skips the gate in debug builds) and CUA_ENV_ALLOW_UNVERIFIED_SENSITIVE_EXPORT (Orcel never skips or downgrades STRONG). Windows branch (Hello + CredUI password fallback) not taken: Orcel's qualified Hello verifier stays; adding a password fallback would change Windows STRONG semantics."
     },
     {
       "id": "T-CUA-21",
       "donor": "cua",
       "path": "libs/cua-driver/rust/crates/cua-driver-core/src/perception_client/containment.rs",
       "kind": "blob",
-      "dest": "crates/orcel-contain/src/lib.rs",
+      "dest": "apps/orcel-contain/src/containment.rs",
       "dest_state": "NEW",
       "method": "COPY_ADAPT",
       "task": "XP-13",
       "object": "6179d5eac250382b76ad951a9abfc1c950193be8",
-      "notes": "MIT. Capability-reported containment contract (refuse to spawn when the platform cannot install every advertised boundary). Replace tokio::process with std::process; replace cua_driver_contract error types with Orcel's."
+      "notes": "MIT. Capability-reported containment contract (refuse to spawn when the platform cannot install every advertised boundary). Lives in its own workspace, apps/orcel-contain, because the donor uses tokio; the kernel talks to it as a pinned one-shot helper."
     },
     {
       "id": "T-CUA-22",
       "donor": "cua",
       "path": "libs/cua-driver/rust/crates/cua-driver-core/src/perception_client/containment",
       "kind": "tree",
-      "dest": "crates/orcel-contain/src/",
+      "dest": "apps/orcel-contain/src/",
       "dest_state": "NEW",
       "method": "COPY_ADAPT",
       "task": "XP-13",
@@ -289,7 +289,7 @@
       "method": "COPY_ADAPT",
       "task": "XP-03",
       "object": "10940238921f0f5e44969624480c9c7d9aa07e6e",
-      "notes": "MIT. Only the peer-credential section (around line 736: LOCAL_PEERPID on macOS, SO_PEERCRED on Linux, SAFETY-commented getsockopt). The daemon itself is not taken."
+      "notes": "MIT. Pattern only: the getsockopt call near line 736 (LOCAL_PEERPID on macOS gives a pid, SO_PEERCRED on Linux) from a client-side probe; Orcel adds getpeereid for the macOS uid. The daemon itself is not taken."
     },
     {
       "id": "T-CUA-25",
@@ -325,7 +325,7 @@
       "method": "COPY_ADAPT",
       "task": "XP-14",
       "object": "a630391a7f8c4af9df1504f3f0abcd0eef7f9446",
-      "notes": "FSL-1.1-MIT (FD-04). SecCode/SecRequirement/SecCodeCopySigningInformation bindings, reused for (a) verifying the browser engine's vendor team id and (b) verifying the approval helper's designated requirement (XP-09). Keychain protector parts are not taken."
+      "notes": "FSL-1.1-MIT (FD-04). SecCode signing-info and requirement plumbing, adapted to SecStaticCode to verify binaries on disk (the donor checks running socket peers and has no browser logic). Used for the browser engine's vendor team id and the approval helper's designated requirement (XP-09). Keychain-protector code is not taken."
     },
     {
       "id": "T-CUA-28",
@@ -385,7 +385,7 @@
       "method": "COPY_ADAPT",
       "task": "CR-03",
       "object": "6fbb5741ada508575a690f7a8ba84aaf82cbdeb1",
-      "notes": "FSL-1.1-MIT (FD-04). Window/security scaffolding only. Tighten the CSP: drop 'wasm-unsafe-eval', ws:/wss: and remote connect-src; remove the updater plugin (lifecycle owns updates)."
+      "notes": "FSL-1.1-MIT (FD-04). Window/security scaffolding only. Tighten the CSP: drop 'wasm-unsafe-eval', ws:/wss: and remote connect-src; remove the updater plugin, bundle.createUpdaterArtifacts and macOSPrivateApi (lifecycle owns updates)."
     },
     {
       "id": "T-CUA-33",
@@ -410,6 +410,42 @@
       "task": "XP-19",
       "object": "d66267a3e99c9eb01dfaea77180170fb53aa00c7",
       "notes": "MIT. Reference for keyring-crate usage (Keychain, Secret Service, Credential Manager); Orcel WRAPs the keyring crate directly."
+    },
+    {
+      "id": "T-CUA-35",
+      "donor": "cua",
+      "path": "apps/cua-spaces-desktop/packaging/ai.cua.spaces.policy",
+      "kind": "blob",
+      "dest": "distribution/linux/ai.orcel.approve.policy",
+      "dest_state": "NEW",
+      "method": "COPY_ADAPT",
+      "task": "XP-10",
+      "object": "39fc34b0b3bcf434d25b785fbc62bf3b38669d27",
+      "notes": "FSL-1.1-MIT (FD-04). polkit action template; Orcel action ai.orcel.approve.strong with auth_self for active, inactive and any sessions; static message (polkit takes --detail only from root). Packaged by XP-17."
+    },
+    {
+      "id": "T-CUA-36",
+      "donor": "cua",
+      "path": "libs/images/omarchy/files/systemd-user/cua-driver.service",
+      "kind": "blob",
+      "dest": "distribution/linux/orceld.service",
+      "dest_state": "NEW",
+      "method": "REFERENCE",
+      "task": "XP-17",
+      "object": "187ee565902bf66cd6cda3669b311541b9e810d8",
+      "notes": "MIT. systemd user-unit shape; Orcel's unit is written for orceld."
+    },
+    {
+      "id": "T-CUA-37",
+      "donor": "cua",
+      "path": "apps/cua-spaces-macos/scripts/retry-apple.sh",
+      "kind": "blob",
+      "dest": "scripts/macos/retry-apple.sh",
+      "dest_state": "NEW",
+      "method": "COPY_ADAPT",
+      "task": "XP-16",
+      "object": "d1d6c61923eef01bbf977ed097815e87eff111f3",
+      "notes": "FSL-1.1-MIT (FD-04). Retry wrapper notarize.sh calls."
     },
     {
       "id": "T-BU-01",

@@ -8,12 +8,12 @@ Status: ADOPTED planning direction (founder, 2026-10-18; `docs/orcel/grants/2026
 |---|---|---|
 | Tasks marked BUILD_NEW | 20 | 11 (each with a written reason in its card) |
 | Tasks that copy, adapt or wrap donor code | 22 | 32 |
-| Matrix rows | 58 | 79 |
-| Matrix rows that reuse code (COPY, COPY_ADAPT, WRAP) | 33 | 53 |
-| Total backlog effort, ESTIMATE engineer-days | 182-266 | 161-234 |
-| Saved by this pass, ESTIMATE | - | 21-32 days, plus avoiding a second sandbox for WI-05 |
+| Matrix rows | 58 | 82 |
+| Matrix rows that reuse code (COPY, COPY_ADAPT, WRAP) | 33 | 55 |
+| Total backlog effort, ESTIMATE engineer-days | 182-266 | 162-236 |
+| Saved by this pass, ESTIMATE | - | 20-30 days (WI-05's sandbox saving included once, under WI-05) |
 
-These are planning estimates from the task cards, not measurements. The earlier package already counted the large Cua saving for the native hosts (CUA_INTEGRATION.md §9, about 120-200 days of build-new work replaced by 26-39). This pass adds 21-32 days on top.
+These are planning estimates from the task cards, not measurements. The earlier package already counted the large Cua saving for the native hosts (CUA_INTEGRATION.md §9, about 120-200 days of build-new work replaced by 26-39). This pass adds 20-30 days on top.
 
 ## 2. New transplants
 
@@ -21,12 +21,12 @@ These are planning estimates from the task cards, not measurements. The earlier 
 |---|---|---|---|---|---|
 | XP-09 macOS approvals | BUILD_NEW | COPY_ADAPT | Cua `libs/cua/crates/cua-teleport/src/biometric.rs` (`3fa6cc41`, FSL, FD-04) | LocalAuthentication presence gate; SecCode helper check from `cua-keyvault/src/macos.rs` | 4-6 → 2-3 |
 | XP-10 Linux approvals | BUILD_NEW | COPY_ADAPT | same file, polkit `pkcheck` `auth_self` path | polkit STRONG verifier | 4-6 → 2-3 |
-| XP-13 process confinement | BUILD_NEW | COPY_ADAPT | Cua `cua-driver-core/src/perception_client/containment.rs` + `containment/` (`6179d5ea`, `2c05bb8d`, MIT) | a three-OS sandbox for untrusted helpers: Landlock + seccomp, Seatbelt, AppContainer + Job Object, capability-reported (refuses to run when a boundary is missing) | 6-10 → 3-5 |
-| WI-05 document parser | COPY_ADAPT | COPY_ADAPT, now launched through `orcel-contain` | same containment crate | the parser's own sandbox | 4-6 → 2-3 |
-| XP-03 identity primitives | BUILD_NEW | COPY_ADAPT | Cua `platform-linux/src/proc_fs.rs` (`7cf1622c`, MIT); `cua-daemon/src/lib.rs` peer section (`10940238`, MIT) | Linux process generation; Unix peer credentials | 2-3 → 1-2 |
-| CR-01 app API transport | BUILD_NEW | COPY_ADAPT | Cua `cua-keyvault/src/caller.rs` (`16c562b9`), `winpeer.rs` (`cbf13894`) (FSL, FD-04) | kernel-derived peer identity on three OSes: macOS audit token + code requirement, Linux `SO_PEERCRED`, Windows pipe client + Authenticode | 4-6 → 3-4 |
-| XP-14 browser host macOS/Linux | BUILD_NEW | COPY_ADAPT | Cua `cua-keyvault/src/macos.rs` (`a630391a`, FSL); Playwright `server/registry/index.ts` (`077fd78e`, Apache-2.0) | macOS vendor-signature check of Chrome/Edge; stable-channel install paths | 8-12 → 6-9 |
-| XP-16 macOS packaging | BUILD_NEW | COPY_ADAPT | Cua `CuaDriverBundle` (`e7a2941e`), `CuaDriver.entitlements` (`9570bbca`), `.github/scripts/macos-review-codesign.sh` (`47c6cd40`) (MIT); `apps/cua-spaces-macos/scripts/notarize.sh` (`ea269f8e`, FSL) | TCC-identity app bundle, entitlements, codesign review, notarization | 6-9 → 4-6 |
+| XP-13 process confinement | BUILD_NEW | COPY_ADAPT | Cua `cua-driver-core/src/perception_client/containment.rs` + `containment/` (`6179d5ea`, `2c05bb8d`, MIT) | a three-OS sandbox for untrusted helpers: Landlock + seccomp, Seatbelt, AppContainer + Job Object, capability-reported (refuses to run when a boundary is missing). The donor uses tokio, so it becomes a pinned one-shot helper binary in its own workspace (`apps/orcel-contain`), keeping tokio out of the kernel (AD-16) | 6-10 → 4-7 |
+| WI-05 document parser | COPY_ADAPT | COPY_ADAPT, now launched through the `orcel-contain` helper | same containment code | the parser's own sandbox (this is the only place that saving is counted) | 4-6 → 2-3 |
+| XP-03 identity primitives | BUILD_NEW | COPY_ADAPT | Cua `platform-linux/src/proc_fs.rs` (`7cf1622c`, MIT); the getsockopt pattern in `cua-daemon/src/lib.rs` (`10940238`, MIT) | Linux process generation; a ~40-line peer getsockopt pattern (macOS uid still needs `getpeereid`) | 2-3 → 1-2 |
+| CR-01 app API transport | BUILD_NEW | COPY_ADAPT | Cua `cua-keyvault/src/caller.rs` (`16c562b9`), `winpeer.rs` (`cbf13894`) (FSL, FD-04) | kernel-derived peer identity on three OSes: macOS audit token + code requirement, Linux `SO_PEERCRED`, Windows pipe client + Authenticode. New dependencies for orceld: `security-framework`, `core-foundation`; windows-sys `Win32_Security_WinTrust`, `Win32_Security_Cryptography`, `Win32_System_Pipes` | 4-6 → 3-4 |
+| XP-14 browser host macOS/Linux | BUILD_NEW | COPY_ADAPT | Cua `cua-keyvault/src/macos.rs` (`a630391a`, FSL); Playwright `server/registry/index.ts` (`077fd78e`, Apache-2.0) | SecCode signing-info and requirement plumbing, adapted to SecStaticCode for the on-disk Chrome/Edge check (the donor checks running peers and has no browser logic; its Keychain code is excluded); stable-channel install paths | 8-12 → 6-9 |
+| XP-16 macOS packaging | BUILD_NEW | COPY_ADAPT | Cua `CuaDriverBundle` (`e7a2941e`), `CuaDriver.entitlements` (`9570bbca`), `.github/scripts/macos-review-codesign.sh` (`47c6cd40`) (MIT); `apps/cua-spaces-macos/scripts/notarize.sh` (`ea269f8e`) and its `retry-apple.sh` (`d1d6c619`) (FSL) | TCC-identity app bundle, entitlements, codesign review, notarization | 6-9 → 4-6 |
 | XP-19 secret storage | BUILD_NEW | WRAP | `keyring` crate, as Cua uses it (`cua-auth/src/lib.rs`, REFERENCE) | per-OS secret backends | 3-5 → 2-3 |
 | CR-03 Control Room | BUILD_NEW | COPY_ADAPT | Cua Spaces `src-tauri/tauri.conf.json` (`6fbb5741`), `capabilities/` (`fc862b2f`) (FSL); Agent-Native Toolkit `root.tsx`, `context.tsx`, `stop-button.tsx`, `streaming-text.tsx` (MIT) | Tauri window/CSP/capability scaffolding; AgentKit React provider, hooks, stop button, text rendering | 8-12 → 5-8 |
 | BM-02 task benchmarks | PORT | COPY_ADAPT | Cua `libs/cua-bench/cua_bench` (`d8a26f15`, MIT); `benchmarks/cua-driver-bench/taskpack` (`72a1d950`, FSL, FD-04) | a benchmark runner and a starting task set; Python stays test-only, so no language port | 5-7 → 3-4 |
@@ -35,10 +35,10 @@ These are planning estimates from the task cards, not measurements. The earlier 
 
 | Import | Required adaptation | Security row |
 |---|---|---|
-| `biometric.rs` | Delete `CUA_ENV_ALLOW_UNVERIFIED_SENSITIVE_EXPORT`; no environment variable may bypass STRONG. Do not take the Windows CredUI password fallback: it would change Windows STRONG semantics, which stay Hello-only. | S-24 |
-| `containment*` | macOS uses `sandbox-exec`, which Apple marks deprecated; keep the capability report honest and refuse on any OS where a boundary cannot be installed. seccomp is per-architecture; unsupported architectures are refused, as upstream does. | S-25 |
-| `tauri.conf.json`, `capabilities/` | Remove the updater plugin (the lifecycle owns updates) and `process:allow-restart`. Tighten the CSP: no `'wasm-unsafe-eval'`, no `ws:`/`wss:`, no remote `connect-src`. The only command is the read-only `app_api_call`. | S-15, S-26 |
-| `caller.rs` | On Linux the donor marks peers `os_verified: false`, because same-uid processes can ptrace each other. Orcel trusts Linux peers only as "same uid", never as a verified binary. | S-27 |
+| `biometric.rs` | Delete both bypasses, `CUA_ENV_SKIP_SENSITIVE_AUTH` (skips the gate in any debug build) and `CUA_ENV_ALLOW_UNVERIFIED_SENSITIVE_EXPORT`; no environment variable may bypass STRONG, tested in debug and release builds. On Linux, polkit takes `--detail` only from root, so the STRONG prompt shows a static message and always follows the SOFT dialog that shows the digest. Do not take the Windows CredUI password fallback: it would change Windows STRONG semantics, which stay Hello-only. | S-24 |
+| `containment*` | Uses tokio, so it runs as the `apps/orcel-contain` helper in its own workspace, never inside the kernel. macOS uses `sandbox-exec`, which Apple marks deprecated; keep the capability report honest and refuse on any OS where a boundary cannot be installed. seccomp is per-architecture; unsupported architectures are refused, as upstream does. | S-25 |
+| `tauri.conf.json`, `capabilities/` | Remove the updater plugin, `bundle.createUpdaterArtifacts` (the lifecycle owns updates), `process:allow-restart` and `macOSPrivateApi`. Tighten the CSP: no `'wasm-unsafe-eval'`, no `ws:`/`wss:`, no remote `connect-src`. The only command is the read-only `app_api_call`. | S-15, S-26 |
+| `caller.rs`, `winpeer.rs` | Brings `security-framework`/`core-foundation` (macOS) and windows-sys WinTrust/Cryptography/Pipes features into orceld; admit them. On Linux the donor marks peers `os_verified: false`, because same-uid processes can ptrace each other. Orcel trusts Linux peers only as "same uid", never as a verified binary. | S-27 |
 | Toolkit React files | Remove approval-response controls; the UI shows broker state only. | S-16 |
 | `notarize.sh` | Credentials come only from the release environment, never the repository. | S-22 |
 
@@ -49,7 +49,7 @@ These are planning estimates from the task cards, not measurements. The earlier 
 | XP-01, XP-01B | Orcel's own state contract with ancestor checks; donor state-dir handling is product-specific and weaker. XP-01 is in PR #345. |
 | XP-02 | CI configuration of Orcel's own workflows (PR #346). |
 | XP-04 | Orcel's private protocol is a compatibility contract with the qualified Go host. Cua's MCP/envelope protocol would add a second protocol and a second authority surface. Its refusal codes are reused as reference. |
-| XP-17 | No donor ships per-user Linux packaging without Nix or Electron. |
+| XP-17 | No donor ships per-user Linux packaging without Nix or Electron; two small templates are reused (Cua's polkit action file, COPY_ADAPT; a systemd user unit, REFERENCE). |
 | XP-18 | Extends Orcel's own runtime pin (PR #336); no donor pins a Node runtime tree with held handles. |
 | CR-04, XP-20 | Measurement and decision records. |
 | RJ-01, RJ-02 | Orcel's own qualified journal and per-provider reconciliation. The donor journals are tied to SQL/PostgreSQL stores Orcel does not run; their semantics are taken as rules (SPACE) and as a port (RJ-03, Agent-Native). |
@@ -92,8 +92,8 @@ Two sub-parts of reused tasks are still new code, and their cards say so:
 
 ## 7. Costs this adds (ESTIMATE)
 
-- **Runtime:** one extra helper process per contained parse (Landlock/seccomp or Seatbelt setup, milliseconds, to be measured); one `pkcheck` or LocalAuthentication call per STRONG approval (the same user cost as today on Windows); one system WebView for the Control Room, measured in CR-04.
-- **Maintenance:** Orcel owns copies of three FSL files (`biometric.rs`, `caller.rs`/`winpeer.rs`, `macos.rs`) and one MIT module (containment). They are rebased only on security fixes, each one reviewed. The Tauri scaffolding follows Tauri 2 releases.
+- **Runtime:** one extra helper launcher plus the child per contained run (Landlock/seccomp or Seatbelt setup, milliseconds, to be measured); one `pkcheck` or LocalAuthentication call per STRONG approval (the same user cost as today on Windows); one system WebView for the Control Room, measured in CR-04.
+- **Maintenance:** Orcel owns copies of FSL files (`biometric.rs`, `caller.rs`, `winpeer.rs`, `macos.rs`, the polkit policy and notarization scripts) and one MIT module (containment, in its own helper workspace). They are rebased only on security fixes, each one reviewed. The Tauri scaffolding follows Tauri 2 releases.
 - **Licensing:** FSL files carry their FSL header and notice, citing the founder authorization; MIT files keep their notices.
 
 ## 8. Unresolved risks

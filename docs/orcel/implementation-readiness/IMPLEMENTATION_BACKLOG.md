@@ -33,7 +33,7 @@ Gates every task inherits:
 | [XP-10](#xp-10) | X2 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Approval broker on Linux: SOFT dialog and STRONG presence | XP-01 | 2-3 | SG-000112 |
 | [XP-11](#xp-11) | X3 | BLOCKED_ON_DEPENDENCY | WRAP | Semantic actions on macOS and Linux (invoke, set_value, select, toggle, scroll) | XP-06, XP-08, XP-09, XP-10 | 5-7 | SG-000113 |
 | [XP-12](#xp-12) | X3 | BLOCKED_ON_DEPENDENCY | WRAP | Bounded raw input on macOS and Linux, background delivery, GNOME/KDE Wayland enablement | XP-11 | 6-9 | SG-000113 |
-| [XP-13](#xp-13) | X4 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Process confinement on Linux and macOS: contained tier from Cua, Safe registered-exec parity | XP-03 | 3-5 | SG-000114 |
+| [XP-13](#xp-13) | X4 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Process confinement on Linux and macOS: contained tier from Cua, Safe registered-exec parity | XP-03 | 4-7 | SG-000114 |
 | [XP-14](#xp-14) | X4 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Browser host on macOS and Linux: discovery, verification, confinement, supervision | XP-03, SG-000108-CLOSE | 6-9 | SG-000115 |
 | [XP-15](#xp-15) | X0 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Clipboard provider on macOS and Linux | XP-02 | 1-2 | SG-000114 |
 | [XP-16](#xp-16) | X5 | FOUNDER_DECISION_REQUIRED | COPY_ADAPT | macOS packaging: signed app bundles, LaunchAgent, TCC identity | XP-05, FD-05 | 4-6 | SG-000116 |
@@ -202,7 +202,7 @@ Gates every task inherits:
 - **User-visible capability.** None directly.
 - **Existing Orcel implementation.** `crates/orcel-provider-uia/src/lib.rs NativeProcess { start_generation, generation_source, session_verified }`; `crates/orcel-provider-uia/src/native_desktop.rs (Windows creation-time generation)`
 - **Donor.** cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f · method COPY_ADAPT
-- **Donor files.** `libs/cua-driver/rust/crates/platform-linux/src/proc_fs.rs (process_instance_id, is_process_live)`; `libs/cua/crates/cua-daemon/src/lib.rs (peer-credential section near line 736: LOCAL_PEERPID / SO_PEERCRED)`
+- **Donor files.** `libs/cua-driver/rust/crates/platform-linux/src/proc_fs.rs (process_instance_id, is_process_live)`; `libs/cua/crates/cua-daemon/src/lib.rs (getsockopt pattern near line 736: LOCAL_PEERPID / SO_PEERCRED; pattern only)`
 - **Create.** `crates/orcel-platform/src/process.rs`; `crates/orcel-platform/src/session.rs`; `crates/orcel-platform/src/peer.rs`
 - **Change.** `crates/orcel-platform/src/lib.rs`; `crates/orcel-platform/Cargo.toml`
 - **Dependencies to admit.** libc (MIT/Apache-2.0) for proc_pidinfo, getpeereid, SO_PEERCRED; admitted with SBOM entry
@@ -212,7 +212,7 @@ Gates every task inherits:
 - **Steps.**
   1. process::start_generation(pid): Linux = COPY_ADAPT Cua proc_fs.rs process_instance_id (starttime after the final ')' of /proc/<pid>/stat) combined with /proc/sys/kernel/random/boot_id; macOS = proc_pidinfo(PROC_PIDTBSDINFO) pbi_start_tvsec/usec (new, ~40 lines; Cua has no macOS equivalent); Windows delegates to the existing implementation.
   2. session::current(): uid + login session (Linux: /proc/self/sessionid and XDG_SESSION_ID cross-checked; macOS: audit session id via getaudit_addr); Windows unchanged.
-  3. peer::verify_unix_peer: COPY_ADAPT the getsockopt section of Cua cua-daemon lib.rs (LOCAL_PEERPID on macOS, SO_PEERCRED on Linux) plus getpeereid on macOS; refuse when uid differs. CR-01 extends this with code identity.
+  3. peer::verify_unix_peer: the getsockopt pattern (about 40 lines) in Cua cua-daemon lib.rs near line 736 is a client-side probe that yields only a pid on macOS (LOCAL_PEERPID); reuse that pattern and add getpeereid for the uid on macOS and SO_PEERCRED on Linux; refuse when uid differs. CR-01 extends this with code identity.
   4. Unit tests with the current process; reuse-of-pid test spawns a child, records generation, waits, and checks a different generation is reported for a recycled pid when observable.
 - **Tests.**
   - positive: own pid generation stable across calls; peer of a socketpair is the current process
@@ -431,14 +431,14 @@ Gates every task inherits:
 - **Platforms.** windows: unchanged; macos: new; linux: XP-10
 - **Security and authority.** Approval UI is OS-owned, not Control Room-owned. The helper is a separate signed binary; its result is accepted only with the current nonce and only from a code-signature-verified child. Authority delta: Approvals become possible on macOS; no new action becomes approvable.
 - **Steps.**
-  1. STRONG: COPY_ADAPT Cua cua-teleport biometric.rs macOS path (LAContext evaluatePolicy LAPolicyDeviceOwnerAuthentication) into crates/orcel-approval/src/presence_unix.rs behind the existing PresenceVerifier trait. Delete the CUA_ENV_ALLOW_UNVERIFIED_SENSITIVE_EXPORT override: no environment variable may bypass STRONG.
+  1. STRONG: COPY_ADAPT Cua cua-teleport biometric.rs macOS path (LAContext evaluatePolicy LAPolicyDeviceOwnerAuthentication) into crates/orcel-approval/src/presence_unix.rs behind the existing PresenceVerifier trait. Delete both donor bypasses: CUA_ENV_SKIP_SENSITIVE_AUTH (skips the gate entirely in any debug build, including cargo test) and CUA_ENV_ALLOW_UNVERIFIED_SENSITIVE_EXPORT. No environment variable may bypass or weaken STRONG.
   2. If LocalAuthentication must run in a GUI-capable signed helper, verify the helper with the SecCode requirement check copied from cua-keyvault macos.rs (T-CUA-27) before trusting its answer.
   3. SOFT: CFUserNotificationDisplayAlert with caution level, default button Deny, the same body text as the Windows prompt. BUILD_NEW (no donor presents an approval-style system modal; Cua's consent modules automate Chrome's own dialog).
   4. Fail closed with no GUI session (launchd background, SSH): unavailable, never SOFT downgrade of STRONG.
   5. Development builds use an ad-hoc or development-certificate signature checked against a pinned designated requirement in the test config; production Developer ID signing and notarization arrive with XP-16 and replace the pin.
 - **Tests.**
   - positive: scripted SoftDecider path (existing test-support) on macOS; manual: real prompt approve/deny recorded
-  - negative: no GUI session -> unavailable; helper with wrong signature refused; STRONG never downgrades
+  - negative: no GUI session -> unavailable; helper with wrong signature refused; STRONG never downgrades; debug and release builds: setting CUA_ENV_SKIP_SENSITIVE_AUTH or CUA_ENV_ALLOW_UNVERIFIED_SENSITIVE_EXPORT changes no STRONG outcome
   - recovery: helper killed mid-prompt -> denied, ledger consistent
   - e2e: self-hosted macOS runner manual-approval checklist
 - **Performance.** Prompt latency not measured; user-bound.
@@ -449,7 +449,7 @@ Gates every task inherits:
   - #278 regression tests pass on macOS
 - **Definition of done.** Merged; SECURITY_INTEGRATION.md S-03 updated.
 - **Rollback.** Revert to fail-closed unavailable.
-- **Reuse review (2026-10-18).** BUILD_NEW → COPY_ADAPT; ESTIMATE 4-6 days if built new, 2-3 with reuse. Runtime overhead: one LocalAuthentication prompt per STRONG approval (unchanged user cost). Maintenance: Orcel owns the copied FSL file; rebase only on security fixes. Matrix rows: T-CUA-20, T-CUA-27. Risks: donor override variable must be removed and a test must prove no env var bypasses STRONG.
+- **Reuse review (2026-10-18).** BUILD_NEW → COPY_ADAPT; ESTIMATE 4-6 days if built new, 2-3 with reuse. Runtime overhead: one LocalAuthentication prompt per STRONG approval (unchanged user cost). Maintenance: Orcel owns the copied FSL file; rebase only on security fixes. Matrix rows: T-CUA-20, T-CUA-27. Risks: both donor bypass variables must be removed; a debug-build test enforces it.
 
 ### XP-10
 
@@ -459,7 +459,7 @@ Gates every task inherits:
 - **User-visible capability.** Approval prompts appear on Linux desktops; STRONG uses the system authentication agent (password or fingerprint).
 - **Existing Orcel implementation.** `crates/orcel-approval/src/lib.rs (as XP-09)`
 - **Donor.** cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f · method COPY_ADAPT
-- **Donor files.** `libs/cua/crates/cua-teleport/src/biometric.rs (Linux polkit pkcheck auth_self path, POLKIT_ACTION)`
+- **Donor files.** `libs/cua/crates/cua-teleport/src/biometric.rs (Linux polkit pkcheck auth_self path, POLKIT_ACTION)`; `apps/cua-spaces-desktop/packaging/ai.cua.spaces.policy (polkit action template, FSL, FD-04)`
 - **Create.** `crates/orcel-approval/src/linux.rs`; `apps/orcel-approval-helper-linux/ (GTK4 dialog binary)`; `distribution/linux/ai.orcel.approve.policy (polkit action)`
 - **Change.** `crates/orcel-approval/src/lib.rs`
 - **Dependencies to admit.** None new for STRONG (pkcheck subprocess); gtk4-rs (MIT) in the SOFT helper only.
@@ -467,13 +467,14 @@ Gates every task inherits:
 - **Platforms.** windows: unchanged; macos: XP-09; linux: new (X11 and Wayland sessions)
 - **Security and authority.** polkit auth_self requires credentials each time; agent spoofing by a same-user process is the residual risk, documented. Authority delta: Approvals become possible on Linux.
 - **Steps.**
-  1. STRONG: COPY_ADAPT Cua biometric.rs Linux path (pkcheck with the desktop authentication agent, auth_self every time; no polkit, no agent or no installed action is Unavailable) with Orcel's action id ai.orcel.approve.strong; delete the override variable. Prefer the donor's pkcheck subprocess (pinned /usr/bin/pkcheck, verified owner root) over a new zbus client unless measurement shows a problem.
+  1. STRONG: COPY_ADAPT Cua biometric.rs Linux path (pkcheck with the desktop authentication agent, auth_self every time; no polkit, no agent or no installed action is Unavailable) with Orcel's action id ai.orcel.approve.strong; delete both donor bypasses (CUA_ENV_SKIP_SENSITIVE_AUTH and CUA_ENV_ALLOW_UNVERIFIED_SENSITIVE_EXPORT). Prefer the donor's pkcheck subprocess (pinned /usr/bin/pkcheck, verified owner root) over a new zbus client unless measurement shows a problem.
   2. SOFT: broker-spawned GTK4 helper shows the same body; default Deny; returns over an inherited pipe with the nonce.
   3. Headless or no polkit agent -> unavailable.
   4. Development installs the polkit action file with a documented one-line sudo script in tests only; XP-17 packages it.
+  5. polkit accepts --detail only from root, so the STRONG prompt can show only the action's static message, not the digest. The STRONG check therefore always follows the SOFT helper, which shows the full body (workspace, action, target, digest, nonce); the residual risk (an agent prompt that cannot name the action) is recorded under S-04.
 - **Tests.**
   - positive: unit tests with test-support; scripted D-Bus polkit test double returns authorized
-  - negative: polkit returns challenge/denied -> denied; no agent -> unavailable
+  - negative: polkit returns challenge/denied -> denied; no agent -> unavailable; debug and release builds: setting CUA_ENV_SKIP_SENSITIVE_AUTH or CUA_ENV_ALLOW_UNVERIFIED_SENSITIVE_EXPORT changes no STRONG outcome
   - recovery: helper crash -> denied
   - e2e: manual checklist on GNOME and KDE
 - **Performance.** n/a
@@ -483,7 +484,7 @@ Gates every task inherits:
   - ledger tests and #278 regressions pass on Linux
 - **Definition of done.** Merged.
 - **Rollback.** Fail-closed unavailable.
-- **Reuse review (2026-10-18).** BUILD_NEW → COPY_ADAPT; ESTIMATE 4-6 days if built new, 2-3 with reuse. Runtime overhead: one pkcheck subprocess per STRONG approval. Maintenance: none beyond normal. Matrix rows: T-CUA-20. Risks: SOFT GTK4 helper remains new code: no donor ships a Linux approval dialog.
+- **Reuse review (2026-10-18).** BUILD_NEW → COPY_ADAPT; ESTIMATE 4-6 days if built new, 2-3 with reuse. Runtime overhead: one pkcheck subprocess per STRONG approval. Maintenance: none beyond normal. Matrix rows: T-CUA-20. Risks: SOFT GTK4 helper remains new code: no donor ships a Linux approval dialog; both donor bypass variables must be removed; a debug-build test enforces it.
 
 ### XP-11
 
@@ -559,22 +560,22 @@ Gates every task inherits:
 
 ### XP-13
 
-**Process confinement on Linux and macOS: contained tier from Cua, Safe registered-exec parity** · phase X4 · BLOCKED_ON_DEPENDENCY · estimate 3-5 days (ESTIMATE) · proposed grain SG-000114
+**Process confinement on Linux and macOS: contained tier from Cua, Safe registered-exec parity** · phase X4 · BLOCKED_ON_DEPENDENCY · estimate 4-7 days (ESTIMATE) · proposed grain SG-000114
 
 - **Objective.** Registered-executable Safe execution with owned process-tree cleanup and resource bounds on Linux and macOS, matching what Job Objects/AppContainer give on Windows.
 - **User-visible capability.** process_spawn works on macOS and Linux with the same bounds.
 - **Existing Orcel implementation.** `crates/orcel-provider-process/src/lib.rs (Windows JobObject kill-on-close, AppContainer)`
 - **Donor.** cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f · method COPY_ADAPT
 - **Donor files.** `libs/cua-driver/rust/crates/cua-driver-core/src/perception_client/containment.rs`; `libs/cua-driver/rust/crates/cua-driver-core/src/perception_client/containment (linux.rs, macos.rs, unix.rs, windows.rs, unsupported.rs)`
-- **Create.** `crates/orcel-contain/Cargo.toml`; `crates/orcel-contain/src/lib.rs`; `crates/orcel-contain/src/linux.rs`; `crates/orcel-contain/src/macos.rs`; `crates/orcel-contain/src/unix.rs`; `crates/orcel-contain/src/windows.rs`; `crates/orcel-provider-process/src/unix.rs`
+- **Create.** `apps/orcel-contain/Cargo.toml`; `apps/orcel-contain/Cargo.lock`; `apps/orcel-contain/src/main.rs`; `apps/orcel-contain/src/containment.rs`; `apps/orcel-contain/src/linux.rs`; `apps/orcel-contain/src/macos.rs`; `apps/orcel-contain/src/unix.rs`; `apps/orcel-contain/src/windows.rs`; `crates/orcel-provider-process/src/unix.rs`; `crates/orcel-provider-process/src/contained.rs`
 - **Change.** `crates/orcel-provider-process/src/lib.rs`; `crates/orcel-provider-process/Cargo.toml`
-- **Dependencies to admit.** libc; windows-sys features as the donor's windows.rs needs (check against Orcel's windows-sys 0.52 and windows 0.58; admit any new feature).
+- **Dependencies to admit.** Inside apps/orcel-contain only: tokio (as the donor uses it), libc, and the windows-sys features the donor's windows.rs needs, admitted with cargo-deny and cargo-audit on that workspace. Kernel side: std only.
 - **Interface.** Existing provider API
 - **Platforms.** windows: unchanged; macos: new; linux: new
-- **Security and authority.** No ambient shell; registered executables only. Authority delta: Existing Safe process tool on two more OSes.
+- **Security and authority.** No ambient shell; registered executables only. Authority delta: Existing Safe process tool on two more OSes; a new pinned helper binary with no listener.
 - **Steps.**
-  1. Create crates/orcel-contain by COPY_ADAPT of Cua's perception containment (MIT): keep the capability-reporting contract (spawn refuses when any advertised boundary cannot be installed), Linux Landlock + seccomp + rlimits + PDEATHSIG + NO_NEW_PRIVS, macOS Seatbelt + rlimits + sentinel, Windows AppContainer + Job Object + private desktop. Replace tokio::process with std::process and the donor error type with Orcel's.
-  2. This 'contained' tier (no network, exact read/write allowlist, no fork) is used for parsers and helpers (WI-05) and as an opt-in policy tier for registered executables.
+  1. Create apps/orcel-contain as its own Cargo workspace (like apps/orcel-native-host), by COPY_ADAPT of Cua's perception containment (MIT). The donor code uses tokio (containment.rs AsyncReadExt and tokio::time::timeout; linux.rs tokio::process ChildStdin/ChildStdout), so it stays async inside this helper and tokio never enters the kernel's 62-package lockfile (AD-16). Keep the capability-reporting contract (refuse to spawn when any advertised boundary cannot be installed): Linux Landlock + seccomp + rlimits + PDEATHSIG + NO_NEW_PRIVS, macOS Seatbelt + rlimits + sentinel, Windows AppContainer + Job Object + private desktop. The helper is a one-shot launcher: orceld (or the browser host) passes a closed, bounded spec over stdin (executable, argv, read/write allowlist, limits), the helper installs every boundary, runs the child, relays bounded stdout/stderr and exit status, and exits. No listener.
+  2. crates/orcel-provider-process/src/contained.rs is the kernel-side client of that helper (std only): it pins the helper binary, writes the spec and reads a bounded result. The 'contained' tier (no network, exact read/write allowlist, no fork) serves parsers and helpers (WI-05) and is an opt-in tier for registered executables.
   3. Safe registered-executable parity on Linux/macOS (needs fork and sometimes network, so it cannot use the contained tier): process group, PR_SET_PDEATHSIG, pidfd (Linux) or kqueue EVFILT_PROC (macOS), rlimits, cgroup v2 child when delegated; kill the group on drop. This glue is BUILD_NEW but reuses unix.rs helpers from the copied crate.
   4. Same registered-executable rules and output bounds; SG-000096 shell semantics are not ported here.
 - **Tests.**
@@ -589,7 +590,7 @@ Gates every task inherits:
   - process provider test suite passes on three OSes
 - **Definition of done.** Merged.
 - **Rollback.** process_spawn reported unavailable on that OS.
-- **Reuse review (2026-10-18).** BUILD_NEW → COPY_ADAPT; ESTIMATE 6-10 (plus 6-9 if WI-05 had to build its own sandbox) days if built new, 3-5 with reuse. Runtime overhead: contained spawn adds Landlock/seccomp or Seatbelt setup per process (ESTIMATE: milliseconds; measure). Maintenance: Orcel owns the copy; security fixes from upstream reviewed per pin bump. Matrix rows: T-CUA-21, T-CUA-22. Risks: macOS sandbox-exec is deprecated by Apple (S-25); seccomp filter is architecture-specific; unsupported arch must be refused, as the donor does.
+- **Reuse review (2026-10-18).** BUILD_NEW → COPY_ADAPT; ESTIMATE 6-10 days if built new, 4-7 with reuse. Runtime overhead: one extra helper process per contained run (launcher, then child), with Landlock/seccomp or Seatbelt setup (ESTIMATE: milliseconds; measure in M-NAT-04). Maintenance: Orcel owns the copy; security fixes from upstream reviewed per pin bump. Matrix rows: T-CUA-21, T-CUA-22. Risks: macOS sandbox-exec is deprecated by Apple (S-25); seccomp filter is architecture-specific; unsupported arch must be refused, as the donor does; the helper binary is a new trusted component and must be pinned and verified like the native host.
 
 ### XP-14
 
@@ -599,7 +600,7 @@ Gates every task inherits:
 - **User-visible capability.** Browser tools work on macOS and Linux with the same policies.
 - **Existing Orcel implementation.** `crates/orcel-browser-host/src/discovery.rs (Authenticode on Windows)`; `crates/orcel-browser-host/src/confinement.rs (NO_ROUTE_PROXY http://0.0.0.0:9: 'Windows-only; on Linux it is loopback')`; `crates/orcel-browser-host/src/leftovers.rs, profile.rs, worker_launch.rs (Job Objects, handle-held files)`
 - **Donor.** cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f · method COPY_ADAPT
-- **Donor files.** `libs/cua/crates/cua-keyvault/src/macos.rs (SecCode requirement and signing-info bindings)`; `packages/playwright-core/src/server/registry/index.ts at playwright 1b025d7e (stable-channel install paths; PORT of a 20-line table)`
+- **Donor files.** `libs/cua/crates/cua-keyvault/src/macos.rs (SecCode signing-info and requirement plumbing, adapted to SecStaticCode for binaries on disk; Keychain-protector code excluded)`; `packages/playwright-core/src/server/registry/index.ts at playwright 1b025d7e (stable-channel install paths; PORT of a 20-line table)`
 - **Create.** `crates/orcel-browser-host/src/platform_macos.rs`; `crates/orcel-browser-host/src/platform_linux.rs`; `crates/orcel-browser-host/src/sink.rs`
 - **Change.** `crates/orcel-browser-host/src/discovery.rs`; `crates/orcel-browser-host/src/confinement.rs`; `crates/orcel-browser-host/src/worker_launch.rs`; `crates/orcel-browser-host/src/leftovers.rs`
 - **Dependencies to admit.** security-framework (MIT/Apache) for SecStaticCode on macOS.
@@ -607,7 +608,7 @@ Gates every task inherits:
 - **Platforms.** windows: unchanged; macos: new; linux: new
 - **Security and authority.** See SECURITY_INTEGRATION.md S-06 (no-route proxy) and S-07 (weaker Linux engine verification). Authority delta: Existing browser authority on two more OSes.
 - **Steps.**
-  1. Discovery: port Playwright 1.63.0 registry stable-channel paths for chrome and msedge on darwin and linux into discovery.rs. Verification: macOS = COPY_ADAPT cua-keyvault macos.rs SecCode bindings and check 'anchor apple generic and certificate leaf[subject.OU] = <Google EQHXZ8M8AV | Microsoft UBF8T346G9>'; Linux = owning package via dpkg -S / rpm -qf plus package signature status (BUILD_NEW, no donor verifies Linux browser binaries); record that Linux verification is weaker.
+  1. Discovery: port Playwright 1.63.0 registry stable-channel paths for chrome and msedge on darwin and linux into discovery.rs. Verification: macOS = adapt the SecCode signing-info and requirement plumbing from cua-keyvault macos.rs to SecStaticCode (it checks running peers, not binaries, and has no browser logic; leave its Keychain code behind) and check 'anchor apple generic and certificate leaf[subject.OU] = <Google EQHXZ8M8AV | Microsoft UBF8T346G9>'; Linux = owning package via dpkg -S / rpm -qf plus package signature status (BUILD_NEW, no donor verifies Linux browser binaries); record that Linux verification is weaker.
   2. Replace NO_ROUTE_PROXY on Unix with a host-owned sink: the host binds 127.0.0.1:0, never accepts payload (accept then close), and passes that exact port; this removes the 0.0.0.0-is-loopback hole.
   3. Supervision: process group + pidfd (Linux) / kqueue (macOS) instead of Job Objects; profile files held via O_NOFOLLOW opens.
   4. Network-leak probes (existing native tests) ported to the new OSes.
@@ -664,8 +665,8 @@ Gates every task inherits:
 - **User-visible capability.** Install Orcel on a Mac; grant Accessibility once to 'Orcel Computer Host'.
 - **Existing Orcel implementation.** `crates/orcel-lifecycle/src/layout.rs, install.rs (Windows-only)`; `docs/canonical/P12_INSTALLER_LIFECYCLE_DESIGN.md`
 - **Donor.** cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f · method COPY_ADAPT
-- **Donor files.** `libs/cua-driver/rust/scripts/CuaDriverBundle (Info.plist app-bundle skeleton for TCC identity)`; `libs/cua-driver/rust/scripts/CuaDriver.entitlements`; `apps/cua-spaces-macos/scripts/notarize.sh`; `.github/scripts/macos-review-codesign.sh`
-- **Create.** `crates/orcel-lifecycle/src/macos.rs`; `distribution/macos/OrcelComputerHost.app/Contents/Info.plist`; `distribution/macos/ai.orcel.orceld.plist`; `distribution/macos/entitlements.plist`; `scripts/macos/notarize.sh`; `scripts/macos/review-codesign.sh`
+- **Donor files.** `libs/cua-driver/rust/scripts/CuaDriverBundle (Info.plist app-bundle skeleton for TCC identity)`; `libs/cua-driver/rust/scripts/CuaDriver.entitlements`; `apps/cua-spaces-macos/scripts/notarize.sh`; `.github/scripts/macos-review-codesign.sh`; `apps/cua-spaces-macos/scripts/retry-apple.sh (called by notarize.sh)`
+- **Create.** `crates/orcel-lifecycle/src/macos.rs`; `distribution/macos/OrcelComputerHost.app/Contents/Info.plist`; `distribution/macos/ai.orcel.orceld.plist`; `distribution/macos/entitlements.plist`; `scripts/macos/notarize.sh`; `scripts/macos/review-codesign.sh`; `scripts/macos/retry-apple.sh`
 - **Change.** `crates/orcel-lifecycle/src/layout.rs`; `.github/workflows/release.yml`
 - **Dependencies to admit.** Apple Developer ID certificate and notarization (paid Apple membership: FD-05).
 - **Interface.** orcel install/update/rollback/doctor on macOS
@@ -678,6 +679,7 @@ Gates every task inherits:
   4. LaunchAgent for orceld (per-user, no root).
   5. notarytool in release workflow when FD-05 is approved; unsigned dev builds are labeled and never published.
   6. Replace XP-09's development signature pin with the Developer ID designated requirement.
+  7. Entitlements: justify or drop com.apple.security.automation.apple-events (the host does not send Apple Events in the adopted allowlist); keep only what the allowlisted tools need.
 - **Tests.**
   - positive: install/uninstall in a clean user account
   - negative: tampered bundle refused by doctor
@@ -691,7 +693,7 @@ Gates every task inherits:
   - doctor green
 - **Definition of done.** Merged; release remains a founder decision.
 - **Rollback.** Uninstall.
-- **Reuse review (2026-10-18).** BUILD_NEW → COPY_ADAPT; ESTIMATE 6-9 days if built new, 4-6 with reuse. Runtime overhead: negligible. Maintenance: scripts track Apple notarytool changes. Matrix rows: T-CUA-28, T-CUA-29, T-CUA-30, T-CUA-31. Risks: paid Apple Developer ID still required for distribution (FD-05).
+- **Reuse review (2026-10-18).** BUILD_NEW → COPY_ADAPT; ESTIMATE 6-9 days if built new, 4-6 with reuse. Runtime overhead: negligible. Maintenance: scripts track Apple notarytool changes. Matrix rows: T-CUA-28, T-CUA-29, T-CUA-30, T-CUA-31, T-CUA-37. Risks: paid Apple Developer ID still required for distribution (FD-05).
 
 ### XP-17
 
@@ -700,7 +702,8 @@ Gates every task inherits:
 - **Objective.** Per-user Linux install with the same lifecycle guarantees.
 - **User-visible capability.** Install Orcel on Ubuntu/Fedora.
 - **Existing Orcel implementation.** `crates/orcel-lifecycle (Windows-only layout)`
-- **Donor.** none · method BUILD_NEW
+- **Donor.** cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f · method BUILD_NEW
+- **Donor files.** `apps/cua-spaces-desktop/packaging/ai.cua.spaces.policy (polkit action template)`; `libs/images/omarchy/files/systemd-user/cua-driver.service (systemd user unit, REFERENCE)`
 - **Create.** `crates/orcel-lifecycle/src/linux.rs`; `distribution/linux/orceld.service`; `distribution/linux/ai.orcel.approve.policy`; `distribution/linux/nfpm.yaml`
 - **Change.** `crates/orcel-lifecycle/src/layout.rs`; `.github/workflows/release.yml`
 - **Dependencies to admit.** nfpm (MIT) as a build tool only.
@@ -724,8 +727,8 @@ Gates every task inherits:
   - clean install on two distributions
 - **Definition of done.** Merged.
 - **Rollback.** Uninstall.
-- **Reuse review (2026-10-18).** BUILD_NEW → BUILD_NEW; ESTIMATE 4-6 days if built new, 4-6 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
-- **Why not reuse.** No donor ships per-user Linux packaging without Nix or Electron (Cua uses Nix and electron-builder; Spaces' .deb installs to /opt as root). nfpm config plus a systemd user unit is small.
+- **Reuse review (2026-10-18).** BUILD_NEW → BUILD_NEW; ESTIMATE 4-6 days if built new, 4-6 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal. Matrix rows: T-CUA-35, T-CUA-36.
+- **Why not reuse.** No donor ships per-user Linux packaging without Nix or Electron. Two small templates are reused: Cua's polkit action file (COPY_ADAPT) and a systemd user unit (REFERENCE); the nfpm config and lifecycle code are new.
 
 ### XP-18
 
@@ -768,8 +771,8 @@ Gates every task inherits:
 - **Existing Orcel implementation.** `apps/orcel-mcp/src/device_identity.ts`; `apps/orcel-mcp/src/oauth_authorization.ts`
 - **Donor.** cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f · method WRAP
 - **Donor files.** `libs/cua/crates/cua-auth/src/lib.rs (REFERENCE: keyring usage across Keychain, Secret Service and Credential Manager)`
-- **Create.** `apps/orcel-mcp/src/secret_store.ts`
-- **Change.** `apps/orcel-mcp/src/device_identity.ts`
+- **Create.** `crates/orceld/src/secret_store.rs`; `apps/orcel-mcp/src/secret_store.ts`
+- **Change.** `crates/orceld/Cargo.toml`; `apps/orcel-mcp/src/device_identity.ts`
 - **Dependencies to admit.** keyring crate (MIT/Apache-2.0), the same library Cua uses; admitted with SBOM. On Windows keep DPAPI-backed storage or use keyring's Windows Credential Manager backend after comparison.
 - **Interface.** orceld secret_store get/put by fixed key names
 - **Platforms.** windows: DPAPI; macos: Keychain; linux: Secret Service; unavailable when no keyring daemon
@@ -836,7 +839,7 @@ Gates every task inherits:
 - **Donor files.** `libs/cua/crates/cua-keyvault/src/caller.rs (kernel-derived peer identity, three OSes)`; `libs/cua/crates/cua-keyvault/src/winpeer.rs (named-pipe client and Authenticode)`
 - **Create.** `crates/orceld/src/app_api.rs`; `docs/orcel/implementation-readiness/protocol/ORCEL_APP_API_1.md`
 - **Change.** `crates/orceld/src/main.rs`; `crates/orcel-platform/src/peer.rs`
-- **Dependencies to admit.** none (std + existing windows-sys features)
+- **Dependencies to admit.** macOS: security-framework and core-foundation (as the copied caller.rs uses). Windows: windows-sys features Win32_Security_WinTrust, Win32_Security_Cryptography (and sub-features the donor uses) and Win32_System_Pipes, admitted for orceld. Linux: libc only.
 - **Interface.** See ORCEL_APP_API_1.md (to be written in this task; skeleton in AGENT_RUNTIME_INTEGRATION.md section 3)
 - **Platforms.** windows: named pipe \\.\pipe\orcel-<sid>-app with DACL = current user SID only; macos: unix socket in state root; linux: unix socket in $XDG_RUNTIME_DIR/orcel (0700)
 - **Security and authority.** Loopback TCP is not used. Unauthenticated peers are dropped before any read. Authority delta: New read-only local interface; no mutation.
@@ -909,7 +912,7 @@ Gates every task inherits:
 - **Platforms.** windows: WebView2; macos: WKWebView; linux: WebKitGTK 4.1
 - **Security and authority.** CSP default-src 'self'; no remote content; no eval; approvals never rendered as actionable. Authority delta: none.
 - **Steps.**
-  1. Start from Cua Spaces' src-tauri scaffolding (FSL, FD-04) for window, capability and CSP structure; tighten the CSP (no 'wasm-unsafe-eval', no ws:/wss:, no remote connect-src) and delete the updater plugin. Start the front end from Agent-Native Toolkit's AgentKit React root, context, stop button and streaming text (MIT); do not take components.tsx (5,618 lines on assistant-ui, Radix, CodeMirror).
+  1. Start from Cua Spaces' src-tauri scaffolding (FSL, FD-04) for window, capability and CSP structure; tighten the CSP (no 'wasm-unsafe-eval', no ws:/wss:, no remote connect-src) and delete the updater plugin, bundle.createUpdaterArtifacts, process:allow-restart and macOSPrivateApi. Start the front end from Agent-Native Toolkit's AgentKit React root, context, stop button and streaming text (MIT; stop-button.tsx pulls in @tabler/icons-react, admitted with the front end); do not take components.tsx (5,618 lines on assistant-ui, Radix, CodeMirror).
   2. Rust side: one Tauri command 'app_api_call' proxying only the CR-01 read-only methods by name allowlist.
   3. Front end: compact task view, device selector, timeline, capability panel with explicit unavailable reasons, Stop button wired to the existing emergency stop path only when CR-01 exposes it.
   4. Accessibility: keyboard-only, screen reader names, RTL with Arabic strings, 100/150/200% scaling.
@@ -1468,7 +1471,7 @@ Gates every task inherits:
 - **Platforms.** all: process confinement per XP-13
 - **Security and authority.** Parser bugs contained in a no-network, no-write process. Authority delta: New local read of an approved file.
 - **Steps.**
-  1. Parser process launched through crates/orcel-contain (XP-13, copied from Cua containment): no network, read only its input file, write only its output pipe, no fork, rlimits; stdin bytes ≤50 MiB, stdout Markdown bounded; 30 s timeout.
+  1. Parser process launched through the apps/orcel-contain helper (XP-13, copied from Cua containment): no network, read only its input file, write only its output pipe, no fork, rlimits; stdin bytes ≤50 MiB, stdout Markdown bounded; 30 s timeout.
   2. Macros and external links never evaluated.
 - **Tests.**
   - positive: fixture PDF/DOCX
@@ -1482,7 +1485,7 @@ Gates every task inherits:
   - fuzz 10 minutes without crash escaping the process
 - **Definition of done.** Merged.
 - **Rollback.** Unavailable.
-- **Reuse review (2026-10-18).** COPY_ADAPT → COPY_ADAPT; ESTIMATE 4-6 days if built new, 2-3 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal. Matrix rows: T-FC-06, T-FC-07, T-CUA-21, T-CUA-22.
+- **Reuse review (2026-10-18).** COPY_ADAPT → COPY_ADAPT; ESTIMATE 4-6 days if built new, 2-3 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal. Matrix rows: T-FC-06, T-FC-07, T-CUA-21, T-CUA-22. Risks: WI-05's sandbox saving is counted here (4-6 → 2-3), not again under XP-13.
 
 ### WI-06
 

@@ -46,7 +46,7 @@ FD-01 is resolved, so XP-05 onward is no longer blocked on adoption; each task s
 7. crawl4ai `94b67888ca8b335ff2121423a50e06dd27661922`: `crawl4ai/content_filter_strategy.py` (attribution clause).
 8. Stagehand `f261c38b4dc50c39485f924e8599c1d3c6e37dc7`: `packages/extension/understudy/a11y/snapshot`, `understudy/page.ts`.
 
-9. Added by the 2026-10-18 reuse review (REUSE_REVIEW.md): Cua `cua-teleport/src/biometric.rs` (approvals), `cua-driver-core/src/perception_client/containment*` (sandbox crate `orcel-contain`), `cua-keyvault/src/{caller,winpeer,macos}.rs` (peer and code identity), `platform-linux/src/proc_fs.rs`, macOS bundle and notarization scripts, Cua Spaces Tauri scaffolding, `cua-bench` and the driver-bench taskpack; Agent-Native Toolkit AgentKit React root, context, stop button and streaming text; Playwright's registry path table.
+9. Added by the 2026-10-18 reuse review (REUSE_REVIEW.md): Cua `cua-teleport/src/biometric.rs` (approvals), `cua-driver-core/src/perception_client/containment*` (sandbox helper `apps/orcel-contain`, own workspace because the donor uses tokio), `cua-keyvault/src/{caller,winpeer,macos}.rs` (peer and code identity), `platform-linux/src/proc_fs.rs`, macOS bundle and notarization scripts, Cua Spaces Tauri scaffolding, `cua-bench` and the driver-bench taskpack; Agent-Native Toolkit AgentKit React root, context, stop button and streaming text; Playwright's registry path table.
 
 Every row with git object SHAs: SOURCE_TRANSPLANT_MATRIX.md. Why each remaining BUILD_NEW task is new code: REUSE_REVIEW.md section 4 and each task card's "Why not reuse" line. Verify before copying: `python -I docs/orcel/implementation-readiness/tools/readiness_check.py --donors <dir-with-owner_repo-checkouts> --verbose`.
 
