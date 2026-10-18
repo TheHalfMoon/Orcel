@@ -90,15 +90,17 @@
     {
       "id": "XP-01B",
       "phase": "X0",
-      "title": "Move policy stores off the shared-temp fallback",
+      "title": "Move remaining state stores off the shared-temp fallback",
       "status": "BLOCKED_ON_DEPENDENCY",
-      "objective": "Apply XP-01's private state root to the policy stores that still default to std::env::temp_dir()/orcel off Windows: full-control authority, executable registry and remote session leases (found by the independent #345 security review).",
-      "user_visible": "Full-control leases, the executable registry and remote leases stay private on macOS and Linux.",
+      "objective": "Apply XP-01's private state root to every remaining non-test default that still resolves under std::env::temp_dir()/orcel off Windows: full-control authority, executable registry, remote session leases (orcel-policy), trust records (orceld) and the browser profile (orcel-provider-browser). Found by the independent #345 security review and the #344 judge.",
+      "user_visible": "Full-control leases, the executable registry, remote leases, trust records and the browser profile stay private on macOS and Linux.",
       "existing_orcel": [
         "crates/orcel-policy/src/full_control_store.rs (line ~82: authority_dir(&std::env::temp_dir().join(\"orcel\")))",
         "crates/orcel-policy/src/executable_registry.rs (line ~185: std::env::temp_dir() fallback)",
         "crates/orcel-policy/src/remote_session.rs (line ~535: std::env::temp_dir() fallback)",
-        "crates/orcel-policy/src/protected_state.rs (line ~40: adds temp root to the protected list; harmless, aligned for consistency)"
+        "crates/orceld/src/trust.rs (line ~256: std::env::temp_dir().join(\"orcel\").join(\"trust.jsonl\"))",
+        "crates/orcel-provider-browser/src/lib.rs (line ~673: std::env::temp_dir().join(\"orcel\").join(\"browser-profile\"))",
+        "crates/orcel-policy/src/protected_state.rs (line ~40: protected-path list root; security-relevant, it decides which paths fs tools are denied)"
       ],
       "donor": null,
       "donor_files": [],
@@ -110,13 +112,16 @@
           "crates/orcel-policy/src/full_control_store.rs",
           "crates/orcel-policy/src/executable_registry.rs",
           "crates/orcel-policy/src/remote_session.rs",
-          "crates/orcel-policy/src/protected_state.rs"
+          "crates/orcel-policy/src/protected_state.rs",
+          "crates/orceld/src/trust.rs",
+          "crates/orcel-provider-browser/Cargo.toml",
+          "crates/orcel-provider-browser/src/lib.rs"
         ]
       },
       "dependencies": "orcel-platform (from XP-01)",
       "steps": [
-        "Replace each non-test temp_dir() fallback with orcel_platform::paths::state_root() and propagate the error; keep existing env overrides (with XP-01's absolute-path rule).",
-        "protected_state: protect the resolved state root instead of the temp root.",
+        "Replace each listed non-test temp_dir() fallback with orcel_platform::paths::state_root() and propagate the error; keep existing env overrides under XP-01's absolute-path rule.",
+        "protected_state: the protected-path list must cover every resolved default root at every step. Add the private state root first; remove the temp root only in the same change that moves the last default path off it, and keep the trust.rs test that asserts trust records and the browser profile are under protected roots.",
         "Windows paths byte-identical; no migration of existing stores."
       ],
       "interfaces": "existing store constructors become fallible where they resolved a default path",
@@ -125,14 +130,15 @@
         "macos": "private state root",
         "linux": "private state root"
       },
-      "security": "Same pre-create/symlink attack as S-01, on authority-bearing stores (full-control leases, executable registry, remote leases). Fails closed.",
+      "security": "Same pre-create/symlink attack as S-01, on authority-bearing stores (full-control leases, executable registry, remote leases, trust records) and the browser profile. Fails closed; protected-path coverage never drops.",
       "tests": {
         "positive": [
           "each store resolves under the private root with a fake HOME"
         ],
         "negative": [
-          "no non-test temp_dir() in orcel-policy (grep test)",
-          "symlinked root refused"
+          "no non-test std::env::temp_dir() state default anywhere in crates/ (repo-wide grep test)",
+          "symlinked root refused",
+          "trust records and browser profile remain under a protected root after the change"
         ],
         "recovery": [
           "existing Windows stores read unchanged"
@@ -145,12 +151,12 @@
         "XP-01"
       ],
       "acceptance": [
-        "grep finds no non-test std::env::temp_dir() in orcel-policy",
-        "policy tests pass on three OSes"
+        "repo-wide grep finds no non-test std::env::temp_dir() state default",
+        "policy, orceld and provider-browser tests pass on three OSes"
       ],
       "done": "Merged with common gates; SECURITY_INTEGRATION.md S-01b marked fixed.",
       "rollback": "Revert.",
-      "estimate": "1-2",
+      "estimate": "2-3",
       "authority_delta": "none (fails closed earlier)",
       "proposed_grain": "SG-000109"
     },

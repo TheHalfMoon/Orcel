@@ -53,12 +53,12 @@ Every row with git object SHAs: SOURCE_TRANSPLANT_MATRIX.md. Verify before copyi
 | # | Task | Why now | Depends on |
 |---:|---|---|---|
 | 1 | **XP-01** secure per-OS state directories | security fix, smallest, unblocks every non-Windows build | - |
-| 1b | XP-01B policy stores off the temp fallback | same bug in authority-bearing stores (found in #345 review) | XP-01 |
+| 1b | XP-01B remaining stores off the temp fallback | same bug in authority-bearing stores, trust records and the browser profile (found in #345 review and #344 judge) | XP-01 |
 | 2 | XP-02 macOS CI leg | catches regressions from here on | - |
 | 3 | BM-01 report schema | every later task reports numbers in it | - |
 | 4 | XP-04 host protocol /2 | contract for all native hosts | XP-02 |
-| 5 | XP-03 identity primitives | pid generation, session, peer creds | XP-01, XP-02 |
-| 6 | CR-01 app API transport (read-only) | F0 next slice, cross-platform from day one | XP-01, XP-03 |
+| 5 | XP-03 identity primitives | pid generation, session, peer creds | XP-01, XP-01B, XP-02 |
+| 6 | CR-01 app API transport (read-only) | F0 next slice, cross-platform from day one | XP-01, XP-01B, XP-03 |
 | 7 | XP-05 vendor Cua, host workspace | first donor import | XP-02, FD-01 |
 | 8 | XP-06 macOS/Linux observation | first user-visible cross-platform capability | XP-03, XP-04, XP-05 |
 | 9 | XP-08 conformance fixtures and runners | evidence for everything after | XP-06 |

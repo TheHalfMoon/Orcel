@@ -21,7 +21,7 @@ Gates every task inherits:
 | Task | Phase | Status | Title | Depends on | Estimate (days) | Grain |
 |---|---|---|---|---|---|---|
 | [XP-01](#xp-01) | X0 | READY | Secure per-OS state directories; remove the shared-temp fallback | - | 1-2 | SG-000109 |
-| [XP-01B](#xp-01b) | X0 | BLOCKED_ON_DEPENDENCY | Move policy stores off the shared-temp fallback | XP-01 | 1-2 | SG-000109 |
+| [XP-01B](#xp-01b) | X0 | BLOCKED_ON_DEPENDENCY | Move remaining state stores off the shared-temp fallback | XP-01 | 2-3 | SG-000109 |
 | [XP-02](#xp-02) | X0 | READY | Add macOS to the CI matrix and make the workspace build and test on all three OSes | - | 1-3 | SG-000109 |
 | [XP-03](#xp-03) | X0 | READY | Platform identity primitives: process start generation, user/session identity, IPC peer credentials | XP-01, XP-01B, XP-02 | 2-3 | SG-000109 |
 | [XP-04](#xp-04) | X0 | READY | Private host protocol orcel-computer-host/2 with capability negotiation and platform-neutral identities | XP-02 | 3-4 | SG-000110 |
@@ -126,33 +126,33 @@ Gates every task inherits:
 
 ### XP-01B
 
-**Move policy stores off the shared-temp fallback** · phase X0 · BLOCKED_ON_DEPENDENCY · estimate 1-2 days (ESTIMATE) · proposed grain SG-000109
+**Move remaining state stores off the shared-temp fallback** · phase X0 · BLOCKED_ON_DEPENDENCY · estimate 2-3 days (ESTIMATE) · proposed grain SG-000109
 
-- **Objective.** Apply XP-01's private state root to the policy stores that still default to std::env::temp_dir()/orcel off Windows: full-control authority, executable registry and remote session leases (found by the independent #345 security review).
-- **User-visible capability.** Full-control leases, the executable registry and remote leases stay private on macOS and Linux.
-- **Existing Orcel implementation.** `crates/orcel-policy/src/full_control_store.rs (line ~82: authority_dir(&std::env::temp_dir().join("orcel")))`; `crates/orcel-policy/src/executable_registry.rs (line ~185: std::env::temp_dir() fallback)`; `crates/orcel-policy/src/remote_session.rs (line ~535: std::env::temp_dir() fallback)`; `crates/orcel-policy/src/protected_state.rs (line ~40: adds temp root to the protected list; harmless, aligned for consistency)`
+- **Objective.** Apply XP-01's private state root to every remaining non-test default that still resolves under std::env::temp_dir()/orcel off Windows: full-control authority, executable registry, remote session leases (orcel-policy), trust records (orceld) and the browser profile (orcel-provider-browser). Found by the independent #345 security review and the #344 judge.
+- **User-visible capability.** Full-control leases, the executable registry, remote leases, trust records and the browser profile stay private on macOS and Linux.
+- **Existing Orcel implementation.** `crates/orcel-policy/src/full_control_store.rs (line ~82: authority_dir(&std::env::temp_dir().join("orcel")))`; `crates/orcel-policy/src/executable_registry.rs (line ~185: std::env::temp_dir() fallback)`; `crates/orcel-policy/src/remote_session.rs (line ~535: std::env::temp_dir() fallback)`; `crates/orceld/src/trust.rs (line ~256: std::env::temp_dir().join("orcel").join("trust.jsonl"))`; `crates/orcel-provider-browser/src/lib.rs (line ~673: std::env::temp_dir().join("orcel").join("browser-profile"))`; `crates/orcel-policy/src/protected_state.rs (line ~40: protected-path list root; security-relevant, it decides which paths fs tools are denied)`
 - **Donor.** none · method BUILD_NEW
 - **Create.** none
-- **Change.** `crates/orcel-policy/Cargo.toml`; `crates/orcel-policy/src/full_control_store.rs`; `crates/orcel-policy/src/executable_registry.rs`; `crates/orcel-policy/src/remote_session.rs`; `crates/orcel-policy/src/protected_state.rs`
+- **Change.** `crates/orcel-policy/Cargo.toml`; `crates/orcel-policy/src/full_control_store.rs`; `crates/orcel-policy/src/executable_registry.rs`; `crates/orcel-policy/src/remote_session.rs`; `crates/orcel-policy/src/protected_state.rs`; `crates/orceld/src/trust.rs`; `crates/orcel-provider-browser/Cargo.toml`; `crates/orcel-provider-browser/src/lib.rs`
 - **Dependencies to admit.** orcel-platform (from XP-01)
 - **Interface.** existing store constructors become fallible where they resolved a default path
 - **Platforms.** windows: unchanged paths; macos: private state root; linux: private state root
-- **Security and authority.** Same pre-create/symlink attack as S-01, on authority-bearing stores (full-control leases, executable registry, remote leases). Fails closed. Authority delta: none (fails closed earlier).
+- **Security and authority.** Same pre-create/symlink attack as S-01, on authority-bearing stores (full-control leases, executable registry, remote leases, trust records) and the browser profile. Fails closed; protected-path coverage never drops. Authority delta: none (fails closed earlier).
 - **Steps.**
-  1. Replace each non-test temp_dir() fallback with orcel_platform::paths::state_root() and propagate the error; keep existing env overrides (with XP-01's absolute-path rule).
-  2. protected_state: protect the resolved state root instead of the temp root.
+  1. Replace each listed non-test temp_dir() fallback with orcel_platform::paths::state_root() and propagate the error; keep existing env overrides under XP-01's absolute-path rule.
+  2. protected_state: the protected-path list must cover every resolved default root at every step. Add the private state root first; remove the temp root only in the same change that moves the last default path off it, and keep the trust.rs test that asserts trust records and the browser profile are under protected roots.
   3. Windows paths byte-identical; no migration of existing stores.
 - **Tests.**
   - positive: each store resolves under the private root with a fake HOME
-  - negative: no non-test temp_dir() in orcel-policy (grep test); symlinked root refused
+  - negative: no non-test std::env::temp_dir() state default anywhere in crates/ (repo-wide grep test); symlinked root refused; trust records and browser profile remain under a protected root after the change
   - recovery: existing Windows stores read unchanged
   - e2e: none required
 - **Performance.** Negligible.
 - **CI.** all OS legs
 - **Depends on.** XP-01
 - **Acceptance.**
-  - grep finds no non-test std::env::temp_dir() in orcel-policy
-  - policy tests pass on three OSes
+  - repo-wide grep finds no non-test std::env::temp_dir() state default
+  - policy, orceld and provider-browser tests pass on three OSes
 - **Definition of done.** Merged with common gates; SECURITY_INTEGRATION.md S-01b marked fixed.
 - **Rollback.** Revert.
 
