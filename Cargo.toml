@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "crates/orcel-contracts",
+  "crates/orcel-platform",
   "crates/orcel-policy",
   "crates/orcel-audit",
   "crates/orcel-approval",

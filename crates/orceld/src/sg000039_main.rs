@@ -53,9 +53,11 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let policy = legacy::load_policy_bridge()?;
-    let audit = AuditLogger::new(default_audit_path())
-        .map_err(|error| format!("initialize audit log: {error}"))?;
-    let approval = LocalApprovalBroker::new();
+    let audit_path = default_audit_path().map_err(|error| format!("resolve audit log: {error}"))?;
+    let audit =
+        AuditLogger::new(audit_path).map_err(|error| format!("initialize audit log: {error}"))?;
+    let approval = LocalApprovalBroker::new()
+        .map_err(|error| format!("initialize approval broker: {}", error.message))?;
     let workspace_set = remote_lease::WorkspaceSet::from_environment();
 
     eprintln!(

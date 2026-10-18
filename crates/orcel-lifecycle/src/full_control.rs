@@ -266,6 +266,7 @@ pub fn grant_full_user(
         digest,
     );
     LocalApprovalBroker::new()
+        .map_err(approval_error)?
         .request(&prompt)
         .map_err(approval_error)?;
     full_control_store::grant_local(

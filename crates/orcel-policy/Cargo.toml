@@ -12,6 +12,7 @@ path = "src/sg000040.rs"
 [dependencies]
 orcel-approval = { path = "../orcel-approval" }
 orcel-contracts = { path = "../orcel-contracts" }
+orcel-platform = { path = "../orcel-platform" }
 orcel-provider-browser = { path = "../orcel-provider-browser" }
 orcel-provider-clipboard = { path = "../orcel-provider-clipboard" }
 orcel-provider-network = { path = "../orcel-provider-network" }
