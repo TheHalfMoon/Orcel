@@ -6,6 +6,7 @@ use orcel_provider_git::{GitProvider, GitProviderError};
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -80,13 +81,18 @@ impl DnsResolver for DriftResolver {
     }
 }
 
+// Unique per call: macOS clocks have microsecond resolution, so parallel
+// tests in one process can otherwise draw the same timestamp.
+static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
 fn temp_root(label: &str) -> PathBuf {
     let suffix = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock")
         .as_nanos();
+    let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let root = std::env::temp_dir().join(format!(
-        "orcel-sg16-fetch-{label}-{}-{suffix}",
+        "orcel-sg16-fetch-{label}-{}-{suffix}-{sequence}",
         std::process::id()
     ));
     std::fs::create_dir_all(&root).expect("create temp root");
