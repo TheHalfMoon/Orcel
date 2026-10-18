@@ -1,0 +1,3958 @@
+{
+  "schema": "orcel-readiness-backlog/1",
+  "status": "ADOPTED planning direction (founder, 2026-10-18; docs/orcel/grants/2026-10-18-founder-attestation.md). Each task becomes a SpecGrain only when its grain is activated under canonical governance.",
+  "estimate_scale": "ESTIMATE in engineer-days of focused implementation for one agent, excluding review latency. Not a measurement.",
+  "common_gates": [
+    "exact-head CI green on every OS the task touches (ubuntu-latest, windows-latest, macos-latest once XP-02 lands)",
+    "Jev exact-diff review and Alibaba OCR delegation with manual review of excluded files",
+    "PStack or fresh-context judge verdict posted on the PR",
+    "Graft when donor code is copied or adapted",
+    "provenance JSON with donor commit and blob/tree SHAs plus notice file for every imported unit",
+    "zero unresolved review threads; normal merge",
+    "no new listener, no second MCP server, no donor-side approval, no page/model/caller script evaluation"
+  ],
+  "tasks": [
+    {
+      "id": "XP-01",
+      "phase": "X0",
+      "title": "Secure per-OS state directories; remove the shared-temp fallback",
+      "status": "READY",
+      "objective": "Approval history and audit logs must never default to a world-shared temp directory. Resolve one per-user Orcel state root per OS and fail closed when it cannot be resolved.",
+      "user_visible": "Approvals and audit records survive and stay private on macOS and Linux exactly as on Windows.",
+      "existing_orcel": [
+        "crates/orcel-approval/src/lib.rs (default_approval_history_path, lines ~2120-2131: LOCALAPPDATA else std::env::temp_dir()/orcel)",
+        "crates/orcel-audit/src/lib.rs (default_audit_path, lines 72-84: same fallback)",
+        "crates/orcel-lifecycle/src/layout.rs (Windows-only layout from LOCALAPPDATA)"
+      ],
+      "donor": null,
+      "donor_files": [],
+      "method": "BUILD_NEW",
+      "orcel_files": {
+        "create": [
+          "crates/orcel-platform/Cargo.toml",
+          "crates/orcel-platform/src/lib.rs",
+          "crates/orcel-platform/src/paths.rs"
+        ],
+        "change": [
+          "Cargo.toml",
+          "crates/orcel-approval/Cargo.toml",
+          "crates/orcel-approval/src/lib.rs",
+          "crates/orcel-audit/Cargo.toml",
+          "crates/orcel-audit/src/lib.rs"
+        ]
+      },
+      "dependencies": "none new (std only; libc already transitively present is NOT assumed; use std::os::unix::fs::PermissionsExt)",
+      "steps": [
+        "Create crate orcel-platform with paths::state_root() -> Result<PathBuf, PlatformError>: Windows %LOCALAPPDATA%\\Orcel; macOS $HOME/Library/Application Support/Orcel; Linux $XDG_STATE_HOME/orcel else $HOME/.local/state/orcel. Reject relative, empty or non-absolute environment values.",
+        "paths::ensure_private_dir(path): create with 0700 on Unix; refuse if it exists and is a symlink, is not a directory, is not owned by the current uid, or grants group/other access. On Windows keep current behavior.",
+        "Replace the temp_dir() fallbacks in default_approval_history_path and default_audit_path with state_root(); return the error up to the caller so the broker reports ProviderUnavailable instead of writing elsewhere. Keep the ORCEL_APPROVAL_HISTORY_PATH and ORCEL_AUDIT_PATH overrides unchanged.",
+        "Test-only code that uses std::env::temp_dir() with unique names stays as is."
+      ],
+      "interfaces": "pub fn state_root() -> Result<PathBuf, PlatformError>; pub fn ensure_private_dir(&Path) -> Result<(), PlatformError>",
+      "platforms": {
+        "windows": "Unchanged path; ensure_private_dir is a no-op that only checks it is a directory.",
+        "macos": "~/Library/Application Support/Orcel, 0700.",
+        "linux": "XDG_STATE_HOME/orcel or ~/.local/state/orcel, 0700."
+      },
+      "security": "Removes ledger/audit placement in /tmp where another local user could pre-create or symlink the path. Authority delta: none (fails closed earlier).",
+      "tests": {
+        "positive": [
+          "state_root resolves per OS with a fake HOME/XDG_STATE_HOME",
+          "broker writes history under the private root"
+        ],
+        "negative": [
+          "pre-created symlink at the root is refused",
+          "group-writable root is refused",
+          "relative XDG_STATE_HOME is ignored",
+          "missing HOME and LOCALAPPDATA returns an error, never temp_dir"
+        ],
+        "recovery": [
+          "existing Windows ledger path is read unchanged (no migration)"
+        ],
+        "e2e": [
+          "ubuntu-latest CI runs the approval crate tests with HOME pointed at a temp sandbox"
+        ]
+      },
+      "performance": "Negligible; one stat per process start.",
+      "ci": "Rust jobs on ubuntu-latest and windows-latest (macos-latest after XP-02).",
+      "depends_on": [],
+      "acceptance": [
+        "grep finds no non-test std::env::temp_dir() in orcel-approval or orcel-audit",
+        "all new tests pass on Linux and Windows",
+        "Windows ledger path byte-identical to before"
+      ],
+      "done": "Merged with the common gates; THREAT_MODEL delta recorded in SECURITY_INTEGRATION.md row S-01 marked fixed.",
+      "rollback": "Revert the commit; no persisted format changed.",
+      "estimate": "1-2",
+      "authority_delta": "none",
+      "proposed_grain": "SG-000109",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "BUILD_NEW",
+        "estimate_build_new_days": "1-2",
+        "estimate_with_reuse_days": "1-2",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": [],
+        "build_new_justification": "Path resolution and permission checks are Orcel's own state contract; Cua's state-dir handling (CUA_DRIVER_RS_HOME, keyvault paths) is product-specific and weaker on ancestor checks. Already implemented in PR #345."
+      }
+    },
+    {
+      "id": "XP-01B",
+      "phase": "X0",
+      "title": "Move remaining state stores off the shared-temp fallback",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "Apply XP-01's private state root to every remaining non-test default that still resolves under std::env::temp_dir()/orcel off Windows: full-control authority, executable registry, remote session leases (orcel-policy), trust records (orceld) and the browser profile (orcel-provider-browser). Found by the independent #345 security review and the #344 judge.",
+      "user_visible": "Full-control leases, the executable registry, remote leases, trust records and the browser profile stay private on macOS and Linux.",
+      "existing_orcel": [
+        "crates/orcel-policy/src/full_control_store.rs (line ~82: authority_dir(&std::env::temp_dir().join(\"orcel\")))",
+        "crates/orcel-policy/src/executable_registry.rs (line ~185: std::env::temp_dir() fallback)",
+        "crates/orcel-policy/src/remote_session.rs (line ~535: std::env::temp_dir() fallback)",
+        "crates/orceld/src/trust.rs (line ~256: std::env::temp_dir().join(\"orcel\").join(\"trust.jsonl\"))",
+        "crates/orcel-provider-browser/src/lib.rs (line ~673: std::env::temp_dir().join(\"orcel\").join(\"browser-profile\"))",
+        "crates/orcel-policy/src/protected_state.rs (line ~40: protected-path list root; security-relevant, it decides which paths fs tools are denied)"
+      ],
+      "donor": null,
+      "donor_files": [],
+      "method": "BUILD_NEW",
+      "orcel_files": {
+        "create": [],
+        "change": [
+          "crates/orcel-policy/Cargo.toml",
+          "crates/orcel-policy/src/full_control_store.rs",
+          "crates/orcel-policy/src/executable_registry.rs",
+          "crates/orcel-policy/src/remote_session.rs",
+          "crates/orcel-policy/src/protected_state.rs",
+          "crates/orceld/src/trust.rs",
+          "crates/orcel-provider-browser/Cargo.toml",
+          "crates/orcel-provider-browser/src/lib.rs"
+        ]
+      },
+      "dependencies": "orcel-platform (from XP-01)",
+      "steps": [
+        "Replace each listed non-test temp_dir() fallback with orcel_platform::paths::state_root() and propagate the error; keep existing env overrides under XP-01's absolute-path rule.",
+        "protected_state: the protected-path list must cover every resolved default root at every step. Add the private state root first; remove the temp root only in the same change that moves the last default path off it, and keep the trust.rs test that asserts trust records and the browser profile are under protected roots.",
+        "Windows paths byte-identical; no migration of existing stores."
+      ],
+      "interfaces": "existing store constructors become fallible where they resolved a default path",
+      "platforms": {
+        "windows": "unchanged paths",
+        "macos": "private state root",
+        "linux": "private state root"
+      },
+      "security": "Same pre-create/symlink attack as S-01, on authority-bearing stores (full-control leases, executable registry, remote leases, trust records) and the browser profile. Fails closed; protected-path coverage never drops.",
+      "tests": {
+        "positive": [
+          "each store resolves under the private root with a fake HOME"
+        ],
+        "negative": [
+          "no non-test std::env::temp_dir() state default anywhere in crates/ (repo-wide grep test)",
+          "symlinked root refused",
+          "trust records and browser profile remain under a protected root after the change"
+        ],
+        "recovery": [
+          "existing Windows stores read unchanged"
+        ],
+        "e2e": []
+      },
+      "performance": "Negligible.",
+      "ci": "all OS legs",
+      "depends_on": [
+        "XP-01"
+      ],
+      "acceptance": [
+        "repo-wide grep finds no non-test std::env::temp_dir() state default",
+        "policy, orceld and provider-browser tests pass on three OSes"
+      ],
+      "done": "Merged with common gates; SECURITY_INTEGRATION.md S-01b marked fixed.",
+      "rollback": "Revert.",
+      "estimate": "2-3",
+      "authority_delta": "none (fails closed earlier)",
+      "proposed_grain": "SG-000109",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "BUILD_NEW",
+        "estimate_build_new_days": "2-3",
+        "estimate_with_reuse_days": "2-3",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": [],
+        "build_new_justification": "Applies XP-01's crate to Orcel's own stores; no donor code applies."
+      }
+    },
+    {
+      "id": "XP-02",
+      "phase": "X0",
+      "title": "Add macOS to the CI matrix and make the workspace build and test on all three OSes",
+      "status": "READY",
+      "objective": "Every Rust and Node job runs on ubuntu-latest, windows-latest and macos-latest so cross-platform regressions are caught at the PR that causes them.",
+      "user_visible": "None directly; prerequisite for any macOS release.",
+      "existing_orcel": [
+        ".github/workflows/ci.yml (matrix os: [ubuntu-latest, windows-latest] for Rust and Node)"
+      ],
+      "donor": null,
+      "donor_files": [],
+      "method": "BUILD_NEW",
+      "orcel_files": {
+        "create": [],
+        "change": [
+          ".github/workflows/ci.yml",
+          "crates/*/src/** only where a test assumes Windows or Linux"
+        ]
+      },
+      "dependencies": "none",
+      "steps": [
+        "Add macos-latest to the Rust and Node matrices; keep fail-fast false.",
+        "Run cargo test --workspace; for each failure, either gate the test with cfg(windows) when it exercises a Windows-only primitive, or fix the portable code. Never weaken an assertion to pass.",
+        "Add the macOS leg to the required checks list only after it is green for five consecutive runs (record run ids in the PR)."
+      ],
+      "interfaces": "none",
+      "platforms": {
+        "windows": "unchanged",
+        "macos": "new CI leg",
+        "linux": "unchanged"
+      },
+      "security": "No authority change.",
+      "tests": {
+        "positive": [
+          "cargo test --workspace green on macos-latest"
+        ],
+        "negative": [
+          "a deliberately Windows-only test without cfg fails the macOS leg (verified once, then reverted)"
+        ],
+        "recovery": [],
+        "e2e": []
+      },
+      "performance": "CI wall-clock increase recorded in the PR.",
+      "ci": "Itself.",
+      "depends_on": [],
+      "acceptance": [
+        "three-OS matrix green",
+        "no test removed; every cfg gate listed in the PR body"
+      ],
+      "done": "Merged; ruleset update requested from the founder (required check names).",
+      "rollback": "Remove the matrix entry.",
+      "estimate": "1-3",
+      "authority_delta": "none",
+      "proposed_grain": "SG-000109",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "BUILD_NEW",
+        "estimate_build_new_days": "1-3",
+        "estimate_with_reuse_days": "1-3",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": [],
+        "build_new_justification": "CI matrix configuration of Orcel's own workflow; nothing to reuse. In PR #346."
+      }
+    },
+    {
+      "id": "XP-03",
+      "phase": "X0",
+      "title": "Platform identity primitives: process start generation, user/session identity, IPC peer credentials",
+      "status": "READY",
+      "objective": "Give the registry and IPC the same identity guarantees on macOS and Linux that Windows has: pid + start generation, current user and session, and authenticated peer of a local socket.",
+      "user_visible": "None directly.",
+      "existing_orcel": [
+        "crates/orcel-provider-uia/src/lib.rs NativeProcess { start_generation, generation_source, session_verified }",
+        "crates/orcel-provider-uia/src/native_desktop.rs (Windows creation-time generation)"
+      ],
+      "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "donor_files": [
+        "libs/cua-driver/rust/crates/platform-linux/src/proc_fs.rs (process_instance_id, is_process_live)",
+        "libs/cua/crates/cua-daemon/src/lib.rs (getsockopt pattern near line 736: LOCAL_PEERPID / SO_PEERCRED; pattern only)"
+      ],
+      "method": "COPY_ADAPT",
+      "orcel_files": {
+        "create": [
+          "crates/orcel-platform/src/process.rs",
+          "crates/orcel-platform/src/session.rs",
+          "crates/orcel-platform/src/peer.rs"
+        ],
+        "change": [
+          "crates/orcel-platform/src/lib.rs",
+          "crates/orcel-platform/Cargo.toml"
+        ]
+      },
+      "dependencies": "libc (MIT/Apache-2.0) for proc_pidinfo, getpeereid, SO_PEERCRED; admitted with SBOM entry",
+      "steps": [
+        "process::start_generation(pid): Linux = COPY_ADAPT Cua proc_fs.rs process_instance_id (starttime after the final ')' of /proc/<pid>/stat) combined with /proc/sys/kernel/random/boot_id; macOS = proc_pidinfo(PROC_PIDTBSDINFO) pbi_start_tvsec/usec (new, ~40 lines; Cua has no macOS equivalent); Windows delegates to the existing implementation.",
+        "session::current(): uid + login session (Linux: /proc/self/sessionid and XDG_SESSION_ID cross-checked; macOS: audit session id via getaudit_addr); Windows unchanged.",
+        "peer::verify_unix_peer: the getsockopt pattern (about 40 lines) in Cua cua-daemon lib.rs near line 736 is a client-side probe that yields only a pid on macOS (LOCAL_PEERPID); reuse that pattern and add getpeereid for the uid on macOS and SO_PEERCRED on Linux; refuse when uid differs. CR-01 extends this with code identity.",
+        "Unit tests with the current process; reuse-of-pid test spawns a child, records generation, waits, and checks a different generation is reported for a recycled pid when observable."
+      ],
+      "interfaces": "pub struct ProcessGeneration { pid: u32, generation: u64, source: &'static str }; pub fn start_generation(pid) -> Result<ProcessGeneration, PlatformError>; pub fn verify_unix_peer(&UnixStream) -> Result<PeerIdentity, PlatformError>",
+      "platforms": {
+        "windows": "Thin wrapper over existing code.",
+        "macos": "New.",
+        "linux": "New."
+      },
+      "security": "Pid reuse and peer spoofing are the attacks; both are closed by generation binding and kernel-reported peer credentials.",
+      "tests": {
+        "positive": [
+          "own pid generation stable across calls",
+          "peer of a socketpair is the current process"
+        ],
+        "negative": [
+          "nonexistent pid errors",
+          "generation of a recycled pid differs"
+        ],
+        "recovery": [],
+        "e2e": []
+      },
+      "performance": "Single syscall or /proc read per lookup.",
+      "ci": "All three OS legs.",
+      "depends_on": [
+        "XP-01",
+        "XP-01B",
+        "XP-02"
+      ],
+      "acceptance": [
+        "tests pass on three OSes",
+        "no unsafe block without a SAFETY comment"
+      ],
+      "done": "Merged with common gates.",
+      "rollback": "Revert; no callers yet.",
+      "estimate": "1-2",
+      "authority_delta": "none",
+      "proposed_grain": "SG-000109",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "2-3",
+        "estimate_with_reuse_days": "1-2",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [
+          "macOS start-time path has no donor and is new code"
+        ],
+        "matrix_rows": [
+          "T-CUA-23",
+          "T-CUA-24"
+        ]
+      }
+    },
+    {
+      "id": "XP-04",
+      "phase": "X0",
+      "title": "Private host protocol orcel-computer-host/2 with capability negotiation and platform-neutral identities",
+      "status": "READY",
+      "objective": "One versioned private protocol for every native host on every OS. /2 is a strict superset of /1: hello returns platform, backend and a per-operation capability table; window and process identities are opaque platform-tagged values; refusals use a closed code set.",
+      "user_visible": "system.status reports which desktop capabilities are available on this machine and why others are not.",
+      "existing_orcel": [
+        "apps/orcel-computer-host/protocol.go (orcel-computer-host/1, allowedOperations, validateRequest)",
+        "crates/orcel-provider-uia/src/computer_host.rs (HOST_PROTOCOL, HostSession, HostTargetBinding)"
+      ],
+      "donor": "cua",
+      "donor_files": [
+        "libs/cua-driver/docs/action-result-contract.md (REFERENCE for refusal codes: background_unavailable, background_occluded, background_uipi_blocked)"
+      ],
+      "method": "BUILD_NEW",
+      "orcel_files": {
+        "create": [
+          "docs/orcel/implementation-readiness/protocol/ORCEL_COMPUTER_HOST_2.md",
+          "crates/orcel-provider-uia/src/host_protocol.rs"
+        ],
+        "change": [
+          "apps/orcel-computer-host/protocol.go",
+          "apps/orcel-computer-host/main_windows.go",
+          "crates/orcel-provider-uia/src/computer_host.rs"
+        ]
+      },
+      "dependencies": "none",
+      "steps": [
+        "Write the protocol spec (frames, bounds, identities, capability table, refusal codes, versioning) as ORCEL_COMPUTER_HOST_2.md; the skeleton is in CROSS_PLATFORM_ARCHITECTURE.md section 4.",
+        "Go host: accept protocol '/2' hello and answer with platform=windows, backend=uia, capabilities for its 16 operations; keep '/1' behavior byte-identical.",
+        "Rust adapter: send '/2' hello first, fall back to '/1' only for a host that refuses '/2' with invalid_request; store the capability table; map every refusal code to an existing orcel_contracts::FailureCode (no new public code without governance).",
+        "Rename the adapter's error strings from 'Windows Computer Host' to 'computer host' (strings only; no identifier changes)."
+      ],
+      "interfaces": "hello -> {protocol, host, platform: windows|macos|linux, backend: uia|ax|atspi-x11|atspi-wayland, capabilities: {op: {support: delivered|foreground_only|refused|unavailable, reason?}}}; window ref {kind, id, pid, start_generation, nonce}",
+      "platforms": {
+        "windows": "Go host gains /2.",
+        "macos": "Implemented by XP-06.",
+        "linux": "Implemented by XP-06."
+      },
+      "security": "Capability table is advisory to the kernel; the registry still enforces every binding. Unknown capability means unavailable.",
+      "tests": {
+        "positive": [
+          "Go protocol_test.go: /2 hello",
+          "Rust: negotiation picks /2"
+        ],
+        "negative": [
+          "/2 frame with unknown field refused",
+          "capability omitted -> operation unavailable",
+          "/1 host still works"
+        ],
+        "recovery": [
+          "host crash during hello -> provider unavailable, no retry storm"
+        ],
+        "e2e": [
+          "existing Windows native qualification suites unchanged and green"
+        ]
+      },
+      "performance": "One extra field set in hello.",
+      "ci": "Windows Go tests and Rust on all OS legs.",
+      "depends_on": [
+        "XP-02"
+      ],
+      "acceptance": [
+        "/1 compatibility test vectors unchanged",
+        "SG-000094/95 native suites green on windows-latest"
+      ],
+      "done": "Merged; spec linked from CROSS_PLATFORM_ARCHITECTURE.md.",
+      "rollback": "Adapter falls back to /1 automatically; revert Go change.",
+      "estimate": "3-4",
+      "authority_delta": "none (private protocol; no tool or scope change)",
+      "proposed_grain": "SG-000110",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "BUILD_NEW",
+        "estimate_build_new_days": "3-4",
+        "estimate_with_reuse_days": "3-4",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": [],
+        "build_new_justification": "Orcel's private protocol is a compatibility contract with the qualified Go host; adopting Cua's MCP or envelope protocol would add a second protocol and a second authority surface. Refusal codes are reused from Cua's action-result contract (REFERENCE)."
+      }
+    },
+    {
+      "id": "XP-05",
+      "phase": "X1",
+      "title": "Vendor Cua Driver platform crates and create the orcel-native-host workspace (compile-only)",
+      "status": "READY",
+      "objective": "Bring the MIT Cua Driver macOS and Linux providers into Orcel at a pinned revision as a separate Cargo workspace, with provenance, notices and a reviewed patch queue, building on macOS and Linux CI without being reachable from any tool yet.",
+      "user_visible": "None yet.",
+      "existing_orcel": [
+        "Cargo.toml (workspace; orcel-native-host must NOT be a member so orceld's 62-crate graph stays unchanged)"
+      ],
+      "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "donor_files": [
+        "libs/cua-driver/rust/crates/platform-macos",
+        "libs/cua-driver/rust/crates/platform-linux",
+        "libs/cua-driver/rust/crates/cua-driver-core",
+        "libs/cua-driver/rust/crates/cua-driver-contract",
+        "libs/cua-driver/rust/crates/cursor-overlay",
+        "libs/cua-driver/rust/crates/pip-preview",
+        "libs/cua-driver/rust/THIRD_PARTY_NOTICES.md",
+        "LICENSE.md"
+      ],
+      "method": "WRAP",
+      "orcel_files": {
+        "create": [
+          "apps/orcel-native-host/Cargo.toml",
+          "apps/orcel-native-host/Cargo.lock",
+          "apps/orcel-native-host/rust-toolchain.toml",
+          "apps/orcel-native-host/src/main.rs",
+          "apps/orcel-native-host/third_party/cua-driver/** (vendored)",
+          "apps/orcel-native-host/third_party/cua-driver/PATCHES.md",
+          "docs/orcel/notices/cua-MIT.txt",
+          "docs/orcel/cua_driver_provenance.json"
+        ],
+        "change": [
+          ".github/workflows/ci.yml",
+          "scripts/third-party-notices.mjs",
+          "scripts/generate-sbom.mjs"
+        ]
+      },
+      "dependencies": "All transitive crates of the vendored set (tokio, objc2*, core-graphics, x11rb, atspi, zbus, wayland-*, image, ...). Each admitted through cargo-deny license allowlist and cargo-audit on the new workspace.",
+      "steps": [
+        "Copy the six crate directories byte-for-byte from the pin; record each tree SHA in cua_driver_provenance.json (tools/readiness_check.py --donors prints them).",
+        "Write a standalone workspace Cargo.toml listing them plus orcel-native-host; set cua-driver-core default-features = false.",
+        "Patch queue in PATCHES.md, each patch a separate commit: P-01 workspace path fixes; P-02 remove the cua-driver binary crate's telemetry dependency from the graph (not vendored); P-03 add feature 'orcel-minimal' that compiles out core browser/, cdp*.rs, history.rs, recording.rs, perception_client*, server.rs, daemon.rs and platform browser/, history.rs, recording_hooks.rs, video_*.rs, pip/ (cfg gates only, no logic edits); P-04 none of Cua's prompts: force host_owns_permission_ux = true.",
+        "main.rs prints protocol version and exits (no tool reachable).",
+        "CI: new job 'Native host / macos-latest, ubuntu-latest' running cargo build --locked and cargo test -p cua-driver-core --no-default-features --lib inside apps/orcel-native-host; cargo audit and cargo deny check licenses there.",
+        "Add the MIT notice and the Cua copyright line to THIRD_PARTY_NOTICES generation.",
+        "Proposed review-scope exclusion, which requires explicit approval in the XP-05 grain before use: unpatched vendored files are verified byte-identical to the upstream pin by a CI step (git tree hash per crate, minus the files PATCHES.md lists); Jev/OCR exact-diff review covers PATCHES.md commits, the adapter and the workspace manifests. Until approved, the full vendored diff goes through the normal Jev/OCR gates."
+      ],
+      "interfaces": "none exposed",
+      "platforms": {
+        "windows": "Not built on Windows in this task.",
+        "macos": "Builds.",
+        "linux": "Builds (X11/AT-SPI/wlroots default features)."
+      },
+      "security": "Code is present but unreachable; reachability proof: orcel-native-host binary links no symbol from server/daemon/browser modules (cargo tree + nm check in CI).",
+      "tests": {
+        "positive": [
+          "workspace builds --locked on macOS and Linux",
+          "cua-driver-core unit tests pass with no default features"
+        ],
+        "negative": [
+          "feature orcel-minimal: grep of the binary for 'run_script' and 'remote-debugging' finds nothing"
+        ],
+        "recovery": [],
+        "e2e": []
+      },
+      "performance": "Record release binary size per OS in the PR (UNMEASURED today).",
+      "ci": "New native-host job on macos-latest and ubuntu-latest.",
+      "depends_on": [
+        "XP-02",
+        "FD-01"
+      ],
+      "acceptance": [
+        "provenance tree SHAs match the pin",
+        "cargo deny licenses passes with no unknown license",
+        "orceld Cargo.lock unchanged",
+        "CI step proves every unpatched vendored file matches the upstream tree at a802eaf2"
+      ],
+      "done": "Merged; Graft run on the vendored tree recorded.",
+      "rollback": "Delete apps/orcel-native-host; nothing depends on it.",
+      "estimate": "3-5",
+      "authority_delta": "none",
+      "proposed_grain": "SG-000111",
+      "reuse": {
+        "before": "WRAP",
+        "after": "WRAP",
+        "estimate_build_new_days": "3-5",
+        "estimate_with_reuse_days": "3-5",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
+    },
+    {
+      "id": "XP-06",
+      "phase": "X1",
+      "title": "orcel-native-host read-only observation on macOS and Linux",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "Serve hello, ping, shutdown, list_windows, observe_window and cursor_position over orcel-computer-host/2 by calling Cua's list_windows and get_window_state tool implementations in-process, mapped into Orcel's windowFact/elementFact shapes with Orcel bounds.",
+      "user_visible": "desktop_window_list, desktop_window_tree and desktop_cursor_get work on macOS and Linux (X11 and Sway) with the same bounds as Windows.",
+      "existing_orcel": [
+        "crates/orcel-provider-uia/src/lib.rs UiaAdapter trait and UiaRegistry (all policy, redaction, bounds)",
+        "apps/orcel-computer-host/main_windows.go (supervisor + one-shot sacrificial worker pattern)"
+      ],
+      "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "donor_files": [
+        "libs/cua-driver/rust/crates/platform-macos/src/tools/list_windows.rs",
+        "libs/cua-driver/rust/crates/platform-macos/src/tools/get_window_state.rs",
+        "libs/cua-driver/rust/crates/platform-macos/src/ax/tree.rs",
+        "libs/cua-driver/rust/crates/platform-macos/src/permissions/status.rs",
+        "libs/cua-driver/rust/crates/platform-linux/src/tools/impl_.rs (list_windows, get_window_state)",
+        "libs/cua-driver/rust/crates/platform-linux/src/atspi/native.rs"
+      ],
+      "method": "WRAP",
+      "orcel_files": {
+        "create": [
+          "apps/orcel-native-host/src/protocol.rs",
+          "apps/orcel-native-host/src/supervisor.rs",
+          "apps/orcel-native-host/src/worker.rs",
+          "apps/orcel-native-host/src/cua_adapter.rs",
+          "apps/orcel-native-host/src/map.rs"
+        ],
+        "change": [
+          "crates/orcel-provider-uia/src/computer_host.rs (spawn by ORCEL_COMPUTER_HOST_BIN on any OS)",
+          "crates/orceld/src/uia.rs (adapter selection off Windows)"
+        ]
+      },
+      "dependencies": "None beyond XP-05.",
+      "steps": [
+        "protocol.rs: serde types mirroring protocol.go /2 with deny_unknown_fields and the same byte bounds (64 KiB request, 16 MiB response, 64 windows, 256 nodes, depth 8).",
+        "supervisor.rs/worker.rs: same shape as the Go host: long-lived supervisor never touches AX/AT-SPI; each observation runs in a one-shot worker child with an 8 s timeout and 2 attempts; worker exits after one answer. The worker constructs Cua's platform ToolState with cursor_overlay_available=false, host_owns_permission_ux=true.",
+        "cua_adapter.rs: allowlist {list_windows, get_window_state, get_cursor_position, check_permissions}; build typed inputs through cua-driver-contract; any other tool name is a compile-time impossibility (enum dispatch, no string lookup).",
+        "map.rs: Cua window -> windowFact {pid, start_generation via orcel-platform, window id as kind-tagged u64, title, class/role, nonce = hash(window id, pid, generation, creation attribute)}; AX/AT-SPI element -> elementFact with runtime_id = Cua element token, control_type = normalized role table (documented), patterns from advertised actions, value only when not secure (AXSecureTextField / ATSPI password role -> value_is_password=true, value omitted).",
+        "macOS: if Accessibility permission is missing, hello capability for observe_window is unavailable with reason permission_missing; never call AXIsProcessTrustedWithOptions with a prompt.",
+        "Rust adapter: on macOS and Linux, orceld uses ComputerHostAdapter when ORCEL_COMPUTER_HOST_BIN points at orcel-native-host; NativeAdapter stays fail-closed otherwise.",
+        "GNOME/KDE Wayland without Cua's compositor helpers: report the AT-SPI tree as available and window identity/geometry as unavailable(reason: compositor_helper_missing); never infer window identity from titles."
+      ],
+      "interfaces": "orcel-computer-host/2 ops: hello, ping, list_windows, observe_window, cursor_position, shutdown",
+      "platforms": {
+        "windows": "Unchanged (Go host).",
+        "macos": "AX via Cua; requires Accessibility permission for the signed host identity (XP-16).",
+        "linux": "X11 + AT-SPI and Sway/wlroots via Cua default features; GNOME/KDE Wayland report unavailable until XP-12."
+      },
+      "security": "Read-only. The registry still allocates identities, redacts, bounds and excludes protected surfaces. Protected-window list extended per OS (macOS loginwindow, SecurityAgent, screensaver; Linux polkit agent dialogs, lock screens) in crates/orcel-provider-uia is_protected_window.",
+      "tests": {
+        "positive": [
+          "fixture GTK3 and AppKit apps from tests/native-fixtures are listed with stable identities",
+          "tree of the fixture has expected roles/names"
+        ],
+        "negative": [
+          "secure text field value never leaves the host",
+          "unknown op refused",
+          "oversize request refused",
+          "worker killed at timeout returns typed error"
+        ],
+        "recovery": [
+          "window closed between list and observe -> TargetStale",
+          "worker crash -> provider unavailable for that call only"
+        ],
+        "e2e": [
+          "Linux Xvfb+Openbox and Sway headless jobs run the observation suite in CI",
+          "macOS run on the founder-provided self-hosted runner (FD-05)"
+        ]
+      },
+      "performance": "Record P50/P95 of list_windows and observe_window per OS (BENCHMARK_AND_E2E.md M-NAT-01); target parity with Windows Go host +/- 50% (ESTIMATE, to be measured).",
+      "ci": "Native host job; GUI jobs labeled native-e2e.",
+      "depends_on": [
+        "XP-03",
+        "XP-04",
+        "XP-05"
+      ],
+      "acceptance": [
+        "observation suite green on X11, Sway and macOS",
+        "no secure value in any captured frame log",
+        "identity binding rejects a recycled window"
+      ],
+      "done": "Merged; capability matrix row 'observe' updated in CROSS_PLATFORM_ARCHITECTURE.md with run ids.",
+      "rollback": "Unset ORCEL_COMPUTER_HOST_BIN on macOS/Linux; NativeAdapter fails closed.",
+      "estimate": "5-8",
+      "authority_delta": "Existing read-only desktop observation tools become available on two more OSes; no new tool, scope or approval class.",
+      "proposed_grain": "SG-000111",
+      "reuse": {
+        "before": "WRAP",
+        "after": "WRAP",
+        "estimate_build_new_days": "5-8",
+        "estimate_with_reuse_days": "5-8",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
+    },
+    {
+      "id": "XP-07",
+      "phase": "X1",
+      "title": "Exact-window capture on macOS and Linux",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "Implement capture_window through Cua's capture modules with Orcel's window-scope and protected-surface rules.",
+      "user_visible": "desktop_window_capture works on macOS and Linux.",
+      "existing_orcel": [
+        "crates/orcel-provider-uia/src/lib.rs capture_window contract and CaptureBinding",
+        "apps/orcel-computer-host/native_capture_windows.go"
+      ],
+      "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "donor_files": [
+        "libs/cua-driver/rust/crates/platform-macos/src/capture.rs",
+        "libs/cua-driver/rust/crates/platform-macos/src/capture_consent.rs",
+        "libs/cua-driver/rust/crates/platform-linux/src/capture.rs",
+        "libs/cua-driver/rust/crates/platform-linux/src/wayland/mod.rs"
+      ],
+      "method": "WRAP",
+      "orcel_files": {
+        "create": [
+          "apps/orcel-native-host/src/capture.rs"
+        ],
+        "change": [
+          "apps/orcel-native-host/src/cua_adapter.rs",
+          "apps/orcel-native-host/src/protocol.rs",
+          "crates/orcel-provider-uia/src/lib.rs (is_protected_window per OS)"
+        ]
+      },
+      "dependencies": "none beyond XP-05",
+      "steps": [
+        "Allowlist Cua screenshot for an exact window id only; refuse desktop/display scope.",
+        "Convert to 8-bit RGBA within 7680x4320 and 8 MiB bounds.",
+        "macOS: Screen Recording permission missing -> unavailable(permission_missing); never trigger the consent prompt from the host.",
+        "Linux X11: MIT-SHM capture of the window; Sway: wlr-screencopy of the toplevel; GNOME/KDE: unavailable until XP-12."
+      ],
+      "interfaces": "capture_window(window ref) -> captureFact",
+      "platforms": {
+        "windows": "unchanged",
+        "macos": "ScreenCaptureKit path in Cua capture.rs",
+        "linux": "X11 SHM / wlroots screencopy"
+      },
+      "security": "Same window-only scope; protected surfaces return denial before pixels are read.",
+      "tests": {
+        "positive": [
+          "fixture window capture dimensions and pixel marker"
+        ],
+        "negative": [
+          "capture of a protected window denied",
+          "display scope request refused",
+          "oversize window refused"
+        ],
+        "recovery": [
+          "window minimized -> typed unavailable, never restore it"
+        ],
+        "e2e": [
+          "X11, Sway, macOS runners"
+        ]
+      },
+      "performance": "M-NAT-02 capture latency P50/P95.",
+      "ci": "native-e2e jobs",
+      "depends_on": [
+        "XP-06"
+      ],
+      "acceptance": [
+        "capture suite green",
+        "no minimized window is restored or raised"
+      ],
+      "done": "Merged with matrix update.",
+      "rollback": "Capability reported unavailable.",
+      "estimate": "3-4",
+      "authority_delta": "Existing capture tool on two more OSes.",
+      "proposed_grain": "SG-000111",
+      "reuse": {
+        "before": "WRAP",
+        "after": "WRAP",
+        "estimate_build_new_days": "3-4",
+        "estimate_with_reuse_days": "3-4",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
+    },
+    {
+      "id": "XP-08",
+      "phase": "X1",
+      "title": "Cross-platform native conformance fixtures and runners",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "Adopt Cua's MIT GUI harness apps and external-oracle catalog as Orcel's native conformance suite, driven through orcel-computer-host/2, with CI runners for Linux and a self-hosted macOS runner.",
+      "user_visible": "None; quality gate.",
+      "existing_orcel": [
+        "apps/orcel-computer-host/native_qualification_windows_test.go",
+        "apps/orcel-computer-host/native_input_qualification_windows_test.go"
+      ],
+      "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "donor_files": [
+        "libs/cua-driver/tests/fixtures",
+        "libs/cua-driver/rust/crates/cua-driver-e2e/tests/cross_platform_behavior_test.rs",
+        "libs/cua-driver/rust/crates/cua-driver-e2e/tests/harness_gtk3_test.rs",
+        "libs/cua-driver/rust/crates/cua-driver-e2e/tests/harness_appkit_test.rs",
+        "scripts/ci/linux/run-rust-e2e.sh",
+        "scripts/ci/linux/run-rust-e2e-wayland.sh"
+      ],
+      "method": "COPY",
+      "orcel_files": {
+        "create": [
+          "tests/native-fixtures/**",
+          "apps/orcel-native-host/tests/conformance_shared_web.rs",
+          "apps/orcel-native-host/tests/conformance_native.rs",
+          ".github/workflows/native-e2e.yml"
+        ],
+        "change": []
+      },
+      "dependencies": "Fixture build toolchains per OS (GTK dev packages, Xvfb, openbox, sway, Node for Electron fixture). Electron fixture download is pinned by lockfile and runs only in CI.",
+      "steps": [
+        "Copy fixtures with provenance.",
+        "Port the 40-cell shared-web catalog to orcel-computer-host/2 requests; each cell asserts fixture state plus focus/z-order/cursor/no-input-leak oracles.",
+        "Linux CI: Xvfb+Openbox and headless Sway jobs.",
+        "macOS: workflow_dispatch job on label 'self-hosted-macos' (FD-05); results attached to the PR.",
+        "Report format: one JSON row per cell {os, window_system, harness, targeting, delivery, oracle, status, observed} matching Cua's dimensions.",
+        "CI follow-up from the #348 judge: set ORCEL_COMPUTER_HOST_BIN to the freshly built Go host in the Windows CI job so the Rust adapter's configured_host_handshake_is_exact test exercises the live /2 negotiation, and do the same with orcel-native-host on macOS and Linux."
+      ],
+      "interfaces": "Test-only",
+      "platforms": {
+        "windows": "Optional later: run the same catalog against the Go host for XP-20.",
+        "macos": "self-hosted",
+        "linux": "GitHub-hosted"
+      },
+      "security": "Fixtures run only in CI or disposable sessions.",
+      "tests": {
+        "positive": [
+          "observation cells green after XP-06/07"
+        ],
+        "negative": [
+          "action cells report 'refused' until XP-11/12 land"
+        ],
+        "recovery": [],
+        "e2e": [
+          "this is the E2E suite"
+        ]
+      },
+      "performance": "Suite duration recorded.",
+      "ci": "native-e2e.yml",
+      "depends_on": [
+        "XP-06"
+      ],
+      "acceptance": [
+        "report JSON produced for X11 and Sway in CI",
+        "macOS report attached when FD-05 is available",
+        "Rust adapter /2 negotiation test runs against the live host binary on every OS in CI"
+      ],
+      "done": "Merged; BENCHMARK_AND_E2E.md references the report schema.",
+      "rollback": "Disable the workflow.",
+      "estimate": "4-6",
+      "authority_delta": "none",
+      "proposed_grain": "SG-000111",
+      "reuse": {
+        "before": "COPY",
+        "after": "COPY",
+        "estimate_build_new_days": "4-6",
+        "estimate_with_reuse_days": "4-6",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
+    },
+    {
+      "id": "XP-09",
+      "phase": "X2",
+      "title": "Approval broker on macOS: SOFT dialog and STRONG presence",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "Give the existing LocalApprovalBroker a macOS presenter and presence verifier so approvals work with the same ledger, digest, nonce, expiry and single-use semantics as Windows.",
+      "user_visible": "Approval prompts appear on macOS; STRONG approvals ask for Touch ID or the login password.",
+      "existing_orcel": [
+        "crates/orcel-approval/src/lib.rs platform_prompt (cfg(windows) MessageBoxW; cfg(not(windows)) returns 'local approval UI is Windows-only')",
+        "crates/orcel-approval/src/lib.rs PresenceVerifier trait, WindowsHelloPresenceVerifier, NoPresenceVerifier default off Windows"
+      ],
+      "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "donor_files": [
+        "libs/cua/crates/cua-teleport/src/biometric.rs (macOS LocalAuthentication path)",
+        "libs/cua/crates/cua-keyvault/src/macos.rs (SecCode requirement check for the helper)"
+      ],
+      "method": "COPY_ADAPT",
+      "orcel_files": {
+        "create": [
+          "crates/orcel-approval/src/presence_unix.rs",
+          "crates/orcel-approval/src/soft_macos.rs",
+          "docs/orcel/notices/cua-FSL-1.1-MIT.txt"
+        ],
+        "change": [
+          "crates/orcel-approval/src/lib.rs",
+          "crates/orcel-approval/Cargo.toml"
+        ]
+      },
+      "dependencies": "objc2 + LocalAuthentication bindings as used by the donor; security-framework or the donor's raw Security.framework externs; CoreFoundation for CFUserNotification.",
+      "steps": [
+        "STRONG: COPY_ADAPT Cua cua-teleport biometric.rs macOS path (LAContext evaluatePolicy LAPolicyDeviceOwnerAuthentication) into crates/orcel-approval/src/presence_unix.rs behind the existing PresenceVerifier trait. Delete both donor bypasses: CUA_ENV_SKIP_SENSITIVE_AUTH (skips the gate entirely in any debug build, including cargo test) and CUA_ENV_ALLOW_UNVERIFIED_SENSITIVE_EXPORT. No environment variable may bypass or weaken STRONG.",
+        "If LocalAuthentication must run in a GUI-capable signed helper, verify the helper with the SecCode requirement check copied from cua-keyvault macos.rs (T-CUA-27) before trusting its answer.",
+        "SOFT: CFUserNotificationDisplayAlert with caution level, default button Deny, the same body text as the Windows prompt. BUILD_NEW (no donor presents an approval-style system modal; Cua's consent modules automate Chrome's own dialog).",
+        "Fail closed with no GUI session (launchd background, SSH): unavailable, never SOFT downgrade of STRONG.",
+        "Development builds use an ad-hoc or development-certificate signature checked against a pinned designated requirement in the test config; production Developer ID signing and notarization arrive with XP-16 and replace the pin."
+      ],
+      "interfaces": "impl PresenceVerifier for MacLocalAuthPresenceVerifier; platform_prompt(cfg(target_os=\"macos\"))",
+      "platforms": {
+        "windows": "unchanged",
+        "macos": "new",
+        "linux": "XP-10"
+      },
+      "security": "Approval UI is OS-owned, not Control Room-owned. The helper is a separate signed binary; its result is accepted only with the current nonce and only from a code-signature-verified child.",
+      "tests": {
+        "positive": [
+          "scripted SoftDecider path (existing test-support) on macOS",
+          "manual: real prompt approve/deny recorded"
+        ],
+        "negative": [
+          "no GUI session -> unavailable",
+          "helper with wrong signature refused",
+          "STRONG never downgrades",
+          "debug and release builds: setting CUA_ENV_SKIP_SENSITIVE_AUTH or CUA_ENV_ALLOW_UNVERIFIED_SENSITIVE_EXPORT changes no STRONG outcome"
+        ],
+        "recovery": [
+          "helper killed mid-prompt -> denied, ledger consistent"
+        ],
+        "e2e": [
+          "self-hosted macOS runner manual-approval checklist"
+        ]
+      },
+      "performance": "Prompt latency not measured; user-bound.",
+      "ci": "macOS leg runs unit tests with test-support.",
+      "depends_on": [
+        "XP-01",
+        "XP-02"
+      ],
+      "acceptance": [
+        "all existing approval ledger tests pass on macOS",
+        "#278 regression tests pass on macOS"
+      ],
+      "done": "Merged; SECURITY_INTEGRATION.md S-03 updated.",
+      "rollback": "Revert to fail-closed unavailable.",
+      "estimate": "2-3",
+      "authority_delta": "Approvals become possible on macOS; no new action becomes approvable.",
+      "proposed_grain": "SG-000112",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "4-6",
+        "estimate_with_reuse_days": "2-3",
+        "runtime_overhead": "one LocalAuthentication prompt per STRONG approval (unchanged user cost)",
+        "maintenance": "Orcel owns the copied FSL file; rebase only on security fixes",
+        "risks": [
+          "both donor bypass variables must be removed; a debug-build test enforces it"
+        ],
+        "matrix_rows": [
+          "T-CUA-20",
+          "T-CUA-27"
+        ]
+      }
+    },
+    {
+      "id": "XP-10",
+      "phase": "X2",
+      "title": "Approval broker on Linux: SOFT dialog and STRONG presence",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "Linux presenter and presence verifier with the same ledger semantics.",
+      "user_visible": "Approval prompts appear on Linux desktops; STRONG uses the system authentication agent (password or fingerprint).",
+      "existing_orcel": [
+        "crates/orcel-approval/src/lib.rs (as XP-09)"
+      ],
+      "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "donor_files": [
+        "libs/cua/crates/cua-teleport/src/biometric.rs (Linux polkit pkcheck auth_self path, POLKIT_ACTION)",
+        "apps/cua-spaces-desktop/packaging/ai.cua.spaces.policy (polkit action template, FSL, FD-04)"
+      ],
+      "method": "COPY_ADAPT",
+      "orcel_files": {
+        "create": [
+          "crates/orcel-approval/src/linux.rs",
+          "apps/orcel-approval-helper-linux/ (GTK4 dialog binary)",
+          "distribution/linux/ai.orcel.approve.policy (polkit action)"
+        ],
+        "change": [
+          "crates/orcel-approval/src/lib.rs"
+        ]
+      },
+      "dependencies": "None new for STRONG (pkcheck subprocess); gtk4-rs (MIT) in the SOFT helper only.",
+      "steps": [
+        "STRONG: COPY_ADAPT Cua biometric.rs Linux path (pkcheck with the desktop authentication agent, auth_self every time; no polkit, no agent or no installed action is Unavailable) with Orcel's action id ai.orcel.approve.strong; delete both donor bypasses (CUA_ENV_SKIP_SENSITIVE_AUTH and CUA_ENV_ALLOW_UNVERIFIED_SENSITIVE_EXPORT). Prefer the donor's pkcheck subprocess (pinned /usr/bin/pkcheck, verified owner root) over a new zbus client unless measurement shows a problem.",
+        "SOFT: broker-spawned GTK4 helper shows the same body; default Deny; returns over an inherited pipe with the nonce.",
+        "Headless or no polkit agent -> unavailable.",
+        "Development installs the polkit action file with a documented one-line sudo script in tests only; XP-17 packages it.",
+        "polkit accepts --detail only from root, so the STRONG prompt can show only the action's static message, not the digest. The STRONG check therefore always follows the SOFT helper, which shows the full body (workspace, action, target, digest, nonce); the residual risk (an agent prompt that cannot name the action) is recorded under S-04.",
+        "Policy file (from T-CUA-35): allow_any=no, allow_inactive=no, allow_active=auth_self, as the donor ships it."
+      ],
+      "interfaces": "impl PresenceVerifier for PolkitPresenceVerifier; platform_prompt(cfg(target_os=\"linux\"))",
+      "platforms": {
+        "windows": "unchanged",
+        "macos": "XP-09",
+        "linux": "new (X11 and Wayland sessions)"
+      },
+      "security": "polkit auth_self requires credentials each time; agent spoofing by a same-user process is the residual risk, documented.",
+      "tests": {
+        "positive": [
+          "unit tests with test-support",
+          "scripted D-Bus polkit test double returns authorized"
+        ],
+        "negative": [
+          "polkit returns challenge/denied -> denied",
+          "no agent -> unavailable",
+          "debug and release builds: setting CUA_ENV_SKIP_SENSITIVE_AUTH or CUA_ENV_ALLOW_UNVERIFIED_SENSITIVE_EXPORT changes no STRONG outcome",
+          "STRONG from an inactive or remote (SSH) session is refused"
+        ],
+        "recovery": [
+          "helper crash -> denied"
+        ],
+        "e2e": [
+          "manual checklist on GNOME and KDE"
+        ]
+      },
+      "performance": "n/a",
+      "ci": "ubuntu leg unit tests",
+      "depends_on": [
+        "XP-01"
+      ],
+      "acceptance": [
+        "ledger tests and #278 regressions pass on Linux"
+      ],
+      "done": "Merged.",
+      "rollback": "Fail-closed unavailable.",
+      "estimate": "2-3",
+      "authority_delta": "Approvals become possible on Linux.",
+      "proposed_grain": "SG-000112",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "4-6",
+        "estimate_with_reuse_days": "2-3",
+        "runtime_overhead": "one pkcheck subprocess per STRONG approval",
+        "maintenance": "none beyond normal",
+        "risks": [
+          "SOFT GTK4 helper remains new code: no donor ships a Linux approval dialog",
+          "both donor bypass variables must be removed; a debug-build test enforces it"
+        ],
+        "matrix_rows": [
+          "T-CUA-20"
+        ]
+      }
+    },
+    {
+      "id": "XP-11",
+      "phase": "X3",
+      "title": "Semantic actions on macOS and Linux (invoke, set_value, select, toggle, scroll)",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "Route the five existing approval-gated structured actions through Cua's AX/AT-SPI action implementations, with Orcel's per-action bindings and post-action re-observation.",
+      "user_visible": "desktop_element_* tools work on macOS and Linux, background-first (no focus steal) where the platform allows.",
+      "existing_orcel": [
+        "crates/orcel-provider-uia/src/lib.rs InvokeBinding/ValueBinding/SelectBinding/ToggleBinding/ScrollBinding and their digests",
+        "apps/orcel-computer-host/native_actions_windows.go"
+      ],
+      "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "donor_files": [
+        "libs/cua-driver/rust/crates/platform-macos/src/tools/click.rs (AX path)",
+        "libs/cua-driver/rust/crates/platform-macos/src/tools/set_value.rs",
+        "libs/cua-driver/rust/crates/platform-macos/src/tools/scroll.rs",
+        "libs/cua-driver/rust/crates/platform-macos/src/input/ax_actions.rs",
+        "libs/cua-driver/rust/crates/platform-macos/src/focus_guard.rs",
+        "libs/cua-driver/rust/crates/platform-linux/src/tools/impl_.rs (click/set_value/scroll AT-SPI paths)",
+        "libs/cua-driver/rust/crates/platform-linux/src/input/focus_guard.rs"
+      ],
+      "method": "WRAP",
+      "orcel_files": {
+        "create": [],
+        "change": [
+          "apps/orcel-native-host/src/cua_adapter.rs",
+          "apps/orcel-native-host/src/protocol.rs",
+          "crates/orcel-provider-uia/src/computer_host.rs (UiaAdapter action methods for the host adapter on macOS/Linux)"
+        ]
+      },
+      "dependencies": "none",
+      "steps": [
+        "Map semantic_action{invoke} -> Cua click with element_token and AX addressing only (pixel path disabled for semantic_action).",
+        "set_value -> Cua set_value; refuse secure fields before the call.",
+        "select/toggle -> Cua click on the exact element when the element's advertised action matches; otherwise refused (no fallback to coordinates).",
+        "scroll -> Cua scroll by element; bounded ticks.",
+        "Each action returns delivered/refused with Cua's exact reason mapped; host never retries.",
+        "Registry re-observes the window after every action (existing rule)."
+      ],
+      "interfaces": "semantic_action over /2 with the existing request fields",
+      "platforms": {
+        "windows": "unchanged",
+        "macos": "AX background delivery per Cua evidence",
+        "linux": "AT-SPI on X11 and Sway; GNOME/KDE after XP-12"
+      },
+      "security": "Same SOFT approval per action; digest binds element runtime id + window generation + value digest.",
+      "tests": {
+        "positive": [
+          "fixture state changes for each action on AppKit and GTK3"
+        ],
+        "negative": [
+          "stale element -> TargetStale",
+          "secure field set_value refused before dispatch",
+          "approval digest mismatch refused"
+        ],
+        "recovery": [
+          "host crash after dispatch -> journal marks unknown (after RJ-02); re-observe decides"
+        ],
+        "e2e": [
+          "conformance cells for semantic actions turn green"
+        ]
+      },
+      "performance": "M-NAT-03 action latency.",
+      "ci": "native-e2e",
+      "depends_on": [
+        "XP-06",
+        "XP-08",
+        "XP-09",
+        "XP-10"
+      ],
+      "acceptance": [
+        "semantic action cells green on X11, Sway, macOS",
+        "focus/no-leak oracles green for background rows"
+      ],
+      "done": "Merged with matrix update.",
+      "rollback": "Capabilities reported refused.",
+      "estimate": "5-7",
+      "authority_delta": "Existing approval-gated actions on two more OSes.",
+      "proposed_grain": "SG-000113",
+      "reuse": {
+        "before": "WRAP",
+        "after": "WRAP",
+        "estimate_build_new_days": "5-7",
+        "estimate_with_reuse_days": "5-7",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
+    },
+    {
+      "id": "XP-12",
+      "phase": "X3",
+      "title": "Bounded raw input on macOS and Linux, background delivery, GNOME/KDE Wayland enablement",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "Implement input_move/click/drag/scroll/type_text/key/hotkey under the existing Full User lease, with a per-OS fresh-human-input binding, background delivery reported as a capability, and Wayland portal/libei input only where the target binding can be proven.",
+      "user_visible": "desktop_input_execute works on macOS and Linux; on Wayland desktops that cannot target a window, the tool says so instead of guessing.",
+      "existing_orcel": [
+        "apps/orcel-computer-host/native_input_windows.go (ExpectedLastInputTick binding)",
+        "crates/orcel-provider-uia/src/computer_host.rs DesktopInputAction"
+      ],
+      "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "donor_files": [
+        "libs/cua-driver/rust/crates/platform-macos/src/input/mouse.rs",
+        "libs/cua-driver/rust/crates/platform-macos/src/input/keyboard.rs",
+        "libs/cua-driver/rust/crates/platform-macos/src/input/skylight.rs",
+        "libs/cua-driver/rust/crates/platform-macos/src/tools/type_text.rs",
+        "libs/cua-driver/rust/crates/platform-linux/src/input/mod.rs",
+        "libs/cua-driver/rust/crates/platform-linux/src/input/targeted.rs",
+        "libs/cua-driver/rust/crates/platform-linux/src/wayland/libei.rs",
+        "libs/cua-driver/wayland-helper (GNOME Shell extension winrects@cua and install.sh)",
+        "libs/cua-driver/kwin-target-helper (KWin identity helper, C++)"
+      ],
+      "method": "WRAP",
+      "orcel_files": {
+        "create": [
+          "apps/orcel-native-host/src/input.rs"
+        ],
+        "change": [
+          "apps/orcel-native-host/src/cua_adapter.rs",
+          "apps/orcel-native-host/Cargo.toml (portal-input feature for GNOME/KDE builds)"
+        ]
+      },
+      "dependencies": "portal-input feature deps (ashpd, reis, xkbcommon) admitted separately.",
+      "steps": [
+        "Human-input recency: macOS CGEventSourceSecondsSinceLastEventType(combined, any) converted to a monotonic tick; Linux X11 XScreenSaverQueryInfo idle; Wayland: ext-idle-notify when the compositor offers it, else raw input unavailable.",
+        "Background delivery: report per op from Cua refusals; Orcel policy prefers background delivery and never activates or raises a window unless the request asked for foreground.",
+        "SkyLight SPI use on macOS is a private API: gate behind capability 'macos_background_spi' with public CGEvent post_to_pid fallback; record in SECURITY_INTEGRATION.md.",
+        "KWin: keep raw target-addressed input refused (Cua documents the focus race).",
+        "GNOME: vendor wayland-helper/winrects@cua as the compositor identity helper; installing a Shell extension is a user-visible step with its own consent screen in the Control Room and a session restart; KDE: build kwin-target-helper for identity only."
+      ],
+      "interfaces": "input_* ops over /2",
+      "platforms": {
+        "windows": "unchanged",
+        "macos": "background + foreground",
+        "linux": "X11 XTest/MPX; Sway; GNOME via portal/libei after helper installation; KDE refused"
+      },
+      "security": "Full User lease + SOFT approval per action unchanged; human-input binding prevents acting over a user who is typing.",
+      "tests": {
+        "positive": [
+          "fixture pointer/keyboard cells deliver"
+        ],
+        "negative": [
+          "stale input tick refused",
+          "no lease refused",
+          "KDE raw input refused with typed reason"
+        ],
+        "recovery": [
+          "release-all on interrupt leaves no stuck modifier"
+        ],
+        "e2e": [
+          "conformance input cells"
+        ]
+      },
+      "performance": "M-NAT-03.",
+      "ci": "native-e2e",
+      "depends_on": [
+        "XP-11"
+      ],
+      "acceptance": [
+        "input cells green on X11, Sway, macOS; GNOME reported when helper installed"
+      ],
+      "done": "Merged.",
+      "rollback": "Capabilities refused.",
+      "estimate": "6-9",
+      "authority_delta": "Existing Full User input tools on two more OSes.",
+      "proposed_grain": "SG-000113",
+      "reuse": {
+        "before": "WRAP",
+        "after": "WRAP",
+        "estimate_build_new_days": "6-9",
+        "estimate_with_reuse_days": "6-9",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
+    },
+    {
+      "id": "XP-13",
+      "phase": "X4",
+      "title": "Process confinement on Linux and macOS: contained tier from Cua, Safe registered-exec parity",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "Registered-executable Safe execution with owned process-tree cleanup and resource bounds on Linux and macOS, matching what Job Objects/AppContainer give on Windows.",
+      "user_visible": "process_spawn works on macOS and Linux with the same bounds.",
+      "existing_orcel": [
+        "crates/orcel-provider-process/src/lib.rs (Windows JobObject kill-on-close, AppContainer)"
+      ],
+      "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "donor_files": [
+        "libs/cua-driver/rust/crates/cua-driver-core/src/perception_client/containment.rs",
+        "libs/cua-driver/rust/crates/cua-driver-core/src/perception_client/containment (linux.rs, macos.rs, unix.rs, windows.rs, unsupported.rs)"
+      ],
+      "method": "COPY_ADAPT",
+      "orcel_files": {
+        "create": [
+          "apps/orcel-contain/Cargo.toml",
+          "apps/orcel-contain/Cargo.lock",
+          "apps/orcel-contain/src/main.rs",
+          "apps/orcel-contain/src/containment.rs",
+          "apps/orcel-contain/src/linux.rs",
+          "apps/orcel-contain/src/macos.rs",
+          "apps/orcel-contain/src/unix.rs",
+          "apps/orcel-contain/src/windows.rs",
+          "crates/orcel-provider-process/src/unix.rs",
+          "crates/orcel-provider-process/src/contained.rs"
+        ],
+        "change": [
+          "crates/orcel-provider-process/src/lib.rs",
+          "crates/orcel-provider-process/Cargo.toml"
+        ]
+      },
+      "dependencies": "Inside apps/orcel-contain only: tokio (as the donor uses it), libc, and the windows-sys features the donor's windows.rs needs, admitted with cargo-deny and cargo-audit on that workspace. Kernel side: std only.",
+      "steps": [
+        "Create apps/orcel-contain as its own Cargo workspace (like apps/orcel-native-host), by COPY_ADAPT of Cua's perception containment (MIT). The donor code uses tokio (containment.rs AsyncReadExt and tokio::time::timeout; linux.rs tokio::process ChildStdin/ChildStdout), so it stays async inside this helper and tokio never enters the kernel's 62-package lockfile (AD-16). Keep the capability-reporting contract (refuse to spawn when any advertised boundary cannot be installed): Linux Landlock + seccomp + rlimits + PDEATHSIG + NO_NEW_PRIVS, macOS Seatbelt + rlimits + sentinel, Windows AppContainer + Job Object + private desktop. The helper is a one-shot launcher: orceld (or the browser host) passes a closed, bounded spec over stdin (executable, argv, read/write allowlist, limits), the helper installs every boundary, runs the child, relays bounded stdout/stderr and exit status, and exits. No listener.",
+        "crates/orcel-provider-process/src/contained.rs is the kernel-side client of that helper (std only): it pins the helper binary, writes the spec and reads a bounded result. The 'contained' tier (no network, exact read/write allowlist, no fork) serves parsers and helpers (WI-05) and is an opt-in tier for registered executables.",
+        "Safe registered-executable parity on Linux/macOS (needs fork and sometimes network, so it cannot use the contained tier): process group, PR_SET_PDEATHSIG, pidfd (Linux) or kqueue EVFILT_PROC (macOS), rlimits, cgroup v2 child when delegated; kill the group on drop. This glue is BUILD_NEW but reuses unix.rs helpers from the copied crate.",
+        "Same registered-executable rules and output bounds; SG-000096 shell semantics are not ported here.",
+        "Packaging: the helper ships with Orcel on every OS and is resolved only from the signed install root by a pinned path (no PATH lookup), verified like the native host before launch. XP-16 (macOS bundle), XP-17 (Linux packages) and the Windows lifecycle payload (SG-000106) include it."
+      ],
+      "interfaces": "Existing provider API",
+      "platforms": {
+        "windows": "unchanged",
+        "macos": "new",
+        "linux": "new"
+      },
+      "security": "No ambient shell; registered executables only.",
+      "tests": {
+        "positive": [
+          "registered executable runs and output bounded"
+        ],
+        "negative": [
+          "child that forks a grandchild is cleaned up",
+          "write outside workspace denied by Landlock"
+        ],
+        "recovery": [
+          "parent orceld killed -> children die"
+        ],
+        "e2e": []
+      },
+      "performance": "Spawn overhead recorded.",
+      "ci": "all OS legs",
+      "depends_on": [
+        "XP-03"
+      ],
+      "acceptance": [
+        "process provider test suite passes on three OSes"
+      ],
+      "done": "Merged.",
+      "rollback": "process_spawn reported unavailable on that OS.",
+      "estimate": "4-7",
+      "authority_delta": "Existing Safe process tool on two more OSes; a new pinned helper binary with no listener.",
+      "proposed_grain": "SG-000114",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "6-10",
+        "estimate_with_reuse_days": "4-7",
+        "runtime_overhead": "one extra helper process per contained run (launcher, then child), with Landlock/seccomp or Seatbelt setup (ESTIMATE: milliseconds; measure in M-NAT-04)",
+        "maintenance": "Orcel owns the copy; security fixes from upstream reviewed per pin bump",
+        "risks": [
+          "macOS sandbox-exec is deprecated by Apple (S-25)",
+          "seccomp filter is architecture-specific; unsupported arch must be refused, as the donor does",
+          "the helper binary is a new trusted component and must be pinned and verified like the native host"
+        ],
+        "matrix_rows": [
+          "T-CUA-21",
+          "T-CUA-22"
+        ]
+      }
+    },
+    {
+      "id": "XP-14",
+      "phase": "X4",
+      "title": "Browser host on macOS and Linux: discovery, verification, confinement, supervision",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "Port SG-000074..79/108 host guarantees to macOS and Linux: find and verify an installed Chrome/Edge, launch it over the pipe with host-built argv, confine its network, supervise and sweep its process tree and profile.",
+      "user_visible": "Browser tools work on macOS and Linux with the same policies.",
+      "existing_orcel": [
+        "crates/orcel-browser-host/src/discovery.rs (Authenticode on Windows)",
+        "crates/orcel-browser-host/src/confinement.rs (NO_ROUTE_PROXY http://0.0.0.0:9: 'Windows-only; on Linux it is loopback')",
+        "crates/orcel-browser-host/src/leftovers.rs, profile.rs, worker_launch.rs (Job Objects, handle-held files)"
+      ],
+      "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "donor_files": [
+        "libs/cua/crates/cua-keyvault/src/macos.rs (SecCode signing-info and requirement plumbing, adapted to SecStaticCode for binaries on disk; Keychain-protector code excluded)",
+        "packages/playwright-core/src/server/registry/index.ts at playwright 1b025d7e (stable-channel install paths; PORT of a 20-line table)"
+      ],
+      "method": "COPY_ADAPT",
+      "orcel_files": {
+        "create": [
+          "crates/orcel-browser-host/src/platform_macos.rs",
+          "crates/orcel-browser-host/src/platform_linux.rs",
+          "crates/orcel-browser-host/src/sink.rs"
+        ],
+        "change": [
+          "crates/orcel-browser-host/src/discovery.rs",
+          "crates/orcel-browser-host/src/confinement.rs",
+          "crates/orcel-browser-host/src/worker_launch.rs",
+          "crates/orcel-browser-host/src/leftovers.rs"
+        ]
+      },
+      "dependencies": "security-framework (MIT/Apache) for SecStaticCode on macOS.",
+      "steps": [
+        "Discovery: port Playwright 1.63.0 registry stable-channel paths for chrome and msedge on darwin and linux into discovery.rs. Verification: macOS = adapt the SecCode signing-info and requirement plumbing from cua-keyvault macos.rs to SecStaticCode (it checks running peers, not binaries, and has no browser logic; leave its Keychain code behind) and check 'anchor apple generic and certificate leaf[subject.OU] = <Google EQHXZ8M8AV | Microsoft UBF8T346G9>'; Linux = owning package via dpkg -S / rpm -qf plus package signature status (BUILD_NEW, no donor verifies Linux browser binaries); record that Linux verification is weaker.",
+        "Replace NO_ROUTE_PROXY on Unix with a host-owned sink: the host binds 127.0.0.1:0, never accepts payload (accept then close), and passes that exact port; this removes the 0.0.0.0-is-loopback hole.",
+        "Supervision: process group + pidfd (Linux) / kqueue (macOS) instead of Job Objects; profile files held via O_NOFOLLOW opens.",
+        "Network-leak probes (existing native tests) ported to the new OSes."
+      ],
+      "interfaces": "unchanged host frames",
+      "platforms": {
+        "windows": "unchanged",
+        "macos": "new",
+        "linux": "new"
+      },
+      "security": "See SECURITY_INTEGRATION.md S-06 (no-route proxy) and S-07 (weaker Linux engine verification).",
+      "tests": {
+        "positive": [
+          "engine found and verified on CI images with Chrome installed"
+        ],
+        "negative": [
+          "unsigned or re-signed engine refused",
+          "connection to a local listener on port 9 never receives a byte",
+          "IP-literal navigation blocked"
+        ],
+        "recovery": [
+          "engine crash -> leftovers swept on next start"
+        ],
+        "e2e": [
+          "existing PDF journey on macOS and Linux"
+        ]
+      },
+      "performance": "Cold launch time per OS.",
+      "ci": "ubuntu and macos legs with Chrome installed",
+      "depends_on": [
+        "XP-03",
+        "SG-000108-CLOSE"
+      ],
+      "acceptance": [
+        "SG-000108 native suites green on three OSes"
+      ],
+      "done": "Merged.",
+      "rollback": "Browser reported unavailable on that OS.",
+      "estimate": "6-9",
+      "authority_delta": "Existing browser authority on two more OSes.",
+      "proposed_grain": "SG-000115",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "8-12",
+        "estimate_with_reuse_days": "6-9",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [
+          "host-owned sink, process supervision and network-leak probes remain Orcel-specific new code"
+        ],
+        "matrix_rows": [
+          "T-CUA-27",
+          "T-PW-13"
+        ]
+      }
+    },
+    {
+      "id": "XP-15",
+      "phase": "X0",
+      "title": "Clipboard provider on macOS and Linux",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "Text-only clipboard read/write with the existing secret-denial and size rules.",
+      "user_visible": "clipboard_read/clipboard_write on macOS and Linux.",
+      "existing_orcel": [
+        "crates/orcel-provider-clipboard/src/lib.rs (Windows only)"
+      ],
+      "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "donor_files": [
+        "libs/cua-driver/rust/crates/platform-linux/src/clipboard.rs",
+        "libs/cua-driver/rust/crates/cua-driver-core/src/clipboard.rs"
+      ],
+      "method": "COPY_ADAPT",
+      "orcel_files": {
+        "create": [
+          "crates/orcel-provider-clipboard/src/unix.rs"
+        ],
+        "change": [
+          "crates/orcel-provider-clipboard/src/lib.rs",
+          "crates/orcel-provider-clipboard/Cargo.toml"
+        ]
+      },
+      "dependencies": "clipboard-rs 0.3.5 (MIT) as Cua uses, with wayland feature on Linux.",
+      "steps": [
+        "Wrap clipboard-rs text get/set; keep 64 KiB bound and secret denial; Wayland requires a focused surface for some compositors: report unavailable rather than spawning wl-copy."
+      ],
+      "interfaces": "unchanged",
+      "platforms": {
+        "windows": "unchanged",
+        "macos": "NSPasteboard via clipboard-rs",
+        "linux": "X11/Wayland via clipboard-rs"
+      },
+      "security": "Same SOFT approval.",
+      "tests": {
+        "positive": [
+          "roundtrip"
+        ],
+        "negative": [
+          "oversize refused",
+          "secret pattern refused"
+        ],
+        "recovery": [],
+        "e2e": []
+      },
+      "performance": "n/a",
+      "ci": "all legs",
+      "depends_on": [
+        "XP-02"
+      ],
+      "acceptance": [
+        "clipboard tests on three OSes"
+      ],
+      "done": "Merged.",
+      "rollback": "unavailable",
+      "estimate": "1-2",
+      "authority_delta": "Existing clipboard tools on two more OSes.",
+      "proposed_grain": "SG-000114",
+      "reuse": {
+        "before": "COPY_ADAPT",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "1-2",
+        "estimate_with_reuse_days": "1-2",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
+    },
+    {
+      "id": "XP-16",
+      "phase": "X5",
+      "title": "macOS packaging: signed app bundles, LaunchAgent, TCC identity",
+      "status": "FOUNDER_DECISION_REQUIRED",
+      "objective": "A per-user macOS install whose native host has a stable code-signature identity for Accessibility and Screen Recording grants, with orceld as a LaunchAgent and the existing lifecycle (install/update/rollback/doctor).",
+      "user_visible": "Install Orcel on a Mac; grant Accessibility once to 'Orcel Computer Host'.",
+      "existing_orcel": [
+        "crates/orcel-lifecycle/src/layout.rs, install.rs (Windows-only)",
+        "docs/canonical/P12_INSTALLER_LIFECYCLE_DESIGN.md"
+      ],
+      "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "donor_files": [
+        "libs/cua-driver/rust/scripts/CuaDriverBundle (Info.plist app-bundle skeleton for TCC identity)",
+        "libs/cua-driver/rust/scripts/CuaDriver.entitlements",
+        "apps/cua-spaces-macos/scripts/notarize.sh",
+        ".github/scripts/macos-review-codesign.sh",
+        "apps/cua-spaces-macos/scripts/retry-apple.sh (called by notarize.sh)"
+      ],
+      "method": "COPY_ADAPT",
+      "orcel_files": {
+        "create": [
+          "crates/orcel-lifecycle/src/macos.rs",
+          "distribution/macos/OrcelComputerHost.app/Contents/Info.plist",
+          "distribution/macos/ai.orcel.orceld.plist",
+          "distribution/macos/entitlements.plist",
+          "scripts/macos/notarize.sh",
+          "scripts/macos/review-codesign.sh",
+          "scripts/macos/retry-apple.sh"
+        ],
+        "change": [
+          "crates/orcel-lifecycle/src/layout.rs",
+          ".github/workflows/release.yml"
+        ]
+      },
+      "dependencies": "Apple Developer ID certificate and notarization (paid Apple membership: FD-05).",
+      "steps": [
+        "Layout under ~/Library/Application Support/Orcel with versioned payloads like Windows.",
+        "COPY_ADAPT Cua's CuaDriverBundle skeleton and entitlements (rebranded bundle id ai.orcel.computer-host, entitlements reviewed one by one), notarize.sh and macos-review-codesign.sh.",
+        "Host binary inside a minimal .app bundle (bundle id ai.orcel.computer-host) so TCC grants attach to a stable signature.",
+        "LaunchAgent for orceld (per-user, no root).",
+        "notarytool in release workflow when FD-05 is approved; unsigned dev builds are labeled and never published.",
+        "Replace XP-09's development signature pin with the Developer ID designated requirement.",
+        "Entitlements: justify or drop com.apple.security.automation.apple-events (the host does not send Apple Events in the adopted allowlist); keep only what the allowlisted tools need.",
+        "Include the apps/orcel-contain helper (XP-13) in the bundle, signed with the same identity."
+      ],
+      "interfaces": "orcel install/update/rollback/doctor on macOS",
+      "platforms": {
+        "macos": "new"
+      },
+      "security": "No root, no privileged helper in this task.",
+      "tests": {
+        "positive": [
+          "install/uninstall in a clean user account"
+        ],
+        "negative": [
+          "tampered bundle refused by doctor"
+        ],
+        "recovery": [
+          "rollback keeps TCC identity"
+        ],
+        "e2e": [
+          "self-hosted macOS"
+        ]
+      },
+      "performance": "Installed size reported against the 400 MB budget.",
+      "ci": "release.yml macOS job (manual dispatch)",
+      "depends_on": [
+        "XP-05",
+        "FD-05"
+      ],
+      "acceptance": [
+        "clean install on macOS 15 and 26",
+        "doctor green"
+      ],
+      "done": "Merged; release remains a founder decision.",
+      "rollback": "Uninstall.",
+      "estimate": "4-6",
+      "authority_delta": "none",
+      "proposed_grain": "SG-000116",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "6-9",
+        "estimate_with_reuse_days": "4-6",
+        "runtime_overhead": "negligible",
+        "maintenance": "scripts track Apple notarytool changes",
+        "risks": [
+          "paid Apple Developer ID still required for distribution (FD-05)"
+        ],
+        "matrix_rows": [
+          "T-CUA-28",
+          "T-CUA-29",
+          "T-CUA-30",
+          "T-CUA-31",
+          "T-CUA-37"
+        ]
+      }
+    },
+    {
+      "id": "XP-17",
+      "phase": "X5",
+      "title": "Linux packaging: XDG layout, systemd user unit, deb/rpm/tarball, polkit action",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "Per-user Linux install with the same lifecycle guarantees.",
+      "user_visible": "Install Orcel on Ubuntu/Fedora.",
+      "existing_orcel": [
+        "crates/orcel-lifecycle (Windows-only layout)"
+      ],
+      "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "donor_files": [
+        "apps/cua-spaces-desktop/packaging/ai.cua.spaces.policy (polkit action template)",
+        "libs/images/omarchy/files/systemd-user/cua-driver.service (systemd user unit, REFERENCE)"
+      ],
+      "method": "BUILD_NEW",
+      "orcel_files": {
+        "create": [
+          "crates/orcel-lifecycle/src/linux.rs",
+          "distribution/linux/orceld.service",
+          "distribution/linux/ai.orcel.approve.policy",
+          "distribution/linux/nfpm.yaml"
+        ],
+        "change": [
+          "crates/orcel-lifecycle/src/layout.rs",
+          ".github/workflows/release.yml"
+        ]
+      },
+      "dependencies": "nfpm (MIT) as a build tool only.",
+      "steps": [
+        "Tarball install under ~/.local/share/orcel with systemd --user unit.",
+        "deb/rpm only for the polkit action file (system path) and optional desktop entry; core stays per-user.",
+        "Signed checksums like the Windows release.",
+        "Ship the GNOME Shell identity extension (from XP-12) as an optional component that the user enables explicitly; doctor reports whether it is active.",
+        "Include the apps/orcel-contain helper (XP-13) in the payload at a pinned path."
+      ],
+      "interfaces": "orcel install/update/rollback/doctor on Linux",
+      "platforms": {
+        "linux": "new"
+      },
+      "security": "Only the polkit action requires root install; documented.",
+      "tests": {
+        "positive": [
+          "install in Ubuntu 24.04 and Fedora 41 containers (non-GUI parts)"
+        ],
+        "negative": [
+          "tampered payload refused"
+        ],
+        "recovery": [
+          "rollback"
+        ],
+        "e2e": []
+      },
+      "performance": "Installed size.",
+      "ci": "release.yml Linux job",
+      "depends_on": [
+        "XP-01"
+      ],
+      "acceptance": [
+        "clean install on two distributions"
+      ],
+      "done": "Merged.",
+      "rollback": "Uninstall.",
+      "estimate": "4-6",
+      "authority_delta": "none",
+      "proposed_grain": "SG-000116",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "BUILD_NEW",
+        "estimate_build_new_days": "4-6",
+        "estimate_with_reuse_days": "4-6",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": [
+          "T-CUA-35",
+          "T-CUA-36"
+        ],
+        "build_new_justification": "No donor ships per-user Linux packaging without Nix or Electron. Two small templates are reused: Cua's polkit action file (COPY_ADAPT) and a systemd user unit (REFERENCE); the nfpm config and lifecycle code are new."
+      }
+    },
+    {
+      "id": "XP-18",
+      "phase": "X5",
+      "title": "Pinned Node runtime per OS for the MCP edge and browser worker",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "Extend the SG-000106 signed pinned Node runtime decision to macOS and Linux (arm64 and x64), and the SG-000108 runtime pin to non-Windows paths.",
+      "user_visible": "No separate Node.js install on any OS.",
+      "existing_orcel": [
+        "SG-000106 plan (P20)",
+        "PR #336 runtime pin (Windows, open)"
+      ],
+      "donor": null,
+      "donor_files": [],
+      "method": "BUILD_NEW",
+      "orcel_files": {
+        "create": [],
+        "change": [
+          "crates/orcel-lifecycle/src/*",
+          "crates/orcel-browser-host/src/runtime_pin.rs (after #336 merges)"
+        ]
+      },
+      "dependencies": "Official Node release archives verified by SHASUMS256 signature.",
+      "steps": [
+        "Per-OS archive pin table; verify signature at build, not at runtime.",
+        "Runtime pin: O_NOFOLLOW opens and fd-held files on Unix instead of share-mode handles.",
+        "Pin the apps/orcel-contain helper binary alongside the Node runtime in the release manifest on all three OSes."
+      ],
+      "interfaces": "n/a",
+      "platforms": {
+        "windows": "SG-000106",
+        "macos": "new",
+        "linux": "new"
+      },
+      "security": "No runtime download.",
+      "tests": {
+        "positive": [
+          "worker launches with pinned runtime"
+        ],
+        "negative": [
+          "modified node binary refused"
+        ],
+        "recovery": [],
+        "e2e": []
+      },
+      "performance": "Installed size delta.",
+      "ci": "all legs",
+      "depends_on": [
+        "XP-16",
+        "XP-17",
+        "SG-000108-CLOSE"
+      ],
+      "acceptance": [
+        "edge and worker run with no system Node"
+      ],
+      "done": "Merged.",
+      "rollback": "System Node prerequisite.",
+      "estimate": "3-5",
+      "authority_delta": "none",
+      "proposed_grain": "SG-000116",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "BUILD_NEW",
+        "estimate_build_new_days": "3-5",
+        "estimate_with_reuse_days": "3-5",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": [],
+        "build_new_justification": "Extends Orcel's own runtime pin (PR #336, SG-000108). No donor pins a Node runtime tree with held handles."
+      }
+    },
+    {
+      "id": "XP-19",
+      "phase": "X5",
+      "title": "Per-OS secret storage for device identity and OAuth material",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "Keep device private keys and refresh tokens in DPAPI (Windows), Keychain (macOS) and Secret Service (Linux), never in plain files.",
+      "user_visible": "Pairing works on macOS and Linux.",
+      "existing_orcel": [
+        "apps/orcel-mcp/src/device_identity.ts",
+        "apps/orcel-mcp/src/oauth_authorization.ts"
+      ],
+      "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "donor_files": [
+        "libs/cua/crates/cua-auth/src/lib.rs (REFERENCE: keyring usage across Keychain, Secret Service and Credential Manager)"
+      ],
+      "method": "WRAP",
+      "orcel_files": {
+        "create": [
+          "crates/orceld/src/secret_store.rs",
+          "apps/orcel-mcp/src/secret_store.ts"
+        ],
+        "change": [
+          "crates/orceld/Cargo.toml",
+          "apps/orcel-mcp/src/device_identity.ts"
+        ]
+      },
+      "dependencies": "keyring crate (MIT/Apache-2.0), the same library Cua uses; admitted with SBOM. On Windows keep DPAPI-backed storage or use keyring's Windows Credential Manager backend after comparison.",
+      "steps": [
+        "Inventory where keys live today (read device_identity.ts first and record it in the PR).",
+        "Move storage behind orceld secret_store with per-OS backends; migration only on explicit user action."
+      ],
+      "interfaces": "orceld secret_store get/put by fixed key names",
+      "platforms": {
+        "windows": "DPAPI",
+        "macos": "Keychain",
+        "linux": "Secret Service; unavailable when no keyring daemon"
+      },
+      "security": "Removes file-at-rest secrets.",
+      "tests": {
+        "positive": [
+          "roundtrip per OS"
+        ],
+        "negative": [
+          "no keyring -> unavailable, never plaintext fallback"
+        ],
+        "recovery": [],
+        "e2e": [
+          "pairing journey"
+        ]
+      },
+      "performance": "n/a",
+      "ci": "all legs (Linux uses a dbus-launch keyring in CI)",
+      "depends_on": [
+        "XP-03"
+      ],
+      "acceptance": [
+        "no secret file written by the edge on any OS"
+      ],
+      "done": "Merged.",
+      "rollback": "Previous storage.",
+      "estimate": "2-3",
+      "authority_delta": "none",
+      "proposed_grain": "SG-000117",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "WRAP",
+        "estimate_build_new_days": "3-5",
+        "estimate_with_reuse_days": "2-3",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": [
+          "T-CUA-34"
+        ]
+      }
+    },
+    {
+      "id": "XP-20",
+      "phase": "X6",
+      "title": "Windows host bake-off: Go host vs Cua platform-windows inside orcel-native-host",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "Decide with data whether to consolidate all three OSes on the Rust native host.",
+      "user_visible": "None directly; possible background (no focus steal) input on Windows if Cua wins.",
+      "existing_orcel": [
+        "apps/orcel-computer-host (Go, qualified SG-000094/95; one sacrificial worker process per observation)"
+      ],
+      "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "donor_files": [
+        "libs/cua-driver/rust/crates/platform-windows"
+      ],
+      "method": "REFERENCE",
+      "orcel_files": {
+        "create": [
+          "docs/orcel/implementation-readiness/decisions/XP-20_WINDOWS_HOST.md"
+        ],
+        "change": []
+      },
+      "dependencies": "n/a",
+      "steps": [
+        "Run the XP-08 catalog and M-NAT metrics against both hosts on the same Windows machine.",
+        "Compare delivered/refused per cell, P50/P95 latency, memory, binary size, background delivery rows.",
+        "Write the decision record; consolidation is a separate task if chosen."
+      ],
+      "interfaces": "n/a",
+      "platforms": {
+        "windows": "measurement"
+      },
+      "security": "Bake-off runs only in a disposable session.",
+      "tests": {
+        "positive": [],
+        "negative": [],
+        "recovery": [],
+        "e2e": [
+          "catalog on both hosts"
+        ]
+      },
+      "performance": "The point of the task.",
+      "ci": "manual",
+      "depends_on": [
+        "XP-08",
+        "XP-12"
+      ],
+      "acceptance": [
+        "decision record with raw results attached"
+      ],
+      "done": "Decision recorded; FD-07 asked.",
+      "rollback": "n/a",
+      "estimate": "3-4",
+      "authority_delta": "none",
+      "proposed_grain": "-",
+      "reuse": {
+        "before": "REFERENCE",
+        "after": "REFERENCE",
+        "estimate_build_new_days": "3-4",
+        "estimate_with_reuse_days": "3-4",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": [],
+        "build_new_justification": "Measurement only."
+      }
+    },
+    {
+      "id": "CR-01",
+      "phase": "X0",
+      "title": "Authenticated local app API transport on three OSes (read-only status and events)",
+      "status": "READY",
+      "objective": "The F0 next slice, built cross-platform from the start: orceld serves a private per-user IPC endpoint (Windows named pipe with explicit DACL and client PID check; macOS/Linux Unix domain socket in the 0700 state root with peer-credential check) exposing status, capabilities and a bounded event subscription with sequence cursors.",
+      "user_visible": "The Control Room (and the WPF preview) show real daemon state on every OS.",
+      "existing_orcel": [
+        "docs/orcel/ARCHITECTURE.md 'App API proposal'",
+        "apps/orcel-desktop-preview (WPF reads CLI JSON today)"
+      ],
+      "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "donor_files": [
+        "libs/cua/crates/cua-keyvault/src/caller.rs (kernel-derived peer identity, three OSes)",
+        "libs/cua/crates/cua-keyvault/src/winpeer.rs (named-pipe client and Authenticode)"
+      ],
+      "method": "COPY_ADAPT",
+      "orcel_files": {
+        "create": [
+          "crates/orceld/src/app_api.rs",
+          "docs/orcel/implementation-readiness/protocol/ORCEL_APP_API_1.md"
+        ],
+        "change": [
+          "crates/orceld/src/main.rs",
+          "crates/orcel-platform/src/peer.rs"
+        ]
+      },
+      "dependencies": "macOS: security-framework and core-foundation (as the copied caller.rs uses). Windows: windows-sys features Win32_Security_WinTrust, Win32_Security_Cryptography (and sub-features the donor uses) and Win32_System_Pipes, admitted for orceld. Linux: libc only.",
+      "steps": [
+        "Frame: JSON lines, 64 KiB max, versioned 'orcel-app-api/1'.",
+        "Methods (read-only): status.get, capabilities.get, devices.list (paginated), events.subscribe {after_seq} -> snapshot when gap, task.get, task.list.",
+        "No method can submit or approve anything in this task.",
+        "Peer auth: COPY_ADAPT cua-keyvault caller.rs and winpeer.rs (FSL, FD-04): macOS audit token -> SecCode -> requirement; Linux SO_PEERCRED with os_verified=false (same-user ptrace) so Linux peers are trusted only as 'same uid'; Windows pipe client pid + Authenticode. Orcel's own trust policy names the first-party signer. Record the peer's start generation per connection."
+      ],
+      "interfaces": "See ORCEL_APP_API_1.md (to be written in this task; skeleton in AGENT_RUNTIME_INTEGRATION.md section 3)",
+      "platforms": {
+        "windows": "named pipe \\\\.\\pipe\\orcel-<sid>-app with DACL = current user SID only",
+        "macos": "unix socket in state root",
+        "linux": "unix socket in $XDG_RUNTIME_DIR/orcel (0700)"
+      },
+      "security": "Loopback TCP is not used. Unauthenticated peers are dropped before any read.",
+      "tests": {
+        "positive": [
+          "status roundtrip on three OSes",
+          "event resubscribe after_seq"
+        ],
+        "negative": [
+          "other-uid peer refused (Linux CI using a second user)",
+          "frame over 64 KiB refused",
+          "unknown method refused"
+        ],
+        "recovery": [
+          "gap -> snapshot",
+          "daemon restart -> client resubscribes from snapshot"
+        ],
+        "e2e": []
+      },
+      "performance": "Event fan-out to one client bounded at 1,000 events/s (ESTIMATE target).",
+      "ci": "all legs",
+      "depends_on": [
+        "XP-01",
+        "XP-01B",
+        "XP-03"
+      ],
+      "acceptance": [
+        "read-only contract tests pass on three OSes",
+        "no listener reachable from another user"
+      ],
+      "done": "Merged; ARCHITECTURE.md app API section points at the spec.",
+      "rollback": "Endpoint not started.",
+      "estimate": "3-4",
+      "authority_delta": "New read-only local interface; no mutation.",
+      "proposed_grain": "SG-000118",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "4-6",
+        "estimate_with_reuse_days": "3-4",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [
+          "Linux peer identity is uid-level only; documented, as the donor does"
+        ],
+        "matrix_rows": [
+          "T-CUA-25",
+          "T-CUA-26"
+        ]
+      }
+    },
+    {
+      "id": "CR-02",
+      "phase": "X1",
+      "title": "Adopt the AgentKit protocol and headless client for the Control Room event stream",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "Copy and adapt AgentKit's versioned protocol, validators and deterministic client so the Control Room gets replay, gap rejection and reconnect semantics without writing them.",
+      "user_visible": "Timeline survives reconnects without duplicates or silent gaps.",
+      "existing_orcel": [],
+      "donor": "agent-native@9c277b79cb87eb27da538e572dd710986e2fa06d",
+      "donor_files": [
+        "packages/agentkit/src/protocol",
+        "packages/agentkit/src/client",
+        "packages/agentkit/src/conformance/index.ts"
+      ],
+      "method": "COPY_ADAPT",
+      "orcel_files": {
+        "create": [
+          "apps/orcel-control-room/src/agentkit/**",
+          "docs/orcel/notices/agent-native-MIT.txt"
+        ],
+        "change": []
+      },
+      "dependencies": "none at runtime beyond what AgentKit protocol imports (verify; drop any that pull React).",
+      "steps": [
+        "Copy protocol + client; remove approval-response commands and any option that would let the UI resolve an approval.",
+        "Write an AgentTransport over CR-01's IPC bridge (Tauri command channel).",
+        "Run the copied conformance suite against it."
+      ],
+      "interfaces": "AgentTransport implementation 'orceldTransport'",
+      "platforms": {
+        "windows": "same",
+        "macos": "same",
+        "linux": "same"
+      },
+      "security": "Invariant 12/23 preserved and strengthened: the Control Room can display a pending approval but cannot answer it.",
+      "tests": {
+        "positive": [
+          "conformance suite green"
+        ],
+        "negative": [
+          "sequence gap rejected before cursor advance",
+          "unknown envelope field rejected"
+        ],
+        "recovery": [
+          "resubscribe never re-dispatches"
+        ],
+        "e2e": []
+      },
+      "performance": "n/a",
+      "ci": "Node legs",
+      "depends_on": [
+        "CR-01"
+      ],
+      "acceptance": [
+        "conformance green; no approval mutation path in the bundle (static check)"
+      ],
+      "done": "Merged with provenance.",
+      "rollback": "Remove the folder.",
+      "estimate": "3-4",
+      "authority_delta": "none",
+      "proposed_grain": "SG-000118",
+      "reuse": {
+        "before": "COPY_ADAPT",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "3-4",
+        "estimate_with_reuse_days": "3-4",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
+    },
+    {
+      "id": "CR-03",
+      "phase": "X1",
+      "title": "Tauri 2 Control Room skeleton (read-only) on three OSes",
+      "status": "FOUNDER_DECISION_REQUIRED",
+      "objective": "One cross-platform Control Room: status, capabilities, device list, task timeline and stop request, with strict Tauri capabilities, CSP and no shell/fs plugins.",
+      "user_visible": "The same Orcel window on Windows, macOS and Linux.",
+      "existing_orcel": [
+        "apps/orcel-desktop-preview (WPF, 876 lines incl. tests)",
+        "docs/orcel/UI_UX_AND_APP_SIZE_BUDGET.md 'Exact reversal conditions'"
+      ],
+      "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f and agent-native@9c277b79cb87eb27da538e572dd710986e2fa06d",
+      "donor_files": [
+        "apps/cua-spaces/src-tauri/tauri.conf.json (window and CSP scaffolding)",
+        "apps/cua-spaces/src-tauri/capabilities (per-window capability pattern)",
+        "agent-native:packages/toolkit/src/app/agentkit/react/root.tsx",
+        "agent-native:packages/toolkit/src/app/agentkit/react/context.tsx",
+        "agent-native:packages/toolkit/src/app/agentkit/react/stop-button.tsx",
+        "agent-native:packages/toolkit/src/app/agentkit/react/streaming-text.tsx"
+      ],
+      "method": "COPY_ADAPT",
+      "orcel_files": {
+        "create": [
+          "apps/orcel-control-room/src-tauri/**",
+          "apps/orcel-control-room/src/**",
+          "apps/orcel-control-room/package.json"
+        ],
+        "change": [
+          ".github/workflows/ci.yml"
+        ]
+      },
+      "dependencies": "tauri 2.x (MIT/Apache), React 18 (MIT); pinned lockfiles; no updater plugin (lifecycle owns updates).",
+      "steps": [
+        "Start from Cua Spaces' src-tauri scaffolding (FSL, FD-04) for window, capability and CSP structure; tighten the CSP (no 'wasm-unsafe-eval', no ws:/wss:, no remote connect-src) and delete the updater plugin, bundle.createUpdaterArtifacts, process:allow-restart and macOSPrivateApi. Start the front end from Agent-Native Toolkit's AgentKit React root, context, stop button and streaming text (MIT; stop-button.tsx pulls in @tabler/icons-react, admitted with the front end); do not take components.tsx (5,618 lines on assistant-ui, Radix, CodeMirror).",
+        "Rust side: one Tauri command 'app_api_call' proxying only the CR-01 read-only methods by name allowlist.",
+        "Front end: compact task view, device selector, timeline, capability panel with explicit unavailable reasons, Stop button wired to the existing emergency stop path only when CR-01 exposes it.",
+        "Accessibility: keyboard-only, screen reader names, RTL with Arabic strings, 100/150/200% scaling.",
+        "Measure cold/warm start, working set, installed size per OS against the WPF preview on Windows."
+      ],
+      "interfaces": "Tauri command allowlist",
+      "platforms": {
+        "windows": "WebView2",
+        "macos": "WKWebView",
+        "linux": "WebKitGTK 4.1"
+      },
+      "security": "CSP default-src 'self'; no remote content; no eval; approvals never rendered as actionable.",
+      "tests": {
+        "positive": [
+          "UI tests via WebDriver (tauri-driver) on Linux/Windows; manual checklist macOS"
+        ],
+        "negative": [
+          "navigation to remote URL blocked",
+          "unlisted command refused"
+        ],
+        "recovery": [
+          "daemon down -> truthful unavailable"
+        ],
+        "e2e": [
+          "UIA tree check on Windows like PR #282's 13 checks"
+        ]
+      },
+      "performance": "Report against the 400 MB installed budget and the WPF baseline (#288).",
+      "ci": "new control-room job",
+      "depends_on": [
+        "CR-02",
+        "FD-03"
+      ],
+      "acceptance": [
+        "same 13 functional checks as PR #282 pass on Windows",
+        "keyboard/screen-reader checklist on all three OSes"
+      ],
+      "done": "Merged; WPF retirement is CR-04.",
+      "rollback": "Keep WPF on Windows.",
+      "estimate": "5-8",
+      "authority_delta": "none",
+      "proposed_grain": "SG-000119",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "8-12",
+        "estimate_with_reuse_days": "5-8",
+        "runtime_overhead": "one system WebView per OS (WebView2, WKWebView, WebKitGTK); measured against WPF in CR-04",
+        "maintenance": "Tauri major-version upgrades",
+        "risks": [
+          "WebKitGTK accessibility must be tested",
+          "FD-03 still open"
+        ],
+        "matrix_rows": [
+          "T-CUA-32",
+          "T-CUA-33",
+          "T-AN-06",
+          "T-AN-07",
+          "T-AN-08",
+          "T-AN-09",
+          "T-AN-10"
+        ]
+      }
+    },
+    {
+      "id": "CR-04",
+      "phase": "X6",
+      "title": "Control Room parity gate and WPF retirement decision",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "Apply UI_UX_AND_APP_SIZE_BUDGET.md reversal condition (c) with measurements; retire apps/orcel-desktop-preview only if Tauri passes.",
+      "user_visible": "One app instead of two.",
+      "existing_orcel": [
+        "apps/orcel-desktop-preview"
+      ],
+      "donor": null,
+      "donor_files": [],
+      "method": "BUILD_NEW",
+      "orcel_files": {
+        "create": [
+          "docs/orcel/implementation-readiness/decisions/CR-04_CONTROL_ROOM_PARITY.md"
+        ],
+        "change": [
+          "docs/orcel/UI_UX_AND_APP_SIZE_BUDGET.md"
+        ]
+      },
+      "dependencies": "n/a",
+      "steps": [
+        "Run the incremental acceptance list of UI_UX_AND_APP_SIZE_BUDGET.md on both apps.",
+        "Record results and porting effort; ask FD-03 final."
+      ],
+      "interfaces": "n/a",
+      "platforms": {
+        "windows": "comparison"
+      },
+      "security": "n/a",
+      "tests": {
+        "positive": [],
+        "negative": [],
+        "recovery": [],
+        "e2e": [
+          "full acceptance list"
+        ]
+      },
+      "performance": "Measured startup and memory.",
+      "ci": "manual",
+      "depends_on": [
+        "CR-03"
+      ],
+      "acceptance": [
+        "decision record with measurements"
+      ],
+      "done": "Recorded.",
+      "rollback": "n/a",
+      "estimate": "2-3",
+      "authority_delta": "none",
+      "proposed_grain": "-",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "BUILD_NEW",
+        "estimate_build_new_days": "2-3",
+        "estimate_with_reuse_days": "2-3",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": [],
+        "build_new_justification": "Measurement and decision record; no code."
+      }
+    },
+    {
+      "id": "RJ-01",
+      "phase": "X2",
+      "title": "Extract the kernel journal crate from the SG-000108 intent journal (no behavior change)",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "Move the download intent journal (pending/settled/abandoned/reconciled, one writer, durable append) out of crates/orceld/src/live_browser.rs into crates/orcel-journal so every provider can use it.",
+      "user_visible": "None.",
+      "existing_orcel": [
+        "crates/orceld/src/live_browser.rs (JournalLine, reconcile_destination, intents.jsonl)",
+        "crates/orcel-approval/src/lib.rs ApprovalLedger (one-writer durable append after #278)"
+      ],
+      "donor": null,
+      "donor_files": [],
+      "method": "BUILD_NEW",
+      "orcel_files": {
+        "create": [
+          "crates/orcel-journal/Cargo.toml",
+          "crates/orcel-journal/src/lib.rs"
+        ],
+        "change": [
+          "Cargo.toml",
+          "crates/orceld/src/live_browser.rs",
+          "crates/orceld/Cargo.toml"
+        ]
+      },
+      "dependencies": "fs4 (already a workspace dependency) for the writer lock.",
+      "steps": [
+        "Generic Journal<Intent> with states pending -> dispatched -> settled | abandoned | unknown -> reconciled; bounded line size and file size; fsync on append; parent dir sync on Unix.",
+        "live_browser.rs uses it with the same file name and line schema (byte-compatible).",
+        "All existing live_browser tests unchanged and green."
+      ],
+      "interfaces": "Journal::open(path), append(Event), recover() -> Vec<OpenIntent>",
+      "platforms": {
+        "windows": "same",
+        "macos": "same",
+        "linux": "same"
+      },
+      "security": "Same one-writer guarantee as the approval ledger.",
+      "tests": {
+        "positive": [
+          "existing browser journal tests"
+        ],
+        "negative": [
+          "torn last line ignored with typed warning",
+          "second writer refused"
+        ],
+        "recovery": [
+          "crash between pending and dispatch -> recover lists it"
+        ],
+        "e2e": []
+      },
+      "performance": "One fsync per transition (unchanged).",
+      "ci": "all legs",
+      "depends_on": [
+        "SG-000108-CLOSE"
+      ],
+      "acceptance": [
+        "intents.jsonl byte-compatible",
+        "no behavior change in SG-000108 suites"
+      ],
+      "done": "Merged.",
+      "rollback": "Revert.",
+      "estimate": "2-3",
+      "authority_delta": "none",
+      "proposed_grain": "SG-000120",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "BUILD_NEW",
+        "estimate_build_new_days": "2-3",
+        "estimate_with_reuse_days": "2-3",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": [],
+        "build_new_justification": "Extracts Orcel's own qualified intent journal; donor journals (Agent-Native SQL run store, SPACE PostgreSQL operations) are bound to stores Orcel does not run. Semantics are PORTed (RJ-03) where they help."
+      }
+    },
+    {
+      "id": "RJ-02",
+      "phase": "X3",
+      "title": "Journal every mutating dispatch and add per-provider reconciliation",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "fs write/edit/move/remove, git mutations, desktop actions, clipboard write and process spawn record an intent before dispatch and settle after; after a lost reply or crash, the provider's reconciliation probe decides settled/abandoned/unknown and never re-dispatches.",
+      "user_visible": "After a crash, the timeline shows exactly which steps finished, which did not, and which are unknown.",
+      "existing_orcel": [
+        "crates/orceld/src/fs_mutation.rs",
+        "crates/orceld/src/git_mutation.rs",
+        "crates/orceld/src/uia.rs",
+        "crates/orceld/src/clipboard.rs"
+      ],
+      "donor": "space@09e922efd23b3c0d109ab64de7e567a901bcc61e",
+      "donor_files": [
+        "docs/architecture.md (REFERENCE: unknown Process.Start outcome, execution-generation fencing)"
+      ],
+      "method": "BUILD_NEW",
+      "orcel_files": {
+        "create": [
+          "crates/orceld/src/reconcile.rs"
+        ],
+        "change": [
+          "crates/orceld/src/fs_mutation.rs",
+          "crates/orceld/src/git_mutation.rs",
+          "crates/orceld/src/uia.rs",
+          "crates/orceld/src/clipboard.rs"
+        ]
+      },
+      "dependencies": "none",
+      "steps": [
+        "fs: probe destination existence + content hash vs the approved digest.",
+        "git: probe ref/index state.",
+        "desktop: mark unknown and require re-observation; never infer success from the UI.",
+        "process: record pid+generation; probe exit record.",
+        "Unknown outcome blocks dependent steps until an explicit new approval."
+      ],
+      "interfaces": "Provider trait method reconcile(&Intent) -> Outcome",
+      "platforms": {
+        "windows": "same",
+        "macos": "same",
+        "linux": "same"
+      },
+      "security": "No blind retry of a mutation with unknown outcome (adopted rule D).",
+      "tests": {
+        "positive": [
+          "each provider settles normally"
+        ],
+        "negative": [
+          "kill orceld after dispatch -> unknown, no re-dispatch on restart"
+        ],
+        "recovery": [
+          "reconcile marks settled when destination hash matches"
+        ],
+        "e2e": [
+          "F2 report journey with induced crash"
+        ]
+      },
+      "performance": "One extra fsync per mutation.",
+      "ci": "all legs",
+      "depends_on": [
+        "RJ-01"
+      ],
+      "acceptance": [
+        "fault-injection suite: crash at each transition for each provider"
+      ],
+      "done": "Merged.",
+      "rollback": "Journal writes disabled; behavior as today.",
+      "estimate": "6-9",
+      "authority_delta": "none (reduces duplicate effects)",
+      "proposed_grain": "SG-000120",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "BUILD_NEW",
+        "estimate_build_new_days": "6-9",
+        "estimate_with_reuse_days": "6-9",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": [],
+        "build_new_justification": "Per-provider reconciliation probes depend on Orcel's providers and digests; no donor has them. SPACE fencing and unknown-start rules are adopted as rules."
+      }
+    },
+    {
+      "id": "RJ-03",
+      "phase": "X3",
+      "title": "Resume summary for external clients after reconnect",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "Port Agent-Native's tool-call journal classification so an MCP client that reconnects gets a bounded, factual summary: completed steps, interrupted/unknown steps (do not assume success or failure), and what verification each needs.",
+      "user_visible": "Claude/ChatGPT/Codex resume a task without repeating a side effect.",
+      "existing_orcel": [
+        "apps/orcel-mcp/src/tool_contract.ts (40 tools; adding a tool is governed)"
+      ],
+      "donor": "agent-native@9c277b79cb87eb27da538e572dd710986e2fa06d",
+      "donor_files": [
+        "packages/core/src/agent/tool-call-journal.ts"
+      ],
+      "method": "PORT",
+      "orcel_files": {
+        "create": [
+          "crates/orcel-journal/src/resume.rs"
+        ],
+        "change": [
+          "apps/orcel-mcp/src/tool_contract.ts (one new read-only tool task_resume_summary, profile local + core)"
+        ]
+      },
+      "dependencies": "none",
+      "steps": [
+        "Classify journal entries into completed / interrupted-unknown with input fingerprints.",
+        "Expose as a read-only tool; governed tool-contract change."
+      ],
+      "interfaces": "task_resume_summary {task_id} -> {completed[], unknown[], next_verification[]}",
+      "platforms": {
+        "all": "same"
+      },
+      "security": "Read-only; no secret values in fingerprints (hash only).",
+      "tests": {
+        "positive": [
+          "summary after induced crash"
+        ],
+        "negative": [
+          "other session's task refused"
+        ],
+        "recovery": [],
+        "e2e": [
+          "MCP client transcript"
+        ]
+      },
+      "performance": "n/a",
+      "ci": "Node + Rust legs",
+      "depends_on": [
+        "RJ-02"
+      ],
+      "acceptance": [
+        "tool contract tests updated; profile tests pass"
+      ],
+      "done": "Merged.",
+      "rollback": "Remove tool.",
+      "estimate": "2-3",
+      "authority_delta": "One new read-only tool.",
+      "proposed_grain": "SG-000120",
+      "reuse": {
+        "before": "PORT",
+        "after": "PORT",
+        "estimate_build_new_days": "2-3",
+        "estimate_with_reuse_days": "2-3",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
+    },
+    {
+      "id": "BR-01",
+      "phase": "B1",
+      "title": "Stale-reference recovery through normalized locators under a host identity check",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "When an approved aria ref goes stale after a benign re-render, re-resolve it through Playwright's normalized locator and act only if role, accessible name and frame match the approved target; otherwise return TargetStale.",
+      "user_visible": "Fewer 'target stale' failures on dynamic sites without acting on the wrong element.",
+      "existing_orcel": [
+        "apps/orcel-browser-worker/src/main.ts (locator('aria-ref=...') click)",
+        "apps/orcel-browser-worker/src/snapshot.ts"
+      ],
+      "donor": "playwright@1b025d7e20a026371cd5f98ba0cdce48892737c8",
+      "donor_files": [
+        "packages/playwright-core/src/tools/backend/tab.ts (targetLocators)"
+      ],
+      "method": "COPY_ADAPT",
+      "orcel_files": {
+        "create": [
+          "apps/orcel-browser-worker/src/actions/targets.ts"
+        ],
+        "change": [
+          "apps/orcel-browser-worker/src/main.ts",
+          "crates/orcel-browser-host/src/actuation.rs"
+        ]
+      },
+      "dependencies": "none (playwright-core 1.63.0 already admitted)",
+      "steps": [
+        "At observation, worker reports for each actionable ref its normalized selector string.",
+        "Host stores {ref, role, name, frame, normalized} in the approval binding.",
+        "At dispatch: try aria-ref; if missing, resolve normalized; require exactly one match with equal role and name; else TargetStale."
+      ],
+      "interfaces": "observation node gains 'n' (normalized selector, bounded 512 bytes)",
+      "platforms": {
+        "all": "same"
+      },
+      "security": "Binding strengthened, never weakened: role+name+frame equality is mandatory.",
+      "tests": {
+        "positive": [
+          "React fixture re-renders the button -> action succeeds"
+        ],
+        "negative": [
+          "re-render swaps two buttons' names -> TargetStale",
+          "two matches -> TargetStale"
+        ],
+        "recovery": [],
+        "e2e": [
+          "controlled-site journey"
+        ]
+      },
+      "performance": "Measure retries avoided on fixture set (M-BR-02).",
+      "ci": "browser-worker tests + native launcher",
+      "depends_on": [
+        "SG-000108-CLOSE"
+      ],
+      "acceptance": [
+        "negative swap test passes",
+        "no new page-script evaluation"
+      ],
+      "done": "Merged.",
+      "rollback": "Flag off -> ref only.",
+      "estimate": "2-3",
+      "authority_delta": "none",
+      "proposed_grain": "SG-000121",
+      "reuse": {
+        "before": "COPY_ADAPT",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "2-3",
+        "estimate_with_reuse_days": "2-3",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
+    },
+    {
+      "id": "BR-02",
+      "phase": "B1",
+      "title": "Typed browser actuation vocabulary from the Playwright tools backend",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "Add fill (non-secret), select option, check/uncheck, press key, hover, drag and bounded wait as closed worker frames and host-approved actions.",
+      "user_visible": "Agents can complete forms and multi-step flows, not only click and download.",
+      "existing_orcel": [
+        "apps/orcel-browser-worker/src/protocol.ts (closed frame vocabulary)",
+        "crates/orcel-browser-host/src/actuation.rs (SG-000077)"
+      ],
+      "donor": "playwright@1b025d7e20a026371cd5f98ba0cdce48892737c8",
+      "donor_files": [
+        "packages/playwright-core/src/tools/backend/snapshot.ts",
+        "packages/playwright-core/src/tools/backend/form.ts",
+        "packages/playwright-core/src/tools/backend/keyboard.ts",
+        "packages/playwright-core/src/tools/backend/mouse.ts",
+        "packages/playwright-core/src/tools/backend/wait.ts"
+      ],
+      "method": "COPY_ADAPT",
+      "orcel_files": {
+        "create": [
+          "apps/orcel-browser-worker/src/actions/pointer.ts",
+          "apps/orcel-browser-worker/src/actions/form.ts",
+          "apps/orcel-browser-worker/src/actions/keyboard.ts",
+          "apps/orcel-browser-worker/src/actions/wait.ts",
+          "docs/orcel/notices/playwright-Apache-2.0-NOTICE.txt"
+        ],
+        "change": [
+          "apps/orcel-browser-worker/src/protocol.ts",
+          "apps/orcel-browser-worker/src/main.ts",
+          "crates/orcel-browser-host/src/proto.rs",
+          "crates/orcel-browser-host/src/actuation.rs",
+          "apps/orcel-mcp/src/tool_contract.ts"
+        ]
+      },
+      "dependencies": "none",
+      "steps": [
+        "Copy the locator-level calls; drop zod schemas, MCP response builder, code generation and page.evaluate timers.",
+        "Each action is one frame with a bounded payload; fill refuses password/one-time-code/credit-card autocomplete fields (SG-000077).",
+        "Host approval classes: fill/select/check SOFT bound to {ref binding, value digest}; press/hover/drag SOFT; wait none.",
+        "Browser Use semantics carried: fill clears first; select on a non-<select> combobox opens and chooses by accessible name; navigation inside a multi-action proposal ends the proposal (terminates_sequence).",
+        "Apache-2.0 section 4(d): carry Playwright's NOTICE file text (blob 814ec169 at v1.63.0) into docs/orcel/notices and THIRD_PARTY_NOTICES with the copied files' attribution headers."
+      ],
+      "interfaces": "worker frames: fill, select, check, press, hover, drag, wait_for",
+      "platforms": {
+        "all": "same"
+      },
+      "security": "No secret fill; no evaluate; value digest in approval.",
+      "tests": {
+        "positive": [
+          "form fixture end-to-end"
+        ],
+        "negative": [
+          "password field fill refused",
+          "value digest mismatch refused",
+          "navigation mid-proposal stops remaining actions"
+        ],
+        "recovery": [
+          "worker crash mid-fill -> unknown; re-observe"
+        ],
+        "e2e": [
+          "login-free multi-step form journey"
+        ]
+      },
+      "performance": "M-BR-01..03.",
+      "ci": "browser-worker + native",
+      "depends_on": [
+        "BR-01"
+      ],
+      "acceptance": [
+        "all negative tests",
+        "tool contract updated through governance"
+      ],
+      "done": "Merged.",
+      "rollback": "Frames refused by host.",
+      "estimate": "5-7",
+      "authority_delta": "New approval-gated browser actions.",
+      "proposed_grain": "SG-000121",
+      "reuse": {
+        "before": "COPY_ADAPT",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "5-7",
+        "estimate_with_reuse_days": "5-7",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
+    },
+    {
+      "id": "BR-03",
+      "phase": "B2",
+      "title": "Uploads through a host-staged, separately approved grant",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "Set a file input or answer a file chooser with exactly one host-staged file the user approved for that origin.",
+      "user_visible": "Upload a chosen file to an allowed site.",
+      "existing_orcel": [
+        "crates/orcel-browser-host/src/transfers.rs (upload governance shapes)"
+      ],
+      "donor": "playwright@1b025d7e20a026371cd5f98ba0cdce48892737c8",
+      "donor_files": [
+        "packages/playwright-core/src/tools/backend/files.ts"
+      ],
+      "method": "COPY_ADAPT",
+      "orcel_files": {
+        "create": [
+          "apps/orcel-browser-worker/src/actions/upload.ts"
+        ],
+        "change": [
+          "crates/orcel-browser-host/src/transfers.rs",
+          "apps/orcel-browser-worker/src/protocol.ts"
+        ]
+      },
+      "dependencies": "none",
+      "steps": [
+        "Host copies the approved file into a per-lifetime staging dir it holds open; worker receives only that path.",
+        "Browser Use semantics: resolve the nearest file input to the approved ref."
+      ],
+      "interfaces": "worker frame upload {ref, staged_id}",
+      "platforms": {
+        "all": "same"
+      },
+      "security": "Upload is egress: STRONG? decision: SOFT with origin+file digest unless policy marks the workspace sensitive (then STRONG).",
+      "tests": {
+        "positive": [
+          "fixture receives exact bytes"
+        ],
+        "negative": [
+          "unstaged path refused",
+          "different origin refused"
+        ],
+        "recovery": [],
+        "e2e": []
+      },
+      "performance": "n/a",
+      "ci": "native",
+      "depends_on": [
+        "BR-02"
+      ],
+      "acceptance": [
+        "byte-exact fixture check"
+      ],
+      "done": "Merged.",
+      "rollback": "Frame refused.",
+      "estimate": "3-4",
+      "authority_delta": "New approval-gated egress.",
+      "proposed_grain": "SG-000122",
+      "reuse": {
+        "before": "COPY_ADAPT",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "3-4",
+        "estimate_with_reuse_days": "3-4",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
+    },
+    {
+      "id": "BR-04",
+      "phase": "B2",
+      "title": "Interactivity and occlusion heuristics in observation",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "Mark clickable generic nodes and occluded targets using DOMSnapshot data so the model sees what is actually actionable.",
+      "user_visible": "Higher success on sites with div-buttons and overlays.",
+      "existing_orcel": [
+        "apps/orcel-browser-worker/src/extract/model.ts (DOMSnapshot with layout and styles)"
+      ],
+      "donor": "browser-use@c75e8476e26d18b7617643bc2ae082fae8eae431",
+      "donor_files": [
+        "browser_use/dom/serializer/clickable_elements.py",
+        "browser_use/dom/serializer/paint_order.py"
+      ],
+      "method": "PORT",
+      "orcel_files": {
+        "create": [
+          "apps/orcel-browser-worker/src/observe/interactive.ts",
+          "apps/orcel-browser-worker/src/observe/occlusion.ts"
+        ],
+        "change": [
+          "apps/orcel-browser-worker/src/snapshot.ts"
+        ]
+      },
+      "dependencies": "none",
+      "steps": [
+        "Port heuristics against the snapshot already captured for extraction; no new CDP domains.",
+        "Occluded target -> host refuses activation with typed reason."
+      ],
+      "interfaces": "node flags: interactive, occluded",
+      "platforms": {
+        "all": "same"
+      },
+      "security": "Read-only analysis.",
+      "tests": {
+        "positive": [
+          "donor's cases ported"
+        ],
+        "negative": [
+          "overlay covering a button -> occluded"
+        ],
+        "recovery": [],
+        "e2e": []
+      },
+      "performance": "Observation time budget unchanged (4 s).",
+      "ci": "worker tests",
+      "depends_on": [
+        "BR-01"
+      ],
+      "acceptance": [
+        "ported donor cases green"
+      ],
+      "done": "Merged with MIT notice.",
+      "rollback": "Flags omitted.",
+      "estimate": "3-4",
+      "authority_delta": "none",
+      "proposed_grain": "SG-000121",
+      "reuse": {
+        "before": "PORT",
+        "after": "PORT",
+        "estimate_build_new_days": "3-4",
+        "estimate_with_reuse_days": "3-4",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
+    },
+    {
+      "id": "BR-05",
+      "phase": "B2",
+      "title": "Tabs, popups and dialogs as typed, host-admitted events",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "List/select/close tabs inside one lifetime, admit popups through the navigation policy, and handle JavaScript dialogs with default-dismiss.",
+      "user_visible": "Flows that open a new tab or show a confirm dialog work.",
+      "existing_orcel": [
+        "crates/orcel-browser-host/src/navigation.rs (popup decisions)"
+      ],
+      "donor": "playwright@1b025d7e20a026371cd5f98ba0cdce48892737c8",
+      "donor_files": [
+        "packages/playwright-core/src/tools/backend/tabs.ts",
+        "packages/playwright-core/src/tools/backend/dialogs.ts"
+      ],
+      "method": "COPY_ADAPT",
+      "orcel_files": {
+        "create": [
+          "apps/orcel-browser-worker/src/actions/tabs.ts",
+          "apps/orcel-browser-worker/src/actions/dialogs.ts"
+        ],
+        "change": [
+          "apps/orcel-browser-worker/src/protocol.ts",
+          "crates/orcel-browser-host/src/proto.rs"
+        ]
+      },
+      "dependencies": "none",
+      "steps": [
+        "Tab ids are host-issued.",
+        "Dialog accept is its own SOFT action with the dialog text digest."
+      ],
+      "interfaces": "frames tab_list, tab_select, tab_close, dialog_respond",
+      "platforms": {
+        "all": "same"
+      },
+      "security": "Popup to non-admitted origin closed.",
+      "tests": {
+        "positive": [
+          "popup fixture"
+        ],
+        "negative": [
+          "popup to other origin closed",
+          "dialog auto-dismissed without approval"
+        ],
+        "recovery": [],
+        "e2e": []
+      },
+      "performance": "n/a",
+      "ci": "native",
+      "depends_on": [
+        "BR-02"
+      ],
+      "acceptance": [
+        "fixtures"
+      ],
+      "done": "Merged.",
+      "rollback": "Single-tab mode.",
+      "estimate": "3-4",
+      "authority_delta": "New approval-gated dialog response.",
+      "proposed_grain": "SG-000122",
+      "reuse": {
+        "before": "COPY_ADAPT",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "3-4",
+        "estimate_with_reuse_days": "3-4",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
+    },
+    {
+      "id": "BR-06",
+      "phase": "B3",
+      "title": "Cross-frame observation (iframes and out-of-process iframes)",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "Observe and target elements inside same-origin and admitted cross-origin frames using Stagehand's CDP-only stitching.",
+      "user_visible": "Embedded checkout and document viewers work.",
+      "existing_orcel": [
+        "apps/orcel-browser-worker/src/snapshot.ts (main document)"
+      ],
+      "donor": "stagehand@f261c38b4dc50c39485f924e8599c1d3c6e37dc7",
+      "donor_files": [
+        "packages/extension/understudy/a11y/snapshot"
+      ],
+      "method": "COPY_ADAPT",
+      "orcel_files": {
+        "create": [
+          "apps/orcel-browser-worker/src/observe/frames.ts"
+        ],
+        "change": [
+          "apps/orcel-browser-worker/src/snapshot.ts"
+        ]
+      },
+      "dependencies": "none",
+      "steps": [
+        "Drop resolveObjectIdForXPath and every Runtime.* call.",
+        "Cross-origin frames only when the frame origin is in the lifetime's admitted set."
+      ],
+      "interfaces": "refs gain frame prefix (already f\\d+e\\d+ in the REF pattern)",
+      "platforms": {
+        "all": "same"
+      },
+      "security": "Frame admission by host.",
+      "tests": {
+        "positive": [
+          "nested frame fixture"
+        ],
+        "negative": [
+          "non-admitted cross-origin frame omitted"
+        ],
+        "recovery": [],
+        "e2e": []
+      },
+      "performance": "Observation budget.",
+      "ci": "native",
+      "depends_on": [
+        "BR-01"
+      ],
+      "acceptance": [
+        "fixtures"
+      ],
+      "done": "Merged with MIT notice.",
+      "rollback": "Main document only.",
+      "estimate": "4-5",
+      "authority_delta": "none",
+      "proposed_grain": "SG-000122",
+      "reuse": {
+        "before": "COPY_ADAPT",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "4-5",
+        "estimate_with_reuse_days": "4-5",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
+    },
+    {
+      "id": "BR-07",
+      "phase": "B1",
+      "title": "Independent postcondition verifier for browser steps",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "Every proposal may carry expected postconditions (element visible, text visible, value equals, URL matches, download hash); the host verifies them after the step and records evidence; a model summary is never accepted as completion.",
+      "user_visible": "Task results show 'verified' only with evidence.",
+      "existing_orcel": [
+        "crates/orcel-browser-host/src/observation.rs"
+      ],
+      "donor": "playwright@1b025d7e20a026371cd5f98ba0cdce48892737c8",
+      "donor_files": [
+        "packages/playwright-core/src/tools/backend/verify.ts"
+      ],
+      "method": "COPY_ADAPT",
+      "orcel_files": {
+        "create": [
+          "apps/orcel-browser-worker/src/verify.ts",
+          "crates/orcel-browser-host/src/verify.rs"
+        ],
+        "change": [
+          "apps/orcel-browser-worker/src/protocol.ts"
+        ]
+      },
+      "dependencies": "none",
+      "steps": [
+        "Worker probes are read-only locator counts; host decides pass/fail and journals evidence."
+      ],
+      "interfaces": "frame verify {checks[]} -> {results[]}",
+      "platforms": {
+        "all": "same"
+      },
+      "security": "Read-only.",
+      "tests": {
+        "positive": [
+          "pass on fixture"
+        ],
+        "negative": [
+          "text present but hidden -> fail"
+        ],
+        "recovery": [],
+        "e2e": [
+          "journey verified"
+        ]
+      },
+      "performance": "n/a",
+      "ci": "native",
+      "depends_on": [
+        "BR-01",
+        "RJ-01"
+      ],
+      "acceptance": [
+        "journey results carry evidence references"
+      ],
+      "done": "Merged.",
+      "rollback": "Unverified status shown.",
+      "estimate": "3-4",
+      "authority_delta": "none",
+      "proposed_grain": "SG-000121",
+      "reuse": {
+        "before": "COPY_ADAPT",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "3-4",
+        "estimate_with_reuse_days": "3-4",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
+    },
+    {
+      "id": "BR-08",
+      "phase": "B3",
+      "title": "Native WebMCP over the CDP WebMCP domain",
+      "status": "FOUNDER_DECISION_REQUIRED",
+      "objective": "Replace the host-constructed read-only evaluation used by slices 4/5 with the engine's native WebMCP domain once the experimental flag is admitted by an SG-000074 argv amendment.",
+      "user_visible": "Imperative WebMCP tools on sites that publish them.",
+      "existing_orcel": [
+        "apps/orcel-browser-worker/src/webmcp/*",
+        "crates/orcel-browser-host/src/webmcp.rs"
+      ],
+      "donor": "stagehand@f261c38b4dc50c39485f924e8599c1d3c6e37dc7",
+      "donor_files": [
+        "packages/extension/understudy/page.ts"
+      ],
+      "method": "COPY_ADAPT",
+      "orcel_files": {
+        "create": [
+          "apps/orcel-browser-worker/src/webmcp/native.ts"
+        ],
+        "change": [
+          "crates/orcel-browser-host/src/argv.rs"
+        ]
+      },
+      "dependencies": "none",
+      "steps": [
+        "Security review of the flag; argv amendment; then client."
+      ],
+      "interfaces": "existing webmcp frames",
+      "platforms": {
+        "all": "same"
+      },
+      "security": "Argv amendment is an authority change.",
+      "tests": {
+        "positive": [],
+        "negative": [],
+        "recovery": [],
+        "e2e": []
+      },
+      "performance": "n/a",
+      "ci": "native",
+      "depends_on": [
+        "BR-02",
+        "FD-08"
+      ],
+      "acceptance": [
+        "argv amendment approved"
+      ],
+      "done": "Merged.",
+      "rollback": "Declarative path only.",
+      "estimate": "4-6",
+      "authority_delta": "Engine flag admission.",
+      "proposed_grain": "SG-000123",
+      "reuse": {
+        "before": "COPY_ADAPT",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "4-6",
+        "estimate_with_reuse_days": "4-6",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
+    },
+    {
+      "id": "WI-01",
+      "phase": "B2",
+      "title": "Crawl scope from Firecrawl: regex include/exclude, canonical URLs, sitemap depth guard",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "Replace the prefix-only include/exclude of crawl.rs with Firecrawl's tested filter semantics under strict regex limits, keeping every existing crawl test green.",
+      "user_visible": "Crawl and map honor patterns users already know from Firecrawl.",
+      "existing_orcel": [
+        "crates/orcel-browser-host/src/crawl.rs ('no Firecrawl code is copied'; path prefixes, MAX_PATH_PATTERNS 16)",
+        "crates/orcel-browser-host/src/robots.rs"
+      ],
+      "donor": "firecrawl@f84845c864b6e2af22791c18fcf89ac2a21f1434",
+      "donor_files": [
+        "apps/api/native/src/crawler.rs",
+        "apps/api/src/lib/crawl-regex.ts",
+        "apps/api/src/lib/canonical-url.ts"
+      ],
+      "method": "COPY_ADAPT",
+      "orcel_files": {
+        "create": [
+          "crates/orcel-browser-host/src/crawl_scope.rs",
+          "docs/orcel/notices/firecrawl-AGPL-with-founder-authorization.txt"
+        ],
+        "change": [
+          "crates/orcel-browser-host/src/crawl.rs",
+          "crates/orcel-browser-host/Cargo.toml"
+        ]
+      },
+      "dependencies": "regex (MIT/Apache) with RegexBuilder size_limit(1 MiB) and dfa_size_limit; url (already used?) verify; roxmltree (MIT/Apache) only if existing sitemap parsing is replaced.",
+      "steps": [
+        "Copy filter_links/filter_url/validate_regexes; remove napi and tokio; patterns compiled once per crawl with size limits; max 16 patterns of 256 bytes (existing bounds).",
+        "Keep prefix patterns working (a prefix is a literal regex anchor).",
+        "Port canonical-url normalization for dedup.",
+        "Compare existing sitemap parser with parse_sitemap_xml on a corpus; switch only if it fixes a failing case; record the decision."
+      ],
+      "interfaces": "crawl request gains pattern_kind: prefix|regex (default prefix for compatibility)",
+      "platforms": {
+        "all": "same"
+      },
+      "security": "ReDoS bounded by regex crate (no backtracking) plus size limits.",
+      "tests": {
+        "positive": [
+          "Firecrawl's crawler.rs unit cases ported"
+        ],
+        "negative": [
+          "oversize regex refused",
+          "external link with regex match still refused by origin policy"
+        ],
+        "recovery": [],
+        "e2e": [
+          "controlled-site crawl"
+        ]
+      },
+      "performance": "M-WI-01 crawl throughput unchanged within 10%.",
+      "ci": "Rust legs + native",
+      "depends_on": [
+        "SG-000108-CLOSE"
+      ],
+      "acceptance": [
+        "existing crawl tests unchanged and green",
+        "AGPL notice + founder authorization reference in provenance"
+      ],
+      "done": "Merged.",
+      "rollback": "pattern_kind regex refused.",
+      "estimate": "3-4",
+      "authority_delta": "none",
+      "proposed_grain": "SG-000102",
+      "reuse": {
+        "before": "COPY_ADAPT",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "3-4",
+        "estimate_with_reuse_days": "3-4",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
+    },
+    {
+      "id": "WI-02",
+      "phase": "B2",
+      "title": "Map with a search term: local ranking",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "Rank mapped URLs (sitemap + links) against a query locally, without Firecrawl's hosted index.",
+      "user_visible": "map(site, search='pricing') returns the most relevant pages first.",
+      "existing_orcel": [
+        "crates/orcel-browser-host/src/crawl.rs (map)"
+      ],
+      "donor": "firecrawl@f84845c864b6e2af22791c18fcf89ac2a21f1434",
+      "donor_files": [
+        "apps/api/src/lib/map-cosine.ts"
+      ],
+      "method": "PORT",
+      "orcel_files": {
+        "create": [
+          "crates/orcel-browser-host/src/map_rank.rs"
+        ],
+        "change": [
+          "crates/orcel-browser-host/src/crawl.rs"
+        ]
+      },
+      "dependencies": "none",
+      "steps": [
+        "Port tokenization + cosine scoring over URL path tokens and titles."
+      ],
+      "interfaces": "map request field search (bounded 256 bytes)",
+      "platforms": {
+        "all": "same"
+      },
+      "security": "Local only.",
+      "tests": {
+        "positive": [
+          "ranking vectors"
+        ],
+        "negative": [
+          "empty search -> original order"
+        ],
+        "recovery": [],
+        "e2e": []
+      },
+      "performance": "n/a",
+      "ci": "Rust",
+      "depends_on": [
+        "WI-01"
+      ],
+      "acceptance": [
+        "vectors"
+      ],
+      "done": "Merged.",
+      "rollback": "Field ignored.",
+      "estimate": "1-2",
+      "authority_delta": "none",
+      "proposed_grain": "SG-000102",
+      "reuse": {
+        "before": "PORT",
+        "after": "PORT",
+        "estimate_build_new_days": "1-2",
+        "estimate_with_reuse_days": "1-2",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
+    },
+    {
+      "id": "WI-03",
+      "phase": "B2",
+      "title": "Relevance filters for extraction (BM25 and pruning)",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "Optional query-focused extraction that keeps relevant blocks and drops boilerplate, reducing tokens sent to the client model.",
+      "user_visible": "extract(page, query='refund policy') returns the relevant section.",
+      "existing_orcel": [
+        "apps/orcel-browser-worker/src/extract/*"
+      ],
+      "donor": "crawl4ai@94b67888ca8b335ff2121423a50e06dd27661922",
+      "donor_files": [
+        "crawl4ai/content_filter_strategy.py"
+      ],
+      "method": "PORT",
+      "orcel_files": {
+        "create": [
+          "apps/orcel-browser-worker/src/extract/relevance.ts",
+          "docs/orcel/notices/crawl4ai-Apache-2.0-attribution.txt"
+        ],
+        "change": [
+          "apps/orcel-browser-worker/src/extract/index.ts",
+          "scripts/third-party-notices.mjs"
+        ]
+      },
+      "dependencies": "none",
+      "steps": [
+        "Port BM25ContentFilter and PruningContentFilter over Orcel's content model blocks.",
+        "Add the exact crawl4ai attribution sentence to THIRD_PARTY_NOTICES and the About surface."
+      ],
+      "interfaces": "extract option relevance {query, method: bm25|pruning, threshold}",
+      "platforms": {
+        "all": "same"
+      },
+      "security": "Still untrusted page text.",
+      "tests": {
+        "positive": [
+          "ported cases"
+        ],
+        "negative": [
+          "empty query -> no filtering"
+        ],
+        "recovery": [],
+        "e2e": []
+      },
+      "performance": "M-WI-02 token reduction on fixture pages.",
+      "ci": "worker tests",
+      "depends_on": [
+        "SG-000108-CLOSE"
+      ],
+      "acceptance": [
+        "attribution present"
+      ],
+      "done": "Merged.",
+      "rollback": "Option refused.",
+      "estimate": "2-3",
+      "authority_delta": "none",
+      "proposed_grain": "SG-000101",
+      "reuse": {
+        "before": "PORT",
+        "after": "PORT",
+        "estimate_build_new_days": "2-3",
+        "estimate_with_reuse_days": "2-3",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
+    },
+    {
+      "id": "WI-04",
+      "phase": "B3",
+      "title": "Change tracking between extractions",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "Store the last extraction per canonical URL in the workspace and return a diff on the next one.",
+      "user_visible": "'What changed on this page since last week?'",
+      "existing_orcel": [],
+      "donor": "firecrawl@f84845c864b6e2af22791c18fcf89ac2a21f1434",
+      "donor_files": [
+        "apps/api/src/lib/change-tracking-diff.ts"
+      ],
+      "method": "PORT",
+      "orcel_files": {
+        "create": [
+          "crates/orcel-browser-host/src/change_tracking.rs"
+        ],
+        "change": []
+      },
+      "dependencies": "similar (MIT/Apache) for diff",
+      "steps": [
+        "Workspace-scoped store; bounded size; user can clear."
+      ],
+      "interfaces": "extract option track_changes",
+      "platforms": {
+        "all": "same"
+      },
+      "security": "Stored page text is workspace data.",
+      "tests": {
+        "positive": [
+          "diff"
+        ],
+        "negative": [
+          "store over bound evicts oldest"
+        ],
+        "recovery": [],
+        "e2e": []
+      },
+      "performance": "n/a",
+      "ci": "Rust",
+      "depends_on": [
+        "WI-01"
+      ],
+      "acceptance": [
+        "tests"
+      ],
+      "done": "Merged.",
+      "rollback": "Option refused.",
+      "estimate": "2",
+      "authority_delta": "none",
+      "proposed_grain": "SG-000102",
+      "reuse": {
+        "before": "PORT",
+        "after": "PORT",
+        "estimate_build_new_days": "2",
+        "estimate_with_reuse_days": "2",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
+    },
+    {
+      "id": "WI-05",
+      "phase": "B3",
+      "title": "Confined document parser for downloaded PDF and Office files",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "Convert an approved, already-downloaded file to Markdown in a separate confined process, never inside the browser or orceld.",
+      "user_visible": "Summarize the PDF the agent just downloaded.",
+      "existing_orcel": [
+        "SG-000078 inert downloads"
+      ],
+      "donor": "firecrawl@f84845c864b6e2af22791c18fcf89ac2a21f1434",
+      "donor_files": [
+        "apps/api/native/src/pdf.rs",
+        "apps/api/native/src/document.rs"
+      ],
+      "method": "COPY_ADAPT",
+      "orcel_files": {
+        "create": [
+          "apps/orcel-doc-parser/Cargo.toml",
+          "apps/orcel-doc-parser/src/main.rs",
+          "apps/orcel-doc-parser/src/pdf.rs",
+          "apps/orcel-doc-parser/src/document.rs"
+        ],
+        "change": []
+      },
+      "dependencies": "pdf-inspector 1.21 and anydoc 0.2.2: licenses to be verified at admission (not inspected here); zip with deflate only.",
+      "steps": [
+        "Parser process launched through the apps/orcel-contain helper (XP-13, copied from Cua containment): no network, read only its input file, write only its output pipe, no fork, rlimits; stdin bytes ≤50 MiB, stdout Markdown bounded; 30 s timeout.",
+        "Macros and external links never evaluated."
+      ],
+      "interfaces": "orcel-doc-parser/1 frames",
+      "platforms": {
+        "all": "process confinement per XP-13"
+      },
+      "security": "Parser bugs contained in a no-network, no-write process.",
+      "tests": {
+        "positive": [
+          "fixture PDF/DOCX"
+        ],
+        "negative": [
+          "zip bomb bounded",
+          "malformed PDF -> typed error"
+        ],
+        "recovery": [
+          "timeout kills process"
+        ],
+        "e2e": []
+      },
+      "performance": "n/a",
+      "ci": "all legs",
+      "depends_on": [
+        "XP-13"
+      ],
+      "acceptance": [
+        "fuzz 10 minutes without crash escaping the process"
+      ],
+      "done": "Merged.",
+      "rollback": "Unavailable.",
+      "estimate": "2-3",
+      "authority_delta": "New local read of an approved file.",
+      "proposed_grain": "SG-000102",
+      "reuse": {
+        "before": "COPY_ADAPT",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "4-6",
+        "estimate_with_reuse_days": "2-3",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [
+          "WI-05's sandbox saving is counted here (4-6 → 2-3), not again under XP-13"
+        ],
+        "matrix_rows": [
+          "T-FC-06",
+          "T-FC-07",
+          "T-CUA-21",
+          "T-CUA-22"
+        ]
+      }
+    },
+    {
+      "id": "WI-06",
+      "phase": "B3",
+      "title": "Optional search adapters behind the capability router",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "web_search through a self-hosted SearXNG or a user-supplied API key (Brave, Tavily, Exa, Serper); never mandatory, never Orcel-paid.",
+      "user_visible": "Research tasks can search when the user configures a provider.",
+      "existing_orcel": [
+        "crates/orcel-provider-network (HTTPS GET with public-address pinning)",
+        "SG-000103 router plan"
+      ],
+      "donor": "agent-reach@a19a171fa980a0785849596492e0af4db800c82f",
+      "donor_files": [
+        "agent_reach/channels/base.py",
+        "agent_reach/probe.py",
+        "agent_reach/doctor.py"
+      ],
+      "method": "PORT",
+      "orcel_files": {
+        "create": [
+          "crates/orceld/src/search.rs"
+        ],
+        "change": [
+          "apps/orcel-mcp/src/tool_contract.ts"
+        ]
+      },
+      "dependencies": "none",
+      "steps": [
+        "Provider registry with probe/doctor semantics; API keys in XP-19 secret store; egress to the configured host only."
+      ],
+      "interfaces": "web_search {query, provider?}",
+      "platforms": {
+        "all": "same"
+      },
+      "security": "Key never in tool output; network policy pins destination.",
+      "tests": {
+        "positive": [
+          "local fake search provider"
+        ],
+        "negative": [
+          "no provider -> unavailable"
+        ],
+        "recovery": [],
+        "e2e": []
+      },
+      "performance": "n/a",
+      "ci": "all legs",
+      "depends_on": [
+        "XP-19"
+      ],
+      "acceptance": [
+        "doctor reports provider health without secrets"
+      ],
+      "done": "Merged.",
+      "rollback": "Tool unavailable.",
+      "estimate": "3-4",
+      "authority_delta": "New network tool, SOFT-gated egress.",
+      "proposed_grain": "SG-000103",
+      "reuse": {
+        "before": "PORT",
+        "after": "PORT",
+        "estimate_build_new_days": "3-4",
+        "estimate_with_reuse_days": "3-4",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
+    },
+    {
+      "id": "SX-01",
+      "phase": "S1",
+      "title": "orcel-sandbox crate: Runtime trait and rootless container backend (Linux)",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "Optional isolated workspaces for code execution, starting with rootless Podman + gVisor runsc on Linux, through a Runtime trait taken from cua-vmm.",
+      "user_visible": "Run untrusted code in a disposable Linux sandbox.",
+      "existing_orcel": [],
+      "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "donor_files": [
+        "libs/cua/crates/cua-vmm/src/runtime.rs",
+        "libs/cua/crates/cua-vmm/src/container",
+        "libs/cua/crates/cua-vmm/src/types.rs",
+        "libs/cua/crates/cua-vmm/src/exec.rs"
+      ],
+      "method": "COPY_ADAPT",
+      "orcel_files": {
+        "create": [
+          "crates/orcel-sandbox/**"
+        ],
+        "change": [
+          "Cargo.toml"
+        ]
+      },
+      "dependencies": "bollard (Apache-2.0) only if Docker API is used; prefer podman CLI subprocess with pinned path to avoid a large dep. Decide in task with SBOM numbers.",
+      "steps": [
+        "Copy Runtime trait and types; remove auto.rs provisioning and managed downloads.",
+        "Backend: podman run --runtime=runsc --network=none by default; workspace mount read-only unless granted.",
+        "Lifecycle verbs: start, stop, exec, delete; suspend/fork/checkpoint unavailable for containers.",
+        "Expose nothing over MCP in this task."
+      ],
+      "interfaces": "trait SandboxRuntime (subset of cua-vmm Runtime)",
+      "platforms": {
+        "linux": "rootless podman + runsc",
+        "macos": "SX-03",
+        "windows": "SX-02"
+      },
+      "security": "Not required for basic computer use. No root.",
+      "tests": {
+        "positive": [
+          "exec echo in sandbox"
+        ],
+        "negative": [
+          "network none blocks egress",
+          "write to host path denied"
+        ],
+        "recovery": [
+          "orceld crash -> orphan containers swept by label"
+        ],
+        "e2e": []
+      },
+      "performance": "Cold start measured.",
+      "ci": "ubuntu leg with podman",
+      "depends_on": [
+        "XP-13",
+        "RJ-01"
+      ],
+      "acceptance": [
+        "tests on ubuntu-latest"
+      ],
+      "done": "Merged.",
+      "rollback": "Crate unused.",
+      "estimate": "5-7",
+      "authority_delta": "none until SX-06",
+      "proposed_grain": "SG-000124",
+      "reuse": {
+        "before": "COPY_ADAPT",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "5-7",
+        "estimate_with_reuse_days": "5-7",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
+    },
+    {
+      "id": "SX-02",
+      "phase": "S2",
+      "title": "QEMU backend (KVM, HVF, WHPX) with pinned binaries",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "VM-backed sandboxes on all three hosts through cua-vmm's qemu backend.",
+      "user_visible": "Disposable VM workspaces.",
+      "existing_orcel": [],
+      "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "donor_files": [
+        "libs/cua/crates/cua-vmm/src/qemu",
+        "libs/cua/crates/cua-vmm/src/cloudinit.rs",
+        "libs/cua/crates/cua-vmm/src/disk.rs"
+      ],
+      "method": "COPY_ADAPT",
+      "orcel_files": {
+        "create": [
+          "crates/orcel-sandbox/src/qemu/**"
+        ],
+        "change": []
+      },
+      "dependencies": "QEMU binaries are a user-installed prerequisite or a separately admitted pinned download; never fetched at runtime.",
+      "steps": [
+        "Remove 'fetch QEMU when absent'.",
+        "Images pinned by digest."
+      ],
+      "interfaces": "SandboxRuntime",
+      "platforms": {
+        "linux": "KVM",
+        "macos": "HVF",
+        "windows": "WHPX (Windows Hypervisor Platform must be enabled by the user)"
+      },
+      "security": "VNC disabled by default; no published ports.",
+      "tests": {
+        "positive": [
+          "boot + exec"
+        ],
+        "negative": [
+          "no accelerator -> unavailable unless user opts into TCG"
+        ],
+        "recovery": [],
+        "e2e": []
+      },
+      "performance": "Boot time measured.",
+      "ci": "manual",
+      "depends_on": [
+        "SX-01"
+      ],
+      "acceptance": [
+        "boot on three OS hosts"
+      ],
+      "done": "Merged.",
+      "rollback": "Unavailable.",
+      "estimate": "6-8",
+      "authority_delta": "none until SX-06",
+      "proposed_grain": "SG-000124",
+      "reuse": {
+        "before": "COPY_ADAPT",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "6-8",
+        "estimate_with_reuse_days": "6-8",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
+    },
+    {
+      "id": "SX-03",
+      "phase": "S2",
+      "title": "Lume backend on macOS (Apple Virtualization)",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "macOS and Linux guests on Apple silicon via a pinned lume CLI subprocess.",
+      "user_visible": "Disposable macOS VM workspaces on a Mac.",
+      "existing_orcel": [],
+      "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "donor_files": [
+        "libs/lume",
+        "libs/cua/crates/cua-vmm/src/lume"
+      ],
+      "method": "WRAP",
+      "orcel_files": {
+        "create": [
+          "crates/orcel-sandbox/src/lume.rs"
+        ],
+        "change": []
+      },
+      "dependencies": "lume binary verified by code signature.",
+      "steps": [
+        "Never run 'lume serve'; telemetry off; per-VM random guest credential replaces lume/lume."
+      ],
+      "interfaces": "SandboxRuntime",
+      "platforms": {
+        "macos": "Apple silicon only"
+      },
+      "security": "Default credentials are a documented upstream behavior and must be replaced.",
+      "tests": {
+        "positive": [
+          "create/run/stop"
+        ],
+        "negative": [
+          "default credential login refused after provisioning"
+        ],
+        "recovery": [],
+        "e2e": []
+      },
+      "performance": "n/a",
+      "ci": "self-hosted macOS",
+      "depends_on": [
+        "SX-01",
+        "XP-16"
+      ],
+      "acceptance": [
+        "checklist"
+      ],
+      "done": "Merged.",
+      "rollback": "Unavailable.",
+      "estimate": "4-5",
+      "authority_delta": "none until SX-06",
+      "proposed_grain": "SG-000124",
+      "reuse": {
+        "before": "WRAP",
+        "after": "WRAP",
+        "estimate_build_new_days": "4-5",
+        "estimate_with_reuse_days": "4-5",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
+    },
+    {
+      "id": "SX-04",
+      "phase": "S3",
+      "title": "Firecracker microVM backend (Linux with /dev/kvm)",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "Fast snapshot/restore microVMs from SPACE's node runtime pieces.",
+      "user_visible": "Sub-second sandbox resume on Linux servers and workstations with KVM.",
+      "existing_orcel": [],
+      "donor": "space@09e922efd23b3c0d109ab64de7e567a901bcc61e",
+      "donor_files": [
+        "crates/libs/node/runtime/core/src/fc_api",
+        "crates/libs/node/runtime/core/src/fc_api.rs",
+        "crates/libs/node/runtime/core/src/snapshot_files.rs"
+      ],
+      "method": "COPY_ADAPT",
+      "orcel_files": {
+        "create": [
+          "crates/orcel-sandbox/src/firecracker/**"
+        ],
+        "change": []
+      },
+      "dependencies": "firecracker binary pinned; edition 2024 crates kept as edition 2024 (toolchain 1.97.1 supports it).",
+      "steps": [
+        "Strip gRPC/tonic and SPACE common_svc; keep the API client and snapshot layout."
+      ],
+      "interfaces": "SandboxRuntime with suspend/resume",
+      "platforms": {
+        "linux": "KVM only"
+      },
+      "security": "jailer used; no network by default.",
+      "tests": {
+        "positive": [
+          "boot/suspend/resume"
+        ],
+        "negative": [
+          "no kvm -> unavailable"
+        ],
+        "recovery": [],
+        "e2e": []
+      },
+      "performance": "Resume time measured.",
+      "ci": "manual on a KVM host",
+      "depends_on": [
+        "SX-01"
+      ],
+      "acceptance": [
+        "checklist"
+      ],
+      "done": "Merged with Apache-2.0 notice.",
+      "rollback": "Unavailable.",
+      "estimate": "6-8",
+      "authority_delta": "none until SX-06",
+      "proposed_grain": "SG-000124",
+      "reuse": {
+        "before": "COPY_ADAPT",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "6-8",
+        "estimate_with_reuse_days": "6-8",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
+    },
+    {
+      "id": "SX-05",
+      "phase": "S3",
+      "title": "Guest agent for VM sandboxes (process, files, idempotency)",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "A small in-guest agent over vsock/virtio-serial adapted from SPACE's guest service.",
+      "user_visible": "Run commands and move files inside VM sandboxes.",
+      "existing_orcel": [],
+      "donor": "space@09e922efd23b3c0d109ab64de7e567a901bcc61e",
+      "donor_files": [
+        "crates/libs/spaced/guest/server/src/process.rs",
+        "crates/libs/spaced/guest/server/src/idempotency.rs",
+        "crates/libs/spaced/guest/server/src/filesystem.rs"
+      ],
+      "method": "COPY_ADAPT",
+      "orcel_files": {
+        "create": [
+          "apps/orcel-guest-agent/**"
+        ],
+        "change": []
+      },
+      "dependencies": "Replace tonic gRPC with Orcel JSON-lines frames to keep the guest small.",
+      "steps": [
+        "Port process and filesystem services; keep 'caller disconnect never cancels accepted start'."
+      ],
+      "interfaces": "orcel-guest/1",
+      "platforms": {
+        "guest": "Linux"
+      },
+      "security": "Guest is untrusted; host validates every reply.",
+      "tests": {
+        "positive": [
+          "exec, upload, download"
+        ],
+        "negative": [
+          "oversize frame refused"
+        ],
+        "recovery": [
+          "host reconnect -> idempotent replay of unacknowledged request id"
+        ],
+        "e2e": []
+      },
+      "performance": "n/a",
+      "ci": "unit",
+      "depends_on": [
+        "SX-02"
+      ],
+      "acceptance": [
+        "tests"
+      ],
+      "done": "Merged.",
+      "rollback": "Unavailable.",
+      "estimate": "5-7",
+      "authority_delta": "none until SX-06",
+      "proposed_grain": "SG-000124",
+      "reuse": {
+        "before": "COPY_ADAPT",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "5-7",
+        "estimate_with_reuse_days": "5-7",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
+    },
+    {
+      "id": "SX-06",
+      "phase": "S3",
+      "title": "Sandbox MCP exposure with approvals",
+      "status": "FOUNDER_DECISION_REQUIRED",
+      "objective": "sandbox_create/exec/files/delete tools gated by policy.",
+      "user_visible": "AI clients can run code in a sandbox.",
+      "existing_orcel": [
+        "apps/orcel-mcp/src/tool_contract.ts"
+      ],
+      "donor": null,
+      "donor_files": [],
+      "method": "BUILD_NEW",
+      "orcel_files": {
+        "create": [],
+        "change": [
+          "apps/orcel-mcp/src/tool_contract.ts",
+          "crates/orceld/src/main.rs"
+        ]
+      },
+      "dependencies": "n/a",
+      "steps": [
+        "Tool contract governance; approval classes."
+      ],
+      "interfaces": "new tools",
+      "platforms": {
+        "all": "per backend availability"
+      },
+      "security": "New authority.",
+      "tests": {
+        "positive": [],
+        "negative": [],
+        "recovery": [],
+        "e2e": []
+      },
+      "performance": "n/a",
+      "ci": "all",
+      "depends_on": [
+        "SX-01"
+      ],
+      "acceptance": [
+        "governance"
+      ],
+      "done": "Merged.",
+      "rollback": "Remove tools.",
+      "estimate": "4-6",
+      "authority_delta": "New tools.",
+      "proposed_grain": "SG-000125",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "BUILD_NEW",
+        "estimate_build_new_days": "4-6",
+        "estimate_with_reuse_days": "4-6",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": [],
+        "build_new_justification": "Tool-contract and approval-class work in Orcel's governed MCP surface; donor MCP tools would be a second authority."
+      }
+    },
+    {
+      "id": "BM-01",
+      "phase": "X0",
+      "title": "Benchmark and conformance reporting format and dashboard file",
+      "status": "READY",
+      "objective": "One JSON schema for native conformance cells and task benchmark runs, checked into docs, so every later task reports comparable numbers.",
+      "user_visible": "None.",
+      "existing_orcel": [
+        "docs/orcel/BENCHMARK_AND_E2E_PLAN.md"
+      ],
+      "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "donor_files": [
+        "libs/cua-driver/docs/test-matrix.md (REFERENCE dimensions)",
+        "libs/cua-driver/docs/e2e-results-summary-design.md (REFERENCE)"
+      ],
+      "method": "BUILD_NEW",
+      "orcel_files": {
+        "create": [
+          "docs/orcel/implementation-readiness/protocol/BENCHMARK_REPORT_1.schema.json",
+          "scripts/check-benchmark-report.mjs"
+        ],
+        "change": []
+      },
+      "dependencies": "none",
+      "steps": [
+        "Schema per BENCHMARK_AND_E2E.md section 3.",
+        "Checker validates reports attached to PRs."
+      ],
+      "interfaces": "schema",
+      "platforms": {
+        "all": "n/a"
+      },
+      "security": "Reports carry no secrets or page text.",
+      "tests": {
+        "positive": [
+          "sample report validates"
+        ],
+        "negative": [
+          "missing os/commit fails"
+        ],
+        "recovery": [],
+        "e2e": []
+      },
+      "performance": "n/a",
+      "ci": "governance job runs the checker on changed reports",
+      "depends_on": [],
+      "acceptance": [
+        "schema + checker merged"
+      ],
+      "done": "Merged.",
+      "rollback": "Remove.",
+      "estimate": "1",
+      "authority_delta": "none",
+      "proposed_grain": "SG-000109",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "BUILD_NEW",
+        "estimate_build_new_days": "1",
+        "estimate_with_reuse_days": "1",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": [],
+        "build_new_justification": "A ~1-day schema; Cua's e2e results-summary design is used as REFERENCE for dimensions."
+      }
+    },
+    {
+      "id": "BM-02",
+      "phase": "X6",
+      "title": "Task benchmark runner with local fixtures (cua-bench task format)",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "Run fixed task sets through a deterministic planner or a pinned external client against Orcel, collecting success, steps, model calls, tokens, latency P50/P95 and memory.",
+      "user_visible": "None; evidence for claims.",
+      "existing_orcel": [
+        "docs/security/SG-000108_TESTERARMY_E2E.md"
+      ],
+      "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "donor_files": [
+        "libs/cua-bench/cua_bench (MIT; runner, task loader, oracle flow)",
+        "benchmarks/cua-driver-bench/taskpack (FSL, FD-04; starting task set with per-file provenance)"
+      ],
+      "method": "COPY_ADAPT",
+      "orcel_files": {
+        "create": [
+          "tests/benchmarks/**"
+        ],
+        "change": []
+      },
+      "dependencies": "Python only in the benchmark harness, not the product.",
+      "steps": [
+        "COPY_ADAPT the cua-bench Python runner as test-only tooling (no PORT to another language; Python never ships in the product).",
+        "COPY the cua-driver-bench taskpack with a provenance manifest per task file, then add Orcel-owned tasks per OS.",
+        "Runner records BENCHMARK_REPORT_1 rows; never --on cloud.",
+        "Follow-up from the #347 judge: extend the credential-prefix guard to machine.cpu and to every path segment of evidence (today only the first segment is checked), with tests, before the first real report is accepted."
+      ],
+      "interfaces": "n/a",
+      "platforms": {
+        "all": "fixtures per OS"
+      },
+      "security": "Disposable sessions.",
+      "tests": {
+        "positive": [
+          "oracle-only dry run"
+        ],
+        "negative": [],
+        "recovery": [],
+        "e2e": [
+          "the benchmark"
+        ]
+      },
+      "performance": "n/a",
+      "ci": "manual",
+      "depends_on": [
+        "BM-01",
+        "XP-12",
+        "BR-02"
+      ],
+      "acceptance": [
+        "first report for 20 tasks per OS"
+      ],
+      "done": "Merged.",
+      "rollback": "n/a",
+      "estimate": "3-4",
+      "authority_delta": "none",
+      "proposed_grain": "-",
+      "reuse": {
+        "before": "PORT",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "5-7",
+        "estimate_with_reuse_days": "3-4",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": [
+          "T-CUA-13",
+          "T-CUA-15"
+        ]
+      }
+    }
+  ],
+  "founder_decisions": [
+    {
+      "id": "FD-01",
+      "question": "Adopt this cross-platform revision (Windows, macOS, Linux first-class; Cua platform crates for macOS/Linux native hosts; copy-first donor plan) as planning direction?",
+      "blocks": [
+        "XP-05"
+      ],
+      "default_if_silent": "Nothing beyond X0 tasks with no authority delta starts.",
+      "status": "ADOPTED 2026-10-18 (docs/orcel/grants/2026-10-18-founder-attestation.md)"
+    },
+    {
+      "id": "FD-02",
+      "question": "May the X0/X1 cross-platform track run as its own grain in parallel with SG-000096 and SG-000108 (as SG-000108 was allowed in parallel on 2026-10-10)?",
+      "blocks": [
+        "XP-01..XP-08 scheduling"
+      ],
+      "default_if_silent": "X0 waits for a free grain slot.",
+      "status": "APPROVED 2026-10-18 (same record)"
+    },
+    {
+      "id": "FD-03",
+      "question": "Direction: Tauri 2 Control Room for all three OSes, with WPF kept on Windows until the CR-04 parity gate passes?",
+      "blocks": [
+        "CR-03"
+      ],
+      "default_if_silent": "WPF stays; CR-01/CR-02 still proceed because they are UI-toolkit-neutral.",
+      "status": "OPEN"
+    },
+    {
+      "id": "FD-04",
+      "question": "Does the direct Cua authorization cover copying and commercially distributing FSL-1.1-MIT components (Cua Spaces, cua-spacesd, cua-driver-bench) inside Orcel? A one-line scope statement is enough.",
+      "blocks": [
+        "any FSL reuse"
+      ],
+      "default_if_silent": "FSL components stay REJECT; the plan does not depend on them.",
+      "status": "CONFIRMED 2026-10-18 (same record)"
+    },
+    {
+      "id": "FD-05",
+      "question": "Provide (a) a Mac that can act as a self-hosted GitHub runner with Accessibility and Screen Recording granted, and (b) an Apple Developer ID for signing and notarization (paid Apple membership)?",
+      "blocks": [
+        "XP-08 macOS leg",
+        "XP-16 release signing"
+      ],
+      "default_if_silent": "macOS ships unsigned dev builds only and macOS GUI E2E is manual.",
+      "status": "OPEN"
+    },
+    {
+      "id": "FD-06",
+      "question": "Confirm in one line that the AGPL donor authorization (Firecrawl, Skyvern) includes redistribution and commercial distribution inside Apache-2.0 Orcel.",
+      "blocks": [
+        "release of WI-01/WI-05 code"
+      ],
+      "default_if_silent": "The 2026-10-13 record's reading stands; flagged as open.",
+      "status": "CONFIRMED 2026-10-18 (same record)"
+    },
+    {
+      "id": "FD-07",
+      "question": "After XP-20, consolidate Windows on the Rust native host?",
+      "blocks": [
+        "Windows consolidation"
+      ],
+      "default_if_silent": "Keep the Go host.",
+      "status": "OPEN"
+    },
+    {
+      "id": "FD-08",
+      "question": "Admit the engine's experimental WebMCP flag through an SG-000074 argv amendment?",
+      "blocks": [
+        "BR-08"
+      ],
+      "default_if_silent": "Declarative WebMCP only.",
+      "status": "OPEN"
+    }
+  ],
+  "external_dependencies": [
+    {
+      "id": "SG-000108-CLOSE",
+      "meaning": "SG-000108 (Opus's active browser grain, PR #336 open and currently conflicting with main) closes canonically. Browser, journal and web tasks that touch the same files wait for it to avoid conflicts with active work."
+    }
+  ]
+}
