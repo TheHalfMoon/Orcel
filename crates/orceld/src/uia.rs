@@ -65,7 +65,7 @@ fn computer_host() -> Result<&'static ComputerHostAdapter, ProviderError> {
     HOST.get().ok_or_else(|| {
         ProviderError::new(
             FailureCode::ProviderUnavailable,
-            "Windows Computer Host could not be retained",
+            "computer host could not be retained",
         )
     })
 }

@@ -93,9 +93,11 @@ impl DesktopWindowAction {
 }
 
 #[cfg(windows)]
-const HOST_PROTOCOL: &str = "orcel-computer-host/1";
-#[cfg(windows)]
-const HOST_IDENTITY: &str = "orcel-windows-computer-host";
+use crate::host_protocol::{
+    map_refusal_code, negotiate, HelloFrame, NegotiatedHost, ProtocolGeneration, HOST_IDENTITY,
+    PROTOCOL_V1,
+};
+
 #[cfg(windows)]
 const MAX_HOST_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 
@@ -147,6 +149,19 @@ struct HostRequest<'a> {
     key: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     expected_last_input_tick: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    window: Option<HostWindowRef>,
+}
+
+/// The `/2` platform-tagged window reference. This adapter serves `hwnd`.
+#[cfg(windows)]
+#[derive(Debug, Serialize)]
+struct HostWindowRef {
+    kind: &'static str,
+    id: u64,
+    expected_pid: u32,
+    expected_start_generation: u64,
+    expected_window_nonce: u64,
 }
 
 #[cfg(windows)]
@@ -154,7 +169,7 @@ impl<'a> HostRequest<'a> {
     fn new(op: &'a str) -> Self {
         Self {
             id: 0,
-            protocol: HOST_PROTOCOL,
+            protocol: PROTOCOL_V1,
             op,
             hwnd: None,
             expected_pid: None,
@@ -177,6 +192,39 @@ impl<'a> HostRequest<'a> {
             text: None,
             key: None,
             expected_last_input_tick: None,
+            window: None,
+        }
+    }
+
+    /// Frames the request in the negotiated generation. Under `/2` a complete
+    /// exact binding travels as the platform-tagged window reference.
+    fn frame_for(&mut self, generation: ProtocolGeneration) {
+        self.protocol = generation.as_str();
+        if generation != ProtocolGeneration::V2 {
+            return;
+        }
+        if let (
+            Some(id),
+            Some(expected_pid),
+            Some(expected_start_generation),
+            Some(expected_window_nonce),
+        ) = (
+            self.hwnd,
+            self.expected_pid,
+            self.expected_start_generation,
+            self.expected_window_nonce,
+        ) {
+            self.window = Some(HostWindowRef {
+                kind: "hwnd",
+                id,
+                expected_pid,
+                expected_start_generation,
+                expected_window_nonce,
+            });
+            self.hwnd = None;
+            self.expected_pid = None;
+            self.expected_start_generation = None;
+            self.expected_window_nonce = None;
         }
     }
 
@@ -193,6 +241,10 @@ impl<'a> HostRequest<'a> {
 struct HostError {
     code: String,
     message: String,
+    /// The generation of the session that received this refusal. Set by the
+    /// session after decoding; it selects the refusal mapping.
+    #[serde(skip)]
+    generation: ProtocolGeneration,
 }
 
 #[cfg(windows)]
@@ -289,15 +341,10 @@ struct HostResponse {
 
 #[cfg(windows)]
 fn map_host_error(error: HostError) -> UiaError {
-    let code = match error.code.as_str() {
-        "invalid_request" => FailureCode::InvalidRequest,
-        "capability_denied" => FailureCode::CapabilityDenied,
-        "target_stale" => FailureCode::TargetStale,
-        "output_limit" => FailureCode::OutputLimit,
-        "provider_unavailable" => FailureCode::ProviderUnavailable,
-        _ => FailureCode::ProviderUnavailable,
-    };
-    UiaError::new(code, error.message)
+    UiaError::new(
+        map_refusal_code(error.generation, &error.code),
+        error.message,
+    )
 }
 
 #[cfg(any(windows, test))]
@@ -411,6 +458,7 @@ mod platform {
         stdin: ChildStdin,
         stdout: BufReader<ChildStdout>,
         next_id: u64,
+        negotiated: NegotiatedHost,
     }
 
     impl HostSession {
@@ -429,19 +477,19 @@ mod platform {
             let mut child = command.spawn().map_err(|error| {
                 UiaError::new(
                     FailureCode::ProviderUnavailable,
-                    format!("Windows Computer Host could not start: {error}"),
+                    format!("computer host could not start: {error}"),
                 )
             })?;
             let stdin = child.stdin.take().ok_or_else(|| {
                 UiaError::new(
                     FailureCode::ProviderUnavailable,
-                    "Windows Computer Host stdin is unavailable",
+                    "computer host stdin is unavailable",
                 )
             })?;
             let stdout = child.stdout.take().ok_or_else(|| {
                 UiaError::new(
                     FailureCode::ProviderUnavailable,
-                    "Windows Computer Host stdout is unavailable",
+                    "computer host stdout is unavailable",
                 )
             })?;
             let mut session = Self {
@@ -449,14 +497,12 @@ mod platform {
                 stdin,
                 stdout: BufReader::new(stdout),
                 next_id: 1,
+                negotiated: NegotiatedHost::v1(),
             };
-            let hello = session.request("hello", None, None, None, None)?;
-            if !hello.ok || hello.protocol != HOST_PROTOCOL || hello.host != HOST_IDENTITY {
-                return Err(UiaError::new(
-                    FailureCode::ProviderUnavailable,
-                    "Windows Computer Host handshake identity mismatch",
-                ));
-            }
+            let negotiated = negotiate(crate::host_protocol::current_platform(), |protocol| {
+                session.hello(protocol)
+            })?;
+            session.negotiated = negotiated;
             Ok(session)
         }
 
@@ -478,37 +524,85 @@ mod platform {
             self.send_checked(request)
         }
 
+        /// One hello exchange in an explicit generation, used only while
+        /// negotiating. The caller checks protocol and host identity.
+        fn hello(&mut self, protocol: &'static str) -> Result<HelloFrame, UiaError> {
+            let mut request = HostRequest::new("hello");
+            request.protocol = protocol;
+            let (id, line) = self.roundtrip(request)?;
+            let frame: HelloFrame = serde_json::from_str(&line).map_err(|_| {
+                UiaError::new(
+                    FailureCode::ProviderUnavailable,
+                    "computer host returned corrupt JSON",
+                )
+            })?;
+            if frame.id != id {
+                return Err(UiaError::new(
+                    FailureCode::ProviderUnavailable,
+                    "computer host response binding mismatch",
+                ));
+            }
+            Ok(frame)
+        }
+
         fn exchange(&mut self, mut request: HostRequest<'_>) -> Result<HostResponse, UiaError> {
+            self.negotiated.require(request.op)?;
+            let generation = self.negotiated.generation();
+            request.frame_for(generation);
+            let (id, line) = self.roundtrip(request)?;
+            let response: HostResponse = serde_json::from_str(&line).map_err(|_| {
+                UiaError::new(
+                    FailureCode::ProviderUnavailable,
+                    "computer host returned corrupt JSON",
+                )
+            })?;
+            if response.id != id
+                || response.protocol != generation.as_str()
+                || response.host != HOST_IDENTITY
+            {
+                return Err(UiaError::new(
+                    FailureCode::ProviderUnavailable,
+                    "computer host response binding mismatch",
+                ));
+            }
+            let mut response = response;
+            if let Some(error) = response.error.as_mut() {
+                error.generation = generation;
+            }
+            Ok(response)
+        }
+
+        fn roundtrip(&mut self, mut request: HostRequest<'_>) -> Result<(u64, String), UiaError> {
             let id = self.next_id;
             self.next_id = self.next_id.checked_add(1).ok_or_else(|| {
                 UiaError::new(
                     FailureCode::InternalError,
-                    "Windows Computer Host request id overflow",
+                    "computer host request id overflow",
                 )
             })?;
             request.id = id;
             let raw = serde_json::to_vec(&request).map_err(|_| {
                 UiaError::new(
                     FailureCode::InternalError,
-                    "Windows Computer Host request serialization failed",
+                    "computer host request serialization failed",
                 )
             })?;
             self.stdin.write_all(&raw).map_err(|_| {
                 UiaError::new(
                     FailureCode::ProviderUnavailable,
-                    "Windows Computer Host request pipe is unavailable",
+                    "computer host request pipe is unavailable",
                 )
             })?;
             self.stdin.write_all(b"\n").map_err(|_| {
                 UiaError::new(
                     FailureCode::ProviderUnavailable,
-                    "Windows Computer Host request framing failed",
+                    "computer host request framing failed",
                 )
             })?;
             self.stdin.flush().map_err(|_| {
                 UiaError::new(
                     FailureCode::ProviderUnavailable,
-                    "Windows Computer Host request flush failed",
+                    "computer host request flush failed",
                 )
             })?;
 
@@ -516,37 +610,22 @@ mod platform {
             let read = self.stdout.read_line(&mut line).map_err(|_| {
                 UiaError::new(
                     FailureCode::ProviderUnavailable,
-                    "Windows Computer Host response pipe is unavailable",
+                    "computer host response pipe is unavailable",
                 )
             })?;
             if read == 0 {
                 return Err(UiaError::new(
                     FailureCode::ProviderUnavailable,
-                    "Windows Computer Host exited before returning a response",
+                    "computer host exited before returning a response",
                 ));
             }
             if line.len() > MAX_HOST_RESPONSE_BYTES {
                 return Err(UiaError::new(
                     FailureCode::OutputLimit,
-                    "Windows Computer Host response exceeds the bounded size",
+                    "computer host response exceeds the bounded size",
                 ));
             }
-            let response: HostResponse = serde_json::from_str(&line).map_err(|_| {
-                UiaError::new(
-                    FailureCode::ProviderUnavailable,
-                    "Windows Computer Host returned corrupt JSON",
-                )
-            })?;
-            if response.id != id
-                || response.protocol != HOST_PROTOCOL
-                || response.host != HOST_IDENTITY
-            {
-                return Err(UiaError::new(
-                    FailureCode::ProviderUnavailable,
-                    "Windows Computer Host response binding mismatch",
-                ));
-            }
-            Ok(response)
+            Ok((id, line))
         }
 
         fn send_checked(&mut self, request: HostRequest<'_>) -> Result<HostResponse, UiaError> {
@@ -555,7 +634,7 @@ mod platform {
                 return Err(response.error.map(map_host_error).unwrap_or_else(|| {
                     UiaError::new(
                         FailureCode::ProviderUnavailable,
-                        "Windows Computer Host failed without typed error",
+                        "computer host failed without typed error",
                     )
                 }));
             }
@@ -603,6 +682,14 @@ mod platform {
         }
 
         #[cfg(test)]
+        pub(crate) fn negotiated_generation_for_test(&self) -> ProtocolGeneration {
+            self.session
+                .lock()
+                .map(|session| session.negotiated.generation())
+                .unwrap_or(ProtocolGeneration::V1)
+        }
+
+        #[cfg(test)]
         pub(crate) fn ping_for_test(&self) -> Result<(), UiaError> {
             self.request("ping", None, None, None, None).map(|_| ())
         }
@@ -618,7 +705,7 @@ mod platform {
             let mut session = self.session.lock().map_err(|_| {
                 UiaError::new(
                     FailureCode::ProviderUnavailable,
-                    "Windows Computer Host session lock is poisoned",
+                    "computer host session lock is poisoned",
                 )
             })?;
             session.request(op, hwnd, binding, max_nodes, max_depth)
@@ -629,7 +716,7 @@ mod platform {
             let mut bindings = self.bindings.lock().map_err(|_| {
                 UiaError::new(
                     FailureCode::ProviderUnavailable,
-                    "Windows Computer Host binding cache is poisoned",
+                    "computer host binding cache is poisoned",
                 )
             })?;
             bindings.clear();
@@ -659,7 +746,7 @@ mod platform {
                 .map_err(|_| {
                     UiaError::new(
                         FailureCode::ProviderUnavailable,
-                        "Windows Computer Host binding cache is poisoned",
+                        "computer host binding cache is poisoned",
                     )
                 })?
                 .get(&hwnd)
@@ -667,7 +754,7 @@ mod platform {
                 .ok_or_else(|| {
                     UiaError::new(
                         FailureCode::TargetStale,
-                        "Windows Computer Host has no live binding for the requested window; list windows again",
+                        "computer host has no live binding for the requested window; list windows again",
                     )
                 })?;
             self.request(op, Some(hwnd), Some(binding), max_nodes, max_depth)
@@ -679,7 +766,7 @@ mod platform {
                 .map_err(|_| {
                     UiaError::new(
                         FailureCode::ProviderUnavailable,
-                        "Windows Computer Host binding cache is poisoned",
+                        "computer host binding cache is poisoned",
                     )
                 })?
                 .get(&hwnd)
@@ -687,7 +774,7 @@ mod platform {
                 .ok_or_else(|| {
                     UiaError::new(
                         FailureCode::TargetStale,
-                        "Windows Computer Host has no live binding for the requested window; list windows again",
+                        "computer host has no live binding for the requested window; list windows again",
                     )
                 })
         }
@@ -696,7 +783,7 @@ mod platform {
             let mut session = self.session.lock().map_err(|_| {
                 UiaError::new(
                     FailureCode::ProviderUnavailable,
-                    "Windows Computer Host session lock is poisoned",
+                    "computer host session lock is poisoned",
                 )
             })?;
             session.exchange(request)
@@ -706,7 +793,7 @@ mod platform {
             let mut session = self.session.lock().map_err(|_| {
                 UiaError::new(
                     FailureCode::ProviderUnavailable,
-                    "Windows Computer Host session lock is poisoned",
+                    "computer host session lock is poisoned",
                 )
             })?;
             session.send_checked(request)
@@ -717,7 +804,7 @@ mod platform {
             let cursor = response.cursor.ok_or_else(|| {
                 UiaError::new(
                     FailureCode::ProviderUnavailable,
-                    "Windows Computer Host omitted cursor payload",
+                    "computer host omitted cursor payload",
                 )
             })?;
             Ok(DesktopCursorPosition {
@@ -801,7 +888,7 @@ mod platform {
                 let action = response.action.ok_or_else(|| {
                     UiaError::new(
                         FailureCode::ProviderUnavailable,
-                        "Windows Computer Host omitted action outcome",
+                        "computer host omitted action outcome",
                     )
                 })?;
                 return Ok(DesktopActionResult {
@@ -813,7 +900,7 @@ mod platform {
             let error = response.error.ok_or_else(|| {
                 UiaError::new(
                     FailureCode::ProviderUnavailable,
-                    "Windows Computer Host failed without typed error",
+                    "computer host failed without typed error",
                 )
             })?;
             if matches!(error.code.as_str(), "cancelled" | "outcome_unknown") {
@@ -842,7 +929,7 @@ mod platform {
                 let action = response.action.ok_or_else(|| {
                     UiaError::new(
                         FailureCode::ProviderUnavailable,
-                        "Windows Computer Host omitted window action outcome",
+                        "computer host omitted window action outcome",
                     )
                 })?;
                 return Ok(DesktopActionResult {
@@ -854,7 +941,7 @@ mod platform {
             let error = response.error.ok_or_else(|| {
                 UiaError::new(
                     FailureCode::ProviderUnavailable,
-                    "Windows Computer Host failed without typed error",
+                    "computer host failed without typed error",
                 )
             })?;
             if matches!(error.code.as_str(), "cancelled" | "outcome_unknown") {
@@ -892,13 +979,13 @@ mod platform {
             let action = response.action.ok_or_else(|| {
                 UiaError::new(
                     FailureCode::ProviderUnavailable,
-                    "Windows Computer Host omitted semantic action outcome",
+                    "computer host omitted semantic action outcome",
                 )
             })?;
             if action.state != "completed" {
                 return Err(UiaError::new(
                     FailureCode::PostconditionFailed,
-                    "Windows Computer Host did not complete the semantic action",
+                    "computer host did not complete the semantic action",
                 ));
             }
             Ok(())
@@ -979,7 +1066,7 @@ mod platform {
             if !selected {
                 return Err(UiaError::new(
                     FailureCode::CapabilityDenied,
-                    "Windows Computer Host semantic select does not widen to deselection",
+                    "computer host semantic select does not widen to deselection",
                 ));
             }
             self.semantic_action(hwnd, runtime_id, "select", None, 0, 0)
@@ -1024,13 +1111,13 @@ mod platform {
             let capture = response.capture.ok_or_else(|| {
                 UiaError::new(
                     FailureCode::ProviderUnavailable,
-                    "Windows Computer Host omitted capture payload",
+                    "computer host omitted capture payload",
                 )
             })?;
             if capture.pixel_format != "rgba8" {
                 return Err(UiaError::new(
                     FailureCode::ProviderUnavailable,
-                    "Windows Computer Host returned an unsupported pixel format",
+                    "computer host returned an unsupported pixel format",
                 ));
             }
             let bytes = decode_base64(&capture.pixels_b64, crate::MAX_CAPTURE_BYTES)?;
@@ -1060,7 +1147,7 @@ impl ComputerHostAdapter {
     pub fn from_env() -> Result<Self, UiaError> {
         Err(UiaError::new(
             FailureCode::ProviderUnavailable,
-            "Windows Computer Host is available only on Windows",
+            "computer host is available only on Windows",
         ))
     }
 
@@ -1073,7 +1160,7 @@ impl ComputerHostAdapter {
     pub fn cursor_position(&self) -> Result<DesktopCursorPosition, UiaError> {
         Err(UiaError::new(
             FailureCode::ProviderUnavailable,
-            "Windows Computer Host is available only on Windows",
+            "computer host is available only on Windows",
         ))
     }
 
@@ -1085,7 +1172,7 @@ impl ComputerHostAdapter {
     ) -> Result<DesktopActionResult, UiaError> {
         Err(UiaError::new(
             FailureCode::ProviderUnavailable,
-            "Windows Computer Host is available only on Windows",
+            "computer host is available only on Windows",
         ))
     }
 
@@ -1097,7 +1184,7 @@ impl ComputerHostAdapter {
     ) -> Result<DesktopActionResult, UiaError> {
         Err(UiaError::new(
             FailureCode::ProviderUnavailable,
-            "Windows Computer Host is available only on Windows",
+            "computer host is available only on Windows",
         ))
     }
 }
@@ -1107,21 +1194,21 @@ impl UiaAdapter for ComputerHostAdapter {
     fn list_processes(&self) -> Result<Vec<NativeProcess>, UiaError> {
         Err(UiaError::new(
             FailureCode::ProviderUnavailable,
-            "Windows Computer Host is available only on Windows",
+            "computer host is available only on Windows",
         ))
     }
 
     fn list_windows(&self, _pid: u32) -> Result<Vec<NativeWindow>, UiaError> {
         Err(UiaError::new(
             FailureCode::ProviderUnavailable,
-            "Windows Computer Host is available only on Windows",
+            "computer host is available only on Windows",
         ))
     }
 
     fn read_tree(&self, _hwnd: u64) -> Result<Vec<NativeElement>, UiaError> {
         Err(UiaError::new(
             FailureCode::ProviderUnavailable,
-            "Windows Computer Host is available only on Windows",
+            "computer host is available only on Windows",
         ))
     }
 }
@@ -1173,12 +1260,46 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn bound_requests_are_framed_per_negotiated_generation() {
+        let binding = HostTargetBinding {
+            pid: 12,
+            start_generation: 13,
+            window_nonce: 14,
+        };
+        let mut v1 = HostRequest::new("observe_window");
+        v1.bind_window(11, binding);
+        v1.frame_for(ProtocolGeneration::V1);
+        assert_eq!(
+            serde_json::to_string(&v1).unwrap(),
+            r#"{"id":0,"protocol":"orcel-computer-host/1","op":"observe_window","hwnd":11,"expected_pid":12,"expected_start_generation":13,"expected_window_nonce":14}"#
+        );
+        let mut v2 = HostRequest::new("observe_window");
+        v2.bind_window(11, binding);
+        v2.frame_for(ProtocolGeneration::V2);
+        assert_eq!(
+            serde_json::to_string(&v2).unwrap(),
+            r#"{"id":0,"protocol":"orcel-computer-host/2","op":"observe_window","window":{"kind":"hwnd","id":11,"expected_pid":12,"expected_start_generation":13,"expected_window_nonce":14}}"#
+        );
+        let mut unbound = HostRequest::new("cursor_position");
+        unbound.frame_for(ProtocolGeneration::V2);
+        assert_eq!(
+            serde_json::to_string(&unbound).unwrap(),
+            r#"{"id":0,"protocol":"orcel-computer-host/2","op":"cursor_position"}"#
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn configured_host_handshake_is_exact() {
         let Some(path) = std::env::var_os("ORCEL_COMPUTER_HOST_BIN") else {
             return;
         };
         let adapter = ComputerHostAdapter::from_path(PathBuf::from(path)).unwrap();
         assert!(adapter.executable().ends_with("orcel-computer-host.exe"));
+        assert_eq!(
+            adapter.negotiated_generation_for_test(),
+            ProtocolGeneration::V2
+        );
         adapter.ping_for_test().unwrap();
     }
 }

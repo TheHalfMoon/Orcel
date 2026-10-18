@@ -36,40 +36,12 @@ func supervisorMain(input io.Reader, output io.Writer) error {
 	scanner.Buffer(make([]byte, 4096), maxRequestBytes)
 	encoder := json.NewEncoder(output)
 	for scanner.Scan() {
-		var req hostRequest
-		if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
-			if err := encoder.Encode(failure(0, "invalid_request", "request is not valid JSON")); err != nil {
-				return err
-			}
-			continue
-		}
-		if problem := validateRequest(req); problem != nil {
-			if err := encoder.Encode(failure(req.ID, problem.Code, problem.Message)); err != nil {
-				return err
-			}
-			continue
-		}
-		var resp hostResponse
-		switch req.Op {
-		case "hello":
-			resp = success(req.ID)
-		case "ping":
-			resp = success(req.ID)
-			resp.Pong = true
-		case "shutdown":
-			resp = success(req.ID)
-			if err := encoder.Encode(resp); err != nil {
-				return err
-			}
-			return nil
-		default:
-			resp = runSacrificialWorker(req)
-		}
-		if encodedSize(resp) > maxResponseBytes {
-			resp = failure(req.ID, "output_limit", "host response exceeds the bounded private IPC size")
-		}
+		resp, stop := handleFrame(scanner.Bytes(), runSacrificialWorker)
 		if err := encoder.Encode(resp); err != nil {
 			return err
+		}
+		if stop {
+			return nil
 		}
 	}
 	return scanner.Err()

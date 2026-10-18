@@ -79,6 +79,67 @@ test("SG-000094 Windows host builds with pinned Go and speaks only private stdio
     assert.equal(denied.ok, false);
     assert.equal(denied.error?.code, "capability_denied");
 
+    // XP-04: the same live host also answers the orcel-computer-host/2 hello
+    // that the Rust adapter offers first, with one capability per operation.
+    child.stdin.write(
+      JSON.stringify({ id: 5, protocol: "orcel-computer-host/2", op: "hello" }) + "\n",
+    );
+    const helloV2 = JSON.parse((await once(lines, "line"))[0] as string);
+    assert.deepEqual(
+      {
+        id: helloV2.id,
+        ok: helloV2.ok,
+        protocol: helloV2.protocol,
+        host: helloV2.host,
+        platform: helloV2.platform,
+        backend: helloV2.backend,
+      },
+      {
+        id: 5,
+        ok: true,
+        protocol: "orcel-computer-host/2",
+        host: "orcel-windows-computer-host",
+        platform: "windows",
+        backend: "uia",
+      },
+    );
+    assert.deepEqual(Object.keys(helloV2.capabilities).sort(), [
+      "capture_window",
+      "cursor_position",
+      "hello",
+      "input_click",
+      "input_drag",
+      "input_hotkey",
+      "input_key",
+      "input_move",
+      "input_scroll",
+      "input_type_text",
+      "list_windows",
+      "observe_window",
+      "ping",
+      "semantic_action",
+      "shutdown",
+      "window_action",
+    ]);
+    assert.equal(helloV2.capabilities.input_click.support, "foreground_only");
+
+    child.stdin.write(
+      JSON.stringify({ id: 6, protocol: "orcel-computer-host/2", op: "ping", extra: true }) + "\n",
+    );
+    const strictV2 = JSON.parse((await once(lines, "line"))[0] as string);
+    assert.deepEqual(
+      { id: strictV2.id, ok: strictV2.ok, protocol: strictV2.protocol, code: strictV2.error?.code },
+      { id: 6, ok: false, protocol: "orcel-computer-host/2", code: "invalid_request" },
+    );
+
+    child.stdin.write(
+      JSON.stringify({ id: 7, protocol: "orcel-computer-host/1", op: "ping", window: "x" }) + "\n",
+    );
+    assert.equal(
+      (await once(lines, "line"))[0],
+      '{"id":7,"ok":true,"protocol":"orcel-computer-host/1","host":"orcel-windows-computer-host","pong":true}',
+    );
+
     request(4, "shutdown");
     const shutdown = JSON.parse((await once(lines, "line"))[0] as string);
     assert.equal(shutdown.ok, true);

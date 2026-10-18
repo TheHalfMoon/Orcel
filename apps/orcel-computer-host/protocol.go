@@ -3,10 +3,18 @@
 
 package main
 
-import "encoding/json"
+import (
+	"bytes"
+	"encoding/json"
+)
 
 const (
 	protocolGeneration = "orcel-computer-host/1"
+	// protocolGenerationV2 is the strict superset described in
+	// docs/orcel/implementation-readiness/protocol/ORCEL_COMPUTER_HOST_2.md.
+	protocolGenerationV2 = "orcel-computer-host/2"
+	hostPlatform = "windows"
+	hostBackend = "uia"
 	hostIdentity = "orcel-windows-computer-host"
 	maxRequestBytes = 64 * 1024
 	maxResponseBytes = 16 * 1024 * 1024
@@ -42,6 +50,17 @@ var allowedOperations = map[string]struct{}{
 	"shutdown": {},
 }
 
+// windowRef is the /2 platform-tagged window reference. This host serves
+// only kind "hwnd"; the reference is normalized into the /1 binding fields
+// before any native work happens.
+type windowRef struct {
+	Kind string `json:"kind"`
+	ID uint64 `json:"id"`
+	ExpectedPID *uint32 `json:"expected_pid"`
+	ExpectedStartGeneration *uint64 `json:"expected_start_generation"`
+	ExpectedWindowNonce *uint64 `json:"expected_window_nonce"`
+}
+
 type hostRequest struct {
 	ID uint64 `json:"id"`
 	Protocol string `json:"protocol"`
@@ -67,6 +86,13 @@ type hostRequest struct {
 	Text string `json:"text,omitempty"`
 	Key string `json:"key,omitempty"`
 	ExpectedLastInputTick *uint32 `json:"expected_last_input_tick,omitempty"`
+}
+
+// v2Frame is the strict /2 request shape. The window reference lives only
+// here, so /1 decoding of hostRequest stays exactly as it was.
+type v2Frame struct {
+	hostRequest
+	Window *windowRef `json:"window,omitempty"`
 }
 
 type hostError struct {
@@ -129,6 +155,14 @@ type actionFact struct {
 	Action string `json:"action"`
 }
 
+// capabilityFact is one /2 capability table entry. It is advisory: the
+// kernel registry still enforces every binding and approval.
+type capabilityFact struct {
+	Support string `json:"support"`
+	Delivery string `json:"delivery,omitempty"`
+	Reason string `json:"reason,omitempty"`
+}
+
 type hostResponse struct {
 	ID uint64 `json:"id"`
 	OK bool `json:"ok"`
@@ -141,6 +175,9 @@ type hostResponse struct {
 	Cursor *cursorFact `json:"cursor,omitempty"`
 	Action *actionFact `json:"action,omitempty"`
 	Error *hostError `json:"error,omitempty"`
+	Platform string `json:"platform,omitempty"`
+	Backend string `json:"backend,omitempty"`
+	Capabilities map[string]capabilityFact `json:"capabilities,omitempty"`
 }
 
 func success(id uint64) hostResponse {
@@ -149,6 +186,122 @@ func success(id uint64) hostResponse {
 
 func failure(id uint64, code, message string) hostResponse {
 	return hostResponse{ID: id, OK: false, Protocol: protocolGeneration, Host: hostIdentity, Error: &hostError{Code: code, Message: message}}
+}
+
+// windowsCapabilities is the /2 capability table: exactly one entry per
+// operation in allowedOperations. Raw input foregrounds the exact target
+// before SendInput, so it is foreground_only; UIA patterns and PrintWindow
+// do not need the foreground.
+var windowsCapabilities = map[string]capabilityFact{
+	"hello": {Support: "delivered"},
+	"ping": {Support: "delivered"},
+	"shutdown": {Support: "delivered"},
+	"list_windows": {Support: "delivered"},
+	"observe_window": {Support: "delivered"},
+	"capture_window": {Support: "delivered", Delivery: "background"},
+	"cursor_position": {Support: "delivered"},
+	"semantic_action": {Support: "delivered", Delivery: "background"},
+	"window_action": {Support: "delivered", Delivery: "foreground"},
+	"input_move": {Support: "foreground_only", Delivery: "foreground"},
+	"input_click": {Support: "foreground_only", Delivery: "foreground"},
+	"input_drag": {Support: "foreground_only", Delivery: "foreground"},
+	"input_scroll": {Support: "foreground_only", Delivery: "foreground"},
+	"input_type_text": {Support: "foreground_only", Delivery: "foreground"},
+	"input_key": {Support: "foreground_only", Delivery: "foreground"},
+	"input_hotkey": {Support: "foreground_only", Delivery: "foreground"},
+}
+
+// helloV2 answers a /2 hello with the platform, backend and capability table.
+func helloV2(id uint64) hostResponse {
+	resp := success(id)
+	resp.Protocol = protocolGenerationV2
+	resp.Platform = hostPlatform
+	resp.Backend = hostBackend
+	resp.Capabilities = make(map[string]capabilityFact, len(windowsCapabilities))
+	for op, fact := range windowsCapabilities {
+		resp.Capabilities[op] = fact
+	}
+	return resp
+}
+
+// decodeRequest parses one request frame. /1 frames keep their historical
+// lenient decoding unchanged (unknown fields, including any "window" value of
+// any type, are ignored).
+// /2 frames refuse unknown fields and normalize the window reference.
+func decodeRequest(line []byte) (hostRequest, *hostError) {
+	var req hostRequest
+	if err := json.Unmarshal(line, &req); err != nil {
+		return hostRequest{}, &hostError{Code: "invalid_request", Message: "request is not valid JSON"}
+	}
+	if req.Protocol != protocolGenerationV2 {
+		return req, nil
+	}
+	strict := json.NewDecoder(bytes.NewReader(line))
+	strict.DisallowUnknownFields()
+	var frame v2Frame
+	if err := strict.Decode(&frame); err != nil {
+		return req, &hostError{Code: "invalid_request", Message: "request contains an unknown or malformed field"}
+	}
+	v2 := frame.hostRequest
+	if frame.Window != nil {
+		if v2.HWND != 0 || v2.ExpectedPID != nil || v2.ExpectedStartGeneration != nil || v2.ExpectedWindowNonce != nil {
+			return v2, &hostError{Code: "invalid_request", Message: "window reference and legacy window fields are mutually exclusive"}
+		}
+		if frame.Window.Kind != "hwnd" {
+			return v2, &hostError{Code: "invalid_request", Message: "window reference kind is not served by this host"}
+		}
+		v2.HWND = frame.Window.ID
+		v2.ExpectedPID = frame.Window.ExpectedPID
+		v2.ExpectedStartGeneration = frame.Window.ExpectedStartGeneration
+		v2.ExpectedWindowNonce = frame.Window.ExpectedWindowNonce
+	}
+	return v2, nil
+}
+
+// respondFailure builds a typed refusal in the generation the caller spoke.
+func respondFailure(req hostRequest, code, message string) hostResponse {
+	resp := failure(req.ID, code, message)
+	if req.Protocol == protocolGenerationV2 {
+		resp.Protocol = protocolGenerationV2
+	}
+	return resp
+}
+
+// handleFrame answers one request line. dispatch runs native operations;
+// it always receives a normalized /1 request so the sacrificial worker and
+// its response binding stay unchanged. stop reports a completed shutdown.
+func handleFrame(line []byte, dispatch func(hostRequest) hostResponse) (resp hostResponse, stop bool) {
+	req, problem := decodeRequest(line)
+	if problem == nil {
+		problem = validateRequest(req)
+	}
+	if problem != nil {
+		return respondFailure(req, problem.Code, problem.Message), false
+	}
+	switch req.Op {
+	case "hello":
+		if req.Protocol == protocolGenerationV2 {
+			return helloV2(req.ID), false
+		}
+		resp = success(req.ID)
+	case "ping":
+		resp = success(req.ID)
+		resp.Pong = true
+	case "shutdown":
+		resp = success(req.ID)
+		stop = true
+	default:
+		native := req
+		native.Protocol = protocolGeneration
+		resp = dispatch(native)
+	}
+	if encodedSize(resp) > maxResponseBytes {
+		resp = failure(req.ID, "output_limit", "host response exceeds the bounded private IPC size")
+	}
+	if req.Protocol == protocolGenerationV2 {
+		resp.Protocol = protocolGenerationV2
+	}
+	return resp, stop
 }
 
 func isMutationOperation(op string) bool {
@@ -167,7 +320,7 @@ func requiresWindowBinding(op string) bool {
 }
 
 func validateRequest(req hostRequest) *hostError {
-	if req.Protocol != protocolGeneration {
+	if req.Protocol != protocolGeneration && req.Protocol != protocolGenerationV2 {
 		return &hostError{Code: "invalid_request", Message: "protocol generation mismatch"}
 	}
 	if _, ok := allowedOperations[req.Op]; !ok {
