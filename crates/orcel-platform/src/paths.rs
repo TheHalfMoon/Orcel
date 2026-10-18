@@ -13,6 +13,10 @@
 //! That holds because [`ensure_private_dir`] also refuses any ancestor
 //! another user could modify: once it passes, no other non-root user can
 //! rename, replace or re-point any component of the path.
+//!
+//! On Unix the ancestor rule is strict: a group-writable home such as one
+//! with mode 0775 is refused with [`PlatformError::WritableAncestor`] naming
+//! that home, even when the group holds only its owner.
 
 use std::ffi::{OsStr, OsString};
 use std::fmt;
@@ -273,17 +277,14 @@ mod imp {
                 Err(error) => return Err(io_error(ancestor, error)),
             };
             verify_ancestor(ancestor, &metadata, uid)?;
-        }
-        // The walk above checks the links themselves; the directories a
-        // symlinked ancestor resolves to are checked here.
-        if let Some(parent) = path.parent() {
-            let resolved =
-                std::fs::canonicalize(parent).map_err(|error| io_error(parent, error))?;
-            for ancestor in resolved.ancestors() {
-                let metadata = std::fs::symlink_metadata(ancestor)
-                    .map_err(|error| io_error(ancestor, error))?;
-                verify_ancestor(ancestor, &metadata, uid)?;
+            // The link itself passed; the directories it resolves to must
+            // pass too before anything is created beneath it.
+            if metadata.file_type().is_symlink() {
+                verify_resolved(ancestor, uid)?;
             }
+        }
+        if let Some(parent) = path.parent() {
+            verify_resolved(parent, uid)?;
         }
         let metadata = match std::fs::symlink_metadata(path) {
             Ok(metadata) => metadata,
@@ -291,6 +292,17 @@ mod imp {
             Err(error) => return Err(io_error(path, error)),
         };
         verify(path, &metadata, uid)
+    }
+
+    /// Checks every directory on the canonical path of `path`, which exists.
+    fn verify_resolved(path: &Path, uid: u32) -> Result<(), PlatformError> {
+        let resolved = std::fs::canonicalize(path).map_err(|error| io_error(path, error))?;
+        for ancestor in resolved.ancestors() {
+            let metadata =
+                std::fs::symlink_metadata(ancestor).map_err(|error| io_error(ancestor, error))?;
+            verify_ancestor(ancestor, &metadata, uid)?;
+        }
+        Ok(())
     }
 
     /// Creates one directory with mode 0700 and returns what is there
@@ -794,6 +806,75 @@ mod tests {
             std::os::unix::fs::symlink(&real, &link).expect("symlink");
             ensure_private_dir(&link.join("orcel")).expect("private link target");
             assert!(real.join("orcel").is_dir());
+            let _ = std::fs::remove_dir_all(base);
+        }
+
+        #[test]
+        fn nothing_is_created_below_a_link_into_a_writable_directory() {
+            let base = sandbox("symlink-missing");
+            let shared = base.join("shared");
+            std::fs::create_dir(&shared).expect("shared");
+            set_mode(&shared, 0o777);
+            let link = base.join("state");
+            std::os::unix::fs::symlink(&shared, &link).expect("symlink");
+            // `a` is missing below the link, so it would be created first.
+            let error = ensure_private_dir(&link.join("a").join("orcel")).expect_err("refused");
+            assert!(
+                matches!(&error, PlatformError::WritableAncestor { path, mode: 0o777 }
+                    if path.ends_with("shared")),
+                "{error:?}"
+            );
+            assert_eq!(
+                std::fs::read_dir(&shared).expect("shared").count(),
+                0,
+                "nothing may be created in the link target"
+            );
+            let _ = std::fs::remove_dir_all(base);
+        }
+
+        #[test]
+        fn xdg_state_home_wins_over_a_valid_home() {
+            let base = sandbox("xdg-wins");
+            let home = base.join("home");
+            let xdg = base.join("xdg");
+            for dir in [&home, &xdg] {
+                std::fs::create_dir(dir).expect("dir");
+                set_mode(dir, 0o700);
+            }
+            let root = state_root_for(
+                StateLayout::Xdg,
+                &lookup(&[
+                    ("HOME", home.to_str().expect("utf-8")),
+                    ("XDG_STATE_HOME", xdg.to_str().expect("utf-8")),
+                ]),
+            )
+            .expect("root");
+            assert_eq!(root, xdg.join("orcel"));
+            ensure_private_dir(&root).expect("private root");
+            assert!(xdg.join("orcel").is_dir());
+            assert!(std::fs::symlink_metadata(home.join(".local")).is_err());
+            let _ = std::fs::remove_dir_all(base);
+        }
+
+        #[test]
+        fn group_writable_home_is_refused_by_name() {
+            let base = sandbox("home-0775");
+            let home = base.join("home");
+            std::fs::create_dir(&home).expect("home");
+            set_mode(&home, 0o775);
+            let root = state_root_for(
+                StateLayout::Xdg,
+                &lookup(&[("HOME", home.to_str().expect("utf-8"))]),
+            )
+            .expect("root");
+            assert_eq!(
+                ensure_private_dir(&root),
+                Err(PlatformError::WritableAncestor {
+                    path: home.clone(),
+                    mode: 0o775
+                })
+            );
+            assert!(std::fs::symlink_metadata(home.join(".local")).is_err());
             let _ = std::fs::remove_dir_all(base);
         }
 
