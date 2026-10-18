@@ -68,6 +68,7 @@ canonically.
 | `docs/p20/sg000096_shell_session_import.json` | Active SG-000096 frozen donor source/blob/MIT/reuse plan, existing Orcel executor ownership, and zero-code-import activation record. |
 | `docs/p20/sg000094_windows_host_import.json` | Closed SG-000094 donor/provenance/private-protocol record for the qualified Windows observation/capture host. |
 | `docs/canonical/ORCEL_POST_P18_LAUNCH_PLAN.md` | Exited ORCEL-P19 launch-program record; it authorizes no P20 runtime work. |
+| `docs/orcel/implementation-readiness/` | PROPOSED cross-platform implementation-readiness package (2026-10-18): Opus handoff, donor registry, transplant matrix, blueprints, backlog. Grants nothing; a backlog task binds only once activated as a SpecGrain. |
 | `docs/p19/sg000091_exit_matrix.json` | Canonical P19 launch-completeness exit matrix: 18 rows, zero UNVERIFIED rows. |
 | `docs/canonical/ORCEL_COMPUTER_USE_PLAN.md` | Closed-program design record for ORCEL-P18. It remains supporting evidence for the delivered computer-use authority boundary but authorizes no new implementation. |
 | `docs/canonical/ORCEL_COMPUTER_USE_STATUS.md`, `..._ACTIVATION_GATE.md`, `..._IMPLEMENTATION_ORDER.md`, `..._GOVERNANCE_NOTE.md`, `..._SCOPE.md`, `..._README.md` | Program sequencing and activation state. |

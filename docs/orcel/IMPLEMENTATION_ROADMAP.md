@@ -54,7 +54,7 @@ MVP First Path is F0/F1/F2/F3/F4. Complete Product Path adds F5/F6/F7 and qualif
 | 21 | DEFER default service until ablations; custom decision adapter | Advice only, stricter/abstain permitted |
 | 22 | KEEP after text workflow; offline corpus/harness preparation independent | Voice never authorizes, all speech processing server-side |
 | 23 | DELETE billing/allowances from roadmap now; MERGE telemetry/caps with18 | Cost control needed; pricing deferred |
-| 24 | DEFER macOS/Linux until funded requirements | New platform authority/conformance |
+| 24 | DEFER macOS/Linux until funded requirements. **Proposed revision 2026-10-18: REMOVE the deferral** (founder directive: all three OSes first-class); replaced by tracks X0–X6 in `docs/orcel/implementation-readiness/ROADMAP.md` | New platform authority/conformance per task in `docs/orcel/implementation-readiness/backlog/tasks.json` |
 
 Safe parallel preparation: UI reads/events, fixture/checker development, dependency inventory, source/license admission, AI schema mocks and offline voice evaluation can proceed with separate files/owners/tests and no new dispatch. Mocks must be visibly test-only. Simultaneous authority implementation is not automatically authorized by this plan; record independence and obtain the required governance decision.
 

@@ -22,5 +22,6 @@ This package revises the Opus proposal; the founder adopted it as planning direc
 | Pricing-deferred cost assumptions | INFRASTRUCTURE_AND_UNIT_ECONOMICS.md, tools/unit_economics.py |
 | Two roadmaps, all25 packet dispositions, five journeys | IMPLEMENTATION_ROADMAP.md |
 | Decision rationale and scope | OPUS_TO_SOL_CHANGELOG.md |
+| PROPOSED cross-platform revision (2026-10-18): Opus handoff, audit, donor registry, transplant matrix, blueprints, backlog | implementation-readiness/README.md |
 
 Original PR283 exact-head checks passed 11/11; Jev reviewed 15/15 hunks; Alibaba reviewed one eligible script and excluded 14 Markdown files. The original-head result does not qualify this amendment head. At review time, genuine reviews, manual exclusions, exact-head CI, resolved threads and founder adoption were required before an approved normal merge; the founder has since adopted the direction, and #278 has been repaired by PR #286 and closed. Native visible product E2E, complete installer/RAM/startup, model inference and remote journeys remain unmeasured.
