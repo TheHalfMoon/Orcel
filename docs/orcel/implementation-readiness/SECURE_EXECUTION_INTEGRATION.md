@@ -1,6 +1,6 @@
 # SPACE → Orcel secure execution blueprint (with cua-vmm, Lume, and the multi-device boundary)
 
-Status: PROPOSED (Fable, 2026-10-18). Donors: [perplexityai/SPACE](https://github.com/perplexityai/SPACE/tree/09e922efd23b3c0d109ab64de7e567a901bcc61e) `09e922ef` (2026-10-18), **Apache-2.0, Copyright 2026 Perplexity AI** (public license; the founder's separate permission is not needed for Apache terms); Cua `a802eaf2` (`libs/cua/crates/cua-vmm`, `libs/lume`, MIT). Rows: `T-SP-*`, `T-CUA-11/12`.
+Status: ADOPTED planning direction (founder, 2026-10-18; `docs/orcel/grants/2026-10-18-founder-attestation.md`), authored by Fable. Donors: [perplexityai/SPACE](https://github.com/perplexityai/SPACE/tree/09e922efd23b3c0d109ab64de7e567a901bcc61e) `09e922ef` (2026-10-18), **Apache-2.0, Copyright 2026 Perplexity AI** (public license; the founder's separate permission is not needed for Apache terms); Cua `a802eaf2` (`libs/cua/crates/cua-vmm`, `libs/lume`, MIT). Rows: `T-SP-*`, `T-CUA-11/12`.
 
 ## 1. Principle
 
@@ -65,7 +65,7 @@ Multi-device stays as adopted (`MULTI_DEVICE_ARCHITECTURE.md`): existing device 
 | Inventory and grouping ideas | MeshCentral (Apache-2.0) | REFERENCE |
 | Agent install patterns | MeshAgent (README Apache-2.0, no root LICENSE) | REFERENCE; no SYSTEM agent |
 | Direct device-to-device transport | cua-mesh (MIT, WireGuard via boringtun) | DEFER; only if relay latency is measured as the bottleneck |
-| Desktop streaming, teleport, presence | Cua Spaces (FSL) | REJECT (FD-04) |
+| Desktop streaming, teleport, presence | Cua Spaces (FSL; reuse authorized by FD-04) | REJECT by architecture |
 
 ## 7. Cost
 

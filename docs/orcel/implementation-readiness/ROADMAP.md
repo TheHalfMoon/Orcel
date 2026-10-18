@@ -1,13 +1,13 @@
 # Optimized engineering roadmap (cross-platform revision)
 
-Status: PROPOSED (Fable, 2026-10-18). It extends, and does not restart, the adopted F0-F8 increments in `docs/orcel/IMPLEMENTATION_ROADMAP.md` and the P20 grains in `docs/canonical/ORCEL_P20_UNIVERSAL_AGENT_RUNTIME_PLAN.md`. Effort figures are ESTIMATES in engineer-days (backlog `estimate` fields), not dates.
+Status: ADOPTED planning direction (founder, 2026-10-18; `docs/orcel/grants/2026-10-18-founder-attestation.md`), authored by Fable. It extends, and does not restart, the adopted F0-F8 increments in `docs/orcel/IMPLEMENTATION_ROADMAP.md` and the P20 grains in `docs/canonical/ORCEL_P20_UNIVERSAL_AGENT_RUNTIME_PLAN.md`. Effort figures are ESTIMATES in engineer-days (backlog `estimate` fields), not dates.
 
 ## 1. Tracks
 
 | Track | Content | Runs with | Governance |
 |---|---|---|---|
 | **A. Windows Core MVP (in progress)** | SG-000108 browser (Opus active; #336 open), SG-000096 shell; F0 app API, F2 report task, F4 qualification | unchanged | existing grains |
-| **X. Cross-platform foundation and hosts** | XP-01..XP-20 | parallel with A after FD-02 | new grains SG-000109+ |
+| **X. Cross-platform foundation and hosts** | XP-01..XP-20 | parallel with A (FD-02 approved 2026-10-18) | new grains SG-000109+ |
 | **C. Control Room** | CR-01..CR-04 | CR-01/02 with X1; CR-03 after FD-03 | SG-000118, SG-000119 |
 | **R. Runtime journal** | RJ-01..RJ-03 | after SG-000108 closes | SG-000120 |
 | **B. Browser capability** | BR-01..BR-08 | after SG-000108 closes | SG-000121..123 |

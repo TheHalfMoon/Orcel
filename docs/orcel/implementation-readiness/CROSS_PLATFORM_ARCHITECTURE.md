@@ -1,6 +1,6 @@
 # Cross-platform architecture: Windows, macOS, Linux
 
-Status: FOUNDER-DIRECTED goal (2026-10-18: all three OSes are first-class); the design below is PROPOSED (Fable) until adopted. It grants no authority. Owning tasks: `backlog/tasks.json` XP-01..XP-20.
+Status: FOUNDER-DIRECTED goal (2026-10-18: all three OSes are first-class); the design below is ADOPTED (founder, 2026-10-18; `docs/orcel/grants/2026-10-18-founder-attestation.md`). It grants no authority. Owning tasks: `backlog/tasks.json` XP-01..XP-20.
 
 ## 1. Rule
 

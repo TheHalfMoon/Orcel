@@ -177,9 +177,9 @@
       "kind": "tree",
       "dest": "-",
       "dest_state": "NONE",
-      "method": "REJECT",
-      "task": "FD-04",
-      "notes": "FSL-1.1-MIT. Rejected until the founder confirms the distribution scope of the direct authorization for FSL components.",
+      "method": "REFERENCE",
+      "task": "BM-02",
+      "notes": "FSL-1.1-MIT, authorized for reuse by FD-04 (2026-10-18). Candidate taskset and method reference for BM-02; adopt task files only with per-file provenance (upstream notes the digest-pinned task files have no per-file headers).",
       "object": "faab03bc7f0a9a2ad40a4edde2531116e7511725"
     },
     {
@@ -191,7 +191,7 @@
       "dest_state": "NONE",
       "method": "REJECT",
       "task": "FD-04",
-      "notes": "FSL-1.1-MIT, Tauri app tied to cua-spacesd and Cua cloud identity.",
+      "notes": "FSL-1.1-MIT (reuse authorized by FD-04). Rejected by architecture: Tauri app bound to cua-spacesd network services (3211/3212) and Cua cloud enrollment.",
       "object": "a14141ce64a87a33be32e3d559166a81d4e9709e"
     },
     {

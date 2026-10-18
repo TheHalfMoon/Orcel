@@ -1,6 +1,6 @@
 # Trusted security architecture for the cross-platform plan
 
-Status: PROPOSED (Fable, 2026-10-18). Living threat baseline remains `docs/security/THREAT_MODEL.md` and `docs/orcel/SECURITY_THREAT_MODEL.md`; this file is the delta introduced by the integrations in this package. Nothing here weakens an existing control.
+Status: ADOPTED planning direction (founder, 2026-10-18; `docs/orcel/grants/2026-10-18-founder-attestation.md`), authored by Fable. Living threat baseline remains `docs/security/THREAT_MODEL.md` and `docs/orcel/SECURITY_THREAT_MODEL.md`; this file is the delta introduced by the integrations in this package. Nothing here weakens an existing control.
 
 ## 1. Non-negotiable rule
 

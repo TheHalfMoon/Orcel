@@ -1,6 +1,6 @@
 # Implementation readiness package (cross-platform revision, 2026-10-18)
 
-Status: PROPOSED planning package (Fable). It grants no authority, imports no donor code and changes no runtime behavior. Start at [OPUS_HANDOFF.md](OPUS_HANDOFF.md).
+Status: ADOPTED planning package (founder, 2026-10-18; `docs/orcel/grants/2026-10-18-founder-attestation.md`), authored by Fable. It grants no authority, imports no donor code and changes no runtime behavior. Start at [OPUS_HANDOFF.md](OPUS_HANDOFF.md).
 
 ## One authoritative document per question
 

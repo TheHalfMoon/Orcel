@@ -1,6 +1,6 @@
 # Agent-Native → Orcel agent runtime, durable execution, Control Room and macOS blueprint
 
-Status: PROPOSED (Fable, 2026-10-18). Donor: [BuilderIO/agent-native](https://github.com/BuilderIO/agent-native/tree/9c277b79cb87eb27da538e572dd710986e2fa06d) at `9c277b79` (2026-10-17). License: packages declare MIT in `package.json`; the root declares ISC; **no LICENSE text file** exists at the root or in `packages/agentkit`, `packages/toolkit`, `packages/core`. Copied files carry an MIT notice naming Builder.io as the copyright holder (to be confirmed against package metadata at import) and cite the founder authorization. Rows: `transplant_matrix.json` `T-AN-*`.
+Status: ADOPTED planning direction (founder, 2026-10-18; `docs/orcel/grants/2026-10-18-founder-attestation.md`), authored by Fable. Donor: [BuilderIO/agent-native](https://github.com/BuilderIO/agent-native/tree/9c277b79cb87eb27da538e572dd710986e2fa06d) at `9c277b79` (2026-10-17). License: packages declare MIT in `package.json`; the root declares ISC; **no LICENSE text file** exists at the root or in `packages/agentkit`, `packages/toolkit`, `packages/core`. Copied files carry an MIT notice naming Builder.io as the copyright holder (to be confirmed against package metadata at import) and cite the founder authorization. Rows: `transplant_matrix.json` `T-AN-*`.
 
 ## 1. Runtime model: what Orcel runs and what it does not
 

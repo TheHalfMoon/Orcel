@@ -84,9 +84,9 @@ The founder adopted this revised direction on 2026-10-09; it is adopted as plann
 
 Next three executable packets at review time (current next grains: `EXECUTION_FRONTIER.md`): (1) #278 isolated security repair (done, PR #286) with durable one-writer append and full fault tests; (2) WPF read-only app API/timeline and truthful daemon status, correcting UI-blocking I/O; (3) narrow live-browser adapter behind existing contracts with real download and denial fixtures. Packet 2 can develop read-only functionality independently; packet 3's mutations wait for qualified ledger repair and authorized grain sequencing. See `IMPLEMENTATION_ROADMAP.md` for estimates and exact exit tests.
 
-## Proposed cross-platform revision (2026-10-18)
+## Cross-platform revision (2026-10-18)
 
-Status: PROPOSED (Fable). Not adopted until the founder says so; the adopted text above stays in force meanwhile.
+Status: ADOPTED planning direction (founder, 2026-10-18; `docs/orcel/grants/2026-10-18-founder-attestation.md`), authored by Fable. Where it differs from the text above, this section governs.
 
 The founder directed on 2026-10-18 that Windows, macOS and Linux are all first-class targets, and that authorized donor code be reused before anything is rebuilt. A source-level review of every recorded donor, at exact pins, produced `docs/orcel/implementation-readiness/` (entry `OPUS_HANDOFF.md`). Summary of what it changes here:
 
@@ -100,8 +100,8 @@ The founder directed on 2026-10-18 that Windows, macOS and Linux are all first-c
 
 | Decision | Owner | Where discussed |
 |---|---|---|
-| Adopt the 2026-10-18 cross-platform revision and run its track in parallel with SG-000096/SG-000108 (FD-01, FD-02) | Founder | `docs/orcel/implementation-readiness/IMPLEMENTATION_BACKLOG.md` |
-| Tauri 2 Control Room direction (FD-03); FSL scope of the Cua authorization (FD-04); macOS runner and Apple Developer ID (FD-05) | Founder | same |
+| (Resolved 2026-10-18) Adopt the cross-platform revision and run it in parallel (FD-01, FD-02); FSL and AGPL distribution scope (FD-04, FD-06) | Founder, `docs/orcel/grants/2026-10-18-founder-attestation.md` | `docs/orcel/implementation-readiness/IMPLEMENTATION_BACKLOG.md` |
+| Tauri 2 Control Room direction (FD-03); macOS runner and Apple Developer ID (FD-05); Windows host consolidation (FD-07); WebMCP engine flag (FD-08) | Founder | `docs/orcel/implementation-readiness/IMPLEMENTATION_BACKLOG.md` |
 | Whether approvals should be invalidated on broker restart, or a trust anchor added against tail rollback | Founder + security review | SECURITY_THREAT_MODEL.md; residual risk in the #278 note |
 | Whether relay-blind (end-to-end) encryption is required before confidential transfer | Founder + security review | MULTI_DEVICE_ARCHITECTURE.md |
 | Code signing and distribution channel for releases | Founder | IMPLEMENTATION_ROADMAP.md (F4) |

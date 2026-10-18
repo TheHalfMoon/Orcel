@@ -1,6 +1,6 @@
 # Architecture decisions (2026-10-18 cross-platform revision)
 
-Status column meanings: **FOUNDER-DIRECTED** = stated by the founder in the 2026-10-18 directive; **KEPT** = existing adopted decision this revision keeps unchanged; **PROPOSED** = Fable's recommendation, binding only after founder adoption (merging this planning PR is not adoption by itself unless the founder says so); **FOUNDER DECISION** = cannot proceed without an explicit answer (ids in `backlog/tasks.json` `founder_decisions`).
+Status column meanings: **FOUNDER-DIRECTED** = stated by the founder in the 2026-10-18 directive; **KEPT** = existing adopted decision this revision keeps unchanged; **ADOPTED** = Fable's recommendation adopted by the founder on 2026-10-18 (`docs/orcel/grants/2026-10-18-founder-attestation.md`); **PROPOSED** = still waiting on an open founder decision; **FOUNDER DECISION** = cannot proceed without an explicit answer (ids in `backlog/tasks.json` `founder_decisions`).
 
 ## 1. Decision register
 
@@ -9,23 +9,23 @@ Status column meanings: **FOUNDER-DIRECTED** = stated by the founder in the 2026
 | AD-01 | Windows, macOS and Linux are first-class targets; the WP24 "defer macOS/Linux" disposition is withdrawn | FOUNDER-DIRECTED | CROSS_PLATFORM_ARCHITECTURE.md |
 | AD-02 | Copy first, adapt second, build only when necessary, at the smallest reliable boundary | FOUNDER-DIRECTED | this file §3; SOURCE_TRANSPLANT_MATRIX.md |
 | AD-03 | `orceld` remains the sole authority; donors run subordinate inside Orcel-owned hosts; AI proposes, Orcel authorizes, executes, verifies | KEPT | `docs/orcel/ARCHITECTURE.md`; SECURITY_INTEGRATION.md |
-| AD-04 | macOS and Linux native hosts: one Rust `orcel-native-host` embedding vendored Cua Driver platform crates (WRAP, allowlisted, in-process, no listener) | PROPOSED (FD-01) | CUA_INTEGRATION.md |
-| AD-05 | Windows native host: keep the qualified Go host; decide consolidation after the XP-20 bake-off | KEPT + PROPOSED measurement | CUA_INTEGRATION.md §2, backlog XP-20, FD-07 |
-| AD-06 | One private host protocol `orcel-computer-host/2` with capability negotiation and platform-tagged identities, superset of `/1` | PROPOSED | CROSS_PLATFORM_ARCHITECTURE.md §4 |
+| AD-04 | macOS and Linux native hosts: one Rust `orcel-native-host` embedding vendored Cua Driver platform crates (WRAP, allowlisted, in-process, no listener) | ADOPTED | CUA_INTEGRATION.md |
+| AD-05 | Windows native host: keep the qualified Go host; decide consolidation after the XP-20 bake-off | KEPT + ADOPTED measurement | CUA_INTEGRATION.md §2, backlog XP-20, FD-07 |
+| AD-06 | One private host protocol `orcel-computer-host/2` with capability negotiation and platform-tagged identities, superset of `/1` | ADOPTED | CROSS_PLATFORM_ARCHITECTURE.md §4 |
 | AD-07 | Public tool names (`uia.*`, `desktop.*`) stay as compatibility identifiers on every OS | KEPT | CROSS_PLATFORM_ARCHITECTURE.md §5 |
-| AD-08 | New crate `orcel-platform` owns per-OS paths, process/session identity, IPC peer credentials, secret storage hooks; no shared-temp fallback | PROPOSED | backlog XP-01, XP-03 |
-| AD-09 | Approvals stay OS-owned on every platform: CFUserNotification + LocalAuthentication on macOS; GTK4 helper + polkit `auth_self` on Linux | PROPOSED | backlog XP-09, XP-10 |
-| AD-10 | Browser: single engine, single pipe, playwright-core worker (kept); actions from playwright-core's own `tools/backend` (COPY_ADAPT); Browser Use contributes heuristics and semantics, not action code | KEPT + PROPOSED | BROWSER_INTEGRATION.md |
-| AD-11 | Web intelligence is one host pipeline (search optional, map, crawl, extract, document parse, change tracking); Firecrawl units transplanted by file; no hosted index | PROPOSED | WEB_INTELLIGENCE_INTEGRATION.md |
-| AD-12 | One kernel journal (`orcel-journal`) for every mutating provider; no blind retry; per-provider reconciliation; SPACE-style generation fencing for remote leases | PROPOSED | AGENT_RUNTIME_INTEGRATION.md §3.2 |
-| AD-13 | Control Room: Tauri 2 on all three OSes; AgentKit protocol/client for events; UI never answers approvals; WPF kept on Windows until the parity gate | PROPOSED (FD-03) | AGENT_RUNTIME_INTEGRATION.md §3.4 |
-| AD-14 | Optional sandboxes through `orcel-sandbox` (cua-vmm `Runtime` subset): gVisor containers on Linux first, QEMU, Lume, Firecracker later; never required for computer use | PROPOSED | SECURE_EXECUTION_INTEGRATION.md |
+| AD-08 | New crate `orcel-platform` owns per-OS paths, process/session identity, IPC peer credentials, secret storage hooks; no shared-temp fallback | ADOPTED | backlog XP-01, XP-03 |
+| AD-09 | Approvals stay OS-owned on every platform: CFUserNotification + LocalAuthentication on macOS; GTK4 helper + polkit `auth_self` on Linux | ADOPTED | backlog XP-09, XP-10 |
+| AD-10 | Browser: single engine, single pipe, playwright-core worker (kept); actions from playwright-core's own `tools/backend` (COPY_ADAPT); Browser Use contributes heuristics and semantics, not action code | KEPT + ADOPTED | BROWSER_INTEGRATION.md |
+| AD-11 | Web intelligence is one host pipeline (search optional, map, crawl, extract, document parse, change tracking); Firecrawl units transplanted by file; no hosted index | ADOPTED | WEB_INTELLIGENCE_INTEGRATION.md |
+| AD-12 | One kernel journal (`orcel-journal`) for every mutating provider; no blind retry; per-provider reconciliation; SPACE-style generation fencing for remote leases | ADOPTED | AGENT_RUNTIME_INTEGRATION.md §3.2 |
+| AD-13 | Control Room: Tauri 2 on all three OSes; AgentKit protocol/client for events; UI never answers approvals; WPF kept on Windows until the parity gate | PROPOSED (FD-03 open) | AGENT_RUNTIME_INTEGRATION.md §3.4 |
+| AD-14 | Optional sandboxes through `orcel-sandbox` (cua-vmm `Runtime` subset): gVisor containers on Linux first, QEMU, Lume, Firecracker later; never required for computer use | ADOPTED | SECURE_EXECUTION_INTEGRATION.md |
 | AD-15 | Multi-device unchanged in shape (existing relay, per-target grants, no LAN/QUIC prerequisite); endpoints gain macOS/Linux key storage | KEPT | `docs/orcel/MULTI_DEVICE_ARCHITECTURE.md` |
-| AD-16 | Native host lives in a separate Cargo workspace so the kernel's 62-package lockfile is unaffected | PROPOSED | CUA_INTEGRATION.md §2.5 |
-| AD-17 | FSL components of Cua (Spaces, spacesd, driver bench) are not used until the founder states the authorization's distribution scope | PROPOSED default; FOUNDER DECISION FD-04 | CUA_INTEGRATION.md §1 |
+| AD-16 | Native host lives in a separate Cargo workspace so the kernel's 62-package lockfile is unaffected | ADOPTED | CUA_INTEGRATION.md §2.5 |
+| AD-17 | FSL components of Cua (Spaces, spacesd, driver bench) are authorized for reuse (FD-04 confirmed 2026-10-18); Spaces/spacesd stay out by architecture, driver bench is a BM-02 candidate | ADOPTED (FD-04 confirmed) | CUA_INTEGRATION.md §1 |
 | AD-18 | No mandatory paid service, hosted browser, scraping API, GPU or microVM; search adapters only with user keys | KEPT + FOUNDER-DIRECTED | WEB_INTELLIGENCE_INTEGRATION.md §7 |
 | AD-19 | Founder AI remains server-side and optional for Core; CUA-S1 is a research reference only | KEPT | `docs/orcel/ORCEL_AI_SERVER_ARCHITECTURE.md` |
-| AD-20 | Planning backlog lives in `docs/orcel/implementation-readiness/backlog/`; a task becomes a SpecGrain only on activation | PROPOSED | IMPLEMENTATION_BACKLOG.md |
+| AD-20 | Planning backlog lives in `docs/orcel/implementation-readiness/backlog/`; a task becomes a SpecGrain only on activation | ADOPTED | IMPLEMENTATION_BACKLOG.md |
 
 ## 2. What this revision changes in the adopted plan
 

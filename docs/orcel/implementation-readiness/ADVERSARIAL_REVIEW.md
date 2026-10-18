@@ -1,6 +1,6 @@
 # Second-pass adversarial review of this package
 
-Status: PROPOSED (Fable, 2026-10-18). Each question from the founder directive was answered against the source, not against the first draft. "Changed" lists what the first draft got wrong and what was revised in the JSON sources (re-rendered tables carry the changes).
+Status: ADOPTED planning direction (founder, 2026-10-18; `docs/orcel/grants/2026-10-18-founder-attestation.md`), authored by Fable. Each question from the founder directive was answered against the source, not against the first draft. "Changed" lists what the first draft got wrong and what was revised in the JSON sources (re-rendered tables carry the changes).
 
 | # | Challenge | Finding | Changed |
 |---:|---|---|---|

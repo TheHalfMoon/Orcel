@@ -1,6 +1,6 @@
 # Benchmark and E2E plan (cross-platform)
 
-Status: PROPOSED (Fable, 2026-10-18). Extends `docs/orcel/BENCHMARK_AND_E2E_PLAN.md` (adopted minimum native evidence). No result in this file is measured; every target is an ESTIMATE to be replaced by data.
+Status: ADOPTED planning direction (founder, 2026-10-18; `docs/orcel/grants/2026-10-18-founder-attestation.md`), authored by Fable. Extends `docs/orcel/BENCHMARK_AND_E2E_PLAN.md` (adopted minimum native evidence). No result in this file is measured; every target is an ESTIMATE to be replaced by data.
 
 ## 1. Rules
 

@@ -1,6 +1,6 @@
 # Opus handoff: build cross-platform Orcel
 
-Status: PROPOSED planning handoff (Fable, 2026-10-18). This is the one entry document for implementation. It grants no authority: each task becomes a SpecGrain and goes through normal governance. Where this file and an ADOPTED document disagree on something already merged, the adopted document wins until the founder adopts this revision.
+Status: ADOPTED planning handoff (founder, 2026-10-18; `docs/orcel/grants/2026-10-18-founder-attestation.md`), authored by Fable. This is the one entry document for implementation. It grants no authority: each task becomes a SpecGrain and goes through normal governance. Where this file and an ADOPTED document disagree on something already merged, the adopted document wins until the founder adopts this revision.
 
 ## 1. Exact frontier (verified 2026-10-18)
 
@@ -31,9 +31,9 @@ Decision register with statuses: ARCHITECTURE_DECISIONS.md. Founder-directed: th
 
 ## 3. Remaining founder decisions (do not guess)
 
-FD-01 adopt this revision · FD-02 run the cross-platform track in parallel with SG-000096/108 · FD-03 Tauri Control Room direction · FD-04 FSL scope for Cua Spaces/bench · FD-05 self-hosted Mac runner and Apple Developer ID · FD-06 AGPL distribution wording · FD-07 Windows host consolidation after data · FD-08 WebMCP engine flag. Details and defaults: IMPLEMENTATION_BACKLOG.md "Founder decisions".
+Resolved 2026-10-18 (`docs/orcel/grants/2026-10-18-founder-attestation.md`): FD-01 adopted · FD-02 parallel track approved · FD-04 FSL reuse confirmed · FD-06 AGPL distribution confirmed. Open: FD-03 Tauri Control Room direction · FD-04 FSL scope for Cua Spaces/bench · FD-05 self-hosted Mac runner and Apple Developer ID · FD-06 AGPL distribution wording · FD-07 Windows host consolidation after data · FD-08 WebMCP engine flag. Details and defaults: IMPLEMENTATION_BACKLOG.md "Founder decisions".
 
-Tasks with no authority delta (XP-01, XP-02, XP-03, XP-04, BM-01, CR-01) do not wait for FD-01 beyond normal grain activation; XP-05 onward waits for FD-01.
+FD-01 is resolved, so XP-05 onward is no longer blocked on adoption; each task still needs its own grain activation and gates.
 
 ## 4. Source reuse priorities and pins
 
@@ -58,7 +58,7 @@ Every row with git object SHAs: SOURCE_TRANSPLANT_MATRIX.md. Verify before copyi
 | 4 | XP-04 host protocol /2 | contract for all native hosts | XP-02 |
 | 5 | XP-03 identity primitives | pid generation, session, peer creds | XP-01, XP-02 |
 | 6 | CR-01 app API transport (read-only) | F0 next slice, cross-platform from day one | XP-01, XP-03 |
-| 7 | XP-05 vendor Cua, host workspace | needs FD-01 | XP-02, FD-01 |
+| 7 | XP-05 vendor Cua, host workspace | first donor import | XP-02, FD-01 |
 | 8 | XP-06 macOS/Linux observation | first user-visible cross-platform capability | XP-03, XP-04, XP-05 |
 | 9 | XP-08 conformance fixtures and runners | evidence for everything after | XP-06 |
 | 10 | XP-07 window capture | completes read-only parity | XP-06 |

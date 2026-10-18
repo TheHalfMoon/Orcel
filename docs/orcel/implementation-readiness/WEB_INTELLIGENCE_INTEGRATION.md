@@ -1,6 +1,6 @@
 # Firecrawl → Orcel web intelligence blueprint (scrape + crawl + map + extract + research)
 
-Status: PROPOSED (Fable, 2026-10-18). Extends `WEB_CAPABILITIES_DECISION.md` (adopted, authoritative for slices 4-7 already merged). Donors: Firecrawl `f84845c8` (AGPL engine, founder authorization `docs/orcel/grants/2026-10-13-founder-source-authorization.md`), crawl4ai `94b67888` (Apache-2.0 + attribution clause), Agent-Reach `a19a171f` (MIT), TinyFish AgentQL `9257f7aa` (MIT examples). Rows: `transplant_matrix.json` `T-FC-*`, `T-C4-*`, `T-AR-*`.
+Status: ADOPTED planning direction (founder, 2026-10-18; `docs/orcel/grants/2026-10-18-founder-attestation.md`), authored by Fable. Extends `WEB_CAPABILITIES_DECISION.md` (adopted, authoritative for slices 4-7 already merged). Donors: Firecrawl `f84845c8` (AGPL engine, founder authorization `docs/orcel/grants/2026-10-13-founder-source-authorization.md`), crawl4ai `94b67888` (Apache-2.0 + attribution clause), Agent-Reach `a19a171f` (MIT), TinyFish AgentQL `9257f7aa` (MIT examples). Rows: `transplant_matrix.json` `T-FC-*`, `T-C4-*`, `T-AR-*`.
 
 ## 1. What already exists in Orcel (VERIFIED SOURCE FACT)
 

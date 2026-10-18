@@ -90,9 +90,9 @@ def backlog_md(backlog: dict) -> str:
             f"| [{t['id']}](#{t['id'].lower()}) | {t['phase']} | {t['status']} | {cell(t['title'])} | "
             f"{', '.join(t['depends_on']) or '-'} | {t['estimate']} | {t['proposed_grain']} |\n"
         )
-    out.append("\n## Founder decisions\n\n| Id | Question | Blocks | If no answer |\n|---|---|---|---|\n")
+    out.append("\n## Founder decisions\n\n| Id | Status | Question | Blocks | If no answer |\n|---|---|---|---|---|\n")
     for f in backlog["founder_decisions"]:
-        out.append(f"| {f['id']} | {cell(f['question'])} | {cell(', '.join(f['blocks']))} | {cell(f['default_if_silent'])} |\n")
+        out.append(f"| {f['id']} | {cell(f.get('status', 'OPEN'))} | {cell(f['question'])} | {cell(', '.join(f['blocks']))} | {cell(f['default_if_silent'])} |\n")
     out.append("\n## External dependencies\n\n")
     for e in backlog["external_dependencies"]:
         out.append(f"- **{e['id']}**: {e['meaning']}\n")

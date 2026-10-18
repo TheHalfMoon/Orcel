@@ -1,6 +1,6 @@
 # Browser intelligence: Browser Use, Playwright, Stagehand, Skyvern, WebMCP → Orcel
 
-Status: PROPOSED (Fable, 2026-10-18). Builds on the adopted SG-000108 design and `BROWSER_AGENT_DONORS_DECISION.md`, which stay authoritative for what is already merged. Donor pins: `donor_registry.json`. Rows: `transplant_matrix.json` `T-BU-*`, `T-PW-*`, `T-SH-*`.
+Status: ADOPTED planning direction (founder, 2026-10-18; `docs/orcel/grants/2026-10-18-founder-attestation.md`), authored by Fable. Builds on the adopted SG-000108 design and `BROWSER_AGENT_DONORS_DECISION.md`, which stay authoritative for what is already merged. Donor pins: `donor_registry.json`. Rows: `transplant_matrix.json` `T-BU-*`, `T-PW-*`, `T-SH-*`.
 
 ## 1. One browser architecture: who owns what
 

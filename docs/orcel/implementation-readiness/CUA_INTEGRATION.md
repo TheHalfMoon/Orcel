@@ -1,6 +1,6 @@
 # Cua → Orcel transplantation blueprint
 
-Status: PROPOSED (Fable, 2026-10-18). Donor: [trycua/cua](https://github.com/trycua/cua/tree/a802eaf26ca97616a6bf0de6a29729a9346fbb1f) at `a802eaf26ca97616a6bf0de6a29729a9346fbb1f` (2026-10-17). Inspection only: no Cua build script, binary or test was run for this blueprint. File-level rows with object SHAs: `transplant_matrix.json` rows `T-CUA-*`.
+Status: ADOPTED planning direction (founder, 2026-10-18; `docs/orcel/grants/2026-10-18-founder-attestation.md`), authored by Fable. Donor: [trycua/cua](https://github.com/trycua/cua/tree/a802eaf26ca97616a6bf0de6a29729a9346fbb1f) at `a802eaf26ca97616a6bf0de6a29729a9346fbb1f` (2026-10-17). Inspection only: no Cua build script, binary or test was run for this blueprint. File-level rows with object SHAs: `transplant_matrix.json` rows `T-CUA-*`.
 
 ## 1. Licensing map (from `LICENSING.md` at the pin)
 
@@ -10,12 +10,12 @@ Status: PROPOSED (Fable, 2026-10-18). Donor: [trycua/cua](https://github.com/try
 | `libs/cua/crates/{cua-sdk, cua-sandbox-core, cua-vmm, cua-image, cua-daemon, cua-proto, cua-mesh, ...}` | MIT | Not needed | cua-vmm COPY_ADAPT; rest REFERENCE |
 | `libs/lume` | MIT | Not needed | WRAP the CLI (later) |
 | `libs/cua-bench`, `cua-bench-rl`, `cua-s1/python`, `cua-bench-s1/python` | MIT | Not needed | PORT task format; S1 REFERENCE |
-| Cua Spaces: `apps/cua-spaces*`, `libs/cua-spacesd`, `cua-spaces-*`, `cua-keyvault`, `cua-teleport*`, `cua-machine-seal`, `cua-volume`, `cua-media-*`, `cua-viewer`, `cua-spacesd-html5`, `cua-logging`, `libs/spaces-*-swift`, FSL samples | FSL-1.1-MIT (no "Competing Use") | Founder asserts direct authorization over Cua-owned source; the **distribution scope for a commercial product is not evidenced** | REJECT until FD-04 |
-| `benchmarks/cua-driver-bench` | FSL-1.1-MIT | same | REJECT until FD-04 |
+| Cua Spaces: `apps/cua-spaces*`, `libs/cua-spacesd`, `cua-spaces-*`, `cua-keyvault`, `cua-teleport*`, `cua-machine-seal`, `cua-volume`, `cua-media-*`, `cua-viewer`, `cua-spacesd-html5`, `cua-logging`, `libs/spaces-*-swift`, FSL samples | FSL-1.1-MIT (no "Competing Use") | Authorized for reuse and commercial distribution (FD-04 confirmed 2026-10-18) | REJECT by architecture (network services on 3211/3212, own enrollment and keyvault) |
+| `benchmarks/cua-driver-bench` | FSL-1.1-MIT | Authorized (FD-04 confirmed 2026-10-18) | REFERENCE for BM-02; adopt task files with per-file provenance |
 | `libs/python/som` | AGPL-3.0-or-later | Cua-owned? not established | REJECT (not needed) |
 | `cua-perception` model artifacts (OmniParser icon detector) | AGPL-3.0-only, third-party | Not covered: third party | REJECT |
 
-FSL's Competing Use clause forbids making the software "or something substantially similar" available as a commercial product. Orcel is a computer-use product, so the default public FSL terms would not permit shipping these parts. The founder's direct authorization may change that; it must state its scope (FD-04). The plan does not depend on any FSL code.
+FSL's Competing Use clause would block a commercial computer-use product under the default public terms. The founder confirmed on 2026-10-18 that the direct authorization covers copying and commercial distribution of Cua-owned FSL components (FD-04, `docs/orcel/grants/2026-10-18-founder-attestation.md`). The plan still does not depend on FSL code; FSL parts are judged per component on architecture.
 
 ## 2. Cua Driver (`libs/cua-driver`)
 

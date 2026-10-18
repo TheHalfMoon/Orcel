@@ -4,7 +4,7 @@ Status: EXECUTION FRONTIER (a working summary that mirrors grain state; it does 
 
 Last verified: 2026-10-18 · main `40fc9f0a17b158188d20084126e2742b1632002c` (Merge PR #343; CI green). Previous verification: 2026-10-10 · `37a1a0f`.
 
-**Proposed cross-platform revision (2026-10-18, not yet adopted):** the founder directed that Windows, macOS and Linux are all first-class targets. The implementation-ready plan, donor registry, transplant matrix and backlog are in `docs/orcel/implementation-readiness/` (entry: `OPUS_HANDOFF.md`). It keeps every adopted decision below except the macOS/Linux deferral and the WPF-only UI decision; see its `ARCHITECTURE_DECISIONS.md` section 2.
+**Cross-platform revision (2026-10-18, ADOPTED by the founder, `docs/orcel/grants/2026-10-18-founder-attestation.md`):** the founder directed that Windows, macOS and Linux are all first-class targets. The implementation-ready plan, donor registry, transplant matrix and backlog are in `docs/orcel/implementation-readiness/` (entry: `OPUS_HANDOFF.md`). It keeps every adopted decision below except the macOS/Linux deferral and the WPF-only UI decision; see its `ARCHITECTURE_DECISIONS.md` section 2.
 
 ## Adopted decisions
 
@@ -34,14 +34,14 @@ The founder adopted the Sol app-first revision of the Opus plan on 2026-10-09. W
 | F4 · Core MVP qualification | NOT STARTED | F2 + F3, one real MCP client, installer < 400 MB |
 | SG-000096 privileged shell (#260) | GRAIN (spec state) | #278 prerequisite removed; T02 hardening records in `docs/p20/`; T02–T05 issues #264–#267 and #271 open; Full User shell stays unarmed |
 | F5–F8 | NOT STARTED | See roadmap dependencies |
-| Cross-platform track (X0–X6) | PROPOSED, NOT ACTIVATED | `docs/orcel/implementation-readiness/ROADMAP.md`; first task XP-01 (secure per-OS state directories); needs founder decisions FD-01/FD-02 for scheduling beyond no-authority-delta tasks |
+| Cross-platform track (X0–X6) | ADOPTED, IN PROGRESS | `docs/orcel/implementation-readiness/ROADMAP.md`; XP-01 PR #345, XP-02 PR #346; parallel with SG-000096/108 approved (FD-02) |
 
 ## Next executable grain
 
 1. F3 / SG-000108: rebase and finish #336 (slice 3b-i), then slice 3b-ii and the remaining product-caller slices to canonical closeout.
 2. F0 next slice: authenticated read-only app API in `orceld` (status/events/tasks). The proposed revision specifies it cross-platform from the start (backlog CR-01: named pipe with DACL on Windows, Unix socket with peer credentials on macOS/Linux); memory investigation (#288).
 3. F2: first local report task through the kernel with create-only approval and an independent checker.
-4. Proposed, pending founder decision: cross-platform foundation XP-01 → XP-02 → XP-04 → XP-03 (`docs/orcel/implementation-readiness/OPUS_HANDOFF.md` section 5).
+4. Cross-platform foundation (adopted): XP-01 (#345) → XP-02 (#346) → XP-04 → XP-03 (`docs/orcel/implementation-readiness/OPUS_HANDOFF.md` section 5).
 
 ## Review pathway
 

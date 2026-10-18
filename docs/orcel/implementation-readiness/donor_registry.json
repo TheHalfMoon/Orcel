@@ -6,7 +6,8 @@
   "authorization_records": [
     "docs/orcel/SOURCE_PERMISSIONS.md",
     "docs/orcel/grants/2026-10-13-founder-source-authorization.md",
-    "founder directive of 2026-10-18 (this planning PR): reconfirmed permission for trycua/cua and browser-use/browser-use and every previously authorized donor"
+    "founder directive of 2026-10-18 (this planning PR): reconfirmed permission for trycua/cua and browser-use/browser-use and every previously authorized donor",
+    "docs/orcel/grants/2026-10-18-founder-attestation.md"
   ],
   "strategy_vocabulary": [
     "COPY",
@@ -40,9 +41,9 @@
       "license_evidence": "LICENSING.md at the pinned commit",
       "source_access": "public",
       "strategy": "WRAP",
-      "strategy_detail": "Vendor the MIT Cua Driver platform crates at the pin and call their tool implementations in-process from an Orcel-owned private host (macOS, Linux). COPY_ADAPT cua-vmm's Runtime trait and backends for the optional sandbox subsystem. REFERENCE Lume, cua-bench, CUA-S1. REJECT cuabot (upstream marks it unsafe), the Cua MCP/HTTP/daemon surfaces, its CDP browser engine, run_script (QuickJS), Computer History, telemetry, every FSL component until its distribution scope is confirmed, and the AGPL perception extension.",
+      "strategy_detail": "Vendor the MIT Cua Driver platform crates at the pin and call their tool implementations in-process from an Orcel-owned private host (macOS, Linux). COPY_ADAPT cua-vmm's Runtime trait and backends for the optional sandbox subsystem. REFERENCE Lume, cua-bench, CUA-S1. REJECT cuabot (upstream marks it unsafe), the Cua MCP/HTTP/daemon surfaces, its CDP browser engine, run_script (QuickJS), Computer History, telemetry, FSL components by architecture (network listeners, separate enrollment and keyvault) even though FD-04 now authorizes their reuse, and the AGPL perception extension.",
       "blueprint": "CUA_INTEGRATION.md",
-      "status": "PROPOSED"
+      "status": "ADOPTED_PLAN"
     },
     {
       "id": "browser-use",
@@ -81,7 +82,7 @@
       "strategy": "COPY_ADAPT",
       "strategy_detail": "COPY_ADAPT the AgentKit protocol, validation and headless client (packages/agentkit/src) as the Control Room event contract. PORT the tool-call journal classification (packages/core/src/agent/tool-call-journal.ts) into the kernel journal's resume summary. REFERENCE the agent loop, SQL run store, A2A and Electron desktop app. REJECT AgentNativeComputerHelper.swift as an input engine (foreground-only, frontmost-app only, no capture or window identity).",
       "blueprint": "AGENT_RUNTIME_INTEGRATION.md",
-      "status": "PROPOSED"
+      "status": "ADOPTED_PLAN"
     },
     {
       "id": "space",
@@ -97,7 +98,7 @@
       "strategy": "COPY_ADAPT",
       "strategy_detail": "COPY_ADAPT node-level pieces only, for the optional Linux/KVM backend: Firecracker API client and snapshot files (crates/libs/node/runtime/core), guest process/filesystem/idempotency service (crates/libs/spaced/guest/server). PORT lifecycle semantics (paused vs suspended), execution-generation fencing and unknown Process.Start outcome. REJECT the control plane (API, PostgreSQL, Kubernetes, cluster controller, AWS, ECW) for a local-first product.",
       "blueprint": "SECURE_EXECUTION_INTEGRATION.md",
-      "status": "PROPOSED"
+      "status": "ADOPTED_PLAN"
     },
     {
       "id": "firecrawl",
@@ -352,7 +353,7 @@
       "strategy": "PORT",
       "strategy_detail": "PORT BM25ContentFilter and PruningContentFilter (crawl4ai/content_filter_strategy.py) into the TypeScript extraction pipeline with the required attribution. REFERENCE adaptive_crawler.py and async_url_seeder.py. REJECT LLMContentFilter and the Python runtime.",
       "blueprint": "WEB_INTELLIGENCE_INTEGRATION.md",
-      "status": "PROPOSED"
+      "status": "ADOPTED_PLAN"
     },
     {
       "id": "agent-reach",

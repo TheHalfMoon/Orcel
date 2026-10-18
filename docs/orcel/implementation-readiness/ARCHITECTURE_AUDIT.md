@@ -1,6 +1,6 @@
 # Orcel architecture audit (2026-10-18)
 
-Status: PROPOSED planning record (Fable). It grants no authority and changes no code. Base: `main@40fc9f0a17b158188d20084126e2742b1632002c` (Merge PR #343, CI success). Evidence labels follow `ORCEL_MASTER_PLAN.md`: VERIFIED SOURCE FACT, TESTED RESULT, ENGINEERING INFERENCE, ESTIMATE, UNPROVEN ASSUMPTION, OPEN DECISION. Every finding below was read in source at the base revision; no Orcel or donor code was built or run for this audit.
+Status: ADOPTED planning record (founder, 2026-10-18), authored by Fable. It grants no authority and changes no code. Base: `main@40fc9f0a17b158188d20084126e2742b1632002c` (Merge PR #343, CI success). Evidence labels follow `ORCEL_MASTER_PLAN.md`: VERIFIED SOURCE FACT, TESTED RESULT, ENGINEERING INFERENCE, ESTIMATE, UNPROVEN ASSUMPTION, OPEN DECISION. Every finding below was read in source at the base revision; no Orcel or donor code was built or run for this audit.
 
 ## 1. What Orcel is today
 

@@ -2,7 +2,7 @@
 
 # Implementation backlog
 
-Status: PROPOSED (Fable planning, 2026-10-18). Each task becomes a SpecGrain only when its grain is activated under canonical governance; nothing here is an active grain.
+Status: ADOPTED planning direction (founder, 2026-10-18; docs/orcel/grants/2026-10-18-founder-attestation.md). Each task becomes a SpecGrain only when its grain is activated under canonical governance.
 
 Estimates: ESTIMATE in engineer-days of focused implementation for one agent, excluding review latency. Not a measurement.
 
@@ -72,16 +72,16 @@ Gates every task inherits:
 
 ## Founder decisions
 
-| Id | Question | Blocks | If no answer |
-|---|---|---|---|
-| FD-01 | Adopt this cross-platform revision (Windows, macOS, Linux first-class; Cua platform crates for macOS/Linux native hosts; copy-first donor plan) as planning direction? | XP-05 | Nothing beyond X0 tasks with no authority delta starts. |
-| FD-02 | May the X0/X1 cross-platform track run as its own grain in parallel with SG-000096 and SG-000108 (as SG-000108 was allowed in parallel on 2026-10-10)? | XP-01..XP-08 scheduling | X0 waits for a free grain slot. |
-| FD-03 | Direction: Tauri 2 Control Room for all three OSes, with WPF kept on Windows until the CR-04 parity gate passes? | CR-03 | WPF stays; CR-01/CR-02 still proceed because they are UI-toolkit-neutral. |
-| FD-04 | Does the direct Cua authorization cover copying and commercially distributing FSL-1.1-MIT components (Cua Spaces, cua-spacesd, cua-driver-bench) inside Orcel? A one-line scope statement is enough. | any FSL reuse | FSL components stay REJECT; the plan does not depend on them. |
-| FD-05 | Provide (a) a Mac that can act as a self-hosted GitHub runner with Accessibility and Screen Recording granted, and (b) an Apple Developer ID for signing and notarization (paid Apple membership)? | XP-08 macOS leg, XP-16 release signing | macOS ships unsigned dev builds only and macOS GUI E2E is manual. |
-| FD-06 | Confirm in one line that the AGPL donor authorization (Firecrawl, Skyvern) includes redistribution and commercial distribution inside Apache-2.0 Orcel. | release of WI-01/WI-05 code | The 2026-10-13 record's reading stands; flagged as open. |
-| FD-07 | After XP-20, consolidate Windows on the Rust native host? | Windows consolidation | Keep the Go host. |
-| FD-08 | Admit the engine's experimental WebMCP flag through an SG-000074 argv amendment? | BR-08 | Declarative WebMCP only. |
+| Id | Status | Question | Blocks | If no answer |
+|---|---|---|---|---|
+| FD-01 | ADOPTED 2026-10-18 (docs/orcel/grants/2026-10-18-founder-attestation.md) | Adopt this cross-platform revision (Windows, macOS, Linux first-class; Cua platform crates for macOS/Linux native hosts; copy-first donor plan) as planning direction? | XP-05 | Nothing beyond X0 tasks with no authority delta starts. |
+| FD-02 | APPROVED 2026-10-18 (same record) | May the X0/X1 cross-platform track run as its own grain in parallel with SG-000096 and SG-000108 (as SG-000108 was allowed in parallel on 2026-10-10)? | XP-01..XP-08 scheduling | X0 waits for a free grain slot. |
+| FD-03 | OPEN | Direction: Tauri 2 Control Room for all three OSes, with WPF kept on Windows until the CR-04 parity gate passes? | CR-03 | WPF stays; CR-01/CR-02 still proceed because they are UI-toolkit-neutral. |
+| FD-04 | CONFIRMED 2026-10-18 (same record) | Does the direct Cua authorization cover copying and commercially distributing FSL-1.1-MIT components (Cua Spaces, cua-spacesd, cua-driver-bench) inside Orcel? A one-line scope statement is enough. | any FSL reuse | FSL components stay REJECT; the plan does not depend on them. |
+| FD-05 | OPEN | Provide (a) a Mac that can act as a self-hosted GitHub runner with Accessibility and Screen Recording granted, and (b) an Apple Developer ID for signing and notarization (paid Apple membership)? | XP-08 macOS leg, XP-16 release signing | macOS ships unsigned dev builds only and macOS GUI E2E is manual. |
+| FD-06 | CONFIRMED 2026-10-18 (same record) | Confirm in one line that the AGPL donor authorization (Firecrawl, Skyvern) includes redistribution and commercial distribution inside Apache-2.0 Orcel. | release of WI-01/WI-05 code | The 2026-10-13 record's reading stands; flagged as open. |
+| FD-07 | OPEN | After XP-20, consolidate Windows on the Rust native host? | Windows consolidation | Keep the Go host. |
+| FD-08 | OPEN | Admit the engine's experimental WebMCP flag through an SG-000074 argv amendment? | BR-08 | Declarative WebMCP only. |
 
 ## External dependencies
 

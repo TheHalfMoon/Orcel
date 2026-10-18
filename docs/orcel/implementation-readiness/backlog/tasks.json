@@ -1,6 +1,6 @@
 {
   "schema": "orcel-readiness-backlog/1",
-  "status": "PROPOSED (Fable planning, 2026-10-18). Each task becomes a SpecGrain only when its grain is activated under canonical governance; nothing here is an active grain.",
+  "status": "ADOPTED planning direction (founder, 2026-10-18; docs/orcel/grants/2026-10-18-founder-attestation.md). Each task becomes a SpecGrain only when its grain is activated under canonical governance.",
   "estimate_scale": "ESTIMATE in engineer-days of focused implementation for one agent, excluding review latency. Not a measurement.",
   "common_gates": [
     "exact-head CI green on every OS the task touches (ubuntu-latest, windows-latest, macos-latest once XP-02 lands)",
@@ -3175,7 +3175,8 @@
       "blocks": [
         "XP-05"
       ],
-      "default_if_silent": "Nothing beyond X0 tasks with no authority delta starts."
+      "default_if_silent": "Nothing beyond X0 tasks with no authority delta starts.",
+      "status": "ADOPTED 2026-10-18 (docs/orcel/grants/2026-10-18-founder-attestation.md)"
     },
     {
       "id": "FD-02",
@@ -3183,7 +3184,8 @@
       "blocks": [
         "XP-01..XP-08 scheduling"
       ],
-      "default_if_silent": "X0 waits for a free grain slot."
+      "default_if_silent": "X0 waits for a free grain slot.",
+      "status": "APPROVED 2026-10-18 (same record)"
     },
     {
       "id": "FD-03",
@@ -3191,7 +3193,8 @@
       "blocks": [
         "CR-03"
       ],
-      "default_if_silent": "WPF stays; CR-01/CR-02 still proceed because they are UI-toolkit-neutral."
+      "default_if_silent": "WPF stays; CR-01/CR-02 still proceed because they are UI-toolkit-neutral.",
+      "status": "OPEN"
     },
     {
       "id": "FD-04",
@@ -3199,7 +3202,8 @@
       "blocks": [
         "any FSL reuse"
       ],
-      "default_if_silent": "FSL components stay REJECT; the plan does not depend on them."
+      "default_if_silent": "FSL components stay REJECT; the plan does not depend on them.",
+      "status": "CONFIRMED 2026-10-18 (same record)"
     },
     {
       "id": "FD-05",
@@ -3208,7 +3212,8 @@
         "XP-08 macOS leg",
         "XP-16 release signing"
       ],
-      "default_if_silent": "macOS ships unsigned dev builds only and macOS GUI E2E is manual."
+      "default_if_silent": "macOS ships unsigned dev builds only and macOS GUI E2E is manual.",
+      "status": "OPEN"
     },
     {
       "id": "FD-06",
@@ -3216,7 +3221,8 @@
       "blocks": [
         "release of WI-01/WI-05 code"
       ],
-      "default_if_silent": "The 2026-10-13 record's reading stands; flagged as open."
+      "default_if_silent": "The 2026-10-13 record's reading stands; flagged as open.",
+      "status": "CONFIRMED 2026-10-18 (same record)"
     },
     {
       "id": "FD-07",
@@ -3224,7 +3230,8 @@
       "blocks": [
         "Windows consolidation"
       ],
-      "default_if_silent": "Keep the Go host."
+      "default_if_silent": "Keep the Go host.",
+      "status": "OPEN"
     },
     {
       "id": "FD-08",
@@ -3232,7 +3239,8 @@
       "blocks": [
         "BR-08"
       ],
-      "default_if_silent": "Declarative WebMCP only."
+      "default_if_silent": "Declarative WebMCP only.",
+      "status": "OPEN"
     }
   ],
   "external_dependencies": [

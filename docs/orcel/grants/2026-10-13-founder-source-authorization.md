@@ -28,7 +28,7 @@ This record reads two things together as covering distribution of the integrated
 - the permission to **integrate** the code into Aladdin, a product distributed under Apache-2.0;
 - the founder's instruction that this authorization is **sufficient internal approval** and must not block authorized implementation.
 
-That reading is the record's own, not a further statement by the founder. The founder holds the documents and is the party who would correct it. A one-line founder confirmation of the distribution scope would replace this paragraph.
+That reading is the record's own, not a further statement by the founder. **Confirmed by the founder on 2026-10-18** (redistribution and commercial distribution included): `docs/orcel/grants/2026-10-18-founder-attestation.md`. The founder holds the documents and is the party who would correct it. A one-line founder confirmation of the distribution scope would replace this paragraph.
 
 ## What this record does not contain
 

@@ -15,6 +15,10 @@ The founder therefore attests that official permission is held to **copy, use, a
 
 For permissive donors (MIT, Apache-2.0, BSD) nothing changes. Their licenses already allow copying and renaming, provided the copyright and permission notices travel with the copied code.
 
+## Update 2026-10-18
+
+The founder confirmed in writing that the authorization covers copying, modification, integration, commercial use, commercial distribution, redistribution and relicensing of the covered donor-owned code, including Cua (FSL components included), Firecrawl, Skyvern, Browser Use, Agent-Native and Perplexity SPACE. Record: `docs/orcel/grants/2026-10-18-founder-attestation.md`. The agreements remain confidential and were not reviewed by the engineering agent. Everything in the next section still applies.
+
 ## What the attestation does not change
 
 - **Notices and provenance.** Every copied or adapted file keeps an attribution header (donor, path, commit). Every import keeps a provenance record with blob SHAs and a modification summary, plus the donor's notice under `docs/orcel/notices/`. For the AGPL donors the notice records the upstream license **and** this permission.
