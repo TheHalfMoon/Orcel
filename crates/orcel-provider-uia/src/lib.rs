@@ -46,6 +46,9 @@ use std::collections::HashMap;
 mod native_desktop;
 
 mod computer_host;
+#[cfg(any(windows, test))]
+#[cfg_attr(not(windows), allow(dead_code))]
+mod host_protocol;
 pub use computer_host::{
     ComputerHostAdapter, DesktopActionResult, DesktopCursorPosition, DesktopInputAction,
     DesktopWindowAction,
