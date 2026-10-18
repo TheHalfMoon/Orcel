@@ -424,7 +424,7 @@ Gates every task inherits:
   4. Package the polkit action file in XP-17.
   5. Development installs the polkit action file with a documented one-line sudo script in tests only; XP-17 packages it.
 - **Tests.**
-  - positive: unit tests with test-support; dbus mock of polkit returns authorized
+  - positive: unit tests with test-support; scripted D-Bus polkit test double returns authorized
   - negative: polkit returns challenge/denied -> denied; no agent -> unavailable
   - recovery: helper crash -> denied
   - e2e: manual checklist on GNOME and KDE
@@ -1412,7 +1412,7 @@ Gates every task inherits:
 - **Steps.**
   1. Provider registry with probe/doctor semantics; API keys in XP-19 secret store; egress to the configured host only.
 - **Tests.**
-  - positive: mock provider
+  - positive: local fake search provider
   - negative: no provider -> unavailable
   - recovery: none required
   - e2e: none required

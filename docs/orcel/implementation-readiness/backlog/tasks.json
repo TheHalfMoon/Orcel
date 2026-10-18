@@ -719,7 +719,7 @@
       "tests": {
         "positive": [
           "unit tests with test-support",
-          "dbus mock of polkit returns authorized"
+          "scripted D-Bus polkit test double returns authorized"
         ],
         "negative": [
           "polkit returns challenge/denied -> denied",
@@ -2697,7 +2697,7 @@
       "security": "Key never in tool output; network policy pins destination.",
       "tests": {
         "positive": [
-          "mock provider"
+          "local fake search provider"
         ],
         "negative": [
           "no provider -> unavailable"
