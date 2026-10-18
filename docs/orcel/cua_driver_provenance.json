@@ -1,0 +1,103 @@
+{
+  "schema": "orcel-vendored-provenance/1",
+  "task": "XP-05",
+  "proposed_grain": "SG-000111",
+  "donor": {
+    "id": "cua",
+    "repository": "trycua/cua",
+    "commit": "a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+    "license": "MIT",
+    "license_path": "LICENSE.md",
+    "license_blob_sha": "b8b198ce3ebaa22c9f59588a80f9f1875d85b34a",
+    "notice_path": "docs/orcel/notices/cua-MIT.txt",
+    "authorization": "docs/orcel/grants/2026-10-18-founder-attestation.md"
+  },
+  "verification": "scripts/check-vendored-cua.mjs rebuilds each crate's git tree from the committed files, substituting the upstream blob for every path listed in patched_files, and requires the result to equal tree_sha. Run: node scripts/check-vendored-cua.mjs",
+  "patch_queue": "apps/orcel-native-host/third_party/cua-driver/PATCHES.md",
+  "crates": [
+    {
+      "matrix_id": "T-CUA-01",
+      "name": "platform-macos",
+      "source": "libs/cua-driver/rust/crates/platform-macos",
+      "tree_sha": "ad71d18fb2cdd257c86e861e1acf13ead4ebf787",
+      "destination": "apps/orcel-native-host/third_party/cua-driver/crates/platform-macos",
+      "files": 99,
+      "patched_files": []
+    },
+    {
+      "matrix_id": "T-CUA-02",
+      "name": "platform-linux",
+      "source": "libs/cua-driver/rust/crates/platform-linux",
+      "tree_sha": "131729601863cac56d291657e58ac5b7ec931210",
+      "destination": "apps/orcel-native-host/third_party/cua-driver/crates/platform-linux",
+      "files": 94,
+      "patched_files": []
+    },
+    {
+      "matrix_id": "T-CUA-03",
+      "name": "cua-driver-core",
+      "source": "libs/cua-driver/rust/crates/cua-driver-core",
+      "tree_sha": "e30a399d3bd1001aa6d33d5f790314538686100a",
+      "destination": "apps/orcel-native-host/third_party/cua-driver/crates/cua-driver-core",
+      "files": 121,
+      "patched_files": []
+    },
+    {
+      "matrix_id": "T-CUA-04",
+      "name": "cua-driver-contract",
+      "source": "libs/cua-driver/rust/crates/cua-driver-contract",
+      "tree_sha": "4a1b8f96567120acf83ae0cb5e83f2a01b597627",
+      "destination": "apps/orcel-native-host/third_party/cua-driver/crates/cua-driver-contract",
+      "files": 19,
+      "patched_files": []
+    },
+    {
+      "matrix_id": "T-CUA-05",
+      "name": "cursor-overlay",
+      "source": "libs/cua-driver/rust/crates/cursor-overlay",
+      "tree_sha": "e1d281e8266f7fa511ae4bc96acf10df25ce6bc1",
+      "destination": "apps/orcel-native-host/third_party/cua-driver/crates/cursor-overlay",
+      "files": 25,
+      "patched_files": []
+    },
+    {
+      "matrix_id": "T-CUA-06",
+      "name": "pip-preview",
+      "source": "libs/cua-driver/rust/crates/pip-preview",
+      "tree_sha": "f7bc009a59c7a6a4185ca262731afe2467f040f5",
+      "destination": "apps/orcel-native-host/third_party/cua-driver/crates/pip-preview",
+      "files": 2,
+      "patched_files": []
+    },
+    {
+      "matrix_id": "T-CUA-38",
+      "name": "cua-cursor-motion",
+      "source": "libs/cua-driver/rust/crates/cua-cursor-motion",
+      "tree_sha": "c396291e7882634f4d8ae93b86cdadd887bfe85f",
+      "destination": "apps/orcel-native-host/third_party/cua-driver/crates/cua-cursor-motion",
+      "files": 20,
+      "patched_files": []
+    },
+    {
+      "matrix_id": "T-CUA-39",
+      "name": "Skills/cua-driver",
+      "source": "libs/cua-driver/rust/Skills/cua-driver",
+      "tree_sha": "a9a05022bd85ccf9374f1947b389af5e5574f428",
+      "destination": "apps/orcel-native-host/third_party/cua-driver/Skills/cua-driver",
+      "files": 11,
+      "patched_files": []
+    }
+  ],
+  "files": [
+    {
+      "source": "LICENSE.md",
+      "blob_sha": "b8b198ce3ebaa22c9f59588a80f9f1875d85b34a",
+      "destination": "apps/orcel-native-host/third_party/cua-driver/LICENSE.md"
+    },
+    {
+      "source": "libs/cua-driver/rust/THIRD_PARTY_NOTICES.md",
+      "blob_sha": "8a111b26105f46a203da69d9fed0be54d91a44d8",
+      "destination": "apps/orcel-native-host/third_party/cua-driver/THIRD_PARTY_NOTICES.md"
+    }
+  ]
+}

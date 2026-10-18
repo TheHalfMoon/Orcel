@@ -26,6 +26,22 @@ fn is_test_file(relative: &str) -> bool {
         || relative.contains("examples/")
 }
 
+/// XP-05 vendored Cua Driver crates (trycua/cua@a802eaf2, MIT). Their bytes
+/// are upstream's: CI (`scripts/check-vendored-cua.mjs`) proves every
+/// unpatched file is identical to the pinned tree, and the only edits allowed
+/// are the reviewed queue in `third_party/cua-driver/PATCHES.md`. Upstream's
+/// own TODO comments, panic!/unreachable! calls, "mock" identifiers and
+/// `#[ignore]` desktop tests cannot be rewritten without breaking that proof,
+/// so the marker, panic/unreachable/mock and ignored-test rules skip this one
+/// prefix. Every other rule (focused tests, console output, secrets, the
+/// live-browser feature, workflows) still applies to it, and nothing outside
+/// it is exempt.
+const VENDORED_CUA: &str = "apps/orcel-native-host/third_party/cua-driver/crates/";
+
+fn vendored(relative: &str) -> bool {
+    relative.starts_with(VENDORED_CUA)
+}
+
 fn text_files(root: &Path) -> Vec<(String, String)> {
     // The gate never scans itself: its allowlists name the exact vectors, and
     // the gate definition is reviewed as ordinary PR diff instead.
@@ -213,7 +229,7 @@ fn no_release_blocker_markers_in_code() {
     for (relative, text) in text_files(&root) {
         // Governance specifications describe the sweep requirement itself in
         // prose; they are not shipped code markers.
-        if !code_file(&relative) || relative.starts_with(".specgrain/") {
+        if !code_file(&relative) || relative.starts_with(".specgrain/") || vendored(&relative) {
             continue;
         }
         for (index, line) in text.lines().enumerate() {
@@ -242,12 +258,14 @@ fn no_panic_unreachable_or_mock_in_non_test_code() {
             continue;
         }
         let is_rust = relative.ends_with(".rs");
+        let upstream = vendored(&relative);
         for (index, line) in text.lines().enumerate() {
             let trimmed = line.trim();
-            if is_rust && line.contains("panic!") {
+            if is_rust && !upstream && line.contains("panic!") {
                 hits.push(format!("{relative}:{}: {trimmed}", index + 1));
             }
             if is_rust
+                && !upstream
                 && line.contains("unreachable!")
                 && !(relative == "crates/orcel-provider-process/src/lib.rs"
                     && line
@@ -255,7 +273,7 @@ fn no_panic_unreachable_or_mock_in_non_test_code() {
             {
                 hits.push(format!("{relative}:{}: {trimmed}", index + 1));
             }
-            if line.to_lowercase().contains("mock") {
+            if !upstream && line.to_lowercase().contains("mock") {
                 hits.push(format!("{relative}:{}: {trimmed}", index + 1));
             }
             // Build/generator scripts report progress on stdout as ordinary CLI
@@ -306,7 +324,7 @@ fn only_the_documented_ignored_tests_exist() {
     let root = repo_root();
     let mut hits = Vec::new();
     for (relative, text) in text_files(&root) {
-        if !relative.ends_with(".rs") {
+        if !relative.ends_with(".rs") || vendored(&relative) {
             continue;
         }
         for (index, line) in text.lines().enumerate() {

@@ -448,6 +448,30 @@
       "notes": "FSL-1.1-MIT (FD-04). Retry wrapper notarize.sh calls."
     },
     {
+      "id": "T-CUA-38",
+      "donor": "cua",
+      "path": "libs/cua-driver/rust/crates/cua-cursor-motion",
+      "kind": "tree",
+      "dest": "apps/orcel-native-host/third_party/cua-driver/crates/cua-cursor-motion",
+      "dest_state": "NEW",
+      "method": "WRAP",
+      "task": "XP-05",
+      "notes": "Path dependency of cursor-overlay (T-CUA-05), found while vendoring; pure-Rust motion math with no dependencies beyond optional serde. Never constructed by the Orcel host.",
+      "object": "c396291e7882634f4d8ae93b86cdadd887bfe85f"
+    },
+    {
+      "id": "T-CUA-39",
+      "donor": "cua",
+      "path": "libs/cua-driver/rust/Skills/cua-driver",
+      "kind": "tree",
+      "dest": "apps/orcel-native-host/third_party/cua-driver/Skills/cua-driver",
+      "dest_state": "NEW",
+      "method": "WRAP",
+      "task": "XP-05",
+      "notes": "Markdown that cua-driver-core's mcp_skills.rs embeds with include_str!(\"../../../Skills/cua-driver/...\"); vendored at the same relative place so the path needs no patch. MCP skill prose only; the Orcel host serves no MCP.",
+      "object": "a9a05022bd85ccf9374f1947b389af5e5574f428"
+    },
+    {
       "id": "T-BU-01",
       "donor": "browser-use",
       "path": "browser_use/dom/serializer/clickable_elements.py",
