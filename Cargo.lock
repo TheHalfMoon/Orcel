@@ -112,6 +112,7 @@ version = "0.2.0"
 dependencies = [
  "fs4",
  "orcel-contracts",
+ "orcel-platform",
  "serde",
  "serde_json",
  "sha2",
@@ -123,6 +124,7 @@ name = "orcel-audit"
 version = "0.2.0"
 dependencies = [
  "orcel-contracts",
+ "orcel-platform",
  "serde",
  "serde_json",
 ]
@@ -159,11 +161,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "orcel-platform"
+version = "0.2.0"
+
+[[package]]
 name = "orcel-policy"
 version = "0.2.0"
 dependencies = [
  "orcel-approval",
  "orcel-contracts",
+ "orcel-platform",
  "orcel-provider-browser",
  "orcel-provider-clipboard",
  "orcel-provider-network",

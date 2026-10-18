@@ -1,0 +1,36 @@
+{
+  "schema": "orcel-benchmark-report/1",
+  "orcel_commit": "40fc9f0a17b158188d20084126e2742b1632002c",
+  "suite": "native-conformance",
+  "machine": {
+    "os": "macos",
+    "os_version": "26.0",
+    "arch": "arm64",
+    "cpu": "Apple M2",
+    "ram_gb": 16
+  },
+  "planner": {
+    "kind": "deterministic",
+    "name": "orcel-conformance",
+    "version": "0.2.0"
+  },
+  "rows": [
+    {
+      "case": "shared-web/click/ax/background",
+      "status": "pass",
+      "observed": "delivered",
+      "latency_ms": { "p50": 41, "p95": 88 },
+      "steps": 1,
+      "model_calls": 0,
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "rss_mb_peak": 112.5,
+      "evidence": "runs/sample/shared-web-click-ax-background.json"
+    },
+    {
+      "case": "shared-web/type/ax/foreground",
+      "status": "skip",
+      "observed": "unsupported"
+    }
+  ]
+}

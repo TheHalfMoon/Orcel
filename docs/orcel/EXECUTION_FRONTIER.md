@@ -2,7 +2,9 @@
 
 Status: EXECUTION FRONTIER (a working summary that mirrors grain state; it does not set it — canonical grain state lives in `.specgrain/` and `docs/canonical/`). Update this file whenever a grain merges, blocks, or the next grain changes. It serves implementation; it grants no authority. Planning detail lives in the adopted documents listed below; evidence lives in PRs, issues and CI runs.
 
-Last verified: 2026-10-10 · main `37a1a0f9f3e530d6fdef998301f975752f8c991a`.
+Last verified: 2026-10-18 · main `40fc9f0a17b158188d20084126e2742b1632002c` (Merge PR #343; CI green). Previous verification: 2026-10-10 · `37a1a0f`.
+
+**Cross-platform revision (2026-10-18, ADOPTED by the founder, `docs/orcel/grants/2026-10-18-founder-attestation.md`):** the founder directed that Windows, macOS and Linux are all first-class targets. The implementation-ready plan, donor registry, transplant matrix and backlog are in `docs/orcel/implementation-readiness/` (entry: `OPUS_HANDOFF.md`). It keeps every adopted decision below except the macOS/Linux deferral and the WPF-only UI decision; see its `ARCHITECTURE_DECISIONS.md` section 2.
 
 ## Adopted decisions
 
@@ -28,16 +30,18 @@ The founder adopted the Sol app-first revision of the Opus plan on 2026-10-09. W
 | F0 · WPF read-only shell | MERGED (first slice) | PR #282 → `37a1a0f`: truthful runtime status from the runtime's JSON, bounded non-blocking I/O, accessibility ids, native UI Automation E2E (13/13 against a real install; evidence on PR #282). Open: idle memory higher than expected (#288) |
 | F0 · app API (status/events/tasks) | NOT IMPLEMENTED | Next executable grain |
 | F2 · local report task | NOT IMPLEMENTED | Needs F0 + F1 |
-| F3 · Playwright browser worker | GRAIN ACTIVATING (SG-000108, #289, tracking #290) | Parallel with SG-000096 by founder decision (2026-10-10); `playwright-core` 1.63.0 selected; engine-attachment and address-enforcement decisions proposed in `docs/security/SG-000108_ENGINE_ATTACHMENT_DECISION.md`; implementation not started |
+| F3 · Playwright browser worker | GRAIN, IMPLEMENTATION IN PROGRESS (SG-000108, #289, tracking #290) | Parallel with SG-000096 by founder decision (2026-10-10). Merged since 2026-10-10: worker package, native probes, launcher, HTTPS probes, navigation, observation and activation, PDF download, typed outcomes, WebMCP discovery and execution, browser-use extraction port, native extraction, map/crawl, robots/sitemaps, download hardening, crash recovery, TesterArmy E2E, loopback-only confinement, profile sweep, engine window, product-caller slices 1a-3a (#294-#335). Open: #336 slice 3b-i runtime pin (checks green, merge conflict with main since 2026-10-14) |
 | F4 · Core MVP qualification | NOT STARTED | F2 + F3, one real MCP client, installer < 400 MB |
-| SG-000096 privileged shell (#260) | NOT ACTIVATED | #278 prerequisite removed; remaining T02–T05 grains and their own reviews still required; Full User shell stays unarmed |
+| SG-000096 privileged shell (#260) | GRAIN (spec state) | #278 prerequisite removed; T02 hardening records in `docs/p20/`; T02–T05 issues #264–#267 and #271 open; Full User shell stays unarmed |
 | F5–F8 | NOT STARTED | See roadmap dependencies |
+| Cross-platform track (X0–X6) | ADOPTED (planning); grain SG-000109 not yet activated | `docs/orcel/implementation-readiness/ROADMAP.md`; XP-02 merged (#346 → `564e0fe`); XP-01 #345, BM-01 #347, XP-04 #348 reviewed and passing; parallel with SG-000096/108 approved (FD-02) |
 
 ## Next executable grain
 
-1. F3 / SG-000108: dependency admission, closed host-worker IPC, read-only live navigation and observation on the verified engine, then the PDF download journey.
-2. F0 next slice: authenticated read-only app API in `orceld` (status/events/tasks) and WPF wiring; memory investigation (#288).
+1. F3 / SG-000108: rebase and finish #336 (slice 3b-i), then slice 3b-ii and the remaining product-caller slices to canonical closeout.
+2. F0 next slice: authenticated read-only app API in `orceld` (status/events/tasks). The adopted revision specifies it cross-platform from the start (backlog CR-01: named pipe with DACL on Windows, Unix socket with peer credentials on macOS/Linux); memory investigation (#288).
 3. F2: first local report task through the kernel with create-only approval and an independent checker.
+4. Cross-platform foundation (adopted): XP-01 (#345) → XP-02 (#346) → XP-04 → XP-03 (`docs/orcel/implementation-readiness/OPUS_HANDOFF.md` section 5).
 
 ## Review pathway
 
