@@ -86,7 +86,7 @@ Rules inside the host:
 
 Object SHAs are the git tree/blob ids printed by `tools/readiness_check.py --donors <dir>`; the full ids are in `transplant_matrix.json`.
 
-Review scope for the vendored tree (from the adversarial review): line-by-line exact-diff review of roughly 220K vendored lines is not feasible. XP-05 therefore adds a CI step proving every unpatched vendored file is byte-identical to the upstream tree at `a802eaf2`; Jev/OCR exact-diff review covers the patch queue (`PATCHES.md` commits), the Orcel adapter and the workspace manifests. This is the same admission model already used for playwright-core's npm sources, and it is recorded in the PR as the governed handling of a vendored dependency.
+Review scope for the vendored tree (from the adversarial review): line-by-line exact-diff review of roughly 220K vendored lines is not feasible. XP-05 therefore proposes a CI step proving every unpatched vendored file is byte-identical to the upstream tree at `a802eaf2`, with Jev/OCR exact-diff review covering the patch queue (`PATCHES.md` commits), the Orcel adapter and the workspace manifests, the same admission model already used for playwright-core's npm sources. This narrowing of the review gate is a **proposal that requires explicit approval in the XP-05 grain**; until then the normal gates apply to the whole diff.
 
 ### 2.5 Dependency impact
 

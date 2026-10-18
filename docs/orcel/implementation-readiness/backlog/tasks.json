@@ -333,7 +333,7 @@
         "main.rs prints protocol version and exits (no tool reachable).",
         "CI: new job 'Native host / macos-latest, ubuntu-latest' running cargo build --locked and cargo test -p cua-driver-core --no-default-features --lib inside apps/orcel-native-host; cargo audit and cargo deny check licenses there.",
         "Add the MIT notice and the Cua copyright line to THIRD_PARTY_NOTICES generation.",
-        "Review scope: unpatched vendored files are verified byte-identical to the upstream pin by a CI step (git tree hash per crate, minus the files PATCHES.md lists); Jev/OCR exact-diff review covers PATCHES.md commits, the adapter and the workspace manifests. Record this exclusion in the PR as the governed handling of a vendored dependency, the same way playwright-core's npm sources are admitted without line review."
+        "Proposed review-scope exclusion, which requires explicit approval in the XP-05 grain before use: unpatched vendored files are verified byte-identical to the upstream pin by a CI step (git tree hash per crate, minus the files PATCHES.md lists); Jev/OCR exact-diff review covers PATCHES.md commits, the adapter and the workspace manifests. Until approved, the full vendored diff goes through the normal Jev/OCR gates."
       ],
       "interfaces": "none exposed",
       "platforms": {
@@ -1046,7 +1046,7 @@
     },
     {
       "id": "XP-15",
-      "phase": "X4",
+      "phase": "X0",
       "title": "Clipboard provider on macOS and Linux",
       "status": "BLOCKED_ON_DEPENDENCY",
       "objective": "Text-only clipboard read/write with the existing secret-denial and size rules.",
@@ -1418,7 +1418,7 @@
     },
     {
       "id": "CR-01",
-      "phase": "X1",
+      "phase": "X0",
       "title": "Authenticated local app API transport on three OSes (read-only status and events)",
       "status": "READY",
       "objective": "The F0 next slice, built cross-platform from the start: orceld serves a private per-user IPC endpoint (Windows named pipe with explicit DACL and client PID check; macOS/Linux Unix domain socket in the 0700 state root with peer-credential check) exposing status, capabilities and a bounded event subscription with sequence cursors.",
@@ -3057,7 +3057,7 @@
     },
     {
       "id": "BM-01",
-      "phase": "X1",
+      "phase": "X0",
       "title": "Benchmark and conformance reporting format and dashboard file",
       "status": "READY",
       "objective": "One JSON schema for native conformance cells and task benchmark runs, checked into docs, so every later task reports comparable numbers.",

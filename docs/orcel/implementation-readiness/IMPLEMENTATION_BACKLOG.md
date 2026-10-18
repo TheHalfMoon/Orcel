@@ -34,13 +34,13 @@ Gates every task inherits:
 | [XP-12](#xp-12) | X3 | BLOCKED_ON_DEPENDENCY | Bounded raw input on macOS and Linux, background delivery, GNOME/KDE Wayland enablement | XP-11 | 6-9 | SG-000113 |
 | [XP-13](#xp-13) | X4 | BLOCKED_ON_DEPENDENCY | Process provider confinement on Linux and macOS (Safe mode parity) | XP-03 | 6-10 | SG-000114 |
 | [XP-14](#xp-14) | X4 | BLOCKED_ON_DEPENDENCY | Browser host on macOS and Linux: discovery, verification, confinement, supervision | XP-03, SG-000108-CLOSE | 8-12 | SG-000115 |
-| [XP-15](#xp-15) | X4 | BLOCKED_ON_DEPENDENCY | Clipboard provider on macOS and Linux | XP-02 | 1-2 | SG-000114 |
+| [XP-15](#xp-15) | X0 | BLOCKED_ON_DEPENDENCY | Clipboard provider on macOS and Linux | XP-02 | 1-2 | SG-000114 |
 | [XP-16](#xp-16) | X5 | FOUNDER_DECISION_REQUIRED | macOS packaging: signed app bundles, LaunchAgent, TCC identity | XP-05, FD-05 | 6-9 | SG-000116 |
 | [XP-17](#xp-17) | X5 | BLOCKED_ON_DEPENDENCY | Linux packaging: XDG layout, systemd user unit, deb/rpm/tarball, polkit action | XP-01 | 4-6 | SG-000116 |
 | [XP-18](#xp-18) | X5 | BLOCKED_ON_DEPENDENCY | Pinned Node runtime per OS for the MCP edge and browser worker | XP-16, XP-17, SG-000108-CLOSE | 3-5 | SG-000116 |
 | [XP-19](#xp-19) | X5 | BLOCKED_ON_DEPENDENCY | Per-OS secret storage for device identity and OAuth material | XP-03 | 3-5 | SG-000117 |
 | [XP-20](#xp-20) | X6 | BLOCKED_ON_DEPENDENCY | Windows host bake-off: Go host vs Cua platform-windows inside orcel-native-host | XP-08, XP-12 | 3-4 | - |
-| [CR-01](#cr-01) | X1 | READY | Authenticated local app API transport on three OSes (read-only status and events) | XP-01, XP-03 | 4-6 | SG-000118 |
+| [CR-01](#cr-01) | X0 | READY | Authenticated local app API transport on three OSes (read-only status and events) | XP-01, XP-03 | 4-6 | SG-000118 |
 | [CR-02](#cr-02) | X1 | BLOCKED_ON_DEPENDENCY | Adopt the AgentKit protocol and headless client for the Control Room event stream | CR-01 | 3-4 | SG-000118 |
 | [CR-03](#cr-03) | X1 | FOUNDER_DECISION_REQUIRED | Tauri 2 Control Room skeleton (read-only) on three OSes | CR-02, FD-03 | 8-12 | SG-000119 |
 | [CR-04](#cr-04) | X6 | BLOCKED_ON_DEPENDENCY | Control Room parity gate and WPF retirement decision | CR-03 | 2-3 | - |
@@ -67,7 +67,7 @@ Gates every task inherits:
 | [SX-04](#sx-04) | S3 | BLOCKED_ON_DEPENDENCY | Firecracker microVM backend (Linux with /dev/kvm) | SX-01 | 6-8 | SG-000124 |
 | [SX-05](#sx-05) | S3 | BLOCKED_ON_DEPENDENCY | Guest agent for VM sandboxes (process, files, idempotency) | SX-02 | 5-7 | SG-000124 |
 | [SX-06](#sx-06) | S3 | FOUNDER_DECISION_REQUIRED | Sandbox MCP exposure with approvals | SX-01 | 4-6 | SG-000125 |
-| [BM-01](#bm-01) | X1 | READY | Benchmark and conformance reporting format and dashboard file | - | 1 | SG-000109 |
+| [BM-01](#bm-01) | X0 | READY | Benchmark and conformance reporting format and dashboard file | - | 1 | SG-000109 |
 | [BM-02](#bm-02) | X6 | BLOCKED_ON_DEPENDENCY | Task benchmark runner with local fixtures (cua-bench task format) | BM-01, XP-12, BR-02 | 5-7 | - |
 
 ## Founder decisions
@@ -245,7 +245,7 @@ Gates every task inherits:
   4. main.rs prints protocol version and exits (no tool reachable).
   5. CI: new job 'Native host / macos-latest, ubuntu-latest' running cargo build --locked and cargo test -p cua-driver-core --no-default-features --lib inside apps/orcel-native-host; cargo audit and cargo deny check licenses there.
   6. Add the MIT notice and the Cua copyright line to THIRD_PARTY_NOTICES generation.
-  7. Review scope: unpatched vendored files are verified byte-identical to the upstream pin by a CI step (git tree hash per crate, minus the files PATCHES.md lists); Jev/OCR exact-diff review covers PATCHES.md commits, the adapter and the workspace manifests. Record this exclusion in the PR as the governed handling of a vendored dependency, the same way playwright-core's npm sources are admitted without line review.
+  7. Proposed review-scope exclusion, which requires explicit approval in the XP-05 grain before use: unpatched vendored files are verified byte-identical to the upstream pin by a CI step (git tree hash per crate, minus the files PATCHES.md lists); Jev/OCR exact-diff review covers PATCHES.md commits, the adapter and the workspace manifests. Until approved, the full vendored diff goes through the normal Jev/OCR gates.
 - **Tests.**
   - positive: workspace builds --locked on macOS and Linux; cua-driver-core unit tests pass with no default features
   - negative: feature orcel-minimal: grep of the binary for 'run_script' and 'remote-debugging' finds nothing
@@ -276,7 +276,7 @@ Gates every task inherits:
 - **Dependencies to admit.** None beyond XP-05.
 - **Interface.** orcel-computer-host/2 ops: hello, ping, list_windows, observe_window, cursor_position, shutdown
 - **Platforms.** windows: Unchanged (Go host).; macos: AX via Cua; requires Accessibility permission for the signed host identity (XP-16).; linux: X11 + AT-SPI and Sway/wlroots via Cua default features; GNOME/KDE Wayland report unavailable until XP-12.
-- **Security and authority.** Read-only. The registry still allocates identities, redacts, bounds and excludes protected surfaces. Protected-window list extended per OS (macOS loginwindow, SecurityAgent, screensaver; Linux polkit agent dialogs, lock screens) in crates/orcel-provider-uia is_protected_window. Authority delta: Existing read-only desktop observation tools become available on two more OSes; no new tool, scope or approval class..
+- **Security and authority.** Read-only. The registry still allocates identities, redacts, bounds and excludes protected surfaces. Protected-window list extended per OS (macOS loginwindow, SecurityAgent, screensaver; Linux polkit agent dialogs, lock screens) in crates/orcel-provider-uia is_protected_window. Authority delta: Existing read-only desktop observation tools become available on two more OSes; no new tool, scope or approval class.
 - **Steps.**
   1. protocol.rs: serde types mirroring protocol.go /2 with deny_unknown_fields and the same byte bounds (64 KiB request, 16 MiB response, 64 windows, 256 nodes, depth 8).
   2. supervisor.rs/worker.rs: same shape as the Go host: long-lived supervisor never touches AX/AT-SPI; each observation runs in a one-shot worker child with an 8 s timeout and 2 attempts; worker exits after one answer. The worker constructs Cua's platform ToolState with cursor_overlay_available=false, host_owns_permission_ux=true.
@@ -314,7 +314,7 @@ Gates every task inherits:
 - **Dependencies to admit.** none beyond XP-05
 - **Interface.** capture_window(window ref) -> captureFact
 - **Platforms.** windows: unchanged; macos: ScreenCaptureKit path in Cua capture.rs; linux: X11 SHM / wlroots screencopy
-- **Security and authority.** Same window-only scope; protected surfaces return denial before pixels are read. Authority delta: Existing capture tool on two more OSes..
+- **Security and authority.** Same window-only scope; protected surfaces return denial before pixels are read. Authority delta: Existing capture tool on two more OSes.
 - **Steps.**
   1. Allowlist Cua screenshot for an exact window id only; refuse desktop/display scope.
   2. Convert to 8-bit RGBA within 7680x4320 and 8 MiB bounds.
@@ -382,7 +382,7 @@ Gates every task inherits:
 - **Dependencies to admit.** objc2 + objc2-local-authentication (MIT/Apache) or a 200-line Swift helper; CoreFoundation for CFUserNotificationDisplayAlert.
 - **Interface.** impl PresenceVerifier for MacLocalAuthPresenceVerifier; platform_prompt(cfg(target_os="macos"))
 - **Platforms.** windows: unchanged; macos: new; linux: XP-10
-- **Security and authority.** Approval UI is OS-owned, not Control Room-owned. The helper is a separate signed binary; its result is accepted only with the current nonce and only from a code-signature-verified child. Authority delta: Approvals become possible on macOS; no new action becomes approvable..
+- **Security and authority.** Approval UI is OS-owned, not Control Room-owned. The helper is a separate signed binary; its result is accepted only with the current nonce and only from a code-signature-verified child. Authority delta: Approvals become possible on macOS; no new action becomes approvable.
 - **Steps.**
   1. SOFT: CFUserNotificationDisplayAlert with kCFUserNotificationCautionAlertLevel, default button = Deny, same text body as the Windows prompt (workspace, action, target, summary, digest, nonce prefix).
   2. STRONG: LAContext evaluatePolicy(.deviceOwnerAuthentication) inside the signed helper; the helper returns a result bound to the request nonce over an inherited pipe; orceld verifies the helper's code signature (team id) before trusting it.
@@ -416,7 +416,7 @@ Gates every task inherits:
 - **Dependencies to admit.** zbus (MIT) for polkit CheckAuthorization; gtk4-rs (MIT) in the helper only.
 - **Interface.** impl PresenceVerifier for PolkitPresenceVerifier; platform_prompt(cfg(target_os="linux"))
 - **Platforms.** windows: unchanged; macos: XP-09; linux: new (X11 and Wayland sessions)
-- **Security and authority.** polkit auth_self requires credentials each time; agent spoofing by a same-user process is the residual risk, documented. Authority delta: Approvals become possible on Linux..
+- **Security and authority.** polkit auth_self requires credentials each time; agent spoofing by a same-user process is the residual risk, documented. Authority delta: Approvals become possible on Linux.
 - **Steps.**
   1. STRONG: polkit CheckAuthorization for action ai.orcel.approve.strong with auth_self (never auth_self_keep, never allow_active=yes) and AllowUserInteraction; details carry the digest.
   2. SOFT: broker-spawned GTK4 helper shows the same body; default Deny; returns over an inherited pipe with the nonce.
@@ -450,7 +450,7 @@ Gates every task inherits:
 - **Dependencies to admit.** none
 - **Interface.** semantic_action over /2 with the existing request fields
 - **Platforms.** windows: unchanged; macos: AX background delivery per Cua evidence; linux: AT-SPI on X11 and Sway; GNOME/KDE after XP-12
-- **Security and authority.** Same SOFT approval per action; digest binds element runtime id + window generation + value digest. Authority delta: Existing approval-gated actions on two more OSes..
+- **Security and authority.** Same SOFT approval per action; digest binds element runtime id + window generation + value digest. Authority delta: Existing approval-gated actions on two more OSes.
 - **Steps.**
   1. Map semantic_action{invoke} -> Cua click with element_token and AX addressing only (pixel path disabled for semantic_action).
   2. set_value -> Cua set_value; refuse secure fields before the call.
@@ -486,7 +486,7 @@ Gates every task inherits:
 - **Dependencies to admit.** portal-input feature deps (ashpd, reis, xkbcommon) admitted separately.
 - **Interface.** input_* ops over /2
 - **Platforms.** windows: unchanged; macos: background + foreground; linux: X11 XTest/MPX; Sway; GNOME via portal/libei after helper installation; KDE refused
-- **Security and authority.** Full User lease + SOFT approval per action unchanged; human-input binding prevents acting over a user who is typing. Authority delta: Existing Full User input tools on two more OSes..
+- **Security and authority.** Full User lease + SOFT approval per action unchanged; human-input binding prevents acting over a user who is typing. Authority delta: Existing Full User input tools on two more OSes.
 - **Steps.**
   1. Human-input recency: macOS CGEventSourceSecondsSinceLastEventType(combined, any) converted to a monotonic tick; Linux X11 XScreenSaverQueryInfo idle; Wayland: ext-idle-notify when the compositor offers it, else raw input unavailable.
   2. Background delivery: report per op from Cua refusals; Orcel policy prefers background delivery and never activates or raises a window unless the request asked for foreground.
@@ -520,7 +520,7 @@ Gates every task inherits:
 - **Dependencies to admit.** landlock (MIT/Apache) and seccompiler (Apache-2.0) on Linux; libc.
 - **Interface.** Existing provider API
 - **Platforms.** windows: unchanged; macos: new; linux: new
-- **Security and authority.** No ambient shell; registered executables only. Authority delta: Existing Safe process tool on two more OSes..
+- **Security and authority.** No ambient shell; registered executables only. Authority delta: Existing Safe process tool on two more OSes.
 - **Steps.**
   1. Linux: spawn into a new process group, PR_SET_PDEATHSIG, pidfd for exact wait/kill, cgroup v2 child cgroup when delegated (systemd --user), rlimits, Landlock filesystem allowlist for the workspace, seccomp deny of ptrace/mount/bpf.
   2. macOS: posix_spawn with POSIX_SPAWN_SETPGROUP, rlimits, kqueue EVFILT_PROC for exit, kill the group on drop; Seatbelt via sandbox_init is DEPRECATED API: use only as defense-in-depth behind a feature flag and record the risk.
@@ -551,7 +551,7 @@ Gates every task inherits:
 - **Dependencies to admit.** security-framework (MIT/Apache) for SecStaticCode on macOS.
 - **Interface.** unchanged host frames
 - **Platforms.** windows: unchanged; macos: new; linux: new
-- **Security and authority.** See SECURITY_INTEGRATION.md S-06 (no-route proxy) and S-07 (weaker Linux engine verification). Authority delta: Existing browser authority on two more OSes..
+- **Security and authority.** See SECURITY_INTEGRATION.md S-06 (no-route proxy) and S-07 (weaker Linux engine verification). Authority delta: Existing browser authority on two more OSes.
 - **Steps.**
   1. Discovery: macOS /Applications/{Google Chrome,Microsoft Edge}.app; verify with SecStaticCodeCheckValidity against requirement 'anchor apple generic and certificate leaf[subject.OU] = <Google EQHXZ8M8AV | Microsoft UBF8T346G9>'. Linux: /opt/google/chrome/chrome, /opt/microsoft/msedge/msedge; verify owning package via dpkg -S / rpm -qf plus package signature status; record that Linux verification is weaker.
   2. Replace NO_ROUTE_PROXY on Unix with a host-owned sink: the host binds 127.0.0.1:0, never accepts payload (accept then close), and passes that exact port; this removes the 0.0.0.0-is-loopback hole.
@@ -572,7 +572,7 @@ Gates every task inherits:
 
 ### XP-15
 
-**Clipboard provider on macOS and Linux** · phase X4 · BLOCKED_ON_DEPENDENCY · estimate 1-2 days (ESTIMATE) · proposed grain SG-000114
+**Clipboard provider on macOS and Linux** · phase X0 · BLOCKED_ON_DEPENDENCY · estimate 1-2 days (ESTIMATE) · proposed grain SG-000114
 
 - **Objective.** Text-only clipboard read/write with the existing secret-denial and size rules.
 - **User-visible capability.** clipboard_read/clipboard_write on macOS and Linux.
@@ -584,7 +584,7 @@ Gates every task inherits:
 - **Dependencies to admit.** clipboard-rs 0.3.5 (MIT) as Cua uses, with wayland feature on Linux.
 - **Interface.** unchanged
 - **Platforms.** windows: unchanged; macos: NSPasteboard via clipboard-rs; linux: X11/Wayland via clipboard-rs
-- **Security and authority.** Same SOFT approval. Authority delta: Existing clipboard tools on two more OSes..
+- **Security and authority.** Same SOFT approval. Authority delta: Existing clipboard tools on two more OSes.
 - **Steps.**
   1. Wrap clipboard-rs text get/set; keep 64 KiB bound and secret denial; Wayland requires a focused surface for some compositors: report unavailable rather than spawning wl-copy.
 - **Tests.**
@@ -762,7 +762,7 @@ Gates every task inherits:
 
 ### CR-01
 
-**Authenticated local app API transport on three OSes (read-only status and events)** · phase X1 · READY · estimate 4-6 days (ESTIMATE) · proposed grain SG-000118
+**Authenticated local app API transport on three OSes (read-only status and events)** · phase X0 · READY · estimate 4-6 days (ESTIMATE) · proposed grain SG-000118
 
 - **Objective.** The F0 next slice, built cross-platform from the start: orceld serves a private per-user IPC endpoint (Windows named pipe with explicit DACL and client PID check; macOS/Linux Unix domain socket in the 0700 state root with peer-credential check) exposing status, capabilities and a bounded event subscription with sequence cursors.
 - **User-visible capability.** The Control Room (and the WPF preview) show real daemon state on every OS.
@@ -773,7 +773,7 @@ Gates every task inherits:
 - **Dependencies to admit.** none (std + existing windows-sys features)
 - **Interface.** See ORCEL_APP_API_1.md (to be written in this task; skeleton in AGENT_RUNTIME_INTEGRATION.md section 3)
 - **Platforms.** windows: named pipe \\.\pipe\orcel-<sid>-app with DACL = current user SID only; macos: unix socket in state root; linux: unix socket in $XDG_RUNTIME_DIR/orcel (0700)
-- **Security and authority.** Loopback TCP is not used. Unauthenticated peers are dropped before any read. Authority delta: New read-only local interface; no mutation..
+- **Security and authority.** Loopback TCP is not used. Unauthenticated peers are dropped before any read. Authority delta: New read-only local interface; no mutation.
 - **Steps.**
   1. Frame: JSON lines, 64 KiB max, versioned 'orcel-app-api/1'.
   2. Methods (read-only): status.get, capabilities.get, devices.list (paginated), events.subscribe {after_seq} -> snapshot when gap, task.get, task.list.
@@ -969,7 +969,7 @@ Gates every task inherits:
 - **Dependencies to admit.** none
 - **Interface.** task_resume_summary {task_id} -> {completed[], unknown[], next_verification[]}
 - **Platforms.** all: same
-- **Security and authority.** Read-only; no secret values in fingerprints (hash only). Authority delta: One new read-only tool..
+- **Security and authority.** Read-only; no secret values in fingerprints (hash only). Authority delta: One new read-only tool.
 - **Steps.**
   1. Classify journal entries into completed / interrupted-unknown with input fingerprints.
   2. Expose as a read-only tool; governed tool-contract change.
@@ -1033,7 +1033,7 @@ Gates every task inherits:
 - **Dependencies to admit.** none
 - **Interface.** worker frames: fill, select, check, press, hover, drag, wait_for
 - **Platforms.** all: same
-- **Security and authority.** No secret fill; no evaluate; value digest in approval. Authority delta: New approval-gated browser actions..
+- **Security and authority.** No secret fill; no evaluate; value digest in approval. Authority delta: New approval-gated browser actions.
 - **Steps.**
   1. Copy the locator-level calls; drop zod schemas, MCP response builder, code generation and page.evaluate timers.
   2. Each action is one frame with a bounded payload; fill refuses password/one-time-code/credit-card autocomplete fields (SG-000077).
@@ -1068,7 +1068,7 @@ Gates every task inherits:
 - **Dependencies to admit.** none
 - **Interface.** worker frame upload {ref, staged_id}
 - **Platforms.** all: same
-- **Security and authority.** Upload is egress: STRONG? decision: SOFT with origin+file digest unless policy marks the workspace sensitive (then STRONG). Authority delta: New approval-gated egress..
+- **Security and authority.** Upload is egress: STRONG? decision: SOFT with origin+file digest unless policy marks the workspace sensitive (then STRONG). Authority delta: New approval-gated egress.
 - **Steps.**
   1. Host copies the approved file into a per-lifetime staging dir it holds open; worker receives only that path.
   2. Browser Use semantics: resolve the nearest file input to the approved ref.
@@ -1130,7 +1130,7 @@ Gates every task inherits:
 - **Dependencies to admit.** none
 - **Interface.** frames tab_list, tab_select, tab_close, dialog_respond
 - **Platforms.** all: same
-- **Security and authority.** Popup to non-admitted origin closed. Authority delta: New approval-gated dialog response..
+- **Security and authority.** Popup to non-admitted origin closed. Authority delta: New approval-gated dialog response.
 - **Steps.**
   1. Tab ids are host-issued.
   2. Dialog accept is its own SOFT action with the dialog text digest.
@@ -1222,7 +1222,7 @@ Gates every task inherits:
 - **Dependencies to admit.** none
 - **Interface.** existing webmcp frames
 - **Platforms.** all: same
-- **Security and authority.** Argv amendment is an authority change. Authority delta: Engine flag admission..
+- **Security and authority.** Argv amendment is an authority change. Authority delta: Engine flag admission.
 - **Steps.**
   1. Security review of the flag; argv amendment; then client.
 - **Tests.**
@@ -1377,7 +1377,7 @@ Gates every task inherits:
 - **Dependencies to admit.** pdf-inspector 1.21 and anydoc 0.2.2: licenses to be verified at admission (not inspected here); zip with deflate only.
 - **Interface.** orcel-doc-parser/1 frames
 - **Platforms.** all: process confinement per XP-13
-- **Security and authority.** Parser bugs contained in a no-network, no-write process. Authority delta: New local read of an approved file..
+- **Security and authority.** Parser bugs contained in a no-network, no-write process. Authority delta: New local read of an approved file.
 - **Steps.**
   1. Parser process: stdin file bytes (bounded 50 MiB), stdout Markdown (bounded); no network, Landlock/AppContainer/sandbox profile; 30 s timeout.
   2. Macros and external links never evaluated.
@@ -1408,7 +1408,7 @@ Gates every task inherits:
 - **Dependencies to admit.** none
 - **Interface.** web_search {query, provider?}
 - **Platforms.** all: same
-- **Security and authority.** Key never in tool output; network policy pins destination. Authority delta: New network tool, SOFT-gated egress..
+- **Security and authority.** Key never in tool output; network policy pins destination. Authority delta: New network tool, SOFT-gated egress.
 - **Steps.**
   1. Provider registry with probe/doctor semantics; API keys in XP-19 secret store; egress to the configured host only.
 - **Tests.**
@@ -1591,7 +1591,7 @@ Gates every task inherits:
 - **Dependencies to admit.** n/a
 - **Interface.** new tools
 - **Platforms.** all: per backend availability
-- **Security and authority.** New authority. Authority delta: New tools..
+- **Security and authority.** New authority. Authority delta: New tools.
 - **Steps.**
   1. Tool contract governance; approval classes.
 - **Tests.**
@@ -1609,7 +1609,7 @@ Gates every task inherits:
 
 ### BM-01
 
-**Benchmark and conformance reporting format and dashboard file** · phase X1 · READY · estimate 1 days (ESTIMATE) · proposed grain SG-000109
+**Benchmark and conformance reporting format and dashboard file** · phase X0 · READY · estimate 1 days (ESTIMATE) · proposed grain SG-000109
 
 - **Objective.** One JSON schema for native conformance cells and task benchmark runs, checked into docs, so every later task reports comparable numbers.
 - **User-visible capability.** None.

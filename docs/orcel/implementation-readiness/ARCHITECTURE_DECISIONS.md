@@ -32,7 +32,7 @@ Status column meanings: **FOUNDER-DIRECTED** = stated by the founder in the 2026
 | Adopted item | Change | Reason |
 |---|---|---|
 | WP24 "DEFER macOS/Linux until funded requirements" | REMOVE | Founder directive AD-01 |
-| UI decision "Keep WPF for Windows v1" | REVERSAL TRIGGER MET for condition (a); toolkit change still gated by condition (c) | UI_UX_AND_APP_SIZE_BUDGET.md "Exact reversal conditions" |
+| UI decision "Keep WPF for Windows v1" | REVERSAL TRIGGER MET for condition (a) as a founder-directed requirement (funding not separately recorded); toolkit change still gated by condition (c) | UI_UX_AND_APP_SIZE_BUDGET.md "Exact reversal conditions" |
 | F0 app API "private per-user stdio/named-pipe adapter" | IMPROVE: specify Unix socket + peer credentials from the start | AD-08 |
 | F5 "complete Windows Core" | IMPROVE: becomes "complete Core on each OS"; macOS/Linux increments X1-X5 run alongside | AD-01 |
 | F8 "additional OS hosts only with an approved need" | REMOVE (the need is approved) | AD-01 |
@@ -81,7 +81,7 @@ Ranked by product value, evidence strength, effort and risk. Only findings with 
 1. Relevance filtering reduces tokens per extraction (WI-03, M-WI-02).
 2. Fewer failed steps from stale refs and occlusion (BR-01, BR-04, M-BR-02).
 3. Background semantic actions avoid activate/raise round trips (XP-11, M-NAT-03).
-4. Sacrificial-worker cost on Windows observation measured; a persistent worker considered only with data (A-09, XP-20).
+4. Sacrificial-worker cost on Windows observation to be measured; a persistent worker considered only with data (A-09, XP-20).
 
 **Top cross-platform gaps**
 1. Approval presenters and presence (XP-09/10).

@@ -1,5 +1,6 @@
 {
   "schema": "orcel-donor-registry/1",
+  "status": "ADOPTED planning record (founder, 2026-10-18; docs/orcel/grants/2026-10-18-founder-attestation.md)",
   "verified_on": "2026-10-18",
   "verified_by": "Fable planning pass (source inspection only; no donor code, build script or test was executed)",
   "orcel_base": "40fc9f0a17b158188d20084126e2742b1632002c",

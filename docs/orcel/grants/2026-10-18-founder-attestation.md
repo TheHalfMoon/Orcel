@@ -16,7 +16,7 @@ On 2026-10-18 the founder stated in writing to the engineering agent:
 
 - **FD-04 (Cua FSL components):** Cua-owned FSL-1.1-MIT components may be copied and distributed inside Orcel. A component is still used only when the architecture admits it.
 - **FD-06 (AGPL donors):** the distribution scope of Firecrawl- and Skyvern-owned code includes redistribution and commercial distribution inside Apache-2.0 Orcel. This closes the open paragraph in `2026-10-13-founder-source-authorization.md`.
-- **FD-01 (adopt the revision):** read as adopted from "PROCEED WITH THE APPROVED PLAN".
+- **FD-01 (adopt the revision):** read as adopted from "PROCEED WITH THE APPROVED PLAN" and "enable Opus to execute the adopted plan". This reading is the record's own.
 - **FD-02 (parallel track):** read as approved from "Continue XP-02 and the remaining cross-platform backlog". This reading is the record's own; the founder can correct it.
 - **Still open:** FD-03 (Tauri direction), FD-05 (Mac runner and Apple Developer ID; no purchase without an explicit decision), FD-07 and FD-08.
 

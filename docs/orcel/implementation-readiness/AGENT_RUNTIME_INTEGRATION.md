@@ -73,7 +73,7 @@ Agent-Native ships Electron. Cua ships Tauri, SwiftUI and Electron for the same 
 | Security surface | small | IPC allowlist + CSP; no remote content | larger (Node in main) | small |
 | Existing investment | 876 lines | 0 | 0 | 876 lines |
 
-Proposal: **Tauri 2 for one Control Room on all three OSes** (CR-03), WPF kept on Windows until the CR-04 parity gate passes. The UI_UX reversal condition (a) "macOS/Linux becomes a funded near-term product requirement" is met by the founder directive of 2026-10-18; condition (b) "a real reusable frontend" is met by AgentKit's client and selected Toolkit components; condition (c) is still the measured gate. FD-03 asks the founder to confirm the direction. Electron is rejected (bundled Chromium contradicts the no-bundled-browser policy and the 400 MB budget pressure). Cua Spaces' web UI is FSL and tied to its daemon: rejected.
+Proposal: **Tauri 2 for one Control Room on all three OSes** (CR-03), WPF kept on Windows until the CR-04 parity gate passes. The UI_UX reversal condition (a) "macOS/Linux becomes a funded near-term product requirement" is met by the founder directive of 2026-10-18 as a founder-directed requirement (funding is not separately recorded); condition (b) "a real reusable frontend" is met by AgentKit's client and selected Toolkit components; condition (c) is still the measured gate. FD-03 asks the founder to confirm the direction. Electron is rejected (bundled Chromium contradicts the no-bundled-browser policy and the 400 MB budget pressure). Cua Spaces' web UI is FSL and tied to its daemon: rejected.
 
 ### 3.5 macOS helper: REJECT Agent-Native's, adopt Cua's platform crate
 

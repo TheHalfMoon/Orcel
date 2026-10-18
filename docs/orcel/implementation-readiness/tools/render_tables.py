@@ -26,7 +26,7 @@ def cell(value) -> str:
 def donors_md(reg: dict) -> str:
     out = [HEADER.format(src="donor_registry.json"), "# Authorized donor registry\n\n"]
     out.append(
-        f"Status: PROPOSED planning record. Verified {reg['verified_on']} against Orcel main "
+        f"Status: {reg['status']}. Verified {reg['verified_on']} against Orcel main "
         f"`{reg['orcel_base'][:12]}`. {reg['verified_by']}.\n\n"
         "Authorization records: " + "; ".join(f"`{a}`" if a.startswith("docs/") else a for a in reg["authorization_records"]) + ".\n\n"
         "A founder authorization reaches only code its grantor owns. Third-party files inside a donor, every dependency, "
@@ -64,7 +64,7 @@ def matrix_md(matrix: dict, reg: dict) -> str:
     pins = {d["id"]: d for d in reg["donors"]}
     out = [HEADER.format(src="transplant_matrix.json"), "# Source transplant matrix\n\n"]
     out.append(
-        "Status: PROPOSED. " + matrix["note"] + "\n\n"
+        "Status: " + matrix["status"] + ". " + matrix["note"] + "\n\n"
         "| Row | Donor @ pin | Source | Object | Method | Orcel destination | Task | Notes |\n|---|---|---|---|---|---|---|---|\n"
     )
     for r in matrix["rows"]:
@@ -110,7 +110,7 @@ def backlog_md(backlog: dict) -> str:
         out.append("- **Change.** " + ("; ".join(f"`{x}`" for x in ch) or "none") + "\n")
         out.append(f"- **Dependencies to admit.** {t['dependencies']}\n- **Interface.** {t['interfaces']}\n")
         out.append("- **Platforms.** " + "; ".join(f"{k}: {v}" for k, v in t["platforms"].items()) + "\n")
-        out.append(f"- **Security and authority.** {t['security']} Authority delta: {t['authority_delta']}.\n")
+        out.append(f"- **Security and authority.** {t['security']} Authority delta: {t['authority_delta'].rstrip('.')}.\n")
         out.append("- **Steps.**\n" + "".join(f"  {i}. {s}\n" for i, s in enumerate(t["steps"], 1)))
         out.append("- **Tests.**\n")
         for k in ("positive", "negative", "recovery", "e2e"):

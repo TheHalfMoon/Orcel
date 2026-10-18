@@ -21,8 +21,8 @@ Tracks A and X touch different files (A: `crates/orcel-browser-host`, `apps/orce
 
 | Phase | Tasks | Exit test | Effort (ESTIMATE) |
 |---|---|---|---|
-| X0 foundation | XP-01, XP-02, XP-03, XP-04, BM-01, CR-01 | three-OS CI green; no temp fallback; `/2` hello works with Go host; app API read-only on three OSes | 12-19 |
-| X1 observe | XP-05, XP-06, XP-07, XP-08, CR-02, (CR-03 after FD-03) | macOS + X11 + Sway observation and capture conformance reports; Control Room shows real status | 23-38 |
+| X0 foundation | XP-01, XP-02, XP-03, XP-04, BM-01, CR-01, XP-15 | three-OS CI green; no temp fallback; `/2` hello works with Go host; app API read-only on three OSes; clipboard on three OSes | 13-21 |
+| X1 observe | XP-05, XP-06, XP-07, XP-08, CR-02, (CR-03 after FD-03) | macOS + X11 + Sway observation and capture conformance reports; Control Room shows real status | 18-27 without CR-03; 26-39 with it |
 | X2 approve | XP-09, XP-10, RJ-01 | #278 regressions and ledger tests pass on macOS/Linux; real prompts recorded | 10-15 |
 | X3 act | XP-11, XP-12, RJ-02, RJ-03 | semantic and input cells green; crash-at-each-transition suite | 19-28 |
 | X4 parity | XP-13, XP-14, XP-15 | process, browser, clipboard suites on three OSes | 15-24 |
@@ -50,7 +50,8 @@ XP-02 ↗        ↗   ↓
 XP-04 ─────────┘  XP-07, XP-08
 XP-05 ────────────┘
 XP-01 → CR-01 → CR-02 → CR-03 → CR-04
-XP-16 → XP-09 → XP-11            XP-17 → XP-10 → XP-11
+XP-01 + XP-02 → XP-09 → XP-11    XP-01 → XP-10 → XP-11
+(XP-09 uses a development-signed helper checked against a pinned designated requirement; XP-16 later swaps in the Developer ID requirement. XP-10 installs its polkit action with a test-only script; XP-17 packages it.)
 SG-000108 close → RJ-01 → RJ-02 → RJ-03
 SG-000108 close → BR-01 → BR-02 → BR-03/BR-05 ; BR-01 → BR-04, BR-06 ; BR-01 + RJ-01 → BR-07
 SG-000108 close → WI-01 → WI-02, WI-04 ; WI-03 ; XP-13 → WI-05 ; XP-19 → WI-06

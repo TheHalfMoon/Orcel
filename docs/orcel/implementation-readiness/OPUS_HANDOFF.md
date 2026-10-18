@@ -1,6 +1,6 @@
 # Opus handoff: build cross-platform Orcel
 
-Status: ADOPTED planning handoff (founder, 2026-10-18; `docs/orcel/grants/2026-10-18-founder-attestation.md`), authored by Fable. This is the one entry document for implementation. It grants no authority: each task becomes a SpecGrain and goes through normal governance. Where this file and an ADOPTED document disagree on something already merged, the adopted document wins until the founder adopts this revision.
+Status: ADOPTED planning handoff (founder, 2026-10-18; `docs/orcel/grants/2026-10-18-founder-attestation.md`), authored by Fable. This is the one entry document for implementation. It grants no authority: each task becomes a SpecGrain and goes through normal governance. Where this file disagrees with merged code or a closed grain's record, the merged state wins and this file is corrected.
 
 ## 1. Exact frontier (verified 2026-10-18)
 
@@ -27,11 +27,11 @@ founder AI ──┼─► apps/orcel-mcp (Node) ─┤      └─ AgentKit cli
   presence)                    (Rust + vendored Cua)
 ```
 
-Decision register with statuses: ARCHITECTURE_DECISIONS.md. Founder-directed: three first-class OSes; copy first. Kept: single authority, tool names, browser engine choice, relay. Proposed: everything in AD-04..AD-17.
+Decision register with statuses: ARCHITECTURE_DECISIONS.md. Founder-directed: three first-class OSes; copy first. Kept: single authority, tool names, browser engine choice, relay. Adopted: AD-04..AD-12, AD-14, AD-16, AD-17, AD-20. Proposed: AD-13 (Tauri Control Room, waiting on FD-03).
 
 ## 3. Remaining founder decisions (do not guess)
 
-Resolved 2026-10-18 (`docs/orcel/grants/2026-10-18-founder-attestation.md`): FD-01 adopted · FD-02 parallel track approved · FD-04 FSL reuse confirmed · FD-06 AGPL distribution confirmed. Open: FD-03 Tauri Control Room direction · FD-04 FSL scope for Cua Spaces/bench · FD-05 self-hosted Mac runner and Apple Developer ID · FD-06 AGPL distribution wording · FD-07 Windows host consolidation after data · FD-08 WebMCP engine flag. Details and defaults: IMPLEMENTATION_BACKLOG.md "Founder decisions".
+Resolved 2026-10-18 (`docs/orcel/grants/2026-10-18-founder-attestation.md`): FD-01 adopted · FD-02 parallel track approved · FD-04 FSL reuse confirmed · FD-06 AGPL distribution confirmed. Open: FD-03 Tauri Control Room direction · FD-05 self-hosted Mac runner and Apple Developer ID · FD-07 Windows host consolidation after data · FD-08 WebMCP engine flag. Details and defaults: IMPLEMENTATION_BACKLOG.md "Founder decisions".
 
 FD-01 is resolved, so XP-05 onward is no longer blocked on adoption; each task still needs its own grain activation and gates.
 

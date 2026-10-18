@@ -2,7 +2,7 @@
 
 # Source transplant matrix
 
-Status: PROPOSED. One row per donor source unit. 'object' is the git blob (file) or tree (directory) SHA at the donor pin, filled and checked by tools/readiness_check.py --donors <dir>. Destinations marked NEW do not exist yet; the owning task creates them. Methods use the strategy vocabulary of donor_registry.json. No row is imported by this planning change.
+Status: ADOPTED planning record (founder, 2026-10-18; docs/orcel/grants/2026-10-18-founder-attestation.md). One row per donor source unit. 'object' is the git blob (file) or tree (directory) SHA at the donor pin, filled and checked by tools/readiness_check.py --donors <dir>. Destinations marked NEW do not exist yet; the owning task creates them. Methods use the strategy vocabulary of donor_registry.json. No row is imported by this planning change.
 
 | Row | Donor @ pin | Source | Object | Method | Orcel destination | Task | Notes |
 |---|---|---|---|---|---|---|---|

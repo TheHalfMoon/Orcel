@@ -40,7 +40,7 @@ The 1,160-pixel three-column preview is not the requested compact chat experienc
 
 Move to Tauri only if (a) macOS/Linux becomes a funded near-term product requirement, (b) a real reusable frontend or prototype demonstrably reduces implementation effort, and (c) the same functional app passes all authority, accessibility/RTL, installer/offline, update and non-admin tests with acceptable measured startup and memory within the overall 400 MB limit. Record total porting effort and regressions. A tiny Rust executable or a preference for one language does not satisfy these conditions.
 
-Proposed status (2026-10-18, not adopted): condition (a) is met by the founder's directive that macOS and Linux are first-class. Condition (b) has a candidate in Agent-Native's AgentKit headless client and Toolkit components. Condition (c) remains the gate (backlog CR-03, CR-04 in `docs/orcel/implementation-readiness/`).
+Status (2026-10-18): condition (a) is met as a founder-directed requirement that macOS and Linux are first-class (funding is not separately recorded). The toolkit change itself is still FD-03 (open). Condition (b) has a candidate in Agent-Native's AgentKit headless client and Toolkit components. Condition (c) remains the gate (backlog CR-03, CR-04 in `docs/orcel/implementation-readiness/`).
 
 Measure signed installer download, full installed bytes including bundled runtime/dependencies, allocated disk, cold/warm time to interactive, aggregate working set/private bytes at idle and under task load, update download, and separately bounded cache growth. The founder's 400 MB target applies to the installed app/dependencies; optional cache is separately reported and cannot obscure product growth.
 

@@ -34,12 +34,12 @@ The founder adopted the Sol app-first revision of the Opus plan on 2026-10-09. W
 | F4 · Core MVP qualification | NOT STARTED | F2 + F3, one real MCP client, installer < 400 MB |
 | SG-000096 privileged shell (#260) | GRAIN (spec state) | #278 prerequisite removed; T02 hardening records in `docs/p20/`; T02–T05 issues #264–#267 and #271 open; Full User shell stays unarmed |
 | F5–F8 | NOT STARTED | See roadmap dependencies |
-| Cross-platform track (X0–X6) | ADOPTED, IN PROGRESS | `docs/orcel/implementation-readiness/ROADMAP.md`; XP-01 PR #345, XP-02 PR #346; parallel with SG-000096/108 approved (FD-02) |
+| Cross-platform track (X0–X6) | ADOPTED (planning); grain SG-000109 not yet activated | `docs/orcel/implementation-readiness/ROADMAP.md`; XP-01 PR #345, XP-02 PR #346; parallel with SG-000096/108 approved (FD-02) |
 
 ## Next executable grain
 
 1. F3 / SG-000108: rebase and finish #336 (slice 3b-i), then slice 3b-ii and the remaining product-caller slices to canonical closeout.
-2. F0 next slice: authenticated read-only app API in `orceld` (status/events/tasks). The proposed revision specifies it cross-platform from the start (backlog CR-01: named pipe with DACL on Windows, Unix socket with peer credentials on macOS/Linux); memory investigation (#288).
+2. F0 next slice: authenticated read-only app API in `orceld` (status/events/tasks). The adopted revision specifies it cross-platform from the start (backlog CR-01: named pipe with DACL on Windows, Unix socket with peer credentials on macOS/Linux); memory investigation (#288).
 3. F2: first local report task through the kernel with create-only approval and an independent checker.
 4. Cross-platform foundation (adopted): XP-01 (#345) → XP-02 (#346) → XP-04 → XP-03 (`docs/orcel/implementation-readiness/OPUS_HANDOFF.md` section 5).
 

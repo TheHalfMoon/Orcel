@@ -46,6 +46,10 @@ EXTRA_DOCS = [
     "docs/orcel/ORCEL_MASTER_PLAN.md",
     "docs/orcel/IMPLEMENTATION_ROADMAP.md",
     "docs/canonical/PLANNING_INDEX.md",
+    "docs/orcel/SOURCE_PERMISSIONS.md",
+    "docs/orcel/UI_UX_AND_APP_SIZE_BUDGET.md",
+    "docs/orcel/grants/2026-10-13-founder-source-authorization.md",
+    "docs/orcel/grants/2026-10-18-founder-attestation.md",
 ]
 
 
@@ -101,7 +105,7 @@ def check_backlog(backlog: dict, rep: Report) -> dict:
                 rep.err(f"backlog: {t.get('id', '?')} lacks field {f}")
         for k in TEST_KINDS:
             if k not in t.get("tests", {}):
-                rep.err(f"backlog: {t['id']} tests lack {k}")
+                rep.err(f"backlog: {t.get('id', '?')} tests lack {k}")
         if t["id"] in tasks:
             rep.err(f"backlog: duplicate task {t['id']}")
         if t["status"] not in STATUSES:
@@ -253,6 +257,8 @@ def main() -> int:
     ap.add_argument("--write-objects", action="store_true")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
+    if args.write_objects and not args.donors:
+        ap.error("--write-objects requires --donors")
     rep = Report()
     reg = load("donor_registry.json")
     matrix = load("transplant_matrix.json")

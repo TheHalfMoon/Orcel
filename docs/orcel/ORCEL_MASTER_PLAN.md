@@ -90,8 +90,8 @@ Status: ADOPTED planning direction (founder, 2026-10-18; `docs/orcel/grants/2026
 
 The founder directed on 2026-10-18 that Windows, macOS and Linux are all first-class targets, and that authorized donor code be reused before anything is rebuilt. A source-level review of every recorded donor, at exact pins, produced `docs/orcel/implementation-readiness/` (entry `OPUS_HANDOFF.md`). Summary of what it changes here:
 
-- Answer O ("A Windows app ... first") stays the first release. macOS and Linux are no longer deferred: they follow on a parallel track, X0 (foundation) to X5 (packaging).
-- Answer I ("Keep WPF for Windows v1") meets its own reversal condition (a). The proposed direction is a Tauri 2 Control Room on all three OSes, gated by the measured condition (c); WPF stays until that gate passes.
+- Answer O ("A Windows app ... first") stays the first release. macOS and Linux are no longer deferred: they follow on a parallel track, X0 (foundation) to X5 (packaging), plus X6 (measurement).
+- Answer I ("Keep WPF for Windows v1") meets its own reversal condition (a) as a founder-directed requirement (funding is not separately recorded). The proposed direction is a Tauri 2 Control Room on all three OSes, gated by the measured condition (c); WPF stays until that gate passes.
 - Answer G ("Reuse") becomes file-level. macOS/Linux desktop control comes from vendored Cua Driver platform crates inside an Orcel-owned host. Browser actions come from playwright-core's own tool backend. UI events use AgentKit. Optional sandboxes use cua-vmm and SPACE. Firecrawl, crawl4ai and Stagehand contribute specific units. Every row is in `SOURCE_TRANSPLANT_MATRIX.md` with git object SHAs.
 - Security deltas found during the review: the approval/audit shared-temp fallback off Windows, and the `0.0.0.0` no-route proxy, which reaches loopback on Unix (`SECURITY_INTEGRATION.md` S-01, S-06).
 - Unchanged: the single authority, tool names, the browser engine choice, relay and multi-device shape, server-side founder AI, and the no-paid-dependency rule.

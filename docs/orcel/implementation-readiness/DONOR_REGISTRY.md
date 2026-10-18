@@ -2,7 +2,7 @@
 
 # Authorized donor registry
 
-Status: PROPOSED planning record. Verified 2026-10-18 against Orcel main `40fc9f0a17b1`. Fable planning pass (source inspection only; no donor code, build script or test was executed).
+Status: ADOPTED planning record (founder, 2026-10-18; docs/orcel/grants/2026-10-18-founder-attestation.md). Verified 2026-10-18 against Orcel main `40fc9f0a17b1`. Fable planning pass (source inspection only; no donor code, build script or test was executed).
 
 Authorization records: `docs/orcel/SOURCE_PERMISSIONS.md`; `docs/orcel/grants/2026-10-13-founder-source-authorization.md`; founder directive of 2026-10-18 (this planning PR): reconfirmed permission for trycua/cua and browser-use/browser-use and every previously authorized donor; `docs/orcel/grants/2026-10-18-founder-attestation.md`.
 
