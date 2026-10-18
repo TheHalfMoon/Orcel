@@ -86,6 +86,12 @@ type hostRequest struct {
 	Text string `json:"text,omitempty"`
 	Key string `json:"key,omitempty"`
 	ExpectedLastInputTick *uint32 `json:"expected_last_input_tick,omitempty"`
+}
+
+// v2Frame is the strict /2 request shape. The window reference lives only
+// here, so /1 decoding of hostRequest stays exactly as it was.
+type v2Frame struct {
+	hostRequest
 	Window *windowRef `json:"window,omitempty"`
 }
 
@@ -219,7 +225,8 @@ func helloV2(id uint64) hostResponse {
 }
 
 // decodeRequest parses one request frame. /1 frames keep their historical
-// lenient decoding unchanged (unknown fields ignored, no window reference).
+// lenient decoding unchanged (unknown fields, including any "window" value of
+// any type, are ignored).
 // /2 frames refuse unknown fields and normalize the window reference.
 func decodeRequest(line []byte) (hostRequest, *hostError) {
 	var req hostRequest
@@ -227,27 +234,26 @@ func decodeRequest(line []byte) (hostRequest, *hostError) {
 		return hostRequest{}, &hostError{Code: "invalid_request", Message: "request is not valid JSON"}
 	}
 	if req.Protocol != protocolGenerationV2 {
-		req.Window = nil
 		return req, nil
 	}
 	strict := json.NewDecoder(bytes.NewReader(line))
 	strict.DisallowUnknownFields()
-	var v2 hostRequest
-	if err := strict.Decode(&v2); err != nil {
+	var frame v2Frame
+	if err := strict.Decode(&frame); err != nil {
 		return req, &hostError{Code: "invalid_request", Message: "request contains an unknown or malformed field"}
 	}
-	if v2.Window != nil {
+	v2 := frame.hostRequest
+	if frame.Window != nil {
 		if v2.HWND != 0 || v2.ExpectedPID != nil || v2.ExpectedStartGeneration != nil || v2.ExpectedWindowNonce != nil {
 			return v2, &hostError{Code: "invalid_request", Message: "window reference and legacy window fields are mutually exclusive"}
 		}
-		if v2.Window.Kind != "hwnd" {
+		if frame.Window.Kind != "hwnd" {
 			return v2, &hostError{Code: "invalid_request", Message: "window reference kind is not served by this host"}
 		}
-		v2.HWND = v2.Window.ID
-		v2.ExpectedPID = v2.Window.ExpectedPID
-		v2.ExpectedStartGeneration = v2.Window.ExpectedStartGeneration
-		v2.ExpectedWindowNonce = v2.Window.ExpectedWindowNonce
-		v2.Window = nil
+		v2.HWND = frame.Window.ID
+		v2.ExpectedPID = frame.Window.ExpectedPID
+		v2.ExpectedStartGeneration = frame.Window.ExpectedStartGeneration
+		v2.ExpectedWindowNonce = frame.Window.ExpectedWindowNonce
 	}
 	return v2, nil
 }

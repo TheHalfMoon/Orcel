@@ -34,7 +34,7 @@ Implementations:
 
 Request fields are the `/1` fields (`hwnd`, `expected_pid`, `expected_start_generation`, `expected_window_nonce`, `max_nodes`, `max_depth`, `element_runtime_id`, `semantic_action`, `window_action`, `value`, `x`, `y`, `to_x`, `to_y`, `button`, `click_count`, `scroll_x`, `scroll_y`, `text`, `key`, `expected_last_input_tick`) plus `window`.
 
-Under `/2` the host refuses an unknown field with `invalid_request`. Under `/1` it keeps ignoring unknown fields, as it always did. In particular, a `/1` frame that carries `window` has that field ignored.
+Under `/2` the host refuses an unknown field with `invalid_request`. Under `/1` it keeps ignoring unknown fields, as it always did. In particular, a `/1` frame that carries `window` has that field ignored, whatever its JSON type: the `/1` request shape has no `window` field, and only the strict `/2` path decodes it.
 
 ### 2.2 Response frame
 
@@ -70,7 +70,7 @@ Any other `op` is refused with `capability_denied`.
 
 1. The adapter sends `{"id": 1, "protocol": "orcel-computer-host/2", "op": "hello"}`.
 2. A `/2` host answers `ok: true` in `/2` with the hello fields of section 5. The adapter checks `host`, `platform` (in the closed set and equal to the platform the build serves) and `backend` (in the closed set), and bounds the table at 64 entries. Every later frame in the session uses `/2`.
-3. A `/1` host answers `ok: false`, `protocol: "orcel-computer-host/1"`, `error.code: "invalid_request"` ("protocol generation mismatch"). Only this exact refusal makes the adapter send `{"id": 2, "protocol": "orcel-computer-host/1", "op": "hello"}` and run the session in `/1`.
+3. A `/1` host answers with a refusal with `error.code` `invalid_request` in `/1` framing (`ok: false`, `protocol: "orcel-computer-host/1"`; the `/1` host says "protocol generation mismatch"). Only such a refusal makes the adapter send `{"id": 2, "protocol": "orcel-computer-host/1", "op": "hello"}` and run the session in `/1`.
 4. Any other answer is a failed handshake (`ProviderUnavailable`): a refusal with another code, a `/1` frame claiming success to a `/2` hello, a wrong host identity, or an unknown or foreign platform or backend.
 5. A transport failure during hello (the host exits, the pipe closes, or the JSON is corrupt) is a failed handshake at once. The adapter does not retry the hello and does not respawn. The provider reports unavailable until the next adapter construction.
 
@@ -98,7 +98,7 @@ Future generations follow the same pattern. `/N` is offered first and the adapte
 |---|---|---|
 | `platform` | `windows`, `macos`, `linux` | Closed. Required. |
 | `backend` | `uia`, `ax`, `atspi-x11`, `atspi-wayland` | Closed. Required. |
-| `capabilities` | object keyed by operation | At most 64 entries. Keys that name no operation are ignored. |
+| `capabilities` | object keyed by operation | At most 64 entries. Keys that name no operation are dropped at negotiation, so an advertised unknown operation stays unavailable. |
 | `capabilities.*.support` | `delivered`, `foreground_only`, `refused`, `unavailable` | Closed. Any other value is read as `unavailable`. |
 | `capabilities.*.delivery` | `background`, `foreground` | Optional and informational. |
 | `capabilities.*.reason` | a refusal code from section 7 | Optional. The adapter keeps it only when it is ASCII and at most 128 bytes, and uses it only in error text. |
@@ -138,7 +138,7 @@ Process facts in `list_windows` (`pid`, `start_generation`, `generation_source`,
 
 ## 7. Refusal codes
 
-`error.code` is drawn from a closed set. The adapter maps each code to an existing `orcel_contracts::FailureCode` (`host_protocol::map_refusal_code`):
+`error.code` is drawn from a closed set. In a `/2` session the adapter maps each code to an existing `orcel_contracts::FailureCode` (`host_protocol::map_refusal_code`). A `/1` session keeps the exact `/1` mapping (section 7.1), so `/1` meanings do not change.
 
 | Host code | Meaning | `FailureCode` |
 |---|---|---|
@@ -158,6 +158,16 @@ Process facts in `list_windows` (`pid`, `start_generation`, `generation_source`,
 | `outcome_unknown` | a mutation may have been delivered, but the host lost the result | outcome state (below) |
 
 Any code outside this table maps to `ProviderUnavailable`.
+
+### 7.1 `/1` session mapping (unchanged)
+
+| Host code | `FailureCode` |
+|---|---|
+| `invalid_request` | `InvalidRequest` |
+| `capability_denied` | `CapabilityDenied` |
+| `target_stale` | `TargetStale` |
+| `output_limit` | `OutputLimit` |
+| anything else | `ProviderUnavailable` |
 
 For raw input and window actions, `cancelled` and `outcome_unknown` are execution states, not errors. The adapter returns them as a `DesktopActionResult` with that `state`, exactly as in `/1`. A mutation is never retried after `outcome_unknown`. On any other path they map to `ProviderUnavailable`.
 
@@ -193,6 +203,8 @@ The `background_*` codes come from the Cua Driver action-result contract (`libs/
 | Fallback only on `invalid_request` | Rust `other_refusals_never_fall_back_to_v1` |
 | Host crash during hello is unavailable, no retry | Rust `host_crash_during_hello_is_unavailable_without_retry` |
 | Identity, platform and backend checks; bounds | Rust `v2_hello_must_match_identity_platform_and_backend`, `capability_table_and_reasons_are_bounded` |
-| Closed refusal mapping | Rust `refusal_codes_map_onto_existing_failure_codes` |
+| Closed refusal mapping in `/2`; `/1` mapping unchanged | Rust `refusal_codes_map_onto_existing_failure_codes`, `v1_sessions_keep_the_v1_refusal_mapping` |
+| Advertised unknown operation stays unavailable | Rust `advertised_unknown_operation_stays_unavailable` |
+| Real Go host answers `/1` and `/2` hello on windows-latest | Node `apps/orcel-mcp/src/sg000094-host-ci.test.ts` |
 | Per-generation framing of bound requests | Rust `computer_host::tests::bound_requests_are_framed_per_negotiated_generation` (Windows) |
 | Real host negotiates `/2` | Rust `configured_host_handshake_is_exact` (Windows, with `ORCEL_COMPUTER_HOST_BIN`) |

@@ -241,6 +241,10 @@ impl<'a> HostRequest<'a> {
 struct HostError {
     code: String,
     message: String,
+    /// The generation of the session that received this refusal. Set by the
+    /// session after decoding; it selects the refusal mapping.
+    #[serde(skip)]
+    generation: ProtocolGeneration,
 }
 
 #[cfg(windows)]
@@ -337,7 +341,10 @@ struct HostResponse {
 
 #[cfg(windows)]
 fn map_host_error(error: HostError) -> UiaError {
-    UiaError::new(map_refusal_code(&error.code), error.message)
+    UiaError::new(
+        map_refusal_code(error.generation, &error.code),
+        error.message,
+    )
 }
 
 #[cfg(any(windows, test))]
@@ -557,6 +564,10 @@ mod platform {
                     FailureCode::ProviderUnavailable,
                     "computer host response binding mismatch",
                 ));
+            }
+            let mut response = response;
+            if let Some(error) = response.error.as_mut() {
+                error.generation = generation;
             }
             Ok(response)
         }

@@ -102,6 +102,10 @@ func TestProtocolV1VectorsAreByteIdentical(t *testing.T) {
 			`{"id":5,"ok":false,"protocol":"orcel-computer-host/1","host":"orcel-windows-computer-host","error":{"code":"invalid_request","message":"protocol generation mismatch"}}` + "\n", false},
 		{"unknown field stays lenient", `{"id":6,"protocol":"orcel-computer-host/1","op":"ping","extra":true,"window":{"kind":"hwnd","id":9}}`,
 			`{"id":6,"ok":true,"protocol":"orcel-computer-host/1","host":"orcel-windows-computer-host","pong":true}` + "\n", false},
+		{"window string stays lenient", `{"id":10,"protocol":"orcel-computer-host/1","op":"ping","window":"x"}`,
+			`{"id":10,"ok":true,"protocol":"orcel-computer-host/1","host":"orcel-windows-computer-host","pong":true}` + "\n", false},
+		{"window with string id stays lenient", `{"id":11,"protocol":"orcel-computer-host/1","op":"ping","window":{"id":"x"}}`,
+			`{"id":11,"ok":true,"protocol":"orcel-computer-host/1","host":"orcel-windows-computer-host","pong":true}` + "\n", false},
 		{"unbound observe", `{"id":7,"protocol":"orcel-computer-host/1","op":"observe_window","hwnd":1}`,
 			`{"id":7,"ok":false,"protocol":"orcel-computer-host/1","host":"orcel-windows-computer-host","error":{"code":"invalid_request","message":"exact window binding is required"}}` + "\n", false},
 		{"shutdown", `{"id":8,"protocol":"orcel-computer-host/1","op":"shutdown"}`,
@@ -128,7 +132,7 @@ func TestProtocolV1BoundRequestReachesWorkerUnchanged(t *testing.T) {
 	if !resp.OK || resp.Protocol != protocolGeneration {
 		t.Fatalf("bound /1 request failed: %+v", resp)
 	}
-	if forwarded.Protocol != protocolGeneration || forwarded.HWND != 11 || forwarded.Window != nil || *forwarded.ExpectedWindowNonce != 14 {
+	if forwarded.Protocol != protocolGeneration || forwarded.HWND != 11 || *forwarded.ExpectedWindowNonce != 14 {
 		t.Fatalf("/1 request was rewritten before dispatch: %+v", forwarded)
 	}
 }
@@ -176,6 +180,8 @@ func TestProtocolV2RefusesUnknownFieldsAndForeignWindowKinds(t *testing.T) {
 		`{"id":2,"protocol":"orcel-computer-host/2","op":"observe_window","window":{"kind":"cgwindow","id":1,"expected_pid":1,"expected_start_generation":1,"expected_window_nonce":1}}`,
 		`{"id":2,"protocol":"orcel-computer-host/2","op":"observe_window","hwnd":1,"window":{"kind":"hwnd","id":1,"expected_pid":1,"expected_start_generation":1,"expected_window_nonce":1}}`,
 		`{"id":2,"protocol":"orcel-computer-host/2","op":"observe_window","window":{"kind":"hwnd","id":1}}`,
+		`{"id":2,"protocol":"orcel-computer-host/2","op":"ping","window":"x"}`,
+		`{"id":2,"protocol":"orcel-computer-host/2","op":"ping","window":{"id":"x"}}`,
 	} {
 		resp, _ := handleFrame([]byte(line), refuseDispatch(t))
 		if resp.OK || resp.Error == nil || resp.Error.Code != "invalid_request" || resp.Protocol != protocolGenerationV2 || resp.ID != 2 {
@@ -198,7 +204,7 @@ func TestProtocolV2WindowReferenceIsNormalizedForTheWorker(t *testing.T) {
 	if resp.OK || resp.Protocol != protocolGenerationV2 || resp.Error == nil || resp.Error.Code != "target_stale" {
 		t.Fatalf("worker refusal not projected into /2: %+v", resp)
 	}
-	if forwarded.Protocol != protocolGeneration || forwarded.Window != nil || forwarded.HWND != 21 ||
+	if forwarded.Protocol != protocolGeneration || forwarded.HWND != 21 ||
 		*forwarded.ExpectedPID != 22 || *forwarded.ExpectedStartGeneration != 23 || *forwarded.ExpectedWindowNonce != 24 || forwarded.MaxNodes != 5 {
 		t.Fatalf("worker did not receive the normalized /1 request: %+v", forwarded)
 	}

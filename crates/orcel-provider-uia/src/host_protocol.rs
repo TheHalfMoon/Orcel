@@ -47,8 +47,9 @@ pub(crate) const V1_OPERATIONS: [&str; 16] = [
 const PLATFORMS: [&str; 3] = ["windows", "macos", "linux"];
 const BACKENDS: [&str; 4] = ["uia", "ax", "atspi-x11", "atspi-wayland"];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum ProtocolGeneration {
+    #[default]
     V1,
     V2,
 }
@@ -238,8 +239,11 @@ fn accept_v2(expected_platform: &str, reply: HelloFrame) -> Result<NegotiatedHos
             "computer host capability table exceeds the bounded size",
         ));
     }
+    // Spec section 5: keys that name no operation are ignored, so an
+    // advertised unknown operation stays unavailable.
     let capabilities = table
         .into_iter()
+        .filter(|(op, _)| V1_OPERATIONS.contains(&op.as_str()))
         .map(|(op, wire)| {
             let reason = wire
                 .reason
@@ -259,11 +263,21 @@ fn accept_v2(expected_platform: &str, reply: HelloFrame) -> Result<NegotiatedHos
     })
 }
 
-/// Maps the closed host refusal code set onto existing public failure codes.
-/// No host code creates a new public code. Codes outside the set, and the
-/// mutation outcome states `cancelled` and `outcome_unknown` when they reach
-/// this path, map to `ProviderUnavailable`, as in `/1`.
-pub(crate) fn map_refusal_code(code: &str) -> FailureCode {
+/// Maps a host refusal code onto an existing public failure code. No host
+/// code creates a new public code. A `/1` session keeps the exact `/1`
+/// mapping; the closed `/2` set applies only once `/2` is negotiated. Codes
+/// outside the set, and the mutation outcome states `cancelled` and
+/// `outcome_unknown` when they reach this path, map to `ProviderUnavailable`.
+pub(crate) fn map_refusal_code(generation: ProtocolGeneration, code: &str) -> FailureCode {
+    if generation == ProtocolGeneration::V1 {
+        return match code {
+            "invalid_request" => FailureCode::InvalidRequest,
+            "capability_denied" => FailureCode::CapabilityDenied,
+            "target_stale" => FailureCode::TargetStale,
+            "output_limit" => FailureCode::OutputLimit,
+            _ => FailureCode::ProviderUnavailable,
+        };
+    }
     match code {
         "invalid_request" => FailureCode::InvalidRequest,
         "capability_denied"
@@ -453,8 +467,53 @@ mod tests {
             ("never_defined", FailureCode::ProviderUnavailable),
         ];
         for (code, expected) in cases {
-            assert_eq!(map_refusal_code(code), expected, "{code}");
+            assert_eq!(
+                map_refusal_code(ProtocolGeneration::V2, code),
+                expected,
+                "{code}"
+            );
         }
+    }
+
+    #[test]
+    fn v1_sessions_keep_the_v1_refusal_mapping() {
+        let cases = [
+            ("invalid_request", FailureCode::InvalidRequest),
+            ("capability_denied", FailureCode::CapabilityDenied),
+            ("target_stale", FailureCode::TargetStale),
+            ("output_limit", FailureCode::OutputLimit),
+            ("provider_unavailable", FailureCode::ProviderUnavailable),
+            ("timeout", FailureCode::ProviderUnavailable),
+            ("background_unavailable", FailureCode::ProviderUnavailable),
+            ("background_occluded", FailureCode::ProviderUnavailable),
+            ("background_uipi_blocked", FailureCode::ProviderUnavailable),
+            ("protected_surface", FailureCode::ProviderUnavailable),
+            ("permission_missing", FailureCode::ProviderUnavailable),
+            ("postcondition_failed", FailureCode::ProviderUnavailable),
+            ("never_defined", FailureCode::ProviderUnavailable),
+        ];
+        for (code, expected) in cases {
+            assert_eq!(
+                map_refusal_code(ProtocolGeneration::V1, code),
+                expected,
+                "{code}"
+            );
+        }
+        assert_eq!(ProtocolGeneration::default(), ProtocolGeneration::V1);
+    }
+
+    #[test]
+    fn advertised_unknown_operation_stays_unavailable() {
+        let raw = r#"{"id":1,"ok":true,"protocol":"orcel-computer-host/2","host":"orcel-windows-computer-host","platform":"windows","backend":"uia","capabilities":{"launch_process":{"support":"delivered"},"shell":{"support":"delivered"},"ping":{"support":"delivered"}}}"#;
+        let host = negotiate("windows", |_| Ok(frame(raw))).unwrap();
+        assert_eq!(
+            host.support("launch_process"),
+            CapabilitySupport::Unavailable
+        );
+        assert_eq!(host.support("shell"), CapabilitySupport::Unavailable);
+        assert!(host.require("launch_process").is_err());
+        assert!(host.require("ping").is_ok());
+        assert!(!host.capabilities.contains_key("launch_process"));
     }
 
     #[test]
