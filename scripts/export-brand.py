@@ -18,7 +18,7 @@ PUBLIC=ROOT/"apps"/"web"/"public"/"brand"
 DOWNLOADS=BRAND/"downloads"
 DOWNLOADS.mkdir(parents=True,exist_ok=True)
 PUBLIC.mkdir(parents=True,exist_ok=True)
-ZIPPATH=DOWNLOADS/"Orcel-Identity-Kit-v1.zip"
+ZIPPATH=DOWNLOADS/"Orcel-Identity-Kit-v2.zip"
 
 def png_info(path:Path)->tuple[int,int]:
     raw=path.read_bytes()
@@ -52,7 +52,7 @@ sources=sorted(BRAND.glob("*.svg"))
 exports=sorted(OUT.glob("*"))
 docs=[BRAND/"IDENTITY.md",ROOT/"docs"/"brand"/"README.md"]
 entries=sorted([*sources,*exports,*docs],key=lambda p:p.relative_to(ROOT).as_posix())
-manifest={"name":"Orcel","brand_version":"1.0","source":"Orcel Orbital Identity 2026","assets":[]}
+manifest={"name":"Orcel","brand_version":"2.0","source":"Orcel Signal Identity 2026","assets":[]}
 for path in entries:
     body=path.read_bytes()
     manifest["assets"].append({
@@ -65,7 +65,7 @@ manifest_path.write_text(json.dumps(manifest,indent=2,ensure_ascii=False)+"\n",e
 entries.append(manifest_path)
 with ZipFile(ZIPPATH,"w",ZIP_DEFLATED,compresslevel=9) as z:
     for path in sorted(entries,key=lambda p:p.relative_to(ROOT).as_posix()):
-        name="Orcel-Identity-Kit-v1/"+path.relative_to(ROOT).as_posix()
+        name="Orcel-Identity-Kit-v2/"+path.relative_to(ROOT).as_posix()
         info=ZipInfo(name,date_time=(2026,10,16,0,0,0))
         info.compress_type=ZIP_DEFLATED
         info.external_attr=0o644<<16

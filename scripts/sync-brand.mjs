@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// Orcel Orbital Identity. One deterministic vector construction, shared across
+// Orcel Signal Identity. One deterministic vector construction, shared across
 // site, OpenAI/Codex packages, favicon, marketing, and downloadable assets.
-// Based on the founder-approved October 16, 2026 orbital concept. Not third-party art.
+// Based on the founder-approved October 17, 2026 Signal typography design. Not third-party art.
 // No font files, runtime dependencies, or mutable external resources.
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
@@ -13,79 +13,80 @@ const svgStart='<svg xmlns="http://www.w3.org/2000/svg"';
 function doc(view,body,label) {
  return svgStart+' viewBox="'+view+'" role="img" aria-label="'+label+'">\n'+body+'\n</svg>\n';
 }
-// Master geometry (256x256). Outer C-shaped orbit deliberately ends before
-// the detached satellite and near the lower vertical axis. Inner O is complete.
-export const ORBIT={
-  outerPath:"M188 36 A108 108 0 1 0 128 232",
-  outerWidth:10,
-  inner:{cx:137,cy:127,r:78,width:12},
-  satellite:{cx:208,cy:49,r:14}
+// Orcel Signal. Founder-approved typographic identity, 17 October 2026.
+// Original fill geometry derived from the approved Signal visual reference.
+// Final visual reference: o has a precise lower-left opening; c is continuous; l orange tip and curved icon.
+export const SIGNAL={
+  orange:"#FF813E",
+  wordWidth:860,
+  glyphHeight:256,
+  iconWidth:256
 };
-function core(ink) {
- const {outerPath,outerWidth,inner,satellite}=ORBIT;
- return '<path d="'+outerPath+'" stroke="'+ink+'" stroke-width="'+outerWidth+'" fill="none" stroke-linecap="round"/>'+
-  '<circle cx="'+inner.cx+'" cy="'+inner.cy+'" r="'+inner.r+'" stroke="'+ink+'" stroke-width="'+inner.width+'" fill="none"/>'+
-  '<circle cx="'+satellite.cx+'" cy="'+satellite.cy+'" r="'+satellite.r+'" fill="'+ink+'"/>';
+function lettering(ink,tip=SIGNAL.orange) {
+ const o='M67.1 161.6 A71 71 0 1 1 80.5 177.8';
+ const r='M248 219 V106 C248 62 279 35 321 35 H354 L331 78 H319 C299 78 290 91 290 112 V219 Z';
+ const c='M557 52 L531 88 C513 76 496 70 471 70 C431 70 406 96 406 130 C406 166 433 190 471 190 C495 190 511 183 531 170 L556 201 C533 222 503 231 469 231 C404 231 361 191 361 130 C361 69 405 30 469 30 C506 30 535 38 557 52 Z';
+ const e='M748 139 H603 C609 172 634 190 663 190 C688 190 713 180 730 165 L755 196 C734 217 702 229 661 229 C598 229 554 192 554 130 C554 71 594 31 655 31 C711 31 751 68 751 127 V139 H748 Z M605 112 H706 C701 88 681 72 655 72 C632 72 612 88 605 112 Z';
+ const glyph=(d,evenodd=false)=>'<path d="'+d+'" fill="'+ink+'"'+(evenodd?' fill-rule="evenodd"':'')+'/>';
+ return '<g class="orcel-signal-wordmark">'+
+   '<path d="'+o+'" fill="none" stroke="'+ink+'" stroke-width="48" stroke-linecap="butt"/>'+glyph(r)+glyph(c)+
+   '<g transform="translate(20 0)">'+glyph(e,true)+'</g>'+
+   '<rect x="793" y="5" width="47" height="218" rx="10" fill="'+ink+'"/>'+
+   '<path d="M803 5 H830 Q840 5 840 15 V118 C820 122 802 113 793 91 V15 Q793 5 803 5 Z" fill="'+tip+'"/>'+
+   '</g>';
 }
-const pure=doc("0 0 256 256","  "+core("#FFFFFF"),"Orcel orbital emblem: open outer white arc, inner white ring, satellite dot");
-const inverse=doc("0 0 256 256","  "+core("#080808"),"Orcel orbital emblem in black for a light surface");
-const tile=doc("0 0 256 256",'  <rect width="256" height="256" rx="54" fill="#080808"/>\n  '+core("#FFFFFF"),"Orcel dark application icon with orbital symbol");
-const tileLight=doc("0 0 256 256",'  <rect width="256" height="256" rx="54" fill="#F5F6F7"/>\n  '+core("#080808"),"Orcel light application icon with orbital symbol");
-// Custom hand-authored lowercase outline letterforms, converted to filled
-// outlines by a 19px monoline stroke. No system or redistributed font needed.
-function lettering(ink) {
- return '<g fill="none" stroke="'+ink+'" stroke-width="19" stroke-linejoin="round" stroke-linecap="round">'+
-  '<circle cx="46" cy="81" r="27.5"/>'+
-  '<path d="M103 109V80 Q103 55 126 55"/>'+
-  '<path d="M198 60 C174 44 151 59 151 82 C151 105 175 119 198 103"/>'+
-  '<path d="M231 83 H287 C287 64 275 54 259 54 C241 54 225 67 225 85 C225 105 241 115 258 115 C270 115 280 111 287 104"/>'+
-  '<path d="M327 27 V109"/>'+
-  '</g>';
+function signalMark(ink,tip=SIGNAL.orange) {
+ // Cropped from the same architectural vocabulary as the wordmark: a
+ // Continuous C with upper-right orange curved signal arc and white teardrop.
+ const c='M190 58 L160 91 C145 78 131 70 111 70 C80 70 60 95 60 128 C60 161 81 186 112 186 C131 186 146 176 160 163 L190 194 C170 215 144 226 110 226 C58 226 21 182 21 128 C21 73 59 30 110 30 C143 30 171 41 190 58 Z';
+ return '<g class="orcel-signal-mark"><path d="'+c+'" fill="'+ink+'"/>'+
+  '<path d="M148 105 C161 65 193 41 231 41 V83 C209 82 191 92 179 119 L147 114 Z" fill="'+tip+'"/>'+
+  '<path d="M187 119 C184 132 190 140 202 140 C212 140 217 130 214 122 C227 131 227 146 217 157 C207 168 188 164 179 155 C171 146 175 130 187 119 Z" fill="'+ink+'"/></g>';
 }
-const wordWhite=doc("0 0 357 142","  "+lettering("#FFFFFF"),"Lowercase Orcel white vector wordmark");
-const wordBlack=doc("0 0 357 142","  "+lettering("#080808"),"Lowercase Orcel black vector wordmark");
+const pure=doc("0 0 256 256","  "+signalMark("#FFFFFF"),"Orcel Signal white mark with orange terminal");
+const inverse=doc("0 0 256 256","  "+signalMark("#080808"),"Orcel Signal black mark with orange terminal");
+const tile=doc("0 0 256 256",'  <rect width="256" height="256" rx="54" fill="#080808"/>\n  '+signalMark("#FFFFFF"),"Orcel Signal dark application icon");
+const tileLight=doc("0 0 256 256",'  <rect width="256" height="256" rx="54" fill="#F5F6F7"/>\n  '+signalMark("#080808"),"Orcel Signal light application icon");
+const wordWhite=doc("0 0 860 256","  "+lettering("#FFFFFF"),"Orcel Signal original lowercase white and orange wordmark");
+const wordBlack=doc("0 0 860 256","  "+lettering("#080808"),"Orcel Signal original lowercase black and orange wordmark");
+// Dedicated dark-background lockup for GitHub README in either theme.
+const readmeLogo=doc("0 0 1000 300",
+  '  <rect width="1000" height="300" rx="20" fill="#080808"/>\n  <g transform="translate(40 26) scale(1.06)">\n    '+lettering("#FFFFFF")+'\n  </g>',
+  "Orcel Signal primary white wordmark with orange l terminal for GitHub");
 function horizontal(ink) {
- return doc("0 0 900 256",
-   '  <g>'+core(ink)+'</g>\n'+
-   '  <g transform="translate(270 23) scale(1.65)">'+lettering(ink)+'</g>',
-   "Orcel orbital emblem and lowercase custom wordmark in horizontal arrangement");
+ return doc("0 0 900 256",'  <g transform="translate(20 0)">'+lettering(ink)+'</g>',
+  "Orcel Signal typographic horizontal logo with orange terminal");
 }
 const lockWhite=horizontal("#FFFFFF"),lockBlack=horizontal("#080808");
 function stacked(ink) {
  return doc("0 0 520 450",
-  '  <g transform="translate(132 15)">'+core(ink)+'</g>\n'+
-  '  <g transform="translate(80 278) scale(1.04)">'+lettering(ink)+'</g>',
-  "Orcel vertical lockup with orbital icon and lowercase wordmark");
+  '  <g transform="translate(132 10)">'+signalMark(ink)+'</g>\n'+
+  '  <g transform="translate(6 291) scale(.59)">'+lettering(ink)+'</g>',
+  "Orcel Signal stacked icon and original lowercase wordmark");
 }
 const stackWhite=stacked("#FFFFFF"),stackBlack=stacked("#080808");
 function social(dark) {
  const ink=dark?"#FFFFFF":"#080808",bg=dark?"#080808":"#F5F6F7",muted=dark?"#B8BCC1":"#565D66";
  return doc("0 0 1200 630",
    '<rect width="1200" height="630" fill="'+bg+'"/>\n'+
-   '<g transform="translate(90 151) scale(1.28)">'+core(ink)+'</g>\n'+
-   '<g transform="translate(420 200) scale(1.77)">'+lettering(ink)+'</g>\n'+
-   '<path d="M95 529 H1105" stroke="'+muted+'" stroke-width="1" opacity=".4"/>\n'+
-   '<text x="420" y="453" font-family="Arial,sans-serif" font-size="30" fill="'+muted+'">Your computer, your terms.</text>\n'+
-   '<text x="98" y="578" font-family="Arial,sans-serif" font-size="18" letter-spacing="2.5" fill="'+muted+'">OPEN SOURCE  /  LOCAL-FIRST  /  USER-APPROVED</text>',
-   "Orcel open-source project social banner");
+   '<g transform="translate(85 128) scale(1.19)">'+lettering(ink)+'</g>\n'+
+   '<path d="M95 503 H1105" stroke="'+muted+'" stroke-width="1" opacity=".4"/>\n'+
+   '<text x="97" y="561" font-family="Arial,sans-serif" font-size="25" fill="'+muted+'">Your computer, your terms.</text>'+
+   '<text x="1100" y="561" text-anchor="end" font-family="Arial,sans-serif" font-size="16" letter-spacing="2" fill="'+muted+'">OPEN SOURCE / LOCAL-FIRST</text>',
+   "Orcel Signal social wordmark banner");
 }
 function motif() {
  const parts=['<rect width="1200" height="420" fill="#080808"/>'];
- for (let i=0;i<5;i++) {
+ for(let i=0;i<5;i++){
   const x=30+i*230;
-  parts.push('<g transform="translate('+x+' 70) scale(.9)" opacity="'+(0.12+i*.11).toFixed(2)+'">'+core("#FFFFFF")+'</g>');
+  parts.push('<g transform="translate('+x+' 66) scale(.85)" opacity="'+(.14+i*.09).toFixed(2)+'">'+signalMark("#FFFFFF")+'</g>');
  }
- return doc("0 0 1200 420",parts.join("\n"),"Orcel orbital rhythm for supporting brand graphics");
+ return doc("0 0 1200 420",parts.join("\n"),"Orcel Signal supporting editorial graphic");
 }
 const pattern=motif();
-// A tightly limited accent treatment for optional marketing pieces only.
-// The primary identity and package tiles remain strictly monochrome.
 const accent=doc("0 0 256 256",
-  '  <rect width="256" height="256" rx="54" fill="#17191B"/>\n'+
-  '  <path d="'+ORBIT.outerPath+'" stroke="#D9DDE1" stroke-width="'+ORBIT.outerWidth+'" fill="none" stroke-linecap="round"/>\n'+
-  '  <circle cx="137" cy="127" r="78" stroke="#FFFFFF" stroke-width="12" fill="none"/>\n'+
-  '  <circle cx="208" cy="49" r="14" fill="#FFFFFF"/>',
-  "Orcel graphite/silver accent icon for editorial use");
+  '  <rect width="256" height="256" rx="54" fill="#17191B"/>\n'+signalMark("#FFFFFF"),
+  "Orcel Signal editorial icon with orange approval terminal");
 const outputs=new Map([
  ["assets/brand/orcel-o-white.svg",pure],
  ["assets/brand/orcel-o-black.svg",inverse],
@@ -93,16 +94,20 @@ const outputs=new Map([
  ["assets/brand/orcel-app-icon-light.svg",tileLight],
  ["assets/brand/orcel-wordmark-white.svg",wordWhite],
  ["assets/brand/orcel-wordmark-black.svg",wordBlack],
+ ["assets/brand/orcel-readme-lockup.svg",readmeLogo],
  ["assets/brand/orcel-lockup-white.svg",lockWhite],
  ["assets/brand/orcel-lockup-black.svg",lockBlack],
  ["assets/brand/orcel-lockup-stacked-white.svg",stackWhite],
  ["assets/brand/orcel-lockup-stacked-black.svg",stackBlack],
  ["assets/brand/orcel-social-dark.svg",social(true)],
  ["assets/brand/orcel-social-light.svg",social(false)],
+ ["assets/brand/orcel-monogram-pattern.svg",pattern],
  ["assets/brand/orcel-orbit-pattern.svg",pattern],
  ["assets/brand/orcel-accent-icon.svg",accent],
  ["apps/web/public/brand/orcel-o-white.svg",pure],
  ["apps/web/public/brand/orcel-o-black.svg",inverse],
+ ["apps/web/public/brand/orcel-wordmark-white.svg",wordWhite],
+ ["apps/web/public/brand/orcel-wordmark-black.svg",wordBlack],
  ["apps/web/public/brand/orcel-app-icon.svg",tile],
  ["apps/web/public/brand/orcel-app-icon-light.svg",tileLight],
  ["apps/web/public/brand/orcel-lockup-white.svg",lockWhite],
@@ -111,6 +116,7 @@ const outputs=new Map([
  ["apps/web/public/brand/orcel-lockup-stacked-black.svg",stackBlack],
  ["apps/web/public/brand/orcel-social-dark.svg",social(true)],
  ["apps/web/public/brand/orcel-social-light.svg",social(false)],
+ ["apps/web/public/brand/orcel-monogram-pattern.svg",pattern],
  ["apps/web/public/brand/orcel-orbit-pattern.svg",pattern],
  ["apps/web/public/brand/orcel-accent-icon.svg",accent],
  ["apps/web/app/icon.svg",tile],
@@ -129,7 +135,7 @@ for (const [name,contents] of outputs) {
  }
 }
 if(errors.length) {console.error("Brand asset drift:\n"+errors.join("\n"));process.exit(1);}
-console.log("Orcel orbital identity "+(check?"verified":"generated")+": "+outputs.size+" SVG destinations");
+console.log("Orcel Signal identity "+(check?"verified":"generated")+": "+outputs.size+" SVG destinations");
 for (const [name,data] of [["symbol",pure],["app tile",tile],["lockup",lockWhite]]) {
  console.log(name+": "+createHash("sha256").update(data).digest("hex"));
 }

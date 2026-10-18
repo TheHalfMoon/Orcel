@@ -1,14 +1,7 @@
-# Orcel public brand assets
+# Orcel public brand — Signal
 
-**Current approved mark:** three-part Orbital Identity (open C-shaped outer orbit, complete circular inner ring, detached dot), with the lowercase orcel vector wordmark.
+The founder-approved current brand is Signal: custom lowercase white orcel lettering with an orange terminal on l, and a deliberate lower-left o opening and a continuous c. Black #080808, white #FFFFFF, accent #FF813E. The standalone Signal icon is a C-based mark with the same orange accent.
 
-The canonical generator is scripts/sync-brand.mjs. Run node scripts/sync-brand.mjs --check to detect asset drift. All public SVG files and the OpenAI, Codex and Next.js icons derive from that script.
+Source vectors are generated from scripts/sync-brand.mjs and mirrored here for GitHub Pages. Local Sharp and Python build PNG/ICO, asset manifest, social preview and Orcel-Identity-Kit-v2.zip. See assets/brand/IDENTITY.md for guidelines.
 
-Production imagery: orbital SVG masters, horizontal and vertical vector lockups, monochrome app tiles, optional neutral editorial accent, orbital background pattern and 1200 by 630 social-card artwork. The dark social PNG, ZIP and checksum JSON in this directory are built on CI/Pages from reviewable sources.
-
-Complete identity specifications: assets/brand/IDENTITY.md.
-Public gallery: https://thehalfmoon.github.io/Orcel/brand.html
-
-**Historic artifact only:** orcel-mark-mask.svg is the frozen predecessor from a closed governance record. Do not edit, overwrite or rebrand that file. It is not used as the current public mark.
-
-The GitHub repo defines the package icons, but installed ChatGPT/Codex interfaces may require separate distribution steps and cache refreshes before showing them.
+Old orbit or OI media filenames are retained only for public URL compatibility; they contain updated Signal art. Past history and released versions are not rewritten. No software capability is implied by these changes.

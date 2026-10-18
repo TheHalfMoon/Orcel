@@ -1,3 +1,3 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Orcel orbital emblem in black for a light surface">
-  <path d="M188 36 A108 108 0 1 0 128 232" stroke="#080808" stroke-width="10" fill="none" stroke-linecap="round"/><circle cx="137" cy="127" r="78" stroke="#080808" stroke-width="12" fill="none"/><circle cx="208" cy="49" r="14" fill="#080808"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Orcel Signal black mark with orange terminal">
+  <g class="orcel-signal-mark"><path d="M190 58 L160 91 C145 78 131 70 111 70 C80 70 60 95 60 128 C60 161 81 186 112 186 C131 186 146 176 160 163 L190 194 C170 215 144 226 110 226 C58 226 21 182 21 128 C21 73 59 30 110 30 C143 30 171 41 190 58 Z" fill="#080808"/><path d="M148 105 C161 65 193 41 231 41 V83 C209 82 191 92 179 119 L147 114 Z" fill="#FF813E"/><path d="M187 119 C184 132 190 140 202 140 C212 140 217 130 214 122 C227 131 227 146 217 157 C207 168 188 164 179 155 C171 146 175 130 187 119 Z" fill="#080808"/></g>
 </svg>

@@ -57,7 +57,7 @@ jobs:
           test -f apps/web/out/index.html
           test -f apps/web/out/brand/orcel-o-white.svg
           test -f apps/web/out/brand/orcel-social-dark.png
-          test -f apps/web/out/brand/Orcel-Identity-Kit-v1.zip
+          test -f apps/web/out/brand/Orcel-Identity-Kit-v2.zip
           test -f apps/web/out/brand/orcel-asset-manifest.json
           test -f apps/web/out/brand.html
           grep -Fq '/Orcel/brand.html' apps/web/out/index.html
@@ -108,14 +108,18 @@ jobs:
           asset="${PAGE_URL%/}/brand/orcel-o-white.svg"
           gallery="${PAGE_URL%/}/brand.html"
           social="${PAGE_URL%/}/brand/orcel-social-dark.png"
-          kit="${PAGE_URL%/}/brand/Orcel-Identity-Kit-v1.zip"
+          kit="${PAGE_URL%/}/brand/Orcel-Identity-Kit-v2.zip"
+          wordmark="${PAGE_URL%/}/brand/orcel-wordmark-white.svg"
+          manifest="${PAGE_URL%/}/brand/orcel-asset-manifest.json"
 
           for attempt in $(seq 1 12); do
             if curl --fail --location --silent --show-error --max-time 15 "$page" -o "$RUNNER_TEMP/index.html" &&
                curl --fail --location --silent --show-error --max-time 15 "$asset" -o "$RUNNER_TEMP/orcel-o-white.svg" &&
                curl --fail --location --silent --show-error --max-time 15 "$gallery" -o "$RUNNER_TEMP/brand.html" &&
                curl --fail --location --silent --show-error --max-time 15 "$social" -o "$RUNNER_TEMP/social.png" &&
-               curl --fail --location --silent --show-error --max-time 15 "$kit" -o "$RUNNER_TEMP/Orcel-Identity-Kit-v1.zip"; then
+               curl --fail --location --silent --show-error --max-time 15 "$kit" -o "$RUNNER_TEMP/Orcel-Identity-Kit-v2.zip" &&
+               curl --fail --location --silent --show-error --max-time 15 "$wordmark" -o "$RUNNER_TEMP/orcel-wordmark-white.svg" &&
+               curl --fail --location --silent --show-error --max-time 15 "$manifest" -o "$RUNNER_TEMP/asset-manifest.json"; then
               break
             fi
             if [ "$attempt" -eq 12 ]; then
@@ -128,6 +132,9 @@ jobs:
           grep -Fq 'Orcel' "$RUNNER_TEMP/index.html"
           grep -Fq 'https://github.com/TheHalfMoon/Orcel/releases' "$RUNNER_TEMP/index.html"
           grep -Fq '<svg' "$RUNNER_TEMP/orcel-o-white.svg"
-          grep -Fq 'One mark.' "$RUNNER_TEMP/brand.html"
+          grep -Fq 'A clear signal.' "$RUNNER_TEMP/brand.html"
+          grep -Fq '#FF813E' "$RUNNER_TEMP/orcel-o-white.svg"
+          grep -Fq '#FF813E' "$RUNNER_TEMP/orcel-wordmark-white.svg"
+          grep -Fq 'Orcel Signal Identity 2026' "$RUNNER_TEMP/asset-manifest.json"
           test "$(wc -c < "$RUNNER_TEMP/social.png")" -gt 5000
-          test "$(wc -c < "$RUNNER_TEMP/Orcel-Identity-Kit-v1.zip")" -gt 25000
+          test "$(wc -c < "$RUNNER_TEMP/Orcel-Identity-Kit-v2.zip")" -gt 25000

@@ -192,4 +192,4 @@ if (openaiPlugin.name !== "orcel" || openaiPlugin.displayName !== "Orcel") {
 }
 
 execFileSync(process.execPath, ["scripts/sync-brand.mjs", "--check"], { encoding: "utf8" });
-console.log(`Orcel identity validated across ${tracked.length} tracked files with orcel compatibility identifiers preserved, including synchronized orbital identity assets.`);
+console.log(`Orcel identity validated across ${tracked.length} tracked files with orcel compatibility identifiers preserved, including synchronized nested monogram assets.`);

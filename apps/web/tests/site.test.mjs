@@ -82,18 +82,18 @@ test("Next output is a static export with a bounded explicit project base path",
   assert.match(layout, /--orcel-mark-mask/);
   assert.match(layout, /brand\/orcel-o-white\.svg/);
   assert.equal(css.includes('url("/brand/orcel-o-white.svg")'), false);
-  assert.equal((css.match(/var\(--orcel-mark-mask\)/g) ?? []).length, 2);
+  assert.equal((css.match(/var\(--orcel-mark-mask\)/g) ?? []).length, 1);
 });
 
-test("approved orbital geometry is byte-pinned and shared by both variants", async () => {
+test("approved Signal symbol is byte-pinned and keeps the orange terminal", async () => {
   assert.equal(
     await sha256(join(root, "public", "brand", "orcel-o-white.svg")),
-    "1a0785e4d1eff2fa6158c68837cf62f4a70eb2481a6872768f2b2a1c9260251c"
+    "99c3c4d510147df7b9a043e758ddede7844b91c585547d0ba700a59867e94a58"
   );
   const css = await read(join(root, "app", "globals.css"));
-  assert.equal((css.match(/var\(--orcel-mark-mask\)/g) ?? []).length, 2, "both mask declarations must use the one canonical geometry variable");
+  assert.equal((css.match(/var\(--orcel-mark-mask\)/g) ?? []).length, 1, "all site instances share one full-color SVG");
   assert.match(css, /\.brand-mark-white[\s\S]*color:\s*#fff/);
-  assert.match(css, /\.brand-mark-color[\s\S]*background:\s*#fff/);
+  assert.match(css, /\.brand-mark[\s\S]*background:\s*var\(--orcel-mark-mask\)/);
 });
 
 test("web dependency graph is isolated from runtime workspaces and lockfile", async () => {
@@ -160,6 +160,9 @@ test("Pages workflow builds the canonical project path and verifies the deployed
   assert.match(workflow, /test "\$\{\{ steps\.pages\.outputs\.base_path \}\}" = "\/Orcel"/);
   assert.match(workflow, /\/Orcel\/_next\//);
   assert.match(workflow, /\/Orcel\/brand\/orcel-o-white\.svg/);
+  assert.match(workflow, /A clear signal\./);
+  assert.match(workflow, /orcel-wordmark-white\.svg/);
+  assert.match(workflow, /Orcel Signal Identity 2026/);
   assert.match(workflow, /https:\/\/thehalfmoon\.github\.io\/Orcel/);
   assert.match(workflow, /curl --fail --location/);
   assert.match(workflow, /https:\/\/github\.com\/TheHalfMoon\/Orcel\/releases/);

@@ -3,6 +3,7 @@ const releases = `${github}/releases`;
 const security = `${github}/blob/main/docs/security/THREAT_MODEL.md`;
 const docs = `${github}/tree/main/docs`;
 const brandUrl = (process.env.ORCEL_WEB_BASE_PATH ?? "") + "/brand.html";
+const brandWordmarkUrl = (process.env.ORCEL_WEB_BASE_PATH ?? "") + "/brand/orcel-lockup-white.svg";
 
 const Arrow = () => (
   <svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16">
@@ -84,8 +85,7 @@ export default function Home() {
 
       <header className="site-header">
         <a className="brand" href="#" aria-label="Orcel home">
-          <span className="brand-mark brand-mark-white" aria-hidden="true" />
-          <span>Orcel</span>
+          <img className="brand-wordmark" src={brandWordmarkUrl} width="130" height="37" alt="Orcel" />
         </a>
         <nav className="desktop-nav" aria-label="Primary navigation">
           <a href="#product">Product</a>
@@ -120,7 +120,7 @@ export default function Home() {
             <div className="console-topbar">
               <div className="console-brand">
                 <span className="brand-mark brand-mark-color" aria-hidden="true" />
-                <span>Orcel</span>
+                <img className="brand-wordmark brand-wordmark-console" src={brandWordmarkUrl} width="98" height="28" alt="Orcel" />
               </div>
               <div className="console-status"><span className="status-dot" /> Local boundary active</div>
             </div>
@@ -253,7 +253,7 @@ export default function Home() {
 
       <footer className="site-footer">
         <div className="footer-brand">
-          <span className="brand"><span className="brand-mark brand-mark-white" aria-hidden="true" /><span>Orcel</span></span>
+          <span className="brand"><img className="brand-wordmark" src={brandWordmarkUrl} width="130" height="37" alt="Orcel" /></span>
           <p>Your computer, on your terms.</p>
         </div>
         <div className="footer-links">
