@@ -22,6 +22,25 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const provenancePath = join(repoRoot, "docs/orcel/cua_driver_provenance.json");
 const vendorRoot = "apps/orcel-native-host/third_party/cua-driver";
 const SHA = /^[0-9a-f]{40}$/;
+// P-02: the cua-driver binary crate, its SDK/daemon and the telemetry client
+// it uses (cua-telemetry over ureq, PostHog ingest) are not vendored, and no
+// HTTP client may enter the host's graph. Cargo.lock lists every package for
+// every target and feature, so absence there is absence from any build.
+export const forbiddenPackages = [
+  "cua-driver",
+  "cua-driver-sdk",
+  "cua-daemon",
+  "cua-telemetry",
+  "posthog-rs",
+  "ureq",
+  "reqwest",
+  "hyper",
+];
+
+/** Package names in a Cargo.lock. */
+export function lockPackages(text) {
+  return [...text.matchAll(/^name = "([^"]+)"$/gm)].map((m) => m[1]);
+}
 
 function git(args, input) {
   return execFileSync("git", args, {
@@ -122,6 +141,18 @@ export function check() {
   for (const path of all.keys()) {
     if (!claimed.has(path)) errors.push(`${path}: not part of any recorded upstream tree`);
   }
+
+  const hostLock = lockPackages(readFileSync(join(repoRoot, "apps/orcel-native-host/Cargo.lock"), "utf8"));
+  for (const name of forbiddenPackages) {
+    if (hostLock.includes(name)) errors.push(`apps/orcel-native-host/Cargo.lock: ${name} is in the graph`);
+  }
+  // orceld's lockfile must not reach any crate of the separate workspace.
+  const rootLock = new Set(lockPackages(readFileSync(join(repoRoot, "Cargo.lock"), "utf8")));
+  for (const crate of provenance.crates ?? []) {
+    if (rootLock.has(crate.name)) errors.push(`Cargo.lock: ${crate.name} reached the root workspace`);
+  }
+  if (rootLock.has("orcel-native-host")) errors.push("Cargo.lock: orcel-native-host reached the root workspace");
+  summary.push(`native-host lock: ${hostLock.length} packages, none forbidden`);
   return { errors, summary };
 }
 

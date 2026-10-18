@@ -48,3 +48,16 @@ QuickJS `run_script` engine) come back:
 - `platform-linux/Cargo.toml`: the same.
 
 `cursor-overlay` already declares `default-features = false` upstream.
+
+## P-02: no cua-driver binary or telemetry in the graph
+
+No vendored file changes. Upstream's telemetry lives in the `cua-driver`
+binary crate: `cua-telemetry`'s config reader plus a `ureq` POST to PostHog.
+That crate is not vendored, and none of the seven vendored crates depends on
+it, on `cua-driver-sdk` or on any HTTP client. The patch is the guard that
+keeps it that way. `scripts/check-vendored-cua.mjs` fails if
+`apps/orcel-native-host/Cargo.lock` names `cua-driver`, `cua-driver-sdk`,
+`cua-daemon`, `cua-telemetry`, `posthog-rs`, `ureq`, `reqwest` or `hyper`.
+Cargo.lock lists every package for every target and feature, so absence there
+means absence from every build. The same check also fails if the root
+`Cargo.lock` names any vendored crate or `orcel-native-host`.
