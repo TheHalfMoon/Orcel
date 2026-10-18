@@ -475,7 +475,7 @@ Gates every task inherits:
   6. Policy file (from T-CUA-35): allow_any=no, allow_inactive=no, allow_active=auth_self, as the donor ships it.
 - **Tests.**
   - positive: unit tests with test-support; scripted D-Bus polkit test double returns authorized
-  - negative: polkit returns challenge/denied -> denied; no agent -> unavailable; debug and release builds: setting CUA_ENV_SKIP_SENSITIVE_AUTH or CUA_ENV_ALLOW_UNVERIFIED_SENSITIVE_EXPORT changes no STRONG outcome; STRONG from an inactive or remote (SSH) session, or via a text agent (pkttyagent), is refused
+  - negative: polkit returns challenge/denied -> denied; no agent -> unavailable; debug and release builds: setting CUA_ENV_SKIP_SENSITIVE_AUTH or CUA_ENV_ALLOW_UNVERIFIED_SENSITIVE_EXPORT changes no STRONG outcome; STRONG from an inactive or remote (SSH) session is refused
   - recovery: helper crash -> denied
   - e2e: manual checklist on GNOME and KDE
 - **Performance.** n/a
