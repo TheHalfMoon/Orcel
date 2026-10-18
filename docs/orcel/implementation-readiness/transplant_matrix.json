@@ -421,7 +421,7 @@
       "method": "COPY_ADAPT",
       "task": "XP-10",
       "object": "39fc34b0b3bcf434d25b785fbc62bf3b38669d27",
-      "notes": "FSL-1.1-MIT (FD-04). polkit action template; Orcel action ai.orcel.approve.strong with auth_self for active, inactive and any sessions; static message (polkit takes --detail only from root). Packaged by XP-17."
+      "notes": "FSL-1.1-MIT (FD-04). polkit action template; keep the donor's session defaults exactly: allow_any=no, allow_inactive=no, allow_active=auth_self (a remote or inactive session, or a text agent such as pkttyagent, must not satisfy presence). Orcel action ai.orcel.approve.strong; static message (polkit takes --detail only from root). Packaged by XP-17."
     },
     {
       "id": "T-CUA-36",

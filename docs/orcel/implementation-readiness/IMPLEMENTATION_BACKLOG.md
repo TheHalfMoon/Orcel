@@ -472,9 +472,10 @@ Gates every task inherits:
   3. Headless or no polkit agent -> unavailable.
   4. Development installs the polkit action file with a documented one-line sudo script in tests only; XP-17 packages it.
   5. polkit accepts --detail only from root, so the STRONG prompt can show only the action's static message, not the digest. The STRONG check therefore always follows the SOFT helper, which shows the full body (workspace, action, target, digest, nonce); the residual risk (an agent prompt that cannot name the action) is recorded under S-04.
+  6. Policy file (from T-CUA-35): allow_any=no, allow_inactive=no, allow_active=auth_self, as the donor ships it.
 - **Tests.**
   - positive: unit tests with test-support; scripted D-Bus polkit test double returns authorized
-  - negative: polkit returns challenge/denied -> denied; no agent -> unavailable; debug and release builds: setting CUA_ENV_SKIP_SENSITIVE_AUTH or CUA_ENV_ALLOW_UNVERIFIED_SENSITIVE_EXPORT changes no STRONG outcome
+  - negative: polkit returns challenge/denied -> denied; no agent -> unavailable; debug and release builds: setting CUA_ENV_SKIP_SENSITIVE_AUTH or CUA_ENV_ALLOW_UNVERIFIED_SENSITIVE_EXPORT changes no STRONG outcome; STRONG from an inactive or remote (SSH) session, or via a text agent (pkttyagent), is refused
   - recovery: helper crash -> denied
   - e2e: manual checklist on GNOME and KDE
 - **Performance.** n/a
@@ -578,6 +579,7 @@ Gates every task inherits:
   2. crates/orcel-provider-process/src/contained.rs is the kernel-side client of that helper (std only): it pins the helper binary, writes the spec and reads a bounded result. The 'contained' tier (no network, exact read/write allowlist, no fork) serves parsers and helpers (WI-05) and is an opt-in tier for registered executables.
   3. Safe registered-executable parity on Linux/macOS (needs fork and sometimes network, so it cannot use the contained tier): process group, PR_SET_PDEATHSIG, pidfd (Linux) or kqueue EVFILT_PROC (macOS), rlimits, cgroup v2 child when delegated; kill the group on drop. This glue is BUILD_NEW but reuses unix.rs helpers from the copied crate.
   4. Same registered-executable rules and output bounds; SG-000096 shell semantics are not ported here.
+  5. Packaging: the helper ships with Orcel on every OS and is resolved only from the signed install root by a pinned path (no PATH lookup), verified like the native host before launch. XP-16 (macOS bundle), XP-17 (Linux packages) and the Windows lifecycle payload (SG-000106) include it.
 - **Tests.**
   - positive: registered executable runs and output bounded
   - negative: child that forks a grandchild is cleaned up; write outside workspace denied by Landlock
@@ -680,6 +682,7 @@ Gates every task inherits:
   5. notarytool in release workflow when FD-05 is approved; unsigned dev builds are labeled and never published.
   6. Replace XP-09's development signature pin with the Developer ID designated requirement.
   7. Entitlements: justify or drop com.apple.security.automation.apple-events (the host does not send Apple Events in the adopted allowlist); keep only what the allowlisted tools need.
+  8. Include the apps/orcel-contain helper (XP-13) in the bundle, signed with the same identity.
 - **Tests.**
   - positive: install/uninstall in a clean user account
   - negative: tampered bundle refused by doctor
@@ -715,6 +718,7 @@ Gates every task inherits:
   2. deb/rpm only for the polkit action file (system path) and optional desktop entry; core stays per-user.
   3. Signed checksums like the Windows release.
   4. Ship the GNOME Shell identity extension (from XP-12) as an optional component that the user enables explicitly; doctor reports whether it is active.
+  5. Include the apps/orcel-contain helper (XP-13) in the payload at a pinned path.
 - **Tests.**
   - positive: install in Ubuntu 24.04 and Fedora 41 containers (non-GUI parts)
   - negative: tampered payload refused
@@ -747,6 +751,7 @@ Gates every task inherits:
 - **Steps.**
   1. Per-OS archive pin table; verify signature at build, not at runtime.
   2. Runtime pin: O_NOFOLLOW opens and fd-held files on Unix instead of share-mode handles.
+  3. Pin the apps/orcel-contain helper binary alongside the Node runtime in the release manifest on all three OSes.
 - **Tests.**
   - positive: worker launches with pinned runtime
   - negative: modified node binary refused
