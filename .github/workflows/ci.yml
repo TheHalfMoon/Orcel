@@ -30,6 +30,18 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo test --workspace
+      # XP-15: the clipboard roundtrip must run for real off Windows; it
+      # fails instead of skipping when ORCEL_REQUIRE_LIVE_CLIPBOARD is set.
+      - name: Live clipboard roundtrip (Linux, Xvfb)
+        if: runner.os == 'Linux'
+        env:
+          ORCEL_REQUIRE_LIVE_CLIPBOARD: "1"
+        run: xvfb-run -a cargo test -p orcel-provider-clipboard xp15_ -- --test-threads=1
+      - name: Live clipboard roundtrip (macOS)
+        if: runner.os == 'macOS'
+        env:
+          ORCEL_REQUIRE_LIVE_CLIPBOARD: "1"
+        run: cargo test -p orcel-provider-clipboard xp15_ -- --test-threads=1
 
   node:
     name: Node / ${{ matrix.os }}

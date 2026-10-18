@@ -352,7 +352,11 @@ fn native_adapter_reports_honest_typed_results() {
     let native = NativeAdapter::new();
     match native.sequence_number() {
         Ok(sequence) => {
-            assert!(sequence <= u32::MAX as u64);
+            // Win32 sequence numbers are 32-bit; the macOS and Linux adapter
+            // derives a 64-bit sequence from the clipboard text.
+            if cfg!(windows) {
+                assert!(sequence <= u32::MAX as u64);
+            }
             match native.read_unicode_text() {
                 Ok(text) => {
                     // The raw adapter returns content without policy
@@ -557,7 +561,11 @@ fn native_write_path_reports_honest_typed_results() {
     // fabricating success.
     match native.write_unicode_text("orcel-write-gating-probe") {
         Ok(sequence) => {
-            assert!(sequence <= u32::MAX as u64);
+            // Win32 sequence numbers are 32-bit; the macOS and Linux adapter
+            // derives a 64-bit sequence from the clipboard text.
+            if cfg!(windows) {
+                assert!(sequence <= u32::MAX as u64);
+            }
         }
         Err(error) => {
             assert!(matches!(
@@ -602,7 +610,11 @@ fn sg000064_live_clipboard_round_trip_is_sequence_bound_and_secret_safe() {
     let mut sampled = None;
     for _ in 0..20 {
         let observed = native.sequence_number().unwrap();
-        assert!(observed >= placed_sequence);
+        // The Win32 sequence only advances; the macOS and Linux sequence
+        // is content-derived, so it has no order.
+        if cfg!(windows) {
+            assert!(observed >= placed_sequence);
+        }
         match read_bounded_text(&native, Some(observed), WORKSPACE, POLICY) {
             Ok(outcome) => {
                 sampled = Some((observed, outcome));
@@ -629,4 +641,82 @@ fn sg000064_live_clipboard_round_trip_is_sequence_bound_and_secret_safe() {
         "a refused secret never reaches the clipboard"
     );
     eprintln!("SG-000064 live clipboard evidence: placed at sequence {placed_sequence}, read back at sequence {sequence}; stale read and secret placement refused");
+}
+
+/// XP-15: the oversize and secret refusals hold through the native
+/// adapter on every OS, with or without a reachable clipboard, because
+/// the approved pipeline refuses before the operating system is touched
+/// and the adapter enforces the size bound itself.
+#[test]
+fn xp15_native_adapter_refuses_oversize_and_secret_text_on_every_os() {
+    let _guard = native_clipboard_test_lock();
+    let native = NativeAdapter::new();
+    let oversize = "a".repeat(MAX_CLIPBOARD_BYTES + 1);
+    let refused = write_bounded_text(&native, &oversize, WORKSPACE, POLICY)
+        .expect_err("oversize placement must be refused");
+    assert_eq!(refused.code, FailureCode::OutputLimit);
+    let refused = native
+        .write_unicode_text(&oversize)
+        .expect_err("the adapter itself must refuse oversize text");
+    assert_eq!(refused.code, FailureCode::OutputLimit);
+    for secret in [
+        "password=hunter2-xp15",
+        "-----BEGIN OPENSSH KEY-----",
+        "export AWS_SECRET_ACCESS_KEY=xp15",
+    ] {
+        let refused = write_bounded_text(&native, secret, WORKSPACE, POLICY)
+            .expect_err("secret placement must be refused");
+        assert_eq!(refused.code, FailureCode::CapabilityDenied);
+        assert!(!refused.message.contains(secret));
+    }
+}
+
+/// XP-15 live roundtrip through the native adapter where a clipboard is
+/// reachable: a real Windows session, the macOS pasteboard, or an X11 or
+/// data-control Wayland display on Linux. Without one the test reports
+/// why and returns, unless `ORCEL_REQUIRE_LIVE_CLIPBOARD=1` is set, as CI
+/// sets it on macOS and on Linux under Xvfb, in which case it fails.
+#[test]
+fn xp15_native_round_trip_where_a_clipboard_is_reachable() {
+    let _guard = native_clipboard_test_lock();
+    let native = NativeAdapter::new();
+    let required = std::env::var("ORCEL_REQUIRE_LIVE_CLIPBOARD").as_deref() == Ok("1");
+    let marker = "orcel-xp15-roundtrip-marker \u{2713} caf\u{e9}";
+    let placed = match write_bounded_text(&native, marker, WORKSPACE, POLICY) {
+        Ok(placed) => placed,
+        Err(error) => {
+            assert_eq!(error.code, FailureCode::ProviderUnavailable);
+            assert!(
+                !required,
+                "a live clipboard was required but is unavailable: {}",
+                error.message
+            );
+            eprintln!(
+                "XP-15 live roundtrip skipped: no clipboard is reachable ({})",
+                error.message
+            );
+            return;
+        }
+    };
+    let mut sampled = None;
+    for _ in 0..20 {
+        let observed = native.sequence_number().unwrap();
+        if let Ok(outcome) = read_bounded_text(&native, Some(observed), WORKSPACE, POLICY) {
+            if outcome.text == marker {
+                sampled = Some(outcome);
+                break;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let sampled = sampled.expect("the placed text reads back through the bounded pipeline");
+    assert_eq!(
+        sampled.evidence["content_digest"],
+        clipboard_content_digest(marker)
+    );
+    if !cfg!(windows) {
+        // The content-derived sequence of the placed text is the one the
+        // read observes.
+        assert_eq!(sampled.evidence["sequence"], placed.resulting_sequence);
+    }
 }
