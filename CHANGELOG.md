@@ -6,6 +6,7 @@ Orcel's published artifacts and release notes are the canonical release history:
 
 - Improve open-source onboarding, contributor documentation, project presentation, and issue/PR templates.
 - Keep the existing compatibility and security boundaries explicit for new contributors.
+- XP-01: approval history and audit records default to a private per-user state root on every OS (`%LOCALAPPDATA%\Orcel` on Windows, unchanged; `~/Library/Application Support/Orcel` on macOS; `$XDG_STATE_HOME/orcel` or `~/.local/state/orcel` on Linux, mode 0700) and fail closed instead of falling back to the shared temp directory.
 
 ## 2026-10-16 — Orbital identity adopted (repository change)
 

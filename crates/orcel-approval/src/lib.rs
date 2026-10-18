@@ -1,4 +1,5 @@
 pub use orcel_contracts::FailureCode;
+pub use orcel_platform::PlatformError;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
@@ -689,16 +690,23 @@ impl std::fmt::Debug for SoftDeciderHandle {
 pub type SoftDecider = dyn Fn(&ApprovalPrompt) -> ApprovalDecision + Send + Sync;
 
 impl LocalApprovalBroker {
-    pub fn new() -> Self {
-        Self::with_path(default_approval_history_path())
+    /// The broker over the default ledger. Fails with `ApprovalUnavailable`
+    /// when the default location cannot be resolved, rather than recording
+    /// approvals anywhere else.
+    pub fn new() -> Result<Self, ApprovalError> {
+        let path = default_approval_history_path().map_err(history_path_unavailable)?;
+        Ok(Self::with_path(path))
     }
 
     pub fn with_path(path: impl Into<std::path::PathBuf>) -> Self {
         Self::with_path_and_verifier(path, default_presence_verifier())
     }
 
-    pub fn with_presence_verifier(presence: Arc<dyn PresenceVerifier>) -> Self {
-        Self::with_path_and_verifier(default_approval_history_path(), presence)
+    pub fn with_presence_verifier(
+        presence: Arc<dyn PresenceVerifier>,
+    ) -> Result<Self, ApprovalError> {
+        let path = default_approval_history_path().map_err(history_path_unavailable)?;
+        Ok(Self::with_path_and_verifier(path, presence))
     }
 
     pub fn with_path_and_verifier(
@@ -741,12 +749,6 @@ impl LocalApprovalBroker {
             .lock()
             .map(|mut ledger| ledger.history(limit))
             .unwrap_or_default()
-    }
-}
-
-impl Default for LocalApprovalBroker {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -2117,18 +2119,27 @@ pub fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-pub fn default_approval_history_path() -> std::path::PathBuf {
-    if let Some(path) = std::env::var_os("ORCEL_APPROVAL_HISTORY_PATH") {
-        return std::path::PathBuf::from(path);
+/// `ORCEL_APPROVAL_HISTORY_PATH`, else `approval-history.jsonl` in the
+/// private per-user Orcel state root. Fails closed when the root cannot be
+/// resolved or is not private; it never falls back to the shared temp
+/// directory.
+pub fn default_approval_history_path() -> Result<std::path::PathBuf, PlatformError> {
+    default_approval_history_path_from(&|name| std::env::var_os(name))
+}
+
+fn default_approval_history_path_from(
+    lookup: &dyn Fn(&str) -> Option<std::ffi::OsString>,
+) -> Result<std::path::PathBuf, PlatformError> {
+    if let Some(path) = lookup("ORCEL_APPROVAL_HISTORY_PATH") {
+        return Ok(std::path::PathBuf::from(path));
     }
-    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
-        return std::path::PathBuf::from(local_app_data)
-            .join("Orcel")
-            .join("approval-history.jsonl");
-    }
-    std::env::temp_dir()
-        .join("orcel")
-        .join("approval-history.jsonl")
+    let root = orcel_platform::paths::state_root_from(lookup)?;
+    orcel_platform::paths::ensure_private_dir(&root)?;
+    Ok(root.join("approval-history.jsonl"))
+}
+
+fn history_path_unavailable(error: PlatformError) -> ApprovalError {
+    ApprovalError::unavailable(format!("approval history is unavailable: {error}"))
 }
 
 #[cfg(windows)]
@@ -2190,6 +2201,153 @@ fn platform_prompt(prompt: &ApprovalPrompt) -> Result<ApprovalDecision, Approval
     Err(ApprovalError::unavailable(
         "local approval UI is Windows-only in the current Orcel runtime",
     ))
+}
+
+#[cfg(test)]
+mod state_root_tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    fn lookup(vars: Vec<(&'static str, OsString)>) -> impl Fn(&str) -> Option<OsString> {
+        move |name| {
+            vars.iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| value.clone())
+        }
+    }
+
+    fn sandbox(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!(
+            "orcel-approval-root-{label}-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("sandbox");
+        dir
+    }
+
+    /// The per-user variable the running OS's layout reads, pointed at `base`.
+    fn user_root_env(base: &Path) -> Vec<(&'static str, OsString)> {
+        #[cfg(windows)]
+        let name = "LOCALAPPDATA";
+        #[cfg(not(windows))]
+        let name = "HOME";
+        vec![(name, base.as_os_str().to_owned())]
+    }
+
+    fn approve_once(broker: &LocalApprovalBroker, digest: &str) -> ApprovedToken {
+        let prompt = ApprovalPrompt::new("ws", "rev-1", "act", "target", "summary", digest);
+        broker.request_token(&prompt).expect("approved")
+    }
+
+    fn scripted_broker(path: &Path) -> LocalApprovalBroker {
+        LocalApprovalBroker::with_path_and_soft_decider(
+            path,
+            Arc::new(NoPresenceVerifier),
+            Arc::new(|_| ApprovalDecision::Approved),
+        )
+    }
+
+    #[test]
+    fn history_path_override_is_kept() {
+        let path = default_approval_history_path_from(&lookup(vec![(
+            "ORCEL_APPROVAL_HISTORY_PATH",
+            OsString::from("custom-history.jsonl"),
+        )]));
+        assert_eq!(path, Ok(PathBuf::from("custom-history.jsonl")));
+    }
+
+    #[test]
+    fn missing_state_root_is_an_error_never_temp() {
+        let error = default_approval_history_path_from(&lookup(Vec::new())).expect_err("no root");
+        assert!(matches!(error, PlatformError::StateRootUnavailable(_)));
+        let error = history_path_unavailable(error);
+        assert_eq!(error.code, FailureCode::ApprovalUnavailable);
+    }
+
+    #[test]
+    fn broker_writes_history_under_the_private_root() {
+        let base = sandbox("write");
+        let lookup = lookup(user_root_env(&base));
+        let root = orcel_platform::paths::state_root_from(&lookup).expect("root");
+        let path = default_approval_history_path_from(&lookup).expect("history path");
+        assert_eq!(path, root.join("approval-history.jsonl"));
+        assert!(path.starts_with(&base));
+        assert!(!path.starts_with(std::env::temp_dir().join("orcel")));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&root).expect("root").permissions().mode();
+            assert_eq!(mode & 0o077, 0);
+        }
+        let broker = scripted_broker(&path);
+        let token = approve_once(&broker, &"a".repeat(64));
+        assert!(path.is_file());
+        assert!(broker
+            .history(10)
+            .iter()
+            .any(|record| record.id == token.record_id));
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_state_root_fails_closed() {
+        let base = sandbox("symlink");
+        let lookup = lookup(user_root_env(&base));
+        let root = orcel_platform::paths::state_root_from(&lookup).expect("root");
+        std::fs::create_dir_all(root.parent().expect("parent")).expect("parent");
+        let elsewhere = base.join("elsewhere");
+        std::fs::create_dir(&elsewhere).expect("elsewhere");
+        std::os::unix::fs::symlink(&elsewhere, &root).expect("symlink");
+        let error = default_approval_history_path_from(&lookup).expect_err("symlink");
+        assert_eq!(error, PlatformError::Symlink(root));
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn existing_ledger_is_read_in_place_without_migration() {
+        let base = sandbox("existing");
+        let lookup = lookup(user_root_env(&base));
+        let path = default_approval_history_path_from(&lookup).expect("history path");
+        let token = approve_once(&scripted_broker(&path), &"b".repeat(64));
+        let before = std::fs::read(&path).expect("ledger");
+        // A later process resolves the same file and reads it unchanged.
+        let again = default_approval_history_path_from(&lookup).expect("history path");
+        assert_eq!(again, path);
+        let broker = scripted_broker(&again);
+        assert!(broker
+            .history(10)
+            .iter()
+            .any(|record| record.id == token.record_id));
+        assert_eq!(std::fs::read(&path).expect("ledger"), before);
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_ledger_path_is_byte_identical_to_the_previous_default() {
+        let local_app_data = sandbox("windows");
+        let lookup = lookup(vec![(
+            "LOCALAPPDATA",
+            local_app_data.clone().into_os_string(),
+        )]);
+        let path = default_approval_history_path_from(&lookup).expect("history path");
+        // The expression the previous default used.
+        let previous = PathBuf::from(local_app_data.clone().into_os_string())
+            .join("Orcel")
+            .join("approval-history.jsonl");
+        assert_eq!(
+            path.as_os_str().as_encoded_bytes(),
+            previous.as_os_str().as_encoded_bytes()
+        );
+        // Resolution does not create the directory on Windows.
+        assert!(!local_app_data.join("Orcel").exists());
+        let _ = std::fs::remove_dir_all(local_app_data);
+    }
 }
 
 #[cfg(test)]

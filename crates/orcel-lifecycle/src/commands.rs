@@ -376,11 +376,8 @@ pub fn doctor(args: &mut Args) -> Result<Output, LifecycleError> {
     let layout = Layout::for_current_user()?;
     let platform = host_platform();
     // The exact ledger the brokers and `orcel approvals recover` use.
-    let report = doctor::run_with_approval_history(
-        &layout,
-        platform.as_ref(),
-        &orcel_approval::default_approval_history_path(),
-    );
+    let report =
+        doctor::run_with_approval_history(&layout, platform.as_ref(), &approval_history_path()?);
     let mut human = String::new();
     for check in &report.checks {
         let mark = match check.status {
@@ -410,7 +407,7 @@ pub fn doctor(args: &mut Args) -> Result<Output, LifecycleError> {
 pub fn approvals(args: &mut Args) -> Result<Output, LifecycleError> {
     if args.flag("recover") {
         args.finish()?;
-        return approvals_recover(&orcel_approval::default_approval_history_path());
+        return approvals_recover(&approval_history_path()?);
     }
     let limit = match args.value("--limit")? {
         Some(value) => value
@@ -479,6 +476,11 @@ pub fn approvals(args: &mut Args) -> Result<Output, LifecycleError> {
 
 /// Quarantines an approval ledger that fails verification and starts a new
 /// one. Runs locally, without the daemon, under the ledger's writer lock.
+fn approval_history_path() -> Result<std::path::PathBuf, LifecycleError> {
+    orcel_approval::default_approval_history_path()
+        .map_err(|error| LifecycleError::state(format!("approval history: {error}")))
+}
+
 fn approvals_recover(path: &std::path::Path) -> Result<Output, LifecycleError> {
     let recovery = orcel_approval::recover_approval_ledger(path).map_err(|error| {
         let message = format!("approval ledger recovery: {}", error.message);

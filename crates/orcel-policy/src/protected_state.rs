@@ -33,12 +33,22 @@ pub fn protected_state_roots() -> Vec<PathBuf> {
 }
 
 /// Returns the unresolved protected state roots derived from `lookup`: the
-/// Orcel state root followed by every configured override.
+/// Orcel state root, the XP-01 per-OS state root when it differs, and every
+/// configured override.
 pub fn protected_state_roots_from(lookup: &dyn Fn(&str) -> Option<OsString>) -> Vec<PathBuf> {
+    // Trust records, the browser profile, the lease store, the executable
+    // registry and full-control authority still default under this root.
     let mut roots = vec![match lookup("LOCALAPPDATA") {
         Some(local_app_data) => PathBuf::from(local_app_data).join("Orcel"),
         None => std::env::temp_dir().join("orcel"),
     }];
+    // Approval history and audit records default under the per-OS state root
+    // (`orcel_platform::paths`). On Windows it is the root above.
+    if let Ok(state_root) = orcel_platform::paths::state_root_from(lookup) {
+        if !roots.contains(&state_root) {
+            roots.push(state_root);
+        }
+    }
     for name in PROTECTED_STATE_OVERRIDES {
         if let Some(value) = lookup(name) {
             roots.push(PathBuf::from(value));
@@ -175,6 +185,29 @@ mod tests {
     fn state_root_falls_back_to_temp_orcel_without_local_app_data() {
         let roots = protected_state_roots_from(&lookup(BTreeMap::new()));
         assert_eq!(roots, vec![std::env::temp_dir().join("orcel")]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn xp01_windows_roots_are_unchanged() {
+        let roots = protected_state_roots_from(&lookup(BTreeMap::from([
+            ("LOCALAPPDATA", OsString::from(r"C:\Users\u\AppData\Local")),
+            ("HOME", OsString::from(r"C:\Users\u")),
+        ])));
+        assert_eq!(
+            roots,
+            vec![PathBuf::from(r"C:\Users\u\AppData\Local").join("Orcel")]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn xp01_per_os_state_root_is_protected() {
+        let values = BTreeMap::from([("HOME", OsString::from("/home/u"))]);
+        let state_root =
+            orcel_platform::paths::state_root_from(&lookup(values.clone())).expect("root");
+        let roots = protected_state_roots_from(&lookup(values));
+        assert_eq!(roots, vec![std::env::temp_dir().join("orcel"), state_root]);
     }
 
     #[test]

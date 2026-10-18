@@ -374,8 +374,8 @@ mod tests {
         let roots = orcel_policy::protected_state::protected_state_roots();
         for path in [
             default_trust_path(),
-            orcel_audit::default_audit_path(),
-            orcel_approval::default_approval_history_path(),
+            orcel_audit::default_audit_path().expect("audit path"),
+            orcel_approval::default_approval_history_path().expect("approval history path"),
             orcel_provider_browser::default_profile_root(),
         ] {
             assert!(

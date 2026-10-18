@@ -32,9 +32,12 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let policy = load_policy()?;
-    let audit = AuditLogger::new(default_audit_path())
+    let audit_path =
+        default_audit_path().map_err(|error| format!("resolve audit log: {error}"))?;
+    let audit = AuditLogger::new(audit_path)
         .map_err(|error| format!("initialize audit log: {error}"))?;
-    let approval = LocalApprovalBroker::new();
+    let approval = LocalApprovalBroker::new()
+        .map_err(|error| format!("initialize approval broker: {}", error.message))?;
 
     eprintln!(
         "orceld ready: protocol={} audit={} mode=SG-000010_BOUNDED_PROCESS_SPAWN",
