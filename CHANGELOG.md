@@ -7,6 +7,9 @@ Orcel's published artifacts and release notes are the canonical release history:
 - Improve open-source onboarding, contributor documentation, project presentation, and issue/PR templates.
 - Keep the existing compatibility and security boundaries explicit for new contributors.
 - XP-01: approval history and audit records default to a private per-user state root on every OS (`%LOCALAPPDATA%\Orcel` on Windows, unchanged; `~/Library/Application Support/Orcel` on macOS; `$XDG_STATE_HOME/orcel` or `~/.local/state/orcel` on Linux, mode 0700) and fail closed instead of falling back to the shared temp directory.
+  - On Unix the root and every ancestor are checked: an ancestor must be owned by the current user or root and not writable by group or other unless it is a root-owned sticky directory such as `/tmp`.
+  - Fail-closed behavior changes: a missing `LOCALAPPDATA`, or one that is relative or contains `..`, is now an error on Windows; an empty or relative `ORCEL_APPROVAL_HISTORY_PATH` or `ORCEL_AUDIT_PATH` is refused instead of resolving against the working directory.
+  - API changes: `LocalApprovalBroker::new` and `LocalApprovalBroker::with_presence_verifier` return `Result` and fail with `ApprovalUnavailable`; `impl Default for LocalApprovalBroker` is removed; `default_audit_path` and `default_approval_history_path` return `Result`.
 
 ## 2026-10-16 — Orbital identity adopted (repository change)
 

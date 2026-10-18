@@ -73,17 +73,19 @@ impl AuditLogger {
 }
 
 /// `ORCEL_AUDIT_PATH`, else `audit.jsonl` in the private per-user Orcel
-/// state root. Fails closed when the root cannot be resolved or is not
-/// private; it never falls back to the shared temp directory.
+/// state root. Fails closed when the override is empty or relative, or when
+/// the root cannot be resolved or is not private; it never falls back to the
+/// shared temp directory.
 pub fn default_audit_path() -> Result<PathBuf, PlatformError> {
     default_audit_path_from(&|name| std::env::var_os(name))
 }
 
-fn default_audit_path_from(
+/// [`default_audit_path`] with the environment read through `lookup`.
+pub fn default_audit_path_from(
     lookup: &dyn Fn(&str) -> Option<OsString>,
 ) -> Result<PathBuf, PlatformError> {
     if let Some(path) = lookup("ORCEL_AUDIT_PATH") {
-        return Ok(PathBuf::from(path));
+        return paths::absolute_override(path);
     }
     let root = paths::state_root_from(lookup)?;
     paths::ensure_private_dir(&root)?;
@@ -139,16 +141,37 @@ mod tests {
             .as_nanos();
         let dir = std::env::temp_dir().join(format!("orcel-audit-{label}-{suffix}"));
         std::fs::create_dir_all(&dir).expect("sandbox");
+        // Independent of the umask, so the ancestor checks see a private base.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+                .expect("chmod sandbox");
+        }
         dir
     }
 
     #[test]
     fn audit_path_override_is_kept() {
+        let custom = std::env::temp_dir().join("custom-audit.jsonl");
         let path = default_audit_path_from(&lookup(vec![(
             "ORCEL_AUDIT_PATH",
-            OsString::from("custom-audit.jsonl"),
+            custom.clone().into_os_string(),
         )]));
-        assert_eq!(path, Ok(PathBuf::from("custom-audit.jsonl")));
+        assert_eq!(path, Ok(custom));
+    }
+
+    #[test]
+    fn empty_or_relative_audit_override_is_refused() {
+        for value in ["", "custom-audit.jsonl", "logs/audit.jsonl"] {
+            let path =
+                default_audit_path_from(&lookup(vec![("ORCEL_AUDIT_PATH", OsString::from(value))]));
+            assert_eq!(
+                path,
+                Err(PlatformError::NotAbsolute(PathBuf::from(value))),
+                "{value:?}"
+            );
+        }
     }
 
     #[test]

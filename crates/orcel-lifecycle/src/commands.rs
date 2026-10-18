@@ -474,13 +474,13 @@ pub fn approvals(args: &mut Args) -> Result<Output, LifecycleError> {
     })
 }
 
-/// Quarantines an approval ledger that fails verification and starts a new
-/// one. Runs locally, without the daemon, under the ledger's writer lock.
 fn approval_history_path() -> Result<std::path::PathBuf, LifecycleError> {
     orcel_approval::default_approval_history_path()
         .map_err(|error| LifecycleError::state(format!("approval history: {error}")))
 }
 
+/// Quarantines an approval ledger that fails verification and starts a new
+/// one. Runs locally, without the daemon, under the ledger's writer lock.
 fn approvals_recover(path: &std::path::Path) -> Result<Output, LifecycleError> {
     let recovery = orcel_approval::recover_approval_ledger(path).map_err(|error| {
         let message = format!("approval ledger recovery: {}", error.message);

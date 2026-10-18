@@ -2120,18 +2120,20 @@ pub fn now_ms() -> u64 {
 }
 
 /// `ORCEL_APPROVAL_HISTORY_PATH`, else `approval-history.jsonl` in the
-/// private per-user Orcel state root. Fails closed when the root cannot be
-/// resolved or is not private; it never falls back to the shared temp
-/// directory.
+/// private per-user Orcel state root. Fails closed when the override is
+/// empty or relative, or when the root cannot be resolved or is not private;
+/// it never falls back to the shared temp directory.
 pub fn default_approval_history_path() -> Result<std::path::PathBuf, PlatformError> {
     default_approval_history_path_from(&|name| std::env::var_os(name))
 }
 
-fn default_approval_history_path_from(
+/// [`default_approval_history_path`] with the environment read through
+/// `lookup`.
+pub fn default_approval_history_path_from(
     lookup: &dyn Fn(&str) -> Option<std::ffi::OsString>,
 ) -> Result<std::path::PathBuf, PlatformError> {
     if let Some(path) = lookup("ORCEL_APPROVAL_HISTORY_PATH") {
-        return Ok(std::path::PathBuf::from(path));
+        return orcel_platform::paths::absolute_override(path);
     }
     let root = orcel_platform::paths::state_root_from(lookup)?;
     orcel_platform::paths::ensure_private_dir(&root)?;
@@ -2226,6 +2228,13 @@ mod state_root_tests {
             std::process::id()
         ));
         std::fs::create_dir_all(&dir).expect("sandbox");
+        // Independent of the umask, so the ancestor checks see a private base.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+                .expect("chmod sandbox");
+        }
         dir
     }
 
@@ -2253,11 +2262,32 @@ mod state_root_tests {
 
     #[test]
     fn history_path_override_is_kept() {
+        let custom = std::env::temp_dir().join("custom-history.jsonl");
         let path = default_approval_history_path_from(&lookup(vec![(
             "ORCEL_APPROVAL_HISTORY_PATH",
-            OsString::from("custom-history.jsonl"),
+            custom.clone().into_os_string(),
         )]));
-        assert_eq!(path, Ok(PathBuf::from("custom-history.jsonl")));
+        assert_eq!(path, Ok(custom));
+    }
+
+    #[test]
+    fn empty_or_relative_history_override_is_refused() {
+        for value in ["", "custom-history.jsonl", "state/history.jsonl"] {
+            let error = default_approval_history_path_from(&lookup(vec![(
+                "ORCEL_APPROVAL_HISTORY_PATH",
+                OsString::from(value),
+            )]))
+            .expect_err("relative override");
+            assert_eq!(
+                error,
+                PlatformError::NotAbsolute(PathBuf::from(value)),
+                "{value:?}"
+            );
+            assert_eq!(
+                history_path_unavailable(error).code,
+                FailureCode::ApprovalUnavailable
+            );
+        }
     }
 
     #[test]

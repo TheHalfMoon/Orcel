@@ -371,11 +371,28 @@ mod tests {
 
     #[test]
     fn sg000041_state_defaults_lie_within_protected_state_roots() {
-        let roots = orcel_policy::protected_state::protected_state_roots();
+        // The audit and approval defaults create their state root, so HOME
+        // and XDG_STATE_HOME point at a sandbox instead of the real home.
+        // The Windows layout reads neither.
+        let home = temp_path("home");
+        std::fs::create_dir_all(&home).expect("sandbox home");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700))
+                .expect("chmod sandbox home");
+        }
+        let lookup = |name: &str| match name {
+            "HOME" => Some(home.clone().into_os_string()),
+            "XDG_STATE_HOME" => None,
+            _ => std::env::var_os(name),
+        };
+        let roots = orcel_policy::protected_state::protected_state_roots_from(&lookup);
         for path in [
             default_trust_path(),
-            orcel_audit::default_audit_path().expect("audit path"),
-            orcel_approval::default_approval_history_path().expect("approval history path"),
+            orcel_audit::default_audit_path_from(&lookup).expect("audit path"),
+            orcel_approval::default_approval_history_path_from(&lookup)
+                .expect("approval history path"),
             orcel_provider_browser::default_profile_root(),
         ] {
             assert!(
@@ -386,5 +403,6 @@ mod tests {
                 path.display()
             );
         }
+        let _ = std::fs::remove_dir_all(home);
     }
 }
