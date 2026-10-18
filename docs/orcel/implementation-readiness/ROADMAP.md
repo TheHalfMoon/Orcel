@@ -45,10 +45,10 @@ Nothing in releases 1-3 depends on Hala training, founder-hosted inference, sand
 ## 4. Critical path (task ids)
 
 ```text
-XP-01 → XP-01B → XP-03 → XP-06 → XP-11 → XP-12 → XP-20
-XP-02 ↗        ↗   ↓
-XP-04 ─────────┘  XP-07, XP-08
-XP-05 ────────────┘
+XP-01 → XP-01B → XP-03
+XP-02 → XP-03
+XP-03 + XP-04 + XP-05 → XP-06 → XP-11 → XP-12 → XP-20
+XP-06 → XP-07, XP-08
 XP-01 → XP-01B → CR-01 → CR-02 → CR-03 → CR-04
 XP-01 + XP-02 → XP-09 → XP-11    XP-01 → XP-10 → XP-11
 (XP-09 uses a development-signed helper checked against a pinned designated requirement; XP-16 later swaps in the Developer ID requirement. XP-10 installs its polkit action with a test-only script; XP-17 packages it.)
