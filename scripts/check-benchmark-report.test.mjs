@@ -59,8 +59,79 @@ const invalidCases = [
   ["latency missing p95", (r) => delete r.rows[0].latency_ms.p95, /latency_ms: missing required property p95/],
   ["fractional steps", (r) => (r.rows[0].steps = 1.5), /rows\/0\/steps: expected integer/],
   ["string tokens", (r) => (r.rows[0].tokens_in = "12"), /rows\/0\/tokens_in: expected integer/],
-  ["machine as array", (r) => (r.machine = []), /machine: expected object/]
+  ["machine as array", (r) => (r.machine = []), /machine: expected object/],
+  [
+    "prose in machine.cpu",
+    (r) => (r.machine.cpu = "Clicked the Sign in button on the page"),
+    /machine\/cpu: does not match/
+  ],
+  ["machine.cpu too long", (r) => (r.machine.cpu = "A".repeat(65)), /machine\/cpu: longer than 64/],
+  ["URL in evidence", (r) => (r.rows[0].evidence = "https://example.com/leak/x"), /rows\/0\/evidence: does not match/],
+  ["absolute path in evidence", (r) => (r.rows[0].evidence = "/etc/passwd"), /rows\/0\/evidence: does not match/],
+  ["dot segment in evidence", (r) => (r.rows[0].evidence = "runs/../secrets"), /rows\/0\/evidence: does not match/]
 ];
+
+// Credential-shaped values are assembled from parts so this file itself never
+// contains a secret-shaped literal.
+const credentialShapes = [
+  ["sk-" + "ant-api03-abcdef", "anthropic"],
+  ["sk_" + "live_abcdef", "stripe"],
+  ["gh" + "p_abcdef123456", "github classic"],
+  ["github" + "_pat_abcdef", "github fine-grained"],
+  ["xo" + "xb-123456-abcdef", "slack"],
+  ["AK" + "IAABCDEFGHIJKLMNOP", "aws"]
+];
+
+for (const [value, kind] of credentialShapes) {
+  test(`invalid: ${kind} credential shape in planner.model, observed and evidence`, () => {
+    for (const [field, set] of [
+      [/planner\/model: does not match/, (r) => (r.planner.model = value)],
+      [/planner\/name: does not match/, (r) => (r.planner.name = value)],
+      [/rows\/0\/observed: does not match/, (r) => (r.rows[0].observed = value)],
+      [/rows\/0\/evidence: does not match/, (r) => (r.rows[0].evidence = `${value}/run.json`)]
+    ]) {
+      const report = copy();
+      set(report);
+      const errors = validateReport(report, schema);
+      assert.ok(
+        errors.some((e) => field.test(e)),
+        `${kind} value not rejected (${field}): ${errors.join("; ")}`
+      );
+    }
+  });
+}
+
+test("valid: realistic short cpu names, numeric run id and plain model ids", () => {
+  for (const cpu of ["Apple M2", "AMD Ryzen 9 7950X", "Intel i7-1185G7", "Snapdragon X Elite"]) {
+    const report = copy();
+    report.machine.cpu = cpu;
+    assert.deepEqual(validateReport(report, schema), [], cpu);
+  }
+  const report = copy();
+  report.rows[0].evidence = "18273645123";
+  report.planner = { kind: "mcp-client", name: "claude-code", version: "2.1.0", model: "claude-opus-5-5" };
+  assert.deepEqual(validateReport(report, schema), []);
+});
+
+test("regression: api_key, password and secret properties are rejected at every level", () => {
+  for (const name of ["api_key", "password", "secret"]) {
+    for (const [where, target] of [
+      ["(root)", (r) => r],
+      ["/machine", (r) => r.machine],
+      ["/planner", (r) => r.planner],
+      ["/rows/0", (r) => r.rows[0]],
+      ["/rows/0/latency_ms", (r) => r.rows[0].latency_ms]
+    ]) {
+      const report = copy();
+      target(report)[name] = "value";
+      const errors = validateReport(report, schema);
+      assert.ok(
+        errors.includes(`${where}: unexpected property ${name}`),
+        `${name} at ${where} not rejected: ${errors.join("; ")}`
+      );
+    }
+  }
+});
 
 for (const [name, mutate, expected] of invalidCases) {
   test(`invalid: ${name}`, () => {

@@ -9,7 +9,8 @@
   "scripts": {
     "build": "npm run build --workspace @orcel/mcp && npm run build --workspace @orcel/relay",
     "typecheck": "npm run typecheck --workspace @orcel/mcp && npm run build --workspace @orcel/mcp && npm run typecheck --workspace @orcel/relay",
-    "test": "npm run test --workspace @orcel/mcp && npm run test --workspace @orcel/relay && npm run browser-worker:test && npm run browser-launcher:native",
+    "test": "npm run test --workspace @orcel/mcp && npm run test --workspace @orcel/relay && npm run browser-worker:test && npm run browser-launcher:native && npm run benchmark-report:test",
+    "benchmark-report:test": "node --test scripts/check-benchmark-report.test.mjs && node scripts/check-benchmark-report.mjs",
     "web:typecheck": "npm --prefix apps/web run typecheck",
     "web:test": "npm --prefix apps/web run test",
     "web:build": "npm --prefix apps/web run build",

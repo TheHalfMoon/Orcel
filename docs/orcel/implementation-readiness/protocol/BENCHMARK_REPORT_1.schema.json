@@ -27,11 +27,11 @@
   },
   "$defs": {
     "token": {
-      "description": "Short identifier: no whitespace, no prose.",
+      "description": "Short identifier: no whitespace, no prose, and no common credential prefix (sk-, sk_, ghp_, gho_, ghs_, ghu_, github_pat_, xox?-, AKIA, ASIA).",
       "type": "string",
       "minLength": 1,
       "maxLength": 64,
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]*$"
+      "pattern": "^(?!(?:sk-|sk_|ghp_|gho_|ghs_|ghu_|github_pat_|xox[a-z]-|AKIA|ASIA))[A-Za-z0-9][A-Za-z0-9._+-]*$"
     },
     "count": { "type": "integer", "minimum": 0 },
     "machine": {
@@ -43,11 +43,11 @@
         "os_version": { "$ref": "#/$defs/token" },
         "arch": { "type": "string", "enum": ["x86_64", "arm64"] },
         "cpu": {
-          "description": "CPU model name as reported by the OS.",
+          "description": "Short CPU model name, at most 4 words (e.g. Apple M2, AMD Ryzen 9 7950X, Intel i7-1185G7).",
           "type": "string",
           "minLength": 1,
-          "maxLength": 96,
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9 ()@.,_+-]*$"
+          "maxLength": 64,
+          "pattern": "^(?!(?:[^ ]* ){4})[A-Za-z0-9][A-Za-z0-9 ()@.,_+-]*$"
         },
         "ram_gb": { "type": "number", "minimum": 0 }
       }
@@ -81,7 +81,7 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 64,
-          "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          "pattern": "^(?!(?:sk-|sk_|ghp_|gho_|ghs_|ghu_|github_pat_|xox[a-z]-|AKIA|ASIA))[a-z0-9][a-z0-9._-]*$"
         },
         "latency_ms": {
           "type": "object",
@@ -98,11 +98,11 @@
         "tokens_out": { "$ref": "#/$defs/count" },
         "rss_mb_peak": { "type": "number", "minimum": 0 },
         "evidence": {
-          "description": "Repo-relative artifact path or CI run id.",
+          "description": "Repo-relative artifact path (no URL, no leading slash, no dot segments) or numeric CI run id.",
           "type": "string",
           "minLength": 1,
           "maxLength": 256,
-          "pattern": "^[A-Za-z0-9._:/@+-]+$"
+          "pattern": "^(?:[0-9]{1,20}|(?!(?:sk-|sk_|ghp_|gho_|ghs_|ghu_|github_pat_|xox[a-z]-|AKIA|ASIA))[A-Za-z0-9_-][A-Za-z0-9._-]*(?:/[A-Za-z0-9_-][A-Za-z0-9._-]*)*)$"
         }
       }
     }
