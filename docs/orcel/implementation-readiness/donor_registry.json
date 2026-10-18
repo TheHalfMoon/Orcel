@@ -1,0 +1,490 @@
+{
+  "schema": "orcel-donor-registry/1",
+  "status": "ADOPTED planning record (founder, 2026-10-18; docs/orcel/grants/2026-10-18-founder-attestation.md)",
+  "verified_on": "2026-10-18",
+  "verified_by": "Fable planning pass (source inspection only; no donor code, build script or test was executed)",
+  "orcel_base": "40fc9f0a17b158188d20084126e2742b1632002c",
+  "authorization_records": [
+    "docs/orcel/SOURCE_PERMISSIONS.md",
+    "docs/orcel/grants/2026-10-13-founder-source-authorization.md",
+    "founder directive of 2026-10-18 (this planning PR): reconfirmed permission for trycua/cua and browser-use/browser-use and every previously authorized donor",
+    "docs/orcel/grants/2026-10-18-founder-attestation.md"
+  ],
+  "strategy_vocabulary": [
+    "COPY",
+    "COPY_ADAPT",
+    "WRAP",
+    "COMPOSE",
+    "PORT",
+    "BUILD_NEW",
+    "REFERENCE",
+    "REJECT"
+  ],
+  "donors": [
+    {
+      "id": "cua",
+      "tier": 1,
+      "repo": "trycua/cua",
+      "commit": "a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "commit_date": "2026-10-17",
+      "previous_pins": [],
+      "root_license": "MIT",
+      "component_licenses": {
+        "libs/cua-driver (all crates)": "MIT",
+        "libs/cua (cua-sdk, cua-sandbox-core, cua-vmm, cua-image, cua-daemon, cua-proto, cua-mesh)": "MIT",
+        "libs/lume": "MIT",
+        "libs/cua-bench, libs/cua-bench-rl, libs/cua-s1/python, libs/cua-bench-s1/python": "MIT",
+        "apps/cua-spaces*, libs/cua-spacesd, libs/cua/crates/cua-spaces-*, cua-keyvault, cua-teleport*, cua-machine-seal, cua-volume, cua-media-*, cua-viewer, cua-spacesd-html5, cua-logging, libs/spaces-*-swift": "FSL-1.1-MIT",
+        "benchmarks/cua-driver-bench": "FSL-1.1-MIT",
+        "libs/python/som": "AGPL-3.0-or-later",
+        "libs/cua-driver/rust/crates/cua-perception/models (OmniParser icon detector)": "AGPL-3.0-only (third-party model)"
+      },
+      "license_evidence": "LICENSING.md at the pinned commit",
+      "source_access": "public",
+      "strategy": "WRAP",
+      "strategy_detail": "Vendor the MIT Cua Driver platform crates at the pin and call their tool implementations in-process from an Orcel-owned private host (macOS, Linux). COPY_ADAPT cua-vmm's Runtime trait and backends for the optional sandbox subsystem. REFERENCE Lume, cua-bench, CUA-S1. REJECT cuabot (upstream marks it unsafe), the Cua MCP/HTTP/daemon surfaces, its CDP browser engine, run_script (QuickJS), Computer History, telemetry, FSL components by architecture (network listeners, separate enrollment and keyvault) even though FD-04 now authorizes their reuse, and the AGPL perception extension. Reuse review 2026-10-18: also COPY_ADAPT cua-teleport biometric.rs (STRONG presence), cua-driver-core perception containment (orcel-contain sandbox), cua-keyvault caller/winpeer/macos (peer and code identity), proc_fs.rs and cua-daemon peer section, macOS bundle/entitlements/notarize/codesign scripts, Cua Spaces src-tauri config and capabilities, cua-bench runner and driver-bench taskpack.",
+      "blueprint": "CUA_INTEGRATION.md",
+      "status": "ADOPTED_PLAN"
+    },
+    {
+      "id": "browser-use",
+      "tier": 1,
+      "repo": "browser-use/browser-use",
+      "commit": "c75e8476e26d18b7617643bc2ae082fae8eae431",
+      "commit_date": "2026-10-07",
+      "previous_pins": [
+        "c75e8476e26d18b7617643bc2ae082fae8eae431"
+      ],
+      "root_license": "MIT",
+      "component_licenses": {},
+      "license_evidence": "LICENSE blob 1ea3836c; docs/orcel/notices/browser-use-MIT.txt",
+      "source_access": "public",
+      "strategy": "PORT",
+      "strategy_detail": "Extraction pipeline already ported (PR #312). Next: PORT the interactivity and paint-order heuristics and the action semantics (input clear-then-type, dropdown discovery, nearest file input, scroll container choice, terminates_sequence). REJECT its action layer as code (27 page-context Runtime.evaluate call sites in browser/watchdogs/default_action_watchdog.py), agent loop, LLM providers, cloud, telemetry.",
+      "blueprint": "BROWSER_INTEGRATION.md",
+      "status": "PARTIALLY_IMPORTED"
+    },
+    {
+      "id": "agent-native",
+      "tier": 1,
+      "repo": "BuilderIO/agent-native",
+      "commit": "9c277b79cb87eb27da538e572dd710986e2fa06d",
+      "commit_date": "2026-10-17",
+      "previous_pins": [],
+      "root_license": "ISC (root package.json); packages declare MIT in package.json; no LICENSE text file at root or in packages/agentkit, packages/toolkit, packages/core",
+      "component_licenses": {
+        "packages/agentkit": "MIT (package.json)",
+        "packages/toolkit": "MIT (package.json)",
+        "packages/core": "MIT (package.json)",
+        "packages/vscode-extension": "LICENSE.md present"
+      },
+      "license_evidence": "package.json license fields; founder direct authorization covers missing notice text",
+      "source_access": "public",
+      "strategy": "COPY_ADAPT",
+      "strategy_detail": "COPY_ADAPT the AgentKit protocol, validation and headless client (packages/agentkit/src) as the Control Room event contract. PORT the tool-call journal classification (packages/core/src/agent/tool-call-journal.ts) into the kernel journal's resume summary. REFERENCE the agent loop, SQL run store, A2A and Electron desktop app. REJECT AgentNativeComputerHelper.swift as an input engine (foreground-only, frontmost-app only, no capture or window identity). Reuse review 2026-10-18: also COPY_ADAPT Toolkit AgentKit React root.tsx, context.tsx, stop-button.tsx, streaming-text.tsx; components.tsx stays REFERENCE.",
+      "blueprint": "AGENT_RUNTIME_INTEGRATION.md",
+      "status": "ADOPTED_PLAN"
+    },
+    {
+      "id": "space",
+      "tier": 1,
+      "repo": "perplexityai/SPACE",
+      "commit": "09e922efd23b3c0d109ab64de7e567a901bcc61e",
+      "commit_date": "2026-10-18",
+      "previous_pins": [],
+      "root_license": "Apache-2.0",
+      "component_licenses": {},
+      "license_evidence": "LICENSE (Copyright 2026 Perplexity AI, Apache-2.0); publicly licensed, so the founder's direct permission is not needed for the Apache-2.0 terms",
+      "source_access": "public",
+      "strategy": "COPY_ADAPT",
+      "strategy_detail": "COPY_ADAPT node-level pieces only, for the optional Linux/KVM backend: Firecracker API client and snapshot files (crates/libs/node/runtime/core), guest process/filesystem/idempotency service (crates/libs/spaced/guest/server). PORT lifecycle semantics (paused vs suspended), execution-generation fencing and unknown Process.Start outcome. REJECT the control plane (API, PostgreSQL, Kubernetes, cluster controller, AWS, ECW) for a local-first product.",
+      "blueprint": "SECURE_EXECUTION_INTEGRATION.md",
+      "status": "ADOPTED_PLAN"
+    },
+    {
+      "id": "firecrawl",
+      "tier": 1,
+      "repo": "firecrawl/firecrawl",
+      "commit": "f84845c864b6e2af22791c18fcf89ac2a21f1434",
+      "commit_date": "2026-10-11",
+      "previous_pins": [
+        "7120d16926544483513782b5393ae9850691d52a",
+        "f84845c864b6e2af22791c18fcf89ac2a21f1434"
+      ],
+      "root_license": "AGPL-3.0 (engine); SDK directories MIT",
+      "component_licenses": {
+        "apps/js-sdk, apps/python-sdk, apps/rust-sdk and other SDKs": "MIT"
+      },
+      "license_evidence": "docs/orcel/grants/2026-10-13-founder-source-authorization.md (grantor-owned code)",
+      "source_access": "public engine; hosted index, fire-engine and billing are proprietary services and not inspectable",
+      "strategy": "COPY_ADAPT",
+      "strategy_detail": "Existing slices 6/7 are Orcel-native (crawl.rs states 'no Firecrawl code is copied'). Next: COPY_ADAPT apps/api/native/src/crawler.rs link filtering (regex include/exclude with size limits) and sitemap parsing; PORT lib/map-cosine.ts, lib/change-tracking-diff.ts, lib/canonical-url.ts, lib/crawl-regex.ts; WRAP pdf/document conversion (pdf-inspector, anydoc) inside a sandboxed parser process. REJECT hosted map index, fire-engine, LLM extract, prompt-injection guard model, queues, billing.",
+      "blueprint": "WEB_INTELLIGENCE_INTEGRATION.md",
+      "status": "REFERENCE_ONLY_SO_FAR"
+    },
+    {
+      "id": "stagehand",
+      "tier": 2,
+      "repo": "browserbase/stagehand",
+      "commit": "f261c38b4dc50c39485f924e8599c1d3c6e37dc7",
+      "commit_date": "2026-10-12",
+      "previous_pins": [
+        "2d605b099996e10c3e3ab0dcf293db8d482a2c97"
+      ],
+      "root_license": "MIT",
+      "component_licenses": {},
+      "license_evidence": "LICENSE blob 683c709c",
+      "source_access": "public",
+      "strategy": "COPY_ADAPT",
+      "strategy_detail": "Later: cross-frame accessibility snapshot (packages/extension/understudy/a11y/snapshot/*) without its Runtime focus path; CDP WebMCP client after the SG-000074 argv amendment. REJECT the extension runtime, in-browser LLM calls and domainPolicy.ts.",
+      "blueprint": "BROWSER_INTEGRATION.md",
+      "status": "REFERENCE_ONLY_SO_FAR"
+    },
+    {
+      "id": "skyvern",
+      "tier": 2,
+      "repo": "Skyvern-AI/skyvern",
+      "commit": "f5f3f28a9ce0021a1db24286928a7bff6582a1eb",
+      "commit_date": "2026-10-12",
+      "previous_pins": [],
+      "root_license": "AGPL-3.0 (some files Apache-2.0 by SPDX header; one MIT dataset)",
+      "component_licenses": {
+        "skyvern/cli/mcpb/claude_desktop": "Apache-2.0",
+        "evaluation/datasets/ODYSSEYS": "MIT (third-party)"
+      },
+      "license_evidence": "docs/orcel/grants/2026-10-13-founder-source-authorization.md",
+      "source_access": "public; hosted product parts not inspectable",
+      "strategy": "REFERENCE",
+      "strategy_detail": "Architecture, not license, rejects its modules: domUtils.js is page-injected script; script_generations generates and runs programs. Ideas carried: deterministic replay of a verified run as re-approved typed actions.",
+      "blueprint": "BROWSER_INTEGRATION.md",
+      "status": "REFERENCE"
+    },
+    {
+      "id": "playwright",
+      "tier": 2,
+      "repo": "microsoft/playwright",
+      "commit": "1b025d7e20a026371cd5f98ba0cdce48892737c8",
+      "commit_date": "tag v1.63.0",
+      "previous_pins": [
+        "b28411b105a25fcd97014111764a1cf76f0c6bb0"
+      ],
+      "root_license": "Apache-2.0",
+      "component_licenses": {},
+      "license_evidence": "LICENSE; playwright-core 1.63.0 is the admitted SG-000108 dependency",
+      "source_access": "public",
+      "strategy": "COPY_ADAPT",
+      "strategy_detail": "WRAP playwright-core 1.63.0 (already admitted). COPY_ADAPT the typed tool backend that ships in the same version (packages/playwright-core/src/tools/backend: snapshot.ts, form.ts, keyboard.ts, mouse.ts, files.ts, tabs.ts, dialogs.ts, wait.ts, verify.ts, tab.ts targetLocators) into the worker's closed frame vocabulary. REJECT evaluate.ts, runCode.ts, cookies.ts, route.ts, network.ts, storage/webstorage, devtools, codegen, cdpRelay and the MCP program. Reuse review 2026-10-18: PORT the stable-channel install-path table from src/server/registry/index.ts into the host's discovery.",
+      "blueprint": "BROWSER_INTEGRATION.md",
+      "status": "WRAPPED"
+    },
+    {
+      "id": "playwright-mcp",
+      "tier": 2,
+      "repo": "microsoft/playwright-mcp",
+      "commit": "b8b4183e099f136cbec0388a6088d4aa2f6b9685",
+      "commit_date": "2026-10-08",
+      "previous_pins": [
+        "b8b4183e099f136cbec0388a6088d4aa2f6b9685"
+      ],
+      "root_license": "Apache-2.0",
+      "component_licenses": {},
+      "license_evidence": "LICENSE",
+      "source_access": "public",
+      "strategy": "REFERENCE",
+      "strategy_detail": "Thin package; its tool code now lives in playwright-core (see the playwright entry). Never exposed as a second MCP edge.",
+      "blueprint": "BROWSER_INTEGRATION.md",
+      "status": "REFERENCE"
+    },
+    {
+      "id": "chrome-devtools-mcp",
+      "tier": 2,
+      "repo": "ChromeDevTools/chrome-devtools-mcp",
+      "commit": "2777fa05b296cdb51507e6fd33ae05c06fe0b9e7",
+      "commit_date": "2026-10-16",
+      "previous_pins": [
+        "f08dbe152502d66e75fa07fb2588dc0feb42bc20"
+      ],
+      "root_license": "Apache-2.0",
+      "component_licenses": {},
+      "license_evidence": "LICENSE",
+      "source_access": "public",
+      "strategy": "REFERENCE",
+      "strategy_detail": "Attachment and diagnostics ideas only; broad evaluate/performance/telemetry surface excluded.",
+      "blueprint": "BROWSER_INTEGRATION.md",
+      "status": "REFERENCE"
+    },
+    {
+      "id": "ui-tars-desktop",
+      "tier": 2,
+      "repo": "bytedance/UI-TARS-desktop",
+      "commit": "3ac2cb8d946d78d5ff92ad17b318eaafa18c178c",
+      "commit_date": "2026-10-09",
+      "previous_pins": [
+        "2ff41a9e515828c5bd5b276e493d73aa0bdf4a3a",
+        "3ac2cb8d946d78d5ff92ad17b318eaafa18c178c"
+      ],
+      "root_license": "Apache-2.0 (per-package verification required)",
+      "component_licenses": {},
+      "license_evidence": "LICENSE",
+      "source_access": "public",
+      "strategy": "COPY_ADAPT",
+      "strategy_detail": "Unchanged from SG-000104 plan: packages/ui-tars/action-parser into ComputerActionProposal normalization. REJECT Electron app, nut-js operator authority, local model runtime.",
+      "blueprint": "CUA_INTEGRATION.md",
+      "status": "PLANNED_SG-000104"
+    },
+    {
+      "id": "desktop-commander",
+      "tier": 2,
+      "repo": "wonderwhy-er/DesktopCommanderMCP",
+      "commit": "bc1e944e30302e0022d49f418d55563dd74a162c",
+      "commit_date": "P20 ledger pin",
+      "previous_pins": [
+        "ea3ed35a7be9f2a3ea3e89185ff9bbb03fe5ab57",
+        "c774c3b505de990219637ecdc9a830c8772fae9d"
+      ],
+      "root_license": "MIT",
+      "component_licenses": {},
+      "license_evidence": "LICENSE",
+      "source_access": "public",
+      "strategy": "COPY_ADAPT",
+      "strategy_detail": "Unchanged: SG-000096 terminal-manager.ts session mechanics. Three different pins exist across Orcel records (P20 ledger bc1e944e, reuse matrix ea3ed35a, local checkout c774c3b5); the SG-000096 import manifest (docs/p20/sg000096_shell_session_import.json) is authoritative for that grain.",
+      "blueprint": "CROSS_PLATFORM_ARCHITECTURE.md",
+      "status": "ACTIVE_SG-000096"
+    },
+    {
+      "id": "open-computer-use",
+      "tier": 2,
+      "repo": "opensymph/open-computer-use",
+      "commit": "5b433b98019c18201a15d11e8c3cb0010879a3d8",
+      "commit_date": "SG-000094/95 pin",
+      "previous_pins": [],
+      "latest_inspected": "e551c13e7082ce4c097234137582fbf4a1bc647a",
+      "root_license": "MIT",
+      "component_licenses": {},
+      "license_evidence": "LICENSE",
+      "source_access": "public",
+      "strategy": "COPY_ADAPT",
+      "strategy_detail": "KEEP the qualified Windows Go host derived from it. Its newer macOS (Swift, packages/OpenComputerUseKit, ~21.5K lines) and Linux (Go, X11-only, xdotool/ffmpeg subprocesses) hosts are REFERENCE and the fallback if the Cua integration fails its gate.",
+      "blueprint": "CUA_INTEGRATION.md",
+      "status": "IMPORTED_WINDOWS"
+    },
+    {
+      "id": "meshcentral",
+      "tier": 2,
+      "repo": "Ylianst/MeshCentral",
+      "commit": "029b7338ecfeeacc65da3b5a1a4cc069baeb2f65",
+      "commit_date": "2026-09-23",
+      "previous_pins": [
+        "029b7338ecfeeacc65da3b5a1a4cc069baeb2f65"
+      ],
+      "root_license": "Apache-2.0",
+      "component_licenses": {},
+      "license_evidence": "LICENSE",
+      "source_access": "public",
+      "strategy": "REFERENCE",
+      "strategy_detail": "Inventory, device groups and control-channel patterns. Whole server duplicates Orcel authority.",
+      "blueprint": "SECURE_EXECUTION_INTEGRATION.md",
+      "status": "REFERENCE"
+    },
+    {
+      "id": "meshagent",
+      "tier": 2,
+      "repo": "Ylianst/MeshAgent",
+      "commit": "26846b1c7f0841d71938f6bebc96eef5a947d217",
+      "commit_date": "unchanged pin",
+      "previous_pins": [
+        "26846b1c7f0841d71938f6bebc96eef5a947d217"
+      ],
+      "root_license": "README declares Apache-2.0; no root LICENSE file",
+      "component_licenses": {},
+      "license_evidence": "readme.md",
+      "source_access": "public",
+      "strategy": "REFERENCE",
+      "strategy_detail": "No SYSTEM agent import; confirm file-level rights before any copy.",
+      "blueprint": "SECURE_EXECUTION_INTEGRATION.md",
+      "status": "REFERENCE"
+    },
+    {
+      "id": "gsudo",
+      "tier": 2,
+      "repo": "gerardog/gsudo",
+      "commit": "a4eda9b263d72a3e174f73b6b6b3ecfc5bc6656b",
+      "commit_date": "2026-05-19",
+      "previous_pins": [
+        "a4eda9b263d72a3e174f73b6b6b3ecfc5bc6656b"
+      ],
+      "root_license": "MIT",
+      "component_licenses": {},
+      "license_evidence": "LICENSE.txt",
+      "source_access": "public",
+      "strategy": "COPY_ADAPT",
+      "strategy_detail": "Unchanged: SG-000098 Windows elevation broker. Windows-only; macOS (SMAppService/Authorization Services) and Linux (polkit/pkexec) need their own adapters, built new.",
+      "blueprint": "CROSS_PLATFORM_ARCHITECTURE.md",
+      "status": "PLANNED_SG-000098"
+    },
+    {
+      "id": "agentql",
+      "tier": 2,
+      "repo": "tinyfish-io/agentql",
+      "commit": "9257f7aa261114b24e099f193a4516ed74014b0f",
+      "commit_date": "2026-10-08",
+      "previous_pins": [
+        "9257f7aa261114b24e099f193a4516ed74014b0f"
+      ],
+      "root_license": "MIT",
+      "component_licenses": {},
+      "license_evidence": "LICENSE (Copyright 2025 Tiny Fish, Inc.)",
+      "source_access": "public examples only; the semantic query engine is a hosted TinyFish service and was not inspectable",
+      "strategy": "REFERENCE",
+      "strategy_detail": "Optional service adapter only with user-supplied credentials and explicit egress.",
+      "blueprint": "WEB_INTELLIGENCE_INTEGRATION.md",
+      "status": "REFERENCE"
+    },
+    {
+      "id": "crawl4ai",
+      "tier": 3,
+      "repo": "unclecode/crawl4ai",
+      "commit": "94b67888ca8b335ff2121423a50e06dd27661922",
+      "commit_date": "2026-10-15",
+      "previous_pins": [],
+      "root_license": "Apache-2.0 plus an added attribution requirement (LICENSE lines 54-64)",
+      "component_licenses": {},
+      "license_evidence": "LICENSE; the added clause requires the exact attribution sentence in a NOTICE/README/About location",
+      "source_access": "public",
+      "strategy": "PORT",
+      "strategy_detail": "PORT BM25ContentFilter and PruningContentFilter (crawl4ai/content_filter_strategy.py) into the TypeScript extraction pipeline with the required attribution. REFERENCE adaptive_crawler.py and async_url_seeder.py. REJECT LLMContentFilter and the Python runtime.",
+      "blueprint": "WEB_INTELLIGENCE_INTEGRATION.md",
+      "status": "ADOPTED_PLAN"
+    },
+    {
+      "id": "agent-reach",
+      "tier": 3,
+      "repo": "Panniantong/Agent-Reach",
+      "commit": "a19a171fa980a0785849596492e0af4db800c82f",
+      "commit_date": "P20 ledger pin",
+      "previous_pins": [],
+      "latest_inspected": "94f06c1969dfc1834001269d79d3ad0972d9dee6",
+      "root_license": "MIT",
+      "component_licenses": {},
+      "license_evidence": "LICENSE (Copyright 2025 Agent Eyes)",
+      "source_access": "public",
+      "strategy": "PORT",
+      "strategy_detail": "Unchanged SG-000103 plan: channel registry, probe and doctor semantics. REJECT agent_reach/cookie_extract.py (browser cookie extraction is credential export).",
+      "blueprint": "WEB_INTELLIGENCE_INTEGRATION.md",
+      "status": "PLANNED_SG-000103"
+    },
+    {
+      "id": "webmcp-spec",
+      "tier": 4,
+      "repo": "webmachinelearning/webmcp",
+      "commit": "d0e4e0e0f039358cc9d93f90074116622bfebd53",
+      "commit_date": "unchanged pin",
+      "previous_pins": [
+        "d0e4e0e0f039358cc9d93f90074116622bfebd53"
+      ],
+      "root_license": "W3C Software and Document License",
+      "component_licenses": {},
+      "license_evidence": "LICENSE.md",
+      "source_access": "public",
+      "strategy": "REFERENCE",
+      "strategy_detail": "Specification reference; no implementation code.",
+      "blueprint": "BROWSER_INTEGRATION.md",
+      "status": "REFERENCE"
+    },
+    {
+      "id": "webmcp-org-npm-packages",
+      "tier": 4,
+      "repo": "WebMCP-org/npm-packages",
+      "commit": "7db816b5a280c2d1d4b86559696e993c497c021a",
+      "commit_date": "unchanged pin",
+      "previous_pins": [
+        "7db816b5a280c2d1d4b86559696e993c497c021a"
+      ],
+      "root_license": "MIT",
+      "component_licenses": {},
+      "license_evidence": "docs/orcel/notices/WebMCP-org-npm-packages-MIT.txt",
+      "source_access": "public",
+      "strategy": "COPY_ADAPT",
+      "strategy_detail": "Imported in SG-000108 slices 4/5 (declarative-forms recognition, bounded JSON-schema subset).",
+      "blueprint": "BROWSER_INTEGRATION.md",
+      "status": "IMPORTED"
+    },
+    {
+      "id": "ripulio-web-mcp",
+      "tier": 4,
+      "repo": "ripulio/web-mcp",
+      "commit": "4921a1834446440c4d1c6867d98d0ff662ea6231",
+      "commit_date": "unchanged pin",
+      "previous_pins": [
+        "4921a1834446440c4d1c6867d98d0ff662ea6231"
+      ],
+      "root_license": "MIT",
+      "component_licenses": {},
+      "license_evidence": "LICENSE",
+      "source_access": "public",
+      "strategy": "REFERENCE",
+      "strategy_detail": "Polyfill, extension and WebSocket server duplicate MCP-B and add a second browser channel.",
+      "blueprint": "BROWSER_INTEGRATION.md",
+      "status": "REFERENCE"
+    },
+    {
+      "id": "rea",
+      "tier": 5,
+      "repo": "morluto/rea",
+      "commit": "69833fb0d0fe9b320b5745a992822342f2c54a92",
+      "commit_date": "reuse-matrix pin",
+      "previous_pins": [],
+      "latest_inspected": "2c4338db1fdb7773e05376301c558cff2a0b4b80",
+      "root_license": "MIT",
+      "component_licenses": {},
+      "license_evidence": "LICENSE (Copyright 2026 morluto)",
+      "source_access": "public",
+      "strategy": "REFERENCE",
+      "strategy_detail": "Development/review tool, not a product runtime.",
+      "blueprint": "BENCHMARK_AND_E2E.md",
+      "status": "TOOL"
+    },
+    {
+      "id": "open-code-review",
+      "tier": 5,
+      "repo": "alibaba/open-code-review",
+      "commit": "8eb83340a487b1150af00701b94f01af97e4b4d6",
+      "commit_date": "2026-10-16",
+      "previous_pins": [],
+      "root_license": "Apache-2.0",
+      "component_licenses": {},
+      "license_evidence": "LICENSE",
+      "source_access": "public",
+      "strategy": "REFERENCE",
+      "strategy_detail": "Review tool used in delegation mode per EXECUTION_FRONTIER review pathway; not a product dependency.",
+      "blueprint": "BENCHMARK_AND_E2E.md",
+      "status": "TOOL"
+    }
+  ],
+  "unresolved_sources": [
+    {
+      "name": "BrowserSafe",
+      "reason": "Named in the founder directive; no repository URL, commit or license appears in any Orcel record or local checkout. Not inventoried until the founder supplies the source."
+    },
+    {
+      "name": "OpenCLI",
+      "reason": "No OpenCLI repository is pinned in any Orcel record. The only occurrence found is Agent-Reach's agent_reach/channels/_opencli_site.py, which routes 'browser-session-only platforms' to an external 'opencli' executable that relies on the user's logged-in browser sessions. That pattern uses personal sessions outside Orcel's browser confinement and is REJECT as an execution path; no source is inventoried."
+    },
+    {
+      "name": "Exa, Tavily, Serper, ScrapingBee, Brave Search",
+      "reason": "Hosted search/scrape services. No donor source to reuse; at most optional user-credentialed adapters behind the network policy. Never mandatory (no mandatory paid API)."
+    },
+    {
+      "name": "SearXNG",
+      "reason": "Self-hostable metasearch (AGPL-3.0 upstream). Consumed only over its HTTP API by an optional adapter; no source copied, so its license does not reach Orcel code."
+    },
+    {
+      "name": "PStack, Graft, TesterArmy E2E, Local D1, Jev",
+      "reason": "Engineering review/test tools already used by the governance pathway; not product donors."
+    },
+    {
+      "name": "Private donors recorded in SOURCE_REUSE_MATRIX.md 'Private donor provenance'",
+      "reason": "Kept local to the founder by the earlier review; not visible in this environment."
+    }
+  ]
+}
