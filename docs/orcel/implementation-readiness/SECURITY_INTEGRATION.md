@@ -32,6 +32,7 @@ A donor unit that cannot meet these is not imported, whatever its license.
 | Id | Integration | New or changed threat | Control | Test | Task |
 |---|---|---|---|---|---|
 | S-01 | Any non-Windows build | Approval/audit state in shared `/tmp/orcel` can be pre-created, symlinked or read by another user | per-OS 0700 state root; refuse symlinks, foreign owner, group/other bits; no temp fallback | symlink/permission negative tests | XP-01 |
+| S-01b | Any non-Windows build (found by the #345 security review) | Full-control authority, executable registry and remote-lease stores default to `std::env::temp_dir()/orcel` in `orcel-policy` | same private state root; error instead of temp | grep test; symlinked root refused | XP-01B |
 | S-02 | Native host on macOS/Linux (Cua) | Vendored code reaches a socket, CDP endpoint, QuickJS or telemetry | P-03 compiles them out; enum dispatch; fd audit test; `cargo deny`/`cargo audit` on the host workspace | binary symbol check; fd test | XP-05, XP-06 |
 | S-03 | macOS approvals | Same-user process draws a fake prompt or answers the helper | prompt owned by system (CFUserNotification) or a code-signature-verified helper; nonce binding; residual same-user spoofing documented as on Windows | wrong-signature helper refused | XP-09 |
 | S-04 | Linux approvals | Fake polkit agent; headless session silently auto-approves | `auth_self` only, never `allow_active=yes`; no agent → unavailable; residual agent spoofing documented | dbus mock denial; headless unavailable | XP-10 |
@@ -68,7 +69,7 @@ A donor unit that cannot meet these is not imported, whatever its license.
 ## 5. Release-blocking acceptance tests for the cross-platform track
 
 1. #278 approval ledger regressions pass on macOS and Linux.
-2. No non-test `std::env::temp_dir()` use in approval, audit or journal paths (grep in CI).
+2. No non-test `std::env::temp_dir()` use in approval, audit, policy-store or journal paths (grep in CI).
 3. Native host: fd audit shows only inherited stdio; no listening socket in `lsof`/`ss` during the conformance suite.
 4. Browser network-leak suite on macOS and Linux, including the port-9 listener case.
 5. Control Room IPC allowlist test and CSP test.

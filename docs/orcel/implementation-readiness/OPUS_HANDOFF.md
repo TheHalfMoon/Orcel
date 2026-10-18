@@ -53,6 +53,7 @@ Every row with git object SHAs: SOURCE_TRANSPLANT_MATRIX.md. Verify before copyi
 | # | Task | Why now | Depends on |
 |---:|---|---|---|
 | 1 | **XP-01** secure per-OS state directories | security fix, smallest, unblocks every non-Windows build | - |
+| 1b | XP-01B policy stores off the temp fallback | same bug in authority-bearing stores (found in #345 review) | XP-01 |
 | 2 | XP-02 macOS CI leg | catches regressions from here on | - |
 | 3 | BM-01 report schema | every later task reports numbers in it | - |
 | 4 | XP-04 host protocol /2 | contract for all native hosts | XP-02 |

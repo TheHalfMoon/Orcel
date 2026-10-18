@@ -88,6 +88,73 @@
       "proposed_grain": "SG-000109"
     },
     {
+      "id": "XP-01B",
+      "phase": "X0",
+      "title": "Move policy stores off the shared-temp fallback",
+      "status": "BLOCKED_ON_DEPENDENCY",
+      "objective": "Apply XP-01's private state root to the policy stores that still default to std::env::temp_dir()/orcel off Windows: full-control authority, executable registry and remote session leases (found by the independent #345 security review).",
+      "user_visible": "Full-control leases, the executable registry and remote leases stay private on macOS and Linux.",
+      "existing_orcel": [
+        "crates/orcel-policy/src/full_control_store.rs (line ~82: authority_dir(&std::env::temp_dir().join(\"orcel\")))",
+        "crates/orcel-policy/src/executable_registry.rs (line ~185: std::env::temp_dir() fallback)",
+        "crates/orcel-policy/src/remote_session.rs (line ~535: std::env::temp_dir() fallback)",
+        "crates/orcel-policy/src/protected_state.rs (line ~40: adds temp root to the protected list; harmless, aligned for consistency)"
+      ],
+      "donor": null,
+      "donor_files": [],
+      "method": "BUILD_NEW",
+      "orcel_files": {
+        "create": [],
+        "change": [
+          "crates/orcel-policy/Cargo.toml",
+          "crates/orcel-policy/src/full_control_store.rs",
+          "crates/orcel-policy/src/executable_registry.rs",
+          "crates/orcel-policy/src/remote_session.rs",
+          "crates/orcel-policy/src/protected_state.rs"
+        ]
+      },
+      "dependencies": "orcel-platform (from XP-01)",
+      "steps": [
+        "Replace each non-test temp_dir() fallback with orcel_platform::paths::state_root() and propagate the error; keep existing env overrides (with XP-01's absolute-path rule).",
+        "protected_state: protect the resolved state root instead of the temp root.",
+        "Windows paths byte-identical; no migration of existing stores."
+      ],
+      "interfaces": "existing store constructors become fallible where they resolved a default path",
+      "platforms": {
+        "windows": "unchanged paths",
+        "macos": "private state root",
+        "linux": "private state root"
+      },
+      "security": "Same pre-create/symlink attack as S-01, on authority-bearing stores (full-control leases, executable registry, remote leases). Fails closed.",
+      "tests": {
+        "positive": [
+          "each store resolves under the private root with a fake HOME"
+        ],
+        "negative": [
+          "no non-test temp_dir() in orcel-policy (grep test)",
+          "symlinked root refused"
+        ],
+        "recovery": [
+          "existing Windows stores read unchanged"
+        ],
+        "e2e": []
+      },
+      "performance": "Negligible.",
+      "ci": "all OS legs",
+      "depends_on": [
+        "XP-01"
+      ],
+      "acceptance": [
+        "grep finds no non-test std::env::temp_dir() in orcel-policy",
+        "policy tests pass on three OSes"
+      ],
+      "done": "Merged with common gates; SECURITY_INTEGRATION.md S-01b marked fixed.",
+      "rollback": "Revert.",
+      "estimate": "1-2",
+      "authority_delta": "none (fails closed earlier)",
+      "proposed_grain": "SG-000109"
+    },
+    {
       "id": "XP-02",
       "phase": "X0",
       "title": "Add macOS to the CI matrix and make the workspace build and test on all three OSes",
@@ -201,6 +268,7 @@
       "ci": "All three OS legs.",
       "depends_on": [
         "XP-01",
+        "XP-01B",
         "XP-02"
       ],
       "acceptance": [
@@ -1473,6 +1541,7 @@
       "ci": "all legs",
       "depends_on": [
         "XP-01",
+        "XP-01B",
         "XP-03"
       ],
       "acceptance": [

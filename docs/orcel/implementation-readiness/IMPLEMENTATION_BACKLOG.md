@@ -21,8 +21,9 @@ Gates every task inherits:
 | Task | Phase | Status | Title | Depends on | Estimate (days) | Grain |
 |---|---|---|---|---|---|---|
 | [XP-01](#xp-01) | X0 | READY | Secure per-OS state directories; remove the shared-temp fallback | - | 1-2 | SG-000109 |
+| [XP-01B](#xp-01b) | X0 | BLOCKED_ON_DEPENDENCY | Move policy stores off the shared-temp fallback | XP-01 | 1-2 | SG-000109 |
 | [XP-02](#xp-02) | X0 | READY | Add macOS to the CI matrix and make the workspace build and test on all three OSes | - | 1-3 | SG-000109 |
-| [XP-03](#xp-03) | X0 | READY | Platform identity primitives: process start generation, user/session identity, IPC peer credentials | XP-01, XP-02 | 2-3 | SG-000109 |
+| [XP-03](#xp-03) | X0 | READY | Platform identity primitives: process start generation, user/session identity, IPC peer credentials | XP-01, XP-01B, XP-02 | 2-3 | SG-000109 |
 | [XP-04](#xp-04) | X0 | READY | Private host protocol orcel-computer-host/2 with capability negotiation and platform-neutral identities | XP-02 | 3-4 | SG-000110 |
 | [XP-05](#xp-05) | X1 | READY | Vendor Cua Driver platform crates and create the orcel-native-host workspace (compile-only) | XP-02, FD-01 | 3-5 | SG-000111 |
 | [XP-06](#xp-06) | X1 | BLOCKED_ON_DEPENDENCY | orcel-native-host read-only observation on macOS and Linux | XP-03, XP-04, XP-05 | 5-8 | SG-000111 |
@@ -40,7 +41,7 @@ Gates every task inherits:
 | [XP-18](#xp-18) | X5 | BLOCKED_ON_DEPENDENCY | Pinned Node runtime per OS for the MCP edge and browser worker | XP-16, XP-17, SG-000108-CLOSE | 3-5 | SG-000116 |
 | [XP-19](#xp-19) | X5 | BLOCKED_ON_DEPENDENCY | Per-OS secret storage for device identity and OAuth material | XP-03 | 3-5 | SG-000117 |
 | [XP-20](#xp-20) | X6 | BLOCKED_ON_DEPENDENCY | Windows host bake-off: Go host vs Cua platform-windows inside orcel-native-host | XP-08, XP-12 | 3-4 | - |
-| [CR-01](#cr-01) | X0 | READY | Authenticated local app API transport on three OSes (read-only status and events) | XP-01, XP-03 | 4-6 | SG-000118 |
+| [CR-01](#cr-01) | X0 | READY | Authenticated local app API transport on three OSes (read-only status and events) | XP-01, XP-01B, XP-03 | 4-6 | SG-000118 |
 | [CR-02](#cr-02) | X1 | BLOCKED_ON_DEPENDENCY | Adopt the AgentKit protocol and headless client for the Control Room event stream | CR-01 | 3-4 | SG-000118 |
 | [CR-03](#cr-03) | X1 | FOUNDER_DECISION_REQUIRED | Tauri 2 Control Room skeleton (read-only) on three OSes | CR-02, FD-03 | 8-12 | SG-000119 |
 | [CR-04](#cr-04) | X6 | BLOCKED_ON_DEPENDENCY | Control Room parity gate and WPF retirement decision | CR-03 | 2-3 | - |
@@ -123,6 +124,38 @@ Gates every task inherits:
 - **Definition of done.** Merged with the common gates; THREAT_MODEL delta recorded in SECURITY_INTEGRATION.md row S-01 marked fixed.
 - **Rollback.** Revert the commit; no persisted format changed.
 
+### XP-01B
+
+**Move policy stores off the shared-temp fallback** · phase X0 · BLOCKED_ON_DEPENDENCY · estimate 1-2 days (ESTIMATE) · proposed grain SG-000109
+
+- **Objective.** Apply XP-01's private state root to the policy stores that still default to std::env::temp_dir()/orcel off Windows: full-control authority, executable registry and remote session leases (found by the independent #345 security review).
+- **User-visible capability.** Full-control leases, the executable registry and remote leases stay private on macOS and Linux.
+- **Existing Orcel implementation.** `crates/orcel-policy/src/full_control_store.rs (line ~82: authority_dir(&std::env::temp_dir().join("orcel")))`; `crates/orcel-policy/src/executable_registry.rs (line ~185: std::env::temp_dir() fallback)`; `crates/orcel-policy/src/remote_session.rs (line ~535: std::env::temp_dir() fallback)`; `crates/orcel-policy/src/protected_state.rs (line ~40: adds temp root to the protected list; harmless, aligned for consistency)`
+- **Donor.** none · method BUILD_NEW
+- **Create.** none
+- **Change.** `crates/orcel-policy/Cargo.toml`; `crates/orcel-policy/src/full_control_store.rs`; `crates/orcel-policy/src/executable_registry.rs`; `crates/orcel-policy/src/remote_session.rs`; `crates/orcel-policy/src/protected_state.rs`
+- **Dependencies to admit.** orcel-platform (from XP-01)
+- **Interface.** existing store constructors become fallible where they resolved a default path
+- **Platforms.** windows: unchanged paths; macos: private state root; linux: private state root
+- **Security and authority.** Same pre-create/symlink attack as S-01, on authority-bearing stores (full-control leases, executable registry, remote leases). Fails closed. Authority delta: none (fails closed earlier).
+- **Steps.**
+  1. Replace each non-test temp_dir() fallback with orcel_platform::paths::state_root() and propagate the error; keep existing env overrides (with XP-01's absolute-path rule).
+  2. protected_state: protect the resolved state root instead of the temp root.
+  3. Windows paths byte-identical; no migration of existing stores.
+- **Tests.**
+  - positive: each store resolves under the private root with a fake HOME
+  - negative: no non-test temp_dir() in orcel-policy (grep test); symlinked root refused
+  - recovery: existing Windows stores read unchanged
+  - e2e: none required
+- **Performance.** Negligible.
+- **CI.** all OS legs
+- **Depends on.** XP-01
+- **Acceptance.**
+  - grep finds no non-test std::env::temp_dir() in orcel-policy
+  - policy tests pass on three OSes
+- **Definition of done.** Merged with common gates; SECURITY_INTEGRATION.md S-01b marked fixed.
+- **Rollback.** Revert.
+
 ### XP-02
 
 **Add macOS to the CI matrix and make the workspace build and test on all three OSes** · phase X0 · READY · estimate 1-3 days (ESTIMATE) · proposed grain SG-000109
@@ -182,7 +215,7 @@ Gates every task inherits:
   - e2e: none required
 - **Performance.** Single syscall or /proc read per lookup.
 - **CI.** All three OS legs.
-- **Depends on.** XP-01, XP-02
+- **Depends on.** XP-01, XP-01B, XP-02
 - **Acceptance.**
   - tests pass on three OSes
   - no unsafe block without a SAFETY comment
@@ -785,7 +818,7 @@ Gates every task inherits:
   - e2e: none required
 - **Performance.** Event fan-out to one client bounded at 1,000 events/s (ESTIMATE target).
 - **CI.** all legs
-- **Depends on.** XP-01, XP-03
+- **Depends on.** XP-01, XP-01B, XP-03
 - **Acceptance.**
   - read-only contract tests pass on three OSes
   - no listener reachable from another user
