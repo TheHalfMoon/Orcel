@@ -12,6 +12,8 @@ On 2026-10-18 the founder stated in writing to the engineering agent:
 - FD-04 and FD-06 of `docs/orcel/implementation-readiness/backlog/tasks.json` are founder-confirmed for the covered donor-owned code;
 - engineering proceeds with the plan in `docs/orcel/implementation-readiness/`, including XP-02 and the remaining cross-platform backlog.
 
+A second founder statement the same day, made with the reuse review, adds **rebranding as Orcel** to the confirmed permissions and asks that this record stand without the private agreements being requested.
+
 ## How this record is read
 
 - **FD-04 (Cua FSL components):** Cua-owned FSL-1.1-MIT components may be copied and distributed inside Orcel. A component is still used only when the architecture admits it.

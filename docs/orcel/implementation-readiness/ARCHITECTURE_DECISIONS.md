@@ -57,6 +57,8 @@ Ranked by product value, evidence strength, effort and risk. Only findings with 
 9. browser-use clickable-elements and paint-order heuristics (BR-04).
 10. Stagehand cross-frame snapshot (BR-06).
 
+11. (Reuse review 2026-10-18) Cua `biometric.rs` for STRONG presence on macOS/Linux, Cua containment as `orcel-contain`, Cua `cua-keyvault` peer and code identity, Cua macOS bundle and notarization scripts, Cua Spaces Tauri scaffolding, Agent-Native Toolkit AgentKit React pieces, `cua-bench` (REUSE_REVIEW.md).
+
 **Top unnecessary rewrites eliminated**
 1. A from-scratch macOS AX/ScreenCaptureKit/background-input host.
 2. A from-scratch Linux AT-SPI/X11/Wayland host (Open Computer Use's Linux host is X11-only and shells out to xdotool/ffmpeg).

@@ -1,6 +1,6 @@
 # Optimized engineering roadmap (cross-platform revision)
 
-Status: ADOPTED planning direction (founder, 2026-10-18; `docs/orcel/grants/2026-10-18-founder-attestation.md`), authored by Fable. It extends, and does not restart, the adopted F0-F8 increments in `docs/orcel/IMPLEMENTATION_ROADMAP.md` and the P20 grains in `docs/canonical/ORCEL_P20_UNIVERSAL_AGENT_RUNTIME_PLAN.md`. Effort figures are ESTIMATES in engineer-days (backlog `estimate` fields), not dates.
+Status: ADOPTED planning direction (founder, 2026-10-18; `docs/orcel/grants/2026-10-18-founder-attestation.md`), authored by Fable. It extends, and does not restart, the adopted F0-F8 increments in `docs/orcel/IMPLEMENTATION_ROADMAP.md` and the P20 grains in `docs/canonical/ORCEL_P20_UNIVERSAL_AGENT_RUNTIME_PLAN.md`. Effort figures are ESTIMATES in engineer-days (backlog `estimate` fields), not dates. They include the 2026-10-18 reuse review (REUSE_REVIEW.md), which lowered the backlog total from 182-266 to 161-234.
 
 ## 1. Tracks
 
@@ -21,16 +21,16 @@ Tracks A and X touch different files (A: `crates/orcel-browser-host`, `apps/orce
 
 | Phase | Tasks | Exit test | Effort (ESTIMATE) |
 |---|---|---|---|
-| X0 foundation | XP-01, XP-01B, XP-02, XP-03, XP-04, BM-01, CR-01, XP-15 | three-OS CI green; no temp fallback; `/2` hello works with Go host; app API read-only on three OSes; clipboard on three OSes | 15-24 |
-| X1 observe | XP-05, XP-06, XP-07, XP-08, CR-02, (CR-03 after FD-03) | macOS + X11 + Sway observation and capture conformance reports; Control Room shows real status | 18-27 without CR-03; 26-39 with it |
-| X2 approve | XP-09, XP-10, RJ-01 | #278 regressions and ledger tests pass on macOS/Linux; real prompts recorded | 10-15 |
+| X0 foundation | XP-01, XP-01B, XP-02, XP-03, XP-04, BM-01, CR-01, XP-15 | three-OS CI green; no temp fallback; `/2` hello works with Go host; app API read-only on three OSes; clipboard on three OSes | 13-21 |
+| X1 observe | XP-05, XP-06, XP-07, XP-08, CR-02, (CR-03 after FD-03) | macOS + X11 + Sway observation and capture conformance reports; Control Room shows real status | 18-27 without CR-03; 23-35 with it |
+| X2 approve | XP-09, XP-10, RJ-01 | #278 regressions and ledger tests pass on macOS/Linux; real prompts recorded | 6-9 |
 | X3 act | XP-11, XP-12, RJ-02, RJ-03 | semantic and input cells green; crash-at-each-transition suite | 19-28 |
-| X4 parity | XP-13, XP-14 | process and browser suites on three OSes | 14-22 |
-| X5 ship | XP-16, XP-17, XP-18, XP-19 | clean installs on macOS 15/26, Ubuntu 24.04, Fedora 41; pairing works | 16-25 |
+| X4 parity | XP-13, XP-14 | process and browser suites on three OSes | 9-14 |
+| X5 ship | XP-16, XP-17, XP-18, XP-19 | clean installs on macOS 15/26, Ubuntu 24.04, Fedora 41; pairing works | 13-20 |
 | B1/B2/B3 browser | BR-01..08 | M-BR metrics vs baseline | 27-37 |
-| W web | WI-01..06 | M-WI metrics; fixture crawl/map/extract | 15-21 |
+| W web | WI-01..06 | M-WI metrics; fixture crawl/map/extract | 13-18 |
 | S sandbox | SX-01..06 | per-backend checklists | 30-41 |
-| X6 measure | XP-20, CR-04, BM-02 | decision records with data | 10-14 |
+| X6 measure | XP-20, CR-04, BM-02 | decision records with data | 8-11 |
 
 ## 3. Release sequence
 

@@ -22,6 +22,7 @@ Status: ADOPTED planning package (founder, 2026-10-18; `docs/orcel/grants/2026-1
 | Every donor file → Orcel destination, with git object SHAs | [SOURCE_TRANSPLANT_MATRIX.md](SOURCE_TRANSPLANT_MATRIX.md) (data: [transplant_matrix.json](transplant_matrix.json)) |
 | Every task card | [IMPLEMENTATION_BACKLOG.md](IMPLEMENTATION_BACKLOG.md) (data: [backlog/tasks.json](backlog/tasks.json)) |
 | What the second-pass review challenged and changed | [ADVERSARIAL_REVIEW.md](ADVERSARIAL_REVIEW.md) |
+| Where more donor code replaced planned new code, with before/after estimates | [REUSE_REVIEW.md](REUSE_REVIEW.md) |
 
 The three generated Markdown tables are rendered from the JSON by `tools/render_tables.py`; edit the JSON and re-render.
 

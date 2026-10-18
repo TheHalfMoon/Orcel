@@ -146,6 +146,22 @@ Upstream README: "Deprecated and unsafe to run: cuabot has known security issues
 
 ESTIMATE, not a measurement. Building macOS AX + capture + background input and Linux AT-SPI + X11 + wlroots + GNOME/KDE handling to the upstream matrix level from scratch: roughly 120-200 engineer-days, based on the size of the upstream platform crates (130K lines for macOS+Linux) and their documented per-compositor edge cases. Integrating through XP-05..XP-12: 26-39 engineer-days by the backlog estimates. The saving is in edge cases (focus guards, occlusion, compositor identity), which are the expensive part.
 
-## 10. Exit gate for the integration
+## 10. Additional Cua reuse found by the 2026-10-18 reuse review
+
+Detail and estimates: REUSE_REVIEW.md. Matrix rows T-CUA-20..34.
+
+| Source | License | Orcel use | Task |
+|---|---|---|---|
+| `libs/cua/crates/cua-teleport/src/biometric.rs` | FSL (FD-04) | STRONG presence on macOS (LocalAuthentication) and Linux (polkit `auth_self`); override variable removed | XP-09, XP-10 |
+| `cua-driver-core/src/perception_client/containment*` | MIT | `crates/orcel-contain`: three-OS sandbox for untrusted helpers | XP-13, WI-05 |
+| `platform-linux/src/proc_fs.rs`, `cua-daemon/src/lib.rs` (peer section) | MIT | process generation, Unix peer credentials | XP-03 |
+| `cua-keyvault/src/caller.rs`, `winpeer.rs`, `macos.rs` | FSL (FD-04) | kernel-derived peer identity; macOS code-requirement checks for the browser engine and the approval helper | CR-01, XP-14, XP-09 |
+| `rust/scripts/CuaDriverBundle`, `CuaDriver.entitlements`, `.github/scripts/macos-review-codesign.sh` (MIT); `apps/cua-spaces-macos/scripts/notarize.sh` (FSL) | mixed | macOS bundle identity, entitlements, codesign review, notarization | XP-16 |
+| `apps/cua-spaces/src-tauri/tauri.conf.json`, `capabilities/` | FSL (FD-04) | Control Room shell scaffolding with a tightened CSP | CR-03 |
+| `libs/cua-bench/cua_bench` (MIT), `benchmarks/cua-driver-bench/taskpack` (FSL) | mixed | benchmark runner (test-only Python) and starting task set | BM-02 |
+
+Patch P-03 still compiles `perception_client` out of the native host; containment is copied into its own Orcel crate instead, so the kernel does not depend on the vendored tree.
+
+## 11. Exit gate for the integration
 
 Cua integration is accepted only when, on Orcel's own runners: the XP-08 catalog passes for X11, Sway and macOS; no Cua code path opens a socket (a test asserts the host's file descriptors); the patch queue rebases cleanly onto the next upstream pin in a dry run; and `cargo deny` reports no unknown or copyleft license in the host workspace. If the gate fails, the fallback is Open Computer Use's macOS kit and a reduced Linux X11 scope (REFERENCE rows T-OCU-01/02).

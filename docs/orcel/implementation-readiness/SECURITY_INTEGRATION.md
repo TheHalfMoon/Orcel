@@ -55,6 +55,10 @@ A donor unit that cannot meet these is not imported, whatever its license.
 | S-21 | Cua cuabot | Known upstream security issues | rejected | n/a | - |
 | S-22 | Packaging macOS | TCC grants attached to an unsigned or changing binary; users re-grant to anything named Orcel | stable bundle id + Developer ID signature; doctor verifies signature | tampered bundle refused | XP-16 |
 | S-23 | Secrets on Linux without a keyring | Plaintext fallback | unavailable, never plaintext | test | XP-19 |
+| S-24 | Cua `biometric.rs` copy (XP-09, XP-10) | Donor env override `CUA_ENV_ALLOW_UNVERIFIED_SENSITIVE_EXPORT` would let an environment variable bypass STRONG | override deleted on import; Windows CredUI fallback not taken | test: no env var changes a STRONG outcome | XP-09, XP-10 |
+| S-25 | Cua containment copy (XP-13, WI-05) | macOS boundary relies on deprecated `sandbox-exec`; seccomp is per-architecture | capability report stays truthful; refuse to spawn when a boundary cannot be installed; unsupported arch refused | capability-refusal tests per OS | XP-13 |
+| S-26 | Cua Spaces Tauri scaffolding (CR-03) | Donor CSP allows `'wasm-unsafe-eval'` and `ws:`/`wss:`; donor ships an updater plugin and process restart | CSP tightened, updater and process permissions removed, single read-only command | CSP and capability tests | CR-03 |
+| S-27 | Cua `caller.rs` peer identity (CR-01) | Linux same-uid processes can ptrace each other, so binary identity is not provable | Linux peers trusted only as same uid (`os_verified: false`), as upstream marks them | other-uid refused; Linux peer never reported verified | CR-01 |
 
 ## 4. Forbidden introductions (checked at review)
 

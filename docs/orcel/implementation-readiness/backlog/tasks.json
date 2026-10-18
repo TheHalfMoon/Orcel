@@ -85,7 +85,18 @@
       "rollback": "Revert the commit; no persisted format changed.",
       "estimate": "1-2",
       "authority_delta": "none",
-      "proposed_grain": "SG-000109"
+      "proposed_grain": "SG-000109",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "BUILD_NEW",
+        "estimate_build_new_days": "1-2",
+        "estimate_with_reuse_days": "1-2",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": [],
+        "build_new_justification": "Path resolution and permission checks are Orcel's own state contract; Cua's state-dir handling (CUA_DRIVER_RS_HOME, keyvault paths) is product-specific and weaker on ancestor checks. Already implemented in PR #345."
+      }
     },
     {
       "id": "XP-01B",
@@ -158,7 +169,18 @@
       "rollback": "Revert.",
       "estimate": "2-3",
       "authority_delta": "none (fails closed earlier)",
-      "proposed_grain": "SG-000109"
+      "proposed_grain": "SG-000109",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "BUILD_NEW",
+        "estimate_build_new_days": "2-3",
+        "estimate_with_reuse_days": "2-3",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": [],
+        "build_new_justification": "Applies XP-01's crate to Orcel's own stores; no donor code applies."
+      }
     },
     {
       "id": "XP-02",
@@ -214,7 +236,18 @@
       "rollback": "Remove the matrix entry.",
       "estimate": "1-3",
       "authority_delta": "none",
-      "proposed_grain": "SG-000109"
+      "proposed_grain": "SG-000109",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "BUILD_NEW",
+        "estimate_build_new_days": "1-3",
+        "estimate_with_reuse_days": "1-3",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": [],
+        "build_new_justification": "CI matrix configuration of Orcel's own workflow; nothing to reuse. In PR #346."
+      }
     },
     {
       "id": "XP-03",
@@ -227,12 +260,12 @@
         "crates/orcel-provider-uia/src/lib.rs NativeProcess { start_generation, generation_source, session_verified }",
         "crates/orcel-provider-uia/src/native_desktop.rs (Windows creation-time generation)"
       ],
-      "donor": "cua",
+      "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
       "donor_files": [
-        "libs/cua-driver/rust/crates/platform-linux/src/proc_fs.rs (REFERENCE)",
-        "libs/cua-driver/rust/crates/platform-linux/src/x11_client_pid.rs (REFERENCE)"
+        "libs/cua-driver/rust/crates/platform-linux/src/proc_fs.rs (process_instance_id, is_process_live)",
+        "libs/cua/crates/cua-daemon/src/lib.rs (peer-credential section near line 736: LOCAL_PEERPID / SO_PEERCRED)"
       ],
-      "method": "BUILD_NEW",
+      "method": "COPY_ADAPT",
       "orcel_files": {
         "create": [
           "crates/orcel-platform/src/process.rs",
@@ -246,9 +279,9 @@
       },
       "dependencies": "libc (MIT/Apache-2.0) for proc_pidinfo, getpeereid, SO_PEERCRED; admitted with SBOM entry",
       "steps": [
-        "process::start_generation(pid): Linux = (boot_id from /proc/sys/kernel/random/boot_id, starttime field 22 of /proc/<pid>/stat); macOS = proc_pidinfo(PROC_PIDTBSDINFO) pbi_start_tvsec/usec; Windows delegates to the existing implementation. generation_source strings: 'linux-proc-starttime', 'macos-bsdinfo-start', 'windows-creation-time'.",
+        "process::start_generation(pid): Linux = COPY_ADAPT Cua proc_fs.rs process_instance_id (starttime after the final ')' of /proc/<pid>/stat) combined with /proc/sys/kernel/random/boot_id; macOS = proc_pidinfo(PROC_PIDTBSDINFO) pbi_start_tvsec/usec (new, ~40 lines; Cua has no macOS equivalent); Windows delegates to the existing implementation.",
         "session::current(): uid + login session (Linux: /proc/self/sessionid and XDG_SESSION_ID cross-checked; macOS: audit session id via getaudit_addr); Windows unchanged.",
-        "peer::verify_unix_peer(fd) -> PeerIdentity { uid, pid, start_generation }: SO_PEERCRED on Linux, getpeereid + LOCAL_PEERPID on macOS. Refuse when uid differs from current uid.",
+        "peer::verify_unix_peer: COPY_ADAPT the getsockopt section of Cua cua-daemon lib.rs (LOCAL_PEERPID on macOS, SO_PEERCRED on Linux) plus getpeereid on macOS; refuse when uid differs. CR-01 extends this with code identity.",
         "Unit tests with the current process; reuse-of-pid test spawns a child, records generation, waits, and checks a different generation is reported for a recycled pid when observable."
       ],
       "interfaces": "pub struct ProcessGeneration { pid: u32, generation: u64, source: &'static str }; pub fn start_generation(pid) -> Result<ProcessGeneration, PlatformError>; pub fn verify_unix_peer(&UnixStream) -> Result<PeerIdentity, PlatformError>",
@@ -283,9 +316,24 @@
       ],
       "done": "Merged with common gates.",
       "rollback": "Revert; no callers yet.",
-      "estimate": "2-3",
+      "estimate": "1-2",
       "authority_delta": "none",
-      "proposed_grain": "SG-000109"
+      "proposed_grain": "SG-000109",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "2-3",
+        "estimate_with_reuse_days": "1-2",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [
+          "macOS start-time path has no donor and is new code"
+        ],
+        "matrix_rows": [
+          "T-CUA-23",
+          "T-CUA-24"
+        ]
+      }
     },
     {
       "id": "XP-04",
@@ -358,7 +406,18 @@
       "rollback": "Adapter falls back to /1 automatically; revert Go change.",
       "estimate": "3-4",
       "authority_delta": "none (private protocol; no tool or scope change)",
-      "proposed_grain": "SG-000110"
+      "proposed_grain": "SG-000110",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "BUILD_NEW",
+        "estimate_build_new_days": "3-4",
+        "estimate_with_reuse_days": "3-4",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": [],
+        "build_new_justification": "Orcel's private protocol is a compatibility contract with the qualified Go host; adopting Cua's MCP or envelope protocol would add a second protocol and a second authority surface. Refusal codes are reused from Cua's action-result contract (REFERENCE)."
+      }
     },
     {
       "id": "XP-05",
@@ -443,7 +502,17 @@
       "rollback": "Delete apps/orcel-native-host; nothing depends on it.",
       "estimate": "3-5",
       "authority_delta": "none",
-      "proposed_grain": "SG-000111"
+      "proposed_grain": "SG-000111",
+      "reuse": {
+        "before": "WRAP",
+        "after": "WRAP",
+        "estimate_build_new_days": "3-5",
+        "estimate_with_reuse_days": "3-5",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
     },
     {
       "id": "XP-06",
@@ -532,7 +601,17 @@
       "rollback": "Unset ORCEL_COMPUTER_HOST_BIN on macOS/Linux; NativeAdapter fails closed.",
       "estimate": "5-8",
       "authority_delta": "Existing read-only desktop observation tools become available on two more OSes; no new tool, scope or approval class.",
-      "proposed_grain": "SG-000111"
+      "proposed_grain": "SG-000111",
+      "reuse": {
+        "before": "WRAP",
+        "after": "WRAP",
+        "estimate_build_new_days": "5-8",
+        "estimate_with_reuse_days": "5-8",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
     },
     {
       "id": "XP-07",
@@ -606,7 +685,17 @@
       "rollback": "Capability reported unavailable.",
       "estimate": "3-4",
       "authority_delta": "Existing capture tool on two more OSes.",
-      "proposed_grain": "SG-000111"
+      "proposed_grain": "SG-000111",
+      "reuse": {
+        "before": "WRAP",
+        "after": "WRAP",
+        "estimate_build_new_days": "3-4",
+        "estimate_with_reuse_days": "3-4",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
     },
     {
       "id": "XP-08",
@@ -678,7 +767,17 @@
       "rollback": "Disable the workflow.",
       "estimate": "4-6",
       "authority_delta": "none",
-      "proposed_grain": "SG-000111"
+      "proposed_grain": "SG-000111",
+      "reuse": {
+        "before": "COPY",
+        "after": "COPY",
+        "estimate_build_new_days": "4-6",
+        "estimate_with_reuse_days": "4-6",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
     },
     {
       "id": "XP-09",
@@ -691,25 +790,29 @@
         "crates/orcel-approval/src/lib.rs platform_prompt (cfg(windows) MessageBoxW; cfg(not(windows)) returns 'local approval UI is Windows-only')",
         "crates/orcel-approval/src/lib.rs PresenceVerifier trait, WindowsHelloPresenceVerifier, NoPresenceVerifier default off Windows"
       ],
-      "donor": null,
-      "donor_files": [],
-      "method": "BUILD_NEW",
+      "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "donor_files": [
+        "libs/cua/crates/cua-teleport/src/biometric.rs (macOS LocalAuthentication path)",
+        "libs/cua/crates/cua-keyvault/src/macos.rs (SecCode requirement check for the helper)"
+      ],
+      "method": "COPY_ADAPT",
       "orcel_files": {
         "create": [
-          "crates/orcel-approval/src/macos.rs",
-          "apps/orcel-approval-helper-macos/ (signed helper app, Swift or objc2)"
+          "crates/orcel-approval/src/presence_unix.rs",
+          "crates/orcel-approval/src/soft_macos.rs",
+          "docs/orcel/notices/cua-FSL-1.1-MIT.txt"
         ],
         "change": [
           "crates/orcel-approval/src/lib.rs",
           "crates/orcel-approval/Cargo.toml"
         ]
       },
-      "dependencies": "objc2 + objc2-local-authentication (MIT/Apache) or a 200-line Swift helper; CoreFoundation for CFUserNotificationDisplayAlert.",
+      "dependencies": "objc2 + LocalAuthentication bindings as used by the donor; security-framework or the donor's raw Security.framework externs; CoreFoundation for CFUserNotification.",
       "steps": [
-        "SOFT: CFUserNotificationDisplayAlert with kCFUserNotificationCautionAlertLevel, default button = Deny, same text body as the Windows prompt (workspace, action, target, summary, digest, nonce prefix).",
-        "STRONG: LAContext evaluatePolicy(.deviceOwnerAuthentication) inside the signed helper; the helper returns a result bound to the request nonce over an inherited pipe; orceld verifies the helper's code signature (team id) before trusting it.",
-        "Fail closed: no GUI session (launchd background, SSH) -> unavailable, never SOFT downgrade of STRONG.",
-        "Document residual same-user spoofing risk as on Windows.",
+        "STRONG: COPY_ADAPT Cua cua-teleport biometric.rs macOS path (LAContext evaluatePolicy LAPolicyDeviceOwnerAuthentication) into crates/orcel-approval/src/presence_unix.rs behind the existing PresenceVerifier trait. Delete the CUA_ENV_ALLOW_UNVERIFIED_SENSITIVE_EXPORT override: no environment variable may bypass STRONG.",
+        "If LocalAuthentication must run in a GUI-capable signed helper, verify the helper with the SecCode requirement check copied from cua-keyvault macos.rs (T-CUA-27) before trusting its answer.",
+        "SOFT: CFUserNotificationDisplayAlert with caution level, default button Deny, the same body text as the Windows prompt. BUILD_NEW (no donor presents an approval-style system modal; Cua's consent modules automate Chrome's own dialog).",
+        "Fail closed with no GUI session (launchd background, SSH): unavailable, never SOFT downgrade of STRONG.",
         "Development builds use an ad-hoc or development-certificate signature checked against a pinned designated requirement in the test config; production Developer ID signing and notarization arrive with XP-16 and replace the pin."
       ],
       "interfaces": "impl PresenceVerifier for MacLocalAuthPresenceVerifier; platform_prompt(cfg(target_os=\"macos\"))",
@@ -748,9 +851,24 @@
       ],
       "done": "Merged; SECURITY_INTEGRATION.md S-03 updated.",
       "rollback": "Revert to fail-closed unavailable.",
-      "estimate": "4-6",
+      "estimate": "2-3",
       "authority_delta": "Approvals become possible on macOS; no new action becomes approvable.",
-      "proposed_grain": "SG-000112"
+      "proposed_grain": "SG-000112",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "4-6",
+        "estimate_with_reuse_days": "2-3",
+        "runtime_overhead": "one LocalAuthentication prompt per STRONG approval (unchanged user cost)",
+        "maintenance": "Orcel owns the copied FSL file; rebase only on security fixes",
+        "risks": [
+          "donor override variable must be removed and a test must prove no env var bypasses STRONG"
+        ],
+        "matrix_rows": [
+          "T-CUA-20",
+          "T-CUA-27"
+        ]
+      }
     },
     {
       "id": "XP-10",
@@ -762,9 +880,11 @@
       "existing_orcel": [
         "crates/orcel-approval/src/lib.rs (as XP-09)"
       ],
-      "donor": null,
-      "donor_files": [],
-      "method": "BUILD_NEW",
+      "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "donor_files": [
+        "libs/cua/crates/cua-teleport/src/biometric.rs (Linux polkit pkcheck auth_self path, POLKIT_ACTION)"
+      ],
+      "method": "COPY_ADAPT",
       "orcel_files": {
         "create": [
           "crates/orcel-approval/src/linux.rs",
@@ -775,9 +895,9 @@
           "crates/orcel-approval/src/lib.rs"
         ]
       },
-      "dependencies": "zbus (MIT) for polkit CheckAuthorization; gtk4-rs (MIT) in the helper only.",
+      "dependencies": "None new for STRONG (pkcheck subprocess); gtk4-rs (MIT) in the SOFT helper only.",
       "steps": [
-        "STRONG: polkit CheckAuthorization for action ai.orcel.approve.strong with auth_self (never auth_self_keep, never allow_active=yes) and AllowUserInteraction; details carry the digest.",
+        "STRONG: COPY_ADAPT Cua biometric.rs Linux path (pkcheck with the desktop authentication agent, auth_self every time; no polkit, no agent or no installed action is Unavailable) with Orcel's action id ai.orcel.approve.strong; delete the override variable. Prefer the donor's pkcheck subprocess (pinned /usr/bin/pkcheck, verified owner root) over a new zbus client unless measurement shows a problem.",
         "SOFT: broker-spawned GTK4 helper shows the same body; default Deny; returns over an inherited pipe with the nonce.",
         "Headless or no polkit agent -> unavailable.",
         "Development installs the polkit action file with a documented one-line sudo script in tests only; XP-17 packages it."
@@ -815,9 +935,23 @@
       ],
       "done": "Merged.",
       "rollback": "Fail-closed unavailable.",
-      "estimate": "4-6",
+      "estimate": "2-3",
       "authority_delta": "Approvals become possible on Linux.",
-      "proposed_grain": "SG-000112"
+      "proposed_grain": "SG-000112",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "4-6",
+        "estimate_with_reuse_days": "2-3",
+        "runtime_overhead": "one pkcheck subprocess per STRONG approval",
+        "maintenance": "none beyond normal",
+        "risks": [
+          "SOFT GTK4 helper remains new code: no donor ships a Linux approval dialog"
+        ],
+        "matrix_rows": [
+          "T-CUA-20"
+        ]
+      }
     },
     {
       "id": "XP-11",
@@ -897,7 +1031,17 @@
       "rollback": "Capabilities reported refused.",
       "estimate": "5-7",
       "authority_delta": "Existing approval-gated actions on two more OSes.",
-      "proposed_grain": "SG-000113"
+      "proposed_grain": "SG-000113",
+      "reuse": {
+        "before": "WRAP",
+        "after": "WRAP",
+        "estimate_build_new_days": "5-7",
+        "estimate_with_reuse_days": "5-7",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
     },
     {
       "id": "XP-12",
@@ -975,40 +1119,55 @@
       "rollback": "Capabilities refused.",
       "estimate": "6-9",
       "authority_delta": "Existing Full User input tools on two more OSes.",
-      "proposed_grain": "SG-000113"
+      "proposed_grain": "SG-000113",
+      "reuse": {
+        "before": "WRAP",
+        "after": "WRAP",
+        "estimate_build_new_days": "6-9",
+        "estimate_with_reuse_days": "6-9",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
     },
     {
       "id": "XP-13",
       "phase": "X4",
-      "title": "Process provider confinement on Linux and macOS (Safe mode parity)",
+      "title": "Process confinement on Linux and macOS: contained tier from Cua, Safe registered-exec parity",
       "status": "BLOCKED_ON_DEPENDENCY",
       "objective": "Registered-executable Safe execution with owned process-tree cleanup and resource bounds on Linux and macOS, matching what Job Objects/AppContainer give on Windows.",
       "user_visible": "process_spawn works on macOS and Linux with the same bounds.",
       "existing_orcel": [
         "crates/orcel-provider-process/src/lib.rs (Windows JobObject kill-on-close, AppContainer)"
       ],
-      "donor": "space@09e922efd23b3c0d109ab64de7e567a901bcc61e",
+      "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
       "donor_files": [
-        "crates/libs/spaced/guest/server/src/process.rs (REFERENCE: process-group termination, admission close)",
-        "crates/libs/spaced/guest/server/src/cgroup.rs (REFERENCE)"
+        "libs/cua-driver/rust/crates/cua-driver-core/src/perception_client/containment.rs",
+        "libs/cua-driver/rust/crates/cua-driver-core/src/perception_client/containment (linux.rs, macos.rs, unix.rs, windows.rs, unsupported.rs)"
       ],
-      "method": "BUILD_NEW",
+      "method": "COPY_ADAPT",
       "orcel_files": {
         "create": [
-          "crates/orcel-provider-process/src/unix.rs",
-          "crates/orcel-provider-process/src/linux_confine.rs",
-          "crates/orcel-provider-process/src/macos_confine.rs"
+          "crates/orcel-contain/Cargo.toml",
+          "crates/orcel-contain/src/lib.rs",
+          "crates/orcel-contain/src/linux.rs",
+          "crates/orcel-contain/src/macos.rs",
+          "crates/orcel-contain/src/unix.rs",
+          "crates/orcel-contain/src/windows.rs",
+          "crates/orcel-provider-process/src/unix.rs"
         ],
         "change": [
           "crates/orcel-provider-process/src/lib.rs",
           "crates/orcel-provider-process/Cargo.toml"
         ]
       },
-      "dependencies": "landlock (MIT/Apache) and seccompiler (Apache-2.0) on Linux; libc.",
+      "dependencies": "libc; windows-sys features as the donor's windows.rs needs (check against Orcel's windows-sys 0.52 and windows 0.58; admit any new feature).",
       "steps": [
-        "Linux: spawn into a new process group, PR_SET_PDEATHSIG, pidfd for exact wait/kill, cgroup v2 child cgroup when delegated (systemd --user), rlimits, Landlock filesystem allowlist for the workspace, seccomp deny of ptrace/mount/bpf.",
-        "macOS: posix_spawn with POSIX_SPAWN_SETPGROUP, rlimits, kqueue EVFILT_PROC for exit, kill the group on drop; Seatbelt via sandbox_init is DEPRECATED API: use only as defense-in-depth behind a feature flag and record the risk.",
-        "Same Safe registered-executable rules and output bounds; SG-000096 shell semantics are not ported here."
+        "Create crates/orcel-contain by COPY_ADAPT of Cua's perception containment (MIT): keep the capability-reporting contract (spawn refuses when any advertised boundary cannot be installed), Linux Landlock + seccomp + rlimits + PDEATHSIG + NO_NEW_PRIVS, macOS Seatbelt + rlimits + sentinel, Windows AppContainer + Job Object + private desktop. Replace tokio::process with std::process and the donor error type with Orcel's.",
+        "This 'contained' tier (no network, exact read/write allowlist, no fork) is used for parsers and helpers (WI-05) and as an opt-in policy tier for registered executables.",
+        "Safe registered-executable parity on Linux/macOS (needs fork and sometimes network, so it cannot use the contained tier): process group, PR_SET_PDEATHSIG, pidfd (Linux) or kqueue EVFILT_PROC (macOS), rlimits, cgroup v2 child when delegated; kill the group on drop. This glue is BUILD_NEW but reuses unix.rs helpers from the copied crate.",
+        "Same registered-executable rules and output bounds; SG-000096 shell semantics are not ported here."
       ],
       "interfaces": "Existing provider API",
       "platforms": {
@@ -1040,9 +1199,25 @@
       ],
       "done": "Merged.",
       "rollback": "process_spawn reported unavailable on that OS.",
-      "estimate": "6-10",
+      "estimate": "3-5",
       "authority_delta": "Existing Safe process tool on two more OSes.",
-      "proposed_grain": "SG-000114"
+      "proposed_grain": "SG-000114",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "6-10 (plus 6-9 if WI-05 had to build its own sandbox)",
+        "estimate_with_reuse_days": "3-5",
+        "runtime_overhead": "contained spawn adds Landlock/seccomp or Seatbelt setup per process (ESTIMATE: milliseconds; measure)",
+        "maintenance": "Orcel owns the copy; security fixes from upstream reviewed per pin bump",
+        "risks": [
+          "macOS sandbox-exec is deprecated by Apple (S-25)",
+          "seccomp filter is architecture-specific; unsupported arch must be refused, as the donor does"
+        ],
+        "matrix_rows": [
+          "T-CUA-21",
+          "T-CUA-22"
+        ]
+      }
     },
     {
       "id": "XP-14",
@@ -1056,9 +1231,12 @@
         "crates/orcel-browser-host/src/confinement.rs (NO_ROUTE_PROXY http://0.0.0.0:9: 'Windows-only; on Linux it is loopback')",
         "crates/orcel-browser-host/src/leftovers.rs, profile.rs, worker_launch.rs (Job Objects, handle-held files)"
       ],
-      "donor": null,
-      "donor_files": [],
-      "method": "BUILD_NEW",
+      "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "donor_files": [
+        "libs/cua/crates/cua-keyvault/src/macos.rs (SecCode requirement and signing-info bindings)",
+        "packages/playwright-core/src/server/registry/index.ts at playwright 1b025d7e (stable-channel install paths; PORT of a 20-line table)"
+      ],
+      "method": "COPY_ADAPT",
       "orcel_files": {
         "create": [
           "crates/orcel-browser-host/src/platform_macos.rs",
@@ -1074,7 +1252,7 @@
       },
       "dependencies": "security-framework (MIT/Apache) for SecStaticCode on macOS.",
       "steps": [
-        "Discovery: macOS /Applications/{Google Chrome,Microsoft Edge}.app; verify with SecStaticCodeCheckValidity against requirement 'anchor apple generic and certificate leaf[subject.OU] = <Google EQHXZ8M8AV | Microsoft UBF8T346G9>'. Linux: /opt/google/chrome/chrome, /opt/microsoft/msedge/msedge; verify owning package via dpkg -S / rpm -qf plus package signature status; record that Linux verification is weaker.",
+        "Discovery: port Playwright 1.63.0 registry stable-channel paths for chrome and msedge on darwin and linux into discovery.rs. Verification: macOS = COPY_ADAPT cua-keyvault macos.rs SecCode bindings and check 'anchor apple generic and certificate leaf[subject.OU] = <Google EQHXZ8M8AV | Microsoft UBF8T346G9>'; Linux = owning package via dpkg -S / rpm -qf plus package signature status (BUILD_NEW, no donor verifies Linux browser binaries); record that Linux verification is weaker.",
         "Replace NO_ROUTE_PROXY on Unix with a host-owned sink: the host binds 127.0.0.1:0, never accepts payload (accept then close), and passes that exact port; this removes the 0.0.0.0-is-loopback hole.",
         "Supervision: process group + pidfd (Linux) / kqueue (macOS) instead of Job Objects; profile files held via O_NOFOLLOW opens.",
         "Network-leak probes (existing native tests) ported to the new OSes."
@@ -1113,9 +1291,24 @@
       ],
       "done": "Merged.",
       "rollback": "Browser reported unavailable on that OS.",
-      "estimate": "8-12",
+      "estimate": "6-9",
       "authority_delta": "Existing browser authority on two more OSes.",
-      "proposed_grain": "SG-000115"
+      "proposed_grain": "SG-000115",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "8-12",
+        "estimate_with_reuse_days": "6-9",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [
+          "host-owned sink, process supervision and network-leak probes remain Orcel-specific new code"
+        ],
+        "matrix_rows": [
+          "T-CUA-27",
+          "T-PW-13"
+        ]
+      }
     },
     {
       "id": "XP-15",
@@ -1176,7 +1369,17 @@
       "rollback": "unavailable",
       "estimate": "1-2",
       "authority_delta": "Existing clipboard tools on two more OSes.",
-      "proposed_grain": "SG-000114"
+      "proposed_grain": "SG-000114",
+      "reuse": {
+        "before": "COPY_ADAPT",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "1-2",
+        "estimate_with_reuse_days": "1-2",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
     },
     {
       "id": "XP-16",
@@ -1191,16 +1394,20 @@
       ],
       "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
       "donor_files": [
-        "libs/cua-driver/docs/driver-permission-modes-and-consent-plan.md (REFERENCE: app-owned TCC identity)",
-        "libs/cua-driver/scripts (REFERENCE install layout)"
+        "libs/cua-driver/rust/scripts/CuaDriverBundle (Info.plist app-bundle skeleton for TCC identity)",
+        "libs/cua-driver/rust/scripts/CuaDriver.entitlements",
+        "apps/cua-spaces-macos/scripts/notarize.sh",
+        ".github/scripts/macos-review-codesign.sh"
       ],
-      "method": "BUILD_NEW",
+      "method": "COPY_ADAPT",
       "orcel_files": {
         "create": [
           "crates/orcel-lifecycle/src/macos.rs",
           "distribution/macos/OrcelComputerHost.app/Contents/Info.plist",
           "distribution/macos/ai.orcel.orceld.plist",
-          "distribution/macos/entitlements.plist"
+          "distribution/macos/entitlements.plist",
+          "scripts/macos/notarize.sh",
+          "scripts/macos/review-codesign.sh"
         ],
         "change": [
           "crates/orcel-lifecycle/src/layout.rs",
@@ -1210,6 +1417,7 @@
       "dependencies": "Apple Developer ID certificate and notarization (paid Apple membership: FD-05).",
       "steps": [
         "Layout under ~/Library/Application Support/Orcel with versioned payloads like Windows.",
+        "COPY_ADAPT Cua's CuaDriverBundle skeleton and entitlements (rebranded bundle id ai.orcel.computer-host, entitlements reviewed one by one), notarize.sh and macos-review-codesign.sh.",
         "Host binary inside a minimal .app bundle (bundle id ai.orcel.computer-host) so TCC grants attach to a stable signature.",
         "LaunchAgent for orceld (per-user, no root).",
         "notarytool in release workflow when FD-05 is approved; unsigned dev builds are labeled and never published.",
@@ -1246,9 +1454,26 @@
       ],
       "done": "Merged; release remains a founder decision.",
       "rollback": "Uninstall.",
-      "estimate": "6-9",
+      "estimate": "4-6",
       "authority_delta": "none",
-      "proposed_grain": "SG-000116"
+      "proposed_grain": "SG-000116",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "6-9",
+        "estimate_with_reuse_days": "4-6",
+        "runtime_overhead": "negligible",
+        "maintenance": "scripts track Apple notarytool changes",
+        "risks": [
+          "paid Apple Developer ID still required for distribution (FD-05)"
+        ],
+        "matrix_rows": [
+          "T-CUA-28",
+          "T-CUA-29",
+          "T-CUA-30",
+          "T-CUA-31"
+        ]
+      }
     },
     {
       "id": "XP-17",
@@ -1311,7 +1536,18 @@
       "rollback": "Uninstall.",
       "estimate": "4-6",
       "authority_delta": "none",
-      "proposed_grain": "SG-000116"
+      "proposed_grain": "SG-000116",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "BUILD_NEW",
+        "estimate_build_new_days": "4-6",
+        "estimate_with_reuse_days": "4-6",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": [],
+        "build_new_justification": "No donor ships per-user Linux packaging without Nix or Electron (Cua uses Nix and electron-builder; Spaces' .deb installs to /opt as root). nfpm config plus a systemd user unit is small."
+      }
     },
     {
       "id": "XP-18",
@@ -1370,7 +1606,18 @@
       "rollback": "System Node prerequisite.",
       "estimate": "3-5",
       "authority_delta": "none",
-      "proposed_grain": "SG-000116"
+      "proposed_grain": "SG-000116",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "BUILD_NEW",
+        "estimate_build_new_days": "3-5",
+        "estimate_with_reuse_days": "3-5",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": [],
+        "build_new_justification": "Extends Orcel's own runtime pin (PR #336, SG-000108). No donor pins a Node runtime tree with held handles."
+      }
     },
     {
       "id": "XP-19",
@@ -1385,9 +1632,9 @@
       ],
       "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
       "donor_files": [
-        "libs/cua-driver/rust/crates/platform-linux/Cargo.toml (keyring 4.1.6 usage, REFERENCE)"
+        "libs/cua/crates/cua-auth/src/lib.rs (REFERENCE: keyring usage across Keychain, Secret Service and Credential Manager)"
       ],
-      "method": "BUILD_NEW",
+      "method": "WRAP",
       "orcel_files": {
         "create": [
           "apps/orcel-mcp/src/secret_store.ts"
@@ -1396,7 +1643,7 @@
           "apps/orcel-mcp/src/device_identity.ts"
         ]
       },
-      "dependencies": "Prefer a small orceld-side Rust module over a native npm addon: keyring (MIT/Apache) crate behind a kernel IPC method.",
+      "dependencies": "keyring crate (MIT/Apache-2.0), the same library Cua uses; admitted with SBOM. On Windows keep DPAPI-backed storage or use keyring's Windows Credential Manager backend after comparison.",
       "steps": [
         "Inventory where keys live today (read device_identity.ts first and record it in the PR).",
         "Move storage behind orceld secret_store with per-OS backends; migration only on explicit user action."
@@ -1430,9 +1677,21 @@
       ],
       "done": "Merged.",
       "rollback": "Previous storage.",
-      "estimate": "3-5",
+      "estimate": "2-3",
       "authority_delta": "none",
-      "proposed_grain": "SG-000117"
+      "proposed_grain": "SG-000117",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "WRAP",
+        "estimate_build_new_days": "3-5",
+        "estimate_with_reuse_days": "2-3",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": [
+          "T-CUA-34"
+        ]
+      }
     },
     {
       "id": "XP-20",
@@ -1487,7 +1746,18 @@
       "rollback": "n/a",
       "estimate": "3-4",
       "authority_delta": "none",
-      "proposed_grain": "-"
+      "proposed_grain": "-",
+      "reuse": {
+        "before": "REFERENCE",
+        "after": "REFERENCE",
+        "estimate_build_new_days": "3-4",
+        "estimate_with_reuse_days": "3-4",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": [],
+        "build_new_justification": "Measurement only."
+      }
     },
     {
       "id": "CR-01",
@@ -1500,9 +1770,12 @@
         "docs/orcel/ARCHITECTURE.md 'App API proposal'",
         "apps/orcel-desktop-preview (WPF reads CLI JSON today)"
       ],
-      "donor": null,
-      "donor_files": [],
-      "method": "BUILD_NEW",
+      "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
+      "donor_files": [
+        "libs/cua/crates/cua-keyvault/src/caller.rs (kernel-derived peer identity, three OSes)",
+        "libs/cua/crates/cua-keyvault/src/winpeer.rs (named-pipe client and Authenticode)"
+      ],
+      "method": "COPY_ADAPT",
       "orcel_files": {
         "create": [
           "crates/orceld/src/app_api.rs",
@@ -1518,7 +1791,7 @@
         "Frame: JSON lines, 64 KiB max, versioned 'orcel-app-api/1'.",
         "Methods (read-only): status.get, capabilities.get, devices.list (paginated), events.subscribe {after_seq} -> snapshot when gap, task.get, task.list.",
         "No method can submit or approve anything in this task.",
-        "Peer auth: same uid + peer process start generation recorded per connection."
+        "Peer auth: COPY_ADAPT cua-keyvault caller.rs and winpeer.rs (FSL, FD-04): macOS audit token -> SecCode -> requirement; Linux SO_PEERCRED with os_verified=false (same-user ptrace) so Linux peers are trusted only as 'same uid'; Windows pipe client pid + Authenticode. Orcel's own trust policy names the first-party signer. Record the peer's start generation per connection."
       ],
       "interfaces": "See ORCEL_APP_API_1.md (to be written in this task; skeleton in AGENT_RUNTIME_INTEGRATION.md section 3)",
       "platforms": {
@@ -1556,9 +1829,24 @@
       ],
       "done": "Merged; ARCHITECTURE.md app API section points at the spec.",
       "rollback": "Endpoint not started.",
-      "estimate": "4-6",
+      "estimate": "3-4",
       "authority_delta": "New read-only local interface; no mutation.",
-      "proposed_grain": "SG-000118"
+      "proposed_grain": "SG-000118",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "4-6",
+        "estimate_with_reuse_days": "3-4",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [
+          "Linux peer identity is uid-level only; documented, as the donor does"
+        ],
+        "matrix_rows": [
+          "T-CUA-25",
+          "T-CUA-26"
+        ]
+      }
     },
     {
       "id": "CR-02",
@@ -1620,7 +1908,17 @@
       "rollback": "Remove the folder.",
       "estimate": "3-4",
       "authority_delta": "none",
-      "proposed_grain": "SG-000118"
+      "proposed_grain": "SG-000118",
+      "reuse": {
+        "before": "COPY_ADAPT",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "3-4",
+        "estimate_with_reuse_days": "3-4",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
     },
     {
       "id": "CR-03",
@@ -1633,11 +1931,16 @@
         "apps/orcel-desktop-preview (WPF, 876 lines incl. tests)",
         "docs/orcel/UI_UX_AND_APP_SIZE_BUDGET.md 'Exact reversal conditions'"
       ],
-      "donor": "agent-native@9c277b79cb87eb27da538e572dd710986e2fa06d",
+      "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f and agent-native@9c277b79cb87eb27da538e572dd710986e2fa06d",
       "donor_files": [
-        "packages/toolkit (REFERENCE for accessible components; copy individual components only with provenance)"
+        "apps/cua-spaces/src-tauri/tauri.conf.json (window and CSP scaffolding)",
+        "apps/cua-spaces/src-tauri/capabilities (per-window capability pattern)",
+        "agent-native:packages/toolkit/src/app/agentkit/react/root.tsx",
+        "agent-native:packages/toolkit/src/app/agentkit/react/context.tsx",
+        "agent-native:packages/toolkit/src/app/agentkit/react/stop-button.tsx",
+        "agent-native:packages/toolkit/src/app/agentkit/react/streaming-text.tsx"
       ],
-      "method": "BUILD_NEW",
+      "method": "COPY_ADAPT",
       "orcel_files": {
         "create": [
           "apps/orcel-control-room/src-tauri/**",
@@ -1650,6 +1953,7 @@
       },
       "dependencies": "tauri 2.x (MIT/Apache), React 18 (MIT); pinned lockfiles; no updater plugin (lifecycle owns updates).",
       "steps": [
+        "Start from Cua Spaces' src-tauri scaffolding (FSL, FD-04) for window, capability and CSP structure; tighten the CSP (no 'wasm-unsafe-eval', no ws:/wss:, no remote connect-src) and delete the updater plugin. Start the front end from Agent-Native Toolkit's AgentKit React root, context, stop button and streaming text (MIT); do not take components.tsx (5,618 lines on assistant-ui, Radix, CodeMirror).",
         "Rust side: one Tauri command 'app_api_call' proxying only the CR-01 read-only methods by name allowlist.",
         "Front end: compact task view, device selector, timeline, capability panel with explicit unavailable reasons, Stop button wired to the existing emergency stop path only when CR-01 exposes it.",
         "Accessibility: keyboard-only, screen reader names, RTL with Arabic strings, 100/150/200% scaling.",
@@ -1689,9 +1993,30 @@
       ],
       "done": "Merged; WPF retirement is CR-04.",
       "rollback": "Keep WPF on Windows.",
-      "estimate": "8-12",
+      "estimate": "5-8",
       "authority_delta": "none",
-      "proposed_grain": "SG-000119"
+      "proposed_grain": "SG-000119",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "8-12",
+        "estimate_with_reuse_days": "5-8",
+        "runtime_overhead": "one system WebView per OS (WebView2, WKWebView, WebKitGTK); measured against WPF in CR-04",
+        "maintenance": "Tauri major-version upgrades",
+        "risks": [
+          "WebKitGTK accessibility must be tested",
+          "FD-03 still open"
+        ],
+        "matrix_rows": [
+          "T-CUA-32",
+          "T-CUA-33",
+          "T-AN-06",
+          "T-AN-07",
+          "T-AN-08",
+          "T-AN-09",
+          "T-AN-10"
+        ]
+      }
     },
     {
       "id": "CR-04",
@@ -1744,7 +2069,18 @@
       "rollback": "n/a",
       "estimate": "2-3",
       "authority_delta": "none",
-      "proposed_grain": "-"
+      "proposed_grain": "-",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "BUILD_NEW",
+        "estimate_build_new_days": "2-3",
+        "estimate_with_reuse_days": "2-3",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": [],
+        "build_new_justification": "Measurement and decision record; no code."
+      }
     },
     {
       "id": "RJ-01",
@@ -1810,7 +2146,18 @@
       "rollback": "Revert.",
       "estimate": "2-3",
       "authority_delta": "none",
-      "proposed_grain": "SG-000120"
+      "proposed_grain": "SG-000120",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "BUILD_NEW",
+        "estimate_build_new_days": "2-3",
+        "estimate_with_reuse_days": "2-3",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": [],
+        "build_new_justification": "Extracts Orcel's own qualified intent journal; donor journals (Agent-Native SQL run store, SPACE PostgreSQL operations) are bound to stores Orcel does not run. Semantics are PORTed (RJ-03) where they help."
+      }
     },
     {
       "id": "RJ-02",
@@ -1882,7 +2229,18 @@
       "rollback": "Journal writes disabled; behavior as today.",
       "estimate": "6-9",
       "authority_delta": "none (reduces duplicate effects)",
-      "proposed_grain": "SG-000120"
+      "proposed_grain": "SG-000120",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "BUILD_NEW",
+        "estimate_build_new_days": "6-9",
+        "estimate_with_reuse_days": "6-9",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": [],
+        "build_new_justification": "Per-provider reconciliation probes depend on Orcel's providers and digests; no donor has them. SPACE fencing and unknown-start rules are adopted as rules."
+      }
     },
     {
       "id": "RJ-03",
@@ -1941,7 +2299,17 @@
       "rollback": "Remove tool.",
       "estimate": "2-3",
       "authority_delta": "One new read-only tool.",
-      "proposed_grain": "SG-000120"
+      "proposed_grain": "SG-000120",
+      "reuse": {
+        "before": "PORT",
+        "after": "PORT",
+        "estimate_build_new_days": "2-3",
+        "estimate_with_reuse_days": "2-3",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
     },
     {
       "id": "BR-01",
@@ -2005,7 +2373,17 @@
       "rollback": "Flag off -> ref only.",
       "estimate": "2-3",
       "authority_delta": "none",
-      "proposed_grain": "SG-000121"
+      "proposed_grain": "SG-000121",
+      "reuse": {
+        "before": "COPY_ADAPT",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "2-3",
+        "estimate_with_reuse_days": "2-3",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
     },
     {
       "id": "BR-02",
@@ -2085,7 +2463,17 @@
       "rollback": "Frames refused by host.",
       "estimate": "5-7",
       "authority_delta": "New approval-gated browser actions.",
-      "proposed_grain": "SG-000121"
+      "proposed_grain": "SG-000121",
+      "reuse": {
+        "before": "COPY_ADAPT",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "5-7",
+        "estimate_with_reuse_days": "5-7",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
     },
     {
       "id": "BR-03",
@@ -2144,7 +2532,17 @@
       "rollback": "Frame refused.",
       "estimate": "3-4",
       "authority_delta": "New approval-gated egress.",
-      "proposed_grain": "SG-000122"
+      "proposed_grain": "SG-000122",
+      "reuse": {
+        "before": "COPY_ADAPT",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "3-4",
+        "estimate_with_reuse_days": "3-4",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
     },
     {
       "id": "BR-04",
@@ -2203,7 +2601,17 @@
       "rollback": "Flags omitted.",
       "estimate": "3-4",
       "authority_delta": "none",
-      "proposed_grain": "SG-000121"
+      "proposed_grain": "SG-000121",
+      "reuse": {
+        "before": "PORT",
+        "after": "PORT",
+        "estimate_build_new_days": "3-4",
+        "estimate_with_reuse_days": "3-4",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
     },
     {
       "id": "BR-05",
@@ -2264,7 +2672,17 @@
       "rollback": "Single-tab mode.",
       "estimate": "3-4",
       "authority_delta": "New approval-gated dialog response.",
-      "proposed_grain": "SG-000122"
+      "proposed_grain": "SG-000122",
+      "reuse": {
+        "before": "COPY_ADAPT",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "3-4",
+        "estimate_with_reuse_days": "3-4",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
     },
     {
       "id": "BR-06",
@@ -2321,7 +2739,17 @@
       "rollback": "Main document only.",
       "estimate": "4-5",
       "authority_delta": "none",
-      "proposed_grain": "SG-000122"
+      "proposed_grain": "SG-000122",
+      "reuse": {
+        "before": "COPY_ADAPT",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "4-5",
+        "estimate_with_reuse_days": "4-5",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
     },
     {
       "id": "BR-07",
@@ -2381,7 +2809,17 @@
       "rollback": "Unverified status shown.",
       "estimate": "3-4",
       "authority_delta": "none",
-      "proposed_grain": "SG-000121"
+      "proposed_grain": "SG-000121",
+      "reuse": {
+        "before": "COPY_ADAPT",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "3-4",
+        "estimate_with_reuse_days": "3-4",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
     },
     {
       "id": "BR-08",
@@ -2435,7 +2873,17 @@
       "rollback": "Declarative path only.",
       "estimate": "4-6",
       "authority_delta": "Engine flag admission.",
-      "proposed_grain": "SG-000123"
+      "proposed_grain": "SG-000123",
+      "reuse": {
+        "before": "COPY_ADAPT",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "4-6",
+        "estimate_with_reuse_days": "4-6",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
     },
     {
       "id": "WI-01",
@@ -2503,7 +2951,17 @@
       "rollback": "pattern_kind regex refused.",
       "estimate": "3-4",
       "authority_delta": "none",
-      "proposed_grain": "SG-000102"
+      "proposed_grain": "SG-000102",
+      "reuse": {
+        "before": "COPY_ADAPT",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "3-4",
+        "estimate_with_reuse_days": "3-4",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
     },
     {
       "id": "WI-02",
@@ -2559,7 +3017,17 @@
       "rollback": "Field ignored.",
       "estimate": "1-2",
       "authority_delta": "none",
-      "proposed_grain": "SG-000102"
+      "proposed_grain": "SG-000102",
+      "reuse": {
+        "before": "PORT",
+        "after": "PORT",
+        "estimate_build_new_days": "1-2",
+        "estimate_with_reuse_days": "1-2",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
     },
     {
       "id": "WI-03",
@@ -2618,7 +3086,17 @@
       "rollback": "Option refused.",
       "estimate": "2-3",
       "authority_delta": "none",
-      "proposed_grain": "SG-000101"
+      "proposed_grain": "SG-000101",
+      "reuse": {
+        "before": "PORT",
+        "after": "PORT",
+        "estimate_build_new_days": "2-3",
+        "estimate_with_reuse_days": "2-3",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
     },
     {
       "id": "WI-04",
@@ -2670,7 +3148,17 @@
       "rollback": "Option refused.",
       "estimate": "2",
       "authority_delta": "none",
-      "proposed_grain": "SG-000102"
+      "proposed_grain": "SG-000102",
+      "reuse": {
+        "before": "PORT",
+        "after": "PORT",
+        "estimate_build_new_days": "2",
+        "estimate_with_reuse_days": "2",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
     },
     {
       "id": "WI-05",
@@ -2699,7 +3187,7 @@
       },
       "dependencies": "pdf-inspector 1.21 and anydoc 0.2.2: licenses to be verified at admission (not inspected here); zip with deflate only.",
       "steps": [
-        "Parser process: stdin file bytes (bounded 50 MiB), stdout Markdown (bounded); no network, Landlock/AppContainer/sandbox profile; 30 s timeout.",
+        "Parser process launched through crates/orcel-contain (XP-13, copied from Cua containment): no network, read only its input file, write only its output pipe, no fork, rlimits; stdin bytes ≤50 MiB, stdout Markdown bounded; 30 s timeout.",
         "Macros and external links never evaluated."
       ],
       "interfaces": "orcel-doc-parser/1 frames",
@@ -2730,9 +3218,24 @@
       ],
       "done": "Merged.",
       "rollback": "Unavailable.",
-      "estimate": "4-6",
+      "estimate": "2-3",
       "authority_delta": "New local read of an approved file.",
-      "proposed_grain": "SG-000102"
+      "proposed_grain": "SG-000102",
+      "reuse": {
+        "before": "COPY_ADAPT",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "4-6",
+        "estimate_with_reuse_days": "2-3",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": [
+          "T-FC-06",
+          "T-FC-07",
+          "T-CUA-21",
+          "T-CUA-22"
+        ]
+      }
     },
     {
       "id": "WI-06",
@@ -2791,7 +3294,17 @@
       "rollback": "Tool unavailable.",
       "estimate": "3-4",
       "authority_delta": "New network tool, SOFT-gated egress.",
-      "proposed_grain": "SG-000103"
+      "proposed_grain": "SG-000103",
+      "reuse": {
+        "before": "PORT",
+        "after": "PORT",
+        "estimate_build_new_days": "3-4",
+        "estimate_with_reuse_days": "3-4",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
     },
     {
       "id": "SX-01",
@@ -2857,7 +3370,17 @@
       "rollback": "Crate unused.",
       "estimate": "5-7",
       "authority_delta": "none until SX-06",
-      "proposed_grain": "SG-000124"
+      "proposed_grain": "SG-000124",
+      "reuse": {
+        "before": "COPY_ADAPT",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "5-7",
+        "estimate_with_reuse_days": "5-7",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
     },
     {
       "id": "SX-02",
@@ -2914,7 +3437,17 @@
       "rollback": "Unavailable.",
       "estimate": "6-8",
       "authority_delta": "none until SX-06",
-      "proposed_grain": "SG-000124"
+      "proposed_grain": "SG-000124",
+      "reuse": {
+        "before": "COPY_ADAPT",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "6-8",
+        "estimate_with_reuse_days": "6-8",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
     },
     {
       "id": "SX-03",
@@ -2968,7 +3501,17 @@
       "rollback": "Unavailable.",
       "estimate": "4-5",
       "authority_delta": "none until SX-06",
-      "proposed_grain": "SG-000124"
+      "proposed_grain": "SG-000124",
+      "reuse": {
+        "before": "WRAP",
+        "after": "WRAP",
+        "estimate_build_new_days": "4-5",
+        "estimate_with_reuse_days": "4-5",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
     },
     {
       "id": "SX-04",
@@ -3022,7 +3565,17 @@
       "rollback": "Unavailable.",
       "estimate": "6-8",
       "authority_delta": "none until SX-06",
-      "proposed_grain": "SG-000124"
+      "proposed_grain": "SG-000124",
+      "reuse": {
+        "before": "COPY_ADAPT",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "6-8",
+        "estimate_with_reuse_days": "6-8",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
     },
     {
       "id": "SX-05",
@@ -3078,7 +3631,17 @@
       "rollback": "Unavailable.",
       "estimate": "5-7",
       "authority_delta": "none until SX-06",
-      "proposed_grain": "SG-000124"
+      "proposed_grain": "SG-000124",
+      "reuse": {
+        "before": "COPY_ADAPT",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "5-7",
+        "estimate_with_reuse_days": "5-7",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": []
+      }
     },
     {
       "id": "SX-06",
@@ -3127,7 +3690,18 @@
       "rollback": "Remove tools.",
       "estimate": "4-6",
       "authority_delta": "New tools.",
-      "proposed_grain": "SG-000125"
+      "proposed_grain": "SG-000125",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "BUILD_NEW",
+        "estimate_build_new_days": "4-6",
+        "estimate_with_reuse_days": "4-6",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": [],
+        "build_new_justification": "Tool-contract and approval-class work in Orcel's governed MCP surface; donor MCP tools would be a second authority."
+      }
     },
     {
       "id": "BM-01",
@@ -3182,7 +3756,18 @@
       "rollback": "Remove.",
       "estimate": "1",
       "authority_delta": "none",
-      "proposed_grain": "SG-000109"
+      "proposed_grain": "SG-000109",
+      "reuse": {
+        "before": "BUILD_NEW",
+        "after": "BUILD_NEW",
+        "estimate_build_new_days": "1",
+        "estimate_with_reuse_days": "1",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": [],
+        "build_new_justification": "A ~1-day schema; Cua's e2e results-summary design is used as REFERENCE for dimensions."
+      }
     },
     {
       "id": "BM-02",
@@ -3196,10 +3781,10 @@
       ],
       "donor": "cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f",
       "donor_files": [
-        "libs/cua-bench/cua_bench",
-        "libs/cua-bench/example_tasks"
+        "libs/cua-bench/cua_bench (MIT; runner, task loader, oracle flow)",
+        "benchmarks/cua-driver-bench/taskpack (FSL, FD-04; starting task set with per-file provenance)"
       ],
-      "method": "PORT",
+      "method": "COPY_ADAPT",
       "orcel_files": {
         "create": [
           "tests/benchmarks/**"
@@ -3208,7 +3793,9 @@
       },
       "dependencies": "Python only in the benchmark harness, not the product.",
       "steps": [
-        "Task dir = setup + oracle; runner records BENCHMARK_REPORT_1 rows."
+        "COPY_ADAPT the cua-bench Python runner as test-only tooling (no PORT to another language; Python never ships in the product).",
+        "COPY the cua-driver-bench taskpack with a provenance manifest per task file, then add Orcel-owned tasks per OS.",
+        "Runner records BENCHMARK_REPORT_1 rows; never --on cloud."
       ],
       "interfaces": "n/a",
       "platforms": {
@@ -3237,9 +3824,22 @@
       ],
       "done": "Merged.",
       "rollback": "n/a",
-      "estimate": "5-7",
+      "estimate": "3-4",
       "authority_delta": "none",
-      "proposed_grain": "-"
+      "proposed_grain": "-",
+      "reuse": {
+        "before": "PORT",
+        "after": "COPY_ADAPT",
+        "estimate_build_new_days": "5-7",
+        "estimate_with_reuse_days": "3-4",
+        "runtime_overhead": "negligible",
+        "maintenance": "none beyond normal",
+        "risks": [],
+        "matrix_rows": [
+          "T-CUA-13",
+          "T-CUA-15"
+        ]
+      }
     }
   ],
   "founder_decisions": [

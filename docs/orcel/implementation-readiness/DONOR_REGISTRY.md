@@ -50,7 +50,7 @@ A founder authorization reaches only code its grantor owns. Third-party files in
 - Component license: `benchmarks/cua-driver-bench`: FSL-1.1-MIT
 - Component license: `libs/python/som`: AGPL-3.0-or-later
 - Component license: `libs/cua-driver/rust/crates/cua-perception/models (OmniParser icon detector)`: AGPL-3.0-only (third-party model)
-- Strategy (WRAP): Vendor the MIT Cua Driver platform crates at the pin and call their tool implementations in-process from an Orcel-owned private host (macOS, Linux). COPY_ADAPT cua-vmm's Runtime trait and backends for the optional sandbox subsystem. REFERENCE Lume, cua-bench, CUA-S1. REJECT cuabot (upstream marks it unsafe), the Cua MCP/HTTP/daemon surfaces, its CDP browser engine, run_script (QuickJS), Computer History, telemetry, FSL components by architecture (network listeners, separate enrollment and keyvault) even though FD-04 now authorizes their reuse, and the AGPL perception extension.
+- Strategy (WRAP): Vendor the MIT Cua Driver platform crates at the pin and call their tool implementations in-process from an Orcel-owned private host (macOS, Linux). COPY_ADAPT cua-vmm's Runtime trait and backends for the optional sandbox subsystem. REFERENCE Lume, cua-bench, CUA-S1. REJECT cuabot (upstream marks it unsafe), the Cua MCP/HTTP/daemon surfaces, its CDP browser engine, run_script (QuickJS), Computer History, telemetry, FSL components by architecture (network listeners, separate enrollment and keyvault) even though FD-04 now authorizes their reuse, and the AGPL perception extension. Reuse review 2026-10-18: also COPY_ADAPT cua-teleport biometric.rs (STRONG presence), cua-driver-core perception containment (orcel-contain sandbox), cua-keyvault caller/winpeer/macos (peer and code identity), proc_fs.rs and cua-daemon peer section, macOS bundle/entitlements/notarize/codesign scripts, Cua Spaces src-tauri config and capabilities, cua-bench runner and driver-bench taskpack.
 
 ### browser-use/browser-use
 
@@ -68,7 +68,7 @@ A founder authorization reaches only code its grantor owns. Third-party files in
 - Component license: `packages/toolkit`: MIT (package.json)
 - Component license: `packages/core`: MIT (package.json)
 - Component license: `packages/vscode-extension`: LICENSE.md present
-- Strategy (COPY_ADAPT): COPY_ADAPT the AgentKit protocol, validation and headless client (packages/agentkit/src) as the Control Room event contract. PORT the tool-call journal classification (packages/core/src/agent/tool-call-journal.ts) into the kernel journal's resume summary. REFERENCE the agent loop, SQL run store, A2A and Electron desktop app. REJECT AgentNativeComputerHelper.swift as an input engine (foreground-only, frontmost-app only, no capture or window identity).
+- Strategy (COPY_ADAPT): COPY_ADAPT the AgentKit protocol, validation and headless client (packages/agentkit/src) as the Control Room event contract. PORT the tool-call journal classification (packages/core/src/agent/tool-call-journal.ts) into the kernel journal's resume summary. REFERENCE the agent loop, SQL run store, A2A and Electron desktop app. REJECT AgentNativeComputerHelper.swift as an input engine (foreground-only, frontmost-app only, no capture or window identity). Reuse review 2026-10-18: also COPY_ADAPT Toolkit AgentKit React root.tsx, context.tsx, stop-button.tsx, streaming-text.tsx; components.tsx stays REFERENCE.
 
 ### perplexityai/SPACE
 
@@ -106,7 +106,7 @@ A founder authorization reaches only code its grantor owns. Third-party files in
 - Pin: `1b025d7e20a026371cd5f98ba0cdce48892737c8` (tag v1.63.0); earlier Orcel pins `b28411b105a2`
 - Source access: public
 - License evidence: LICENSE; playwright-core 1.63.0 is the admitted SG-000108 dependency
-- Strategy (COPY_ADAPT): WRAP playwright-core 1.63.0 (already admitted). COPY_ADAPT the typed tool backend that ships in the same version (packages/playwright-core/src/tools/backend: snapshot.ts, form.ts, keyboard.ts, mouse.ts, files.ts, tabs.ts, dialogs.ts, wait.ts, verify.ts, tab.ts targetLocators) into the worker's closed frame vocabulary. REJECT evaluate.ts, runCode.ts, cookies.ts, route.ts, network.ts, storage/webstorage, devtools, codegen, cdpRelay and the MCP program.
+- Strategy (COPY_ADAPT): WRAP playwright-core 1.63.0 (already admitted). COPY_ADAPT the typed tool backend that ships in the same version (packages/playwright-core/src/tools/backend: snapshot.ts, form.ts, keyboard.ts, mouse.ts, files.ts, tabs.ts, dialogs.ts, wait.ts, verify.ts, tab.ts targetLocators) into the worker's closed frame vocabulary. REJECT evaluate.ts, runCode.ts, cookies.ts, route.ts, network.ts, storage/webstorage, devtools, codegen, cdpRelay and the MCP program. Reuse review 2026-10-18: PORT the stable-channel install-path table from src/server/registry/index.ts into the host's discovery.
 
 ### microsoft/playwright-mcp
 

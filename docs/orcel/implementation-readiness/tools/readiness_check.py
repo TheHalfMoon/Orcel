@@ -110,6 +110,8 @@ def check_backlog(backlog: dict, rep: Report) -> dict:
             rep.err(f"backlog: duplicate task {t['id']}")
         if t["status"] not in STATUSES:
             rep.err(f"backlog: {t['id']} unknown status {t['status']}")
+        if t.get("method") == "BUILD_NEW" and not t.get("reuse", {}).get("build_new_justification"):
+            rep.err(f"backlog: {t['id']} is BUILD_NEW without reuse.build_new_justification")
         if not t["acceptance"]:
             rep.err(f"backlog: {t['id']} has no acceptance criteria")
         tasks[t["id"]] = t
@@ -228,11 +230,18 @@ def check_donor_paths(donors_dir: Path, donors: dict, matrix: dict, tasks: dict,
             continue
         for path in t["donor_files"]:
             p = strip_note(path)
+            target, target_co = donor_id, co
+            prefix, sep, rest = p.partition(":")
+            if sep and prefix in donors:
+                target, p = prefix, rest
+                target_co, target_head = checkout_for(prefix)
+                if target_co is None or target_head is None:
+                    continue
             if is_checkable(p):
                 try:
-                    git(co, "rev-parse", f"HEAD:{p}")
+                    git(target_co, "rev-parse", f"HEAD:{p}")
                 except subprocess.CalledProcessError:
-                    rep.err(f"backlog: {t['id']} donor path absent in {donor_id}: {p}")
+                    rep.err(f"backlog: {t['id']} donor path absent in {target}: {p}")
 
 
 LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")

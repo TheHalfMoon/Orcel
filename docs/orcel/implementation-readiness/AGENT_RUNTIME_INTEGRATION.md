@@ -75,6 +75,8 @@ Agent-Native ships Electron. Cua ships Tauri, SwiftUI and Electron for the same 
 
 Proposal: **Tauri 2 for one Control Room on all three OSes** (CR-03), WPF kept on Windows until the CR-04 parity gate passes. The UI_UX reversal condition (a) "macOS/Linux becomes a funded near-term product requirement" is met by the founder directive of 2026-10-18 as a founder-directed requirement (funding is not separately recorded); condition (b) "a real reusable frontend" is met by AgentKit's client and selected Toolkit components; condition (c) is still the measured gate. FD-03 asks the founder to confirm the direction. Electron is rejected (bundled Chromium contradicts the no-bundled-browser policy and the 400 MB budget pressure). Cua Spaces' web UI is FSL and tied to its daemon: rejected.
 
+UI starting points (reuse review): Agent-Native Toolkit `root.tsx`, `context.tsx`, `stop-button.tsx`, `streaming-text.tsx` (MIT) and Cua Spaces' Tauri `tauri.conf.json` and `capabilities/` (FSL, FD-04) are copied and adapted; Toolkit `components.tsx` (5,618 lines on assistant-ui, Radix, CodeMirror) stays REFERENCE (REUSE_REVIEW.md).
+
 ### 3.5 macOS helper: REJECT Agent-Native's, adopt Cua's platform crate
 
 Two native input engines on one OS is forbidden by the directive and by Orcel's single-owner rule. Cua `platform-macos` supersedes the Agent-Native helper on every axis that matters for authority: exact window identity, background delivery that does not move the user's cursor, capture with consent state, and an upstream test matrix. The helper's phantom-cursor overlay is a UX idea only; Cua's `cursor-overlay` crate is the equivalent and stays disabled in the host (the Control Room can show an agent-activity indicator instead, required by multi-device indicator rules).

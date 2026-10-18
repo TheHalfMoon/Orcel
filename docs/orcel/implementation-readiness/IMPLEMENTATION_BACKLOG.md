@@ -18,58 +18,58 @@ Gates every task inherits:
 
 ## Summary
 
-| Task | Phase | Status | Title | Depends on | Estimate (days) | Grain |
-|---|---|---|---|---|---|---|
-| [XP-01](#xp-01) | X0 | READY | Secure per-OS state directories; remove the shared-temp fallback | - | 1-2 | SG-000109 |
-| [XP-01B](#xp-01b) | X0 | BLOCKED_ON_DEPENDENCY | Move remaining state stores off the shared-temp fallback | XP-01 | 2-3 | SG-000109 |
-| [XP-02](#xp-02) | X0 | READY | Add macOS to the CI matrix and make the workspace build and test on all three OSes | - | 1-3 | SG-000109 |
-| [XP-03](#xp-03) | X0 | READY | Platform identity primitives: process start generation, user/session identity, IPC peer credentials | XP-01, XP-01B, XP-02 | 2-3 | SG-000109 |
-| [XP-04](#xp-04) | X0 | READY | Private host protocol orcel-computer-host/2 with capability negotiation and platform-neutral identities | XP-02 | 3-4 | SG-000110 |
-| [XP-05](#xp-05) | X1 | READY | Vendor Cua Driver platform crates and create the orcel-native-host workspace (compile-only) | XP-02, FD-01 | 3-5 | SG-000111 |
-| [XP-06](#xp-06) | X1 | BLOCKED_ON_DEPENDENCY | orcel-native-host read-only observation on macOS and Linux | XP-03, XP-04, XP-05 | 5-8 | SG-000111 |
-| [XP-07](#xp-07) | X1 | BLOCKED_ON_DEPENDENCY | Exact-window capture on macOS and Linux | XP-06 | 3-4 | SG-000111 |
-| [XP-08](#xp-08) | X1 | BLOCKED_ON_DEPENDENCY | Cross-platform native conformance fixtures and runners | XP-06 | 4-6 | SG-000111 |
-| [XP-09](#xp-09) | X2 | BLOCKED_ON_DEPENDENCY | Approval broker on macOS: SOFT dialog and STRONG presence | XP-01, XP-02 | 4-6 | SG-000112 |
-| [XP-10](#xp-10) | X2 | BLOCKED_ON_DEPENDENCY | Approval broker on Linux: SOFT dialog and STRONG presence | XP-01 | 4-6 | SG-000112 |
-| [XP-11](#xp-11) | X3 | BLOCKED_ON_DEPENDENCY | Semantic actions on macOS and Linux (invoke, set_value, select, toggle, scroll) | XP-06, XP-08, XP-09, XP-10 | 5-7 | SG-000113 |
-| [XP-12](#xp-12) | X3 | BLOCKED_ON_DEPENDENCY | Bounded raw input on macOS and Linux, background delivery, GNOME/KDE Wayland enablement | XP-11 | 6-9 | SG-000113 |
-| [XP-13](#xp-13) | X4 | BLOCKED_ON_DEPENDENCY | Process provider confinement on Linux and macOS (Safe mode parity) | XP-03 | 6-10 | SG-000114 |
-| [XP-14](#xp-14) | X4 | BLOCKED_ON_DEPENDENCY | Browser host on macOS and Linux: discovery, verification, confinement, supervision | XP-03, SG-000108-CLOSE | 8-12 | SG-000115 |
-| [XP-15](#xp-15) | X0 | BLOCKED_ON_DEPENDENCY | Clipboard provider on macOS and Linux | XP-02 | 1-2 | SG-000114 |
-| [XP-16](#xp-16) | X5 | FOUNDER_DECISION_REQUIRED | macOS packaging: signed app bundles, LaunchAgent, TCC identity | XP-05, FD-05 | 6-9 | SG-000116 |
-| [XP-17](#xp-17) | X5 | BLOCKED_ON_DEPENDENCY | Linux packaging: XDG layout, systemd user unit, deb/rpm/tarball, polkit action | XP-01 | 4-6 | SG-000116 |
-| [XP-18](#xp-18) | X5 | BLOCKED_ON_DEPENDENCY | Pinned Node runtime per OS for the MCP edge and browser worker | XP-16, XP-17, SG-000108-CLOSE | 3-5 | SG-000116 |
-| [XP-19](#xp-19) | X5 | BLOCKED_ON_DEPENDENCY | Per-OS secret storage for device identity and OAuth material | XP-03 | 3-5 | SG-000117 |
-| [XP-20](#xp-20) | X6 | BLOCKED_ON_DEPENDENCY | Windows host bake-off: Go host vs Cua platform-windows inside orcel-native-host | XP-08, XP-12 | 3-4 | - |
-| [CR-01](#cr-01) | X0 | READY | Authenticated local app API transport on three OSes (read-only status and events) | XP-01, XP-01B, XP-03 | 4-6 | SG-000118 |
-| [CR-02](#cr-02) | X1 | BLOCKED_ON_DEPENDENCY | Adopt the AgentKit protocol and headless client for the Control Room event stream | CR-01 | 3-4 | SG-000118 |
-| [CR-03](#cr-03) | X1 | FOUNDER_DECISION_REQUIRED | Tauri 2 Control Room skeleton (read-only) on three OSes | CR-02, FD-03 | 8-12 | SG-000119 |
-| [CR-04](#cr-04) | X6 | BLOCKED_ON_DEPENDENCY | Control Room parity gate and WPF retirement decision | CR-03 | 2-3 | - |
-| [RJ-01](#rj-01) | X2 | BLOCKED_ON_DEPENDENCY | Extract the kernel journal crate from the SG-000108 intent journal (no behavior change) | SG-000108-CLOSE | 2-3 | SG-000120 |
-| [RJ-02](#rj-02) | X3 | BLOCKED_ON_DEPENDENCY | Journal every mutating dispatch and add per-provider reconciliation | RJ-01 | 6-9 | SG-000120 |
-| [RJ-03](#rj-03) | X3 | BLOCKED_ON_DEPENDENCY | Resume summary for external clients after reconnect | RJ-02 | 2-3 | SG-000120 |
-| [BR-01](#br-01) | B1 | BLOCKED_ON_DEPENDENCY | Stale-reference recovery through normalized locators under a host identity check | SG-000108-CLOSE | 2-3 | SG-000121 |
-| [BR-02](#br-02) | B1 | BLOCKED_ON_DEPENDENCY | Typed browser actuation vocabulary from the Playwright tools backend | BR-01 | 5-7 | SG-000121 |
-| [BR-03](#br-03) | B2 | BLOCKED_ON_DEPENDENCY | Uploads through a host-staged, separately approved grant | BR-02 | 3-4 | SG-000122 |
-| [BR-04](#br-04) | B2 | BLOCKED_ON_DEPENDENCY | Interactivity and occlusion heuristics in observation | BR-01 | 3-4 | SG-000121 |
-| [BR-05](#br-05) | B2 | BLOCKED_ON_DEPENDENCY | Tabs, popups and dialogs as typed, host-admitted events | BR-02 | 3-4 | SG-000122 |
-| [BR-06](#br-06) | B3 | BLOCKED_ON_DEPENDENCY | Cross-frame observation (iframes and out-of-process iframes) | BR-01 | 4-5 | SG-000122 |
-| [BR-07](#br-07) | B1 | BLOCKED_ON_DEPENDENCY | Independent postcondition verifier for browser steps | BR-01, RJ-01 | 3-4 | SG-000121 |
-| [BR-08](#br-08) | B3 | FOUNDER_DECISION_REQUIRED | Native WebMCP over the CDP WebMCP domain | BR-02, FD-08 | 4-6 | SG-000123 |
-| [WI-01](#wi-01) | B2 | BLOCKED_ON_DEPENDENCY | Crawl scope from Firecrawl: regex include/exclude, canonical URLs, sitemap depth guard | SG-000108-CLOSE | 3-4 | SG-000102 |
-| [WI-02](#wi-02) | B2 | BLOCKED_ON_DEPENDENCY | Map with a search term: local ranking | WI-01 | 1-2 | SG-000102 |
-| [WI-03](#wi-03) | B2 | BLOCKED_ON_DEPENDENCY | Relevance filters for extraction (BM25 and pruning) | SG-000108-CLOSE | 2-3 | SG-000101 |
-| [WI-04](#wi-04) | B3 | BLOCKED_ON_DEPENDENCY | Change tracking between extractions | WI-01 | 2 | SG-000102 |
-| [WI-05](#wi-05) | B3 | BLOCKED_ON_DEPENDENCY | Confined document parser for downloaded PDF and Office files | XP-13 | 4-6 | SG-000102 |
-| [WI-06](#wi-06) | B3 | BLOCKED_ON_DEPENDENCY | Optional search adapters behind the capability router | XP-19 | 3-4 | SG-000103 |
-| [SX-01](#sx-01) | S1 | BLOCKED_ON_DEPENDENCY | orcel-sandbox crate: Runtime trait and rootless container backend (Linux) | XP-13, RJ-01 | 5-7 | SG-000124 |
-| [SX-02](#sx-02) | S2 | BLOCKED_ON_DEPENDENCY | QEMU backend (KVM, HVF, WHPX) with pinned binaries | SX-01 | 6-8 | SG-000124 |
-| [SX-03](#sx-03) | S2 | BLOCKED_ON_DEPENDENCY | Lume backend on macOS (Apple Virtualization) | SX-01, XP-16 | 4-5 | SG-000124 |
-| [SX-04](#sx-04) | S3 | BLOCKED_ON_DEPENDENCY | Firecracker microVM backend (Linux with /dev/kvm) | SX-01 | 6-8 | SG-000124 |
-| [SX-05](#sx-05) | S3 | BLOCKED_ON_DEPENDENCY | Guest agent for VM sandboxes (process, files, idempotency) | SX-02 | 5-7 | SG-000124 |
-| [SX-06](#sx-06) | S3 | FOUNDER_DECISION_REQUIRED | Sandbox MCP exposure with approvals | SX-01 | 4-6 | SG-000125 |
-| [BM-01](#bm-01) | X0 | READY | Benchmark and conformance reporting format and dashboard file | - | 1 | SG-000109 |
-| [BM-02](#bm-02) | X6 | BLOCKED_ON_DEPENDENCY | Task benchmark runner with local fixtures (cua-bench task format) | BM-01, XP-12, BR-02 | 5-7 | - |
+| Task | Phase | Status | Method | Title | Depends on | Estimate (days) | Grain |
+|---|---|---|---|---|---|---|---|
+| [XP-01](#xp-01) | X0 | READY | BUILD_NEW | Secure per-OS state directories; remove the shared-temp fallback | - | 1-2 | SG-000109 |
+| [XP-01B](#xp-01b) | X0 | BLOCKED_ON_DEPENDENCY | BUILD_NEW | Move remaining state stores off the shared-temp fallback | XP-01 | 2-3 | SG-000109 |
+| [XP-02](#xp-02) | X0 | READY | BUILD_NEW | Add macOS to the CI matrix and make the workspace build and test on all three OSes | - | 1-3 | SG-000109 |
+| [XP-03](#xp-03) | X0 | READY | COPY_ADAPT | Platform identity primitives: process start generation, user/session identity, IPC peer credentials | XP-01, XP-01B, XP-02 | 1-2 | SG-000109 |
+| [XP-04](#xp-04) | X0 | READY | BUILD_NEW | Private host protocol orcel-computer-host/2 with capability negotiation and platform-neutral identities | XP-02 | 3-4 | SG-000110 |
+| [XP-05](#xp-05) | X1 | READY | WRAP | Vendor Cua Driver platform crates and create the orcel-native-host workspace (compile-only) | XP-02, FD-01 | 3-5 | SG-000111 |
+| [XP-06](#xp-06) | X1 | BLOCKED_ON_DEPENDENCY | WRAP | orcel-native-host read-only observation on macOS and Linux | XP-03, XP-04, XP-05 | 5-8 | SG-000111 |
+| [XP-07](#xp-07) | X1 | BLOCKED_ON_DEPENDENCY | WRAP | Exact-window capture on macOS and Linux | XP-06 | 3-4 | SG-000111 |
+| [XP-08](#xp-08) | X1 | BLOCKED_ON_DEPENDENCY | COPY | Cross-platform native conformance fixtures and runners | XP-06 | 4-6 | SG-000111 |
+| [XP-09](#xp-09) | X2 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Approval broker on macOS: SOFT dialog and STRONG presence | XP-01, XP-02 | 2-3 | SG-000112 |
+| [XP-10](#xp-10) | X2 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Approval broker on Linux: SOFT dialog and STRONG presence | XP-01 | 2-3 | SG-000112 |
+| [XP-11](#xp-11) | X3 | BLOCKED_ON_DEPENDENCY | WRAP | Semantic actions on macOS and Linux (invoke, set_value, select, toggle, scroll) | XP-06, XP-08, XP-09, XP-10 | 5-7 | SG-000113 |
+| [XP-12](#xp-12) | X3 | BLOCKED_ON_DEPENDENCY | WRAP | Bounded raw input on macOS and Linux, background delivery, GNOME/KDE Wayland enablement | XP-11 | 6-9 | SG-000113 |
+| [XP-13](#xp-13) | X4 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Process confinement on Linux and macOS: contained tier from Cua, Safe registered-exec parity | XP-03 | 3-5 | SG-000114 |
+| [XP-14](#xp-14) | X4 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Browser host on macOS and Linux: discovery, verification, confinement, supervision | XP-03, SG-000108-CLOSE | 6-9 | SG-000115 |
+| [XP-15](#xp-15) | X0 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Clipboard provider on macOS and Linux | XP-02 | 1-2 | SG-000114 |
+| [XP-16](#xp-16) | X5 | FOUNDER_DECISION_REQUIRED | COPY_ADAPT | macOS packaging: signed app bundles, LaunchAgent, TCC identity | XP-05, FD-05 | 4-6 | SG-000116 |
+| [XP-17](#xp-17) | X5 | BLOCKED_ON_DEPENDENCY | BUILD_NEW | Linux packaging: XDG layout, systemd user unit, deb/rpm/tarball, polkit action | XP-01 | 4-6 | SG-000116 |
+| [XP-18](#xp-18) | X5 | BLOCKED_ON_DEPENDENCY | BUILD_NEW | Pinned Node runtime per OS for the MCP edge and browser worker | XP-16, XP-17, SG-000108-CLOSE | 3-5 | SG-000116 |
+| [XP-19](#xp-19) | X5 | BLOCKED_ON_DEPENDENCY | WRAP | Per-OS secret storage for device identity and OAuth material | XP-03 | 2-3 | SG-000117 |
+| [XP-20](#xp-20) | X6 | BLOCKED_ON_DEPENDENCY | REFERENCE | Windows host bake-off: Go host vs Cua platform-windows inside orcel-native-host | XP-08, XP-12 | 3-4 | - |
+| [CR-01](#cr-01) | X0 | READY | COPY_ADAPT | Authenticated local app API transport on three OSes (read-only status and events) | XP-01, XP-01B, XP-03 | 3-4 | SG-000118 |
+| [CR-02](#cr-02) | X1 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Adopt the AgentKit protocol and headless client for the Control Room event stream | CR-01 | 3-4 | SG-000118 |
+| [CR-03](#cr-03) | X1 | FOUNDER_DECISION_REQUIRED | COPY_ADAPT | Tauri 2 Control Room skeleton (read-only) on three OSes | CR-02, FD-03 | 5-8 | SG-000119 |
+| [CR-04](#cr-04) | X6 | BLOCKED_ON_DEPENDENCY | BUILD_NEW | Control Room parity gate and WPF retirement decision | CR-03 | 2-3 | - |
+| [RJ-01](#rj-01) | X2 | BLOCKED_ON_DEPENDENCY | BUILD_NEW | Extract the kernel journal crate from the SG-000108 intent journal (no behavior change) | SG-000108-CLOSE | 2-3 | SG-000120 |
+| [RJ-02](#rj-02) | X3 | BLOCKED_ON_DEPENDENCY | BUILD_NEW | Journal every mutating dispatch and add per-provider reconciliation | RJ-01 | 6-9 | SG-000120 |
+| [RJ-03](#rj-03) | X3 | BLOCKED_ON_DEPENDENCY | PORT | Resume summary for external clients after reconnect | RJ-02 | 2-3 | SG-000120 |
+| [BR-01](#br-01) | B1 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Stale-reference recovery through normalized locators under a host identity check | SG-000108-CLOSE | 2-3 | SG-000121 |
+| [BR-02](#br-02) | B1 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Typed browser actuation vocabulary from the Playwright tools backend | BR-01 | 5-7 | SG-000121 |
+| [BR-03](#br-03) | B2 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Uploads through a host-staged, separately approved grant | BR-02 | 3-4 | SG-000122 |
+| [BR-04](#br-04) | B2 | BLOCKED_ON_DEPENDENCY | PORT | Interactivity and occlusion heuristics in observation | BR-01 | 3-4 | SG-000121 |
+| [BR-05](#br-05) | B2 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Tabs, popups and dialogs as typed, host-admitted events | BR-02 | 3-4 | SG-000122 |
+| [BR-06](#br-06) | B3 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Cross-frame observation (iframes and out-of-process iframes) | BR-01 | 4-5 | SG-000122 |
+| [BR-07](#br-07) | B1 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Independent postcondition verifier for browser steps | BR-01, RJ-01 | 3-4 | SG-000121 |
+| [BR-08](#br-08) | B3 | FOUNDER_DECISION_REQUIRED | COPY_ADAPT | Native WebMCP over the CDP WebMCP domain | BR-02, FD-08 | 4-6 | SG-000123 |
+| [WI-01](#wi-01) | B2 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Crawl scope from Firecrawl: regex include/exclude, canonical URLs, sitemap depth guard | SG-000108-CLOSE | 3-4 | SG-000102 |
+| [WI-02](#wi-02) | B2 | BLOCKED_ON_DEPENDENCY | PORT | Map with a search term: local ranking | WI-01 | 1-2 | SG-000102 |
+| [WI-03](#wi-03) | B2 | BLOCKED_ON_DEPENDENCY | PORT | Relevance filters for extraction (BM25 and pruning) | SG-000108-CLOSE | 2-3 | SG-000101 |
+| [WI-04](#wi-04) | B3 | BLOCKED_ON_DEPENDENCY | PORT | Change tracking between extractions | WI-01 | 2 | SG-000102 |
+| [WI-05](#wi-05) | B3 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Confined document parser for downloaded PDF and Office files | XP-13 | 2-3 | SG-000102 |
+| [WI-06](#wi-06) | B3 | BLOCKED_ON_DEPENDENCY | PORT | Optional search adapters behind the capability router | XP-19 | 3-4 | SG-000103 |
+| [SX-01](#sx-01) | S1 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | orcel-sandbox crate: Runtime trait and rootless container backend (Linux) | XP-13, RJ-01 | 5-7 | SG-000124 |
+| [SX-02](#sx-02) | S2 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | QEMU backend (KVM, HVF, WHPX) with pinned binaries | SX-01 | 6-8 | SG-000124 |
+| [SX-03](#sx-03) | S2 | BLOCKED_ON_DEPENDENCY | WRAP | Lume backend on macOS (Apple Virtualization) | SX-01, XP-16 | 4-5 | SG-000124 |
+| [SX-04](#sx-04) | S3 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Firecracker microVM backend (Linux with /dev/kvm) | SX-01 | 6-8 | SG-000124 |
+| [SX-05](#sx-05) | S3 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Guest agent for VM sandboxes (process, files, idempotency) | SX-02 | 5-7 | SG-000124 |
+| [SX-06](#sx-06) | S3 | FOUNDER_DECISION_REQUIRED | BUILD_NEW | Sandbox MCP exposure with approvals | SX-01 | 4-6 | SG-000125 |
+| [BM-01](#bm-01) | X0 | READY | BUILD_NEW | Benchmark and conformance reporting format and dashboard file | - | 1 | SG-000109 |
+| [BM-02](#bm-02) | X6 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Task benchmark runner with local fixtures (cua-bench task format) | BM-01, XP-12, BR-02 | 3-4 | - |
 
 ## Founder decisions
 
@@ -123,6 +123,8 @@ Gates every task inherits:
   - Windows ledger path byte-identical to before
 - **Definition of done.** Merged with the common gates; THREAT_MODEL delta recorded in SECURITY_INTEGRATION.md row S-01 marked fixed.
 - **Rollback.** Revert the commit; no persisted format changed.
+- **Reuse review (2026-10-18).** BUILD_NEW → BUILD_NEW; ESTIMATE 1-2 days if built new, 1-2 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
+- **Why not reuse.** Path resolution and permission checks are Orcel's own state contract; Cua's state-dir handling (CUA_DRIVER_RS_HOME, keyvault paths) is product-specific and weaker on ancestor checks. Already implemented in PR #345.
 
 ### XP-01B
 
@@ -155,6 +157,8 @@ Gates every task inherits:
   - policy, orceld and provider-browser tests pass on three OSes
 - **Definition of done.** Merged with common gates; SECURITY_INTEGRATION.md S-01b marked fixed.
 - **Rollback.** Revert.
+- **Reuse review (2026-10-18).** BUILD_NEW → BUILD_NEW; ESTIMATE 2-3 days if built new, 2-3 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
+- **Why not reuse.** Applies XP-01's crate to Orcel's own stores; no donor code applies.
 
 ### XP-02
 
@@ -187,16 +191,18 @@ Gates every task inherits:
   - no test removed; every cfg gate listed in the PR body
 - **Definition of done.** Merged; ruleset update requested from the founder (required check names).
 - **Rollback.** Remove the matrix entry.
+- **Reuse review (2026-10-18).** BUILD_NEW → BUILD_NEW; ESTIMATE 1-3 days if built new, 1-3 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
+- **Why not reuse.** CI matrix configuration of Orcel's own workflow; nothing to reuse. In PR #346.
 
 ### XP-03
 
-**Platform identity primitives: process start generation, user/session identity, IPC peer credentials** · phase X0 · READY · estimate 2-3 days (ESTIMATE) · proposed grain SG-000109
+**Platform identity primitives: process start generation, user/session identity, IPC peer credentials** · phase X0 · READY · estimate 1-2 days (ESTIMATE) · proposed grain SG-000109
 
 - **Objective.** Give the registry and IPC the same identity guarantees on macOS and Linux that Windows has: pid + start generation, current user and session, and authenticated peer of a local socket.
 - **User-visible capability.** None directly.
 - **Existing Orcel implementation.** `crates/orcel-provider-uia/src/lib.rs NativeProcess { start_generation, generation_source, session_verified }`; `crates/orcel-provider-uia/src/native_desktop.rs (Windows creation-time generation)`
-- **Donor.** cua · method BUILD_NEW
-- **Donor files.** `libs/cua-driver/rust/crates/platform-linux/src/proc_fs.rs (REFERENCE)`; `libs/cua-driver/rust/crates/platform-linux/src/x11_client_pid.rs (REFERENCE)`
+- **Donor.** cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f · method COPY_ADAPT
+- **Donor files.** `libs/cua-driver/rust/crates/platform-linux/src/proc_fs.rs (process_instance_id, is_process_live)`; `libs/cua/crates/cua-daemon/src/lib.rs (peer-credential section near line 736: LOCAL_PEERPID / SO_PEERCRED)`
 - **Create.** `crates/orcel-platform/src/process.rs`; `crates/orcel-platform/src/session.rs`; `crates/orcel-platform/src/peer.rs`
 - **Change.** `crates/orcel-platform/src/lib.rs`; `crates/orcel-platform/Cargo.toml`
 - **Dependencies to admit.** libc (MIT/Apache-2.0) for proc_pidinfo, getpeereid, SO_PEERCRED; admitted with SBOM entry
@@ -204,9 +210,9 @@ Gates every task inherits:
 - **Platforms.** windows: Thin wrapper over existing code.; macos: New.; linux: New.
 - **Security and authority.** Pid reuse and peer spoofing are the attacks; both are closed by generation binding and kernel-reported peer credentials. Authority delta: none.
 - **Steps.**
-  1. process::start_generation(pid): Linux = (boot_id from /proc/sys/kernel/random/boot_id, starttime field 22 of /proc/<pid>/stat); macOS = proc_pidinfo(PROC_PIDTBSDINFO) pbi_start_tvsec/usec; Windows delegates to the existing implementation. generation_source strings: 'linux-proc-starttime', 'macos-bsdinfo-start', 'windows-creation-time'.
+  1. process::start_generation(pid): Linux = COPY_ADAPT Cua proc_fs.rs process_instance_id (starttime after the final ')' of /proc/<pid>/stat) combined with /proc/sys/kernel/random/boot_id; macOS = proc_pidinfo(PROC_PIDTBSDINFO) pbi_start_tvsec/usec (new, ~40 lines; Cua has no macOS equivalent); Windows delegates to the existing implementation.
   2. session::current(): uid + login session (Linux: /proc/self/sessionid and XDG_SESSION_ID cross-checked; macOS: audit session id via getaudit_addr); Windows unchanged.
-  3. peer::verify_unix_peer(fd) -> PeerIdentity { uid, pid, start_generation }: SO_PEERCRED on Linux, getpeereid + LOCAL_PEERPID on macOS. Refuse when uid differs from current uid.
+  3. peer::verify_unix_peer: COPY_ADAPT the getsockopt section of Cua cua-daemon lib.rs (LOCAL_PEERPID on macOS, SO_PEERCRED on Linux) plus getpeereid on macOS; refuse when uid differs. CR-01 extends this with code identity.
   4. Unit tests with the current process; reuse-of-pid test spawns a child, records generation, waits, and checks a different generation is reported for a recycled pid when observable.
 - **Tests.**
   - positive: own pid generation stable across calls; peer of a socketpair is the current process
@@ -221,6 +227,7 @@ Gates every task inherits:
   - no unsafe block without a SAFETY comment
 - **Definition of done.** Merged with common gates.
 - **Rollback.** Revert; no callers yet.
+- **Reuse review (2026-10-18).** BUILD_NEW → COPY_ADAPT; ESTIMATE 2-3 days if built new, 1-2 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal. Matrix rows: T-CUA-23, T-CUA-24. Risks: macOS start-time path has no donor and is new code.
 
 ### XP-04
 
@@ -255,6 +262,8 @@ Gates every task inherits:
   - SG-000094/95 native suites green on windows-latest
 - **Definition of done.** Merged; spec linked from CROSS_PLATFORM_ARCHITECTURE.md.
 - **Rollback.** Adapter falls back to /1 automatically; revert Go change.
+- **Reuse review (2026-10-18).** BUILD_NEW → BUILD_NEW; ESTIMATE 3-4 days if built new, 3-4 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
+- **Why not reuse.** Orcel's private protocol is a compatibility contract with the qualified Go host; adopting Cua's MCP or envelope protocol would add a second protocol and a second authority surface. Refusal codes are reused from Cua's action-result contract (REFERENCE).
 
 ### XP-05
 
@@ -294,6 +303,7 @@ Gates every task inherits:
   - CI step proves every unpatched vendored file matches the upstream tree at a802eaf2
 - **Definition of done.** Merged; Graft run on the vendored tree recorded.
 - **Rollback.** Delete apps/orcel-native-host; nothing depends on it.
+- **Reuse review (2026-10-18).** WRAP → WRAP; ESTIMATE 3-5 days if built new, 3-5 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
 
 ### XP-06
 
@@ -332,6 +342,7 @@ Gates every task inherits:
   - identity binding rejects a recycled window
 - **Definition of done.** Merged; capability matrix row 'observe' updated in CROSS_PLATFORM_ARCHITECTURE.md with run ids.
 - **Rollback.** Unset ORCEL_COMPUTER_HOST_BIN on macOS/Linux; NativeAdapter fails closed.
+- **Reuse review (2026-10-18).** WRAP → WRAP; ESTIMATE 5-8 days if built new, 5-8 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
 
 ### XP-07
 
@@ -366,6 +377,7 @@ Gates every task inherits:
   - no minimized window is restored or raised
 - **Definition of done.** Merged with matrix update.
 - **Rollback.** Capability reported unavailable.
+- **Reuse review (2026-10-18).** WRAP → WRAP; ESTIMATE 3-4 days if built new, 3-4 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
 
 ### XP-08
 
@@ -401,26 +413,28 @@ Gates every task inherits:
   - macOS report attached when FD-05 is available
 - **Definition of done.** Merged; BENCHMARK_AND_E2E.md references the report schema.
 - **Rollback.** Disable the workflow.
+- **Reuse review (2026-10-18).** COPY → COPY; ESTIMATE 4-6 days if built new, 4-6 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
 
 ### XP-09
 
-**Approval broker on macOS: SOFT dialog and STRONG presence** · phase X2 · BLOCKED_ON_DEPENDENCY · estimate 4-6 days (ESTIMATE) · proposed grain SG-000112
+**Approval broker on macOS: SOFT dialog and STRONG presence** · phase X2 · BLOCKED_ON_DEPENDENCY · estimate 2-3 days (ESTIMATE) · proposed grain SG-000112
 
 - **Objective.** Give the existing LocalApprovalBroker a macOS presenter and presence verifier so approvals work with the same ledger, digest, nonce, expiry and single-use semantics as Windows.
 - **User-visible capability.** Approval prompts appear on macOS; STRONG approvals ask for Touch ID or the login password.
 - **Existing Orcel implementation.** `crates/orcel-approval/src/lib.rs platform_prompt (cfg(windows) MessageBoxW; cfg(not(windows)) returns 'local approval UI is Windows-only')`; `crates/orcel-approval/src/lib.rs PresenceVerifier trait, WindowsHelloPresenceVerifier, NoPresenceVerifier default off Windows`
-- **Donor.** none · method BUILD_NEW
-- **Create.** `crates/orcel-approval/src/macos.rs`; `apps/orcel-approval-helper-macos/ (signed helper app, Swift or objc2)`
+- **Donor.** cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f · method COPY_ADAPT
+- **Donor files.** `libs/cua/crates/cua-teleport/src/biometric.rs (macOS LocalAuthentication path)`; `libs/cua/crates/cua-keyvault/src/macos.rs (SecCode requirement check for the helper)`
+- **Create.** `crates/orcel-approval/src/presence_unix.rs`; `crates/orcel-approval/src/soft_macos.rs`; `docs/orcel/notices/cua-FSL-1.1-MIT.txt`
 - **Change.** `crates/orcel-approval/src/lib.rs`; `crates/orcel-approval/Cargo.toml`
-- **Dependencies to admit.** objc2 + objc2-local-authentication (MIT/Apache) or a 200-line Swift helper; CoreFoundation for CFUserNotificationDisplayAlert.
+- **Dependencies to admit.** objc2 + LocalAuthentication bindings as used by the donor; security-framework or the donor's raw Security.framework externs; CoreFoundation for CFUserNotification.
 - **Interface.** impl PresenceVerifier for MacLocalAuthPresenceVerifier; platform_prompt(cfg(target_os="macos"))
 - **Platforms.** windows: unchanged; macos: new; linux: XP-10
 - **Security and authority.** Approval UI is OS-owned, not Control Room-owned. The helper is a separate signed binary; its result is accepted only with the current nonce and only from a code-signature-verified child. Authority delta: Approvals become possible on macOS; no new action becomes approvable.
 - **Steps.**
-  1. SOFT: CFUserNotificationDisplayAlert with kCFUserNotificationCautionAlertLevel, default button = Deny, same text body as the Windows prompt (workspace, action, target, summary, digest, nonce prefix).
-  2. STRONG: LAContext evaluatePolicy(.deviceOwnerAuthentication) inside the signed helper; the helper returns a result bound to the request nonce over an inherited pipe; orceld verifies the helper's code signature (team id) before trusting it.
-  3. Fail closed: no GUI session (launchd background, SSH) -> unavailable, never SOFT downgrade of STRONG.
-  4. Document residual same-user spoofing risk as on Windows.
+  1. STRONG: COPY_ADAPT Cua cua-teleport biometric.rs macOS path (LAContext evaluatePolicy LAPolicyDeviceOwnerAuthentication) into crates/orcel-approval/src/presence_unix.rs behind the existing PresenceVerifier trait. Delete the CUA_ENV_ALLOW_UNVERIFIED_SENSITIVE_EXPORT override: no environment variable may bypass STRONG.
+  2. If LocalAuthentication must run in a GUI-capable signed helper, verify the helper with the SecCode requirement check copied from cua-keyvault macos.rs (T-CUA-27) before trusting its answer.
+  3. SOFT: CFUserNotificationDisplayAlert with caution level, default button Deny, the same body text as the Windows prompt. BUILD_NEW (no donor presents an approval-style system modal; Cua's consent modules automate Chrome's own dialog).
+  4. Fail closed with no GUI session (launchd background, SSH): unavailable, never SOFT downgrade of STRONG.
   5. Development builds use an ad-hoc or development-certificate signature checked against a pinned designated requirement in the test config; production Developer ID signing and notarization arrive with XP-16 and replace the pin.
 - **Tests.**
   - positive: scripted SoftDecider path (existing test-support) on macOS; manual: real prompt approve/deny recorded
@@ -435,23 +449,25 @@ Gates every task inherits:
   - #278 regression tests pass on macOS
 - **Definition of done.** Merged; SECURITY_INTEGRATION.md S-03 updated.
 - **Rollback.** Revert to fail-closed unavailable.
+- **Reuse review (2026-10-18).** BUILD_NEW → COPY_ADAPT; ESTIMATE 4-6 days if built new, 2-3 with reuse. Runtime overhead: one LocalAuthentication prompt per STRONG approval (unchanged user cost). Maintenance: Orcel owns the copied FSL file; rebase only on security fixes. Matrix rows: T-CUA-20, T-CUA-27. Risks: donor override variable must be removed and a test must prove no env var bypasses STRONG.
 
 ### XP-10
 
-**Approval broker on Linux: SOFT dialog and STRONG presence** · phase X2 · BLOCKED_ON_DEPENDENCY · estimate 4-6 days (ESTIMATE) · proposed grain SG-000112
+**Approval broker on Linux: SOFT dialog and STRONG presence** · phase X2 · BLOCKED_ON_DEPENDENCY · estimate 2-3 days (ESTIMATE) · proposed grain SG-000112
 
 - **Objective.** Linux presenter and presence verifier with the same ledger semantics.
 - **User-visible capability.** Approval prompts appear on Linux desktops; STRONG uses the system authentication agent (password or fingerprint).
 - **Existing Orcel implementation.** `crates/orcel-approval/src/lib.rs (as XP-09)`
-- **Donor.** none · method BUILD_NEW
+- **Donor.** cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f · method COPY_ADAPT
+- **Donor files.** `libs/cua/crates/cua-teleport/src/biometric.rs (Linux polkit pkcheck auth_self path, POLKIT_ACTION)`
 - **Create.** `crates/orcel-approval/src/linux.rs`; `apps/orcel-approval-helper-linux/ (GTK4 dialog binary)`; `distribution/linux/ai.orcel.approve.policy (polkit action)`
 - **Change.** `crates/orcel-approval/src/lib.rs`
-- **Dependencies to admit.** zbus (MIT) for polkit CheckAuthorization; gtk4-rs (MIT) in the helper only.
+- **Dependencies to admit.** None new for STRONG (pkcheck subprocess); gtk4-rs (MIT) in the SOFT helper only.
 - **Interface.** impl PresenceVerifier for PolkitPresenceVerifier; platform_prompt(cfg(target_os="linux"))
 - **Platforms.** windows: unchanged; macos: XP-09; linux: new (X11 and Wayland sessions)
 - **Security and authority.** polkit auth_self requires credentials each time; agent spoofing by a same-user process is the residual risk, documented. Authority delta: Approvals become possible on Linux.
 - **Steps.**
-  1. STRONG: polkit CheckAuthorization for action ai.orcel.approve.strong with auth_self (never auth_self_keep, never allow_active=yes) and AllowUserInteraction; details carry the digest.
+  1. STRONG: COPY_ADAPT Cua biometric.rs Linux path (pkcheck with the desktop authentication agent, auth_self every time; no polkit, no agent or no installed action is Unavailable) with Orcel's action id ai.orcel.approve.strong; delete the override variable. Prefer the donor's pkcheck subprocess (pinned /usr/bin/pkcheck, verified owner root) over a new zbus client unless measurement shows a problem.
   2. SOFT: broker-spawned GTK4 helper shows the same body; default Deny; returns over an inherited pipe with the nonce.
   3. Headless or no polkit agent -> unavailable.
   4. Development installs the polkit action file with a documented one-line sudo script in tests only; XP-17 packages it.
@@ -467,6 +483,7 @@ Gates every task inherits:
   - ledger tests and #278 regressions pass on Linux
 - **Definition of done.** Merged.
 - **Rollback.** Fail-closed unavailable.
+- **Reuse review (2026-10-18).** BUILD_NEW → COPY_ADAPT; ESTIMATE 4-6 days if built new, 2-3 with reuse. Runtime overhead: one pkcheck subprocess per STRONG approval. Maintenance: none beyond normal. Matrix rows: T-CUA-20. Risks: SOFT GTK4 helper remains new code: no donor ships a Linux approval dialog.
 
 ### XP-11
 
@@ -503,6 +520,7 @@ Gates every task inherits:
   - focus/no-leak oracles green for background rows
 - **Definition of done.** Merged with matrix update.
 - **Rollback.** Capabilities reported refused.
+- **Reuse review (2026-10-18).** WRAP → WRAP; ESTIMATE 5-7 days if built new, 5-7 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
 
 ### XP-12
 
@@ -537,26 +555,28 @@ Gates every task inherits:
   - input cells green on X11, Sway, macOS; GNOME reported when helper installed
 - **Definition of done.** Merged.
 - **Rollback.** Capabilities refused.
+- **Reuse review (2026-10-18).** WRAP → WRAP; ESTIMATE 6-9 days if built new, 6-9 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
 
 ### XP-13
 
-**Process provider confinement on Linux and macOS (Safe mode parity)** · phase X4 · BLOCKED_ON_DEPENDENCY · estimate 6-10 days (ESTIMATE) · proposed grain SG-000114
+**Process confinement on Linux and macOS: contained tier from Cua, Safe registered-exec parity** · phase X4 · BLOCKED_ON_DEPENDENCY · estimate 3-5 days (ESTIMATE) · proposed grain SG-000114
 
 - **Objective.** Registered-executable Safe execution with owned process-tree cleanup and resource bounds on Linux and macOS, matching what Job Objects/AppContainer give on Windows.
 - **User-visible capability.** process_spawn works on macOS and Linux with the same bounds.
 - **Existing Orcel implementation.** `crates/orcel-provider-process/src/lib.rs (Windows JobObject kill-on-close, AppContainer)`
-- **Donor.** space@09e922efd23b3c0d109ab64de7e567a901bcc61e · method BUILD_NEW
-- **Donor files.** `crates/libs/spaced/guest/server/src/process.rs (REFERENCE: process-group termination, admission close)`; `crates/libs/spaced/guest/server/src/cgroup.rs (REFERENCE)`
-- **Create.** `crates/orcel-provider-process/src/unix.rs`; `crates/orcel-provider-process/src/linux_confine.rs`; `crates/orcel-provider-process/src/macos_confine.rs`
+- **Donor.** cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f · method COPY_ADAPT
+- **Donor files.** `libs/cua-driver/rust/crates/cua-driver-core/src/perception_client/containment.rs`; `libs/cua-driver/rust/crates/cua-driver-core/src/perception_client/containment (linux.rs, macos.rs, unix.rs, windows.rs, unsupported.rs)`
+- **Create.** `crates/orcel-contain/Cargo.toml`; `crates/orcel-contain/src/lib.rs`; `crates/orcel-contain/src/linux.rs`; `crates/orcel-contain/src/macos.rs`; `crates/orcel-contain/src/unix.rs`; `crates/orcel-contain/src/windows.rs`; `crates/orcel-provider-process/src/unix.rs`
 - **Change.** `crates/orcel-provider-process/src/lib.rs`; `crates/orcel-provider-process/Cargo.toml`
-- **Dependencies to admit.** landlock (MIT/Apache) and seccompiler (Apache-2.0) on Linux; libc.
+- **Dependencies to admit.** libc; windows-sys features as the donor's windows.rs needs (check against Orcel's windows-sys 0.52 and windows 0.58; admit any new feature).
 - **Interface.** Existing provider API
 - **Platforms.** windows: unchanged; macos: new; linux: new
 - **Security and authority.** No ambient shell; registered executables only. Authority delta: Existing Safe process tool on two more OSes.
 - **Steps.**
-  1. Linux: spawn into a new process group, PR_SET_PDEATHSIG, pidfd for exact wait/kill, cgroup v2 child cgroup when delegated (systemd --user), rlimits, Landlock filesystem allowlist for the workspace, seccomp deny of ptrace/mount/bpf.
-  2. macOS: posix_spawn with POSIX_SPAWN_SETPGROUP, rlimits, kqueue EVFILT_PROC for exit, kill the group on drop; Seatbelt via sandbox_init is DEPRECATED API: use only as defense-in-depth behind a feature flag and record the risk.
-  3. Same Safe registered-executable rules and output bounds; SG-000096 shell semantics are not ported here.
+  1. Create crates/orcel-contain by COPY_ADAPT of Cua's perception containment (MIT): keep the capability-reporting contract (spawn refuses when any advertised boundary cannot be installed), Linux Landlock + seccomp + rlimits + PDEATHSIG + NO_NEW_PRIVS, macOS Seatbelt + rlimits + sentinel, Windows AppContainer + Job Object + private desktop. Replace tokio::process with std::process and the donor error type with Orcel's.
+  2. This 'contained' tier (no network, exact read/write allowlist, no fork) is used for parsers and helpers (WI-05) and as an opt-in policy tier for registered executables.
+  3. Safe registered-executable parity on Linux/macOS (needs fork and sometimes network, so it cannot use the contained tier): process group, PR_SET_PDEATHSIG, pidfd (Linux) or kqueue EVFILT_PROC (macOS), rlimits, cgroup v2 child when delegated; kill the group on drop. This glue is BUILD_NEW but reuses unix.rs helpers from the copied crate.
+  4. Same registered-executable rules and output bounds; SG-000096 shell semantics are not ported here.
 - **Tests.**
   - positive: registered executable runs and output bounded
   - negative: child that forks a grandchild is cleaned up; write outside workspace denied by Landlock
@@ -569,15 +589,17 @@ Gates every task inherits:
   - process provider test suite passes on three OSes
 - **Definition of done.** Merged.
 - **Rollback.** process_spawn reported unavailable on that OS.
+- **Reuse review (2026-10-18).** BUILD_NEW → COPY_ADAPT; ESTIMATE 6-10 (plus 6-9 if WI-05 had to build its own sandbox) days if built new, 3-5 with reuse. Runtime overhead: contained spawn adds Landlock/seccomp or Seatbelt setup per process (ESTIMATE: milliseconds; measure). Maintenance: Orcel owns the copy; security fixes from upstream reviewed per pin bump. Matrix rows: T-CUA-21, T-CUA-22. Risks: macOS sandbox-exec is deprecated by Apple (S-25); seccomp filter is architecture-specific; unsupported arch must be refused, as the donor does.
 
 ### XP-14
 
-**Browser host on macOS and Linux: discovery, verification, confinement, supervision** · phase X4 · BLOCKED_ON_DEPENDENCY · estimate 8-12 days (ESTIMATE) · proposed grain SG-000115
+**Browser host on macOS and Linux: discovery, verification, confinement, supervision** · phase X4 · BLOCKED_ON_DEPENDENCY · estimate 6-9 days (ESTIMATE) · proposed grain SG-000115
 
 - **Objective.** Port SG-000074..79/108 host guarantees to macOS and Linux: find and verify an installed Chrome/Edge, launch it over the pipe with host-built argv, confine its network, supervise and sweep its process tree and profile.
 - **User-visible capability.** Browser tools work on macOS and Linux with the same policies.
 - **Existing Orcel implementation.** `crates/orcel-browser-host/src/discovery.rs (Authenticode on Windows)`; `crates/orcel-browser-host/src/confinement.rs (NO_ROUTE_PROXY http://0.0.0.0:9: 'Windows-only; on Linux it is loopback')`; `crates/orcel-browser-host/src/leftovers.rs, profile.rs, worker_launch.rs (Job Objects, handle-held files)`
-- **Donor.** none · method BUILD_NEW
+- **Donor.** cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f · method COPY_ADAPT
+- **Donor files.** `libs/cua/crates/cua-keyvault/src/macos.rs (SecCode requirement and signing-info bindings)`; `packages/playwright-core/src/server/registry/index.ts at playwright 1b025d7e (stable-channel install paths; PORT of a 20-line table)`
 - **Create.** `crates/orcel-browser-host/src/platform_macos.rs`; `crates/orcel-browser-host/src/platform_linux.rs`; `crates/orcel-browser-host/src/sink.rs`
 - **Change.** `crates/orcel-browser-host/src/discovery.rs`; `crates/orcel-browser-host/src/confinement.rs`; `crates/orcel-browser-host/src/worker_launch.rs`; `crates/orcel-browser-host/src/leftovers.rs`
 - **Dependencies to admit.** security-framework (MIT/Apache) for SecStaticCode on macOS.
@@ -585,7 +607,7 @@ Gates every task inherits:
 - **Platforms.** windows: unchanged; macos: new; linux: new
 - **Security and authority.** See SECURITY_INTEGRATION.md S-06 (no-route proxy) and S-07 (weaker Linux engine verification). Authority delta: Existing browser authority on two more OSes.
 - **Steps.**
-  1. Discovery: macOS /Applications/{Google Chrome,Microsoft Edge}.app; verify with SecStaticCodeCheckValidity against requirement 'anchor apple generic and certificate leaf[subject.OU] = <Google EQHXZ8M8AV | Microsoft UBF8T346G9>'. Linux: /opt/google/chrome/chrome, /opt/microsoft/msedge/msedge; verify owning package via dpkg -S / rpm -qf plus package signature status; record that Linux verification is weaker.
+  1. Discovery: port Playwright 1.63.0 registry stable-channel paths for chrome and msedge on darwin and linux into discovery.rs. Verification: macOS = COPY_ADAPT cua-keyvault macos.rs SecCode bindings and check 'anchor apple generic and certificate leaf[subject.OU] = <Google EQHXZ8M8AV | Microsoft UBF8T346G9>'; Linux = owning package via dpkg -S / rpm -qf plus package signature status (BUILD_NEW, no donor verifies Linux browser binaries); record that Linux verification is weaker.
   2. Replace NO_ROUTE_PROXY on Unix with a host-owned sink: the host binds 127.0.0.1:0, never accepts payload (accept then close), and passes that exact port; this removes the 0.0.0.0-is-loopback hole.
   3. Supervision: process group + pidfd (Linux) / kqueue (macOS) instead of Job Objects; profile files held via O_NOFOLLOW opens.
   4. Network-leak probes (existing native tests) ported to the new OSes.
@@ -601,6 +623,7 @@ Gates every task inherits:
   - SG-000108 native suites green on three OSes
 - **Definition of done.** Merged.
 - **Rollback.** Browser reported unavailable on that OS.
+- **Reuse review (2026-10-18).** BUILD_NEW → COPY_ADAPT; ESTIMATE 8-12 days if built new, 6-9 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal. Matrix rows: T-CUA-27, T-PW-13. Risks: host-owned sink, process supervision and network-leak probes remain Orcel-specific new code.
 
 ### XP-15
 
@@ -631,17 +654,18 @@ Gates every task inherits:
   - clipboard tests on three OSes
 - **Definition of done.** Merged.
 - **Rollback.** unavailable
+- **Reuse review (2026-10-18).** COPY_ADAPT → COPY_ADAPT; ESTIMATE 1-2 days if built new, 1-2 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
 
 ### XP-16
 
-**macOS packaging: signed app bundles, LaunchAgent, TCC identity** · phase X5 · FOUNDER_DECISION_REQUIRED · estimate 6-9 days (ESTIMATE) · proposed grain SG-000116
+**macOS packaging: signed app bundles, LaunchAgent, TCC identity** · phase X5 · FOUNDER_DECISION_REQUIRED · estimate 4-6 days (ESTIMATE) · proposed grain SG-000116
 
 - **Objective.** A per-user macOS install whose native host has a stable code-signature identity for Accessibility and Screen Recording grants, with orceld as a LaunchAgent and the existing lifecycle (install/update/rollback/doctor).
 - **User-visible capability.** Install Orcel on a Mac; grant Accessibility once to 'Orcel Computer Host'.
 - **Existing Orcel implementation.** `crates/orcel-lifecycle/src/layout.rs, install.rs (Windows-only)`; `docs/canonical/P12_INSTALLER_LIFECYCLE_DESIGN.md`
-- **Donor.** cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f · method BUILD_NEW
-- **Donor files.** `libs/cua-driver/docs/driver-permission-modes-and-consent-plan.md (REFERENCE: app-owned TCC identity)`; `libs/cua-driver/scripts (REFERENCE install layout)`
-- **Create.** `crates/orcel-lifecycle/src/macos.rs`; `distribution/macos/OrcelComputerHost.app/Contents/Info.plist`; `distribution/macos/ai.orcel.orceld.plist`; `distribution/macos/entitlements.plist`
+- **Donor.** cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f · method COPY_ADAPT
+- **Donor files.** `libs/cua-driver/rust/scripts/CuaDriverBundle (Info.plist app-bundle skeleton for TCC identity)`; `libs/cua-driver/rust/scripts/CuaDriver.entitlements`; `apps/cua-spaces-macos/scripts/notarize.sh`; `.github/scripts/macos-review-codesign.sh`
+- **Create.** `crates/orcel-lifecycle/src/macos.rs`; `distribution/macos/OrcelComputerHost.app/Contents/Info.plist`; `distribution/macos/ai.orcel.orceld.plist`; `distribution/macos/entitlements.plist`; `scripts/macos/notarize.sh`; `scripts/macos/review-codesign.sh`
 - **Change.** `crates/orcel-lifecycle/src/layout.rs`; `.github/workflows/release.yml`
 - **Dependencies to admit.** Apple Developer ID certificate and notarization (paid Apple membership: FD-05).
 - **Interface.** orcel install/update/rollback/doctor on macOS
@@ -649,10 +673,11 @@ Gates every task inherits:
 - **Security and authority.** No root, no privileged helper in this task. Authority delta: none.
 - **Steps.**
   1. Layout under ~/Library/Application Support/Orcel with versioned payloads like Windows.
-  2. Host binary inside a minimal .app bundle (bundle id ai.orcel.computer-host) so TCC grants attach to a stable signature.
-  3. LaunchAgent for orceld (per-user, no root).
-  4. notarytool in release workflow when FD-05 is approved; unsigned dev builds are labeled and never published.
-  5. Replace XP-09's development signature pin with the Developer ID designated requirement.
+  2. COPY_ADAPT Cua's CuaDriverBundle skeleton and entitlements (rebranded bundle id ai.orcel.computer-host, entitlements reviewed one by one), notarize.sh and macos-review-codesign.sh.
+  3. Host binary inside a minimal .app bundle (bundle id ai.orcel.computer-host) so TCC grants attach to a stable signature.
+  4. LaunchAgent for orceld (per-user, no root).
+  5. notarytool in release workflow when FD-05 is approved; unsigned dev builds are labeled and never published.
+  6. Replace XP-09's development signature pin with the Developer ID designated requirement.
 - **Tests.**
   - positive: install/uninstall in a clean user account
   - negative: tampered bundle refused by doctor
@@ -666,6 +691,7 @@ Gates every task inherits:
   - doctor green
 - **Definition of done.** Merged; release remains a founder decision.
 - **Rollback.** Uninstall.
+- **Reuse review (2026-10-18).** BUILD_NEW → COPY_ADAPT; ESTIMATE 6-9 days if built new, 4-6 with reuse. Runtime overhead: negligible. Maintenance: scripts track Apple notarytool changes. Matrix rows: T-CUA-28, T-CUA-29, T-CUA-30, T-CUA-31. Risks: paid Apple Developer ID still required for distribution (FD-05).
 
 ### XP-17
 
@@ -698,6 +724,8 @@ Gates every task inherits:
   - clean install on two distributions
 - **Definition of done.** Merged.
 - **Rollback.** Uninstall.
+- **Reuse review (2026-10-18).** BUILD_NEW → BUILD_NEW; ESTIMATE 4-6 days if built new, 4-6 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
+- **Why not reuse.** No donor ships per-user Linux packaging without Nix or Electron (Cua uses Nix and electron-builder; Spaces' .deb installs to /opt as root). nfpm config plus a systemd user unit is small.
 
 ### XP-18
 
@@ -728,19 +756,21 @@ Gates every task inherits:
   - edge and worker run with no system Node
 - **Definition of done.** Merged.
 - **Rollback.** System Node prerequisite.
+- **Reuse review (2026-10-18).** BUILD_NEW → BUILD_NEW; ESTIMATE 3-5 days if built new, 3-5 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
+- **Why not reuse.** Extends Orcel's own runtime pin (PR #336, SG-000108). No donor pins a Node runtime tree with held handles.
 
 ### XP-19
 
-**Per-OS secret storage for device identity and OAuth material** · phase X5 · BLOCKED_ON_DEPENDENCY · estimate 3-5 days (ESTIMATE) · proposed grain SG-000117
+**Per-OS secret storage for device identity and OAuth material** · phase X5 · BLOCKED_ON_DEPENDENCY · estimate 2-3 days (ESTIMATE) · proposed grain SG-000117
 
 - **Objective.** Keep device private keys and refresh tokens in DPAPI (Windows), Keychain (macOS) and Secret Service (Linux), never in plain files.
 - **User-visible capability.** Pairing works on macOS and Linux.
 - **Existing Orcel implementation.** `apps/orcel-mcp/src/device_identity.ts`; `apps/orcel-mcp/src/oauth_authorization.ts`
-- **Donor.** cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f · method BUILD_NEW
-- **Donor files.** `libs/cua-driver/rust/crates/platform-linux/Cargo.toml (keyring 4.1.6 usage, REFERENCE)`
+- **Donor.** cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f · method WRAP
+- **Donor files.** `libs/cua/crates/cua-auth/src/lib.rs (REFERENCE: keyring usage across Keychain, Secret Service and Credential Manager)`
 - **Create.** `apps/orcel-mcp/src/secret_store.ts`
 - **Change.** `apps/orcel-mcp/src/device_identity.ts`
-- **Dependencies to admit.** Prefer a small orceld-side Rust module over a native npm addon: keyring (MIT/Apache) crate behind a kernel IPC method.
+- **Dependencies to admit.** keyring crate (MIT/Apache-2.0), the same library Cua uses; admitted with SBOM. On Windows keep DPAPI-backed storage or use keyring's Windows Credential Manager backend after comparison.
 - **Interface.** orceld secret_store get/put by fixed key names
 - **Platforms.** windows: DPAPI; macos: Keychain; linux: Secret Service; unavailable when no keyring daemon
 - **Security and authority.** Removes file-at-rest secrets. Authority delta: none.
@@ -759,6 +789,7 @@ Gates every task inherits:
   - no secret file written by the edge on any OS
 - **Definition of done.** Merged.
 - **Rollback.** Previous storage.
+- **Reuse review (2026-10-18).** BUILD_NEW → WRAP; ESTIMATE 3-5 days if built new, 2-3 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal. Matrix rows: T-CUA-34.
 
 ### XP-20
 
@@ -791,15 +822,18 @@ Gates every task inherits:
   - decision record with raw results attached
 - **Definition of done.** Decision recorded; FD-07 asked.
 - **Rollback.** n/a
+- **Reuse review (2026-10-18).** REFERENCE → REFERENCE; ESTIMATE 3-4 days if built new, 3-4 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
+- **Why not reuse.** Measurement only.
 
 ### CR-01
 
-**Authenticated local app API transport on three OSes (read-only status and events)** · phase X0 · READY · estimate 4-6 days (ESTIMATE) · proposed grain SG-000118
+**Authenticated local app API transport on three OSes (read-only status and events)** · phase X0 · READY · estimate 3-4 days (ESTIMATE) · proposed grain SG-000118
 
 - **Objective.** The F0 next slice, built cross-platform from the start: orceld serves a private per-user IPC endpoint (Windows named pipe with explicit DACL and client PID check; macOS/Linux Unix domain socket in the 0700 state root with peer-credential check) exposing status, capabilities and a bounded event subscription with sequence cursors.
 - **User-visible capability.** The Control Room (and the WPF preview) show real daemon state on every OS.
 - **Existing Orcel implementation.** `docs/orcel/ARCHITECTURE.md 'App API proposal'`; `apps/orcel-desktop-preview (WPF reads CLI JSON today)`
-- **Donor.** none · method BUILD_NEW
+- **Donor.** cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f · method COPY_ADAPT
+- **Donor files.** `libs/cua/crates/cua-keyvault/src/caller.rs (kernel-derived peer identity, three OSes)`; `libs/cua/crates/cua-keyvault/src/winpeer.rs (named-pipe client and Authenticode)`
 - **Create.** `crates/orceld/src/app_api.rs`; `docs/orcel/implementation-readiness/protocol/ORCEL_APP_API_1.md`
 - **Change.** `crates/orceld/src/main.rs`; `crates/orcel-platform/src/peer.rs`
 - **Dependencies to admit.** none (std + existing windows-sys features)
@@ -810,7 +844,7 @@ Gates every task inherits:
   1. Frame: JSON lines, 64 KiB max, versioned 'orcel-app-api/1'.
   2. Methods (read-only): status.get, capabilities.get, devices.list (paginated), events.subscribe {after_seq} -> snapshot when gap, task.get, task.list.
   3. No method can submit or approve anything in this task.
-  4. Peer auth: same uid + peer process start generation recorded per connection.
+  4. Peer auth: COPY_ADAPT cua-keyvault caller.rs and winpeer.rs (FSL, FD-04): macOS audit token -> SecCode -> requirement; Linux SO_PEERCRED with os_verified=false (same-user ptrace) so Linux peers are trusted only as 'same uid'; Windows pipe client pid + Authenticode. Orcel's own trust policy names the first-party signer. Record the peer's start generation per connection.
 - **Tests.**
   - positive: status roundtrip on three OSes; event resubscribe after_seq
   - negative: other-uid peer refused (Linux CI using a second user); frame over 64 KiB refused; unknown method refused
@@ -824,6 +858,7 @@ Gates every task inherits:
   - no listener reachable from another user
 - **Definition of done.** Merged; ARCHITECTURE.md app API section points at the spec.
 - **Rollback.** Endpoint not started.
+- **Reuse review (2026-10-18).** BUILD_NEW → COPY_ADAPT; ESTIMATE 4-6 days if built new, 3-4 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal. Matrix rows: T-CUA-25, T-CUA-26. Risks: Linux peer identity is uid-level only; documented, as the donor does.
 
 ### CR-02
 
@@ -856,16 +891,17 @@ Gates every task inherits:
   - conformance green; no approval mutation path in the bundle (static check)
 - **Definition of done.** Merged with provenance.
 - **Rollback.** Remove the folder.
+- **Reuse review (2026-10-18).** COPY_ADAPT → COPY_ADAPT; ESTIMATE 3-4 days if built new, 3-4 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
 
 ### CR-03
 
-**Tauri 2 Control Room skeleton (read-only) on three OSes** · phase X1 · FOUNDER_DECISION_REQUIRED · estimate 8-12 days (ESTIMATE) · proposed grain SG-000119
+**Tauri 2 Control Room skeleton (read-only) on three OSes** · phase X1 · FOUNDER_DECISION_REQUIRED · estimate 5-8 days (ESTIMATE) · proposed grain SG-000119
 
 - **Objective.** One cross-platform Control Room: status, capabilities, device list, task timeline and stop request, with strict Tauri capabilities, CSP and no shell/fs plugins.
 - **User-visible capability.** The same Orcel window on Windows, macOS and Linux.
 - **Existing Orcel implementation.** `apps/orcel-desktop-preview (WPF, 876 lines incl. tests)`; `docs/orcel/UI_UX_AND_APP_SIZE_BUDGET.md 'Exact reversal conditions'`
-- **Donor.** agent-native@9c277b79cb87eb27da538e572dd710986e2fa06d · method BUILD_NEW
-- **Donor files.** `packages/toolkit (REFERENCE for accessible components; copy individual components only with provenance)`
+- **Donor.** cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f and agent-native@9c277b79cb87eb27da538e572dd710986e2fa06d · method COPY_ADAPT
+- **Donor files.** `apps/cua-spaces/src-tauri/tauri.conf.json (window and CSP scaffolding)`; `apps/cua-spaces/src-tauri/capabilities (per-window capability pattern)`; `agent-native:packages/toolkit/src/app/agentkit/react/root.tsx`; `agent-native:packages/toolkit/src/app/agentkit/react/context.tsx`; `agent-native:packages/toolkit/src/app/agentkit/react/stop-button.tsx`; `agent-native:packages/toolkit/src/app/agentkit/react/streaming-text.tsx`
 - **Create.** `apps/orcel-control-room/src-tauri/**`; `apps/orcel-control-room/src/**`; `apps/orcel-control-room/package.json`
 - **Change.** `.github/workflows/ci.yml`
 - **Dependencies to admit.** tauri 2.x (MIT/Apache), React 18 (MIT); pinned lockfiles; no updater plugin (lifecycle owns updates).
@@ -873,10 +909,11 @@ Gates every task inherits:
 - **Platforms.** windows: WebView2; macos: WKWebView; linux: WebKitGTK 4.1
 - **Security and authority.** CSP default-src 'self'; no remote content; no eval; approvals never rendered as actionable. Authority delta: none.
 - **Steps.**
-  1. Rust side: one Tauri command 'app_api_call' proxying only the CR-01 read-only methods by name allowlist.
-  2. Front end: compact task view, device selector, timeline, capability panel with explicit unavailable reasons, Stop button wired to the existing emergency stop path only when CR-01 exposes it.
-  3. Accessibility: keyboard-only, screen reader names, RTL with Arabic strings, 100/150/200% scaling.
-  4. Measure cold/warm start, working set, installed size per OS against the WPF preview on Windows.
+  1. Start from Cua Spaces' src-tauri scaffolding (FSL, FD-04) for window, capability and CSP structure; tighten the CSP (no 'wasm-unsafe-eval', no ws:/wss:, no remote connect-src) and delete the updater plugin. Start the front end from Agent-Native Toolkit's AgentKit React root, context, stop button and streaming text (MIT); do not take components.tsx (5,618 lines on assistant-ui, Radix, CodeMirror).
+  2. Rust side: one Tauri command 'app_api_call' proxying only the CR-01 read-only methods by name allowlist.
+  3. Front end: compact task view, device selector, timeline, capability panel with explicit unavailable reasons, Stop button wired to the existing emergency stop path only when CR-01 exposes it.
+  4. Accessibility: keyboard-only, screen reader names, RTL with Arabic strings, 100/150/200% scaling.
+  5. Measure cold/warm start, working set, installed size per OS against the WPF preview on Windows.
 - **Tests.**
   - positive: UI tests via WebDriver (tauri-driver) on Linux/Windows; manual checklist macOS
   - negative: navigation to remote URL blocked; unlisted command refused
@@ -890,6 +927,7 @@ Gates every task inherits:
   - keyboard/screen-reader checklist on all three OSes
 - **Definition of done.** Merged; WPF retirement is CR-04.
 - **Rollback.** Keep WPF on Windows.
+- **Reuse review (2026-10-18).** BUILD_NEW → COPY_ADAPT; ESTIMATE 8-12 days if built new, 5-8 with reuse. Runtime overhead: one system WebView per OS (WebView2, WKWebView, WebKitGTK); measured against WPF in CR-04. Maintenance: Tauri major-version upgrades. Matrix rows: T-CUA-32, T-CUA-33, T-AN-06, T-AN-07, T-AN-08, T-AN-09, T-AN-10. Risks: WebKitGTK accessibility must be tested; FD-03 still open.
 
 ### CR-04
 
@@ -920,6 +958,8 @@ Gates every task inherits:
   - decision record with measurements
 - **Definition of done.** Recorded.
 - **Rollback.** n/a
+- **Reuse review (2026-10-18).** BUILD_NEW → BUILD_NEW; ESTIMATE 2-3 days if built new, 2-3 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
+- **Why not reuse.** Measurement and decision record; no code.
 
 ### RJ-01
 
@@ -952,6 +992,8 @@ Gates every task inherits:
   - no behavior change in SG-000108 suites
 - **Definition of done.** Merged.
 - **Rollback.** Revert.
+- **Reuse review (2026-10-18).** BUILD_NEW → BUILD_NEW; ESTIMATE 2-3 days if built new, 2-3 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
+- **Why not reuse.** Extracts Orcel's own qualified intent journal; donor journals (Agent-Native SQL run store, SPACE PostgreSQL operations) are bound to stores Orcel does not run. Semantics are PORTed (RJ-03) where they help.
 
 ### RJ-02
 
@@ -986,6 +1028,8 @@ Gates every task inherits:
   - fault-injection suite: crash at each transition for each provider
 - **Definition of done.** Merged.
 - **Rollback.** Journal writes disabled; behavior as today.
+- **Reuse review (2026-10-18).** BUILD_NEW → BUILD_NEW; ESTIMATE 6-9 days if built new, 6-9 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
+- **Why not reuse.** Per-provider reconciliation probes depend on Orcel's providers and digests; no donor has them. SPACE fencing and unknown-start rules are adopted as rules.
 
 ### RJ-03
 
@@ -1017,6 +1061,7 @@ Gates every task inherits:
   - tool contract tests updated; profile tests pass
 - **Definition of done.** Merged.
 - **Rollback.** Remove tool.
+- **Reuse review (2026-10-18).** PORT → PORT; ESTIMATE 2-3 days if built new, 2-3 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
 
 ### BR-01
 
@@ -1050,6 +1095,7 @@ Gates every task inherits:
   - no new page-script evaluation
 - **Definition of done.** Merged.
 - **Rollback.** Flag off -> ref only.
+- **Reuse review (2026-10-18).** COPY_ADAPT → COPY_ADAPT; ESTIMATE 2-3 days if built new, 2-3 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
 
 ### BR-02
 
@@ -1085,6 +1131,7 @@ Gates every task inherits:
   - tool contract updated through governance
 - **Definition of done.** Merged.
 - **Rollback.** Frames refused by host.
+- **Reuse review (2026-10-18).** COPY_ADAPT → COPY_ADAPT; ESTIMATE 5-7 days if built new, 5-7 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
 
 ### BR-03
 
@@ -1116,6 +1163,7 @@ Gates every task inherits:
   - byte-exact fixture check
 - **Definition of done.** Merged.
 - **Rollback.** Frame refused.
+- **Reuse review (2026-10-18).** COPY_ADAPT → COPY_ADAPT; ESTIMATE 3-4 days if built new, 3-4 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
 
 ### BR-04
 
@@ -1147,6 +1195,7 @@ Gates every task inherits:
   - ported donor cases green
 - **Definition of done.** Merged with MIT notice.
 - **Rollback.** Flags omitted.
+- **Reuse review (2026-10-18).** PORT → PORT; ESTIMATE 3-4 days if built new, 3-4 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
 
 ### BR-05
 
@@ -1178,6 +1227,7 @@ Gates every task inherits:
   - fixtures
 - **Definition of done.** Merged.
 - **Rollback.** Single-tab mode.
+- **Reuse review (2026-10-18).** COPY_ADAPT → COPY_ADAPT; ESTIMATE 3-4 days if built new, 3-4 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
 
 ### BR-06
 
@@ -1209,6 +1259,7 @@ Gates every task inherits:
   - fixtures
 - **Definition of done.** Merged with MIT notice.
 - **Rollback.** Main document only.
+- **Reuse review (2026-10-18).** COPY_ADAPT → COPY_ADAPT; ESTIMATE 4-5 days if built new, 4-5 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
 
 ### BR-07
 
@@ -1239,6 +1290,7 @@ Gates every task inherits:
   - journey results carry evidence references
 - **Definition of done.** Merged.
 - **Rollback.** Unverified status shown.
+- **Reuse review (2026-10-18).** COPY_ADAPT → COPY_ADAPT; ESTIMATE 3-4 days if built new, 3-4 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
 
 ### BR-08
 
@@ -1269,6 +1321,7 @@ Gates every task inherits:
   - argv amendment approved
 - **Definition of done.** Merged.
 - **Rollback.** Declarative path only.
+- **Reuse review (2026-10-18).** COPY_ADAPT → COPY_ADAPT; ESTIMATE 4-6 days if built new, 4-6 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
 
 ### WI-01
 
@@ -1303,6 +1356,7 @@ Gates every task inherits:
   - AGPL notice + founder authorization reference in provenance
 - **Definition of done.** Merged.
 - **Rollback.** pattern_kind regex refused.
+- **Reuse review (2026-10-18).** COPY_ADAPT → COPY_ADAPT; ESTIMATE 3-4 days if built new, 3-4 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
 
 ### WI-02
 
@@ -1333,6 +1387,7 @@ Gates every task inherits:
   - vectors
 - **Definition of done.** Merged.
 - **Rollback.** Field ignored.
+- **Reuse review (2026-10-18).** PORT → PORT; ESTIMATE 1-2 days if built new, 1-2 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
 
 ### WI-03
 
@@ -1364,6 +1419,7 @@ Gates every task inherits:
   - attribution present
 - **Definition of done.** Merged.
 - **Rollback.** Option refused.
+- **Reuse review (2026-10-18).** PORT → PORT; ESTIMATE 2-3 days if built new, 2-3 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
 
 ### WI-04
 
@@ -1394,10 +1450,11 @@ Gates every task inherits:
   - tests
 - **Definition of done.** Merged.
 - **Rollback.** Option refused.
+- **Reuse review (2026-10-18).** PORT → PORT; ESTIMATE 2 days if built new, 2 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
 
 ### WI-05
 
-**Confined document parser for downloaded PDF and Office files** · phase B3 · BLOCKED_ON_DEPENDENCY · estimate 4-6 days (ESTIMATE) · proposed grain SG-000102
+**Confined document parser for downloaded PDF and Office files** · phase B3 · BLOCKED_ON_DEPENDENCY · estimate 2-3 days (ESTIMATE) · proposed grain SG-000102
 
 - **Objective.** Convert an approved, already-downloaded file to Markdown in a separate confined process, never inside the browser or orceld.
 - **User-visible capability.** Summarize the PDF the agent just downloaded.
@@ -1411,7 +1468,7 @@ Gates every task inherits:
 - **Platforms.** all: process confinement per XP-13
 - **Security and authority.** Parser bugs contained in a no-network, no-write process. Authority delta: New local read of an approved file.
 - **Steps.**
-  1. Parser process: stdin file bytes (bounded 50 MiB), stdout Markdown (bounded); no network, Landlock/AppContainer/sandbox profile; 30 s timeout.
+  1. Parser process launched through crates/orcel-contain (XP-13, copied from Cua containment): no network, read only its input file, write only its output pipe, no fork, rlimits; stdin bytes ≤50 MiB, stdout Markdown bounded; 30 s timeout.
   2. Macros and external links never evaluated.
 - **Tests.**
   - positive: fixture PDF/DOCX
@@ -1425,6 +1482,7 @@ Gates every task inherits:
   - fuzz 10 minutes without crash escaping the process
 - **Definition of done.** Merged.
 - **Rollback.** Unavailable.
+- **Reuse review (2026-10-18).** COPY_ADAPT → COPY_ADAPT; ESTIMATE 4-6 days if built new, 2-3 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal. Matrix rows: T-FC-06, T-FC-07, T-CUA-21, T-CUA-22.
 
 ### WI-06
 
@@ -1455,6 +1513,7 @@ Gates every task inherits:
   - doctor reports provider health without secrets
 - **Definition of done.** Merged.
 - **Rollback.** Tool unavailable.
+- **Reuse review (2026-10-18).** PORT → PORT; ESTIMATE 3-4 days if built new, 3-4 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
 
 ### SX-01
 
@@ -1488,6 +1547,7 @@ Gates every task inherits:
   - tests on ubuntu-latest
 - **Definition of done.** Merged.
 - **Rollback.** Crate unused.
+- **Reuse review (2026-10-18).** COPY_ADAPT → COPY_ADAPT; ESTIMATE 5-7 days if built new, 5-7 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
 
 ### SX-02
 
@@ -1519,6 +1579,7 @@ Gates every task inherits:
   - boot on three OS hosts
 - **Definition of done.** Merged.
 - **Rollback.** Unavailable.
+- **Reuse review (2026-10-18).** COPY_ADAPT → COPY_ADAPT; ESTIMATE 6-8 days if built new, 6-8 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
 
 ### SX-03
 
@@ -1549,6 +1610,7 @@ Gates every task inherits:
   - checklist
 - **Definition of done.** Merged.
 - **Rollback.** Unavailable.
+- **Reuse review (2026-10-18).** WRAP → WRAP; ESTIMATE 4-5 days if built new, 4-5 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
 
 ### SX-04
 
@@ -1579,6 +1641,7 @@ Gates every task inherits:
   - checklist
 - **Definition of done.** Merged with Apache-2.0 notice.
 - **Rollback.** Unavailable.
+- **Reuse review (2026-10-18).** COPY_ADAPT → COPY_ADAPT; ESTIMATE 6-8 days if built new, 6-8 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
 
 ### SX-05
 
@@ -1609,6 +1672,7 @@ Gates every task inherits:
   - tests
 - **Definition of done.** Merged.
 - **Rollback.** Unavailable.
+- **Reuse review (2026-10-18).** COPY_ADAPT → COPY_ADAPT; ESTIMATE 5-7 days if built new, 5-7 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
 
 ### SX-06
 
@@ -1638,6 +1702,8 @@ Gates every task inherits:
   - governance
 - **Definition of done.** Merged.
 - **Rollback.** Remove tools.
+- **Reuse review (2026-10-18).** BUILD_NEW → BUILD_NEW; ESTIMATE 4-6 days if built new, 4-6 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
+- **Why not reuse.** Tool-contract and approval-class work in Orcel's governed MCP surface; donor MCP tools would be a second authority.
 
 ### BM-01
 
@@ -1669,16 +1735,18 @@ Gates every task inherits:
   - schema + checker merged
 - **Definition of done.** Merged.
 - **Rollback.** Remove.
+- **Reuse review (2026-10-18).** BUILD_NEW → BUILD_NEW; ESTIMATE 1 days if built new, 1 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
+- **Why not reuse.** A ~1-day schema; Cua's e2e results-summary design is used as REFERENCE for dimensions.
 
 ### BM-02
 
-**Task benchmark runner with local fixtures (cua-bench task format)** · phase X6 · BLOCKED_ON_DEPENDENCY · estimate 5-7 days (ESTIMATE) · proposed grain -
+**Task benchmark runner with local fixtures (cua-bench task format)** · phase X6 · BLOCKED_ON_DEPENDENCY · estimate 3-4 days (ESTIMATE) · proposed grain -
 
 - **Objective.** Run fixed task sets through a deterministic planner or a pinned external client against Orcel, collecting success, steps, model calls, tokens, latency P50/P95 and memory.
 - **User-visible capability.** None; evidence for claims.
 - **Existing Orcel implementation.** `docs/security/SG-000108_TESTERARMY_E2E.md`
-- **Donor.** cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f · method PORT
-- **Donor files.** `libs/cua-bench/cua_bench`; `libs/cua-bench/example_tasks`
+- **Donor.** cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f · method COPY_ADAPT
+- **Donor files.** `libs/cua-bench/cua_bench (MIT; runner, task loader, oracle flow)`; `benchmarks/cua-driver-bench/taskpack (FSL, FD-04; starting task set with per-file provenance)`
 - **Create.** `tests/benchmarks/**`
 - **Change.** none
 - **Dependencies to admit.** Python only in the benchmark harness, not the product.
@@ -1686,7 +1754,9 @@ Gates every task inherits:
 - **Platforms.** all: fixtures per OS
 - **Security and authority.** Disposable sessions. Authority delta: none.
 - **Steps.**
-  1. Task dir = setup + oracle; runner records BENCHMARK_REPORT_1 rows.
+  1. COPY_ADAPT the cua-bench Python runner as test-only tooling (no PORT to another language; Python never ships in the product).
+  2. COPY the cua-driver-bench taskpack with a provenance manifest per task file, then add Orcel-owned tasks per OS.
+  3. Runner records BENCHMARK_REPORT_1 rows; never --on cloud.
 - **Tests.**
   - positive: oracle-only dry run
   - negative: none required
@@ -1699,3 +1769,4 @@ Gates every task inherits:
   - first report for 20 tasks per OS
 - **Definition of done.** Merged.
 - **Rollback.** n/a
+- **Reuse review (2026-10-18).** PORT → COPY_ADAPT; ESTIMATE 5-7 days if built new, 3-4 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal. Matrix rows: T-CUA-13, T-CUA-15.

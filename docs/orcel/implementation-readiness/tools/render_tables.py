@@ -84,10 +84,10 @@ def backlog_md(backlog: dict) -> str:
         f"Status: {backlog['status']}\n\nEstimates: {backlog['estimate_scale']}\n\n"
         "Gates every task inherits:\n\n" + "".join(f"- {g}\n" for g in backlog["common_gates"]) + "\n"
     )
-    out.append("## Summary\n\n| Task | Phase | Status | Title | Depends on | Estimate (days) | Grain |\n|---|---|---|---|---|---|---|\n")
+    out.append("## Summary\n\n| Task | Phase | Status | Method | Title | Depends on | Estimate (days) | Grain |\n|---|---|---|---|---|---|---|---|\n")
     for t in backlog["tasks"]:
         out.append(
-            f"| [{t['id']}](#{t['id'].lower()}) | {t['phase']} | {t['status']} | {cell(t['title'])} | "
+            f"| [{t['id']}](#{t['id'].lower()}) | {t['phase']} | {t['status']} | {t['method']} | {cell(t['title'])} | "
             f"{', '.join(t['depends_on']) or '-'} | {t['estimate']} | {t['proposed_grain']} |\n"
         )
     out.append("\n## Founder decisions\n\n| Id | Status | Question | Blocks | If no answer |\n|---|---|---|---|---|\n")
@@ -120,6 +120,17 @@ def backlog_md(backlog: dict) -> str:
         out.append("- **Depends on.** " + (", ".join(t["depends_on"]) or "nothing") + "\n")
         out.append("- **Acceptance.**\n" + "".join(f"  - {a}\n" for a in t["acceptance"]))
         out.append(f"- **Definition of done.** {t['done']}\n- **Rollback.** {t['rollback']}\n")
+        r = t.get("reuse")
+        if r:
+            out.append(
+                f"- **Reuse review (2026-10-18).** {r['before']} → {r['after']}; ESTIMATE {r['estimate_build_new_days']} days if built new, "
+                f"{r['estimate_with_reuse_days']} with reuse. Runtime overhead: {r['runtime_overhead']}. Maintenance: {r['maintenance']}."
+                + (f" Matrix rows: {', '.join(r['matrix_rows'])}." if r["matrix_rows"] else "")
+                + (f" Risks: {'; '.join(r['risks'])}." if r["risks"] else "")
+                + "\n"
+            )
+            if r.get("build_new_justification"):
+                out.append(f"- **Why not reuse.** {r['build_new_justification']}\n")
     return "".join(out)
 
 
