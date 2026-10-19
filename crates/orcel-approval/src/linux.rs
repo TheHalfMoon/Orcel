@@ -1874,11 +1874,43 @@ mod tests {
     /// all fail closed; only the request's own nonce approves.
     #[cfg(target_os = "linux")]
     mod runner {
-        use super::super::sys::run_helper;
+        use super::super::sys;
         use super::super::*;
         use std::os::unix::fs::PermissionsExt;
         use std::path::PathBuf;
         use std::time::{Duration, Instant};
+
+        /// `sys::run_helper`, retried when exec fails with ETXTBSY: a script
+        /// written moments ago can still be open for writing in a child
+        /// another test thread forked and has not yet exec'd.
+        fn run_helper(
+            path: &std::path::Path,
+            class: ApprovalClass,
+            title: &str,
+            body: &str,
+            dialog_timeout_secs: u64,
+            deadline: Duration,
+            env: Vec<(std::ffi::OsString, std::ffi::OsString)>,
+        ) -> HelperOutcome {
+            for _ in 0..20 {
+                let outcome = sys::run_helper(
+                    path,
+                    class,
+                    title,
+                    body,
+                    dialog_timeout_secs,
+                    deadline,
+                    env.clone(),
+                );
+                match &outcome {
+                    HelperOutcome::NotStarted(error) if error.contains("Text file busy") => {
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
+                    _ => return outcome,
+                }
+            }
+            HelperOutcome::NotStarted(String::from("Text file busy (retries exhausted)"))
+        }
 
         fn script(name: &str, body: &str) -> PathBuf {
             static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -2043,7 +2075,7 @@ mod tests {
         fn xp10_helper_location_is_never_taken_from_path() {
             // A helper on PATH or in the working directory is not found:
             // only the sibling of the test binary and the system path count.
-            match super::super::sys::helper_path() {
+            match sys::helper_path() {
                 Ok(path) => {
                     let exe_dir = std::env::current_exe()
                         .ok()
@@ -2060,7 +2092,7 @@ mod tests {
                     "{error}"
                 ),
             }
-            assert!(super::super::sys::trusted_file(std::path::Path::new("/tmp"), true).is_err());
+            assert!(sys::trusted_file(std::path::Path::new("/tmp"), true).is_err());
         }
     }
 }
