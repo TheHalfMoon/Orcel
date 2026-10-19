@@ -25,8 +25,8 @@ use crate::{
 };
 use orcel_contracts::FailureCode;
 use std::ffi::c_void;
-use windows::core::{Interface, PWSTR};
-use windows::Win32::Foundation::{CloseHandle, BOOL, HANDLE, HWND, LPARAM};
+use windows::core::Interface;
+use windows::Win32::Foundation::{BOOL, HANDLE, HWND, LPARAM};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
@@ -35,13 +35,8 @@ use windows::Win32::System::Com::{
 use windows::Win32::System::Ole::{
     SafeArrayDestroy, SafeArrayGetElement, SafeArrayGetLBound, SafeArrayGetUBound,
 };
-use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
 use windows::Win32::System::StationsAndDesktops::{
     GetProcessWindowStation, GetUserObjectInformationW, UOI_NAME,
-};
-use windows::Win32::System::Threading::{
-    GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
-    PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::Accessibility::{
     CUIAutomation8, IUIAutomation, IUIAutomation2, IUIAutomationElement,
@@ -59,7 +54,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
 const UIA_CONNECTION_TIMEOUT_MS: u32 = 2_000;
 const UIA_TRANSACTION_TIMEOUT_MS: u32 = 5_000;
 const TITLE_BUFFER_CHARS: usize = 512;
-const IMAGE_PATH_CHARS: usize = 1_024;
 
 /// Executables whose windows are never observed: the Orcel product
 /// executables, and the Windows hosts of credential, consent, and logon
@@ -125,11 +119,9 @@ pub(crate) fn require_interactive_station() -> Result<(), UiaError> {
     Ok(())
 }
 
+/// XP-03: the terminal session read lives in orcel-platform.
 fn session_of(pid: u32) -> Option<u32> {
-    let mut session = 0u32;
-    unsafe { ProcessIdToSessionId(pid, &mut session) }
-        .ok()
-        .map(|_| session)
+    orcel_platform::session::session_of_pid(pid).ok()
 }
 
 fn own_session() -> Result<u32, UiaError> {
@@ -233,36 +225,12 @@ pub(crate) fn visible_windows() -> Result<Vec<DesktopWindow>, UiaError> {
 /// is unreadable, so the caller omits the process instead of fabricating it.
 pub(crate) fn process_facts(pid: u32) -> Option<NativeProcess> {
     let session_id = session_of(pid)?;
-    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
-    let mut path = vec![0u16; IMAGE_PATH_CHARS];
-    let mut len = path.len() as u32;
-    let path_ok = unsafe {
-        QueryFullProcessImageNameW(
-            handle,
-            PROCESS_NAME_WIN32,
-            PWSTR(path.as_mut_ptr()),
-            &mut len,
-        )
-    }
-    .is_ok();
-    let mut creation = Default::default();
-    let mut exit = Default::default();
-    let mut kernel = Default::default();
-    let mut user = Default::default();
-    let times_ok =
-        unsafe { GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user) }
-            .is_ok();
-    let _ = unsafe { CloseHandle(handle) };
-    if !path_ok || !times_ok {
-        return None;
-    }
-    let image = String::from_utf16_lossy(&path[..len as usize]);
+    // XP-03: one process handle in orcel-platform reads both facts.
+    let (image, generation) = orcel_platform::process::image_path_and_generation(pid).ok()?;
     let exe_name = image.rsplit(['\\', '/']).next().unwrap_or("").to_owned();
     if exe_name.is_empty() || is_excluded_executable(&exe_name) {
         return None;
     }
-    let start_generation =
-        ((creation.dwHighDateTime as u64) << 32) | (creation.dwLowDateTime as u64);
     Some(NativeProcess {
         pid,
         exe_name,
@@ -272,8 +240,8 @@ pub(crate) fn process_facts(pid: u32) -> Option<NativeProcess> {
         ),
         session_id,
         session_verified: true,
-        start_generation,
-        generation_source: "win32-creation-time",
+        start_generation: generation.generation,
+        generation_source: generation.source,
     })
 }
 

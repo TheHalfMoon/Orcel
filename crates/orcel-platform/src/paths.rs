@@ -78,6 +78,18 @@ pub enum PlatformError {
         kind: std::io::ErrorKind,
         message: String,
     },
+    /// The process does not exist, has exited, or is a zombie waiting to be
+    /// reaped (XP-03).
+    ProcessGone(u32),
+    /// An identity fact (process start time, boot id, session or socket peer
+    /// credentials) could not be read or parsed (XP-03).
+    IdentityUnavailable(String),
+    /// A local socket peer runs as a different user than this process
+    /// (XP-03).
+    PeerRefused {
+        peer_uid: u32,
+        expected_uid: u32,
+    },
 }
 
 impl fmt::Display for PlatformError {
@@ -122,6 +134,17 @@ impl fmt::Display for PlatformError {
                 kind: _,
                 message,
             } => write!(f, "state directory {}: {message}", path.display()),
+            Self::ProcessGone(pid) => write!(f, "process {pid} is not running"),
+            Self::IdentityUnavailable(reason) => {
+                write!(f, "platform identity is unavailable: {reason}")
+            }
+            Self::PeerRefused {
+                peer_uid,
+                expected_uid,
+            } => write!(
+                f,
+                "socket peer runs as uid {peer_uid}, not the current uid {expected_uid}"
+            ),
         }
     }
 }
