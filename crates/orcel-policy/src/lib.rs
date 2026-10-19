@@ -391,13 +391,32 @@ fn validate_process_executable(executable: &str, argv: &[String]) -> Result<(), 
     Ok(())
 }
 
-/// SG-000010 baseline (`whoami.exe`) or, from SG-000060, a locally
-/// registered, hash-pinned executable whose argv matches its grammar.
-#[cfg(windows)]
+/// SG-000010 baseline (`whoami.exe`, Windows only) or, from SG-000060, a
+/// locally registered, hash-pinned executable whose argv matches its
+/// grammar. XP-13b: the registry applies on every OS, now that the Safe tier
+/// runs on Linux and macOS too.
 fn enforce_sg000010_executable_policy(
     executable: &str,
     argv: &[String],
 ) -> Result<(), PolicyError> {
+    #[cfg(windows)]
+    if is_sg000010_baseline(executable)? {
+        return Ok(());
+    }
+    let registry_path = crate::executable_registry::default_registry_path().map_err(|error| {
+        PolicyError::new(
+            FailureCode::ProviderUnavailable,
+            format!("SG-000060 executable registry is unavailable: {error}"),
+        )
+    })?;
+    let entries = crate::executable_registry::load_registry(&registry_path);
+    crate::executable_registry::check_spawn(&entries, Path::new(executable), argv)
+        .map(|_| ())
+        .map_err(|error| PolicyError::new(error.code, error.message))
+}
+
+#[cfg(windows)]
+fn is_sg000010_baseline(executable: &str) -> Result<bool, PolicyError> {
     let requested = std::fs::canonicalize(executable).map_err(|error| {
         PolicyError::new(
             FailureCode::InvalidRequest,
@@ -421,27 +440,7 @@ fn enforce_sg000010_executable_policy(
             format!("SG-000010 whoami.exe fixture could not be resolved: {error}"),
         )
     })?;
-    if requested == allowed {
-        return Ok(());
-    }
-    let registry_path = crate::executable_registry::default_registry_path().map_err(|error| {
-        PolicyError::new(
-            FailureCode::ProviderUnavailable,
-            format!("SG-000060 executable registry is unavailable: {error}"),
-        )
-    })?;
-    let entries = crate::executable_registry::load_registry(&registry_path);
-    crate::executable_registry::check_spawn(&entries, Path::new(executable), argv)
-        .map(|_| ())
-        .map_err(|error| PolicyError::new(error.code, error.message))
-}
-
-#[cfg(not(windows))]
-fn enforce_sg000010_executable_policy(
-    _executable: &str,
-    _argv: &[String],
-) -> Result<(), PolicyError> {
-    Ok(())
+    Ok(requested == allowed)
 }
 
 pub fn validate_relative_target(target: &str) -> Result<(), PolicyError> {
@@ -553,9 +552,35 @@ mod tests {
             .join("whoami.exe")
     }
 
+    /// Off Windows there is no baseline executable, so this test binary is
+    /// registered (grammar: `--version` only) in a private test registry that
+    /// `ORCEL_EXECUTABLE_REGISTRY_PATH` names for the whole test process.
     #[cfg(not(windows))]
     fn process_fixture_executable() -> PathBuf {
-        std::env::current_exe().expect("current executable")
+        static REGISTERED: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+        REGISTERED
+            .get_or_init(|| {
+                use std::os::unix::fs::PermissionsExt;
+                let executable = std::fs::canonicalize(std::env::current_exe().unwrap()).unwrap();
+                let dir = crate::test_support::unique_temp_dir("orcel-policy-registry");
+                std::fs::create_dir_all(&dir).unwrap();
+                std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+                let registry = dir.join("executable_registry.json");
+                let entry = crate::executable_registry::build_entry(
+                    "fixture",
+                    &executable,
+                    vec!["--version".into()],
+                    vec![],
+                    1,
+                    &[],
+                    1,
+                )
+                .unwrap();
+                crate::executable_registry::save_registry(&registry, &[entry]).unwrap();
+                std::env::set_var("ORCEL_EXECUTABLE_REGISTRY_PATH", &registry);
+                executable
+            })
+            .clone()
     }
 
     fn engine(root: &Path) -> PolicyEngine {

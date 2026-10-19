@@ -3823,7 +3823,7 @@ mod contained_launch_tests {
         let pid: u32 = stdout
             .lines()
             .find_map(|line| line.strip_prefix("ORCEL:grandchild="))
-            .unwrap_or_else(|| panic!("no grandchild pid in {stdout}"))
+            .expect("the fixture reports its grandchild's pid")
             .trim()
             .parse()
             .expect("grandchild pid");

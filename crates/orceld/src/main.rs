@@ -601,9 +601,7 @@ fn content(request: &RequestEnvelope) -> Result<&str, ProviderError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(windows)]
     use orcel_approval::test_support::FixedApprovalBroker;
-    #[cfg(windows)]
     use orcel_approval::ApprovalDecision;
     use orcel_approval::{ApprovalError, ApprovalPrompt};
     use serde_json::json;
@@ -660,6 +658,26 @@ mod tests {
                 message: "approval unavailable in test".into(),
             })
         }
+    }
+
+    /// Tests that point `ORCEL_EXECUTABLE_REGISTRY_PATH` at their own
+    /// registry hold this, so they never read each other's.
+    static REGISTRY_ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn registry_env() -> std::sync::MutexGuard<'static, ()> {
+        REGISTRY_ENV
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// A registry file in a private (0700) directory, as the override
+    /// requires off Windows.
+    #[cfg(not(windows))]
+    fn private_registry(label: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_root(label);
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).expect("private registry dir");
+        dir.join("executable_registry.json")
     }
 
     fn temp_root(label: &str) -> PathBuf {
@@ -748,8 +766,20 @@ mod tests {
                 .join("System32")
                 .join("whoami.exe")
         };
+        // Off Windows there is no baseline: register this test binary (it
+        // never runs here, both brokers refuse first).
+        let _registry = registry_env();
         #[cfg(not(windows))]
-        let executable = std::env::current_exe().expect("test executable");
+        let executable = {
+            use orcel_policy::executable_registry::{build_entry, save_registry};
+            let executable =
+                fs::canonicalize(std::env::current_exe().expect("test executable")).expect("canonical");
+            let registry = private_registry("process-approval-registry");
+            let entry = build_entry("fixture", &executable, vec![], vec![], 0, &[], 1).expect("registrable");
+            save_registry(&registry, &[entry]).expect("save registry");
+            std::env::set_var("ORCEL_EXECUTABLE_REGISTRY_PATH", &registry);
+            executable
+        };
         let request = process_request(&workspace, executable);
         policy
             .authorize(&request)
@@ -840,6 +870,7 @@ mod tests {
     #[test]
     fn sg000060_registered_executables_run_contained_and_drift_fails_closed() {
         use orcel_policy::executable_registry::{build_entry, save_registry, RegisteredExecutable};
+        let _registry = registry_env();
         let root = temp_root("process-registry");
         let workspace = Workspace {
             id: "default".into(),
@@ -909,6 +940,83 @@ mod tests {
         assert_eq!(result["job_quiescent"], true);
         assert_eq!(result["network_class"], "NONE");
         let _ = fs::remove_file(&registry);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// XP-13b: SG-000060 on Linux and macOS. The registry is enforced by
+    /// policy and again before launch, and an intact registered executable
+    /// runs through the Unix Safe tier (process group, owned cleanup).
+    #[cfg(unix)]
+    #[test]
+    fn xp13b_registered_executables_run_in_the_safe_tier_off_windows() {
+        use orcel_policy::executable_registry::{build_entry, save_registry, RegisteredExecutable};
+        let _registry = registry_env();
+        let root = temp_root("process-registry-unix");
+        let workspace = Workspace {
+            id: "default".into(),
+            root: fs::canonicalize(&root).expect("canonical workspace"),
+        };
+        let registry = private_registry("process-registry-unix-store");
+        save_registry(&registry, &[]).expect("empty registry");
+        std::env::set_var("ORCEL_EXECUTABLE_REGISTRY_PATH", &registry);
+        let policy = PolicyEngine::new(vec![workspace.clone()]).expect("policy");
+        let hostname = fs::canonicalize("/bin/hostname").expect("hostname");
+        let mut request = process_request(&workspace, hostname.clone());
+        request.request_id = "process-registry-unix-test-request".into();
+
+        // Unregistered: denied by policy before any approval.
+        let error = policy.authorize(&request).expect_err("unregistered executable");
+        assert_eq!(error.code, FailureCode::CapabilityDenied);
+
+        // Registered with an empty grammar: argv must be empty.
+        let entry = build_entry("hostname", &hostname, vec![], vec![], 0, std::slice::from_ref(&workspace.root), 1)
+            .expect("registrable system executable");
+        save_registry(&registry, std::slice::from_ref(&entry)).expect("save registry");
+        policy.authorize(&request).expect("registered executable");
+        let mut with_args = request.clone();
+        with_args.arguments["argv"] = json!(["-f"]);
+        assert_eq!(
+            policy.authorize(&with_args).expect_err("grammar").code,
+            FailureCode::CapabilityDenied
+        );
+        let mut shell = request.clone();
+        shell.arguments["executable"] = json!(fs::canonicalize("/bin/sh").expect("sh"));
+        assert_eq!(
+            policy.authorize(&shell).expect_err("shell").code,
+            FailureCode::CapabilityDenied
+        );
+
+        // Drifted identity: approved, but refused before launch.
+        let drifted = RegisteredExecutable {
+            sha256: "0".repeat(64),
+            ..entry.clone()
+        };
+        save_registry(&registry, &[drifted]).expect("save drifted registry");
+        let stale = dispatch(
+            &policy,
+            &workspace,
+            &FixedApprovalBroker(ApprovalDecision::Approved),
+            &request,
+        )
+        .expect_err("hash drift fails closed before launch");
+        assert_eq!(stale.code, FailureCode::TargetStale);
+
+        // Intact identity: runs through the Unix Safe tier.
+        save_registry(&registry, std::slice::from_ref(&entry)).expect("save registry");
+        let result = dispatch(
+            &policy,
+            &workspace,
+            &FixedApprovalBroker(ApprovalDecision::Approved),
+            &request,
+        )
+        .expect("registered executable runs through the Safe tier");
+        assert_eq!(result["exit_code"], 0);
+        assert!(result["stdout"].as_str().is_some_and(|value| !value.trim().is_empty()));
+        assert_eq!(result["appcontainer_verified"], false);
+        assert_eq!(result["assigned_to_job_before_resume"], true);
+        assert_eq!(result["job_quiescent"], true);
+        assert_eq!(result["network_class"], "NONE");
+        let _ = fs::remove_dir_all(registry.parent().expect("registry dir"));
         let _ = fs::remove_dir_all(root);
     }
 }
