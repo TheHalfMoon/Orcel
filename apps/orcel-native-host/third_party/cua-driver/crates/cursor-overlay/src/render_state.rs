@@ -1686,6 +1686,8 @@ mod session_badge_and_action_tests {
     }
 
     #[test]
+    // Orcel P-05: needs the Inter font, which is not vendored.
+    #[cfg(feature = "upstream-assets")]
     fn minimal_foreground_chip_waits_for_rest_then_fades_within_a_second() {
         let mut core = minimal_core();
         core.apply_command_base(
@@ -1750,6 +1752,8 @@ mod session_badge_and_action_tests {
     }
 
     #[test]
+    // Orcel P-05: needs the Inter font, which is not vendored.
+    #[cfg(feature = "upstream-assets")]
     fn minimal_key_combo_chip_shows_the_combo_and_keeps_foreground() {
         let mut core = minimal_core();
         move_to(&mut core, 300.0, 240.0);
@@ -1782,6 +1786,8 @@ mod session_badge_and_action_tests {
     }
 
     #[test]
+    // Orcel P-05: needs the Inter font, which is not vendored.
+    #[cfg(feature = "upstream-assets")]
     fn minimal_name_shows_on_hover_and_with_peers_but_never_while_moving() {
         let mut core = minimal_core();
         move_to(&mut core, 300.0, 240.0);
@@ -2534,6 +2540,8 @@ mod pointer_anchor_tests {
 /// a few readable spot samples, counts and per-case sums. On the capture
 /// platform it must stay bit-identical; elsewhere, within 1e-12 relative.
 #[cfg(test)]
+// Orcel P-05: tests/fixtures/motion_equivalence.json is not vendored; see PATCHES.md.
+#[cfg(feature = "upstream-assets")]
 mod motion_equivalence_tests {
     use super::*;
     use crate::trajectory::{plan_move, MoveRequest, Pt};

@@ -5,6 +5,9 @@
 //! seed 7, each shipped style and timing mode. Each Rust trajectory must
 //! match the lab within 0.5 pt at every exported sample time.
 
+// Orcel P-05: tests/fixtures/motion_parity.json is not vendored; see PATCHES.md.
+#![cfg(feature = "upstream-assets")]
+
 use cua_cursor_motion::plan::{apply_timing, generate, MoveCtx, Raw};
 use cua_cursor_motion::{plan_move, MotionParams, MotionStyle, MotionTiming, MoveRequest, Pt, Rng};
 use serde_json::Value;

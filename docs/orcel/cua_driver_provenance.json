@@ -153,7 +153,57 @@
       "tree_sha": "e1d281e8266f7fa511ae4bc96acf10df25ce6bc1",
       "destination": "apps/orcel-native-host/third_party/cua-driver/crates/cursor-overlay",
       "files": 25,
-      "patched_files": []
+      "patched_files": [
+        {
+          "path": "Cargo.toml",
+          "upstream_blob_sha": "0b55e9e2b1b999ca4f9e450585611b0643c0a669"
+        },
+        {
+          "path": "src/render_state.rs",
+          "upstream_blob_sha": "482d1867a06b3f3add3cadeb3844d1e3c449f23f"
+        },
+        {
+          "path": "src/session_badge.rs",
+          "upstream_blob_sha": "f66e866ad1c15195d85a77917d27755e3391ddf8"
+        },
+        {
+          "path": "src/theme_artifact.rs",
+          "upstream_blob_sha": "473940efee1cfaa789db7fe024633b5320925a4c"
+        }
+      ],
+      "removed_files": [
+        {
+          "path": "assets/Inter.ttf",
+          "upstream_blob_sha": "047c92f6e2212473dc436020afed689527076d44",
+          "upstream_mode": "100644",
+          "reason": "binary font (876,576 bytes); the exact-diff review refuses binary files"
+        },
+        {
+          "path": "assets/cua.default.cua-theme",
+          "upstream_blob_sha": "0beb13487d3d84d424cec03dea9695a7d004978d",
+          "upstream_mode": "100644",
+          "reason": "binary theme artifact; re-encoded as assets/cua.default.cua-theme.rs"
+        },
+        {
+          "path": "assets/cua.default.lottie",
+          "upstream_blob_sha": "7eb34db807ffdbf3c473fa62d9f9aeae3eab101b",
+          "upstream_mode": "100644",
+          "reason": "binary Lottie source of the theme; test-only reader"
+        },
+        {
+          "path": "tests/fixtures/motion_equivalence.json",
+          "upstream_blob_sha": "2cfe677d0738fe2955d291639397248aec15006e",
+          "upstream_mode": "100644",
+          "reason": "one 705,133-character JSON line; exceeds the exact-diff review slice budget"
+        }
+      ],
+      "added_files": [
+        {
+          "path": "assets/cua.default.cua-theme.rs",
+          "encodes": "assets/cua.default.cua-theme",
+          "format": "rust-byte-array"
+        }
+      ]
     },
     {
       "matrix_id": "T-CUA-06",
@@ -171,7 +221,34 @@
       "tree_sha": "c396291e7882634f4d8ae93b86cdadd887bfe85f",
       "destination": "apps/orcel-native-host/third_party/cua-driver/crates/cua-cursor-motion",
       "files": 20,
-      "patched_files": []
+      "patched_files": [
+        {
+          "path": "Cargo.toml",
+          "upstream_blob_sha": "2b43c7604f1dbe707738f71b3df99510564b0739"
+        },
+        {
+          "path": "tests/golden.rs",
+          "upstream_blob_sha": "010853fccbcc5bd0ccd8ee94c1aeebc24e328b71"
+        },
+        {
+          "path": "tests/motion_parity.rs",
+          "upstream_blob_sha": "adfa6134418ec65d1b00c4efc2184f590cab4e47"
+        }
+      ],
+      "removed_files": [
+        {
+          "path": "fixtures/golden.json",
+          "upstream_blob_sha": "6b0f36a568ff46a3cf5c159757e29fd4b0ca74db",
+          "upstream_mode": "100644",
+          "reason": "one 855,400-character JSON line; exceeds the exact-diff review slice budget"
+        },
+        {
+          "path": "tests/fixtures/motion_parity.json",
+          "upstream_blob_sha": "7121f9e027f5ae97f7bc8064387b02e9ca83bee0",
+          "upstream_mode": "100644",
+          "reason": "one 540,828-character JSON line; exceeds the exact-diff review slice budget"
+        }
+      ]
     },
     {
       "matrix_id": "T-CUA-39",

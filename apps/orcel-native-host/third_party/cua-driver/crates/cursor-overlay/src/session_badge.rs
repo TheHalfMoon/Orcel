@@ -26,7 +26,12 @@ pub const BADGE_CHIP_SIZE: f32 = 18.0;
 pub const BADGE_CHIP_GAP: f32 = 4.0;
 pub const BADGE_CHIP_GROUP_GAP: f32 = 7.0;
 
+#[cfg(feature = "upstream-assets")]
 const FONT_BYTES: &[u8] = include_bytes!("../assets/Inter.ttf");
+// Orcel P-05: Inter.ttf is not vendored. `font()` then returns `None` and
+// `session_badge_layout` draws no badge, which upstream already handles.
+#[cfg(not(feature = "upstream-assets"))]
+const FONT_BYTES: &[u8] = &[];
 const FONT_SIZE: f32 = 11.5;
 const HORIZONTAL_PADDING: f32 = 10.0;
 
@@ -590,6 +595,7 @@ pub fn paint_session_badge(
 }
 
 #[cfg(test)]
+#[cfg(feature = "upstream-assets")]
 mod tests {
     use super::*;
 

@@ -31,7 +31,12 @@ const MAX_PATH_POINTS: usize = 512;
 const MAX_TEXT_BYTES: usize = 200;
 const CANVAS: u32 = 128;
 const FPS: u16 = 30;
+#[cfg(feature = "upstream-assets")]
 const DEFAULT_THEME_BYTES: &[u8] = include_bytes!("../assets/cua.default.cua-theme");
+// Orcel P-05: the same bytes as a reviewable Rust array (the checker proves
+// they hash to the upstream blob).
+#[cfg(not(feature = "upstream-assets"))]
+const DEFAULT_THEME_BYTES: &[u8] = include!("../assets/cua.default.cua-theme.rs");
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum CompiledGeometry {
@@ -922,6 +927,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "upstream-assets")]
     fn embedded_default_was_compiled_from_the_checked_in_lottie() {
         let source = include_bytes!("../assets/cua.default.lottie");
         let expected: [u8; 32] = Sha256::digest(source).into();

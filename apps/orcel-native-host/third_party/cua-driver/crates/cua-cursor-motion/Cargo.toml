@@ -17,6 +17,10 @@ default = []
 # Serialize/Deserialize for the public types (styles accept their motion-lab
 # ids as aliases).
 serde = ["dep:serde"]
+# Orcel P-05: the golden and parity fixtures are not vendored (each is one
+# JSON line too long for exact-diff review). Their tests compile only with
+# this feature, after the files are restored from the pin; see PATCHES.md.
+upstream-assets = []
 
 [dependencies]
 serde = { workspace = true, optional = true }

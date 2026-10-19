@@ -3,6 +3,8 @@
 //! `examples/export_golden.rs` only for an intended motion change.
 
 #![cfg(feature = "serde")]
+// Orcel P-05: fixtures/golden.json is not vendored; see PATCHES.md.
+#![cfg(feature = "upstream-assets")]
 
 #[path = "common/golden_cases.rs"]
 mod golden_cases;

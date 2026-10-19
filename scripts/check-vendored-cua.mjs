@@ -9,10 +9,23 @@
 // blob back for every listed patched file, rebuilds the git tree with
 // `git mktree` and requires it to equal the upstream tree id. A changed,
 // added, removed or re-moded file outside the list therefore fails, and so
-// does a listed file that no longer differs from upstream.
+// does a listed file that no longer differs from upstream. Files P-05 removes
+// go back in as their recorded upstream blobs. A file P-05 adds must decode to
+// the upstream blob it re-encodes.
 //
-// Usage: node scripts/check-vendored-cua.mjs
+// The upstream tree ids come from the provenance file, so the script also
+// requires each one to equal the object of the same donor path in the
+// transplant matrix. With --upstream it also asks the GitHub API for the
+// pinned commit's tree and compares each crate's id with what trycua/cua
+// actually has, which needs no file in this repository to be trusted. A token
+// in GH_TOKEN or GITHUB_TOKEN raises the rate limit.
+//
+// Every vendored file must also be reviewable by the exact-diff gate: text,
+// with no line longer than MAX_REVIEWABLE_LINE.
+//
+// Usage: node scripts/check-vendored-cua.mjs [--upstream]
 // Dependency-free; needs git on PATH. Exits 1 on any mismatch.
+import { Buffer, isUtf8 } from "node:buffer";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -20,8 +33,57 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const provenancePath = join(repoRoot, "docs/orcel/cua_driver_provenance.json");
+const matrixPath = join(repoRoot, "docs/orcel/implementation-readiness/transplant_matrix.json");
+const registryPath = join(repoRoot, "docs/orcel/implementation-readiness/donor_registry.json");
 const vendorRoot = "apps/orcel-native-host/third_party/cua-driver";
 const SHA = /^[0-9a-f]{40}$/;
+// Jev's exact-diff review packs each slice into 10,000 characters, including
+// the file and hunk headers (.github/scripts/jev-exact-diff.mjs); leave room
+// for those.
+export const MAX_REVIEWABLE_LINE = 9000;
+
+/** The bytes of a `&[0x.., ...]` Rust byte-array literal, or null. */
+export function decodeRustByteArray(text) {
+  const body = text.replace(/\/\/[^\n]*/g, "").trim();
+  const match = body.match(/^&\[([\s\S]*)\]$/);
+  if (!match) return null;
+  const tokens = match[1].split(",").map((t) => t.trim()).filter(Boolean);
+  if (!tokens.every((t) => /^0x[0-9a-f]{2}$/.test(t))) return null;
+  return Buffer.from(tokens.map((t) => Number.parseInt(t.slice(2), 16)));
+}
+
+function gitHashObject(bytes) {
+  return execFileSync("git", ["hash-object", "--stdin"], { cwd: repoRoot, input: bytes }).toString().trim();
+}
+
+/** Tree ids of `paths` at `commit` in trycua/cua, read from the GitHub API. */
+async function upstreamTreeIds(commit, paths) {
+  const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+  const get = async (url) => {
+    const response = await fetch(`https://api.github.com/repos/trycua/cua/${url}`, {
+      headers: { accept: "application/vnd.github+json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    });
+    if (!response.ok) throw new Error(`GitHub API ${url}: HTTP ${response.status}`);
+    return response.json();
+  };
+  const cache = new Map();
+  const children = async (tree) => {
+    if (!cache.has(tree)) cache.set(tree, (await get(`git/trees/${tree}`)).tree);
+    return cache.get(tree);
+  };
+  const root = (await get(`git/commits/${commit}`)).tree.sha;
+  const out = new Map();
+  for (const path of paths) {
+    let sha = root;
+    for (const part of path.split("/")) {
+      const entry = (await children(sha)).find((e) => e.path === part && e.type === "tree");
+      sha = entry?.sha;
+      if (!sha) break;
+    }
+    out.set(path, sha ?? "(absent)");
+  }
+  return out;
+}
 // P-02: the cua-driver binary crate, its SDK/daemon and the telemetry client
 // it uses (cua-telemetry over ureq, PostHog ingest) are not vendored, and no
 // HTTP client may enter the host's graph. Cargo.lock lists every package for
@@ -86,9 +148,14 @@ function mktree(files) {
   return git(["mktree", "--missing", "-z"], lines.map((l) => `${l}\0`).join("")).trim();
 }
 
-export function check() {
+export async function check({ upstream = false } = {}) {
   const provenance = JSON.parse(readFileSync(provenancePath, "utf8"));
   const patches = readFileSync(join(repoRoot, vendorRoot, "PATCHES.md"), "utf8");
+  const matrix = new Map(JSON.parse(readFileSync(matrixPath, "utf8")).rows.map((row) => [row.id, row]));
+  const registry = JSON.parse(readFileSync(registryPath, "utf8")).donors.find((d) => d.id === provenance.donor?.id);
+  const upstreamTrees = upstream
+    ? await upstreamTreeIds(provenance.donor.commit, (provenance.crates ?? []).map((c) => c.source))
+    : null;
   const errors = [];
   if (!SHA.test(provenance.donor?.commit ?? "")) errors.push("donor.commit is not a 40-hex id");
 
@@ -114,6 +181,44 @@ export function check() {
         claimed.add(path);
       }
     }
+    // P-05: files upstream has but Orcel does not vendor go back into the
+    // rebuilt tree as their upstream blobs; their absence is the patch.
+    const removed = new Map((crate.removed_files ?? []).map((file) => [file.path, file]));
+    for (const file of removed.values()) {
+      const full = `${prefix}${file.path}`;
+      if (files.has(file.path)) errors.push(`${full}: listed as removed but present`);
+      if (!SHA.test(file.upstream_blob_sha ?? "")) errors.push(`${full}: removed file needs its upstream blob id`);
+      if (!patches.includes(`${crate.name}/${file.path}`)) {
+        errors.push(`${full}: removed but not named in PATCHES.md`);
+      }
+      files.set(file.path, { mode: file.upstream_mode ?? "100644", sha: file.upstream_blob_sha });
+    }
+    // An added file must be an exact re-encoding of a removed upstream file.
+    for (const added of crate.added_files ?? []) {
+      const full = `${prefix}${added.path}`;
+      const source = removed.get(added.encodes);
+      if (!files.has(added.path) || removed.has(added.path)) {
+        errors.push(`${full}: listed as added but absent`);
+        continue;
+      }
+      files.delete(added.path);
+      if (!source) {
+        errors.push(`${full}: encodes ${added.encodes}, which is not a removed upstream file`);
+        continue;
+      }
+      if (added.format !== "rust-byte-array") {
+        errors.push(`${full}: unknown encoding ${added.format}`);
+        continue;
+      }
+      const bytes = decodeRustByteArray(readFileSync(join(repoRoot, full), "utf8"));
+      const blob = bytes && gitHashObject(bytes);
+      if (blob !== source.upstream_blob_sha) {
+        errors.push(`${full}: decodes to blob ${blob ?? "(unparsable)"}, not upstream ${source.upstream_blob_sha}`);
+      }
+      if (!patches.includes(`${crate.name}/${added.path}`)) {
+        errors.push(`${full}: added but not named in PATCHES.md`);
+      }
+    }
     for (const patched of crate.patched_files ?? []) {
       const entry = files.get(patched.path);
       const full = `${prefix}${patched.path}`;
@@ -134,9 +239,38 @@ export function check() {
     if (tree !== crate.tree_sha) {
       errors.push(`${crate.name}: rebuilt tree ${tree} is not upstream ${crate.tree_sha}`);
     }
+    // The recorded upstream id is only as good as its source: it must equal
+    // the reviewed transplant-matrix row for the same donor path.
+    const row = matrix.get(crate.matrix_id);
+    if (!row) errors.push(`${crate.name}: matrix row ${crate.matrix_id} is missing`);
+    else if (row.object !== crate.tree_sha || row.path !== crate.source || row.dest !== crate.destination) {
+      errors.push(`${crate.name}: provenance does not match matrix row ${crate.matrix_id}`);
+    }
+    if (upstreamTrees && upstreamTrees.get(crate.source) !== crate.tree_sha) {
+      errors.push(
+        `${crate.name}: trycua/cua@${provenance.donor.commit} has ${crate.source} as ${upstreamTrees.get(crate.source)}, not ${crate.tree_sha}`,
+      );
+    }
     summary.push(
-      `${crate.name}: ${files.size} files, ${(crate.patched_files ?? []).length} patched, tree ${tree}`,
+      `${crate.name}: ${files.size} files, ${(crate.patched_files ?? []).length} patched, ` +
+        `${removed.size} removed, ${(crate.added_files ?? []).length} added, tree ${tree}`,
     );
+  }
+  if (registry?.commit !== provenance.donor?.commit) {
+    errors.push(`donor_registry.json pins cua at ${registry?.commit}, provenance at ${provenance.donor?.commit}`);
+  }
+  // Every vendored file must pass the exact-diff review gate as text: no
+  // binary content and no line longer than its per-slice budget allows.
+  for (const path of all.keys()) {
+    const bytes = readFileSync(join(repoRoot, path));
+    if (bytes.subarray(0, 8192).includes(0) || !isUtf8(bytes)) {
+      errors.push(`${path}: binary content cannot pass exact-diff review`);
+      continue;
+    }
+    const longest = Math.max(...bytes.toString("utf8").split("\n").map((line) => line.length));
+    if (longest > MAX_REVIEWABLE_LINE) {
+      errors.push(`${path}: a ${longest}-character line exceeds the ${MAX_REVIEWABLE_LINE}-character review limit`);
+    }
   }
   for (const path of all.keys()) {
     if (!claimed.has(path)) errors.push(`${path}: not part of any recorded upstream tree`);
@@ -157,11 +291,15 @@ export function check() {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const { errors, summary } = check();
+  const upstream = process.argv.includes("--upstream");
+  const { errors, summary } = await check({ upstream });
   for (const line of summary) console.log(line);
   if (errors.length) {
     for (const e of errors) console.error(`error: ${e}`);
     process.exit(1);
   }
-  console.log("vendored Cua Driver crates match the upstream pin outside PATCHES.md");
+  console.log(
+    `vendored Cua Driver crates match the upstream pin outside PATCHES.md` +
+      (upstream ? " (tree ids confirmed against trycua/cua on GitHub)" : ""),
+  );
 }

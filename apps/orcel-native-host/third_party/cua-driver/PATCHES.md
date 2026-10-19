@@ -193,10 +193,58 @@ neither.
 
 platform-linux has no counterpart, because no TCC exists there.
 
+## P-05: no file the exact-diff review cannot read
+
+The required Jev check reviews every changed line, in slices of at most
+10,000 characters including the diff headers. It refuses binary files. Six
+upstream files fail one of those limits, so they are not vendored. The
+provenance file records each one (`removed_files`, with its upstream blob id
+and the reason), and `check-vendored-cua.mjs` puts that blob back when it
+rebuilds the upstream tree. The checker now also fails on any vendored file
+that is binary or has a line longer than 9,000 characters, so a future re-pin
+cannot bring one back unnoticed.
+
+Removed:
+- `cua-cursor-motion/fixtures/golden.json` (one 855,400-character line)
+- `cua-cursor-motion/tests/fixtures/motion_parity.json` (540,828)
+- `cursor-overlay/tests/fixtures/motion_equivalence.json` (705,133)
+- `cursor-overlay/assets/cua.default.lottie` (binary, read by one test)
+- `cursor-overlay/assets/Inter.ttf` (binary font, 876,576 bytes)
+- `cursor-overlay/assets/cua.default.cua-theme` (binary, 14,557 bytes)
+
+Added:
+- `cursor-overlay/assets/cua.default.cua-theme.rs`: the same 14,557 bytes as
+  a Rust `&[0x.., ...]` literal, 16 per line. The checker decodes it and
+  requires it to hash to the upstream blob
+  `0beb13487d3d84d424cec03dea9695a7d004978d`, so the theme the overlay embeds is
+  still upstream's byte for byte. cursor-overlay's own theme tests (decoding,
+  id, size, magic) pass against it.
+
+Code that read the removed files: each crate gets an `upstream-assets`
+feature. Every reader is behind it, and the feature is documented as needing
+the files restored from the pin first:
+- `cua-cursor-motion/Cargo.toml`, `cua-cursor-motion/tests/golden.rs`,
+  `cua-cursor-motion/tests/motion_parity.rs`: the two fixture test crates
+  (crate-level `#![cfg]`).
+- `cursor-overlay/Cargo.toml`, `cursor-overlay/src/render_state.rs` (the
+  `motion_equivalence_tests` module and three badge tests that need the
+  font), `cursor-overlay/src/theme_artifact.rs` (the lottie test, and the
+  choice between `include_bytes!` of the binary and `include!` of the array),
+  `cursor-overlay/src/session_badge.rs` (its test module, and the font).
+- Behavior change, only in cursor-overlay without `upstream-assets`:
+  `FONT_BYTES` is empty, so `font()` returns `None` and
+  `session_badge_layout` returns `None`. The session badge is not drawn, a
+  case upstream already handles. The Orcel host never installs the overlay
+  (`cursor_overlay_available = false`, CUA_INTEGRATION.md 2.3), so it never
+  draws a badge either way.
+
+cursor-overlay and cua-cursor-motion tests pass without the feature, and CI
+now runs them.
+
 ## Patched file index
 
 Every vendored file that differs from upstream, as recorded in the
-provenance `patched_files`. `scripts/check-vendored-cua.mjs` requires each one
+provenance `patched_files`, `removed_files` and `added_files`. `scripts/check-vendored-cua.mjs` requires each one
 to be named here.
 
 - `platform-macos/Cargo.toml` (upstream blob `8d429484aa47`)
@@ -222,3 +270,17 @@ to be named here.
 - `cua-driver-core/src/recording_tools.rs` (upstream blob `1c3d8a4a7bc0`)
 - `cua-driver-core/src/server.rs` (upstream blob `7c85f09756a8`)
 - `cua-driver-core/src/tool.rs` (upstream blob `677392578aa0`)
+- `cursor-overlay/Cargo.toml` (upstream blob `0b55e9e2b1b9`)
+- `cursor-overlay/src/render_state.rs` (upstream blob `482d1867a06b`)
+- `cursor-overlay/src/session_badge.rs` (upstream blob `f66e866ad1c1`)
+- `cursor-overlay/src/theme_artifact.rs` (upstream blob `473940efee1c`)
+- `cursor-overlay/assets/Inter.ttf`: removed (upstream blob `047c92f6e221`)
+- `cursor-overlay/assets/cua.default.cua-theme`: removed (upstream blob `0beb13487d3d`)
+- `cursor-overlay/assets/cua.default.lottie`: removed (upstream blob `7eb34db807ff`)
+- `cursor-overlay/tests/fixtures/motion_equivalence.json`: removed (upstream blob `2cfe677d0738`)
+- `cursor-overlay/assets/cua.default.cua-theme.rs`: added, re-encodes `assets/cua.default.cua-theme`
+- `cua-cursor-motion/Cargo.toml` (upstream blob `2b43c7604f1d`)
+- `cua-cursor-motion/tests/golden.rs` (upstream blob `010853fccbcc`)
+- `cua-cursor-motion/tests/motion_parity.rs` (upstream blob `adfa6134418e`)
+- `cua-cursor-motion/fixtures/golden.json`: removed (upstream blob `6b0f36a568ff`)
+- `cua-cursor-motion/tests/fixtures/motion_parity.json`: removed (upstream blob `7121f9e027f5`)

@@ -7,6 +7,12 @@ license.workspace = true
 [features]
 default = []
 theme-authoring = []
+# Orcel P-05: assets/Inter.ttf, assets/cua.default.lottie and
+# tests/fixtures/motion_equivalence.json are not vendored (binary, or one JSON
+# line too long for exact-diff review). This feature restores the code and
+# tests that read them, after the files are restored from the pin; see
+# PATCHES.md. Without it the session badge has no font and is not drawn.
+upstream-assets = []
 
 [dependencies]
 cua-driver-contract = { path = "../cua-driver-contract" }
