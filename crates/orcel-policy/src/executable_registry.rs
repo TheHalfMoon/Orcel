@@ -491,16 +491,7 @@ mod tests {
     use super::*;
 
     fn temp(label: &str) -> PathBuf {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!(
-            "orcel-registry-{label}-{}-{nanos}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+        crate::test_support::unique_temp_dir(&format!("orcel-registry-{label}"))
     }
 
     fn fake_exe(dir: &Path, name: &str, body: &[u8]) -> PathBuf {

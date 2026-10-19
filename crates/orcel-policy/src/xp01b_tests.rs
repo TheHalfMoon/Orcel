@@ -7,7 +7,6 @@
 use crate::{executable_registry, full_control_store, remote_session};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 type Lookup<'a> = &'a dyn Fn(&str) -> Option<OsString>;
 
@@ -52,15 +51,7 @@ fn lookup(vars: Vec<(&'static str, OsString)>) -> impl Fn(&str) -> Option<OsStri
 }
 
 fn sandbox(label: &str) -> PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    let dir = std::env::temp_dir().join(format!(
-        "orcel-policy-xp01b-{label}-{}-{nanos}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&dir).expect("sandbox");
+    let dir = crate::test_support::unique_temp_dir(&format!("orcel-policy-xp01b-{label}"));
     // Independent of the umask, so the ancestor checks see a private base.
     #[cfg(unix)]
     {
