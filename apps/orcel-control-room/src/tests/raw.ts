@@ -16,10 +16,20 @@ export async function exchange(
   let ended = false;
   const timer = setTimeout(() => connection.close(), timeoutMs);
   try {
-    await connection.send(line);
-    for await (const text of connection.lines()) {
-      frames.push(parseServerFrame(text));
-      if (done(frames)) return { frames, ended };
+    // orceld may answer and close before reading all of a refused frame;
+    // the write then fails, but its answer is still readable.
+    await connection.send(line).catch((error: unknown) => {
+      if (!closedByPeer(error)) throw error;
+    });
+    try {
+      for await (const text of connection.lines()) {
+        frames.push(parseServerFrame(text));
+        if (done(frames)) return { frames, ended };
+      }
+    } catch (error) {
+      // A Unix socket closed with unread input resets the connection after
+      // the frames already sent: that is the close, not a failure.
+      if (!closedByPeer(error)) throw error;
     }
     ended = true;
     return { frames, ended };
@@ -27,4 +37,9 @@ export async function exchange(
     clearTimeout(timer);
     connection.close();
   }
+}
+
+function closedByPeer(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return code === "ECONNRESET" || code === "EPIPE";
 }
