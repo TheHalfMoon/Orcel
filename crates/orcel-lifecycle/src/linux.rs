@@ -296,7 +296,10 @@ mod tests {
             .filter_map(|line| line.trim().strip_prefix("mode:"))
             .map(|mode| u32::from_str_radix(mode.trim(), 8).unwrap())
             .collect();
-        assert_eq!(modes, [0o755, 0o755, 0o755, 0o644, 0o644, 0o644, 0o644, 0o644]);
+        assert_eq!(
+            modes,
+            [0o755, 0o755, 0o755, 0o644, 0o644, 0o644, 0o644, 0o644]
+        );
         assert!(modes.iter().all(|mode| mode & 0o7022 == 0));
         let owners: Vec<&str> = NFPM
             .lines()
