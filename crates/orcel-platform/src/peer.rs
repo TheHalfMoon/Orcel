@@ -81,6 +81,22 @@ pub fn require_same_user(
 
 /// The kernel-reported identity of the peer of `stream`, bound to its
 /// process instance.
+///
+/// # `ProcessGone` (#367)
+///
+/// [`PlatformError::ProcessGone`] means only "refuse this connection". It
+/// does not prove that the process exited: on macOS the pid is 0 when the
+/// peer has closed its end (`LOCAL_PEERTOKEN` answers ENOTCONN), even while
+/// the process still runs, and on Linux it also covers a peer whose pidfd no
+/// longer names a live process. A consumer must never clean up, revoke or
+/// record state about a process because of it; pid 0 names no process.
+///
+/// # Sources
+///
+/// Check [`PeerIdentity::source`] before an authority-bearing decision:
+/// `"linux-so-peercred"` (kernels without `SO_PEERPIDFD`) has the pid-reuse
+/// race described in the module docs and must be refused there, or the
+/// exception recorded (#367). CR-01's app API refuses it.
 #[cfg(unix)]
 pub fn unix_peer_credentials(
     stream: &std::os::unix::net::UnixStream,
@@ -91,7 +107,8 @@ pub fn unix_peer_credentials(
 
 /// The identity of the peer of `stream`, refused with
 /// [`PlatformError::PeerRefused`] unless the peer runs as this process's
-/// effective uid.
+/// effective uid. [`PlatformError::ProcessGone`] and the identity source
+/// carry the same caveats as in [`unix_peer_credentials`].
 #[cfg(unix)]
 pub fn verify_unix_peer(
     stream: &std::os::unix::net::UnixStream,
@@ -116,12 +133,22 @@ mod imp {
 
     pub(super) fn peer_credentials(fd: RawFd) -> Result<PeerIdentity, PlatformError> {
         let cred = peer_cred(fd)?;
-        // A kernel with SO_PEERPIDFD never takes the pid-number fallback:
-        // an exited peer must not be replaced by whoever reuses its pid.
-        if pidfd_supported()? {
-            from_pidfd(&cred, &peer_pidfd(fd, &cred)?)
+        identity_for(&cred, pidfd_supported()?, || raw_pidfd(fd))
+    }
+
+    /// The identity of `cred`'s process. A kernel with SO_PEERPIDFD
+    /// (`pidfd_supported`) never takes the pid-number fallback, whatever
+    /// `pidfd` answers: an exited peer must not be replaced by whoever
+    /// reuses its pid.
+    pub(super) fn identity_for(
+        cred: &libc::ucred,
+        pidfd_supported: bool,
+        pidfd: impl FnOnce() -> std::io::Result<OwnedFd>,
+    ) -> Result<PeerIdentity, PlatformError> {
+        if pidfd_supported {
+            from_pidfd(cred, &pidfd().map_err(|error| pidfd_error(error, cred))?)
         } else {
-            from_ucred(&cred)
+            from_ucred(cred)
         }
     }
 
@@ -219,16 +246,16 @@ mod imp {
         Ok(unsafe { OwnedFd::from_raw_fd(pidfd) })
     }
 
-    /// The peer's pidfd on a kernel known to support `SO_PEERPIDFD`.
-    fn peer_pidfd(fd: RawFd, cred: &libc::ucred) -> Result<OwnedFd, PlatformError> {
-        raw_pidfd(fd).map_err(|error| match error.raw_os_error() {
+    /// A `SO_PEERPIDFD` failure on a kernel known to support it.
+    fn pidfd_error(error: std::io::Error, cred: &libc::ucred) -> PlatformError {
+        match error.raw_os_error() {
             // The peer has exited (EINVAL) or been reaped (ESRCH).
             Some(libc::EINVAL) | Some(libc::ESRCH) => match cred_pid(cred) {
                 Ok(pid) => PlatformError::ProcessGone(pid),
                 Err(unavailable) => unavailable,
             },
             _ => PlatformError::IdentityUnavailable(format!("getsockopt(SO_PEERPIDFD): {error}")),
-        })
+        }
     }
 
     /// The pid a pidfd names now, from `/proc/self/fdinfo/<fd>`; `None` once
@@ -239,6 +266,11 @@ mod imp {
         let path = format!("/proc/self/fdinfo/{}", pidfd.as_raw_fd());
         let text = std::fs::read_to_string(&path)
             .map_err(|error| PlatformError::IdentityUnavailable(format!("{path}: {error}")))?;
+        fdinfo_pid(&path, &text)
+    }
+
+    /// The `Pid:` line of a pidfd's fdinfo `text` (read from `path`).
+    pub(super) fn fdinfo_pid(path: &str, text: &str) -> Result<Option<u32>, PlatformError> {
         let pid = text
             .lines()
             .find_map(|line| line.strip_prefix("Pid:"))
@@ -548,6 +580,72 @@ mod tests {
             imp::from_ucred(&hidden),
             Err(PlatformError::IdentityUnavailable(_))
         ));
+    }
+
+    /// #367 item 3: `Pid: 0` (a pid namespace this one cannot see) is
+    /// unavailable, never gone; `Pid: -1` (reaped) is gone.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_fdinfo_pid_zero_is_unavailable_not_gone() {
+        let path = "/proc/self/fdinfo/9";
+        let fdinfo = |pid: &str| {
+            format!(
+                "pos:	0
+flags:	02000002
+Pid:	{pid}
+"
+            )
+        };
+        assert!(matches!(
+            imp::fdinfo_pid(path, &fdinfo("0")),
+            Err(PlatformError::IdentityUnavailable(_))
+        ));
+        assert_eq!(imp::fdinfo_pid(path, &fdinfo("-1")), Ok(None));
+        assert_eq!(imp::fdinfo_pid(path, &fdinfo("4242")), Ok(Some(4242)));
+        assert!(matches!(
+            imp::fdinfo_pid(
+                path, "pos:	0
+"
+            ),
+            Err(PlatformError::IdentityUnavailable(_))
+        ));
+    }
+
+    /// #367 item 3: on a kernel with `SO_PEERPIDFD`, an EINVAL or ESRCH
+    /// answer (the peer exited) is `ProcessGone`, never the `SO_PEERCRED`
+    /// fallback, even though the pid still names a live process here.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_pidfd_failure_on_a_capable_kernel_never_falls_back() {
+        use std::os::fd::AsRawFd;
+        let (left, _right) = std::os::unix::net::UnixStream::pair().unwrap();
+        let cred = imp::peer_cred(left.as_raw_fd()).unwrap();
+        let pid = std::process::id();
+        for errno in [libc::EINVAL, libc::ESRCH] {
+            let injected = imp::identity_for(&cred, true, || {
+                Err(std::io::Error::from_raw_os_error(errno))
+            });
+            assert_eq!(
+                injected,
+                Err(PlatformError::ProcessGone(pid)),
+                "errno {errno}"
+            );
+        }
+        assert!(matches!(
+            imp::identity_for(&cred, true, || Err(std::io::Error::from_raw_os_error(
+                libc::EPERM
+            ))),
+            Err(PlatformError::IdentityUnavailable(_))
+        ));
+        // Only a kernel without the option takes the fallback.
+        assert_eq!(
+            imp::identity_for(&cred, false, || Err(std::io::Error::from_raw_os_error(
+                libc::EINVAL
+            )))
+            .unwrap()
+            .source,
+            "linux-so-peercred"
+        );
     }
 
     #[cfg(unix)]
