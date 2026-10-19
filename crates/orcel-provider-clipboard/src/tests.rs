@@ -131,7 +131,7 @@ fn read(
 /// The Win32 clipboard is process-global state: a test holding a locked
 /// clipboard view while another test empties or replaces clipboard data
 /// corrupts the heap, so native tests must never run concurrently.
-fn native_clipboard_test_lock() -> std::sync::MutexGuard<'static, ()> {
+pub(crate) fn native_clipboard_test_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
     LOCK.get_or_init(|| std::sync::Mutex::new(()))
         .lock()

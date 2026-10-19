@@ -14,6 +14,9 @@
 //!   places its own text and holds it until its stdin closes.
 //!
 //! The driver asserts the scenario succeeded and wrote nothing to stdout.
+//! The other owner's stdout is sent to null and intentionally not
+//! checked: it is a helper standing in for some other application, and
+//! only the observed adapter process carries orceld's protocol.
 //! Without a reachable clipboard it reports why and passes, unless
 //! `ORCEL_REQUIRE_LIVE_CLIPBOARD=1` is set, as CI sets it on macOS and on
 //! Linux under Xvfb. Other platforms report that the test does not apply.

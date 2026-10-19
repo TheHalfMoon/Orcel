@@ -19,14 +19,17 @@ windows = { version = "0.58", features = ["Win32_Foundation", "Win32_System_Data
 # Wayland through the data-control protocols). Image support is off; the
 # provider never moves anything but Unicode text. arboard reports through
 # the `log` facade and never writes to stdout, which carries orceld's
-# JSON protocol. wl-clipboard-rs is named directly only to probe for the
-# data-control protocol before arboard is asked for a Wayland clipboard.
+# JSON protocol. On Linux, reads use wl-clipboard-rs (Wayland) and x11rb
+# (X11) directly with a hard deadline and size cap (libc for poll), and
+# Wayland writes use wl-clipboard-rs; arboard serves X11 writes.
 [target.'cfg(target_os = "macos")'.dependencies]
 arboard = { version = "=3.6.1", default-features = false }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-arboard = { version = "=3.6.1", default-features = false, features = ["wayland-data-control"] }
+arboard = { version = "=3.6.1", default-features = false }
 wl-clipboard-rs = "=0.9.4"
+x11rb = "=0.13.2"
+libc = "0.2"
 
 # XP-15: runs without the libtest harness so the observed process owns
 # its stdout; see the file header.

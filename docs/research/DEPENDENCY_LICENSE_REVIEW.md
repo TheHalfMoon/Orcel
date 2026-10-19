@@ -50,7 +50,7 @@ Observations:
 
 Admitted 2026-10-19 for the XP-15 clipboard provider (`crates/orcel-provider-clipboard`, target-gated to `target_os = "macos"` and `target_os = "linux"`). None of these crates is built for `x86_64-pc-windows-msvc`, so the Windows x64 release, its SBOM and its `THIRD_PARTY_NOTICES.txt` are unchanged (`cargo tree -i arboard --target x86_64-pc-windows-msvc` prints nothing). They become part of the shipped closure when macOS and Linux packages exist; `scripts/generate-sbom.mjs` and `scripts/third-party-notices.mjs` currently target Windows only and must gain those targets then.
 
-`arboard` is pinned at `=3.6.1` (3.7.0 was four days old at admission) with default features off (no `image-data`), plus `wayland-data-control` on Linux. `wl-clipboard-rs` `=0.9.4` is also a direct Linux dependency, used only to probe for the data-control protocol before arboard is asked for a Wayland clipboard. `cargo tree -e normal` on both targets contains no async runtime (no tokio, async-std, smol, or futures executor). Clipboard work runs on the calling thread, plus the X11 selection-server thread and the Wayland copy-serving thread that arboard and wl-clipboard-rs start. No crate spawns a process, and `wl-copy` is never run.
+`arboard` is pinned at `=3.6.1` (3.7.0 was four days old at admission) with default features off (no `image-data`, no `wayland-data-control`). On Linux, arboard serves only X11 writes. Linux reads are bounded by Orcel itself: `x11rb` `=0.13.2` (X11) and `wl-clipboard-rs` `=0.9.4` (Wayland) are direct dependencies, and `libc` provides `poll`. Every read has a 2 s deadline and a 64 KiB cap, so an owner that stalls, never closes its pipe, or sends an endless INCR transfer fails closed. arboard's own Linux reads have no such bound. Wayland writes also go through wl-clipboard-rs, which keeps the data in memory and serves it from a background thread; arboard is never constructed under Wayland. `cargo tree -e normal` on both targets contains no async runtime (no tokio, async-std, smol, or futures executor). Clipboard work runs on the calling thread, plus the X11 selection-server thread and the Wayland copy-serving thread that arboard and wl-clipboard-rs start. No crate spawns a process, and `wl-copy` is never run.
 
 arboard was chosen over clipboard-rs 0.3.5, which the backlog card named, because clipboard-rs prints to stdout with `println!` from its X11 selection-server thread (for example "Somebody else owns the clipboard now" when another client takes the clipboard). orceld speaks JSON on stdout and holds the stdout lock, so that thread would block forever, or would corrupt the stream in a process that does not hold the lock. arboard reports through the `log` facade. Its only direct print is an `eprintln!` to stderr, made when a handle is dropped within 100 ms of a write and stderr is a terminal; the adapter never drops its handle. The `xp15_clipboard_ownership` test fails with clipboard-rs (stdout received "Somebody else owns the clipboard now") and passes with arboard under Xvfb.
 
@@ -58,17 +58,17 @@ Built for Linux (`x86_64-unknown-linux-gnu`, normal edges):
 
 | Crate | Version | License | Purpose in Orcel |
 |---|---|---|---|
-| arboard | 3.6.1 | MIT OR Apache-2.0 | Text get/set over X11 and Wayland (notice: `docs/orcel/notices/arboard-MIT.txt`) |
-| x11rb, x11rb-protocol | 0.13.2 | MIT OR Apache-2.0 | Pure-Rust X11 protocol (CLIPBOARD selection) |
+| arboard | 3.6.1 | MIT OR Apache-2.0 | X11 text writes (selection owner); notice: `docs/orcel/notices/arboard-MIT.txt` |
+| x11rb, x11rb-protocol | 0.13.2 | MIT OR Apache-2.0 | Pure-Rust X11 protocol; direct use for bounded CLIPBOARD reads |
 | gethostname | 1.1.0 | Apache-2.0 | Host name for X11 authentication (x11rb) |
-| wl-clipboard-rs | 0.9.4 | MIT OR Apache-2.0 | In-process Wayland data-control clipboard and the data-control probe |
+| wl-clipboard-rs | 0.9.4 | MIT OR Apache-2.0 | In-process Wayland data-control reads (bounded by Orcel), writes, and the data-control probe |
 | wayland-client, wayland-backend, wayland-protocols, wayland-protocols-wlr, wayland-sys | 0.31.15 / 0.3.17 / 0.32.13 / 0.3.12 / 0.31.11 | MIT | Wayland protocol (pure-Rust backend) |
 | wayland-scanner, quick-xml | 0.31.11 / 0.41.0 | MIT | Protocol code generation (compile time) |
 | tree_magic_mini, petgraph, fixedbitset, nom, indexmap, hashbrown, equivalent, foldhash | 3.2.2 / 0.8.3 / 0.5.7 / 8.0.0 / 2.14.2 / 0.15.5, 0.17.1 / 1.0.3 / 0.1.5 | MIT; MIT OR Apache-2.0; foldhash Zlib | MIME detection inside wl-clipboard-rs and its graph and parser support |
 | parking_lot, parking_lot_core, lock_api, scopeguard | 0.12.5 / 0.9.12 / 0.4.14 / 1.2.0 | MIT OR Apache-2.0 | Locks in arboard's X11 backend |
 | percent-encoding | 2.3.2 | MIT OR Apache-2.0 | URI handling in arboard (file lists; unused by Orcel) |
 | rustix, linux-raw-sys | 1.1.5 / 0.12.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | System calls |
-| os_pipe, libc, log, thiserror, thiserror-impl, smallvec, downcast-rs, bitflags | 1.2.3 / 0.2.189 / 0.4.34 / 2.0.21 / 2.0.21 / 1.16.3 / 1.2.1 / 2.13.2 | MIT; MIT OR Apache-2.0 | Pipes, FFI, logging facade, error derive (thiserror-impl is a compile-time proc macro), containers |
+| os_pipe, libc (direct: `poll` for the bounded pipe reader), log, thiserror, thiserror-impl, smallvec, downcast-rs, bitflags | 1.2.3 / 0.2.189 / 0.4.34 / 2.0.21 / 2.0.21 / 1.16.3 / 1.2.1 / 2.13.2 | MIT; MIT OR Apache-2.0 | Pipes, FFI, logging facade, error derive (thiserror-impl is a compile-time proc macro), containers |
 | cc, find-msvc-tools, shlex, pkg-config | 1.8.0 / 0.1.14 / 2.0.1 / 0.3.34 | MIT OR Apache-2.0 | Build-dependencies of wayland-backend (cc) and wayland-sys (pkg-config); not linked |
 
 Built for macOS (`aarch64-apple-darwin`, normal edges):

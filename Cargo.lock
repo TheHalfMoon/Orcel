@@ -16,7 +16,6 @@ dependencies = [
  "parking_lot",
  "percent-encoding",
  "windows-sys 0.52.0",
- "wl-clipboard-rs",
  "x11rb",
 ]
 
@@ -411,12 +410,14 @@ name = "orcel-provider-clipboard"
 version = "0.2.0"
 dependencies = [
  "arboard",
+ "libc",
  "orcel-contracts",
  "serde",
  "serde_json",
  "sha2",
  "windows 0.58.0",
  "wl-clipboard-rs",
+ "x11rb",
 ]
 
 [[package]]
