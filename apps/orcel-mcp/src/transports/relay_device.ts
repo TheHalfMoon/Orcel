@@ -17,7 +17,8 @@ import {
   runDeviceUplink,
   type UplinkConfig
 } from "../device_uplink.js";
-import { loadDeviceKey, loadRevocations } from "../uplink_state.js";
+import { withKernelSecretStore } from "../secret_store.js";
+import { loadDeviceKey, loadDeviceRecord, loadRevocations } from "../uplink_state.js";
 
 export const RELAY_TRANSPORT_RESERVED = "ORCEL-P15";
 
@@ -82,9 +83,14 @@ function readUplinkFile(path: string): string {
   }
 }
 
-export function startRelayTransport(): void {
+export async function startRelayTransport(): Promise<void> {
   const uplink = parseUplinkFile(readUplinkFile(requiredEnv("ORCEL_UPLINK_CONFIG")));
-  const device = loadDeviceKey(requiredEnv("ORCEL_DEVICE_KEY_PATH"));
+  const deviceKeyPath = requiredEnv("ORCEL_DEVICE_KEY_PATH");
+  loadDeviceRecord(deviceKeyPath);
+  // XP-19: the private key comes from the orceld secret store, once.
+  const device = await withKernelSecretStore(uplink.defaultWorkspace, (secrets) =>
+    loadDeviceKey(deviceKeyPath, secrets)
+  );
   const revocationsPath = requiredEnv("ORCEL_DEVICE_REVOCATIONS_PATH");
   const controller = new AbortController();
   for (const signal of ["SIGINT", "SIGTERM"] as const) {

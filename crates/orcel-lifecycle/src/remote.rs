@@ -9,7 +9,10 @@
 //! The uplink configuration and the device key record live under the Orcel
 //! state directory. Only public fields (route identifiers, device identifier,
 //! epoch) are read here; the private device key is never read, printed, or
-//! logged by the lifecycle CLI.
+//! logged by the lifecycle CLI. Since XP-19 the private key lives in the OS
+//! secret store behind `orceld` (`secret` capability, name
+//! [`DEVICE_KEY_SECRET`]); `orcel remote migrate-secrets` moves a key that an
+//! earlier version left in the record into it.
 
 use crate::config::Config;
 use crate::install::Installer;
@@ -22,6 +25,8 @@ use std::process::Command;
 
 pub const UPLINK_SCHEMA: &str = "orcel-uplink/1";
 pub const MAX_LEASE_MINUTES: u64 = 15;
+/// XP-19 fixed secret name of the device private key in `orceld`.
+pub const DEVICE_KEY_SECRET: &str = "device.key";
 
 pub fn uplink_config_path(layout: &Layout) -> PathBuf {
     layout.state_dir().join("remote").join("uplink.json")
@@ -332,6 +337,9 @@ pub fn run_enrollment(
     )?;
     crate::ipc::expect_ok(&response)?;
     let mut env = crate::ipc::child_environment(&config);
+    // XP-19: the enrollment entrypoint stores the new private key through
+    // this orceld; it never writes the key to a file.
+    env.insert("ORCEL_DAEMON".into(), orceld.to_string_lossy().into_owned());
     env.insert(
         "ORCEL_DEVICE_KEY_PATH".into(),
         device_key_path(layout).to_string_lossy().into_owned(),
