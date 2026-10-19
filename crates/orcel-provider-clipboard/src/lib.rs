@@ -40,10 +40,21 @@
 //! adapter on every platform. These limits are recorded honestly and
 //! must not be read as interactive clipboard evidence beyond what the
 //! tests and the native gating test genuinely prove.
+//!
+//! macOS and Linux reality (XP-15): the native adapter in `unix.rs`
+//! moves Unicode text through arboard (NSPasteboard; X11 or Wayland
+//! data-control) under the same bounds, secret denial, and typed
+//! fail-closed errors. Its sequence is derived from the clipboard text,
+//! and a Wayland session that would need a focused surface reports the
+//! clipboard unavailable instead of spawning helper processes. Other
+//! platforms fail closed as unavailable.
 
 use orcel_contracts::FailureCode;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod unix;
 
 /// Schema label for bounded clipboard-read results and evidence.
 pub const CLIPBOARD_SCHEMA: &str = "orcel-clipboard-read-v1";
@@ -448,8 +459,10 @@ pub fn write_bounded_text(
 /// the Win32 clipboard APIs. A locked, empty, non-text, oversized,
 /// unwritable, or otherwise unreadable clipboard fails closed with a
 /// typed error instead of fabricated content. Placement synthesizes no
-/// input, keystrokes, paste, or focus changes. Outside Windows every call
-/// fails closed as unavailable.
+/// input, keystrokes, paste, or focus changes. On macOS and Linux it
+/// delegates to the arboard adapter in `unix.rs` with the same
+/// contract. On every other platform each call fails closed as
+/// unavailable.
 pub struct NativeAdapter;
 
 impl NativeAdapter {
@@ -486,11 +499,16 @@ fn native_sequence_number() -> Result<u64, ClipboardError> {
     Ok(sequence as u64)
 }
 
-#[cfg(not(windows))]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn native_sequence_number() -> Result<u64, ClipboardError> {
+    unix::sequence_number()
+}
+
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 fn native_sequence_number() -> Result<u64, ClipboardError> {
     Err(ClipboardError::new(
         FailureCode::ProviderUnavailable,
-        "clipboard sequence state requires Windows clipboard APIs and is unavailable in this context",
+        "clipboard sequence state requires a supported desktop clipboard and is unavailable in this context",
     ))
 }
 
@@ -574,11 +592,16 @@ fn native_read_unicode_text() -> Result<String, ClipboardError> {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn native_read_unicode_text() -> Result<String, ClipboardError> {
+    unix::read_unicode_text()
+}
+
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 fn native_read_unicode_text() -> Result<String, ClipboardError> {
     Err(ClipboardError::new(
         FailureCode::ProviderUnavailable,
-        "clipboard reads require Windows clipboard APIs and are unavailable in this context",
+        "clipboard reads require a supported desktop clipboard and are unavailable in this context",
     ))
 }
 
@@ -657,11 +680,16 @@ fn native_write_unicode_text(text: &str) -> Result<u64, ClipboardError> {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn native_write_unicode_text(text: &str) -> Result<u64, ClipboardError> {
+    unix::write_unicode_text(text)
+}
+
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 fn native_write_unicode_text(_text: &str) -> Result<u64, ClipboardError> {
     Err(ClipboardError::new(
         FailureCode::ProviderUnavailable,
-        "clipboard writes require Windows clipboard APIs and are unavailable in this context",
+        "clipboard writes require a supported desktop clipboard and are unavailable in this context",
     ))
 }
 
