@@ -11,8 +11,10 @@ use crate::full_control::{
 };
 use crate::{PolicyError, POLICY_REVISION};
 use orcel_contracts::FailureCode;
+use orcel_platform::{paths, PlatformError};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 pub const AUTHORITY_STORE_SCHEMA: &str = "orcel-full-control-store/1";
@@ -75,19 +77,32 @@ pub fn authority_store_path(root: &Path) -> PathBuf {
     authority_dir(root).join(STORE_FILE_NAME)
 }
 
-pub fn default_authority_dir() -> PathBuf {
-    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
-        return authority_dir(&PathBuf::from(local_app_data).join("Orcel"));
-    }
-    authority_dir(&std::env::temp_dir().join("orcel"))
+/// The authority directory under the private per-user Orcel state root
+/// (XP-01B). Fails closed when the root cannot be resolved or is not
+/// private; it never falls back to the shared temp directory.
+pub fn default_authority_dir() -> Result<PathBuf, PolicyError> {
+    default_authority_dir_from(&|name| std::env::var_os(name))
 }
 
-pub fn default_key_path() -> PathBuf {
-    default_authority_dir().join(KEY_FILE_NAME)
+/// [`default_authority_dir`] with the environment read through `lookup`.
+pub fn default_authority_dir_from(
+    lookup: &dyn Fn(&str) -> Option<OsString>,
+) -> Result<PathBuf, PolicyError> {
+    let root = paths::state_root_from(lookup).map_err(state_unavailable)?;
+    paths::ensure_private_dir(&root).map_err(state_unavailable)?;
+    Ok(authority_dir(&root))
 }
 
-pub fn default_store_path() -> PathBuf {
-    default_authority_dir().join(STORE_FILE_NAME)
+pub fn default_key_path() -> Result<PathBuf, PolicyError> {
+    Ok(default_authority_dir()?.join(KEY_FILE_NAME))
+}
+
+pub fn default_store_path() -> Result<PathBuf, PolicyError> {
+    Ok(default_authority_dir()?.join(STORE_FILE_NAME))
+}
+
+fn state_unavailable(error: PlatformError) -> PolicyError {
+    unavailable(format!("Full User authority state is unavailable: {error}"))
 }
 
 fn hex_lower(bytes: &[u8]) -> String {
@@ -377,12 +392,13 @@ pub fn revoke(path: &Path, key: &[u8; AUTHORITY_KEY_BYTES]) -> Result<u64, Polic
 }
 
 pub fn revoke_default_if_present() -> Result<Option<u64>, PolicyError> {
-    let key_path = default_key_path();
+    let dir = default_authority_dir()?;
+    let key_path = dir.join(KEY_FILE_NAME);
     if !key_path.exists() {
         return Ok(None);
     }
     let key = read_key(&key_path)?;
-    revoke(&default_store_path(), &key).map(Some)
+    revoke(&dir.join(STORE_FILE_NAME), &key).map(Some)
 }
 
 pub fn check_desktop_input(
@@ -504,9 +520,10 @@ pub fn check_current_desktop_input() -> Result<FullControlLease, PolicyError> {
     let session_id = std::env::var("ORCEL_ORCEL_SESSION_ID")
         .map_err(|_| denied("DesktopInput requires an active Orcel runtime session binding"))?;
     validate_runtime_session(&session_id)?;
-    let key = read_key(&default_key_path())?;
+    let dir = default_authority_dir()?;
+    let key = read_key(&dir.join(KEY_FILE_NAME))?;
     check_desktop_input(
-        &default_store_path(),
+        &dir.join(STORE_FILE_NAME),
         &key,
         &identity.windows_user_sid,
         identity.logon_session_id,

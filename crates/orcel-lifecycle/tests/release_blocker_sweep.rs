@@ -526,3 +526,153 @@ fn workflow_set_is_exactly_the_governed_quartet() {
         vec!["ci.yml", "pages.yml", "release.yml", "review-gates.yml"]
     );
 }
+
+/// XP-01B: transient, per-use locations under the shared temp directory that
+/// non-test Rust may name, as (path, line substring, reason). None of them is
+/// a state default: each is unique per use (nonce or pid in the name), created
+/// exclusively or discarded, and never read back as Orcel state. Every other
+/// `temp_dir()` in non-test Rust fails the gate; state defaults resolve under
+/// `orcel_platform::paths::state_root()` instead.
+const TRANSIENT_TEMP_USES: &[(&str, &str, &str)] = &[
+    (
+        "crates/orcel-lifecycle/src/doctor.rs",
+        "orcel-doctor-",
+        "throwaway ledger path; doctor only asks the broker whether presence is available",
+    ),
+    (
+        "crates/orcel-lifecycle/src/install.rs",
+        "orcel-uninstalled-",
+        "uninstall moves the running CLI out of the install root so the root can be removed",
+    ),
+    (
+        "crates/orcel-provider-git/src/mutation.rs",
+        "let path = std::env::temp_dir().join(format!(",
+        "empty hooks directory, created exclusively per git invocation and removed on drop",
+    ),
+    (
+        "crates/orcel-provider-git/src/push.rs",
+        "let path = std::env::temp_dir().join(format!(",
+        "empty hooks directory, created exclusively per push and removed on drop",
+    ),
+    (
+        "crates/orcel-provider-git/src/push.rs",
+        "let dir = std::env::temp_dir().join(format!(",
+        "per-push askpass directory, created exclusively and removed on drop",
+    ),
+];
+
+/// Files compiled only into tests: `#[cfg(..test..)] mod name;` declarations.
+fn test_only_modules(files: &[(String, String)]) -> Vec<String> {
+    let mut out = Vec::new();
+    for (relative, text) in files.iter().filter(|(path, _)| path.ends_with(".rs")) {
+        let lines: Vec<&str> = text.lines().map(str::trim).collect();
+        for pair in lines.windows(2) {
+            let is_test_cfg = pair[0].starts_with("#[cfg(") && pair[0].contains("test");
+            let Some(name) = pair[1]
+                .strip_prefix("mod ")
+                .or_else(|| pair[1].strip_prefix("pub(crate) mod "))
+                .and_then(|rest| rest.strip_suffix(';'))
+            else {
+                continue;
+            };
+            if !is_test_cfg {
+                continue;
+            }
+            let dir = relative.rsplit_once('/').map_or("", |(dir, _)| dir);
+            let stem = relative
+                .rsplit('/')
+                .next()
+                .and_then(|file| file.strip_suffix(".rs"))
+                .unwrap_or_default();
+            out.push(format!("{dir}/{name}.rs"));
+            out.push(format!("{dir}/{stem}/{name}.rs"));
+        }
+    }
+    out
+}
+
+/// The non-test part of a Rust file: everything before its first
+/// `#[cfg(..test..)]` inline test module.
+fn non_test_lines(text: &str) -> Vec<(usize, &str)> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut out = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        let next = lines.get(index + 1).map_or("", |next| next.trim());
+        if trimmed.starts_with("#[cfg(")
+            && trimmed.contains("test")
+            && (next.starts_with("mod ") || next.starts_with("pub(crate) mod "))
+            && next.ends_with('{')
+        {
+            break;
+        }
+        out.push((index + 1, *line));
+    }
+    out
+}
+
+#[test]
+fn xp01b_no_shared_temp_state_default_in_non_test_rust() {
+    let root = repo_root();
+    let files = text_files(&root);
+    let test_modules = test_only_modules(&files);
+    let mut hits = Vec::new();
+    let mut used = vec![false; TRANSIENT_TEMP_USES.len()];
+    for (relative, text) in &files {
+        if !relative.ends_with(".rs")
+            || vendored(relative)
+            || is_test_file(relative)
+            || test_modules.contains(relative)
+        {
+            continue;
+        }
+        for (number, line) in non_test_lines(text) {
+            if !line.contains("temp_dir()") {
+                continue;
+            }
+            let allowed = TRANSIENT_TEMP_USES
+                .iter()
+                .position(|(path, needle, _)| path == relative && line.contains(needle));
+            match allowed {
+                Some(index) => used[index] = true,
+                None => hits.push(format!("{relative}:{number}: {}", line.trim())),
+            }
+        }
+    }
+    assert!(
+        hits.is_empty(),
+        "non-test std::env::temp_dir() uses (state defaults belong under \
+         orcel_platform::paths::state_root()):\n{}",
+        hits.join("\n")
+    );
+    let stale: Vec<_> = TRANSIENT_TEMP_USES
+        .iter()
+        .zip(&used)
+        .filter(|(_, used)| !**used)
+        .map(|((path, needle, _), _)| format!("{path}: {needle}"))
+        .collect();
+    assert!(stale.is_empty(), "stale allowlist entries: {stale:?}");
+}
+
+/// XP-01B: none of the stores XP-01B moved names the shared temp directory
+/// outside its tests, even through an allowlisted shape.
+#[test]
+fn xp01b_moved_stores_never_name_the_shared_temp_directory() {
+    let root = repo_root();
+    for relative in [
+        "crates/orcel-policy/src/full_control_store.rs",
+        "crates/orcel-policy/src/executable_registry.rs",
+        "crates/orcel-policy/src/remote_session.rs",
+        "crates/orcel-policy/src/protected_state.rs",
+        "crates/orceld/src/trust.rs",
+        "crates/orcel-provider-browser/src/lib.rs",
+    ] {
+        let text = fs::read_to_string(root.join(relative)).expect("read store source");
+        let hits: Vec<_> = non_test_lines(&text)
+            .into_iter()
+            .filter(|(_, line)| line.contains("temp_dir"))
+            .map(|(number, line)| format!("{relative}:{number}: {}", line.trim()))
+            .collect();
+        assert!(hits.is_empty(), "{hits:?}");
+    }
+}

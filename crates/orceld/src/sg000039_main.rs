@@ -124,15 +124,20 @@ fn handle_envelope(
         let _ = audit.record(&request, POLICY_REVISION, "PROFILE_DENIED");
         return ResponseEnvelope::failure(request.request_id, code, message);
     }
-    let lease_path = orcel_policy::remote_session::default_lease_store_path();
+    // XP-01B: an unavailable lease store fails only the requests that need
+    // it, below.
+    let lease_path = orcel_policy::remote_session::default_lease_store_path()
+        .map_err(|error| state_unavailable("remote-session lease store", &error));
     let probe = workstation::current;
     let clock = orcel_approval::now_ms;
-    let ctx = remote_lease::LeaseContext {
-        lease_path: &lease_path,
-        workspaces: workspace_set,
-        workstation: &probe,
-        now_ms: &clock,
-    };
+    let ctx = lease_path
+        .as_deref()
+        .map(|lease_path| remote_lease::LeaseContext {
+            lease_path,
+            workspaces: workspace_set,
+            workstation: &probe,
+            now_ms: &clock,
+        });
     if let Some(remote) = &remote {
         if uia::is_full_user_desktop_shape(&request.capability, &request.operation) {
             let _ = audit.record(&request, POLICY_REVISION, "REMOTE_DENIED");
@@ -142,10 +147,14 @@ fn handle_envelope(
                 "SG-000095 Full User desktop authority is local-only; Remote Full Control remains unavailable",
             );
         }
-        let trust_store = trust::TrustStore::load_or_create(trust::default_trust_path());
-        if let Err(error) =
-            remote_lease::gate_remote(&ctx, approval, &trust_store, &request, remote)
-        {
+        let gated = ctx
+            .as_ref()
+            .map_err(|error| ProviderError::new(error.code.clone(), error.message.clone()))
+            .and_then(|ctx| {
+                let trust_store = load_trust_store()?;
+                remote_lease::gate_remote(ctx, approval, &trust_store, &request, remote)
+            });
+        if let Err(error) = gated {
             let _ = audit.record(&request, POLICY_REVISION, "REMOTE_DENIED");
             return ResponseEnvelope::failure(request.request_id, error.code, error.message);
         }
@@ -181,7 +190,18 @@ fn handle_envelope(
             );
         }
         return match executable_admin::dispatch_registry(
-            &orcel_policy::executable_registry::default_registry_path(),
+            &match orcel_policy::executable_registry::default_registry_path() {
+                Ok(path) => path,
+                Err(error) => {
+                    let error = state_unavailable("executable registry", &error);
+                    let _ = audit.record(&request, POLICY_REVISION, "FAILED");
+                    return ResponseEnvelope::failure(
+                        request.request_id,
+                        error.code,
+                        error.message,
+                    );
+                }
+            },
             &workspace_set.roots,
             approval,
             &request,
@@ -206,9 +226,14 @@ fn handle_envelope(
                 "requested workspace is not configured",
             );
         }
-        let trust_store = trust::TrustStore::load_or_create(trust::default_trust_path());
-        return match remote_lease::dispatch_lease_management(&ctx, approval, &trust_store, &request)
-        {
+        let managed = ctx
+            .as_ref()
+            .map_err(|error| ProviderError::new(error.code.clone(), error.message.clone()))
+            .and_then(|ctx| {
+                let trust_store = load_trust_store()?;
+                remote_lease::dispatch_lease_management(ctx, approval, &trust_store, &request)
+            });
+        return match managed {
             Ok(value) => {
                 if let Err(error) = audit.record(&request, POLICY_REVISION, "SUCCESS") {
                     return ResponseEnvelope::failure(
@@ -228,6 +253,21 @@ fn handle_envelope(
     handle_request(policy, audit, approval, request)
 }
 
+/// XP-01B: a default state store whose private root cannot be established
+/// fails the request closed instead of moving the store anywhere else.
+fn state_unavailable(store: &str, error: &orcel_platform::PlatformError) -> ProviderError {
+    ProviderError::new(
+        FailureCode::ProviderUnavailable,
+        format!("{store} is unavailable: {error}"),
+    )
+}
+
+fn load_trust_store() -> Result<trust::TrustStore, ProviderError> {
+    trust::default_trust_path()
+        .map(trust::TrustStore::load_or_create)
+        .map_err(|error| state_unavailable("trust store", &error))
+}
+
 fn handle_request(
     policy: &PolicyEngine,
     audit: &AuditLogger,
@@ -242,9 +282,21 @@ fn handle_request(
         }
     };
 
-    let mut trust_store = trust::TrustStore::load_or_create(trust::default_trust_path());
+    // XP-01B: without a private trust store or browser profile root the
+    // request fails closed before dispatch.
+    let stores = load_trust_store().and_then(|trust_store| {
+        let browser_root = orcel_provider_browser::default_profile_root()
+            .map_err(|error| state_unavailable("browser profile", &error))?;
+        Ok((trust_store, browser_root))
+    });
+    let (mut trust_store, browser_root) = match stores {
+        Ok(stores) => stores,
+        Err(error) => {
+            let _ = audit.record(&request, decision.policy_revision, "FAILED");
+            return ResponseEnvelope::failure(request.request_id, error.code, error.message);
+        }
+    };
     let browser_resolver = browser::system_resolver();
-    let browser_root = orcel_provider_browser::default_profile_root();
     match dispatch(
         policy,
         &decision.workspace,
@@ -406,9 +458,9 @@ fn dispatch_trust(
                         ),
                     )
                 })?;
-            let leases_revoked = remote_lease::revoke_all(
-                &orcel_policy::remote_session::default_lease_store_path(),
-            )
+            let leases_revoked = orcel_policy::remote_session::default_lease_store_path()
+                .map_err(|error| state_unavailable("remote-session lease store", &error))
+                .and_then(|lease_path| remote_lease::revoke_all(&lease_path))
             .map_err(|error| {
                 ProviderError::new(
                     FailureCode::InternalError,

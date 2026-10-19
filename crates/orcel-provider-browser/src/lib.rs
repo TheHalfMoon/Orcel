@@ -1,4 +1,5 @@
 use orcel_contracts::FailureCode;
+use orcel_platform::{paths, PlatformError};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
@@ -656,21 +657,29 @@ fn profile_identity(root: &Path) -> String {
 /// Canonical root for the isolated Orcel automation browser profile. Tests
 /// override it with `ORCEL_BROWSER_STATE_DIR`; production defaults keep the
 /// profile under Orcel protected local state, never inside a workspace and
-/// never inside a personal browser directory.
-pub fn default_profile_root() -> PathBuf {
-    if let Some(path) = std::env::var_os("ORCEL_BROWSER_STATE_DIR") {
-        let path = PathBuf::from(path);
+/// never inside a personal browser directory. The default is
+/// `browser-profile` in the private per-user Orcel state root (XP-01B); it
+/// fails closed when the override is empty or relative, or when the root
+/// cannot be resolved or is not private, and never falls back to the shared
+/// temp directory.
+pub fn default_profile_root() -> Result<PathBuf, PlatformError> {
+    default_profile_root_from(&|name| std::env::var_os(name))
+}
+
+/// [`default_profile_root`] with the environment read through `lookup`.
+pub fn default_profile_root_from(
+    lookup: &dyn Fn(&str) -> Option<std::ffi::OsString>,
+) -> Result<PathBuf, PlatformError> {
+    if let Some(path) = lookup("ORCEL_BROWSER_STATE_DIR") {
+        let path = paths::absolute_override(path)?;
         if path.ends_with("browser-profile") {
-            return path;
+            return Ok(path);
         }
-        return path.join("browser-profile");
+        return Ok(path.join("browser-profile"));
     }
-    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
-        return PathBuf::from(local_app_data)
-            .join("Orcel")
-            .join("browser-profile");
-    }
-    std::env::temp_dir().join("orcel").join("browser-profile")
+    let root = paths::state_root_from(lookup)?;
+    paths::ensure_private_dir(&root)?;
+    Ok(root.join("browser-profile"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -6332,6 +6341,182 @@ mod tests {
             download_id_for("dl-1", "notes.txt", "content-digest"),
             download_id_for("dl-1", "notes.txt", "other-digest")
         );
+    }
+
+    /// XP-01B: the browser profile default resolves under the private per-user Orcel
+    /// state root, fails closed without one, and never falls back to the
+    /// shared temp directory. State earlier builds left under the shared temp
+    /// directory is not migrated and is never read.
+    mod xp01b {
+        use super::*;
+        use std::ffi::OsString;
+        use std::path::{Path, PathBuf};
+
+        fn resolve(lookup: &dyn Fn(&str) -> Option<OsString>) -> Result<PathBuf, String> {
+            default_profile_root_from(lookup).map_err(|error| error.to_string())
+        }
+
+        fn lookup(vars: Vec<(&'static str, OsString)>) -> impl Fn(&str) -> Option<OsString> {
+            move |name| {
+                vars.iter()
+                    .find(|(key, _)| *key == name)
+                    .map(|(_, value)| value.clone())
+            }
+        }
+
+        fn sandbox(label: &str) -> PathBuf {
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0);
+            let dir = std::env::temp_dir().join(format!(
+                "orcel-browser-xp01b-{label}-{}-{nanos}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(&dir).expect("sandbox");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+                    .expect("chmod sandbox");
+            }
+            dir
+        }
+
+        fn user_root_env(base: &Path) -> Vec<(&'static str, OsString)> {
+            #[cfg(windows)]
+            let name = "LOCALAPPDATA";
+            #[cfg(not(windows))]
+            let name = "HOME";
+            vec![(name, base.as_os_str().to_owned())]
+        }
+
+        #[test]
+        fn default_resolves_under_the_private_root() {
+            let base = sandbox("resolve");
+            let lookup = lookup(user_root_env(&base));
+            let root = orcel_platform::paths::state_root_from(&lookup).expect("root");
+            let path = resolve(&lookup).expect("default");
+            assert_eq!(path, root.join("browser-profile"));
+            assert!(path.starts_with(&base));
+            assert!(!path.starts_with(std::env::temp_dir().join("orcel")));
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = std::fs::metadata(&root).expect("root").permissions().mode();
+                assert_eq!(mode & 0o777, 0o700);
+            }
+            let _ = std::fs::remove_dir_all(base);
+        }
+
+        #[test]
+        fn missing_state_root_is_an_error_never_temp() {
+            let error = resolve(&lookup(Vec::new())).expect_err("no root");
+            assert!(error.contains("state root is unavailable"), "{error}");
+        }
+
+        #[test]
+        fn relative_override_is_refused() {
+            for value in ["", "browser-profile", "state/browser-profile"] {
+                let error = resolve(&lookup(vec![(
+                    "ORCEL_BROWSER_STATE_DIR",
+                    OsString::from(value),
+                )]))
+                .expect_err("relative override");
+                assert!(error.contains("is not absolute"), "{value:?}: {error}");
+            }
+        }
+
+        #[cfg(windows)]
+        #[test]
+        fn windows_path_is_byte_identical_to_the_previous_default() {
+            let path = resolve(&lookup(vec![(
+                "LOCALAPPDATA",
+                OsString::from(r"C:\Users\u\AppData\Local"),
+            )]))
+            .expect("default");
+            assert_eq!(
+                path.as_os_str(),
+                r"C:\Users\u\AppData\Local\Orcel\browser-profile"
+            );
+        }
+
+        #[test]
+        fn absolute_override_keeps_its_browser_profile_suffix_rule() {
+            let custom = std::env::temp_dir().join("custom-xp01b-state");
+            let path = resolve(&lookup(vec![(
+                "ORCEL_BROWSER_STATE_DIR",
+                custom.clone().into_os_string(),
+            )]));
+            assert_eq!(path, Ok(custom.join("browser-profile")));
+            let exact = custom.join("browser-profile");
+            let path = resolve(&lookup(vec![(
+                "ORCEL_BROWSER_STATE_DIR",
+                exact.clone().into_os_string(),
+            )]));
+            assert_eq!(path, Ok(exact));
+        }
+
+        #[cfg(unix)]
+        mod unix {
+            use super::*;
+            use std::os::unix::fs::PermissionsExt;
+
+            fn chmod(path: &Path, mode: u32) {
+                std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+                    .expect("chmod");
+            }
+
+            fn xdg_parent(base: &Path) -> PathBuf {
+                let parent = base.join(".local").join("state");
+                std::fs::create_dir_all(&parent).expect("state parent");
+                chmod(&base.join(".local"), 0o700);
+                chmod(&parent, 0o700);
+                parent
+            }
+
+            fn home_only(base: &Path) -> impl Fn(&str) -> Option<OsString> {
+                lookup(vec![("HOME", base.as_os_str().to_owned())])
+            }
+
+            #[test]
+            fn symlinked_root_is_refused() {
+                let base = sandbox("symlink");
+                let target = base.join("elsewhere");
+                std::fs::create_dir(&target).expect("target");
+                chmod(&target, 0o700);
+                std::os::unix::fs::symlink(&target, xdg_parent(&base).join("orcel"))
+                    .expect("symlink");
+                let error = resolve(&home_only(&base)).expect_err("symlinked root");
+                assert!(error.contains("is a symbolic link"), "{error}");
+                assert_eq!(std::fs::read_dir(&target).expect("target").count(), 0);
+                let _ = std::fs::remove_dir_all(base);
+            }
+
+            #[test]
+            fn world_writable_root_is_refused_and_left_unrepaired() {
+                let base = sandbox("writable-root");
+                let root = xdg_parent(&base).join("orcel");
+                std::fs::create_dir(&root).expect("root");
+                chmod(&root, 0o777);
+                let error = resolve(&home_only(&base)).expect_err("writable root");
+                assert!(error.contains("grants group or other access"), "{error}");
+                let mode = std::fs::metadata(&root).expect("root").permissions().mode();
+                assert_eq!(mode & 0o777, 0o777);
+                let _ = std::fs::remove_dir_all(base);
+            }
+
+            #[test]
+            fn world_writable_home_is_refused_before_anything_is_created() {
+                let base = sandbox("writable-home");
+                chmod(&base, 0o777);
+                let error = resolve(&home_only(&base)).expect_err("writable home");
+                assert!(error.contains("is writable by other users"), "{error}");
+                assert!(!base.join(".local").exists());
+                chmod(&base, 0o700);
+                let _ = std::fs::remove_dir_all(base);
+            }
+        }
     }
 }
 

@@ -424,9 +424,13 @@ fn enforce_sg000010_executable_policy(
     if requested == allowed {
         return Ok(());
     }
-    let entries = crate::executable_registry::load_registry(
-        &crate::executable_registry::default_registry_path(),
-    );
+    let registry_path = crate::executable_registry::default_registry_path().map_err(|error| {
+        PolicyError::new(
+            FailureCode::ProviderUnavailable,
+            format!("SG-000060 executable registry is unavailable: {error}"),
+        )
+    })?;
+    let entries = crate::executable_registry::load_registry(&registry_path);
     crate::executable_registry::check_spawn(&entries, Path::new(executable), argv)
         .map(|_| ())
         .map_err(|error| PolicyError::new(error.code, error.message))

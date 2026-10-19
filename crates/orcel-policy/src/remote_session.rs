@@ -11,8 +11,10 @@
 //! device private key.
 
 use orcel_contracts::{FailureCode, RemoteContext, RequestEnvelope};
+use orcel_platform::{paths, PlatformError};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use crate::PolicyError;
@@ -521,20 +523,26 @@ fn leases_checksum(leases: &[RemoteSessionLease]) -> String {
     hex_lower(&hasher.finalize())
 }
 
-/// Protected lease store location. The override must stay listed in
+/// Protected lease store location: `ORCEL_REMOTE_LEASE_PATH`, else
+/// `remote_leases.json` in the private per-user Orcel state root (XP-01B).
+/// Fails closed when the override is empty or relative, or when the root
+/// cannot be resolved or is not private; it never falls back to the shared
+/// temp directory. The override must stay listed in
 /// `protected_state::PROTECTED_STATE_OVERRIDES`.
-pub fn default_lease_store_path() -> PathBuf {
-    if let Some(path) = std::env::var_os("ORCEL_REMOTE_LEASE_PATH") {
-        return PathBuf::from(path);
+pub fn default_lease_store_path() -> Result<PathBuf, PlatformError> {
+    default_lease_store_path_from(&|name| std::env::var_os(name))
+}
+
+/// [`default_lease_store_path`] with the environment read through `lookup`.
+pub fn default_lease_store_path_from(
+    lookup: &dyn Fn(&str) -> Option<OsString>,
+) -> Result<PathBuf, PlatformError> {
+    if let Some(path) = lookup("ORCEL_REMOTE_LEASE_PATH") {
+        return paths::absolute_override(path);
     }
-    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
-        return PathBuf::from(local_app_data)
-            .join("Orcel")
-            .join("remote_leases.json");
-    }
-    std::env::temp_dir()
-        .join("orcel")
-        .join("remote_leases.json")
+    let root = paths::state_root_from(lookup)?;
+    paths::ensure_private_dir(&root)?;
+    Ok(root.join("remote_leases.json"))
 }
 
 /// Load the lease store. A missing, unreadable, corrupt, or tampered store
