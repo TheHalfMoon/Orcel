@@ -1,7 +1,6 @@
 //! XP-15 native clipboard adapter for macOS and Linux.
 //!
-//! Wraps clipboard-rs 0.3.5 text get/set, as Cua's
-//! `platform-linux/src/clipboard.rs` does: NSPasteboard on macOS, X11
+//! Wraps arboard 3.6.1 text get/set: NSPasteboard on macOS, X11
 //! selections on Linux, and the Wayland data-control protocols (through
 //! wl-clipboard-rs, in process) when `WAYLAND_DISPLAY` is set. Only
 //! Unicode text moves; image, file, HTML, and RTF formats are never read
@@ -9,37 +8,56 @@
 //! and [`crate::write_bounded_text`], unchanged; this module moves raw
 //! clipboard facts only.
 //!
-//! Provenance: the long-lived Linux context and the has-text-then-get
-//! read are adapted from cua@a802eaf2
+//! Standard output: orceld speaks line-delimited JSON on stdout and holds
+//! the stdout lock for its session, so nothing in this adapter may print.
+//! arboard reports through the `log` facade; its X11 selection-server
+//! thread never writes to stdout. (clipboard-rs, which the backlog card
+//! named, prints from that thread when another client takes the
+//! clipboard, which would block on orceld's lock or corrupt the JSON
+//! stream, so it is not used.)
+//!
+//! Provenance: the long-lived Linux context and the read-then-map pattern
+//! are adapted from cua@a802eaf2
 //! `libs/cua-driver/rust/crates/platform-linux/src/clipboard.rs`
 //! (MIT, Copyright (c) 2025 Cua AI, Inc.; full notice in
 //! docs/orcel/notices/cua-driver-clipboard-MIT.txt). Modifications for
-//! Orcel: text only, no image or file paths, a connection failure is not
-//! cached, the XWayland fallback is refused, typed fail-closed errors,
-//! and a content-derived sequence. clipboard-rs itself is MIT
-//! (docs/orcel/notices/clipboard-rs-MIT.txt).
+//! Orcel: arboard instead of clipboard-rs, text only, no image or file
+//! paths, a connection failure is not cached, the XWayland fallback is
+//! refused, typed fail-closed errors, and a content-derived sequence.
+//! arboard is MIT OR Apache-2.0 (docs/orcel/notices/arboard-MIT.txt).
 //!
-//! Sequence binding: neither NSPasteboard's change count nor X11 and
-//! Wayland selections are exposed through clipboard-rs, so the sequence is
-//! a 64-bit SHA-256 prefix over the current text (or a fixed no-text
-//! marker). Any change of content changes the sequence, so pre-approval
-//! and post-approval drift still fails closed; re-placing identical text
+//! Sequence binding: arboard exposes neither NSPasteboard's change count
+//! nor X11 and Wayland selection state, so the sequence is a 64-bit
+//! SHA-256 prefix over the current text (or a fixed no-text marker). Any
+//! change of content changes the sequence, so pre-approval and
+//! post-approval drift still fails closed; re-placing identical text
 //! keeps the same sequence, which describes the same clipboard state.
 //!
 //! Wayland: compositors without a data-control protocol only hand the
 //! clipboard to a focused surface. This adapter has no surface and never
 //! spawns `wl-copy` or any other process, so such a session reports the
-//! clipboard as unavailable. clipboard-rs would otherwise fall back to the
-//! XWayland selection, which is not the Wayland clipboard; that fallback
-//! is refused here.
+//! clipboard as unavailable. arboard would otherwise fall back to the
+//! XWayland selection, which is not the Wayland clipboard; the adapter
+//! probes for data-control first, with the same check arboard uses, and
+//! refuses that fallback. The probe result is kept for the life of the
+//! process, so a refused session opens no further connections.
 //!
-//! Limitation: clipboard-rs reads the whole text before the size check,
-//! so the 64 KiB bound is enforced after the copy rather than from a
+//! Limitation: arboard reads the whole text before the size check, so the
+//! 64 KiB bound is enforced after the copy rather than from a
 //! kernel-reported size as on Windows. Oversized content still fails
 //! closed and never leaves this module.
+//!
+//! Limitation: arboard keeps one X11 connection per process. If the X
+//! server closes it, arboard keeps returning that dead connection, and
+//! dropping and recreating the handle does not replace it, so the
+//! clipboard stays unavailable (fail closed, `ProviderUnavailable`) until
+//! the process restarts. This was seen only on WSLg's XWayland with
+//! `WAYLAND_DISPLAY` removed by hand, where the server closed the
+//! connection after another client that had taken the selection exited.
+//! Xvfb kept the connection and the ownership-loss test passes there.
 
 use crate::{ClipboardError, MAX_CLIPBOARD_BYTES};
-use clipboard_rs::{Clipboard, ClipboardContext, ContentFormat};
+use arboard::Clipboard;
 use orcel_contracts::FailureCode;
 use sha2::{Digest, Sha256};
 
@@ -47,35 +65,52 @@ fn unavailable(message: &str) -> ClipboardError {
     ClipboardError::new(FailureCode::ProviderUnavailable, message)
 }
 
-/// Run `f` against a live clipboard context. On Linux the context is kept
-/// for the life of the process because an X11 selection is served by the
-/// context that placed it: dropping it would empty the clipboard. A
-/// failed connection is not cached, so a display that appears later is
+/// Whether this session may use the clipboard at all. Outside Wayland it
+/// always may. Under Wayland the compositor must offer a data-control
+/// protocol; the answer cannot change for the life of the process, so it
+/// is computed once.
+#[cfg(target_os = "linux")]
+fn wayland_permits_clipboard() -> Result<(), ClipboardError> {
+    use std::sync::OnceLock;
+    static PROBE: OnceLock<bool> = OnceLock::new();
+
+    if std::env::var_os("WAYLAND_DISPLAY").is_none() {
+        return Ok(());
+    }
+    let data_control =
+        *PROBE.get_or_init(|| wl_clipboard_rs::utils::is_primary_selection_supported().is_ok());
+    if data_control {
+        Ok(())
+    } else {
+        Err(unavailable(
+            "the Wayland compositor offers no data-control clipboard protocol and only serves a focused surface, so the clipboard is unavailable",
+        ))
+    }
+}
+
+/// Run `f` against a live clipboard. On Linux the clipboard is kept for
+/// the life of the process because an X11 selection is served by the
+/// client that placed it: dropping it would empty the clipboard. A failed
+/// X11 connection is not cached, so a display that appears later is
 /// picked up on the next call.
 #[cfg(target_os = "linux")]
-fn with_context<R>(
-    f: impl FnOnce(&ClipboardContext) -> Result<R, ClipboardError>,
+fn with_clipboard<R>(
+    f: impl FnOnce(&mut Clipboard) -> Result<R, ClipboardError>,
 ) -> Result<R, ClipboardError> {
     use std::sync::Mutex;
-    static CONTEXT: Mutex<Option<ClipboardContext>> = Mutex::new(None);
+    static CLIPBOARD: Mutex<Option<Clipboard>> = Mutex::new(None);
 
-    let mut slot = CONTEXT
+    wayland_permits_clipboard()?;
+    let mut slot = CLIPBOARD
         .lock()
         .map_err(|_| unavailable("clipboard adapter state is unusable in this process"))?;
     if slot.is_none() {
-        let context = ClipboardContext::new()
+        let clipboard = Clipboard::new()
             .map_err(|_| unavailable("no X11 or Wayland clipboard is reachable in this session"))?;
-        if std::env::var_os("WAYLAND_DISPLAY").is_some()
-            && matches!(context, ClipboardContext::X11(_))
-        {
-            return Err(unavailable(
-                "the Wayland compositor offers no data-control clipboard protocol and only serves a focused surface, so the clipboard is unavailable",
-            ));
-        }
-        *slot = Some(context);
+        *slot = Some(clipboard);
     }
-    match slot.as_ref() {
-        Some(context) => f(context),
+    match slot.as_mut() {
+        Some(clipboard) => f(clipboard),
         None => Err(unavailable(
             "no X11 or Wayland clipboard is reachable in this session",
         )),
@@ -83,14 +118,14 @@ fn with_context<R>(
 }
 
 /// Run `f` against the general pasteboard. NSPasteboard keeps placed
-/// content after the context is dropped, so no state is held.
+/// content after the handle is dropped, so no state is held.
 #[cfg(target_os = "macos")]
-fn with_context<R>(
-    f: impl FnOnce(&ClipboardContext) -> Result<R, ClipboardError>,
+fn with_clipboard<R>(
+    f: impl FnOnce(&mut Clipboard) -> Result<R, ClipboardError>,
 ) -> Result<R, ClipboardError> {
-    let context = ClipboardContext::new()
+    let mut clipboard = Clipboard::new()
         .map_err(|_| unavailable("the macOS pasteboard is unreachable in this session"))?;
-    f(&context)
+    f(&mut clipboard)
 }
 
 /// 64-bit sequence derived from clipboard text. `None` is a clipboard
@@ -111,23 +146,23 @@ fn sequence_of(text: Option<&str>) -> u64 {
     u64::from_be_bytes(prefix)
 }
 
-fn current_text(context: &ClipboardContext) -> Result<Option<String>, ClipboardError> {
-    if !context.has(ContentFormat::Text) {
-        return Ok(None);
+fn current_text(clipboard: &mut Clipboard) -> Result<Option<String>, ClipboardError> {
+    match clipboard.get_text() {
+        Ok(text) => Ok(Some(text)),
+        Err(arboard::Error::ContentNotAvailable) => Ok(None),
+        Err(_) => Err(unavailable(
+            "clipboard Unicode text is unreadable in this session",
+        )),
     }
-    context
-        .get_text()
-        .map(Some)
-        .map_err(|_| unavailable("clipboard Unicode text is unreadable in this session"))
 }
 
 pub(crate) fn sequence_number() -> Result<u64, ClipboardError> {
-    with_context(|context| Ok(sequence_of(current_text(context)?.as_deref())))
+    with_clipboard(|clipboard| Ok(sequence_of(current_text(clipboard)?.as_deref())))
 }
 
 pub(crate) fn read_unicode_text() -> Result<String, ClipboardError> {
-    with_context(|context| {
-        let text = current_text(context)?.ok_or_else(|| {
+    with_clipboard(|clipboard| {
+        let text = current_text(clipboard)?.ok_or_else(|| {
             ClipboardError::new(
                 FailureCode::CapabilityDenied,
                 "clipboard holds no Unicode text; bounded reads never transfer binary or object formats",
@@ -150,9 +185,9 @@ pub(crate) fn write_unicode_text(text: &str) -> Result<u64, ClipboardError> {
             "clipboard write text exceeds the bounded placement size",
         ));
     }
-    with_context(|context| {
-        context
-            .set_text(text.to_owned())
+    with_clipboard(|clipboard| {
+        clipboard
+            .set_text(text)
             .map_err(|_| unavailable("clipboard placement was rejected in this session"))?;
         Ok(sequence_of(Some(text)))
     })

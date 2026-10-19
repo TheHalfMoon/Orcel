@@ -719,4 +719,25 @@ fn xp15_native_round_trip_where_a_clipboard_is_reachable() {
         // read observes.
         assert_eq!(sampled.evidence["sequence"], placed.resulting_sequence);
     }
+    // Read-side denial on the live clipboard: secret text placed by
+    // another party (here the raw adapter, which applies no policy) is
+    // refused by the bounded read without quoting it.
+    let secret = "password=hunter2-xp15-read";
+    native
+        .write_unicode_text(secret)
+        .expect("raw placement on a reachable clipboard");
+    let mut refused = None;
+    for _ in 0..20 {
+        match read_bounded_text(&native, None, WORKSPACE, POLICY) {
+            Err(error) if error.code == FailureCode::CapabilityDenied => {
+                refused = Some(error);
+                break;
+            }
+            _ => std::thread::sleep(std::time::Duration::from_millis(50)),
+        }
+    }
+    let refused = refused.expect("a secret on the clipboard must be refused by the bounded read");
+    assert!(!refused.message.contains(secret));
+    // Leave benign text behind.
+    write_bounded_text(&native, marker, WORKSPACE, POLICY).unwrap();
 }

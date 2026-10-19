@@ -42,7 +42,7 @@
 //! tests and the native gating test genuinely prove.
 //!
 //! macOS and Linux reality (XP-15): the native adapter in `unix.rs`
-//! moves Unicode text through clipboard-rs (NSPasteboard; X11 or Wayland
+//! moves Unicode text through arboard (NSPasteboard; X11 or Wayland
 //! data-control) under the same bounds, secret denial, and typed
 //! fail-closed errors. Its sequence is derived from the clipboard text,
 //! and a Wayland session that would need a focused surface reports the
@@ -460,7 +460,7 @@ pub fn write_bounded_text(
 /// unwritable, or otherwise unreadable clipboard fails closed with a
 /// typed error instead of fabricated content. Placement synthesizes no
 /// input, keystrokes, paste, or focus changes. On macOS and Linux it
-/// delegates to the clipboard-rs adapter in `unix.rs` with the same
+/// delegates to the arboard adapter in `unix.rs` with the same
 /// contract. On every other platform each call fails closed as
 /// unavailable.
 pub struct NativeAdapter;

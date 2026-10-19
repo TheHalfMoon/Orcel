@@ -48,29 +48,44 @@ Observations:
 
 ## Rust crates admitted for macOS and Linux (XP-15)
 
-Admitted 2026-10-19 for the XP-15 clipboard provider (`crates/orcel-provider-clipboard`, target-gated to `target_os = "macos"` and `target_os = "linux"`). None of these crates is built for `x86_64-pc-windows-msvc`, so the Windows x64 release, its SBOM and its `THIRD_PARTY_NOTICES.txt` are unchanged (`cargo tree -i clipboard-rs --target x86_64-pc-windows-msvc` prints nothing). They become part of the shipped closure when macOS and Linux packages exist; `scripts/generate-sbom.mjs` and `scripts/third-party-notices.mjs` currently target Windows only and must gain those targets then.
+Admitted 2026-10-19 for the XP-15 clipboard provider (`crates/orcel-provider-clipboard`, target-gated to `target_os = "macos"` and `target_os = "linux"`). None of these crates is built for `x86_64-pc-windows-msvc`, so the Windows x64 release, its SBOM and its `THIRD_PARTY_NOTICES.txt` are unchanged (`cargo tree -i arboard --target x86_64-pc-windows-msvc` prints nothing). They become part of the shipped closure when macOS and Linux packages exist; `scripts/generate-sbom.mjs` and `scripts/third-party-notices.mjs` currently target Windows only and must gain those targets then.
 
-`clipboard-rs` is pinned at `=0.3.5` with default features off (no `image`), plus `wayland` on Linux. `cargo tree -e normal` on both targets contains no async runtime (no tokio, async-std, smol, or futures executor); clipboard work runs on the calling thread, plus the X11 selection-server thread and the Wayland copy-serving thread that clipboard-rs and wl-clipboard-rs start. No crate spawns a process; `wl-copy` is never run.
+`arboard` is pinned at `=3.6.1` (3.7.0 was four days old at admission) with default features off (no `image-data`), plus `wayland-data-control` on Linux. `wl-clipboard-rs` `=0.9.4` is also a direct Linux dependency, used only to probe for the data-control protocol before arboard is asked for a Wayland clipboard. `cargo tree -e normal` on both targets contains no async runtime (no tokio, async-std, smol, or futures executor). Clipboard work runs on the calling thread, plus the X11 selection-server thread and the Wayland copy-serving thread that arboard and wl-clipboard-rs start. No crate spawns a process, and `wl-copy` is never run.
 
-| Crate | Version | License | Target | Purpose in Orcel |
-|---|---|---|---|---|
-| clipboard-rs | 0.3.5 | MIT | macOS, Linux | Text get/set over NSPasteboard, X11, Wayland (notice: `docs/orcel/notices/clipboard-rs-MIT.txt`) |
-| objc2, objc2-encode, block2 | 0.6.5 / 4.1.0 / 0.6.2 | MIT | macOS | Objective-C runtime bindings |
-| objc2-foundation | 0.3.2 | MIT | macOS | Foundation bindings (NSString, NSArray) |
-| objc2-app-kit, objc2-core-foundation, objc2-core-graphics, objc2-core-image, objc2-core-text, objc2-core-video, objc2-core-data, objc2-cloud-kit, objc2-quartz-core | 0.3.2 | Zlib OR Apache-2.0 OR MIT | macOS | AppKit NSPasteboard and the frameworks it references |
-| x11rb, x11rb-protocol | 0.13.2 | MIT OR Apache-2.0 | Linux | Pure-Rust X11 protocol (CLIPBOARD selection) |
-| gethostname | 1.1.0 | Apache-2.0 | Linux | Host name for X11 authentication (x11rb) |
-| wl-clipboard-rs | 0.9.4 | MIT OR Apache-2.0 | Linux | In-process Wayland data-control clipboard |
-| wayland-client, wayland-backend, wayland-protocols, wayland-protocols-wlr, wayland-sys | 0.31.15 / 0.3.17 / 0.32.13 / 0.3.12 / 0.31.11 | MIT | Linux | Wayland protocol (pure-Rust backend) |
-| wayland-scanner, quick-xml | 0.31.11 / 0.41.0 | MIT | Linux | Protocol code generation (compile time) |
-| tree_magic_mini, petgraph, fixedbitset, nom, indexmap, hashbrown, equivalent, foldhash | 3.2.2 / 0.8.3 / 0.5.7 / 8.0.0 / 2.14.2 / 0.15.5, 0.17.1 / 1.0.3 / 0.1.5 | MIT; MIT OR Apache-2.0; foldhash Zlib | Linux | MIME detection inside wl-clipboard-rs and its graph and parser support |
-| rustix, linux-raw-sys | 1.1.5 / 0.12.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | Linux | System calls |
-| os_pipe, libc, log, thiserror, smallvec, downcast-rs, bitflags | 1.2.3 / 0.2.189 / 0.4.34 / 2.0.21 / 1.16.3 / 1.2.1 / 2.13.2 | MIT; MIT OR Apache-2.0 | Linux (libc and bitflags also macOS) | Pipes, FFI, logging facade, error and container support |
-| cc, pkg-config, shlex, find-msvc-tools | 1.8.0 / 0.3.34 / 2.0.1 / 0.1.14 | MIT OR Apache-2.0 | Linux (build only) | Build-dependencies of wayland-backend (cc) and wayland-sys (pkg-config); not linked |
+arboard was chosen over clipboard-rs 0.3.5, which the backlog card named, because clipboard-rs prints to stdout with `println!` from its X11 selection-server thread (for example "Somebody else owns the clipboard now" when another client takes the clipboard). orceld speaks JSON on stdout and holds the stdout lock, so that thread would block forever, or would corrupt the stream in a process that does not hold the lock. arboard reports through the `log` facade. Its only direct print is an `eprintln!` to stderr, made when a handle is dropped within 100 ms of a write and stderr is a terminal; the adapter never drops its handle. The `xp15_clipboard_ownership` test fails with clipboard-rs (stdout received "Somebody else owns the clipboard now") and passes with arboard under Xvfb.
 
-All licenses are permissive (MIT, Apache-2.0, Zlib, Unlicense, LLVM exception); none carries copyleft obligations. The Linux-only `cc` and `pkg-config` edges are build-dependencies only. wayland-backend is used with its default features, which select the pure-Rust protocol backend, so no system libwayland is linked.
+Built for Linux (`x86_64-unknown-linux-gnu`, normal edges):
 
-The adapter pattern (long-lived Linux context, has-text-then-get) is adapted from cua@a802eaf2 `libs/cua-driver/rust/crates/platform-linux/src/clipboard.rs`, MIT, with its notice in `docs/orcel/notices/cua-driver-clipboard-MIT.txt`.
+| Crate | Version | License | Purpose in Orcel |
+|---|---|---|---|
+| arboard | 3.6.1 | MIT OR Apache-2.0 | Text get/set over X11 and Wayland (notice: `docs/orcel/notices/arboard-MIT.txt`) |
+| x11rb, x11rb-protocol | 0.13.2 | MIT OR Apache-2.0 | Pure-Rust X11 protocol (CLIPBOARD selection) |
+| gethostname | 1.1.0 | Apache-2.0 | Host name for X11 authentication (x11rb) |
+| wl-clipboard-rs | 0.9.4 | MIT OR Apache-2.0 | In-process Wayland data-control clipboard and the data-control probe |
+| wayland-client, wayland-backend, wayland-protocols, wayland-protocols-wlr, wayland-sys | 0.31.15 / 0.3.17 / 0.32.13 / 0.3.12 / 0.31.11 | MIT | Wayland protocol (pure-Rust backend) |
+| wayland-scanner, quick-xml | 0.31.11 / 0.41.0 | MIT | Protocol code generation (compile time) |
+| tree_magic_mini, petgraph, fixedbitset, nom, indexmap, hashbrown, equivalent, foldhash | 3.2.2 / 0.8.3 / 0.5.7 / 8.0.0 / 2.14.2 / 0.15.5, 0.17.1 / 1.0.3 / 0.1.5 | MIT; MIT OR Apache-2.0; foldhash Zlib | MIME detection inside wl-clipboard-rs and its graph and parser support |
+| parking_lot, parking_lot_core, lock_api, scopeguard | 0.12.5 / 0.9.12 / 0.4.14 / 1.2.0 | MIT OR Apache-2.0 | Locks in arboard's X11 backend |
+| percent-encoding | 2.3.2 | MIT OR Apache-2.0 | URI handling in arboard (file lists; unused by Orcel) |
+| rustix, linux-raw-sys | 1.1.5 / 0.12.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | System calls |
+| os_pipe, libc, log, thiserror, thiserror-impl, smallvec, downcast-rs, bitflags | 1.2.3 / 0.2.189 / 0.4.34 / 2.0.21 / 2.0.21 / 1.16.3 / 1.2.1 / 2.13.2 | MIT; MIT OR Apache-2.0 | Pipes, FFI, logging facade, error derive (thiserror-impl is a compile-time proc macro), containers |
+| cc, find-msvc-tools, shlex, pkg-config | 1.8.0 / 0.1.14 / 2.0.1 / 0.3.34 | MIT OR Apache-2.0 | Build-dependencies of wayland-backend (cc) and wayland-sys (pkg-config); not linked |
+
+Built for macOS (`aarch64-apple-darwin`, normal edges):
+
+| Crate | Version | License | Purpose in Orcel |
+|---|---|---|---|
+| arboard | 3.6.1 | MIT OR Apache-2.0 | Text get/set over NSPasteboard |
+| objc2, objc2-encode | 0.6.5 / 4.1.0 | MIT | Objective-C runtime bindings |
+| objc2-foundation | 0.3.2 | MIT | Foundation bindings (NSString, NSArray) |
+| objc2-app-kit, objc2-core-foundation, objc2-core-graphics | 0.3.2 | Zlib OR Apache-2.0 OR MIT | AppKit NSPasteboard and the frameworks it references |
+| bitflags | 2.13.2 | MIT OR Apache-2.0 | Flag types (objc2 bindings) |
+
+In `Cargo.lock` but not built for macOS, Linux or Windows in this workspace: `clipboard-win` 5.4.1 and `error-code` 3.4.0 (arboard's Windows backend; Orcel's Windows clipboard stays on the existing `windows` 0.58 code), `dispatch2` 0.3.1 and `objc2-io-surface` 0.3.2 (optional macOS edges of the objc2 framework crates that this feature set does not enable), and `redox_syscall` 0.5.18 (parking_lot_core on Redox). Lockfile resolution also moved the Windows-only `windows-sys` requirement of the existing `errno` and `rustix` entries from 0.52.0 to the already-locked 0.61.2; neither crate is built for Windows (`cargo tree --target x86_64-pc-windows-msvc -i rustix` and `-i errno` print nothing), so the Windows build graph is unchanged.
+
+All licenses are permissive (MIT, Apache-2.0, Zlib, LLVM exception); none carries copyleft obligations. wayland-backend is used with its default features, which select the pure-Rust protocol backend, so no system libwayland is linked (`ldd` on the Linux test binary shows no libwayland, libX11 or libxcb).
+
+The adapter pattern (long-lived Linux context, read-then-map) is adapted from cua@a802eaf2 `libs/cua-driver/rust/crates/platform-linux/src/clipboard.rs`, MIT, with its notice in `docs/orcel/notices/cua-driver-clipboard-MIT.txt`.
 
 ## npm packages in the release
 
