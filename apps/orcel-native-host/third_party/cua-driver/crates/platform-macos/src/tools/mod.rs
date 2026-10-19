@@ -909,6 +909,14 @@ impl ToolState {
         host_owns_permission_ux: bool,
         host_bundle_id: Option<String>,
     ) -> Self {
+        // Orcel P-04: the Orcel host owns every TCC request, so Cua never
+        // raises its own Accessibility or Screen Recording prompt, whatever
+        // the caller asked for.
+        #[cfg(feature = "orcel-minimal")]
+        let host_owns_permission_ux = {
+            let _requested = host_owns_permission_ux;
+            true
+        };
         Self {
             snapshots: Arc::new(Snapshots::new()),
             cursor_registry: Arc::new(CursorRegistry::new()),

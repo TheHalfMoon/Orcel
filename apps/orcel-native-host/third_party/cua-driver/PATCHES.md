@@ -159,6 +159,24 @@ capability manifest, and without upstream's default `yaml` feature
 `session_manifest::load_manifest` always returns an error. Those tests fail
 on every OS, upstream included. CI skips exactly those fifteen by name.
 
+## P-04: the host owns permission UX
+
+`platform-macos/src/tools/mod.rs`: with `orcel-minimal`,
+`ToolState::new_with_capture_service` ignores the caller's
+`host_owns_permission_ux` and stores `true`. Every `ToolState`, including
+`Default`, is built there, so Cua's `check_permissions` never calls
+`request_accessibility` / `request_screen_recording`. It reports state only.
+TCC requests belong to the Orcel host's signed identity (XP-16). Upstream's
+own tests (`direct_host_runtime_cannot_raise_permission_prompts`) define what
+`true` means.
+
+The other prompt sites are unreachable from the host. They are the hidden
+probe `permissions::gate::run_permission_probe_if_requested`, which a binary's
+`main` must call, and the permission panel. The host's `main.rs` calls
+neither.
+
+platform-linux has no counterpart, because no TCC exists there.
+
 ## Patched file index
 
 Every vendored file that differs from upstream, as recorded in the
