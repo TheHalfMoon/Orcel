@@ -11,7 +11,7 @@
 //! device private key.
 
 use orcel_contracts::{FailureCode, RemoteContext, RequestEnvelope};
-use orcel_platform::{paths, PlatformError};
+use orcel_platform::{files, paths, PlatformError};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::ffi::OsString;
@@ -524,10 +524,10 @@ fn leases_checksum(leases: &[RemoteSessionLease]) -> String {
 }
 
 /// Protected lease store location: `ORCEL_REMOTE_LEASE_PATH`, else
-/// `remote_leases.json` in the private per-user Orcel state root (XP-01B).
-/// Fails closed when the override is empty or relative, or when the root
-/// cannot be resolved or is not private; it never falls back to the shared
-/// temp directory. The override must stay listed in
+/// `remote_leases.json` in the private per-user Orcel state root (XP-01B). Fails
+/// closed when the override is empty, relative or not in a private directory, or
+/// when the root cannot be resolved or is not private; it never falls back to
+/// the shared temp directory. The override must stay listed in
 /// `protected_state::PROTECTED_STATE_OVERRIDES`.
 pub fn default_lease_store_path() -> Result<PathBuf, PlatformError> {
     default_lease_store_path_from(&|name| std::env::var_os(name))
@@ -538,7 +538,7 @@ pub fn default_lease_store_path_from(
     lookup: &dyn Fn(&str) -> Option<OsString>,
 ) -> Result<PathBuf, PlatformError> {
     if let Some(path) = lookup("ORCEL_REMOTE_LEASE_PATH") {
-        return paths::absolute_override(path);
+        return paths::private_file_override(path);
     }
     let root = paths::state_root_from(lookup)?;
     paths::ensure_private_dir(&root)?;
@@ -583,25 +583,11 @@ pub fn save_leases(path: &Path, leases: &[RemoteSessionLease]) -> Result<(), Pol
         std::fs::create_dir_all(parent)
             .map_err(|error| internal(format!("create lease store directory: {error}")))?;
     }
-    let file_name = path
-        .file_name()
-        .ok_or_else(|| internal("lease store path has no file name".into()))?;
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or_default();
-    let temp = path.with_file_name(format!(
-        ".{}.tmp-{}-{nanos}",
-        file_name.to_string_lossy(),
-        std::process::id()
-    ));
-    let result = std::fs::write(&temp, &bytes)
-        .and_then(|()| std::fs::rename(&temp, path))
-        .map_err(|error| internal(format!("write lease store: {error}")));
-    if result.is_err() {
-        let _ = std::fs::remove_file(&temp);
+    if path.file_name().is_none() {
+        return Err(internal("lease store path has no file name".into()));
     }
-    result
+    files::write_private_atomic(path, &bytes)
+        .map_err(|error| internal(format!("write lease store: {error}")))
 }
 
 /// Insert or replace the lease for one remote connection, pruning expired
@@ -670,7 +656,7 @@ pub fn pin_connection(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use serde_json::json;
 
@@ -718,7 +704,7 @@ mod tests {
         }
     }
 
-    fn lease() -> RemoteSessionLease {
+    pub(crate) fn lease() -> RemoteSessionLease {
         build_lease(
             &lease_request(),
             "lease-1".into(),

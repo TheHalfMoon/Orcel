@@ -153,7 +153,8 @@ fn windows_paths_are_byte_identical_to_the_previous_defaults() {
 
 #[test]
 fn absolute_overrides_are_kept_and_relative_ones_refused() {
-    let custom = std::env::temp_dir().join("custom-xp01b.json");
+    let base = sandbox("override");
+    let custom = base.join("custom-xp01b.json");
     for (name, resolve) in [
         (
             "ORCEL_EXECUTABLE_REGISTRY_PATH",
@@ -172,6 +173,7 @@ fn absolute_overrides_are_kept_and_relative_ones_refused() {
             );
         }
     }
+    let _ = std::fs::remove_dir_all(base);
 }
 
 /// Recovery: a store already written at the default location is read in
@@ -199,12 +201,18 @@ mod unix {
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).expect("chmod");
     }
 
-    fn xdg_parent(base: &Path) -> PathBuf {
-        let parent = base.join(".local").join("state");
-        std::fs::create_dir_all(&parent).expect("state parent");
-        chmod(&base.join(".local"), 0o700);
-        chmod(&parent, 0o700);
-        parent
+    /// The state root this OS's layout derives from `HOME=base`, with every
+    /// directory between `base` and the root's parent created 0700.
+    fn root_under(base: &Path) -> PathBuf {
+        let root = orcel_platform::paths::state_root_from(&home_only(base)).expect("root");
+        let parent = root.parent().expect("root parent");
+        std::fs::create_dir_all(parent).expect("root parent");
+        let mut dir = parent;
+        while dir != base {
+            chmod(dir, 0o700);
+            dir = dir.parent().expect("below base");
+        }
+        root
     }
 
     fn home_only(base: &Path) -> impl Fn(&str) -> Option<OsString> {
@@ -218,7 +226,7 @@ mod unix {
             let target = base.join("elsewhere");
             std::fs::create_dir(&target).expect("target");
             chmod(&target, 0o700);
-            let root = xdg_parent(&base).join("orcel");
+            let root = root_under(&base);
             std::os::unix::fs::symlink(&target, &root).expect("symlink");
             let error = (store.resolve)(&home_only(&base)).expect_err(store.name);
             assert!(
@@ -240,7 +248,7 @@ mod unix {
     fn world_writable_root_is_refused_and_left_unrepaired() {
         for store in STORES {
             let base = sandbox("writable-root");
-            let root = xdg_parent(&base).join("orcel");
+            let root = root_under(&base);
             std::fs::create_dir(&root).expect("root");
             chmod(&root, 0o777);
             let error = (store.resolve)(&home_only(&base)).expect_err(store.name);
@@ -251,6 +259,29 @@ mod unix {
             );
             let mode = std::fs::metadata(&root).expect("root").permissions().mode();
             assert_eq!(mode & 0o777, 0o777, "{}", store.name);
+            let _ = std::fs::remove_dir_all(base);
+        }
+    }
+
+    /// An override gets the default location's guarantees: a parent other
+    /// users can reach is refused.
+    #[test]
+    fn override_in_a_shared_directory_is_refused() {
+        for (name, resolve) in [
+            (
+                "ORCEL_EXECUTABLE_REGISTRY_PATH",
+                STORES[1].resolve as fn(Lookup<'_>) -> Result<PathBuf, String>,
+            ),
+            ("ORCEL_REMOTE_LEASE_PATH", STORES[2].resolve),
+        ] {
+            let base = sandbox("shared-override");
+            chmod(&base, 0o755);
+            let error = resolve(&lookup(vec![(name, base.join("s.json").into_os_string())]))
+                .expect_err("shared parent");
+            assert!(
+                error.contains("grants group or other access"),
+                "{name}: {error}"
+            );
             let _ = std::fs::remove_dir_all(base);
         }
     }
@@ -266,9 +297,88 @@ mod unix {
                 "{}: {error}",
                 store.name
             );
-            assert!(!base.join(".local").exists(), "{}", store.name);
+            assert_eq!(
+                std::fs::read_dir(&base).expect("base").count(),
+                0,
+                "{}",
+                store.name
+            );
             chmod(&base, 0o700);
             let _ = std::fs::remove_dir_all(base);
         }
     }
+}
+
+/// A file in the legacy shared-temp `orcel` directory that earlier builds
+/// defaulted to. Only what the test created is removed again; state an
+/// earlier build already left there is kept, and serves as the seed.
+struct LegacySeed {
+    file: PathBuf,
+    created_dir: bool,
+    created_file: bool,
+}
+
+impl LegacySeed {
+    /// Seeds `name` with `write` unless it already exists. `None` when the
+    /// legacy directory belongs to someone else and cannot be written.
+    fn plant(name: &str, write: impl FnOnce(&Path)) -> Option<Self> {
+        let dir = std::env::temp_dir().join("orcel");
+        let created_dir = !dir.exists();
+        if std::fs::create_dir_all(&dir).is_err() {
+            return None;
+        }
+        let file = dir.join(name);
+        let created_file = !file.exists();
+        if created_file {
+            write(&file);
+        }
+        Some(Self {
+            file,
+            created_dir,
+            created_file,
+        })
+    }
+}
+
+impl Drop for LegacySeed {
+    fn drop(&mut self) {
+        if self.created_file {
+            let _ = std::fs::remove_file(&self.file);
+        }
+        if self.created_dir {
+            if let Some(dir) = self.file.parent() {
+                let _ = std::fs::remove_dir(dir);
+            }
+        }
+    }
+}
+
+/// Recovery: a lease store an earlier build left under the shared temp
+/// directory is not migrated and never read; the private default starts
+/// empty, so every remote request stays fail-closed until a new lease.
+#[test]
+fn legacy_shared_temp_lease_store_is_ignored() {
+    let seed = LegacySeed::plant("remote_leases.json", |path| {
+        remote_session::save_leases(path, &[remote_session::tests::lease()]).expect("seed");
+    });
+    if let Some(seed) = &seed {
+        if seed.created_file {
+            assert_eq!(remote_session::load_leases(&seed.file).len(), 1);
+        }
+    }
+    let base = sandbox("legacy");
+    let lookup = lookup(user_root_env(&base));
+    let path = remote_session::default_lease_store_path_from(&lookup).expect("lease path");
+    assert_ne!(
+        path,
+        std::env::temp_dir()
+            .join("orcel")
+            .join("remote_leases.json")
+    );
+    assert!(remote_session::load_leases(&path).is_empty());
+    assert!(!path.exists(), "nothing is copied from the legacy store");
+    let roots = crate::protected_state::protected_state_roots_from(&lookup);
+    assert!(!roots.contains(&std::env::temp_dir().join("orcel")));
+    drop(seed);
+    let _ = std::fs::remove_dir_all(base);
 }

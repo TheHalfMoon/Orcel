@@ -608,8 +608,10 @@ mod tests {
     #[test]
     fn sg000041_refuses_workspace_containing_each_override() {
         let base = temp_root();
+        // The per-OS state root comes from LOCALAPPDATA on Windows and from
+        // HOME elsewhere; both point under `lad` so it is one root per OS.
         let roots = crate::protected_state::protected_state_roots_from(&|name| match name {
-            "LOCALAPPDATA" => Some(base.join("lad").into_os_string()),
+            "LOCALAPPDATA" | "HOME" => Some(base.join("lad").into_os_string()),
             "ORCEL_AUDIT_PATH" => Some(base.join("audit").join("a.jsonl").into_os_string()),
             "ORCEL_TRUST_PATH" => Some(base.join("trust").join("t.jsonl").into_os_string()),
             "ORCEL_APPROVAL_HISTORY_PATH" => {

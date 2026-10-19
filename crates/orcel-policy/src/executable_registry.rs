@@ -11,7 +11,7 @@
 //! network-less, bounded, per-run-approved process path.
 
 use orcel_contracts::FailureCode;
-use orcel_platform::{paths, PlatformError};
+use orcel_platform::{files, paths, PlatformError};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::ffi::OsString;
@@ -174,10 +174,10 @@ fn checksum(entries: &[RegisteredExecutable]) -> String {
 }
 
 /// Protected registry location: `ORCEL_EXECUTABLE_REGISTRY_PATH`, else
-/// `executable_registry.json` in the private per-user Orcel state root
-/// (XP-01B). Fails closed when the override is empty or relative, or when
-/// the root cannot be resolved or is not private; it never falls back to the
-/// shared temp directory. The override must stay listed in
+/// `executable_registry.json` in the private per-user Orcel state root (XP-01B).
+/// Fails closed when the override is empty, relative or not in a private
+/// directory, or when the root cannot be resolved or is not private; it never
+/// falls back to the shared temp directory. The override must stay listed in
 /// `protected_state::PROTECTED_STATE_OVERRIDES`.
 pub fn default_registry_path() -> Result<PathBuf, PlatformError> {
     default_registry_path_from(&|name| std::env::var_os(name))
@@ -188,7 +188,7 @@ pub fn default_registry_path_from(
     lookup: &dyn Fn(&str) -> Option<OsString>,
 ) -> Result<PathBuf, PlatformError> {
     if let Some(path) = lookup("ORCEL_EXECUTABLE_REGISTRY_PATH") {
-        return paths::absolute_override(path);
+        return paths::private_file_override(path);
     }
     let root = paths::state_root_from(lookup)?;
     paths::ensure_private_dir(&root)?;
@@ -232,18 +232,8 @@ pub fn save_registry(path: &Path, entries: &[RegisteredExecutable]) -> Result<()
         std::fs::create_dir_all(parent)
             .map_err(|error| internal(format!("create registry directory: {error}")))?;
     }
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or_default();
-    let temp = path.with_extension(format!("tmp-{}-{nanos}", std::process::id()));
-    let result = std::fs::write(&temp, &bytes)
-        .and_then(|()| std::fs::rename(&temp, path))
-        .map_err(|error| internal(format!("write registry: {error}")));
-    if result.is_err() {
-        let _ = std::fs::remove_file(&temp);
-    }
-    result
+    files::write_private_atomic(path, &bytes)
+        .map_err(|error| internal(format!("write registry: {error}")))
 }
 
 /// Deny shells, interpreters, script hosts, non-`.exe` images, UNC and

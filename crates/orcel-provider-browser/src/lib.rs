@@ -656,12 +656,12 @@ fn profile_identity(root: &Path) -> String {
 
 /// Canonical root for the isolated Orcel automation browser profile. Tests
 /// override it with `ORCEL_BROWSER_STATE_DIR`; production defaults keep the
-/// profile under Orcel protected local state, never inside a workspace and
-/// never inside a personal browser directory. The default is
-/// `browser-profile` in the private per-user Orcel state root (XP-01B); it
-/// fails closed when the override is empty or relative, or when the root
-/// cannot be resolved or is not private, and never falls back to the shared
-/// temp directory.
+/// profile under Orcel protected local state, never inside a workspace and never
+/// inside a personal browser directory. The default is `browser-profile` in the
+/// private per-user Orcel state root (XP-01B); it fails closed when the override
+/// is empty, relative or not in a private directory, or when the root cannot be
+/// resolved or is not private, and never falls back to the shared temp
+/// directory.
 pub fn default_profile_root() -> Result<PathBuf, PlatformError> {
     default_profile_root_from(&|name| std::env::var_os(name))
 }
@@ -672,10 +672,12 @@ pub fn default_profile_root_from(
 ) -> Result<PathBuf, PlatformError> {
     if let Some(path) = lookup("ORCEL_BROWSER_STATE_DIR") {
         let path = paths::absolute_override(path)?;
-        if path.ends_with("browser-profile") {
-            return Ok(path);
-        }
-        return Ok(path.join("browser-profile"));
+        let profile = if path.ends_with("browser-profile") {
+            path
+        } else {
+            path.join("browser-profile")
+        };
+        return paths::private_file(profile);
     }
     let root = paths::state_root_from(lookup)?;
     paths::ensure_private_dir(&root)?;
@@ -6443,7 +6445,8 @@ mod tests {
 
         #[test]
         fn absolute_override_keeps_its_browser_profile_suffix_rule() {
-            let custom = std::env::temp_dir().join("custom-xp01b-state");
+            let base = sandbox("override");
+            let custom = base.join("state");
             let path = resolve(&lookup(vec![(
                 "ORCEL_BROWSER_STATE_DIR",
                 custom.clone().into_os_string(),
@@ -6455,6 +6458,7 @@ mod tests {
                 exact.clone().into_os_string(),
             )]));
             assert_eq!(path, Ok(exact));
+            let _ = std::fs::remove_dir_all(base);
         }
 
         #[cfg(unix)]
@@ -6467,12 +6471,18 @@ mod tests {
                     .expect("chmod");
             }
 
-            fn xdg_parent(base: &Path) -> PathBuf {
-                let parent = base.join(".local").join("state");
-                std::fs::create_dir_all(&parent).expect("state parent");
-                chmod(&base.join(".local"), 0o700);
-                chmod(&parent, 0o700);
-                parent
+            /// The state root this OS's layout derives from `HOME=base`, with every
+            /// directory between `base` and the root's parent created 0700.
+            fn root_under(base: &Path) -> PathBuf {
+                let root = orcel_platform::paths::state_root_from(&home_only(base)).expect("root");
+                let parent = root.parent().expect("root parent");
+                std::fs::create_dir_all(parent).expect("root parent");
+                let mut dir = parent;
+                while dir != base {
+                    chmod(dir, 0o700);
+                    dir = dir.parent().expect("below base");
+                }
+                root
             }
 
             fn home_only(base: &Path) -> impl Fn(&str) -> Option<OsString> {
@@ -6485,8 +6495,7 @@ mod tests {
                 let target = base.join("elsewhere");
                 std::fs::create_dir(&target).expect("target");
                 chmod(&target, 0o700);
-                std::os::unix::fs::symlink(&target, xdg_parent(&base).join("orcel"))
-                    .expect("symlink");
+                std::os::unix::fs::symlink(&target, root_under(&base)).expect("symlink");
                 let error = resolve(&home_only(&base)).expect_err("symlinked root");
                 assert!(error.contains("is a symbolic link"), "{error}");
                 assert_eq!(std::fs::read_dir(&target).expect("target").count(), 0);
@@ -6496,7 +6505,7 @@ mod tests {
             #[test]
             fn world_writable_root_is_refused_and_left_unrepaired() {
                 let base = sandbox("writable-root");
-                let root = xdg_parent(&base).join("orcel");
+                let root = root_under(&base);
                 std::fs::create_dir(&root).expect("root");
                 chmod(&root, 0o777);
                 let error = resolve(&home_only(&base)).expect_err("writable root");
@@ -6506,13 +6515,29 @@ mod tests {
                 let _ = std::fs::remove_dir_all(base);
             }
 
+            /// An override gets the default location's guarantees: a parent other
+            /// users can reach is refused.
+            #[test]
+            fn override_in_a_shared_directory_is_refused() {
+                let base = sandbox("shared-override");
+                chmod(&base, 0o755);
+                let override_path = base.clone();
+                let error = resolve(&lookup(vec![(
+                    "ORCEL_BROWSER_STATE_DIR",
+                    override_path.into_os_string(),
+                )]))
+                .expect_err("shared parent");
+                assert!(error.contains("grants group or other access"), "{error}");
+                let _ = std::fs::remove_dir_all(base);
+            }
+
             #[test]
             fn world_writable_home_is_refused_before_anything_is_created() {
                 let base = sandbox("writable-home");
                 chmod(&base, 0o777);
                 let error = resolve(&home_only(&base)).expect_err("writable home");
                 assert!(error.contains("is writable by other users"), "{error}");
-                assert!(!base.join(".local").exists());
+                assert_eq!(std::fs::read_dir(&base).expect("base").count(), 0);
                 chmod(&base, 0o700);
                 let _ = std::fs::remove_dir_all(base);
             }

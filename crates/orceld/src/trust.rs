@@ -1,5 +1,5 @@
 use orcel_contracts::FailureCode;
-use orcel_platform::{paths, PlatformError};
+use orcel_platform::{files, paths, PlatformError};
 use orcel_provider_fs::ProviderError;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -196,16 +196,12 @@ impl TrustStore {
 
     fn append_to_file(&self, record: &StoredTrust) -> Result<(), ProviderError> {
         use std::io::Write as _;
-        let mut file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)
-            .map_err(|error| {
-                ProviderError::new(
-                    FailureCode::ApprovalUnavailable,
-                    format!("persist trust record: {error}"),
-                )
-            })?;
+        let mut file = files::open_private_append(&self.path).map_err(|error| {
+            ProviderError::new(
+                FailureCode::ApprovalUnavailable,
+                format!("persist trust record: {error}"),
+            )
+        })?;
         serde_json::to_writer(&mut file, record).map_err(|error| {
             ProviderError::new(
                 FailureCode::ApprovalUnavailable,
@@ -245,10 +241,10 @@ impl TrustStore {
     }
 }
 
-/// `ORCEL_TRUST_PATH`, else `trust.jsonl` in the private per-user Orcel
-/// state root (XP-01B). Fails closed when the override is empty or relative,
-/// or when the root cannot be resolved or is not private; it never falls
-/// back to the shared temp directory.
+/// `ORCEL_TRUST_PATH`, else `trust.jsonl` in the private per-user Orcel state
+/// root (XP-01B). Fails closed when the override is empty, relative or not in a
+/// private directory, or when the root cannot be resolved or is not private; it
+/// never falls back to the shared temp directory.
 pub fn default_trust_path() -> Result<std::path::PathBuf, PlatformError> {
     default_trust_path_from(&|name| std::env::var_os(name))
 }
@@ -258,7 +254,7 @@ pub fn default_trust_path_from(
     lookup: &dyn Fn(&str) -> Option<std::ffi::OsString>,
 ) -> Result<std::path::PathBuf, PlatformError> {
     if let Some(path) = lookup("ORCEL_TRUST_PATH") {
-        return paths::absolute_override(path);
+        return paths::private_file_override(path);
     }
     let root = paths::state_root_from(lookup)?;
     paths::ensure_private_dir(&root)?;
@@ -541,6 +537,44 @@ mod tests {
             let _ = std::fs::remove_dir_all(base);
         }
 
+        /// Recovery: trust records an earlier build left in the legacy
+        /// shared-temp `orcel` directory are not migrated and never read, so
+        /// every workspace starts untrusted under the private root. Only what
+        /// the test seeds is removed; an earlier build's file is kept and
+        /// serves as the seed.
+        #[test]
+        fn legacy_shared_temp_trust_records_are_ignored() {
+            let legacy_dir = std::env::temp_dir().join("orcel");
+            let legacy = legacy_dir.join("trust.jsonl");
+            let created_dir = !legacy_dir.exists();
+            let created_file = !legacy.exists();
+            if created_file && std::fs::create_dir_all(&legacy_dir).is_ok() {
+                TrustStore::load_or_create(legacy.clone())
+                    .grant("default", "sg-000020-v1", "legacy-seed", 1_000)
+                    .expect("seed legacy trust");
+                assert!(
+                    TrustStore::load_or_create(legacy.clone())
+                        .get("default")
+                        .trusted
+                );
+            }
+            let base = sandbox("legacy");
+            let lookup = lookup(user_root_env(&base));
+            let path = resolve(&lookup).expect("default");
+            assert_ne!(path, legacy);
+            let store = TrustStore::load_or_create(path.clone());
+            assert!(!store.get("default").trusted);
+            assert!(store.history(200).is_empty());
+            assert!(!path.exists(), "nothing is copied from the legacy store");
+            if created_file {
+                let _ = std::fs::remove_file(&legacy);
+            }
+            if created_dir {
+                let _ = std::fs::remove_dir(&legacy_dir);
+            }
+            let _ = std::fs::remove_dir_all(base);
+        }
+
         #[cfg(unix)]
         mod unix {
             use super::*;
@@ -551,12 +585,18 @@ mod tests {
                     .expect("chmod");
             }
 
-            fn xdg_parent(base: &Path) -> PathBuf {
-                let parent = base.join(".local").join("state");
-                std::fs::create_dir_all(&parent).expect("state parent");
-                chmod(&base.join(".local"), 0o700);
-                chmod(&parent, 0o700);
-                parent
+            /// The state root this OS's layout derives from `HOME=base`, with every
+            /// directory between `base` and the root's parent created 0700.
+            fn root_under(base: &Path) -> PathBuf {
+                let root = orcel_platform::paths::state_root_from(&home_only(base)).expect("root");
+                let parent = root.parent().expect("root parent");
+                std::fs::create_dir_all(parent).expect("root parent");
+                let mut dir = parent;
+                while dir != base {
+                    chmod(dir, 0o700);
+                    dir = dir.parent().expect("below base");
+                }
+                root
             }
 
             fn home_only(base: &Path) -> impl Fn(&str) -> Option<OsString> {
@@ -569,8 +609,7 @@ mod tests {
                 let target = base.join("elsewhere");
                 std::fs::create_dir(&target).expect("target");
                 chmod(&target, 0o700);
-                std::os::unix::fs::symlink(&target, xdg_parent(&base).join("orcel"))
-                    .expect("symlink");
+                std::os::unix::fs::symlink(&target, root_under(&base)).expect("symlink");
                 let error = resolve(&home_only(&base)).expect_err("symlinked root");
                 assert!(error.contains("is a symbolic link"), "{error}");
                 assert_eq!(std::fs::read_dir(&target).expect("target").count(), 0);
@@ -580,7 +619,7 @@ mod tests {
             #[test]
             fn world_writable_root_is_refused_and_left_unrepaired() {
                 let base = sandbox("writable-root");
-                let root = xdg_parent(&base).join("orcel");
+                let root = root_under(&base);
                 std::fs::create_dir(&root).expect("root");
                 chmod(&root, 0o777);
                 let error = resolve(&home_only(&base)).expect_err("writable root");
@@ -590,13 +629,29 @@ mod tests {
                 let _ = std::fs::remove_dir_all(base);
             }
 
+            /// An override gets the default location's guarantees: a parent other
+            /// users can reach is refused.
+            #[test]
+            fn override_in_a_shared_directory_is_refused() {
+                let base = sandbox("shared-override");
+                chmod(&base, 0o755);
+                let override_path = base.join("trust.jsonl");
+                let error = resolve(&lookup(vec![(
+                    "ORCEL_TRUST_PATH",
+                    override_path.into_os_string(),
+                )]))
+                .expect_err("shared parent");
+                assert!(error.contains("grants group or other access"), "{error}");
+                let _ = std::fs::remove_dir_all(base);
+            }
+
             #[test]
             fn world_writable_home_is_refused_before_anything_is_created() {
                 let base = sandbox("writable-home");
                 chmod(&base, 0o777);
                 let error = resolve(&home_only(&base)).expect_err("writable home");
                 assert!(error.contains("is writable by other users"), "{error}");
-                assert!(!base.join(".local").exists());
+                assert_eq!(std::fs::read_dir(&base).expect("base").count(), 0);
                 chmod(&base, 0o700);
                 let _ = std::fs::remove_dir_all(base);
             }

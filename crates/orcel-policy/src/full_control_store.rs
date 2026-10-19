@@ -11,7 +11,7 @@ use crate::full_control::{
 };
 use crate::{PolicyError, POLICY_REVISION};
 use orcel_contracts::FailureCode;
-use orcel_platform::{paths, PlatformError};
+use orcel_platform::{files, paths, PlatformError};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::ffi::OsString;
@@ -218,21 +218,12 @@ pub fn ensure_key(path: &Path) -> Result<[u8; AUTHORITY_KEY_BYTES], PolicyError>
     std::fs::create_dir_all(parent).map_err(|error| {
         unavailable(format!("create full-control authority directory: {error}"))
     })?;
-    let temp = path.with_file_name(format!(".{KEY_FILE_NAME}.tmp-{}", std::process::id()));
-    std::fs::write(&temp, key)
-        .map_err(|error| unavailable(format!("write full-control authority key: {error}")))?;
-    match std::fs::rename(&temp, path) {
+    match files::write_private_atomic(path, &key) {
         Ok(()) => Ok(key),
-        Err(_error) if path.exists() => {
-            let _ = std::fs::remove_file(&temp);
-            read_key(path)
-        }
-        Err(error) => {
-            let _ = std::fs::remove_file(&temp);
-            Err(unavailable(format!(
-                "install full-control authority key: {error}"
-            )))
-        }
+        Err(_error) if path.exists() => read_key(path),
+        Err(error) => Err(unavailable(format!(
+            "install full-control authority key: {error}"
+        ))),
     }
 }
 
@@ -314,14 +305,8 @@ pub fn save_store(
     std::fs::create_dir_all(parent).map_err(|error| {
         unavailable(format!("create full-control authority directory: {error}"))
     })?;
-    let temp = path.with_file_name(format!(".{STORE_FILE_NAME}.tmp-{}", std::process::id()));
-    let result = std::fs::write(&temp, bytes)
-        .and_then(|()| std::fs::rename(&temp, path))
-        .map_err(|error| unavailable(format!("write full-control authority state: {error}")));
-    if result.is_err() {
-        let _ = std::fs::remove_file(&temp);
-    }
-    result
+    files::write_private_atomic(path, &bytes)
+        .map_err(|error| unavailable(format!("write full-control authority state: {error}")))
 }
 
 fn advance_epoch(value: u64) -> Result<u64, PolicyError> {

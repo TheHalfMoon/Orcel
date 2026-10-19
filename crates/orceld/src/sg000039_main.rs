@@ -9,7 +9,9 @@ use orcel_provider_fs::ProviderError;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::io::{self, BufRead, Write};
+#[cfg(test)]
 use std::path::Path;
+use std::path::PathBuf;
 
 mod browser;
 mod clipboard;
@@ -282,29 +284,15 @@ fn handle_request(
         }
     };
 
-    // XP-01B: without a private trust store or browser profile root the
-    // request fails closed before dispatch.
-    let stores = load_trust_store().and_then(|trust_store| {
-        let browser_root = orcel_provider_browser::default_profile_root()
-            .map_err(|error| state_unavailable("browser profile", &error))?;
-        Ok((trust_store, browser_root))
-    });
-    let (mut trust_store, browser_root) = match stores {
-        Ok(stores) => stores,
-        Err(error) => {
-            let _ = audit.record(&request, decision.policy_revision, "FAILED");
-            return ResponseEnvelope::failure(request.request_id, error.code, error.message);
-        }
-    };
     let browser_resolver = browser::system_resolver();
-    match dispatch(
+    let mut stores = DefaultStores::default();
+    match dispatch_with(
         policy,
         &decision.workspace,
         approval,
-        &mut trust_store,
+        &mut stores,
         &request,
         &browser_resolver,
-        &browser_root,
     ) {
         Ok(value) => {
             if let Err(error) = audit.record(&request, decision.policy_revision, "SUCCESS") {
@@ -332,6 +320,62 @@ fn handle_request(
     }
 }
 
+/// XP-01B: the trust store and the browser profile root a request may use.
+/// A request resolves only the stores it uses, so an unavailable store fails
+/// closed only the requests that need it.
+trait StateStores {
+    fn trust_store(&mut self) -> Result<&mut trust::TrustStore, ProviderError>;
+    fn browser_root(&mut self) -> Result<PathBuf, ProviderError>;
+}
+
+/// The default stores, each resolved from the process environment on first
+/// use.
+#[derive(Default)]
+struct DefaultStores {
+    trust: Option<trust::TrustStore>,
+}
+
+impl StateStores for DefaultStores {
+    fn trust_store(&mut self) -> Result<&mut trust::TrustStore, ProviderError> {
+        if self.trust.is_none() {
+            self.trust = Some(load_trust_store()?);
+        }
+        self.trust.as_mut().ok_or_else(|| {
+            ProviderError::new(FailureCode::InternalError, "trust store was not loaded")
+        })
+    }
+
+    fn browser_root(&mut self) -> Result<PathBuf, ProviderError> {
+        orcel_provider_browser::default_profile_root()
+            .map_err(|error| state_unavailable("browser profile", &error))
+    }
+}
+
+/// Stores the caller already resolved.
+#[cfg(test)]
+struct GivenStores<'a> {
+    trust: &'a mut trust::TrustStore,
+    browser_root: &'a Path,
+}
+
+#[cfg(test)]
+impl StateStores for GivenStores<'_> {
+    fn trust_store(&mut self) -> Result<&mut trust::TrustStore, ProviderError> {
+        Ok(self.trust)
+    }
+
+    fn browser_root(&mut self) -> Result<PathBuf, ProviderError> {
+        Ok(self.browser_root.to_path_buf())
+    }
+}
+
+/// Every browser capability is named `browser.*`; no other dispatcher
+/// handles one.
+fn is_browser_request(request: &RequestEnvelope) -> bool {
+    request.capability.starts_with("browser.")
+}
+
+#[cfg(test)]
 fn dispatch(
     policy: &PolicyEngine,
     workspace: &Workspace,
@@ -341,10 +385,32 @@ fn dispatch(
     browser_resolver: &impl orcel_provider_browser::DnsResolver,
     browser_root: &Path,
 ) -> Result<Value, ProviderError> {
+    let mut stores = GivenStores {
+        trust: trust_store,
+        browser_root,
+    };
+    dispatch_with(
+        policy,
+        workspace,
+        approval,
+        &mut stores,
+        request,
+        browser_resolver,
+    )
+}
+
+fn dispatch_with(
+    policy: &PolicyEngine,
+    workspace: &Workspace,
+    approval: &impl ApprovalBroker,
+    stores: &mut impl StateStores,
+    request: &RequestEnvelope,
+    browser_resolver: &impl orcel_provider_browser::DnsResolver,
+) -> Result<Value, ProviderError> {
     if let Some(result) = fs_mutation::dispatch_fs_mutation(workspace, approval, request)? {
         return Ok(result);
     }
-    if let Some(result) = dispatch_trust(workspace, approval, trust_store, request)? {
+    if let Some(result) = dispatch_trust(workspace, approval, stores, request)? {
         return Ok(result);
     }
     if let Some(result) = uia::dispatch_uia(workspace, approval, request)? {
@@ -353,35 +419,12 @@ fn dispatch(
     if let Some(result) = clipboard::dispatch_clipboard(workspace, approval, request)? {
         return Ok(result);
     }
-    if let Some(result) =
-        browser::dispatch_navigation(workspace, approval, request, browser_resolver, browser_root)?
-    {
-        return Ok(result);
-    }
-    if let Some(result) = browser::dispatch_observation(workspace, request, browser_root)? {
-        return Ok(result);
-    }
-    if let Some(result) = browser::dispatch_actuation(workspace, approval, request, browser_root)? {
-        return Ok(result);
-    }
-    if let Some(result) =
-        browser::dispatch_download(workspace, approval, request, browser_resolver, browser_root)?
-    {
-        return Ok(result);
-    }
-    let trust = trust_store.get(&workspace.id);
-    if let Some(result) = browser::dispatch_upload(
-        workspace,
-        approval,
-        request,
-        trust.trusted,
-        trust.revision,
-        browser_root,
-    )? {
-        return Ok(result);
-    }
-    if let Some(result) = browser::dispatch(workspace, request, browser_resolver, browser_root)? {
-        return Ok(result);
+    if is_browser_request(request) {
+        if let Some(result) =
+            dispatch_browser(workspace, approval, stores, request, browser_resolver)?
+        {
+            return Ok(result);
+        }
     }
     if orcel_policy::approval_class_for(&request.capability, &request.operation)
         == ApprovalClass::Strong
@@ -411,15 +454,56 @@ fn dispatch(
     legacy::dispatch_bridge(policy, workspace, approval, request)
 }
 
+fn dispatch_browser(
+    workspace: &Workspace,
+    approval: &impl ApprovalBroker,
+    stores: &mut impl StateStores,
+    request: &RequestEnvelope,
+    browser_resolver: &impl orcel_provider_browser::DnsResolver,
+) -> Result<Option<Value>, ProviderError> {
+    let browser_root = stores.browser_root()?;
+    let browser_root = browser_root.as_path();
+    if let Some(result) =
+        browser::dispatch_navigation(workspace, approval, request, browser_resolver, browser_root)?
+    {
+        return Ok(Some(result));
+    }
+    if let Some(result) = browser::dispatch_observation(workspace, request, browser_root)? {
+        return Ok(Some(result));
+    }
+    if let Some(result) = browser::dispatch_actuation(workspace, approval, request, browser_root)? {
+        return Ok(Some(result));
+    }
+    if let Some(result) =
+        browser::dispatch_download(workspace, approval, request, browser_resolver, browser_root)?
+    {
+        return Ok(Some(result));
+    }
+    if request.capability == "browser.upload" {
+        let trust = stores.trust_store()?.get(&workspace.id);
+        if let Some(result) = browser::dispatch_upload(
+            workspace,
+            approval,
+            request,
+            trust.trusted,
+            trust.revision,
+            browser_root,
+        )? {
+            return Ok(Some(result));
+        }
+    }
+    browser::dispatch(workspace, request, browser_resolver, browser_root)
+}
+
 fn dispatch_trust(
     workspace: &Workspace,
     approval: &impl ApprovalBroker,
-    trust_store: &mut trust::TrustStore,
+    stores: &mut impl StateStores,
     request: &RequestEnvelope,
 ) -> Result<Option<Value>, ProviderError> {
     match (request.capability.as_str(), request.operation.as_str()) {
         ("workspace.trust.get", "get") => {
-            let status = trust_store.get(&request.workspace_id);
+            let status = stores.trust_store()?.get(&request.workspace_id);
             Ok(Some(json!({
                 "workspace_id": status.workspace_id,
                 "trusted": status.trusted,
@@ -430,10 +514,10 @@ fn dispatch_trust(
             })))
         }
         ("workspace.trust.grant", "grant") => {
-            change_trust(workspace, approval, trust_store, request, true).map(Some)
+            change_trust(workspace, approval, stores.trust_store()?, request, true).map(Some)
         }
         ("workspace.trust.revoke", "revoke") => {
-            change_trust(workspace, approval, trust_store, request, false).map(Some)
+            change_trust(workspace, approval, stores.trust_store()?, request, false).map(Some)
         }
         ("trust.revoke_emergency", "revoke") => {
             let digest = revoke_digest(workspace, request);
@@ -507,7 +591,7 @@ fn dispatch_trust(
         }
         ("trust.history.query", "query") => {
             let limit = history_limit(request)?;
-            let entries = trust_store.history(limit);
+            let entries = stores.trust_store()?.history(limit);
             let items: Vec<Value> = entries
                 .iter()
                 .map(|entry| {
@@ -815,6 +899,115 @@ mod tests {
         assert!(marker.is_file(), "profile marker must exist");
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_file(trust_path);
+        let _ = fs::remove_dir_all(browser_root);
+    }
+
+    /// XP-01B: stores whose private root may be unavailable, counting how
+    /// often each is resolved.
+    struct PartialStores {
+        trust: Option<trust::TrustStore>,
+        browser_root: Option<PathBuf>,
+        trust_resolved: usize,
+        browser_resolved: usize,
+    }
+
+    impl StateStores for PartialStores {
+        fn trust_store(&mut self) -> Result<&mut trust::TrustStore, ProviderError> {
+            self.trust_resolved += 1;
+            self.trust.as_mut().ok_or_else(|| {
+                state_unavailable(
+                    "trust store",
+                    &orcel_platform::PlatformError::StateRootUnavailable("test".into()),
+                )
+            })
+        }
+
+        fn browser_root(&mut self) -> Result<PathBuf, ProviderError> {
+            self.browser_resolved += 1;
+            self.browser_root.clone().ok_or_else(|| {
+                state_unavailable(
+                    "browser profile",
+                    &orcel_platform::PlatformError::StateRootUnavailable("test".into()),
+                )
+            })
+        }
+    }
+
+    fn lazy_store_fixture() -> (PathBuf, Workspace, PolicyEngine) {
+        let root = temp_root();
+        git(&root, &["init", "-b", "main"]);
+        let workspace = Workspace {
+            id: "default".into(),
+            root: fs::canonicalize(&root).expect("canonical"),
+        };
+        let policy = policy_for(&workspace);
+        (root, workspace, policy)
+    }
+
+    #[test]
+    fn xp01b_unavailable_browser_root_fails_only_browser_requests() {
+        let (root, workspace, policy) = lazy_store_fixture();
+        let trust_path = temp_trust_path();
+        let mut stores = PartialStores {
+            trust: Some(trust_store_at(&trust_path)),
+            browser_root: None,
+            trust_resolved: 0,
+            browser_resolved: 0,
+        };
+        let approval = FixedApprovalBroker(ApprovalDecision::Denied);
+        let resolver = public_browser_resolver();
+        let run = |stores: &mut PartialStores, capability: &str, operation: &str| {
+            let request = browser_request(capability, operation, json!({}));
+            dispatch_with(&policy, &workspace, &approval, stores, &request, &resolver)
+        };
+        let history = run(&mut stores, "approval.history.query", "query").expect("history");
+        assert!(history["entries"].is_array());
+        let trust = run(&mut stores, "workspace.trust.get", "get").expect("trust");
+        assert_eq!(trust["trusted"], false);
+        assert_eq!(
+            stores.browser_resolved, 0,
+            "non-browser requests never resolve it"
+        );
+        let error = run(&mut stores, "browser.profile", "status").expect_err("browser");
+        assert_eq!(error.code, FailureCode::ProviderUnavailable);
+        assert!(error.message.contains("browser profile is unavailable"));
+        assert_eq!(stores.browser_resolved, 1);
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_file(trust_path);
+    }
+
+    #[test]
+    fn xp01b_unavailable_trust_store_fails_only_requests_that_use_it() {
+        let (root, workspace, policy) = lazy_store_fixture();
+        let browser_root = temp_browser_root("lazy-trust");
+        let mut stores = PartialStores {
+            trust: None,
+            browser_root: Some(browser_root.clone()),
+            trust_resolved: 0,
+            browser_resolved: 0,
+        };
+        let approval = FixedApprovalBroker(ApprovalDecision::Denied);
+        let resolver = public_browser_resolver();
+        let run = |stores: &mut PartialStores, capability: &str, operation: &str| {
+            let request = browser_request(capability, operation, json!({}));
+            dispatch_with(&policy, &workspace, &approval, stores, &request, &resolver)
+        };
+        run(&mut stores, "approval.history.query", "query").expect("history");
+        let status = run(&mut stores, "browser.profile", "status").expect("browser status");
+        assert_eq!(status["isolated"], true);
+        assert_eq!(
+            stores.trust_resolved, 0,
+            "neither request resolves the trust store"
+        );
+        for (capability, operation) in [
+            ("workspace.trust.get", "get"),
+            ("trust.history.query", "query"),
+        ] {
+            let error = run(&mut stores, capability, operation).expect_err(capability);
+            assert_eq!(error.code, FailureCode::ProviderUnavailable, "{capability}");
+            assert!(error.message.contains("trust store is unavailable"));
+        }
+        let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(browser_root);
     }
 
@@ -2167,6 +2360,13 @@ mod sg000058_lease_boundary_tests {
             .as_nanos();
         let root = std::env::temp_dir().join(format!("orcel-sg58-{}-{suffix}", std::process::id()));
         std::fs::create_dir_all(root.join("workspace")).expect("workspace");
+        // XP-01B: the store overrides below must sit in a private directory.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))
+                .expect("chmod root");
+        }
         std::fs::write(
             root.join("workspace").join("README.md"),
             b"sg58 lease boundary",

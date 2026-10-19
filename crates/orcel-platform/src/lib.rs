@@ -2,7 +2,9 @@
 //!
 //! `paths` resolves the per-user Orcel state root and verifies that it is
 //! private, so protected state never lands in a world-shared directory.
+//! `files` writes state files readable by their owner only.
 
+pub mod files;
 pub mod paths;
 
 pub use paths::PlatformError;
