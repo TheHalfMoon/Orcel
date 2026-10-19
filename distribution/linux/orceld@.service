@@ -1,0 +1,36 @@
+# Orcel kernel, one instance per orceld.socket connection: a systemd *user*
+# unit (XP-17). Started only by orceld.socket; it has no [Install] section
+# and never runs system-wide or as root.
+#
+# Hardening is limited to directives that work in a per-user service
+# manager without user namespaces. Each is justified in
+# distribution/linux/README.md; directives left out are listed there too.
+#
+# Unit shape after cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f
+# libs/images/omarchy/files/systemd-user/cua-driver.service (MIT; reference
+# only, transplant row T-CUA-36). No text was copied.
+
+[Unit]
+Description=Orcel kernel (orceld) for one local client
+Documentation=https://github.com/TheHalfMoon/Orcel
+CollectMode=inactive-or-failed
+
+[Service]
+Type=exec
+ExecStart=/usr/lib/orcel/orceld
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+# Workspaces (ORCEL_WORKSPACES_JSON). Without it orceld refuses to start.
+EnvironmentFile=-%E/orcel/orceld.env
+UMask=0077
+KillMode=control-group
+TimeoutStopSec=10
+
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native

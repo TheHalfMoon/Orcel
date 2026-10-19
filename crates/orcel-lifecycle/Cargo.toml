@@ -16,6 +16,7 @@ path = "src/mcp_host_main.rs"
 
 [dependencies]
 orcel-approval = { path = "../orcel-approval" }
+orcel-platform = { path = "../orcel-platform" }
 orcel-policy = { path = "../orcel-policy" }
 orcel-tunnel = { path = "../orcel-tunnel" }
 serde.workspace = true
