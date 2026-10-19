@@ -44,6 +44,21 @@ jobs:
         env:
           ORCEL_REQUIRE_LIVE_CLIPBOARD: "1"
         run: cargo test -p orcel-provider-clipboard -- xp15_ sg000064_ --test-threads=1
+      # XP-09: the real macOS SOFT dialog and LocalAuthentication verifier,
+      # through the real broker, must fail closed with nobody to answer.
+      # xp09_macos_headless_paths_fail_closed fails instead of skipping when
+      # ORCEL_REQUIRE_XP09_HEADLESS is set. The donor's two bypass variables
+      # are set and must change no outcome (S-24), in debug and release.
+      - name: macOS approvals fail closed headless (debug and release)
+        if: runner.os == 'macOS'
+        env:
+          ORCEL_REQUIRE_XP09_HEADLESS: "1"
+          ORCEL_REQUIRE_XP09_BYPASS_ENV: "1"
+          CUA_ENV_SKIP_SENSITIVE_AUTH: "1"
+          CUA_ENV_ALLOW_UNVERIFIED_SENSITIVE_EXPORT: "1"
+        run: |
+          cargo test -p orcel-approval -- xp09_ --nocapture
+          cargo test -p orcel-approval --release -- xp09_ --nocapture
 
   # XP-05: the macOS/Linux native host is its own Cargo workspace with the
   # vendored Cua Driver crates (apps/orcel-native-host/third_party/cua-driver).
