@@ -4,7 +4,8 @@
 //! positive control).
 //!
 //! Exit codes: 0 the operation succeeded; 10 write failed; 11 read failed;
-//! 12 network failed; 13 process creation failed; 2 usage.
+//! 12 network failed; 13 process creation failed; 14 hard link failed;
+//! 2 usage.
 
 use std::io::Write as _;
 use std::time::Duration;
@@ -48,6 +49,14 @@ fn main() {
             Err(error) => {
                 eprintln!("read: {error}");
                 11
+            }
+        },
+        // Give the existing file arg(1) a second name, arg(2).
+        "link" => match std::fs::hard_link(arg(1), arg(2)) {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("link: {error}");
+                14
             }
         },
         "connect" => match arg(1).parse() {

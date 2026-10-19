@@ -437,6 +437,91 @@ fn recursive_grants_do_not_escape_the_boundary_root() {
     );
 }
 
+/// XP-13b: a hard link in a root is a second name for a file that may sit
+/// outside every root. It shares that file's security descriptor, so a grant
+/// through it would reach the outside file. The walk refuses it in every kind
+/// of root, rolls back what it already granted, and leaves the outside file
+/// untouched.
+#[test]
+fn a_hard_linked_file_in_any_root_is_refused_and_never_granted() {
+    for kind in ["readable", "writable", "working", "executable"] {
+        let root = tempfile::tempdir().unwrap();
+        let bundle = root.path().join("bundle");
+        let working = root.path().join("working");
+        std::fs::create_dir(&bundle).unwrap();
+        std::fs::create_dir(&working).unwrap();
+        std::fs::write(bundle.join("plain.bin"), b"plain").unwrap();
+        let root = canonical_test_root(&root);
+        let bundle = root.join("bundle");
+        let working = root.join("working");
+        let outside = root.join("outside.secret");
+        std::fs::write(&outside, b"outside").unwrap();
+        let link = match kind {
+            "working" => working.join("linked.secret"),
+            _ => bundle.join("linked.secret"),
+        };
+        std::fs::hard_link(&outside, &link).unwrap();
+
+        let user = current_user_sid().unwrap();
+        let container = AppContainerSid::create_unique().unwrap();
+        let mut boundary = FilesystemBoundary {
+            readable: Vec::new(),
+            writable: vec![working.clone()],
+            executables: Vec::new(),
+        };
+        match kind {
+            "readable" => boundary.readable.push(bundle.clone()),
+            "writable" => boundary.writable.push(bundle.clone()),
+            "executable" => boundary.executables.push(link.clone()),
+            _ => {}
+        }
+        let refused = grant_child_paths(&working, &boundary, user.sid(), container.sid())
+            .err()
+            .unwrap_or_else(|| panic!("a hard link in a {kind} root was granted"));
+        assert_eq!(
+            refused.message, "a contained process ACL target has more than one hard link",
+            "{kind}"
+        );
+        for path in [&outside, &link, &bundle, &bundle.join("plain.bin"), &working] {
+            let (_, grants) = matching_grants(path, container.sid()).unwrap();
+            assert!(
+                grants.is_empty(),
+                "{} kept a grant after a {kind} root refused a hard link",
+                path.display()
+            );
+        }
+
+        // Positive control: once the second name is gone the same grant
+        // succeeds.
+        std::fs::remove_file(&link).unwrap();
+        if kind == "executable" {
+            boundary.executables = vec![outside.clone()];
+        }
+        let ledger = grant_child_paths(&working, &boundary, user.sid(), container.sid())
+            .unwrap_or_else(|error| panic!("{kind}: {error:?}"));
+        drop(ledger);
+    }
+}
+
+/// The link count is read again after the ACE lands, so a second name made
+/// while the walk holds the handle is caught before the launch proceeds.
+#[test]
+fn a_hard_link_made_after_the_open_is_caught_by_the_recheck() {
+    let root = tempfile::tempdir().unwrap();
+    let root = canonical_test_root(&root);
+    let file = root.join("file.bin");
+    std::fs::write(&file, b"file").unwrap();
+    let target = AclTarget::open(&file).unwrap();
+    assert_eq!(target.links, 1);
+    target.ensure_single_link().unwrap();
+    std::fs::hard_link(&file, root.join("second-name.bin")).unwrap();
+    let refused = target.ensure_single_link().unwrap_err();
+    assert_eq!(
+        refused.message,
+        "a contained process ACL target has more than one hard link"
+    );
+}
+
 #[test]
 fn a_partial_recursive_grant_is_rolled_back() {
     let root = tempfile::tempdir().unwrap();

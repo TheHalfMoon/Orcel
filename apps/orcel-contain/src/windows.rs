@@ -47,6 +47,21 @@
 //! admits only the user. Recovery (a journal under the state root, replayed
 //! before the next launch) is tracked as follow-up XP-13b.
 //!
+//! Hard links: every file the grant walk reaches must have exactly one link.
+//! A hard link shares its file's security descriptor, so stamping an ACE on
+//! `root\x` would also grant whatever outside file `x` is a second name for
+//! (say `%USERPROFILE%\.ssh\id_rsa`). A file with more than one link aborts
+//! the launch, and the count is read again after the ACE is applied, so a
+//! link created between the check and the grant also aborts it and the grant
+//! is rolled back. Directories cannot be hard linked.
+//!
+//! Denial of service, by design: a junction, symbolic link or other reparse
+//! point anywhere inside a root, or a hard-linked file, makes every later
+//! grant of that root refuse to launch until it is removed. Only someone with
+//! write access to the root can plant one (a contained child with a writable
+//! root included), and the effect is a refusal, never a wider grant. Failing
+//! closed is the intended outcome.
+//!
 //! Provenance (T-CUA-22, COPY_ADAPT): adapted from
 //! cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f
 //! `libs/cua-driver/rust/crates/cua-driver-core/src/perception_client/containment/windows.rs`
@@ -1847,14 +1862,17 @@ impl AclGrantLedger {
             }
             let saved = SavedDacl::capture(target)?;
             let acl = build_acl(grants, saved.target.inheritance(true), std::ptr::null_mut())?;
+            // Ledger the entry before applying, so a grant that lands and is
+            // then refused below is still restored by revoke.
+            self.entries.push(saved);
+            let saved = &self.entries[self.entries.len() - 1];
             apply_dacl(
                 saved.target.handle.get(),
                 acl.0,
                 DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
                 "failed to apply the private access control list to the contained process directory",
             )?;
-            self.entries.push(saved);
-            Ok(())
+            saved.target.ensure_single_link()
         })
     }
 
@@ -1881,14 +1899,15 @@ impl AclGrantLedger {
                 saved.target.inheritance(inherit_children),
                 existing,
             )?;
+            self.entries.push(saved);
+            let saved = &self.entries[self.entries.len() - 1];
             apply_dacl(
                 saved.target.handle.get(),
                 acl.0,
                 DACL_SECURITY_INFORMATION,
                 "failed to grant the contained process access to a spec root",
             )?;
-            self.entries.push(saved);
-            Ok(())
+            saved.target.ensure_single_link()
         })
     }
 
@@ -1926,6 +1945,7 @@ fn walk_acl_tree(
     apply: &mut impl FnMut(AclTarget) -> Result<(), ContainError>,
 ) -> Result<(), ContainError> {
     let target = AclTarget::open(path)?;
+    check_single_link(&target, target.links)?;
     let is_directory = target.is_directory();
     let resolved = target.path.clone();
     apply(target)?;
@@ -1990,6 +2010,9 @@ struct AclTarget {
     path: PathBuf,
     identity: FileIdentity,
     file_attributes: u32,
+    /// The link count when the handle was opened; the walk refuses more than
+    /// one before granting.
+    links: u32,
 }
 
 impl AclTarget {
@@ -2053,18 +2076,8 @@ impl AclTarget {
                 None,
             ));
         }
-        let mut information = std::mem::MaybeUninit::<ByHandleFileInformation>::uninit();
-        // SAFETY: `handle` is open and the out-pointer addresses a MaybeUninit of exactly
-        // BY_HANDLE_FILE_INFORMATION.
-        if unsafe { GetFileInformationByHandle(handle.get(), information.as_mut_ptr()) } == FALSE {
-            return Err(last_error(
-                "failed to identify a contained process ACL target",
-            ));
-        }
-        // SAFETY: GetFileInformationByHandle returned success, which means it filled every
-        // field.
-        let information = unsafe { information.assume_init() };
-        Ok(Self {
+        let information = file_information(&handle)?;
+        let target = Self {
             handle,
             path: resolved,
             identity: FileIdentity {
@@ -2073,7 +2086,15 @@ impl AclTarget {
                 file_index_low: information.file_index_low,
             },
             file_attributes: tag.file_attributes,
-        })
+            links: information.number_of_links,
+        };
+        Ok(target)
+    }
+
+    /// Read the link count again through the retained handle (see the
+    /// module header: a link made after `open` must not survive the grant).
+    fn ensure_single_link(&self) -> Result<(), ContainError> {
+        check_single_link(self, file_information(&self.handle)?.number_of_links)
     }
 
     fn is_directory(&self) -> bool {
@@ -2087,6 +2108,31 @@ impl AclTarget {
             NO_INHERITANCE
         }
     }
+}
+
+fn file_information(handle: &OwnedHandle) -> Result<ByHandleFileInformation, ContainError> {
+    let mut information = std::mem::MaybeUninit::<ByHandleFileInformation>::uninit();
+    // SAFETY: `handle` is open and the out-pointer addresses a MaybeUninit of exactly
+    // BY_HANDLE_FILE_INFORMATION.
+    if unsafe { GetFileInformationByHandle(handle.get(), information.as_mut_ptr()) } == FALSE {
+        return Err(last_error(
+            "failed to identify a contained process ACL target",
+        ));
+    }
+    // SAFETY: GetFileInformationByHandle returned success, which means it filled every field.
+    Ok(unsafe { information.assume_init() })
+}
+
+/// A file reachable under a second name outside the root would receive the
+/// root's grant through their shared security descriptor.
+fn check_single_link(target: &AclTarget, links: u32) -> Result<(), ContainError> {
+    if !target.is_directory() && links != 1 {
+        return Err(containment_error(
+            "a contained process ACL target has more than one hard link",
+            Some(format!("{links} links")),
+        ));
+    }
+    Ok(())
 }
 
 fn final_path(handle: &OwnedHandle) -> Result<std::path::PathBuf, ContainError> {

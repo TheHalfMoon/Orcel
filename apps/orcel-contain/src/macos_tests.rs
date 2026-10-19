@@ -175,3 +175,17 @@ fn sysctl_reads_are_limited_to_named_startup_facts() {
         assert!(!profile.contains(denied), "{denied} is readable");
     }
 }
+
+/// XP-13b: no rule grants `file-link` (nor `file*`, which would include it),
+/// so the child cannot give any file a second name, even inside its write
+/// root. The end-to-end proof is `xp13_the_contained_process_cannot_create_a_hard_link`.
+#[test]
+fn the_profile_grants_no_hard_link_creation() {
+    let profile = profile_for(&["/opt/orcel/parser"], &["/tmp/.tmpcontained"]);
+    for forbidden in ["file-link", "(allow file*", "(allow file\n"] {
+        assert!(
+            !profile.contains(forbidden),
+            "the profile grants {forbidden}:\n{profile}"
+        );
+    }
+}
