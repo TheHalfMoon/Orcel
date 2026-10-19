@@ -423,9 +423,10 @@ fn process_spawn(
 
 /// SG-000060: immediately before launch, a non-baseline executable must
 /// still be registered, match its argv grammar, and keep its registered path,
-/// size, and SHA-256. Any drift fails closed.
-#[cfg(windows)]
+/// size, and SHA-256. Any drift fails closed. This holds on every OS
+/// (XP-13b); only Windows has a built-in baseline executable.
 fn verify_registered_identity(plan: &orcel_provider_process::ExecutionPlan) -> Result<(), ProviderError> {
+    #[cfg(windows)]
     if let Some(system_root) = std::env::var_os("SystemRoot") {
         let baseline = std::fs::canonicalize(
             PathBuf::from(system_root).join("System32").join("whoami.exe"),
@@ -445,11 +446,6 @@ fn verify_registered_identity(plan: &orcel_provider_process::ExecutionPlan) -> R
         .map_err(|error| ProviderError::new(error.code, error.message))?;
     orcel_policy::executable_registry::verify_identity(entry, &plan.executable)
         .map_err(|error| ProviderError::new(error.code, error.message))
-}
-
-#[cfg(not(windows))]
-fn verify_registered_identity(_plan: &orcel_provider_process::ExecutionPlan) -> Result<(), ProviderError> {
-    Ok(())
 }
 
 fn process_approval_digest(

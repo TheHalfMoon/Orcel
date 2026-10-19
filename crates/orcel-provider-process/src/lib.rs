@@ -7,6 +7,14 @@ use std::time::Duration;
 /// process creation), run through the pinned `orcel-contain` helper.
 pub mod contained;
 
+/// XP-13b: the Safe tier on Linux and macOS (process group, pidfd or
+/// kqueue, cgroup v2 when delegated, rlimits, owned cleanup).
+#[cfg(all(
+    any(target_os = "linux", target_os = "macos"),
+    target_pointer_width = "64"
+))]
+mod unix;
+
 const SECRETISH: &[&str] = &[
     "SECRET",
     "TOKEN",
@@ -771,13 +779,35 @@ pub fn execute_contained(
     qualify_private_execution_mode(plan, profile_name, PrivateExecutionMode::Public)
 }
 
-#[cfg(not(windows))]
+/// Linux and macOS: the profile name names a Windows AppContainer and is
+/// unused. The result's `appcontainer_verified` is false;
+/// `assigned_to_job_before_resume` and `job_quiescent` report the process
+/// group (and cgroup, when delegated) set before exec and seen empty after
+/// the run. See `unix.rs`.
+#[cfg(all(
+    any(target_os = "linux", target_os = "macos"),
+    target_pointer_width = "64"
+))]
+pub fn execute_contained(
+    plan: ExecutionPlan,
+    _profile_name: &str,
+) -> Result<PrivateExecutionResult, PrivateExecutionFailure> {
+    unix::execute(plan)
+}
+
+#[cfg(not(any(
+    windows,
+    all(
+        any(target_os = "linux", target_os = "macos"),
+        target_pointer_width = "64"
+    )
+)))]
 pub fn execute_contained(
     _plan: ExecutionPlan,
     _profile_name: &str,
 ) -> Result<PrivateExecutionResult, PrivateExecutionFailure> {
     Err(PrivateExecutionFailure::Provider(
-        "contained execution is available only on Windows".into(),
+        "registered executable execution is not available on this platform".into(),
     ))
 }
 
@@ -1080,7 +1110,7 @@ mod windows_contained_launch {
             flags_and_attributes: u32,
             template_file: Handle,
         ) -> Handle;
-        fn SetHandleInformation(handle: Handle, mask: u32, flags: u32) -> i32;
+        fn SetHandleInformation(handle: *mut core::ffi::c_void, mask: u32, flags: u32) -> i32;
         fn PeekNamedPipe(
             pipe: Handle,
             buffer: *mut c_void,
@@ -2538,6 +2568,15 @@ mod windows_contained_launch {
                 }
             }
         }
+        // XP-13b: owned cleanup, as on Linux and macOS. A descendant still
+        // running once the primary has exited and its output is drained is
+        // ended with the job, not waited on.
+        let active = job
+            .active_processes()
+            .map_err(|_| PrivateExecutionFailure::TerminationUnverified)?;
+        if active > 0 && job.terminate().is_err() {
+            return Err(PrivateExecutionFailure::TerminationUnverified);
+        }
         let quiescent = job
             .wait_for_quiescence()
             .map_err(|_| PrivateExecutionFailure::TerminationUnverified)?;
@@ -3677,6 +3716,126 @@ mod contained_launch_tests {
             result,
             Err(PrivateExecutionFailure::OutputLimit(OutputStream::Stderr))
         );
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    /// XP-13b fixture: start a grandchild that holds none of the run's
+    /// stdio, report its pid, and exit while it keeps running. The grandchild
+    /// image is the last argument: a copy of this binary the AppContainer
+    /// may read (it cannot open the original under the user's profile).
+    #[test]
+    fn private_grandchild_primary_child() {
+        if std::env::args().any(|argument| argument == "--exact") {
+            // Keep the run's pipes out of the grandchild (std inherits every
+            // inheritable handle), so the run's output closes when this
+            // process exits and only the job ends the grandchild.
+            #[link(name = "kernel32")]
+            extern "system" {
+                fn GetStdHandle(which: u32) -> *mut core::ffi::c_void;
+                fn SetHandleInformation(
+                    handle: *mut core::ffi::c_void,
+                    mask: u32,
+                    flags: u32,
+                ) -> i32;
+            }
+            for which in [-11_i32 as u32, -12_i32 as u32] {
+                // SAFETY: GetStdHandle and SetHandleInformation take plain values; clearing
+                // HANDLE_FLAG_INHERIT (1) on this process's own stdio handle changes nothing else.
+                unsafe { SetHandleInformation(GetStdHandle(which), 1, 0) };
+            }
+            let image = std::env::args().next_back().expect("grandchild image");
+            let grandchild = std::process::Command::new(image)
+                .args([
+                    "--exact",
+                    "contained_launch_tests::private_timeout_descendant",
+                    "--nocapture",
+                ])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .expect("grandchild");
+            let mut grandchild = grandchild;
+            std::thread::sleep(Duration::from_millis(500));
+            let running = matches!(grandchild.try_wait(), Ok(None));
+            println!("ORCEL:running={running}");
+            println!("ORCEL:grandchild={}", grandchild.id());
+            std::process::exit(0);
+        }
+    }
+
+    /// XP-13b, the card's negative test on Windows: a child that creates a
+    /// grandchild and exits. The run succeeds through the public path, and
+    /// the grandchild does not outlive it (the job is ended once the
+    /// primary has exited).
+    #[test]
+    fn xp13b_windows_a_child_that_creates_a_grandchild_is_cleaned_up() {
+        use core::ffi::c_void;
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut c_void;
+            fn WaitForSingleObject(handle: *mut c_void, milliseconds: u32) -> u32;
+            fn CloseHandle(handle: *mut c_void) -> i32;
+        }
+        const SYNCHRONIZE: u32 = 0x0010_0000;
+        const WAIT_OBJECT_0: u32 = 0;
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let limits = ExecutionLimits {
+            timeout: Duration::from_secs(20),
+            stdout_bytes: 16 * 1024,
+            stderr_bytes: 16 * 1024,
+        };
+        let (workspace, mut plan) = private_fixture_plan(
+            suffix,
+            "contained_launch_tests::private_grandchild_primary_child",
+            limits,
+        );
+        // A copy of this binary that ALL APPLICATION PACKAGES may read and
+        // execute, so the AppContainer child can start it. libtest treats
+        // the extra argument as one more exact filter, which matches nothing.
+        let image = workspace.join("grandchild.exe");
+        std::fs::copy(&plan.executable, &image).expect("copy the grandchild image");
+        let granted = std::process::Command::new("icacls")
+            .arg(&image)
+            .args(["/grant", "*S-1-15-2-1:(RX)"])
+            .stdout(std::process::Stdio::null())
+            .status()
+            .expect("icacls");
+        assert!(granted.success(), "icacls exited with {granted}");
+        plan.argv.push(image.to_string_lossy().into_owned());
+        let result = execute_contained(plan, &format!("Orcel.Private.Grandchild.{suffix}"))
+            .expect("a run whose child created a grandchild completes");
+        assert_eq!(
+            result.exit_code,
+            0,
+            "{}",
+            bounded_child_diagnostic("stderr", &result.stderr)
+        );
+        assert!(result.job_quiescent);
+        let stdout = String::from_utf8_lossy(&result.stdout);
+        assert!(
+            stdout.contains("ORCEL:running=true"),
+            "the grandchild never ran: {stdout}"
+        );
+        let pid: u32 = stdout
+            .lines()
+            .find_map(|line| line.strip_prefix("ORCEL:grandchild="))
+            .unwrap_or_else(|| panic!("no grandchild pid in {stdout}"))
+            .trim()
+            .parse()
+            .expect("grandchild pid");
+        // SAFETY: OpenProcess takes plain values; a null result means the process is gone.
+        let handle = unsafe { OpenProcess(SYNCHRONIZE, 0, pid) };
+        if !handle.is_null() {
+            // SAFETY: `handle` was just opened with SYNCHRONIZE and is closed right after.
+            let wait = unsafe { WaitForSingleObject(handle, 5_000) };
+            // SAFETY: `handle` is open and owned here.
+            unsafe { CloseHandle(handle) };
+            assert_eq!(wait, WAIT_OBJECT_0, "the grandchild outlived the run");
+        }
         let _ = std::fs::remove_dir_all(workspace);
     }
 

@@ -482,7 +482,13 @@ fn a_hard_linked_file_in_any_root_is_refused_and_never_granted() {
             refused.message, "a contained process ACL target has more than one hard link",
             "{kind}"
         );
-        for path in [&outside, &link, &bundle, &bundle.join("plain.bin"), &working] {
+        for path in [
+            &outside,
+            &link,
+            &bundle,
+            &bundle.join("plain.bin"),
+            &working,
+        ] {
             let (_, grants) = matching_grants(path, container.sid()).unwrap();
             assert!(
                 grants.is_empty(),
