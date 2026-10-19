@@ -7,3 +7,17 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+
+# XP-03: process start generation, session identity and socket peer
+# credentials. libc (MIT OR Apache-2.0) supplies proc_pidinfo, getpeereid,
+# SO_PEERCRED and geteuid; windows 0.58 is the version orcel-provider-uia
+# already links, with only the features the moved Win32 calls need.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_System_RemoteDesktop",
+    "Win32_System_Threading",
+] }

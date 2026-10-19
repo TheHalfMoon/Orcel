@@ -114,8 +114,21 @@ Built for Linux (`x86_64-unknown-linux-gnu`, normal edges):
 | glib, gio, glib-macros, glib-sys, gio-sys, gobject-sys | 0.22.x | MIT | Main loop and timeouts |
 | pango, cairo-rs, graphene-rs, gdk-pixbuf (+ `-sys`) | 0.22.x | MIT | Required by gtk4 |
 | serde, serde_json | 1.x | MIT OR Apache-2.0 | The request line from orceld |
+| sha2 (and digest, block-buffer, crypto-common, generic-array, typenum, cpufeatures) | 0.10.9 | MIT OR Apache-2.0 (generic-array MIT) | SHA-256 of the request bytes echoed in the answer (judge round 1, M1) |
 
 Build-time only: `system-deps` and its graph (MIT OR Apache-2.0; `target-lexicon` is Apache-2.0 WITH LLVM-exception). The GTK 4, GLib, Pango and Cairo C libraries are the distribution's own (LGPL-2.1-or-later), linked dynamically and not shipped by Orcel. The polkit action file is adapted from Cua (FSL-1.1-MIT, FD-04), notice in `docs/orcel/notices/cua-FSL-1.1-MIT.txt`.
+
+## orcel-platform identity primitives (XP-03)
+
+Admitted 2026-10-19 for `crates/orcel-platform` `process`, `session` and `peer`. No new crate enters `Cargo.lock`; only edges are added.
+
+| Crate | Version | License | Target | Use |
+|---|---|---|---|---|
+| libc | 0.2.189 (already locked) | MIT OR Apache-2.0 | `cfg(unix)` | `proc_pidinfo`, `getpeereid`, `getsockopt(SO_PEERCRED / LOCAL_PEERPID)`, `geteuid`, `kill` in tests |
+| windows | 0.58.0 (already locked, already in orceld through orcel-provider-uia) | MIT OR Apache-2.0 | `cfg(windows)` | `OpenProcess`, `GetProcessTimes`, `GetExitCodeProcess`, `QueryFullProcessImageNameW`, `ProcessIdToSessionId` (features `Win32_Foundation`, `Win32_System_RemoteDesktop`, `Win32_System_Threading`) |
+
+The Windows x64 SBOM component set is unchanged: `windows` 0.58.0 was already linked into orceld, and libc is not built for Windows. macOS `getaudit_addr` is declared directly against libSystem, which std already links. The Linux `/proc` parse and the `getsockopt` peer pattern are adapted from cua@a802eaf2 (transplant rows T-CUA-23 and T-CUA-24, MIT, notice `docs/orcel/notices/cua-MIT.txt`).
+
 
 ## npm packages in the release
 
