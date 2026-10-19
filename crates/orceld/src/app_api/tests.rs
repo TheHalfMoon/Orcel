@@ -1135,14 +1135,62 @@ fn cr01_pipe_dacl_is_the_current_user_only() {
     let sid = win::current_user_sid().unwrap();
     assert!(sddl.starts_with("D:P"), "not protected: {sddl}");
     assert_eq!(sddl.matches('(').count(), 1, "more than one ACE: {sddl}");
-    assert!(sddl.contains(&format!(";;;{sid})")), "{sddl}");
     assert!(sddl.contains("(A;"), "{sddl}");
+    // SDDL may print a well-known account as an alias (the built-in
+    // Administrator, RID 500, is "LA"), so the trustee is resolved to a SID
+    // and compared as one.
+    let trustee = sddl
+        .rsplit(";;;")
+        .next()
+        .and_then(|rest| rest.strip_suffix(')'))
+        .expect("an ACE trustee");
+    assert_eq!(sid_string_of(trustee), sid, "{sddl}");
     for group in [
         ";WD)", ";AU)", ";BU)", ";AN)", ";IU)", ";NU)", ";SY)", ";BA)",
     ] {
         assert!(!sddl.contains(group), "{group} in {sddl}");
     }
     assert_eq!(win::sddl(&sid), format!("D:P(A;;GA;;;{sid})"));
+}
+
+/// The `S-1-...` form of an SDDL trustee, which may be an alias like `LA`.
+#[cfg(windows)]
+fn sid_string_of(trustee: &str) -> String {
+    use windows_sys::Win32::Foundation::{LocalFree, PSID};
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertSidToStringSidW, ConvertStringSidToSidW,
+    };
+    let wide = win::wide(trustee);
+    let mut sid: PSID = std::ptr::null_mut();
+    // SAFETY: `wide` is NUL-terminated; `sid` receives a LocalAlloc'd SID.
+    assert_ne!(
+        unsafe { ConvertStringSidToSidW(wide.as_ptr(), &mut sid) },
+        0,
+        "unknown trustee {trustee}"
+    );
+    let mut text: *mut u16 = std::ptr::null_mut();
+    // SAFETY: `sid` is live; `text` receives a LocalAlloc'd string.
+    assert_ne!(unsafe { ConvertSidToStringSidW(sid, &mut text) }, 0);
+    // SAFETY: `text` is NUL-terminated; both allocations are freed once.
+    unsafe {
+        let mut len = 0;
+        while *text.add(len) != 0 {
+            len += 1;
+        }
+        let out = String::from_utf16_lossy(std::slice::from_raw_parts(text, len));
+        LocalFree(text.cast());
+        LocalFree(sid);
+        out
+    }
+}
+
+#[test]
+#[cfg(windows)]
+fn cr01_sddl_aliases_resolve_to_their_sid() {
+    // A well-known alias resolves to its SID, and a SID string to itself.
+    assert_eq!(sid_string_of("WD"), "S-1-1-0");
+    let sid = win::current_user_sid().unwrap();
+    assert_eq!(sid_string_of(&sid), sid);
 }
 
 #[cfg(windows)]
