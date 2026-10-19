@@ -12,6 +12,7 @@ pub mod install;
 pub mod ipc;
 pub mod layout;
 pub mod lifecycle;
+pub mod linux;
 pub mod logs;
 pub mod manifest;
 pub mod mcp;
