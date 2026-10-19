@@ -231,7 +231,11 @@ fn unavailable(variables: &str) -> PlatformError {
     PlatformError::StateRootUnavailable(format!("{variables} is not set to an absolute path"))
 }
 
-fn absolute_var(
+/// `name` from `lookup` when `layout` can use it: absolute and free of
+/// `.`/`..` components. Other per-user base directories (XP-17's XDG data,
+/// config and runtime homes) use this so they get the same rules as the
+/// state root.
+pub fn absolute_var(
     layout: StateLayout,
     lookup: &dyn Fn(&str) -> Option<OsString>,
     name: &str,

@@ -88,3 +88,61 @@ jobs:
             gh release create "${{ github.ref_name }}" $files --draft --verify-tag --repo "${{ github.repository }}" --title "Orcel $env:VERSION" --notes "Unsigned Windows x64 build of Orcel $env:VERSION from ${{ github.sha }}. Verify the archive against SHA256SUMS.txt and with 'gh attestation verify <archive> --repo ${{ github.repository }}'; the installer verifies every payload file against manifest.json. SBOM (CycloneDX 1.5), provenance record, and third-party notices are attached."
           }
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  # XP-17: Linux deb, rpm and per-user tarball, added to the draft release
+  # that the Windows job above creates. This job runs only after that job
+  # succeeds and never changes it. Its assets carry their own
+  # SHA256SUMS-linux.txt and build-provenance attestations; the Windows
+  # SHA256SUMS.txt is left untouched.
+  release-linux:
+    name: Release / ubuntu-latest (Linux packages)
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.ref }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24.19.0"
+      - name: Require the tag to match the workspace version
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          if [ "v$version" != "${{ github.ref_name }}" ]; then
+            echo "tag ${{ github.ref_name }} does not match workspace version $version" >&2
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Build orceld (release, locked)
+        run: cargo build --release --locked -p orceld
+      - name: Install the pinned nfpm (checksum-verified)
+        run: |
+          bash distribution/linux/install-nfpm.sh "$RUNNER_TEMP/nfpm-bin"
+          echo "$RUNNER_TEMP/nfpm-bin" >> "$GITHUB_PATH"
+      - name: Build the deb, rpm and tarball
+        run: bash distribution/linux/package.sh "$VERSION" target/release/orceld "$RUNNER_TEMP/linux-dist"
+      - name: Attest build provenance for the Linux packages
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            ${{ runner.temp }}/linux-dist/*.deb
+            ${{ runner.temp }}/linux-dist/*.rpm
+            ${{ runner.temp }}/linux-dist/*.tar.gz
+      - name: Add the Linux packages to the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          draft=$(gh release view "${{ github.ref_name }}" --repo "${{ github.repository }}" --json isDraft --jq .isDraft)
+          if [ "$draft" != "true" ]; then
+            # Publishing is a deliberate, final maintainer action.
+            echo "release ${{ github.ref_name }} is not a draft; its assets are not replaced" >&2
+            exit 1
+          fi
+          gh release upload "${{ github.ref_name }}" "$RUNNER_TEMP"/linux-dist/* --clobber --repo "${{ github.repository }}"

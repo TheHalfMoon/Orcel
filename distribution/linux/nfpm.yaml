@@ -1,0 +1,65 @@
+# XP-17: deb and rpm packages of Orcel for Linux, built with nfpm (MIT,
+# build tool only) by distribution/linux/package.sh, which also builds the
+# per-user tarball. package.sh runs nfpm inside a staging directory that
+# holds every `src` below, and sets ORCEL_VERSION and ORCEL_ARCH.
+#
+# The package installs read-only, root-owned files only: orceld and two
+# systemd *user* units. It has no maintainer scripts, nothing setuid or
+# setgid, no system unit and no network listener. Nothing is enabled at
+# install time; each user opts in with
+# `systemctl --user enable --now orceld.socket`. All state stays in the
+# user's private XDG state root (XP-01, mode 0700).
+
+name: orcel
+arch: ${ORCEL_ARCH}
+platform: linux
+version: ${ORCEL_VERSION}
+release: "1"
+section: utils
+priority: optional
+maintainer: Orcel project <https://github.com/TheHalfMoon/Orcel/issues>
+description: |
+  Orcel local agent runtime kernel (orceld).
+  orceld is the policy and approval authority for local agent actions. It
+  runs per user, started on demand by the orceld.socket systemd user unit.
+vendor: Orcel
+homepage: https://github.com/TheHalfMoon/Orcel
+license: Apache-2.0
+
+contents:
+  - src: orceld
+    dst: /usr/lib/orcel/orceld
+    file_info:
+      mode: 0755
+      owner: root
+      group: root
+  - src: orceld.socket
+    dst: /usr/lib/systemd/user/orceld.socket
+    file_info:
+      mode: 0644
+      owner: root
+      group: root
+  - src: orceld@.service
+    dst: /usr/lib/systemd/user/orceld@.service
+    file_info:
+      mode: 0644
+      owner: root
+      group: root
+  - src: LICENSE
+    dst: /usr/share/doc/orcel/LICENSE
+    file_info:
+      mode: 0644
+      owner: root
+      group: root
+  - src: README.md
+    dst: /usr/share/doc/orcel/README.md
+    file_info:
+      mode: 0644
+      owner: root
+      group: root
+  - src: THIRD_PARTY_NOTICES.txt
+    dst: /usr/share/doc/orcel/THIRD_PARTY_NOTICES.txt
+    file_info:
+      mode: 0644
+      owner: root
+      group: root
