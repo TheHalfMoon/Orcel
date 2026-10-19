@@ -95,51 +95,100 @@ pub fn image_path_and_generation(pid: u32) -> Result<(String, ProcessGeneration)
 mod imp {
     use super::ProcessGeneration;
     use crate::PlatformError;
-    use std::io::ErrorKind;
+    use std::ffi::CStr;
+    use std::fs::File;
+    use std::io::{ErrorKind, Read};
+    use std::os::fd::{AsRawFd, FromRawFd};
     use std::sync::OnceLock;
 
     pub(super) const SOURCE: &str = "linux-proc-starttime";
     const BOOT_ID_PATH: &str = "/proc/sys/kernel/random/boot_id";
 
     pub(super) fn start_generation(pid: u32) -> Result<ProcessGeneration, PlatformError> {
+        // One directory handle serves both reads. If the process exits and
+        // its pid is reused in between, reads through the old handle fail
+        // instead of describing the new process, so the Tgid check and the
+        // start time describe one instance.
+        let dir = ProcDir::open(pid)?;
         // /proc/<tid> also exists for every thread id, unlisted; only a
         // thread group leader is a process.
-        let (tgid, _) = parse_status(pid, &read_proc(pid, "status")?)?;
+        let (tgid, _) = parse_status(pid, &dir.read(c"status")?)?;
         if tgid != pid {
             return Err(PlatformError::IdentityUnavailable(format!(
                 "{pid} is a thread of process {tgid}, not a process"
             )));
         }
-        generation_from_stat(pid, &read_proc(pid, "stat")?, boot_id()?)
+        generation_from_stat(pid, &dir.read(c"stat")?, boot_id()?)
     }
 
     /// The effective uid of `pid` now, from `/proc/<pid>/status`.
     pub(super) fn effective_uid_of(pid: u32) -> Result<u32, PlatformError> {
-        parse_status(pid, &read_proc(pid, "status")?).map(|(_, euid)| euid)
+        let dir = ProcDir::open(pid)?;
+        parse_status(pid, &dir.read(c"status")?).map(|(_, euid)| euid)
     }
 
-    /// Read `/proc/<pid>/<file>`. A missing entry means "gone" only when
-    /// `kill(pid, 0)` agrees: with `hidepid=1/2`, another user's entries are
-    /// hidden, and that must not read as an exit.
-    fn read_proc(pid: u32, file: &str) -> Result<String, PlatformError> {
-        let path = format!("/proc/{pid}/{file}");
-        match std::fs::read_to_string(&path) {
-            Ok(text) => Ok(text),
-            // ESRCH: the process exited between the open and the read.
-            Err(error) if error.raw_os_error() == Some(libc::ESRCH) => {
-                Err(PlatformError::ProcessGone(pid))
+    /// An open `/proc/<pid>` directory, pinned to the process it named when
+    /// it was opened.
+    struct ProcDir {
+        pid: u32,
+        dir: File,
+    }
+
+    impl ProcDir {
+        /// A missing entry means "gone" only when `kill(pid, 0)` agrees:
+        /// with `hidepid=1/2`, another user's entries are hidden, and that
+        /// must not read as an exit.
+        fn open(pid: u32) -> Result<Self, PlatformError> {
+            let path = format!("/proc/{pid}");
+            match File::open(&path) {
+                Ok(dir) => Ok(Self { pid, dir }),
+                Err(error) if error.raw_os_error() == Some(libc::ESRCH) => {
+                    Err(PlatformError::ProcessGone(pid))
+                }
+                Err(error) if error.kind() == ErrorKind::NotFound && !pid_exists(pid) => {
+                    Err(PlatformError::ProcessGone(pid))
+                }
+                Err(error) if error.kind() == ErrorKind::NotFound => {
+                    Err(PlatformError::IdentityUnavailable(format!(
+                        "{path} is hidden (hidepid) although pid {pid} exists"
+                    )))
+                }
+                Err(error) => Err(PlatformError::IdentityUnavailable(format!(
+                    "{path}: {error}"
+                ))),
             }
-            Err(error) if error.kind() == ErrorKind::NotFound && !pid_exists(pid) => {
-                Err(PlatformError::ProcessGone(pid))
+        }
+
+        /// Read one file of this directory. ESRCH or ENOENT through the
+        /// held directory means its process has exited.
+        fn read(&self, name: &CStr) -> Result<String, PlatformError> {
+            let pid = self.pid;
+            let fail = |error: std::io::Error| match error.raw_os_error() {
+                Some(libc::ESRCH) | Some(libc::ENOENT) => PlatformError::ProcessGone(pid),
+                _ => PlatformError::IdentityUnavailable(format!(
+                    "/proc/{pid}/{}: {error}",
+                    name.to_string_lossy()
+                )),
+            };
+            // SAFETY: the directory fd is open for the lifetime of `self`
+            // and `name` is a NUL-terminated C string; openat returns a new
+            // descriptor or -1 and writes no memory of this process.
+            let fd = unsafe {
+                libc::openat(
+                    self.dir.as_raw_fd(),
+                    name.as_ptr(),
+                    libc::O_RDONLY | libc::O_CLOEXEC,
+                )
+            };
+            if fd < 0 {
+                return Err(fail(std::io::Error::last_os_error()));
             }
-            Err(error) if error.kind() == ErrorKind::NotFound => {
-                Err(PlatformError::IdentityUnavailable(format!(
-                    "{path} is hidden (hidepid) although pid {pid} exists"
-                )))
-            }
-            Err(error) => Err(PlatformError::IdentityUnavailable(format!(
-                "{path}: {error}"
-            ))),
+            // SAFETY: openat returned a new descriptor that nothing else
+            // owns; File takes ownership and closes it exactly once.
+            let mut file = unsafe { File::from_raw_fd(fd) };
+            let mut text = String::new();
+            file.read_to_string(&mut text).map_err(fail)?;
+            Ok(text)
         }
     }
 

@@ -112,13 +112,42 @@ mod imp {
     use crate::process;
     use crate::PlatformError;
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+    use std::sync::OnceLock;
 
     pub(super) fn peer_credentials(fd: RawFd) -> Result<PeerIdentity, PlatformError> {
         let cred = peer_cred(fd)?;
-        match peer_pidfd(fd, &cred)? {
-            Some(pidfd) => from_pidfd(&cred, &pidfd),
-            None => from_ucred(&cred),
+        // A kernel with SO_PEERPIDFD never takes the pid-number fallback:
+        // an exited peer must not be replaced by whoever reuses its pid.
+        if pidfd_supported()? {
+            from_pidfd(&cred, &peer_pidfd(fd, &cred)?)
+        } else {
+            from_ucred(&cred)
         }
+    }
+
+    /// Whether this kernel has `SO_PEERPIDFD` (Linux 6.5+), probed once on a
+    /// fresh socket pair whose peer is this live process. Only ENOPROTOOPT,
+    /// the answer of a kernel that does not know the option, means "no".
+    /// On a capable kernel, EINVAL means the peer has exited. Only a
+    /// definite answer is cached.
+    pub(super) fn pidfd_supported() -> Result<bool, PlatformError> {
+        static SUPPORTED: OnceLock<bool> = OnceLock::new();
+        if let Some(supported) = SUPPORTED.get() {
+            return Ok(*supported);
+        }
+        let (probe, _peer) = std::os::unix::net::UnixStream::pair().map_err(|error| {
+            PlatformError::IdentityUnavailable(format!("SO_PEERPIDFD probe socketpair: {error}"))
+        })?;
+        let supported = match raw_pidfd(probe.as_raw_fd()) {
+            Ok(_pidfd) => true,
+            Err(error) if error.raw_os_error() == Some(libc::ENOPROTOOPT) => false,
+            Err(error) => {
+                return Err(PlatformError::IdentityUnavailable(format!(
+                    "SO_PEERPIDFD probe: {error}"
+                )))
+            }
+        };
+        Ok(*SUPPORTED.get_or_init(|| supported))
     }
 
     pub(super) fn peer_cred(fd: RawFd) -> Result<libc::ucred, PlatformError> {
@@ -162,9 +191,8 @@ mod imp {
             })
     }
 
-    /// The peer's pidfd (Linux 6.5+), or `None` when the kernel has no
-    /// `SO_PEERPIDFD`.
-    fn peer_pidfd(fd: RawFd, cred: &libc::ucred) -> Result<Option<OwnedFd>, PlatformError> {
+    /// `getsockopt(SO_PEERPIDFD)` on `fd`.
+    fn raw_pidfd(fd: RawFd) -> std::io::Result<OwnedFd> {
         let mut pidfd: libc::c_int = -1;
         let mut len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
         // SAFETY: getsockopt writes at most `len` bytes into `pidfd`, a live
@@ -179,28 +207,34 @@ mod imp {
             )
         };
         if rc != 0 {
-            let error = std::io::Error::last_os_error();
-            return match error.raw_os_error() {
-                Some(libc::ENOPROTOOPT) | Some(libc::EINVAL) => Ok(None),
-                // The peer process has already been reaped.
-                Some(libc::ESRCH) => Err(PlatformError::ProcessGone(cred_pid(cred)?)),
-                _ => Err(PlatformError::IdentityUnavailable(format!(
-                    "getsockopt(SO_PEERPIDFD): {error}"
-                ))),
-            };
+            return Err(std::io::Error::last_os_error());
         }
         if pidfd < 0 || len as usize != std::mem::size_of::<libc::c_int>() {
-            return Err(PlatformError::IdentityUnavailable(
-                "getsockopt(SO_PEERPIDFD) returned no descriptor".into(),
+            return Err(std::io::Error::other(
+                "getsockopt(SO_PEERPIDFD) returned no descriptor",
             ));
         }
         // SAFETY: getsockopt returned a new pidfd that nothing else owns;
         // OwnedFd takes ownership and closes it exactly once.
-        Ok(Some(unsafe { OwnedFd::from_raw_fd(pidfd) }))
+        Ok(unsafe { OwnedFd::from_raw_fd(pidfd) })
+    }
+
+    /// The peer's pidfd on a kernel known to support `SO_PEERPIDFD`.
+    fn peer_pidfd(fd: RawFd, cred: &libc::ucred) -> Result<OwnedFd, PlatformError> {
+        raw_pidfd(fd).map_err(|error| match error.raw_os_error() {
+            // The peer has exited (EINVAL) or been reaped (ESRCH).
+            Some(libc::EINVAL) | Some(libc::ESRCH) => match cred_pid(cred) {
+                Ok(pid) => PlatformError::ProcessGone(pid),
+                Err(unavailable) => unavailable,
+            },
+            _ => PlatformError::IdentityUnavailable(format!("getsockopt(SO_PEERPIDFD): {error}")),
+        })
     }
 
     /// The pid a pidfd names now, from `/proc/self/fdinfo/<fd>`; `None` once
-    /// the process has been reaped (the kernel reports `Pid: -1`).
+    /// the process has been reaped (the kernel reports `Pid: -1`). `Pid: 0`
+    /// means the process lives in a pid namespace this one cannot see, which
+    /// is unavailable, not gone.
     fn pidfd_pid(pidfd: &OwnedFd) -> Result<Option<u32>, PlatformError> {
         let path = format!("/proc/self/fdinfo/{}", pidfd.as_raw_fd());
         let text = std::fs::read_to_string(&path)
@@ -210,7 +244,15 @@ mod imp {
             .find_map(|line| line.strip_prefix("Pid:"))
             .and_then(|value| value.trim().parse::<i64>().ok())
             .ok_or_else(|| PlatformError::IdentityUnavailable(format!("{path} has no Pid")))?;
-        Ok(u32::try_from(pid).ok().filter(|pid| *pid > 0))
+        match pid {
+            -1 => Ok(None),
+            0 => Err(PlatformError::IdentityUnavailable(
+                "the socket peer's pid is not visible in this pid namespace".into(),
+            )),
+            pid => u32::try_from(pid)
+                .map(Some)
+                .map_err(|_| PlatformError::IdentityUnavailable(format!("{path} has pid {pid}"))),
+        }
     }
 
     fn from_pidfd(cred: &libc::ucred, pidfd: &OwnedFd) -> Result<PeerIdentity, PlatformError> {
@@ -325,7 +367,16 @@ mod imp {
             )
         };
         if rc != 0 {
-            return Err(os_error("getsockopt(LOCAL_PEERTOKEN)"));
+            let error = std::io::Error::last_os_error();
+            // getpeereid keeps answering from the cached connect-time
+            // credentials, but once the peer has closed its end the token is
+            // gone. The kernel no longer names the peer's pid, so it is 0.
+            if error.raw_os_error() == Some(libc::ENOTCONN) {
+                return Err(PlatformError::ProcessGone(0));
+            }
+            return Err(PlatformError::IdentityUnavailable(format!(
+                "getsockopt(LOCAL_PEERTOKEN): {error}"
+            )));
         }
         if len as usize != std::mem::size_of::<AuditToken>() {
             return Err(PlatformError::IdentityUnavailable(
@@ -484,10 +535,13 @@ mod tests {
             crate::process::current_instance().unwrap()
         );
         assert_eq!(identity.source, "linux-so-peercred");
+        assert!(
+            imp::pidfd_supported().unwrap(),
+            "this kernel should support SO_PEERPIDFD (Linux 6.5+)"
+        );
         assert_eq!(
             unix_peer_credentials(&left).unwrap().source,
-            "linux-so-peerpidfd",
-            "this kernel should support SO_PEERPIDFD (Linux 6.5+)"
+            "linux-so-peerpidfd"
         );
         let hidden = libc::ucred { pid: 0, ..cred };
         assert!(matches!(
@@ -583,12 +637,15 @@ mod tests {
         drop(child.stdin.take());
         child.wait().unwrap();
         let after = verify_unix_peer(&server);
-        let gone_or_other = match &after {
-            Err(PlatformError::ProcessGone(gone)) => *gone == pid,
-            Ok(other) => other.process != live.process,
-            Err(_) => false,
+        // A capable Linux kernel never takes the pid-number fallback, so the
+        // exited peer is gone even if its pid was already reused. macOS no
+        // longer names the pid once the peer closed its end (0).
+        let gone = if cfg!(target_os = "macos") {
+            matches!(after, Err(PlatformError::ProcessGone(gone)) if gone == pid || gone == 0)
+        } else {
+            after == Err(PlatformError::ProcessGone(pid))
         };
-        assert!(gone_or_other, "exited peer {pid} read as {after:?}");
+        assert!(gone, "exited peer {pid} read as {after:?}");
         drop((server, listener));
         std::fs::remove_dir_all(&dir).unwrap();
     }

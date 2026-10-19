@@ -79,7 +79,8 @@ pub enum PlatformError {
         message: String,
     },
     /// The process does not exist, has exited, or is a zombie waiting to be
-    /// reaped (XP-03).
+    /// reaped (XP-03). The pid is 0 when the kernel no longer names it, as
+    /// for a macOS socket peer that has closed its end.
     ProcessGone(u32),
     /// An identity fact (process start time, boot id, session or socket peer
     /// credentials) could not be read or parsed (XP-03).
