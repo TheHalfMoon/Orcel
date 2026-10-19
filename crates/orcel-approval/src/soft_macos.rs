@@ -20,8 +20,9 @@
 //! `\u{..}` so a field cannot fake another line of the dialog, and the
 //! bound applies to the escaped text.
 
-// Off macOS this module is compiled only into tests, which run the
-// formatting, escaping and decision rules on every OS.
+// Off macOS this module is compiled into tests, which run the formatting,
+// escaping and decision rules on every OS, and on Linux, whose SOFT helper
+// shows the same body through the same escaper (XP-10).
 #![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
 use crate::presence_unix::SessionState;

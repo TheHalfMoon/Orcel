@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+  "http://www.freedesktop.org/standards/PolicyKit/1.0/policyconfig.dtd">
+<!--
+  Orcel STRONG approvals on Linux (XP-10). orceld asks polkit, through
+  /usr/bin/pkcheck, whether it may perform ai.orcel.approve.strong after the
+  person approved the exact request in Orcel's own dialog; polkit's agent
+  then asks them to prove it is them. Packages install this file to
+  /usr/share/polkit-1/actions/ (XP-17); without it STRONG is unavailable.
+
+  auth_self: the user proves it is them, with their own password or
+  fingerprint, in the active local session they are at, every time (the
+  answer is not kept). An inactive or remote session can never satisfy it.
+  Nothing here gives anyone root or any other right.
+
+  The message is shown as written: polkit fills a message's placeholders
+  only from details, which it takes from root alone, and orceld is not
+  root. The full request is shown in Orcel's dialog before this prompt.
+  A comment here must not hold two hyphens in a row (XML).
+
+  Adapted from apps/cua-spaces-desktop/packaging/ai.cua.spaces.policy at
+  trycua/cua a802eaf26ca97616a6bf0de6a29729a9346fbb1f (blob
+  39fc34b0b3bcf434d25b785fbc62bf3b38669d27), FSL-1.1-MIT, used under FD-04;
+  notice in docs/orcel/notices/cua-FSL-1.1-MIT.txt. The session defaults
+  are kept exactly as the donor ships them.
+-->
+<policyconfig>
+  <vendor>Orcel</vendor>
+  <vendor_url>https://github.com/TheHalfMoon/Orcel</vendor_url>
+  <action id="ai.orcel.approve.strong">
+    <description>Confirm an Orcel STRONG approval</description>
+    <message>Confirm it is you to allow the operation you just approved in the Orcel approval dialog</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_self</allow_active>
+    </defaults>
+  </action>
+</policyconfig>
