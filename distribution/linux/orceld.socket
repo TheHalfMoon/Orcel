@@ -1,6 +1,9 @@
 # Orcel kernel socket: a systemd *user* unit (XP-17).
 #
-# orceld speaks JSON lines on stdin/stdout and opens no listener of its own.
+# orceld speaks JSON lines on stdin/stdout. Its only listener of its own is
+# the read-only app API (CR-01, orcel-app-api/1): a Unix socket in the 0700
+# state root, held by one orceld at a time; per-connection instances that
+# find it held leave it to the holder. It opens no network listener.
 # With Accept=yes, systemd starts one orceld@.service instance per
 # connection with the connection as its stdin/stdout, the same "one fresh
 # orceld per client" model as `orcel mcp stdio` and the CLI's ipc::call.

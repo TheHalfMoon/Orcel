@@ -1,0 +1,15 @@
+# cargo-deny configuration for the orcel-approval-helper-linux workspace only
+# (XP-10). CI runs `cargo deny check licenses`. Every crate in the resolved
+# graph (all targets) must carry a license on this list; an unknown, missing
+# or unlisted license fails. gtk4-rs and the glib/gio/pango/cairo bindings
+# are MIT; the GTK 4 C libraries they link are the system's (LGPL-2.1+,
+# dynamically linked, not shipped by Orcel).
+[licenses]
+confidence-threshold = 0.93
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Unicode-3.0",
+  # target-lexicon, a build-time dependency of system-deps (cfg-expr).
+  "Apache-2.0 WITH LLVM-exception",
+]

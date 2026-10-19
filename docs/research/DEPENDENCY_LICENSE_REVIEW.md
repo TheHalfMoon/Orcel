@@ -101,6 +101,23 @@ Built for macOS (`aarch64-apple-darwin`, normal edges, new to this crate):
 
 The presence code itself is adapted from cua@a802eaf2 `libs/cua/crates/cua-teleport/src/biometric.rs`, FSL-1.1-MIT (FD-04), with its notice in `docs/orcel/notices/cua-FSL-1.1-MIT.txt`.
 
+## Rust crates admitted for the Linux approval helper (XP-10)
+
+Admitted 2026-10-19 for `apps/orcel-approval-helper-linux`, the GTK4 approval dialog orceld spawns on Linux. The helper is its own Cargo workspace with its own `Cargo.lock` and `deny.toml` (CI runs `cargo audit` and `cargo deny check licenses` on it), so the root workspace, orceld's dependency graph and the Windows x64 release, its SBOM and its `THIRD_PARTY_NOTICES.txt` are unchanged. `crates/orcel-approval` adds no crate for Linux: the session probe and polkit check run the pinned system `loginctl` and `pkcheck`.
+
+Built for Linux (`x86_64-unknown-linux-gnu`, normal edges):
+
+| Crate | Version | License | Purpose in Orcel |
+|---|---|---|---|
+| gtk4, gtk4-sys, gtk4-macros | 0.11.5 | MIT | The dialog window, label and buttons |
+| gdk4, gsk4 (+ `-sys`) | 0.11.5 | MIT | GTK 4 display and rendering bindings gtk4 requires |
+| glib, gio, glib-macros, glib-sys, gio-sys, gobject-sys | 0.22.x | MIT | Main loop and timeouts |
+| pango, cairo-rs, graphene-rs, gdk-pixbuf (+ `-sys`) | 0.22.x | MIT | Required by gtk4 |
+| serde, serde_json | 1.x | MIT OR Apache-2.0 | The request line from orceld |
+| sha2 (and digest, block-buffer, crypto-common, generic-array, typenum, cpufeatures) | 0.10.9 | MIT OR Apache-2.0 (generic-array MIT) | SHA-256 of the request bytes echoed in the answer (judge round 1, M1) |
+
+Build-time only: `system-deps` and its graph (MIT OR Apache-2.0; `target-lexicon` is Apache-2.0 WITH LLVM-exception). The GTK 4, GLib, Pango and Cairo C libraries are the distribution's own (LGPL-2.1-or-later), linked dynamically and not shipped by Orcel. The polkit action file is adapted from Cua (FSL-1.1-MIT, FD-04), notice in `docs/orcel/notices/cua-FSL-1.1-MIT.txt`.
+
 ## orcel-platform identity primitives (XP-03)
 
 Admitted 2026-10-19 for `crates/orcel-platform` `process`, `session` and `peer`. No new crate enters `Cargo.lock`; only edges are added.
@@ -112,6 +129,9 @@ Admitted 2026-10-19 for `crates/orcel-platform` `process`, `session` and `peer`.
 
 The Windows x64 SBOM component set is unchanged: `windows` 0.58.0 was already linked into orceld, and libc is not built for Windows. macOS `getaudit_addr` is declared directly against libSystem, which std already links. The Linux `/proc` parse and the `getsockopt` peer pattern are adapted from cua@a802eaf2 (transplant rows T-CUA-23 and T-CUA-24, MIT, notice `docs/orcel/notices/cua-MIT.txt`).
 
+## orceld app API (CR-01)
+
+Admitted 2026-10-19 for `crates/orceld/src/app_api.rs`. No new crate enters `Cargo.lock`. orceld's existing `windows-sys` 0.52.0 edge (`cfg(windows)`, MIT OR Apache-2.0) gains features `Win32_Security`, `Win32_Security_Authorization`, `Win32_Storage_FileSystem`, `Win32_System_IO` and `Win32_System_Pipes`, for `CreateNamedPipeW`, `ConnectNamedPipe`, overlapped `ReadFile`/`WriteFile`, `GetNamedPipeClientProcessId`, `GetNamedPipeClientSessionId`, `PeekNamedPipe`, the token user (`OpenProcessToken`, `GetTokenInformation`, `EqualSid`) and the DACL from SDDL. The backlog card also proposed `security-framework`, `core-foundation`, `Win32_Security_WinTrust` and `Win32_Security_Cryptography` for code-signature checks; these are not admitted because the read-only slice does not take those checks (see the protocol document, "Code identity"). The cua-keyvault files the code adapts are FSL-1.1-MIT (FD-04), notice `docs/orcel/notices/cua-FSL-1.1-MIT.txt`.
 
 ## npm packages in the release
 

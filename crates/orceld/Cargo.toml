@@ -36,8 +36,16 @@ serde_json.workspace = true
 sha2.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+# CR-01 adds the named-pipe app API: Security (token user, SID, DACL from
+# SDDL), Storage_FileSystem (pipe open flags, ReadFile/WriteFile), System_IO
+# (overlapped I/O with timeouts) and System_Pipes. Same crate and version.
 windows-sys = { version = "0.52", features = [
   "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_Storage_FileSystem",
+  "Win32_System_IO",
+  "Win32_System_Pipes",
   "Win32_System_RemoteDesktop",
   "Win32_System_Threading",
 ] }
