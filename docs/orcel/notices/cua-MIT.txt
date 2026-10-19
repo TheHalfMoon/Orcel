@@ -9,6 +9,13 @@ apps/orcel-native-host/third_party/cua-driver/. Orcel's changes are the patch
 queue in apps/orcel-native-host/third_party/cua-driver/PATCHES.md, and
 docs/orcel/cua_driver_provenance.json records the provenance.
 
+apps/orcel-contain/src/ (the contained tier's helper, XP-13) is adapted from
+the same commit's
+libs/cua-driver/rust/crates/cua-driver-core/src/perception_client/containment.rs
+and containment/{linux,macos,unix,unsupported,windows}.rs (transplant rows
+T-CUA-21 and T-CUA-22). Each adapted file names its donor blob and lists
+Orcel's changes in its header.
+
 Copyright (c) 2025 Cua AI, Inc.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy

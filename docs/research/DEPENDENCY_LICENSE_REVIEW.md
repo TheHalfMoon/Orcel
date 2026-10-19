@@ -133,6 +133,21 @@ The Windows x64 SBOM component set is unchanged: `windows` 0.58.0 was already li
 
 Admitted 2026-10-19 for `crates/orceld/src/app_api.rs`. No new crate enters `Cargo.lock`. orceld's existing `windows-sys` 0.52.0 edge (`cfg(windows)`, MIT OR Apache-2.0) gains features `Win32_Security`, `Win32_Security_Authorization`, `Win32_Storage_FileSystem`, `Win32_System_IO` and `Win32_System_Pipes`, for `CreateNamedPipeW`, `ConnectNamedPipe`, overlapped `ReadFile`/`WriteFile`, `GetNamedPipeClientProcessId`, `GetNamedPipeClientSessionId`, `PeekNamedPipe`, the token user (`OpenProcessToken`, `GetTokenInformation`, `EqualSid`) and the DACL from SDDL. The backlog card also proposed `security-framework`, `core-foundation`, `Win32_Security_WinTrust` and `Win32_Security_Cryptography` for code-signature checks; these are not admitted because the read-only slice does not take those checks (see the protocol document, "Code identity"). The cua-keyvault files the code adapts are FSL-1.1-MIT (FD-04), notice `docs/orcel/notices/cua-FSL-1.1-MIT.txt`.
 
+## orcel-contain, the contained-tier helper (XP-13)
+
+Admitted 2026-10-19 for `apps/orcel-contain`, its own Cargo workspace with its own `Cargo.lock` (27 packages, all targets) and `deny.toml`. Nothing enters the root `Cargo.lock`: the kernel-side client, `crates/orcel-provider-process/src/contained.rs`, is std only (it carries its own SHA-256, checked against the `sha2` dev-dependency the crate already had). CI runs `cargo audit` and `cargo deny check licenses bans sources` on the helper workspace.
+
+| Crate | Version | License | Target | Use |
+|---|---|---|---|---|
+| tokio | 1.53.3 | MIT | all | `current_thread` runtime, `process`, `io-util`, `time`, `sync`, `macros` (`select!`); `net` on Windows for the private named pipes. The donor code is async; the runtime is current-thread so the forking thread is the one `PR_SET_PDEATHSIG` watches |
+| libc | 0.2.191 | MIT OR Apache-2.0 | `cfg(unix)` | Landlock, seccomp, `prctl`, rlimits, `close_range`, `proc_pidinfo`, `kill` |
+| tempfile | 3.27.0 | MIT OR Apache-2.0 | dev only | test fixtures |
+
+tokio's own graph adds bytes, mio, socket2, pin-project-lite, signal-hook-registry, errno, windows-sys/windows-link and the `tokio-macros` proc-macro (syn, quote, proc-macro2, unicode-ident), all MIT or MIT OR Apache-2.0 (unicode-ident also Unicode-3.0). The Windows FFI (AppContainer, Job Object, desktop, ACL and `BCryptGenRandom`) is declared directly against system DLLs, as the donor does; no `windows` crate is used. The donor's `fs2`, `uuid` and `tracing` dependencies were removed with the code that used them.
+
+The helper is not yet in a release package: XP-16 (macOS bundle), XP-17 (Linux packages) and the Windows lifecycle payload (SG-000106) ship it, and `scripts/generate-sbom.mjs` and `scripts/third-party-notices.mjs` must add this workspace when they do.
+
+
 ## npm packages in the release
 
 Pinned by `package-lock.json` and copied into the release from the locked production dependency closure.
