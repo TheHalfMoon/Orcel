@@ -69,7 +69,10 @@ pub(crate) fn display_field(value: &str, max_chars: usize) -> String {
     }
     let rest = value.chars().count() - taken;
     if rest > 0 {
-        out.push_str(&format!(" [{rest} more characters not shown]"));
+        out.push_str(&format!(
+            " [{rest} more {} not shown]",
+            if rest == 1 { "character" } else { "characters" }
+        ));
     }
     out
 }
@@ -357,6 +360,15 @@ mod tests {
     }
 
     #[test]
+    fn xp09_omission_label_has_correct_singular_and_plural() {
+        assert_eq!(display_field("abc", 2), "ab [1 more character not shown]");
+        assert_eq!(
+            display_field("abcdef", 2),
+            "ab [4 more characters not shown]"
+        );
+    }
+
+    #[test]
     fn xp09_body_escapes_and_bounds_hostile_fields() {
         let mut prompt = soft_prompt();
         prompt.action =
@@ -415,7 +427,7 @@ mod tests {
         );
         // An escape is never cut in half.
         let shown = display_field("ab\u{202e}", 4);
-        assert_eq!(shown, "ab [1 more characters not shown]");
+        assert_eq!(shown, "ab [1 more character not shown]");
         for max in 0..40 {
             let shown = display_field(&"\u{e0041}x".repeat(30), max);
             let field = shown.split(" [").next().expect("field");
