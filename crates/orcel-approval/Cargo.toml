@@ -19,3 +19,14 @@ fs4.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.52", features = ["Foundation", "Security_Credentials_UI"] }
+
+# XP-09: STRONG presence on macOS through LocalAuthentication (LAContext,
+# LAPolicyDeviceOwnerAuthentication), the bindings the Cua donor uses
+# (cua@a802eaf2 libs/cua/crates/cua-teleport). The SOFT dialog
+# (CFUserNotification) and the session probe (SessionGetInfo) are raw
+# CoreFoundation/Security externs and need no crate.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "=0.6.5"
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSString", "NSError"] }
+objc2-local-authentication = { version = "=0.3.2", default-features = false, features = ["std", "LAContext", "block2"] }
+block2 = "=0.6.2"
