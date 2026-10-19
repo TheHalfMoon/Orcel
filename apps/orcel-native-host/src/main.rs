@@ -1,15 +1,38 @@
 // Copyright 2026 TheHalfMoon contributors
 // SPDX-License-Identifier: Apache-2.0
-//! Orcel native host for macOS and Linux (XP-05).
+//! Orcel native host for macOS and Linux.
 //!
-//! Compile-only: the binary prints the host protocol version and exits. No
-//! tool, listener, MCP server, daemon socket or browser is reachable from it.
-//! orceld remains the sole authority; later tasks (XP-06 onward) add the
-//! allowlisted adapter over orcel-computer-host/2.
+//! XP-06: read-only desktop observation over the private stdio protocol
+//! `orcel-computer-host/2`. orceld spawns this binary with no arguments and
+//! talks to the supervisor over the inherited pipes; the supervisor runs
+//! every observation in a one-shot `--worker` child. There is no listener,
+//! no network client, no telemetry and no permission prompt. orceld remains
+//! the sole authority: its registry allocates identities, redacts, bounds
+//! and excludes protected surfaces again on everything this host reports.
 
-/// The host protocol this binary will speak once it serves requests.
-pub const PROTOCOL_VERSION: &str = "orcel-computer-host/2";
+mod cua_adapter;
+mod map;
+mod protocol;
+mod supervisor;
+mod worker;
 
-fn main() {
-    println!("{PROTOCOL_VERSION}");
+use std::process::ExitCode;
+
+/// The host protocol this binary speaks.
+pub const PROTOCOL_VERSION: &str = protocol::PROTOCOL_V2;
+
+fn main() -> ExitCode {
+    let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    match args.as_slice() {
+        [] => supervisor::main(),
+        [flag] if flag == "--worker" => worker::main(),
+        [flag] if flag == "--version" => {
+            println!("{PROTOCOL_VERSION}");
+            ExitCode::SUCCESS
+        }
+        _ => {
+            eprintln!("usage: orcel-native-host [--version]");
+            ExitCode::from(2)
+        }
+    }
 }
