@@ -152,6 +152,12 @@ mod imp {
         ) -> Result<Value, CuaFailure> {
             settle(self.registry.invoke(name, arguments).await)
         }
+
+        /// The names the vendored registry holds, for the reachability test.
+        #[cfg(test)]
+        pub fn registered_tools(&self) -> Vec<String> {
+            self.registry.tool_names().map(str::to_owned).collect()
+        }
     }
 
     fn settle(result: ToolResult) -> Result<Value, CuaFailure> {
@@ -290,6 +296,39 @@ mod tests {
         assert_eq!(status["direct_capture_status"], "not_checked", "{status}");
         assert!(status["accessibility"].is_boolean());
         assert!(status["screen_recording"].is_boolean());
+    }
+
+    /// The registry the host builds holds the five tools the adapter calls
+    /// and none of the surfaces P-03 compiles out or Orcel never allows: no
+    /// script engine, no page or browser engine tools, no kill_app, no
+    /// recording, history or expression-evaluating drag.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn registry_holds_the_allowlist_and_no_compiled_out_tool() {
+        let names = CuaRuntime::new().registered_tools();
+        for allowed in [
+            "list_windows",
+            "get_window_state",
+            "get_cursor_position",
+            "get_screen_size",
+            CHECK_PERMISSIONS,
+        ] {
+            assert!(
+                names.iter().any(|name| name == allowed),
+                "{allowed}: {names:?}"
+            );
+        }
+        for name in &names {
+            assert!(
+                !matches!(
+                    name.as_str(),
+                    "run_script" | "page" | "kill_app" | "parallel_mouse_drag"
+                ) && !name.starts_with("browser")
+                    && !name.contains("recording")
+                    && !name.contains("history"),
+                "{name} is registered: {names:?}"
+            );
+        }
     }
 
     #[test]

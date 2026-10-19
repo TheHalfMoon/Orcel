@@ -94,22 +94,35 @@ jobs:
         run: cargo build --locked --release -p orcel-native-host
       - name: The binary prints its protocol version
         run: test "$(./target/release/orcel-native-host --version)" = "orcel-computer-host/2"
-      - name: Reachability (no run_script, remote debugging, server, daemon or browser code)
+      - name: Reachability (no script engine, CDP client, server, daemon or browser code)
         # XP-06 links the platform crates through the adapter, so these checks
-        # now cover real code. P-03 keeps a few named items in otherwise
-        # compiled-out modules (PATCHES.md): server.rs's observation
-        # vocabulary, browser::types and download, BrowserJs::supports and
-        # ElectronJs::is_electron, and Linux is_chromium_identity. Only those
-        # may appear; any other symbol of those modules fails.
+        # now cover real code. The words run_script and remote-debugging are
+        # no longer a usable signal: linked core code names them in its
+        # authorization and capability tables and in launch_guard.rs, the
+        # refusal that blocks launching an app with --remote-debugging-port.
+        # What must be absent is the QuickJS engine and every CDP client, so
+        # the binary may hold neither QuickJS nor the CDP-only protocol
+        # literals, nor any rquickjs or script_tool symbol. The registry test
+        # registry_holds_the_allowlist_and_no_compiled_out_tool checks that
+        # run_script, page, kill_app and the browser tools are not registered.
+        # P-03 keeps a few named items in otherwise compiled-out modules
+        # (PATCHES.md): server.rs's observation vocabulary, browser::types and
+        # download, BrowserJs::supports, ElectronJs::is_electron and
+        # execute_main, and Linux is_chromium_identity. Only those may appear;
+        # any other symbol of those modules fails.
         run: |
           set -euo pipefail
           bin=target/release/orcel-native-host
-          if grep -a -q -e run_script -e remote-debugging "$bin"; then
-            echo "::error::the native host binary contains run_script or remote-debugging"
+          if grep -a -q -e QuickJS -e webSocketDebuggerUrl -e Runtime.evaluate -e /json/version "$bin"; then
+            echo "::error::the native host binary holds the script engine or a CDP client"
             exit 1
           fi
           symbols=$(nm -C "$bin" 2>/dev/null || true)
           test -n "$symbols"
+          if grep -E 'rquickjs|cua_driver_core::script_tool' <<<"$symbols"; then
+            echo "::error::the native host binary links the run_script engine"
+            exit 1
+          fi
           compiled_out='cua_driver_core::(server|daemon|browser|cdp|history|recording|perception_client)::|platform_(macos|linux)::(browser|browser_platform|history|recording_hooks|video_[a-z]+|pip)::'
           retained='cua_driver_core::server::(ToolOperation|tool_operation|is_computer_action|ToolCompletionObservation|DurationBucket|OutputType|OutputSizeBucket|ToolErrorClass|ToolRefusalCode)|cua_driver_core::browser::(types|download)::|platform_macos::browser::(browser_js::BrowserJs::supports|electron_js::ElectronJs::(is_electron|execute_main))|platform_linux::browser_platform::is_chromium_identity'
           hits=$(grep -E "$compiled_out" <<<"$symbols" | grep -vE "$retained" || true)
@@ -192,7 +205,7 @@ jobs:
             cargo test --locked --release -p orcel-native-host --test live_observation -- --nocapture
             cd ../..
             cargo test --locked -p orcel-provider-uia --test xp06_native_host_live -- --nocapture
-          ' 
+          '
       - uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
         if: runner.os == 'Linux'
         id: native-host-tools-cache
