@@ -14,8 +14,8 @@
 //! person passed; the broker binds that to the request's nonce and digest
 //! and the ledger issues, expires and consumes the token as on Windows.
 //!
-//! Linux (XP-10) adds its polkit `auth_self` verifier and session probe
-//! next to the macOS ones, under `cfg(target_os = "linux")`.
+//! Linux (XP-10) keeps its polkit `auth_self` verifier and session probe in
+//! `linux.rs` and shares only [`SessionState`] from here.
 //!
 //! Provenance (T-CUA-20, COPY_ADAPT): the macOS backend is adapted from
 //! cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f
@@ -41,9 +41,9 @@
 //! - the Windows (Hello + CredUI password fallback) and Linux branches and
 //!   the export-manifest helpers are not taken.
 
-// Off macOS this module is compiled only into tests, which run its pure
-// rules (session classification, LAError mapping, the STRONG flow) on
-// every OS. XP-10 widens the cfg when it adds Linux.
+// Off macOS this module is compiled into tests, which run its pure rules
+// (session classification, LAError mapping, the STRONG flow) on every OS,
+// and on Linux for `SessionState` (XP-10).
 #![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
 use crate::soft_macos::display_field;

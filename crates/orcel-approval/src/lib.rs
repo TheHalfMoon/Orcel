@@ -8,16 +8,27 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-// XP-09: the macOS SOFT dialog and STRONG presence. Each OS's presenter and
-// verifier lives in its own module and is selected below by cfg; Linux
-// (XP-10) adds its own next to these without touching the Windows path.
-// Other OSes compile them only into tests, which run their pure rules
-// (session classification, escaping, outcome mapping) everywhere.
-#[cfg(any(target_os = "macos", test))]
+// XP-09: the macOS SOFT dialog and STRONG presence; XP-10: Linux. Each OS's
+// presenter and verifier lives in its own module and is selected below by
+// cfg, without touching the Windows path. Linux shares the session states
+// and the escaper of the macOS modules. Other OSes compile these modules
+// only into tests, which run their pure rules (session classification,
+// escaping, helper protocol, outcome mapping) everywhere.
+#[cfg(any(target_os = "linux", test))]
+mod linux;
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 mod presence_unix;
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 mod soft_macos;
 
+/// The Linux helper's own protocol module, so tests on every OS check that
+/// orceld and the helper agree.
+#[cfg(test)]
+#[path = "../../../apps/orcel-approval-helper-linux/src/protocol.rs"]
+mod linux_helper_protocol;
+
+#[cfg(target_os = "linux")]
+pub use linux::{PolkitPresenceVerifier, POLKIT_ACTION_ID, POLKIT_PRESENCE_METHOD};
 #[cfg(target_os = "macos")]
 pub use presence_unix::{MacLocalAuthPresenceVerifier, MAC_LOCAL_AUTH_METHOD};
 
@@ -74,6 +85,11 @@ pub struct PresenceContext {
     pub digest: String,
     pub workspace_id: String,
     pub action: String,
+    /// The request's target and summary, for verifiers that show the whole
+    /// request before asking for presence (Linux, XP-10). Empty unless set
+    /// with [`PresenceContext::with_details`].
+    pub target: String,
+    pub summary: String,
 }
 
 impl PresenceContext {
@@ -88,7 +104,15 @@ impl PresenceContext {
             digest: digest.into(),
             workspace_id: workspace_id.into(),
             action: action.into(),
+            target: String::new(),
+            summary: String::new(),
         }
+    }
+
+    pub fn with_details(mut self, target: impl Into<String>, summary: impl Into<String>) -> Self {
+        self.target = target.into();
+        self.summary = summary.into();
+        self
     }
 }
 
@@ -345,8 +369,11 @@ fn verify_with_hello(
     }
 }
 
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 pub type DefaultPresenceVerifier = NoPresenceVerifier;
+
+#[cfg(target_os = "linux")]
+pub type DefaultPresenceVerifier = PolkitPresenceVerifier;
 
 #[cfg(target_os = "macos")]
 pub type DefaultPresenceVerifier = MacLocalAuthPresenceVerifier;
@@ -812,7 +839,8 @@ impl ApprovalBroker for LocalApprovalBroker {
             prompt.digest.clone(),
             prompt.workspace_id.clone(),
             prompt.action.clone(),
-        );
+        )
+        .with_details(prompt.target.clone(), prompt.summary.clone());
         let method = self.presence.method();
         let attestation = self.presence.verify(&ctx, &lease);
         let mut ledger = self
@@ -953,7 +981,8 @@ impl LocalApprovalBroker {
             prompt.digest.clone(),
             prompt.workspace_id.clone(),
             prompt.action.clone(),
-        );
+        )
+        .with_details(prompt.target.clone(), prompt.summary.clone());
         let method = self.presence.method();
         let attestation = self.presence.verify(&ctx, &lease);
         let mut ledger = self
@@ -2218,7 +2247,12 @@ fn platform_prompt(prompt: &ApprovalPrompt) -> Result<ApprovalDecision, Approval
     soft_macos::platform_prompt(prompt)
 }
 
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(target_os = "linux")]
+fn platform_prompt(prompt: &ApprovalPrompt) -> Result<ApprovalDecision, ApprovalError> {
+    linux::platform_prompt(prompt)
+}
+
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 fn platform_prompt(prompt: &ApprovalPrompt) -> Result<ApprovalDecision, ApprovalError> {
     debug_assert_eq!(prompt.approval_class, ApprovalClass::Soft);
     let _ = prompt;
@@ -2653,7 +2687,11 @@ mod xp09_contract_tests {
         assert_eq!(method, MAC_LOCAL_AUTH_METHOD);
         #[cfg(target_os = "macos")]
         assert_eq!(method, "macos-local-authentication");
-        #[cfg(not(any(windows, target_os = "macos")))]
+        #[cfg(target_os = "linux")]
+        assert_eq!(method, POLKIT_PRESENCE_METHOD);
+        #[cfg(target_os = "linux")]
+        assert_eq!(method, "linux-polkit-auth-self");
+        #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
         assert_eq!(method, "none");
     }
 
@@ -2765,6 +2803,207 @@ mod xp09_contract_tests {
         for prompt in [soft, strong_prompt] {
             let outcome = broker.request_token(&prompt);
             eprintln!("xp09 live {}: {outcome:?}", prompt.approval_class.as_str());
+            assert_eq!(outcome.is_ok(), expect == "approve");
+        }
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+/// XP-10: the real Linux paths. On a runner nobody can answer, so the SOFT
+/// dialog and polkit presence, through the real broker, must fail closed;
+/// the GTK helper itself runs under Xvfb when CI provides it.
+#[cfg(all(test, target_os = "linux"))]
+mod xp10_linux_tests {
+    use super::*;
+
+    fn temp_ledger(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!(
+            "orcel-xp10-{label}-{}-{nanos}.jsonl",
+            std::process::id()
+        ))
+    }
+
+    /// `ORCEL_REQUIRE_XP10_HEADLESS=1` (set by CI) makes an interactive
+    /// session a failure instead of a skip, so the check can never pass by
+    /// not running. With `ORCEL_REQUIRE_XP10_BYPASS_ENV` the donor's two
+    /// bypass variables must be set and change nothing (S-24).
+    #[test]
+    fn xp10_linux_headless_paths_fail_closed() {
+        let required = std::env::var_os("ORCEL_REQUIRE_XP10_HEADLESS").is_some();
+        let session = linux::session_state();
+        // The probe of the runner itself, without the CI guard, must also
+        // refuse: no logind graphical session is active and local here.
+        let facts = linux::sys::session_facts_ignoring_automation();
+        eprintln!("xp10 session probe: state {session:?}, facts {facts:?}");
+        if session == presence_unix::SessionState::Interactive {
+            assert!(
+                !required,
+                "ORCEL_REQUIRE_XP10_HEADLESS is set but this session can show prompts"
+            );
+            return;
+        }
+        if required {
+            assert_eq!(
+                linux::classify_session(&facts),
+                presence_unix::SessionState::NoGraphicSession,
+                "{facts:?}"
+            );
+        }
+        if std::env::var_os("ORCEL_REQUIRE_XP10_BYPASS_ENV").is_some() {
+            for name in [
+                ["CUA_ENV", "_SKIP_SENSITIVE_AUTH"].concat(),
+                ["CUA_ENV", "_ALLOW_UNVERIFIED_SENSITIVE_EXPORT"].concat(),
+            ] {
+                assert_eq!(std::env::var(&name).as_deref(), Ok("1"), "{name}");
+            }
+        }
+
+        let soft = ApprovalPrompt::new(
+            "default",
+            "rev-1",
+            "act",
+            "target",
+            "summary",
+            "d".repeat(64),
+        );
+        let error = platform_prompt(&soft).expect_err("SOFT fails closed");
+        assert_eq!(error.code, FailureCode::ApprovalUnavailable);
+
+        let verifier = PolkitPresenceVerifier::new();
+        assert!(!verifier.is_available());
+        let ctx = PresenceContext::new("nonce-probe", "digest-probe", "default", "probe");
+        let lease = InputLeaseGuard::suspend_for_presence();
+        let error = verifier
+            .verify(&ctx, &lease)
+            .expect_err("STRONG fails closed");
+        assert_eq!(error.reason, PresenceFailureReason::Unavailable);
+
+        let path = temp_ledger("linux-headless");
+        let broker = LocalApprovalBroker::with_path(&path);
+        assert_eq!(broker.presence_method(), POLKIT_PRESENCE_METHOD);
+        let strong = ApprovalPrompt::new_strong(
+            "default",
+            "rev-1",
+            "delete file",
+            "target",
+            "summary",
+            "e".repeat(64),
+        );
+        for prompt in [soft.clone(), strong] {
+            let error = broker.request_token(&prompt).expect_err("fails closed");
+            assert_eq!(error.code, FailureCode::ApprovalUnavailable);
+        }
+        let history = broker.history(10);
+        assert_eq!(history.len(), 2);
+        assert!(history
+            .iter()
+            .all(|record| record.decision == RecordedDecision::Unavailable));
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// CI under Xvfb: the real GTK4 helper shows the dialog, nobody answers,
+    /// and its own timeout answers deny with this request's nonce. The
+    /// binary comes from `ORCEL_XP10_HELPER_BINARY` in this test only; the
+    /// shipped code never reads a helper location from the environment.
+    /// `ORCEL_REQUIRE_XP10_HELPER=1` makes a missing binary or display a
+    /// failure instead of a skip.
+    #[test]
+    fn xp10_real_helper_times_out_to_deny_under_xvfb() {
+        let required = std::env::var_os("ORCEL_REQUIRE_XP10_HELPER").is_some();
+        let binary = std::env::var_os("ORCEL_XP10_HELPER_BINARY").map(PathBuf::from);
+        let display = std::env::var_os("DISPLAY").is_some();
+        let Some(binary) = binary.filter(|_| display) else {
+            assert!(
+                !required,
+                "ORCEL_REQUIRE_XP10_HELPER is set without ORCEL_XP10_HELPER_BINARY and DISPLAY"
+            );
+            return;
+        };
+        let env: Vec<(std::ffi::OsString, std::ffi::OsString)> = linux::HELPER_ENV_ALLOWLIST
+            .iter()
+            .filter_map(|name| std::env::var_os(name).map(|value| ((*name).into(), value)))
+            .collect();
+        let started = Instant::now();
+        let outcome = linux::sys::run_helper(
+            &binary,
+            ApprovalClass::Soft,
+            soft_macos::DIALOG_HEADER,
+            "Orcel requests a local action.\n\nAction: XP-10 CI check\n\nNobody answers; the dialog times out.",
+            2,
+            Duration::from_secs(60),
+            env.clone(),
+        );
+        eprintln!(
+            "xp10 helper under Xvfb: {outcome:?} in {:?}",
+            started.elapsed()
+        );
+        assert_eq!(outcome, linux::HelperOutcome::Answered(false));
+        assert!(started.elapsed() >= Duration::from_secs(2));
+
+        // No display: GTK cannot start, and the helper exits without an
+        // answer.
+        let no_display: Vec<_> = env
+            .into_iter()
+            .filter(|(name, _)| name != "DISPLAY" && name != "WAYLAND_DISPLAY")
+            .collect();
+        let outcome = linux::sys::run_helper(
+            &binary,
+            ApprovalClass::Soft,
+            "t",
+            "b",
+            2,
+            Duration::from_secs(60),
+            no_display,
+        );
+        eprintln!("xp10 helper without a display: {outcome:?}");
+        assert!(
+            matches!(outcome, linux::HelperOutcome::Crashed(_)),
+            "{outcome:?}"
+        );
+    }
+
+    /// Manual live check on a Linux desktop at the keyboard (never in CI).
+    /// See SECURITY_INTEGRATION.md, "XP-10 manual live check (Linux)".
+    #[test]
+    fn xp10_live_linux_dialog_and_presence() {
+        if std::env::var_os("ORCEL_LIVE_APPROVAL_DIALOG").is_none() {
+            return;
+        }
+        let expect = std::env::var("ORCEL_LIVE_APPROVAL_EXPECT").unwrap_or_default();
+        assert!(
+            expect == "approve" || expect == "deny",
+            "set ORCEL_LIVE_APPROVAL_EXPECT to approve or deny, got {expect:?}"
+        );
+        assert_eq!(
+            linux::session_state(),
+            presence_unix::SessionState::Interactive,
+            "the live check needs an active local X11 or Wayland session outside CI and SSH"
+        );
+        let path = temp_ledger("linux-live");
+        let broker = LocalApprovalBroker::with_path(&path);
+        let soft = ApprovalPrompt::new(
+            "default",
+            "rev-1",
+            "XP-10 live check (SOFT)",
+            "nothing is changed",
+            "Answer as ORCEL_LIVE_APPROVAL_EXPECT says.",
+            "f".repeat(64),
+        );
+        let strong_prompt = ApprovalPrompt::new_strong(
+            "default",
+            "rev-1",
+            "XP-10 live check (STRONG)",
+            "nothing is changed",
+            "Answer as ORCEL_LIVE_APPROVAL_EXPECT says.",
+            "0".repeat(64),
+        );
+        for prompt in [soft, strong_prompt] {
+            let outcome = broker.request_token(&prompt);
+            eprintln!("xp10 live {}: {outcome:?}", prompt.approval_class.as_str());
             assert_eq!(outcome.is_ok(), expect == "approve");
         }
         let _ = std::fs::remove_file(path);
