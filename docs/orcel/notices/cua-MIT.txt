@@ -1,0 +1,47 @@
+Cua Driver (trycua/cua) - vendored source notice
+
+Orcel vendors these MIT-licensed crates from trycua/cua at commit
+a802eaf26ca97616a6bf0de6a29729a9346fbb1f (libs/cua-driver/rust/crates/):
+platform-macos, platform-linux, cua-driver-core, cua-driver-contract,
+cursor-overlay, pip-preview and cua-cursor-motion, plus the
+libs/cua-driver/rust/Skills/cua-driver Markdown. They live under
+apps/orcel-native-host/third_party/cua-driver/. Orcel's changes are the patch
+queue in apps/orcel-native-host/third_party/cua-driver/PATCHES.md, and
+docs/orcel/cua_driver_provenance.json records the provenance.
+
+Copyright (c) 2025 Cua AI, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Upstream credits for parts of the vendored crates (full table:
+apps/orcel-native-host/third_party/cua-driver/THIRD_PARTY_NOTICES.md; each
+project is MIT-licensed under the license text above):
+
+- yabai, Copyright (c) 2019 Åsmund Vikane:
+  platform-macos/src/input/skylight.rs (activate_without_raise).
+- trope-cua, Copyright (c) 2026 Victor Vannara:
+  cursor-overlay/src/motion.rs and src/bezier.rs (specific items only).
+- T3 Code, Copyright (c) 2026 T3 Tools Inc.:
+  platform-linux/src/wayland/shell_helper.rs, shell_helper/transport.rs,
+  wayland/libei.rs, wayland/mod.rs and src/tools/impl_.rs (GNOME window
+  capture).
+
+cursor-overlay embeds the Inter typeface (assets/Inter.ttf), Copyright 2020
+The Inter Project Authors, under the SIL Open Font License 1.1. The full
+license text ships next to it in assets/Inter-OFL.txt.
