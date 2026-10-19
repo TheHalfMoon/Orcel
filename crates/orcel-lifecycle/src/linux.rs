@@ -296,14 +296,14 @@ mod tests {
             .filter_map(|line| line.trim().strip_prefix("mode:"))
             .map(|mode| u32::from_str_radix(mode.trim(), 8).unwrap())
             .collect();
-        assert_eq!(modes, [0o755, 0o644, 0o644, 0o644, 0o644, 0o644]);
+        assert_eq!(modes, [0o755, 0o755, 0o755, 0o644, 0o644, 0o644, 0o644, 0o644]);
         assert!(modes.iter().all(|mode| mode & 0o7022 == 0));
         let owners: Vec<&str> = NFPM
             .lines()
             .filter_map(|line| line.trim().strip_prefix("owner:"))
             .map(str::trim)
             .collect();
-        assert_eq!(owners, ["root"; 6]);
+        assert_eq!(owners, ["root"; 8]);
         assert!(NFPM.contains(&format!("dst: {PACKAGE_LIB_DIR}/orceld")));
         assert!(NFPM.contains(&format!("dst: {PACKAGE_USER_UNIT_DIR}/{SOCKET_UNIT}")));
         assert!(NFPM.contains(&format!("dst: {PACKAGE_USER_UNIT_DIR}/{SERVICE_UNIT}")));

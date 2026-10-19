@@ -433,6 +433,7 @@ jobs:
           systemctl --user disable --now orceld.socket
           sudo apt-get remove -y orcel
           test ! -e /usr/lib/orcel
+          test ! -e /usr/share/doc/orcel
           test ! -e /usr/lib/systemd/user/orceld.socket
           # User state is kept.
           test -d "$HOME/.local/state/orcel"
@@ -462,6 +463,7 @@ jobs:
               ORCEL_WORKSPACES_JSON="[{\"id\":\"ci\",\"root\":\"/root/ws\"}]" python3 /probe/linux-orceld-probe.py exec /usr/lib/orcel/orceld ci
               dnf remove -y orcel
               test ! -e /usr/lib/orcel
+              test ! -e /usr/share/doc/orcel
             '
 
   supply-chain:

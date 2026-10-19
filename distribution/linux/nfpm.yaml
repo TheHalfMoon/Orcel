@@ -27,6 +27,19 @@ homepage: https://github.com/TheHalfMoon/Orcel
 license: Apache-2.0
 
 contents:
+  # Owned directories, so `dnf remove` and `apt remove` leave none behind.
+  - dst: /usr/lib/orcel
+    type: dir
+    file_info:
+      mode: 0755
+      owner: root
+      group: root
+  - dst: /usr/share/doc/orcel
+    type: dir
+    file_info:
+      mode: 0755
+      owner: root
+      group: root
   - src: orceld
     dst: /usr/lib/orcel/orceld
     file_info:
