@@ -172,7 +172,128 @@ fn arm_parent_death() -> Option<u32> {
     u32::try_from(unsafe { libc::getppid() }).ok()
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+/// Windows has no death signal; the supervisor's stdin and the kill-on-close
+/// job cover parent death. The launcher is still checked against the spec:
+/// its pid comes from a process snapshot, and it must still be running and
+/// have started no later than the helper, so a recycled pid is not taken for
+/// the supervisor. Any failure yields pid 0, which no spec names, so the
+/// helper refuses.
+#[cfg(windows)]
+fn arm_parent_death() -> Option<u32> {
+    Some(windows_launcher::launcher_pid().unwrap_or(0))
+}
+
+#[cfg(windows)]
+mod windows_launcher {
+    use std::ffi::c_void;
+
+    type Handle = *mut c_void;
+    const TH32CS_SNAPPROCESS: u32 = 0x0000_0002;
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x0000_1000;
+    const STILL_ACTIVE: u32 = 259;
+    const INVALID_HANDLE_VALUE: isize = -1;
+
+    #[repr(C)]
+    struct ProcessEntry32W {
+        size: u32,
+        usage: u32,
+        process_id: u32,
+        default_heap_id: usize,
+        module_id: u32,
+        threads: u32,
+        parent_process_id: u32,
+        priority_class_base: i32,
+        flags: u32,
+        exe_file: [u16; 260],
+    }
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct FileTime {
+        low: u32,
+        high: u32,
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn CreateToolhelp32Snapshot(flags: u32, process_id: u32) -> Handle;
+        fn Process32FirstW(snapshot: Handle, entry: *mut ProcessEntry32W) -> i32;
+        fn Process32NextW(snapshot: Handle, entry: *mut ProcessEntry32W) -> i32;
+        fn GetCurrentProcessId() -> u32;
+        fn GetCurrentProcess() -> Handle;
+        fn OpenProcess(access: u32, inherit: i32, process_id: u32) -> Handle;
+        fn GetExitCodeProcess(process: Handle, code: *mut u32) -> i32;
+        fn GetProcessTimes(
+            process: Handle,
+            creation: *mut FileTime,
+            exit: *mut FileTime,
+            kernel: *mut FileTime,
+            user: *mut FileTime,
+        ) -> i32;
+        fn CloseHandle(object: Handle) -> i32;
+    }
+
+    pub(super) fn launcher_pid() -> Option<u32> {
+        // SAFETY: GetCurrentProcessId takes no arguments.
+        let own = unsafe { GetCurrentProcessId() };
+        let parent = parent_of(own)?;
+        // SAFETY: GetCurrentProcess returns a pseudo-handle that needs no closing.
+        let own_start = start_time(unsafe { GetCurrentProcess() })?;
+        // SAFETY: plain OpenProcess; a null result is handled, and the handle is
+        // closed below exactly once.
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, parent) };
+        if handle.is_null() {
+            return None;
+        }
+        let mut code = 0_u32;
+        // SAFETY: `handle` is open with query access and `code` is a live out-pointer.
+        let alive = unsafe { GetExitCodeProcess(handle, &mut code) } != 0 && code == STILL_ACTIVE;
+        let parent_start = start_time(handle);
+        // SAFETY: `handle` was opened above and is closed once.
+        unsafe { CloseHandle(handle) };
+        (alive && parent_start? <= own_start).then_some(parent)
+    }
+
+    fn parent_of(own: u32) -> Option<u32> {
+        // SAFETY: a process snapshot takes no pointers; the handle is checked and
+        // closed below exactly once.
+        let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+        if snapshot.is_null() || snapshot as isize == INVALID_HANDLE_VALUE {
+            return None;
+        }
+        // SAFETY: PROCESSENTRY32W is integers and an inline array; all-zero is valid,
+        // and `size` is set before the first call as the API requires.
+        let mut entry: ProcessEntry32W = unsafe { std::mem::zeroed() };
+        entry.size = std::mem::size_of::<ProcessEntry32W>() as u32;
+        let mut parent = None;
+        // SAFETY: `snapshot` is open and `entry` is a live, sized PROCESSENTRY32W.
+        let mut more = unsafe { Process32FirstW(snapshot, &mut entry) } != 0;
+        while more {
+            if entry.process_id == own {
+                parent = Some(entry.parent_process_id);
+                break;
+            }
+            // SAFETY: as for Process32FirstW above.
+            more = unsafe { Process32NextW(snapshot, &mut entry) } != 0;
+        }
+        // SAFETY: `snapshot` was opened above and is closed once.
+        unsafe { CloseHandle(snapshot) };
+        parent.filter(|pid| *pid != 0)
+    }
+
+    fn start_time(process: Handle) -> Option<u64> {
+        let mut creation = FileTime::default();
+        let mut exit = FileTime::default();
+        let mut kernel = FileTime::default();
+        let mut user = FileTime::default();
+        // SAFETY: `process` has query access and the four out-pointers are live locals.
+        let ok =
+            unsafe { GetProcessTimes(process, &mut creation, &mut exit, &mut kernel, &mut user) };
+        (ok != 0).then(|| u64::from(creation.high) << 32 | u64::from(creation.low))
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 fn arm_parent_death() -> Option<u32> {
     None
 }

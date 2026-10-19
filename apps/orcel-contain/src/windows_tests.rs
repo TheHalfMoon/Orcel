@@ -27,6 +27,8 @@ fn canonical_test_root(root: &tempfile::TempDir) -> PathBuf {
 
 fn open_delete_shared(path: &Path) -> OwnedHandle {
     let name = wide(path.as_os_str());
+    // SAFETY: `name` is a NUL-terminated UTF-16 path that outlives the call; the result is
+    // checked against INVALID_HANDLE_VALUE before it is wrapped.
     let handle = unsafe {
         CreateFileW(
             name.as_ptr(),
@@ -95,6 +97,8 @@ fn matching_grants(path: &Path, sid: *mut c_void) -> Result<(bool, Vec<(u32, u8)
     let target = AclTarget::open(path)?;
     let mut dacl: *mut c_void = std::ptr::null_mut();
     let mut descriptor: *mut c_void = std::ptr::null_mut();
+    // SAFETY: the target handle is open with READ_CONTROL and both out-pointers are live; the
+    // LocalAlloc'd descriptor is owned by LocalAcl.
     let status = unsafe {
         GetSecurityInfo(
             target.handle.get(),
@@ -116,6 +120,8 @@ fn matching_grants(path: &Path, sid: *mut c_void) -> Result<(bool, Vec<(u32, u8)
     let descriptor = LocalAcl(descriptor);
     let mut control = 0_u16;
     let mut revision = 0_u32;
+    // SAFETY: `descriptor.0` is the descriptor GetSecurityInfo just returned, and both
+    // out-pointers are live locals.
     if unsafe { GetSecurityDescriptorControl(descriptor.0, &mut control, &mut revision) } == FALSE {
         return Err(last_error(
             "failed to inspect contained process ACL control flags in a test",
@@ -131,20 +137,29 @@ fn matching_grants(path: &Path, sid: *mut c_void) -> Result<(bool, Vec<(u32, u8)
         sbz2: u16,
     }
 
+    // SAFETY: `dacl` is non-null and points into the live descriptor; every ACL starts with the
+    // ACL header this struct mirrors.
     let ace_count = unsafe { (*(dacl.cast::<AclHeader>())).ace_count };
     let mut grants = Vec::new();
     for index in 0..u32::from(ace_count) {
         let mut raw: *mut c_void = std::ptr::null_mut();
+        // SAFETY: `dacl` is a valid ACL, `index` is below its ACE count and `raw` is a live
+        // out-pointer.
         if unsafe { GetAce(dacl, index, &mut raw) } == FALSE || raw.is_null() {
             return Err(last_error(
                 "failed to inspect a contained process ACL entry in a test",
             ));
         }
+        // SAFETY: GetAce returned a non-null pointer to an ACE inside the live ACL, and an
+        // access-allowed ACE has this layout (type 0 is checked before the mask and SID are
+        // used).
         let ace = unsafe { &*raw.cast::<AccessAllowedAce>() };
         if ace.header.ace_type != 0 {
             continue;
         }
         let ace_sid = std::ptr::addr_of!(ace.sid_start).cast_mut().cast();
+        // SAFETY: both pointers refer to valid SIDs: one inside the live ACE, one owned by the
+        // test's AppContainerSid.
         if unsafe { EqualSid(ace_sid, sid) } != FALSE {
             grants.push((ace.mask, ace.header.ace_flags));
         }
@@ -588,6 +603,8 @@ fn failed_revocation_is_retained_for_retry() {
     assert_eq!(ledger.entries.len(), 1);
 
     let handle = ledger.entries[0].target.handle.get();
+    // SAFETY: the handle is open and owned by the ledger entry; the test closes it deliberately
+    // and then nulls the field so it is not closed again.
     assert_ne!(unsafe { CloseHandle(handle) }, FALSE);
     ledger.entries[0].target.handle.0 = std::ptr::null_mut();
 

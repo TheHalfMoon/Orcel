@@ -57,3 +57,7 @@ tempfile = "3"
 
 [profile.release]
 panic = "abort"
+
+# Every unsafe block and impl carries a `// SAFETY:` justification.
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"

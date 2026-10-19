@@ -281,6 +281,7 @@ pub fn run_contained(
 ) -> Result<ContainedRun, ContainedError> {
     let encoded = encode_spec(spec, std::process::id())?;
     let verified = verify_helper(pin)?;
+    check_exact_paths(spec)?;
     let mut child = spawn_helper(&verified, &spec.workdir)?;
     drop(verified);
 
@@ -464,6 +465,27 @@ fn parse_result(bytes: &[u8], limits: &ContainedLimits) -> Result<Parsed, Contai
     }))
 }
 
+/// Every path in the spec must already be canonical: a root reached through a
+/// symbolic link (which an earlier contained run could have planted in its
+/// writable root) is refused here, before the helper starts, and the helper
+/// checks again without following links.
+fn check_exact_paths(spec: &ContainedSpec) -> Result<(), ContainedError> {
+    let paths = std::iter::once(&spec.executable)
+        .chain(std::iter::once(&spec.workdir))
+        .chain(&spec.readable)
+        .chain(&spec.writable);
+    for path in paths {
+        let canonical = std::fs::canonicalize(path)
+            .map_err(|_| ContainedError::InvalidSpec("a spec path does not exist".into()))?;
+        if !same_path(&canonical, path) {
+            return Err(ContainedError::InvalidSpec(
+                "a spec path is not canonical (a link or relative part)".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// The pinned helper, verified and still open.
 struct VerifiedHelper {
     path: PathBuf,
@@ -513,7 +535,7 @@ fn same_path(canonical: &Path, pinned: &Path) -> bool {
                 .map_or(text.clone(), str::to_owned)
                 .to_ascii_lowercase()
         };
-        strip(canonical) == strip(pinned)
+        strip(canonical).trim_end_matches('\\') == strip(pinned).trim_end_matches('\\')
     }
     #[cfg(not(windows))]
     {
@@ -561,6 +583,13 @@ fn check_not_shared_writable(
     Ok(())
 }
 
+/// Windows: no DACL check yet. Residual risk, tracked as XP-13b: a helper
+/// in a directory other accounts may write could be replaced *before* the
+/// digest check, which then refuses it (so this fails closed, as tampering),
+/// and the share mode in `open_helper` stops a swap between the check and the
+/// spawn. What the missing check would add is refusing such an install root
+/// up front; the signed install root (SG-000106) is expected to be
+/// user-or-admin only.
 #[cfg(not(unix))]
 fn check_not_shared_writable(
     _path: &Path,

@@ -155,12 +155,14 @@ fn the_boundary_is_exactly_the_spec() {
     let bundle = tempfile::tempdir().unwrap();
     let working = tempfile::tempdir().unwrap();
     let extra = tempfile::tempdir().unwrap();
-    let executable = bundle.path().join("parser");
+    // Spec paths must be canonical (macOS temp dirs sit behind `/var`).
+    let executable = std::fs::canonicalize(bundle.path()).unwrap().join("parser");
     std::fs::write(&executable, b"#!/bin/sh\n").unwrap();
     let mut limits = limits();
-    limits.additional_readable_paths = vec![extra.path().to_path_buf()];
+    limits.additional_readable_paths = vec![std::fs::canonicalize(extra.path()).unwrap()];
+    let working_path = std::fs::canonicalize(working.path()).unwrap();
 
-    let boundary = filesystem_boundary(&executable, working.path(), &limits).unwrap();
+    let boundary = filesystem_boundary(&executable, &working_path, &limits).unwrap();
 
     let canonical_working = std::fs::canonicalize(working.path()).unwrap();
     let canonical_extra = std::fs::canonicalize(extra.path()).unwrap();
@@ -204,4 +206,26 @@ fn shipped_helper_source_reads_no_environment_variable() {
         checked += 1;
     }
     assert!(checked >= 6, "only {checked} source files were checked");
+}
+
+/// Roots and the executable must be named canonically; a link is refused,
+/// not followed.
+#[cfg(unix)]
+#[test]
+fn a_root_or_executable_reached_through_a_link_is_refused() {
+    let root = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(root.path()).unwrap();
+    let real = root.join("real");
+    std::fs::create_dir(&real).unwrap();
+    let link = root.join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    assert!(canonical_directory(&real).is_ok());
+    assert!(canonical_directory(&link).is_err());
+    assert!(canonical_directory(&real.join("..").join("real")).is_err());
+    let file = real.join("tool");
+    std::fs::write(&file, b"x").unwrap();
+    let file_link = root.join("tool");
+    std::os::unix::fs::symlink(&file, &file_link).unwrap();
+    assert!(canonical_file(&file).is_ok());
+    assert!(canonical_file(&file_link).is_err());
 }

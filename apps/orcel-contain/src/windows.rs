@@ -35,6 +35,18 @@
 //! child instruction runs before its containment exists. Any failure
 //! terminates the suspended process and returns a fail-closed error.
 //!
+//! Residual risk after a hard kill: if the helper itself is killed (for
+//! example `TerminateProcess`) between granting and revoking, the child still
+//! dies (closing the job handle kills the job), but the temporary ACEs on the
+//! working directory, the spec roots and the executable, and the
+//! AppContainer profile, stay behind. Nothing cleans them up on the next
+//! launch: the donor's recovery journal was removed with its state
+//! directory. The ACEs name a unique AppContainer SID derived from a random,
+//! never-disclosed 128-bit profile name, so no later process can hold a
+//! token that matches them, and the working directory's protected DACL still
+//! admits only the user. Recovery (a journal under the state root, replayed
+//! before the next launch) is tracked as follow-up XP-13b.
+//!
 //! Provenance (T-CUA-22, COPY_ADAPT): adapted from
 //! cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f
 //! `libs/cua-driver/rust/crates/cua-driver-core/src/perception_client/containment/windows.rs`
@@ -864,8 +876,9 @@ fn random_token() -> Result<String, ContainError> {
 /// longer-lived guard.
 struct OwnedHandle(Handle);
 
-// Win32 kernel handles are process-wide values. Ownership stays unique in this
-// wrapper, and moving it between executor threads does not change validity.
+// SAFETY: a Win32 kernel handle is a process-wide value with no thread affinity, and this
+// wrapper is its only owner, so moving it to another thread keeps it valid and closes it
+// exactly once.
 unsafe impl Send for OwnedHandle {}
 
 impl OwnedHandle {
@@ -890,8 +903,13 @@ impl OwnedHandle {
     }
 
     fn duplicate_io(handle: Handle) -> std::io::Result<Self> {
+        // SAFETY: GetCurrentProcess takes no arguments and returns a pseudo-handle that never
+        // needs closing.
         let process = unsafe { GetCurrentProcess() };
         let mut duplicate = std::ptr::null_mut();
+        // SAFETY: `handle` is an open handle the caller owns, the source and target are this
+        // process's pseudo-handle, and `duplicate` is a live out-pointer; on success the new
+        // handle is owned by the returned value.
         if unsafe {
             DuplicateHandle(
                 process,
@@ -916,6 +934,8 @@ impl OwnedHandle {
         // An unnamed job object with a private, protected security descriptor
         // cannot be opened by name or by an unrelated process.
         let attributes = security.attributes();
+        // SAFETY: `attributes` points at a private security descriptor kept alive by `security`
+        // for the call, and a null name creates an unnamed job.
         let job = unsafe { CreateJobObjectW(&attributes, std::ptr::null()) };
         if job.is_null() {
             return Err(last_error(
@@ -924,6 +944,8 @@ impl OwnedHandle {
         }
         let job = Self(job);
 
+        // SAFETY: JOBOBJECT_EXTENDED_LIMIT_INFORMATION is plain integers and counters, for
+        // which all-zero is a valid value.
         let mut information: JobExtendedLimitInformation = unsafe { std::mem::zeroed() };
         information.basic_limit_information.limit_flags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
             | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION
@@ -938,6 +960,8 @@ impl OwnedHandle {
             i64::try_from(limits.max_cpu_seconds().saturating_mul(10_000_000)).unwrap_or(i64::MAX);
         information.job_memory_limit =
             usize::try_from(limits.max_memory_bytes).unwrap_or(usize::MAX);
+        // SAFETY: `job` is an open job handle, and the pointer and length describe the live
+        // `information` struct of exactly that class.
         if unsafe {
             SetInformationJobObject(
                 job.get(),
@@ -955,6 +979,8 @@ impl OwnedHandle {
         let restrictions = JobBasicUiRestrictions {
             ui_restrictions_class: JOB_OBJECT_UILIMIT_ALL,
         };
+        // SAFETY: `job` is an open job handle, and the pointer and length describe the live
+        // `restrictions` struct of exactly that class.
         if unsafe {
             SetInformationJobObject(
                 job.get(),
@@ -975,6 +1001,8 @@ impl OwnedHandle {
 impl Drop for OwnedHandle {
     fn drop(&mut self) {
         if !self.0.is_null() {
+            // SAFETY: the handle is non-null and owned by this wrapper; `release` nulls it when
+            // ownership moves, so it is closed once.
             unsafe {
                 CloseHandle(self.0);
             }
@@ -995,6 +1023,9 @@ impl PrivateDesktop {
     fn create(token: &str, security: &PrivateSecurity) -> Result<Self, ContainError> {
         let name = wide(format!("orcel-contain-{token}"));
         let attributes = security.attributes();
+        // SAFETY: `name` is a NUL-terminated UTF-16 buffer and `attributes` points at a
+        // descriptor kept alive by `security`, both for the duration of the call; null device
+        // and devmode are allowed.
         let handle = unsafe {
             CreateDesktopW(
                 name.as_ptr(),
@@ -1033,6 +1064,8 @@ impl PrivateDesktop {
 impl Drop for PrivateDesktop {
     fn drop(&mut self) {
         if !self.released && !self.handle.is_null() {
+            // SAFETY: the desktop handle is owned by this value and was not released to a
+            // guard, so it is closed exactly once.
             unsafe {
                 CloseDesktop(self.handle);
             }
@@ -1074,6 +1107,8 @@ impl StdioPipe {
             Direction::FromChild => options.access_inbound(true).access_outbound(false),
         };
         let mut attributes = security.attributes();
+        // SAFETY: `attributes` is a live SECURITY_ATTRIBUTES whose descriptor `security` keeps
+        // alive until after the call; tokio copies nothing from it after creation.
         let server = unsafe {
             options.create_with_security_attributes_raw(
                 &name,
@@ -1093,6 +1128,9 @@ impl StdioPipe {
             Direction::ToChild => GENERIC_READ,
             Direction::FromChild => GENERIC_WRITE,
         };
+        // SAFETY: `wide_name` is NUL-terminated and `client_attributes` is a live
+        // SECURITY_ATTRIBUTES for the call; the returned handle is checked against
+        // INVALID_HANDLE_VALUE before use.
         let client = unsafe {
             CreateFileW(
                 wide_name.as_ptr(),
@@ -1141,6 +1179,8 @@ struct SuspendedProcess {
 
 impl SuspendedProcess {
     fn terminate(self) {
+        // SAFETY: both handles came from CreateProcessW and are owned by this value; `forget`
+        // below stops Drop from closing them a second time.
         unsafe {
             TerminateProcess(self.process, 1);
             WaitForSingleObject(self.process, INFINITE);
@@ -1152,6 +1192,8 @@ impl SuspendedProcess {
 
     fn into_process(self) -> Handle {
         let process = self.process;
+        // SAFETY: the thread handle is owned by this value and closed once; `forget` below
+        // stops Drop from touching it again, and the process handle moves to the caller.
         unsafe {
             CloseHandle(self.thread);
         }
@@ -1162,6 +1204,8 @@ impl SuspendedProcess {
 
 impl Drop for SuspendedProcess {
     fn drop(&mut self) {
+        // SAFETY: both handles came from CreateProcessW and are still owned here because
+        // neither `terminate` nor `into_process` ran.
         unsafe {
             TerminateProcess(self.process, 1);
             WaitForSingleObject(self.process, INFINITE);
@@ -1207,6 +1251,8 @@ fn create_suspended(
         "failed to place the contained process in its AppContainer",
     )?;
 
+    // SAFETY: STARTUPINFOEXW is integers and pointers, for which all-zero (null pointers) is
+    // the documented initial state.
     let mut startup: StartupInfoExW = unsafe { std::mem::zeroed() };
     startup.startup_info.cb = std::mem::size_of::<StartupInfoExW>() as u32;
     startup.startup_info.desktop = desktop.name();
@@ -1218,7 +1264,13 @@ fn create_suspended(
     startup.attribute_list = attributes.pointer();
 
     let process_attributes = security.attributes();
+    // SAFETY: PROCESS_INFORMATION is two handles and two ids; all-zero is a valid placeholder
+    // that CreateProcessW overwrites.
     let mut information: ProcessInformation = unsafe { std::mem::zeroed() };
+    // SAFETY: every pointer argument points at a live, NUL-terminated or correctly sized buffer
+    // owned by this function (application, mutable command line, environment block, directory,
+    // startup info with its attribute list) or at the descriptors `security` keeps alive, all
+    // outliving the call.
     let created = unsafe {
         CreateProcessW(
             application.as_ptr(),
@@ -1257,6 +1309,8 @@ struct AttributeList {
 impl AttributeList {
     fn new(count: u32) -> Result<Self, ContainError> {
         let mut size: usize = 0;
+        // SAFETY: the documented sizing call: a null list with a live `size` out-pointer only
+        // reports the required size.
         unsafe {
             InitializeProcThreadAttributeList(std::ptr::null_mut(), count, 0, &mut size);
         }
@@ -1269,6 +1323,8 @@ impl AttributeList {
         // requires; a byte vector does not. The list is only wrapped in the
         // guard once it initializes, so `Drop` never deletes an unformed list.
         let mut storage = vec![0_usize; size.div_ceil(std::mem::size_of::<usize>())];
+        // SAFETY: `storage` is a pointer-aligned allocation of at least `size` bytes, as the
+        // sizing call required.
         if unsafe {
             InitializeProcThreadAttributeList(storage.as_mut_ptr().cast(), count, 0, &mut size)
         } == FALSE
@@ -1292,6 +1348,9 @@ impl AttributeList {
         message: &'static str,
     ) -> Result<(), ContainError> {
         let list = self.pointer();
+        // SAFETY: `list` is an initialised attribute list, and `value`/`size` describe a buffer
+        // the caller keeps alive until CreateProcessW returns, as UpdateProcThreadAttribute
+        // requires.
         if unsafe {
             UpdateProcThreadAttribute(
                 list,
@@ -1312,6 +1371,8 @@ impl AttributeList {
 
 impl Drop for AttributeList {
     fn drop(&mut self) {
+        // SAFETY: the list was initialised in `new` (a value only exists after a successful
+        // initialisation) and is deleted once.
         unsafe {
             DeleteProcThreadAttributeList(self.storage.as_mut_ptr().cast());
         }
@@ -1349,8 +1410,8 @@ fn profile_name_has_shape(name: &str, prefix: &str) -> bool {
         })
 }
 
-// The SID is an owned allocation released by `FreeSid`; no thread-local state
-// is associated with the pointer.
+// SAFETY: the SID is a heap allocation owned by this value and released by FreeSid in Drop;
+// nothing ties it to the creating thread.
 unsafe impl Send for AppContainerSid {}
 
 impl AppContainerSid {
@@ -1360,6 +1421,8 @@ impl AppContainerSid {
         let display = wide(APP_CONTAINER_DISPLAY_NAME);
         let description = wide(APP_CONTAINER_DESCRIPTION);
         let mut sid: *mut c_void = std::ptr::null_mut();
+        // SAFETY: the three name strings are NUL-terminated buffers that outlive the call,
+        // there are no capabilities (null, 0), and `sid` is a live out-pointer.
         let created = unsafe {
             CreateAppContainerProfile(
                 name.as_ptr(),
@@ -1377,6 +1440,8 @@ impl AppContainerSid {
             ));
         }
         if sid.is_null() {
+            // SAFETY: `name` is the NUL-terminated profile name just passed to
+            // CreateAppContainerProfile.
             unsafe {
                 DeleteAppContainerProfile(name.as_ptr());
             }
@@ -1405,6 +1470,7 @@ impl AppContainerSid {
         if self.profile_deleted {
             return Ok(());
         }
+        // SAFETY: `self.name` is the NUL-terminated name of the profile this value created.
         let status = unsafe { DeleteAppContainerProfile(self.name.as_ptr()) };
         classify_app_container_delete(status).map_err(|status| {
             containment_error(
@@ -1434,6 +1500,8 @@ impl Drop for AppContainerSid {
             // unique random SID and grants nothing.
             let _ = cause;
         }
+        // SAFETY: `self.sid` came from CreateAppContainerProfile, is owned by this value and is
+        // freed exactly once here.
         unsafe {
             FreeSid(self.sid);
         }
@@ -1461,12 +1529,17 @@ impl UserSid {
         // `TOKEN_USER` starts with the `SID_AND_ATTRIBUTES` whose first field
         // points into this same buffer.
         let information = self.buffer.as_ptr().cast::<TokenUserInformation>();
+        // SAFETY: `buffer` holds a TOKEN_USER written by GetTokenInformation; its first field
+        // is a SID_AND_ATTRIBUTES whose pointer refers into the same buffer, which outlives the
+        // returned pointer's uses.
         unsafe { (*information).user.sid }
     }
 }
 
 fn current_user_sid() -> Result<UserSid, ContainError> {
     let mut token: Handle = std::ptr::null_mut();
+    // SAFETY: GetCurrentProcess is a pseudo-handle, and `token` is a live out-pointer whose
+    // result is owned by the OwnedHandle below.
     if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == FALSE {
         return Err(last_error(
             "failed to read the helper identity for the contained process sandbox",
@@ -1474,6 +1547,8 @@ fn current_user_sid() -> Result<UserSid, ContainError> {
     }
     let token = OwnedHandle(token);
     let mut required = 0_u32;
+    // SAFETY: the documented sizing call: a null buffer of length 0 with a live `required`
+    // out-pointer only reports the size.
     unsafe {
         GetTokenInformation(
             token.get(),
@@ -1491,6 +1566,8 @@ fn current_user_sid() -> Result<UserSid, ContainError> {
         ));
     }
     let mut buffer = vec![0_u8; required as usize];
+    // SAFETY: `buffer` is a writable allocation of exactly `required` bytes, the size the
+    // sizing call reported.
     if unsafe {
         GetTokenInformation(
             token.get(),
@@ -1520,11 +1597,15 @@ impl PrivateSecurity {
         let acl = build_acl(grants, NO_INHERITANCE, std::ptr::null_mut())?;
         let mut descriptor = Box::new(SecurityDescriptorStorage([0_u8; 64]));
         let pointer: *mut c_void = std::ptr::addr_of_mut!(descriptor.0).cast();
+        // SAFETY: `pointer` addresses a boxed, 8-byte-aligned 64-byte buffer, above the size of
+        // an absolute SECURITY_DESCRIPTOR, that lives as long as the descriptor.
         if unsafe { InitializeSecurityDescriptor(pointer, SECURITY_DESCRIPTOR_REVISION) } == FALSE {
             return Err(last_error(
                 "failed to create the private security descriptor for the contained process",
             ));
         }
+        // SAFETY: `pointer` is the descriptor initialised just above, and `acl.0` is a valid
+        // ACL owned by `_acl`, which lives as long as the descriptor.
         if unsafe { SetSecurityDescriptorDacl(pointer, TRUE, acl.0, FALSE) } == FALSE {
             return Err(last_error(
                 "failed to apply the private access control list for the contained process",
@@ -1548,13 +1629,15 @@ impl PrivateSecurity {
 /// An access control list allocated by `SetEntriesInAclW`.
 struct LocalAcl(*mut c_void);
 
-// The ACL is an owned `LocalAlloc` allocation and is only read while installed
-// in a descriptor or passed to the security APIs.
+// SAFETY: the ACL is a LocalAlloc allocation owned by this value and freed once by LocalFree;
+// nothing ties it to the allocating thread.
 unsafe impl Send for LocalAcl {}
 
 impl Drop for LocalAcl {
     fn drop(&mut self) {
         if !self.0.is_null() {
+            // SAFETY: the pointer is non-null, came from SetEntriesInAclW or GetSecurityInfo
+            // (both LocalAlloc), and is owned and freed once here.
             unsafe {
                 LocalFree(self.0);
             }
@@ -1583,6 +1666,9 @@ fn build_acl(
         })
         .collect();
     let mut acl: *mut c_void = std::ptr::null_mut();
+    // SAFETY: `entries` is a live slice of EXPLICIT_ACCESS_W whose trustee SIDs outlive the
+    // call, `existing` is null or a valid ACL, and `acl` is a live out-pointer whose LocalAlloc
+    // result is owned by LocalAcl.
     let status = unsafe {
         SetEntriesInAclW(
             entries.len() as u32,
@@ -1679,6 +1765,8 @@ impl SavedDacl {
     fn capture(target: AclTarget) -> Result<Self, ContainError> {
         let mut dacl: *mut c_void = std::ptr::null_mut();
         let mut descriptor: *mut c_void = std::ptr::null_mut();
+        // SAFETY: the target handle is open with READ_CONTROL, and `dacl` and `descriptor` are
+        // live out-pointers; the descriptor is LocalAlloc'd and owned by LocalAcl below.
         let status = unsafe {
             GetSecurityInfo(
                 target.handle.get(),
@@ -1700,6 +1788,8 @@ impl SavedDacl {
         let descriptor = LocalAcl(descriptor);
         let mut control = 0_u16;
         let mut revision = 0_u32;
+        // SAFETY: `descriptor.0` is the security descriptor GetSecurityInfo just returned, and
+        // both out-pointers are live locals.
         if unsafe { GetSecurityDescriptorControl(descriptor.0, &mut control, &mut revision) }
             == FALSE
         {
@@ -1867,6 +1957,8 @@ fn apply_dacl(
     information: u32,
     message: &'static str,
 ) -> Result<(), ContainError> {
+    // SAFETY: `target` is an open handle with WRITE_DAC, and `acl` is null or an ACL kept alive
+    // by the caller for the call.
     let status = unsafe {
         SetSecurityInfo(
             target,
@@ -1903,6 +1995,8 @@ struct AclTarget {
 impl AclTarget {
     fn open(path: &Path) -> Result<Self, ContainError> {
         let name = wide(path.as_os_str());
+        // SAFETY: `name` is a NUL-terminated UTF-16 path that outlives the call; the handle is
+        // checked against INVALID_HANDLE_VALUE and then owned by OwnedHandle.
         let handle = unsafe {
             CreateFileW(
                 name.as_ptr(),
@@ -1930,6 +2024,8 @@ impl AclTarget {
             file_attributes: 0,
             reparse_tag: 0,
         };
+        // SAFETY: `handle` is open, and the pointer and size describe the live `tag` struct of
+        // exactly the FileAttributeTagInfo class.
         if unsafe {
             GetFileInformationByHandleEx(
                 handle.get(),
@@ -1958,11 +2054,15 @@ impl AclTarget {
             ));
         }
         let mut information = std::mem::MaybeUninit::<ByHandleFileInformation>::uninit();
+        // SAFETY: `handle` is open and the out-pointer addresses a MaybeUninit of exactly
+        // BY_HANDLE_FILE_INFORMATION.
         if unsafe { GetFileInformationByHandle(handle.get(), information.as_mut_ptr()) } == FALSE {
             return Err(last_error(
                 "failed to identify a contained process ACL target",
             ));
         }
+        // SAFETY: GetFileInformationByHandle returned success, which means it filled every
+        // field.
         let information = unsafe { information.assume_init() };
         Ok(Self {
             handle,
@@ -1990,6 +2090,8 @@ impl AclTarget {
 }
 
 fn final_path(handle: &OwnedHandle) -> Result<std::path::PathBuf, ContainError> {
+    // SAFETY: the documented sizing call: a null buffer of length 0 returns the required
+    // length.
     let required = unsafe {
         GetFinalPathNameByHandleW(handle.get(), std::ptr::null_mut(), 0, FILE_NAME_NORMALIZED)
     };
@@ -1999,6 +2101,7 @@ fn final_path(handle: &OwnedHandle) -> Result<std::path::PathBuf, ContainError> 
         ));
     }
     let mut path = vec![0_u16; required as usize];
+    // SAFETY: `path` is a writable buffer of exactly the length passed, and `handle` is open.
     let written = unsafe {
         GetFinalPathNameByHandleW(
             handle.get(),
@@ -2057,6 +2160,7 @@ fn environment_block(working_directory: &Path) -> Result<Vec<u16>, ContainError>
 
     let mut system_root = vec![0_u16; 260];
     let written =
+        // SAFETY: `system_root` is a writable buffer of exactly the length passed.
         unsafe { GetSystemWindowsDirectoryW(system_root.as_mut_ptr(), system_root.len() as u32) };
     if written == 0 || written as usize >= system_root.len() {
         return Err(last_error(

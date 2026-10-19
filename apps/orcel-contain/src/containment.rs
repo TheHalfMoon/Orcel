@@ -370,13 +370,23 @@ pub(crate) fn filesystem_boundary(
     })
 }
 
+/// The executable as an exact, canonical file. A path that only reaches the
+/// file through a symbolic link (or a `..`, or a junction) is refused rather
+/// than followed, like the kernel's helper pin.
 pub(crate) fn canonical_file(path: &Path) -> Result<PathBuf, ContainError> {
+    let given = path;
     let path = std::fs::canonicalize(path).map_err(|cause| {
         containment_error(
             "failed to resolve the contained executable",
             os_detail(&cause),
         )
     })?;
+    if !same_path(&path, given) {
+        return Err(containment_error(
+            "the contained executable is not named by its canonical path (a link or relative part)",
+            None,
+        ));
+    }
     if !path.is_file() {
         return Err(containment_error(
             "the contained executable is not a file",
@@ -441,6 +451,14 @@ const BROAD_READ_ROOTS: &[&str] = &[
     "/etc/ssl",
 ];
 
+/// A root as an exact, canonical directory. A root that is (or passes
+/// through) a symbolic link is refused, not followed: a writable root may
+/// create links, so following one would let an earlier run plant
+/// `work/out -> ~/.ssh` and have a later spec that names `work/out` grant the
+/// target. The platform layer then opens the root without following links
+/// and checks it again (Linux `O_PATH | O_NOFOLLOW` plus the fd's own path;
+/// Windows no-follow handles plus the final path), closing the window between
+/// this check and the grant.
 pub(crate) fn canonical_directory(path: &Path) -> Result<PathBuf, ContainError> {
     let resolved = std::fs::canonicalize(path).map_err(|cause| {
         containment_error(
@@ -448,6 +466,12 @@ pub(crate) fn canonical_directory(path: &Path) -> Result<PathBuf, ContainError> 
             os_detail(&cause),
         )
     })?;
+    if !same_path(&resolved, path) {
+        return Err(containment_error(
+            "a contained sandbox root is not named by its canonical path (a link or relative part)",
+            None,
+        ));
+    }
     if !resolved.is_dir() {
         return Err(containment_error(
             "a contained sandbox path is not a directory",
@@ -455,6 +479,27 @@ pub(crate) fn canonical_directory(path: &Path) -> Result<PathBuf, ContainError> 
         ));
     }
     Ok(resolved)
+}
+
+/// Whether `canonical` (from `canonicalize`) names exactly `given`. Windows
+/// compares without the `\\?\` prefix and without case, as the filesystem
+/// does; Unix compares bytes.
+pub(crate) fn same_path(canonical: &Path, given: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        let strip = |path: &Path| {
+            let text = path.to_string_lossy().replace('/', "\\");
+            text.strip_prefix(r"\\?\")
+                .map_or(text.clone(), str::to_owned)
+                .trim_end_matches('\\')
+                .to_ascii_lowercase()
+        };
+        strip(canonical) == strip(given)
+    }
+    #[cfg(not(windows))]
+    {
+        canonical == given
+    }
 }
 
 /// Drop duplicates and any root already covered by an ancestor, so a platform

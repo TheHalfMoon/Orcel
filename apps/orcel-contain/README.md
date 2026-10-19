@@ -35,8 +35,27 @@ If orceld dies, the helper sees end of file and kills the child's tree. If the
 helper is killed, the child dies through `PR_SET_PDEATHSIG`, the sentinel pipe
 or the kill-on-close job.
 
+Roots and the executable must be named by their canonical path; a root
+reached through a symbolic link or junction is refused, by the kernel client
+and again by the helper, which opens it without following links.
+
 No namespace of any type is created, so `RestrictNamespaces=yes` in
 `orceld@.service` does not affect it (issue #369, item 1).
+
+## Residual risks
+
+- Linux: "exact executable" limits what `execve` may start, not which bytes
+  run. Landlock does not mediate `mmap(PROT_EXEC)`, so readable code can be
+  mapped (or run through `ld.so`), and `memfd_create` + `execveat` is not
+  denied; all of it stays inside the same Landlock, seccomp and rlimit
+  boundary. See `src/linux.rs`.
+- Windows: a helper killed hard leaves its temporary ACEs and AppContainer
+  profile behind (the child still dies with the job). They name a random,
+  never-disclosed AppContainer SID. No cleanup runs on the next launch yet.
+- Windows: the kernel client checks the helper's digest and holds it open
+  without write or delete sharing, but does not yet check the install
+  directory's DACL.
+- macOS: `sandbox-exec` is deprecated by Apple (S-25).
 
 ## Provenance
 

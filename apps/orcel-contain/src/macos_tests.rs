@@ -87,6 +87,9 @@ fn closing_the_sentinel_pipe_kills_a_child_that_ignores_signals() {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .process_group(0);
+    // SAFETY: `pre_exec` runs in the forked child before exec; the closure only calls dup2,
+    // close and fcntl on the descriptor number it captured, which are async-signal-safe, and
+    // allocates nothing.
     unsafe {
         command.pre_exec(move || {
             if source != SENTINEL_DESCRIPTOR && libc::dup2(source, SENTINEL_DESCRIPTOR) < 0 {
@@ -161,4 +164,14 @@ fn a_missing_sandbox_exec_is_a_refusal_not_an_unsandboxed_launch() {
         refused.err().map(|refusal| refusal.code),
         Some(crate::containment::ErrorCode::UnsupportedPlatform)
     );
+}
+
+#[test]
+fn sysctl_reads_are_limited_to_named_startup_facts() {
+    let profile = profile_for(&["/opt/orcel/parser"], &["/tmp/.tmpcontained"]);
+    assert!(!profile.contains("(allow sysctl-read)"));
+    assert!(profile.contains("(sysctl-name \"hw.ncpu\")"));
+    for denied in ["kern.proc", "kern.hostname", "net."] {
+        assert!(!profile.contains(denied), "{denied} is readable");
+    }
 }

@@ -24,6 +24,18 @@
 //! any type is created, so a systemd unit with `RestrictNamespaces=yes` does
 //! not affect this helper (issue #369, item 1).
 //!
+//! What "exact executable" means here: Landlock grants `EXECUTE` to the one
+//! spec executable and to the immutable system trees (which hold the ELF
+//! interpreter), and nowhere else; writable roots are never executable. It
+//! limits which file `execve` may start, not which bytes may run: Landlock
+//! does not mediate `mmap(PROT_EXEC)`, so code read from a readable root can
+//! be mapped by hand or through the system loader (`ld.so <file>`), and
+//! `memfd_create` + `execveat` is not denied. None of that escapes the
+//! sandbox: `execve` keeps the same Landlock domain, seccomp filter, rlimits
+//! and process group, and process creation stays denied. The guarantee is
+//! the boundary, not code integrity. `/usr/libexec` is executable only
+//! because it is one of the fixed system trees.
+//!
 //! Provenance (T-CUA-22, COPY_ADAPT): adapted from
 //! cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f
 //! `libs/cua-driver/rust/crates/cua-driver-core/src/perception_client/containment/linux.rs`
@@ -241,6 +253,11 @@ pub(crate) async fn spawn(
     // Runs between fork and exec. Every call below is a raw syscall, nothing
     // allocates, and both the ruleset descriptor and the filter program were
     // materialized before the fork.
+    // SAFETY: `pre_exec` runs in the forked child before exec, where only async-signal-safe
+    // work is allowed. The closure makes only raw syscalls (getppid, prctl, raise, getrlimit/setrlimit,
+    // landlock_restrict_self, close_range, seccomp) and one in-place store into the prebuilt
+    // filter Vec; it allocates nothing and takes no lock. The ruleset fd and the filter were
+    // created before the fork and are owned by the closure, so both are valid in the child.
     unsafe {
         command.as_std_mut().pre_exec(move || {
             let parent = libc::getppid();
@@ -344,6 +361,8 @@ pub(crate) fn build_landlock_ruleset(
     let attribute = LandlockRulesetAttr {
         handled_access_fs: LANDLOCK_HANDLED_ACCESS,
     };
+    // SAFETY: `attribute` is a live, correctly sized `landlock_ruleset_attr` and the size
+    // argument is its exact size; the kernel only reads it and returns a new fd or -1.
     let ruleset = unsafe {
         libc::syscall(
             SYS_LANDLOCK_CREATE_RULESET,
@@ -361,6 +380,8 @@ pub(crate) fn build_landlock_ruleset(
                 os_detail(&std::io::Error::last_os_error()),
             )
         })?;
+    // SAFETY: `ruleset` was checked to be a non-negative descriptor just returned by
+    // landlock_create_ruleset, and nothing else owns it, so `OwnedFd` takes sole ownership.
     let ruleset = unsafe { OwnedFd::from_raw_fd(ruleset) };
 
     // Writable roots are readable but intentionally non-executable. Model
@@ -400,6 +421,9 @@ fn add_rule(
         allowed_access,
         parent_fd: parent.as_raw_fd(),
     };
+    // SAFETY: `ruleset` and `parent` are open descriptors owned by this function, and
+    // `attribute` is a live packed `landlock_path_beneath_attr`, the exact layout the kernel
+    // reads for LANDLOCK_RULE_PATH_BENEATH; flags is 0.
     let added = unsafe {
         libc::syscall(
             SYS_LANDLOCK_ADD_RULE,
@@ -425,11 +449,23 @@ fn open_path(path: &Path, required: bool) -> Result<Option<OwnedFd>, ContainErro
             None,
         )
     })?;
-    // `O_PATH` resolves the object without opening it for I/O. Symlinks are
-    // followed deliberately: the child paths are canonicalized before they
-    // reach this function, and the system directories below are symlinks to
-    // their merged-`/usr` targets on most distributions.
-    let fd = unsafe { libc::open(raw.as_ptr(), libc::O_PATH | libc::O_CLOEXEC) };
+    // `O_PATH` resolves the object without opening it for I/O. The system
+    // trees (`required == false`) are followed deliberately: on most
+    // distributions they are links to their merged-`/usr` targets, and they
+    // are fixed, root-owned paths. Spec roots and the executable
+    // (`required == true`) are never followed: `O_NOFOLLOW` refuses a link in
+    // the last component, and the fd's own path must equal the canonical path
+    // checked in `containment.rs`, which catches a link swapped into any
+    // earlier component after that check. The rule is then added through this
+    // fd, so what was checked is exactly what is granted.
+    let flags = if required {
+        libc::O_PATH | libc::O_NOFOLLOW | libc::O_CLOEXEC
+    } else {
+        libc::O_PATH | libc::O_CLOEXEC
+    };
+    // SAFETY: `raw` is a NUL-terminated CString that outlives the call; open with O_PATH does
+    // no I/O and returns a new descriptor or -1.
+    let fd = unsafe { libc::open(raw.as_ptr(), flags) };
     if fd < 0 {
         if !required {
             return Ok(None);
@@ -439,7 +475,50 @@ fn open_path(path: &Path, required: bool) -> Result<Option<OwnedFd>, ContainErro
             os_detail(&std::io::Error::last_os_error()),
         ));
     }
-    Ok(Some(unsafe { OwnedFd::from_raw_fd(fd) }))
+    // SAFETY: `fd` is a non-negative descriptor this function just opened and has not shared,
+    // so `OwnedFd` takes sole ownership.
+    let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+    if required {
+        verify_unfollowed(&fd, path)?;
+    }
+    Ok(Some(fd))
+}
+
+/// The opened object is not a link and the kernel names it by exactly `path`.
+fn verify_unfollowed(fd: &OwnedFd, path: &Path) -> Result<(), ContainError> {
+    let mut status = std::mem::MaybeUninit::<libc::stat>::uninit();
+    // SAFETY: `fd` is an open O_PATH descriptor (fstat accepts those since Linux 3.6) and
+    // `status` is a writable stat buffer.
+    if unsafe { libc::fstat(fd.as_raw_fd(), status.as_mut_ptr()) } != 0 {
+        return Err(containment_error(
+            "failed to inspect a path for the Linux child sandbox",
+            os_detail(&std::io::Error::last_os_error()),
+        ));
+    }
+    // SAFETY: fstat returned 0, so it filled the whole struct.
+    let status = unsafe { status.assume_init() };
+    if status.st_mode & libc::S_IFMT == libc::S_IFLNK {
+        return Err(containment_error(
+            "a Linux child sandbox root is a symbolic link",
+            None,
+        ));
+    }
+    // `/proc` is required: without it the fd's path cannot be checked, and
+    // the launch fails closed.
+    let named =
+        std::fs::read_link(format!("/proc/self/fd/{}", fd.as_raw_fd())).map_err(|cause| {
+            containment_error(
+                "failed to read back a path for the Linux child sandbox",
+                os_detail(&cause),
+            )
+        })?;
+    if named != path {
+        return Err(containment_error(
+            "a Linux child sandbox root changed after it was checked",
+            None,
+        ));
+    }
+    Ok(())
 }
 
 /// Syscalls the child may never make, on every architecture this filter
@@ -623,6 +702,8 @@ struct SeccompFilter {
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn seccomp_action_available(action: u32) -> bool {
+    // SAFETY: SECCOMP_GET_ACTION_AVAIL only reads the u32 behind the pointer, which points at
+    // the live `action` local for the duration of the call.
     unsafe {
         libc::syscall(
             libc::SYS_seccomp,

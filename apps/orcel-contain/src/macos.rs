@@ -38,14 +38,13 @@
 //! (blob 28f9d8120057001db53dd40f80b591e290234469), MIT; notice in
 //! `docs/orcel/notices/cua-MIT.txt`. Orcel's changes: stderr is a third piped
 //! stream; the executable is readable as one exact file (the donor granted its
-//! whole directory); the profile file is replaced if a stale one exists and
-//! removed when the run ends; the shell and `sandbox-exec` paths are
+//! whole directory); the profile is passed to `sandbox-exec -p` as text
+//! instead of a file in the child's writable working directory;
+//! `sysctl-read` is narrowed to the names the loader and runtimes read; the shell and `sandbox-exec` paths are
 //! parameters of `spawn_with_tools` so the refusal branch is testable; the
 //! unit tests moved to `macos_tests.rs`.
 
-use std::io::Write as _;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
-use std::os::unix::fs::OpenOptionsExt as _;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -67,7 +66,6 @@ pub(crate) type ChildStderr = tokio::process::ChildStderr;
 
 const SHELL: &str = "/bin/sh";
 const SANDBOX_EXEC: &str = "/usr/bin/sandbox-exec";
-const PROFILE_FILE: &str = ".orcel-contain-sandbox.sb";
 
 /// The descriptor the sentinel reads. Chosen because `pre_exec` runs after the
 /// standard library has already placed the protocol pipes on 0, 1 and 2.
@@ -119,6 +117,50 @@ const MACH_SERVICES: &[&str] = &[
     "com.apple.diagnosticd",
 ];
 
+/// The sysctls a child may read: the CPU, memory and OS-version facts dyld,
+/// libSystem and language runtimes ask for at startup. Everything else,
+/// including `kern.proc.*` (other processes), `kern.hostname` and network
+/// state, stays denied by the default rule.
+const SYSCTL_NAMES: &[&str] = &[
+    "hw.activecpu",
+    "hw.byteorder",
+    "hw.cachelinesize",
+    "hw.cpufamily",
+    "hw.cpusubtype",
+    "hw.cputype",
+    "hw.l1dcachesize",
+    "hw.l1icachesize",
+    "hw.l2cachesize",
+    "hw.l3cachesize",
+    "hw.logicalcpu",
+    "hw.logicalcpu_max",
+    "hw.machine",
+    "hw.memsize",
+    "hw.model",
+    "hw.ncpu",
+    "hw.nperflevels",
+    "hw.pagesize",
+    "hw.pagesize_compat",
+    "hw.physicalcpu",
+    "hw.physicalcpu_max",
+    "kern.argmax",
+    "kern.maxfilesperproc",
+    "kern.ngroups",
+    "kern.osproductversion",
+    "kern.osrelease",
+    "kern.ostype",
+    "kern.osvariant_status",
+    "kern.osversion",
+    "kern.secure_kernel",
+    "kern.usrstack64",
+    "kern.version",
+    "sysctl.proc_cputype",
+    "sysctl.proc_native",
+    "sysctl.proc_translated",
+];
+
+const SYSCTL_PREFIXES: &[&str] = &["hw.optional.", "hw.perflevel"];
+
 /// Owns the child's process group, the sentinel pipe and the memory sampler.
 ///
 /// Field order is load-bearing. [`Drop::drop`] runs first and stops the
@@ -132,8 +174,6 @@ pub(crate) struct Guard {
     /// observe end of file when the helper goes away.
     _sentinel: OwnedFd,
     memory_watch: tokio::task::JoinHandle<()>,
-    /// The Seatbelt profile file, removed when the run ends.
-    profile: PathBuf,
 }
 
 impl Guard {
@@ -153,7 +193,6 @@ impl Guard {
 impl Drop for Guard {
     fn drop(&mut self) {
         self.memory_watch.abort();
-        let _ = std::fs::remove_file(&self.profile);
     }
 }
 
@@ -199,7 +238,11 @@ pub(crate) async fn spawn_with_tools(
     if !executable.is_file() {
         return Err(spawn_error(std::io::Error::from_raw_os_error(libc::ENOENT)));
     }
-    let profile_path = write_profile(working_directory, boundary)?;
+    // The profile travels as an argument, not a file: nothing the child can
+    // write ever held it. It is visible in the process list only until
+    // `/bin/sh` and then `sandbox-exec` exec, which replaces their argv; it
+    // names the spec's paths, which are the user's own.
+    let profile = build_profile(boundary)?;
     let (sentinel_read, sentinel_write) = sentinel_pipe()?;
 
     let mut command = base_command(shell, working_directory);
@@ -208,8 +251,8 @@ pub(crate) async fn spawn_with_tools(
         .arg(PARENT_DEATH_SENTINEL)
         .arg("orcel-contain-supervisor")
         .arg(sandbox_exec)
-        .arg("-f")
-        .arg(&profile_path)
+        .arg("-p")
+        .arg(&profile)
         .arg(executable)
         .args(args);
     command.current_dir(working_directory);
@@ -227,6 +270,9 @@ pub(crate) async fn spawn_with_tools(
     // Runs between fork and exec using only raw syscalls. The limits and the
     // descriptor table survive the exec into `/bin/sh`, its exec of
     // `sandbox-exec`, and that program's exec of the child itself.
+    // SAFETY: `pre_exec` runs in the forked child before exec. The closure makes only
+    // async-signal-safe raw calls (dup2, close, fcntl, getrlimit/setrlimit) on integers it
+    // captured by value, and allocates nothing.
     unsafe {
         command.as_std_mut().pre_exec(move || {
             if sentinel_source != SENTINEL_DESCRIPTOR
@@ -256,6 +302,8 @@ pub(crate) async fn spawn_with_tools(
         ));
     };
     if resident_bytes(sample_pid).is_none() {
+        // SAFETY: kill has no memory preconditions. `sample_pid` is the just-spawned shell, the
+        // leader of its own new process group, so -pid addresses only the contained tree.
         unsafe {
             libc::kill(-sample_pid, libc::SIGKILL);
         }
@@ -270,7 +318,6 @@ pub(crate) async fn spawn_with_tools(
             group,
             _sentinel: sentinel_write,
             memory_watch,
-            profile: profile_path,
         },
         process: Process::new(child),
         stdin,
@@ -283,15 +330,20 @@ pub(crate) async fn spawn_with_tools(
 /// child can hold the write end open and keep a dead helper's child alive.
 fn sentinel_pipe() -> Result<(OwnedFd, OwnedFd), ContainError> {
     let mut ends = [0 as libc::c_int; 2];
+    // SAFETY: `ends` is a live two-element c_int array, exactly what pipe(2) writes.
     if unsafe { libc::pipe(ends.as_mut_ptr()) } != 0 {
         return Err(containment_error(
             "failed to create the contained process parent-death sentinel pipe",
             os_detail(&std::io::Error::last_os_error()),
         ));
     }
+    // SAFETY: pipe(2) succeeded, so ends[0] is a fresh descriptor that nothing else owns.
     let read = unsafe { OwnedFd::from_raw_fd(ends[0]) };
+    // SAFETY: pipe(2) succeeded, so ends[1] is a fresh descriptor that nothing else owns.
     let write = unsafe { OwnedFd::from_raw_fd(ends[1]) };
     for end in [&read, &write] {
+        // SAFETY: `end` is an open descriptor owned by the OwnedFd it was borrowed from;
+        // F_SETFD only changes its flags.
         if unsafe { libc::fcntl(end.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) } != 0 {
             return Err(containment_error(
                 "failed to isolate the contained process parent-death sentinel pipe",
@@ -317,9 +369,14 @@ fn watch_memory(
                 // ESRCH proves the child is gone. Any other sampling failure
                 // leaves the ceiling unobservable, so kill the group rather
                 // than silently continuing without enforcement.
+                // SAFETY: kill with signal 0 only checks that `pid` exists; it has no memory
+                // preconditions.
                 if unsafe { libc::kill(pid, 0) } == 0
                     || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
                 {
+                    // SAFETY: kill has no memory preconditions. The sampler only runs while the
+                    // guard holds the group, and the parent-death sentinel keeps the group id
+                    // reserved, so -pid cannot address an unrelated group.
                     unsafe {
                         libc::kill(-pid, libc::SIGKILL);
                     }
@@ -328,6 +385,9 @@ fn watch_memory(
             };
             if resident > ceiling {
                 exceeded.store(true, Ordering::Release);
+                // SAFETY: kill has no memory preconditions. The sampler only runs while the
+                // guard holds the group, and the parent-death sentinel keeps the group id
+                // reserved, so -pid cannot address an unrelated group.
                 unsafe {
                     libc::kill(-pid, libc::SIGKILL);
                 }
@@ -396,6 +456,8 @@ fn resident_bytes(pid: libc::c_int) -> Option<u64> {
         priority: 0,
     };
     let size = std::mem::size_of::<ProcTaskInfo>() as libc::c_int;
+    // SAFETY: `info` is a live, zero-initialised `proc_taskinfo` and `size` is its exact size,
+    // so proc_pidinfo writes at most that many bytes into it.
     let written = unsafe {
         proc_pidinfo(
             pid,
@@ -406,46 +468,6 @@ fn resident_bytes(pid: libc::c_int) -> Option<u64> {
         )
     };
     (written == size).then_some(info.resident_size)
-}
-
-/// Write the Seatbelt profile into the private working directory and hand
-/// `sandbox-exec` a path rather than the policy text, so the profile and the
-/// child's temporary path never appear in `ps` output.
-fn write_profile(
-    working_directory: &Path,
-    boundary: &FilesystemBoundary,
-) -> Result<PathBuf, ContainError> {
-    let path = working_directory.join(PROFILE_FILE);
-    let profile = build_profile(boundary)?;
-    // A stale profile (or anything a previous child planted under this name)
-    // is unlinked, never followed: `create_new` below refuses to open through
-    // a link that reappears.
-    if path.symlink_metadata().is_ok() {
-        std::fs::remove_file(&path).map_err(|cause| {
-            containment_error(
-                "failed to replace a stale macOS contained process sandbox profile",
-                os_detail(&cause),
-            )
-        })?;
-    }
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&path)
-        .map_err(|cause| {
-            containment_error(
-                "failed to create the macOS contained process sandbox profile",
-                os_detail(&cause),
-            )
-        })?;
-    file.write_all(profile.as_bytes()).map_err(|cause| {
-        containment_error(
-            "failed to write the macOS contained process sandbox profile",
-            os_detail(&cause),
-        )
-    })?;
-    Ok(path)
 }
 
 /// Deny-by-default Seatbelt profile.
@@ -463,10 +485,22 @@ fn build_profile(boundary: &FilesystemBoundary) -> Result<String, ContainError> 
          (deny network*)\n\
          (deny process-fork)\n\
          (deny mach-register)\n\
-         (allow sysctl-read)\n\
          (allow process-info* (target self))\n\
          (allow signal (target self))\n",
     );
+
+    profile.push_str("(allow sysctl-read\n");
+    for name in SYSCTL_NAMES {
+        profile.push_str("  (sysctl-name \"");
+        profile.push_str(name);
+        profile.push_str("\")\n");
+    }
+    for prefix in SYSCTL_PREFIXES {
+        profile.push_str("  (sysctl-name-prefix \"");
+        profile.push_str(prefix);
+        profile.push_str("\")\n");
+    }
+    profile.push_str(")\n");
 
     profile.push_str("(allow mach-lookup\n");
     for service in MACH_SERVICES {

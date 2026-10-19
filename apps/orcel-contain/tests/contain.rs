@@ -49,6 +49,44 @@ struct Fixture {
     outside: PathBuf,
 }
 
+/// Tests run in parallel, so a sibling test may fork while this copy's write
+/// descriptor is open; that child holds the descriptor until it execs, and
+/// executing the copy meanwhile fails with ETXTBSY. Wait until the copy runs.
+fn is_text_file_busy(error: &std::io::Error) -> bool {
+    #[cfg(unix)]
+    return error.raw_os_error() == Some(libc::ETXTBSY);
+    #[cfg(not(unix))]
+    return {
+        let _ = error;
+        false
+    };
+}
+
+fn settle_copied_executable(path: &Path) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        // The probe exits 0 for `noop`; the helper refuses an empty stdin.
+        // Either way it started, which is all this waits for.
+        let started = Command::new(path)
+            .arg("noop")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        match started {
+            Ok(_) => return,
+            Err(error) if is_text_file_busy(&error) => {
+                assert!(
+                    Instant::now() < deadline,
+                    "the copied executable stayed busy"
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(error) => panic!("the copied executable cannot start: {error}"),
+        }
+    }
+}
+
 impl Fixture {
     fn new() -> Self {
         let root = tempfile::Builder::new().prefix("xp13-").tempdir().unwrap();
@@ -65,6 +103,7 @@ impl Fixture {
         let outside = dir("outside");
         let probe = bin.join(if cfg!(windows) { "probe.exe" } else { "probe" });
         std::fs::copy(env!("CARGO_BIN_EXE_orcel-contain-probe"), &probe).unwrap();
+        settle_copied_executable(&probe);
         std::fs::write(readable.join("granted.txt"), b"granted bytes").unwrap();
         std::fs::write(outside.join("secret.txt"), b"outside bytes").unwrap();
         Self {
@@ -396,6 +435,7 @@ fn xp13_a_tampered_or_unpinned_helper_is_refused() {
         "orcel-contain"
     });
     std::fs::copy(helper_path(), &copy).unwrap();
+    settle_copied_executable(&copy);
 
     // Positive control: the untouched copy, pinned, runs.
     let pin = pin_of(&copy);
@@ -545,14 +585,10 @@ fn xp13_the_helper_refuses_a_spec_from_a_different_supervisor() {
     let spec = fixture.spec(&["noop"]);
     let encoded = encode_spec(&spec, std::process::id().wrapping_add(1).max(2)).unwrap();
     let (bytes, status) = drive_helper(&encoded);
-    if cfg!(unix) {
-        assert_eq!(refusal(&bytes, &spec.limits), RefusalKind::InvalidSpec);
-        assert_eq!(status, Some(3));
-    } else {
-        // Windows has no death signal to arm against a parent, so the pid is
-        // not checked there; parent death is covered by stdin and the job.
-        assert!(decode_result(&bytes, &spec.limits).is_ok());
-    }
+    // Unix: the pid the death signal is armed against. Windows: the parent
+    // from a process snapshot, still running and started before the helper.
+    assert_eq!(refusal(&bytes, &spec.limits), RefusalKind::InvalidSpec);
+    assert_eq!(status, Some(3));
 }
 
 /// Linux without Landlock: the helper must refuse rather than run the child
@@ -697,4 +733,85 @@ fn xp13_spawn_overhead_is_recorded() {
             let _ = file.write_all(line.as_bytes());
         }
     }
+}
+
+fn plant_link(target: &Path, link: &Path) {
+    #[cfg(unix)]
+    let made = std::os::unix::fs::symlink(target, link);
+    // A directory junction: a reparse point like a symbolic link, but one any
+    // user may create, so the test needs no privilege.
+    #[cfg(windows)]
+    let made = Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(link)
+        .arg(target)
+        .stdout(Stdio::null())
+        .status()
+        .and_then(|status| {
+            if status.success() {
+                Ok(())
+            } else {
+                Err(std::io::Error::other(format!(
+                    "mklink /J exited with {status}"
+                )))
+            }
+        });
+    if let Err(error) = made {
+        panic!("cannot create the symbolic link this test needs: {error}");
+    }
+}
+
+/// A root reached through a symbolic link is refused, by the kernel client
+/// and by the helper itself, instead of granting the link's target.
+#[test]
+fn xp13_a_symlinked_root_is_refused() {
+    let fixture = Fixture::new();
+    let link = fixture.writable.join("out");
+    plant_link(&fixture.outside, &link);
+
+    let mut spec = fixture.spec(&["read", path_arg(&link.join("secret.txt"))]);
+    spec.readable = vec![link.clone()];
+    assert!(matches!(
+        run_contained(&helper_pin(), &spec),
+        Err(ContainedError::InvalidSpec(_))
+    ));
+    let (bytes, status) = drive_helper(&encode_spec(&spec, std::process::id()).unwrap());
+    assert_eq!(refusal(&bytes, &spec.limits), RefusalKind::LaunchFailed);
+    assert_eq!(status, Some(3));
+
+    let mut spec = fixture.spec(&["noop"]);
+    spec.workdir = link.clone();
+    let (bytes, _) = drive_helper(&encode_spec(&spec, std::process::id()).unwrap());
+    assert_eq!(refusal(&bytes, &spec.limits), RefusalKind::LaunchFailed);
+}
+
+/// A link an earlier run left inside its write root never widens a later
+/// grant: reading through it reaches the target, which no rule grants (Unix),
+/// or the grant itself refuses to walk a reparse point (Windows).
+#[test]
+fn xp13_a_link_planted_in_a_write_root_never_widens_a_later_grant() {
+    let fixture = Fixture::new();
+    let link = fixture.writable.join("out");
+    plant_link(&fixture.outside, &link);
+    let through = link.join("secret.txt");
+    assert_eq!(fixture.uncontained(&["read", path_arg(&through)]), 0);
+    let spec = fixture.spec(&["read", path_arg(&through)]);
+    let result = run_contained(&helper_pin(), &spec);
+    #[cfg(unix)]
+    {
+        let run = result.unwrap();
+        assert_eq!(exited(&run), READ_FAILED);
+        assert!(run.stdout.is_empty());
+    }
+    #[cfg(windows)]
+    assert!(
+        matches!(
+            result,
+            Err(ContainedError::Refused {
+                kind: RefusalKind::LaunchFailed,
+                ..
+            })
+        ),
+        "{result:?}"
+    );
 }

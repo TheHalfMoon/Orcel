@@ -300,3 +300,26 @@ fn xp13_a_result_that_breaks_its_bounds_or_shape_is_rejected() {
         );
     }
 }
+
+/// A spec root reached through a link is refused before the helper starts.
+#[cfg(unix)]
+#[test]
+fn xp13_a_symlinked_spec_root_is_refused_before_the_helper_starts() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = scratch("linked-root");
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let helper = dir.join("orcel-contain");
+    // Not executable and never started: the spec check comes first.
+    std::fs::write(&helper, b"helper").unwrap();
+    let pin = HelperPin::new(&helper, &sha256_hex(b"helper")).unwrap();
+    let outside = scratch("linked-target");
+    let link = dir.join("out");
+    std::os::unix::fs::symlink(&outside, &link).unwrap();
+    std::fs::write(dir.join("parser"), b"parser").unwrap();
+    let mut spec = spec_in(&dir);
+    spec.readable = vec![link];
+    assert!(matches!(
+        run_contained(&pin, &spec),
+        Err(ContainedError::InvalidSpec(_))
+    ));
+}
