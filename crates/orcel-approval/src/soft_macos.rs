@@ -3,11 +3,11 @@
 //! Orcel or the Control Room. BUILD_NEW: no donor presents an
 //! approval-style system modal.
 //!
-//! The dialog only reports the person's answer. The answer carries the
-//! nonce and digest of the request it was shown for, `decide` refuses it
-//! for any other request, and the broker then records it in the existing
-//! ledger, which issues the single-use, expiring token exactly as for the
-//! Windows `MessageBoxW` prompt.
+//! The dialog only reports the person's answer to the one synchronous call
+//! that showed it. This layer does no request binding: the broker records
+//! the answer for the prompt it asked about, and the existing ledger binds
+//! it to that request's nonce and digest and issues the single-use,
+//! expiring token, exactly as for the Windows `MessageBoxW` prompt.
 //!
 //! Fail closed: the default button (Return) is Deny; Approve is the
 //! alternate button. Cancel, a dismissal and the timeout all deny. No GUI
@@ -15,12 +15,13 @@
 //! anything, and a dialog that cannot be shown is `unavailable`.
 //!
 //! The body has the same lines as the Windows prompt. Every field from the
-//! request is shown exactly but bounded, and control, line-break, bidi and
-//! zero-width characters are escaped as `\u{..}` so a field cannot fake
-//! another line of the dialog.
+//! request is shown exactly when it is printable and short. Control,
+//! line-break, bidi, zero-width, tag and filler characters are escaped as
+//! `\u{..}` so a field cannot fake another line of the dialog, and the
+//! bound applies to the escaped text.
 
-// The formatting, escaping and decision rules are compiled and tested on
-// every OS; only macOS shows the dialog.
+// Off macOS this module is compiled only into tests, which run the
+// formatting, escaping and decision rules on every OS.
 #![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
 use crate::presence_unix::SessionState;
@@ -43,20 +44,30 @@ const RESPONSE_MASK: usize = 0x3;
 const ALTERNATE_RESPONSE: usize = 1;
 
 /// Shows `value` exactly when it is printable and short; otherwise escapes
-/// the characters that could change the dialog's layout or reading order
-/// and cuts it at `max_chars`, saying how much was left out.
+/// the characters that could change the dialog's layout or reading order,
+/// and stops before the escaped text would exceed `max_chars`, saying how
+/// many input characters were left out.
 pub(crate) fn display_field(value: &str, max_chars: usize) -> String {
     let mut out = String::new();
-    for ch in value.chars().take(max_chars) {
-        if ch == '\\' {
-            out.push_str("\\\\");
+    let mut out_chars = 0usize;
+    let mut taken = 0usize;
+    for ch in value.chars() {
+        let piece = if ch == '\\' {
+            String::from("\\\\")
         } else if needs_escape(ch) {
-            out.push_str(&format!("\\u{{{:x}}}", ch as u32));
+            format!("\\u{{{:x}}}", ch as u32)
         } else {
-            out.push(ch);
+            ch.to_string()
+        };
+        let len = piece.chars().count();
+        if out_chars + len > max_chars {
+            break;
         }
+        out.push_str(&piece);
+        out_chars += len;
+        taken += 1;
     }
-    let rest = value.chars().count().saturating_sub(max_chars);
+    let rest = value.chars().count() - taken;
     if rest > 0 {
         out.push_str(&format!(" [{rest} more characters not shown]"));
     }
@@ -73,9 +84,15 @@ fn needs_escape(ch: char) -> bool {
             | '\u{200e}' | '\u{200f}' | '\u{061c}'
             | '\u{202a}'..='\u{202e}'
             | '\u{2066}'..='\u{2069}'
-            // Zero-width and invisible formatting characters.
-            | '\u{200b}'..='\u{200d}' | '\u{2060}'..='\u{2064}' | '\u{feff}'
-            | '\u{00ad}' | '\u{180e}'
+            // Zero-width, invisible and deprecated formatting characters.
+            | '\u{200b}'..='\u{200d}' | '\u{2060}'..='\u{2064}' | '\u{206a}'..='\u{206f}'
+            | '\u{feff}' | '\u{00ad}' | '\u{180e}'
+            // Interlinear annotation characters.
+            | '\u{fff9}'..='\u{fffb}'
+            // Tag characters.
+            | '\u{e0000}'..='\u{e007f}'
+            // Hangul fillers, which render as blank space.
+            | '\u{115f}' | '\u{1160}' | '\u{3164}' | '\u{ffa0}'
         )
 }
 
@@ -94,15 +111,7 @@ pub(crate) fn dialog_body(prompt: &ApprovalPrompt) -> String {
     )
 }
 
-/// What the system dialog reported, tagged with the request it was shown
-/// for.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct DialogAnswer {
-    pub(crate) nonce: String,
-    pub(crate) digest: String,
-    pub(crate) outcome: DialogOutcome,
-}
-
+/// What the system dialog reported.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DialogOutcome {
     /// `responseFlags` from `CFUserNotificationDisplayAlert`.
@@ -125,23 +134,18 @@ pub(crate) fn session_gate(session: SessionState) -> Result<(), ApprovalError> {
     }
 }
 
-/// Binds the dialog's answer to `prompt`. Only the Approve button, for
-/// this very request, approves.
+/// Maps the dialog's outcome to a decision. Only the Approve button
+/// approves; the broker and the ledger bind the decision to the request.
 pub(crate) fn decide(
     prompt: &ApprovalPrompt,
-    answer: &DialogAnswer,
+    outcome: DialogOutcome,
 ) -> Result<ApprovalDecision, ApprovalError> {
     if prompt.approval_class != ApprovalClass::Soft {
         return Err(ApprovalError::unavailable(
             "the SOFT dialog never answers a STRONG request; STRONG requires presence verification",
         ));
     }
-    if answer.nonce != prompt.nonce || answer.digest != prompt.digest {
-        return Err(ApprovalError::unavailable(
-            "the approval dialog's answer belongs to another request; SOFT approval fails closed",
-        ));
-    }
-    match answer.outcome {
+    match outcome {
         DialogOutcome::Response(flags) if flags & RESPONSE_MASK == ALTERNATE_RESPONSE => {
             Ok(ApprovalDecision::Approved)
         }
@@ -162,13 +166,10 @@ pub(crate) fn platform_prompt(prompt: &ApprovalPrompt) -> Result<ApprovalDecisio
         ));
     }
     session_gate(crate::presence_unix::session_state())?;
-    let outcome = cf::display_alert(&dialog_body(prompt), SOFT_PROMPT_TIMEOUT_SECS);
-    let answer = DialogAnswer {
-        nonce: prompt.nonce.clone(),
-        digest: prompt.digest.clone(),
-        outcome,
-    };
-    decide(prompt, &answer)
+    decide(
+        prompt,
+        cf::display_alert(&dialog_body(prompt), SOFT_PROMPT_TIMEOUT_SECS),
+    )
 }
 
 #[cfg(target_os = "macos")]
@@ -291,79 +292,39 @@ mod tests {
             "default",
             "rev-1",
             "write file",
-            "C:/work/a.txt",
+            "/Users/me/a.txt",
             "Replace 3 lines",
             "e".repeat(64),
             5_000,
         )
     }
 
-    fn answer_for(prompt: &ApprovalPrompt, outcome: DialogOutcome) -> DialogAnswer {
-        DialogAnswer {
-            nonce: prompt.nonce.clone(),
-            digest: prompt.digest.clone(),
-            outcome,
-        }
-    }
-
     #[test]
-    fn xp09_only_approve_for_this_request_approves() {
+    fn xp09_only_the_approve_button_approves() {
         let prompt = soft_prompt();
-        let approve = answer_for(&prompt, DialogOutcome::Response(1));
         assert_eq!(
-            decide(&prompt, &approve).expect("decided"),
+            decide(&prompt, DialogOutcome::Response(1)).expect("decided"),
             ApprovalDecision::Approved
         );
         // Deny (default / Return), other, cancel and timeout all deny.
         for flags in [0usize, 2, 3, 0x100 | 3] {
-            let answer = answer_for(&prompt, DialogOutcome::Response(flags));
             assert_eq!(
-                decide(&prompt, &answer).expect("decided"),
+                decide(&prompt, DialogOutcome::Response(flags)).expect("decided"),
                 ApprovalDecision::Denied,
                 "flags {flags:#x}"
             );
         }
-        let error = decide(&prompt, &answer_for(&prompt, DialogOutcome::NotShown(-1)))
-            .expect_err("not shown");
+        let error = decide(&prompt, DialogOutcome::NotShown(-1)).expect_err("not shown");
         assert_eq!(error.code, FailureCode::ApprovalUnavailable);
-    }
-
-    #[test]
-    fn xp09_mismatched_nonce_or_digest_is_rejected() {
-        let prompt = soft_prompt();
-        let mut wrong_nonce = answer_for(&prompt, DialogOutcome::Response(1));
-        wrong_nonce.nonce.push('x');
-        assert_eq!(
-            decide(&prompt, &wrong_nonce).expect_err("nonce").code,
-            FailureCode::ApprovalUnavailable
-        );
-        let mut wrong_digest = answer_for(&prompt, DialogOutcome::Response(1));
-        wrong_digest.digest = "f".repeat(64);
-        assert!(decide(&prompt, &wrong_digest).is_err());
-    }
-
-    #[test]
-    fn xp09_replayed_answer_is_rejected_for_the_next_request() {
-        let first = soft_prompt();
-        let approved = answer_for(&first, DialogOutcome::Response(1));
-        assert_eq!(
-            decide(&first, &approved).expect("first"),
-            ApprovalDecision::Approved
-        );
-        // The same operation asked again gets a fresh nonce; the earlier
-        // Approve cannot answer it.
-        let second = soft_prompt();
-        assert_eq!(second.digest, first.digest);
-        assert_ne!(second.nonce, first.nonce);
-        assert!(decide(&second, &approved).is_err());
     }
 
     #[test]
     fn xp09_soft_dialog_never_answers_strong() {
         let strong = soft_prompt().with_class(ApprovalClass::Strong);
-        let answer = answer_for(&strong, DialogOutcome::Response(1));
         assert_eq!(
-            decide(&strong, &answer).expect_err("strong").code,
+            decide(&strong, DialogOutcome::Response(1))
+                .expect_err("strong")
+                .code,
             FailureCode::ApprovalUnavailable
         );
     }
@@ -384,7 +345,7 @@ mod tests {
         let prompt = soft_prompt();
         let body = dialog_body(&prompt);
         assert!(body.contains("\nAction: write file\n"));
-        assert!(body.contains("\nTarget: C:/work/a.txt\n"));
+        assert!(body.contains("\nTarget: /Users/me/a.txt\n"));
         assert!(body.contains("\nReplace 3 lines\n"));
         assert!(body.contains(&format!("\nDigest: {}\n", prompt.digest)));
         assert!(body.contains(&format!(
@@ -416,6 +377,50 @@ mod tests {
             "s".repeat(MAX_SUMMARY_CHARS)
         )));
         assert!(body.chars().count() < 3_000);
+    }
+
+    #[test]
+    fn xp09_invisible_tag_and_filler_characters_are_escaped() {
+        let hostile = [
+            '\u{206a}',
+            '\u{206f}',
+            '\u{fff9}',
+            '\u{fffb}',
+            '\u{e0000}',
+            '\u{e0041}',
+            '\u{e007f}',
+            '\u{3164}',
+            '\u{115f}',
+            '\u{1160}',
+            '\u{ffa0}',
+            '\u{2066}',
+            '\u{2028}',
+            '\u{feff}',
+        ];
+        for ch in hostile {
+            let shown = display_field(&format!("a{ch}b"), 64);
+            assert_eq!(shown, format!("a\\u{{{:x}}}b", ch as u32));
+            assert!(!shown.contains(ch));
+        }
+    }
+
+    #[test]
+    fn xp09_bound_applies_to_the_escaped_text() {
+        // 100 newlines escape to 500 characters; a bound of 20 shows four
+        // whole escapes and counts the 96 input characters left out.
+        let shown = display_field(&"\n".repeat(100), 20);
+        assert_eq!(
+            shown,
+            format!("{} [96 more characters not shown]", "\\u{a}".repeat(4))
+        );
+        // An escape is never cut in half.
+        let shown = display_field("ab\u{202e}", 4);
+        assert_eq!(shown, "ab [1 more characters not shown]");
+        for max in 0..40 {
+            let shown = display_field(&"\u{e0041}x".repeat(30), max);
+            let field = shown.split(" [").next().expect("field");
+            assert!(field.chars().count() <= max, "{max}: {shown}");
+        }
     }
 
     #[test]

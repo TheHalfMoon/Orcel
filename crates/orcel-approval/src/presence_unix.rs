@@ -41,8 +41,9 @@
 //! - the Windows (Hello + CredUI password fallback) and Linux branches and
 //!   the export-manifest helpers are not taken.
 
-// The pure flow below is compiled and tested on every OS; only macOS
-// calls it outside tests until XP-10 adds Linux.
+// Off macOS this module is compiled only into tests, which run its pure
+// rules (session classification, LAError mapping, the STRONG flow) on
+// every OS. XP-10 widens the cfg when it adds Linux.
 #![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
 use crate::soft_macos::display_field;
@@ -66,24 +67,43 @@ pub(crate) enum SessionState {
 
 /// The current session. Every state but `Interactive` fails closed.
 pub(crate) fn session_state() -> SessionState {
-    // Mirrors the Windows Hello verifier's CI check: a runner has no person
-    // at the keyboard. It can only make approvals unavailable.
-    if std::env::var_os("CI").is_some() || std::env::var_os("GITHUB_ACTIONS").is_some() {
-        return SessionState::Automation;
-    }
-    match graphic_session_attributes() {
-        Some(bits) if bits & SESSION_HAS_GRAPHIC_ACCESS != 0 => SessionState::Interactive,
-        _ => SessionState::NoGraphicSession,
-    }
+    classify_session(automation_environment(), session_info())
+}
+
+/// A CI runner has no person at the keyboard (the Windows Hello verifier
+/// makes the same check). This can only make approvals unavailable.
+fn automation_environment() -> bool {
+    std::env::var_os("CI").is_some() || std::env::var_os("GITHUB_ACTIONS").is_some()
 }
 
 /// `sessionHasGraphicAccess` from Security/AuthSession.h.
 pub(crate) const SESSION_HAS_GRAPHIC_ACCESS: u32 = 0x0010;
+/// `sessionHasTTY` from Security/AuthSession.h (tests build SSH-like sets).
+#[cfg(test)]
+pub(crate) const SESSION_HAS_TTY: u32 = 0x0020;
+/// `sessionIsRemote` from Security/AuthSession.h (for example SSH).
+pub(crate) const SESSION_IS_REMOTE: u32 = 0x1000;
 
-/// The caller's security-session attribute bits, or `None` when the
-/// session cannot be read (or off macOS).
+/// Classifies the session from the automation check and the
+/// `SessionGetInfo` result (attribute bits, or the failing status). Only a
+/// local session with graphic access is interactive; a probe error, no
+/// graphic access, or a remote session fails closed.
+pub(crate) fn classify_session(automation: bool, info: Result<u32, i32>) -> SessionState {
+    if automation {
+        return SessionState::Automation;
+    }
+    match info {
+        Ok(bits) if bits & SESSION_HAS_GRAPHIC_ACCESS != 0 && bits & SESSION_IS_REMOTE == 0 => {
+            SessionState::Interactive
+        }
+        _ => SessionState::NoGraphicSession,
+    }
+}
+
+/// The caller's security-session attribute bits, or the `SessionGetInfo`
+/// status when the session cannot be read.
 #[cfg(target_os = "macos")]
-pub(crate) fn graphic_session_attributes() -> Option<u32> {
+pub(crate) fn session_info() -> Result<u32, i32> {
     /// `callerSecuritySession`, `((SecuritySessionId)-1)`.
     const CALLER_SECURITY_SESSION: u32 = u32::MAX;
 
@@ -99,12 +119,18 @@ pub(crate) fn graphic_session_attributes() -> Option<u32> {
     // live for the call.
     let status =
         unsafe { SessionGetInfo(CALLER_SECURITY_SESSION, &mut session_id, &mut attributes) };
-    (status == 0).then_some(attributes)
+    if status == 0 {
+        Ok(attributes)
+    } else {
+        Err(status)
+    }
 }
 
+/// Test builds off macOS (the module is compiled there only for its pure
+/// rules): there is no session to read.
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn graphic_session_attributes() -> Option<u32> {
-    None
+pub(crate) fn session_info() -> Result<u32, i32> {
+    Err(-1)
 }
 
 /// What one LocalAuthentication evaluation reported.
@@ -466,16 +492,56 @@ mod tests {
         );
     }
 
+    #[test]
+    fn xp09_session_classification_fails_closed() {
+        // The GitHub macos-latest runner reports 0x2030: graphic access, a
+        // TTY and an undocumented bit. Only the automation guard stops it.
+        let runner = 0x2030;
+        assert_eq!(
+            classify_session(false, Ok(runner)),
+            SessionState::Interactive
+        );
+        assert_eq!(classify_session(true, Ok(runner)), SessionState::Automation);
+        let local_gui = SESSION_HAS_GRAPHIC_ACCESS;
+        assert_eq!(
+            classify_session(false, Ok(local_gui)),
+            SessionState::Interactive
+        );
+        let cases = [
+            // launchd background: no graphic access.
+            Ok(0),
+            // SSH: a remote TTY session without graphic access.
+            Ok(SESSION_HAS_TTY | SESSION_IS_REMOTE),
+            // Remote even if it claims graphic access.
+            Ok(SESSION_HAS_GRAPHIC_ACCESS | SESSION_IS_REMOTE),
+            Ok(SESSION_HAS_TTY),
+            // SessionGetInfo failed (errSessionInvalidId and others).
+            Err(-60_500),
+            Err(-1),
+        ];
+        for info in cases {
+            assert_eq!(
+                classify_session(false, info),
+                SessionState::NoGraphicSession,
+                "{info:?}"
+            );
+            assert_eq!(classify_session(true, info), SessionState::Automation);
+        }
+    }
+
     /// S-24: the donor's two bypass variables are gone from the shipped
     /// code, and the only environment reads in it are the automation
     /// check, which can only make STRONG unavailable.
     #[test]
     fn xp09_donor_bypass_variables_are_not_read_by_shipped_code() {
-        let source = include_str!("presence_unix.rs");
-        let shipped = source
-            .split("#[cfg(test)]\nmod tests")
-            .next()
-            .expect("module body");
+        // A Windows checkout may have CRLF line endings.
+        let source = include_str!("presence_unix.rs").replace("\r\n", "\n");
+        let (shipped, tests) = source
+            .split_once("#[cfg(test)]\nmod tests {")
+            .expect("the test module marker is present");
+        // The split really separated the module from its tests.
+        assert!(tests.contains("fn xp09_donor_bypass_variables_are_not_read_by_shipped_code"));
+        assert!(!shipped.contains("fn xp09_"));
         let donor_prefix = ["CUA", "_ENV"].concat();
         assert!(!shipped.contains(&donor_prefix));
         assert!(!shipped.contains("SENSITIVE"));
@@ -485,6 +551,7 @@ mod tests {
             .collect();
         assert_eq!(reads.len(), 1, "{reads:?}");
         assert!(reads[0].contains("\"CI\"") && reads[0].contains("\"GITHUB_ACTIONS\""));
+        assert!(!shipped.contains("env::vars"));
         let automation = verify_with(
             &ctx(),
             &lease(),

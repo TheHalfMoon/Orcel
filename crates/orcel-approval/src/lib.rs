@@ -11,12 +11,15 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 // XP-09: the macOS SOFT dialog and STRONG presence. Each OS's presenter and
 // verifier lives in its own module and is selected below by cfg; Linux
 // (XP-10) adds its own next to these without touching the Windows path.
+// Other OSes compile them only into tests, which run their pure rules
+// (session classification, escaping, outcome mapping) everywhere.
+#[cfg(any(target_os = "macos", test))]
 mod presence_unix;
+#[cfg(any(target_os = "macos", test))]
 mod soft_macos;
 
 #[cfg(target_os = "macos")]
-pub use presence_unix::MacLocalAuthPresenceVerifier;
-pub use presence_unix::MAC_LOCAL_AUTH_METHOD;
+pub use presence_unix::{MacLocalAuthPresenceVerifier, MAC_LOCAL_AUTH_METHOD};
 
 pub const APPROVAL_TTL_MS: u64 = 5 * 60 * 1_000;
 pub const SINGLE_OPERATION_SCOPE: &str = "single-operation";
@@ -2648,6 +2651,8 @@ mod xp09_contract_tests {
         assert_eq!(method, "windows-hello");
         #[cfg(target_os = "macos")]
         assert_eq!(method, MAC_LOCAL_AUTH_METHOD);
+        #[cfg(target_os = "macos")]
+        assert_eq!(method, "macos-local-authentication");
         #[cfg(not(any(windows, target_os = "macos")))]
         assert_eq!(method, "none");
     }
@@ -2663,8 +2668,8 @@ mod xp09_contract_tests {
         let required = std::env::var_os("ORCEL_REQUIRE_XP09_HEADLESS").is_some();
         let session = presence_unix::session_state();
         eprintln!(
-            "xp09 session probe: state {session:?}, SessionGetInfo attributes {:?}",
-            presence_unix::graphic_session_attributes()
+            "xp09 session probe: state {session:?}, SessionGetInfo {:x?}",
+            presence_unix::session_info()
         );
         if session == presence_unix::SessionState::Interactive {
             assert!(
