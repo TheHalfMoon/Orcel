@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 // Writes THIRD_PARTY_NOTICES.txt for a Orcel release: for every third-party
-// crate linked into the shipped binaries (x86_64-pc-windows-msvc, normal
-// dependency edges only) and every npm package in the release's
+// crate linked into the shipped binaries (x86_64-pc-windows-msvc unless
+// --target names another triple, normal dependency edges only) and every npm package in the release's
 // app/orcel-mcp/node_modules, the declared license expression and the full
 // text of each license or notice file the package ships.
 //
 // Usage:
-//   node scripts/third-party-notices.mjs --release <release-dir> --out <file>
+//   node scripts/third-party-notices.mjs --release <release-dir> --out <file> [--target <triple>]
 
 import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -14,7 +14,10 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const TARGET = "x86_64-pc-windows-msvc";
+const targetIndex = process.argv.indexOf("--target");
+// XP-17: the Linux packages pass --target x86_64-unknown-linux-gnu.
+const TARGET = targetIndex === -1 ? "x86_64-pc-windows-msvc" : process.argv[targetIndex + 1];
+if (!TARGET || TARGET.startsWith("--")) fail("--target <triple> needs a value");
 const ROOT_PACKAGES = ["orceld", "orcel-lifecycle"];
 const NOTICE_FILE = /^(licen[cs]e|copying|notice|unlicense)([-_.].*)?$/i;
 // Source vendored into this repository rather than resolved from a registry.
