@@ -2,7 +2,7 @@
 
 Status: EXECUTION FRONTIER (a working summary that mirrors grain state; it does not set it — canonical grain state lives in `.specgrain/` and `docs/canonical/`). Update this file whenever a grain merges, blocks, or the next grain changes. It serves implementation; it grants no authority. Planning detail lives in the adopted documents listed below; evidence lives in PRs, issues and CI runs.
 
-Last verified: 2026-10-18 (evening) · main `015768783786` (Merge PR #348; CI green). Earlier today: `40fc9f0`.
+Last verified: 2026-10-19 · main `8225d9f79bea` (Merge PR #357; CI green). Earlier: `0157688` (2026-10-18).
 
 **Cross-platform revision (2026-10-18, ADOPTED by the founder, `docs/orcel/grants/2026-10-18-founder-attestation.md`):** the founder directed that Windows, macOS and Linux are all first-class targets. The implementation-ready plan, donor registry, transplant matrix and backlog are in `docs/orcel/implementation-readiness/` (entry: `OPUS_HANDOFF.md`). It keeps every adopted decision below except the macOS/Linux deferral and the WPF-only UI decision; see its `ARCHITECTURE_DECISIONS.md` section 2.
 
@@ -34,14 +34,14 @@ The founder adopted the Sol app-first revision of the Opus plan on 2026-10-09. W
 | F4 · Core MVP qualification | NOT STARTED | F2 + F3, one real MCP client, installer < 400 MB |
 | SG-000096 privileged shell (#260) | GRAIN (spec state) | #278 prerequisite removed; T02 hardening records in `docs/p20/`; T02–T05 issues #264–#267 and #271 open; Full User shell stays unarmed |
 | F5–F8 | NOT STARTED | See roadmap dependencies |
-| Cross-platform track (X0–X6) | ADOPTED; IN PROGRESS (grain SG-000109 not yet activated as a spec) | Merged: plan #344 (`e11f629`), XP-02 macOS CI #346, BM-01 report schema #347, XP-01 private state root #345, XP-04 host protocol /2 #348, macOS test-flake fix #349. Next: XP-01B (remaining temp fallbacks), XP-03 (identity primitives), XP-05 (vendor Cua), XP-15 (clipboard). Open follow-ups: #350, #351 |
+| Cross-platform track (X0–X6) | ADOPTED; IN PROGRESS (grain SG-000109 not yet activated as a spec) | Merged: plan #344 (`e11f629`), XP-02 macOS CI #346, BM-01 report schema #347, XP-01 private state root #345, XP-04 host protocol /2 #348, macOS test-flake fix #349, XP-05 vendored Cua Driver in `apps/orcel-native-host` #354, XP-15 macOS/Linux clipboard #353, XP-01B remaining state stores on the private root #357. Next: XP-03 (identity primitives) → CR-01; then XP-09, XP-10, XP-17. Open follow-ups: #350, #351, #355, #356, #358 |
 
 ## Next executable grain
 
 1. F3 / SG-000108: rebase and finish #336 (slice 3b-i), then slice 3b-ii and the remaining product-caller slices to canonical closeout.
 2. F0 next slice: authenticated read-only app API in `orceld` (status/events/tasks). The adopted revision specifies it cross-platform from the start (backlog CR-01: named pipe with DACL on Windows, Unix socket with peer credentials on macOS/Linux); memory investigation (#288).
 3. F2: first local report task through the kernel with create-only approval and an independent checker.
-4. Cross-platform foundation (adopted): XP-01, XP-02, XP-04 and BM-01 are merged. Next: XP-01B → XP-03 → CR-01, with XP-05 and XP-15 in parallel (`docs/orcel/implementation-readiness/OPUS_HANDOFF.md` section 5).
+4. Cross-platform foundation (adopted): XP-01, XP-01B, XP-02, XP-04, XP-05, XP-15 and BM-01 are merged. Next: XP-03 → CR-01, with XP-09, XP-10 and XP-17 unblocked (`docs/orcel/implementation-readiness/OPUS_HANDOFF.md` section 5).
 
 ## Review pathway
 
