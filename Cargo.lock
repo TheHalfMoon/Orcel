@@ -402,6 +402,10 @@ dependencies = [
 [[package]]
 name = "orcel-platform"
 version = "0.2.0"
+dependencies = [
+ "libc",
+ "windows 0.58.0",
+]
 
 [[package]]
 name = "orcel-policy"
@@ -489,6 +493,7 @@ name = "orcel-provider-uia"
 version = "0.2.0"
 dependencies = [
  "orcel-contracts",
+ "orcel-platform",
  "serde",
  "serde_json",
  "sha2",
