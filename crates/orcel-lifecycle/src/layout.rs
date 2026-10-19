@@ -2,6 +2,7 @@
 
 use crate::LifecycleError;
 use serde::{Deserialize, Serialize};
+use std::ffi::OsString;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -9,7 +10,8 @@ use std::path::{Path, PathBuf};
 pub const CURRENT_SCHEMA: &str = "orcel-current-v1";
 pub const INSTALL_SCHEMA: &str = "orcel-install-v1";
 
-/// Paths of the per-user install rooted at `%LOCALAPPDATA%\Orcel`.
+/// Paths of the per-user install rooted at the XP-01 state root
+/// (`%LOCALAPPDATA%\Orcel` on Windows).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Layout {
     pub root: PathBuf,
@@ -20,21 +22,23 @@ impl Layout {
         Self { root: root.into() }
     }
 
-    /// The layout for the current user, derived from `LOCALAPPDATA`. Installs
-    /// never fall back to another location.
+    /// The layout for the current user, from the process environment.
+    /// Installs never fall back to another location.
     pub fn for_current_user() -> Result<Self, LifecycleError> {
-        let local_app_data = std::env::var_os("LOCALAPPDATA").ok_or_else(|| {
-            LifecycleError::prerequisite(
-                "LOCALAPPDATA is not set; a per-user install root is unavailable",
-            )
-        })?;
-        let local_app_data = PathBuf::from(local_app_data);
-        if !local_app_data.is_absolute() {
-            return Err(LifecycleError::prerequisite(
-                "LOCALAPPDATA must be absolute",
-            ));
-        }
-        Ok(Self::new(local_app_data.join("Orcel")))
+        Self::from_lookup(&|name| std::env::var_os(name))
+    }
+
+    /// The layout rooted where XP-01's single resolver,
+    /// [`orcel_platform::paths::state_root_from`], puts the state root. It
+    /// refuses missing, relative and `.`/`..`-bearing values.
+    pub fn from_lookup(lookup: &dyn Fn(&str) -> Option<OsString>) -> Result<Self, LifecycleError> {
+        orcel_platform::paths::state_root_from(lookup)
+            .map(Self::new)
+            .map_err(|error| {
+                LifecycleError::prerequisite(format!(
+                    "a per-user install root is unavailable: {error}"
+                ))
+            })
     }
 
     pub fn bin_dir(&self) -> PathBuf {
@@ -281,6 +285,43 @@ mod tests {
         assert!(layout
             .ensure_beneath_root(Path::new("/x/Orcel-other/bin"))
             .is_err());
+    }
+
+    /// #358 item 1: the root comes from XP-01's resolver, so a `..` input
+    /// is refused on every OS instead of escaping the per-user directory.
+    #[test]
+    fn current_user_root_refuses_parent_components() {
+        let escaping = if cfg!(windows) {
+            r"C:\Users\someone\AppData\Local\..\..\..\Public"
+        } else {
+            "/home/someone/../shared"
+        };
+        assert!(Layout::from_lookup(&|_| Some(OsString::from(escaping))).is_err());
+        assert!(Layout::from_lookup(&|_| Some(OsString::from("relative"))).is_err());
+        assert!(Layout::from_lookup(&|_| None).is_err());
+    }
+
+    /// Valid Windows input resolves exactly as the earlier
+    /// `LOCALAPPDATA` + `Orcel` resolver did.
+    #[cfg(windows)]
+    #[test]
+    fn current_user_root_on_windows_is_localappdata_orcel() {
+        let local = r"C:\Users\someone\AppData\Local";
+        let lookup = |name: &str| (name == "LOCALAPPDATA").then(|| OsString::from(local));
+        assert_eq!(
+            Layout::from_lookup(&lookup).unwrap().root,
+            Path::new(local).join("Orcel")
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn current_user_root_on_linux_is_the_xdg_state_root() {
+        let lookup = |name: &str| (name == "HOME").then(|| OsString::from("/home/someone"));
+        assert_eq!(
+            Layout::from_lookup(&lookup).unwrap().root,
+            Path::new("/home/someone/.local/state/orcel")
+        );
     }
 
     #[test]

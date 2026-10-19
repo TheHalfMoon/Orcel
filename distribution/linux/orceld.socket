@@ -1,0 +1,34 @@
+# Orcel kernel socket: a systemd *user* unit (XP-17).
+#
+# orceld speaks JSON lines on stdin/stdout and opens no listener of its own.
+# With Accept=yes, systemd starts one orceld@.service instance per
+# connection with the connection as its stdin/stdout, the same "one fresh
+# orceld per client" model as `orcel mcp stdio` and the CLI's ipc::call.
+#
+# The socket is AF_UNIX in the user's runtime directory (%t, normally
+# /run/user/<uid>, mode 0700). DirectoryMode and SocketMode keep the
+# directory and socket owner-only, so only processes of the same user can
+# connect: they could already start orceld directly, so the socket grants
+# no new authority. No network listener exists.
+#
+# Enable with: systemctl --user enable --now orceld.socket
+#
+# Unit shape after cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f
+# libs/images/omarchy/files/systemd-user/cua-driver.service (MIT; reference
+# only, transplant row T-CUA-36). No text was copied.
+
+[Unit]
+Description=Orcel kernel socket (orceld, per-user)
+Documentation=https://github.com/TheHalfMoon/Orcel
+
+[Socket]
+ListenStream=%t/orcel/orceld.sock
+SocketMode=0600
+DirectoryMode=0700
+Accept=yes
+MaxConnections=16
+MaxConnectionsPerSource=16
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

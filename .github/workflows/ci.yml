@@ -372,6 +372,170 @@ jobs:
           if docker logs relay 2>&1 | grep -E 'Bearer|access_token|refresh_token|privateKey'; then exit 1; fi
           docker rm -f relay
 
+  # XP-17: builds the Linux deb, rpm and tarball with nfpm, checks their
+  # contents and modes, installs the deb and the tarball for the runner user
+  # and talks to orceld through the systemd user socket, and installs the
+  # rpm in Fedora 41. Not a release gate: release.yml is unchanged for
+  # Windows.
+  linux-packages:
+    name: Linux packages / ubuntu-latest
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      DIST: ${{ github.workspace }}/../linux-dist
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24.19.0"
+      - name: Build orceld (release, locked)
+        run: cargo build --release --locked -p orceld
+      - name: Install the pinned nfpm (checksum-verified)
+        run: |
+          bash distribution/linux/install-nfpm.sh "$RUNNER_TEMP/nfpm-bin"
+          echo "$RUNNER_TEMP/nfpm-bin" >> "$GITHUB_PATH"
+      - name: Build the deb, rpm and tarball
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          bash distribution/linux/package.sh "$version" target/release/orceld "$DIST"
+          ls -l "$DIST"
+      - name: Package file list and modes (dpkg -c), no maintainer scripts
+        run: |
+          deb="$DIST/orcel_${VERSION}-1_amd64.deb"
+          dpkg -c "$deb"
+          actual=$(dpkg -c "$deb" | awk '$1 !~ /^d/ { print $1, $2, $6 }' | sort)
+          expected=$(sort <<'LIST'
+          -rwxr-xr-x root/root ./usr/lib/orcel/orceld
+          -rw-r--r-- root/root ./usr/lib/systemd/user/orceld.socket
+          -rw-r--r-- root/root ./usr/lib/systemd/user/orceld@.service
+          -rw-r--r-- root/root ./usr/share/doc/orcel/LICENSE
+          -rw-r--r-- root/root ./usr/share/doc/orcel/README.md
+          -rw-r--r-- root/root ./usr/share/doc/orcel/THIRD_PARTY_NOTICES.txt
+          LIST
+          )
+          expected=$(echo "$expected" | sed 's/^ *//' | sort)
+          diff <(echo "$expected") <(echo "$actual")
+          # No setuid, setgid or sticky bit on any entry, directories included.
+          if dpkg -c "$deb" | awk '{ print $1 }' | grep -E '[sStT]'; then exit 1; fi
+          control=$(dpkg-deb --ctrl-tarfile "$deb" | tar -t)
+          echo "$control"
+          if echo "$control" | grep -E 'preinst|postinst|prerm|postrm|config|triggers'; then exit 1; fi
+          tar -tvzf "$DIST/orcel-${VERSION}-linux-x86_64.tar.gz"
+          (cd "$DIST" && sha256sum --check --strict SHA256SUMS-linux.txt)
+      - name: A tampered download fails its checksum
+        run: |
+          mkdir "$RUNNER_TEMP/tampered" && cp "$DIST"/* "$RUNNER_TEMP/tampered/"
+          tarball="$RUNNER_TEMP/tampered/orcel-${VERSION}-linux-x86_64.tar.gz"
+          # Flip every bit of one byte inside the archive.
+          python3 -c 'import sys; p = sys.argv[1]; b = bytearray(open(p, "rb").read()); b[100] ^= 0xFF; open(p, "wb").write(b)' "$tarball"
+          if (cd "$RUNNER_TEMP/tampered" && sha256sum --check --strict SHA256SUMS-linux.txt); then
+            echo "a tampered tarball passed its checksum" >&2
+            exit 1
+          fi
+      - name: Install the deb and start the runner's systemd user manager
+        run: |
+          sudo apt-get install -y "$DIST/orcel_${VERSION}-1_amd64.deb"
+          dpkg -L orcel
+          test -z "$(dpkg --verify orcel)"
+          sudo loginctl enable-linger "$USER"
+          uid=$(id -u)
+          echo "XDG_RUNTIME_DIR=/run/user/$uid" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus" >> "$GITHUB_ENV"
+          for attempt in $(seq 1 30); do
+            state=$(XDG_RUNTIME_DIR=/run/user/$uid systemctl --user is-system-running 2>/dev/null || true)
+            echo "user manager: $state"
+            case "$state" in running|degraded) break ;; esac
+            sleep 1
+          done
+          XDG_RUNTIME_DIR=/run/user/$uid systemctl --user --version
+      - name: systemd-analyze verify --user on the installed units
+        run: |
+          mkdir -p "$RUNNER_TEMP/units"
+          cp /usr/lib/systemd/user/orceld.socket "$RUNNER_TEMP/units/"
+          cp /usr/lib/systemd/user/orceld@.service "$RUNNER_TEMP/units/orceld@probe.service"
+          systemd-analyze verify --user "$RUNNER_TEMP/units/orceld.socket" "$RUNNER_TEMP/units/orceld@probe.service"
+      - name: orceld answers through the user socket
+        run: |
+          mkdir -p "$HOME/orcel-ci-workspace" "$HOME/.config/orcel"
+          chmod 0700 "$HOME/.config/orcel"
+          printf '%s\n' "ORCEL_WORKSPACES_JSON='[{\"id\":\"ci\",\"root\":\"$HOME/orcel-ci-workspace\"}]'" > "$HOME/.config/orcel/orceld.env"
+          systemctl --user daemon-reload
+          systemctl --user enable --now orceld.socket
+          systemctl --user status orceld.socket --no-pager
+          sock="$XDG_RUNTIME_DIR/orcel/orceld.sock"
+          test "$(stat -c '%a %U' "$sock")" = "600 $USER"
+          test "$(stat -c '%a %U' "$XDG_RUNTIME_DIR/orcel")" = "700 $USER"
+          python3 scripts/linux-orceld-probe.py socket "$sock" ci
+          python3 scripts/linux-orceld-probe.py socket "$sock" ci
+          test "$(stat -c '%a %U' "$HOME/.local/state/orcel")" = "700 $USER"
+          ls -la "$HOME/.local/state/orcel"
+          journalctl --user --no-pager -u 'orceld@*' | tail -n 20
+          # No process of the instance outlives its connection.
+          sleep 1
+          if systemctl --user list-units --no-legend 'orceld@*' | grep -E 'running|activating'; then exit 1; fi
+          # No TCP or UDP listener was opened.
+          if ss -ltnup | grep -i orceld; then exit 1; fi
+      - name: Probe namespace-based hardening in a user unit (recorded, not enforced)
+        run: |
+          dropin="$HOME/.config/systemd/user/orceld@.service.d"
+          mkdir -p "$dropin"
+          printf '[Service]\nProtectSystem=strict\nReadWritePaths=%%h\nPrivateTmp=yes\n' > "$dropin/probe.conf"
+          systemctl --user daemon-reload
+          if python3 scripts/linux-orceld-probe.py socket "$XDG_RUNTIME_DIR/orcel/orceld.sock" ci; then
+            echo "PROBE: orceld works with ProtectSystem=strict and PrivateTmp=yes in a user unit"
+          else
+            echo "PROBE: orceld fails with ProtectSystem=strict and PrivateTmp=yes in a user unit"
+          fi
+          journalctl --user --no-pager -u 'orceld@*' | tail -n 20
+          rm -rf "$dropin"
+          systemctl --user daemon-reload
+      - name: A modified installed file is reported, and uninstall removes the payload
+        run: |
+          python3 scripts/linux-orceld-probe.py socket "$XDG_RUNTIME_DIR/orcel/orceld.sock" ci
+          echo tampered | sudo tee -a /usr/lib/orcel/orceld > /dev/null
+          verify=$(dpkg --verify orcel || true)
+          echo "$verify"
+          echo "$verify" | grep -F /usr/lib/orcel/orceld
+          systemctl --user disable --now orceld.socket
+          sudo apt-get remove -y orcel
+          test ! -e /usr/lib/orcel
+          test ! -e /usr/share/doc/orcel
+          test ! -e /usr/lib/systemd/user/orceld.socket
+          # User state is kept.
+          test -d "$HOME/.local/state/orcel"
+      - name: Per-user tarball install answers through the user socket
+        run: |
+          mkdir -p "$HOME/.local/share/orcel" "$HOME/.config/systemd/user"
+          tar -xzf "$DIST/orcel-${VERSION}-linux-x86_64.tar.gz" --strip-components=1 -C "$HOME/.local/share/orcel"
+          install -m 0644 "$HOME/.local/share/orcel/systemd/orceld.socket" "$HOME/.local/share/orcel/systemd/orceld@.service" "$HOME/.config/systemd/user/"
+          cp "$HOME/.config/systemd/user/orceld@.service" "$RUNNER_TEMP/units/orceld@tarball.service"
+          systemd-analyze verify --user "$HOME/.config/systemd/user/orceld.socket" "$RUNNER_TEMP/units/orceld@tarball.service"
+          systemctl --user daemon-reload
+          systemctl --user enable --now orceld.socket
+          python3 scripts/linux-orceld-probe.py socket "$XDG_RUNTIME_DIR/orcel/orceld.sock" ci
+          systemctl --user disable --now orceld.socket
+      - name: Install the rpm in Fedora 41
+        run: |
+          docker run --rm -v "$DIST:/dist:ro" -v "$PWD/scripts:/probe:ro" \
+            docker.io/library/fedora@sha256:f1a3fab47bcb3c3ddf3135d5ee7ba8b7b25f2e809a47440936212a3a50957f3d \
+            bash -euxc '
+              rpm=/dist/orcel-'"$VERSION"'-1.x86_64.rpm
+              rpm -qplv "$rpm"
+              test -z "$(rpm -qp --scripts "$rpm")"
+              if rpm -qplv "$rpm" | awk "{ print \$1 }" | grep -E "[sStT]"; then exit 1; fi
+              dnf install -y --setopt=install_weak_deps=False "$rpm" python3
+              rpm -V orcel
+              mkdir -p /root/ws
+              ORCEL_WORKSPACES_JSON="[{\"id\":\"ci\",\"root\":\"/root/ws\"}]" python3 /probe/linux-orceld-probe.py exec /usr/lib/orcel/orceld ci
+              dnf remove -y orcel
+              test ! -e /usr/lib/orcel
+              test ! -e /usr/share/doc/orcel
+            '
+
   supply-chain:
     name: Supply chain audit
     runs-on: ubuntu-latest
