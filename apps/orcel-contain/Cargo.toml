@@ -1,0 +1,59 @@
+# orcel-contain: the pinned one-shot containment launcher (XP-13).
+#
+# This is its own Cargo workspace on purpose: it is NOT a member of the root
+# workspace, so tokio never enters orceld's lockfile (AD-16). orceld talks to
+# it only through crates/orcel-provider-process/src/contained.rs (std only):
+# a bounded spec on stdin, a bounded result on stdout, then exit. There is no
+# listener.
+#
+# The containment code is COPY_ADAPT of Cua's perception-worker containment
+# (trycua/cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f, MIT; transplant rows
+# T-CUA-21 and T-CUA-22). Each source file names its donor blob and lists
+# Orcel's changes; the notice is docs/orcel/notices/cua-MIT.txt.
+[workspace]
+resolver = "2"
+members = ["."]
+
+[package]
+name = "orcel-contain"
+version = "0.2.0"
+edition = "2021"
+license = "Apache-2.0 AND MIT"
+repository = "https://github.com/TheHalfMoon/Orcel"
+rust-version = "1.82"
+publish = false
+description = "Orcel's one-shot launcher for the contained execution tier"
+
+[[bin]]
+name = "orcel-contain"
+path = "src/main.rs"
+
+# Test fixture for tests/contain.rs: it tries the operations the contained
+# tier must deny (write, read, network, process creation) and reports what
+# happened. It is never packaged; release packaging names orcel-contain only.
+[[bin]]
+name = "orcel-contain-probe"
+path = "src/bin/orcel-contain-probe.rs"
+test = false
+
+[dependencies]
+# The donor is async (tokio::process, AsyncReadExt, tokio::time::timeout and,
+# on Windows, tokio's named pipes). Runtime: current_thread only, so the
+# thread that forks the child is the thread whose exit PR_SET_PDEATHSIG
+# watches, and it lives for the whole run.
+tokio = { version = "1.47", default-features = false, features = ["rt", "macros", "io-util", "process", "time", "sync"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+tokio = { version = "1.47", default-features = false, features = ["net"] }
+
+[dev-dependencies]
+# The kernel-side client is the only way orceld reaches this helper, so the
+# end-to-end tests drive the helper through it. It is std only (no deps).
+orcel-provider-process = { path = "../../crates/orcel-provider-process" }
+tempfile = "3"
+
+[profile.release]
+panic = "abort"
