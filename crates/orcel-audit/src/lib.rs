@@ -72,10 +72,10 @@ impl AuditLogger {
     }
 }
 
-/// `ORCEL_AUDIT_PATH`, else `audit.jsonl` in the private per-user Orcel
-/// state root. Fails closed when the override is empty or relative, or when
-/// the root cannot be resolved or is not private; it never falls back to the
-/// shared temp directory.
+/// `ORCEL_AUDIT_PATH`, else `audit.jsonl` in the private per-user Orcel state
+/// root. Fails closed when the override is empty, relative or not in a private
+/// directory, or when the root cannot be resolved or is not private; it never
+/// falls back to the shared temp directory.
 pub fn default_audit_path() -> Result<PathBuf, PlatformError> {
     default_audit_path_from(&|name| std::env::var_os(name))
 }
@@ -85,7 +85,7 @@ pub fn default_audit_path_from(
     lookup: &dyn Fn(&str) -> Option<OsString>,
 ) -> Result<PathBuf, PlatformError> {
     if let Some(path) = lookup("ORCEL_AUDIT_PATH") {
-        return paths::absolute_override(path);
+        return paths::private_file_override(path);
     }
     let root = paths::state_root_from(lookup)?;
     paths::ensure_private_dir(&root)?;
@@ -153,12 +153,35 @@ mod tests {
 
     #[test]
     fn audit_path_override_is_kept() {
-        let custom = std::env::temp_dir().join("custom-audit.jsonl");
+        let base = sandbox("override");
+        let custom = base.join("custom-audit.jsonl");
         let path = default_audit_path_from(&lookup(vec![(
             "ORCEL_AUDIT_PATH",
             custom.clone().into_os_string(),
         )]));
         assert_eq!(path, Ok(custom));
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// XP-01B: an override gets the default location's guarantees, so a
+    /// parent directory other users can reach is refused.
+    #[cfg(unix)]
+    #[test]
+    fn override_in_a_shared_directory_is_refused() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = sandbox("shared-override");
+        std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod shared");
+        let error = default_audit_path_from(&lookup(vec![(
+            "ORCEL_AUDIT_PATH",
+            base.join("audit.jsonl").into_os_string(),
+        )]))
+        .expect_err("shared parent");
+        assert!(
+            matches!(error, PlatformError::InsecureMode { .. }),
+            "{error:?}"
+        );
+        let _ = std::fs::remove_dir_all(base);
     }
 
     #[test]

@@ -2121,8 +2121,9 @@ pub fn now_ms() -> u64 {
 
 /// `ORCEL_APPROVAL_HISTORY_PATH`, else `approval-history.jsonl` in the
 /// private per-user Orcel state root. Fails closed when the override is
-/// empty or relative, or when the root cannot be resolved or is not private;
-/// it never falls back to the shared temp directory.
+/// empty, relative or not in a private directory, or when the root cannot
+/// be resolved or is not private; it never falls back to the shared temp
+/// directory.
 pub fn default_approval_history_path() -> Result<std::path::PathBuf, PlatformError> {
     default_approval_history_path_from(&|name| std::env::var_os(name))
 }
@@ -2133,7 +2134,7 @@ pub fn default_approval_history_path_from(
     lookup: &dyn Fn(&str) -> Option<std::ffi::OsString>,
 ) -> Result<std::path::PathBuf, PlatformError> {
     if let Some(path) = lookup("ORCEL_APPROVAL_HISTORY_PATH") {
-        return orcel_platform::paths::absolute_override(path);
+        return orcel_platform::paths::private_file_override(path);
     }
     let root = orcel_platform::paths::state_root_from(lookup)?;
     orcel_platform::paths::ensure_private_dir(&root)?;
@@ -2262,12 +2263,35 @@ mod state_root_tests {
 
     #[test]
     fn history_path_override_is_kept() {
-        let custom = std::env::temp_dir().join("custom-history.jsonl");
+        let base = sandbox("override");
+        let custom = base.join("custom-history.jsonl");
         let path = default_approval_history_path_from(&lookup(vec![(
             "ORCEL_APPROVAL_HISTORY_PATH",
             custom.clone().into_os_string(),
         )]));
         assert_eq!(path, Ok(custom));
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// XP-01B: an override gets the default location's guarantees, so a
+    /// parent directory other users can reach is refused.
+    #[cfg(unix)]
+    #[test]
+    fn override_in_a_shared_directory_is_refused() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = sandbox("shared-override");
+        std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod shared");
+        let error = default_approval_history_path_from(&lookup(vec![(
+            "ORCEL_APPROVAL_HISTORY_PATH",
+            base.join("approval-history.jsonl").into_os_string(),
+        )]))
+        .expect_err("shared parent");
+        assert!(
+            matches!(error, PlatformError::InsecureMode { .. }),
+            "{error:?}"
+        );
+        let _ = std::fs::remove_dir_all(base);
     }
 
     #[test]

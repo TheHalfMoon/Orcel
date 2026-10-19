@@ -209,6 +209,24 @@ pub fn absolute_override(value: OsString) -> Result<PathBuf, PlatformError> {
     }
 }
 
+/// A state file location from an `ORCEL_*` override (XP-01B): absolute, as
+/// [`absolute_override`] requires, and inside a directory that passes
+/// [`ensure_private_dir`] (created when missing). An override gets the same
+/// guarantees as the default location instead of bypassing them.
+pub fn private_file_override(value: OsString) -> Result<PathBuf, PlatformError> {
+    private_file(absolute_override(value)?)
+}
+
+/// `path` once its parent directory passes [`ensure_private_dir`].
+pub fn private_file(path: PathBuf) -> Result<PathBuf, PlatformError> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .ok_or_else(|| PlatformError::NotAbsolute(path.clone()))?;
+    ensure_private_dir(parent)?;
+    Ok(path)
+}
+
 fn unavailable(variables: &str) -> PlatformError {
     PlatformError::StateRootUnavailable(format!("{variables} is not set to an absolute path"))
 }

@@ -163,9 +163,9 @@ fn dispatch(
             "arch": std::env::consts::ARCH,
             "pid": std::process::id(),
             "mode": "SG-000010_BOUNDED_PROCESS_SPAWN",
-            "registered_executables": crate::executable_admin::registered_summaries(
-                &orcel_policy::executable_registry::default_registry_path()
-            )
+            "registered_executables": orcel_policy::executable_registry::default_registry_path()
+                .map(|path| crate::executable_admin::registered_summaries(&path))
+                .unwrap_or_default()
         })),
         ("workspace.get", "get") => {
             let configured = policy.workspace(&workspace.id).ok_or_else(|| {
@@ -434,9 +434,13 @@ fn verify_registered_identity(plan: &orcel_provider_process::ExecutionPlan) -> R
             return Ok(());
         }
     }
-    let entries = orcel_policy::executable_registry::load_registry(
-        &orcel_policy::executable_registry::default_registry_path(),
-    );
+    let registry_path = orcel_policy::executable_registry::default_registry_path().map_err(|error| {
+        ProviderError::new(
+            FailureCode::ProviderUnavailable,
+            format!("executable registry is unavailable: {error}"),
+        )
+    })?;
+    let entries = orcel_policy::executable_registry::load_registry(&registry_path);
     let entry = orcel_policy::executable_registry::check_spawn(&entries, &plan.executable, &plan.argv)
         .map_err(|error| ProviderError::new(error.code, error.message))?;
     orcel_policy::executable_registry::verify_identity(entry, &plan.executable)

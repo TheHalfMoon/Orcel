@@ -10,6 +10,12 @@ Orcel's published artifacts and release notes are the canonical release history:
   - On Unix the root and every ancestor are checked: an ancestor must be owned by the current user or root and not writable by group or other unless it is a root-owned sticky directory such as `/tmp`.
   - Fail-closed behavior changes: a missing `LOCALAPPDATA`, or one that is relative or contains `..`, is now an error on Windows; an empty or relative `ORCEL_APPROVAL_HISTORY_PATH` or `ORCEL_AUDIT_PATH` is refused instead of resolving against the working directory.
   - API changes: `LocalApprovalBroker::new` and `LocalApprovalBroker::with_presence_verifier` return `Result` and fail with `ApprovalUnavailable`; `impl Default for LocalApprovalBroker` is removed; `default_audit_path` and `default_approval_history_path` return `Result`.
+- XP-01B: full-control authority, the executable registry, remote-session leases, trust records and the browser profile also default to the private per-user state root and fail closed instead of falling back to the shared temp directory. Windows paths are unchanged.
+  - Migration: none. State an earlier build left under the shared temp directory (`/tmp/orcel` or `$TMPDIR/orcel`) is ignored, never read or trusted; full-control and remote leases must be granted again, trust re-granted and executables re-registered. Delete the old directory by hand.
+  - The shared-temp `orcel` directory is no longer a protected state root, since nothing defaults there.
+  - Fail-closed behavior changes: an empty or relative `ORCEL_TRUST_PATH`, `ORCEL_REMOTE_LEASE_PATH`, `ORCEL_EXECUTABLE_REGISTRY_PATH` or `ORCEL_BROWSER_STATE_DIR` is refused. Every `ORCEL_*` state override, including `ORCEL_AUDIT_PATH` and `ORCEL_APPROVAL_HISTORY_PATH`, must now sit in a directory that passes the same private-directory checks as the default root; a missing directory is created 0700. Only a request that uses an unavailable store fails, with `PROVIDER_UNAVAILABLE`.
+  - On Unix the authority key, full-control state, trust records, lease store and executable registry are written mode 0600. Atomic replaces go through an exclusively created temp file with a random name.
+  - API changes: `default_trust_path`, `default_profile_root`, `default_lease_store_path`, `default_registry_path`, `default_authority_dir`, `default_key_path` and `default_store_path` return `Result`.
 
 ## 2026-10-16 — Orbital identity adopted (repository change)
 

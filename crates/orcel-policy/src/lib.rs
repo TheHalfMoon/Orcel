@@ -424,9 +424,13 @@ fn enforce_sg000010_executable_policy(
     if requested == allowed {
         return Ok(());
     }
-    let entries = crate::executable_registry::load_registry(
-        &crate::executable_registry::default_registry_path(),
-    );
+    let registry_path = crate::executable_registry::default_registry_path().map_err(|error| {
+        PolicyError::new(
+            FailureCode::ProviderUnavailable,
+            format!("SG-000060 executable registry is unavailable: {error}"),
+        )
+    })?;
+    let entries = crate::executable_registry::load_registry(&registry_path);
     crate::executable_registry::check_spawn(&entries, Path::new(executable), argv)
         .map(|_| ())
         .map_err(|error| PolicyError::new(error.code, error.message))
@@ -604,8 +608,10 @@ mod tests {
     #[test]
     fn sg000041_refuses_workspace_containing_each_override() {
         let base = temp_root();
+        // The per-OS state root comes from LOCALAPPDATA on Windows and from
+        // HOME elsewhere; both point under `lad` so it is one root per OS.
         let roots = crate::protected_state::protected_state_roots_from(&|name| match name {
-            "LOCALAPPDATA" => Some(base.join("lad").into_os_string()),
+            "LOCALAPPDATA" | "HOME" => Some(base.join("lad").into_os_string()),
             "ORCEL_AUDIT_PATH" => Some(base.join("audit").join("a.jsonl").into_os_string()),
             "ORCEL_TRUST_PATH" => Some(base.join("trust").join("t.jsonl").into_os_string()),
             "ORCEL_APPROVAL_HISTORY_PATH" => {

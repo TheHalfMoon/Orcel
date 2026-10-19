@@ -6,6 +6,8 @@ pub mod remote_session;
 #[path = "sg000039.rs"]
 mod sg000039_legacy;
 pub mod shell_session;
+#[cfg(test)]
+mod xp01b_tests;
 
 pub use orcel_approval::ApprovalClass;
 pub use sg000039_legacy::{

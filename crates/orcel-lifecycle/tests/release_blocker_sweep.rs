@@ -526,3 +526,341 @@ fn workflow_set_is_exactly_the_governed_quartet() {
         vec!["ci.yml", "pages.yml", "release.yml", "review-gates.yml"]
     );
 }
+
+/// XP-01B: transient, per-use locations under the shared temp directory that
+/// non-test Rust may name, as (path, line substring, reason). None of them is
+/// a state default: each is unique per use (nonce or pid in the name), created
+/// exclusively or discarded, and never read back as Orcel state. Every other
+/// `temp_dir()` in non-test Rust fails the gate; state defaults resolve under
+/// `orcel_platform::paths::state_root()` instead.
+const TRANSIENT_TEMP_USES: &[(&str, &str, &str)] = &[
+    (
+        "crates/orcel-lifecycle/src/doctor.rs",
+        "orcel-doctor-",
+        "throwaway ledger path; doctor only asks the broker whether presence is available",
+    ),
+    (
+        "crates/orcel-lifecycle/src/install.rs",
+        "orcel-uninstalled-",
+        "uninstall moves the running CLI out of the install root so the root can be removed",
+    ),
+    (
+        "crates/orcel-provider-git/src/mutation.rs",
+        "let path = std::env::temp_dir().join(format!(",
+        "empty hooks directory, created exclusively per git invocation and removed on drop",
+    ),
+    (
+        "crates/orcel-provider-git/src/push.rs",
+        "let path = std::env::temp_dir().join(format!(",
+        "empty hooks directory, created exclusively per push and removed on drop",
+    ),
+    (
+        "crates/orcel-provider-git/src/push.rs",
+        "let dir = std::env::temp_dir().join(format!(",
+        "per-push askpass directory, created exclusively and removed on drop",
+    ),
+];
+
+/// Files compiled only into tests: `#[cfg(..test..)] mod name;` declarations.
+fn test_only_modules(files: &[(String, String)]) -> Vec<String> {
+    let mut out = Vec::new();
+    for (relative, text) in files.iter().filter(|(path, _)| path.ends_with(".rs")) {
+        let lines: Vec<&str> = text.lines().map(str::trim).collect();
+        for pair in lines.windows(2) {
+            let is_test_cfg = is_test_only_cfg(pair[0]);
+            let Some(name) = pair[1]
+                .strip_prefix("mod ")
+                .or_else(|| pair[1].strip_prefix("pub(crate) mod "))
+                .and_then(|rest| rest.strip_suffix(';'))
+            else {
+                continue;
+            };
+            if !is_test_cfg {
+                continue;
+            }
+            let dir = relative.rsplit_once('/').map_or("", |(dir, _)| dir);
+            let stem = relative
+                .rsplit('/')
+                .next()
+                .and_then(|file| file.strip_suffix(".rs"))
+                .unwrap_or_default();
+            out.push(format!("{dir}/{name}.rs"));
+            out.push(format!("{dir}/{stem}/{name}.rs"));
+        }
+    }
+    out
+}
+
+/// A `#[cfg(..)]` attribute that compiles its item only into tests:
+/// `cfg(test)` or `cfg(all(.., test, ..))`. `not(test)` and
+/// `any(test, ..)` can reach a non-test build, so they do not count.
+fn is_test_only_cfg(attribute: &str) -> bool {
+    let Some(predicate) = attribute
+        .strip_prefix("#[cfg(")
+        .and_then(|rest| rest.strip_suffix(")]"))
+    else {
+        return false;
+    };
+    let predicate = predicate.trim();
+    if predicate == "test" {
+        return true;
+    }
+    predicate
+        .strip_prefix("all(")
+        .and_then(|rest| rest.strip_suffix(')'))
+        .is_some_and(|inner| {
+            !inner.contains('(') && inner.split(',').any(|part| part.trim() == "test")
+        })
+}
+
+/// Lexer state carried across lines by [`brace_delta`].
+#[derive(Clone, Copy, PartialEq)]
+enum Lex {
+    Code,
+    Str,
+    RawStr(usize),
+    BlockComment(usize),
+}
+
+/// Net `{` minus `}` on `line`, and whether any `{` appeared, ignoring
+/// braces inside comments, string, raw-string and character literals;
+/// `state` carries an unterminated string or block comment to the next line.
+fn brace_delta(line: &str, state: &mut Lex) -> (i64, bool) {
+    let chars: Vec<char> = line.chars().collect();
+    let mut delta = 0;
+    let mut opened = false;
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        let next = chars.get(i + 1).copied();
+        match *state {
+            Lex::Str => {
+                if c == '\\' {
+                    i += 1;
+                } else if c == '"' {
+                    *state = Lex::Code;
+                }
+            }
+            Lex::RawStr(hashes) => {
+                if c == '"'
+                    && chars[i + 1..]
+                        .iter()
+                        .take(hashes)
+                        .filter(|h| **h == '#')
+                        .count()
+                        == hashes
+                {
+                    *state = Lex::Code;
+                    i += hashes;
+                }
+            }
+            Lex::BlockComment(depth) => {
+                if c == '*' && next == Some('/') {
+                    *state = if depth == 1 {
+                        Lex::Code
+                    } else {
+                        Lex::BlockComment(depth - 1)
+                    };
+                    i += 1;
+                } else if c == '/' && next == Some('*') {
+                    *state = Lex::BlockComment(depth + 1);
+                    i += 1;
+                }
+            }
+            Lex::Code => {
+                if c == '/' && next == Some('/') {
+                    break;
+                } else if c == '/' && next == Some('*') {
+                    *state = Lex::BlockComment(1);
+                    i += 1;
+                } else if c == '"' {
+                    *state = Lex::Str;
+                } else if c == 'r'
+                    && (next == Some('"') || next == Some('#'))
+                    && !chars[..i]
+                        .last()
+                        .is_some_and(|p| p.is_alphanumeric() || *p == '_')
+                {
+                    let hashes = chars[i + 1..].iter().take_while(|h| **h == '#').count();
+                    if chars.get(i + 1 + hashes) == Some(&'"') {
+                        *state = Lex::RawStr(hashes);
+                        i += 1 + hashes;
+                    }
+                } else if c == '\'' {
+                    // A character literal ('{', '\'', '\u{..}'); a lifetime
+                    // such as 'a has no closing quote right after it.
+                    if next == Some('\\') {
+                        if let Some(end) = chars[i + 2..].iter().position(|q| *q == '\'') {
+                            i += 2 + end;
+                        }
+                    } else if chars.get(i + 2) == Some(&'\'') {
+                        i += 2;
+                    }
+                } else if c == '{' {
+                    delta += 1;
+                    opened = true;
+                } else if c == '}' {
+                    delta -= 1;
+                }
+            }
+        }
+        i += 1;
+    }
+    (delta, opened)
+}
+
+/// The non-test part of a Rust file: every line outside items compiled
+/// only into tests. An item under `#[cfg(test)]` (or `cfg(all(.., test,
+/// ..))`) is skipped through the end of its block, or through its `;` when it
+/// has none (`mod tests;`, `use ..;`). Code after a test item is still
+/// scanned.
+fn non_test_lines(text: &str) -> Vec<(usize, &str)> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut out = Vec::new();
+    let mut index = 0;
+    let mut state = Lex::Code;
+    while index < lines.len() {
+        if state == Lex::Code && is_test_only_cfg(lines[index].trim()) {
+            index = test_item_end(&lines, index + 1) + 1;
+            continue;
+        }
+        brace_delta(lines[index], &mut state);
+        out.push((index + 1, lines[index]));
+        index += 1;
+    }
+    out
+}
+
+/// The last line of the item that starts at `start` (after any further
+/// attributes and doc comments).
+fn test_item_end(lines: &[&str], start: usize) -> usize {
+    let mut index = start;
+    while index < lines.len() {
+        let trimmed = lines[index].trim();
+        if trimmed.starts_with("#[") || trimmed.starts_with("///") {
+            index += 1;
+        } else {
+            break;
+        }
+    }
+    let mut depth = 0;
+    let mut opened = false;
+    let mut state = Lex::Code;
+    while index < lines.len() {
+        let line = lines[index];
+        let (delta, saw_open) = brace_delta(line, &mut state);
+        depth += delta;
+        opened |= saw_open;
+        if opened && depth <= 0 {
+            return index;
+        }
+        if !opened && depth == 0 && state == Lex::Code && line.trim_end().ends_with(';') {
+            return index;
+        }
+        index += 1;
+    }
+    lines.len().saturating_sub(1)
+}
+
+#[test]
+fn non_test_lines_skip_only_the_test_module_block() {
+    let text = "fn a() {}\n#[cfg(test)]\nmod tests {\n    fn t() { let _ = '}'; let _ = \"}\"; }\n    // }\n}\nfn after() { std::env::temp_dir(); }\n#[cfg(not(test))]\nmod real {\n    fn r() {}\n}\n";
+    let kept: Vec<_> = non_test_lines(text)
+        .into_iter()
+        .map(|(_, line)| line)
+        .collect();
+    assert_eq!(
+        kept,
+        vec![
+            "fn a() {}",
+            "fn after() { std::env::temp_dir(); }",
+            "#[cfg(not(test))]",
+            "mod real {",
+            "    fn r() {}",
+            "}",
+        ]
+    );
+    let item = "mod m {\n    #[cfg(test)]\n    pub(super) fn helper(\n        x: u8,\n    ) -> u8 {\n        if x > 0 { x } else { 0 }\n    }\n    #[cfg(test)]\n    use std::fs;\n    fn real() {}\n}\n";
+    let kept: Vec<_> = non_test_lines(item)
+        .into_iter()
+        .map(|(_, line)| line)
+        .collect();
+    assert_eq!(kept, vec!["mod m {", "    fn real() {}", "}"]);
+    let raw = "#[cfg(test)]\nmod tests {\n    const S: &str = r#\"{ \"#;\n}\nfn tail() {}\n";
+    let kept: Vec<_> = non_test_lines(raw)
+        .into_iter()
+        .map(|(_, line)| line)
+        .collect();
+    assert_eq!(kept, vec!["fn tail() {}"]);
+    assert!(is_test_only_cfg("#[cfg(all(test, windows))]"));
+    assert!(!is_test_only_cfg(
+        "#[cfg(any(test, feature = \"test-support\"))]"
+    ));
+    assert!(!is_test_only_cfg("#[cfg(not(test))]"));
+}
+
+#[test]
+fn xp01b_no_shared_temp_state_default_in_non_test_rust() {
+    let root = repo_root();
+    let files = text_files(&root);
+    let test_modules = test_only_modules(&files);
+    let mut hits = Vec::new();
+    let mut used = vec![false; TRANSIENT_TEMP_USES.len()];
+    for (relative, text) in &files {
+        if !relative.ends_with(".rs")
+            || vendored(relative)
+            || is_test_file(relative)
+            || test_modules.contains(relative)
+        {
+            continue;
+        }
+        for (number, line) in non_test_lines(text) {
+            if !line.contains("temp_dir()") {
+                continue;
+            }
+            let allowed = TRANSIENT_TEMP_USES
+                .iter()
+                .position(|(path, needle, _)| path == relative && line.contains(needle));
+            match allowed {
+                Some(index) => used[index] = true,
+                None => hits.push(format!("{relative}:{number}: {}", line.trim())),
+            }
+        }
+    }
+    assert!(
+        hits.is_empty(),
+        "non-test std::env::temp_dir() uses (state defaults belong under \
+         orcel_platform::paths::state_root()):\n{}",
+        hits.join("\n")
+    );
+    let stale: Vec<_> = TRANSIENT_TEMP_USES
+        .iter()
+        .zip(&used)
+        .filter(|(_, used)| !**used)
+        .map(|((path, needle, _), _)| format!("{path}: {needle}"))
+        .collect();
+    assert!(stale.is_empty(), "stale allowlist entries: {stale:?}");
+}
+
+/// XP-01B: none of the stores XP-01B moved names the shared temp directory
+/// outside its tests, even through an allowlisted shape.
+#[test]
+fn xp01b_moved_stores_never_name_the_shared_temp_directory() {
+    let root = repo_root();
+    for relative in [
+        "crates/orcel-policy/src/full_control_store.rs",
+        "crates/orcel-policy/src/executable_registry.rs",
+        "crates/orcel-policy/src/remote_session.rs",
+        "crates/orcel-policy/src/protected_state.rs",
+        "crates/orceld/src/trust.rs",
+        "crates/orcel-provider-browser/src/lib.rs",
+    ] {
+        let text = fs::read_to_string(root.join(relative)).expect("read store source");
+        let hits: Vec<_> = non_test_lines(&text)
+            .into_iter()
+            .filter(|(_, line)| line.contains("temp_dir"))
+            .map(|(number, line)| format!("{relative}:{number}: {}", line.trim()))
+            .collect();
+        assert!(hits.is_empty(), "{hits:?}");
+    }
+}

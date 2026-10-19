@@ -11,8 +11,10 @@
 //! network-less, bounded, per-run-approved process path.
 
 use orcel_contracts::FailureCode;
+use orcel_platform::{files, paths, PlatformError};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::ffi::OsString;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
@@ -171,20 +173,26 @@ fn checksum(entries: &[RegisteredExecutable]) -> String {
     hex_lower(&hasher.finalize())
 }
 
-/// Protected registry location. The override must stay listed in
+/// Protected registry location: `ORCEL_EXECUTABLE_REGISTRY_PATH`, else
+/// `executable_registry.json` in the private per-user Orcel state root (XP-01B).
+/// Fails closed when the override is empty, relative or not in a private
+/// directory, or when the root cannot be resolved or is not private; it never
+/// falls back to the shared temp directory. The override must stay listed in
 /// `protected_state::PROTECTED_STATE_OVERRIDES`.
-pub fn default_registry_path() -> PathBuf {
-    if let Some(path) = std::env::var_os("ORCEL_EXECUTABLE_REGISTRY_PATH") {
-        return PathBuf::from(path);
+pub fn default_registry_path() -> Result<PathBuf, PlatformError> {
+    default_registry_path_from(&|name| std::env::var_os(name))
+}
+
+/// [`default_registry_path`] with the environment read through `lookup`.
+pub fn default_registry_path_from(
+    lookup: &dyn Fn(&str) -> Option<OsString>,
+) -> Result<PathBuf, PlatformError> {
+    if let Some(path) = lookup("ORCEL_EXECUTABLE_REGISTRY_PATH") {
+        return paths::private_file_override(path);
     }
-    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
-        return PathBuf::from(local_app_data)
-            .join("Orcel")
-            .join("executable_registry.json");
-    }
-    std::env::temp_dir()
-        .join("orcel")
-        .join("executable_registry.json")
+    let root = paths::state_root_from(lookup)?;
+    paths::ensure_private_dir(&root)?;
+    Ok(root.join("executable_registry.json"))
 }
 
 /// Load the registry. A missing, corrupt, tampered, or oversized registry
@@ -224,18 +232,8 @@ pub fn save_registry(path: &Path, entries: &[RegisteredExecutable]) -> Result<()
         std::fs::create_dir_all(parent)
             .map_err(|error| internal(format!("create registry directory: {error}")))?;
     }
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or_default();
-    let temp = path.with_extension(format!("tmp-{}-{nanos}", std::process::id()));
-    let result = std::fs::write(&temp, &bytes)
-        .and_then(|()| std::fs::rename(&temp, path))
-        .map_err(|error| internal(format!("write registry: {error}")));
-    if result.is_err() {
-        let _ = std::fs::remove_file(&temp);
-    }
-    result
+    files::write_private_atomic(path, &bytes)
+        .map_err(|error| internal(format!("write registry: {error}")))
 }
 
 /// Deny shells, interpreters, script hosts, non-`.exe` images, UNC and

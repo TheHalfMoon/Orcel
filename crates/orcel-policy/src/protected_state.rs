@@ -33,21 +33,21 @@ pub fn protected_state_roots() -> Vec<PathBuf> {
 }
 
 /// Returns the unresolved protected state roots derived from `lookup`: the
-/// Orcel state root, the XP-01 per-OS state root when it differs, and every
-/// configured override.
+/// XP-01 per-OS state root (`orcel_platform::paths`) and every configured
+/// override.
+///
+/// Every default store (trust records, approval history, audit records, the
+/// browser profile, the lease store, the executable registry and full-control
+/// authority) resolves under the per-OS root since XP-01B, so the old
+/// shared-temp `orcel` root is no longer listed: nothing defaults there, and
+/// state left there by earlier builds is never read. On Windows the per-OS
+/// root is `%LOCALAPPDATA%\Orcel`, the same root as before. When no per-OS
+/// root can be established every default store fails closed, so only the
+/// overrides remain to protect.
 pub fn protected_state_roots_from(lookup: &dyn Fn(&str) -> Option<OsString>) -> Vec<PathBuf> {
-    // Trust records, the browser profile, the lease store, the executable
-    // registry and full-control authority still default under this root.
-    let mut roots = vec![match lookup("LOCALAPPDATA") {
-        Some(local_app_data) => PathBuf::from(local_app_data).join("Orcel"),
-        None => std::env::temp_dir().join("orcel"),
-    }];
-    // Approval history and audit records default under the per-OS state root
-    // (`orcel_platform::paths`). On Windows it is the root above.
+    let mut roots = Vec::new();
     if let Ok(state_root) = orcel_platform::paths::state_root_from(lookup) {
-        if !roots.contains(&state_root) {
-            roots.push(state_root);
-        }
+        roots.push(state_root);
     }
     for name in PROTECTED_STATE_OVERRIDES {
         if let Some(value) = lookup(name) {
@@ -157,10 +157,21 @@ mod tests {
         move |name| values.get(name).cloned()
     }
 
+    /// A per-OS state root for the running OS's layout.
+    fn state_root_values() -> BTreeMap<&'static str, OsString> {
+        if cfg!(windows) {
+            BTreeMap::from([("LOCALAPPDATA", OsString::from(r"C:\Users\u\AppData\Local"))])
+        } else {
+            BTreeMap::from([("HOME", OsString::from("/home/u"))])
+        }
+    }
+
     #[test]
-    fn state_root_follows_local_app_data_and_every_override() {
-        let roots = protected_state_roots_from(&lookup(BTreeMap::from([
-            ("LOCALAPPDATA", OsString::from("/lad")),
+    fn state_root_follows_the_per_os_root_and_every_override() {
+        let mut values = state_root_values();
+        let state_root =
+            orcel_platform::paths::state_root_from(&lookup(values.clone())).expect("root");
+        values.extend([
             ("ORCEL_AUDIT_PATH", OsString::from("/a/audit.jsonl")),
             ("ORCEL_TRUST_PATH", OsString::from("/t/trust.jsonl")),
             (
@@ -168,11 +179,12 @@ mod tests {
                 OsString::from("/h/history.jsonl"),
             ),
             ("ORCEL_BROWSER_STATE_DIR", OsString::from("/b")),
-        ])));
+        ]);
+        let roots = protected_state_roots_from(&lookup(values));
         assert_eq!(
             roots,
             vec![
-                PathBuf::from("/lad").join("Orcel"),
+                state_root,
                 PathBuf::from("/a/audit.jsonl"),
                 PathBuf::from("/t/trust.jsonl"),
                 PathBuf::from("/h/history.jsonl"),
@@ -181,10 +193,21 @@ mod tests {
         );
     }
 
+    /// XP-01B: no default store resolves under the shared temp directory, so
+    /// it is no longer a protected root, and without a per-OS root only the
+    /// overrides remain.
     #[test]
-    fn state_root_falls_back_to_temp_orcel_without_local_app_data() {
+    fn xp01b_temp_orcel_is_no_longer_a_protected_root() {
         let roots = protected_state_roots_from(&lookup(BTreeMap::new()));
-        assert_eq!(roots, vec![std::env::temp_dir().join("orcel")]);
+        assert!(roots.is_empty(), "{roots:?}");
+        let roots = protected_state_roots_from(&lookup(BTreeMap::from([(
+            "ORCEL_TRUST_PATH",
+            OsString::from("/t/trust.jsonl"),
+        )])));
+        assert_eq!(roots, vec![PathBuf::from("/t/trust.jsonl")]);
+        let roots = protected_state_roots_from(&lookup(state_root_values()));
+        let legacy = std::env::temp_dir().join("orcel");
+        assert!(!roots.contains(&legacy), "{roots:?}");
     }
 
     #[cfg(windows)]
@@ -207,7 +230,7 @@ mod tests {
         let state_root =
             orcel_platform::paths::state_root_from(&lookup(values.clone())).expect("root");
         let roots = protected_state_roots_from(&lookup(values));
-        assert_eq!(roots, vec![std::env::temp_dir().join("orcel"), state_root]);
+        assert_eq!(roots, vec![state_root]);
     }
 
     #[test]

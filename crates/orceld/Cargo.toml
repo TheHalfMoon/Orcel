@@ -22,6 +22,7 @@ orcel-approval = { path = "../orcel-approval" }
 orcel-browser-host = { path = "../orcel-browser-host", optional = true }
 orcel-audit = { path = "../orcel-audit" }
 orcel-contracts = { path = "../orcel-contracts" }
+orcel-platform = { path = "../orcel-platform" }
 orcel-policy = { path = "../orcel-policy" }
 orcel-provider-browser = { path = "../orcel-provider-browser" }
 orcel-provider-clipboard = { path = "../orcel-provider-clipboard" }

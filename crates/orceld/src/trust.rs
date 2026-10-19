@@ -1,4 +1,5 @@
 use orcel_contracts::FailureCode;
+use orcel_platform::{files, paths, PlatformError};
 use orcel_provider_fs::ProviderError;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -195,16 +196,12 @@ impl TrustStore {
 
     fn append_to_file(&self, record: &StoredTrust) -> Result<(), ProviderError> {
         use std::io::Write as _;
-        let mut file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)
-            .map_err(|error| {
-                ProviderError::new(
-                    FailureCode::ApprovalUnavailable,
-                    format!("persist trust record: {error}"),
-                )
-            })?;
+        let mut file = files::open_private_append(&self.path).map_err(|error| {
+            ProviderError::new(
+                FailureCode::ApprovalUnavailable,
+                format!("persist trust record: {error}"),
+            )
+        })?;
         serde_json::to_writer(&mut file, record).map_err(|error| {
             ProviderError::new(
                 FailureCode::ApprovalUnavailable,
@@ -244,16 +241,24 @@ impl TrustStore {
     }
 }
 
-pub fn default_trust_path() -> std::path::PathBuf {
-    if let Some(path) = std::env::var_os("ORCEL_TRUST_PATH") {
-        return std::path::PathBuf::from(path);
+/// `ORCEL_TRUST_PATH`, else `trust.jsonl` in the private per-user Orcel state
+/// root (XP-01B). Fails closed when the override is empty, relative or not in a
+/// private directory, or when the root cannot be resolved or is not private; it
+/// never falls back to the shared temp directory.
+pub fn default_trust_path() -> Result<std::path::PathBuf, PlatformError> {
+    default_trust_path_from(&|name| std::env::var_os(name))
+}
+
+/// [`default_trust_path`] with the environment read through `lookup`.
+pub fn default_trust_path_from(
+    lookup: &dyn Fn(&str) -> Option<std::ffi::OsString>,
+) -> Result<std::path::PathBuf, PlatformError> {
+    if let Some(path) = lookup("ORCEL_TRUST_PATH") {
+        return paths::private_file_override(path);
     }
-    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
-        return std::path::PathBuf::from(local_app_data)
-            .join("Orcel")
-            .join("trust.jsonl");
-    }
-    std::env::temp_dir().join("orcel").join("trust.jsonl")
+    let root = paths::state_root_from(lookup)?;
+    paths::ensure_private_dir(&root)?;
+    Ok(root.join("trust.jsonl"))
 }
 
 fn record_checksum(record: &StoredTrust) -> String {
@@ -389,11 +394,18 @@ mod tests {
         };
         let roots = orcel_policy::protected_state::protected_state_roots_from(&lookup);
         for path in [
-            default_trust_path(),
+            default_trust_path_from(&lookup).expect("trust path"),
             orcel_audit::default_audit_path_from(&lookup).expect("audit path"),
             orcel_approval::default_approval_history_path_from(&lookup)
                 .expect("approval history path"),
-            orcel_provider_browser::default_profile_root(),
+            orcel_provider_browser::default_profile_root_from(&lookup)
+                .expect("browser profile root"),
+            orcel_policy::remote_session::default_lease_store_path_from(&lookup)
+                .expect("lease store path"),
+            orcel_policy::executable_registry::default_registry_path_from(&lookup)
+                .expect("registry path"),
+            orcel_policy::full_control_store::default_authority_dir_from(&lookup)
+                .expect("authority dir"),
         ] {
             assert!(
                 roots
@@ -404,5 +416,245 @@ mod tests {
             );
         }
         let _ = std::fs::remove_dir_all(home);
+    }
+
+    /// XP-01B: the trust record default resolves under the private per-user Orcel
+    /// state root, fails closed without one, and never falls back to the
+    /// shared temp directory. State earlier builds left under the shared temp
+    /// directory is not migrated and is never read.
+    mod xp01b {
+        use super::*;
+        use std::ffi::OsString;
+        use std::path::{Path, PathBuf};
+
+        fn resolve(lookup: &dyn Fn(&str) -> Option<OsString>) -> Result<PathBuf, String> {
+            default_trust_path_from(lookup).map_err(|error| error.to_string())
+        }
+
+        fn lookup(vars: Vec<(&'static str, OsString)>) -> impl Fn(&str) -> Option<OsString> {
+            move |name| {
+                vars.iter()
+                    .find(|(key, _)| *key == name)
+                    .map(|(_, value)| value.clone())
+            }
+        }
+
+        fn sandbox(label: &str) -> PathBuf {
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0);
+            let dir = std::env::temp_dir().join(format!(
+                "orcel-trust-xp01b-{label}-{}-{nanos}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(&dir).expect("sandbox");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+                    .expect("chmod sandbox");
+            }
+            dir
+        }
+
+        fn user_root_env(base: &Path) -> Vec<(&'static str, OsString)> {
+            #[cfg(windows)]
+            let name = "LOCALAPPDATA";
+            #[cfg(not(windows))]
+            let name = "HOME";
+            vec![(name, base.as_os_str().to_owned())]
+        }
+
+        #[test]
+        fn default_resolves_under_the_private_root() {
+            let base = sandbox("resolve");
+            let lookup = lookup(user_root_env(&base));
+            let root = orcel_platform::paths::state_root_from(&lookup).expect("root");
+            let path = resolve(&lookup).expect("default");
+            assert_eq!(path, root.join("trust.jsonl"));
+            assert!(path.starts_with(&base));
+            assert!(!path.starts_with(std::env::temp_dir().join("orcel")));
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = std::fs::metadata(&root).expect("root").permissions().mode();
+                assert_eq!(mode & 0o777, 0o700);
+            }
+            let _ = std::fs::remove_dir_all(base);
+        }
+
+        #[test]
+        fn missing_state_root_is_an_error_never_temp() {
+            let error = resolve(&lookup(Vec::new())).expect_err("no root");
+            assert!(error.contains("state root is unavailable"), "{error}");
+        }
+
+        #[test]
+        fn relative_override_is_refused() {
+            for value in ["", "trust.jsonl", "state/trust.jsonl"] {
+                let error = resolve(&lookup(vec![("ORCEL_TRUST_PATH", OsString::from(value))]))
+                    .expect_err("relative override");
+                assert!(error.contains("is not absolute"), "{value:?}: {error}");
+            }
+        }
+
+        #[cfg(windows)]
+        #[test]
+        fn windows_path_is_byte_identical_to_the_previous_default() {
+            let path = resolve(&lookup(vec![(
+                "LOCALAPPDATA",
+                OsString::from(r"C:\Users\u\AppData\Local"),
+            )]))
+            .expect("default");
+            assert_eq!(
+                path.as_os_str(),
+                r"C:\Users\u\AppData\Local\Orcel\trust.jsonl"
+            );
+        }
+
+        /// Recovery: trust records already at the default location are read
+        /// in place with no migration step.
+        #[test]
+        fn existing_trust_records_are_read_in_place_without_migration() {
+            let base = sandbox("recover");
+            let lookup = lookup(user_root_env(&base));
+            let path = resolve(&lookup).expect("default");
+            let mut store = TrustStore::load_or_create(path.clone());
+            store
+                .grant("default", "sg-000020-v1", "test-hello", 1_000)
+                .expect("grant");
+            drop(store);
+            let before = std::fs::read(&path).expect("read");
+            let again = resolve(&lookup).expect("default");
+            assert_eq!(again, path);
+            assert!(
+                TrustStore::load_or_create(again.clone())
+                    .get("default")
+                    .trusted
+            );
+            assert_eq!(std::fs::read(&again).expect("read"), before);
+            let _ = std::fs::remove_dir_all(base);
+        }
+
+        /// Recovery: trust records an earlier build left in the legacy
+        /// shared-temp `orcel` directory are not migrated and never read, so
+        /// every workspace starts untrusted under the private root. Only what
+        /// the test seeds is removed; an earlier build's file is kept and
+        /// serves as the seed.
+        #[test]
+        fn legacy_shared_temp_trust_records_are_ignored() {
+            let legacy_dir = std::env::temp_dir().join("orcel");
+            let legacy = legacy_dir.join("trust.jsonl");
+            let created_dir = !legacy_dir.exists();
+            let created_file = !legacy.exists();
+            if created_file && std::fs::create_dir_all(&legacy_dir).is_ok() {
+                TrustStore::load_or_create(legacy.clone())
+                    .grant("default", "sg-000020-v1", "legacy-seed", 1_000)
+                    .expect("seed legacy trust");
+                assert!(
+                    TrustStore::load_or_create(legacy.clone())
+                        .get("default")
+                        .trusted
+                );
+            }
+            let base = sandbox("legacy");
+            let lookup = lookup(user_root_env(&base));
+            let path = resolve(&lookup).expect("default");
+            assert_ne!(path, legacy);
+            let store = TrustStore::load_or_create(path.clone());
+            assert!(!store.get("default").trusted);
+            assert!(store.history(200).is_empty());
+            assert!(!path.exists(), "nothing is copied from the legacy store");
+            if created_file {
+                let _ = std::fs::remove_file(&legacy);
+            }
+            if created_dir {
+                let _ = std::fs::remove_dir(&legacy_dir);
+            }
+            let _ = std::fs::remove_dir_all(base);
+        }
+
+        #[cfg(unix)]
+        mod unix {
+            use super::*;
+            use std::os::unix::fs::PermissionsExt;
+
+            fn chmod(path: &Path, mode: u32) {
+                std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+                    .expect("chmod");
+            }
+
+            /// The state root this OS's layout derives from `HOME=base`, with every
+            /// directory between `base` and the root's parent created 0700.
+            fn root_under(base: &Path) -> PathBuf {
+                let root = orcel_platform::paths::state_root_from(&home_only(base)).expect("root");
+                let parent = root.parent().expect("root parent");
+                std::fs::create_dir_all(parent).expect("root parent");
+                let mut dir = parent;
+                while dir != base {
+                    chmod(dir, 0o700);
+                    dir = dir.parent().expect("below base");
+                }
+                root
+            }
+
+            fn home_only(base: &Path) -> impl Fn(&str) -> Option<OsString> {
+                lookup(vec![("HOME", base.as_os_str().to_owned())])
+            }
+
+            #[test]
+            fn symlinked_root_is_refused() {
+                let base = sandbox("symlink");
+                let target = base.join("elsewhere");
+                std::fs::create_dir(&target).expect("target");
+                chmod(&target, 0o700);
+                std::os::unix::fs::symlink(&target, root_under(&base)).expect("symlink");
+                let error = resolve(&home_only(&base)).expect_err("symlinked root");
+                assert!(error.contains("is a symbolic link"), "{error}");
+                assert_eq!(std::fs::read_dir(&target).expect("target").count(), 0);
+                let _ = std::fs::remove_dir_all(base);
+            }
+
+            #[test]
+            fn world_writable_root_is_refused_and_left_unrepaired() {
+                let base = sandbox("writable-root");
+                let root = root_under(&base);
+                std::fs::create_dir(&root).expect("root");
+                chmod(&root, 0o777);
+                let error = resolve(&home_only(&base)).expect_err("writable root");
+                assert!(error.contains("grants group or other access"), "{error}");
+                let mode = std::fs::metadata(&root).expect("root").permissions().mode();
+                assert_eq!(mode & 0o777, 0o777);
+                let _ = std::fs::remove_dir_all(base);
+            }
+
+            /// An override gets the default location's guarantees: a parent other
+            /// users can reach is refused.
+            #[test]
+            fn override_in_a_shared_directory_is_refused() {
+                let base = sandbox("shared-override");
+                chmod(&base, 0o755);
+                let override_path = base.join("trust.jsonl");
+                let error = resolve(&lookup(vec![(
+                    "ORCEL_TRUST_PATH",
+                    override_path.into_os_string(),
+                )]))
+                .expect_err("shared parent");
+                assert!(error.contains("grants group or other access"), "{error}");
+                let _ = std::fs::remove_dir_all(base);
+            }
+
+            #[test]
+            fn world_writable_home_is_refused_before_anything_is_created() {
+                let base = sandbox("writable-home");
+                chmod(&base, 0o777);
+                let error = resolve(&home_only(&base)).expect_err("writable home");
+                assert!(error.contains("is writable by other users"), "{error}");
+                assert_eq!(std::fs::read_dir(&base).expect("base").count(), 0);
+                chmod(&base, 0o700);
+                let _ = std::fs::remove_dir_all(base);
+            }
+        }
     }
 }

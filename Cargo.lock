@@ -400,6 +400,7 @@ name = "orcel-provider-browser"
 version = "0.2.0"
 dependencies = [
  "orcel-contracts",
+ "orcel-platform",
  "serde",
  "serde_json",
  "sha2",
@@ -485,6 +486,7 @@ dependencies = [
  "orcel-audit",
  "orcel-browser-host",
  "orcel-contracts",
+ "orcel-platform",
  "orcel-policy",
  "orcel-provider-browser",
  "orcel-provider-clipboard",
