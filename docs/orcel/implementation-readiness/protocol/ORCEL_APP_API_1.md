@@ -145,3 +145,13 @@ Publishing never waits for a client. It holds the ring lock only to append. Each
 - **Unix location.** A symlinked socket path, a non-socket file, a directory others can reach, and a socket owned by another user (synthetic seam) are each refused and left in place. A stale socket of ours is replaced. A live socket is kept. The socket mode is 0600 and the directory mode is 0700.
 - **Windows pipe.** The pipe's DACL, read back with `GetSecurityInfo`, is protected and has exactly one ACE, for the current user's SID. A second server cannot take the name.
 - **Another user.** On the Linux and macOS CI legs, `ORCEL_APP_API_OTHER_USER_TEST=1` runs a connect as `nobody` through `sudo`. It must fail with EACCES, and the server must see no connection.
+
+## 9. Reference client (CR-02)
+
+`apps/orcel-control-room` is the headless Control Room client. Its protocol layer, client and conformance suite are adapted from Agent-Native AgentKit (`docs/orcel/control_room_agentkit_provenance.json`). It renders nothing, and the UI is CR-03.
+
+- It sends only `status.get`, `capabilities.get` and `events.subscribe`, and refuses every other method name before writing.
+- Every `events.subscribe` it sends carries `epoch`, so a cursor from an earlier daemon run always gets an `epoch` snapshot rather than the new run's events (#375 item 4). The server still accepts a subscription without `epoch`, and making it required is the server-side half of that item.
+- It rejects any frame field this section does not define, and it rejects a sequence gap before advancing its cursor (AgentKit invariant 22).
+- On Unix it refuses an endpoint whose `run/` directory or socket is not this user's before connecting. On Windows it connects through libuv, which cannot request `SECURITY_IDENTIFICATION` (section 7), so the CR-03 Tauri bridge must open the pipe from Rust.
+- `npm --prefix apps/orcel-control-room test` runs its contract tests and the conformance suite against the real `orceld` on all three OSes in CI.
