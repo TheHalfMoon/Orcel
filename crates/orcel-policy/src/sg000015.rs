@@ -264,15 +264,9 @@ fn policy_error(code: FailureCode, message: impl Into<String>) -> PolicyError {
 mod sg000015_tests {
     use super::*;
     use serde_json::json;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn engine() -> (PolicyEngine, std::path::PathBuf) {
-        let suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("orcel-policy-sg000015-{suffix}"));
-        std::fs::create_dir_all(&root).expect("workspace");
+        let root = crate::test_support::unique_temp_dir("orcel-policy-sg000015");
         let engine = PolicyEngine::new(vec![Workspace {
             id: "default".into(),
             root: root.clone(),

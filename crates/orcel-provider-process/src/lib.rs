@@ -3,6 +3,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+/// XP-13: the contained tier (no network, exact read/write allowlist, no
+/// process creation), run through the pinned `orcel-contain` helper.
+pub mod contained;
+
 const SECRETISH: &[&str] = &[
     "SECRET",
     "TOKEN",

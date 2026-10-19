@@ -7,6 +7,8 @@ pub mod remote_session;
 mod sg000039_legacy;
 pub mod shell_session;
 #[cfg(test)]
+mod test_support;
+#[cfg(test)]
 mod xp01b_tests;
 
 pub use orcel_approval::ApprovalClass;
