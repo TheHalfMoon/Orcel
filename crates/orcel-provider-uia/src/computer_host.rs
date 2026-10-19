@@ -1,18 +1,20 @@
 // Copyright 2026 TheHalfMoon contributors
 // SPDX-License-Identifier: Apache-2.0
 //
-// SG-000094 private Windows Computer Host adapter. The adapter is deliberately
-// not the default NativeAdapter and adds no caller-facing MCP surface. It only
+// SG-000094 private Computer Host adapter. The adapter is deliberately not the
+// default NativeAdapter and adds no caller-facing MCP surface. It only
 // translates host OS facts/pixels into the existing UiaAdapter contract.
+//
+// XP-06: the same adapter serves the Windows host (`orcel-computer-host`) and
+// the macOS and Linux host (`orcel-native-host`), selected by
+// ORCEL_COMPUTER_HOST_BIN on every OS. The negotiated hello fixes the host
+// identity every response must echo and the window kind bound requests carry;
+// the capability table makes the adapter refuse, before sending anything, an
+// operation the host does not deliver (the native host is observation only).
 
-#[cfg(windows)]
-use crate::CapturedImage;
-use crate::{NativeElement, NativeProcess, NativeWindow, UiaAdapter, UiaError};
+use crate::{CapturedImage, NativeElement, NativeProcess, NativeWindow, UiaAdapter, UiaError};
 use orcel_contracts::FailureCode;
-#[cfg(any(windows, test))]
-use serde::Deserialize;
-#[cfg(windows)]
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 /// One live cursor snapshot from the private Windows Computer Host.
@@ -79,7 +81,6 @@ pub enum DesktopWindowAction {
     Close,
 }
 
-#[cfg(windows)]
 impl DesktopWindowAction {
     fn as_host_str(self) -> &'static str {
         match self {
@@ -92,16 +93,12 @@ impl DesktopWindowAction {
     }
 }
 
-#[cfg(windows)]
 use crate::host_protocol::{
-    map_refusal_code, negotiate, HelloFrame, NegotiatedHost, ProtocolGeneration, HOST_IDENTITY,
-    PROTOCOL_V1,
+    map_refusal_code, negotiate, HelloFrame, NegotiatedHost, ProtocolGeneration, PROTOCOL_V1,
 };
 
-#[cfg(windows)]
 const MAX_HOST_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 
-#[cfg(windows)]
 #[derive(Debug, Serialize)]
 struct HostRequest<'a> {
     id: u64,
@@ -153,8 +150,8 @@ struct HostRequest<'a> {
     window: Option<HostWindowRef>,
 }
 
-/// The `/2` platform-tagged window reference. This adapter serves `hwnd`.
-#[cfg(windows)]
+/// The `/2` platform-tagged window reference, of the kind the negotiated
+/// backend serves (`hwnd`, `cgwindow`, `x11` or `wl_toplevel`).
 #[derive(Debug, Serialize)]
 struct HostWindowRef {
     kind: &'static str,
@@ -164,7 +161,6 @@ struct HostWindowRef {
     expected_window_nonce: u64,
 }
 
-#[cfg(windows)]
 impl<'a> HostRequest<'a> {
     fn new(op: &'a str) -> Self {
         Self {
@@ -198,7 +194,7 @@ impl<'a> HostRequest<'a> {
 
     /// Frames the request in the negotiated generation. Under `/2` a complete
     /// exact binding travels as the platform-tagged window reference.
-    fn frame_for(&mut self, generation: ProtocolGeneration) {
+    fn frame_for(&mut self, generation: ProtocolGeneration, kind: &'static str) {
         self.protocol = generation.as_str();
         if generation != ProtocolGeneration::V2 {
             return;
@@ -215,7 +211,7 @@ impl<'a> HostRequest<'a> {
             self.expected_window_nonce,
         ) {
             self.window = Some(HostWindowRef {
-                kind: "hwnd",
+                kind,
                 id,
                 expected_pid,
                 expected_start_generation,
@@ -236,7 +232,6 @@ impl<'a> HostRequest<'a> {
     }
 }
 
-#[cfg(windows)]
 #[derive(Debug, Deserialize)]
 struct HostError {
     code: String,
@@ -247,7 +242,6 @@ struct HostError {
     generation: ProtocolGeneration,
 }
 
-#[cfg(windows)]
 #[derive(Debug, Deserialize, Clone)]
 struct HostProcess {
     pid: u32,
@@ -259,7 +253,6 @@ struct HostProcess {
     generation_source: String,
 }
 
-#[cfg(windows)]
 #[derive(Debug, Deserialize, Clone)]
 struct HostWindow {
     process: HostProcess,
@@ -270,7 +263,6 @@ struct HostWindow {
     window_nonce: u64,
 }
 
-#[cfg(windows)]
 #[derive(Debug, Clone, Copy)]
 struct HostTargetBinding {
     pid: u32,
@@ -278,7 +270,6 @@ struct HostTargetBinding {
     window_nonce: u64,
 }
 
-#[cfg(any(windows, test))]
 #[derive(Debug, Deserialize)]
 struct HostElement {
     runtime_id: String,
@@ -296,7 +287,6 @@ struct HostElement {
     children: Vec<HostElement>,
 }
 
-#[cfg(windows)]
 #[derive(Debug, Deserialize)]
 struct HostCapture {
     width: u32,
@@ -305,7 +295,6 @@ struct HostCapture {
     pixels_b64: String,
 }
 
-#[cfg(windows)]
 #[derive(Debug, Deserialize)]
 struct HostCursor {
     x: i32,
@@ -315,14 +304,12 @@ struct HostCursor {
     last_input_tick: u32,
 }
 
-#[cfg(windows)]
 #[derive(Debug, Deserialize)]
 struct HostAction {
     state: String,
     action: String,
 }
 
-#[cfg(windows)]
 #[derive(Debug, Deserialize)]
 struct HostResponse {
     id: u64,
@@ -339,7 +326,6 @@ struct HostResponse {
     error: Option<HostError>,
 }
 
-#[cfg(windows)]
 fn map_host_error(error: HostError) -> UiaError {
     UiaError::new(
         map_refusal_code(error.generation, &error.code),
@@ -347,7 +333,6 @@ fn map_host_error(error: HostError) -> UiaError {
     )
 }
 
-#[cfg(any(windows, test))]
 fn decode_base64(input: &str, max_bytes: usize) -> Result<Vec<u8>, UiaError> {
     fn value(byte: u8) -> Option<u8> {
         match byte {
@@ -422,7 +407,6 @@ fn decode_base64(input: &str, max_bytes: usize) -> Result<Vec<u8>, UiaError> {
     Ok(out)
 }
 
-#[cfg(any(windows, test))]
 fn convert_element(element: HostElement) -> NativeElement {
     NativeElement {
         runtime_id: element.runtime_id,
@@ -445,18 +429,45 @@ fn convert_element(element: HostElement) -> NativeElement {
     }
 }
 
-#[cfg(windows)]
 mod platform {
     use super::*;
     use std::collections::BTreeMap;
     use std::io::{BufRead, BufReader, Write};
-    use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+    use std::process::{Child, Command, Stdio};
     use std::sync::Mutex;
 
+    /// The environment the host inherits, by name; everything else is
+    /// cleared. Windows is unchanged from `/1`. On Linux these are what X11,
+    /// Wayland and AT-SPI clients read; on macOS only the basics.
+    #[cfg(windows)]
+    const HOST_ENV: &[&str] = &["SystemRoot", "WINDIR", "COMSPEC", "TEMP", "TMP", "PATH"];
+    #[cfg(target_os = "macos")]
+    const HOST_ENV: &[&str] = &["PATH", "LANG", "TMPDIR"];
+    #[cfg(not(any(windows, target_os = "macos")))]
+    const HOST_ENV: &[&str] = &[
+        "PATH",
+        "LANG",
+        "HOME",
+        "DISPLAY",
+        "XAUTHORITY",
+        "WAYLAND_DISPLAY",
+        "XDG_RUNTIME_DIR",
+        "DBUS_SESSION_BUS_ADDRESS",
+        "XDG_SESSION_TYPE",
+        "XDG_CURRENT_DESKTOP",
+        "XDG_SESSION_DESKTOP",
+        "DESKTOP_SESSION",
+        "SWAYSOCK",
+        "KDE_FULL_SESSION",
+    ];
+
+    pub(super) type HostWriter = Box<dyn Write + Send>;
+    pub(super) type HostReader = Box<dyn BufRead + Send>;
+
     struct HostSession {
-        child: Child,
-        stdin: ChildStdin,
-        stdout: BufReader<ChildStdout>,
+        child: Option<Child>,
+        stdin: HostWriter,
+        stdout: HostReader,
         next_id: u64,
         negotiated: NegotiatedHost,
     }
@@ -469,7 +480,7 @@ mod platform {
                 .stdout(Stdio::piped())
                 .stderr(Stdio::null())
                 .env_clear();
-            for name in ["SystemRoot", "WINDIR", "COMSPEC", "TEMP", "TMP", "PATH"] {
+            for name in HOST_ENV {
                 if let Some(value) = std::env::var_os(name) {
                     command.env(name, value);
                 }
@@ -492,16 +503,30 @@ mod platform {
                     "computer host stdout is unavailable",
                 )
             })?;
+            Self::over(
+                Some(child),
+                Box::new(stdin),
+                Box::new(BufReader::new(stdout)),
+                crate::host_protocol::current_platform(),
+            )
+        }
+
+        /// Negotiates over an established transport. A failed handshake
+        /// drops the session, which ends the host.
+        fn over(
+            child: Option<Child>,
+            stdin: HostWriter,
+            stdout: HostReader,
+            platform: &str,
+        ) -> Result<Self, UiaError> {
             let mut session = Self {
                 child,
                 stdin,
-                stdout: BufReader::new(stdout),
+                stdout,
                 next_id: 1,
                 negotiated: NegotiatedHost::v1(),
             };
-            let negotiated = negotiate(crate::host_protocol::current_platform(), |protocol| {
-                session.hello(protocol)
-            })?;
+            let negotiated = negotiate(platform, |protocol| session.hello(protocol))?;
             session.negotiated = negotiated;
             Ok(session)
         }
@@ -548,7 +573,7 @@ mod platform {
         fn exchange(&mut self, mut request: HostRequest<'_>) -> Result<HostResponse, UiaError> {
             self.negotiated.require(request.op)?;
             let generation = self.negotiated.generation();
-            request.frame_for(generation);
+            request.frame_for(generation, self.negotiated.window_kind());
             let (id, line) = self.roundtrip(request)?;
             let response: HostResponse = serde_json::from_str(&line).map_err(|_| {
                 UiaError::new(
@@ -558,7 +583,7 @@ mod platform {
             })?;
             if response.id != id
                 || response.protocol != generation.as_str()
-                || response.host != HOST_IDENTITY
+                || response.host != self.negotiated.identity()
             {
                 return Err(UiaError::new(
                     FailureCode::ProviderUnavailable,
@@ -645,8 +670,10 @@ mod platform {
     impl Drop for HostSession {
         fn drop(&mut self) {
             let _ = self.request("shutdown", None, None, None, None);
-            let _ = self.child.kill();
-            let _ = self.child.wait();
+            if let Some(child) = self.child.as_mut() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
         }
     }
 
@@ -679,6 +706,21 @@ mod platform {
 
         pub fn executable(&self) -> &Path {
             &self.path
+        }
+
+        /// An adapter over a scripted transport, negotiated for `platform`.
+        #[cfg(test)]
+        pub(crate) fn over_transport(
+            stdin: HostWriter,
+            stdout: HostReader,
+            platform: &str,
+        ) -> Result<Self, UiaError> {
+            let session = HostSession::over(None, stdin, stdout, platform)?;
+            Ok(Self {
+                path: PathBuf::from("scripted-host"),
+                session: Mutex::new(session),
+                bindings: Mutex::new(BTreeMap::new()),
+            })
         }
 
         #[cfg(test)]
@@ -1010,10 +1052,11 @@ mod platform {
                     session_id: process.session_id,
                     session_verified: process.session_verified,
                     start_generation: process.start_generation,
-                    generation_source: if process.generation_source == "win32-creation-time" {
-                        "win32-creation-time"
-                    } else {
-                        "computer-host"
+                    generation_source: match process.generation_source.as_str() {
+                        "win32-creation-time" => "win32-creation-time",
+                        "linux-proc-starttime" => "linux-proc-starttime",
+                        "macos-bsd-start-time" => "macos-bsd-start-time",
+                        _ => "computer-host",
                     },
                 })
                 .collect())
@@ -1130,104 +1173,22 @@ mod platform {
     }
 }
 
-#[cfg(windows)]
 pub use platform::ComputerHostAdapter;
-
-#[cfg(not(windows))]
-pub struct ComputerHostAdapter {
-    path: PathBuf,
-}
-
-#[cfg(not(windows))]
-impl ComputerHostAdapter {
-    pub fn from_path(path: impl Into<PathBuf>) -> Result<Self, UiaError> {
-        Ok(Self { path: path.into() })
-    }
-
-    pub fn from_env() -> Result<Self, UiaError> {
-        Err(UiaError::new(
-            FailureCode::ProviderUnavailable,
-            "computer host is available only on Windows",
-        ))
-    }
-
-    pub fn executable(&self) -> &Path {
-        &self.path
-    }
-
-    // The Windows-only methods remain type-visible on other hosts but never
-    // acquire desktop, input, or authority capabilities.
-    pub fn cursor_position(&self) -> Result<DesktopCursorPosition, UiaError> {
-        Err(UiaError::new(
-            FailureCode::ProviderUnavailable,
-            "computer host is available only on Windows",
-        ))
-    }
-
-    pub fn execute_raw_input(
-        &self,
-        _hwnd: u64,
-        _action: &DesktopInputAction,
-        _expected_last_input_tick: u32,
-    ) -> Result<DesktopActionResult, UiaError> {
-        Err(UiaError::new(
-            FailureCode::ProviderUnavailable,
-            "computer host is available only on Windows",
-        ))
-    }
-
-    pub fn execute_window_action(
-        &self,
-        _hwnd: u64,
-        _action: DesktopWindowAction,
-        _expected_last_input_tick: u32,
-    ) -> Result<DesktopActionResult, UiaError> {
-        Err(UiaError::new(
-            FailureCode::ProviderUnavailable,
-            "computer host is available only on Windows",
-        ))
-    }
-}
-
-#[cfg(not(windows))]
-impl UiaAdapter for ComputerHostAdapter {
-    fn list_processes(&self) -> Result<Vec<NativeProcess>, UiaError> {
-        Err(UiaError::new(
-            FailureCode::ProviderUnavailable,
-            "computer host is available only on Windows",
-        ))
-    }
-
-    fn list_windows(&self, _pid: u32) -> Result<Vec<NativeWindow>, UiaError> {
-        Err(UiaError::new(
-            FailureCode::ProviderUnavailable,
-            "computer host is available only on Windows",
-        ))
-    }
-
-    fn read_tree(&self, _hwnd: u64) -> Result<Vec<NativeElement>, UiaError> {
-        Err(UiaError::new(
-            FailureCode::ProviderUnavailable,
-            "computer host is available only on Windows",
-        ))
-    }
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::{json, Value};
+    use std::io::{BufRead, Read, Write};
+    use std::sync::mpsc::{channel, Receiver, Sender};
+    use std::sync::{Arc, Mutex};
 
-    #[cfg(not(windows))]
     #[test]
-    fn windows_desktop_control_fails_closed_on_other_platforms() {
-        let adapter = ComputerHostAdapter::from_path("not-a-windows-host").unwrap();
-        assert!(adapter.cursor_position().is_err());
-        assert!(adapter
-            .execute_raw_input(1, &DesktopInputAction::Move { x: 1, y: 1 }, 0)
-            .is_err());
-        assert!(adapter
-            .execute_window_action(1, DesktopWindowAction::Focus, 0)
-            .is_err());
+    fn missing_host_binary_is_unavailable() {
+        let error = ComputerHostAdapter::from_path("definitely-not-an-orcel-host-binary")
+            .err()
+            .expect("spawn fails");
+        assert_eq!(error.code, FailureCode::ProviderUnavailable);
     }
 
     #[test]
@@ -1258,7 +1219,6 @@ mod tests {
         assert_eq!(convert_element(element).value, None);
     }
 
-    #[cfg(windows)]
     #[test]
     fn bound_requests_are_framed_per_negotiated_generation() {
         let binding = HostTargetBinding {
@@ -1268,24 +1228,489 @@ mod tests {
         };
         let mut v1 = HostRequest::new("observe_window");
         v1.bind_window(11, binding);
-        v1.frame_for(ProtocolGeneration::V1);
+        v1.frame_for(ProtocolGeneration::V1, "hwnd");
         assert_eq!(
             serde_json::to_string(&v1).unwrap(),
             r#"{"id":0,"protocol":"orcel-computer-host/1","op":"observe_window","hwnd":11,"expected_pid":12,"expected_start_generation":13,"expected_window_nonce":14}"#
         );
         let mut v2 = HostRequest::new("observe_window");
         v2.bind_window(11, binding);
-        v2.frame_for(ProtocolGeneration::V2);
+        v2.frame_for(ProtocolGeneration::V2, "hwnd");
         assert_eq!(
             serde_json::to_string(&v2).unwrap(),
             r#"{"id":0,"protocol":"orcel-computer-host/2","op":"observe_window","window":{"kind":"hwnd","id":11,"expected_pid":12,"expected_start_generation":13,"expected_window_nonce":14}}"#
         );
+        for kind in ["cgwindow", "x11", "wl_toplevel"] {
+            let mut native = HostRequest::new("observe_window");
+            native.bind_window(11, binding);
+            native.frame_for(ProtocolGeneration::V2, kind);
+            assert_eq!(
+                serde_json::to_string(&native).unwrap(),
+                format!(
+                    r#"{{"id":0,"protocol":"orcel-computer-host/2","op":"observe_window","window":{{"kind":"{kind}","id":11,"expected_pid":12,"expected_start_generation":13,"expected_window_nonce":14}}}}"#
+                )
+            );
+        }
         let mut unbound = HostRequest::new("cursor_position");
-        unbound.frame_for(ProtocolGeneration::V2);
+        unbound.frame_for(ProtocolGeneration::V2, "x11");
         assert_eq!(
             serde_json::to_string(&unbound).unwrap(),
             r#"{"id":0,"protocol":"orcel-computer-host/2","op":"cursor_position"}"#
         );
+    }
+
+    /// The adapter's end of an in-memory pipe to a scripted host thread.
+    struct PipeWriter(Sender<Vec<u8>>);
+
+    impl Write for PipeWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .send(buf.to_vec())
+                .map_err(|_| std::io::Error::from(std::io::ErrorKind::BrokenPipe))?;
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct PipeReader {
+        receiver: Receiver<Vec<u8>>,
+        buffer: Vec<u8>,
+        position: usize,
+    }
+
+    impl Read for PipeReader {
+        fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+            let available = self.fill_buf()?;
+            let count = available.len().min(out.len());
+            out[..count].copy_from_slice(&available[..count]);
+            self.consume(count);
+            Ok(count)
+        }
+    }
+
+    impl BufRead for PipeReader {
+        fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+            if self.position >= self.buffer.len() {
+                self.buffer = self.receiver.recv().unwrap_or_default();
+                self.position = 0;
+            }
+            Ok(&self.buffer[self.position..])
+        }
+
+        fn consume(&mut self, amount: usize) {
+            self.position += amount;
+        }
+    }
+
+    type Frames = Arc<Mutex<Vec<Value>>>;
+
+    /// Connects an adapter, negotiated for `platform`, to a host thread that
+    /// answers each frame with `answer` (`None` hangs up).
+    fn scripted(
+        platform: &str,
+        mut answer: impl FnMut(&Value) -> Option<String> + Send + 'static,
+    ) -> (Result<ComputerHostAdapter, UiaError>, Frames) {
+        let (to_host, from_adapter) = channel::<Vec<u8>>();
+        let (to_adapter, from_host) = channel::<Vec<u8>>();
+        let frames: Frames = Arc::new(Mutex::new(Vec::new()));
+        let seen = frames.clone();
+        std::thread::spawn(move || {
+            let mut pending = Vec::new();
+            while let Ok(chunk) = from_adapter.recv() {
+                pending.extend_from_slice(&chunk);
+                while let Some(end) = pending.iter().position(|byte| *byte == b'\n') {
+                    let line: Vec<u8> = pending.drain(..=end).collect();
+                    let frame: Value = serde_json::from_slice(&line[..end]).unwrap();
+                    seen.lock().unwrap().push(frame.clone());
+                    let Some(mut reply) = answer(&frame) else {
+                        return;
+                    };
+                    reply.push('\n');
+                    if to_adapter.send(reply.into_bytes()).is_err() {
+                        return;
+                    }
+                }
+            }
+        });
+        let adapter = ComputerHostAdapter::over_transport(
+            Box::new(PipeWriter(to_host)),
+            Box::new(PipeReader {
+                receiver: from_host,
+                buffer: Vec::new(),
+                position: 0,
+            }),
+            platform,
+        );
+        (adapter, frames)
+    }
+
+    fn native_reply(frame: &Value, body: Value) -> String {
+        let mut reply = json!({
+            "id": frame["id"],
+            "ok": true,
+            "protocol": "orcel-computer-host/2",
+            "host": "orcel-native-host",
+        });
+        if let (Some(reply), Some(body)) = (reply.as_object_mut(), body.as_object()) {
+            reply.extend(body.clone());
+        }
+        reply.to_string()
+    }
+
+    fn native_refusal(frame: &Value, code: &str) -> String {
+        json!({
+            "id": frame["id"],
+            "ok": false,
+            "protocol": "orcel-computer-host/2",
+            "host": "orcel-native-host",
+            "error": {"code": code, "message": format!("refused: {code}")},
+        })
+        .to_string()
+    }
+
+    /// The table `orcel-native-host` reports when observation works.
+    fn observing_table(observation: &str) -> Value {
+        let mut table = serde_json::Map::new();
+        for op in crate::host_protocol::V1_OPERATIONS {
+            let entry = match op {
+                "hello" | "ping" | "shutdown" | "cursor_position" => {
+                    json!({"support": "delivered"})
+                }
+                "list_windows" | "observe_window" if observation == "delivered" => {
+                    json!({"support": "delivered"})
+                }
+                "list_windows" | "observe_window" => {
+                    json!({"support": "unavailable", "reason": observation})
+                }
+                "capture_window" => {
+                    json!({"support": "unavailable", "reason": "provider_unavailable"})
+                }
+                _ => json!({"support": "refused", "reason": "capability_denied"}),
+            };
+            table.insert(op.to_owned(), entry);
+        }
+        Value::Object(table)
+    }
+
+    fn native_hello(frame: &Value, observation: &str) -> String {
+        native_reply(
+            frame,
+            json!({
+                "platform": "linux",
+                "backend": "atspi-x11",
+                "capabilities": observing_table(observation),
+            }),
+        )
+    }
+
+    const SECRET: &str = "hunter2-xp06-secret";
+
+    fn window_fact(hwnd: u64, title: &str) -> Value {
+        json!({
+            "process": {
+                "pid": 4410,
+                "exe_name": "gedit",
+                "exe_id": "00112233445566778899aabbccddeeff",
+                "session_id": 0,
+                "session_verified": false,
+                "start_generation": 133702,
+                "generation_source": "linux-proc-starttime"
+            },
+            "hwnd": hwnd,
+            "title": title,
+            "class": "gedit",
+            "visible": true,
+            "window_nonce": 99
+        })
+    }
+
+    fn element(
+        runtime_id: &str,
+        control_type: &str,
+        name: &str,
+        value: Option<&str>,
+        password: bool,
+        children: Vec<Value>,
+    ) -> Value {
+        json!({
+            "runtime_id": runtime_id,
+            "control_type": control_type,
+            "automation_id": "",
+            "name": name,
+            "enabled": true,
+            "selected": false,
+            "toggled": false,
+            "scroll_horizontal_percent": 0,
+            "scroll_vertical_percent": 0,
+            "patterns": [],
+            "value": value,
+            "value_is_password": password,
+            "children": children
+        })
+    }
+
+    /// A Linux native host: two windows (one a protected Orcel surface), a
+    /// tree with a plain field and a password field, and a cursor.
+    fn linux_desktop(frame: &Value) -> Option<String> {
+        match frame["op"].as_str().unwrap_or_default() {
+            "hello" => Some(native_hello(frame, "delivered")),
+            "list_windows" => Some(native_reply(
+                frame,
+                json!({"windows": [window_fact(11, "Editor"), window_fact(12, "Orcel Approval Probe 7")]}),
+            )),
+            "observe_window" => Some(native_reply(
+                frame,
+                json!({"elements": [element("1:0", "Window", "Editor", None, false, vec![
+                    element("1:1", "Edit", "Name", Some("visible text"), false, Vec::new()),
+                    element("1:2", "Edit", "Sign in", Some(SECRET), true, Vec::new()),
+                ])]}),
+            )),
+            "cursor_position" => Some(native_reply(
+                frame,
+                json!({"cursor": {"x": 5, "y": 6, "screen_width": 1280, "screen_height": 800, "last_input_tick": 0}}),
+            )),
+            "ping" | "shutdown" => Some(native_reply(frame, json!({}))),
+            _ => Some(native_refusal(frame, "capability_denied")),
+        }
+    }
+
+    fn ops(frames: &Frames) -> Vec<String> {
+        frames
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|frame| frame["op"].as_str().unwrap_or_default().to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn native_host_observation_is_bound_redacted_and_excludes_protected_surfaces() {
+        let (adapter, frames) = scripted("linux", linux_desktop);
+        let adapter = adapter.unwrap();
+        assert_eq!(
+            adapter.negotiated_generation_for_test(),
+            ProtocolGeneration::V2
+        );
+        let mut registry = crate::UiaRegistry::new();
+        let listing = registry
+            .list_windows(&adapter, "xp06-ws", "xp06-policy")
+            .unwrap();
+        assert!(listing["protected_omitted"].as_u64().unwrap() >= 1);
+        let windows = listing["windows"].as_array().unwrap();
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0]["title"], "Editor");
+        let window_id = windows[0]["window_id"].as_str().unwrap().to_owned();
+        let generation = windows[0]["window_generation"].as_u64().unwrap();
+        let tree = registry
+            .observe_tree(
+                &adapter,
+                &window_id,
+                generation,
+                None,
+                None,
+                "xp06-ws",
+                "xp06-policy",
+            )
+            .unwrap();
+        let rendered = tree.to_string();
+        assert!(!rendered.contains(SECRET), "{rendered}");
+        let nodes = tree["nodes"].as_array().unwrap();
+        assert!(nodes.iter().any(|node| node["value"] == "visible text"));
+        let hidden = nodes
+            .iter()
+            .find(|node| node["value_is_password"] == true)
+            .unwrap();
+        assert_eq!(hidden["redacted"], true);
+        assert!(hidden["value"].is_null());
+
+        // The bound frame carried the native window kind, not legacy fields.
+        let frames = frames.lock().unwrap();
+        let observe = frames
+            .iter()
+            .find(|frame| frame["op"] == "observe_window")
+            .unwrap();
+        assert_eq!(observe["protocol"], "orcel-computer-host/2");
+        assert_eq!(
+            observe["window"],
+            json!({"kind": "x11", "id": 11, "expected_pid": 4410, "expected_start_generation": 133702, "expected_window_nonce": 99})
+        );
+        assert!(observe.get("hwnd").is_none());
+    }
+
+    #[test]
+    fn native_host_mutations_and_capture_are_refused_before_any_frame() {
+        let (adapter, frames) = scripted("linux", linux_desktop);
+        let adapter = adapter.unwrap();
+        assert_eq!(adapter.list_processes().unwrap().len(), 1);
+        let refused = [
+            adapter
+                .execute_raw_input(11, &DesktopInputAction::Move { x: 1, y: 1 }, 0)
+                .unwrap_err(),
+            adapter
+                .execute_window_action(11, DesktopWindowAction::Focus, 0)
+                .unwrap_err(),
+            adapter.invoke_element(11, "1:1").unwrap_err(),
+            adapter.capture_window(11).unwrap_err(),
+        ];
+        for error in &refused {
+            assert_eq!(error.code, FailureCode::ProviderUnavailable, "{error:?}");
+            assert!(error.message.contains("does not deliver"), "{error:?}");
+        }
+        let cursor = adapter.cursor_position().unwrap();
+        assert_eq!((cursor.x, cursor.y, cursor.screen_width), (5, 6, 1280));
+        let sent = ops(&frames);
+        assert!(
+            sent.iter()
+                .all(|op| matches!(op.as_str(), "hello" | "list_windows" | "cursor_position")),
+            "{sent:?}"
+        );
+    }
+
+    #[test]
+    fn missing_permission_makes_observation_unavailable_without_a_frame() {
+        let (adapter, frames) = scripted("linux", |frame| match frame["op"].as_str() {
+            Some("hello") => Some(native_hello(frame, "permission_missing")),
+            _ => Some(native_reply(frame, json!({}))),
+        });
+        let adapter = adapter.unwrap();
+        let error = adapter.list_processes().unwrap_err();
+        assert_eq!(error.code, FailureCode::ProviderUnavailable);
+        assert!(error.message.contains("permission_missing"), "{error:?}");
+        assert_eq!(ops(&frames), vec!["hello"]);
+    }
+
+    #[test]
+    fn native_refusals_map_onto_existing_failure_codes() {
+        for (code, expected) in [
+            ("target_stale", FailureCode::TargetStale),
+            ("timeout", FailureCode::ProcessTimeout),
+            ("permission_missing", FailureCode::ProviderUnavailable),
+            ("protected_surface", FailureCode::CapabilityDenied),
+            ("output_limit", FailureCode::OutputLimit),
+            ("provider_unavailable", FailureCode::ProviderUnavailable),
+        ] {
+            let (adapter, _) = scripted("linux", move |frame| match frame["op"].as_str() {
+                Some("observe_window") => Some(native_refusal(frame, code)),
+                _ => linux_desktop(frame),
+            });
+            let adapter = adapter.unwrap();
+            adapter.list_processes().unwrap();
+            assert_eq!(adapter.read_tree(11).unwrap_err().code, expected, "{code}");
+        }
+    }
+
+    #[test]
+    fn responses_must_echo_the_native_identity() {
+        let (adapter, _) = scripted("linux", |frame| match frame["op"].as_str() {
+            Some("list_windows") => Some(
+                native_reply(frame, json!({"windows": []}))
+                    .replace("orcel-native-host", "orcel-windows-computer-host"),
+            ),
+            _ => linux_desktop(frame),
+        });
+        let error = adapter.unwrap().list_processes().unwrap_err();
+        assert_eq!(error.code, FailureCode::ProviderUnavailable);
+        assert!(error.message.contains("binding mismatch"), "{error:?}");
+    }
+
+    #[test]
+    fn oversize_native_response_is_output_limit() {
+        let (adapter, _) = scripted("linux", |frame| match frame["op"].as_str() {
+            Some("list_windows") => Some(native_reply(
+                frame,
+                json!({"windows": [], "padding": "x".repeat(MAX_HOST_RESPONSE_BYTES)}),
+            )),
+            _ => linux_desktop(frame),
+        });
+        let error = adapter.unwrap().list_processes().unwrap_err();
+        assert_eq!(error.code, FailureCode::OutputLimit);
+    }
+
+    #[test]
+    fn native_host_that_refuses_v2_is_unavailable_without_v1_fallback() {
+        let (adapter, frames) = scripted("linux", |frame| {
+            Some(
+                json!({
+                    "id": frame["id"], "ok": false, "protocol": "orcel-computer-host/1",
+                    "host": "orcel-native-host",
+                    "error": {"code": "invalid_request", "message": "protocol generation mismatch"}
+                })
+                .to_string(),
+            )
+        });
+        let error = adapter.err().expect("handshake fails");
+        assert_eq!(error.code, FailureCode::ProviderUnavailable);
+        let hellos: Vec<_> = frames
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|frame| frame["op"] == "hello")
+            .map(|frame| frame["protocol"].as_str().unwrap_or_default().to_owned())
+            .collect();
+        assert_eq!(hellos, vec!["orcel-computer-host/2"]);
+    }
+
+    #[test]
+    fn host_crash_during_hello_is_unavailable() {
+        let (adapter, _) = scripted("macos", |_| None);
+        assert_eq!(
+            adapter.err().expect("no host").code,
+            FailureCode::ProviderUnavailable
+        );
+    }
+
+    #[test]
+    fn windows_v1_host_keeps_its_legacy_framing() {
+        let (adapter, frames) = scripted("windows", |frame| {
+            let protocol = frame["protocol"].as_str().unwrap_or_default();
+            let mut reply = json!({
+                "id": frame["id"], "ok": true, "protocol": "orcel-computer-host/1",
+                "host": "orcel-windows-computer-host",
+            });
+            if protocol == "orcel-computer-host/2" {
+                reply["ok"] = json!(false);
+                reply["error"] =
+                    json!({"code": "invalid_request", "message": "protocol generation mismatch"});
+            } else if frame["op"] == "list_windows" {
+                let mut window = window_fact(11, "Editor");
+                window["process"]["generation_source"] = json!("win32-creation-time");
+                reply["windows"] = json!([window]);
+            } else if frame["op"] == "observe_window" {
+                reply["elements"] = json!([]);
+            }
+            Some(reply.to_string())
+        });
+        let adapter = adapter.unwrap();
+        assert_eq!(
+            adapter.negotiated_generation_for_test(),
+            ProtocolGeneration::V1
+        );
+        adapter.list_processes().unwrap();
+        adapter.read_tree(11).unwrap();
+        let frames = frames.lock().unwrap();
+        let observe = frames
+            .iter()
+            .find(|frame| frame["op"] == "observe_window")
+            .unwrap();
+        assert_eq!(observe["hwnd"], 11);
+        assert!(observe.get("window").is_none());
+    }
+
+    #[test]
+    fn os_authentication_and_lock_surfaces_are_protected_per_platform() {
+        assert!(crate::is_protected_window("Orcel Approval", "any"));
+        assert_eq!(
+            crate::is_protected_window("Authenticate", "polkit-gnome-authentication-agent-1"),
+            cfg!(all(unix, not(target_os = "macos")))
+        );
+        assert_eq!(
+            crate::is_protected_window("", "SecurityAgent"),
+            cfg!(target_os = "macos")
+        );
+        assert!(!crate::is_protected_window("Editor", "gedit"));
     }
 
     #[cfg(windows)]
@@ -1301,5 +1726,24 @@ mod tests {
             ProtocolGeneration::V2
         );
         adapter.ping_for_test().unwrap();
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn configured_native_host_handshake_is_exact() {
+        let Some(path) = std::env::var_os("ORCEL_COMPUTER_HOST_BIN") else {
+            return;
+        };
+        let adapter = ComputerHostAdapter::from_path(PathBuf::from(path)).unwrap();
+        assert!(adapter.executable().ends_with("orcel-native-host"));
+        assert_eq!(
+            adapter.negotiated_generation_for_test(),
+            ProtocolGeneration::V2
+        );
+        adapter.ping_for_test().unwrap();
+        let error = adapter
+            .execute_raw_input(1, &DesktopInputAction::Move { x: 1, y: 1 }, 0)
+            .unwrap_err();
+        assert_ne!(error.code, FailureCode::InternalError);
     }
 }

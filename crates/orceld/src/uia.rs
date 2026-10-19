@@ -54,10 +54,34 @@ fn locked_registry() -> Result<std::sync::MutexGuard<'static, UiaRegistry>, Prov
         .map_err(|_| ProviderError::new(FailureCode::InternalError, "uia registry is unavailable"))
 }
 
+/// Whether observation goes through the private computer host. On every OS
+/// the host is selected by ORCEL_COMPUTER_HOST_BIN; unset, the fail-closed
+/// NativeAdapter answers instead (rollback for XP-06 is unsetting it).
+fn computer_host_selected() -> bool {
+    std::env::var_os("ORCEL_COMPUTER_HOST_BIN").is_some()
+}
+
+/// XP-06: off Windows the private host is `orcel-native-host`, the macOS and
+/// Linux host. Any other binary is refused before it is started.
+#[cfg_attr(windows, allow(dead_code))]
+fn is_native_host_binary(path: &std::path::Path) -> bool {
+    path.file_name()
+        .is_some_and(|name| name == "orcel-native-host")
+}
+
 fn computer_host() -> Result<&'static ComputerHostAdapter, ProviderError> {
     static HOST: OnceLock<ComputerHostAdapter> = OnceLock::new();
     if let Some(host) = HOST.get() {
         return Ok(host);
+    }
+    #[cfg(not(windows))]
+    if !std::env::var_os("ORCEL_COMPUTER_HOST_BIN")
+        .is_some_and(|path| is_native_host_binary(std::path::Path::new(&path)))
+    {
+        return Err(ProviderError::new(
+            FailureCode::ProviderUnavailable,
+            "ORCEL_COMPUTER_HOST_BIN must name orcel-native-host on this platform",
+        ));
     }
     let host = ComputerHostAdapter::from_env()
         .map_err(|error| ProviderError::new(error.code, error.message))?;
@@ -546,7 +570,7 @@ pub fn dispatch_uia(
         ("uia.window", "list") => {
             reject_uia_arguments(request, &[])?;
             let mut guard = locked_registry()?;
-            if std::env::var_os("ORCEL_COMPUTER_HOST_BIN").is_some() {
+            if computer_host_selected() {
                 let adapter = computer_host()?;
                 guard
                     .list_windows(adapter, &workspace.id, POLICY_REVISION)
@@ -575,7 +599,7 @@ pub fn dispatch_uia(
             let max_depth = optional_u64(request, "max_depth")?;
             let max_nodes = optional_u64(request, "max_nodes")?;
             let mut guard = locked_registry()?;
-            if std::env::var_os("ORCEL_COMPUTER_HOST_BIN").is_some() {
+            if computer_host_selected() {
                 let adapter = computer_host()?;
                 guard
                     .observe_tree(
@@ -1634,4 +1658,22 @@ fn reject_uia_arguments(request: &RequestEnvelope, allowed: &[&str]) -> Result<(
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod xp06_tests {
+    use super::is_native_host_binary;
+    use std::path::Path;
+
+    #[test]
+    fn xp06_only_orcel_native_host_is_accepted_off_windows() {
+        assert!(is_native_host_binary(Path::new(
+            "/opt/orcel/bin/orcel-native-host"
+        )));
+        assert!(!is_native_host_binary(Path::new(
+            "/opt/orcel/bin/orcel-native-host-evil"
+        )));
+        assert!(!is_native_host_binary(Path::new("/usr/bin/cua-driver")));
+        assert!(!is_native_host_binary(Path::new("")));
+    }
 }
