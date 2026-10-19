@@ -7,8 +7,17 @@ a802eaf26ca97616a6bf0de6a29729a9346fbb1f:
     blob 3fa6cc4132ef2d57ce8b57740fbeb9fb8b6f37cf
     -> crates/orcel-approval/src/presence_unix.rs (XP-09, matrix row
        T-CUA-20, COPY_ADAPT: the macOS LocalAuthentication backend only)
+    -> crates/orcel-approval/src/linux.rs (XP-10, matrix row T-CUA-20,
+       COPY_ADAPT: the Linux polkit pkcheck status mapping and the
+       /proc/<pid>/stat start-time parser only)
 
-Orcel's modifications are listed in the header of the destination file.
+  apps/cua-spaces-desktop/packaging/ai.cua.spaces.policy
+    blob 39fc34b0b3bcf434d25b785fbc62bf3b38669d27
+    -> distribution/linux/ai.orcel.approve.policy (XP-10, matrix row
+       T-CUA-35, COPY_ADAPT: one Orcel action, ai.orcel.approve.strong,
+       with the donor's session defaults kept exactly)
+
+Orcel's modifications are listed in the header of each destination file.
 Both donor bypass variables (CUA_ENV_SKIP_SENSITIVE_AUTH and
 CUA_ENV_ALLOW_UNVERIFIED_SENSITIVE_EXPORT) were removed with every code
 path that read them.

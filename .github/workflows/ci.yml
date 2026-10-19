@@ -59,6 +59,21 @@ jobs:
         run: |
           cargo test -p orcel-approval -- xp09_ --nocapture
           cargo test -p orcel-approval --release -- xp09_ --nocapture
+      # XP-10: the real Linux SOFT helper path and polkit verifier, through
+      # the real broker, must fail closed on a runner (no logind graphical
+      # session). xp10_linux_headless_paths_fail_closed fails instead of
+      # skipping when ORCEL_REQUIRE_XP10_HEADLESS is set; the donor's two
+      # bypass variables are set and must change no outcome (S-24).
+      - name: Linux approvals fail closed headless (debug and release)
+        if: runner.os == 'Linux'
+        env:
+          ORCEL_REQUIRE_XP10_HEADLESS: "1"
+          ORCEL_REQUIRE_XP10_BYPASS_ENV: "1"
+          CUA_ENV_SKIP_SENSITIVE_AUTH: "1"
+          CUA_ENV_ALLOW_UNVERIFIED_SENSITIVE_EXPORT: "1"
+        run: |
+          cargo test -p orcel-approval -- xp10_ --nocapture
+          cargo test -p orcel-approval --release -- xp10_ --nocapture
 
   # XP-05: the macOS/Linux native host is its own Cargo workspace with the
   # vendored Cua Driver crates (apps/orcel-native-host/third_party/cua-driver).
@@ -173,6 +188,61 @@ jobs:
         run: cargo audit
       - name: License check of the native-host graph
         if: runner.os == 'Linux'
+        run: cargo deny check licenses
+
+  # XP-10: the GTK4 approval dialog orceld spawns on Linux. Its own Cargo
+  # workspace, so the root build never needs the GTK development files.
+  approval-helper-linux:
+    name: Approval helper / ubuntu-latest
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+        working-directory: apps/orcel-approval-helper-linux
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - name: Install GTK 4 and Xvfb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgtk-4-dev xvfb xauth
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Protocol tests
+        run: cargo test --locked
+      - name: Build (release, locked)
+        run: cargo build --locked --release
+      # The real helper under Xvfb: nobody answers, so its own 2 s timeout
+      # must answer deny with orceld's nonce; without a display it must exit
+      # without an answer. ORCEL_REQUIRE_XP10_HELPER makes a skip a failure.
+      - name: Real helper under Xvfb answers deny on timeout
+        working-directory: .
+        timeout-minutes: 15
+        env:
+          ORCEL_REQUIRE_XP10_HELPER: "1"
+        run: |
+          export ORCEL_XP10_HELPER_BINARY="$PWD/apps/orcel-approval-helper-linux/target/release/orcel-approval-helper-linux"
+          timeout 600 xvfb-run -a cargo test -p orcel-approval -- xp10_real_helper --nocapture --test-threads=1
+      - uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        id: approval-helper-tools-cache
+        with:
+          path: |
+            ~/.cargo/bin/cargo-audit
+            ~/.cargo/bin/cargo-deny
+          key: native-host-tools-audit-0.22.2-deny-0.20.2-${{ runner.os }}
+      - name: Install cargo-audit and cargo-deny
+        if: steps.approval-helper-tools-cache.outputs.cache-hit != 'true'
+        run: |
+          cargo install cargo-audit --locked --version 0.22.2
+          cargo install cargo-deny --locked --version 0.20.2
+      - name: Audit the helper lockfile
+        run: cargo audit
+      - name: License check of the helper graph
         run: cargo deny check licenses
 
   node:
