@@ -1,0 +1,91 @@
+//! XP-13b unit tests for the contained-tier wiring. The end-to-end run
+//! through the real helper is `legacy::tests::xp13b_a_registered_contained_executable_runs_under_the_helper`
+//! in `main.rs`.
+
+use super::*;
+use std::time::Duration;
+
+fn temp_dir(label: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "orceld-xp13b-{label}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::canonicalize(dir).unwrap()
+}
+
+const DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+#[test]
+fn xp13b_the_pin_file_holds_exactly_one_lowercase_sha256() {
+    assert_eq!(parse_pin(DIGEST.as_bytes()).unwrap(), DIGEST);
+    assert_eq!(parse_pin(format!("{DIGEST}\n").as_bytes()).unwrap(), DIGEST);
+    assert_eq!(
+        parse_pin(format!("{DIGEST}\r\n").as_bytes()).unwrap(),
+        DIGEST
+    );
+    for bad in [
+        String::new(),
+        DIGEST.to_uppercase(),
+        DIGEST[..63].to_owned(),
+        format!("{DIGEST}  orcel-contain\n"),
+        format!("{DIGEST}\n\n"),
+        format!(" {DIGEST}"),
+    ] {
+        let error = parse_pin(bad.as_bytes()).unwrap_err();
+        assert_eq!(error.code, FailureCode::ProviderUnavailable, "{bad:?}");
+    }
+}
+
+#[test]
+fn xp13b_the_helper_is_pinned_only_from_its_own_directory() {
+    let dir = temp_dir("pin");
+    // No pin file: the contained tier is not installed.
+    let error = helper_pin_in(&dir).unwrap_err();
+    assert_eq!(error.code, FailureCode::ProviderUnavailable);
+    assert!(error.message.contains(PIN_NAME), "{}", error.message);
+    std::fs::write(dir.join(PIN_NAME), "not a digest\n").unwrap();
+    assert_eq!(
+        helper_pin_in(&dir).unwrap_err().code,
+        FailureCode::ProviderUnavailable
+    );
+    std::fs::write(dir.join(PIN_NAME), format!("{DIGEST}\n")).unwrap();
+    let pin = helper_pin_in(&dir).unwrap();
+    assert_eq!(pin.path(), dir.join(HELPER_NAME));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn xp13b_the_spec_grants_the_cwd_read_only_and_nothing_writable() {
+    let workspace = temp_dir("spec-workspace");
+    let scratch = temp_dir("spec-scratch");
+    let plan = orcel_provider_process::build_execution_plan(
+        &workspace,
+        std::env::current_exe().unwrap(),
+        &["--version".to_owned()],
+        ".",
+        &Default::default(),
+        orcel_provider_process::ExecutionLimits {
+            timeout: Duration::from_secs(7),
+            stdout_bytes: 100,
+            stderr_bytes: 50,
+        },
+    )
+    .unwrap();
+    let spec = spec_for(&plan, scratch.clone());
+    assert_eq!(spec.executable, plan.executable);
+    assert_eq!(spec.argv, plan.argv);
+    assert_eq!(spec.workdir, scratch);
+    assert_eq!(spec.readable, vec![workspace.clone()]);
+    assert!(spec.writable.is_empty());
+    assert_eq!(spec.limits.timeout, Duration::from_secs(7));
+    assert_eq!(spec.limits.stdout_bytes, 100);
+    assert_eq!(spec.limits.stderr_bytes, 50);
+    assert_eq!(spec.limits.cpu_seconds, 7);
+    let _ = std::fs::remove_dir_all(workspace);
+    let _ = std::fs::remove_dir_all(scratch);
+}

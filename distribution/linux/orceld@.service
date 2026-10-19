@@ -26,6 +26,10 @@ EnvironmentFile=-%E/orcel/orceld.env
 UMask=0077
 KillMode=control-group
 TimeoutStopSec=10
+# XP-13b: the unit's cgroup is delegated to orceld, so the Safe tier puts
+# each registered executable in a child cgroup and ends its whole tree with
+# cgroup.kill, including descendants that leave the process group.
+Delegate=yes
 
 NoNewPrivileges=yes
 RestrictSUIDSGID=yes

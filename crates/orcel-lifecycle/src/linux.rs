@@ -271,6 +271,7 @@ mod tests {
             ("SystemCallArchitectures", "native"),
             ("UMask", "0077"),
             ("KillMode", "control-group"),
+            ("Delegate", "yes"),
         ] {
             assert_eq!(directive(SERVICE, name), [value], "{name}");
         }
@@ -298,7 +299,7 @@ mod tests {
             .collect();
         assert_eq!(
             modes,
-            [0o755, 0o755, 0o755, 0o644, 0o644, 0o644, 0o644, 0o644]
+            [0o755, 0o755, 0o755, 0o755, 0o644, 0o644, 0o644, 0o644, 0o644, 0o644]
         );
         assert!(modes.iter().all(|mode| mode & 0o7022 == 0));
         let owners: Vec<&str> = NFPM
@@ -306,8 +307,13 @@ mod tests {
             .filter_map(|line| line.trim().strip_prefix("owner:"))
             .map(str::trim)
             .collect();
-        assert_eq!(owners, ["root"; 8]);
+        assert_eq!(owners, ["root"; 10]);
         assert!(NFPM.contains(&format!("dst: {PACKAGE_LIB_DIR}/orceld")));
+        // XP-13b: the contained-tier helper and its pin sit beside orceld.
+        for helper in ["orcel-contain", "orcel-contain.sha256"] {
+            let dst = format!("dst: {PACKAGE_LIB_DIR}/{helper}");
+            assert!(NFPM.lines().any(|line| line.trim() == dst), "{dst}");
+        }
         assert!(NFPM.contains(&format!("dst: {PACKAGE_USER_UNIT_DIR}/{SOCKET_UNIT}")));
         assert!(NFPM.contains(&format!("dst: {PACKAGE_USER_UNIT_DIR}/{SERVICE_UNIT}")));
     }

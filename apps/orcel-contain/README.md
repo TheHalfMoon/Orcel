@@ -42,6 +42,69 @@ and again by the helper, which opens it without following links.
 No namespace of any type is created, so `RestrictNamespaces=yes` in
 `orceld@.service` does not affect it (issue #369, item 1).
 
+## Wiring in orceld (XP-13b)
+
+The contained tier is opt-in per registered executable, through the existing
+SG-000060 registry. There is no new capability and no new authority path:
+
+1. `executable.registry.add` takes `"tier": "contained"` under the same STRONG
+   approval. The registration digest binds the tier. Without it the entry
+   stays in the Safe tier, so existing registries and their checksums are
+   unchanged.
+2. `process.spawn` keeps its policy check, per-run approval and pre-launch
+   identity check. The tier is read before approval: the approval digest
+   binds it, and the prompt shows `tier=contained`. A tier that changed
+   during the approval fails as `TargetStale`.
+3. A contained entry runs through `run_contained`:
+   - the requested cwd is granted **read-only**;
+   - the child works in a fresh private scratch directory under the state
+     root (`contained-runs/`), which is removed after the run;
+   - nothing else of the user's is writable;
+   - there is no network and no process creation, and the CPU, memory and
+     descriptor ceilings apply.
+4. It never falls back to the Safe tier. A missing helper, a missing or
+   malformed pin, a tampered helper or a refusal is an error, and a missing
+   helper fails before any prompt.
+
+`crates/orceld/src/contained_tier.rs` holds the wiring. CI runs it end to end
+on every OS (`xp13b_a_registered_contained_executable_runs_under_the_helper`):
+a registered probe reads the cwd, cannot write it, and the uncontained
+positive control can.
+
+On Windows a granted file must have exactly one link (see below). This
+includes the registered executable, so register a plain copy, not, for
+example, a Cargo `target/` output, which Cargo hard-links into `deps/`.
+
+## Installation
+
+orceld resolves the helper only beside its own executable. There is no `PATH`
+lookup and no environment override. It reads two files there:
+
+- `orcel-contain` (`orcel-contain.exe` on Windows);
+- `orcel-contain.sha256`, one lowercase SHA-256 line that the helper must
+  match.
+
+| OS | Where | Built by |
+|---|---|---|
+| Windows | the release payload, beside `orceld.exe`; both files are in `manifest.json`, so the installer verifies them | `scripts/package-release.mjs` (`--contain-target-dir`) in `build-package-qualify`, and checked by `release_qualification` and the reproducibility check |
+| Linux | `/usr/lib/orcel/` from the deb or rpm (root-owned, 0755 and 0644), or `~/.local/share/orcel/bin/` from the tarball | `distribution/linux/package.sh <version> <orceld> <orcel-contain> <out>` and `nfpm.yaml` |
+| macOS | not packaged | see below |
+
+**macOS is not packaged yet.** XP-16, the signed app bundle and LaunchAgent,
+waits on the Apple Developer ID (FD-05). Until then:
+
+- a developer can place a `cargo build --release --locked --bin orcel-contain`
+  output beside their own `orceld` and write its SHA-256 to
+  `orcel-contain.sha256`;
+- such a helper is unsigned, so nothing about it may be published;
+- XP-16 must ship it inside the bundle, signed with the same identity as
+  orceld, and keep the pin file.
+
+The deb, rpm and tarball include the helper's crates in
+`THIRD_PARTY_NOTICES.txt`, and the Windows SBOM lists them
+(`scripts/third-party-notices.mjs` and `scripts/generate-sbom.mjs` walk this
+workspace too).
+
 ## Hard links and junctions
 
 A hard link is a second name for a file, and the name can sit inside a root

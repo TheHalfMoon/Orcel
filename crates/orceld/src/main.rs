@@ -3,6 +3,7 @@ use orcel_approval::{
 };
 use orcel_audit::{default_audit_path, AuditLogger};
 use orcel_contracts::{FailureCode, RequestEnvelope, ResponseEnvelope, INTERNAL_PROTOCOL_VERSION};
+use orcel_policy::executable_registry::ExecutionTier;
 use orcel_policy::{PolicyEngine, Workspace, POLICY_REVISION};
 use orcel_provider_fs::{FsProvider, ProviderError};
 use orcel_provider_git::{GitProvider, GitProviderError};
@@ -381,19 +382,29 @@ fn process_spawn(
     )
     .map_err(|error| ProviderError::new(FailureCode::InvalidRequest, error.message))?;
 
-    let digest = process_approval_digest(workspace, &plan);
+    // XP-13b: the registered tier is read before approval and bound into it.
+    // A contained entry needs its pinned helper; without one it fails here,
+    // before any prompt, and never falls back to the Safe tier.
+    let tier = crate::contained_tier::registered_tier(&plan)?;
+    let helper = match tier {
+        ExecutionTier::Contained => Some(crate::contained_tier::installed_helper_pin()?),
+        ExecutionTier::Safe => None,
+    };
+    let digest = process_approval_digest(workspace, &plan, tier);
+    let run_name = digest[..16].to_owned();
     let prompt = ApprovalPrompt::new(
         workspace.id.clone(),
         POLICY_REVISION,
         "execute argv process",
         plan.executable.display().to_string(),
         format!(
-            "argv={:?} cwd={} timeout={}ms stdout_limit={} stderr_limit={} stdin=null network=NONE",
+            "argv={:?} cwd={} timeout={}ms stdout_limit={} stderr_limit={} stdin=null network=NONE tier={}",
             plan.argv,
             plan.cwd.display(),
             plan.limits.timeout.as_millis(),
             plan.limits.stdout_bytes,
-            plan.limits.stderr_bytes
+            plan.limits.stderr_bytes,
+            tier.as_str()
         ),
         digest.clone(),
     );
@@ -407,6 +418,15 @@ fn process_spawn(
         .map_err(|error| ProviderError::new(error.code, error.message))?;
 
     verify_registered_identity(&plan)?;
+    if crate::contained_tier::registered_tier(&plan)? != tier {
+        return Err(ProviderError::new(
+            FailureCode::TargetStale,
+            "the executable's registered tier changed during approval",
+        ));
+    }
+    if let Some(helper) = helper {
+        return crate::contained_tier::execute(&plan, &helper, &run_name);
+    }
     let profile = process_profile_name(&request.request_id);
     let result = execute_contained(plan, &profile).map_err(map_process_failure)?;
     Ok(json!({
@@ -416,6 +436,7 @@ fn process_spawn(
         "appcontainer_verified": result.appcontainer_verified,
         "assigned_to_job_before_resume": result.assigned_to_job_before_resume,
         "job_quiescent": result.job_quiescent,
+        "execution_tier": ExecutionTier::Safe.as_str(),
         "stdin_policy": "null",
         "network_class": "NONE"
     }))
@@ -451,6 +472,7 @@ fn verify_registered_identity(plan: &orcel_provider_process::ExecutionPlan) -> R
 fn process_approval_digest(
     workspace: &Workspace,
     plan: &orcel_provider_process::ExecutionPlan,
+    tier: ExecutionTier,
 ) -> String {
     let mut hasher = Sha256::new();
     digest_field(&mut hasher, b"ORCEL_PROCESS_APPROVAL_V1");
@@ -472,6 +494,10 @@ fn process_approval_digest(
     for (name, value) in &plan.env {
         digest_field(&mut hasher, name.as_bytes());
         digest_field(&mut hasher, value.as_bytes());
+    }
+    // XP-13b: only a contained run adds a field, so Safe digests are as before.
+    if !tier.is_safe() {
+        digest_field(&mut hasher, b"tier=contained");
     }
     hex_lower(&hasher.finalize())
 }
@@ -823,8 +849,8 @@ mod tests {
         )
         .expect("second plan");
         assert_ne!(
-            process_approval_digest(&workspace, &first),
-            process_approval_digest(&workspace, &second)
+            process_approval_digest(&workspace, &first, ExecutionTier::Safe),
+            process_approval_digest(&workspace, &second, ExecutionTier::Safe)
         );
         let _ = fs::remove_dir_all(root);
     }
@@ -1017,6 +1043,180 @@ mod tests {
         assert_eq!(result["job_quiescent"], true);
         assert_eq!(result["network_class"], "NONE");
         let _ = fs::remove_dir_all(registry.parent().expect("registry dir"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// A registry file the override accepts on this OS.
+    fn test_registry(label: &str) -> PathBuf {
+        #[cfg(windows)]
+        return temp_root(label).join("executable_registry.json");
+        #[cfg(not(windows))]
+        return private_registry(label);
+    }
+
+    fn system_hostname() -> PathBuf {
+        #[cfg(windows)]
+        let path = PathBuf::from(std::env::var_os("SystemRoot").expect("SystemRoot"))
+            .join("System32")
+            .join("hostname.exe");
+        // Windows policy refuses the verbatim (UNC-style) form canonicalize returns.
+        #[cfg(not(windows))]
+        let path = fs::canonicalize("/bin/hostname").expect("hostname");
+        path
+    }
+
+    struct TestPin;
+
+    impl TestPin {
+        fn set(pin: Option<orcel_provider_process::contained::HelperPin>) -> Self {
+            *crate::contained_tier::TEST_PIN
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = pin;
+            Self
+        }
+    }
+
+    impl Drop for TestPin {
+        fn drop(&mut self) {
+            *crate::contained_tier::TEST_PIN
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        }
+    }
+
+    /// XP-13b: a contained-tier entry whose helper is not installed fails
+    /// before any approval is asked for, and never runs in the Safe tier.
+    #[test]
+    fn xp13b_a_contained_entry_without_its_helper_fails_closed_before_approval() {
+        use orcel_policy::executable_registry::{build_entry, save_registry};
+        let _registry = registry_env();
+        let _pin = TestPin::set(None);
+        let root = temp_root("contained-unavailable");
+        let workspace = Workspace {
+            id: "default".into(),
+            root: fs::canonicalize(&root).expect("canonical workspace"),
+        };
+        let registry = test_registry("contained-unavailable-store");
+        std::env::set_var("ORCEL_EXECUTABLE_REGISTRY_PATH", &registry);
+        let hostname = system_hostname();
+        let mut entry = build_entry("hostname", &hostname, vec![], vec![], 0, &[], 1).expect("registrable");
+        entry.tier = ExecutionTier::Contained;
+        save_registry(&registry, &[entry]).expect("save registry");
+        let policy = PolicyEngine::new(vec![workspace.clone()]).expect("policy");
+        let mut request = process_request(&workspace, hostname);
+        request.request_id = "contained-unavailable-request".into();
+        policy.authorize(&request).expect("registered executable");
+        // DenyBroker would answer ApprovalDenied if it were asked.
+        for error in [
+            dispatch(&policy, &workspace, &DenyBroker, &request).expect_err("no helper"),
+            dispatch(
+                &policy,
+                &workspace,
+                &FixedApprovalBroker(ApprovalDecision::Approved),
+                &request,
+            )
+            .expect_err("no helper"),
+        ] {
+            assert_eq!(error.code, FailureCode::ProviderUnavailable, "{}", error.message);
+            assert!(error.message.contains("orcel-contain"), "{}", error.message);
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// XP-13b end to end: a registered executable that opted in to the
+    /// contained tier runs under the real, pinned `orcel-contain` helper
+    /// through `process.spawn`. It reads the requested cwd, cannot write it,
+    /// and the same write works uncontained. `ORCEL_TEST_CONTAIN_DIR` names
+    /// the helper workspace's target directory (holding `orcel-contain` and
+    /// `orcel-contain-probe`); the Contained-tier CI job sets it together
+    /// with `ORCEL_REQUIRE_CONTAINED_WIRING`, which turns a missing directory
+    /// into a failure instead of a skip.
+    #[test]
+    fn xp13b_a_registered_contained_executable_runs_under_the_helper() {
+        use orcel_policy::executable_registry::{build_entry, save_registry};
+        use orcel_provider_process::contained::{sha256_hex, HelperPin};
+        let Some(dir) = std::env::var_os("ORCEL_TEST_CONTAIN_DIR") else {
+            assert!(
+                std::env::var_os("ORCEL_REQUIRE_CONTAINED_WIRING").is_none(),
+                "ORCEL_TEST_CONTAIN_DIR is required"
+            );
+            return;
+        };
+        let dir = fs::canonicalize(dir).expect("helper directory");
+        let helper = dir.join(crate::contained_tier::HELPER_NAME);
+        let probe_name = if cfg!(windows) {
+            "orcel-contain-probe.exe"
+        } else {
+            "orcel-contain-probe"
+        };
+        // Cargo hard-links its outputs into deps/, and a granted file must
+        // have one link (the Windows grant walk refuses more), so the probe
+        // runs from a plain copy outside the workspace.
+        let bin = temp_root("contained-e2e-bin");
+        let probe = bin.join(probe_name);
+        fs::copy(dir.join(probe_name), &probe).expect("copy probe");
+        // A parallel test's fork can briefly hold the fresh copy open for
+        // writing (ETXTBSY); wait until it starts.
+        let started = std::time::Instant::now();
+        while std::process::Command::new(&probe).arg("noop").status().is_err() {
+            assert!(started.elapsed() < Duration::from_secs(10), "the probe copy never started");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let digest = sha256_hex(&fs::read(&helper).expect("read helper"));
+        let _registry = registry_env();
+        let _pin = TestPin::set(Some(HelperPin::new(&helper, &digest).expect("pin")));
+
+        let root = temp_root("contained-e2e");
+        let workspace = Workspace {
+            id: "default".into(),
+            root: fs::canonicalize(&root).expect("canonical workspace"),
+        };
+        fs::write(workspace.root.join("granted.txt"), b"granted bytes").expect("seed");
+        let registry = test_registry("contained-e2e-store");
+        std::env::set_var("ORCEL_EXECUTABLE_REGISTRY_PATH", &registry);
+        let mut entry = build_entry(
+            "probe",
+            &probe,
+            vec!["read".into(), "write".into()],
+            vec![],
+            2,
+            std::slice::from_ref(&workspace.root),
+            1,
+        )
+        .expect("registrable probe");
+        entry.tier = ExecutionTier::Contained;
+        save_registry(&registry, &[entry]).expect("save registry");
+        let policy = PolicyEngine::new(vec![workspace.clone()]).expect("policy");
+        let run = |argv: Value, id: &str| {
+            let mut request = process_request(&workspace, probe.clone());
+            request.request_id = id.into();
+            request.arguments["argv"] = argv;
+            dispatch(
+                &policy,
+                &workspace,
+                &FixedApprovalBroker(ApprovalDecision::Approved),
+                &request,
+            )
+        };
+
+        let granted = workspace.root.join("granted.txt");
+        let read = run(json!(["read", granted]), "contained-e2e-read").expect("contained read");
+        assert_eq!(read["execution_tier"], "contained");
+        assert_eq!(read["exit_code"], 0, "{read}");
+        assert_eq!(read["stdout"], "granted bytes");
+
+        let escape = workspace.root.join("escape.txt");
+        let write = run(json!(["write", escape]), "contained-e2e-write").expect("contained write");
+        assert_eq!(write["exit_code"], 10, "the contained process wrote into the cwd: {write}");
+        assert!(!escape.exists());
+        // Positive control: the same write works uncontained.
+        let status = std::process::Command::new(&probe)
+            .args(["write"])
+            .arg(&escape)
+            .status()
+            .expect("uncontained probe");
+        assert!(status.success());
+        let _ = fs::remove_dir_all(bin);
         let _ = fs::remove_dir_all(root);
     }
 }

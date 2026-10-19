@@ -15,6 +15,7 @@ every OS.
 | State: audit, approvals, trust, leases | `$XDG_STATE_HOME/orcel`, else `~/.local/state/orcel`. This is the XP-01 root, mode 0700, and is never under `/tmp`. |
 | `orceld` from the deb or rpm | `/usr/lib/orcel/orceld` (root-owned, 0755) |
 | `orceld` from the tarball | `~/.local/share/orcel/bin/orceld` |
+| Contained-tier helper and its pin (XP-13b) | `orcel-contain` and `orcel-contain.sha256` beside `orceld`, in either layout. `orceld` pins the helper by that file and looks nowhere else. |
 | User units from the deb or rpm | `/usr/lib/systemd/user/orceld.socket`, `orceld@.service` |
 | User units from the tarball | `~/.config/systemd/user/` |
 | Workspaces for `orceld` | `$XDG_CONFIG_HOME/orcel/orceld.env`, else `~/.config/orcel/orceld.env` |
@@ -91,6 +92,7 @@ namespaces. Unit tests in `linux.rs` keep them in the unit.
 | `SystemCallArchitectures=native` | Only native-ABI system calls are allowed. Compat-ABI calls, which can bypass the filters above, are refused. |
 | `UMask=0077` | Every file `orceld` creates is owner-only, on top of the 0600 and 0700 modes the state store already sets. |
 | `KillMode=control-group` | When a connection ends, every process the instance started ends too. This is the Linux counterpart of the Windows kill-on-close Job Object. |
+| `Delegate=yes` | XP-13b: the instance's cgroup is delegated to `orceld`. The Safe tier puts each registered executable in its own child cgroup and ends the whole tree with `cgroup.kill`, including descendants that left the process group. Delegation lets `orceld` create child cgroups and move its own children into them. It grants no other rights: no controllers are enabled, so no resource limits are lifted. |
 | `EnvironmentFile=-%E/orcel/orceld.env` | Workspaces come from the user's own config. When the file is missing, `orceld` refuses to start (fail closed). |
 
 ### Directives left out

@@ -16,6 +16,7 @@ use std::path::PathBuf;
 mod app_api;
 mod browser;
 mod clipboard;
+mod contained_tier;
 mod executable_admin;
 mod fs_mutation;
 mod git_fetch;
