@@ -473,12 +473,7 @@ mod platform {
     }
 
     impl HostSession {
-        /// Starts the host. `verify` runs immediately before the spawn and
-        /// can refuse it (XP-06: the pinned binary must be unchanged).
-        fn spawn(
-            path: &Path,
-            verify: impl FnOnce() -> Result<(), UiaError>,
-        ) -> Result<Self, UiaError> {
+        fn spawn(path: &Path) -> Result<Self, UiaError> {
             let mut command = Command::new(path);
             command
                 .stdin(Stdio::piped())
@@ -490,7 +485,6 @@ mod platform {
                     command.env(name, value);
                 }
             }
-            verify()?;
             let mut child = command.spawn().map_err(|error| {
                 UiaError::new(
                     FailureCode::ProviderUnavailable,
@@ -692,7 +686,7 @@ mod platform {
     impl ComputerHostAdapter {
         pub fn from_path(path: impl Into<PathBuf>) -> Result<Self, UiaError> {
             let path = path.into();
-            let session = HostSession::spawn(&path, || Ok(()))?;
+            let session = HostSession::spawn(&path)?;
             Ok(Self {
                 path,
                 session: Mutex::new(session),
@@ -701,11 +695,22 @@ mod platform {
         }
 
         /// Starts the pinned host the XP-06 path check accepted. The file
-        /// is re-read right before the spawn and refused if it changed.
+        /// is opened and verified (identity, size, digest, owner, mode)
+        /// right before the start; on Linux the host is started from that
+        /// descriptor, so the path is not resolved again.
         #[cfg(unix)]
         pub fn from_trusted(binary: &crate::TrustedHostBinary) -> Result<Self, UiaError> {
             let path = binary.path().to_path_buf();
-            let session = HostSession::spawn(&path, || binary.verify_unchanged())?;
+            let verified = binary.open_verified()?;
+            #[cfg(target_os = "linux")]
+            let program = {
+                use std::os::fd::AsRawFd;
+                PathBuf::from(format!("/proc/self/fd/{}", verified.as_raw_fd()))
+            };
+            #[cfg(not(target_os = "linux"))]
+            let program = path.clone();
+            let session = HostSession::spawn(&program)?;
+            drop(verified);
             Ok(Self {
                 path,
                 session: Mutex::new(session),

@@ -119,6 +119,48 @@ jobs:
         run: cargo build --locked --release -p orcel-native-host
       - name: The binary prints its protocol version
         run: test "$(./target/release/orcel-native-host --version)" = "orcel-computer-host/2"
+      - name: XP-06 TEMPORARY diagnostic, which code opens com.apple.netsrc (removed before merge)
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        run: |
+          set -u
+          bin=target/release/orcel-native-host
+          echo "== linked libraries"; otool -L "$bin"
+          echo "== host at startup, before any request"
+          (sleep 8) | "$bin" & pid=$!; sleep 3
+          lsof -n -P -a -p "$pid" -d 0-1023 || true
+          wait "$pid" || true
+          echo "== host after hello and ping"
+          coproc HOST { "$bin"; }
+          echo '{"id":1,"protocol":"orcel-computer-host/2","op":"hello"}' >&"${HOST[1]}"; read -r -t 30 line <&"${HOST[0]}"; echo "$line" | cut -c1-200
+          lsof -n -P -a -p "$HOST_PID" -d 0-1023 || true
+          echo '{"id":2,"protocol":"orcel-computer-host/2","op":"shutdown"}' >&"${HOST[1]}"; read -r -t 30 line <&"${HOST[0]}" || true
+          echo "== the worker alone"
+          (sleep 8) | "$bin" --worker & wpid=$!; sleep 3
+          lsof -n -P -a -p "$wpid" -d 0-1023 || true
+          kill "$wpid" 2>/dev/null || true
+          echo "== a plain Rust binary"
+          printf 'fn main(){ std::thread::sleep(std::time::Duration::from_secs(4)); }\n' > /tmp/plain.rs
+          rustc -O /tmp/plain.rs -o /tmp/plain && { /tmp/plain & p=$!; sleep 2; lsof -n -P -a -p "$p" -d 0-1023 | grep -i -e netsrc -e systm || echo "plain: no netsrc"; wait "$p"; }
+          echo "== per framework at load time"
+          printf '#include <unistd.h>\nint main(void){ sleep(4); return 0; }\n' > /tmp/probe.c
+          for fw in $(otool -L "$bin" | awk '/\.framework\//{print $1}' | sed -E 's#.*/([^/]+)\.framework/.*#\1#' | sort -u); do
+            if clang /tmp/probe.c -Wl,-framework,"$fw" -o "/tmp/probe-$fw" 2>/dev/null; then
+              "/tmp/probe-$fw" & p=$!; sleep 2
+              if lsof -n -P -a -p "$p" -d 0-1023 | grep -q netsrc; then echo "NETSRC at load: $fw"; else echo "clean: $fw"; fi
+              wait "$p" || true
+            else
+              echo "skipped: $fw"
+            fi
+          done
+          for lib in $(otool -L "$bin" | awk '/\.dylib/{print $1}' | grep -v '^@'); do
+            name=$(basename "$lib")
+            if clang /tmp/probe.c "$lib" -o "/tmp/probe-$name" 2>/dev/null; then
+              "/tmp/probe-$name" & p=$!; sleep 2
+              if lsof -n -P -a -p "$p" -d 0-1023 | grep -q netsrc; then echo "NETSRC at load: $name"; else echo "clean: $name"; fi
+              wait "$p" || true
+            fi
+          done
       - name: Reachability (no script engine, CDP client, server, daemon or browser code)
         # XP-06 links the platform crates through the adapter, so these checks
         # now cover real code. The words run_script and remote-debugging are

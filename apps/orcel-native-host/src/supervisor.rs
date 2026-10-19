@@ -87,9 +87,16 @@ enum Attempt {
 }
 
 impl WorkerDispatch {
+    /// Workers run this very binary. On Linux it is named through
+    /// `/proc/self/exe`, the file this process was started from, so a binary
+    /// replaced on disk afterwards is never the worker.
     pub fn for_current_exe(platform: HostPlatform) -> std::io::Result<Self> {
+        #[cfg(target_os = "linux")]
+        let program = PathBuf::from("/proc/self/exe");
+        #[cfg(not(target_os = "linux"))]
+        let program = std::env::current_exe()?;
         Ok(Self {
-            program: std::env::current_exe()?,
+            program,
             args: vec!["--worker".into()],
             environment: worker_environment(platform),
             timeout: WORKER_TIMEOUT,

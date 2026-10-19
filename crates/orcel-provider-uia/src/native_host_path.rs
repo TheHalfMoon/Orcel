@@ -17,12 +17,17 @@
 // Anything else is refused before the binary is started, so a file dropped
 // in /tmp or a name resolved through PATH never becomes the observation host.
 //
-// The check records the file's device and inode, and the adapter re-reads
-// them (with owner and mode) immediately before it spawns the host
-// (`TrustedHostBinary::verify_unchanged`), so a file swapped or loosened
-// after the check is refused. The remaining window between that re-read and
-// exec is open only to root and this user, because every directory on the
-// path must be writable by nobody else, and those can already replace orceld.
+// The check records the file's device, inode, size and SHA-256. Right before
+// the host starts, the adapter opens the file once, checks through that
+// descriptor that it is still the same file (device and inode against the
+// path, size, digest of the bytes read through the descriptor, owner and
+// mode), and on Linux starts the host from that descriptor
+// (`/proc/self/fd/N`), so nothing is resolved by path again. A file replaced
+// by rename, rewritten in place, loosened or swapped for a symlink is
+// refused. On macOS, which has no descriptor exec, the host is started by
+// path right after the descriptor check; that short window is open only to
+// root and this user, because every directory on the path must be writable
+// by nobody else, and those can already replace orceld itself.
 //
 // macOS packaging (XP-16): `/Applications` is `root:admin` mode 0775, which
 // this rule refuses, so a host inside `/Applications/Orcel.app` is not
@@ -55,44 +60,88 @@ pub fn owner_and_mode_trusted(uid: u32, mode: u32, euid: u32) -> bool {
     (uid == 0 || uid == euid) && mode & 0o022 == 0
 }
 
-/// The pinned host as it was checked: its canonical path and the device
-/// and inode of the file at check time.
+/// The pinned host as it was checked: its canonical path, and the device,
+/// inode, size and SHA-256 of the file at check time.
 #[cfg(unix)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrustedHostBinary {
     path: PathBuf,
     dev: u64,
     ino: u64,
+    size: u64,
+    digest: [u8; 32],
+}
+
+#[cfg(unix)]
+fn digest_of(file: &mut std::fs::File, path: &Path) -> Result<[u8; 32], UiaError> {
+    use sha2::{Digest, Sha256};
+    use std::io::{Read, Seek, SeekFrom};
+    file.seek(SeekFrom::Start(0))
+        .map_err(|error| refused(format!("{}: {error}", path.display())))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; 64 * 1024];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|error| refused(format!("{}: {error}", path.display())))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hasher.finalize().into())
+}
+
+/// Opens `path` and returns the descriptor with its metadata, refusing a
+/// symlink and a file swapped between the path lookup and the open.
+#[cfg(unix)]
+fn open_regular(path: &Path) -> Result<(std::fs::File, std::fs::Metadata), UiaError> {
+    use std::os::unix::fs::MetadataExt;
+    let by_path = std::fs::symlink_metadata(path)
+        .map_err(|error| refused(format!("{}: {error}", path.display())))?;
+    if !by_path.file_type().is_file() {
+        return Err(refused(format!("{} is not a regular file", path.display())));
+    }
+    let file = std::fs::File::open(path)
+        .map_err(|error| refused(format!("{}: {error}", path.display())))?;
+    let by_fd = file
+        .metadata()
+        .map_err(|error| refused(format!("{}: {error}", path.display())))?;
+    if by_fd.dev() != by_path.dev() || by_fd.ino() != by_path.ino() || !by_fd.is_file() {
+        return Err(refused(format!(
+            "{} changed while it was opened",
+            path.display()
+        )));
+    }
+    Ok((file, by_fd))
 }
 
 #[cfg(unix)]
 impl TrustedHostBinary {
-    fn recorded(path: PathBuf, meta: &std::fs::Metadata) -> Self {
+    fn record(path: PathBuf) -> Result<Self, UiaError> {
         use std::os::unix::fs::MetadataExt;
-        Self {
-            path,
+        let (mut file, meta) = open_regular(&path)?;
+        let digest = digest_of(&mut file, &path)?;
+        Ok(Self {
             dev: meta.dev(),
             ino: meta.ino(),
-        }
+            size: meta.size(),
+            digest,
+            path,
+        })
     }
 
     pub fn path(&self) -> &Path {
         &self.path
     }
 
-    /// Re-reads the file right before it is started. It must still be the
-    /// same file (device and inode), not a symlink, owned by root or this
-    /// user and writable by nobody else.
-    pub fn verify_unchanged(&self) -> Result<(), UiaError> {
+    /// Opens the file and checks, through that descriptor, that it is still
+    /// the file that was checked: same device, inode and size, same bytes,
+    /// owned by root or this user and writable by nobody else. The caller
+    /// starts the host from the returned descriptor where the OS allows it.
+    pub fn open_verified(&self) -> Result<std::fs::File, UiaError> {
         use std::os::unix::fs::MetadataExt;
-        let meta = std::fs::symlink_metadata(&self.path)
-            .map_err(|error| refused(format!("{}: {error}", self.path.display())))?;
-        if !meta.file_type().is_file() || meta.dev() != self.dev || meta.ino() != self.ino {
-            return Err(refused(format!(
-                "{} changed since it was checked",
-                self.path.display()
-            )));
-        }
+        let (mut file, meta) = open_regular(&self.path)?;
         let euid = orcel_platform::session::effective_uid()
             .ok_or_else(|| refused("this process's uid is unreadable".to_owned()))?;
         if !owner_and_mode_trusted(meta.uid(), meta.mode(), euid) {
@@ -101,14 +150,29 @@ impl TrustedHostBinary {
                 self.path.display()
             )));
         }
-        Ok(())
+        if meta.dev() != self.dev
+            || meta.ino() != self.ino
+            || meta.size() != self.size
+            || digest_of(&mut file, &self.path)? != self.digest
+        {
+            return Err(refused(format!(
+                "{} changed since it was checked",
+                self.path.display()
+            )));
+        }
+        Ok(file)
+    }
+
+    /// [`Self::open_verified`] without keeping the descriptor.
+    pub fn verify_unchanged(&self) -> Result<(), UiaError> {
+        self.open_verified().map(|_| ())
     }
 
     /// The identity of `path` without the location and ancestor checks,
     /// for tests of the re-check itself.
     #[cfg(test)]
     pub(crate) fn record_for_test(path: &Path) -> Self {
-        Self::recorded(path.to_path_buf(), &std::fs::metadata(path).unwrap())
+        Self::record(path.to_path_buf()).unwrap()
     }
 }
 
@@ -167,7 +231,7 @@ pub fn trusted_native_host_path(
             )));
         }
     }
-    Ok(TrustedHostBinary::recorded(canonical, &meta))
+    TrustedHostBinary::record(canonical)
 }
 
 #[cfg(test)]
@@ -288,6 +352,11 @@ mod tests {
             assert!(trusted_native_host_path(&dotted, Some(&fixture.dir)).is_err());
         }
 
+        fn write_host(path: &Path, content: &[u8]) {
+            std::fs::write(path, content).unwrap();
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
         #[test]
         fn xp06_host_swapped_after_the_check_is_refused_before_spawn() {
             let fixture = Fixture::new("swapped");
@@ -302,24 +371,64 @@ mod tests {
             std::fs::set_permissions(&host, std::fs::Permissions::from_mode(0o755)).unwrap();
             checked.verify_unchanged().unwrap();
 
-            // Replaced by another file under the same name.
-            std::fs::remove_file(&host).unwrap();
-            fixture.host(0o755);
+            // Rewritten in place: same inode and size, other bytes.
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&host)
+                .and_then(|mut file| std::io::Write::write_all(&mut file, b"evil"))
+                .unwrap();
             let error = checked.verify_unchanged().unwrap_err();
             assert!(error.message.contains("changed since"), "{error:?}");
+            write_host(&host, b"host");
+            checked.verify_unchanged().unwrap();
+
+            // Replaced by rename with another file (the file system may even
+            // hand the old inode number to the new file).
+            let staged = fixture.dir.join("staged");
+            write_host(&staged, b"other host");
+            std::fs::rename(&staged, &host).unwrap();
+            let error = checked.verify_unchanged().unwrap_err();
+            assert!(error.message.contains("changed"), "{error:?}");
+
+            // Deleted and recreated with other bytes of the same length.
+            std::fs::remove_file(&host).unwrap();
+            write_host(&host, b"hoss");
+            assert!(checked.verify_unchanged().is_err());
 
             // Replaced by a symlink to a file elsewhere.
             std::fs::remove_file(&host).unwrap();
             let elsewhere = fixture.dir.join("elsewhere");
-            std::fs::write(&elsewhere, b"host").unwrap();
+            write_host(&elsewhere, b"host");
             std::os::unix::fs::symlink(&elsewhere, &host).unwrap();
-            assert!(checked.verify_unchanged().is_err());
+            let error = checked.verify_unchanged().unwrap_err();
+            assert!(error.message.contains("not a regular file"), "{error:?}");
 
             // The adapter refuses before it starts anything.
             let error = crate::ComputerHostAdapter::from_trusted(&checked)
                 .err()
                 .expect("refused before spawn");
-            assert!(error.message.contains("changed since"), "{error:?}");
+            assert!(error.message.contains("not a regular file"), "{error:?}");
+        }
+
+        /// The verified descriptor really starts the program (on Linux via
+        /// /proc/self/fd): a copy of `true` starts, then exits without a
+        /// hello, so the failure is the handshake, not the start.
+        #[test]
+        fn xp06_verified_host_is_started_from_the_checked_file() {
+            let fixture = Fixture::new("started");
+            let host = fixture.dir.join(NATIVE_HOST_FILE_NAME);
+            let system_true = ["/usr/bin/true", "/bin/true"]
+                .into_iter()
+                .find(|path| Path::new(path).is_file())
+                .unwrap();
+            std::fs::copy(system_true, &host).unwrap();
+            std::fs::set_permissions(&host, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let checked = TrustedHostBinary::record_for_test(&host);
+            let error = crate::ComputerHostAdapter::from_trusted(&checked)
+                .err()
+                .expect("true is not a host");
+            assert!(!error.message.contains("could not start"), "{error:?}");
+            assert!(!error.message.contains("changed"), "{error:?}");
         }
 
         #[test]
