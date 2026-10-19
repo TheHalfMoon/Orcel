@@ -1,0 +1,57 @@
+# TEMPORARY (#366): repeat the orcel-policy tests on macOS to prove the
+# temp-dir race is gone. Removed again before the PR is merged.
+name: tmp-366 orcel-policy macOS loop
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  fixed:
+    name: orcel-policy x30 (fixed) / macos-latest
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - name: Build
+        run: cargo test -p orcel-policy --no-run
+      - name: cargo test -p orcel-policy, 30 times
+        run: |
+          fail=0
+          for i in $(seq 1 30); do
+            if ! cargo test -p orcel-policy > "run-$i.log" 2>&1; then
+              fail=$((fail+1)); echo "run $i FAILED"; grep -E "panicked|FAILED" "run-$i.log" | head -5
+            fi
+          done
+          echo "cargo test -p orcel-policy: 30 runs, $fail failed"
+          test "$fail" -eq 0
+      - name: unit-test binary, 300 times (stress)
+        run: |
+          exe=$(cargo test -p orcel-policy --lib --no-run --message-format=json 2>/dev/null | jq -r 'select(.executable != null) | .executable' | head -1)
+          fail=0
+          for i in $(seq 1 300); do
+            "$exe" -q > out.log 2>&1 || { fail=$((fail+1)); grep -E "panicked" out.log | head -3; }
+          done
+          echo "orcel-policy unit binary: 300 runs, $fail failed"
+          test "$fail" -eq 0
+
+  unfixed:
+    name: orcel-policy x300 (main, before fix) / macos-latest
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - name: unit-test binary, 300 times (reproduction attempt, informational)
+        run: |
+          exe=$(cargo test -p orcel-policy --lib --no-run --message-format=json 2>/dev/null | jq -r 'select(.executable != null) | .executable' | head -1)
+          fail=0
+          for i in $(seq 1 300); do
+            "$exe" -q > out.log 2>&1 || { fail=$((fail+1)); grep -E "panicked" out.log | head -3; }
+          done
+          echo "UNFIXED orcel-policy unit binary: 300 runs, $fail failed"
