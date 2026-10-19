@@ -176,9 +176,10 @@ fn sysctl_reads_are_limited_to_named_startup_facts() {
     }
 }
 
-/// XP-13b: no rule grants `file-link` (nor `file*`, which would include it),
-/// so the child cannot give any file a second name, even inside its write
-/// root. The end-to-end proof is `xp13_the_contained_process_cannot_create_a_hard_link`.
+/// XP-13b: no rule grants `file-link` or `file*`, so link creation is only
+/// what `file-write*` on the write roots allows: both names inside a write
+/// root. The end-to-end proof that a read-only or outside file cannot be
+/// linked in is `xp13_the_contained_process_cannot_create_a_hard_link`.
 #[test]
 fn the_profile_grants_no_hard_link_creation() {
     let profile = profile_for(&["/opt/orcel/parser"], &["/tmp/.tmpcontained"]);

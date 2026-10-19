@@ -3721,8 +3721,8 @@ mod contained_launch_tests {
 
     /// XP-13b fixture: start a grandchild that holds none of the run's
     /// stdio, report its pid, and exit while it keeps running. The grandchild
-    /// image is the last argument: a copy of this binary the AppContainer
-    /// may read (it cannot open the original under the user's profile).
+    /// is the system `cmd.exe` (every AppContainer may read and execute
+    /// System32) spinning in a builtin loop: no other image, no network.
     #[test]
     fn private_grandchild_primary_child() {
         if std::env::args().any(|argument| argument == "--exact") {
@@ -3743,13 +3743,9 @@ mod contained_launch_tests {
                 // HANDLE_FLAG_INHERIT (1) on this process's own stdio handle changes nothing else.
                 unsafe { SetHandleInformation(GetStdHandle(which), 1, 0) };
             }
-            let image = std::env::args().next_back().expect("grandchild image");
-            let grandchild = std::process::Command::new(image)
-                .args([
-                    "--exact",
-                    "contained_launch_tests::private_timeout_descendant",
-                    "--nocapture",
-                ])
+            let cmd = windows_contained_launch::fixed_system_executable().expect("cmd.exe");
+            let grandchild = std::process::Command::new(cmd)
+                .args(["/d", "/c", "for /l %i in (1,1,2000000000) do @rem"])
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
@@ -3788,24 +3784,11 @@ mod contained_launch_tests {
             stdout_bytes: 16 * 1024,
             stderr_bytes: 16 * 1024,
         };
-        let (workspace, mut plan) = private_fixture_plan(
+        let (workspace, plan) = private_fixture_plan(
             suffix,
             "contained_launch_tests::private_grandchild_primary_child",
             limits,
         );
-        // A copy of this binary that ALL APPLICATION PACKAGES may read and
-        // execute, so the AppContainer child can start it. libtest treats
-        // the extra argument as one more exact filter, which matches nothing.
-        let image = workspace.join("grandchild.exe");
-        std::fs::copy(&plan.executable, &image).expect("copy the grandchild image");
-        let granted = std::process::Command::new("icacls")
-            .arg(&image)
-            .args(["/grant", "*S-1-15-2-1:(RX)"])
-            .stdout(std::process::Stdio::null())
-            .status()
-            .expect("icacls");
-        assert!(granted.success(), "icacls exited with {granted}");
-        plan.argv.push(image.to_string_lossy().into_owned());
         let result = execute_contained(plan, &format!("Orcel.Private.Grandchild.{suffix}"))
             .expect("a run whose child created a grandchild completes");
         assert_eq!(

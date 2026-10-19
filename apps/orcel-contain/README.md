@@ -57,10 +57,11 @@ while the file's other name is outside every root.
   granted root lets the contained process read (or, in a write root, write)
   the linked file through the granted path. The helper does not walk the
   roots to look for links. The contained process cannot create such a link
-  itself: Landlock withholds `REFER` from every root that is not writable,
-  and the Seatbelt profile grants no `file-link` at all, so on macOS even a
-  file inside the write root cannot be linked. On Windows the AppContainer has
-  no write-attributes right on read-only roots.
+  itself, to a file it may only read or cannot reach: Landlock withholds
+  `REFER` from every root that is not writable, Seatbelt allows a link only
+  where both names are writable, and on Windows the AppContainer has no
+  write-attributes right on read-only roots. A link between two names inside
+  the write root is allowed on every OS; it widens nothing.
   `xp13_the_contained_process_cannot_create_a_hard_link` checks this on every
   OS, and `xp13_a_hard_link_already_in_a_granted_root` pins the behaviour of
   each OS for a link that already exists.

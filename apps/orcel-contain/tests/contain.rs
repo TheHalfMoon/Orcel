@@ -823,8 +823,9 @@ fn xp13_a_link_planted_in_a_write_root_never_widens_a_later_grant() {
 /// path rules would then allow writes through it, and on Windows the grant
 /// walk would refuse the root (see the next test). Landlock withholds
 /// `REFER` from read-only roots, AppContainer has no write-attributes right
-/// on them, and Seatbelt grants no `file-link` at all, so on macOS even a
-/// file inside the write root cannot be linked.
+/// on them, and Seatbelt allows a link only where both names are writable.
+/// A link between two names inside the write root widens nothing, and it
+/// works on every OS: that is this test's contained positive control.
 #[test]
 fn xp13_the_contained_process_cannot_create_a_hard_link() {
     let fixture = Fixture::new();
@@ -850,23 +851,17 @@ fn xp13_the_contained_process_cannot_create_a_hard_link() {
         std::fs::remove_file(&link).unwrap();
     }
 
-    #[cfg(target_os = "macos")]
-    {
-        let own = fixture.writable.join("own.txt");
-        std::fs::write(&own, b"own").unwrap();
-        let link = fixture.writable.join("own-link");
-        let run = fixture.contained(&["link", path_arg(&own), path_arg(&link)]);
-        assert_eq!(
-            exited(&run),
-            LINK_FAILED,
-            "Seatbelt allowed a hard link inside the write root"
-        );
-        assert!(!link.exists());
-        assert_eq!(
-            fixture.uncontained(&["link", path_arg(&own), path_arg(&link)]),
-            0
-        );
-    }
+    let own = fixture.writable.join("own.txt");
+    std::fs::write(&own, b"own").unwrap();
+    let link = fixture.writable.join("own-link");
+    let run = fixture.contained(&["link", path_arg(&own), path_arg(&link)]);
+    assert_eq!(
+        exited(&run),
+        0,
+        "a link inside the write root failed: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert!(link.exists());
 }
 
 /// XP-13b: a hard link that already exists in a granted root. On Windows the
