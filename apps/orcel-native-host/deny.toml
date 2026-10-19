@@ -1,0 +1,20 @@
+# cargo-deny configuration for the orcel-native-host workspace only (XP-05).
+# CI runs `cargo deny check licenses`. Every crate in the resolved graph (all
+# targets) must carry a license on this list; an unknown, missing or
+# unlisted license fails.
+[licenses]
+confidence-threshold = 0.93
+allow = [
+  "MIT",
+  "MIT-0",
+  "Apache-2.0",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "BSL-1.0",
+  "Zlib",
+  "Unicode-3.0",
+  # File-level weak copyleft: uniffi (cua-driver-contract's binding macros)
+  # and option-ext (via dirs). Unmodified registry sources; their notices ship
+  # with any release that links them.
+  "MPL-2.0",
+]

@@ -17,6 +17,17 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const TARGET = "x86_64-pc-windows-msvc";
 const ROOT_PACKAGES = ["orceld", "orcel-lifecycle"];
 const NOTICE_FILE = /^(licen[cs]e|copying|notice|unlicense)([-_.].*)?$/i;
+// Source vendored into this repository rather than resolved from a registry.
+// Its notice is maintained in-repo, and the upstream copyright line must
+// appear in it verbatim.
+const VENDORED_NOTICES = [
+  {
+    name: "Cua Driver (trycua/cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f, vendored source)",
+    license: "MIT",
+    file: "docs/orcel/notices/cua-MIT.txt",
+    copyright: "Copyright (c) 2025 Cua AI, Inc."
+  }
+];
 
 function fail(message) {
   console.error(`third-party-notices: ${message}`);
@@ -145,6 +156,11 @@ for (const entry of entries) {
   for (const file of files) {
     text += `\n--- ${file.name} ---\n${file.text}\n`;
   }
+}
+for (const vendored of VENDORED_NOTICES) {
+  const notice = readFileSync(join(repo, vendored.file), "utf8").replace(/\r\n/g, "\n").trimEnd();
+  if (!notice.includes(vendored.copyright)) fail(`${vendored.file} lacks "${vendored.copyright}"`);
+  text += `\n${"=".repeat(78)}\n${vendored.name}\nLicense: ${vendored.license}\n\n--- ${vendored.file} ---\n${notice}\n`;
 }
 if (missing.length) {
   text += `\n${"=".repeat(78)}\nComponents without a declared license or shipped license file:\n${missing.join("\n")}\n`;
