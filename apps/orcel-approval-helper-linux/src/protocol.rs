@@ -3,9 +3,11 @@
 //! orceld writes one request, a JSON object on one line, to the helper's
 //! stdin and reads one answer line from its stdout; both pipes belong to
 //! orceld. The answer repeats the request's channel nonce, which orceld
-//! drew for this request alone, so orceld refuses an answer meant for
-//! another request, a replayed one, or one printed by anything that does
-//! not know the nonce.
+//! drew for this request alone, and the SHA-256 of the exact request bytes
+//! the helper parsed and displayed. orceld compares both with what it sent,
+//! so it refuses an answer meant for another request, a replayed one, one
+//! printed by anything that does not know the nonce, and one about request
+//! text a same-uid process swapped in on the helper's stdin.
 //!
 //! orcel-approval's tests compile this file too (`linux_helper_protocol`
 //! in `crates/orcel-approval/src/lib.rs`), so orceld and the helper are
@@ -15,6 +17,7 @@
 #![allow(dead_code)]
 
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 pub const PROTOCOL: &str = "orcel-approval-helper/1";
 /// The largest request the helper reads.
@@ -105,10 +108,19 @@ pub fn parse_request(input: &[u8]) -> Result<Request, String> {
     Ok(request)
 }
 
-/// The one line the helper prints: `orcel-approval-helper/1 <nonce> approve|deny`.
-pub fn answer_line(nonce: &str, approved: bool) -> String {
+/// Lowercase hex SHA-256 of the exact request bytes read from stdin.
+pub fn request_digest(input: &[u8]) -> String {
+    Sha256::digest(input)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// The one line the helper prints:
+/// `orcel-approval-helper/1 <nonce> <request sha256> approve|deny`.
+pub fn answer_line(nonce: &str, digest: &str, approved: bool) -> String {
     let verdict = if approved { "approve" } else { "deny" };
-    format!("{PROTOCOL} {nonce} {verdict}\n")
+    format!("{PROTOCOL} {nonce} {digest} {verdict}\n")
 }
 
 #[cfg(test)]
@@ -133,9 +145,15 @@ mod tests {
     fn xp10_accepts_a_well_formed_request() {
         let parsed = parse_request(request("line one\nline two").as_bytes()).expect("ok");
         assert_eq!(parsed.body, "line one\nline two");
+        let digest = request_digest(request("line one\nline two").as_bytes());
+        assert_eq!(digest.len(), 64);
         assert_eq!(
-            answer_line(&parsed.nonce, true),
-            format!("{PROTOCOL} {NONCE} approve\n")
+            answer_line(&parsed.nonce, &digest, true),
+            format!("{PROTOCOL} {NONCE} {digest} approve\n")
+        );
+        assert_eq!(
+            request_digest(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         );
     }
 

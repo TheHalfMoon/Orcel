@@ -9,18 +9,22 @@
 //! request, which carries a fresh channel nonce from orceld, goes in on the
 //! helper's stdin and the answer comes back on its stdout; both are pipes
 //! orceld creates and owns. An answer is accepted only when it is exactly
-//! one line, `orcel-approval-helper/1 <nonce> approve|deny`, with this
-//! request's nonce, so anything else the helper (or something it loads) prints, an answer for
-//! another request, a replayed answer, a crash, a timeout or silence fails
-//! closed. The helper only reports what the person clicked; the broker
-//! records it for the prompt it asked about and the ledger binds it to the
-//! request's nonce and digest, as for the Windows and macOS dialogs.
+//! one line, `orcel-approval-helper/1 <nonce> <sha256> approve|deny`, with
+//! this request's nonce and the SHA-256 of the exact request bytes orceld
+//! wrote, which the helper hashes over the bytes it parsed and displayed.
+//! So a request swapped in on the helper's stdin by a same-uid process
+//! (which could read the nonce from `/proc/<pid>/fd/0`), anything else the
+//! helper (or something it loads) prints, an answer for another request, a
+//! replayed answer, a crash, a timeout or silence fails closed. The helper
+//! only reports what the person clicked; the broker records it for the
+//! prompt it asked about and the ledger binds it to the request's nonce and
+//! digest, as for the Windows and macOS dialogs.
 //!
 //! STRONG: polkit `auth_self` for [`POLKIT_ACTION_ID`]
 //! (`distribution/linux/ai.orcel.approve.policy`: `allow_any=no`,
 //! `allow_inactive=no`, `allow_active=auth_self`), asked through polkit's
 //! `CheckAuthorization` D-Bus method by the pinned, root-owned
-//! `/usr/bin/pkcheck` for this process (id and start time) with
+//! `/usr/bin/pkcheck` for this process (id, start time and uid) with
 //! `--allow-user-interaction` and no internal text agent. polkit takes
 //! `--detail` only from root, so its prompt can show only the action's
 //! static message; the STRONG flow therefore shows the full request in the
@@ -29,11 +33,21 @@
 //! fails the whole STRONG approval; STRONG never degrades to SOFT.
 //!
 //! Every path but an interactive, local, active graphical login session
-//! fails closed before anything is shown: a CI runner, no `WAYLAND_DISPLAY`
-//! or `DISPLAY`, an SSH login, or a logind session that is not active, is
-//! remote, is not X11 or Wayland, or cannot be read. No environment
-//! variable can approve; the ones read here can only make approvals
-//! unavailable.
+//! fails closed before anything is shown: a CI runner, an SSH login, or a
+//! logind session that is not active, is remote, is not X11 or Wayland, or
+//! cannot be read. The display must belong to that session: on X11,
+//! `DISPLAY` must be the session's logind `Display`; on Wayland,
+//! `WAYLAND_DISPLAY` must name a socket under `/run/user/<uid>` owned by
+//! this user. The helper is given only the verified display's variables.
+//! No environment variable can approve; the ones read here can only make
+//! approvals unavailable.
+//!
+//! Residual risks (S-04), as on Windows and macOS: a same-uid process can
+//! run its own Wayland compositor socket in `/run/user/<uid>` and point
+//! `WAYLAND_DISPLAY` at it (for example with `systemctl --user
+//! set-environment`), then approve the SOFT dialog there; on X11 a same-uid
+//! process can click Approve with XTest. Neither can supply the password
+//! or fingerprint polkit asks for, so STRONG still requires the person.
 //!
 //! Provenance (T-CUA-20, COPY_ADAPT, Linux path): `pkcheck_outcome` and
 //! `proc_start_time` are adapted from cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f
@@ -118,6 +132,8 @@ pub(crate) struct LogindSession {
     pub kind: String,
     /// `Class`: `user`, `greeter`, `lock-screen`, `background`, ...
     pub class: String,
+    /// `Display`: the X11 display of an X11 session (empty otherwise).
+    pub display: String,
 }
 
 /// Everything the session decision depends on.
@@ -127,43 +143,112 @@ pub(crate) struct SessionFacts {
     pub automation: bool,
     /// `SSH_CONNECTION`, `SSH_CLIENT` or `SSH_TTY` is set.
     pub ssh: bool,
-    /// A non-empty `WAYLAND_DISPLAY` or `DISPLAY`.
-    pub display: bool,
+    /// A non-empty `WAYLAND_DISPLAY`.
+    pub wayland_display: Option<String>,
+    /// Whether `WAYLAND_DISPLAY` names a socket under `/run/user/<uid>`
+    /// that this user owns.
+    pub wayland_socket_owned: bool,
+    /// A non-empty `DISPLAY`.
+    pub x_display: Option<String>,
     /// The logind session, or why it could not be read.
     pub logind: Result<LogindSession, String>,
 }
 
+/// The display server the helper may connect to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DisplayKind {
+    X11,
+    Wayland,
+}
+
+/// `:N` or `:N.S` (a local X display, no host part) as `:N`.
+pub(crate) fn local_x_display(value: &str) -> Option<&str> {
+    let rest = value.strip_prefix(':')?;
+    let number = rest.split_once('.').map_or(rest, |(number, _)| number);
+    (!number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit()))
+        .then(|| &value[..number.len() + 1])
+}
+
+/// The display a person in this session would see, or `None` when there
+/// is none that provably belongs to the active local session: on X11,
+/// `DISPLAY` must be the session's own logind `Display`; on Wayland,
+/// `WAYLAND_DISPLAY` must be this user's socket in its runtime directory.
+pub(crate) fn session_display(facts: &SessionFacts) -> Option<DisplayKind> {
+    if facts.automation || facts.ssh {
+        return None;
+    }
+    let session = facts.logind.as_ref().ok()?;
+    if !session.active || session.remote || session.class != "user" {
+        return None;
+    }
+    match session.kind.as_str() {
+        "x11" => {
+            let env = local_x_display(facts.x_display.as_deref()?)?;
+            let own = local_x_display(&session.display)?;
+            (env == own).then_some(DisplayKind::X11)
+        }
+        "wayland" => (facts.wayland_display.is_some() && facts.wayland_socket_owned)
+            .then_some(DisplayKind::Wayland),
+        _ => None,
+    }
+}
+
 /// Classifies the session. Only a local, active, graphical (X11 or
-/// Wayland) user session with a display, outside CI and SSH, is
+/// Wayland) user session whose display is verified, outside CI and SSH, is
 /// interactive; everything else, including a probe failure, fails closed.
 pub(crate) fn classify_session(facts: &SessionFacts) -> SessionState {
     if facts.automation {
         return SessionState::Automation;
     }
-    if facts.ssh || !facts.display {
-        return SessionState::NoGraphicSession;
-    }
-    match &facts.logind {
-        Ok(session)
-            if session.active
-                && !session.remote
-                && matches!(session.kind.as_str(), "x11" | "wayland")
-                && session.class == "user" =>
-        {
-            SessionState::Interactive
-        }
-        _ => SessionState::NoGraphicSession,
+    match session_display(facts) {
+        Some(_) => SessionState::Interactive,
+        None => SessionState::NoGraphicSession,
     }
 }
 
+/// The socket `WAYLAND_DISPLAY` names, when it lies directly in this
+/// user's runtime directory `/run/user/<euid>`.
+pub(crate) fn wayland_socket_path(
+    wayland_display: &str,
+    runtime_dir: Option<&str>,
+    euid: u32,
+) -> Option<std::path::PathBuf> {
+    let own = format!("/run/user/{euid}");
+    let name = match wayland_display.strip_prefix(&format!("{own}/")) {
+        Some(name) => name,
+        None if wayland_display.starts_with('/') => return None,
+        None if runtime_dir? == own => wayland_display,
+        None => return None,
+    };
+    if name.is_empty() || name.contains('/') || name == "." || name == ".." {
+        return None;
+    }
+    Some(std::path::Path::new(&own).join(name))
+}
+
+/// The variables the helper is given for `kind`: the verified display
+/// only, plus what GTK needs to reach the session.
+pub(crate) fn helper_env_names(kind: DisplayKind) -> Vec<&'static str> {
+    HELPER_ENV_ALLOWLIST
+        .iter()
+        .copied()
+        .filter(|name| match kind {
+            DisplayKind::X11 => *name != "WAYLAND_DISPLAY",
+            DisplayKind::Wayland => *name != "DISPLAY" && *name != "XAUTHORITY",
+        })
+        .collect()
+}
+
 /// Parses `loginctl show-session` output (`Key=value` lines). Every one of
-/// `Active`, `Remote`, `Type` and `Class` must be present exactly once, and
-/// the two booleans must be `yes` or `no`.
+/// `Active`, `Remote`, `Type`, `Class` and `Display` must be present
+/// exactly once (`Display` may be empty), and the two booleans must be
+/// `yes` or `no`.
 pub(crate) fn parse_logind_properties(text: &str) -> Result<LogindSession, String> {
     let mut active = None;
     let mut remote = None;
     let mut kind = None;
     let mut class = None;
+    let mut display = None;
     for line in text.lines() {
         let line = line.trim_end_matches('\r');
         if line.is_empty() {
@@ -177,6 +262,7 @@ pub(crate) fn parse_logind_properties(text: &str) -> Result<LogindSession, Strin
             "Remote" => &mut remote,
             "Type" => &mut kind,
             "Class" => &mut class,
+            "Display" => &mut display,
             _ => continue,
         };
         if slot.replace(value.to_owned()).is_some() {
@@ -194,6 +280,7 @@ pub(crate) fn parse_logind_properties(text: &str) -> Result<LogindSession, Strin
         remote: flag("Remote", remote)?,
         kind: kind.ok_or("logind did not report Type")?,
         class: class.ok_or("logind did not report Class")?,
+        display: display.ok_or("logind did not report Display")?,
     })
 }
 
@@ -232,13 +319,19 @@ pub(crate) fn encode_request(
     line
 }
 
+/// Lowercase hex SHA-256 of the exact request bytes.
+pub(crate) fn request_digest(request: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    hex(&Sha256::digest(request))
+}
+
 /// The one answer line the helper may print:
-/// `orcel-approval-helper/1 <channel nonce> approve|deny`. orceld only
-/// parses it; tests build answers with it.
+/// `orcel-approval-helper/1 <channel nonce> <request sha256> approve|deny`.
+/// orceld only parses it; tests build answers with it.
 #[cfg(test)]
-pub(crate) fn answer_line(channel_nonce: &str, approved: bool) -> String {
+pub(crate) fn answer_line(channel_nonce: &str, digest: &str, approved: bool) -> String {
     let verdict = if approved { "approve" } else { "deny" };
-    format!("{HELPER_PROTOCOL} {channel_nonce} {verdict}\n")
+    format!("{HELPER_PROTOCOL} {channel_nonce} {digest} {verdict}\n")
 }
 
 /// Compares without stopping at the first differing byte.
@@ -248,9 +341,15 @@ fn same_bytes(a: &[u8], b: &[u8]) -> bool {
 
 /// Parses everything the helper wrote to stdout. Exactly one line ending in
 /// `\n`, no `\r`, at most [`MAX_ANSWER_BYTES`], the protocol name, this
-/// request's channel nonce and `approve` or `deny`; anything else (a missing,
-/// forged or replayed nonce, extra output, a partial line) is refused.
-pub(crate) fn parse_answer(output: &[u8], channel_nonce: &str) -> Result<bool, String> {
+/// request's channel nonce, the SHA-256 of the request bytes orceld sent
+/// and `approve` or `deny`; anything else (a missing, forged or replayed
+/// nonce, an answer about other request text, extra output, a partial
+/// line) is refused.
+pub(crate) fn parse_answer(
+    output: &[u8],
+    channel_nonce: &str,
+    request_sha256: &str,
+) -> Result<bool, String> {
     if output.is_empty() {
         return Err("the approval helper printed no answer".into());
     }
@@ -266,9 +365,13 @@ pub(crate) fn parse_answer(output: &[u8], channel_nonce: &str) -> Result<bool, S
         return Err("the approval helper printed more than one line".into());
     }
     let mut parts = line.split(' ');
-    let (Some(protocol), Some(nonce), Some(verdict), None) =
-        (parts.next(), parts.next(), parts.next(), parts.next())
-    else {
+    let (Some(protocol), Some(nonce), Some(digest), Some(verdict), None) = (
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+        parts.next(),
+    ) else {
         return Err("the approval helper answer is malformed".into());
     };
     if protocol != HELPER_PROTOCOL {
@@ -276,6 +379,9 @@ pub(crate) fn parse_answer(output: &[u8], channel_nonce: &str) -> Result<bool, S
     }
     if channel_nonce.is_empty() || !same_bytes(nonce.as_bytes(), channel_nonce.as_bytes()) {
         return Err("the approval helper answer is not for this request".into());
+    }
+    if request_sha256.is_empty() || !same_bytes(digest.as_bytes(), request_sha256.as_bytes()) {
+        return Err("the approval helper answered about text orceld did not send".into());
     }
     match verdict {
         "approve" => Ok(true),
@@ -365,8 +471,9 @@ pub(crate) fn strong_body(ctx: &PresenceContext) -> String {
 /// What one `pkcheck` run reported.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PolkitOutcome {
-    /// The exit status (`None` for a signal) and the first stderr line.
-    Exited(Option<i32>, String),
+    /// The exit status (`None` for a signal), stderr, and whether orceld
+    /// runs inside a logind session scope.
+    Exited(Option<i32>, String, bool),
     /// No reply before the deadline; pkcheck was killed.
     TimedOut,
     /// pkcheck, the policy or this process's start time is missing or
@@ -377,8 +484,15 @@ pub(crate) enum PolkitOutcome {
 /// `pkcheck`'s exit status (pkcheck(1)): 0 authorized, 1 not authorized,
 /// 2 the challenge could not be made (no authentication agent), 3 the
 /// person dismissed the dialog, 127 an error. An error or a signal is a
-/// failure, never the person's refusal.
-pub(crate) fn pkcheck_outcome(code: Option<i32>, stderr: &str) -> Result<(), PresenceError> {
+/// failure, never the person's refusal. A plain "not authorized" for a
+/// process outside any login session (orceld as a systemd user service)
+/// means polkit may not have found the active session to ask in: that is
+/// unavailable, not the person's refusal.
+pub(crate) fn pkcheck_outcome(
+    code: Option<i32>,
+    stderr: &str,
+    in_session: bool,
+) -> Result<(), PresenceError> {
     let detail = || {
         let line = stderr.lines().map(str::trim).find(|line| !line.is_empty());
         match (line, code) {
@@ -397,6 +511,9 @@ pub(crate) fn pkcheck_outcome(code: Option<i32>, stderr: &str) -> Result<(), Pre
                 detail()
             )))
         }
+        Some(1) if !in_session => Err(PresenceError::unavailable(
+            "polkit did not authorize orceld, which runs outside a login session (for example as a user service), so polkit may not have found the active session; STRONG approval fails closed",
+        )),
         Some(1) => Err(PresenceError::denied(
             "polkit did not authorize the Orcel STRONG action; STRONG approval fails closed",
         )),
@@ -486,7 +603,9 @@ pub(crate) fn verify_with(
         }
     }
     match authorize() {
-        PolkitOutcome::Exited(code, stderr) => pkcheck_outcome(code, &stderr)?,
+        PolkitOutcome::Exited(code, stderr, in_session) => {
+            pkcheck_outcome(code, &stderr, in_session)?
+        }
         PolkitOutcome::TimedOut => {
             return Err(PresenceError::timeout(
                 "strong user-presence verification timed out; STRONG approval fails closed",
@@ -515,8 +634,27 @@ pub(crate) fn owner_and_mode_trusted(uid: u32, mode: u32, euid: u32, allow_owner
 
 /// The effective uid from a `/proc/self/status` text.
 pub(crate) fn effective_uid(status: &str) -> Option<u32> {
+    status_uid(status, 2)
+}
+
+/// The real uid from a `/proc/self/status` text.
+pub(crate) fn real_uid(status: &str) -> Option<u32> {
+    status_uid(status, 1)
+}
+
+fn status_uid(status: &str, field: usize) -> Option<u32> {
     let line = status.lines().find(|line| line.starts_with("Uid:"))?;
-    line.split_whitespace().nth(2)?.parse().ok()
+    line.split_whitespace().nth(field)?.parse().ok()
+}
+
+/// Whether a `/proc/self/cgroup` text puts the process in a logind session
+/// scope (`.../session-<id>.scope`).
+pub(crate) fn cgroup_in_session(cgroup: &str) -> bool {
+    cgroup.lines().any(|line| {
+        line.rsplit('/')
+            .next()
+            .is_some_and(|leaf| leaf.starts_with("session-") && leaf.ends_with(".scope"))
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -537,10 +675,21 @@ pub(crate) fn platform_prompt(prompt: &ApprovalPrompt) -> Result<ApprovalDecisio
             "the SOFT dialog never answers a STRONG request; STRONG requires presence verification",
         ));
     }
-    session_gate(session_state())?;
+    let facts = sys::session_facts();
+    session_gate(classify_session(&facts))?;
+    let Some(kind) = session_display(&facts) else {
+        return Err(ApprovalError::unavailable(
+            "no verified display for the approval dialog; SOFT approval fails closed",
+        ));
+    };
     decide(
         prompt,
-        sys::confirm_in_helper(ApprovalClass::Soft, DIALOG_HEADER, &dialog_body(prompt)),
+        sys::confirm_in_helper(
+            ApprovalClass::Soft,
+            DIALOG_HEADER,
+            &dialog_body(prompt),
+            kind,
+        ),
     )
 }
 
@@ -575,12 +724,19 @@ impl crate::PresenceVerifier for PolkitPresenceVerifier {
         ctx: &PresenceContext,
         lease: &InputLeaseGuard,
     ) -> Result<PresenceAttestation, PresenceError> {
+        let facts = sys::session_facts();
+        let kind = session_display(&facts);
         verify_with(
             ctx,
             lease,
             self.method(),
-            session_state(),
-            |body| sys::confirm_in_helper(ApprovalClass::Strong, STRONG_HEADER, body),
+            classify_session(&facts),
+            |body| match kind {
+                Some(kind) => {
+                    sys::confirm_in_helper(ApprovalClass::Strong, STRONG_HEADER, body, kind)
+                }
+                None => HelperOutcome::NotStarted(String::from("no verified display")),
+            },
             sys::pkcheck,
         )
     }
@@ -610,10 +766,24 @@ pub(crate) mod sys {
     /// The facts [`classify_session`] decides on. The variables read here
     /// can only make approvals unavailable.
     pub(crate) fn session_facts() -> SessionFacts {
-        let set = |name: &str| std::env::var_os(name).is_some_and(|value| !value.is_empty());
+        let get = |name: &str| {
+            std::env::var_os(name)
+                .filter(|value| !value.is_empty())
+                .map(|value| value.to_string_lossy().into_owned())
+        };
+        let set = |name: &str| get(name).is_some();
         let automation = set("CI") || set("GITHUB_ACTIONS");
         let ssh = set("SSH_CONNECTION") || set("SSH_CLIENT") || set("SSH_TTY");
-        let display = set("WAYLAND_DISPLAY") || set("DISPLAY");
+        let wayland_display = get("WAYLAND_DISPLAY");
+        let x_display = get("DISPLAY");
+        let runtime_dir = get("XDG_RUNTIME_DIR");
+        let wayland_socket_owned = wayland_display.as_deref().is_some_and(|display| {
+            euid().ok().is_some_and(|euid| {
+                wayland_socket_path(display, runtime_dir.as_deref(), euid)
+                    .is_some_and(|path| owned_socket(&path, euid))
+            })
+        });
+        let display = wayland_display.is_some() || x_display.is_some();
         // Nothing is asked of logind when the answer is already no.
         let logind = if automation || ssh || !display {
             Err(String::from("not probed"))
@@ -623,9 +793,18 @@ pub(crate) mod sys {
         SessionFacts {
             automation,
             ssh,
-            display,
+            wayland_display,
+            wayland_socket_owned,
+            x_display,
             logind,
         }
+    }
+
+    /// A Unix socket (not a link to one) owned by `euid`.
+    fn owned_socket(path: &Path, euid: u32) -> bool {
+        use std::os::unix::fs::FileTypeExt;
+        std::fs::symlink_metadata(path)
+            .is_ok_and(|meta| meta.file_type().is_socket() && meta.uid() == euid)
     }
 
     /// The facts with the automation guard ignored, so CI can check that
@@ -634,7 +813,8 @@ pub(crate) mod sys {
     pub(crate) fn session_facts_ignoring_automation() -> SessionFacts {
         let mut facts = session_facts();
         facts.automation = false;
-        if facts.logind.is_err() && !facts.ssh && facts.display {
+        let display = facts.wayland_display.is_some() || facts.x_display.is_some();
+        if facts.logind.is_err() && !facts.ssh && display {
             facts.logind = logind_session();
         }
         facts
@@ -720,9 +900,11 @@ pub(crate) mod sys {
         Ok(hex(&bytes))
     }
 
-    fn helper_env() -> Vec<(OsString, OsString)> {
-        HELPER_ENV_ALLOWLIST
-            .iter()
+    /// The helper's environment: the allowlisted variables for the verified
+    /// display only.
+    fn helper_env(kind: DisplayKind) -> Vec<(OsString, OsString)> {
+        helper_env_names(kind)
+            .into_iter()
             .filter_map(|name| std::env::var_os(name).map(|value| (OsString::from(name), value)))
             .collect()
     }
@@ -732,6 +914,7 @@ pub(crate) mod sys {
         class: ApprovalClass,
         title: &str,
         body: &str,
+        kind: DisplayKind,
     ) -> HelperOutcome {
         let path = match helper_path() {
             Ok(path) => path,
@@ -744,7 +927,7 @@ pub(crate) mod sys {
             body,
             HELPER_DIALOG_TIMEOUT_SECS,
             Duration::from_secs(HELPER_DIALOG_TIMEOUT_SECS + HELPER_GRACE_SECS),
-            helper_env(),
+            helper_env(kind),
         )
     }
 
@@ -765,6 +948,7 @@ pub(crate) mod sys {
             Err(error) => return HelperOutcome::NotStarted(error),
         };
         let request = encode_request(&nonce, class, title, body, dialog_timeout_secs);
+        let digest = request_digest(request.as_bytes());
         let mut child = match Command::new(path)
             .env_clear()
             .envs(env)
@@ -778,8 +962,8 @@ pub(crate) mod sys {
             Err(error) => return HelperOutcome::NotStarted(format!("{}: {error}", path.display())),
         };
         if let Some(mut stdin) = child.stdin.take() {
-            // A helper that exits without reading is judged by its exit
-            // status and output below.
+            // A helper that exits without reading, or reads something else,
+            // is judged by its exit status and its answer's digest below.
             let _ = stdin.write_all(request.as_bytes());
         }
         let output = read_bounded(&mut child, MAX_ANSWER_BYTES + 1);
@@ -793,7 +977,7 @@ pub(crate) mod sys {
         // The pipe closes when the helper exits; a descendant that kept it
         // open does not make orceld wait for it.
         match output.recv_timeout(Duration::from_secs(2)) {
-            Ok(bytes) => match parse_answer(&bytes, &nonce) {
+            Ok(bytes) => match parse_answer(&bytes, &nonce, &digest) {
                 Ok(approved) => HelperOutcome::Answered(approved),
                 Err(error) => HelperOutcome::Malformed(error),
             },
@@ -894,6 +1078,7 @@ pub(crate) mod sys {
             "--property=Remote",
             "--property=Type",
             "--property=Class",
+            "--property=Display",
         ];
         match run_tool(&loginctl, &args, Duration::from_secs(5), 4096)? {
             Some((status, stdout, _)) if status.success() => {
@@ -928,7 +1113,17 @@ pub(crate) mod sys {
                 "cannot read this process's start time",
             ));
         };
-        let subject = format!("{},{start}", std::process::id());
+        let Some(uid) = std::fs::read_to_string("/proc/self/status")
+            .ok()
+            .as_deref()
+            .and_then(real_uid)
+        else {
+            return PolkitOutcome::NotAvailable(String::from("cannot read this process's uid"));
+        };
+        let in_session = std::fs::read_to_string("/proc/self/cgroup")
+            .is_ok_and(|cgroup| cgroup_in_session(&cgroup));
+        // pid, start time and uid: the form that is not racy (CVE-2013-4288).
+        let subject = format!("{},{start},{uid}", std::process::id());
         let args = [
             "--action-id",
             POLKIT_ACTION_ID,
@@ -942,9 +1137,11 @@ pub(crate) mod sys {
             Duration::from_millis(crate::STRONG_VERIFY_TIMEOUT_MS),
             4096,
         ) {
-            Ok(Some((status, _, stderr))) => {
-                PolkitOutcome::Exited(status.code(), String::from_utf8_lossy(&stderr).into_owned())
-            }
+            Ok(Some((status, _, stderr))) => PolkitOutcome::Exited(
+                status.code(),
+                String::from_utf8_lossy(&stderr).into_owned(),
+                in_session,
+            ),
             Ok(None) => PolkitOutcome::TimedOut,
             Err(error) => PolkitOutcome::NotAvailable(error),
         }
@@ -983,12 +1180,19 @@ mod tests {
         SessionFacts {
             automation: false,
             ssh: false,
-            display: true,
+            wayland_display: (kind == "wayland").then(|| "wayland-0".to_owned()),
+            wayland_socket_owned: kind == "wayland",
+            x_display: Some(":0".to_owned()),
             logind: Ok(LogindSession {
                 active: true,
                 remote: false,
                 kind: kind.to_owned(),
                 class: "user".to_owned(),
+                display: if kind == "x11" {
+                    ":0".to_owned()
+                } else {
+                    String::new()
+                },
             }),
         }
     }
@@ -1001,6 +1205,11 @@ mod tests {
                 SessionState::Interactive
             );
         }
+        assert_eq!(session_display(&graphical("x11")), Some(DisplayKind::X11));
+        assert_eq!(
+            session_display(&graphical("wayland")),
+            Some(DisplayKind::Wayland)
+        );
         let mut automation = graphical("wayland");
         automation.automation = true;
         assert_eq!(classify_session(&automation), SessionState::Automation);
@@ -1009,9 +1218,12 @@ mod tests {
         let mut ssh = graphical("x11");
         ssh.ssh = true;
         cases.push(("ssh", ssh));
-        let mut headless = graphical("wayland");
-        headless.display = false;
-        cases.push(("no display", headless));
+        let mut headless = graphical("x11");
+        headless.x_display = None;
+        cases.push(("x11 without DISPLAY", headless));
+        let mut no_wayland = graphical("wayland");
+        no_wayland.wayland_display = None;
+        cases.push(("wayland without WAYLAND_DISPLAY", no_wayland));
         let mut failed = graphical("x11");
         failed.logind = Err("no session".into());
         cases.push(("logind failed", failed));
@@ -1027,11 +1239,13 @@ mod tests {
             ("lock-screen", |s| s.class = "lock-screen".into()),
             ("background", |s| s.class = "background".into()),
         ] {
-            let mut facts = graphical("wayland");
-            if let Ok(session) = facts.logind.as_mut() {
-                edit(session);
+            for kind in ["x11", "wayland"] {
+                let mut facts = graphical(kind);
+                if let Ok(session) = facts.logind.as_mut() {
+                    edit(session);
+                }
+                cases.push((name, facts));
             }
-            cases.push((name, facts));
         }
         for (name, facts) in cases {
             assert_eq!(
@@ -1039,90 +1253,170 @@ mod tests {
                 SessionState::NoGraphicSession,
                 "{name}"
             );
+            assert_eq!(session_display(&facts), None, "{name}");
             let mut ci = facts.clone();
             ci.automation = true;
             assert_eq!(classify_session(&ci), SessionState::Automation, "{name}");
         }
     }
 
+    /// S-04 (M2): the dialog may only go to the active session's own
+    /// display. `systemctl --user set-environment DISPLAY=:99` pointing at
+    /// a same-uid Xvfb is refused on X11; a Wayland socket that is not this
+    /// user's, or not in its runtime directory, is refused.
+    #[test]
+    fn xp10_display_must_belong_to_the_active_session() {
+        for (display, ok) in [
+            (":0", true),
+            (":0.0", true),
+            (":0.1", true),
+            (":99", false),
+            (":1", false),
+            ("localhost:0", false),
+            ("evil.example:0", false),
+            ("unix:0", false),
+            (":", false),
+            (":0x", false),
+            ("", false),
+        ] {
+            let mut facts = graphical("x11");
+            facts.x_display = Some(display.to_owned());
+            assert_eq!(session_display(&facts).is_some(), ok, "DISPLAY={display}");
+        }
+        // logind reporting no Display for an X11 session is refused too.
+        let mut facts = graphical("x11");
+        if let Ok(session) = facts.logind.as_mut() {
+            session.display = String::new();
+        }
+        assert_eq!(session_display(&facts), None);
+        // A Wayland session never uses DISPLAY, and needs its own socket.
+        let mut facts = graphical("wayland");
+        facts.wayland_socket_owned = false;
+        assert_eq!(session_display(&facts), None);
+
+        assert_eq!(
+            wayland_socket_path("wayland-0", Some("/run/user/1000"), 1000),
+            Some(std::path::PathBuf::from("/run/user/1000/wayland-0"))
+        );
+        assert_eq!(
+            wayland_socket_path("/run/user/1000/wayland-1", None, 1000),
+            Some(std::path::PathBuf::from("/run/user/1000/wayland-1"))
+        );
+        for (display, runtime) in [
+            ("wayland-0", Some("/tmp/evil")),
+            ("wayland-0", None),
+            ("wayland-0", Some("/run/user/1001")),
+            ("/tmp/wayland-0", Some("/run/user/1000")),
+            ("/run/user/1001/wayland-0", Some("/run/user/1000")),
+            ("../1001/wayland-0", Some("/run/user/1000")),
+            ("sub/wayland-0", Some("/run/user/1000")),
+            ("/run/user/1000/../1001/w", Some("/run/user/1000")),
+            ("..", Some("/run/user/1000")),
+        ] {
+            assert_eq!(
+                wayland_socket_path(display, runtime, 1000),
+                None,
+                "{display} {runtime:?}"
+            );
+        }
+
+        // The helper is given only the verified display's variables.
+        let x11 = helper_env_names(DisplayKind::X11);
+        assert!(x11.contains(&"DISPLAY") && x11.contains(&"XAUTHORITY"));
+        assert!(!x11.contains(&"WAYLAND_DISPLAY"));
+        let wayland = helper_env_names(DisplayKind::Wayland);
+        assert!(wayland.contains(&"WAYLAND_DISPLAY"));
+        assert!(!wayland.contains(&"DISPLAY") && !wayland.contains(&"XAUTHORITY"));
+    }
+
     #[test]
     fn xp10_logind_properties_parse_strictly() {
-        let good = "Active=yes\nRemote=no\nType=wayland\nClass=user\n";
+        let good = "Active=yes\nRemote=no\nType=wayland\nClass=user\nDisplay=\n";
         assert_eq!(
             parse_logind_properties(good),
             Ok(LogindSession {
                 active: true,
                 remote: false,
                 kind: "wayland".into(),
-                class: "user".into()
+                class: "user".into(),
+                display: String::new(),
             })
         );
         // CRLF and unknown keys are tolerated; order does not matter.
-        let crlf = "Class=user\r\nId=3\r\nType=x11\r\nRemote=yes\r\nActive=no\r\n";
+        let crlf = "Display=:0\r\nClass=user\r\nId=3\r\nType=x11\r\nRemote=yes\r\nActive=no\r\n";
         let session = parse_logind_properties(crlf).expect("crlf");
         assert!(!session.active && session.remote && session.kind == "x11");
+        assert_eq!(session.display, ":0");
         for bad in [
             "",
-            "Active=yes\nRemote=no\nType=x11\n",
-            "Active=maybe\nRemote=no\nType=x11\nClass=user\n",
-            "Active=yes\nActive=yes\nRemote=no\nType=x11\nClass=user\n",
-            "Active=yes\nRemote=no\nType=x11\nClass=user\ngarbage\n",
-            "Active=yes\nRemote=\nType=x11\nClass=user\n",
+            "Active=yes\nRemote=no\nType=x11\nDisplay=:0\n",
+            "Active=yes\nRemote=no\nType=x11\nClass=user\n",
+            "Active=maybe\nRemote=no\nType=x11\nClass=user\nDisplay=\n",
+            "Active=yes\nActive=yes\nRemote=no\nType=x11\nClass=user\nDisplay=\n",
+            "Active=yes\nRemote=no\nType=x11\nClass=user\nDisplay=\ngarbage\n",
+            "Active=yes\nRemote=\nType=x11\nClass=user\nDisplay=\n",
         ] {
             assert!(parse_logind_properties(bad).is_err(), "{bad:?}");
         }
     }
 
+    const DIGEST: &str = "aa00000000000000000000000000000000000000000000000000000000000000";
+
     #[test]
-    fn xp10_answer_must_carry_this_requests_nonce() {
+    fn xp10_answer_must_carry_this_requests_nonce_and_digest() {
+        let ok = |nonce: &str, approved| answer_line(nonce, DIGEST, approved);
         assert_eq!(
-            parse_answer(answer_line(NONCE, true).as_bytes(), NONCE),
+            parse_answer(ok(NONCE, true).as_bytes(), NONCE, DIGEST),
             Ok(true)
         );
         assert_eq!(
-            parse_answer(answer_line(NONCE, false).as_bytes(), NONCE),
+            parse_answer(ok(NONCE, false).as_bytes(), NONCE, DIGEST),
             Ok(false)
         );
         let other = "fedcba9876543210fedcba9876543210";
+        let other_digest = format!("bb{}", &DIGEST[2..]);
         let refused: Vec<Vec<u8>> = vec![
-            // Missing nonce.
-            format!("{HELPER_PROTOCOL} approve\n").into_bytes(),
-            format!("{HELPER_PROTOCOL}  approve\n").into_bytes(),
+            // Missing nonce or digest.
+            format!("{HELPER_PROTOCOL} {DIGEST} approve\n").into_bytes(),
+            format!("{HELPER_PROTOCOL} {NONCE} approve\n").into_bytes(),
+            format!("{HELPER_PROTOCOL}  {DIGEST} approve\n").into_bytes(),
+            format!("{HELPER_PROTOCOL} {NONCE}  approve\n").into_bytes(),
             b"approve\n".to_vec(),
             // Spoofed or replayed from another request.
-            answer_line(other, true).into_bytes(),
-            answer_line(&NONCE[..31], true).into_bytes(),
-            answer_line(&format!("{NONCE}0"), true).into_bytes(),
-            answer_line(&NONCE.to_uppercase(), true).into_bytes(),
+            ok(other, true).into_bytes(),
+            ok(&NONCE[..31], true).into_bytes(),
+            ok(&format!("{NONCE}0"), true).into_bytes(),
+            ok(&NONCE.to_uppercase(), true).into_bytes(),
+            // The right nonce about other text (a substituted request).
+            answer_line(NONCE, &other_digest, true).into_bytes(),
+            answer_line(NONCE, &DIGEST.to_uppercase(), true).into_bytes(),
+            answer_line(NONCE, &DIGEST[..63], true).into_bytes(),
             // A second answer appended, or noise before the answer.
-            format!("{}{}", answer_line(NONCE, false), answer_line(NONCE, true)).into_bytes(),
-            format!("Gtk-WARNING\n{}", answer_line(NONCE, true)).into_bytes(),
+            format!("{}{}", ok(NONCE, false), ok(NONCE, true)).into_bytes(),
+            format!("Gtk-WARNING\n{}", ok(NONCE, true)).into_bytes(),
             // Partial, CRLF, padded or unknown verdicts.
-            answer_line(NONCE, true).trim_end().as_bytes().to_vec(),
-            format!("{HELPER_PROTOCOL} {NONCE} approve\r\n").into_bytes(),
-            format!("{HELPER_PROTOCOL} {NONCE} approve \n").into_bytes(),
-            format!("{HELPER_PROTOCOL} {NONCE} Approve\n").into_bytes(),
-            format!("{HELPER_PROTOCOL} {NONCE} yes\n").into_bytes(),
-            format!("orcel-approval-helper/2 {NONCE} approve\n").into_bytes(),
+            ok(NONCE, true).trim_end().as_bytes().to_vec(),
+            format!("{HELPER_PROTOCOL} {NONCE} {DIGEST} approve\r\n").into_bytes(),
+            format!("{HELPER_PROTOCOL} {NONCE} {DIGEST} approve \n").into_bytes(),
+            format!("{HELPER_PROTOCOL} {NONCE} {DIGEST} Approve\n").into_bytes(),
+            format!("{HELPER_PROTOCOL} {NONCE} {DIGEST} yes\n").into_bytes(),
+            format!("orcel-approval-helper/2 {NONCE} {DIGEST} approve\n").into_bytes(),
             // Not UTF-8, empty, or too long.
             vec![0xff, 0xfe, b'\n'],
             Vec::new(),
-            format!(
-                "{}{}",
-                " ".repeat(MAX_ANSWER_BYTES),
-                answer_line(NONCE, true)
-            )
-            .into_bytes(),
+            format!("{}{}", " ".repeat(MAX_ANSWER_BYTES), ok(NONCE, true)).into_bytes(),
         ];
         for output in refused {
             assert!(
-                parse_answer(&output, NONCE).is_err(),
+                parse_answer(&output, NONCE, DIGEST).is_err(),
                 "{:?}",
                 String::from_utf8_lossy(&output)
             );
         }
-        // An empty expected nonce never matches an empty field.
-        assert!(parse_answer(format!("{HELPER_PROTOCOL}  approve\n").as_bytes(), "").is_err());
+        // Empty expectations never match empty fields.
+        let blank = format!("{HELPER_PROTOCOL}   approve\n");
+        assert!(parse_answer(blank.as_bytes(), "", "").is_err());
+        assert!(parse_answer(ok(NONCE, true).as_bytes(), NONCE, "").is_err());
     }
 
     #[test]
@@ -1137,26 +1431,53 @@ mod tests {
         assert_eq!(value["body"], "a\nb");
         assert_eq!(value["timeout_secs"], 120);
         assert_eq!(hex(&[0, 1, 0xab, 0xff]), "0001abff");
+        assert_eq!(
+            request_digest(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
     }
 
     /// The helper's own protocol module (`apps/orcel-approval-helper-linux`)
-    /// accepts what orceld sends and answers what orceld accepts.
+    /// accepts what orceld sends and answers what orceld accepts, and a
+    /// request substituted with the same nonce (M1) yields an answer orceld
+    /// refuses.
     #[test]
     fn xp10_helper_protocol_matches_orceld() {
         use crate::linux_helper_protocol as helper;
         let body = dialog_body(&soft_prompt());
         let line = encode_request(NONCE, ApprovalClass::Soft, DIALOG_HEADER, &body, 120);
+        let sent = request_digest(line.as_bytes());
         let request = helper::parse_request(line.as_bytes()).expect("helper accepts");
         assert_eq!(request.nonce, NONCE);
         assert_eq!(request.body, body);
         assert_eq!(request.title, DIALOG_HEADER);
         assert_eq!(request.timeout_secs, 120);
         assert_eq!(helper::PROTOCOL, HELPER_PROTOCOL);
+        assert_eq!(helper::request_digest(line.as_bytes()), sent);
         for approved in [true, false] {
-            let answer = helper::answer_line(&request.nonce, approved);
-            assert_eq!(answer, answer_line(NONCE, approved));
-            assert_eq!(parse_answer(answer.as_bytes(), NONCE), Ok(approved));
+            let answer = helper::answer_line(&request.nonce, &sent, approved);
+            assert_eq!(answer, answer_line(NONCE, &sent, approved));
+            assert_eq!(parse_answer(answer.as_bytes(), NONCE, &sent), Ok(approved));
         }
+        // Substitution: a same-uid process reads the real request (and its
+        // nonce) from the helper's stdin and feeds a benign one with the
+        // same nonce. The helper shows and hashes the benign bytes, so its
+        // answer cannot match what orceld sent.
+        let benign = encode_request(
+            NONCE,
+            ApprovalClass::Soft,
+            DIALOG_HEADER,
+            "Orcel requests a local action.\n\nAction: read a file",
+            120,
+        );
+        let shown = helper::parse_request(benign.as_bytes()).expect("benign parses");
+        assert_eq!(shown.nonce, NONCE);
+        let answer = helper::answer_line(
+            &shown.nonce,
+            &helper::request_digest(benign.as_bytes()),
+            true,
+        );
+        assert!(parse_answer(answer.as_bytes(), NONCE, &sent).is_err());
         // The helper refuses requests it cannot show safely.
         for bad in [
             line.replace(HELPER_PROTOCOL, "orcel-approval-helper/0"),
@@ -1235,7 +1556,7 @@ mod tests {
                 shown = body.to_owned();
                 HelperOutcome::Answered(true)
             },
-            || PolkitOutcome::Exited(Some(0), String::new()),
+            || PolkitOutcome::Exited(Some(0), String::new(), true),
         )
         .expect("verified");
         assert_eq!(attestation.nonce, ctx.nonce);
@@ -1284,7 +1605,7 @@ mod tests {
                 |_| outcome.clone(),
                 || {
                     asked = true;
-                    PolkitOutcome::Exited(Some(0), String::new())
+                    PolkitOutcome::Exited(Some(0), String::new(), true)
                 },
             )
             .expect_err("fails closed");
@@ -1313,6 +1634,21 @@ mod tests {
             (Some(4), "", PresenceFailureReason::Failed),
             (None, "", PresenceFailureReason::Failed),
         ];
+        // orceld outside a login session (a user service): a plain "not
+        // authorized" may mean polkit found no session to ask in.
+        assert_eq!(
+            pkcheck_outcome(Some(1), "", false)
+                .expect_err("closed")
+                .reason,
+            PresenceFailureReason::Unavailable
+        );
+        assert!(pkcheck_outcome(Some(0), "", false).is_ok());
+        assert_eq!(
+            pkcheck_outcome(Some(3), "", false)
+                .expect_err("closed")
+                .reason,
+            PresenceFailureReason::Cancelled
+        );
         for (code, stderr, reason) in cases {
             let error = verify_with(
                 &ctx(),
@@ -1320,7 +1656,7 @@ mod tests {
                 POLKIT_PRESENCE_METHOD,
                 SessionState::Interactive,
                 |_| HelperOutcome::Answered(true),
-                || PolkitOutcome::Exited(code, stderr.to_owned()),
+                || PolkitOutcome::Exited(code, stderr.to_owned(), true),
             )
             .expect_err("fails closed");
             assert_eq!(error.reason, reason, "{code:?} {stderr}");
@@ -1360,7 +1696,7 @@ mod tests {
                 },
                 || {
                     asked.set(true);
-                    PolkitOutcome::Exited(Some(0), String::new())
+                    PolkitOutcome::Exited(Some(0), String::new(), true)
                 },
             )
             .expect_err("fails closed");
@@ -1376,7 +1712,7 @@ mod tests {
             POLKIT_PRESENCE_METHOD,
             SessionState::Interactive,
             |_| HelperOutcome::Answered(true),
-            || PolkitOutcome::Exited(Some(0), String::new()),
+            || PolkitOutcome::Exited(Some(0), String::new(), true),
         )
         .expect_err("lease");
         assert_eq!(error.reason, PresenceFailureReason::InvalidResponse);
@@ -1425,6 +1761,16 @@ mod tests {
         let status = "Name:\torceld\nUid:\t1000\t1001\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\n";
         assert_eq!(effective_uid(status), Some(1001));
         assert_eq!(effective_uid("Name:\tx\n"), None);
+        assert_eq!(real_uid(status), Some(1000));
+        assert_eq!(real_uid("Uid:\t\n"), None);
+        assert!(cgroup_in_session(
+            "0::/user.slice/user-1000.slice/session-3.scope\n"
+        ));
+        assert!(!cgroup_in_session(
+            "0::/user.slice/user-1000.slice/user@1000.service/app.slice/orceld.service\n"
+        ));
+        assert!(!cgroup_in_session("0::/session-3.scope/child\n"));
+        assert!(!cgroup_in_session(""));
         // root-owned 0755 is trusted; group or world write never is.
         assert!(owner_and_mode_trusted(0, 0o100755, 1000, false));
         assert!(!owner_and_mode_trusted(0, 0o100775, 1000, false));
@@ -1487,11 +1833,16 @@ mod tests {
             .filter(|line| line.contains("env::var_os"))
             .collect();
         assert_eq!(reads.len(), 2, "{reads:?}");
-        assert!(reads[0].contains("let set = |name: &str|"), "{reads:?}");
+        assert!(
+            reads[0].contains("std::env::var_os(name)") && !reads[0].contains("filter_map"),
+            "{reads:?}"
+        );
+        assert!(shipped.contains("let get = |name: &str| {"));
+        assert!(shipped.contains("let set = |name: &str| get(name).is_some();"));
         assert!(reads[1].contains("HELPER_ENV_ALLOWLIST") || reads[1].contains("filter_map"));
-        let mut names: Vec<&str> = shipped
-            .split("set(\"")
-            .skip(1)
+        let mut names: Vec<&str> = ["set(\"", "get(\""]
+            .iter()
+            .flat_map(|marker| shipped.split(marker).skip(1))
             .filter_map(|rest| rest.split('"').next())
             .collect();
         names.sort_unstable();
@@ -1504,7 +1855,8 @@ mod tests {
                 "SSH_CLIENT",
                 "SSH_CONNECTION",
                 "SSH_TTY",
-                "WAYLAND_DISPLAY"
+                "WAYLAND_DISPLAY",
+                "XDG_RUNTIME_DIR"
             ]
         );
         for name in HELPER_ENV_ALLOWLIST {
@@ -1558,28 +1910,36 @@ mod tests {
             outcome
         }
 
-        /// Echoes the nonce from the request it was sent.
-        const ECHO: &str = r#"read line; nonce=$(printf '%s' "$line" | /usr/bin/sed 's/.*"nonce":"\([0-9a-f]*\)".*/\1/')"#;
+        /// Echoes the nonce from the request it was sent, and hashes the
+        /// exact request line (with its newline) as the real helper does.
+        const ECHO: &str = r#"read -r line; nonce=$(printf '%s' "$line" | /usr/bin/sed 's/.*"nonce":"\([0-9a-f]*\)".*/\1/'); digest=$(printf '%s\n' "$line" | /usr/bin/sha256sum | /usr/bin/cut -d' ' -f1)"#;
 
         #[test]
         fn xp10_runner_accepts_only_this_requests_nonce() {
-            let approve =
-                format!("{ECHO}; printf 'orcel-approval-helper/1 %s approve\\n' \"$nonce\"");
+            let approve = format!(
+                "{ECHO}; printf 'orcel-approval-helper/1 %s %s approve\\n' \"$nonce\" \"$digest\""
+            );
             assert_eq!(
                 run(&approve, Duration::from_secs(10)),
                 HelperOutcome::Answered(true)
             );
-            let deny = format!("{ECHO}; printf 'orcel-approval-helper/1 %s deny\\n' \"$nonce\"");
+            let deny = format!(
+                "{ECHO}; printf 'orcel-approval-helper/1 %s %s deny\\n' \"$nonce\" \"$digest\""
+            );
             assert_eq!(
                 run(&deny, Duration::from_secs(10)),
                 HelperOutcome::Answered(false)
             );
             // Spoofed, missing and replayed nonces.
             for body in [
-                "read line; echo 'orcel-approval-helper/1 0123456789abcdef0123456789abcdef approve'".to_owned(),
+                "read line; echo 'orcel-approval-helper/1 0123456789abcdef0123456789abcdef e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 approve'".to_owned(),
                 "read line; echo 'orcel-approval-helper/1 approve'".to_owned(),
+                // The right nonce, but no digest, or the digest of other text:
+                // the request this helper showed is not the one orceld sent.
+                format!("{ECHO}; printf 'orcel-approval-helper/1 %s approve\\n' \"$nonce\""),
+                format!("{ECHO}; other=$(printf '%s\\n' \"$line\" | /usr/bin/sed 's/\"body\":\"body\"/\"body\":\"safe\"/' | /usr/bin/sha256sum | /usr/bin/cut -d' ' -f1); printf 'orcel-approval-helper/1 %s %s approve\\n' \"$nonce\" \"$other\""),
                 "echo approve".to_owned(),
-                format!("{ECHO}; printf 'orcel-approval-helper/1 %s approve\\n' \"$nonce\"; printf 'orcel-approval-helper/1 %s approve\\n' \"$nonce\""),
+                format!("{ECHO}; printf 'orcel-approval-helper/1 %s %s approve\\n' \"$nonce\" \"$digest\"; printf 'orcel-approval-helper/1 %s %s approve\\n' \"$nonce\" \"$digest\""),
             ] {
                 assert!(
                     matches!(run(&body, Duration::from_secs(10)), HelperOutcome::Malformed(_)),
@@ -1588,7 +1948,7 @@ mod tests {
             }
             // The same helper run twice gets two different nonces: an answer
             // captured from the first run is refused by the second.
-            let capture = script("capture", &format!("{ECHO}; printf '%s' \"$nonce\" > \"$0.nonce\"; printf 'orcel-approval-helper/1 %s approve\\n' \"$nonce\""));
+            let capture = script("capture", &format!("{ECHO}; printf '%s %s' \"$nonce\" \"$digest\" > \"$0.nonce\"; printf 'orcel-approval-helper/1 %s %s approve\\n' \"$nonce\" \"$digest\""));
             let first = run_helper(
                 &capture,
                 ApprovalClass::Soft,
@@ -1625,7 +1985,7 @@ mod tests {
             assert!(matches!(
                 run(
                     &format!(
-                        "{ECHO}; printf 'orcel-approval-helper/1 %s approve\\n' \"$nonce\"; exit 1"
+                        "{ECHO}; printf 'orcel-approval-helper/1 %s %s approve\\n' \"$nonce\" \"$digest\"; exit 1"
                     ),
                     Duration::from_secs(10)
                 ),
@@ -1664,7 +2024,7 @@ mod tests {
             // The test process has HOME (sh may invent a default PATH, so
             // PATH proves nothing); the helper sees only what it is given.
             assert!(std::env::var_os("HOME").is_some());
-            let body = format!("{ECHO}; if [ -z \"$HOME$LD_PRELOAD$CARGO\" ] && [ \"$ORCEL_XP10_GIVEN\" = 1 ]; then v=approve; else v=deny; fi; printf 'orcel-approval-helper/1 %s %s\n' \"$nonce\" \"$v\"");
+            let body = format!("{ECHO}; if [ -z \"$HOME$LD_PRELOAD$CARGO\" ] && [ \"$ORCEL_XP10_GIVEN\" = 1 ]; then v=approve; else v=deny; fi; printf 'orcel-approval-helper/1 %s %s %s\n' \"$nonce\" \"$digest\" \"$v\"");
             let path = script("env", &body);
             let outcome = run_helper(
                 &path,

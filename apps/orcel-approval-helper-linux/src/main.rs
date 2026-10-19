@@ -1,14 +1,17 @@
 //! orcel-approval-helper-linux (XP-10): the GTK4 approval dialog orceld
 //! spawns on Linux.
 //!
-//! It reads one request from stdin, shows the text exactly as orceld sent
-//! it (orceld bounds and escapes every field; the helper refuses text that
-//! was not escaped), and prints one answer line with orceld's channel nonce
-//! to stdout. Deny is the default button and Approve becomes clickable only
-//! after a short delay. Deny, Escape, closing the window and the timeout all
-//! answer deny. When the request is refused or no dialog can be shown (no
-//! display), the helper prints nothing and exits non-zero, which orceld
-//! treats as a failure.
+//! First, before GTK or anything else is loaded, it checks that stdin is a
+//! pipe and reads the whole request from it. It shows the text exactly as
+//! orceld sent it (orceld bounds and escapes every field; the helper refuses
+//! text that was not escaped), and prints one answer line to stdout with
+//! orceld's channel nonce and the SHA-256 of the exact bytes it read, so
+//! orceld refuses the answer when those bytes are not what it sent. Deny is
+//! the default button and Approve becomes clickable only after a short
+//! delay. Deny, Escape, closing the window and the timeout all answer deny.
+//! When the request is refused or no dialog can be shown (no display), the
+//! helper prints nothing and exits non-zero, which orceld treats as a
+//! failure.
 //!
 //! The helper decides nothing: orceld's broker records the answer for the
 //! request it asked about and the ledger binds it to that request. It is
@@ -24,6 +27,10 @@ use std::io::{Read, Write};
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+    if !stdin_is_pipe() {
+        eprintln!("orcel-approval-helper-linux: stdin is not a pipe");
+        return ExitCode::from(2);
+    }
     let mut input = Vec::new();
     let limit = protocol::MAX_REQUEST_BYTES as u64 + 1;
     if std::io::stdin()
@@ -41,12 +48,14 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    // The digest of the bytes parsed and shown, not of anything re-encoded.
+    let digest = protocol::request_digest(&input);
     let Some(approved) = show(&request) else {
         eprintln!("orcel-approval-helper-linux: no dialog could be shown");
         return ExitCode::from(3);
     };
     let mut stdout = std::io::stdout().lock();
-    let answer = protocol::answer_line(&request.nonce, approved);
+    let answer = protocol::answer_line(&request.nonce, &digest, approved);
     if stdout
         .write_all(answer.as_bytes())
         .and_then(|()| stdout.flush())
@@ -55,6 +64,18 @@ fn main() -> ExitCode {
         return ExitCode::from(4);
     }
     ExitCode::SUCCESS
+}
+
+/// orceld always starts the helper with a pipe it owns on stdin.
+#[cfg(target_os = "linux")]
+fn stdin_is_pipe() -> bool {
+    use std::os::unix::fs::FileTypeExt;
+    std::fs::metadata("/proc/self/fd/0").is_ok_and(|meta| meta.file_type().is_fifo())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn stdin_is_pipe() -> bool {
+    true
 }
 
 #[cfg(target_os = "linux")]
