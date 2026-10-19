@@ -71,7 +71,7 @@ fn computer_host_selected() -> bool {
 #[cfg(not(windows))]
 fn trusted_native_host(
     configured: Option<std::ffi::OsString>,
-) -> Result<std::path::PathBuf, ProviderError> {
+) -> Result<orcel_provider_uia::TrustedHostBinary, ProviderError> {
     let configured = configured.ok_or_else(|| {
         ProviderError::new(
             FailureCode::ProviderUnavailable,
@@ -95,7 +95,7 @@ fn computer_host() -> Result<&'static ComputerHostAdapter, ProviderError> {
         return Ok(host);
     }
     #[cfg(not(windows))]
-    let host = ComputerHostAdapter::from_path(trusted_native_host(std::env::var_os(
+    let host = ComputerHostAdapter::from_trusted(&trusted_native_host(std::env::var_os(
         "ORCEL_COMPUTER_HOST_BIN",
     ))?)
     .map_err(|error| ProviderError::new(error.code, error.message))?;

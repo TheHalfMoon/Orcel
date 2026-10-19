@@ -517,6 +517,31 @@ mod tests {
         assert_eq!(nonce, window_nonce("x11", 1312, &original, "gedit"));
     }
 
+    /// A lock or authentication surface of the OS the test runs on, from
+    /// that OS's own protected list.
+    #[cfg(target_os = "macos")]
+    const OS_LOCK_SCREEN: &str = "ScreenSaverEngine";
+    #[cfg(not(target_os = "macos"))]
+    const OS_LOCK_SCREEN: &str = "i3lock";
+
+    #[test]
+    fn os_lock_and_authentication_surfaces_are_protected_executables() {
+        assert!(is_protected_executable(OS_LOCK_SCREEN));
+        #[cfg(target_os = "macos")]
+        for name in ["loginwindow", "SecurityAgent", "coreautha"] {
+            assert!(is_protected_executable(name), "{name}");
+        }
+        #[cfg(not(target_os = "macos"))]
+        for name in [
+            "polkit-gnome-authentication-agent-1",
+            "swaylock",
+            "xscreensaver",
+        ] {
+            assert!(is_protected_executable(name), "{name}");
+        }
+        assert!(!is_protected_executable("gedit"));
+    }
+
     #[test]
     fn windows_without_attested_owner_self_or_protected_owner_are_omitted() {
         let windows = vec![
@@ -528,7 +553,7 @@ mod tests {
             window(6, Some(13), "Editor", "gedit"),
         ];
         let (facts, omitted) = map_windows(&windows, "x11", 99, |pid| match pid {
-            10 => Some(identity(10, 1, "i3lock")),
+            10 => Some(identity(10, 1, OS_LOCK_SCREEN)),
             11 => Some(identity(11, 1, "untitled")),
             13 => Some(identity(13, 5, "gedit")),
             _ => None,

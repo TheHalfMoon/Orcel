@@ -473,7 +473,12 @@ mod platform {
     }
 
     impl HostSession {
-        fn spawn(path: &Path) -> Result<Self, UiaError> {
+        /// Starts the host. `verify` runs immediately before the spawn and
+        /// can refuse it (XP-06: the pinned binary must be unchanged).
+        fn spawn(
+            path: &Path,
+            verify: impl FnOnce() -> Result<(), UiaError>,
+        ) -> Result<Self, UiaError> {
             let mut command = Command::new(path);
             command
                 .stdin(Stdio::piped())
@@ -485,6 +490,7 @@ mod platform {
                     command.env(name, value);
                 }
             }
+            verify()?;
             let mut child = command.spawn().map_err(|error| {
                 UiaError::new(
                     FailureCode::ProviderUnavailable,
@@ -686,7 +692,20 @@ mod platform {
     impl ComputerHostAdapter {
         pub fn from_path(path: impl Into<PathBuf>) -> Result<Self, UiaError> {
             let path = path.into();
-            let session = HostSession::spawn(&path)?;
+            let session = HostSession::spawn(&path, || Ok(()))?;
+            Ok(Self {
+                path,
+                session: Mutex::new(session),
+                bindings: Mutex::new(BTreeMap::new()),
+            })
+        }
+
+        /// Starts the pinned host the XP-06 path check accepted. The file
+        /// is re-read right before the spawn and refused if it changed.
+        #[cfg(unix)]
+        pub fn from_trusted(binary: &crate::TrustedHostBinary) -> Result<Self, UiaError> {
+            let path = binary.path().to_path_buf();
+            let session = HostSession::spawn(&path, || binary.verify_unchanged())?;
             Ok(Self {
                 path,
                 session: Mutex::new(session),

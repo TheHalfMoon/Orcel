@@ -52,11 +52,11 @@ pub use computer_host::{
     ComputerHostAdapter, DesktopActionResult, DesktopCursorPosition, DesktopInputAction,
     DesktopWindowAction,
 };
-#[cfg(unix)]
-pub use native_host_path::trusted_native_host_path;
 pub use native_host_path::{
     owner_and_mode_trusted, NATIVE_HOST_FILE_NAME, SYSTEM_NATIVE_HOST_PATH,
 };
+#[cfg(unix)]
+pub use native_host_path::{trusted_native_host_path, TrustedHostBinary};
 
 pub const UIA_SCHEMA: &str = "orcel-uia-observation-v1";
 pub const INVOKE_SCHEMA: &str = "orcel-uia-invoke-v1";

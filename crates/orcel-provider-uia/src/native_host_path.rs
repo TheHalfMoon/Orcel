@@ -16,6 +16,21 @@
 //
 // Anything else is refused before the binary is started, so a file dropped
 // in /tmp or a name resolved through PATH never becomes the observation host.
+//
+// The check records the file's device and inode, and the adapter re-reads
+// them (with owner and mode) immediately before it spawns the host
+// (`TrustedHostBinary::verify_unchanged`), so a file swapped or loosened
+// after the check is refused. The remaining window between that re-read and
+// exec is open only to root and this user, because every directory on the
+// path must be writable by nobody else, and those can already replace orceld.
+//
+// macOS packaging (XP-16): `/Applications` is `root:admin` mode 0775, which
+// this rule refuses, so a host inside `/Applications/Orcel.app` is not
+// trusted. The rule is not relaxed to admin-group directories: any admin user
+// could then swap the host of another user. XP-16 must install the host where
+// every ancestor is owned by root or the user and writable by nobody else
+// (for example a per-user `~/Applications` bundle, or a root:wheel 0755
+// location), and keep a test for it.
 
 #[cfg(unix)]
 use crate::UiaError;
@@ -40,13 +55,70 @@ pub fn owner_and_mode_trusted(uid: u32, mode: u32, euid: u32) -> bool {
     (uid == 0 || uid == euid) && mode & 0o022 == 0
 }
 
+/// The pinned host as it was checked: its canonical path and the device
+/// and inode of the file at check time.
+#[cfg(unix)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrustedHostBinary {
+    path: PathBuf,
+    dev: u64,
+    ino: u64,
+}
+
+#[cfg(unix)]
+impl TrustedHostBinary {
+    fn recorded(path: PathBuf, meta: &std::fs::Metadata) -> Self {
+        use std::os::unix::fs::MetadataExt;
+        Self {
+            path,
+            dev: meta.dev(),
+            ino: meta.ino(),
+        }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Re-reads the file right before it is started. It must still be the
+    /// same file (device and inode), not a symlink, owned by root or this
+    /// user and writable by nobody else.
+    pub fn verify_unchanged(&self) -> Result<(), UiaError> {
+        use std::os::unix::fs::MetadataExt;
+        let meta = std::fs::symlink_metadata(&self.path)
+            .map_err(|error| refused(format!("{}: {error}", self.path.display())))?;
+        if !meta.file_type().is_file() || meta.dev() != self.dev || meta.ino() != self.ino {
+            return Err(refused(format!(
+                "{} changed since it was checked",
+                self.path.display()
+            )));
+        }
+        let euid = orcel_platform::session::effective_uid()
+            .ok_or_else(|| refused("this process's uid is unreadable".to_owned()))?;
+        if !owner_and_mode_trusted(meta.uid(), meta.mode(), euid) {
+            return Err(refused(format!(
+                "{} changed owner or mode since it was checked",
+                self.path.display()
+            )));
+        }
+        Ok(())
+    }
+
+    /// The identity of `path` without the location and ancestor checks,
+    /// for tests of the re-check itself.
+    #[cfg(test)]
+    pub(crate) fn record_for_test(path: &Path) -> Self {
+        Self::recorded(path.to_path_buf(), &std::fs::metadata(path).unwrap())
+    }
+}
+
 /// The pinned host `configured` names, checked as described above.
 /// `orceld_dir` is the canonical directory of the running orceld.
 #[cfg(unix)]
 pub fn trusted_native_host_path(
     configured: &Path,
     orceld_dir: Option<&Path>,
-) -> Result<PathBuf, UiaError> {
+) -> Result<TrustedHostBinary, UiaError> {
     use std::os::unix::fs::MetadataExt;
 
     if !configured.is_absolute() {
@@ -95,7 +167,7 @@ pub fn trusted_native_host_path(
             )));
         }
     }
-    Ok(canonical)
+    Ok(TrustedHostBinary::recorded(canonical, &meta))
 }
 
 #[cfg(test)]
@@ -165,7 +237,7 @@ mod tests {
             let host = fixture.host(0o755);
             let result = trusted_native_host_path(&host, Some(&fixture.dir));
             if ancestors_trusted(&fixture.dir) {
-                assert_eq!(result.unwrap(), host);
+                assert_eq!(result.unwrap().path(), host);
             } else {
                 // A checkout under a directory others can write is refused.
                 assert!(result.is_err());
@@ -214,6 +286,40 @@ mod tests {
                 .join("..")
                 .join(NATIVE_HOST_FILE_NAME);
             assert!(trusted_native_host_path(&dotted, Some(&fixture.dir)).is_err());
+        }
+
+        #[test]
+        fn xp06_host_swapped_after_the_check_is_refused_before_spawn() {
+            let fixture = Fixture::new("swapped");
+            let host = fixture.host(0o755);
+            let checked = TrustedHostBinary::record_for_test(&host);
+            checked.verify_unchanged().unwrap();
+
+            // Loosened in place: same inode, group-writable.
+            std::fs::set_permissions(&host, std::fs::Permissions::from_mode(0o775)).unwrap();
+            let error = checked.verify_unchanged().unwrap_err();
+            assert!(error.message.contains("owner or mode"), "{error:?}");
+            std::fs::set_permissions(&host, std::fs::Permissions::from_mode(0o755)).unwrap();
+            checked.verify_unchanged().unwrap();
+
+            // Replaced by another file under the same name.
+            std::fs::remove_file(&host).unwrap();
+            fixture.host(0o755);
+            let error = checked.verify_unchanged().unwrap_err();
+            assert!(error.message.contains("changed since"), "{error:?}");
+
+            // Replaced by a symlink to a file elsewhere.
+            std::fs::remove_file(&host).unwrap();
+            let elsewhere = fixture.dir.join("elsewhere");
+            std::fs::write(&elsewhere, b"host").unwrap();
+            std::os::unix::fs::symlink(&elsewhere, &host).unwrap();
+            assert!(checked.verify_unchanged().is_err());
+
+            // The adapter refuses before it starts anything.
+            let error = crate::ComputerHostAdapter::from_trusted(&checked)
+                .err()
+                .expect("refused before spawn");
+            assert!(error.message.contains("changed since"), "{error:?}");
         }
 
         #[test]
