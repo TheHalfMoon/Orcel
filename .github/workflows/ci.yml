@@ -149,7 +149,8 @@ jobs:
             exit 1
           fi
           compiled_out='cua_driver_core::(server|daemon|browser|cdp|history|recording|perception_client)::|platform_(macos|linux)::(browser|browser_platform|history|recording_hooks|video_[a-z]+|pip)::'
-          retained='cua_driver_core::server::(ToolOperation|tool_operation|is_computer_action|ToolCompletionObservation|DurationBucket|OutputType|OutputSizeBucket|ToolErrorClass|ToolRefusalCode)|cua_driver_core::browser::(types|download)::|platform_macos::browser::(browser_js::BrowserJs::supports|electron_js::ElectronJs::(is_electron|execute_main))|platform_linux::browser_platform::is_chromium_identity'
+          retained='cua_driver_core::server::(ToolOperation|tool_operation|is_computer_action|ToolCompletionObservation|DurationBucket|OutputType|OutputSizeBucket|ToolErrorClass|ToolRefusalCode)|cua_driver_core::browser::(types|download)::|platform_macos::browser::(browser_js::BrowserJs>?::supports|electron_js::ElectronJs>?::(is_electron|execute_main))|platform_linux::browser_platform::is_chromium_identity'
+          # nm -C prints inherent methods as <Type>::method, hence the optional >.
           hits=$(grep -E "$compiled_out" <<<"$symbols" | grep -vE "$retained" || true)
           if [ -n "$hits" ]; then
             head -n 40 <<<"$hits"

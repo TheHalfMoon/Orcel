@@ -1309,6 +1309,15 @@ impl ToolRegistry {
         self.tools.insert(name, tool);
     }
 
+    /// Orcel P-07: drop every registered tool whose name is not in `keep`,
+    /// so a host that registers a platform's whole set can narrow it to an
+    /// allowlist. A dropped name is then unknown to `invoke`.
+    #[cfg(feature = "orcel-minimal")]
+    pub fn retain_tools(&mut self, keep: &[&str]) {
+        self.tools.retain(|name, _| keep.contains(&name.as_str()));
+        self.order.retain(|name| keep.contains(&name.as_str()));
+    }
+
     pub fn retain_session_end_hook(
         &mut self,
         registration: crate::session::SessionEndHookRegistration,

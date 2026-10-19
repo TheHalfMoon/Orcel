@@ -129,6 +129,8 @@ The Go test `TestProtocolV2HelloReportsPlatformBackendAndCapabilities` requires 
 | `capture_window` | unavailable | `provider_unavailable` | XP-07 |
 | `semantic_action`, `window_action`, `input_*` | refused | `capability_denied` | observation only (XP-11, XP-12) |
 
+The kernel caps this table (`host_protocol::NATIVE_OBSERVATION_OPERATIONS`): on macOS and Linux every operation other than `hello`, `ping`, `shutdown`, `list_windows`, `observe_window` and `cursor_position` is unavailable (reason `observation_only`) whatever the host advertises, until XP-11 and XP-12 qualify more. orceld starts the host only from a pinned path (`orcel_provider_uia::trusted_native_host_path`, the XP-10 helper rule): `ORCEL_COMPUTER_HOST_BIN` must be an absolute canonical path next to orceld or at `/usr/libexec/orcel/orcel-native-host`, a file owned by root or this user that nobody else can write, in directories nobody else can write; `PATH` is never searched.
+
 The availability comes from a worker probe at hello time (macOS: the Cua `check_permissions` tool, read without prompting; Linux: the session variables). A failed probe never fails the handshake; it marks observation unavailable. Every observation request re-checks in its own worker and refuses with the same code. The host never prompts for a permission. A refused or unavailable operation sent anyway is answered with `capability_denied`, or with the code of the probe, before any native work.
 
 ## 6. Window identity
@@ -221,6 +223,8 @@ The `background_*` codes come from the Cua Driver action-result contract (`libs/
 | Real Go host answers `/1` and `/2` hello on windows-latest | Node `apps/orcel-mcp/src/sg000094-host-ci.test.ts` |
 | Per-generation framing of bound requests | Rust `computer_host::tests::bound_requests_are_framed_per_negotiated_generation` (Windows) |
 | Real host negotiates `/2` | Rust `configured_host_handshake_is_exact` (Windows, with `ORCEL_COMPUTER_HOST_BIN`) |
+| Kernel cap: a native hello claiming input, capture or semantic actions is held to observation | Rust `host_protocol::tests::native_hello_claiming_input_or_capture_is_capped_to_observation` (all OSes) |
+| Pinned host path: `/tmp`, `PATH` names, symlinks and writable files refused | Rust `native_host_path::tests::*` (Linux and macOS), orceld `xp06_tests::xp06_unpinned_host_bins_are_refused` |
 | Native identity, platform/backend pairing, window kind per backend, no `/1` fallback off Windows | Rust `host_protocol::tests::native_host_negotiates_identity_and_window_kind_per_backend`, `native_platforms_never_fall_back_to_v1` (all OSes) |
 | Adapter over a scripted native host: bound frames carry the kind of the backend; mutations and capture refused before any frame; `permission_missing` unavailable; identity echo; output bound; refusal mapping | Rust `computer_host::tests::native_*`, `missing_permission_makes_observation_unavailable_without_a_frame`, `responses_must_echo_the_native_identity`, `oversize_native_response_is_output_limit` (all OSes) |
 | Native host frames, bounds, table, refusals | Rust `orcel-native-host` `protocol::tests`, `supervisor::tests` (timeout kill, crash, oversized worker output on Unix) |

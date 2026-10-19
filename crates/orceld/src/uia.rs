@@ -61,12 +61,32 @@ fn computer_host_selected() -> bool {
     std::env::var_os("ORCEL_COMPUTER_HOST_BIN").is_some()
 }
 
-/// XP-06: off Windows the private host is `orcel-native-host`, the macOS and
-/// Linux host. Any other binary is refused before it is started.
-#[cfg_attr(windows, allow(dead_code))]
-fn is_native_host_binary(path: &std::path::Path) -> bool {
-    path.file_name()
-        .is_some_and(|name| name == "orcel-native-host")
+/// XP-06: off Windows ORCEL_COMPUTER_HOST_BIN must name the pinned
+/// `orcel-native-host`: an absolute canonical path next to orceld or at
+/// `/usr/libexec/orcel/orcel-native-host`, owned by root or this user and
+/// writable by nobody else, in directories nobody else can write
+/// (`orcel_provider_uia::trusted_native_host_path`, the XP-10 rule). Any
+/// other binary is refused before it is started. Whatever the host then
+/// advertises, the kernel accepts only observation from it until XP-11.
+#[cfg(not(windows))]
+fn trusted_native_host(
+    configured: Option<std::ffi::OsString>,
+) -> Result<std::path::PathBuf, ProviderError> {
+    let configured = configured.ok_or_else(|| {
+        ProviderError::new(
+            FailureCode::ProviderUnavailable,
+            "ORCEL_COMPUTER_HOST_BIN is not configured",
+        )
+    })?;
+    let orceld_dir = std::env::current_exe()
+        .ok()
+        .and_then(|exe| std::fs::canonicalize(exe).ok())
+        .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf));
+    orcel_provider_uia::trusted_native_host_path(
+        std::path::Path::new(&configured),
+        orceld_dir.as_deref(),
+    )
+    .map_err(|error| ProviderError::new(error.code, error.message))
 }
 
 fn computer_host() -> Result<&'static ComputerHostAdapter, ProviderError> {
@@ -75,14 +95,11 @@ fn computer_host() -> Result<&'static ComputerHostAdapter, ProviderError> {
         return Ok(host);
     }
     #[cfg(not(windows))]
-    if !std::env::var_os("ORCEL_COMPUTER_HOST_BIN")
-        .is_some_and(|path| is_native_host_binary(std::path::Path::new(&path)))
-    {
-        return Err(ProviderError::new(
-            FailureCode::ProviderUnavailable,
-            "ORCEL_COMPUTER_HOST_BIN must name orcel-native-host on this platform",
-        ));
-    }
+    let host = ComputerHostAdapter::from_path(trusted_native_host(std::env::var_os(
+        "ORCEL_COMPUTER_HOST_BIN",
+    ))?)
+    .map_err(|error| ProviderError::new(error.code, error.message))?;
+    #[cfg(windows)]
     let host = ComputerHostAdapter::from_env()
         .map_err(|error| ProviderError::new(error.code, error.message))?;
     let _ = HOST.set(host);
@@ -1660,20 +1677,26 @@ fn reject_uia_arguments(request: &RequestEnvelope, allowed: &[&str]) -> Result<(
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(windows)))]
 mod xp06_tests {
-    use super::is_native_host_binary;
-    use std::path::Path;
+    use super::trusted_native_host;
 
+    /// The path rule itself is tested in orcel-provider-uia
+    /// (native_host_path); this checks orceld applies it.
     #[test]
-    fn xp06_only_orcel_native_host_is_accepted_off_windows() {
-        assert!(is_native_host_binary(Path::new(
-            "/opt/orcel/bin/orcel-native-host"
-        )));
-        assert!(!is_native_host_binary(Path::new(
-            "/opt/orcel/bin/orcel-native-host-evil"
-        )));
-        assert!(!is_native_host_binary(Path::new("/usr/bin/cua-driver")));
-        assert!(!is_native_host_binary(Path::new("")));
+    fn xp06_unpinned_host_bins_are_refused() {
+        for value in [
+            None,
+            Some("orcel-native-host"),
+            Some("/tmp/x/orcel-native-host"),
+            Some("/usr/bin/orcel-native-host"),
+        ] {
+            let error = trusted_native_host(value.map(Into::into)).unwrap_err();
+            assert_eq!(
+                error.code,
+                orcel_contracts::FailureCode::ProviderUnavailable,
+                "{value:?}"
+            );
+        }
     }
 }

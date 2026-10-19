@@ -49,6 +49,18 @@ pub(crate) const V1_OPERATIONS: [&str; 16] = [
     "shutdown",
 ];
 
+/// The operations the kernel accepts from the macOS and Linux host (XP-06).
+/// Every other operation is unavailable there until XP-11 and XP-12 qualify
+/// semantic actions, capture and input, even if a host advertises it.
+pub(crate) const NATIVE_OBSERVATION_OPERATIONS: [&str; 6] = [
+    "hello",
+    "ping",
+    "shutdown",
+    "list_windows",
+    "observe_window",
+    "cursor_position",
+];
+
 const PLATFORMS: [&str; 3] = ["windows", "macos", "linux"];
 const BACKENDS: [&str; 4] = ["uia", "ax", "atspi-x11", "atspi-wayland"];
 
@@ -302,13 +314,21 @@ fn accept_v2(expected_platform: &str, reply: HelloFrame) -> Result<NegotiatedHos
             let reason = wire
                 .reason
                 .filter(|reason| reason.len() <= MAX_REASON_BYTES && reason.is_ascii());
-            (
-                op,
-                HostCapability {
-                    support: CapabilitySupport::parse(&wire.support),
-                    reason,
-                },
-            )
+            let mut capability = HostCapability {
+                support: CapabilitySupport::parse(&wire.support),
+                reason,
+            };
+            // XP-06 kernel cap: off Windows the host is observation only
+            // until XP-11, whatever its hello claims.
+            if expected_platform != "windows"
+                && !NATIVE_OBSERVATION_OPERATIONS.contains(&op.as_str())
+            {
+                capability = HostCapability {
+                    support: CapabilitySupport::Unavailable,
+                    reason: Some("observation_only".to_owned()),
+                };
+            }
+            (op, capability)
         })
         .collect();
     Ok(NegotiatedHost {
@@ -608,6 +628,44 @@ mod tests {
         assert!(negotiate("windows", |_| Ok(frame(V2_LINUX_HELLO))).is_err());
         let atspi_on_macos = V2_LINUX_HELLO.replace("\"linux\"", "\"macos\"");
         assert!(negotiate("macos", |_| Ok(frame(&atspi_on_macos))).is_err());
+    }
+
+    #[test]
+    fn native_hello_claiming_input_or_capture_is_capped_to_observation() {
+        let claims_everything = V2_LINUX_HELLO
+            .replace(
+                r#""input_click":{"support":"refused","reason":"capability_denied"}"#,
+                r#""input_click":{"support":"delivered"},"input_hotkey":{"support":"foreground_only"},"semantic_action":{"support":"delivered"},"capture_window":{"support":"delivered"},"window_action":{"support":"delivered"},"cursor_position":{"support":"delivered"}"#,
+            );
+        for platform in ["linux", "macos"] {
+            let raw = if platform == "macos" {
+                claims_everything
+                    .replace("\"linux\"", "\"macos\"")
+                    .replace("atspi-x11", "ax")
+            } else {
+                claims_everything.clone()
+            };
+            let host = negotiate(platform, |_| Ok(frame(&raw))).unwrap();
+            for op in [
+                "input_click",
+                "input_hotkey",
+                "semantic_action",
+                "capture_window",
+                "window_action",
+            ] {
+                let error = host.require(op).unwrap_err();
+                assert_eq!(error.code, FailureCode::ProviderUnavailable, "{op}");
+                assert!(
+                    error.message.contains("observation_only"),
+                    "{op}: {error:?}"
+                );
+            }
+            assert!(host.require("list_windows").is_ok());
+            assert!(host.require("cursor_position").is_ok());
+        }
+        // Windows keeps whatever its host reports.
+        let windows = negotiate("windows", |_| Ok(frame(V2_WINDOWS_HELLO))).unwrap();
+        assert!(windows.require("input_click").is_ok());
     }
 
     #[test]

@@ -22,6 +22,17 @@ use serde_json::Value;
 /// only argument is `prompt`, which the host always sends as `false`.
 pub const CHECK_PERMISSIONS: &str = "check_permissions";
 
+/// The tool names the vendored registry keeps after construction (patch
+/// P-07): exactly the tools [`CuaCall`] names. Every other tool the platform
+/// registers is dropped, so even a name that bypassed the enum is unknown.
+pub const ALLOWED_TOOLS: [&str; 5] = [
+    ListWindowsInput::TOOL_NAME,
+    GetWindowStateInput::TOOL_NAME,
+    GetCursorPositionInput::TOOL_NAME,
+    GetScreenSizeInput::TOOL_NAME,
+    CHECK_PERMISSIONS,
+];
+
 /// The only Cua tools the host calls.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CuaCall {
@@ -132,7 +143,10 @@ mod imp {
                 registry
             };
             #[cfg(target_os = "linux")]
-            let registry = platform_linux::tools::build_registry(false);
+            let mut registry = platform_linux::tools::build_registry(false);
+            #[cfg(target_os = "macos")]
+            let mut registry = registry;
+            registry.retain_tools(&super::ALLOWED_TOOLS);
             Self { registry }
         }
 
@@ -235,6 +249,7 @@ mod tests {
                 "check_permissions"
             ]
         );
+        assert_eq!(names, ALLOWED_TOOLS.to_vec());
         for call in &calls {
             assert!(call.arguments().is_ok(), "{call:?}");
         }
@@ -305,30 +320,14 @@ mod tests {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
     fn registry_holds_the_allowlist_and_no_compiled_out_tool() {
-        let names = CuaRuntime::new().registered_tools();
-        for allowed in [
-            "list_windows",
-            "get_window_state",
-            "get_cursor_position",
-            "get_screen_size",
-            CHECK_PERMISSIONS,
-        ] {
-            assert!(
-                names.iter().any(|name| name == allowed),
-                "{allowed}: {names:?}"
-            );
-        }
-        for name in &names {
-            assert!(
-                !matches!(
-                    name.as_str(),
-                    "run_script" | "page" | "kill_app" | "parallel_mouse_drag"
-                ) && !name.starts_with("browser")
-                    && !name.contains("recording")
-                    && !name.contains("history"),
-                "{name} is registered: {names:?}"
-            );
-        }
+        let mut names = CuaRuntime::new().registered_tools();
+        names.sort();
+        let mut allowed: Vec<String> = ALLOWED_TOOLS.iter().map(|n| n.to_string()).collect();
+        allowed.sort();
+        // P-07 narrows the platform's whole set to exactly the allowlist:
+        // no run_script, page, kill_app, browser, input, clipboard or
+        // recording tool is registered.
+        assert_eq!(names, allowed);
     }
 
     #[test]

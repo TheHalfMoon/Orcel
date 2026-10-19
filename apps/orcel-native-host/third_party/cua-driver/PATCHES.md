@@ -299,6 +299,22 @@ reworded; with the feature off the file compiles exactly as upstream.
 Linux needs no counterpart: upstream's `atspi/native.rs` never reads the
 text of a `password text` node, and the host marks that role the same way.
 
+## P-07: a host narrows the registry to its allowlist (XP-06)
+
+`cua-driver-core/src/tool.rs` (already patched by P-03), with `orcel-minimal`
+only: one added method, `ToolRegistry::retain_tools(keep: &[&str])`, which
+drops every registered tool whose name is not in `keep` from the tool map and
+the ordered name list. Upstream has no way to remove a tool, and the platform
+crates expose only `register_all` / `build_registry`, which register every
+tool. The Orcel host calls `retain_tools(&ALLOWED_TOOLS)` right after
+construction (`apps/orcel-native-host/src/cua_adapter.rs`), so the registry
+holds exactly `list_windows`, `get_window_state`, `get_cursor_position`,
+`get_screen_size` and `check_permissions`; any other name is unknown to
+`invoke`. This is defence in depth under the closed `CuaCall` enum.
+`registry_holds_the_allowlist_and_no_compiled_out_tool` (macOS and Linux CI)
+requires the registered names to equal the allowlist exactly. Lines added
+only; with the feature off the file compiles exactly as upstream.
+
 ## Patched file index
 
 Every vendored file that differs from upstream, as recorded in the
