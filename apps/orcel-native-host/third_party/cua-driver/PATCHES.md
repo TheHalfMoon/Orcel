@@ -114,6 +114,22 @@ cua-driver-core:
   `synthesize_action_label`, `current_dispatch_authorization_context`) and
   the `stop_recording` approval arm.
 - `capture_registry.rs`: `screenshot_to_action`, used only by recording.
+- Modules with no caller left once the above is gone, also whole:
+  `ffmpeg_install.rs` (runs the platform package manager to install ffmpeg),
+  `video.rs`, `video_ffmpeg.rs` and `recording_render.rs` (spawn ffmpeg),
+  `recording_loader.rs`, `recording_zoom.rs`, `cursor_sampler.rs` (the
+  recording-time pointer poller), `pip_hook.rs` and `socket_io.rs` (framed
+  writes to the daemon socket).
+
+Still compiled with the feature on, but with no caller from the host or from
+any registered tool:
+- `page.rs`: the cross-platform `page` tool definition. Both platform
+  backends and both registrations are compiled out, so it is never
+  registered. Its CDP paths go through `cdp.rs`, which is gone.
+- `mcp_wire.rs` and `mcp_skills.rs`: MCP message shaping and the read-only
+  skill pack (the `Skills/` Markdown). `protocol.rs` uses `mcp_wire` for its
+  response types, so both stay. Without `server.rs`'s dispatch nothing serves
+  them.
 
 platform-macos:
 - `history.rs`, `recording_hooks.rs`, `video_sckit.rs`, `pip/`: the whole

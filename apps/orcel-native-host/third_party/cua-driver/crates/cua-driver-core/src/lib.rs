@@ -66,6 +66,7 @@ pub mod clipboard;
 pub mod consent;
 pub mod cursor_events;
 pub mod cursor_hook;
+#[cfg(not(feature = "orcel-minimal"))]
 pub mod cursor_sampler;
 pub mod cursor_shape;
 #[cfg(not(feature = "orcel-minimal"))]
@@ -76,6 +77,7 @@ pub mod element_frame;
 pub mod element_query;
 pub mod element_token;
 pub mod expectation;
+#[cfg(not(feature = "orcel-minimal"))]
 pub mod ffmpeg_install;
 pub mod health_report;
 #[cfg(not(feature = "orcel-minimal"))]
@@ -90,15 +92,19 @@ pub mod page;
 pub mod perception_client;
 #[cfg(not(feature = "orcel-minimal"))]
 pub mod perception_tools;
+#[cfg(not(feature = "orcel-minimal"))]
 pub mod pip_hook;
 pub mod pointer_shape;
 pub mod policy;
 pub mod protocol;
 #[cfg(not(feature = "orcel-minimal"))]
 pub mod recording;
+#[cfg(not(feature = "orcel-minimal"))]
 pub mod recording_loader;
+#[cfg(not(feature = "orcel-minimal"))]
 pub mod recording_render;
 pub mod recording_tools;
+#[cfg(not(feature = "orcel-minimal"))]
 pub mod recording_zoom;
 #[cfg(feature = "script")]
 pub mod script_tool;
@@ -111,13 +117,16 @@ pub mod single_flight;
 pub mod snapshot_store;
 #[cfg(test)]
 pub(crate) mod snapshot_test_support;
+#[cfg(not(feature = "orcel-minimal"))]
 pub mod socket_io;
 pub mod text_sanitize;
 pub mod timestamp;
 pub mod tool;
 pub mod tool_args;
 pub mod tool_schema;
+#[cfg(not(feature = "orcel-minimal"))]
 pub mod video;
+#[cfg(not(feature = "orcel-minimal"))]
 pub mod video_ffmpeg;
 pub mod walk_budget;
 pub mod window_inspection;
