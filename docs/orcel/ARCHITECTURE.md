@@ -36,6 +36,8 @@ Use a private per-user stdio/named-pipe adapter whose authenticated peer and ses
 - cancel, immediate stop and takeover;
 - request broker presentation of an exact proposal, never submit an approved token from UI.
 
+The read-only first slice is implemented (CR-01): `orcel-app-api/1`, specified in [ORCEL_APP_API_1.md](implementation-readiness/protocol/ORCEL_APP_API_1.md), serves `status.get`, `capabilities.get` and `events.subscribe` over a per-user named pipe (Windows) or a Unix socket in the private state root (macOS, Linux). Every other method above remains PROPOSED.
+
 Method names above are PROPOSED, not currently exported tools. Preserve all existing MCP tool names, scopes, failure codes and orcel identifiers. Adding methods or changing relay payloads requires the existing governance process.
 
 The UI renders observe -> proposed -> awaiting user -> dispatched -> verified, with explicit error/unknown branches. These display stages map to existing execution states; they do not redefine P20. Host completion alone does not establish task success. Show exact device, path/origin, data destination and cloud/model availability. Disabled capability controls explain what is unavailable; do not animate fabricated progress.
