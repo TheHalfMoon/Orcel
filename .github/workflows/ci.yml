@@ -45,6 +45,121 @@ jobs:
           ORCEL_REQUIRE_LIVE_CLIPBOARD: "1"
         run: cargo test -p orcel-provider-clipboard -- xp15_ sg000064_ --test-threads=1
 
+  # XP-05: the macOS/Linux native host is its own Cargo workspace with the
+  # vendored Cua Driver crates (apps/orcel-native-host/third_party/cua-driver).
+  # It is compile-only; nothing reaches it from orceld yet.
+  native-host:
+    name: Native host / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+        working-directory: apps/orcel-native-host
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        # The packages Cua's own Linux CI installs for platform-linux's default
+        # features (D-Bus, X11/XInput/XTest/Xext, xcb, Wayland, xkbcommon).
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libdbus-1-dev libxkbcommon-dev libx11-dev libxi-dev \
+            libxtst-dev libxext-dev libxcb1-dev libwayland-dev
+      - name: Build (release, locked)
+        run: cargo build --locked --release -p orcel-native-host
+      - name: The binary only prints its protocol version
+        run: test "$(./target/release/orcel-native-host)" = "orcel-computer-host/2"
+      - name: Reachability (no run_script, remote debugging, server, daemon or browser code)
+        # In XP-05 main.rs calls no vendored code, so these checks pass
+        # trivially and only pin the baseline. They start to mean something
+        # in XP-06, when the adapter links the platform crates.
+        run: |
+          set -euo pipefail
+          bin=target/release/orcel-native-host
+          if grep -a -q -e run_script -e remote-debugging "$bin"; then
+            echo "::error::the native host binary contains run_script or remote-debugging"
+            exit 1
+          fi
+          symbols=$(nm -C "$bin" 2>/dev/null || true)
+          test -n "$symbols"
+          if grep -E 'cua_driver_core::(server|daemon|browser|cdp|history|recording|perception_client)::|platform_(macos|linux)::(browser|browser_platform|history|recording_hooks|video_[a-z]+|pip)::' <<<"$symbols"; then
+            echo "::error::the native host binary links a compiled-out Cua module"
+            exit 1
+          fi
+      - name: Feature graph excludes run_script (QuickJS) and Rego
+        run: |
+          set -euo pipefail
+          tree=$(cargo tree --locked -p orcel-native-host -e normal --prefix none)
+          if grep -E '^(rquickjs|rquickjs-core|rquickjs-sys|regorus) ' <<<"$tree"; then
+            echo "::error::a disabled cua-driver-core default feature reached the graph"
+            exit 1
+          fi
+      - name: Record binary size and package count
+        run: |
+          set -euo pipefail
+          bytes=$(wc -c < target/release/orcel-native-host | tr -d ' ')
+          packages=$(cargo tree --locked -p orcel-native-host -e normal --prefix none | sed 's/ (\*)$//' | sort -u | wc -l | tr -d ' ')
+          locked=$(grep -c '^name = ' Cargo.lock)
+          {
+            echo "### orcel-native-host on ${{ runner.os }}"
+            echo "- release binary: ${bytes} bytes"
+            echo "- packages in the normal build graph for this OS: ${packages}"
+            echo "- packages in Cargo.lock (all targets and features): ${locked}"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: cua-driver-core lib tests (no default features)
+        # Upstream's code with orcel-minimal off. The fifteen skipped tests load
+        # a YAML capability manifest, which upstream compiles to an error
+        # without its default `yaml` feature, on every OS (PATCHES.md, P-03).
+        run: |
+          cargo test --locked -p cua-driver-core --no-default-features --lib -- --exact \
+            --skip authorization::tests::standard_manifest_scope_is_checked_before_existing_profile_approval \
+            --skip batch_tools::tests::a_manifest_that_allows_run_actions_allows_run_steps \
+            --skip batch_tools::tests::each_step_is_held_to_the_capability_manifest \
+            --skip batch_tools::tests::the_batch_itself_needs_the_manifest_to_allow_it \
+            --skip consent::tests::capability_manifest_resources_narrow_standard_and_unrestricted_without_prompting \
+            --skip session_authorization::tests::capability_manifest_is_optional_except_in_bounded_mode \
+            --skip session_authorization::tests::capability_manifests_are_stored_per_connection_context \
+            --skip tool::runtime_isolation_tests::background_input_rechecks_manifest_before_every_adapter_dispatch \
+            --skip tool::runtime_isolation_tests::bounded_history_requires_the_matching_operation_resource \
+            --skip tool::runtime_isolation_tests::bounded_observation_uses_only_the_manifest_without_a_protected_host \
+            --skip tool::runtime_isolation_tests::capability_manifest_tools_narrow_standard_and_unrestricted \
+            --skip tool::runtime_isolation_tests::capability_manifest_typed_resources_narrow_standard_and_unrestricted \
+            --skip tool::runtime_isolation_tests::manifest_cannot_widen_standard_foreign_process_termination \
+            --skip tool::runtime_isolation_tests::manifest_preserves_standard_owned_process_termination_inside_scope \
+            --skip tool::runtime_isolation_tests::rejected_typed_resource_does_not_refresh_manifest_idle_lease
+      - name: cursor-overlay and cua-cursor-motion tests (P-05 asset changes)
+        # Exercises the re-encoded default theme and the font-less badge path.
+        run: cargo test --locked -p cursor-overlay -p cua-cursor-motion --features cua-cursor-motion/serde
+      - uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        if: runner.os == 'Linux'
+        id: native-host-tools-cache
+        with:
+          path: |
+            ~/.cargo/bin/cargo-audit
+            ~/.cargo/bin/cargo-deny
+          key: native-host-tools-audit-0.22.2-deny-0.20.2-${{ runner.os }}
+      - name: Install cargo-audit and cargo-deny
+        if: runner.os == 'Linux' && steps.native-host-tools-cache.outputs.cache-hit != 'true'
+        run: |
+          cargo install cargo-audit --locked --version 0.22.2
+          cargo install cargo-deny --locked --version 0.20.2
+      - name: Audit the native-host lockfile
+        if: runner.os == 'Linux'
+        # Ignores, each with its reason: apps/orcel-native-host/.cargo/audit.toml.
+        run: cargo audit
+      - name: License check of the native-host graph
+        if: runner.os == 'Linux'
+        run: cargo deny check licenses
+
   node:
     name: Node / ${{ matrix.os }}
     strategy:
@@ -210,6 +325,12 @@ jobs:
         run: git diff --check
       - name: Validate current Orcel identity
         run: node scripts/check-current-identity.mjs
+      - name: Vendored Cua Driver crates match the upstream pin outside PATCHES.md
+        # --upstream also reads each tree id from trycua/cua on GitHub, so the
+        # ids recorded in this repository are not trusted on their own.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/check-vendored-cua.mjs --upstream
       - name: Validate SpecGrain JSON and canonical evidence
         shell: python
         run: |

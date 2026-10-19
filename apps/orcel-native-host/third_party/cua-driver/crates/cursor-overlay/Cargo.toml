@@ -1,0 +1,34 @@
+[package]
+name = "cursor-overlay"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+theme-authoring = []
+# Orcel P-05: assets/Inter.ttf, assets/cua.default.lottie and
+# tests/fixtures/motion_equivalence.json are not vendored (binary, or one JSON
+# line too long for exact-diff review). This feature restores the code and
+# tests that read them, after the files are restored from the pin; see
+# PATCHES.md. Without it the session badge has no font and is not drawn.
+upstream-assets = []
+
+[dependencies]
+cua-driver-contract = { path = "../cua-driver-contract" }
+# Motion math (paths, timing, effects geometry), shared with @trycua/cursor-motion.
+cua-cursor-motion = { path = "../cua-cursor-motion", features = ["serde"] }
+# Shared agent cursor lifecycle (idle timeout, fade, session end).
+cua-driver-core = { path = "../cua-driver-core", default-features = false }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+indexmap = "2"
+postcard.workspace = true
+sha2.workspace = true
+zstd.workspace = true
+
+tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+fontdue = { version = "0.9", default-features = false }
