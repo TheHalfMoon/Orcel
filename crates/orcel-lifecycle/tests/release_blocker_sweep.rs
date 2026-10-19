@@ -6,6 +6,7 @@
 //! vectors, unexpected ignored tests, or unexpected workflows. Any new hit
 //! fails the suite until it is fixed at its root or explicitly allowlisted
 //! here with a reason.
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -35,11 +36,52 @@ fn is_test_file(relative: &str) -> bool {
 /// so the marker, panic/unreachable/mock and ignored-test rules skip this one
 /// prefix. Every other rule (focused tests, console output, secrets, the
 /// live-browser feature, workflows) still applies to it, and nothing outside
-/// it is exempt.
+/// it is exempt. Files the patch queue changes or adds are not trusted this
+/// way: `patched_vendored_files_add_no_release_blockers` holds them to these
+/// rules, allowing only the upstream lines the provenance records.
 const VENDORED_CUA: &str = "apps/orcel-native-host/third_party/cua-driver/crates/";
+const CUA_PROVENANCE: &str = "docs/orcel/cua_driver_provenance.json";
 
 fn vendored(relative: &str) -> bool {
     relative.starts_with(VENDORED_CUA)
+}
+
+/// Every vendored file the patch queue changes or adds, with the SHA-256 of
+/// each upstream line in it that a rule below flags (an added file has none).
+fn patched_vendored_files(root: &Path) -> BTreeMap<String, Vec<String>> {
+    let text = fs::read_to_string(root.join(CUA_PROVENANCE)).expect("read Cua provenance");
+    let provenance: serde_json::Value = serde_json::from_str(&text).expect("Cua provenance JSON");
+    let mut out = BTreeMap::new();
+    for krate in provenance["crates"].as_array().expect("provenance crates") {
+        let destination = krate["destination"].as_str().expect("crate destination");
+        for file in krate["patched_files"].as_array().into_iter().flatten() {
+            let digests = file["upstream_blocker_lines"]
+                .as_array()
+                .expect("patched file records its upstream_blocker_lines")
+                .iter()
+                .map(|digest| digest.as_str().expect("digest").to_owned())
+                .collect();
+            let path = file["path"].as_str().expect("patched path");
+            out.insert(format!("{destination}/{path}"), digests);
+        }
+        for file in krate["added_files"].as_array().into_iter().flatten() {
+            let path = file["path"].as_str().expect("added path");
+            out.insert(format!("{destination}/{path}"), Vec::new());
+        }
+    }
+    out
+}
+
+/// The union of the marker, panic/unreachable/mock and ignored-test rules for
+/// one line, as the tests below apply them.
+fn blocker_line(relative: &str, line: &str) -> bool {
+    let code = code_file(relative);
+    let rust = relative.ends_with(".rs");
+    let non_test = code && !is_test_file(relative);
+    (code && (contains_marker(line) || line.contains("todo!") || line.contains("unimplemented!")))
+        || (non_test && rust && (line.contains("panic!") || line.contains("unreachable!")))
+        || (non_test && line.to_lowercase().contains("mock"))
+        || (rust && line.contains("#[ignore"))
 }
 
 fn text_files(root: &Path) -> Vec<(String, String)> {
@@ -296,6 +338,48 @@ fn no_panic_unreachable_or_mock_in_non_test_code() {
     assert!(
         hits.is_empty(),
         "non-test code blockers:\n{}",
+        hits.join("\n")
+    );
+}
+
+/// The vendored exemption covers upstream's bytes only. In a file the patch
+/// queue touches, every flagged line must be one upstream already had (matched
+/// by SHA-256, as a multiset), so a patch cannot add a marker, panic!,
+/// unreachable!, mock or #[ignore] line.
+#[test]
+fn patched_vendored_files_add_no_release_blockers() {
+    let root = repo_root();
+    let patched = patched_vendored_files(&root);
+    assert!(
+        !patched.is_empty(),
+        "the Cua provenance lists no patched files"
+    );
+    let mut hits = Vec::new();
+    for (relative, upstream) in &patched {
+        assert!(
+            vendored(relative),
+            "{relative} is outside the vendored prefix"
+        );
+        let text = fs::read_to_string(root.join(relative))
+            .unwrap_or_else(|err| panic!("read {relative}: {err}"));
+        let mut remaining: BTreeMap<&str, usize> = BTreeMap::new();
+        for digest in upstream {
+            *remaining.entry(digest.as_str()).or_default() += 1;
+        }
+        for (index, line) in text.lines().enumerate() {
+            if !blocker_line(relative, line) {
+                continue;
+            }
+            let digest = format!("{:x}", Sha256::digest(line.as_bytes()));
+            match remaining.get_mut(digest.as_str()) {
+                Some(count) if *count > 0 => *count -= 1,
+                _ => hits.push(format!("{relative}:{}: {}", index + 1, line.trim())),
+            }
+        }
+    }
+    assert!(
+        hits.is_empty(),
+        "release blockers added by the vendored patch queue:\n{}",
         hits.join("\n")
     );
 }

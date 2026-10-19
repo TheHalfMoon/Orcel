@@ -62,6 +62,16 @@ Cargo.lock lists every package for every target and feature, so absence there
 means absence from every build. The same check also fails if the root
 `Cargo.lock` names any vendored crate or `orcel-native-host`.
 
+What "no HTTP client" does and does not cover: the lockfile still has
+`tungstenite` and `tokio-tungstenite`. `cua-driver-core` declares
+`tokio-tungstenite` unconditionally, and on macOS `platform-macos` declares it
+with `native-tls`. Their only callers are the CDP WebSocket clients
+(`cua-driver-core/src/browser/cdp_ws.rs` and `cdp.rs`, and
+`platform-macos/src/browser/cdp_client.rs`),
+which P-03 compiles out, so with `orcel-minimal` nothing calls them. P-03
+gates code, not manifests, so the crates are still compiled. The
+graph-level guarantee covers HTTP clients only, not WebSocket libraries.
+
 ## P-03: feature `orcel-minimal`
 
 `orcel-minimal` compiles out every Cua surface the Orcel host must not carry.
@@ -166,6 +176,13 @@ platform-linux:
   and `atspi/mod.rs` (`walk_tree_for_recording`): used only by kill_app and
   recording.
 
+The release-blocker sweep exempts unpatched vendored files from its marker,
+panic/unreachable/mock and `#[ignore]` rules. A file this queue changes gets
+no such exemption: `docs/orcel/cua_driver_provenance.json` records, for each
+patched file, the SHA-256 of every upstream line those rules flag. The sweep
+allows exactly that multiset of lines and nothing more. A blocker line that a
+patch adds therefore fails the sweep as it would anywhere else.
+
 With the feature on, the compiler reports no new warnings on either target.
 The only warnings left are upstream's own.
 
@@ -192,6 +209,12 @@ probe `permissions::gate::run_permission_probe_if_requested`, which a binary's
 neither.
 
 platform-linux has no counterpart, because no TCC exists there.
+
+For XP-06: `ToolState::host_owns_permission_ux` is a `pub` field, so code that
+holds a `ToolState` (any of `platform_macos::tools`) could still overwrite it
+after construction. Nothing does today. The Orcel adapter must never write
+it, and XP-06 should add a test that the registered `check_permissions`
+reports `direct_runtime` without prompting.
 
 ## P-05: no file the exact-diff review cannot read
 

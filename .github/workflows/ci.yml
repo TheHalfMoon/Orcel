@@ -65,6 +65,9 @@ jobs:
       - name: The binary only prints its protocol version
         run: test "$(./target/release/orcel-native-host)" = "orcel-computer-host/2"
       - name: Reachability (no run_script, remote debugging, server, daemon or browser code)
+        # In XP-05 main.rs calls no vendored code, so these checks pass
+        # trivially and only pin the baseline. They start to mean something
+        # in XP-06, when the adapter links the platform crates.
         run: |
           set -euo pipefail
           bin=target/release/orcel-native-host
@@ -119,6 +122,9 @@ jobs:
             --skip tool::runtime_isolation_tests::manifest_cannot_widen_standard_foreign_process_termination \
             --skip tool::runtime_isolation_tests::manifest_preserves_standard_owned_process_termination_inside_scope \
             --skip tool::runtime_isolation_tests::rejected_typed_resource_does_not_refresh_manifest_idle_lease
+      - name: cursor-overlay and cua-cursor-motion tests (P-05 asset changes)
+        # Exercises the re-encoded default theme and the font-less badge path.
+        run: cargo test --locked -p cursor-overlay -p cua-cursor-motion --features cua-cursor-motion/serde
       - uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
         if: runner.os == 'Linux'
         id: native-host-tools-cache
@@ -306,7 +312,11 @@ jobs:
       - name: Validate current Orcel identity
         run: node scripts/check-current-identity.mjs
       - name: Vendored Cua Driver crates match the upstream pin outside PATCHES.md
-        run: node scripts/check-vendored-cua.mjs
+        # --upstream also reads each tree id from trycua/cua on GitHub, so the
+        # ids recorded in this repository are not trusted on their own.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/check-vendored-cua.mjs --upstream
       - name: Validate SpecGrain JSON and canonical evidence
         shell: python
         run: |

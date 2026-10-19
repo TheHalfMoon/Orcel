@@ -25,31 +25,38 @@
       "patched_files": [
         {
           "path": "Cargo.toml",
-          "upstream_blob_sha": "8d429484aa477f95a1cc6af5dde832cfc019db0e"
+          "upstream_blob_sha": "8d429484aa477f95a1cc6af5dde832cfc019db0e",
+          "upstream_blocker_lines": []
         },
         {
           "path": "src/ax/tree.rs",
-          "upstream_blob_sha": "681c636058fd94609b9e8285c4dd8fbd4fc9bf2d"
+          "upstream_blob_sha": "681c636058fd94609b9e8285c4dd8fbd4fc9bf2d",
+          "upstream_blocker_lines": []
         },
         {
           "path": "src/browser/browser_js.rs",
-          "upstream_blob_sha": "5d1e2c2adf625189a1b28d169532a9df49d65953"
+          "upstream_blob_sha": "5d1e2c2adf625189a1b28d169532a9df49d65953",
+          "upstream_blocker_lines": []
         },
         {
           "path": "src/browser/electron_js.rs",
-          "upstream_blob_sha": "c22f3e9989f2aea16592a8df7712829e0771cbc9"
+          "upstream_blob_sha": "c22f3e9989f2aea16592a8df7712829e0771cbc9",
+          "upstream_blocker_lines": []
         },
         {
           "path": "src/browser/mod.rs",
-          "upstream_blob_sha": "859243557ed79afa8ff8de02f0d99e39ffc47f92"
+          "upstream_blob_sha": "859243557ed79afa8ff8de02f0d99e39ffc47f92",
+          "upstream_blocker_lines": []
         },
         {
           "path": "src/lib.rs",
-          "upstream_blob_sha": "329c62985332cf7a84f083715159e198a4eec3c3"
+          "upstream_blob_sha": "329c62985332cf7a84f083715159e198a4eec3c3",
+          "upstream_blocker_lines": []
         },
         {
           "path": "src/tools/mod.rs",
-          "upstream_blob_sha": "771e6717e3e5b64ff160d149ad7a6cebd433e132"
+          "upstream_blob_sha": "771e6717e3e5b64ff160d149ad7a6cebd433e132",
+          "upstream_blocker_lines": []
         }
       ]
     },
@@ -63,35 +70,52 @@
       "patched_files": [
         {
           "path": "Cargo.toml",
-          "upstream_blob_sha": "dfb5ec0fdc3f971970dfd9e05a244ac8099fa87b"
+          "upstream_blob_sha": "dfb5ec0fdc3f971970dfd9e05a244ac8099fa87b",
+          "upstream_blocker_lines": []
         },
         {
           "path": "src/atspi/mod.rs",
-          "upstream_blob_sha": "77c5608cf2f5393920db0c99a9237bb706c19715"
+          "upstream_blob_sha": "77c5608cf2f5393920db0c99a9237bb706c19715",
+          "upstream_blocker_lines": []
         },
         {
           "path": "src/browser_platform.rs",
-          "upstream_blob_sha": "ddecce24e4008b0502b8fe25a35364d883600afa"
+          "upstream_blob_sha": "ddecce24e4008b0502b8fe25a35364d883600afa",
+          "upstream_blocker_lines": []
         },
         {
           "path": "src/input/mod.rs",
-          "upstream_blob_sha": "7a0cd50dae20134c6994b065e4c96b3852f1bae6"
+          "upstream_blob_sha": "7a0cd50dae20134c6994b065e4c96b3852f1bae6",
+          "upstream_blocker_lines": [
+            "650ccb2498eebfe0486c510ec91cf270beb12f7c6d6d7c46e3cd478f2e973d35",
+            "65ad2898961d47e51f9263ea3ba69100e0dabb6f8345959ec0afcbaeff40e551"
+          ]
         },
         {
           "path": "src/lib.rs",
-          "upstream_blob_sha": "fc866c39a61b6bc107c8fdd73dde5088bd0e4b8a"
+          "upstream_blob_sha": "fc866c39a61b6bc107c8fdd73dde5088bd0e4b8a",
+          "upstream_blocker_lines": []
         },
         {
           "path": "src/proc_fs.rs",
-          "upstream_blob_sha": "7cf1622cdfa3969d79a11e14b9776925c68bb4e4"
+          "upstream_blob_sha": "7cf1622cdfa3969d79a11e14b9776925c68bb4e4",
+          "upstream_blocker_lines": []
         },
         {
           "path": "src/tools/impl_.rs",
-          "upstream_blob_sha": "3be700798b9310b6cf931725f97ae7c02c619b5a"
+          "upstream_blob_sha": "3be700798b9310b6cf931725f97ae7c02c619b5a",
+          "upstream_blocker_lines": [
+            "19d34976a3acac9d4681a196728b226a0bc2d5edfb81aa8613e9db28dfacaaaa",
+            "4b89a467d5826939dcfb526114f265be81c0f662f12d0d883976a5091b13bafe",
+            "ba185b0123c35168bab27bf3880ae6c50ef9f8bc7585436dbd43bba659762252",
+            "bab88ae94ca4eb2b9a2999378bdb1eb530c4fe88fcbd5e1848cb947eefe0e714",
+            "f4e2807cde10c2e2807df7482ee11ae755c60be7044c00d4def3f4e1312e00e2"
+          ]
         },
         {
           "path": "src/tools/mod.rs",
-          "upstream_blob_sha": "38b9c42d143b1626906b68725d72d2120bb52b86"
+          "upstream_blob_sha": "38b9c42d143b1626906b68725d72d2120bb52b86",
+          "upstream_blocker_lines": []
         }
       ]
     },
@@ -105,35 +129,51 @@
       "patched_files": [
         {
           "path": "Cargo.toml",
-          "upstream_blob_sha": "de9e618d6b514fa4508b8a247a3cd66213574b8a"
+          "upstream_blob_sha": "de9e618d6b514fa4508b8a247a3cd66213574b8a",
+          "upstream_blocker_lines": []
         },
         {
           "path": "src/browser/download.rs",
-          "upstream_blob_sha": "3a2a4677056a88ec3540dc1dac5579ea786a9876"
+          "upstream_blob_sha": "3a2a4677056a88ec3540dc1dac5579ea786a9876",
+          "upstream_blocker_lines": []
         },
         {
           "path": "src/browser/mod.rs",
-          "upstream_blob_sha": "070d6c0734fa6ee1f410c254763149482d439944"
+          "upstream_blob_sha": "070d6c0734fa6ee1f410c254763149482d439944",
+          "upstream_blocker_lines": [
+            "ac15969605b67af4f0c366f8b39f82df94203ad58a36f00c4d9fcef8bcf2dae8"
+          ]
         },
         {
           "path": "src/capture_registry.rs",
-          "upstream_blob_sha": "f7e6be0d533edb2bbd1a30753e6e5cb2b91701a3"
+          "upstream_blob_sha": "f7e6be0d533edb2bbd1a30753e6e5cb2b91701a3",
+          "upstream_blocker_lines": [
+            "cf0c026efc973f4eaaa6ba7b6fbee803814c14afbf0ec856f879f2b0c296c087",
+            "ee98f113947d98121b87f63646a2d78997b00c1eb73d9f9ceb88b450faad2451"
+          ]
         },
         {
           "path": "src/lib.rs",
-          "upstream_blob_sha": "5fd18d21964e1a4dac3ddf0ce60778456502ac5d"
+          "upstream_blob_sha": "5fd18d21964e1a4dac3ddf0ce60778456502ac5d",
+          "upstream_blocker_lines": []
         },
         {
           "path": "src/recording_tools.rs",
-          "upstream_blob_sha": "1c3d8a4a7bc0db05a52c8c7312d069f8a4140193"
+          "upstream_blob_sha": "1c3d8a4a7bc0db05a52c8c7312d069f8a4140193",
+          "upstream_blocker_lines": []
         },
         {
           "path": "src/server.rs",
-          "upstream_blob_sha": "7c85f09756a8942cb255e826cbe880b67ef93376"
+          "upstream_blob_sha": "7c85f09756a8942cb255e826cbe880b67ef93376",
+          "upstream_blocker_lines": [
+            "6c256753368d980317fe67f13cac1bb606ab36c3bb888ea6b778a7b54e891fc6",
+            "8401ca5c220abbf8d706896d7a497e4db2591b1ceb1cb19bab04fa66dd016747"
+          ]
         },
         {
           "path": "src/tool.rs",
-          "upstream_blob_sha": "677392578aa04a1870b6d71e370eb1d0aee0b6e1"
+          "upstream_blob_sha": "677392578aa04a1870b6d71e370eb1d0aee0b6e1",
+          "upstream_blocker_lines": []
         }
       ]
     },
@@ -156,19 +196,26 @@
       "patched_files": [
         {
           "path": "Cargo.toml",
-          "upstream_blob_sha": "0b55e9e2b1b999ca4f9e450585611b0643c0a669"
+          "upstream_blob_sha": "0b55e9e2b1b999ca4f9e450585611b0643c0a669",
+          "upstream_blocker_lines": []
         },
         {
           "path": "src/render_state.rs",
-          "upstream_blob_sha": "482d1867a06b3f3add3cadeb3844d1e3c449f23f"
+          "upstream_blob_sha": "482d1867a06b3f3add3cadeb3844d1e3c449f23f",
+          "upstream_blocker_lines": [
+            "6f86f4291d53117d16469392a8480ccefb6d49d307054e147a60c306f136c757",
+            "9e1d8e66b3ebcfa0d5c71a0ee68db07d7a98105789264ccaa451ad5e1fd4ec7c"
+          ]
         },
         {
           "path": "src/session_badge.rs",
-          "upstream_blob_sha": "f66e866ad1c15195d85a77917d27755e3391ddf8"
+          "upstream_blob_sha": "f66e866ad1c15195d85a77917d27755e3391ddf8",
+          "upstream_blocker_lines": []
         },
         {
           "path": "src/theme_artifact.rs",
-          "upstream_blob_sha": "473940efee1cfaa789db7fe024633b5320925a4c"
+          "upstream_blob_sha": "473940efee1cfaa789db7fe024633b5320925a4c",
+          "upstream_blocker_lines": []
         }
       ],
       "removed_files": [
@@ -224,15 +271,18 @@
       "patched_files": [
         {
           "path": "Cargo.toml",
-          "upstream_blob_sha": "2b43c7604f1dbe707738f71b3df99510564b0739"
+          "upstream_blob_sha": "2b43c7604f1dbe707738f71b3df99510564b0739",
+          "upstream_blocker_lines": []
         },
         {
           "path": "tests/golden.rs",
-          "upstream_blob_sha": "010853fccbcc5bd0ccd8ee94c1aeebc24e328b71"
+          "upstream_blob_sha": "010853fccbcc5bd0ccd8ee94c1aeebc24e328b71",
+          "upstream_blocker_lines": []
         },
         {
           "path": "tests/motion_parity.rs",
-          "upstream_blob_sha": "adfa6134418ec65d1b00c4efc2184f590cab4e47"
+          "upstream_blob_sha": "adfa6134418ec65d1b00c4efc2184f590cab4e47",
+          "upstream_blocker_lines": []
         }
       ],
       "removed_files": [
