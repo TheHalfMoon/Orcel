@@ -60,6 +60,16 @@ jobs:
           cargo test -p orcel-approval -- xp09_ --nocapture
           cargo test -p orcel-approval --release -- xp09_ --nocapture
 
+      # CR-01: real other-user evidence for the app API socket. `nobody`
+      # (passwordless sudo on the hosted runners) must be refused with
+      # EACCES at the private directory. The test fails instead of skipping
+      # when ORCEL_APP_API_OTHER_USER_TEST is set.
+      - name: App API socket refuses another user (Linux, macOS)
+        if: runner.os != 'Windows'
+        env:
+          ORCEL_APP_API_OTHER_USER_TEST: "1"
+        run: cargo test -p orceld -- --exact app_api::tests::cr01_other_user_cannot_reach_the_socket --nocapture
+
   # XP-05: the macOS/Linux native host is its own Cargo workspace with the
   # vendored Cua Driver crates (apps/orcel-native-host/third_party/cua-driver).
   # It is compile-only; nothing reaches it from orceld yet.

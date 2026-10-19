@@ -1,12 +1,23 @@
 Cua (trycua/cua) - FSL-1.1-MIT source notice
 
-Orcel adapts this FSL-1.1-MIT file from trycua/cua at commit
+Orcel adapts these FSL-1.1-MIT files from trycua/cua at commit
 a802eaf26ca97616a6bf0de6a29729a9346fbb1f:
 
   libs/cua/crates/cua-teleport/src/biometric.rs
     blob 3fa6cc4132ef2d57ce8b57740fbeb9fb8b6f37cf
     -> crates/orcel-approval/src/presence_unix.rs (XP-09, matrix row
        T-CUA-20, COPY_ADAPT: the macOS LocalAuthentication backend only)
+
+  libs/cua/crates/cua-keyvault/src/winpipe.rs
+    blob 5e0b1e4c4a584f9147c15297c50a497f6d38b27c
+  libs/cua/crates/cua-keyvault/src/winpeer.rs
+    blob cbf138941874ec84045a8433f5403e7fc3c8cdf2
+  libs/cua/crates/cua-keyvault/src/ipc.rs
+    blob 1fd6f75b4101faac8910e9441683ecbdec2f942a
+    -> crates/orceld/src/app_api.rs (CR-01, matrix rows T-CUA-25 and
+       T-CUA-26, COPY_ADAPT: the per-user pipe DACL, first-instance and
+       remote-client rules, the pipe client's token-user check, and the
+       stale-socket rule; Authenticode and code-signature checks not taken)
 
 Orcel's modifications are listed in the header of the destination file.
 Both donor bypass variables (CUA_ENV_SKIP_SENSITIVE_AUTH and
@@ -17,7 +28,7 @@ Reuse and commercial distribution of Cua-owned FSL components are
 authorized by the founder (FD-04, docs/orcel/grants/2026-10-18-founder-attestation.md).
 The license below is reproduced unchanged from
 libs/cua/crates/cua-teleport/LICENSE (blob 79293ae602ed46efa4d7d5d79a22b57ef2c037ec)
-at the same commit.
+at the same commit; libs/cua/crates/cua-keyvault/LICENSE is the same blob.
 
 --------------------------------------------------------------------------
 
