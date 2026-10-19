@@ -55,6 +55,11 @@ pub fn start_generation(pid: u32) -> Result<ProcessGeneration, PlatformError> {
     imp::start_generation(pid)
 }
 
+/// The start generation of this process.
+pub fn current_instance() -> Result<ProcessGeneration, PlatformError> {
+    start_generation(std::process::id())
+}
+
 /// Whether the process recorded as `recorded` still runs: `Ok(false)` when
 /// its pid is gone or now belongs to another process instance.
 pub fn is_same_instance(recorded: &ProcessGeneration) -> Result<bool, PlatformError> {
@@ -71,6 +76,12 @@ fn same_instance(
         Err(PlatformError::ProcessGone(_)) => Ok(false),
         Err(error) => Err(error),
     }
+}
+
+/// The effective uid of the process holding `pid` now.
+#[cfg(target_os = "linux")]
+pub(crate) fn effective_uid_of(pid: u32) -> Result<u32, PlatformError> {
+    imp::effective_uid_of(pid)
 }
 
 /// The Win32 image path of `pid` and its start generation, both read
@@ -91,23 +102,80 @@ mod imp {
     const BOOT_ID_PATH: &str = "/proc/sys/kernel/random/boot_id";
 
     pub(super) fn start_generation(pid: u32) -> Result<ProcessGeneration, PlatformError> {
-        let path = format!("/proc/{pid}/stat");
-        let stat = match std::fs::read_to_string(&path) {
-            Ok(stat) => stat,
+        // /proc/<tid> also exists for every thread id, unlisted; only a
+        // thread group leader is a process.
+        let (tgid, _) = parse_status(pid, &read_proc(pid, "status")?)?;
+        if tgid != pid {
+            return Err(PlatformError::IdentityUnavailable(format!(
+                "{pid} is a thread of process {tgid}, not a process"
+            )));
+        }
+        generation_from_stat(pid, &read_proc(pid, "stat")?, boot_id()?)
+    }
+
+    /// The effective uid of `pid` now, from `/proc/<pid>/status`.
+    pub(super) fn effective_uid_of(pid: u32) -> Result<u32, PlatformError> {
+        parse_status(pid, &read_proc(pid, "status")?).map(|(_, euid)| euid)
+    }
+
+    /// Read `/proc/<pid>/<file>`. A missing entry means "gone" only when
+    /// `kill(pid, 0)` agrees: with `hidepid=1/2`, another user's entries are
+    /// hidden, and that must not read as an exit.
+    fn read_proc(pid: u32, file: &str) -> Result<String, PlatformError> {
+        let path = format!("/proc/{pid}/{file}");
+        match std::fs::read_to_string(&path) {
+            Ok(text) => Ok(text),
             // ESRCH: the process exited between the open and the read.
-            Err(error)
-                if error.kind() == ErrorKind::NotFound
-                    || error.raw_os_error() == Some(libc::ESRCH) =>
-            {
-                return Err(PlatformError::ProcessGone(pid));
+            Err(error) if error.raw_os_error() == Some(libc::ESRCH) => {
+                Err(PlatformError::ProcessGone(pid))
             }
-            Err(error) => {
-                return Err(PlatformError::IdentityUnavailable(format!(
-                    "{path}: {error}"
+            Err(error) if error.kind() == ErrorKind::NotFound && !pid_exists(pid) => {
+                Err(PlatformError::ProcessGone(pid))
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                Err(PlatformError::IdentityUnavailable(format!(
+                    "{path} is hidden (hidepid) although pid {pid} exists"
                 )))
             }
+            Err(error) => Err(PlatformError::IdentityUnavailable(format!(
+                "{path}: {error}"
+            ))),
+        }
+    }
+
+    /// Whether any process (or thread) holds `pid`, by `kill(pid, 0)`.
+    fn pid_exists(pid: u32) -> bool {
+        let Ok(raw) = libc::pid_t::try_from(pid) else {
+            return false;
         };
-        generation_from_stat(pid, &stat, boot_id()?)
+        // pid 0 and negative values address process groups, not a process.
+        if raw <= 0 {
+            return false;
+        }
+        // SAFETY: signal 0 sends nothing; kill only checks that the positive
+        // pid exists and whether we may signal it, and touches no memory.
+        if unsafe { libc::kill(raw, 0) } == 0 {
+            return true;
+        }
+        std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+    }
+
+    /// `Tgid` and the effective uid (second `Uid` field) of a
+    /// `/proc/<pid>/status` text.
+    pub(super) fn parse_status(pid: u32, status: &str) -> Result<(u32, u32), PlatformError> {
+        let field = |name: &str, index: usize| {
+            status
+                .lines()
+                .find_map(|line| line.strip_prefix(name))
+                .and_then(|rest| rest.split_whitespace().nth(index))
+                .and_then(|value| value.parse::<u32>().ok())
+        };
+        match (field("Tgid:", 0), field("Uid:", 1)) {
+            (Some(tgid), Some(euid)) => Ok((tgid, euid)),
+            _ => Err(PlatformError::IdentityUnavailable(format!(
+                "/proc/{pid}/status is malformed"
+            ))),
+        }
     }
 
     /// Parse one `/proc/<pid>/stat` line. `comm` is parenthesized and may
@@ -254,17 +322,18 @@ mod imp {
     use super::ProcessGeneration;
     use crate::PlatformError;
     use windows::core::PWSTR;
-    use windows::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, FILETIME, HANDLE};
+    use windows::Win32::Foundation::{
+        CloseHandle, ERROR_INVALID_PARAMETER, FILETIME, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    };
     use windows::Win32::System::Threading::{
-        GetExitCodeProcess, GetProcessTimes, OpenProcess, QueryFullProcessImageNameW,
-        PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+        GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, WaitForSingleObject,
+        PROCESS_ACCESS_RIGHTS, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+        PROCESS_SYNCHRONIZE,
     };
 
     /// The value orcel-provider-uia has always reported; the registry
     /// compares it.
     pub(super) const SOURCE: &str = "win32-creation-time";
-    /// GetExitCodeProcess reports STILL_ACTIVE (259) while a process runs.
-    const STILL_ACTIVE: u32 = 259;
     const IMAGE_PATH_CHARS: usize = 1_024;
 
     struct ProcessHandle(HANDLE);
@@ -277,10 +346,10 @@ mod imp {
         }
     }
 
-    fn open(pid: u32) -> Result<ProcessHandle, PlatformError> {
+    fn open(pid: u32, access: PROCESS_ACCESS_RIGHTS) -> Result<ProcessHandle, PlatformError> {
         // SAFETY: OpenProcess takes plain values and returns a new handle
         // that ProcessHandle owns; it touches no memory of this process.
-        match unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) } {
+        match unsafe { OpenProcess(access, false, pid) } {
             Ok(handle) => Ok(ProcessHandle(handle)),
             // No process has this id.
             Err(error) if error.code() == ERROR_INVALID_PARAMETER.to_hresult() => {
@@ -292,19 +361,27 @@ mod imp {
         }
     }
 
-    fn generation_of(handle: &ProcessHandle, pid: u32) -> Result<ProcessGeneration, PlatformError> {
-        let mut exit_code = 0u32;
-        // SAFETY: the handle is open with PROCESS_QUERY_LIMITED_INFORMATION
-        // and exit_code is a live u32 the call writes.
-        unsafe { GetExitCodeProcess(handle.0, &mut exit_code) }.map_err(|error| {
-            PlatformError::IdentityUnavailable(format!("GetExitCodeProcess({pid}): {error}"))
-        })?;
-        // A handle held elsewhere keeps an exited process object alive. A
-        // process that exits with code 259 itself is indistinguishable from
-        // a running one here; its creation time still binds the instance.
-        if exit_code != STILL_ACTIVE {
-            return Err(PlatformError::ProcessGone(pid));
+    /// A process object outlives its exit while anyone (for example the
+    /// parent's `Child`) holds a handle. The object is signaled exactly when
+    /// the process has exited, which, unlike `GetExitCodeProcess`, cannot be
+    /// confused with a process that exits with code 259.
+    fn ensure_running(handle: &ProcessHandle, pid: u32) -> Result<(), PlatformError> {
+        // SAFETY: the handle is open with SYNCHRONIZE access; a zero timeout
+        // only polls the object's state.
+        let wait = unsafe { WaitForSingleObject(handle.0, 0) };
+        if wait == WAIT_OBJECT_0 {
+            Err(PlatformError::ProcessGone(pid))
+        } else if wait == WAIT_TIMEOUT {
+            Ok(())
+        } else {
+            Err(PlatformError::IdentityUnavailable(format!(
+                "WaitForSingleObject({pid}) returned {:#x}",
+                wait.0
+            )))
         }
+    }
+
+    fn generation_of(handle: &ProcessHandle, pid: u32) -> Result<ProcessGeneration, PlatformError> {
         let mut creation = FILETIME::default();
         let mut exit = FILETIME::default();
         let mut kernel = FILETIME::default();
@@ -324,14 +401,17 @@ mod imp {
     }
 
     pub(super) fn start_generation(pid: u32) -> Result<ProcessGeneration, PlatformError> {
-        let handle = open(pid)?;
+        let handle = open(pid, PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE)?;
+        ensure_running(&handle, pid)?;
         generation_of(&handle, pid)
     }
 
     pub(super) fn image_path_and_generation(
         pid: u32,
     ) -> Result<(String, ProcessGeneration), PlatformError> {
-        let handle = open(pid)?;
+        // Exactly the access and the facts orcel-provider-uia read before
+        // XP-03 (no liveness check), so desktop observation is unchanged.
+        let handle = open(pid, PROCESS_QUERY_LIMITED_INFORMATION)?;
         let mut path = vec![0u16; IMAGE_PATH_CHARS];
         let mut len = path.len() as u32;
         // SAFETY: `path` is a live buffer of `len` UTF-16 units and the call
@@ -398,6 +478,7 @@ mod tests {
         assert_ne!(first.generation, 0);
         assert_eq!(first.source, imp::SOURCE);
         assert_eq!(first.boot_id.is_some(), cfg!(target_os = "linux"));
+        assert_eq!(current_instance().unwrap(), first);
         assert!(is_same_instance(&first).expect("compare own generation"));
     }
 
@@ -523,6 +604,50 @@ mod tests {
         assert_eq!(
             imp::parse_boot_id("00000000-0000-0000-0000-000000000000"),
             None
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_thread_ids_are_not_processes() {
+        let (tid_tx, tid_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+        let thread = std::thread::spawn(move || {
+            // SAFETY: gettid takes no arguments, always succeeds and touches
+            // no memory.
+            let tid = unsafe { libc::syscall(libc::SYS_gettid) } as u32;
+            tid_tx.send(tid).unwrap();
+            let _ = done_rx.recv();
+        });
+        let tid = tid_rx.recv().unwrap();
+        assert_ne!(tid, std::process::id());
+        assert!(matches!(
+            start_generation(tid),
+            Err(PlatformError::IdentityUnavailable(reason)) if reason.contains("thread")
+        ));
+        done_tx.send(()).unwrap();
+        thread.join().unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_status_yields_tgid_and_effective_uid() {
+        let status = "Name:	x
+Tgid:	4242
+Pid:	4243
+Uid:	1000	1001	1000	1000
+";
+        assert_eq!(imp::parse_status(4243, status), Ok((4242, 1001)));
+        assert!(matches!(
+            imp::parse_status(
+                4243, "Name:	x
+"
+            ),
+            Err(PlatformError::IdentityUnavailable(_))
+        ));
+        assert_eq!(
+            effective_uid_of(std::process::id()),
+            Ok(crate::session::effective_uid().unwrap())
         );
     }
 

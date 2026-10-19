@@ -13,6 +13,14 @@
 //!   the environment is caller-controlled: it sets `session_verified` when it
 //!   names the same session and is otherwise ignored.
 //! - macOS: the effective uid and the audit session id (`getaudit_addr`).
+//!
+//! Audit session versus logind: logind names a session after the audit
+//! session id only when the kernel has audit support and `pam_loginuid`
+//! set one. Otherwise logind uses its own ids (for example `c1`), which are
+//! not reported here, because the only way to read them without D-Bus is the
+//! caller-controlled environment. A process that inherited another
+//! session's environment (for example under `su` without `-`) can therefore
+//! show `session_verified == false` with a correct kernel `session_id`.
 
 use crate::PlatformError;
 
