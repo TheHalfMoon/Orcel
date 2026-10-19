@@ -12103,15 +12103,18 @@ impl Tool for MouseButtonUpTool {
     }
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 pub struct ParallelMouseDragTool {
     state: Arc<ToolState>,
 }
+#[cfg(not(feature = "orcel-minimal"))]
 static PMDRAG_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
 /// cua-compositor path for parallel_mouse_drag: build window-local drag paths
 /// and run them as concurrent multi-cursor injections over the control socket.
 /// Coordinates stay window-local (the compositor maps them per app_id), so no
 /// X11 geometry/MPX is needed — the X11 path's hard blocker on Wayland.
+#[cfg(not(feature = "orcel-minimal"))]
 async fn parallel_drag_inject(args: &Value) -> ToolResult {
     let Some(items) = args.get("drags").and_then(|v| v.as_array()) else {
         return ToolResult::error("drags[] is required.");
@@ -12184,6 +12187,7 @@ async fn parallel_drag_inject(args: &Value) -> ToolResult {
 }
 
 #[async_trait]
+#[cfg(not(feature = "orcel-minimal"))]
 impl Tool for ParallelMouseDragTool {
     fn def(&self) -> &ToolDef {
         PMDRAG_DEF.get_or_init(|| ToolDef {
@@ -13830,10 +13834,13 @@ impl Tool for TypeTextCharsTool {
 
 // ── kill_app ──────────────────────────────────────────────────────────────────
 
+#[cfg(not(feature = "orcel-minimal"))]
 pub struct KillAppTool;
+#[cfg(not(feature = "orcel-minimal"))]
 static KILL_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
 #[async_trait]
+#[cfg(not(feature = "orcel-minimal"))]
 impl Tool for KillAppTool {
     fn def(&self) -> &ToolDef {
         KILL_DEF.get_or_init(|| ToolDef {
@@ -13985,9 +13992,12 @@ impl Tool for KillAppTool {
 
 /// How long `kill_app` waits for the signaled process to exit, and how often
 /// it re-reads `/proc/<pid>/stat` meanwhile.
+#[cfg(not(feature = "orcel-minimal"))]
 const KILL_CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+#[cfg(not(feature = "orcel-minimal"))]
 const KILL_CONFIRM_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn kill_app_failure(pid: i32, code: &str, message: String) -> ToolResult {
     ToolResult::error(message.clone()).with_structured(json!({
         "status": "failed",
@@ -13998,6 +14008,7 @@ fn kill_app_failure(pid: i32, code: &str, message: String) -> ToolResult {
     }))
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn kill_app_stale_process_refusal(message: String) -> ToolResult {
     ToolResult::error(message.clone()).with_structured(json!({
         "status": "refused",
@@ -14469,6 +14480,7 @@ pub fn build_registry_with_provider(
 ) -> ToolRegistry {
     let mut r = ToolRegistry::new_with_protected_consent_provider(provider);
     let state = ToolState::new_with_capture_service(r.capture_service());
+    #[cfg(not(feature = "orcel-minimal"))]
     if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
         let recording_state = Arc::downgrade(&state);
         r.recording
@@ -14597,6 +14609,7 @@ pub fn build_registry_with_provider(
         )),
     ));
     r.register(Box::new(LaunchAppTool));
+    #[cfg(not(feature = "orcel-minimal"))]
     r.register(Box::new(KillAppTool));
     let pid_window_candidates: PidWindowGuardParts = (
         Arc::new(pid_window_target_candidates),
@@ -14650,6 +14663,7 @@ pub fn build_registry_with_provider(
         },
         &pid_window_candidates,
     ));
+    #[cfg(not(feature = "orcel-minimal"))]
     r.register(Box::new(ParallelMouseDragTool {
         state: state.clone(),
     }));
@@ -14733,9 +14747,11 @@ pub fn build_registry_with_provider(
     let _: &TypeTextCharsTool = &TypeTextCharsTool;
     // Cross-platform `page` tool definition lives in mcp-server; Linux plugs
     // in its AT-SPI + CDP backend here.
+    #[cfg(not(feature = "orcel-minimal"))]
     r.register(Box::new(cua_driver_core::page::PageTool::new(Arc::new(
         super::page::LinuxPageBackend::new(),
     ))));
+    #[cfg(not(feature = "orcel-minimal"))]
     let browser_engine = cua_driver_core::browser::BrowserEngine::new_with_runtime_services(
         Arc::new(crate::browser_platform::LinuxBrowserPlatform::new(
             state.cursor_registry.clone(),
@@ -14743,7 +14759,9 @@ pub fn build_registry_with_provider(
         r.approval_broker(),
         r.protected_resource_ownership(),
     );
+    #[cfg(not(feature = "orcel-minimal"))]
     cua_driver_core::browser::register_browser_tools(&browser_engine, &mut r);
+    #[cfg(not(feature = "orcel-minimal"))]
     r.register_recording_tools();
     r.register_session_tools();
     r

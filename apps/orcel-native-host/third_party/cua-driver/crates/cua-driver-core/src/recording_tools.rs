@@ -13,33 +13,45 @@
 //! stop|status`) and removes the "is this a setting write?" ambiguity of
 //! the old `set_*` name.
 
+#[cfg(not(feature = "orcel-minimal"))]
 use std::sync::{Arc, Mutex, OnceLock, Weak};
+#[cfg(feature = "orcel-minimal")]
+use std::sync::{Arc, Mutex, Weak};
 
+#[cfg(not(feature = "orcel-minimal"))]
 use async_trait::async_trait;
+#[cfg(not(feature = "orcel-minimal"))]
 use serde_json::{json, Value};
 
+#[cfg(not(feature = "orcel-minimal"))]
 use crate::{
     protocol::ToolResult,
     recording::{RecordingSession, RecordingState},
     tool::{Tool, ToolDef, ToolRegistry},
 };
+#[cfg(feature = "orcel-minimal")]
+use crate::tool::ToolRegistry;
 
 pub type ReplayRegistrySlot = Arc<Mutex<Weak<ToolRegistry>>>;
 
 // ── start_recording ──────────────────────────────────────────────────────────
 
+#[cfg(not(feature = "orcel-minimal"))]
 pub struct StartRecordingTool {
     session: Arc<RecordingSession>,
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 impl StartRecordingTool {
     pub fn new(session: Arc<RecordingSession>) -> Self {
         Self { session }
     }
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 static START_REC_DEF: OnceLock<ToolDef> = OnceLock::new();
 
+#[cfg(not(feature = "orcel-minimal"))]
 #[async_trait]
 impl Tool for StartRecordingTool {
     fn def(&self) -> &ToolDef {
@@ -216,18 +228,22 @@ impl Tool for StartRecordingTool {
 
 // ── stop_recording ───────────────────────────────────────────────────────────
 
+#[cfg(not(feature = "orcel-minimal"))]
 pub struct StopRecordingTool {
     session: Arc<RecordingSession>,
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 impl StopRecordingTool {
     pub fn new(session: Arc<RecordingSession>) -> Self {
         Self { session }
     }
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 static STOP_REC_DEF: OnceLock<ToolDef> = OnceLock::new();
 
+#[cfg(not(feature = "orcel-minimal"))]
 #[async_trait]
 impl Tool for StopRecordingTool {
     fn def(&self) -> &ToolDef {
@@ -278,18 +294,22 @@ impl Tool for StopRecordingTool {
 
 // ── get_recording_state ───────────────────────────────────────────────────────
 
+#[cfg(not(feature = "orcel-minimal"))]
 pub struct GetRecordingStateTool {
     session: Arc<RecordingSession>,
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 impl GetRecordingStateTool {
     pub fn new(session: Arc<RecordingSession>) -> Self {
         Self { session }
     }
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 static GET_REC_DEF: OnceLock<ToolDef> = OnceLock::new();
 
+#[cfg(not(feature = "orcel-minimal"))]
 #[async_trait]
 impl Tool for GetRecordingStateTool {
     fn def(&self) -> &ToolDef {
@@ -330,18 +350,22 @@ impl Tool for GetRecordingStateTool {
 
 // ── replay_trajectory ─────────────────────────────────────────────────────────
 
+#[cfg(not(feature = "orcel-minimal"))]
 pub struct ReplayTrajectoryTool {
     registry: ReplayRegistrySlot,
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 impl ReplayTrajectoryTool {
     pub fn new(registry: ReplayRegistrySlot) -> Self {
         Self { registry }
     }
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 static REPLAY_DEF: OnceLock<ToolDef> = OnceLock::new();
 
+#[cfg(not(feature = "orcel-minimal"))]
 #[async_trait]
 impl Tool for ReplayTrajectoryTool {
     fn def(&self) -> &ToolDef {
@@ -546,6 +570,7 @@ impl Tool for ReplayTrajectoryTool {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn recording_state_json(state: &RecordingState) -> Value {
     json!({
         // "recording" mirrors the Swift field name for parity.
@@ -564,6 +589,7 @@ fn recording_state_json(state: &RecordingState) -> Value {
     })
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn parse_action_json(path: &std::path::Path) -> anyhow::Result<(String, Value)> {
     if !path.exists() {
         anyhow::bail!("Missing action.json");
@@ -590,9 +616,12 @@ fn parse_action_json(path: &std::path::Path) -> anyhow::Result<(String, Value)> 
 // destructive + open_world so conforming MCP clients also gate it behind a
 // human approval. ffmpeg is invoked as a separate process, never linked.
 
+#[cfg(not(feature = "orcel-minimal"))]
 pub struct InstallFfmpegTool;
+#[cfg(not(feature = "orcel-minimal"))]
 static INSTALL_FFMPEG_DEF: OnceLock<ToolDef> = OnceLock::new();
 
+#[cfg(not(feature = "orcel-minimal"))]
 #[async_trait]
 impl Tool for InstallFfmpegTool {
     fn def(&self) -> &ToolDef {
@@ -674,6 +703,7 @@ impl Tool for InstallFfmpegTool {
 }
 
 #[cfg(test)]
+#[cfg(not(feature = "orcel-minimal"))]
 mod tests {
     use super::*;
 

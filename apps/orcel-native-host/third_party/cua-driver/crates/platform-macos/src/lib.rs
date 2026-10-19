@@ -34,6 +34,7 @@ pub mod focus_guard;
 #[cfg(target_os = "macos")]
 pub mod focus_steal;
 #[cfg(target_os = "macos")]
+#[cfg(not(feature = "orcel-minimal"))]
 pub mod history;
 #[cfg(target_os = "macos")]
 pub mod input;
@@ -44,12 +45,14 @@ mod permission_observation;
 #[cfg(target_os = "macos")]
 pub mod permissions;
 #[cfg(target_os = "macos")]
+#[cfg(not(feature = "orcel-minimal"))]
 pub mod pip;
 #[cfg(target_os = "macos")]
 pub mod pointer_shape;
 /// AX role -> cursor shape table for the presence hit-test (pure, every host).
 pub mod pointer_shape_map;
 #[cfg(target_os = "macos")]
+#[cfg(not(feature = "orcel-minimal"))]
 pub mod recording_hooks;
 #[cfg(target_os = "macos")]
 pub mod session;
@@ -58,6 +61,7 @@ pub mod terminal;
 #[cfg(target_os = "macos")]
 pub mod tools;
 #[cfg(target_os = "macos")]
+#[cfg(not(feature = "orcel-minimal"))]
 pub mod video_sckit;
 #[cfg(target_os = "macos")]
 pub mod window_change_detector;

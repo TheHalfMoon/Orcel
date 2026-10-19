@@ -8,6 +8,7 @@ use cua_driver_core::tool::ToolRegistry;
 #[cfg(target_os = "linux")]
 mod impl_;
 #[cfg(target_os = "linux")]
+#[cfg(not(feature = "orcel-minimal"))]
 pub(crate) mod page;
 
 #[cfg(not(target_os = "linux"))]

@@ -62,11 +62,13 @@ license = "Apache-2.0"
 repository = "https://github.com/TheHalfMoon/Orcel"
 publish = false
 
+# P-03: orcel-minimal compiles out Cua's MCP server, daemon, CDP browser
+# engine, Computer History, recording, perception client and PiP preview.
 [dependencies]
-cua-driver-core = { path = "third_party/cua-driver/crates/cua-driver-core", default-features = false }
+cua-driver-core = { path = "third_party/cua-driver/crates/cua-driver-core", default-features = false, features = ["orcel-minimal"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-platform-macos = { path = "third_party/cua-driver/crates/platform-macos" }
+platform-macos = { path = "third_party/cua-driver/crates/platform-macos", features = ["orcel-minimal"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-platform-linux = { path = "third_party/cua-driver/crates/platform-linux" }
+platform-linux = { path = "third_party/cua-driver/crates/platform-linux", features = ["orcel-minimal"] }

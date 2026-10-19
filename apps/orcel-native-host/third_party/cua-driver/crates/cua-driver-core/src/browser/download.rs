@@ -5,39 +5,56 @@
 //! default before returning. Output deliberately omits URLs, filenames, and
 //! local paths.
 
+#[cfg(not(feature = "orcel-minimal"))]
 use std::path::{Component, Path, PathBuf};
+#[cfg(not(feature = "orcel-minimal"))]
 use std::sync::{Arc, OnceLock};
+#[cfg(not(feature = "orcel-minimal"))]
 use std::time::Duration;
 
+#[cfg(not(feature = "orcel-minimal"))]
 use async_trait::async_trait;
+#[cfg(not(feature = "orcel-minimal"))]
 use serde_json::{json, Value};
 
+#[cfg(not(feature = "orcel-minimal"))]
 use crate::protocol::ToolResult;
+#[cfg(not(feature = "orcel-minimal"))]
 use crate::tool::{Tool, ToolDef};
+#[cfg(not(feature = "orcel-minimal"))]
 use crate::tool_args::ArgsExt;
 
+#[cfg(not(feature = "orcel-minimal"))]
 use super::cdp_ws::CdpConnection;
+#[cfg(not(feature = "orcel-minimal"))]
 use super::engine::BrowserEngine;
+#[cfg(not(feature = "orcel-minimal"))]
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
+#[cfg(not(feature = "orcel-minimal"))]
 use super::required_session_schema;
+#[cfg(not(feature = "orcel-minimal"))]
 use super::store::BrowserActionKind;
 
 /// Injected by an MCP host only after its destructive-tool approval flow.
 /// It is intentionally absent from the public input schema.
 pub const MCP_HOST_DOWNLOAD_APPROVAL_ARG: &str = "_cua_browser_download_mcp_host_approved";
 
+#[cfg(not(feature = "orcel-minimal"))]
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30);
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn browser_download_gate() -> &'static tokio::sync::Mutex<()> {
     static GATE: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
     GATE.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 pub struct BrowserDownloadTool {
     def: ToolDef,
     engine: Arc<BrowserEngine>,
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 impl BrowserDownloadTool {
     pub fn new(engine: Arc<BrowserEngine>) -> Self {
         Self {
@@ -78,6 +95,7 @@ impl BrowserDownloadTool {
     }
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn consent_required() -> ToolResult {
     BrowserRefusal::new(
         BrowserRefusalCode::BrowserConsentRequired,
@@ -86,6 +104,7 @@ fn consent_required() -> ToolResult {
     .to_tool_result()
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn explicit_session(args: &Value) -> Result<String, ToolResult> {
     let session = args.require_str("session")?;
     if session.trim().is_empty() || session == "default" {
@@ -96,6 +115,7 @@ fn explicit_session(args: &Value) -> Result<String, ToolResult> {
     Ok(session)
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn validate_destination_root(raw: &str) -> Result<PathBuf, ToolResult> {
     let path = Path::new(raw);
     if !path.is_absolute() {
@@ -125,6 +145,7 @@ fn validate_destination_root(raw: &str) -> Result<PathBuf, ToolResult> {
     Ok(canonical)
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn download_path_for_cdp(path: &Path) -> String {
     let raw = path.to_string_lossy();
     #[cfg(target_os = "windows")]
@@ -142,6 +163,7 @@ fn download_path_for_cdp(path: &Path) -> String {
     raw.into_owned()
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn main_frame_id(frame_tree: &Value) -> Option<&str> {
     frame_tree
         .get("frameTree")?
@@ -150,11 +172,13 @@ fn main_frame_id(frame_tree: &Value) -> Option<&str> {
         .as_str()
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn is_safe_guid(guid: &str) -> bool {
     let mut components = Path::new(guid).components();
     matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none()
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn completed_download_size(root: &Path, guid: &str) -> Result<u64, BrowserRefusal> {
     if !is_safe_guid(guid) {
         return Err(BrowserRefusal::new(
@@ -190,6 +214,7 @@ fn completed_download_size(root: &Path, guid: &str) -> Result<u64, BrowserRefusa
     Ok(metadata.len())
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 async fn reset_download_behavior(conn: &CdpConnection) {
     let _ = conn
         .call(
@@ -200,12 +225,14 @@ async fn reset_download_behavior(conn: &CdpConnection) {
         .await;
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 enum DownloadEventOutcome {
     Completed { guid: String },
     Canceled { guid: String },
     EventStreamClosed,
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 async fn await_download(
     events: &mut tokio::sync::mpsc::UnboundedReceiver<super::cdp_ws::CdpEvent>,
     expected_frame_id: &str,
@@ -250,6 +277,7 @@ async fn await_download(
     DownloadEventOutcome::EventStreamClosed
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn remove_proven_partial(root: &Path, guid: Option<&str>) {
     let Some(guid) = guid.filter(|guid| is_safe_guid(guid)) else {
         return;
@@ -269,6 +297,7 @@ fn remove_proven_partial(root: &Path, guid: Option<&str>) {
     }
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 #[async_trait]
 impl Tool for BrowserDownloadTool {
     fn def(&self) -> &ToolDef {
@@ -504,6 +533,7 @@ impl Tool for BrowserDownloadTool {
 }
 
 #[cfg(test)]
+#[cfg(not(feature = "orcel-minimal"))]
 mod tests {
     use super::*;
 

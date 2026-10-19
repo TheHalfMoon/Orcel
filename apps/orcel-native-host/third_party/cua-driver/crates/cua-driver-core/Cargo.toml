@@ -14,6 +14,10 @@ rego = ["dep:regorus"]
 # offered unless the operator turns it off at runtime. Without this feature
 # the tool is not offered at all.
 script = ["dep:rquickjs"]
+# Orcel P-03: compile out the MCP server, daemon, CDP browser engine, Computer
+# History, recording and the perception worker client. cfg gates only; see
+# apps/orcel-native-host/third_party/cua-driver/PATCHES.md.
+orcel-minimal = []
 
 [dependencies]
 cua-driver-contract = { path = "../cua-driver-contract" }

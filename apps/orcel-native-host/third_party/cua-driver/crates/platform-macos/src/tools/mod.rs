@@ -9,6 +9,7 @@ mod drag;
 mod get_window_state;
 mod hotkey;
 mod invoke_menu;
+#[cfg(not(feature = "orcel-minimal"))]
 mod kill_app;
 mod launch_app;
 mod list_apps;
@@ -35,6 +36,7 @@ mod get_desktop_state;
 pub(crate) mod get_screen_size;
 mod health_report;
 mod move_cursor;
+#[cfg(not(feature = "orcel-minimal"))]
 mod page;
 mod pixel_route;
 pub(crate) mod px_frame;
@@ -867,6 +869,7 @@ pub struct ToolState {
     /// `type_keystrokes` calls instead of reconnecting fresh every time —
     /// see `CdpSessionCache` for why (Chrome's "allow remote debugging"
     /// popup fires on every new connection, not once per session).
+    #[cfg(not(feature = "orcel-minimal"))]
     pub cdp_sessions: Arc<crate::browser::CdpSessionCache>,
     /// Whether the runtime owner installed the AppKit main-thread cursor
     /// overlay facility. Imported SDK runtimes deliberately leave this false;
@@ -914,6 +917,7 @@ impl ToolState {
             // `cua-driver config set` changes carry over into MCP sessions.
             config: Arc::new(std::sync::RwLock::new(load_driver_config())),
             session_config: Arc::new(SessionConfigRegistry::new()),
+            #[cfg(not(feature = "orcel-minimal"))]
             cdp_sessions: Arc::new(crate::browser::CdpSessionCache::new()),
             cursor_overlay_available,
             host_owns_permission_ux,
@@ -1057,6 +1061,7 @@ pub fn register_all(
     }
     // Share the element cache with the recording-hook layer so it can
     // resolve element_index → window-local screenshot coords for click.png.
+    #[cfg(not(feature = "orcel-minimal"))]
     crate::recording_hooks::set_snapshots(state.snapshots.clone());
 
     // Drop a disconnecting session's config overrides + owned cursor on
@@ -1103,6 +1108,7 @@ pub fn register_all(
         )),
     ));
     registry.register(Box::new(launch_app::LaunchAppTool));
+    #[cfg(not(feature = "orcel-minimal"))]
     registry.register(Box::new(kill_app::KillAppTool));
     let pid_window_candidates: WindowTargetCandidates = Arc::new(pid_window_target_candidates);
     registry.register(pid_window_guarded(
@@ -1209,9 +1215,11 @@ pub fn register_all(
         &type_text_chars::TypeTextCharsTool::new(state.clone());
     // Cross-platform `page` tool definition lives in mcp-server; macOS plugs in
     // its Apple-Events / CDP / AX-tree backend here.
+    #[cfg(not(feature = "orcel-minimal"))]
     registry.register(Box::new(cua_driver_core::page::PageTool::new(Arc::new(
         page::MacOsPageBackend::new(state.clone()),
     ))));
+    #[cfg(not(feature = "orcel-minimal"))]
     let browser_engine = cua_driver_core::browser::BrowserEngine::new_with_runtime_services(
         Arc::new(crate::browser::MacOsBrowserPlatform::new(
             state.cursor_registry.clone(),
@@ -1219,8 +1227,10 @@ pub fn register_all(
         registry.approval_broker(),
         registry.protected_resource_ownership(),
     );
+    #[cfg(not(feature = "orcel-minimal"))]
     cua_driver_core::browser::register_browser_tools(&browser_engine, registry);
     // Recording / replay + session-lifecycle tools are platform-independent.
+    #[cfg(not(feature = "orcel-minimal"))]
     registry.register_recording_tools();
     registry.register_session_tools();
 }
@@ -1343,6 +1353,7 @@ mod pixel_focus_readback_tests {
 }
 
 #[cfg(test)]
+#[cfg(not(feature = "orcel-minimal"))]
 mod recording_start_guard_tests {
     use cua_driver_core::recording::RecordingSession;
     use cua_driver_core::session::fire_session_end;

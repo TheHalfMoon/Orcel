@@ -1,8 +1,11 @@
 //! ElectronJS: detect Electron apps and evaluate JS via CDP inspector.
 
+#[cfg(not(feature = "orcel-minimal"))]
 use std::collections::HashSet;
+#[cfg(not(feature = "orcel-minimal"))]
 use std::time::Duration;
 
+#[cfg(not(feature = "orcel-minimal"))]
 use super::cdp_client::{listening_ports, CdpClient};
 
 pub struct ElectronJs;
@@ -47,6 +50,7 @@ impl ElectronJs {
     /// Evaluate JavaScript in the Electron app's main (Node.js) process at
     /// `pid` through its inspector, opening it with SIGUSR1 when no inspector
     /// is listening yet. Apps built with the inspector fuse off refuse.
+    #[cfg(not(feature = "orcel-minimal"))]
     pub async fn execute_main(javascript: &str, pid: i32) -> anyhow::Result<String> {
         let existing_ports = listening_ports(pid).await;
         for &port in &existing_ports {
@@ -68,7 +72,17 @@ impl ElectronJs {
         anyhow::bail!("no Node inspector for Electron pid {pid} (the app may disable it)")
     }
 
+    /// Orcel P-03: the inspector route (SIGUSR1 plus CDP evaluation in the main
+    /// process) is compiled out. Every caller already treats this error as
+    /// "route unavailable": Electron drags refuse and hover takes the native
+    /// route.
+    #[cfg(feature = "orcel-minimal")]
+    pub async fn execute_main(_javascript: &str, pid: i32) -> anyhow::Result<String> {
+        anyhow::bail!("no Node inspector for Electron pid {pid} (compiled out by orcel-minimal)")
+    }
+
     /// Evaluate JavaScript in the Electron app at `pid` via CDP.
+    #[cfg(not(feature = "orcel-minimal"))]
     pub async fn execute(javascript: &str, pid: i32) -> anyhow::Result<String> {
         // Only inspect listeners owned by the requested process. Probing common
         // CDP ports globally can execute JavaScript in an unrelated browser.

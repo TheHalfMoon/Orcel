@@ -140,6 +140,7 @@ pub fn walk_tree(pid: u32, xid: u64, query: Option<&str>) -> AtspiTreeResult {
 /// smaller budget than the transport's tool-call deadline. Unlike the
 /// interactive tree walker, evidence capture makes one attempt and accepts an
 /// unavailable tree when the target renderer is blocked.
+#[cfg(not(feature = "orcel-minimal"))]
 pub(crate) fn walk_tree_for_recording(
     pid: u32,
     xid: u64,

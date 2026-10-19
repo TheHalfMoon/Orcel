@@ -35,33 +35,54 @@
 //! is re-proven before any mutation; frames whose identity or
 //! capability cannot be proven are omitted or refused, never guessed.
 
+#[cfg(not(feature = "orcel-minimal"))]
 mod adapter_support;
+#[cfg(not(feature = "orcel-minimal"))]
 pub mod binding;
+#[cfg(not(feature = "orcel-minimal"))]
 pub mod cdp_ws;
 pub mod download;
+#[cfg(not(feature = "orcel-minimal"))]
 pub mod engine;
+#[cfg(not(feature = "orcel-minimal"))]
 mod grant;
+#[cfg(not(feature = "orcel-minimal"))]
 mod keyed_gates;
 #[cfg(test)]
+#[cfg(not(feature = "orcel-minimal"))]
 pub(crate) mod mock_cdp;
+#[cfg(not(feature = "orcel-minimal"))]
 mod mutation;
+#[cfg(not(feature = "orcel-minimal"))]
 pub mod platform;
+#[cfg(not(feature = "orcel-minimal"))]
 pub mod pointer;
+#[cfg(not(feature = "orcel-minimal"))]
 mod prepare;
+#[cfg(not(feature = "orcel-minimal"))]
 mod reconnect;
+#[cfg(not(feature = "orcel-minimal"))]
 pub mod refusal;
+#[cfg(not(feature = "orcel-minimal"))]
 mod semantic;
+#[cfg(not(feature = "orcel-minimal"))]
 mod setup_descriptor;
+#[cfg(not(feature = "orcel-minimal"))]
 pub mod store;
+#[cfg(not(feature = "orcel-minimal"))]
 pub mod tools;
 pub mod types;
 #[cfg(test)]
+#[cfg(not(feature = "orcel-minimal"))]
 mod v2_tests;
 
+#[cfg(not(feature = "orcel-minimal"))]
 pub use adapter_support::{
     is_firefox, loopback_websocket_port, parse_devtools_active_port, BrowserCursorTracker,
 };
+#[cfg(not(feature = "orcel-minimal"))]
 pub use engine::BrowserEngine;
+#[cfg(not(feature = "orcel-minimal"))]
 pub use platform::{
     BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, BrowserVisualAction,
     BrowserVisualActionKind, ExistingProfileSetupOutcome, ExistingProfileSetupRequest,
@@ -69,10 +90,13 @@ pub use platform::{
     PrepareOutcome, PrepareProfile, PrepareProfileMode, PrepareRequest, PrepareSideEffects,
     PrepareStrategy,
 };
+#[cfg(not(feature = "orcel-minimal"))]
 pub use refusal::{BrowserRefusal, BrowserRefusalCode};
+#[cfg(not(feature = "orcel-minimal"))]
 pub use setup_descriptor::{
     existing_profile_setup_descriptor, BrowserSetupDescriptor, EXISTING_PROFILE_SETUP_READY_TIMEOUT,
 };
+#[cfg(not(feature = "orcel-minimal"))]
 pub use tools::register_browser_tools;
 pub use types::{
     BindingQuality, BrowserClassification, BrowserEngineFamily, BrowserProduct,
@@ -80,6 +104,7 @@ pub use types::{
     NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
 };
 
+#[cfg(not(feature = "orcel-minimal"))]
 pub(crate) fn session_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "string",
@@ -90,6 +115,7 @@ pub(crate) fn session_schema() -> serde_json::Value {
     })
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 pub(crate) fn required_session_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "string",
@@ -98,6 +124,7 @@ pub(crate) fn required_session_schema() -> serde_json::Value {
 }
 
 #[cfg(test)]
+#[cfg(not(feature = "orcel-minimal"))]
 mod tests {
     use super::*;
 

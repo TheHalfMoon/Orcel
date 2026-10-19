@@ -76,6 +76,11 @@ tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
 tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
 futures-util = "0.3"
 
+# Orcel P-03: compile out browser/, history.rs, recording_hooks.rs, video_*.rs
+# and pip/ (cfg gates only); see apps/orcel-native-host/third_party/cua-driver/PATCHES.md.
+[features]
+orcel-minimal = ["cua-driver-core/orcel-minimal"]
+
 [dev-dependencies]
 tempfile = "3"
 

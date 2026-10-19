@@ -13,6 +13,7 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 use crate::{
     pip_hook,
     protocol::{Content, ToolResult},
@@ -22,6 +23,11 @@ use crate::{
         StopRecordingTool,
     },
     tool_args::ArgsExt,
+};
+#[cfg(feature = "orcel-minimal")]
+use crate::{
+    protocol::{Content, ToolResult},
+    recording_tools::ReplayRegistrySlot,
 };
 
 tokio::task_local! {
@@ -43,6 +49,7 @@ tokio::task_local! {
 /// Resource adapters use this instead of consulting process-global
 /// compatibility configuration. The value exists only while the canonical
 /// registry chokepoint is executing a tool, including nested dispatch.
+#[cfg(not(feature = "orcel-minimal"))]
 pub(crate) fn current_dispatch_authorization_context(
 ) -> Option<Arc<crate::session_authorization::EffectiveAuthorizationContext>> {
     DISPATCH_AUTHORIZATION_CONTEXT.try_with(Arc::clone).ok()
@@ -1113,14 +1120,17 @@ pub struct ToolRegistry {
     /// Ordered list of tool names for `tools/list`.
     order: Vec<String>,
     /// Shared recording session — auto-records each non-read-only tool call.
+    #[cfg(not(feature = "orcel-minimal"))]
     pub recording: Arc<RecordingSession>,
     /// Optional encrypted Computer History runtime. It is installed only by a
     /// trusted host that admitted the experimental preview.
+    #[cfg(not(feature = "orcel-minimal"))]
     history: Option<Arc<crate::history::HistoryManager>>,
     replay_registry: ReplayRegistrySlot,
     session_end_hooks: Vec<crate::session::SessionEndHookRegistration>,
     session_revive_hooks: Vec<crate::session::SessionReviveHookRegistration>,
     cursor_outcome_readers: Vec<crate::session::CursorOutcomeReaderRegistration>,
+    #[cfg(not(feature = "orcel-minimal"))]
     _recording_state_readers: Vec<crate::session::RecordingStateReaderRegistration>,
     runtime_cleanups: Vec<RuntimeCleanup>,
     capture_service: Arc<crate::capture_runtime::CaptureService>,
@@ -1177,8 +1187,11 @@ impl ToolRegistry {
                     });
                 }
             });
+        #[cfg(not(feature = "orcel-minimal"))]
         let recording = Arc::new(RecordingSession::new());
+        #[cfg(not(feature = "orcel-minimal"))]
         let weak_recording = Arc::downgrade(&recording);
+        #[cfg(not(feature = "orcel-minimal"))]
         let recording_state_reader =
             crate::session::register_scoped_recording_state_reader(Arc::new(move |session_id| {
                 weak_recording.upgrade().is_some_and(|recording| {
@@ -1189,12 +1202,15 @@ impl ToolRegistry {
         Self {
             tools: HashMap::new(),
             order: Vec::new(),
+            #[cfg(not(feature = "orcel-minimal"))]
             recording,
+            #[cfg(not(feature = "orcel-minimal"))]
             history: None,
             replay_registry: Arc::new(std::sync::Mutex::new(std::sync::Weak::new())),
             session_end_hooks: vec![session_end_hook],
             session_revive_hooks: Vec::new(),
             cursor_outcome_readers: Vec::new(),
+            #[cfg(not(feature = "orcel-minimal"))]
             _recording_state_readers: vec![recording_state_reader],
             runtime_cleanups: Vec::new(),
             capture_service,
@@ -1321,6 +1337,7 @@ impl ToolRegistry {
 
     /// Register the four platform-independent recording/replay tools.
     /// Call this after all platform tools have been registered.
+    #[cfg(not(feature = "orcel-minimal"))]
     pub fn register_recording_tools(&mut self) {
         let session = self.recording.clone();
         self.register(Box::new(StartRecordingTool::new(session.clone())));
@@ -1334,6 +1351,7 @@ impl ToolRegistry {
 
     /// Install the encrypted history hook and its two permission-gated,
     /// read-only agent tools. Lifecycle mutation remains daemon-private.
+    #[cfg(not(feature = "orcel-minimal"))]
     pub fn register_history_tools(&mut self, manager: Arc<crate::history::HistoryManager>) {
         self.history = Some(manager.clone());
         self.register(Box::new(crate::history::HistoryStatusTool::new(
@@ -1342,6 +1360,7 @@ impl ToolRegistry {
         self.register(Box::new(crate::history::HistoryQueryTool::new(manager)));
     }
 
+    #[cfg(not(feature = "orcel-minimal"))]
     pub fn history(&self) -> Option<Arc<crate::history::HistoryManager>> {
         self.history.clone()
     }
@@ -1391,6 +1410,7 @@ impl ToolRegistry {
         )));
     }
 
+    #[cfg(not(feature = "orcel-minimal"))]
     pub fn register_perception_tool(
         &mut self,
         client: impl Into<crate::perception_client::PerceptionClientHandle>,
@@ -1409,6 +1429,7 @@ impl ToolRegistry {
         self.register_perception_tool_with_binding_resolver(client, resolve_binding);
     }
 
+    #[cfg(not(feature = "orcel-minimal"))]
     pub fn register_perception_tool_with_binding_resolver(
         &mut self,
         client: impl Into<crate::perception_client::PerceptionClientHandle>,
@@ -2003,6 +2024,7 @@ impl ToolRegistry {
             args = public_args.clone();
             namespace_runtime_args(&mut args, context, evidence);
         }
+        #[cfg(not(feature = "orcel-minimal"))]
         let recording_args = recording_args_for(resolved_name, &public_args);
         if has_adapter("desktop_input")
             && (!runtime_proves_driver_owned || context.capability_manifest().is_some())
@@ -2199,8 +2221,10 @@ impl ToolRegistry {
         } else {
             None
         };
+        #[cfg(not(feature = "orcel-minimal"))]
         let start_ms = now_ms();
         let cursor_event = crate::cursor_events::begin_tool(resolved_name, &args);
+        #[cfg(not(feature = "orcel-minimal"))]
         let pending_history = self.history.as_ref().and_then(|history| {
             history.begin_action(resolved_name, &public_args, runtime_session.as_deref())
         });
@@ -2208,6 +2232,7 @@ impl ToolRegistry {
         // Reserve and capture the turn before dispatch so recorded evidence
         // shows the application immediately before the action changed it.
         // Exclude session lifecycle calls, including one-shot CLI teardown.
+        #[cfg(not(feature = "orcel-minimal"))]
         let should_record = !tool.def().read_only
             && !matches!(
                 resolved_name,
@@ -2220,6 +2245,7 @@ impl ToolRegistry {
                     | "start_session"
                     | "end_session"
             );
+        #[cfg(not(feature = "orcel-minimal"))]
         let private_consent_turn = is_existing_profile_prepare(resolved_name, &args);
         let _desktop_action = if requires_desktop_coordination(
             resolved_name,
@@ -2239,6 +2265,7 @@ impl ToolRegistry {
         } else {
             None
         };
+        #[cfg(not(feature = "orcel-minimal"))]
         let pending_turn = should_record
             .then(|| {
                 // Use the same trusted identities the recording owner was minted from.
@@ -2276,11 +2303,15 @@ impl ToolRegistry {
         // Desktop pixels read off a capped get_desktop_state image are mapped
         // back to the uncapped capture before any platform interprets them.
         crate::desktop_capture_scale::map_desktop_args(&mut args);
+        #[cfg(not(feature = "orcel-minimal"))]
         let mut result = crate::recording::scope_dispatch_click_capture(
             pending_turn.as_ref(),
             tool.invoke(args.clone()),
         )
         .await;
+        // Orcel P-03: no recording turn exists to scope, so await the dispatch.
+        #[cfg(feature = "orcel-minimal")]
+        let mut result = tool.invoke(args.clone()).await;
         match resolved_name {
             "get_desktop_state" if result.is_error != Some(true) => {
                 crate::desktop_capture_scale::record_desktop_state(
@@ -2346,6 +2377,7 @@ impl ToolRegistry {
         // the public ActionResult projection deliberately replaces legacy
         // prose. Coordinate recovery and other internal diagnostics must not
         // depend on the narrowed MCP text surface.
+        #[cfg(not(feature = "orcel-minimal"))]
         let recording_result_text = result.content.iter().find_map(|content| {
             if let Content::Text { text, .. } = content {
                 Some(text.clone())
@@ -2386,8 +2418,10 @@ impl ToolRegistry {
         // Use the original name for downstream code paths below so the
         // exit-code matching and recording paths keep treating the alias
         // as a distinct call site.
+        #[cfg(not(feature = "orcel-minimal"))]
         let name = resolved_name;
 
+        #[cfg(not(feature = "orcel-minimal"))]
         if let (Some(history), Some(pending)) = (self.history.as_ref(), pending_history) {
             history.finish_action(
                 pending,
@@ -2395,6 +2429,7 @@ impl ToolRegistry {
                 result.is_error == Some(true),
             );
         }
+        #[cfg(not(feature = "orcel-minimal"))]
         if result.is_error != Some(true) && matches!(name, "start_session" | "end_session") {
             if let Some(history) = self.history.as_ref() {
                 history.session_event(
@@ -2411,6 +2446,7 @@ impl ToolRegistry {
         // control tools themselves are excluded so the recorded turn
         // stream stays the actual user-action sequence (not the meta
         // start/stop frames).
+        #[cfg(not(feature = "orcel-minimal"))]
         if let Some(pending_turn) = pending_turn {
             self.recording.finish_turn_with_outcome(
                 pending_turn,
@@ -2426,6 +2462,7 @@ impl ToolRegistry {
         // of action tools the recording pipeline cares about (non-read-only,
         // not the recording-control meta-tools) so the live view matches
         // what the recorder would have captured for the turn.
+        #[cfg(not(feature = "orcel-minimal"))]
         if pip_hook::pip_enabled() && should_record && !private_consent_turn {
             let window_id = args.opt_u64("window_id");
             let pid = args.opt_i64("pid");
@@ -2868,6 +2905,7 @@ impl ToolRegistry {
                         .to_owned(),
                 )
             }
+            #[cfg(not(feature = "orcel-minimal"))]
             "stop_recording" => {
                 let state = self.recording.current_state();
                 let Some(output_dir) = state.output_dir else {
@@ -6100,6 +6138,7 @@ fn protected_refusal(code: &str, message: &str) -> ToolResult {
     }))
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn is_existing_profile_prepare(tool_name: &str, args: &Value) -> bool {
     tool_name == "browser_prepare"
         && args
@@ -6109,6 +6148,7 @@ fn is_existing_profile_prepare(tool_name: &str, args: &Value) -> bool {
             == Some("existing_profile")
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn recording_args_for(tool_name: &str, args: &Value) -> Value {
     let mut redacted = args.clone();
     if let Some(arguments) = redacted.as_object_mut() {
@@ -6165,6 +6205,7 @@ impl Default for ToolRegistry {
 /// Build a short, human-friendly label for the PiP overlay from the
 /// tool name + raw args. Kept under ~60 chars so the macOS NSTextField
 /// has room without truncation at default geometry.
+#[cfg(not(feature = "orcel-minimal"))]
 fn synthesize_action_label(tool_name: &str, args: &Value) -> String {
     let arg = |k: &str| -> Option<String> {
         args.get(k).map(|v| match v {

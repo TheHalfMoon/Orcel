@@ -1,8 +1,11 @@
 //! BrowserJS: run JavaScript in Chrome/Brave/Edge/Safari via AppleScript/osascript.
 
+#[cfg(not(feature = "orcel-minimal"))]
 use anyhow::Context;
+#[cfg(not(feature = "orcel-minimal"))]
 use std::time::Duration;
 
+#[cfg(not(feature = "orcel-minimal"))]
 use crate::windows::WindowBounds;
 
 pub struct BrowserJs;
@@ -10,6 +13,7 @@ pub struct BrowserJs;
 const CHROME_APP_BUNDLE_PREFIX: &str = "com.google.Chrome.app.";
 
 #[derive(Clone, Debug)]
+#[cfg(not(feature = "orcel-minimal"))]
 struct NativeWindowTarget {
     pid: i32,
     title: String,
@@ -35,6 +39,7 @@ impl BrowserJs {
     }
 
     /// Execute JavaScript in the browser window identified by window_id.
+    #[cfg(not(feature = "orcel-minimal"))]
     pub async fn execute(
         javascript: &str,
         bundle_id: &str,
@@ -87,6 +92,7 @@ end tell"#
 
     /// Patch the browser Preferences JSON to enable Allow JavaScript from Apple Events,
     /// then relaunch the browser.
+    #[cfg(not(feature = "orcel-minimal"))]
     pub async fn enable_javascript_apple_events(bundle_id: &str) -> anyhow::Result<()> {
         let app_name = app_name_for_bundle(bundle_id)
             .ok_or_else(|| anyhow::anyhow!("Unsupported browser bundle: {bundle_id}"))?;
@@ -134,6 +140,7 @@ end tell"#
     }
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn native_window_target(window_id: u32) -> anyhow::Result<NativeWindowTarget> {
     let windows = crate::windows::all_windows();
     let target = windows
@@ -158,6 +165,7 @@ fn native_window_target(window_id: u32) -> anyhow::Result<NativeWindowTarget> {
     })
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn ensure_applescript_process_identity(bundle_id: &str, expected_pid: i32) -> anyhow::Result<()> {
     let matching_pids = crate::apps::list_running_apps()
         .into_iter()
@@ -168,6 +176,7 @@ fn ensure_applescript_process_identity(bundle_id: &str, expected_pid: i32) -> an
     ensure_applescript_process_identity_in(bundle_id, expected_pid, &matching_pids)
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn process_is_alive(pid: i32) -> bool {
     if pid <= 0 {
         return false;
@@ -180,6 +189,7 @@ fn process_is_alive(pid: i32) -> bool {
     std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn ensure_applescript_process_identity_in(
     bundle_id: &str,
     expected_pid: i32,
@@ -205,6 +215,7 @@ fn ensure_applescript_process_identity_in(
     Ok(())
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn chromium_window_script(
     app_name: &str,
     target: &NativeWindowTarget,
@@ -257,6 +268,7 @@ end tell"#
     )
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn same_bounds(left: &WindowBounds, right: &WindowBounds) -> bool {
     rounded_i64(left.x) == rounded_i64(right.x)
         && rounded_i64(left.y) == rounded_i64(right.y)
@@ -264,10 +276,12 @@ fn same_bounds(left: &WindowBounds, right: &WindowBounds) -> bool {
         && rounded_i64(left.height) == rounded_i64(right.height)
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn rounded_i64(value: f64) -> i64 {
     value.round() as i64
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn find_preferences_files(profiles_dir: &str) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(profiles_dir) else {
         return vec![];
@@ -285,6 +299,7 @@ fn find_preferences_files(profiles_dir: &str) -> Vec<String> {
     result
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn patch_preferences_file(path: &str) -> anyhow::Result<()> {
     let content = std::fs::read_to_string(path).with_context(|| format!("Reading {path}"))?;
     let mut json: serde_json::Value =
@@ -324,12 +339,14 @@ fn patch_preferences_file(path: &str) -> anyhow::Result<()> {
 }
 
 /// Escape a plain string value for embedding inside an AppleScript double-quoted string.
+#[cfg(not(feature = "orcel-minimal"))]
 fn escape_for_applescript_string(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 /// Escape JS for embedding in an AppleScript string literal.
 /// Multi-line JS is split by newline and concatenated with `& (ASCII character 10) &`.
+#[cfg(not(feature = "orcel-minimal"))]
 fn escape_js_for_applescript(js: &str) -> String {
     let lines: Vec<String> = js
         .lines()
@@ -348,6 +365,7 @@ fn escape_js_for_applescript(js: &str) -> String {
 }
 
 /// Write script to a temp file and run osascript with a 15s timeout.
+#[cfg(not(feature = "orcel-minimal"))]
 pub async fn run_osascript(script: &str) -> anyhow::Result<String> {
     let uuid = format!("{:x}", rand_u64());
     let path = format!("/tmp/{uuid}.applescript");
@@ -387,6 +405,7 @@ pub async fn run_osascript(script: &str) -> anyhow::Result<String> {
         .to_owned())
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn rand_u64() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     let t = SystemTime::now()
@@ -400,6 +419,7 @@ fn rand_u64() -> u64 {
 }
 
 #[cfg(test)]
+#[cfg(not(feature = "orcel-minimal"))]
 mod tests {
     use super::*;
 

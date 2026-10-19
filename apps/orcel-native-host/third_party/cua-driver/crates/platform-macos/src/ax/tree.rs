@@ -201,6 +201,7 @@ pub fn walk_tree_bounded(
     )
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 pub(crate) fn walk_native_chrome_bounded(
     pid: i32,
     window_id: u32,

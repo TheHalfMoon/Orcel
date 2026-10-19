@@ -1,12 +1,19 @@
 //! Shared MCP request dispatch and privacy-bounded observations.
 
+#[cfg(not(feature = "orcel-minimal"))]
 use std::sync::{Arc, OnceLock};
+#[cfg(not(feature = "orcel-minimal"))]
 use std::time::Instant;
+#[cfg(not(feature = "orcel-minimal"))]
 use tracing::warn;
 
+#[cfg(not(feature = "orcel-minimal"))]
 use crate::authorization::authorize_tool_call;
+#[cfg(not(feature = "orcel-minimal"))]
 use crate::mcp_result::{conforming_tool_result, tool_error_result};
+#[cfg(not(feature = "orcel-minimal"))]
 use crate::protocol::{initialize_result, InitializeMetadata, Request, Response, ResponseBody};
+#[cfg(not(feature = "orcel-minimal"))]
 use crate::tool::ToolRegistry;
 
 /// Runtime contract consumed by protocol adapters such as MCP.
@@ -15,6 +22,7 @@ use crate::tool::ToolRegistry;
 /// `ToolRegistry` implementation remains for core-level tests and embedders.
 /// Keeping the protocol dependent on this small contract prevents transports
 /// from reaching through the SDK into its private platform registry.
+#[cfg(not(feature = "orcel-minimal"))]
 #[async_trait::async_trait]
 pub trait ToolProvider: Send + Sync {
     fn tools_list(&self) -> serde_json::Value;
@@ -25,6 +33,7 @@ pub trait ToolProvider: Send + Sync {
     ) -> Result<serde_json::Value, String>;
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 #[async_trait::async_trait]
 impl ToolProvider for ToolRegistry {
     fn tools_list(&self) -> serde_json::Value {
@@ -47,15 +56,18 @@ impl ToolProvider for ToolRegistry {
 /// bodies, arbitrary MCP metadata, or raw errors. HTTP dispatch reuses the
 /// bounded tool timer directly; HTTP session-start telemetry remains deferred
 /// until the transport has explicit session semantics.
+#[cfg(not(feature = "orcel-minimal"))]
 pub trait StdioObserver: Send + Sync + 'static {
     fn on_session_started(&self, metadata: InitializeMetadata);
     fn on_tool_completed(&self, outcome: ToolCompletionObservation);
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 static STDIO_OBSERVER: OnceLock<Arc<dyn StdioObserver>> = OnceLock::new();
 
 /// Register the process-wide stdio observer. Registration is intentionally
 /// one-shot so a second subsystem cannot replace the privacy policy at runtime.
+#[cfg(not(feature = "orcel-minimal"))]
 pub fn set_stdio_observer(observer: Arc<dyn StdioObserver>) -> bool {
     STDIO_OBSERVER.set(observer).is_ok()
 }
@@ -213,6 +225,7 @@ impl ToolRefusalCode {
         !matches!(self, Self::None)
     }
 
+    #[cfg(not(feature = "orcel-minimal"))]
     fn from_wire_code(code: Option<&str>) -> Self {
         match code {
             Some("browser_route_unavailable") => Self::BrowserRouteUnavailable,
@@ -236,6 +249,7 @@ impl ToolRefusalCode {
     }
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 impl From<crate::browser::refusal::BrowserRefusalCode> for ToolRefusalCode {
     fn from(code: crate::browser::refusal::BrowserRefusalCode) -> Self {
         use crate::browser::refusal::BrowserRefusalCode;
@@ -499,6 +513,7 @@ pub fn is_computer_action(tool_name: &str, operation: ToolOperation) -> bool {
 /// Which daemon transport path produced a response. This only affects the
 /// classification of JSON-RPC internal errors and is not emitted directly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(not(feature = "orcel-minimal"))]
 pub enum StdioExecutionPath {
     DirectDaemon,
     DaemonProxy,
@@ -506,6 +521,7 @@ pub enum StdioExecutionPath {
 
 /// Start-state for one tool call. Public so direct daemon and daemon-proxy
 /// transports use exactly the same privacy and bucketing logic.
+#[cfg(not(feature = "orcel-minimal"))]
 pub struct ToolObservationTimer {
     tool_name: String,
     operation: ToolOperation,
@@ -515,6 +531,7 @@ pub struct ToolObservationTimer {
     started: Instant,
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 impl ToolObservationTimer {
     pub fn start(
         tool_name: String,
@@ -554,11 +571,13 @@ impl ToolObservationTimer {
 }
 
 /// Notify the registered observer about a proxy-path initialize request.
+#[cfg(not(feature = "orcel-minimal"))]
 pub fn observe_proxy_session_started(metadata: InitializeMetadata) {
     notify_session_started(metadata);
 }
 
 /// Notify the registered observer about a proxy-path tool result.
+#[cfg(not(feature = "orcel-minimal"))]
 pub fn observe_proxy_tool_completed(outcome: ToolCompletionObservation) {
     notify_tool_completed(outcome);
 }
@@ -566,6 +585,7 @@ pub fn observe_proxy_tool_completed(outcome: ToolCompletionObservation) {
 /// Build a completion timer from a `tools/call` request while extracting only
 /// the declared tool name and validity/allowlist booleans. Tool arguments are
 /// neither cloned nor retained.
+#[cfg(not(feature = "orcel-minimal"))]
 pub fn tool_observation_timer(
     req: &Request,
     is_known_tool: impl FnOnce(&str) -> bool,
@@ -606,6 +626,7 @@ pub fn tool_observation_timer(
 /// Build a private aggregate-session context from a valid, known tool call.
 /// Only the public `session` argument is considered; reserved fallback keys
 /// and all other arguments remain outside the observer seam.
+#[cfg(not(feature = "orcel-minimal"))]
 pub fn session_tool_context(
     req: &Request,
     is_known_tool: impl Fn(&str) -> bool,
@@ -628,20 +649,24 @@ pub fn session_tool_context(
     crate::session::begin_tool_call(&call.name, &call.args, known_tool, transport, client_kind)
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn notify_session_started(metadata: InitializeMetadata) {
     if let Some(observer) = STDIO_OBSERVER.get() {
         observer.on_session_started(metadata);
     }
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn notify_tool_completed(outcome: ToolCompletionObservation) {
     if let Some(observer) = STDIO_OBSERVER.get() {
         observer.on_tool_completed(outcome);
     }
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 const MAX_TOOL_NAME_CHARS: usize = 64;
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn bounded_tool_name(name: &str) -> String {
     let value: String = name
         .chars()
@@ -655,6 +680,7 @@ fn bounded_tool_name(name: &str) -> String {
     }
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn classify_tool_completion(
     timer: ToolObservationTimer,
     response: &Response,
@@ -718,6 +744,7 @@ fn classify_tool_completion(
     }
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn structured_refusal_code(tool_name: &str, result: Option<&serde_json::Value>) -> ToolRefusalCode {
     if !matches!(
         tool_name,
@@ -772,6 +799,7 @@ fn structured_refusal_code(tool_name: &str, result: Option<&serde_json::Value>) 
     ToolRefusalCode::from_wire_code(wire_code)
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn serialized_size_without_retaining(value: &serde_json::Value) -> Option<usize> {
     struct ByteCounter(usize);
     impl std::io::Write for ByteCounter {
@@ -790,6 +818,7 @@ fn serialized_size_without_retaining(value: &serde_json::Value) -> Option<usize>
     Some(counter.0)
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn structured_error_class(result: Option<&serde_json::Value>) -> ToolErrorClass {
     let code = result
         .and_then(|value| value.get("structuredContent"))
@@ -809,6 +838,7 @@ fn structured_error_class(result: Option<&serde_json::Value>) -> ToolErrorClass 
     }
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn classify_output_type(result: Option<&serde_json::Value>) -> OutputType {
     let Some(content) = result
         .and_then(|value| value.get("content"))
@@ -838,6 +868,7 @@ fn classify_output_type(result: Option<&serde_json::Value>) -> OutputType {
     }
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn size_bucket(size: usize) -> OutputSizeBucket {
     match size {
         0 => OutputSizeBucket::Empty,
@@ -853,6 +884,7 @@ fn size_bucket(size: usize) -> OutputSizeBucket {
 /// tools/list / tools/call). Shared by the stdio loop above and the
 /// daemon's HTTP transport (`cua-driver`'s `mcp_http`) so both speak the
 /// exact same MCP semantics.
+#[cfg(not(feature = "orcel-minimal"))]
 pub async fn handle_request(
     req: Request,
     id: serde_json::Value,
@@ -870,6 +902,7 @@ pub async fn handle_request(
 /// request. The inner boundary sanitizes caller claims first and then stamps
 /// this trusted owner onto both implicit and explicitly named lifecycle
 /// sessions.
+#[cfg(not(feature = "orcel-minimal"))]
 pub async fn handle_request_with_transport_session(
     req: Request,
     id: serde_json::Value,
@@ -879,6 +912,7 @@ pub async fn handle_request_with_transport_session(
     handle_request_inner(req, id, provider, Some(transport_session)).await
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 async fn handle_request_inner(
     req: Request,
     id: serde_json::Value,
@@ -906,6 +940,7 @@ async fn handle_request_inner(
     crate::mcp_wire::finish_response(era, &method, response)
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 async fn dispatch_request(
     req: Request,
     id: serde_json::Value,
@@ -985,6 +1020,7 @@ async fn dispatch_request(
 }
 
 #[cfg(test)]
+#[cfg(not(feature = "orcel-minimal"))]
 mod dispatch_contract_tests {
     //! The boundary itself is unit-tested in `crate::mcp_result`; these pin
     //! that `tools/call` dispatch actually routes through it, on the path a
@@ -1139,6 +1175,7 @@ mod dispatch_contract_tests {
 }
 
 #[cfg(test)]
+#[cfg(not(feature = "orcel-minimal"))]
 mod observation_tests {
     use super::*;
     use std::sync::Mutex;

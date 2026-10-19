@@ -1,34 +1,47 @@
 //! Linux identity and endpoint evidence for the first-class browser tools.
 
+#[cfg(not(feature = "orcel-minimal"))]
 use std::collections::{HashMap, HashSet, VecDeque};
+#[cfg(not(feature = "orcel-minimal"))]
 use std::os::unix::fs::MetadataExt;
+#[cfg(not(feature = "orcel-minimal"))]
 use std::path::PathBuf;
+#[cfg(not(feature = "orcel-minimal"))]
 use std::sync::{Arc, Mutex};
+#[cfg(not(feature = "orcel-minimal"))]
 use std::time::Duration;
 
+#[cfg(not(feature = "orcel-minimal"))]
 use async_trait::async_trait;
+#[cfg(not(feature = "orcel-minimal"))]
 use cua_driver_core::browser::platform::{
     select_isolated_browser_executable, BrowserConsentOutcome, BrowserConsentRequest,
     BrowserPlatform, BrowserVisualAction, BrowserVisualActionKind, ExistingProfileSetupOutcome,
     ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
 };
+#[cfg(not(feature = "orcel-minimal"))]
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
+#[cfg(not(feature = "orcel-minimal"))]
 use cua_driver_core::browser::types::{
     BrowserClassification, BrowserEngineFamily, BrowserProcessRole, BrowserProduct,
     EndpointOwnershipMethod, EndpointOwnershipProof, EndpointTransport, NativeOwnershipMethod,
     NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
 };
+#[cfg(not(feature = "orcel-minimal"))]
 use cua_driver_core::browser::{
     existing_profile_setup_descriptor, is_firefox, loopback_websocket_port,
     parse_devtools_active_port, BrowserCursorTracker,
 };
+#[cfg(not(feature = "orcel-minimal"))]
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+#[cfg(not(feature = "orcel-minimal"))]
 pub struct LinuxBrowserPlatform {
     cursor_registry: Arc<cursor_overlay::CursorRegistry>,
     browser_cursors: Mutex<BrowserCursorTracker>,
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 impl LinuxBrowserPlatform {
     pub fn new(cursor_registry: Arc<cursor_overlay::CursorRegistry>) -> Self {
         Self {
@@ -38,20 +51,24 @@ impl LinuxBrowserPlatform {
     }
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 impl Default for LinuxBrowserPlatform {
     fn default() -> Self {
         Self::new(Arc::new(cursor_overlay::CursorRegistry::new()))
     }
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
     BrowserRefusal::new(code, message)
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn hyprland_identity_matches(pid: u32, window_id: u64, owner_pid: u32, address: u64) -> bool {
     pid != 0 && window_id != 0 && owner_pid == pid && address == window_id
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn hyprland_is_only_owned_window(
     pid: u32,
     window_id: u64,
@@ -64,6 +81,7 @@ fn hyprland_is_only_owned_window(
     hyprland_identity_matches(pid, window_id, owner, address) && owned.next().is_none()
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn run_existing_profile_cleanup<T: Send + 'static>(
     cleanup: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, BrowserRefusal> {
@@ -95,10 +113,12 @@ pub(crate) fn is_chromium_identity(name: &str) -> bool {
         .any(|token| products.contains(&token))
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn is_chromium(name: &str) -> bool {
     is_chromium_identity(name)
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn browser_product(identity: &str) -> BrowserProduct {
     let tokens = identity
         .to_ascii_lowercase()
@@ -128,6 +148,7 @@ fn browser_product(identity: &str) -> BrowserProduct {
     }
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn isolated_browser_candidates() -> Vec<PathBuf> {
     // These are the root-managed payload locations of supported Linux
     // packages, not PATH shims. Core additionally rejects symlinked paths, so
@@ -143,6 +164,7 @@ fn isolated_browser_candidates() -> Vec<PathBuf> {
     .collect()
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn trusted_root_owned_installation(executable: &std::path::Path) -> bool {
     if !executable.is_absolute() {
         return false;
@@ -162,6 +184,7 @@ fn trusted_root_owned_installation(executable: &std::path::Path) -> bool {
         .is_ok_and(|metadata| metadata.is_file() && metadata.mode() & 0o111 != 0)
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn process_role_for_pid(pid: i64, product: BrowserProduct) -> BrowserProcessRole {
     let helper = std::fs::read(format!("/proc/{pid}/cmdline"))
         .ok()
@@ -190,6 +213,7 @@ fn process_role_for_pid(pid: i64, product: BrowserProduct) -> BrowserProcessRole
     }
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn parse_proc_net_loopback_listeners(text: &str) -> Vec<(u16, u64)> {
     text.lines()
         .skip(1)
@@ -211,6 +235,7 @@ fn parse_proc_net_loopback_listeners(text: &str) -> Vec<(u16, u64)> {
         .collect()
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn descendant_pids(root: i64, relationships: impl IntoIterator<Item = (i64, i64)>) -> HashSet<i64> {
     let mut children = HashMap::<i64, Vec<i64>>::new();
     for (pid, parent) in relationships {
@@ -228,6 +253,7 @@ fn descendant_pids(root: i64, relationships: impl IntoIterator<Item = (i64, i64)
     family
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn process_family_pids(root: i64) -> Result<HashSet<i64>, BrowserRefusal> {
     if !std::path::Path::new(&format!("/proc/{root}")).exists() {
         return Err(refusal(
@@ -253,6 +279,7 @@ fn process_family_pids(root: i64) -> Result<HashSet<i64>, BrowserRefusal> {
     Ok(descendant_pids(root, relationships))
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn socket_inodes_for_process_tree(pid: i64) -> Result<HashSet<u64>, BrowserRefusal> {
     let process_family = process_family_pids(pid)?;
     let mut inodes = HashSet::new();
@@ -276,6 +303,7 @@ fn socket_inodes_for_process_tree(pid: i64) -> Result<HashSet<u64>, BrowserRefus
     Ok(inodes)
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
     // Chromium may delegate its DevTools listener to a utility child. Core's
     // ownership contract explicitly accepts the approved browser PID or one
@@ -298,6 +326,7 @@ fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
     Ok(listeners)
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
     let home = std::env::var_os("HOME").map(PathBuf::from)?;
     let relative = match product {
@@ -309,6 +338,7 @@ fn default_user_data_dir(product: BrowserProduct) -> Option<PathBuf> {
     Some(home.join(relative))
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn user_data_dir_for_pid(pid: i64) -> Result<Option<PathBuf>, BrowserRefusal> {
     let bytes = std::fs::read(format!("/proc/{pid}/cmdline")).map_err(|_| {
         refusal(
@@ -362,6 +392,7 @@ fn user_data_dir_for_pid(pid: i64) -> Result<Option<PathBuf>, BrowserRefusal> {
     }
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn active_port_endpoint(pid: i64) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
     let Some(user_data_dir) = user_data_dir_for_pid(pid)? else {
         return Ok(None);
@@ -400,6 +431,7 @@ fn active_port_endpoint(pid: i64) -> Result<Option<OwnedEndpoint>, BrowserRefusa
     }))
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 fn process_identity(pid: i64) -> Result<(u64, Option<String>), BrowserRefusal> {
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).map_err(|_| {
         refusal(
@@ -419,6 +451,7 @@ fn process_identity(pid: i64) -> Result<(u64, Option<String>), BrowserRefusal> {
     Ok((started, executable))
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 async fn browser_websocket_url(port: u16) -> Option<String> {
     tokio::time::timeout(Duration::from_secs(2), async move {
         let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
@@ -463,6 +496,7 @@ async fn browser_websocket_url(port: u16) -> Option<String> {
     .flatten()
 }
 
+#[cfg(not(feature = "orcel-minimal"))]
 #[async_trait]
 impl BrowserPlatform for LinuxBrowserPlatform {
     fn isolated_browser_executable(&self) -> Result<String, BrowserRefusal> {
@@ -1321,6 +1355,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
 }
 
 #[cfg(test)]
+#[cfg(not(feature = "orcel-minimal"))]
 mod tests {
     use super::*;
 

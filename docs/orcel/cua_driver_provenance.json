@@ -26,6 +26,30 @@
         {
           "path": "Cargo.toml",
           "upstream_blob_sha": "8d429484aa477f95a1cc6af5dde832cfc019db0e"
+        },
+        {
+          "path": "src/ax/tree.rs",
+          "upstream_blob_sha": "681c636058fd94609b9e8285c4dd8fbd4fc9bf2d"
+        },
+        {
+          "path": "src/browser/browser_js.rs",
+          "upstream_blob_sha": "5d1e2c2adf625189a1b28d169532a9df49d65953"
+        },
+        {
+          "path": "src/browser/electron_js.rs",
+          "upstream_blob_sha": "c22f3e9989f2aea16592a8df7712829e0771cbc9"
+        },
+        {
+          "path": "src/browser/mod.rs",
+          "upstream_blob_sha": "859243557ed79afa8ff8de02f0d99e39ffc47f92"
+        },
+        {
+          "path": "src/lib.rs",
+          "upstream_blob_sha": "329c62985332cf7a84f083715159e198a4eec3c3"
+        },
+        {
+          "path": "src/tools/mod.rs",
+          "upstream_blob_sha": "771e6717e3e5b64ff160d149ad7a6cebd433e132"
         }
       ]
     },
@@ -40,6 +64,34 @@
         {
           "path": "Cargo.toml",
           "upstream_blob_sha": "dfb5ec0fdc3f971970dfd9e05a244ac8099fa87b"
+        },
+        {
+          "path": "src/atspi/mod.rs",
+          "upstream_blob_sha": "77c5608cf2f5393920db0c99a9237bb706c19715"
+        },
+        {
+          "path": "src/browser_platform.rs",
+          "upstream_blob_sha": "ddecce24e4008b0502b8fe25a35364d883600afa"
+        },
+        {
+          "path": "src/input/mod.rs",
+          "upstream_blob_sha": "7a0cd50dae20134c6994b065e4c96b3852f1bae6"
+        },
+        {
+          "path": "src/lib.rs",
+          "upstream_blob_sha": "fc866c39a61b6bc107c8fdd73dde5088bd0e4b8a"
+        },
+        {
+          "path": "src/proc_fs.rs",
+          "upstream_blob_sha": "7cf1622cdfa3969d79a11e14b9776925c68bb4e4"
+        },
+        {
+          "path": "src/tools/impl_.rs",
+          "upstream_blob_sha": "3be700798b9310b6cf931725f97ae7c02c619b5a"
+        },
+        {
+          "path": "src/tools/mod.rs",
+          "upstream_blob_sha": "38b9c42d143b1626906b68725d72d2120bb52b86"
         }
       ]
     },
@@ -50,7 +102,40 @@
       "tree_sha": "e30a399d3bd1001aa6d33d5f790314538686100a",
       "destination": "apps/orcel-native-host/third_party/cua-driver/crates/cua-driver-core",
       "files": 121,
-      "patched_files": []
+      "patched_files": [
+        {
+          "path": "Cargo.toml",
+          "upstream_blob_sha": "de9e618d6b514fa4508b8a247a3cd66213574b8a"
+        },
+        {
+          "path": "src/browser/download.rs",
+          "upstream_blob_sha": "3a2a4677056a88ec3540dc1dac5579ea786a9876"
+        },
+        {
+          "path": "src/browser/mod.rs",
+          "upstream_blob_sha": "070d6c0734fa6ee1f410c254763149482d439944"
+        },
+        {
+          "path": "src/capture_registry.rs",
+          "upstream_blob_sha": "f7e6be0d533edb2bbd1a30753e6e5cb2b91701a3"
+        },
+        {
+          "path": "src/lib.rs",
+          "upstream_blob_sha": "5fd18d21964e1a4dac3ddf0ce60778456502ac5d"
+        },
+        {
+          "path": "src/recording_tools.rs",
+          "upstream_blob_sha": "1c3d8a4a7bc0db05a52c8c7312d069f8a4140193"
+        },
+        {
+          "path": "src/server.rs",
+          "upstream_blob_sha": "7c85f09756a8942cb255e826cbe880b67ef93376"
+        },
+        {
+          "path": "src/tool.rs",
+          "upstream_blob_sha": "677392578aa04a1870b6d71e370eb1d0aee0b6e1"
+        }
+      ]
     },
     {
       "matrix_id": "T-CUA-04",

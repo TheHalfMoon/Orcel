@@ -61,3 +61,130 @@ keeps it that way. `scripts/check-vendored-cua.mjs` fails if
 Cargo.lock lists every package for every target and feature, so absence there
 means absence from every build. The same check also fails if the root
 `Cargo.lock` names any vendored crate or `orcel-native-host`.
+
+## P-03: feature `orcel-minimal`
+
+`orcel-minimal` compiles out every Cua surface the Orcel host must not carry.
+`orcel-native-host` turns it on for `cua-driver-core`, `platform-macos` and
+`platform-linux`. With the feature off, every vendored crate compiles exactly
+as upstream does. The patch only adds lines; no upstream line is deleted or
+reworded.
+
+Almost every added line is `#[cfg(not(feature = "orcel-minimal"))]` on an
+item, field, field initializer, statement or match arm. The exceptions are
+the feature definitions in the three manifests and these cfg-selected
+replacements, each shown next to the item it replaces:
+
+- `cua-driver-core/src/tool.rs`: an import list without `pip_hook`, `recording`
+  and the recording tools. In `ToolRegistry::invoke`, the dispatch is awaited
+  directly (`tool.invoke(args.clone()).await`) instead of through
+  `recording::scope_dispatch_click_capture`. With no recording turn, that
+  wrapper only scopes `None` around the same future.
+- `cua-driver-core/src/recording_tools.rs`: imports for the one item it keeps.
+- `platform-macos/src/browser/electron_js.rs`: `ElectronJs::execute_main`
+  returns the error upstream already treats as "inspector route unavailable".
+  The SIGUSR1-plus-CDP route into an Electron app's main process is gone. An
+  Electron background drag gets upstream's `background_unavailable` refusal,
+  and an Electron hover takes the native route.
+
+### What is compiled out
+
+cua-driver-core:
+- `cdp.rs`, `daemon.rs`, `history.rs`, `perception_client.rs` (with
+  `perception_client/`), `recording.rs`: the whole module.
+- Dependents of those modules, also whole: `perception_tools.rs`, and the
+  `pub use recording::RecordingSession` re-export.
+- `browser/`: every submodule and re-export except `types` (plain serde data
+  types such as `ProcessFingerprint`, carried by `consent.rs` and `tool.rs`).
+  Also `download.rs` except its `MCP_HOST_DOWNLOAD_APPROVAL_ARG` constant. The
+  trusted-evidence path in `tool.rs` still strips that reserved key from
+  caller arguments.
+- `server.rs`: the MCP request dispatch (`ToolProvider`, `handle_request*`,
+  `dispatch_request`), the stdio observer and the completion classifiers. What
+  remains is the closed observation vocabulary (`ToolOperation`,
+  `tool_operation`, `is_computer_action`, `ToolCompletionObservation` and its
+  enums), which `session.rs` uses.
+- `recording_tools.rs`: every tool. Only the `ReplayRegistrySlot` type alias
+  remains, used by `run_steps`.
+- `tool.rs`: the `recording` and `history` registry fields and their
+  initializers, `register_recording_tools`, `register_history_tools`,
+  `history()`, `register_perception_tool*`, and in `invoke` the recording turn,
+  history action and PiP frame push. Also the helpers only those used
+  (`recording_args_for`, `is_existing_profile_prepare`,
+  `synthesize_action_label`, `current_dispatch_authorization_context`) and
+  the `stop_recording` approval arm.
+- `capture_registry.rs`: `screenshot_to_action`, used only by recording.
+
+platform-macos:
+- `history.rs`, `recording_hooks.rs`, `video_sckit.rs`, `pip/`: the whole
+  module.
+- `browser/`: `ax_page_reader`, `cdp_client`, `consent_ui`, `platform`,
+  `setup_ui`, `wk_web_view` and their re-exports. In `browser_js.rs`
+  everything except `BrowserJs::supports` and the bundle-id table it reads,
+  which removes AppleScript `do JavaScript`. In `electron_js.rs`, `execute`
+  (CDP) and the inspector route above. `ElectronJs::is_electron` stays: it is
+  bundle inspection, and click, drag, hotkey, scroll, set_value and type_text
+  route on it.
+- `tools/mod.rs`: the `page` and `kill_app` tools and their registration,
+  the `cdp_sessions` state field, the browser tool engine registration,
+  `register_recording_tools`, `recording_hooks::set_snapshots`, and the
+  recording test module. `kill_app`'s process-identity guard came from
+  `browser/platform.rs`. The tool goes whole rather than unguarded, and it is
+  not on Orcel's allowlist.
+- `ax/tree.rs`: `walk_native_chrome_bounded`, used only by the browser
+  consent/setup UI.
+
+platform-linux:
+- `history.rs`, `recording_hooks.rs`, `video_wayland.rs`, `pip/`,
+  `browser_setup_ui.rs`, `browser_consent_ui.rs`, `tools/page.rs`: the whole
+  module.
+- `browser_platform.rs`: everything except `is_chromium_identity`, a
+  product-name predicate that `atspi/native.rs` reads.
+- `tools/impl_.rs`: the `kill_app` tool (same reason as macOS) with its
+  helpers and constants; `parallel_mouse_drag` with `parallel_drag_inject`
+  (its `fn` drag paths evaluate caller expressions with `meval`); the Hyprland
+  recording point hook; and the page, browser and recording registrations.
+- `input/mod.rs`: `sample_function`, the only `meval` caller. The `meval`
+  crate stays in the graph but nothing calls it.
+- `proc_fs.rs` (`ProcessStat`, `read_process_stat`, `process_exit_observation`)
+  and `atspi/mod.rs` (`walk_tree_for_recording`): used only by kill_app and
+  recording.
+
+With the feature on, the compiler reports no new warnings on either target.
+The only warnings left are upstream's own.
+
+Test note: `cargo test -p cua-driver-core --no-default-features --lib` runs
+upstream's code (the feature is off). Fifteen upstream tests load a YAML
+capability manifest, and without upstream's default `yaml` feature
+`session_manifest::load_manifest` always returns an error. Those tests fail
+on every OS, upstream included. CI skips exactly those fifteen by name.
+
+## Patched file index
+
+Every vendored file that differs from upstream, as recorded in the
+provenance `patched_files`. `scripts/check-vendored-cua.mjs` requires each one
+to be named here.
+
+- `platform-macos/Cargo.toml` (upstream blob `8d429484aa47`)
+- `platform-macos/src/ax/tree.rs` (upstream blob `681c636058fd`)
+- `platform-macos/src/browser/browser_js.rs` (upstream blob `5d1e2c2adf62`)
+- `platform-macos/src/browser/electron_js.rs` (upstream blob `c22f3e9989f2`)
+- `platform-macos/src/browser/mod.rs` (upstream blob `859243557ed7`)
+- `platform-macos/src/lib.rs` (upstream blob `329c62985332`)
+- `platform-macos/src/tools/mod.rs` (upstream blob `771e6717e3e5`)
+- `platform-linux/Cargo.toml` (upstream blob `dfb5ec0fdc3f`)
+- `platform-linux/src/atspi/mod.rs` (upstream blob `77c5608cf2f5`)
+- `platform-linux/src/browser_platform.rs` (upstream blob `ddecce24e400`)
+- `platform-linux/src/input/mod.rs` (upstream blob `7a0cd50dae20`)
+- `platform-linux/src/lib.rs` (upstream blob `fc866c39a61b`)
+- `platform-linux/src/proc_fs.rs` (upstream blob `7cf1622cdfa3`)
+- `platform-linux/src/tools/impl_.rs` (upstream blob `3be700798b93`)
+- `platform-linux/src/tools/mod.rs` (upstream blob `38b9c42d143b`)
+- `cua-driver-core/Cargo.toml` (upstream blob `de9e618d6b51`)
+- `cua-driver-core/src/browser/download.rs` (upstream blob `3a2a4677056a`)
+- `cua-driver-core/src/browser/mod.rs` (upstream blob `070d6c0734fa`)
+- `cua-driver-core/src/capture_registry.rs` (upstream blob `f7e6be0d533e`)
+- `cua-driver-core/src/lib.rs` (upstream blob `5fd18d21964e`)
+- `cua-driver-core/src/recording_tools.rs` (upstream blob `1c3d8a4a7bc0`)
+- `cua-driver-core/src/server.rs` (upstream blob `7c85f09756a8`)
+- `cua-driver-core/src/tool.rs` (upstream blob `677392578aa0`)

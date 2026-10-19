@@ -86,6 +86,7 @@ fn path_cumulative(path: &[(i32, i32)]) -> (Vec<f64>, f64) {
 /// waypoints. Evaluated with meval (sin/cos/^/etc.); non-finite outputs
 /// (ln of a negative, 1/0, …) are dropped. Errors on a bad expression or
 /// fewer than 2 finite points.
+#[cfg(not(feature = "orcel-minimal"))]
 pub fn sample_function(
     expr: &str,
     x_from: f64,

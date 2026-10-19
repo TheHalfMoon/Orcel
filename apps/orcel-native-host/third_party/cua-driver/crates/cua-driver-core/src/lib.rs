@@ -60,6 +60,7 @@ pub mod capture_mode;
 pub(crate) mod capture_registry;
 pub mod capture_runtime;
 pub mod capture_scope;
+#[cfg(not(feature = "orcel-minimal"))]
 pub mod cdp;
 pub mod clipboard;
 pub mod consent;
@@ -67,6 +68,7 @@ pub mod cursor_events;
 pub mod cursor_hook;
 pub mod cursor_sampler;
 pub mod cursor_shape;
+#[cfg(not(feature = "orcel-minimal"))]
 pub mod daemon;
 pub mod delivery;
 pub mod desktop_capture_scale;
@@ -76,6 +78,7 @@ pub mod element_token;
 pub mod expectation;
 pub mod ffmpeg_install;
 pub mod health_report;
+#[cfg(not(feature = "orcel-minimal"))]
 pub mod history;
 pub mod image_utils;
 pub mod interactive_input;
@@ -83,12 +86,15 @@ pub mod key_pacing;
 pub mod launch_guard;
 pub mod mcp_result;
 pub mod page;
+#[cfg(not(feature = "orcel-minimal"))]
 pub mod perception_client;
+#[cfg(not(feature = "orcel-minimal"))]
 pub mod perception_tools;
 pub mod pip_hook;
 pub mod pointer_shape;
 pub mod policy;
 pub mod protocol;
+#[cfg(not(feature = "orcel-minimal"))]
 pub mod recording;
 pub mod recording_loader;
 pub mod recording_render;
@@ -120,4 +126,5 @@ pub mod window_state_view;
 pub mod window_target;
 
 pub use cua_driver_contract::{CaptureScope, EscalationReason, TOOL_INVOCATION_FAILED_CODE};
+#[cfg(not(feature = "orcel-minimal"))]
 pub use recording::RecordingSession;

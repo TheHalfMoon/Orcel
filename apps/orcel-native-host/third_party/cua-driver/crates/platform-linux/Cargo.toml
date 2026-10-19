@@ -132,6 +132,10 @@ dirs = "5"
 [features]
 default = []
 linux-example = []
+# Orcel P-03: compile out browser/, history.rs, recording_hooks.rs, video_*.rs,
+# pip/ and the meval-backed parallel_mouse_drag `fn` paths (cfg gates only);
+# see apps/orcel-native-host/third_party/cua-driver/PATCHES.md.
+orcel-minimal = ["cua-driver-core/orcel-minimal"]
 # GNOME/KDE input is pure Rust plus libxkbcommon, which is available in the
 # Debian 11 release container. Ashpd's RemoteDesktop API exposes ScreenCast
 # stream metadata, so its lightweight screencast module is required here too.

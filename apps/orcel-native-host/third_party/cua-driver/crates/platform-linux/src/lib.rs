@@ -23,6 +23,7 @@ use cua_driver_core::tool::ToolRegistry;
 pub mod health_report;
 pub mod overlay;
 pub mod overlay_capture;
+#[cfg(not(feature = "orcel-minimal"))]
 pub mod pip;
 pub mod tools;
 
@@ -42,15 +43,18 @@ pub mod tty;
 pub mod proc_fs;
 
 #[cfg(target_os = "linux")]
+#[cfg(not(feature = "orcel-minimal"))]
 pub mod history;
 
 #[cfg(target_os = "linux")]
 pub mod browser_platform;
 
 #[cfg(target_os = "linux")]
+#[cfg(not(feature = "orcel-minimal"))]
 mod browser_setup_ui;
 
 #[cfg(target_os = "linux")]
+#[cfg(not(feature = "orcel-minimal"))]
 mod browser_consent_ui;
 
 #[cfg(target_os = "linux")]
@@ -72,9 +76,11 @@ mod snapshot_queries;
 pub mod a11y;
 
 #[cfg(target_os = "linux")]
+#[cfg(not(feature = "orcel-minimal"))]
 pub mod recording_hooks;
 
 #[cfg(target_os = "linux")]
+#[cfg(not(feature = "orcel-minimal"))]
 pub mod video_wayland;
 
 #[cfg(target_os = "linux")]

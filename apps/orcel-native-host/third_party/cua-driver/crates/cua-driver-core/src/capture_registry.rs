@@ -593,6 +593,7 @@ impl PerceptionCapture {
         self.0.encoded_dimensions
     }
 
+    #[cfg(not(feature = "orcel-minimal"))]
     pub(crate) fn screenshot_to_action(&self) -> ScreenshotToActionTransform {
         self.0.screenshot_to_action
     }

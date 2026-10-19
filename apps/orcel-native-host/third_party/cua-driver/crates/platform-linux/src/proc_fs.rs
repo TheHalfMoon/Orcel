@@ -61,12 +61,14 @@ pub fn process_instance_id(pid: u32) -> Option<u64> {
 /// One process instance as `/proc/<pid>/stat` describes it: its scheduler
 /// state and its kernel start time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg(not(feature = "orcel-minimal"))]
 pub(crate) struct ProcessStat {
     pub state: char,
     pub start_time: u64,
 }
 
 /// Parse state (field 3) and start time (field 22) from `/proc/<pid>/stat`.
+#[cfg(not(feature = "orcel-minimal"))]
 pub(crate) fn process_stat_from_stat(stat: &str) -> Option<ProcessStat> {
     let state = stat
         .rsplit_once(')')?
@@ -82,6 +84,7 @@ pub(crate) fn process_stat_from_stat(stat: &str) -> Option<ProcessStat> {
 }
 
 /// Read one pid's [`ProcessStat`]; `Ok(None)` when no such process exists.
+#[cfg(not(feature = "orcel-minimal"))]
 pub(crate) fn read_process_stat(pid: u32) -> std::io::Result<Option<ProcessStat>> {
     match fs::read_to_string(format!("/proc/{pid}/stat")) {
         Ok(stat) => process_stat_from_stat(&stat).map(Some).ok_or_else(|| {
@@ -95,6 +98,7 @@ pub(crate) fn read_process_stat(pid: u32) -> std::io::Result<Option<ProcessStat>
 /// How the process first read as `before` ended, judged from a later read of
 /// the same pid, or `None` while that same instance is still alive. A zombie
 /// has exited and only waits for its parent to reap it.
+#[cfg(not(feature = "orcel-minimal"))]
 pub(crate) fn process_exit_observation(
     before: ProcessStat,
     now: Option<ProcessStat>,
