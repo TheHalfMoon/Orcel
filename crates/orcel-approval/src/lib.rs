@@ -8,6 +8,16 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+// XP-09: the macOS SOFT dialog and STRONG presence. Each OS's presenter and
+// verifier lives in its own module and is selected below by cfg; Linux
+// (XP-10) adds its own next to these without touching the Windows path.
+mod presence_unix;
+mod soft_macos;
+
+#[cfg(target_os = "macos")]
+pub use presence_unix::MacLocalAuthPresenceVerifier;
+pub use presence_unix::MAC_LOCAL_AUTH_METHOD;
+
 pub const APPROVAL_TTL_MS: u64 = 5 * 60 * 1_000;
 pub const SINGLE_OPERATION_SCOPE: &str = "single-operation";
 pub const STRONG_VERIFY_TIMEOUT_MS: u64 = 120_000;
@@ -332,8 +342,11 @@ fn verify_with_hello(
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub type DefaultPresenceVerifier = NoPresenceVerifier;
+
+#[cfg(target_os = "macos")]
+pub type DefaultPresenceVerifier = MacLocalAuthPresenceVerifier;
 
 #[cfg(windows)]
 pub type DefaultPresenceVerifier = WindowsHelloPresenceVerifier;
@@ -2197,12 +2210,17 @@ fn platform_prompt(prompt: &ApprovalPrompt) -> Result<ApprovalDecision, Approval
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn platform_prompt(prompt: &ApprovalPrompt) -> Result<ApprovalDecision, ApprovalError> {
+    soft_macos::platform_prompt(prompt)
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn platform_prompt(prompt: &ApprovalPrompt) -> Result<ApprovalDecision, ApprovalError> {
     debug_assert_eq!(prompt.approval_class, ApprovalClass::Soft);
     let _ = prompt;
     Err(ApprovalError::unavailable(
-        "local approval UI is Windows-only in the current Orcel runtime",
+        "local approval UI is not available on this platform in the current Orcel runtime",
     ))
 }
 
@@ -2466,6 +2484,285 @@ mod soft_decider_tests {
             .iter()
             .all(|record| record.decision != RecordedDecision::Approved));
         let _ = std::fs::remove_file(&path);
+    }
+}
+
+/// XP-09 contract: what any OS's SOFT presenter and STRONG verifier may
+/// and may not do to the broker. These run on every OS; the macOS-only
+/// tests at the end exercise the real presenter and verifier.
+#[cfg(test)]
+mod xp09_contract_tests {
+    use super::*;
+
+    fn temp_ledger(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!(
+            "orcel-xp09-{label}-{}-{nanos}.jsonl",
+            std::process::id()
+        ))
+    }
+
+    fn strong(digest: &str) -> ApprovalPrompt {
+        ApprovalPrompt::new_strong(
+            "default",
+            "rev-1",
+            "delete file",
+            "target",
+            "summary",
+            digest,
+        )
+    }
+
+    /// Answers the first request honestly and then replays that answer,
+    /// or forges the nonce of every answer.
+    #[derive(Debug)]
+    struct ScriptedVerifier {
+        forge_nonce: bool,
+        first: Mutex<Option<PresenceAttestation>>,
+    }
+
+    impl ScriptedVerifier {
+        fn replaying() -> Self {
+            Self {
+                forge_nonce: false,
+                first: Mutex::new(None),
+            }
+        }
+
+        fn forging() -> Self {
+            Self {
+                forge_nonce: true,
+                first: Mutex::new(None),
+            }
+        }
+    }
+
+    impl PresenceVerifier for ScriptedVerifier {
+        fn method(&self) -> &'static str {
+            "test-xp09"
+        }
+
+        fn is_available(&self) -> bool {
+            true
+        }
+
+        fn verify(
+            &self,
+            ctx: &PresenceContext,
+            _lease: &InputLeaseGuard,
+        ) -> Result<PresenceAttestation, PresenceError> {
+            let honest = PresenceAttestation {
+                method: self.method().to_owned(),
+                verified_at_ms: now_ms(),
+                nonce: ctx.nonce.clone(),
+                digest: ctx.digest.clone(),
+            };
+            if self.forge_nonce {
+                return Ok(PresenceAttestation {
+                    nonce: format!("{}-other", ctx.nonce),
+                    ..honest
+                });
+            }
+            let mut first = self.first.lock().expect("script");
+            Ok(first.get_or_insert(honest).clone())
+        }
+    }
+
+    fn assert_refused_and_recorded(broker: &LocalApprovalBroker, prompt: &ApprovalPrompt) {
+        let error = broker.request_token(prompt).expect_err("refused");
+        assert_eq!(error.code, FailureCode::ApprovalUnavailable);
+        let latest = broker.history(1);
+        assert_eq!(latest.len(), 1);
+        assert_eq!(latest[0].digest, prompt.digest);
+        assert_eq!(latest[0].decision, RecordedDecision::Unavailable);
+    }
+
+    #[test]
+    fn xp09_mismatched_presence_nonce_is_rejected() {
+        let path = temp_ledger("forged");
+        let broker = LocalApprovalBroker::with_path_and_verifier(
+            &path,
+            Arc::new(ScriptedVerifier::forging()),
+        );
+        assert_refused_and_recorded(&broker, &strong(&"a".repeat(64)));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn xp09_replayed_presence_answer_is_rejected() {
+        let path = temp_ledger("replay");
+        let broker = LocalApprovalBroker::with_path_and_verifier(
+            &path,
+            Arc::new(ScriptedVerifier::replaying()),
+        );
+        let digest = "b".repeat(64);
+        let first = strong(&digest);
+        let token = broker
+            .request_token(&first)
+            .expect("first answer is honest");
+        // The same operation asked again: the earlier answer is replayed.
+        let second = strong(&digest);
+        assert_refused_and_recorded(&broker, &second);
+        // And the token from the honest answer is single use.
+        let expected = ConsumeExpectation::strong(digest.clone(), "default", "rev-1");
+        broker
+            .consume(&token, &expected, now_ms())
+            .expect("first use");
+        assert_eq!(
+            broker
+                .consume(&token, &expected, now_ms())
+                .expect_err("replayed token")
+                .code,
+            FailureCode::ApprovalDenied
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn xp09_soft_consent_never_answers_strong() {
+        let path = temp_ledger("soft-strong");
+        let broker = LocalApprovalBroker::with_path_and_soft_decider(
+            &path,
+            Arc::new(NoPresenceVerifier),
+            Arc::new(|_| ApprovalDecision::Approved),
+        );
+        let error = broker
+            .request_token(&strong(&"c".repeat(64)))
+            .expect_err("no SOFT downgrade");
+        assert_eq!(error.code, FailureCode::ApprovalUnavailable);
+        assert!(broker
+            .history(10)
+            .iter()
+            .all(|record| record.decision != RecordedDecision::Approved));
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// Each OS selects its own verifier; Windows keeps Windows Hello.
+    #[test]
+    fn xp09_default_verifier_is_selected_per_os() {
+        let method = DefaultPresenceVerifier::default().method();
+        #[cfg(windows)]
+        assert_eq!(method, "windows-hello");
+        #[cfg(target_os = "macos")]
+        assert_eq!(method, MAC_LOCAL_AUTH_METHOD);
+        #[cfg(not(any(windows, target_os = "macos")))]
+        assert_eq!(method, "none");
+    }
+
+    /// CI on macos-latest: the real dialog and the real LocalAuthentication
+    /// verifier, through the real broker, fail closed without showing
+    /// anything. `ORCEL_REQUIRE_XP09_HEADLESS=1` (set by CI) makes an
+    /// interactive session a failure instead of a skip, so the check can
+    /// never pass by not running.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn xp09_macos_headless_paths_fail_closed() {
+        let required = std::env::var_os("ORCEL_REQUIRE_XP09_HEADLESS").is_some();
+        let session = presence_unix::session_state();
+        eprintln!(
+            "xp09 session probe: state {session:?}, SessionGetInfo attributes {:?}",
+            presence_unix::graphic_session_attributes()
+        );
+        if session == presence_unix::SessionState::Interactive {
+            assert!(
+                !required,
+                "ORCEL_REQUIRE_XP09_HEADLESS is set but this session can show prompts"
+            );
+            return;
+        }
+        if std::env::var_os("ORCEL_REQUIRE_XP09_BYPASS_ENV").is_some() {
+            // S-24: the donor's bypass variables are set for this run.
+            for name in [
+                ["CUA_ENV", "_SKIP_SENSITIVE_AUTH"].concat(),
+                ["CUA_ENV", "_ALLOW_UNVERIFIED_SENSITIVE_EXPORT"].concat(),
+            ] {
+                assert_eq!(std::env::var(&name).as_deref(), Ok("1"), "{name}");
+            }
+        }
+
+        let soft = ApprovalPrompt::new(
+            "default",
+            "rev-1",
+            "act",
+            "target",
+            "summary",
+            "d".repeat(64),
+        );
+        let error = platform_prompt(&soft).expect_err("SOFT fails closed");
+        assert_eq!(error.code, FailureCode::ApprovalUnavailable);
+
+        let verifier = MacLocalAuthPresenceVerifier::new();
+        assert!(!verifier.is_available());
+        let ctx = PresenceContext::new("nonce-probe", "digest-probe", "default", "probe");
+        let lease = InputLeaseGuard::suspend_for_presence();
+        let error = verifier
+            .verify(&ctx, &lease)
+            .expect_err("STRONG fails closed");
+        assert_eq!(error.reason, PresenceFailureReason::Unavailable);
+
+        let path = temp_ledger("macos-headless");
+        let broker = LocalApprovalBroker::with_path(&path);
+        assert_eq!(broker.presence_method(), MAC_LOCAL_AUTH_METHOD);
+        for prompt in [soft.clone(), strong(&"e".repeat(64))] {
+            let error = broker.request_token(&prompt).expect_err("fails closed");
+            assert_eq!(error.code, FailureCode::ApprovalUnavailable);
+        }
+        let history = broker.history(10);
+        assert_eq!(history.len(), 2);
+        assert!(history
+            .iter()
+            .all(|record| record.decision == RecordedDecision::Unavailable));
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// Manual live check on a Mac at the keyboard (never in CI):
+    /// `ORCEL_LIVE_APPROVAL_DIALOG=1 ORCEL_LIVE_APPROVAL_EXPECT=approve
+    /// cargo test -p orcel-approval xp09_live -- --nocapture` (then again
+    /// with `deny`). The SOFT dialog and then the STRONG prompt appear;
+    /// answer both as the variable says.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn xp09_live_macos_dialog_and_presence() {
+        if std::env::var_os("ORCEL_LIVE_APPROVAL_DIALOG").is_none() {
+            return;
+        }
+        let expect = std::env::var("ORCEL_LIVE_APPROVAL_EXPECT").unwrap_or_default();
+        assert!(
+            expect == "approve" || expect == "deny",
+            "set ORCEL_LIVE_APPROVAL_EXPECT to approve or deny, got {expect:?}"
+        );
+        assert_eq!(
+            presence_unix::session_state(),
+            presence_unix::SessionState::Interactive,
+            "the live check needs a GUI login session outside CI"
+        );
+        let path = temp_ledger("macos-live");
+        let broker = LocalApprovalBroker::with_path(&path);
+        let soft = ApprovalPrompt::new(
+            "default",
+            "rev-1",
+            "XP-09 live check (SOFT)",
+            "nothing is changed",
+            "Answer as ORCEL_LIVE_APPROVAL_EXPECT says.",
+            "f".repeat(64),
+        );
+        let strong_prompt = ApprovalPrompt::new_strong(
+            "default",
+            "rev-1",
+            "XP-09 live check (STRONG)",
+            "nothing is changed",
+            "Answer as ORCEL_LIVE_APPROVAL_EXPECT says.",
+            "0".repeat(64),
+        );
+        for prompt in [soft, strong_prompt] {
+            let outcome = broker.request_token(&prompt);
+            eprintln!("xp09 live {}: {outcome:?}", prompt.approval_class.as_str());
+            assert_eq!(outcome.is_ok(), expect == "approve");
+        }
+        let _ = std::fs::remove_file(path);
     }
 }
 

@@ -87,6 +87,20 @@ All licenses are permissive (MIT, Apache-2.0, Zlib, LLVM exception); none carrie
 
 The adapter pattern (long-lived Linux context, read-then-map) is adapted from cua@a802eaf2 `libs/cua-driver/rust/crates/platform-linux/src/clipboard.rs`, MIT, with its notice in `docs/orcel/notices/cua-driver-clipboard-MIT.txt`.
 
+## Rust crates admitted for macOS approvals (XP-09)
+
+Admitted 2026-10-19 for the macOS STRONG presence verifier in `crates/orcel-approval` (target-gated to `target_os = "macos"`). They are the LocalAuthentication bindings the Cua donor uses (`libs/cua/crates/cua-teleport`). None is built for Windows or Linux (`cargo tree -p orcel-approval --target x86_64-pc-windows-msvc -i block2` prints nothing), so the Windows x64 release, its SBOM and its `THIRD_PARTY_NOTICES.txt` are unchanged. The SOFT dialog (`CFUserNotificationDisplayAlert`) and the session probe (`SessionGetInfo`) are raw CoreFoundation and Security framework externs and add no crate.
+
+Built for macOS (`aarch64-apple-darwin`, normal edges, new to this crate):
+
+| Crate | Version | License | Purpose in Orcel |
+|---|---|---|---|
+| objc2-local-authentication | 0.3.2 | Zlib OR Apache-2.0 OR MIT | `LAContext` `canEvaluatePolicy` / `evaluatePolicy` (`LAPolicyDeviceOwnerAuthentication`) |
+| block2 | 0.6.2 | MIT | The reply block LocalAuthentication calls |
+| objc2, objc2-encode, objc2-foundation | 0.6.5 / 4.1.0 / 0.3.2 | MIT | Already admitted for XP-15; NSString and NSError here |
+
+The presence code itself is adapted from cua@a802eaf2 `libs/cua/crates/cua-teleport/src/biometric.rs`, FSL-1.1-MIT (FD-04), with its notice in `docs/orcel/notices/cua-FSL-1.1-MIT.txt`.
+
 ## npm packages in the release
 
 Pinned by `package-lock.json` and copied into the release from the locked production dependency closure.
