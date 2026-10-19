@@ -13,6 +13,7 @@ use std::io::{self, BufRead, Write};
 use std::path::Path;
 use std::path::PathBuf;
 
+mod app_api;
 mod browser;
 mod clipboard;
 mod executable_admin;
@@ -67,6 +68,14 @@ fn run() -> Result<(), String> {
         INTERNAL_PROTOCOL_VERSION,
         audit.path().display()
     );
+    // CR-01: the read-only app API. It reads daemon facts and the events
+    // published below; it never reaches dispatch or the approval broker.
+    let app_api = app_api::start(app_api::DaemonFacts {
+        mode: "SG-000039_CLIPBOARD_WRITE",
+        policy_revision: POLICY_REVISION.to_owned(),
+        internal_protocol_version: INTERNAL_PROTOCOL_VERSION.to_string(),
+        capabilities: app_api_capabilities(approval.presence_available()),
+    });
 
     let stdin = io::stdin();
     let mut stdout = io::BufWriter::new(io::stdout().lock());
@@ -83,14 +92,27 @@ fn run() -> Result<(), String> {
             continue;
         }
 
-        let response = match serde_json::from_str::<RemoteRequestEnvelope>(&line) {
-            Ok(envelope) => handle_envelope(&policy, &audit, &approval, &workspace_set, envelope),
-            Err(error) => ResponseEnvelope::failure(
-                "unknown",
-                FailureCode::InvalidRequest,
-                format!("invalid request JSON: {error}"),
+        let (response, shape) = match serde_json::from_str::<RemoteRequestEnvelope>(&line) {
+            Ok(envelope) => {
+                let shape = (
+                    envelope.request.capability.clone(),
+                    envelope.request.operation.clone(),
+                );
+                (
+                    handle_envelope(&policy, &audit, &approval, &workspace_set, envelope),
+                    Some(shape),
+                )
+            }
+            Err(error) => (
+                ResponseEnvelope::failure(
+                    "unknown",
+                    FailureCode::InvalidRequest,
+                    format!("invalid request JSON: {error}"),
+                ),
+                None,
             ),
         };
+        app_api.publish("request.completed", request_event(&response, shape));
 
         serde_json::to_writer(&mut stdout, &response)
             .map_err(|error| format!("serialize response: {error}"))?;
@@ -103,6 +125,48 @@ fn run() -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// CR-01 `request.completed` event data: the request's shape and outcome,
+/// never its arguments or result.
+fn request_event(response: &ResponseEnvelope, shape: Option<(String, String)>) -> Value {
+    let (capability, operation) = shape.unzip();
+    let failure_code = response
+        .error
+        .as_ref()
+        .and_then(|error| serde_json::to_value(error).ok())
+        .and_then(|error| error.get("code").cloned());
+    json!({
+        "request_id": response.request_id,
+        "capability": capability,
+        "operation": operation,
+        "ok": response.ok,
+        "failure_code": failure_code,
+    })
+}
+
+/// CR-01 `capabilities.get` rows for this build and OS. `state` is what this
+/// orceld can serve; readiness beyond that is checked per request.
+fn app_api_capabilities(approval_available: bool) -> Vec<Value> {
+    let windows_only = |id: &str, what: &str| {
+        if cfg!(windows) {
+            json!({ "id": id, "state": "available", "reason": null })
+        } else {
+            json!({ "id": id, "state": "unavailable", "reason": format!("{what} is Windows only in this build") })
+        }
+    };
+    vec![
+        json!({ "id": "fs", "state": "available", "reason": null }),
+        json!({ "id": "git", "state": "available", "reason": null }),
+        json!({ "id": "clipboard", "state": "available", "reason": null }),
+        windows_only("process.contained", "contained process execution"),
+        windows_only("desktop.uia", "the UI Automation desktop provider"),
+        if approval_available {
+            json!({ "id": "approval.presence", "state": "available", "reason": null })
+        } else {
+            json!({ "id": "approval.presence", "state": "unavailable", "reason": "no platform presence surface is available to orceld" })
+        },
+    ]
 }
 
 /// SG-000055 entry: remote-context requests must pass the local

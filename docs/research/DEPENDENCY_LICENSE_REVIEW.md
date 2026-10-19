@@ -129,6 +129,9 @@ Admitted 2026-10-19 for `crates/orcel-platform` `process`, `session` and `peer`.
 
 The Windows x64 SBOM component set is unchanged: `windows` 0.58.0 was already linked into orceld, and libc is not built for Windows. macOS `getaudit_addr` is declared directly against libSystem, which std already links. The Linux `/proc` parse and the `getsockopt` peer pattern are adapted from cua@a802eaf2 (transplant rows T-CUA-23 and T-CUA-24, MIT, notice `docs/orcel/notices/cua-MIT.txt`).
 
+## orceld app API (CR-01)
+
+Admitted 2026-10-19 for `crates/orceld/src/app_api.rs`. No new crate enters `Cargo.lock`. orceld's existing `windows-sys` 0.52.0 edge (`cfg(windows)`, MIT OR Apache-2.0) gains features `Win32_Security`, `Win32_Security_Authorization`, `Win32_Storage_FileSystem`, `Win32_System_IO` and `Win32_System_Pipes`, for `CreateNamedPipeW`, `ConnectNamedPipe`, overlapped `ReadFile`/`WriteFile`, `GetNamedPipeClientProcessId`, `GetNamedPipeClientSessionId`, `PeekNamedPipe`, the token user (`OpenProcessToken`, `GetTokenInformation`, `EqualSid`) and the DACL from SDDL. The backlog card also proposed `security-framework`, `core-foundation`, `Win32_Security_WinTrust` and `Win32_Security_Cryptography` for code-signature checks; these are not admitted because the read-only slice does not take those checks (see the protocol document, "Code identity"). The cua-keyvault files the code adapts are FSL-1.1-MIT (FD-04), notice `docs/orcel/notices/cua-FSL-1.1-MIT.txt`.
 
 ## orcel-contain, the contained-tier helper (XP-13)
 
