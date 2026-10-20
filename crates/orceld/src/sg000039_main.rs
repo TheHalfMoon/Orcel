@@ -17,6 +17,12 @@ mod app_api;
 mod browser;
 mod clipboard;
 mod contained_tier;
+// WI-05: reached through the live browser's committed downloads
+// (`LiveBrowser::parse_download`), which only the Windows `live-browser-test`
+// build compiles today; the module's unit and end-to-end tests run on every
+// OS.
+#[cfg_attr(not(all(windows, feature = "live-browser-test")), allow(dead_code))]
+mod document_parse;
 mod executable_admin;
 mod fs_mutation;
 mod git_fetch;
