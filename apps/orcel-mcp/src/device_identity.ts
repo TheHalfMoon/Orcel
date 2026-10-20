@@ -38,7 +38,12 @@ export const DEVICE_ID_PREFIX = "dev-";
 export const DEVICE_ID_HEX_CHARS = 32;
 export const DEVICE_ID_PATTERN = /^dev-[0-9a-f]{32}$/;
 
-/** Relative protected-store location under the Orcel state root. */
+/**
+ * Relative location of the device key record under the Orcel state root.
+ * Since XP-19 the record holds only the public identity
+ * ({@link DeviceIdentity}); the private key lives in the OS secret store
+ * behind `orceld` (`secret_store.ts`, name `device.key`).
+ */
 export const DEVICE_KEY_STORE_RELATIVE = "device/device_key.json";
 
 /** Pairing code carries 256-bit entropy, encoded as 64 lowercase hex chars. */
@@ -282,6 +287,37 @@ export function rotateDeviceKeyPair(
     throw new Error("PAIRING_DENIED: invalid key rotation time");
   }
   return generateDeviceKeyPair(current.deviceId, rotatedAtMs, current.epoch + 1);
+}
+
+/**
+ * True when the private JWK is the Ed25519 key whose public half the
+ * identity records. A key from another device, a damaged key or a key of
+ * another type is refused before it signs anything.
+ */
+export function privateKeyMatchesIdentity(
+  privateKeyJwkBase64: string,
+  publicKeyJwkBase64: string
+): boolean {
+  try {
+    const privateJwk = decodeJwkBase64(privateKeyJwkBase64);
+    const publicJwk = decodeJwkBase64(publicKeyJwkBase64);
+    if (
+      privateJwk.kty !== "OKP" ||
+      privateJwk.crv !== "Ed25519" ||
+      typeof privateJwk.d !== "string" ||
+      publicJwk.kty !== "OKP" ||
+      publicJwk.crv !== "Ed25519" ||
+      typeof publicJwk.x !== "string"
+    ) {
+      return false;
+    }
+    const derived = createPublicKey(createPrivateKey({ key: privateJwk as never, format: "jwk" })).export({
+      format: "jwk"
+    });
+    return derived.x === publicJwk.x;
+  } catch {
+    return false;
+  }
 }
 
 /** Create a short-lived challenge for one device and epoch. */
