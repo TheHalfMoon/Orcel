@@ -356,7 +356,12 @@ fn wi05_orceld_parses_a_committed_download_under_the_contained_tier() {
     let crash = committed(&folder, "crash.pdf", b"ORCEL-WI05-TEST-ABORT");
     let error =
         parse_committed(&workspace(&folder), &approved, &crash, &helper, &parser).unwrap_err();
-    assert_eq!(error.code, FailureCode::PostconditionFailed, "{}", error.message);
+    assert_eq!(
+        error.code,
+        FailureCode::PostconditionFailed,
+        "{}",
+        error.message
+    );
     assert!(
         error.message.starts_with("document_parse_failed:crashed"),
         "{}",
@@ -386,5 +391,8 @@ fn wi05_each_parse_gets_its_own_stage() {
     assert_ne!(first.root, second.root);
     std::fs::write(first.input.join(INPUT_NAME), b"first").unwrap();
     drop(second);
-    assert_eq!(std::fs::read(first.input.join(INPUT_NAME)).unwrap(), b"first");
+    assert_eq!(
+        std::fs::read(first.input.join(INPUT_NAME)).unwrap(),
+        b"first"
+    );
 }
