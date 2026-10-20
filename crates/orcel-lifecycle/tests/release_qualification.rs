@@ -344,6 +344,11 @@ fn packaged_release_installs_runs_updates_recovers_and_uninstalls() {
         .collect::<Vec<_>>();
     core.sort();
     assert_eq!(listed_sorted, core, "MCP exposure drift: {tools_line}");
+    // WI-06: web_search is local-only; the tunnel must never serve it.
+    assert!(
+        !listed.iter().any(|name| name == "web_search"),
+        "web_search must never be served through the tunnel: {tools_line}"
+    );
     assert!(log.contains(TUNNEL_CALL_LEASE_GATED), "{log}");
     assert!(log.contains("fake-tunnel: env-clean=true"), "{log}");
     assert!(log.contains("api_key=[REDACTED]"), "{log}");

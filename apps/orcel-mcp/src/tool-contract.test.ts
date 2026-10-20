@@ -38,7 +38,8 @@ const LOCAL_ONLY = [
   "desktop_window_capture",
   "desktop_window_list",
   "desktop_window_tree",
-  "web_fetch"
+  "web_fetch",
+  "web_search"
 ];
 
 function fakeKernel(): KernelClient {

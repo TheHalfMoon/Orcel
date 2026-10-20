@@ -242,6 +242,11 @@ export const TOOL_CONTRACT: Readonly<Record<string, ToolContractEntry>> = {
     capability: "network", operation: "fetch", effect: "network", approval: "SOFT", remote: "local_only",
     outputBound: "one response body of at most 1 MiB",
     annotations: { title: "Fetch public HTTPS URL", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true }
+  },
+  web_search: {
+    capability: "search", operation: "query", effect: "network", approval: "SOFT", remote: "local_only",
+    outputBound: "at most 10 untrusted results; titles 300 and snippets 1000 characters; provider response at most 512 KiB",
+    annotations: { title: "Search the web", readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true }
   }
 };
 
@@ -325,7 +330,8 @@ export const DESKTOP_STRUCTURED_TOOLS: readonly string[] = Object.freeze([
   "desktop_window_tree",
   "clipboard_read",
   "clipboard_write",
-  "web_fetch"
+  "web_fetch",
+  "web_search"
 ] as const);
 
 /**

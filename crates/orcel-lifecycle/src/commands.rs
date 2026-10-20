@@ -270,7 +270,15 @@ pub fn tunnel(args: &mut Args) -> Result<Output, LifecycleError> {
             let (device_id, device_epoch) =
                 orcel_lifecycle::tunnel_route::device_identity(&tunnel_id);
             let route = orcel_lifecycle::tunnel_route::route(&tunnel_id);
-            allow_remote_session(args, &layout, &connection, &route, &device_id, device_epoch)
+            allow_remote_session(
+                args,
+                &layout,
+                &connection,
+                &route,
+                &device_id,
+                device_epoch,
+                "orcel tunnel revoke",
+            )
         }
         "revoke" => {
             args.finish()?;
@@ -744,8 +752,157 @@ pub fn mcp(args: &mut Args) -> Result<i32, LifecycleError> {
     orcel_lifecycle::mcp::run_action(&action, port)
 }
 
+/// The WI-06 search providers that take an API key.
+const SEARCH_KEY_PROVIDERS: [&str; 4] = ["brave", "tavily", "exa", "serper"];
+
+/// `orcel search status|set-key|delete-key`: the user's own search provider
+/// keys go straight from a hidden prompt or a key file into the OS secret
+/// store through orceld; they are never printed, logged or returned.
+/// Providers are enabled in `ORCEL_SEARCH_PROVIDERS_JSON` (WI-06).
+pub fn search(args: &mut Args) -> Result<Output, LifecycleError> {
+    let action = args.positional("search action (status, set-key, delete-key)")?;
+    let layout = Layout::for_current_user()?;
+    let config = Config::load(&layout)?;
+    config.check_workspaces_with_policy()?;
+    let workspace = config.default_workspace().unwrap_or("default").to_string();
+    let version = active_version(&layout)?;
+    let orceld = layout.version_dir(&version).join("orceld.exe");
+    let provider_key = |args: &mut Args| -> Result<String, LifecycleError> {
+        let provider = args.positional("search provider (brave, tavily, exa, serper)")?;
+        if !SEARCH_KEY_PROVIDERS.contains(&provider.as_str()) {
+            return Err(LifecycleError::usage(format!(
+                "{provider:?} takes no key; key providers are brave, tavily, exa and serper"
+            )));
+        }
+        Ok(provider)
+    };
+    match action.as_str() {
+        "status" => {
+            args.finish()?;
+            let request = ipc::request(&workspace, "search", "doctor", json!({}));
+            let providers: Vec<(&str, String)> = std::env::var("ORCEL_SEARCH_PROVIDERS_JSON")
+                .ok()
+                .map(|value| vec![("ORCEL_SEARCH_PROVIDERS_JSON", value)])
+                .unwrap_or_default();
+            let response = ipc::call_with_env(
+                &orceld,
+                &config,
+                &providers,
+                &request,
+                Duration::from_secs(60),
+            )?;
+            let result = ipc::expect_ok(&response)?.clone();
+            let mut human = String::new();
+            for row in result["providers"].as_array().into_iter().flatten() {
+                human.push_str(&format!(
+                    "{:<8} {:<11} {}\n",
+                    row["provider"].as_str().unwrap_or("?"),
+                    row["status"].as_str().unwrap_or("?"),
+                    row["message"].as_str().unwrap_or("")
+                ));
+            }
+            Ok(Output {
+                exit_code: 0,
+                human,
+                json: json!({"ok": true, "search": result}),
+            })
+        }
+        "set-key" => {
+            let provider = provider_key(args)?;
+            let key_file = args.value("--key-file")?.map(PathBuf::from);
+            let delete_key_file = args.flag("--delete-key-file");
+            args.finish()?;
+            if delete_key_file && key_file.is_none() {
+                return Err(LifecycleError::usage(
+                    "--delete-key-file needs --key-file <path>",
+                ));
+            }
+            let key = match &key_file {
+                Some(path) => std::fs::read_to_string(path)
+                    .map_err(|error| LifecycleError::io("read --key-file", error))?
+                    .trim()
+                    .to_string(),
+                None => orcel_lifecycle::console::read_secret_line(&format!(
+                    "{provider} API key (input hidden): "
+                ))?,
+            };
+            if key.is_empty() || key.len() > 4096 || key.chars().any(char::is_control) {
+                return Err(LifecycleError::usage(
+                    "the API key must be one line of at most 4096 characters",
+                ));
+            }
+            let mut request = ipc::request(&workspace, "secret", "put", json!({ "value": key }));
+            request["target"] = json!(format!("search.{provider}.key"));
+            let response = ipc::call(&orceld, &config, &request, Duration::from_secs(60))?;
+            let backend = ipc::expect_ok(&response)?
+                .get("backend")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_string();
+            let mut human =
+                format!("Stored the {provider} API key in the {backend} secret store.\n");
+            let mut key_file_deleted = None;
+            if let Some(path) = &key_file {
+                if delete_key_file {
+                    let removed = std::fs::remove_file(path).is_ok();
+                    key_file_deleted = Some(removed);
+                    human.push_str(&if removed {
+                        format!("Deleted the key file {}.\n", path.display())
+                    } else {
+                        format!(
+                            "Could not delete the key file {}; delete it yourself.\n",
+                            path.display()
+                        )
+                    });
+                } else {
+                    human.push_str(&format!(
+                        "The key is still in plaintext at {}. Delete that file now (or pass --delete-key-file next time).\n",
+                        path.display()
+                    ));
+                }
+            }
+            Ok(Output {
+                exit_code: 0,
+                human,
+                json: json!({
+                    "ok": true,
+                    "provider": provider,
+                    "stored": true,
+                    "backend": backend,
+                    "key_file_deleted": key_file_deleted,
+                }),
+            })
+        }
+        "delete-key" => {
+            let provider = provider_key(args)?;
+            args.finish()?;
+            let mut request = ipc::request(&workspace, "secret", "delete", json!({}));
+            request["target"] = json!(format!("search.{provider}.key"));
+            let response = ipc::call(&orceld, &config, &request, Duration::from_secs(60))?;
+            let deleted = ipc::expect_ok(&response)?
+                .get("deleted")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            Ok(Output {
+                exit_code: 0,
+                human: if deleted {
+                    format!("Deleted the {provider} API key.\n")
+                } else {
+                    format!("No {provider} API key was stored.\n")
+                },
+                json: json!({"ok": true, "provider": provider, "deleted": deleted}),
+            })
+        }
+        other => Err(LifecycleError::usage(format!(
+            "unknown search action {other:?}; run `orcel help`"
+        ))),
+    }
+}
+
 /// Creates a finite remote-session lease for one remote route after STRONG
 /// local presence (`orcel remote allow`, `orcel tunnel allow`).
+/// `revoke_command` is the command that ends this kind of lease early.
+#[allow(clippy::too_many_arguments)]
 fn allow_remote_session(
     args: &mut Args,
     layout: &Layout,
@@ -753,6 +910,7 @@ fn allow_remote_session(
     paired: &Value,
     device_id: &str,
     device_epoch: u64,
+    revoke_command: &str,
 ) -> Result<Output, LifecycleError> {
     use orcel_lifecycle::remote;
     let workspaces = args.value("--workspaces")?;
@@ -794,7 +952,7 @@ fn allow_remote_session(
     Ok(Output {
         exit_code: 0,
         human: format!(
-            "Remote session allowed for {connection} on {} for {minutes} minute(s). It never extends itself; run `orcel remote revoke` to end it early.\n",
+            "Remote session allowed for {connection} on {} for {minutes} minute(s). It never extends itself; run `{revoke_command}` to end it early.\n",
             workspaces.join(", ")
         ),
         json: json!({"ok": true, "lease": lease}),
@@ -823,6 +981,7 @@ pub fn remote(args: &mut Args) -> Result<Output, LifecycleError> {
                 &paired,
                 &device_id,
                 device_epoch,
+                "orcel remote revoke",
             )
         }
         "revoke" => {

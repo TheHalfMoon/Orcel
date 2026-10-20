@@ -340,6 +340,23 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
+    /// WI-06: web search must never reach the tunnel, so its provider
+    /// configuration never crosses into the tunnel client.
+    #[test]
+    fn wi06_tunnel_drops_search_configuration() {
+        let (cfg, dir) = config();
+        let source = BTreeMap::from([
+            ("PATH".into(), "bin".into()),
+            (
+                "ORCEL_SEARCH_PROVIDERS_JSON".into(),
+                r#"{"providers":{"brave":{}}}"#.into(),
+            ),
+        ]);
+        let plan = cfg.launch_plan(&source).unwrap();
+        assert!(!plan.env.contains_key("ORCEL_SEARCH_PROVIDERS_JSON"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn tunnel_client_env_carries_no_orcel_variable() {
         // #395: every Orcel variable the local children accept, and the ones

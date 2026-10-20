@@ -4,8 +4,8 @@
   "name": "orcel",
   "display_name": "Orcel",
   "version": "0.2.0",
-  "description": "Local-first MCP gateway with 40 bounded tools and local approval for computer changes.",
-  "long_description": "Orcel exposes 40 bounded tools for trusted workspace files, local Git, registered argv-only processes, structured desktop observation and Full User desktop control, clipboard access, and approved public HTTPS fetches through a local policy kernel. Full User desktop authority is granted only through a local STRONG-presence flow and is never grantable by MCP or remote callers. This extension launches the installed Orcel entrypoint over stdio; no tunnel is required.",
+  "description": "Local-first MCP gateway with 41 bounded tools and local approval for computer changes.",
+  "long_description": "Orcel exposes 41 bounded tools for trusted workspace files, local Git, registered argv-only processes, structured desktop observation and Full User desktop control, clipboard access, approved public HTTPS fetches, and optional web search through a provider the user enables through a local policy kernel. Full User desktop authority is granted only through a local STRONG-presence flow and is never grantable by MCP or remote callers. This extension launches the installed Orcel entrypoint over stdio; no tunnel is required.",
   "author": {
     "name": "TheHalfMoon",
     "url": "https://github.com/TheHalfMoon/Orcel"
@@ -191,6 +191,10 @@
     {
       "name": "web_fetch",
       "description": "Fetch one public HTTPS URL with GET after local approval of the destination."
+    },
+    {
+      "name": "web_search",
+      "description": "Search the web through a provider the user enabled locally, after local approval of the query."
     },
     {
       "name": "workspace_get",
