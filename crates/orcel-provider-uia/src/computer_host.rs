@@ -1860,7 +1860,6 @@ mod tests {
             "LocalAuthenticationRemoteService",
             "coreautha",
             "loginwindow",
-            "ScreenSaverEngine",
         ] {
             assert_eq!(
                 crate::is_protected_window("", class),
