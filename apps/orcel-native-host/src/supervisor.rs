@@ -13,7 +13,7 @@
 
 use crate::protocol::{
     self, code, Availability, HostPlatform, Request, Response, HOST_IDENTITY, MAX_REQUEST_BYTES,
-    MAX_RESPONSE_BYTES, PROTOCOL_V2, WORKER_ATTEMPTS, WORKER_TIMEOUT,
+    MAX_RESPONSE_BYTES, MUTATION_ATTEMPTS, PROTOCOL_V2, WORKER_ATTEMPTS, WORKER_TIMEOUT,
 };
 use std::ffi::OsString;
 use std::io::{BufRead, Read, Write};
@@ -173,7 +173,13 @@ impl Dispatch for WorkerDispatch {
         };
         payload.push(b'\n');
         let mut last = Attempt::Failed("native worker unavailable".to_owned());
-        for _ in 0..WORKER_ATTEMPTS {
+        // A mutation is tried once: a second worker could deliver it twice.
+        let attempts = if is_mutation(&request.op) {
+            MUTATION_ATTEMPTS
+        } else {
+            WORKER_ATTEMPTS
+        };
+        for _ in 0..attempts {
             match self.attempt(request, &payload) {
                 Attempt::Answer(response) => return *response,
                 Attempt::Oversized => {
@@ -186,15 +192,22 @@ impl Dispatch for WorkerDispatch {
                 other => last = other,
             }
         }
+        let unknown = if is_mutation(&request.op) {
+            "; the action may have been delivered, so observe the window again and do not repeat it"
+        } else {
+            ""
+        };
         match last {
             Attempt::TimedOut => Response::failure(
                 request.id,
                 code::TIMEOUT,
-                "native worker timed out and was killed",
+                format!("native worker timed out and was killed{unknown}"),
             ),
-            Attempt::Failed(reason) => {
-                Response::failure(request.id, code::PROVIDER_UNAVAILABLE, reason)
-            }
+            Attempt::Failed(reason) => Response::failure(
+                request.id,
+                code::PROVIDER_UNAVAILABLE,
+                format!("{reason}{unknown}"),
+            ),
             Attempt::Answer(response) => *response,
             Attempt::Oversized => Response::failure(
                 request.id,
@@ -203,6 +216,11 @@ impl Dispatch for WorkerDispatch {
             ),
         }
     }
+}
+
+/// Operations that change the target. The host never retries them.
+fn is_mutation(op: &str) -> bool {
+    op == "semantic_action"
 }
 
 /// The worker's last output line, which must answer exactly this request.
@@ -309,6 +327,7 @@ fn availability_from(response: &Response) -> Availability {
         observe_window: reason("observe_window"),
         cursor_position: reason("cursor_position"),
         capture_window: reason("capture_window"),
+        semantic_action: reason("semantic_action"),
         permissions: response.permissions.clone().unwrap_or_default(),
     }
 }
@@ -606,5 +625,102 @@ mod tests {
         )
         .dispatch(&list_request());
         assert_eq!(response.error.unwrap().code, "output_limit");
+    }
+
+    #[test]
+    fn only_semantic_actions_are_mutations() {
+        for op in protocol::OPERATIONS {
+            assert_eq!(is_mutation(op), op == "semantic_action", "{op}");
+        }
+        assert_eq!(MUTATION_ATTEMPTS, 1);
+    }
+
+    /// XP-11: an action is delivered at most once. A crashed or timed-out
+    /// worker is not run again (it may already have acted), and the answer
+    /// says the outcome is unknown.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_semantic_action_is_never_retried() {
+        let counter = std::env::temp_dir().join(format!(
+            "orcel-xp11-attempts-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let script = format!("cat >/dev/null; echo ran >> '{}'; exit 3", counter.display());
+        let action = Request {
+            id: 4,
+            protocol: PROTOCOL_V2.into(),
+            op: "semantic_action".into(),
+            ..Request::default()
+        };
+        let response = shell(&script, 2000).dispatch(&action);
+        let error = response.error.unwrap();
+        assert_eq!(error.code, "provider_unavailable");
+        assert!(error.message.contains("do not repeat"), "{}", error.message);
+        assert_eq!(std::fs::read_to_string(&counter).unwrap().lines().count(), 1);
+        // The same crash on an observation is tried twice.
+        let _ = std::fs::remove_file(&counter);
+        shell(&script, 2000).dispatch(&list_request());
+        assert_eq!(std::fs::read_to_string(&counter).unwrap().lines().count(), 2);
+        let _ = std::fs::remove_file(&counter);
+        // A timed-out action is killed once, too.
+        let started = std::time::Instant::now();
+        let response = shell("sleep 30", 300).dispatch(&action);
+        assert_eq!(response.error.as_ref().unwrap().code, "timeout");
+        assert!(response.error.unwrap().message.contains("do not repeat"));
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    #[test]
+    fn semantic_frames_that_name_a_position_or_key_never_reach_a_worker() {
+        let mut dispatch = scripted(|request| Response::success(request.id));
+        let bound = r#""window":{"kind":"x11","id":3,"expected_pid":1,"expected_start_generation":2,"expected_window_nonce":3}"#;
+        let frames = [
+            format!(r#"{{"id":1,"protocol":"orcel-computer-host/2","op":"semantic_action","semantic_action":"invoke","element_runtime_id":"e1-00","x":4,"y":4,{bound}}}"#),
+            format!(r#"{{"id":2,"protocol":"orcel-computer-host/2","op":"semantic_action","semantic_action":"scroll","element_runtime_id":"e1-00",{bound}}}"#),
+            format!(r#"{{"id":3,"protocol":"orcel-computer-host/2","op":"window_action","window_action":"close","expected_last_input_tick":1,{bound}}}"#),
+            format!(r#"{{"id":4,"protocol":"orcel-computer-host/2","op":"input_click","x":4,"y":4,"button":"left","click_count":1,"expected_last_input_tick":1,{bound}}}"#),
+        ];
+        let responses = exchange(&(frames.join("
+") + "
+"), &mut dispatch);
+        assert!(dispatch.seen.is_empty());
+        let codes: Vec<_> = responses
+            .iter()
+            .map(|response| response.error.as_ref().unwrap().code.as_str())
+            .collect();
+        assert_eq!(
+            codes,
+            vec![
+                "invalid_request",
+                "capability_denied",
+                "capability_denied",
+                "capability_denied"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_valid_semantic_frame_reaches_the_worker_with_its_answer_unchanged() {
+        let mut dispatch = scripted(|request| {
+            let mut response = Response::success(request.id);
+            response.action = Some(protocol::ActionFact {
+                state: "completed".into(),
+                action: "semantic_invoke".into(),
+            });
+            // A worker must not smuggle hello fields into an action answer.
+            response.platform = Some("linux".into());
+            response
+        });
+        let line = r#"{"id":7,"protocol":"orcel-computer-host/2","op":"semantic_action","semantic_action":"invoke","element_runtime_id":"e1-00","window":{"kind":"x11","id":3,"expected_pid":1,"expected_start_generation":2,"expected_window_nonce":3}}"#;
+        let responses = exchange(&format!("{line}
+"), &mut dispatch);
+        assert_eq!(dispatch.seen, vec!["semantic_action".to_owned()]);
+        let action = responses[0].action.as_ref().unwrap();
+        assert_eq!((action.state.as_str(), action.action.as_str()), ("completed", "semantic_invoke"));
+        assert!(responses[0].platform.is_none());
     }
 }

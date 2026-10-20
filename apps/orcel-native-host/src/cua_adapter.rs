@@ -2,11 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The allowlisted adapter over the vendored Cua Driver tools (XP-06).
 //!
-//! [`CuaCall`] is the whole surface: five read-only tools. Each variant
+//! [`CuaCall`] is the whole surface: five read-only tools and, since XP-11,
+//! one semantic action tool. Each variant
 //! holds the typed `cua-driver-contract` input, validated before dispatch,
 //! and its tool name is that input's `TOOL_NAME` constant. Nothing in a
 //! request names a tool, so no other Cua tool (click, type_text, launch_app,
 //! clipboard writes, ...) can be reached from the protocol.
+//!
+//! The semantic action tool is `orcel_semantic_action`, added to the vendored
+//! crates by patch P-09. It is not one of Cua's tools: upstream's `click`,
+//! `set_value` and `scroll` fall back to pointer events, key events, Apple
+//! Events and menu-opening when the accessibility route fails, and the host
+//! must never reach those. The P-09 tool calls only Cua's accessibility
+//! primitives (AX actions and AXValue writes on macOS, AT-SPI `doAction` and
+//! `setValue` on Linux) on the exact element a fresh `get_window_state`
+//! snapshot of the same process resolved, and has no other route.
 //!
 //! The registry is built the way Cua's own embedders build it, with
 //! `cursor_overlay_available = false` and `host_owns_permission_ux = true`
@@ -20,6 +30,8 @@
 //! the scope, protected-surface, exposure and size rules of `capture.rs`
 //! around the call.
 
+use crate::protocol::MAX_TEXT_BYTES;
+use crate::semantic::Verb;
 use cua_driver_contract::{
     GetCursorPositionInput, GetScreenSizeInput, GetWindowStateInput, ListWindowsInput, ToolInput,
 };
@@ -32,13 +44,35 @@ pub const CHECK_PERMISSIONS: &str = "check_permissions";
 /// The tool names the vendored registry keeps after construction (patch
 /// P-07): exactly the tools [`CuaCall`] names. Every other tool the platform
 /// registers is dropped, so even a name that bypassed the enum is unknown.
-pub const ALLOWED_TOOLS: [&str; 5] = [
+pub const ALLOWED_TOOLS: [&str; 6] = [
     ListWindowsInput::TOOL_NAME,
     GetWindowStateInput::TOOL_NAME,
     GetCursorPositionInput::TOOL_NAME,
     GetScreenSizeInput::TOOL_NAME,
     CHECK_PERMISSIONS,
+    SEMANTIC_ACTION_TOOL,
 ];
+
+/// Tool name of the P-09 accessibility-only action tool.
+pub const SEMANTIC_ACTION_TOOL: &str = "orcel_semantic_action";
+
+/// Longest `element_token` the host sends (`s` + 8 hex digits + `:` + index).
+const MAX_TOKEN_BYTES: usize = 40;
+
+/// One accessibility action on one element of a fresh snapshot.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SemanticCall {
+    pub pid: u32,
+    pub window_id: u64,
+    /// The token the fresh `get_window_state` of this very process minted
+    /// for the element the runtime id located.
+    pub element_token: String,
+    pub verb: Verb,
+    /// The role Cua listed for that element a moment ago; the tool refuses
+    /// when the live element's role differs.
+    pub expect_role: String,
+    pub value: Option<String>,
+}
 
 /// The only Cua tools the host calls.
 #[derive(Debug, Clone, PartialEq)]
@@ -49,6 +83,8 @@ pub enum CuaCall {
     GetScreenSize(GetScreenSizeInput),
     /// macOS only: TCC state, read without prompting.
     CheckPermissions,
+    /// XP-11: one accessibility action (patch P-09).
+    SemanticAction(SemanticCall),
 }
 
 impl CuaCall {
@@ -59,6 +95,7 @@ impl CuaCall {
             Self::GetCursorPosition(_) => GetCursorPositionInput::TOOL_NAME,
             Self::GetScreenSize(_) => GetScreenSizeInput::TOOL_NAME,
             Self::CheckPermissions => CHECK_PERMISSIONS,
+            Self::SemanticAction(_) => SEMANTIC_ACTION_TOOL,
         }
     }
 
@@ -74,6 +111,7 @@ impl CuaCall {
             Self::GetCursorPosition(input) => typed(input),
             Self::GetScreenSize(input) => typed(input),
             Self::CheckPermissions => Ok(serde_json::json!({ "prompt": false })),
+            Self::SemanticAction(call) => call.arguments(),
         }
     }
 
@@ -105,6 +143,45 @@ impl CuaCall {
             pid,
             on_screen_only: None,
         })
+    }
+}
+
+impl SemanticCall {
+    /// The validated argument object: an exact window, an element token, a
+    /// verb and, for `set_value`, the text. There is no coordinate, key,
+    /// button, count, modifier or delivery-mode field to send.
+    pub fn arguments(&self) -> Result<Value, CuaFailure> {
+        if self.pid == 0 || self.window_id == 0 {
+            return Err(CuaFailure::invalid("a semantic action needs an exact window"));
+        }
+        if self.element_token.is_empty()
+            || self.element_token.len() > MAX_TOKEN_BYTES
+            || !self.element_token.starts_with('s')
+            || !self.element_token.contains(':')
+        {
+            return Err(CuaFailure::invalid("the element token is malformed"));
+        }
+        if self.expect_role.is_empty() || self.expect_role.len() > 128 {
+            return Err(CuaFailure::invalid("the element role is missing or too long"));
+        }
+        let mut arguments = serde_json::json!({
+            "pid": self.pid,
+            "window_id": self.window_id,
+            "element_token": self.element_token,
+            "verb": self.verb.as_str(),
+            "expect_role": self.expect_role,
+        });
+        match (self.verb, &self.value) {
+            (Verb::SetValue, Some(value)) if value.len() <= MAX_TEXT_BYTES => {
+                arguments["value"] = Value::String(value.clone());
+            }
+            (Verb::SetValue, _) => {
+                return Err(CuaFailure::invalid("set_value needs a bounded value"));
+            }
+            (_, None) => {}
+            (_, Some(_)) => return Err(CuaFailure::invalid("only set_value carries a value")),
+        }
+        Ok(arguments)
     }
 }
 
@@ -266,13 +343,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_call_names_a_read_only_tool_from_its_typed_input() {
+    fn every_call_names_an_allowlisted_tool_from_its_typed_input() {
         let calls = [
             CuaCall::list_windows(None),
             CuaCall::observe(10, 20, 256, 8),
             CuaCall::GetCursorPosition(GetCursorPositionInput::default()),
             CuaCall::GetScreenSize(GetScreenSizeInput { session: None }),
             CuaCall::CheckPermissions,
+            CuaCall::SemanticAction(semantic_call(Verb::Invoke, None)),
         ];
         let names: Vec<_> = calls.iter().map(CuaCall::tool_name).collect();
         assert_eq!(
@@ -282,13 +360,68 @@ mod tests {
                 "get_window_state",
                 "get_cursor_position",
                 "get_screen_size",
-                "check_permissions"
+                "check_permissions",
+                "orcel_semantic_action"
             ]
         );
         assert_eq!(names, ALLOWED_TOOLS.to_vec());
         for call in &calls {
             assert!(call.arguments().is_ok(), "{call:?}");
         }
+    }
+
+    fn semantic_call(verb: Verb, value: Option<&str>) -> SemanticCall {
+        SemanticCall {
+            pid: 10,
+            window_id: 20,
+            element_token: "s00000001:7".into(),
+            verb,
+            expect_role: "AXButton".into(),
+            value: value.map(str::to_owned),
+        }
+    }
+
+    /// XP-11: the action tool is addressed by window and element token and
+    /// carries no coordinate, key, button, count, modifier, delivery mode or
+    /// scope, so no argument of the host can ask the tool for pointer input.
+    #[test]
+    fn semantic_arguments_carry_no_position_key_or_delivery_field() {
+        let arguments = semantic_call(Verb::SetValue, Some("hello")).arguments().unwrap();
+        let mut keys: Vec<_> = arguments.as_object().unwrap().keys().cloned().collect();
+        keys.sort();
+        assert_eq!(
+            keys,
+            vec!["element_token", "expect_role", "pid", "value", "verb", "window_id"]
+        );
+        assert_eq!(arguments["verb"], "set_value");
+        let invoke = semantic_call(Verb::Invoke, None).arguments().unwrap();
+        assert!(invoke.get("value").is_none());
+        assert_eq!(invoke["verb"], "invoke");
+    }
+
+    #[test]
+    fn semantic_arguments_are_validated_before_dispatch() {
+        let mut call = semantic_call(Verb::Invoke, None);
+        call.pid = 0;
+        assert!(call.arguments().is_err());
+        let mut call = semantic_call(Verb::Invoke, None);
+        call.window_id = 0;
+        assert!(call.arguments().is_err());
+        for token in ["", "7", "x00000001:7", "s00000001", &"s".repeat(41)] {
+            let mut call = semantic_call(Verb::Invoke, None);
+            call.element_token = token.into();
+            assert!(call.arguments().is_err(), "{token:?}");
+        }
+        let mut call = semantic_call(Verb::Invoke, None);
+        call.expect_role = String::new();
+        assert!(call.arguments().is_err());
+        // A value belongs to set_value alone, and set_value needs one.
+        assert!(semantic_call(Verb::Invoke, Some("x")).arguments().is_err());
+        assert!(semantic_call(Verb::Toggle, Some("x")).arguments().is_err());
+        assert!(semantic_call(Verb::SetValue, None).arguments().is_err());
+        let long = "a".repeat(MAX_TEXT_BYTES + 1);
+        assert!(semantic_call(Verb::SetValue, Some(&long)).arguments().is_err());
+        assert!(semantic_call(Verb::SetValue, Some("")).arguments().is_ok());
     }
 
     #[test]
@@ -322,6 +455,7 @@ mod tests {
             ("cua_adapter.rs", include_str!("cua_adapter.rs")),
             ("map.rs", include_str!("map.rs")),
             ("capture.rs", include_str!("capture.rs")),
+            ("semantic.rs", include_str!("semantic.rs")),
         ] {
             assert!(!source.contains(&field), "{name} touches {field}");
         }
@@ -349,6 +483,7 @@ mod tests {
             ("cua_adapter.rs", include_str!("cua_adapter.rs")),
             ("map.rs", include_str!("map.rs")),
             ("capture.rs", include_str!("capture.rs")),
+            ("semantic.rs", include_str!("semantic.rs")),
         ] {
             for word in &forbidden {
                 assert!(!source.contains(word.as_str()), "{name} names {word}");

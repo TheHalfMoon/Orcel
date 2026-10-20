@@ -14710,6 +14710,11 @@ pub fn build_registry_with_provider(
         state: state.clone(),
     }));
     r.register(Box::new(GetCursorPositionTool));
+    // Orcel P-09 (XP-11): the accessibility-only action tool.
+    #[cfg(feature = "orcel-minimal")]
+    r.register(Box::new(orcel_semantic::OrcelSemanticTool {
+        state: state.clone(),
+    }));
     r.register(Box::new(MoveCursorTool {
         state: state.clone(),
     }));
@@ -14825,5 +14830,362 @@ mod cursor_hook_emission_tests {
             ("agent-7", 10.0, 20.0, false)
         );
         assert!(seen[1].pressed);
+    }
+}
+
+// Orcel P-09 (XP-11): the accessibility-only action tool. Everything below is
+// added by the Orcel patch queue and compiled only with `orcel-minimal`.
+#[cfg(feature = "orcel-minimal")]
+mod orcel_semantic {
+    //! `orcel_semantic_action`: one AT-SPI action on one element of the
+    //! calling process's latest snapshot, and nothing else.
+    //!
+    //! Upstream's `click`, `set_value` and `scroll` are not registered by the
+    //! Orcel host, because each one can leave the accessibility route: an XTest
+    //! or uinput pointer click when `doAction` is declined, a virtual
+    //! keyboard that selects all and types, a combo box popup opened with the
+    //! pointer, a wheel event. This tool has none of those. It calls the
+    //! AT-SPI primitives those tools try first (`Action.doAction` on the
+    //! object the snapshot observed, `EditableText`/`Value` writes) and
+    //! refuses rather than falling back. It never re-resolves an element by
+    //! index: a vanished object is `target_stale`.
+
+    use super::ToolState;
+    use async_trait::async_trait;
+    use cua_driver_core::protocol::ToolResult;
+    use cua_driver_core::tool::{Tool, ToolDef};
+    use serde_json::{json, Value};
+    use std::sync::Arc;
+
+    pub const TOOL_NAME: &str = "orcel_semantic_action";
+
+    /// The only argument names the tool accepts. A name that starts with `_`
+    /// is a transport field the core strips and injects itself.
+    const ARGUMENTS: [&str; 6] = [
+        "pid",
+        "window_id",
+        "element_token",
+        "verb",
+        "expect_role",
+        "value",
+    ];
+
+    /// Longest text `set_value` writes, as the host protocol bounds it.
+    const MAX_VALUE_BYTES: usize = 16 * 1024;
+
+    /// One action must settle inside the host worker's deadline (8 s), which
+    /// also covers the window listing and the tree walk before it.
+    const ACTION_BUDGET: std::time::Duration = std::time::Duration::from_secs(4);
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Verb {
+        Invoke,
+        SetValue,
+        Select,
+        Toggle,
+    }
+
+    impl Verb {
+        fn name(self) -> &'static str {
+            match self {
+                Self::Invoke => "invoke",
+                Self::SetValue => "set_value",
+                Self::Select => "select",
+                Self::Toggle => "toggle",
+            }
+        }
+    }
+
+    fn parse_verb(name: &str) -> Option<Verb> {
+        match name {
+            "invoke" => Some(Verb::Invoke),
+            "set_value" => Some(Verb::SetValue),
+            "select" => Some(Verb::Select),
+            "toggle" => Some(Verb::Toggle),
+            _ => None,
+        }
+    }
+
+    /// The AT-SPI roles each verb acts on. Entries, spin buttons and combo
+    /// boxes are not activation targets here: upstream clicks them with a
+    /// real pointer, which this tool never does.
+    fn action_roles(verb: Verb) -> &'static [&'static str] {
+        match verb {
+            Verb::Invoke => &["push button", "button", "link", "menu item"],
+            Verb::Toggle => &["check box", "toggle button", "check menu item"],
+            Verb::Select => &["radio button", "page tab", "list item", "tree item"],
+            Verb::SetValue => &[],
+        }
+    }
+
+    const VALUE_ROLES: &[&str] = &["text", "entry", "editbar", "spin button", "slider"];
+
+    fn refusal(code: &str, message: impl Into<String>) -> ToolResult {
+        ToolResult::error(message.into()).with_structured(json!({
+            "code": code,
+            "effect": "none",
+        }))
+    }
+
+    pub struct OrcelSemanticTool {
+        pub state: Arc<ToolState>,
+    }
+
+    static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+    fn def() -> &'static ToolDef {
+        DEF.get_or_init(|| ToolDef {
+            name: TOOL_NAME.into(),
+            description: "Orcel host only. One AT-SPI action (invoke, toggle, select or \
+                set_value) on the exact element a get_window_state snapshot of this process \
+                resolved, through Action.doAction and EditableText/Value writes. It sends no \
+                pointer or key event and has no fallback."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "required": ["pid", "window_id", "element_token", "verb", "expect_role"],
+                "properties": {
+                    "pid": { "type": "integer" },
+                    "window_id": { "type": "integer" },
+                    "element_token": { "type": "string" },
+                    "verb": { "type": "string", "enum": ["invoke", "set_value", "select", "toggle"] },
+                    "expect_role": { "type": "string" },
+                    "value": { "type": "string" }
+                },
+                "additionalProperties": false
+            }),
+            read_only: false,
+            destructive: true,
+            idempotent: false,
+            open_world: false,
+        })
+    }
+
+    /// The decoded, validated call.
+    struct Call {
+        pid: u32,
+        window_id: u64,
+        verb: Verb,
+        expect_role: String,
+        value: Option<String>,
+    }
+
+    fn decode(args: &Value) -> Result<Call, ToolResult> {
+        let invalid = |message: &str| Err(refusal("invalid_request", message));
+        let Some(object) = args.as_object() else {
+            return invalid("arguments must be an object");
+        };
+        if let Some(name) = object
+            .keys()
+            .find(|name| !name.starts_with('_') && !ARGUMENTS.contains(&name.as_str()))
+        {
+            return invalid(&format!(
+                "{name} is not an argument of this tool: it takes an element, never a position or a key"
+            ));
+        }
+        let Some(pid) = object
+            .get("pid")
+            .and_then(Value::as_u64)
+            .and_then(|pid| u32::try_from(pid).ok())
+            .filter(|pid| *pid != 0)
+        else {
+            return invalid("pid is required");
+        };
+        let Some(window_id) = object
+            .get("window_id")
+            .and_then(Value::as_u64)
+            .filter(|id| *id != 0)
+        else {
+            return invalid("window_id is required");
+        };
+        let token_is_strict = object
+            .get("element_token")
+            .and_then(Value::as_str)
+            .is_some_and(|token| cua_driver_core::element_token::parse_token(token).is_some());
+        if !token_is_strict {
+            return invalid("element_token must be a token from get_window_state");
+        }
+        let Some(verb) = object
+            .get("verb")
+            .and_then(Value::as_str)
+            .and_then(parse_verb)
+        else {
+            return invalid("verb must be invoke, set_value, select or toggle");
+        };
+        let Some(expect_role) = object
+            .get("expect_role")
+            .and_then(Value::as_str)
+            .filter(|role| !role.is_empty())
+        else {
+            return invalid("expect_role is required");
+        };
+        let value = match (verb, object.get("value")) {
+            (Verb::SetValue, Some(Value::String(text))) if text.len() <= MAX_VALUE_BYTES => {
+                Some(text.clone())
+            }
+            (Verb::SetValue, _) => return invalid("set_value needs a text value within 16 KiB"),
+            (_, None) => None,
+            (_, Some(_)) => return invalid("only set_value takes a value"),
+        };
+        Ok(Call {
+            pid,
+            window_id,
+            verb,
+            expect_role: expect_role.to_owned(),
+            value,
+        })
+    }
+
+    fn normalized(role: &str) -> String {
+        role.trim().to_ascii_lowercase()
+    }
+
+    /// Maps an AT-SPI failure onto the tool's closed codes.
+    fn failure(error: &anyhow::Error) -> ToolResult {
+        if error.is::<crate::atspi::native::CachedElementGone>() {
+            return refusal("target_stale", format!("the element is gone: {error}"));
+        }
+        if crate::atspi::native::is_no_value_route(error) {
+            return refusal(
+                "capability_denied",
+                "the element exposes neither EditableText nor Value; there is no keyboard fallback",
+            );
+        }
+        ToolResult::error(format!("AT-SPI action failed: {error:#}"))
+            .with_structured(json!({ "code": "provider_unavailable", "effect": "unknown" }))
+    }
+
+    #[async_trait]
+    impl Tool for OrcelSemanticTool {
+        fn def(&self) -> &ToolDef {
+            def()
+        }
+
+        async fn invoke(&self, args: Value) -> ToolResult {
+            let call = match decode(&args) {
+                Ok(call) => call,
+                Err(refusal) => return refusal,
+            };
+            let resolved = match self.state.snapshots.resolve(call.pid as i32, &args) {
+                Ok(resolved) => resolved,
+                Err(stale) => return stale,
+            };
+            let (window_id, observed) = match resolved {
+                cua_driver_core::element_token::ResolvedElement::Element {
+                    window_id,
+                    element,
+                    ..
+                } => (window_id, element),
+                cua_driver_core::element_token::ResolvedElement::None => {
+                    return refusal("invalid_request", "an element token is required")
+                }
+            };
+            // The snapshot's window must be the window asked for.
+            if window_id != call.window_id {
+                return refusal(
+                    "target_stale",
+                    "the element belongs to another window than the one asked for",
+                );
+            }
+            let role = normalized(&observed.role);
+            if role != normalized(&call.expect_role) {
+                return refusal(
+                    "target_stale",
+                    "the snapshot's element is not the one the host listed (its role differs)",
+                );
+            }
+            if role.contains("password") {
+                return refusal(
+                    "protected_surface",
+                    "a password field takes no semantic action",
+                );
+            }
+            let roles = match call.verb {
+                Verb::SetValue => VALUE_ROLES,
+                verb => action_roles(verb),
+            };
+            if !roles.contains(&role.as_str()) {
+                return refusal(
+                    "capability_denied",
+                    format!("{role} is not a control this action acts on"),
+                );
+            }
+            if observed.object_ref.is_none() {
+                return refusal(
+                    "target_stale",
+                    "the observed element has no bus address in this snapshot",
+                );
+            }
+            let pid = call.pid;
+            let verb = call.verb;
+            let value = call.value.clone();
+            let work = tokio::task::spawn_blocking(move || -> anyhow::Result<ToolResult> {
+                // An AT-SPI action can map a dialog or open a menu that the
+                // toolkit then focuses: snapshot the focus, act, restore.
+                let (result, _guard) = crate::input::focus_guard::guarded(Some(pid), || {
+                    if verb == Verb::SetValue {
+                        let text = value.as_deref().unwrap_or_default();
+                        let Some(object_ref) = observed.object_ref.as_ref() else {
+                            return Err(crate::atspi::native::CachedElementGone(
+                                "observed element has no D-Bus address".into(),
+                            )
+                            .into());
+                        };
+                        crate::atspi::native::set_value_ref(object_ref, text)?;
+                        return Ok(ToolResult::text(
+                            "Wrote the element's value through AT-SPI (effect unverified).",
+                        )
+                        .with_structured(json!({
+                            "path": "atspi",
+                            "verb": verb.name(),
+                            "verified": false,
+                            "effect": "unverifiable",
+                        })));
+                    }
+                    let (action, declined, unacknowledged) =
+                        crate::atspi::perform_action_observed(&observed)?;
+                    if unacknowledged {
+                        return Ok(ToolResult::error(format!(
+                            "AT-SPI did not acknowledge doAction({action}) in time; its effect is unknown and it must not be repeated."
+                        ))
+                        .with_structured(json!({
+                            "code": "outcome_unknown",
+                            "effect": "unknown",
+                        })));
+                    }
+                    if declined {
+                        return Ok(ToolResult::error(format!(
+                            "the toolkit declined doAction({action})"
+                        ))
+                        .with_structured(json!({
+                            "code": "postcondition_failed",
+                            "effect": "none",
+                        })));
+                    }
+                    Ok(ToolResult::text(format!(
+                        "Sent doAction({action}) through AT-SPI (effect unverified)."
+                    ))
+                    .with_structured(json!({
+                        "path": "atspi",
+                        "verb": verb.name(),
+                        "action": action,
+                        "verified": false,
+                        "effect": "unverifiable",
+                    })))
+                })?;
+                Ok(result)
+            });
+            match tokio::time::timeout(ACTION_BUDGET, work).await {
+                Ok(Ok(Ok(result))) => result,
+                Ok(Ok(Err(error))) => failure(&error),
+                Ok(Err(error)) => ToolResult::error(format!("task error: {error}")).with_structured(
+                    json!({ "code": "provider_unavailable", "effect": "unknown" }),
+                ),
+                Err(_) => ToolResult::error(
+                    "the AT-SPI action did not complete in time; its effect is unknown and it must not be repeated.",
+                )
+                .with_structured(json!({ "code": "timeout", "effect": "unknown" })),
+            }
+        }
     }
 }

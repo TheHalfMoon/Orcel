@@ -10,7 +10,13 @@
 // ORCEL_COMPUTER_HOST_BIN on every OS. The negotiated hello fixes the host
 // identity every response must echo and the window kind bound requests carry;
 // the capability table makes the adapter refuse, before sending anything, an
-// operation the host does not deliver (the native host is observation only).
+// operation the host does not deliver.
+//
+// XP-11: the native host also delivers semantic actions, but only while an
+// approval bound to the exact target is armed (`authorize_semantic`). The
+// adapter takes the armed approval for each action, so one approval covers
+// one action, and compares the window's binding (pid, start generation and
+// nonce) with the one the approval was armed on. Windows is unchanged.
 
 use crate::{CapturedImage, NativeElement, NativeProcess, NativeWindow, UiaAdapter, UiaError};
 use orcel_contracts::FailureCode;
@@ -263,7 +269,7 @@ struct HostWindow {
     window_nonce: u64,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct HostTargetBinding {
     pid: u32,
     start_generation: u64,
@@ -677,10 +683,31 @@ mod platform {
         }
     }
 
+    /// What an approval covered, handed to the adapter by the caller that
+    /// consumed it (XP-11). The caller derives every field from the
+    /// registry's server-resolved binding, never from the request.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct ApprovedSemantic {
+        pub hwnd: u64,
+        pub runtime_id: String,
+        /// `invoke`, `set_value`, `select` or `toggle`.
+        pub verb: String,
+        /// `value_content_digest` of the text a `set_value` writes.
+        pub value_digest: Option<String>,
+    }
+
+    /// An approval armed on the binding the window had when it was granted.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct ArmedSemantic {
+        approved: ApprovedSemantic,
+        binding: HostTargetBinding,
+    }
+
     pub struct ComputerHostAdapter {
         path: PathBuf,
         session: Mutex<HostSession>,
         bindings: Mutex<BTreeMap<u64, HostTargetBinding>>,
+        armed: Mutex<Option<ArmedSemantic>>,
     }
 
     impl ComputerHostAdapter {
@@ -691,6 +718,7 @@ mod platform {
                 path,
                 session: Mutex::new(session),
                 bindings: Mutex::new(BTreeMap::new()),
+                armed: Mutex::new(None),
             })
         }
 
@@ -715,6 +743,7 @@ mod platform {
                 path,
                 session: Mutex::new(session),
                 bindings: Mutex::new(BTreeMap::new()),
+                armed: Mutex::new(None),
             })
         }
 
@@ -744,6 +773,7 @@ mod platform {
                 path: PathBuf::from("scripted-host"),
                 session: Mutex::new(session),
                 bindings: Mutex::new(BTreeMap::new()),
+                armed: Mutex::new(None),
             })
         }
 
@@ -826,6 +856,19 @@ mod platform {
             self.request(op, Some(hwnd), Some(binding), max_nodes, max_depth)
         }
 
+        fn require_native_capability(&self, op: &str) -> Result<(), UiaError> {
+            self.session
+                .lock()
+                .map_err(|_| {
+                    UiaError::new(
+                        FailureCode::ProviderUnavailable,
+                        "computer host session lock is poisoned",
+                    )
+                })?
+                .negotiated
+                .require(op)
+        }
+
         fn exact_binding(&self, hwnd: u64) -> Result<HostTargetBinding, UiaError> {
             self.bindings
                 .lock()
@@ -863,6 +906,80 @@ mod platform {
                 )
             })?;
             session.send_checked(request)
+        }
+
+        fn is_native(&self) -> Result<bool, UiaError> {
+            self.session
+                .lock()
+                .map(|session| session.negotiated.is_native())
+                .map_err(|_| {
+                    UiaError::new(
+                        FailureCode::ProviderUnavailable,
+                        "computer host session lock is poisoned",
+                    )
+                })
+        }
+
+        /// XP-11: arms the one approval that lets the next semantic action
+        /// through to a native host. Called after the approval for this exact
+        /// target was consumed. The armed approval records the window's host
+        /// binding (pid, start generation, nonce) as it is now, replaces any
+        /// earlier one, and is used up by the next action whether or not that
+        /// action succeeds. A Windows host needs no arming.
+        pub fn authorize_semantic(&self, approved: ApprovedSemantic) -> Result<(), UiaError> {
+            let binding = self.exact_binding(approved.hwnd)?;
+            let mut armed = self.armed.lock().map_err(|_| {
+                UiaError::new(
+                    FailureCode::ProviderUnavailable,
+                    "computer host approval slot is poisoned",
+                )
+            })?;
+            *armed = Some(ArmedSemantic { approved, binding });
+            Ok(())
+        }
+
+        /// Spends the armed approval against the action about to be sent.
+        fn spend_semantic(
+            &self,
+            hwnd: u64,
+            runtime_id: &str,
+            verb: &str,
+            value: Option<&str>,
+            binding: HostTargetBinding,
+        ) -> Result<(), UiaError> {
+            let armed = self
+                .armed
+                .lock()
+                .map_err(|_| {
+                    UiaError::new(
+                        FailureCode::ProviderUnavailable,
+                        "computer host approval slot is poisoned",
+                    )
+                })?
+                .take()
+                .ok_or_else(|| {
+                    UiaError::new(
+                        FailureCode::CapabilityDenied,
+                        "a semantic action on this platform needs an approval bound to its exact target",
+                    )
+                })?;
+            if armed.approved.hwnd != hwnd
+                || armed.approved.runtime_id != runtime_id
+                || armed.approved.verb != verb
+                || armed.approved.value_digest != value.map(crate::value_content_digest)
+            {
+                return Err(UiaError::new(
+                    FailureCode::CapabilityDenied,
+                    "the approval covers another window, element, action or value than this action",
+                ));
+            }
+            if armed.binding != binding {
+                return Err(UiaError::new(
+                    FailureCode::TargetStale,
+                    "the window was replaced after the approval was granted",
+                ));
+            }
+            Ok(())
         }
 
         pub fn cursor_position(&self) -> Result<DesktopCursorPosition, UiaError> {
@@ -1030,6 +1147,19 @@ mod platform {
             scroll_y: i32,
         ) -> Result<(), UiaError> {
             let binding = self.exact_binding(hwnd)?;
+            if self.is_native()? {
+                // Pixel-addressed delivery is XP-12; the host refuses it too.
+                if action == "scroll" {
+                    return Err(UiaError::new(
+                        FailureCode::CapabilityDenied,
+                        "scroll is delivered as a wheel event at a screen position on this platform; it is pixel-addressed",
+                    ));
+                }
+                // The capability table is checked first, so a host that does
+                // not deliver actions never consumes an approval.
+                self.require_native_capability("semantic_action")?;
+                self.spend_semantic(hwnd, runtime_id, action, value, binding)?;
+            }
             let mut request = HostRequest::new("semantic_action");
             request.bind_window(hwnd, binding);
             request.element_runtime_id = Some(runtime_id);
@@ -1197,7 +1327,7 @@ mod platform {
     }
 }
 
-pub use platform::ComputerHostAdapter;
+pub use platform::{ApprovedSemantic, ComputerHostAdapter};
 
 #[cfg(test)]
 mod tests {
@@ -1395,7 +1525,8 @@ mod tests {
         .to_string()
     }
 
-    /// The table `orcel-native-host` reports when observation works.
+    /// The table `orcel-native-host` reports when observation works. XP-11:
+    /// `semantic_action` is delivered along with observation.
     fn observing_table(observation: &str) -> Value {
         let mut table = serde_json::Map::new();
         for op in crate::host_protocol::V1_OPERATIONS {
@@ -1410,10 +1541,10 @@ mod tests {
                     json!({"support": "unavailable", "reason": observation})
                 }
                 // XP-07: capture follows the window list it is bound by.
-                "capture_window" if observation == "delivered" => {
+                "capture_window" | "semantic_action" if observation == "delivered" => {
                     json!({"support": "delivered", "delivery": "background"})
                 }
-                "capture_window" => {
+                "capture_window" | "semantic_action" => {
                     json!({"support": "unavailable", "reason": observation})
                 }
                 _ => json!({"support": "refused", "reason": "capability_denied"}),
@@ -1692,12 +1823,16 @@ mod tests {
             adapter
                 .execute_window_action(11, DesktopWindowAction::Focus, 0)
                 .unwrap_err(),
-            adapter.invoke_element(11, "1:1").unwrap_err(),
         ];
         for error in &refused {
             assert_eq!(error.code, FailureCode::ProviderUnavailable, "{error:?}");
             assert!(error.message.contains("does not deliver"), "{error:?}");
         }
+        // XP-11: the host delivers semantic actions, but not without an
+        // approval armed on the exact target.
+        let unapproved = adapter.invoke_element(11, "1:1").unwrap_err();
+        assert_eq!(unapproved.code, FailureCode::CapabilityDenied);
+        assert!(unapproved.message.contains("approval"), "{unapproved:?}");
         let cursor = adapter.cursor_position().unwrap();
         assert_eq!((cursor.x, cursor.y, cursor.screen_width), (5, 6, 1280));
         let sent = ops(&frames);
@@ -1931,5 +2066,259 @@ mod tests {
             .execute_raw_input(1, &DesktopInputAction::Move { x: 1, y: 1 }, 0)
             .unwrap_err();
         assert_ne!(error.code, FailureCode::InternalError);
+    }
+
+    /// A Linux desktop whose host also delivers semantic actions. `nonce`
+    /// is the window nonce the listing reports, so a test can replace the
+    /// window between the approval and the action.
+    fn acting_desktop(
+        nonce: Arc<std::sync::atomic::AtomicU64>,
+    ) -> impl FnMut(&Value) -> Option<String> + Send + 'static {
+        move |frame| match frame["op"].as_str().unwrap_or_default() {
+            "list_windows" => {
+                let mut window = window_fact(11, "Editor");
+                window["window_nonce"] =
+                    json!(nonce.load(std::sync::atomic::Ordering::SeqCst));
+                Some(native_reply(frame, json!({ "windows": [window] })))
+            }
+            "semantic_action" => Some(native_reply(
+                frame,
+                json!({"action": {
+                    "state": "completed",
+                    "action": format!("semantic_{}", frame["semantic_action"].as_str().unwrap_or_default())
+                }}),
+            )),
+            _ => linux_desktop(frame),
+        }
+    }
+
+    fn semantic_ops(frames: &Frames) -> Vec<Value> {
+        frames
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|frame| frame["op"] == "semantic_action")
+            .cloned()
+            .collect()
+    }
+
+    fn approved(hwnd: u64, runtime_id: &str, verb: &str, value: Option<&str>) -> ApprovedSemantic {
+        ApprovedSemantic {
+            hwnd,
+            runtime_id: runtime_id.to_owned(),
+            verb: verb.to_owned(),
+            value_digest: value.map(crate::value_content_digest),
+        }
+    }
+
+    /// XP-11: on a native host a semantic action is sent only while an
+    /// approval bound to that exact window, element, verb and value is armed;
+    /// the frame names the window and element and nothing pixel-addressed.
+    #[test]
+    fn native_semantic_action_is_sent_only_under_an_armed_exact_approval() {
+        let nonce = Arc::new(std::sync::atomic::AtomicU64::new(99));
+        let (adapter, frames) = scripted("linux", acting_desktop(nonce));
+        let adapter = adapter.unwrap();
+        assert_eq!(adapter.list_processes().unwrap().len(), 1);
+
+        // No approval: refused before any frame.
+        let error = adapter.invoke_element(11, "1:1").unwrap_err();
+        assert_eq!(error.code, FailureCode::CapabilityDenied);
+        assert!(semantic_ops(&frames).is_empty());
+
+        // The approval for exactly this action lets one frame through.
+        adapter
+            .authorize_semantic(approved(11, "1:1", "invoke", None))
+            .unwrap();
+        adapter.invoke_element(11, "1:1").unwrap();
+        let sent = semantic_ops(&frames);
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0]["semantic_action"], "invoke");
+        assert_eq!(sent[0]["element_runtime_id"], "1:1");
+        assert_eq!(
+            sent[0]["window"],
+            json!({"kind": "x11", "id": 11, "expected_pid": 4410, "expected_start_generation": 133702, "expected_window_nonce": 99})
+        );
+        for field in ["x", "y", "to_x", "to_y", "button", "click_count", "text", "key"] {
+            assert!(sent[0].get(field).is_none(), "{field}");
+        }
+
+        // One approval is one action.
+        let again = adapter.invoke_element(11, "1:1").unwrap_err();
+        assert_eq!(again.code, FailureCode::CapabilityDenied);
+        assert_eq!(semantic_ops(&frames).len(), 1);
+
+        // An approval for another element, verb or window does not carry
+        // over, and a refused attempt still uses the approval up.
+        for (arm, run) in [
+            (approved(11, "1:2", "invoke", None), "invoke:1:1"),
+            (approved(11, "1:1", "toggle", None), "invoke:1:1"),
+            (approved(12, "1:1", "invoke", None), "invoke:1:1"),
+        ] {
+            if arm.hwnd == 11 {
+                adapter.authorize_semantic(arm).unwrap();
+                let error = adapter.invoke_element(11, "1:1").unwrap_err();
+                assert_eq!(error.code, FailureCode::CapabilityDenied, "{run}");
+                let spent = adapter.invoke_element(11, "1:1").unwrap_err();
+                assert!(spent.message.contains("approval"), "{spent:?}");
+            } else {
+                // A window the adapter has never listed cannot be armed.
+                let error = adapter.authorize_semantic(arm).unwrap_err();
+                assert_eq!(error.code, FailureCode::TargetStale);
+            }
+        }
+        assert_eq!(semantic_ops(&frames).len(), 1);
+    }
+
+    #[test]
+    fn a_set_value_approval_covers_exactly_the_approved_text() {
+        let nonce = Arc::new(std::sync::atomic::AtomicU64::new(99));
+        let (adapter, frames) = scripted("linux", acting_desktop(nonce));
+        let adapter = adapter.unwrap();
+        adapter.list_processes().unwrap();
+        adapter
+            .authorize_semantic(approved(11, "1:1", "set_value", Some("approved text")))
+            .unwrap();
+        let error = adapter
+            .set_value_element(11, "1:1", "different text")
+            .unwrap_err();
+        assert_eq!(error.code, FailureCode::CapabilityDenied);
+        assert!(semantic_ops(&frames).is_empty());
+        adapter
+            .authorize_semantic(approved(11, "1:1", "set_value", Some("approved text")))
+            .unwrap();
+        adapter
+            .set_value_element(11, "1:1", "approved text")
+            .unwrap();
+        let sent = semantic_ops(&frames);
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0]["semantic_action"], "set_value");
+        assert_eq!(sent[0]["value"], "approved text");
+        // An approval for another verb never covers a value write, and a
+        // value approval never covers a click.
+        adapter
+            .authorize_semantic(approved(11, "1:1", "invoke", None))
+            .unwrap();
+        assert_eq!(
+            adapter
+                .set_value_element(11, "1:1", "approved text")
+                .unwrap_err()
+                .code,
+            FailureCode::CapabilityDenied
+        );
+        adapter
+            .authorize_semantic(approved(11, "1:1", "set_value", Some("approved text")))
+            .unwrap();
+        assert_eq!(
+            adapter.invoke_element(11, "1:1").unwrap_err().code,
+            FailureCode::CapabilityDenied
+        );
+        assert_eq!(semantic_ops(&frames).len(), 1);
+    }
+
+    /// The approval is armed on the window as the host bound it. If the
+    /// window is replaced (a new nonce) before the action, the action fails
+    /// closed as `TargetStale` and is not sent.
+    #[test]
+    fn a_replaced_window_voids_the_armed_approval() {
+        let nonce = Arc::new(std::sync::atomic::AtomicU64::new(99));
+        let (adapter, frames) = scripted("linux", acting_desktop(nonce.clone()));
+        let adapter = adapter.unwrap();
+        adapter.list_processes().unwrap();
+        adapter
+            .authorize_semantic(approved(11, "1:1", "toggle", None))
+            .unwrap();
+        // The window id is reused by another window; a listing sees it.
+        nonce.store(100, std::sync::atomic::Ordering::SeqCst);
+        adapter.list_processes().unwrap();
+        let error = adapter.toggle_element(11, "1:1", true).unwrap_err();
+        assert_eq!(error.code, FailureCode::TargetStale);
+        assert!(semantic_ops(&frames).is_empty());
+        // Re-arming on the new window works.
+        adapter
+            .authorize_semantic(approved(11, "1:1", "toggle", None))
+            .unwrap();
+        adapter.toggle_element(11, "1:1", true).unwrap();
+        let sent = semantic_ops(&frames);
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0]["window"]["expected_window_nonce"], 100);
+    }
+
+    /// Scroll is a wheel event at a position on these platforms: refused by
+    /// the adapter without a frame, approval or not (XP-12).
+    #[test]
+    fn native_scroll_is_refused_without_a_frame() {
+        let nonce = Arc::new(std::sync::atomic::AtomicU64::new(99));
+        let (adapter, frames) = scripted("linux", acting_desktop(nonce));
+        let adapter = adapter.unwrap();
+        adapter.list_processes().unwrap();
+        adapter
+            .authorize_semantic(approved(11, "1:1", "scroll", None))
+            .unwrap();
+        let error = adapter.scroll_element(11, "1:1", "down", 3).unwrap_err();
+        assert_eq!(error.code, FailureCode::CapabilityDenied);
+        assert!(error.message.contains("pixel-addressed"), "{error:?}");
+        assert!(semantic_ops(&frames).is_empty());
+    }
+
+    /// A native host that does not deliver actions never sees one, and the
+    /// refusal does not spend an approval.
+    #[test]
+    fn a_native_host_that_does_not_deliver_actions_gets_no_frame() {
+        let (adapter, frames) = scripted("linux", |frame| match frame["op"].as_str() {
+            Some("hello") => Some(native_hello(frame, "permission_missing")),
+            _ => Some(native_reply(frame, json!({}))),
+        });
+        let adapter = adapter.unwrap();
+        let error = adapter.invoke_element(11, "1:1").unwrap_err();
+        // Without a live binding the window is unknown before anything else.
+        assert_eq!(error.code, FailureCode::TargetStale);
+        assert_eq!(ops(&frames), vec!["hello"]);
+    }
+
+    /// Windows keeps its behavior: no approval is armed, and the action goes
+    /// to the host as before.
+    #[test]
+    fn windows_semantic_actions_need_no_arming() {
+        let windows_reply = |frame: &Value, body: Value| {
+            let mut reply = json!({
+                "id": frame["id"],
+                "ok": true,
+                "protocol": "orcel-computer-host/2",
+                "host": "orcel-windows-computer-host",
+            });
+            if let (Some(reply), Some(body)) = (reply.as_object_mut(), body.as_object()) {
+                reply.extend(body.clone());
+            }
+            reply.to_string()
+        };
+        let (adapter, frames) = scripted("windows", move |frame| match frame["op"].as_str() {
+            Some("hello") => Some(windows_reply(
+                frame,
+                json!({
+                    "platform": "windows",
+                    "backend": "uia",
+                    "capabilities": {
+                        "list_windows": {"support": "delivered"},
+                        "semantic_action": {"support": "delivered", "delivery": "background"}
+                    }
+                }),
+            )),
+            Some("list_windows") => Some(windows_reply(
+                frame,
+                json!({"windows": [window_fact(11, "Editor")]}),
+            )),
+            Some("semantic_action") => Some(windows_reply(
+                frame,
+                json!({"action": {"state": "completed", "action": "semantic_invoke"}}),
+            )),
+            _ => Some(windows_reply(frame, json!({}))),
+        });
+        let adapter = adapter.unwrap();
+        adapter.list_processes().unwrap();
+        adapter.invoke_element(11, "1.2.3").unwrap();
+        let sent = semantic_ops(&frames);
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0]["window"]["kind"], "hwnd");
     }
 }

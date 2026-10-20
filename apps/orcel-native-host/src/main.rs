@@ -14,6 +14,7 @@ mod capture;
 mod cua_adapter;
 mod map;
 mod protocol;
+mod semantic;
 mod supervisor;
 mod worker;
 

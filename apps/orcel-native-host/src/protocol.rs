@@ -9,11 +9,14 @@
 //! is refused with `invalid_request` in `/1` framing, the answer the adapter
 //! never falls back on outside Windows.
 //!
-//! The host is observation only. `hello`, `ping` and `shutdown` are answered
-//! by the supervisor; `list_windows`, `observe_window`, `cursor_position` and
-//! (XP-07) `capture_window` run in a one-shot worker. Every other operation
-//! of the closed set of 16 is refused with `capability_denied`, and the hello
-//! capability table says so up front.
+//! The host observes, captures one window (XP-07) and delivers
+//! accessibility-addressed semantic actions (XP-11). `hello`, `ping` and
+//! `shutdown` are answered by the supervisor; `list_windows`,
+//! `observe_window`, `cursor_position`, `capture_window` and
+//! `semantic_action` run in a one-shot worker. Every other operation of the
+//! closed set of 16 (`window_action` and the seven `input_*` operations,
+//! which are pixel- or key-addressed) is refused with `capability_denied`,
+//! and the hello capability table says so up front.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -41,7 +44,10 @@ pub const MAX_CAPTURE_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_CAPTURE_WIDTH: u32 = 7680;
 pub const MAX_CAPTURE_HEIGHT: u32 = 4320;
 pub const WORKER_TIMEOUT: Duration = Duration::from_millis(8000);
+/// Attempts for observation and capture. A mutation is attempted once: it is
+/// never retried, so an action cannot be delivered twice.
 pub const WORKER_ATTEMPTS: usize = 2;
+pub const MUTATION_ATTEMPTS: usize = 1;
 
 /// The closed operation set, identical to `/1`.
 pub const OPERATIONS: [&str; 16] = [
@@ -281,6 +287,14 @@ pub struct CaptureFact {
     pub pixels_b64: String,
 }
 
+/// The outcome of a delivered semantic action, as the Windows host sends it
+/// (`actionFact` in `protocol.go`): `completed` and `semantic_<verb>`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActionFact {
+    pub state: String,
+    pub action: String,
+}
+
 /// One `/2` capability table entry. Advisory: it only lets the adapter skip
 /// a call that cannot work; the kernel registry still enforces everything.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -308,6 +322,8 @@ pub struct Response {
     pub capture: Option<CaptureFact>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<CursorFact>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<ActionFact>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<HostError>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -379,6 +395,9 @@ pub struct Availability {
     pub cursor_position: Option<String>,
     /// XP-07 exact-window capture.
     pub capture_window: Option<String>,
+    /// XP-11 semantic actions. They need what observation needs: the action
+    /// worker lists the window and its tree again before it acts.
+    pub semantic_action: Option<String>,
     /// Permission facts reported informationally (macOS).
     #[serde(default)]
     pub permissions: BTreeMap<String, bool>,
@@ -392,6 +411,7 @@ impl Availability {
             observe_window: Some(reason.to_owned()),
             cursor_position: Some(reason.to_owned()),
             capture_window: Some(reason.to_owned()),
+            semantic_action: Some(reason.to_owned()),
             permissions: BTreeMap::new(),
         }
     }
@@ -402,6 +422,7 @@ impl Availability {
             "observe_window" => self.observe_window.as_deref(),
             "cursor_position" => self.cursor_position.as_deref(),
             "capture_window" => self.capture_window.as_deref(),
+            "semantic_action" => self.semantic_action.as_deref(),
             _ => Some(code::CAPABILITY_DENIED),
         }
     }
@@ -416,9 +437,11 @@ fn entry(support: &str, reason: Option<&str>) -> CapabilityFact {
 }
 
 /// The `/2` capability table: exactly one entry for each of the 16
-/// operations. Observation and capture follow `availability`; every mutation
-/// is refused, because this host is read-only. Capture is delivered in the
-/// background: it never raises, focuses, restores or moves the window.
+/// operations. Observation, capture and semantic actions follow
+/// `availability`; `window_action` and the `input_*` operations are refused,
+/// because they are pixel- or key-addressed (XP-12). Capture and semantic
+/// actions are delivered in the background: they never raise, focus, restore
+/// or move the window.
 pub fn capability_table(availability: &Availability) -> BTreeMap<String, CapabilityFact> {
     let mut table = BTreeMap::new();
     for op in OPERATIONS {
@@ -430,7 +453,7 @@ pub fn capability_table(availability: &Availability) -> BTreeMap<String, Capabil
                     Some(reason) => entry("unavailable", Some(reason)),
                 }
             }
-            "capture_window" => match availability.refusal_for(op) {
+            "capture_window" | "semantic_action" => match availability.refusal_for(op) {
                 None => CapabilityFact {
                     support: "delivered".to_owned(),
                     delivery: Some("background".to_owned()),
@@ -592,12 +615,59 @@ fn validate(request: &Request, platform: HostPlatform) -> Result<(), Refusal> {
             | "observe_window"
             | "cursor_position"
             | "capture_window"
+            | "semantic_action"
     ) {
         return Err(refuse(
             id,
             code::CAPABILITY_DENIED,
-            "operation is not served by the observation-only native host",
+            "operation is pixel- or key-addressed and is not served by the native host (XP-12)",
         ));
+    }
+    if request.op == "semantic_action" {
+        validate_semantic(request)?;
+    }
+    Ok(())
+}
+
+/// XP-11: a semantic action names its target by window and element and by
+/// nothing else. Any field that could carry a point, a key, text to type or a
+/// scroll amount is refused before native work, so the frame cannot be
+/// widened into pixel-addressed input.
+fn validate_semantic(request: &Request) -> Result<(), Refusal> {
+    let id = request.id;
+    let invalid = |message: &str| Err(refuse(id, code::INVALID_REQUEST, message));
+    let Some(name) = request.semantic_action.as_deref() else {
+        return invalid("semantic_action needs a verb");
+    };
+    let verb = crate::semantic::parse_verb(name).map_err(|refusal| {
+        Refusal(Box::new(Response::failure(id, refusal.code, refusal.message)))
+    })?;
+    if request
+        .element_runtime_id
+        .as_deref()
+        .is_none_or(str::is_empty)
+    {
+        return invalid("semantic_action needs the element runtime id");
+    }
+    let addressed_by_position_or_key = request.x.is_some()
+        || request.y.is_some()
+        || request.to_x.is_some()
+        || request.to_y.is_some()
+        || request.button.is_some()
+        || request.click_count.is_some()
+        || request.scroll_x.is_some()
+        || request.scroll_y.is_some()
+        || request.text.is_some()
+        || request.key.is_some()
+        || request.expected_last_input_tick.is_some()
+        || request.window_action.is_some()
+        || request.max_nodes.is_some()
+        || request.max_depth.is_some();
+    if addressed_by_position_or_key {
+        return invalid("semantic_action names its target by window and element only");
+    }
+    if verb != crate::semantic::Verb::SetValue && request.value.is_some() {
+        return invalid("only set_value carries a value");
     }
     Ok(())
 }
@@ -638,6 +708,7 @@ mod tests {
             observe_window: None,
             cursor_position: None,
             capture_window: None,
+            semantic_action: None,
             permissions: BTreeMap::new(),
         };
         let response = hello(1, MACOS, &available);
@@ -652,15 +723,27 @@ mod tests {
             let support = table[op].support.as_str();
             let expected = match op {
                 "hello" | "ping" | "shutdown" | "list_windows" | "observe_window"
-                | "cursor_position" | "capture_window" => "delivered",
+                | "cursor_position" | "capture_window" | "semantic_action" => "delivered",
                 _ => "refused",
             };
             assert_eq!(support, expected, "{op}");
         }
-        assert_eq!(
-            table["capture_window"].delivery.as_deref(),
-            Some("background")
-        );
+        for op in ["capture_window", "semantic_action"] {
+            assert_eq!(table[op].delivery.as_deref(), Some("background"), "{op}");
+        }
+        // Pixel- and key-addressed operations stay refused, with the reason.
+        for op in [
+            "window_action",
+            "input_move",
+            "input_click",
+            "input_drag",
+            "input_scroll",
+            "input_type_text",
+            "input_key",
+            "input_hotkey",
+        ] {
+            assert_eq!(table[op].reason.as_deref(), Some("capability_denied"), "{op}");
+        }
     }
 
     #[test]
@@ -668,7 +751,12 @@ mod tests {
         let mut availability = Availability::none(code::PERMISSION_MISSING);
         availability.cursor_position = None;
         let table = capability_table(&availability);
-        for op in ["list_windows", "observe_window", "capture_window"] {
+        for op in [
+            "list_windows",
+            "observe_window",
+            "capture_window",
+            "semantic_action",
+        ] {
             assert_eq!(table[op].support, "unavailable");
             assert_eq!(table[op].reason.as_deref(), Some("permission_missing"));
             assert_eq!(table[op].delivery, None);
@@ -684,6 +772,81 @@ mod tests {
         );
         let mutation = r#"{"id":4,"protocol":"orcel-computer-host/2","op":"input_click","x":1,"y":1,"button":"left","click_count":1,"expected_last_input_tick":1,"window":{"kind":"x11","id":9,"expected_pid":1,"expected_start_generation":2,"expected_window_nonce":3}}"#;
         assert_eq!(refusal_code(mutation), "capability_denied");
+    }
+
+    const BOUND: &str = r#""window":{"kind":"x11","id":9,"expected_pid":1,"expected_start_generation":2,"expected_window_nonce":3}"#;
+
+    fn semantic(fields: &str) -> String {
+        format!(r#"{{"id":6,"protocol":"orcel-computer-host/2","op":"semantic_action",{fields},{BOUND}}}"#)
+    }
+
+    /// XP-11: a semantic action names its window and element and nothing
+    /// else. Every position, key, text and scroll field is refused before
+    /// native work, so it cannot be widened into pixel-addressed input.
+    #[test]
+    fn semantic_action_names_window_and_element_only() {
+        for (verb, extra) in [
+            ("invoke", ""),
+            ("toggle", ""),
+            ("select", ""),
+            ("set_value", r#","value":"hello""#),
+        ] {
+            let line = semantic(&format!(
+                r#""semantic_action":"{verb}","element_runtime_id":"e3-0011223344556677"{extra}"#
+            ));
+            let request = decode(&line).unwrap();
+            assert_eq!(request.semantic_action.as_deref(), Some(verb));
+        }
+        for extra in [
+            r#","x":5"#,
+            r#","y":5"#,
+            r#","to_x":5"#,
+            r#","button":"left""#,
+            r#","click_count":1"#,
+            r#","scroll_x":0"#,
+            r#","scroll_y":-3"#,
+            r#","text":"typed""#,
+            r#","key":"enter""#,
+            r#","expected_last_input_tick":0"#,
+            r#","window_action":"close""#,
+            r#","max_nodes":10"#,
+            r#","value":"not a set_value""#,
+        ] {
+            let line = semantic(&format!(
+                r#""semantic_action":"invoke","element_runtime_id":"e3-0011223344556677"{extra}"#
+            ));
+            assert_eq!(refusal_code(&line), "invalid_request", "{extra}");
+        }
+        // No verb, no element, an unknown verb or an unbound frame.
+        assert_eq!(
+            refusal_code(&semantic(r#""element_runtime_id":"e3-0011223344556677""#)),
+            "invalid_request"
+        );
+        assert_eq!(
+            refusal_code(&semantic(r#""semantic_action":"invoke""#)),
+            "invalid_request"
+        );
+        assert_eq!(
+            refusal_code(&semantic(
+                r#""semantic_action":"invoke","element_runtime_id":"""#
+            )),
+            "invalid_request"
+        );
+        assert_eq!(
+            refusal_code(&semantic(
+                r#""semantic_action":"click","element_runtime_id":"e3-0011223344556677""#
+            )),
+            "invalid_request"
+        );
+        let unbound = r#"{"id":6,"protocol":"orcel-computer-host/2","op":"semantic_action","semantic_action":"invoke","element_runtime_id":"e3-00"}"#;
+        assert_eq!(refusal_code(unbound), "invalid_request");
+        // Scroll is a protocol verb, delivered as a wheel event: refused.
+        assert_eq!(
+            refusal_code(&semantic(
+                r#""semantic_action":"scroll","element_runtime_id":"e3-0011223344556677""#
+            )),
+            "capability_denied"
+        );
     }
 
     /// XP-07: capture names one exact window and nothing else. There is no

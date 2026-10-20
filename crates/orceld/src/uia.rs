@@ -111,6 +111,39 @@ fn computer_host() -> Result<&'static ComputerHostAdapter, ProviderError> {
     })
 }
 
+/// XP-11: on a macOS or Linux host the adapter delivers a semantic action only
+/// while the approval just consumed is armed on the exact target. The
+/// identity comes from the registry's server-resolved binding, never from the
+/// request. A Windows host is unchanged and is not armed.
+#[cfg(not(windows))]
+fn arm_semantic(
+    adapter: &ComputerHostAdapter,
+    hwnd: u64,
+    runtime_id: &str,
+    verb: &str,
+    value_digest: Option<&str>,
+) -> Result<(), ProviderError> {
+    adapter
+        .authorize_semantic(orcel_provider_uia::ApprovedSemantic {
+            hwnd,
+            runtime_id: runtime_id.to_owned(),
+            verb: verb.to_owned(),
+            value_digest: value_digest.map(str::to_owned),
+        })
+        .map_err(|error| ProviderError::new(error.code, error.message))
+}
+
+#[cfg(windows)]
+fn arm_semantic(
+    _adapter: &ComputerHostAdapter,
+    _hwnd: u64,
+    _runtime_id: &str,
+    _verb: &str,
+    _value_digest: Option<&str>,
+) -> Result<(), ProviderError> {
+    Ok(())
+}
+
 fn require_full_user_desktop() -> Result<(), ProviderError> {
     full_control_store::check_current_desktop_input()
         .map(|_| ())
@@ -739,6 +772,7 @@ fn invoke_with_approval(
         .map_err(|error| ProviderError::new(error.code, error.message))?;
     require_full_user_desktop()?;
     let adapter = computer_host()?;
+    arm_semantic(adapter, binding.hwnd, &binding.runtime_id, "invoke", None)?;
     let mut guard = locked_registry()?;
     let evidence = guard
         .invoke_element(
@@ -851,6 +885,13 @@ fn set_value_with_approval(
         .map_err(|error| ProviderError::new(error.code, error.message))?;
     require_full_user_desktop()?;
     let adapter = computer_host()?;
+    arm_semantic(
+        adapter,
+        binding.hwnd,
+        &binding.runtime_id,
+        "set_value",
+        Some(&binding.value_digest),
+    )?;
     let mut guard = locked_registry()?;
     let evidence = guard
         .set_value_element(
@@ -956,6 +997,7 @@ fn select_with_approval(
         .map_err(|error| ProviderError::new(error.code, error.message))?;
     require_full_user_desktop()?;
     let adapter = computer_host()?;
+    arm_semantic(adapter, binding.hwnd, &binding.runtime_id, "select", None)?;
     let mut guard = locked_registry()?;
     let evidence = guard
         .select_element(
@@ -1550,6 +1592,7 @@ fn toggle_with_approval(
         .map_err(|error| ProviderError::new(error.code, error.message))?;
     require_full_user_desktop()?;
     let adapter = computer_host()?;
+    arm_semantic(adapter, binding.hwnd, &binding.runtime_id, "toggle", None)?;
     let mut guard = locked_registry()?;
     let evidence = guard
         .toggle_element(
