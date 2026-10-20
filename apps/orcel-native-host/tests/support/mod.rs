@@ -7,9 +7,10 @@
 
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::mpsc::{channel, Receiver};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The environment orceld passes the host on this OS
 /// (`orcel-provider-uia/src/computer_host.rs`, `HOST_ENV`).
@@ -175,4 +176,88 @@ pub fn flatten(elements: &Value) -> Vec<Value> {
 
 pub fn error_code(reply: &Value) -> &str {
     reply["error"]["code"].as_str().unwrap_or_default()
+}
+
+// ---------------------------------------------------------------------------
+// The XP-12 input probe: an application that journals what it receives.
+
+pub struct Probe {
+    pub child: Child,
+    pub state: PathBuf,
+    pub flag: PathBuf,
+    dir: PathBuf,
+}
+
+impl Drop for Probe {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+fn probe_scratch(nonce: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("orcel-xp12-{nonce}"));
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    dir
+}
+
+pub fn spawn_probe(nonce: &str) -> Probe {
+    let fixtures = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
+    let dir = probe_scratch(nonce);
+    let state = dir.join("state.json");
+    let flag = dir.join("cover.flag");
+    let mut command = if cfg!(target_os = "macos") {
+        let binary = dir.join("appkit_input_probe");
+        let built = Command::new("swiftc")
+            .args(["-O", &format!("{fixtures}/appkit_input_probe.swift"), "-o"])
+            .arg(&binary)
+            .status()
+            .expect("swiftc runs");
+        assert!(built.success(), "the AppKit probe did not compile");
+        Command::new(binary)
+    } else {
+        let mut command = Command::new("python3");
+        command.arg(format!("{fixtures}/gtk3_input_probe.py"));
+        command.env("GDK_BACKEND", "x11");
+        command
+    };
+    let child = command
+        .arg(nonce)
+        .arg(&state)
+        .arg(&flag)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("the probe starts");
+    Probe {
+        child,
+        state,
+        flag,
+        dir,
+    }
+}
+
+pub fn read_state(path: &Path) -> Option<Value> {
+    serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
+}
+
+pub fn wait_for(path: &Path, what: &str, ready: impl Fn(&Value) -> bool) -> Value {
+    let deadline = Instant::now() + Duration::from_secs(45);
+    loop {
+        if let Some(state) = read_state(path) {
+            if ready(&state) {
+                return state;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{what}: the probe never got there"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+pub fn events(state: &Value) -> Vec<Value> {
+    state["events"].as_array().cloned().unwrap_or_default()
 }

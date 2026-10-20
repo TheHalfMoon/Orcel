@@ -3,8 +3,9 @@
 //! The one-shot sacrificial worker (`orcel-native-host --worker`).
 //!
 //! It reads one request the supervisor already validated, validates it
-//! again, runs exactly one observation, capture or semantic action through
-//! [`crate::cua_adapter`], writes one response line and exits. All AX,
+//! again, runs exactly one observation, capture, semantic action or raw input
+//! sequence through [`crate::cua_adapter`], writes one response line and
+//! exits. All AX,
 //! AT-SPI, ScreenCaptureKit and X11 work happens here, so a hang or crash in
 //! those stacks costs one worker, never the supervisor. The worker never
 //! retries and never falls back to another route.
@@ -13,7 +14,8 @@
 //! permission and session probes run here, never in the supervisor.
 
 use crate::capture::{self, FrameRefusal};
-use crate::cua_adapter::{CuaCall, CuaFailure, CuaRuntime, SemanticCall};
+use crate::cua_adapter::{CuaCall, CuaFailure, CuaRuntime, InputCall, SemanticCall};
+use crate::input;
 use crate::map::{self, Omission, ProcessIdentity};
 use crate::protocol::{
     self, code, Availability, CursorFact, HostPlatform, ProcessFact, Request, Response,
@@ -27,6 +29,10 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
 use std::process::ExitCode;
+
+/// How long a delivered input unit gets to be processed before the
+/// human-input baseline is read again.
+const INPUT_SETTLE: std::time::Duration = std::time::Duration::from_millis(40);
 
 /// Longest refusal message the worker sends.
 const MAX_MESSAGE_CHARS: usize = 512;
@@ -95,6 +101,12 @@ async fn answer(request: &Request, platform: HostPlatform) -> Response {
             ("semantic_action", protocol::MACOS) => {
                 "; actions need Accessibility and Screen Recording, and the host never prompts"
             }
+            (op, protocol::MACOS) if input::is_input_operation(op) => {
+                "; raw input needs Accessibility, Screen Recording and the direct-capture consent, and the host never prompts"
+            }
+            (op, protocol::LINUX_WAYLAND) if input::is_input_operation(op) => {
+                "; Wayland offers this host no non-interactive way to target one window"
+            }
             _ => "",
         };
         return Response::failure(
@@ -111,6 +123,7 @@ async fn answer(request: &Request, platform: HostPlatform) -> Response {
         "observe_window" => observe_window(&runtime, request, platform).await,
         "capture_window" => capture_window(&runtime, request, platform).await,
         "semantic_action" => semantic_action(&runtime, request, platform).await,
+        op if input::is_input_operation(op) => input_action(&runtime, request, platform).await,
         "cursor_position" => cursor_position(&runtime, request).await,
         _ => Response::failure(
             request.id,
@@ -139,6 +152,8 @@ async fn probe(runtime: &CuaRuntime, platform: HostPlatform) -> Availability {
                         .insert("direct_capture_consent".to_owned(), consent.is_ok());
                     if consent.is_err() {
                         availability.capture_window = Some(code::PERMISSION_MISSING.to_owned());
+                        // Input scales its points by what a capture measures.
+                        availability.input = Some(code::PERMISSION_MISSING.to_owned());
                     }
                 }
                 availability
@@ -171,7 +186,10 @@ pub fn macos_availability(status: &Value) -> Availability {
         observe_window: observation.clone(),
         cursor_position: None,
         capture_window: observation.clone(),
-        semantic_action: observation,
+        semantic_action: observation.clone(),
+        // Raw input needs what observation needs: it lists the window again
+        // before each unit, and scales points by a capture of the window.
+        input: observation,
         permissions,
     }
 }
@@ -193,6 +211,8 @@ pub struct LinuxSession {
     pub display: bool,
     pub wayland_display: bool,
     pub session_bus: bool,
+    /// The X server answers the idle query the human-input binding reads.
+    pub input_clock: bool,
 }
 
 impl LinuxSession {
@@ -202,6 +222,7 @@ impl LinuxSession {
             display: set("DISPLAY"),
             wayland_display: set("WAYLAND_DISPLAY"),
             session_bus: set("DBUS_SESSION_BUS_ADDRESS"),
+            input_clock: set("DISPLAY") && input::tick::current().is_ok(),
         }
     }
 }
@@ -224,6 +245,12 @@ pub fn linux_availability(platform: HostPlatform, session: &LinuxSession) -> Ava
     }
     let tree = (!session.session_bus).then(|| code::PROVIDER_UNAVAILABLE.to_owned());
     let wayland = platform == protocol::LINUX_WAYLAND;
+    // Raw input: X11 only. A Wayland client cannot read the human-input clock
+    // or address one window non-interactively; the portal and libei routes
+    // ask the user, which this host never does.
+    let input = tree.clone().or_else(|| {
+        (wayland || !session.input_clock).then(|| code::PROVIDER_UNAVAILABLE.to_owned())
+    });
     Availability {
         list_windows: tree.clone(),
         observe_window: tree.clone(),
@@ -235,6 +262,7 @@ pub fn linux_availability(platform: HostPlatform, session: &LinuxSession) -> Ava
         },
         // AT-SPI actions need the tree and a window id, as observation does.
         semantic_action: tree,
+        input,
         permissions: BTreeMap::new(),
     }
 }
@@ -799,6 +827,310 @@ async fn semantic_action(
     }
 }
 
+/// XP-12: why a raw input unit is not delivered now, judged on the live facts
+/// of the bound window immediately before the unit. Everything the approval
+/// bound is proved again here, because a unit can follow its predecessor by
+/// seconds:
+///
+/// - the window binding and owner identity (`bound_window`: same process
+///   instance, same window id, same application, so the nonce matches);
+/// - not a protected surface (owner-based, as in XP-07 and XP-11);
+/// - on screen, not minimized, on the current Space;
+/// - still the frame the points were checked against (a window that moved or
+///   resized would turn the same relative point into another place);
+/// - not covered: the XP-07 X11 exposure check, or on macOS the stacking
+///   order of every window at each point the unit touches;
+/// - the person has not touched the keyboard or pointer since the kernel
+///   read the tick (`cancelled`).
+async fn input_gate(
+    runtime: &CuaRuntime,
+    request: &Request,
+    platform: HostPlatform,
+    planned: Option<&input::Frame>,
+    points: &[(i64, i64)],
+    expected_tick: u32,
+) -> Result<BoundWindow, Response> {
+    let id = request.id;
+    let refuse = |code: &str, message: &str| Response::failure(id, code, message.to_owned());
+    let bound = bound_window(runtime, request, platform).await?;
+    let window = &bound.window;
+    let class = format!("{} {}", window.app_name, bound.process.fact.exe_name);
+    if capture::is_protected_window(&window.title, &class) {
+        return Err(refuse(
+            code::PROTECTED_SURFACE,
+            "window is a protected surface; no input is delivered to it",
+        ));
+    }
+    if !window.is_on_screen
+        || window.minimized == Some(true)
+        || window.on_current_space == Some(false)
+    {
+        return Err(refuse(
+            code::PROVIDER_UNAVAILABLE,
+            "window is minimized, hidden or on another Space; the host never restores, raises or focuses it",
+        ));
+    }
+    let live = input::Frame::of(window);
+    if planned.is_some_and(|planned| !planned.matches(&live)) {
+        return Err(refuse(
+            code::TARGET_STALE,
+            "the window moved or resized since the input was planned",
+        ));
+    }
+    if let Some(refusal) = exposure_refusal(id, platform, bound.binding.id) {
+        return Err(refusal);
+    }
+    if platform == protocol::MACOS {
+        let listed = match live_windows(runtime, None).await {
+            Ok(listed) => listed,
+            Err(failure) => return Err(cua_unavailable(id, &failure)),
+        };
+        for (x, y) in points {
+            let (sx, sy) = live.screen_point(*x, *y);
+            match input::occluded_at(window, &listed.windows, sx, sy) {
+                input::Occlusion::Clear => {}
+                input::Occlusion::Covered => {
+                    return Err(refuse(
+                        code::PROVIDER_UNAVAILABLE,
+                        "window_obscured: another window covers the point, and the host never raises it",
+                    ))
+                }
+                input::Occlusion::Unknown => {
+                    return Err(refuse(
+                        code::PROVIDER_UNAVAILABLE,
+                        "the stacking order cannot prove the point is clear of other windows",
+                    ))
+                }
+            }
+        }
+    }
+    // The owner must still be the instance the binding names, immediately
+    // before the unit.
+    match orcel_platform::process::start_generation(bound.binding.pid) {
+        Ok(now) if now.generation == bound.binding.start_generation => {}
+        _ => {
+            return Err(refuse(
+                code::TARGET_STALE,
+                "window owner changed before the input",
+            ))
+        }
+    }
+    match input::tick::current() {
+        Ok(now) if input::tick_is_fresh(expected_tick, now) => {}
+        Ok(_) => {
+            return Err(refuse(
+                code::CANCELLED,
+                "human input arrived after the bound tick, so the input was not sent",
+            ))
+        }
+        Err(message) => {
+            return Err(refuse(
+                code::PROVIDER_UNAVAILABLE,
+                &bounded_message(&format!("the human-input clock is unreadable: {message}")),
+            ))
+        }
+    }
+    Ok(bound)
+}
+
+/// Physical window pixels per point: what a capture of the window measures
+/// on macOS, where a Retina window captures at twice its point size; 1 on X11.
+async fn input_scale(
+    runtime: &CuaRuntime,
+    platform: HostPlatform,
+    window: &cua_driver_contract::WindowInfo,
+) -> Result<f64, String> {
+    if platform != protocol::MACOS {
+        return Ok(1.0);
+    }
+    let png = runtime
+        .capture_window(window.window_id)
+        .map_err(|failure| bounded_message(&failure.message))?;
+    let decoded = image::load_from_memory(&png)
+        .map_err(|error| bounded_message(&format!("the window capture is unreadable: {error}")))?;
+    input::backing_scale(
+        window.bounds.width,
+        window.bounds.height,
+        decoded.width(),
+        decoded.height(),
+    )
+    .ok_or_else(|| "the window capture and its frame disagree on the scale".to_owned())
+}
+
+/// The vendored call for one planned unit. Points become physical pixels.
+fn input_call(unit: &input::Unit, pid: u32, window_id: u64, scale: f64) -> InputCall {
+    let px = |value: i64| value as f64 * scale;
+    match unit {
+        input::Unit::Click {
+            x,
+            y,
+            button,
+            count,
+        } => InputCall::Click {
+            pid,
+            window_id,
+            x: px(*x),
+            y: px(*y),
+            right: *button == input::Button::Right,
+            count: *count,
+        },
+        input::Unit::Drag { x, y, to_x, to_y } => InputCall::Drag {
+            pid,
+            window_id,
+            from: (px(*x), px(*y)),
+            to: (px(*to_x), px(*to_y)),
+        },
+        input::Unit::Scroll {
+            x,
+            y,
+            direction,
+            lines,
+        } => InputCall::Scroll {
+            pid,
+            window_id,
+            x: px(*x),
+            y: px(*y),
+            direction,
+            lines: *lines,
+        },
+        input::Unit::Text(text) => InputCall::TypeText {
+            pid,
+            window_id,
+            text: text.clone(),
+        },
+        input::Unit::Key(key) => InputCall::PressKey {
+            pid,
+            window_id,
+            key,
+        },
+    }
+}
+
+/// XP-12: bounded raw input to one exact window.
+///
+/// Nothing the kernel said is taken on trust. In this worker, in this order:
+/// the window binding and owner identity are proved (`input_gate`); the frame
+/// shape and every point are judged against the window's live frame (a point
+/// outside it is refused, never clamped); the window's observed tree must show
+/// no secure text field (a click may focus one and typed text then lands in
+/// it); the backing scale is measured; and then each delivery unit, a click,
+/// a drag, a scroll, a key or at most eight typed characters, is preceded by
+/// the whole gate again and delivered through the vendored background route
+/// (`InputCall`: exact `pid` and `window_id`, background delivery, no
+/// foreground, no raise). The host never retries (the supervisor runs this
+/// worker once). A unit refused after an earlier one was delivered is
+/// `outcome_unknown`: part of the input landed and the rest did not.
+async fn input_action(runtime: &CuaRuntime, request: &Request, platform: HostPlatform) -> Response {
+    let id = request.id;
+    let refuse = |code: &str, message: &str| Response::failure(id, code, message.to_owned());
+    let Some(expected_tick) = request.expected_last_input_tick else {
+        return refuse(
+            code::INVALID_REQUEST,
+            "raw input needs the human-input tick",
+        );
+    };
+    let first = match input_gate(runtime, request, platform, None, &[], expected_tick).await {
+        Ok(first) => first,
+        Err(refusal) => return refusal,
+    };
+    let frame = input::Frame::of(&first.window);
+    let plan = match input::plan(request, &frame) {
+        Ok(plan) => plan,
+        Err(refusal) => return refuse(refusal.code, &refusal.message),
+    };
+    let observed = runtime
+        .call(&CuaCall::observe(
+            first.binding.pid,
+            first.binding.id,
+            protocol::MAX_TREE_NODES as u32,
+            protocol::MAX_TREE_DEPTH as u32,
+        ))
+        .await;
+    let elements: Vec<WindowElement> = match observed {
+        Ok(state) => match state.get("elements").cloned() {
+            None => Vec::new(),
+            Some(elements) => match serde_json::from_value(elements) {
+                Ok(elements) => elements,
+                Err(error) => {
+                    return refuse(
+                        code::PROVIDER_UNAVAILABLE,
+                        &bounded_message(&format!(
+                            "the Cua element list did not match its contract: {error}"
+                        )),
+                    )
+                }
+            },
+        },
+        Err(failure) if is_stale(&failure) => {
+            return refuse(code::TARGET_STALE, "window closed while it was observed")
+        }
+        Err(failure) => return cua_unavailable(id, &failure),
+    };
+    if input::shows_secure_field(&elements) {
+        return refuse(
+            code::PROTECTED_SURFACE,
+            "the window shows a password or secure field; no input is delivered to it",
+        );
+    }
+    let scale = match input_scale(runtime, platform, &first.window).await {
+        Ok(scale) => scale,
+        Err(message) => return refuse(code::PROVIDER_UNAVAILABLE, &message),
+    };
+    let total = plan.units.len();
+    // The tick the person is held to. Delivering a unit moves the X server's
+    // idle clock (the host's own events count as input there), so after each
+    // unit the baseline is read again once the event has been processed. Only
+    // a touch of the keyboard or pointer after that read, before the next
+    // unit's gate, cancels the rest.
+    let mut baseline = expected_tick;
+    for (index, unit) in plan.units.iter().enumerate() {
+        let mut points = unit.points();
+        if points.is_empty() {
+            points.push(((frame.width / 2.0) as i64, (frame.height / 2.0) as i64));
+        }
+        let bound =
+            match input_gate(runtime, request, platform, Some(&frame), &points, baseline).await {
+                Ok(bound) => bound,
+                Err(refusal) if index == 0 => return refusal,
+                Err(refusal) => return partial_input(id, index, total, refusal),
+            };
+        let call = CuaCall::Input(input_call(unit, bound.binding.pid, bound.binding.id, scale));
+        if let Err(failure) = runtime.call(&call).await {
+            if index == 0 {
+                return action_failure(id, &failure);
+            }
+            return partial_input(id, index, total, action_failure(id, &failure));
+        }
+        if index + 1 < total {
+            tokio::time::sleep(INPUT_SETTLE).await;
+            if let Ok(now) = input::tick::current() {
+                baseline = now;
+            }
+        }
+    }
+    let mut response = Response::success(id);
+    response.action = Some(protocol::ActionFact {
+        state: "completed".to_owned(),
+        action: request.op.clone(),
+    });
+    response
+}
+
+/// The answer when a later delivery unit was refused after earlier ones landed.
+fn partial_input(id: u64, delivered: usize, total: usize, cause: Response) -> Response {
+    let why = cause
+        .error
+        .map(|error| error.message)
+        .unwrap_or_else(|| "a later unit was not delivered".to_owned());
+    Response::failure(
+        id,
+        code::OUTCOME_UNKNOWN,
+        bounded_message(&format!(
+            "{delivered} of {total} input units were delivered before the rest was refused ({why}); do not repeat the input"
+        )),
+    )
+}
+
 /// X11 capture reads the screen's copy of the window, so the window must be
 /// wholly its own on screen (see `capture::x11`). `None` lets it through.
 #[cfg(target_os = "linux")]
@@ -895,7 +1227,9 @@ async fn cursor_position(runtime: &CuaRuntime, request: &Request) -> Response {
         y,
         screen_width,
         screen_height,
-        last_input_tick: 0,
+        // The human-input tick raw input is bound to; 0 when unreadable, a
+        // value no live tick is within tolerance of.
+        last_input_tick: input::tick::current().unwrap_or(0),
     });
     response
 }
@@ -934,6 +1268,11 @@ mod tests {
             missing.semantic_action.as_deref(),
             Some("permission_missing")
         );
+        assert_eq!(missing.input.as_deref(), Some("permission_missing"));
+        assert_eq!(
+            no_screen_recording.input.as_deref(),
+            Some("permission_missing")
+        );
         assert_eq!(
             no_screen_recording.semantic_action.as_deref(),
             Some("permission_missing")
@@ -942,6 +1281,7 @@ mod tests {
         assert_eq!(granted.list_windows, None);
         assert_eq!(granted.observe_window, None);
         assert_eq!(granted.semantic_action, None);
+        assert_eq!(granted.input, None);
         // The direct-capture consent is read separately, in the probe.
         assert_eq!(granted.capture_window, None);
         // A malformed answer never counts as granted.
@@ -977,12 +1317,24 @@ mod tests {
             display: true,
             wayland_display: true,
             session_bus: true,
+            input_clock: true,
         };
         let x11 = linux_availability(protocol::LINUX_X11, &full);
         assert_eq!(x11.list_windows, None);
         assert_eq!(x11.cursor_position, None);
         assert_eq!(x11.capture_window, None);
         assert_eq!(x11.semantic_action, None);
+        assert_eq!(x11.input, None);
+        // X11 without a readable human-input clock serves no raw input.
+        let no_clock = linux_availability(
+            protocol::LINUX_X11,
+            &LinuxSession {
+                input_clock: false,
+                ..full.clone()
+            },
+        );
+        assert_eq!(no_clock.input.as_deref(), Some("provider_unavailable"));
+        assert_eq!(no_clock.semantic_action, None);
         let wayland = linux_availability(protocol::LINUX_WAYLAND, &full);
         assert_eq!(wayland.list_windows, None);
         // Wayland has no exact-window capture for this host, but AT-SPI
@@ -992,6 +1344,8 @@ mod tests {
             Some("provider_unavailable")
         );
         assert_eq!(wayland.semantic_action, None);
+        // Wayland: unavailable, with no non-interactive path to a window.
+        assert_eq!(wayland.input.as_deref(), Some("provider_unavailable"));
         assert_eq!(
             wayland.cursor_position.as_deref(),
             Some("provider_unavailable")
@@ -1003,6 +1357,7 @@ mod tests {
                 display: true,
                 wayland_display: false,
                 session_bus: true,
+                input_clock: true,
             },
         );
         assert_eq!(xwayland_only, Availability::none("provider_unavailable"));

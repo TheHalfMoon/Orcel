@@ -17,9 +17,12 @@
 //! reported as background-only; a background cell is measured where the
 //! page's controls are observable and an accessibility action can cause the
 //! effect, and otherwise sends its frame and requires the exact refusal.
-//! The 20 `px` cells wait for XP-12 (raw input): each is a typed skip that
-//! still sends its frame and requires the exact refusal with every oracle
-//! unchanged.
+//! The 20 `px` cells (XP-12) need a point inside the page's control, and the
+//! host reports no element geometry, so the page cannot be aimed at: the
+//! hotkey cells, which the host refuses by policy, send their frame and
+//! require the exact refusal with every oracle unchanged; the others are
+//! typed skips (`no-geometry`) that send nothing, and raw input is measured
+//! on the input probe instead (`conformance_native.rs`, `live_input.rs`).
 
 mod conformance;
 mod support;
@@ -426,16 +429,24 @@ fn run_host(spec: &WebHost, report: &mut Report, cdp_port: u16) {
             );
         }
     }
-    // XP-12: the pixel cells are typed skips; their frames are refused and
-    // move no oracle.
-    conformance::pending_input_cells(
+    // XP-12: a hotkey is refused by policy (sent, refused, no oracle moves);
+    // every other pixel cell needs geometry the page does not give the host.
+    let (policy, aimed): (Vec<_>, Vec<_>) = pixel_cells
+        .into_iter()
+        .partition(|cell| conformance::POLICY_REFUSED_OPS.contains(&cell.op));
+    conformance::refused_input_cells(
         &mut host,
         report,
         &prefix,
         &observed.reference,
-        &pixel_cells,
+        &policy,
+        "capability_denied",
+        "refused",
         || journal.settled(),
     );
+    for cell in aimed {
+        report.no_geometry(format!("{prefix}/{}", cell.case));
+    }
     // The page holds exactly what the measured actions did and nothing else.
     let end = journal.settled();
     let text = |id: &str| conformance::journal_text(&end, id).to_owned();
@@ -487,12 +498,22 @@ fn xp08_shared_web_catalog_is_conformant() {
             })
             .collect::<Vec<_>>()
     };
-    // Twenty px cells per host, every one a typed skip waiting for XP-12.
+    // Twenty px cells per host, every one a typed skip: the two hotkey cells
+    // are refused by policy (frame sent, exact refusal), the rest have no
+    // geometry to aim at.
     let pixel = rows_of("px");
     assert_eq!(pixel.len(), 20 * hosts, "every px cell must be reported");
-    assert!(pixel
+    assert!(pixel.iter().all(|row| row["status"] == "skip"
+        && matches!(row["observed"].as_str(), Some("refused" | "no-geometry"))));
+    let refused = pixel
         .iter()
-        .all(|row| row["status"] == "skip" && row["observed"] == "refused"));
+        .filter(|row| row["observed"] == "refused")
+        .count();
+    assert_eq!(
+        refused,
+        2 * hosts,
+        "only the hotkey cells are sent and refused"
+    );
     // Twenty ax cells per host: ten foreground rungs reported as
     // background-only, and ten background cells measured, refused or (where
     // the page's controls are beyond the depth bound) not observable.
@@ -543,7 +564,9 @@ fn frames_use_the_closed_v2_vocabulary() {
     for cell in catalog() {
         let (op, fields) = frame(&cell, "1:2", (10, 20));
         assert!(
-            op == "semantic_action" || conformance::PIXEL_OPS.contains(&op),
+            op == "semantic_action"
+                || conformance::INPUT_OPS.contains(&op)
+                || conformance::POLICY_REFUSED_OPS.contains(&op),
             "{op}"
         );
         if cell.addressing == "ax" {
@@ -558,7 +581,6 @@ fn frames_use_the_closed_v2_vocabulary() {
         } else {
             assert!(op.starts_with("input_"), "{op}");
             assert_eq!(fields["expected_last_input_tick"], 0);
-            assert_eq!(conformance::Pending::for_op(op).task(), "XP-12");
         }
     }
 }

@@ -49,8 +49,9 @@ mod computer_host;
 mod host_protocol;
 mod native_host_path;
 pub use computer_host::{
-    ApprovedSemantic, ComputerHostAdapter, DesktopActionResult, DesktopCursorPosition,
-    DesktopInputAction, DesktopWindowAction,
+    check_native_input_limits, input_sequence_digest, ApprovedInput, ApprovedSemantic,
+    ComputerHostAdapter, DesktopActionResult, DesktopCursorPosition, DesktopInputAction,
+    DesktopWindowAction,
 };
 pub use native_host_path::{
     owner_and_mode_trusted, NATIVE_HOST_FILE_NAME, SYSTEM_NATIVE_HOST_PATH,

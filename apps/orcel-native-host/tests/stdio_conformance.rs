@@ -76,9 +76,10 @@ fn hello_reports_platform_backend_and_exactly_one_entry_per_operation() {
                     );
                 }
             }
-            // XP-07 and XP-11: delivered in the background where the session
-            // allows it, otherwise unavailable with a reason.
-            "capture_window" | "semantic_action" => match support {
+            // XP-07, XP-11 and XP-12: delivered in the background where the
+            // session allows it, otherwise unavailable with a reason.
+            "capture_window" | "semantic_action" | "input_click" | "input_drag"
+            | "input_scroll" | "input_type_text" | "input_key" => match support {
                 "delivered" => assert_eq!(table[op]["delivery"], "background"),
                 "unavailable" => {
                     let reason = table[op]["reason"].as_str().unwrap();
@@ -89,6 +90,7 @@ fn hello_reports_platform_backend_and_exactly_one_entry_per_operation() {
                 }
                 other => panic!("{op} support {other}"),
             },
+            // A window command, a hover and a key chord stay refused.
             _ => {
                 assert_eq!(support, "refused", "{op}");
                 assert_eq!(table[op]["reason"], "capability_denied", "{op}");
@@ -112,12 +114,12 @@ fn session_ops_unknown_ops_and_mutations_are_answered_without_native_work() {
             json!({"window_action": "focus", "expected_last_input_tick": 1}),
         ),
         (
-            "input_click",
-            json!({"x": 1, "y": 1, "button": "left", "click_count": 1, "expected_last_input_tick": 1}),
+            "input_move",
+            json!({"x": 1, "y": 1, "expected_last_input_tick": 1}),
         ),
         (
-            "input_type_text",
-            json!({"text": "x", "expected_last_input_tick": 1}),
+            "input_hotkey",
+            json!({"key": "ctrl+a", "expected_last_input_tick": 1}),
         ),
     ] {
         let mut fields = binding.clone();
@@ -128,6 +130,153 @@ fn session_ops_unknown_ops_and_mutations_are_answered_without_native_work() {
         let reply = host.request(op, fields);
         assert_eq!(reply["ok"], false, "{op}");
         assert_eq!(error_code(&reply), "capability_denied", "{op}");
+    }
+    assert!(host.shutdown().success());
+}
+
+/// XP-12: raw input is served for five operations and each names exactly its
+/// own fields. A frame with a foreign field, a missing human-input tick, a
+/// negative point, a chord, an over-long text or an over-large scroll is
+/// refused before any native work; a well-formed frame for a window no live
+/// process of this user holds is refused with a typed code and delivers
+/// nothing.
+#[test]
+fn raw_input_is_bounded_and_refused_without_a_live_target() {
+    let mut host = Host::spawn();
+    let binding = json!({"window": {"kind": support::window_kind(), "id": 9, "expected_pid": 1,
+        "expected_start_generation": 2, "expected_window_nonce": 3}});
+    let with = |extra: Value| {
+        let mut fields = binding.clone();
+        fields
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        fields
+    };
+    for (op, extra) in [
+        (
+            "input_click",
+            json!({"x": 1, "y": 1, "key": "a", "expected_last_input_tick": 1}),
+        ),
+        ("input_click", json!({"x": 1, "y": 1})),
+        (
+            "input_click",
+            json!({"x": -1, "y": 1, "expected_last_input_tick": 1}),
+        ),
+        (
+            "input_click",
+            json!({"x": 1, "y": 1, "button": "middle", "expected_last_input_tick": 1}),
+        ),
+        (
+            "input_click",
+            json!({"x": 1, "y": 1, "click_count": 4, "expected_last_input_tick": 1}),
+        ),
+        (
+            "input_drag",
+            json!({"x": 1, "y": 1, "to_x": 2, "expected_last_input_tick": 1}),
+        ),
+        (
+            "input_scroll",
+            json!({"x": 1, "y": 1, "scroll_y": 21, "expected_last_input_tick": 1}),
+        ),
+        (
+            "input_scroll",
+            json!({"x": 1, "y": 1, "scroll_x": 1, "scroll_y": 1, "expected_last_input_tick": 1}),
+        ),
+        (
+            "input_type_text",
+            json!({"text": "x", "x": 1, "expected_last_input_tick": 1}),
+        ),
+        ("input_type_text", json!({"expected_last_input_tick": 1})),
+        (
+            "input_key",
+            json!({"key": "a", "text": "a", "expected_last_input_tick": 1}),
+        ),
+        (
+            "input_key",
+            json!({"key": "a", "element_runtime_id": "e1-00", "expected_last_input_tick": 1}),
+        ),
+        (
+            "input_key",
+            json!({"key": "a", "semantic_action": "invoke", "expected_last_input_tick": 1}),
+        ),
+    ] {
+        let reply = host.request(op, with(extra.clone()));
+        assert_eq!(
+            error_code(&reply),
+            "invalid_request",
+            "{op} {extra}: {reply}"
+        );
+        assert!(reply.get("action").is_none(), "{reply}");
+    }
+    // A frame without a window binding is never served.
+    let unbound = host.request(
+        "input_key",
+        json!({"key": "a", "expected_last_input_tick": 1}),
+    );
+    assert_eq!(error_code(&unbound), "invalid_request", "{unbound}");
+    // A hover, a key chord and a window command are never served.
+    for (op, extra) in [
+        (
+            "input_move",
+            json!({"x": 1, "y": 1, "expected_last_input_tick": 1}),
+        ),
+        (
+            "input_hotkey",
+            json!({"key": "cmd+q", "expected_last_input_tick": 1}),
+        ),
+        (
+            "window_action",
+            json!({"window_action": "close", "expected_last_input_tick": 1}),
+        ),
+    ] {
+        let reply = host.request(op, with(extra));
+        assert_eq!(error_code(&reply), "capability_denied", "{op}: {reply}");
+    }
+    // Well formed, but no live window of this user holds the binding (or the
+    // session cannot act): a typed refusal, and nothing is delivered. A key
+    // chord is refused before the window is even looked up.
+    for (op, extra, codes) in [
+        (
+            "input_click",
+            json!({"x": 1, "y": 1, "button": "left", "click_count": 1, "expected_last_input_tick": 1}),
+            &[
+                "target_stale",
+                "provider_unavailable",
+                "permission_missing",
+                "protected_surface",
+            ][..],
+        ),
+        (
+            "input_type_text",
+            json!({"text": "hello", "expected_last_input_tick": 1}),
+            &[
+                "target_stale",
+                "provider_unavailable",
+                "permission_missing",
+                "protected_surface",
+            ][..],
+        ),
+        (
+            "input_key",
+            json!({"key": "ctrl+alt+delete", "expected_last_input_tick": 1}),
+            &["capability_denied"][..],
+        ),
+        (
+            "input_key",
+            json!({"key": "f4", "expected_last_input_tick": 1}),
+            &["capability_denied"][..],
+        ),
+        (
+            "input_key",
+            json!({"key": "cmd", "expected_last_input_tick": 1}),
+            &["capability_denied"][..],
+        ),
+    ] {
+        let reply = host.request(op, with(extra.clone()));
+        assert_eq!(reply["ok"], false, "{op} {extra}: {reply}");
+        assert!(reply.get("action").is_none(), "{reply}");
+        assert!(codes.contains(&error_code(&reply)), "{op} {extra}: {reply}");
     }
     assert!(host.shutdown().success());
 }

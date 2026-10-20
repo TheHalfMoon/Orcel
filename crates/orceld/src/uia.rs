@@ -151,6 +151,31 @@ fn arm_semantic(
     Ok(())
 }
 
+/// XP-12: on a macOS or Linux host the adapter delivers raw input only while
+/// the approval just consumed is armed on the exact window and the exact input
+/// (its digest). The window comes from the registry's server-resolved binding
+/// and the input from the request the approval's digest covers, never from the
+/// host. A Windows host is unchanged and is not armed.
+#[cfg(not(windows))]
+fn arm_input(
+    adapter: &ComputerHostAdapter,
+    hwnd: u64,
+    action: &DesktopInputAction,
+) -> Result<(), ProviderError> {
+    adapter
+        .authorize_input(hwnd, action)
+        .map_err(|error| ProviderError::new(error.code, error.message))
+}
+
+#[cfg(windows)]
+fn arm_input(
+    _adapter: &ComputerHostAdapter,
+    _hwnd: u64,
+    _action: &DesktopInputAction,
+) -> Result<(), ProviderError> {
+    Ok(())
+}
+
 fn require_full_user_desktop() -> Result<(), ProviderError> {
     full_control_store::check_current_desktop_input()
         .map(|_| ())
@@ -360,6 +385,11 @@ fn full_user_input_with_approval(
     let expected_window_generation = required_u64(request, "expected_window_generation")?;
     let action_name = required_string(request, "action")?;
     let action = desktop_input_action(request, &action_name)?;
+    // XP-12: a native host's input limits are judged before any approval is
+    // requested, so an input it would refuse never costs the user a prompt.
+    #[cfg(not(windows))]
+    orcel_provider_uia::check_native_input_limits(&action)
+        .map_err(|error| ProviderError::new(error.code, error.message))?;
 
     require_full_user_desktop()?;
     let binding = {
@@ -426,9 +456,12 @@ fn full_user_input_with_approval(
             "desktop input target changed after approval",
         ));
     }
-    let outcome = host
-        .execute_raw_input(rebound.hwnd, &action, cursor.last_input_tick)
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
+    // XP-12: arm the approval just consumed for this exact input, and clear
+    // it whatever the adapter did, so none is left in the process-wide slot.
+    arm_input(host, rebound.hwnd, &action)?;
+    let outcome = host.execute_raw_input(rebound.hwnd, &action, cursor.last_input_tick);
+    host.disarm_input();
+    let outcome = outcome.map_err(|error| ProviderError::new(error.code, error.message))?;
     Ok(json!({
         "schema": "orcel-desktop-input/1",
         "state": outcome.state,

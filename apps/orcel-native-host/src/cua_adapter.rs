@@ -2,12 +2,23 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The allowlisted adapter over the vendored Cua Driver tools (XP-06).
 //!
-//! [`CuaCall`] is the whole surface: five read-only tools and, since XP-11,
-//! one semantic action tool. Each variant
-//! holds the typed `cua-driver-contract` input, validated before dispatch,
-//! and its tool name is that input's `TOOL_NAME` constant. Nothing in a
-//! request names a tool, so no other Cua tool (click, type_text, launch_app,
-//! clipboard writes, ...) can be reached from the protocol.
+//! [`CuaCall`] is the whole surface: five read-only tools, since XP-11 one
+//! semantic action tool and, since XP-12, the five raw input tools Cua
+//! documents for a window target (`click`, `drag`, `scroll`, `type_text`,
+//! `press_key`). Each variant holds typed, validated arguments, and its tool
+//! name is a constant of this file (the typed `cua-driver-contract` input's
+//! `TOOL_NAME` where one exists). Nothing in a request names a tool, so no
+//! other Cua tool (launch_app, clipboard writes, hotkey, move_cursor,
+//! set_value, ...) can be reached from the protocol.
+//!
+//! The raw input tools are called only through [`InputCall`], which builds
+//! the argument object field by field: an exact `pid` and `window_id`,
+//! window-local pixel coordinates, `delivery_mode: "background"`, and nothing
+//! else. It never sends `scope` (so no desktop-wide coordinate), a modifier,
+//! an `element_token`, a `capture_id`, `from_zoom`, a foreground delivery mode
+//! or any field that could raise, focus or restore a window. The worker has
+//! already refused every point outside the window, every key chord and every
+//! covered or protected target before a call is built (`input.rs`).
 //!
 //! The semantic action tool is `orcel_semantic_action`, added to the vendored
 //! crates by patch P-09. It is not one of Cua's tools: upstream's `click`,
@@ -33,7 +44,8 @@
 use crate::protocol::MAX_TEXT_BYTES;
 use crate::semantic::Verb;
 use cua_driver_contract::{
-    GetCursorPositionInput, GetScreenSizeInput, GetWindowStateInput, ListWindowsInput, ToolInput,
+    ClickInput, DragInput, GetCursorPositionInput, GetScreenSizeInput, GetWindowStateInput,
+    ListWindowsInput, PressKeyInput, ScrollInput, ToolInput, TypeTextInput,
 };
 use serde_json::Value;
 
@@ -44,13 +56,18 @@ pub const CHECK_PERMISSIONS: &str = "check_permissions";
 /// The tool names the vendored registry keeps after construction (patch
 /// P-07): exactly the tools [`CuaCall`] names. Every other tool the platform
 /// registers is dropped, so even a name that bypassed the enum is unknown.
-pub const ALLOWED_TOOLS: [&str; 6] = [
+pub const ALLOWED_TOOLS: [&str; 11] = [
     ListWindowsInput::TOOL_NAME,
     GetWindowStateInput::TOOL_NAME,
     GetCursorPositionInput::TOOL_NAME,
     GetScreenSizeInput::TOOL_NAME,
     CHECK_PERMISSIONS,
     SEMANTIC_ACTION_TOOL,
+    ClickInput::TOOL_NAME,
+    DragInput::TOOL_NAME,
+    ScrollInput::TOOL_NAME,
+    TypeTextInput::TOOL_NAME,
+    PressKeyInput::TOOL_NAME,
 ];
 
 /// Tool name of the P-09 accessibility-only action tool.
@@ -88,6 +105,149 @@ pub enum CuaCall {
     CheckPermissions,
     /// XP-11: one accessibility action (patch P-09).
     SemanticAction(SemanticCall),
+    /// XP-12: one raw input delivery unit in the background.
+    Input(InputCall),
+}
+
+/// Drag duration and interpolation steps the host asks for: Cua's own
+/// defaults, written out so a change upstream cannot lengthen a gesture.
+pub const DRAG_DURATION_MS: u64 = 500;
+pub const DRAG_STEPS: u64 = 20;
+
+/// One raw input delivery unit for one exact window. Coordinates are
+/// window-local pixels of the window's own capture (physical pixels: the host
+/// has multiplied the approved points by the backing scale).
+#[derive(Debug, Clone, PartialEq)]
+pub enum InputCall {
+    Click {
+        pid: u32,
+        window_id: u64,
+        x: f64,
+        y: f64,
+        right: bool,
+        count: u32,
+    },
+    Drag {
+        pid: u32,
+        window_id: u64,
+        from: (f64, f64),
+        to: (f64, f64),
+    },
+    Scroll {
+        pid: u32,
+        window_id: u64,
+        x: f64,
+        y: f64,
+        direction: &'static str,
+        lines: u32,
+    },
+    TypeText {
+        pid: u32,
+        window_id: u64,
+        text: String,
+    },
+    PressKey {
+        pid: u32,
+        window_id: u64,
+        key: &'static str,
+    },
+}
+
+impl InputCall {
+    fn tool_name(&self) -> &'static str {
+        match self {
+            Self::Click { .. } => ClickInput::TOOL_NAME,
+            Self::Drag { .. } => DragInput::TOOL_NAME,
+            Self::Scroll { .. } => ScrollInput::TOOL_NAME,
+            Self::TypeText { .. } => TypeTextInput::TOOL_NAME,
+            Self::PressKey { .. } => PressKeyInput::TOOL_NAME,
+        }
+    }
+
+    /// The validated argument object, field by field. There is no `scope`,
+    /// modifier, element token, capture id, zoom flag or foreground mode.
+    pub fn arguments(&self) -> Result<Value, CuaFailure> {
+        let (pid, window_id) = match self {
+            Self::Click { pid, window_id, .. }
+            | Self::Drag { pid, window_id, .. }
+            | Self::Scroll { pid, window_id, .. }
+            | Self::TypeText { pid, window_id, .. }
+            | Self::PressKey { pid, window_id, .. } => (*pid, *window_id),
+        };
+        if pid == 0 || window_id == 0 {
+            return Err(CuaFailure::invalid("raw input needs an exact window"));
+        }
+        let finite = |values: &[f64]| values.iter().all(|v| v.is_finite() && v.abs() < 1.0e7);
+        let mut arguments = match self {
+            Self::Click {
+                x, y, right, count, ..
+            } => {
+                if !finite(&[*x, *y]) || !(1..=3).contains(count) {
+                    return Err(CuaFailure::invalid("the click is out of bounds"));
+                }
+                serde_json::json!({
+                    "x": x,
+                    "y": y,
+                    "button": if *right { "right" } else { "left" },
+                    "count": count,
+                })
+            }
+            Self::Drag { from, to, .. } => {
+                if !finite(&[from.0, from.1, to.0, to.1]) {
+                    return Err(CuaFailure::invalid("the drag is out of bounds"));
+                }
+                serde_json::json!({
+                    "from_x": from.0,
+                    "from_y": from.1,
+                    "to_x": to.0,
+                    "to_y": to.1,
+                    "button": "left",
+                    "duration_ms": DRAG_DURATION_MS,
+                    "steps": DRAG_STEPS,
+                })
+            }
+            Self::Scroll {
+                x,
+                y,
+                direction,
+                lines,
+                ..
+            } => {
+                if !finite(&[*x, *y])
+                    || !matches!(*direction, "up" | "down" | "left" | "right")
+                    || !(1..=20).contains(lines)
+                {
+                    return Err(CuaFailure::invalid("the scroll is out of bounds"));
+                }
+                serde_json::json!({
+                    "x": x,
+                    "y": y,
+                    "direction": direction,
+                    "by": "line",
+                    "amount": lines,
+                })
+            }
+            Self::TypeText { text, .. } => {
+                if text.is_empty()
+                    || text.len() > MAX_TEXT_BYTES
+                    || text.chars().any(char::is_control)
+                {
+                    return Err(CuaFailure::invalid("the typed text is out of bounds"));
+                }
+                serde_json::json!({ "text": text })
+            }
+            Self::PressKey { key, .. } => {
+                if key.is_empty() || key.len() > 16 {
+                    return Err(CuaFailure::invalid("the key is out of bounds"));
+                }
+                serde_json::json!({ "key": key })
+            }
+        };
+        arguments["pid"] = pid.into();
+        arguments["window_id"] = window_id.into();
+        arguments["delivery_mode"] = Value::String("background".to_owned());
+        Ok(arguments)
+    }
 }
 
 impl CuaCall {
@@ -99,7 +259,14 @@ impl CuaCall {
             Self::GetScreenSize(_) => GetScreenSizeInput::TOOL_NAME,
             Self::CheckPermissions => CHECK_PERMISSIONS,
             Self::SemanticAction(_) => SEMANTIC_ACTION_TOOL,
+            Self::Input(call) => call.tool_name(),
         }
+    }
+
+    /// Whether the coordinates of this call are physical window pixels
+    /// already, so the vendored tool must not look up a screenshot scale.
+    pub fn native_window_pixels(&self) -> bool {
+        matches!(self, Self::Input(_))
     }
 
     /// The validated argument object.
@@ -115,6 +282,7 @@ impl CuaCall {
             Self::GetScreenSize(input) => typed(input),
             Self::CheckPermissions => Ok(serde_json::json!({ "prompt": false })),
             Self::SemanticAction(call) => call.arguments(),
+            Self::Input(call) => call.arguments(),
         }
     }
 
@@ -251,7 +419,16 @@ mod imp {
 
         pub async fn call(&self, call: &CuaCall) -> Result<Value, CuaFailure> {
             let arguments = call.arguments()?;
-            let result = self.registry.invoke(call.tool_name(), arguments).await;
+            // An input unit carries physical window pixels, which the
+            // in-process entry point declares; a forged flag in the
+            // arguments is not honored by the registry.
+            let result = if call.native_window_pixels() {
+                self.registry
+                    .invoke_with_native_window_pixels(call.tool_name(), arguments)
+                    .await
+            } else {
+                self.registry.invoke(call.tool_name(), arguments).await
+            };
             settle(result)
         }
 
@@ -357,6 +534,257 @@ pub use imp::CuaRuntime;
 mod tests {
     use super::*;
 
+    fn click_call() -> InputCall {
+        InputCall::Click {
+            pid: 10,
+            window_id: 20,
+            x: 12.0,
+            y: 34.0,
+            right: false,
+            count: 1,
+        }
+    }
+
+    fn every_input_call() -> Vec<InputCall> {
+        vec![
+            click_call(),
+            InputCall::Drag {
+                pid: 10,
+                window_id: 20,
+                from: (1.0, 2.0),
+                to: (3.0, 4.0),
+            },
+            InputCall::Scroll {
+                pid: 10,
+                window_id: 20,
+                x: 5.0,
+                y: 6.0,
+                direction: "down",
+                lines: 3,
+            },
+            InputCall::TypeText {
+                pid: 10,
+                window_id: 20,
+                text: "hello".into(),
+            },
+            InputCall::PressKey {
+                pid: 10,
+                window_id: 20,
+                key: "tab",
+            },
+        ]
+    }
+
+    /// XP-12: an input unit names an exact window and a background delivery
+    /// and carries only the fields of its tool. Nothing in it can address the
+    /// desktop, hold a modifier, name an element or capture, ask for
+    /// foreground delivery, or reach a function the tool has for raising a
+    /// window.
+    #[test]
+    fn input_arguments_are_exact_window_background_and_nothing_wider() {
+        let expected: [(&str, &[&str]); 5] = [
+            (
+                "click",
+                &[
+                    "button",
+                    "count",
+                    "delivery_mode",
+                    "pid",
+                    "window_id",
+                    "x",
+                    "y",
+                ],
+            ),
+            (
+                "drag",
+                &[
+                    "button",
+                    "delivery_mode",
+                    "duration_ms",
+                    "from_x",
+                    "from_y",
+                    "pid",
+                    "steps",
+                    "to_x",
+                    "to_y",
+                    "window_id",
+                ],
+            ),
+            (
+                "scroll",
+                &[
+                    "amount",
+                    "by",
+                    "delivery_mode",
+                    "direction",
+                    "pid",
+                    "window_id",
+                    "x",
+                    "y",
+                ],
+            ),
+            ("type_text", &["delivery_mode", "pid", "text", "window_id"]),
+            ("press_key", &["delivery_mode", "key", "pid", "window_id"]),
+        ];
+        for (call, (tool, fields)) in every_input_call().into_iter().zip(expected) {
+            let call = CuaCall::Input(call);
+            assert_eq!(call.tool_name(), tool);
+            assert!(call.native_window_pixels());
+            let arguments = call.arguments().unwrap();
+            let mut keys: Vec<_> = arguments.as_object().unwrap().keys().cloned().collect();
+            keys.sort();
+            assert_eq!(keys, fields, "{tool}");
+            assert_eq!(arguments["delivery_mode"], "background", "{tool}");
+            assert_eq!(arguments["pid"], 10);
+            assert_eq!(arguments["window_id"], 20);
+            for forbidden in [
+                "scope",
+                "modifier",
+                "modifiers",
+                "element_token",
+                "capture_id",
+                "from_zoom",
+                "coordinate_frame",
+                "session",
+                "_native_window_pixels",
+            ] {
+                assert!(arguments.get(forbidden).is_none(), "{tool} {forbidden}");
+            }
+        }
+        // Only input units claim physical pixels; observation does not.
+        assert!(!CuaCall::list_windows(None).native_window_pixels());
+        assert!(!CuaCall::SemanticAction(semantic_call(Verb::Invoke, None)).native_window_pixels());
+    }
+
+    #[test]
+    fn input_arguments_are_validated_before_dispatch() {
+        let bad = [
+            InputCall::Click {
+                pid: 0,
+                window_id: 20,
+                x: 1.0,
+                y: 1.0,
+                right: false,
+                count: 1,
+            },
+            InputCall::Click {
+                pid: 10,
+                window_id: 0,
+                x: 1.0,
+                y: 1.0,
+                right: false,
+                count: 1,
+            },
+            InputCall::Click {
+                pid: 10,
+                window_id: 20,
+                x: f64::NAN,
+                y: 1.0,
+                right: false,
+                count: 1,
+            },
+            InputCall::Click {
+                pid: 10,
+                window_id: 20,
+                x: 1.0,
+                y: f64::INFINITY,
+                right: false,
+                count: 1,
+            },
+            InputCall::Click {
+                pid: 10,
+                window_id: 20,
+                x: 1.0,
+                y: 1.0,
+                right: false,
+                count: 0,
+            },
+            InputCall::Click {
+                pid: 10,
+                window_id: 20,
+                x: 1.0,
+                y: 1.0,
+                right: false,
+                count: 4,
+            },
+            InputCall::Drag {
+                pid: 10,
+                window_id: 20,
+                from: (f64::NAN, 0.0),
+                to: (1.0, 1.0),
+            },
+            InputCall::Scroll {
+                pid: 10,
+                window_id: 20,
+                x: 1.0,
+                y: 1.0,
+                direction: "sideways",
+                lines: 1,
+            },
+            InputCall::Scroll {
+                pid: 10,
+                window_id: 20,
+                x: 1.0,
+                y: 1.0,
+                direction: "up",
+                lines: 0,
+            },
+            InputCall::Scroll {
+                pid: 10,
+                window_id: 20,
+                x: 1.0,
+                y: 1.0,
+                direction: "up",
+                lines: 21,
+            },
+            InputCall::TypeText {
+                pid: 10,
+                window_id: 20,
+                text: String::new(),
+            },
+            InputCall::TypeText {
+                pid: 10,
+                window_id: 20,
+                text: "a\nb".into(),
+            },
+            InputCall::TypeText {
+                pid: 10,
+                window_id: 20,
+                text: "a".repeat(MAX_TEXT_BYTES + 1),
+            },
+            InputCall::PressKey {
+                pid: 10,
+                window_id: 20,
+                key: "",
+            },
+            InputCall::PressKey {
+                pid: 10,
+                window_id: 20,
+                key: "a-very-long-key-name",
+            },
+        ];
+        for call in bad {
+            assert!(
+                CuaCall::Input(call.clone()).arguments().is_err(),
+                "{call:?}"
+            );
+        }
+        // The right button is a button argument, never a modifier or action.
+        let right = InputCall::Click {
+            pid: 10,
+            window_id: 20,
+            x: 1.0,
+            y: 1.0,
+            right: true,
+            count: 2,
+        };
+        let arguments = right.arguments().unwrap();
+        assert_eq!(
+            (arguments["button"].as_str(), arguments["count"].as_u64()),
+            (Some("right"), Some(2))
+        );
+    }
+
     #[test]
     fn every_call_names_an_allowlisted_tool_from_its_typed_input() {
         let calls = [
@@ -379,10 +807,20 @@ mod tests {
                 "orcel_semantic_action"
             ]
         );
-        assert_eq!(names, ALLOWED_TOOLS.to_vec());
+        assert_eq!(names, ALLOWED_TOOLS[..6].to_vec());
         for call in &calls {
             assert!(call.arguments().is_ok(), "{call:?}");
         }
+        // The five raw input tools are the rest of the allowlist, and no more.
+        let input_names: Vec<_> = every_input_call()
+            .into_iter()
+            .map(|call| CuaCall::Input(call).tool_name())
+            .collect();
+        assert_eq!(input_names, ALLOWED_TOOLS[6..].to_vec());
+        assert_eq!(
+            input_names,
+            vec!["click", "drag", "scroll", "type_text", "press_key"]
+        );
     }
 
     fn semantic_call(verb: Verb, value: Option<&str>) -> SemanticCall {
@@ -483,6 +921,7 @@ mod tests {
             ("map.rs", include_str!("map.rs")),
             ("capture.rs", include_str!("capture.rs")),
             ("semantic.rs", include_str!("semantic.rs")),
+            ("input.rs", include_str!("input.rs")),
         ] {
             assert!(!source.contains(&field), "{name} touches {field}");
         }
@@ -511,6 +950,7 @@ mod tests {
             ("map.rs", include_str!("map.rs")),
             ("capture.rs", include_str!("capture.rs")),
             ("semantic.rs", include_str!("semantic.rs")),
+            ("input.rs", include_str!("input.rs")),
         ] {
             for word in &forbidden {
                 assert!(!source.contains(word.as_str()), "{name} names {word}");
@@ -702,7 +1142,7 @@ mod tests {
         }
     }
 
-    /// The registry the host builds holds the five tools the adapter calls
+    /// The registry the host builds holds the tools the adapter calls
     /// and none of the surfaces P-03 compiles out or Orcel never allows: no
     /// script engine, no page or browser engine tools, no kill_app, no
     /// recording, history or expression-evaluating drag.

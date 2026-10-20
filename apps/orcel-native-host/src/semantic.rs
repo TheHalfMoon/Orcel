@@ -17,7 +17,8 @@
 //! None can be delivered as a pointer or key event: the vendored tool that
 //! performs them has no such route (`PATCHES.md`, P-09). `scroll` is refused
 //! because Cua delivers it as a wheel event at a screen position, which is
-//! pixel-addressed input (XP-12).
+//! pixel-addressed input: it is the `input_scroll` operation (XP-12), under
+//! its own approval, not a semantic action.
 
 use crate::map::{self, control_type};
 use crate::protocol::{code, ElementFact, MAX_RUNTIME_ID_BYTES, MAX_TEXT_BYTES};
@@ -68,7 +69,7 @@ pub fn parse_verb(name: &str) -> Result<Verb, Refusal> {
         "toggle" => Ok(Verb::Toggle),
         "scroll" => Err(refuse(
             code::CAPABILITY_DENIED,
-            "scroll is delivered as a wheel event at a screen position, which is pixel-addressed input; it waits for XP-12",
+            "scroll is delivered as a wheel event at a screen position, which is pixel-addressed input; it is the input_scroll operation, not a semantic action",
         )),
         _ => Err(refuse(
             code::INVALID_REQUEST,

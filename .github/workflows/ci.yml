@@ -284,7 +284,7 @@ jobs:
       - name: Install a Linux GUI session for live observation (Xvfb, Openbox, AT-SPI, GTK3)
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get install -y --no-install-recommends             xvfb openbox at-spi2-core dbus-x11 python3-gi gir1.2-gtk-3.0
+          sudo apt-get install -y --no-install-recommends             xvfb openbox at-spi2-core dbus-x11 python3-gi gir1.2-gtk-3.0 xdotool
       - name: Live observation under Xvfb and AT-SPI (host frames and kernel registry)
         if: runner.os == 'Linux'
         # XP-06: a GTK3 probe with a password field and a protected Orcel
@@ -298,11 +298,16 @@ jobs:
         # and takes one real value write and press; through the registry, an
         # action reaches the host only under an approval armed on its exact
         # target, and one approval is one action.
+        # XP-12: raw input to a GTK3 probe that journals what it receives,
+        # through the real host (window-relative landing, the refusals, the
+        # covered and protected windows, a stale and a human-moved input
+        # tick) and through the registry under an armed approval.
         # Every test fails instead of skipping when its variable is set.
         env:
           ORCEL_XP06_LIVE: "1"
           ORCEL_XP07_LIVE: deliver
           ORCEL_XP11_LIVE: "1"
+          ORCEL_XP12_LIVE: "1"
         run: |
           set -euo pipefail
           export ORCEL_COMPUTER_HOST_BIN="$PWD/target/release/orcel-native-host"
@@ -315,10 +320,12 @@ jobs:
             cargo test --locked --release -p orcel-native-host --test live_observation -- --nocapture
             cargo test --locked --release -p orcel-native-host --test live_capture -- --nocapture
             cargo test --locked --release -p orcel-native-host --test live_actions -- --nocapture
+            cargo test --locked --release -p orcel-native-host --test live_input -- --nocapture
             cd ../..
             cargo test --locked -p orcel-provider-uia --test xp06_native_host_live -- --nocapture
             cargo test --locked -p orcel-provider-uia --test xp07_native_capture_live -- --nocapture
             cargo test --locked -p orcel-provider-uia --test xp11_native_actions_live -- --nocapture
+            cargo test --locked -p orcel-provider-uia --test xp12_native_input_live -- --nocapture
           '
       - name: Capture availability on the macOS runner (XP-07, report mode)
         if: runner.os == 'macOS'
@@ -331,6 +338,16 @@ jobs:
         env:
           ORCEL_XP07_LIVE: report
         run: cargo test --locked --release -p orcel-native-host --test live_capture -- --nocapture
+      - name: Raw input on the hosted macOS session (XP-12)
+        if: runner.os == 'macOS'
+        # An AppKit probe, compiled with swiftc, journals what it receives:
+        # the host's click, drag, scroll, typing and key land where the frame
+        # named them in window-relative points, and the covered, protected,
+        # out-of-window, stale-tick and chord frames deliver nothing. The
+        # hosted session grants Accessibility and Screen Recording.
+        env:
+          ORCEL_XP12_LIVE: "1"
+        run: cargo test --locked --release -p orcel-native-host --test live_input -- --nocapture
       # XP-08: the shared native conformance suite. The harness apps are Cua's
       # MIT fixtures (tests/native-fixtures, T-CUA-07), built from source on
       # the runner: GTK3 runs as PyGObject source, AppKit and WKWebView are
@@ -432,7 +449,7 @@ jobs:
             for (const file of fs.readdirSync(dir).sort()) {
               const report = JSON.parse(fs.readFileSync(path.join(dir, file), "utf8"));
               const count = (status) => report.rows.filter((row) => row.status === status).length;
-              console.log(`- ${file}: ${count("pass")} pass, ${count("skip")} skip (pending XP-11/XP-12 or not built), ${count("fail")} fail, ${count("error")} error`);
+              console.log(`- ${file}: ${count("pass")} pass, ${count("skip")} skip (typed skips: foreground rungs, refused by policy, no geometry, unavailable on Wayland, or not built), ${count("fail")} fail, ${count("error")} error`);
             }
           ' "$dir" | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

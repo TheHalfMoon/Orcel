@@ -133,7 +133,14 @@ impl WorkerDispatch {
                 .read_to_end(&mut raw);
             let _ = sender.send(read.map(|_| raw));
         });
-        let raw = match receiver.recv_timeout(self.timeout) {
+        // Typed text is delivered in checked chunks, each preceded by a fresh
+        // window listing, so a raw input gets a longer deadline.
+        let timeout = if crate::input::is_input_operation(&request.op) {
+            self.timeout * INPUT_TIMEOUT_FACTOR
+        } else {
+            self.timeout
+        };
+        let raw = match receiver.recv_timeout(timeout) {
             Ok(Ok(raw)) => raw,
             Ok(Err(_)) => {
                 let _ = child.kill();
@@ -218,9 +225,12 @@ impl Dispatch for WorkerDispatch {
     }
 }
 
+/// A raw input may take this many worker deadlines (XP-12).
+const INPUT_TIMEOUT_FACTOR: u32 = 4;
+
 /// Operations that change the target. The host never retries them.
 fn is_mutation(op: &str) -> bool {
-    op == "semantic_action"
+    op == "semantic_action" || crate::input::is_input_operation(op)
 }
 
 /// The worker's last output line, which must answer exactly this request.
@@ -328,6 +338,10 @@ fn availability_from(response: &Response) -> Availability {
         cursor_position: reason("cursor_position"),
         capture_window: reason("capture_window"),
         semantic_action: reason("semantic_action"),
+        // One reason for the five operations: the first one not delivered.
+        input: crate::input::INPUT_OPERATIONS
+            .iter()
+            .find_map(|op| reason(op)),
         permissions: response.permissions.clone().unwrap_or_default(),
     }
 }
@@ -628,9 +642,11 @@ mod tests {
     }
 
     #[test]
-    fn only_semantic_actions_are_mutations() {
+    fn only_semantic_actions_and_raw_input_are_mutations() {
         for op in protocol::OPERATIONS {
-            assert_eq!(is_mutation(op), op == "semantic_action", "{op}");
+            let expected = op == "semantic_action" || op.starts_with("input_");
+            let served = !matches!(op, "input_move" | "input_hotkey");
+            assert_eq!(is_mutation(op), expected && served, "{op}");
         }
         assert_eq!(MUTATION_ATTEMPTS, 1);
     }
@@ -698,7 +714,7 @@ mod tests {
                 r#"{{"id":3,"protocol":"orcel-computer-host/2","op":"window_action","window_action":"close","expected_last_input_tick":1,{bound}}}"#
             ),
             format!(
-                r#"{{"id":4,"protocol":"orcel-computer-host/2","op":"input_click","x":4,"y":4,"button":"left","click_count":1,"expected_last_input_tick":1,{bound}}}"#
+                r#"{{"id":4,"protocol":"orcel-computer-host/2","op":"input_move","x":4,"y":4,"expected_last_input_tick":1,{bound}}}"#
             ),
         ];
         let responses = exchange(
@@ -721,6 +737,84 @@ mod tests {
                 "capability_denied",
                 "capability_denied",
                 "capability_denied"
+            ]
+        );
+    }
+
+    /// XP-12: a raw input frame reaches a worker only with exactly the fields
+    /// its operation uses, window-relative and bound to the human-input tick;
+    /// a hover and a chord never do.
+    #[test]
+    fn only_well_formed_raw_input_frames_reach_a_worker() {
+        let mut dispatch = scripted(|request| Response::success(request.id));
+        let bound = r#""window":{"kind":"x11","id":3,"expected_pid":1,"expected_start_generation":2,"expected_window_nonce":3}"#;
+        let frame = |id: u64, op: &str, fields: &str| {
+            format!(
+                r#"{{"id":{id},"protocol":"orcel-computer-host/2","op":"{op}",{fields}{bound}}}"#
+            )
+        };
+        let frames = [
+            frame(
+                1,
+                "input_click",
+                r#""x":4,"y":4,"expected_last_input_tick":9,"#,
+            ),
+            frame(
+                2,
+                "input_click",
+                r#""x":4,"y":4,"text":"x","expected_last_input_tick":9,"#,
+            ),
+            frame(3, "input_click", r#""x":4,"y":4,"#),
+            frame(4, "input_key", r#""key":"a","expected_last_input_tick":9,"#),
+            frame(
+                5,
+                "input_hotkey",
+                r#""key":"a","expected_last_input_tick":9,"#,
+            ),
+            frame(
+                6,
+                "input_type_text",
+                r#""text":"hi","expected_last_input_tick":9,"#,
+            ),
+            frame(
+                7,
+                "input_click",
+                r#""x":-4,"y":4,"expected_last_input_tick":9,"#,
+            ),
+        ];
+        let responses = exchange(
+            &(frames.join(
+                "
+",
+            ) + "
+"),
+            &mut dispatch,
+        );
+        assert_eq!(
+            dispatch.seen,
+            vec![
+                "input_click".to_owned(),
+                "input_key".to_owned(),
+                "input_type_text".to_owned()
+            ]
+        );
+        let outcome: Vec<_> = responses
+            .iter()
+            .map(|response| match &response.error {
+                None => "ok",
+                Some(error) => error.code.as_str(),
+            })
+            .collect();
+        assert_eq!(
+            outcome,
+            vec![
+                "ok",
+                "invalid_request",
+                "invalid_request",
+                "ok",
+                "capability_denied",
+                "ok",
+                "invalid_request"
             ]
         );
     }

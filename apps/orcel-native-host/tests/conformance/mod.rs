@@ -21,11 +21,18 @@
 //! delivered in the background, the effect is read from the fixture's own
 //! state, and focus, stacking and the pointer must not move. A delivery mode
 //! the host does not have (foreground) and an action with no semantic verb
-//! are typed skips that say so. The pixel-addressed (`px`) cells wait for
-//! raw `input_*` (XP-12): each sends its `/2` frame, requires the exact
-//! `capability_denied` refusal with every oracle unchanged, and is reported
-//! as a typed skip ([`Pending`]). When the hello stops refusing a pixel
-//! operation, the cell fails: the task that landed must port it.
+//! are typed skips that say so.
+//!
+//! The pixel-addressed (`px`) cells (XP-12) are measured on X11 and macOS
+//! against an application that journals what it receives
+//! ([`run_probe_cells`]): the event must arrive where the frame named, in
+//! window-relative coordinates, and focus, stacking and the pointer must not
+//! move. A hover and a key chord are refused by policy and a Wayland session
+//! offers no non-interactive way to address one window; those frames are
+//! sent and must be refused exactly, with every oracle unchanged. The shared
+//! web page does not expose its controls' geometry to the host, so its
+//! pixel cells are reported as skips (`no-geometry`) and the raw input they
+//! stand for is measured on the probe.
 //!
 //! The suites run only when `ORCEL_XP08_FIXTURES` names a directory staged by
 //! `tests/native-fixtures/orcel-stage.sh`; then nothing may be missing.
@@ -336,31 +343,6 @@ pub fn host_serves_cursor() -> bool {
 // ---------------------------------------------------------------------------
 // The report (orcel-benchmark-report/1, BM-01).
 
-/// Why an input cell is not run yet. The variant names the backlog task
-/// whose landing turns the cell into a delivered-or-refused measurement.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Pending {
-    /// Raw `input_*` and `window_action` (pixel- and key-addressed
-    /// delivery): XP-12. Accessibility-addressed actions landed with XP-11.
-    Xp12RawInput,
-}
-
-impl Pending {
-    pub fn task(self) -> &'static str {
-        match self {
-            Self::Xp12RawInput => "XP-12",
-        }
-    }
-
-    pub fn for_op(op: &str) -> Self {
-        assert_ne!(
-            op, "semantic_action",
-            "semantic_action is delivered (XP-11); its cells are measured, not pending"
-        );
-        Self::Xp12RawInput
-    }
-}
-
 pub struct Report {
     started: Instant,
     rows: Vec<Value>,
@@ -438,10 +420,15 @@ impl Report {
     }
 
     /// A typed skip: the cell's frame was sent and refused exactly, with
-    /// every oracle unchanged, and the cell waits for `pending`.
-    pub fn pending(&mut self, case: String, pending: Pending) {
-        eprintln!("XP-08 skip: pending {} for {case}", pending.task());
-        self.push(case, "skip", "refused", &[], 1);
+    /// every oracle unchanged, for the stated reason (`refused` by policy,
+    /// `unavailable` on this window system).
+    pub fn refused_with(&mut self, case: String, observed: &str) {
+        self.push(case, "skip", observed, &[], 1);
+    }
+
+    /// A cell this fixture cannot measure: it exposes no geometry to aim at.
+    pub fn no_geometry(&mut self, case: String) {
+        self.push(case, "skip", "no-geometry", &[], 0);
     }
 
     /// A delivery mode the host does not have: semantic actions are
@@ -607,10 +594,10 @@ pub struct Observed {
     pub nodes: Vec<Value>,
 }
 
-/// The hello must serve observation and semantic actions and refuse every
-/// pixel- or key-addressed operation. A refused operation is what makes the
-/// `px` cells pending; if one is served, the task that landed it has to port
-/// its cells.
+/// The hello must serve observation and semantic actions, serve the five raw
+/// input operations in the background where the window system allows (X11 and
+/// macOS) and say `provider_unavailable` where it does not (Wayland), and
+/// refuse a window command, a hover and a key chord by policy.
 pub fn check_hello(host: &mut Host, report: &mut Report, prefix: &str) -> Value {
     let started = Instant::now();
     let hello = host.hello();
@@ -642,13 +629,21 @@ pub fn check_hello(host: &mut Host, report: &mut Report, prefix: &str) -> Value 
         table["semantic_action"]["delivery"], "background",
         "{hello}"
     );
-    for op in PIXEL_OPS {
-        assert_eq!(
-            table[op]["support"], "refused",
-            "{op} is no longer refused: {} landed, so port its XP-08 cells from pending to measured. {hello}",
-            Pending::for_op(op).task()
-        );
+    for op in POLICY_REFUSED_OPS {
+        assert_eq!(table[op]["support"], "refused", "{op} is served: {hello}");
         assert_eq!(table[op]["reason"], "capability_denied", "{op}: {hello}");
+    }
+    for op in INPUT_OPS {
+        if host_serves_input() {
+            assert_eq!(
+                table[op]["support"], "delivered",
+                "{op} is not served here: {hello}"
+            );
+            assert_eq!(table[op]["delivery"], "background", "{op}: {hello}");
+        } else {
+            assert_eq!(table[op]["support"], "unavailable", "{op}: {hello}");
+            assert_eq!(table[op]["reason"], "provider_unavailable", "{op}: {hello}");
+        }
     }
     report.pass(
         format!("{prefix}/observe/hello"),
@@ -659,17 +654,25 @@ pub fn check_hello(host: &mut Host, report: &mut Report, prefix: &str) -> Value 
     hello
 }
 
-/// The pixel- and key-addressed operations, refused until XP-12.
-pub const PIXEL_OPS: [&str; 8] = [
-    "window_action",
-    "input_move",
+/// The operations the host refuses by policy: a window-manager command, a
+/// hover (no effect the kernel can verify) and a key chord (it can reach a
+/// system shortcut).
+pub const POLICY_REFUSED_OPS: [&str; 3] = ["window_action", "input_move", "input_hotkey"];
+
+/// The raw input operations the host delivers (XP-12).
+pub const INPUT_OPS: [&str; 5] = [
     "input_click",
     "input_drag",
     "input_scroll",
     "input_type_text",
     "input_key",
-    "input_hotkey",
 ];
+
+/// Whether raw input is served here: X11 and macOS. A Wayland client has no
+/// non-interactive way to address one window, so the host says unavailable.
+pub fn host_serves_input() -> bool {
+    matches!(window_system(), "x11" | "quartz")
+}
 
 /// The listed title is the harness title, exactly or followed by the
 /// ` [app id]` suffix Cua's Wayland listing appends (first Sway CI run).
@@ -891,15 +894,20 @@ pub struct InputCell {
     pub fields: Value,
 }
 
-/// Sends each input cell's frame. Every one must be refused with
-/// `capability_denied` and leave every oracle unchanged; it is then a typed
-/// skip naming the task it waits for.
-pub fn pending_input_cells(
+/// Sends each input cell's frame. Every one must be refused with the code
+/// `expected` and leave every oracle unchanged; the cell is then a typed skip
+/// reporting `observed` (`refused` by policy, `unavailable` on Wayland). The
+/// frames carry the human-input tick 0, a value no live tick is within
+/// tolerance of, so even a frame that reached delivery would be cancelled.
+#[allow(clippy::too_many_arguments)]
+pub fn refused_input_cells(
     host: &mut Host,
     report: &mut Report,
     prefix: &str,
     reference: &Value,
     cells: &[InputCell],
+    expected: &str,
+    observed: &str,
     mut state: impl FnMut() -> Value,
 ) {
     for cell in cells {
@@ -908,12 +916,8 @@ pub fn pending_input_cells(
         fields["window"] = reference.clone();
         let reply = host.request(cell.op, fields);
         assert_eq!(reply["ok"], false, "{} was not refused: {reply}", cell.case);
-        assert_eq!(
-            error_code(&reply),
-            "capability_denied",
-            "{}: {reply}",
-            cell.case
-        );
+        assert!(reply.get("action").is_none(), "{}: {reply}", cell.case);
+        assert_eq!(error_code(&reply), expected, "{}: {reply}", cell.case);
         // Give a leaked event time to reach the fixture before comparing.
         std::thread::sleep(Duration::from_millis(250));
         let after = oracles(host, state());
@@ -923,10 +927,206 @@ pub fn pending_input_cells(
             cell.case
         );
         let names = oracle_names(&before.desktop).join(".");
-        report.pending(
-            format!("{prefix}/{}/{names}", cell.case),
-            Pending::for_op(cell.op),
+        report.refused_with(format!("{prefix}/{}/{names}", cell.case), observed);
+    }
+}
+
+/// The window the input probe opened, by its nonce.
+pub fn probe_window(host: &mut Host, nonce: &str) -> Value {
+    let title = format!("Orcel XP12 Input {nonce}");
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let listed = host.request("list_windows", json!({}));
+        assert_eq!(listed["ok"], true, "{listed}");
+        if let Some(window) = listed["windows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|window| window["title"] == title.as_str())
+        {
+            return window.clone();
+        }
+        assert!(Instant::now() < deadline, "{title} never listed: {listed}");
+        std::thread::sleep(Duration::from_millis(500));
+    }
+}
+
+/// The human-input tick the kernel would read before arming a cell.
+fn live_tick(host: &mut Host) -> u64 {
+    let cursor = host.request("cursor_position", json!({}));
+    assert_eq!(cursor["ok"], true, "{cursor}");
+    let tick = cursor["cursor"]["last_input_tick"].as_u64().unwrap_or(0);
+    assert_ne!(tick, 0, "the session has no human-input clock: {cursor}");
+    tick
+}
+
+fn near(value: &Value, expected: f64) -> bool {
+    value
+        .as_f64()
+        .is_some_and(|got| (got - expected).abs() <= 2.0)
+}
+
+/// One measured pixel cell: the frame, how many journal entries to wait for
+/// and what the application must have received.
+struct ProbeCell {
+    case: &'static str,
+    op: &'static str,
+    fields: Value,
+    wanted: usize,
+    check: fn(&[Value]) -> bool,
+}
+
+fn probe_cells() -> Vec<ProbeCell> {
+    vec![
+        ProbeCell {
+            case: "click",
+            op: "input_click",
+            fields: json!({"x": 120, "y": 90, "button": "left", "click_count": 1}),
+            wanted: 2,
+            check: |got| {
+                got[0]["kind"] == "down"
+                    && got[0]["button"] == 1
+                    && near(&got[0]["x"], 120.0)
+                    && near(&got[0]["y"], 90.0)
+                    && got.last().is_some_and(|last| last["kind"] == "up")
+            },
+        },
+        ProbeCell {
+            case: "double-click",
+            op: "input_click",
+            fields: json!({"x": 60, "y": 70, "button": "left", "click_count": 2}),
+            wanted: 4,
+            check: |got| {
+                got.iter().filter(|event| event["kind"] == "down").count() >= 2
+                    && got.iter().any(|event| event["clicks"] == 2)
+                    && near(&got[0]["x"], 60.0)
+                    && near(&got[0]["y"], 70.0)
+            },
+        },
+        ProbeCell {
+            case: "right-click",
+            op: "input_click",
+            fields: json!({"x": 200, "y": 150, "button": "right", "click_count": 1}),
+            wanted: 2,
+            check: |got| {
+                got[0]["button"] == 3 && near(&got[0]["x"], 200.0) && near(&got[0]["y"], 150.0)
+            },
+        },
+        ProbeCell {
+            case: "drag",
+            op: "input_drag",
+            fields: json!({"x": 50, "y": 60, "to_x": 250, "to_y": 160}),
+            wanted: 3,
+            check: |got| {
+                let (first, last) = (&got[0], got.last().unwrap());
+                first["kind"] == "down"
+                    && near(&first["x"], 50.0)
+                    && near(&first["y"], 60.0)
+                    && last["kind"] == "up"
+                    && near(&last["x"], 250.0)
+                    && near(&last["y"], 160.0)
+                    && got.iter().any(|event| event["kind"] == "motion")
+            },
+        },
+        ProbeCell {
+            case: "scroll",
+            op: "input_scroll",
+            fields: json!({"x": 100, "y": 100, "scroll_x": 0, "scroll_y": 3}),
+            wanted: 1,
+            check: |got| {
+                got.iter().all(|event| event["kind"] == "scroll")
+                    && got.iter().any(|event| {
+                        event["direction"] == "down"
+                            || event["dy"].as_f64().is_some_and(|dy| dy != 0.0)
+                    })
+            },
+        },
+        ProbeCell {
+            case: "type-text",
+            op: "input_type_text",
+            fields: json!({"text": "conformance"}),
+            wanted: 11,
+            check: |got| {
+                got.iter()
+                    .filter(|event| event["kind"] == "key")
+                    .map(|event| event["string"].as_str().unwrap_or_default())
+                    .collect::<String>()
+                    == "conformance"
+            },
+        },
+        ProbeCell {
+            case: "press-key",
+            op: "input_key",
+            fields: json!({"key": "tab"}),
+            wanted: 1,
+            check: |got| got.iter().all(|event| event["kind"] == "key"),
+        },
+    ]
+}
+
+/// The measured pixel cells (XP-12) on X11 and macOS: each frame goes to the
+/// probe window with a fresh human-input tick; the application's own journal
+/// must show the event where the frame named it, and the window system's
+/// focus, stacking and pointer must be where they were (no raise, no focus
+/// change, no real pointer move). The foreground rung has nothing to measure:
+/// raw input is delivered in the background and never takes the foreground.
+pub fn run_probe_cells(
+    host: &mut Host,
+    report: &mut Report,
+    prefix: &str,
+    reference: &Value,
+    probe: &crate::support::Probe,
+) {
+    let state = || crate::support::read_state(&probe.state).expect("the probe keeps its state");
+    for cell in probe_cells() {
+        let case = format!("{}/px/background", cell.case);
+        let before = oracles(host, state());
+        let seen = crate::support::events(&before.fixture).len();
+        let mut fields = cell.fields.clone();
+        fields["window"] = reference.clone();
+        fields["expected_last_input_tick"] = json!(live_tick(host));
+        let started = Instant::now();
+        let reply = host.request(cell.op, fields);
+        let elapsed = started.elapsed();
+        assert_eq!(reply["ok"], true, "{case}: {reply}");
+        assert_eq!(reply["action"]["state"], "completed", "{case}: {reply}");
+        assert_eq!(reply["action"]["action"], cell.op, "{case}: {reply}");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let got = loop {
+            let all = crate::support::events(&state());
+            let got: Vec<Value> = all.into_iter().skip(seen).collect();
+            if got.len() >= cell.wanted {
+                // Let a trailing event arrive before the cell is judged.
+                std::thread::sleep(Duration::from_millis(300));
+                break crate::support::events(&state())
+                    .into_iter()
+                    .skip(seen)
+                    .collect::<Vec<_>>();
+            }
+            assert!(
+                Instant::now() < deadline,
+                "{case}: the application received {got:?}"
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        };
+        assert!(
+            (cell.check)(&got),
+            "{case}: the application received {got:?}"
         );
+        let after = oracles(host, state());
+        assert_eq!(before.cursor, after.cursor, "{case}: the pointer moved");
+        assert_eq!(
+            before.desktop, after.desktop,
+            "{case}: focus or stacking changed"
+        );
+        let names = oracle_names(&before.desktop).join(".");
+        report.pass(
+            format!("{prefix}/{case}/{names}"),
+            "delivered",
+            &[elapsed],
+            1,
+        );
+        report.background_only(format!("{prefix}/{}/px/foreground", cell.case));
     }
 }
 
@@ -1192,7 +1392,7 @@ pub fn negative_action_cells(
         stateless,
         "invalid_request",
     );
-    // Scroll is a wheel event at a position: pixel-addressed, XP-12.
+    // Scroll is a wheel event at a position: pixel-addressed (input_scroll).
     refuse(
         host,
         "scroll/ax/refused",

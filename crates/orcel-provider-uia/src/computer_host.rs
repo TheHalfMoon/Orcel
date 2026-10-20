@@ -70,6 +70,125 @@ pub enum DesktopInputAction {
     },
 }
 
+/// XP-12: the most characters one native `input_type_text` types.
+pub const NATIVE_MAX_TYPED_CHARS: usize = 256;
+/// XP-12: the most wheel lines one native `input_scroll` turns.
+pub const NATIVE_MAX_SCROLL_LINES: i32 = 20;
+/// XP-12: the most clicks one native `input_click` makes.
+pub const NATIVE_MAX_CLICK_COUNT: u8 = 3;
+/// XP-12: the shortest time between two native raw input sequences.
+pub const NATIVE_MIN_INPUT_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// The wire operation a raw input travels as.
+fn input_operation(action: &DesktopInputAction) -> &'static str {
+    match action {
+        DesktopInputAction::Move { .. } => "input_move",
+        DesktopInputAction::Click { .. } => "input_click",
+        DesktopInputAction::Drag { .. } => "input_drag",
+        DesktopInputAction::Scroll { .. } => "input_scroll",
+        DesktopInputAction::TypeText { .. } => "input_type_text",
+        DesktopInputAction::Key { .. } => "input_key",
+        DesktopInputAction::Hotkey { .. } => "input_hotkey",
+    }
+}
+
+/// XP-12: SHA-256 digest of one exact input sequence (operation and every
+/// argument). The approval is armed on it and the adapter spends it against
+/// the input it is about to send, so an approval covers exactly one input.
+pub fn input_sequence_digest(action: &DesktopInputAction) -> String {
+    let material = match action {
+        DesktopInputAction::Move { x, y } => format!("move|{x}|{y}"),
+        DesktopInputAction::Click {
+            x,
+            y,
+            button,
+            count,
+        } => format!("click|{x}|{y}|{button}|{count}"),
+        DesktopInputAction::Drag { x, y, to_x, to_y } => format!("drag|{x}|{y}|{to_x}|{to_y}"),
+        DesktopInputAction::Scroll {
+            x,
+            y,
+            scroll_x,
+            scroll_y,
+        } => format!("scroll|{x}|{y}|{scroll_x}|{scroll_y}"),
+        DesktopInputAction::TypeText { text } => format!("type_text|{}|{text}", text.len()),
+        DesktopInputAction::Key { key } => format!("key|{}|{key}", key.len()),
+        DesktopInputAction::Hotkey { key } => format!("hotkey|{}|{key}", key.len()),
+    };
+    crate::digest_hex(&format!("orcel-xp12-input-v1|{material}"), 64)
+}
+
+/// XP-12: the limits a native host's raw input stays inside, judged before an
+/// approval is armed or spent. Coordinates are window-relative and must not
+/// be negative; the host refuses a point outside the live window frame. A
+/// hover and a key chord have no bounded native delivery, so they are
+/// `capability_denied`; the host holds the list of keys it types.
+pub fn check_native_input_limits(action: &DesktopInputAction) -> Result<(), UiaError> {
+    let invalid = |message: &str| Err(UiaError::new(FailureCode::InvalidRequest, message));
+    let point_ok = |x: i32, y: i32| x >= 0 && y >= 0;
+    match action {
+        DesktopInputAction::Move { .. } | DesktopInputAction::Hotkey { .. } => Err(UiaError::new(
+            FailureCode::CapabilityDenied,
+            "a hover and a key chord are not delivered on this platform",
+        )),
+        DesktopInputAction::Click {
+            x,
+            y,
+            button,
+            count,
+        } => {
+            if !point_ok(*x, *y) {
+                return invalid("input coordinates are relative to the window and not negative");
+            }
+            if !matches!(button.as_str(), "left" | "right") {
+                return invalid("native input clicks with the left or right button");
+            }
+            if !(1..=NATIVE_MAX_CLICK_COUNT).contains(count) {
+                return invalid("native input clicks one to three times");
+            }
+            Ok(())
+        }
+        DesktopInputAction::Drag { x, y, to_x, to_y } => {
+            if !point_ok(*x, *y) || !point_ok(*to_x, *to_y) {
+                return invalid("input coordinates are relative to the window and not negative");
+            }
+            Ok(())
+        }
+        DesktopInputAction::Scroll {
+            x,
+            y,
+            scroll_x,
+            scroll_y,
+        } => {
+            if !point_ok(*x, *y) {
+                return invalid("input coordinates are relative to the window and not negative");
+            }
+            let one_axis = (*scroll_x == 0) != (*scroll_y == 0);
+            let bounded = scroll_x.abs() <= NATIVE_MAX_SCROLL_LINES
+                && scroll_y.abs() <= NATIVE_MAX_SCROLL_LINES;
+            if !one_axis || !bounded {
+                return invalid("native scroll turns one axis by one to twenty lines");
+            }
+            Ok(())
+        }
+        DesktopInputAction::TypeText { text } => {
+            let count = text.chars().count();
+            if count == 0 || count > NATIVE_MAX_TYPED_CHARS || text.chars().any(char::is_control) {
+                return invalid(
+                    "native typed text is one to 256 characters with no control character",
+                );
+            }
+            Ok(())
+        }
+        DesktopInputAction::Key { key } => {
+            if key.is_empty() || key.len() > 32 || key.contains(['+', '-', ' ']) {
+                return invalid("native key input names one key, never a chord");
+            }
+            Ok(())
+        }
+    }
+}
+
 /// Frozen execution-state projection for one private-host mutation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopActionResult {
@@ -696,6 +815,20 @@ mod platform {
         pub value_digest: Option<String>,
     }
 
+    /// XP-12: the approval for one raw input sequence on a native host: the
+    /// window and the digest of the exact input (`input_sequence_digest`).
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct ApprovedInput {
+        pub hwnd: u64,
+        pub digest: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct ArmedInput {
+        approved: ApprovedInput,
+        binding: HostTargetBinding,
+    }
+
     /// An approval armed on the binding the window had when it was granted.
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct ArmedSemantic {
@@ -708,6 +841,8 @@ mod platform {
         session: Mutex<HostSession>,
         bindings: Mutex<BTreeMap<u64, HostTargetBinding>>,
         armed: Mutex<Option<ArmedSemantic>>,
+        armed_input: Mutex<Option<ArmedInput>>,
+        last_input: Mutex<Option<std::time::Instant>>,
     }
 
     impl ComputerHostAdapter {
@@ -719,6 +854,8 @@ mod platform {
                 session: Mutex::new(session),
                 bindings: Mutex::new(BTreeMap::new()),
                 armed: Mutex::new(None),
+                armed_input: Mutex::new(None),
+                last_input: Mutex::new(None),
             })
         }
 
@@ -744,6 +881,8 @@ mod platform {
                 session: Mutex::new(session),
                 bindings: Mutex::new(BTreeMap::new()),
                 armed: Mutex::new(None),
+                armed_input: Mutex::new(None),
+                last_input: Mutex::new(None),
             })
         }
 
@@ -774,6 +913,8 @@ mod platform {
                 session: Mutex::new(session),
                 bindings: Mutex::new(BTreeMap::new()),
                 armed: Mutex::new(None),
+                armed_input: Mutex::new(None),
+                last_input: Mutex::new(None),
             })
         }
 
@@ -948,6 +1089,95 @@ mod platform {
             }
         }
 
+        /// XP-12: arms the one approval that lets the next raw input through
+        /// to a native host. It records the digest of the exact input the
+        /// approval covers and the window's host binding (pid, start
+        /// generation, nonce) as it is now. It replaces any earlier approval
+        /// and is used up by the next input whether or not that input
+        /// succeeds. A Windows host needs no arming. An input the native
+        /// limits refuse is not armed.
+        pub fn authorize_input(
+            &self,
+            hwnd: u64,
+            action: &DesktopInputAction,
+        ) -> Result<(), UiaError> {
+            check_native_input_limits(action)?;
+            let binding = self.exact_binding(hwnd)?;
+            let approved = ApprovedInput {
+                hwnd,
+                digest: input_sequence_digest(action),
+            };
+            let mut armed = self.armed_input.lock().map_err(|_| {
+                UiaError::new(
+                    FailureCode::ProviderUnavailable,
+                    "computer host approval slot is poisoned",
+                )
+            })?;
+            *armed = Some(ArmedInput { approved, binding });
+            Ok(())
+        }
+
+        /// Clears any armed input approval; see `disarm_semantic`.
+        pub fn disarm_input(&self) {
+            if let Ok(mut armed) = self.armed_input.lock() {
+                *armed = None;
+            }
+        }
+
+        /// Spends the armed input approval against the input about to be
+        /// sent, then applies the rate limit.
+        fn spend_input(
+            &self,
+            hwnd: u64,
+            action: &DesktopInputAction,
+            binding: HostTargetBinding,
+        ) -> Result<(), UiaError> {
+            let armed = self
+                .armed_input
+                .lock()
+                .map_err(|_| {
+                    UiaError::new(
+                        FailureCode::ProviderUnavailable,
+                        "computer host approval slot is poisoned",
+                    )
+                })?
+                .take()
+                .ok_or_else(|| {
+                    UiaError::new(
+                        FailureCode::CapabilityDenied,
+                        "raw input on this platform needs an approval bound to its exact target and input",
+                    )
+                })?;
+            if armed.approved.hwnd != hwnd || armed.approved.digest != input_sequence_digest(action)
+            {
+                return Err(UiaError::new(
+                    FailureCode::CapabilityDenied,
+                    "the approval covers another window or another input sequence than this input",
+                ));
+            }
+            if armed.binding != binding {
+                return Err(UiaError::new(
+                    FailureCode::TargetStale,
+                    "the window was replaced after the approval was granted",
+                ));
+            }
+            let mut last = self.last_input.lock().map_err(|_| {
+                UiaError::new(
+                    FailureCode::ProviderUnavailable,
+                    "computer host input pacing is poisoned",
+                )
+            })?;
+            let now = std::time::Instant::now();
+            if last.is_some_and(|earlier| now.duration_since(earlier) < NATIVE_MIN_INPUT_INTERVAL) {
+                return Err(UiaError::new(
+                    FailureCode::CapabilityDenied,
+                    "raw input is rate limited: wait before the next input sequence",
+                ));
+            }
+            *last = Some(now);
+            Ok(())
+        }
+
         /// Spends the armed approval against the action about to be sent.
         fn spend_semantic(
             &self,
@@ -1016,6 +1246,13 @@ mod platform {
             expected_last_input_tick: u32,
         ) -> Result<DesktopActionResult, UiaError> {
             let binding = self.exact_binding(hwnd)?;
+            if self.is_native()? {
+                // The limits are judged before the capability table and the
+                // approval, so a refused input never consumes an approval.
+                check_native_input_limits(action)?;
+                self.require_native_capability(input_operation(action))?;
+                self.spend_input(hwnd, action, binding)?;
+            }
             let mut request = match action {
                 DesktopInputAction::Move { x, y } => {
                     let mut request = HostRequest::new("input_move");
@@ -1158,7 +1395,8 @@ mod platform {
         ) -> Result<(), UiaError> {
             let binding = self.exact_binding(hwnd)?;
             if self.is_native()? {
-                // Pixel-addressed delivery is XP-12; the host refuses it too.
+                // A wheel event at a screen position is the pixel-addressed
+                // `input_scroll`, under its own approval; the host refuses it too.
                 if action == "scroll" {
                     return Err(UiaError::new(
                         FailureCode::CapabilityDenied,
@@ -1345,7 +1583,7 @@ mod platform {
     }
 }
 
-pub use platform::{ApprovedSemantic, ComputerHostAdapter};
+pub use platform::{ApprovedInput, ApprovedSemantic, ComputerHostAdapter};
 
 #[cfg(test)]
 mod tests {
@@ -1564,6 +1802,12 @@ mod tests {
                 }
                 "capture_window" | "semantic_action" => {
                     json!({"support": "unavailable", "reason": observation})
+                }
+                // XP-12: five raw input operations follow the window list.
+                "input_click" | "input_drag" | "input_scroll" | "input_type_text" | "input_key"
+                    if observation == "delivered" =>
+                {
+                    json!({"support": "delivered", "delivery": "background"})
                 }
                 _ => json!({"support": "refused", "reason": "capability_denied"}),
             };
@@ -1834,18 +2078,26 @@ mod tests {
         let (adapter, frames) = scripted("linux", linux_desktop);
         let adapter = adapter.unwrap();
         assert_eq!(adapter.list_processes().unwrap().len(), 1);
-        let refused = [
-            adapter
-                .execute_raw_input(11, &DesktopInputAction::Move { x: 1, y: 1 }, 0)
-                .unwrap_err(),
-            adapter
-                .execute_window_action(11, DesktopWindowAction::Focus, 0)
-                .unwrap_err(),
-        ];
-        for error in &refused {
-            assert_eq!(error.code, FailureCode::ProviderUnavailable, "{error:?}");
-            assert!(error.message.contains("does not deliver"), "{error:?}");
+        // A hover and a chord have no bounded native delivery.
+        for action in [
+            DesktopInputAction::Move { x: 1, y: 1 },
+            DesktopInputAction::Hotkey {
+                key: "ctrl+c".into(),
+            },
+        ] {
+            let error = adapter.execute_raw_input(11, &action, 0).unwrap_err();
+            assert_eq!(error.code, FailureCode::CapabilityDenied, "{error:?}");
         }
+        let error = adapter
+            .execute_window_action(11, DesktopWindowAction::Focus, 0)
+            .unwrap_err();
+        assert_eq!(error.code, FailureCode::ProviderUnavailable, "{error:?}");
+        assert!(error.message.contains("does not deliver"), "{error:?}");
+        // XP-12: raw input is delivered, but not without an approval armed on
+        // the exact window and input.
+        let unapproved = adapter.execute_raw_input(11, &click(1, 1), 0).unwrap_err();
+        assert_eq!(unapproved.code, FailureCode::CapabilityDenied);
+        assert!(unapproved.message.contains("approval"), "{unapproved:?}");
         // XP-11: the host delivers semantic actions, but not without an
         // approval armed on the exact target.
         let unapproved = adapter.invoke_element(11, "1:1").unwrap_err();
@@ -2105,8 +2357,361 @@ mod tests {
                     "action": format!("semantic_{}", frame["semantic_action"].as_str().unwrap_or_default())
                 }}),
             )),
+            "input_click" | "input_drag" | "input_scroll" | "input_type_text" | "input_key" => {
+                Some(native_reply(
+                    frame,
+                    json!({"action": {
+                        "state": "completed",
+                        "action": frame["op"].as_str().unwrap_or_default()
+                    }}),
+                ))
+            }
             _ => linux_desktop(frame),
         }
+    }
+
+    fn input_ops(frames: &Frames) -> Vec<Value> {
+        frames
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|frame| {
+                frame["op"]
+                    .as_str()
+                    .is_some_and(|op| op.starts_with("input_"))
+            })
+            .cloned()
+            .collect()
+    }
+
+    fn click(x: i32, y: i32) -> DesktopInputAction {
+        DesktopInputAction::Click {
+            x,
+            y,
+            button: "left".into(),
+            count: 1,
+        }
+    }
+
+    /// XP-12: a raw input reaches a native host only under an approval armed
+    /// on the exact window and the exact input; one approval is one input;
+    /// another input, window or replaced window does not carry over; and a
+    /// hover or chord is never delivered.
+    #[test]
+    fn native_raw_input_is_sent_only_under_an_armed_exact_approval() {
+        let nonce = Arc::new(std::sync::atomic::AtomicU64::new(99));
+        let (adapter, frames) = scripted("linux", acting_desktop(nonce.clone()));
+        let adapter = adapter.unwrap();
+        assert_eq!(adapter.list_processes().unwrap().len(), 1);
+
+        // Unapproved: refused before any frame.
+        let error = adapter.execute_raw_input(11, &click(4, 5), 7).unwrap_err();
+        assert_eq!(error.code, FailureCode::CapabilityDenied);
+        assert!(input_ops(&frames).is_empty());
+
+        // The approval for exactly this input lets one frame through, with
+        // the human-input tick bound and window-relative coordinates.
+        adapter.authorize_input(11, &click(4, 5)).unwrap();
+        let done = adapter.execute_raw_input(11, &click(4, 5), 7).unwrap();
+        assert_eq!(done.state, "completed");
+        let sent = input_ops(&frames);
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0]["op"], "input_click");
+        assert_eq!(
+            (sent[0]["x"].as_i64(), sent[0]["y"].as_i64()),
+            (Some(4), Some(5))
+        );
+        assert_eq!(sent[0]["expected_last_input_tick"], 7);
+        assert_eq!(
+            sent[0]["window"],
+            json!({"kind": "x11", "id": 11, "expected_pid": 4410, "expected_start_generation": 133702, "expected_window_nonce": 99})
+        );
+
+        // A replayed approval is refused: one approval, one input.
+        std::thread::sleep(NATIVE_MIN_INPUT_INTERVAL);
+        let replay = adapter.execute_raw_input(11, &click(4, 5), 7).unwrap_err();
+        assert_eq!(replay.code, FailureCode::CapabilityDenied);
+        assert_eq!(input_ops(&frames).len(), 1);
+
+        // An approval for another point, button, input or window does not
+        // carry over, and a refused attempt still uses the approval up.
+        let other_button = DesktopInputAction::Click {
+            x: 4,
+            y: 5,
+            button: "right".into(),
+            count: 1,
+        };
+        for (armed_for, run) in [
+            (click(4, 5), click(4, 6)),
+            (click(4, 5), other_button),
+            (
+                click(4, 5),
+                DesktopInputAction::Key {
+                    key: "Enter".into(),
+                },
+            ),
+            (
+                DesktopInputAction::TypeText { text: "ab".into() },
+                DesktopInputAction::TypeText { text: "abc".into() },
+            ),
+        ] {
+            adapter.authorize_input(11, &armed_for).unwrap();
+            let error = adapter.execute_raw_input(11, &run, 7).unwrap_err();
+            assert_eq!(error.code, FailureCode::CapabilityDenied, "{run:?}");
+            let spent = adapter.execute_raw_input(11, &armed_for, 7).unwrap_err();
+            assert_eq!(spent.code, FailureCode::CapabilityDenied);
+        }
+        // An unlisted window cannot be armed.
+        assert_eq!(
+            adapter.authorize_input(12, &click(4, 5)).unwrap_err().code,
+            FailureCode::TargetStale
+        );
+        assert_eq!(input_ops(&frames).len(), 1);
+
+        // A window replaced after the approval voids it.
+        std::thread::sleep(NATIVE_MIN_INPUT_INTERVAL);
+        adapter.authorize_input(11, &click(4, 5)).unwrap();
+        nonce.store(100, std::sync::atomic::Ordering::SeqCst);
+        adapter.list_processes().unwrap();
+        let stale = adapter.execute_raw_input(11, &click(4, 5), 7).unwrap_err();
+        assert_eq!(stale.code, FailureCode::TargetStale);
+        assert_eq!(input_ops(&frames).len(), 1);
+
+        // Disarming leaves nothing to spend.
+        adapter.authorize_input(11, &click(4, 5)).unwrap();
+        adapter.disarm_input();
+        let none = adapter.execute_raw_input(11, &click(4, 5), 7).unwrap_err();
+        assert_eq!(none.code, FailureCode::CapabilityDenied);
+    }
+
+    /// XP-12: an over-cap or malformed input is refused before an approval is
+    /// armed, so it consumes nothing, and a hover and a chord are not served.
+    #[test]
+    fn native_raw_input_limits_are_judged_before_any_approval() {
+        let (adapter, frames) = scripted(
+            "linux",
+            acting_desktop(Arc::new(std::sync::atomic::AtomicU64::new(99))),
+        );
+        let adapter = adapter.unwrap();
+        adapter.list_processes().unwrap();
+        let long = "a".repeat(NATIVE_MAX_TYPED_CHARS + 1);
+        let refused = [
+            (click(-1, 5), FailureCode::InvalidRequest),
+            (click(5, -1), FailureCode::InvalidRequest),
+            (
+                DesktopInputAction::Click {
+                    x: 1,
+                    y: 1,
+                    button: "middle".into(),
+                    count: 1,
+                },
+                FailureCode::InvalidRequest,
+            ),
+            (
+                DesktopInputAction::Click {
+                    x: 1,
+                    y: 1,
+                    button: "left".into(),
+                    count: 4,
+                },
+                FailureCode::InvalidRequest,
+            ),
+            (
+                DesktopInputAction::Click {
+                    x: 1,
+                    y: 1,
+                    button: "left".into(),
+                    count: 0,
+                },
+                FailureCode::InvalidRequest,
+            ),
+            (
+                DesktopInputAction::Drag {
+                    x: 1,
+                    y: 1,
+                    to_x: -3,
+                    to_y: 4,
+                },
+                FailureCode::InvalidRequest,
+            ),
+            (
+                DesktopInputAction::Scroll {
+                    x: 1,
+                    y: 1,
+                    scroll_x: 0,
+                    scroll_y: 21,
+                },
+                FailureCode::InvalidRequest,
+            ),
+            (
+                DesktopInputAction::Scroll {
+                    x: 1,
+                    y: 1,
+                    scroll_x: 1,
+                    scroll_y: 1,
+                },
+                FailureCode::InvalidRequest,
+            ),
+            (
+                DesktopInputAction::Scroll {
+                    x: 1,
+                    y: 1,
+                    scroll_x: 0,
+                    scroll_y: 0,
+                },
+                FailureCode::InvalidRequest,
+            ),
+            (
+                DesktopInputAction::TypeText { text: long },
+                FailureCode::InvalidRequest,
+            ),
+            (
+                DesktopInputAction::TypeText {
+                    text: String::new(),
+                },
+                FailureCode::InvalidRequest,
+            ),
+            (
+                DesktopInputAction::TypeText {
+                    text: "a\nb".into(),
+                },
+                FailureCode::InvalidRequest,
+            ),
+            (
+                DesktopInputAction::Key {
+                    key: "cmd+q".into(),
+                },
+                FailureCode::InvalidRequest,
+            ),
+            (
+                DesktopInputAction::Key {
+                    key: "ctrl-alt-delete".into(),
+                },
+                FailureCode::InvalidRequest,
+            ),
+            (
+                DesktopInputAction::Key { key: String::new() },
+                FailureCode::InvalidRequest,
+            ),
+            (
+                DesktopInputAction::Move { x: 1, y: 1 },
+                FailureCode::CapabilityDenied,
+            ),
+            (
+                DesktopInputAction::Hotkey {
+                    key: "cmd+c".into(),
+                },
+                FailureCode::CapabilityDenied,
+            ),
+        ];
+        for (action, code) in refused {
+            assert_eq!(
+                adapter.authorize_input(11, &action).unwrap_err().code,
+                code,
+                "{action:?}"
+            );
+            assert_eq!(
+                adapter.execute_raw_input(11, &action, 1).unwrap_err().code,
+                code,
+                "{action:?}"
+            );
+        }
+        // The largest bounded text is accepted.
+        let longest = "é".repeat(NATIVE_MAX_TYPED_CHARS);
+        adapter
+            .authorize_input(
+                11,
+                &DesktopInputAction::TypeText {
+                    text: longest.clone(),
+                },
+            )
+            .unwrap();
+        adapter
+            .execute_raw_input(11, &DesktopInputAction::TypeText { text: longest }, 1)
+            .unwrap();
+        assert_eq!(input_ops(&frames).len(), 1);
+    }
+
+    /// XP-12: raw input is paced; a second sequence inside the interval is
+    /// refused even with its own approval, and nothing is framed for it.
+    #[test]
+    fn native_raw_input_is_rate_limited() {
+        let (adapter, frames) = scripted(
+            "linux",
+            acting_desktop(Arc::new(std::sync::atomic::AtomicU64::new(99))),
+        );
+        let adapter = adapter.unwrap();
+        adapter.list_processes().unwrap();
+        adapter.authorize_input(11, &click(1, 1)).unwrap();
+        adapter.execute_raw_input(11, &click(1, 1), 1).unwrap();
+        adapter.authorize_input(11, &click(2, 2)).unwrap();
+        let error = adapter.execute_raw_input(11, &click(2, 2), 1).unwrap_err();
+        assert_eq!(error.code, FailureCode::CapabilityDenied);
+        assert!(error.message.contains("rate limited"), "{error:?}");
+        assert_eq!(input_ops(&frames).len(), 1);
+        std::thread::sleep(NATIVE_MIN_INPUT_INTERVAL);
+        adapter.authorize_input(11, &click(2, 2)).unwrap();
+        adapter.execute_raw_input(11, &click(2, 2), 1).unwrap();
+        assert_eq!(input_ops(&frames).len(), 2);
+    }
+
+    /// XP-12: a native host that does not deliver input (its hello refuses
+    /// it, or lists the window system as unavailable) never consumes an
+    /// approval and never gets a frame.
+    #[test]
+    fn a_native_host_that_refuses_input_gets_no_frame() {
+        let (adapter, frames) = scripted("linux", |frame| match frame["op"].as_str() {
+            Some("hello") => {
+                let mut table = observing_table("delivered");
+                table["input_click"] =
+                    json!({"support": "unavailable", "reason": "provider_unavailable"});
+                Some(native_reply(
+                    frame,
+                    json!({"platform": "linux", "backend": "atspi-x11", "capabilities": table}),
+                ))
+            }
+            _ => linux_desktop(frame),
+        });
+        let adapter = adapter.unwrap();
+        adapter.list_processes().unwrap();
+        adapter.authorize_input(11, &click(1, 1)).unwrap();
+        let error = adapter.execute_raw_input(11, &click(1, 1), 1).unwrap_err();
+        assert_eq!(error.code, FailureCode::ProviderUnavailable);
+        assert!(input_ops(&frames).is_empty());
+    }
+
+    #[test]
+    fn the_input_digest_separates_every_argument() {
+        let base = input_sequence_digest(&click(4, 5));
+        for other in [
+            click(5, 4),
+            DesktopInputAction::Click {
+                x: 4,
+                y: 5,
+                button: "right".into(),
+                count: 1,
+            },
+            DesktopInputAction::Click {
+                x: 4,
+                y: 5,
+                button: "left".into(),
+                count: 2,
+            },
+            DesktopInputAction::Key {
+                key: "Enter".into(),
+            },
+            DesktopInputAction::TypeText {
+                text: "Enter".into(),
+            },
+        ] {
+            assert_ne!(input_sequence_digest(&other), base, "{other:?}");
+        }
+        assert_eq!(input_sequence_digest(&click(4, 5)), base);
+        // A text that imitates the fields of another input stays distinct.
+        assert_ne!(
+            input_sequence_digest(&DesktopInputAction::TypeText { text: "x|y".into() }),
+            input_sequence_digest(&DesktopInputAction::Key { key: "x|y".into() })
+        );
     }
 
     fn semantic_ops(frames: &Frames) -> Vec<Value> {
