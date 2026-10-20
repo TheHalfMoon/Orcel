@@ -36,6 +36,7 @@
 //! files, forms and fonts' programs are never evaluated, only the text the
 //! content streams draw is read.
 
+use lopdf::xref::XrefEntry;
 use lopdf::{DecompressError, Document, LoadOptions, Object};
 use orcel_provider_process::document_parser::{
     ParseRefusal, MAX_ARCHIVE_BYTES, MAX_NESTING, MAX_PAGES, MAX_PDF_INFLATED_BYTES,
@@ -85,11 +86,23 @@ pub fn convert(bytes: &[u8]) -> Result<PdfText, ParseRefusal> {
 ///   ("loaded PDF after repairing"). The pre-flight already loaded the same
 ///   bytes with the same options and succeeded, so the load cannot fail.
 ///
+/// Same bytes and options give the same document except in one place: lopdf
+/// gathers object-stream members on parallel tasks and keeps the first copy
+/// of each id, so an id that sits in two object streams, with no xref entry
+/// choosing the container, can resolve differently in the two loads. The
+/// pre-flight refuses such files (`refuse_ambiguous_object_stream_members`).
+/// Even without that, a member of an object stream can never be a stream
+/// (PDF 32000-1 7.5.7), so no unbounded decode could hide behind it.
+///
 /// Parity is checked here as well as argued: a logger records those three
 /// messages, and if any of them is emitted while pdf-inspector runs, or its
 /// page count differs from the pre-flight's, the file is refused. The
 /// messages are pinned with pdf-inspector (=1.21.0), and
 /// `pdf_tests::parity_breaks_are_observed` proves each one is still caught.
+/// The logger proves itself on every parse (`parity::watch` emits a
+/// self-test record and requires it to be seen), so a build whose `log`
+/// filters out debug records at compile time refuses every PDF instead of
+/// silently checking nothing.
 fn inspect_with_parity(
     bytes: &[u8],
     pages: usize,
@@ -131,11 +144,14 @@ mod parity {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Once;
 
-    const MESSAGES: [&str; 3] = [
+    const MESSAGES: [&str; 4] = [
         "dropping ",
         "fix_bare_struct_names: patched",
         "loaded PDF after repairing",
+        SELF_TEST,
     ];
+    /// Emitted by [`watch`] itself; the logger must see it.
+    const SELF_TEST: &str = "orcel-doc-parser parity self-test";
 
     thread_local! {
         static BROKEN: Cell<bool> = const { Cell::new(false) };
@@ -165,8 +181,11 @@ mod parity {
     static INSTALL: Once = Once::new();
     static INSTALLED: AtomicBool = AtomicBool::new(false);
 
-    /// Install the logger (once per process) and clear this thread's flag.
-    /// False if another logger holds the slot, so nothing would be observed.
+    /// Install the logger (once per process), prove it sees a debug record
+    /// from the `pdf_inspector` target on this thread, and clear this
+    /// thread's flag. False if another logger holds the slot, or if debug
+    /// records never arrive (a `log/release_max_level_*` feature compiled
+    /// them out), so nothing would be observed.
     pub(super) fn watch() -> bool {
         INSTALL.call_once(|| {
             if log::set_logger(&LOGGER).is_ok() {
@@ -175,7 +194,10 @@ mod parity {
             }
         });
         BROKEN.with(|broken| broken.set(false));
-        INSTALLED.load(Ordering::SeqCst)
+        log::debug!(target: "pdf_inspector", "{SELF_TEST}");
+        let seen = broken();
+        BROKEN.with(|broken| broken.set(false));
+        INSTALLED.load(Ordering::SeqCst) && seen
     }
 
     pub(super) fn broken() -> bool {
@@ -222,12 +244,51 @@ fn preflight(bytes: &[u8]) -> Result<usize, ParseRefusal> {
         inspect(object, 0)?;
     }
     bound_stream_inflation(&document)?;
+    refuse_ambiguous_object_stream_members(&document)?;
     let pages = document.page_iter().take(MAX_PAGES + 1).count();
     match pages {
         0 => Err(ParseRefusal::Malformed),
         count if count > MAX_PAGES => Err(ParseRefusal::TooManyPages),
         count => Ok(count),
     }
+}
+
+/// lopdf collects the members of every object stream on parallel tasks and
+/// keeps the first copy of each id (`load_objects_raw`). An id the xref
+/// places (a normal entry, or a compressed entry naming its container) is
+/// deterministic: the placed copy wins. An id that is a member of more than
+/// one object stream and that the xref does not place resolves to whichever
+/// task finished first, so two loads of the same bytes could disagree.
+/// Such a file is refused.
+fn refuse_ambiguous_object_stream_members(document: &Document) -> Result<(), ParseRefusal> {
+    let mut containers: std::collections::BTreeMap<u32, u32> = std::collections::BTreeMap::new();
+    for (&(container, _), object) in &document.objects {
+        let Object::Stream(stream) = object else {
+            continue;
+        };
+        if !stream.dict.has_type(b"ObjStm") {
+            continue;
+        }
+        // The load decoded it under the same bound; one that failed then
+        // contributed nothing and is skipped the same way here.
+        let Ok(members) = lopdf::ObjectStream::new_with_limit(stream, Some(INSPECTOR_LOAD_BOUND))
+        else {
+            continue;
+        };
+        for &(id, _) in members.objects.keys() {
+            let placed = matches!(
+                document.reference_table.entries.get(&id),
+                Some(XrefEntry::Normal { .. } | XrefEntry::Compressed { .. })
+            );
+            match containers.insert(id, container) {
+                Some(other) if other != container && !placed => {
+                    return Err(ParseRefusal::Malformed)
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
 }
 
 /// pdf-inspector decodes content, form XObject, font and ToUnicode streams

@@ -568,3 +568,27 @@ pub fn bare_struct_name_pdf() -> Vec<u8> {
         "/OrcelTag << /S P >> ",
     )
 }
+
+/// The normal page plus `containers` object streams that each hold object
+/// 9, which the cross-reference table does not place. With two containers
+/// lopdf's choice of copy depends on task order.
+pub fn object_stream_member_pdf(containers: usize) -> Vec<u8> {
+    let content = "BT /F1 12 Tf 72 720 Td (Orcel WI-05 fixture) Tj ET";
+    let mut objects = vec![
+        "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".into(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] \
+         /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>"
+            .into(),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".into(),
+        stream(content),
+    ];
+    for copy in 0..containers {
+        let body = format!("9 0 << /OrcelCopy {copy} >>");
+        objects.push(format!(
+            "<< /Type /ObjStm /N 1 /First 4 /Length {} >>\nstream\n{body}\nendstream",
+            body.len()
+        ));
+    }
+    pdf(&objects, "")
+}

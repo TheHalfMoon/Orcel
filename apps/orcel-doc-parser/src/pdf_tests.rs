@@ -223,3 +223,32 @@ fn the_inflation_bound_is_wired_to_the_contract() {
     );
     assert_eq!(MAX_PDF_INFLATED_BYTES, 256 * 1024 * 1024);
 }
+
+#[test]
+fn an_unplaced_member_of_two_object_streams_is_refused() {
+    let once = crate::fixtures::object_stream_member_pdf(1);
+    let document = Document::load_mem(&once).unwrap();
+    assert!(
+        document.objects.contains_key(&(9, 0)),
+        "lopdf loads the member, or the fixture tests nothing"
+    );
+    assert_eq!(refuse_ambiguous_object_stream_members(&document), Ok(()));
+    assert!(convert(&once).is_ok());
+
+    let twice = crate::fixtures::object_stream_member_pdf(2);
+    let document = Document::load_mem(&twice).unwrap();
+    assert_eq!(
+        refuse_ambiguous_object_stream_members(&document),
+        Err(ParseRefusal::Malformed)
+    );
+    assert_eq!(convert(&twice).map(|_| ()), Err(ParseRefusal::Malformed));
+}
+
+/// The parity logger proves itself on every parse: its self-test record is
+/// seen and then cleared, so it never reads as a parity break.
+#[test]
+fn the_parity_logger_proves_itself_before_each_parse() {
+    assert!(parity::watch(), "the self-test record was not observed");
+    assert!(!parity::broken(), "the self-test must not count as a break");
+    assert!(inspect_with_parity(&crate::fixtures::text_pdf(), 1).is_ok());
+}
