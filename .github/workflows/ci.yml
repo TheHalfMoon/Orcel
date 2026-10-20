@@ -1077,6 +1077,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/check-vendored-cua.mjs --upstream
+      - name: Vendored lopdf matches its crates.io release outside PATCHES.md
+        # --upstream downloads the crate from crates.io and checks its
+        # checksum and tree id, so the ids recorded here are not trusted alone.
+        run: node scripts/check-vendored-lopdf.mjs --upstream
       - name: Validate SpecGrain JSON and canonical evidence
         shell: python
         run: |

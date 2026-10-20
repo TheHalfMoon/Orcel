@@ -42,19 +42,34 @@ fn main() -> ExitCode {
     let _ = rayon::ThreadPoolBuilder::new()
         .num_threads(1)
         .build_global();
+    pdf::on_budget_exhausted(refuse_archive_limit_now);
     let (frame, status) = match run() {
         Ok(document) => (encode_ok(&document), 0),
         Err(refusal) => (encode_refusal(refusal), EXIT_REFUSED),
     };
+    ExitCode::from(write_frame(&frame, status))
+}
+
+/// Write the one frame and return the exit status (1 if stdout failed).
+fn write_frame(frame: &[u8], status: i64) -> u8 {
     let mut stdout = std::io::stdout().lock();
     if stdout
-        .write_all(&frame)
+        .write_all(frame)
         .and_then(|()| stdout.flush())
         .is_err()
     {
-        return ExitCode::FAILURE;
+        return 1;
     }
-    ExitCode::from(u8::try_from(status).unwrap_or(1))
+    u8::try_from(status).unwrap_or(1)
+}
+
+/// A PDF's decode budget ran out (`pdf::within_budget`, #391): answer
+/// `archive_limit` and end the process now, from whichever thread's decode
+/// exhausted it, so no more of the document is read. Nothing has been
+/// written to stdout yet: the frame is written only after the parse.
+fn refuse_archive_limit_now() {
+    let status = write_frame(&encode_refusal(ParseRefusal::ArchiveLimit), EXIT_REFUSED);
+    std::process::exit(i32::from(status));
 }
 
 fn run() -> Result<ParsedDocument, ParseRefusal> {

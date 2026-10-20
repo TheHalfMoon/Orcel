@@ -1,0 +1,89 @@
+{
+  "schema": "orcel-vendored-provenance/1",
+  "task": "#391",
+  "purpose": "Bound every stream decode pdf-inspector 1.21.0 makes in orcel-doc-parser, on lopdf's own terms, with one decode budget per phase of a parse.",
+  "donor": {
+    "id": "lopdf",
+    "repository": "J-F-Liu/lopdf",
+    "registry": "crates.io",
+    "vcs_commit": "1e3d646ca249ebf1a6ff479278c07e9c0f9377a8",
+    "vcs_note": "The published crate's .cargo_vcs_info.json names this commit with \"dirty\": true, so the crate is not that commit's tree. The crates.io archive (crate_sha256, the checksum Cargo.lock carried) is the pin.",
+    "license": "MIT",
+    "license_path": "LICENSE",
+    "license_blob_sha": "c15fe13e280aa581797d9c32c060f87915450df8",
+    "notice_path": "docs/orcel/notices/lopdf-MIT.txt"
+  },
+  "verification": "scripts/check-vendored-lopdf.mjs rebuilds the crate's git tree from the committed files: patched_files go back as their upstream blobs, removed_files as their upstream blobs or trees, added_files and orcel_files are left out. The result must equal tree_sha. With --upstream it downloads the crate from crates.io, requires crate_sha256, and computes tree_sha from the archive itself. Run: node scripts/check-vendored-lopdf.mjs --upstream",
+  "patch_queue": "apps/orcel-doc-parser/third_party/lopdf/PATCHES.md",
+  "consumer": {
+    "workspace": "apps/orcel-doc-parser",
+    "lockfile": "apps/orcel-doc-parser/Cargo.lock",
+    "reviewed_against": {
+      "pdf-inspector": "1.21.0"
+    }
+  },
+  "crates": [
+    {
+      "name": "lopdf",
+      "version": "0.45.0",
+      "crate_sha256": "bfffda0fe1ab0157e1a13c14bebd3f28671f2fccb7922f0722ec53926e6922d3",
+      "tree_sha": "08e7cd0a5e96690ae4c97d8bb589c109150e161f",
+      "destination": "apps/orcel-doc-parser/third_party/lopdf",
+      "orcel_files": ["PATCHES.md"],
+      "patched_files": [
+        {
+          "path": "Cargo.toml",
+          "patch": "P-01",
+          "upstream_blob_sha": "5b324210ebb968355fa9dc0ed18b2f7a7286c408",
+          "upstream_blocker_lines": []
+        },
+        {
+          "path": "src/lib.rs",
+          "patch": "P-02",
+          "upstream_blob_sha": "4c1d8453163f1a2c7a35e07c132bb5073ab7f594",
+          "upstream_blocker_lines": []
+        },
+        {
+          "path": "README.md",
+          "patch": "P-03",
+          "whitespace_only": true,
+          "upstream_blob_sha": "bc754f2111b433d4c6b9a498aedb2c34f9fc4c20",
+          "upstream_blocker_lines": []
+        },
+        {
+          "path": "src/reader.rs",
+          "patch": "P-03",
+          "whitespace_only": true,
+          "upstream_blob_sha": "e048e3acfcb6edf4d5e134b8d6a4c6bd02776a94",
+          "upstream_blocker_lines": []
+        },
+        {
+          "path": "src/object.rs",
+          "patch": "P-02",
+          "upstream_blob_sha": "490cfffb2027997e07fb6d2fffc381fa14036da8",
+          "upstream_blocker_lines": [
+            "6c93a980ff17e0ed05ace7572e9af4da8d80c30c3bad8fe6429c52a5e2fd490a"
+          ]
+        }
+      ],
+      "added_files": [
+        {
+          "path": "src/decode_budget.rs",
+          "patch": "P-02"
+        }
+      ],
+      "removed_files": [
+        { "path": "examples", "upstream_tree_sha": "24a394170de2aa67bfb4d94c3007ae91549366a7", "reason": "example binaries; not built" },
+        { "path": "tests", "upstream_tree_sha": "b60c6f8a990094e9008733cfbf442c1efd838916", "reason": "integration tests; they read assets/, which the crate excludes, and are not built" },
+        { "path": ".cargo_vcs_info.json", "upstream_blob_sha": "5b175d4668a60836cda3ab096bd729f63de9a6fd", "reason": "packaging metadata" },
+        { "path": ".editorconfig", "upstream_blob_sha": "e0f8ed1c1630912a48b21e6b59e41d1597e167e7", "reason": "editor settings" },
+        { "path": ".gitattributes", "upstream_blob_sha": "83463c264d9c240a435f69e0d0ce97ce346024f3", "reason": "upstream repository settings" },
+        { "path": ".gitignore", "upstream_blob_sha": "ba13bc82452d300bd925a0aecec3a2edb0dea326", "reason": "upstream repository settings" },
+        { "path": "CHANGELOG.md", "upstream_blob_sha": "d38ec589b8a8faead437e5581163485b7b8dcf2e", "reason": "release notes; not built" },
+        { "path": "Cargo.lock", "upstream_blob_sha": "018b51fb76ad25c2c5c6a77842a04a22cef6e8be", "reason": "apps/orcel-doc-parser/Cargo.lock governs the graph" },
+        { "path": "Cargo.toml.orig", "upstream_blob_sha": "da97acf087a70409b476249b1c42ed47ec1373da", "reason": "the pre-normalisation manifest; Cargo.toml is the one built" },
+        { "path": "rustfmt.toml", "upstream_blob_sha": "11b4ac63e4a645970a343bef51386a6263dff98a", "reason": "formatter settings; the vendored copy is never reformatted" }
+      ]
+    }
+  ]
+}

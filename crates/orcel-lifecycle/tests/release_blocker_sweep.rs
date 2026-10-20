@@ -41,17 +41,30 @@ fn is_test_file(relative: &str) -> bool {
 /// rules, allowing only the upstream lines the provenance records.
 const VENDORED_CUA: &str = "apps/orcel-native-host/third_party/cua-driver/crates/";
 const CUA_PROVENANCE: &str = "docs/orcel/cua_driver_provenance.json";
+/// #391 vendored lopdf 0.45.0 (crates.io, MIT), under the same terms as the
+/// Cua crates: CI (`scripts/check-vendored-lopdf.mjs`) proves every
+/// unpatched file is the crates.io release's, and its patch queue
+/// (`third_party/lopdf/PATCHES.md`) is held to these rules below.
+const VENDORED_LOPDF: &str = "apps/orcel-doc-parser/third_party/lopdf/";
+const LOPDF_PROVENANCE: &str = "docs/orcel/lopdf_provenance.json";
 
 fn vendored(relative: &str) -> bool {
-    relative.starts_with(VENDORED_CUA)
+    relative.starts_with(VENDORED_CUA) || relative.starts_with(VENDORED_LOPDF)
 }
 
-/// Every vendored file the patch queue changes or adds, with the SHA-256 of
+/// Every vendored file the patch queues change or add, with the SHA-256 of
 /// each upstream line in it that a rule below flags (an added file has none).
 fn patched_vendored_files(root: &Path) -> BTreeMap<String, Vec<String>> {
-    let text = fs::read_to_string(root.join(CUA_PROVENANCE)).expect("read Cua provenance");
-    let provenance: serde_json::Value = serde_json::from_str(&text).expect("Cua provenance JSON");
     let mut out = BTreeMap::new();
+    for path in [CUA_PROVENANCE, LOPDF_PROVENANCE] {
+        patched_files_of(root, path, &mut out);
+    }
+    out
+}
+
+fn patched_files_of(root: &Path, path: &str, out: &mut BTreeMap<String, Vec<String>>) {
+    let text = fs::read_to_string(root.join(path)).expect("read vendored provenance");
+    let provenance: serde_json::Value = serde_json::from_str(&text).expect("provenance JSON");
     for krate in provenance["crates"].as_array().expect("provenance crates") {
         let destination = krate["destination"].as_str().expect("crate destination");
         for file in krate["patched_files"].as_array().into_iter().flatten() {
@@ -69,7 +82,6 @@ fn patched_vendored_files(root: &Path) -> BTreeMap<String, Vec<String>> {
             out.insert(format!("{destination}/{path}"), Vec::new());
         }
     }
-    out
 }
 
 /// The union of the marker, panic/unreachable/mock and ignored-test rules for
@@ -352,7 +364,7 @@ fn patched_vendored_files_add_no_release_blockers() {
     let patched = patched_vendored_files(&root);
     assert!(
         !patched.is_empty(),
-        "the Cua provenance lists no patched files"
+        "the vendored provenance lists no patched files"
     );
     let mut hits = Vec::new();
     for (relative, upstream) in &patched {
