@@ -18,8 +18,9 @@ use std::time::{Duration, Instant};
 const SECRET: &str = "sk-release-qualification-key-0123456789";
 const TUNNEL_ID: &str = "tunnel_0123456789abcdefghijklmnopqrstuv";
 
-/// The closed MCP tool set registered by `apps/orcel-mcp`.
-const CANONICAL_TOOLS: &[&str] = &[
+/// The closed MCP tool set the tunnel-launched `orcel-mcp-host` serves: the
+/// canonical `apps/orcel-mcp` catalog minus [`TUNNEL_EXCLUDED_TOOLS`].
+const TUNNEL_TOOLS: &[&str] = &[
     "system_status",
     "workspace_get",
     "fs_stat",
@@ -48,7 +49,6 @@ const CANONICAL_TOOLS: &[&str] = &[
     "clipboard_read",
     "clipboard_write",
     "web_fetch",
-    "web_search",
     "process_spawn",
     "git_status",
     "git_diff",
@@ -62,6 +62,11 @@ const CANONICAL_TOOLS: &[&str] = &[
     "git_push_preview",
     "git_push",
 ];
+
+/// WI-06: canonical tools the tunnel host never serves. `web_search` is in
+/// the local catalog but must not be reachable through the ChatGPT Secure
+/// MCP Tunnel, whose requests carry no remote context.
+const TUNNEL_EXCLUDED_TOOLS: &[&str] = &["web_search"];
 
 fn temp_dir(label: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("orcel-rq-{label}-{}", orcel_lifecycle::nonce()));
@@ -338,7 +343,13 @@ fn packaged_release_installs_runs_updates_recovers_and_uninstalls() {
         .unwrap();
     let mut listed_sorted = listed.clone();
     listed_sorted.sort();
-    let mut canonical = CANONICAL_TOOLS
+    for excluded in TUNNEL_EXCLUDED_TOOLS {
+        assert!(
+            !listed.iter().any(|name| name == excluded),
+            "{excluded} must never be served through the tunnel: {tools_line}"
+        );
+    }
+    let mut canonical = TUNNEL_TOOLS
         .iter()
         .map(|name| name.to_string())
         .collect::<Vec<_>>();
