@@ -365,6 +365,41 @@ jobs:
       - name: Test
         run: npm test
 
+  # CR-02: the headless Control Room client against the real orceld app API
+  # (CR-01) on each OS. ORCEL_REQUIRE_LIVE_ORCELD makes the contract and
+  # conformance tests fail instead of skipping without the daemon;
+  # ORCEL_APP_API_OTHER_USER_TEST runs the connect as `nobody` (passwordless
+  # sudo on the hosted Linux and macOS runners).
+  control-room:
+    name: Control Room client / ${{ matrix.os }}
+    # A daemon that never listens fails its test within 30 s; this bounds
+    # the job however a test misbehaves (the first macOS run hung 6 h).
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24.19.0"
+      - name: Build orceld
+        run: cargo build --locked -p orceld
+      - name: Install
+        run: npm ci --prefix apps/orcel-control-room --ignore-scripts
+      - name: Typecheck
+        run: npm --prefix apps/orcel-control-room run typecheck
+      - name: Test against the real orceld
+        env:
+          ORCEL_REQUIRE_LIVE_ORCELD: "1"
+          ORCEL_APP_API_OTHER_USER_TEST: ${{ runner.os != 'Windows' && '1' || '' }}
+        run: npm --prefix apps/orcel-control-room test
+
   web:
     name: Web / ubuntu-latest
     runs-on: ubuntu-latest
