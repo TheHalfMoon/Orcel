@@ -483,6 +483,17 @@ jobs:
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: Unit and end-to-end tests
         run: cargo test --locked -- --nocapture
+      # XP-13b: orceld wiring. A registered executable that opted in to the
+      # contained tier runs through process.spawn under the helper the step
+      # above built; the test fails instead of skipping when
+      # ORCEL_REQUIRE_CONTAINED_WIRING is set.
+      - name: orceld runs a contained-tier registered executable (end to end)
+        env:
+          ORCEL_REQUIRE_CONTAINED_WIRING: "1"
+        run: |
+          set -euo pipefail
+          dir=$(pwd -W 2>/dev/null || pwd)/target/debug
+          ORCEL_TEST_CONTAIN_DIR="$dir" cargo test --locked --manifest-path ../../Cargo.toml -p orceld -- xp13b_ --nocapture
       # Issue #369, item 1: orceld@.service sets RestrictNamespaces=yes and
       # every child inherits it. orcel-contain needs no namespace (Landlock and
       # seccomp only), so the unit is unchanged. This runs the end-to-end
@@ -774,6 +785,8 @@ jobs:
           node-version: "24.19.0"
       - name: Build orceld (release, locked)
         run: cargo build --release --locked -p orceld
+      - name: Build the orcel-contain helper (release, locked, its own workspace)
+        run: cargo build --release --locked --manifest-path apps/orcel-contain/Cargo.toml --bin orcel-contain
       - name: Install the pinned nfpm (checksum-verified)
         run: |
           bash distribution/linux/install-nfpm.sh "$RUNNER_TEMP/nfpm-bin"
@@ -782,7 +795,7 @@ jobs:
         run: |
           version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
           echo "VERSION=$version" >> "$GITHUB_ENV"
-          bash distribution/linux/package.sh "$version" target/release/orceld "$DIST"
+          bash distribution/linux/package.sh "$version" target/release/orceld apps/orcel-contain/target/release/orcel-contain "$DIST"
           ls -l "$DIST"
       - name: Package file list and modes (dpkg -c), no maintainer scripts
         run: |
@@ -791,6 +804,8 @@ jobs:
           actual=$(dpkg -c "$deb" | awk '$1 !~ /^d/ { print $1, $2, $6 }' | sort)
           expected=$(sort <<'LIST'
           -rwxr-xr-x root/root ./usr/lib/orcel/orceld
+          -rwxr-xr-x root/root ./usr/lib/orcel/orcel-contain
+          -rw-r--r-- root/root ./usr/lib/orcel/orcel-contain.sha256
           -rw-r--r-- root/root ./usr/lib/systemd/user/orceld.socket
           -rw-r--r-- root/root ./usr/lib/systemd/user/orceld@.service
           -rw-r--r-- root/root ./usr/share/doc/orcel/LICENSE
@@ -822,6 +837,8 @@ jobs:
           sudo apt-get install -y "$DIST/orcel_${VERSION}-1_amd64.deb"
           dpkg -L orcel
           test -z "$(dpkg --verify orcel)"
+          # XP-13b: the installed pin names the installed helper.
+          test "$(cat /usr/lib/orcel/orcel-contain.sha256)" = "$(sha256sum /usr/lib/orcel/orcel-contain | cut -d ' ' -f 1)"
           sudo loginctl enable-linger "$USER"
           uid=$(id -u)
           echo "XDG_RUNTIME_DIR=/run/user/$uid" >> "$GITHUB_ENV"
