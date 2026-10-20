@@ -388,6 +388,11 @@ pub mod code {
     /// after the bound tick so nothing was sent, and a delivery that may have
     /// reached the target but whose result is lost.
     pub const CANCELLED: &str = "cancelled";
+    /// The vendored tool cannot deliver without taking the foreground (a GTK,
+    /// WebKit or Chromium target with no real pointer backend in the session),
+    /// or the target is covered. The host never takes the foreground.
+    pub const BACKGROUND_UNAVAILABLE: &str = "background_unavailable";
+    pub const BACKGROUND_OCCLUDED: &str = "background_occluded";
     pub const OUTCOME_UNKNOWN: &str = "outcome_unknown";
 }
 

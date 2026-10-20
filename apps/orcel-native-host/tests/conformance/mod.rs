@@ -634,15 +634,20 @@ pub fn check_hello(host: &mut Host, report: &mut Report, prefix: &str) -> Value 
         assert_eq!(table[op]["reason"], "capability_denied", "{op}: {hello}");
     }
     for op in INPUT_OPS {
-        if host_serves_input() {
-            assert_eq!(
-                table[op]["support"], "delivered",
-                "{op} is not served here: {hello}"
-            );
-            assert_eq!(table[op]["delivery"], "background", "{op}: {hello}");
-        } else {
-            assert_eq!(table[op]["support"], "unavailable", "{op}: {hello}");
-            assert_eq!(table[op]["reason"], "provider_unavailable", "{op}: {hello}");
+        match (window_system(), table[op]["support"].as_str()) {
+            ("x11", Some("delivered")) | ("quartz", Some("delivered")) => {
+                assert_eq!(table[op]["delivery"], "background", "{op}: {hello}");
+            }
+            // The hosted macOS runner has no recorded direct-capture consent,
+            // which Cua's pixel tools need: unavailable, with the reason.
+            ("quartz", Some("unavailable")) => {
+                assert_eq!(table[op]["reason"], "permission_missing", "{op}: {hello}");
+            }
+            // A Wayland client has no non-interactive way to address a window.
+            (_, Some("unavailable")) if window_system() != "x11" => {
+                assert_eq!(table[op]["reason"], "provider_unavailable", "{op}: {hello}");
+            }
+            (system, support) => panic!("{op} is {support:?} on {system}: {hello}"),
         }
     }
     report.pass(
@@ -668,10 +673,20 @@ pub const INPUT_OPS: [&str; 5] = [
     "input_key",
 ];
 
-/// Whether raw input is served here: X11 and macOS. A Wayland client has no
-/// non-interactive way to address one window, so the host says unavailable.
-pub fn host_serves_input() -> bool {
-    matches!(window_system(), "x11" | "quartz")
+/// Whether the hello serves raw input (X11, and macOS with the capture
+/// consent recorded). A Wayland client has no non-interactive way to address
+/// one window, so the host says unavailable there.
+pub fn input_delivered(hello: &Value) -> bool {
+    hello["capabilities"]["input_click"]["support"] == "delivered"
+}
+
+/// The reason the hello gives for raw input being unavailable, which is also
+/// the code a raw input frame is refused with.
+pub fn input_unavailable_reason(hello: &Value) -> String {
+    hello["capabilities"]["input_click"]["reason"]
+        .as_str()
+        .unwrap_or("provider_unavailable")
+        .to_owned()
 }
 
 /// The listed title is the harness title, exactly or followed by the

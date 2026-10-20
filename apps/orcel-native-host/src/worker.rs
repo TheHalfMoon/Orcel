@@ -700,6 +700,11 @@ fn action_failure(id: u64, failure: &CuaFailure) -> Response {
         "capability_denied" => code::CAPABILITY_DENIED,
         "invalid_request" => code::INVALID_REQUEST,
         "timeout" => code::TIMEOUT,
+        // Raw input (XP-12): the tool would have to take the foreground, or
+        // the point is covered. Typed, so the caller sees why, and never
+        // retried in the foreground.
+        "background_unavailable" => code::BACKGROUND_UNAVAILABLE,
+        "target_occluded" | "background_occluded" => code::BACKGROUND_OCCLUDED,
         _ if is_stale(failure) => code::TARGET_STALE,
         _ => code::PROVIDER_UNAVAILABLE,
     };
@@ -1380,6 +1385,9 @@ mod tests {
             ("capability_denied", "capability_denied"),
             ("invalid_request", "invalid_request"),
             ("timeout", "timeout"),
+            ("background_unavailable", "background_unavailable"),
+            ("target_occluded", "background_occluded"),
+            ("background_occluded", "background_occluded"),
             ("ax_failed", "provider_unavailable"),
             ("anything else", "provider_unavailable"),
         ] {

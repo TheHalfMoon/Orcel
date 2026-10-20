@@ -5,7 +5,7 @@
 //!
 //! Runs only with `ORCEL_XP12_LIVE=1` and fails, rather than skipping, when
 //! the session cannot deliver input. CI runs it on Linux under Xvfb and
-//! Openbox with the GTK3 probe (`fixtures/gtk3_input_probe.py`) and on the
+//! Openbox with the Tk probe (`fixtures/tk_input_probe.py`) and on the
 //! hosted macOS session with the AppKit probe
 //! (`fixtures/appkit_input_probe.swift`, compiled here with `swiftc`).
 //!
@@ -111,6 +111,50 @@ fn wait_for_events(probe: &Probe, skip: usize, wanted: usize, what: &str) -> Vec
     }
 }
 
+/// A session that cannot deliver: every raw input operation is unavailable
+/// with a reason, a frame is refused with that reason and the probe receives
+/// nothing. The host never prompts for the missing permission.
+fn report_only(host: &mut Host, probe: &Probe, hello: &Value, nonce: &str) {
+    let mut reasons = Vec::new();
+    for op in [
+        "input_click",
+        "input_drag",
+        "input_scroll",
+        "input_type_text",
+        "input_key",
+    ] {
+        assert_eq!(hello["capabilities"][op]["support"], "unavailable", "{op}");
+        let reason = hello["capabilities"][op]["reason"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(
+            matches!(reason, "permission_missing" | "provider_unavailable"),
+            "{op}: {hello}"
+        );
+        reasons.push(reason.to_owned());
+    }
+    let window = find_window(host, &format!("Orcel XP12 Input {nonce}"));
+    let reference = window_ref(&window);
+    wait_for(&probe.state, "state", |state| state["size"][0].is_number());
+    let before = read_state(&probe.state).unwrap();
+    for (op, fields, reason) in [
+        (
+            "input_click",
+            json!({"x": 10, "y": 10, "button": "left", "click_count": 1}),
+            &reasons[0],
+        ),
+        ("input_type_text", json!({"text": "refused"}), &reasons[3]),
+        ("input_key", json!({"key": "tab"}), &reasons[4]),
+    ] {
+        let mut fields = fields;
+        fields["window"] = reference.clone();
+        fields["expected_last_input_tick"] = json!(1);
+        let reply = host.request(op, fields);
+        assert_refused(&reply, reason, op);
+    }
+    assert_unchanged(probe, &before, "an unavailable session");
+}
+
 #[test]
 fn xp12_raw_input_lands_where_approved_and_nowhere_else() {
     if std::env::var_os("ORCEL_XP12_LIVE").is_none() {
@@ -128,6 +172,20 @@ fn xp12_raw_input_lands_where_approved_and_nowhere_else() {
     let probe = spawn_probe(&nonce);
     let mut host = Host::spawn();
     let hello = host.hello();
+    // `report` mode is for a session that cannot deliver (the hosted macOS
+    // runner has no recorded direct-capture consent, which Cua's pixel tools
+    // need to measure a window's scale): the five operations must say so, with
+    // the reason, and a frame must deliver nothing.
+    let delivered = hello["capabilities"]["input_click"]["support"] == "delivered";
+    if !delivered {
+        assert_eq!(
+            std::env::var("ORCEL_XP12_LIVE").as_deref(),
+            Ok("report"),
+            "this session cannot deliver input: {hello}"
+        );
+        report_only(&mut host, &probe, &hello, &nonce);
+        return;
+    }
     for op in [
         "input_click",
         "input_drag",

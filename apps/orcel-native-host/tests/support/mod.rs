@@ -210,7 +210,13 @@ pub fn spawn_probe(nonce: &str) -> Probe {
     let mut command = if cfg!(target_os = "macos") {
         let binary = dir.join("appkit_input_probe");
         let built = Command::new("swiftc")
-            .args(["-O", &format!("{fixtures}/appkit_input_probe.swift"), "-o"])
+            .args([
+                "-O",
+                "-swift-version",
+                "5",
+                &format!("{fixtures}/appkit_input_probe.swift"),
+                "-o",
+            ])
             .arg(&binary)
             .status()
             .expect("swiftc runs");
@@ -218,8 +224,7 @@ pub fn spawn_probe(nonce: &str) -> Probe {
         Command::new(binary)
     } else {
         let mut command = Command::new("python3");
-        command.arg(format!("{fixtures}/gtk3_input_probe.py"));
-        command.env("GDK_BACKEND", "x11");
+        command.arg(format!("{fixtures}/tk_input_probe.py"));
         command
     };
     let child = command

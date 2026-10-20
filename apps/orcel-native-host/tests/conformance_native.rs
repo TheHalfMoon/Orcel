@@ -309,7 +309,7 @@ fn xp08_native_harness_is_conformant() {
     let state = || read_state(&state_path).expect("the harness keeps its state file");
 
     let mut host = Host::spawn();
-    conformance::check_hello(&mut host, &mut report, &prefix);
+    let hello = conformance::check_hello(&mut host, &mut report, &prefix);
     let target = Target {
         prefix: prefix.clone(),
         title: spec.title,
@@ -384,7 +384,7 @@ fn xp08_native_harness_is_conformant() {
         "refused",
         state,
     );
-    if conformance::host_serves_input() {
+    if conformance::input_delivered(&hello) {
         let nonce = format!("{}-{}", std::process::id(), harness.pid());
         let probe = spawn_probe(&nonce);
         let window = conformance::probe_window(&mut host, &nonce);
@@ -404,7 +404,7 @@ fn xp08_native_harness_is_conformant() {
             &prefix,
             &observed.reference,
             &others,
-            "provider_unavailable",
+            &conformance::input_unavailable_reason(&hello),
             "unavailable",
             state,
         );

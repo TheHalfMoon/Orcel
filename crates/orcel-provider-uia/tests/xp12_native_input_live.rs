@@ -5,8 +5,8 @@
 //! `orcel-native-host`, which ORCEL_COMPUTER_HOST_BIN names.
 //!
 //! Runs only with `ORCEL_XP12_LIVE=1`, and then fails rather than skips. CI
-//! runs it on Linux under Xvfb and Openbox with the GTK3 input probe
-//! (`apps/orcel-native-host/tests/fixtures/gtk3_input_probe.py`), which
+//! runs it on Linux under Xvfb and Openbox with the Tk input probe
+//! (`apps/orcel-native-host/tests/fixtures/tk_input_probe.py`), which
 //! journals every event it receives; on macOS it is a manual check (the
 //! AppKit probe is compiled with `swiftc`, and Accessibility and Screen
 //! Recording must be granted to the host binary).
@@ -53,7 +53,13 @@ fn spawn_probe(nonce: &str) -> Probe {
     let mut command = if cfg!(target_os = "macos") {
         let binary = dir.join("appkit_input_probe");
         let built = Command::new("swiftc")
-            .args(["-O", &format!("{fixtures}/appkit_input_probe.swift"), "-o"])
+            .args([
+                "-O",
+                "-swift-version",
+                "5",
+                &format!("{fixtures}/appkit_input_probe.swift"),
+                "-o",
+            ])
             .arg(&binary)
             .status()
             .expect("swiftc runs");
@@ -61,8 +67,7 @@ fn spawn_probe(nonce: &str) -> Probe {
         Command::new(binary)
     } else {
         let mut command = Command::new("python3");
-        command.arg(format!("{fixtures}/gtk3_input_probe.py"));
-        command.env("GDK_BACKEND", "x11");
+        command.arg(format!("{fixtures}/tk_input_probe.py"));
         command
     };
     let child = command
