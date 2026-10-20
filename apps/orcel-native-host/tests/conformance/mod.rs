@@ -11,8 +11,10 @@
 //!   AppKit task-state file the harness rewrites on every change;
 //! - focus and z-order: the window system's own view (`xprop` on X11,
 //!   `swaymsg` on Sway, `lsappinfo` on macOS);
-//! - cursor: `xdotool` on X11; elsewhere the host's `cursor_position`,
-//!   reported as `cursor-host` so the report does not overstate it.
+//! - cursor: `xdotool` on X11; on macOS the host's `cursor_position`,
+//!   reported as `cursor-host` so the report does not overstate it. Wayland
+//!   gives no client the pointer position, so the host does not serve
+//!   `cursor_position` there and Sway cells carry no cursor oracle.
 //!
 //! Input cells exist for every action of the catalog, but `semantic_action`
 //! waits for XP-11 and raw `input_*` for XP-12. Until then each input cell
@@ -313,12 +315,18 @@ pub fn oracle_names(desktop: &Desktop) -> Vec<&'static str> {
     if desktop.stacking.is_some() {
         names.push("z-order");
     }
-    names.push(if desktop.cursor.is_some() {
-        "cursor"
-    } else {
-        "cursor-host"
-    });
+    if desktop.cursor.is_some() {
+        names.push("cursor");
+    } else if host_serves_cursor() {
+        names.push("cursor-host");
+    }
     names
+}
+
+/// Whether the host serves `cursor_position` here: not on Wayland, where no
+/// client can read the pointer (the worker's documented availability).
+pub fn host_serves_cursor() -> bool {
+    !matches!(window_system(), "sway" | "wayland")
 }
 
 // ---------------------------------------------------------------------------
@@ -592,10 +600,22 @@ pub fn check_hello(host: &mut Host, report: &mut Report, prefix: &str) -> Value 
     let hello = host.hello();
     let elapsed = started.elapsed();
     let table = &hello["capabilities"];
-    for op in ["list_windows", "observe_window", "cursor_position"] {
+    for op in ["list_windows", "observe_window"] {
         assert_eq!(
             table[op]["support"], "delivered",
             "{op} is not served here: {hello}"
+        );
+    }
+    if host_serves_cursor() {
+        assert_eq!(table["cursor_position"]["support"], "delivered", "{hello}");
+    } else {
+        assert_eq!(
+            table["cursor_position"]["support"], "unavailable",
+            "{hello}"
+        );
+        assert_eq!(
+            table["cursor_position"]["reason"], "provider_unavailable",
+            "{hello}"
         );
     }
     for op in INPUT_OPS {
@@ -780,15 +800,18 @@ pub fn host_cursor(host: &mut Host) -> (i64, i64, i64, i64) {
 pub struct Oracles {
     pub fixture: Value,
     pub desktop: Desktop,
-    pub cursor: (i64, i64),
+    pub cursor: Option<(i64, i64)>,
 }
 
 pub fn oracles(host: &mut Host, fixture: Value) -> Oracles {
-    let (x, y, _, _) = host_cursor(host);
+    let cursor = host_serves_cursor().then(|| {
+        let (x, y, _, _) = host_cursor(host);
+        (x, y)
+    });
     Oracles {
         fixture,
         desktop: desktop(),
-        cursor: (x, y),
+        cursor,
     }
 }
 
@@ -902,7 +925,22 @@ pub fn closed_window_is_stale(
 
 /// The screen centre, the point every pixel-addressed pending frame names.
 /// The host refuses the operation before it resolves any coordinate.
+/// On Sway the output geometry comes from the compositor.
 pub fn screen_centre(host: &mut Host) -> (i64, i64) {
-    let (_, _, width, height) = host_cursor(host);
-    (width / 2, height / 2)
+    if host_serves_cursor() {
+        let (_, _, width, height) = host_cursor(host);
+        return (width / 2, height / 2);
+    }
+    let outputs: Value = serde_json::from_str(&tool("swaymsg", &["-r", "-t", "get_outputs"]))
+        .expect("swaymsg prints JSON");
+    let rect = &outputs[0]["rect"];
+    let value = |key: &str| {
+        rect[key]
+            .as_i64()
+            .unwrap_or_else(|| panic!("{key}: {outputs}"))
+    };
+    (
+        value("x") + value("width") / 2,
+        value("y") + value("height") / 2,
+    )
 }
