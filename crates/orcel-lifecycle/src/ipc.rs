@@ -88,9 +88,26 @@ pub fn call(
     request: &Value,
     timeout: Duration,
 ) -> Result<Value, LifecycleError> {
+    call_with_env(orceld, config, &[], request, timeout)
+}
+
+/// [`call`] with extra non-secret variables for this one local request
+/// (WI-06: `orcel search status` passes the user's
+/// `ORCEL_SEARCH_PROVIDERS_JSON`, which no tunnel launch ever carries).
+pub fn call_with_env(
+    orceld: &Path,
+    config: &Config,
+    extra: &[(&str, String)],
+    request: &Value,
+    timeout: Duration,
+) -> Result<Value, LifecycleError> {
+    let mut env = child_environment(config);
+    for (name, value) in extra {
+        env.insert((*name).to_string(), value.clone());
+    }
     let mut child = Command::new(orceld)
         .env_clear()
-        .envs(child_environment(config))
+        .envs(env)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

@@ -443,24 +443,25 @@ impl KeySource for Keys {
 
 #[derive(Default)]
 struct MemoryUsage {
-    counts: Mutex<HashMap<(ProviderId, u64), u32>>,
+    state: Mutex<UsageState>,
 }
 
 impl UsageLedger for MemoryUsage {
     fn used(&self, provider: ProviderId, day: u64) -> Result<u32, &'static str> {
-        Ok(*self
-            .counts
-            .lock()
-            .unwrap()
-            .get(&(provider, day))
-            .unwrap_or(&0))
+        Ok(self.state.lock().unwrap().used(provider, day))
     }
 
-    fn charge(&self, provider: ProviderId, day: u64) -> Result<u32, &'static str> {
-        let mut counts = self.counts.lock().unwrap();
-        let count = counts.entry((provider, day)).or_insert(0);
-        *count += 1;
-        Ok(*count)
+    fn admit(
+        &self,
+        provider: ProviderId,
+        now: u64,
+        daily_cap: u32,
+        charge: bool,
+    ) -> Result<u32, Refusal> {
+        self.state
+            .lock()
+            .unwrap()
+            .admit(provider, now, daily_cap, charge)
     }
 }
 
@@ -476,10 +477,10 @@ struct Harness {
     config: Result<SearchConfig, &'static str>,
     keys: Keys,
     usage: MemoryUsage,
-    limiter: RateLimiter,
     resolver: Resolver,
     transport: LoopbackTransport,
     transport_available: bool,
+    tunnel_host: bool,
     clock: Cell<u64>,
 }
 
@@ -492,10 +493,10 @@ impl Harness {
             config: Ok(all_enabled()),
             keys: Keys::with(key),
             usage: MemoryUsage::default(),
-            limiter: RateLimiter::default(),
             resolver: Resolver::public(),
             transport: LoopbackTransport { port },
             transport_available: true,
+            tunnel_host: false,
             clock: Cell::new(1_800_000_000_000),
         }
     }
@@ -515,10 +516,10 @@ impl Harness {
             config: self.config.as_ref().map_err(|error| *error),
             keys: &self.keys,
             usage: &self.usage,
-            limiter: &self.limiter,
             resolver: &self.resolver,
             transport: &self.transport,
             transport_available: self.transport_available,
+            tunnel_host: self.tunnel_host,
             now_ms: &now,
         };
         dispatch(
@@ -966,6 +967,20 @@ fn wi06_config_is_off_by_default_and_pins_origins() {
 }
 
 #[test]
+fn wi06_tunnel_host_refuses_search_before_any_request() {
+    let mut harness = Harness::new(&canary());
+    harness.tunnel_host = true;
+    for operation in ["query", "doctor"] {
+        let error = harness
+            .run_op(operation, APPROVED, json!({"query": "q"}))
+            .unwrap_err();
+        assert_eq!(error.code, FailureCode::CapabilityDenied, "{operation}");
+        assert!(error.message.contains("Tunnel"), "{}", error.message);
+    }
+    assert_eq!(harness.server.count(), 0);
+}
+
+#[test]
 fn wi06_search_is_not_remotely_mappable() {
     for operation in ["query", "doctor"] {
         assert!(orcel_policy::remote_session::required_scopes("search", operation).is_none());
@@ -973,7 +988,7 @@ fn wi06_search_is_not_remotely_mappable() {
 }
 
 #[test]
-fn wi06_file_usage_ledger_persists_counts_per_day() {
+fn wi06_file_usage_ledger_is_locked_and_shared_across_handles() {
     let dir = std::env::temp_dir().join(format!(
         "orcel-wi06-usage-{}-{}",
         std::process::id(),
@@ -985,18 +1000,56 @@ fn wi06_file_usage_ledger_persists_counts_per_day() {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
     }
-    let ledger = FileUsage {
-        path: Ok(dir.join("search").join("usage.json")),
+    let path = dir.join("search").join("usage.json");
+    let ledger = || FileUsage {
+        path: Ok(path.clone()),
     };
-    assert_eq!(ledger.used(ProviderId::Brave, 7).unwrap(), 0);
-    assert_eq!(ledger.charge(ProviderId::Brave, 7).unwrap(), 1);
-    assert_eq!(ledger.charge(ProviderId::Brave, 7).unwrap(), 2);
-    assert_eq!(ledger.charge(ProviderId::Exa, 7).unwrap(), 1);
-    let reopened = FileUsage {
-        path: Ok(dir.join("search").join("usage.json")),
-    };
-    assert_eq!(reopened.used(ProviderId::Brave, 7).unwrap(), 2);
-    assert_eq!(reopened.used(ProviderId::Brave, 8).unwrap(), 0);
-    assert_eq!(reopened.charge(ProviderId::Brave, 8).unwrap(), 1);
+    let day = 7;
+    let now = day * DAY_MS + 1_000;
+    assert_eq!(ledger().used(ProviderId::Brave, day).unwrap(), 0);
+    assert_eq!(ledger().admit(ProviderId::Brave, now, 100, true), Ok(1));
+    assert_eq!(ledger().admit(ProviderId::Brave, now + 1, 100, true), Ok(2));
+    assert_eq!(ledger().admit(ProviderId::Exa, now, 100, true), Ok(1));
+    // Judging without charging records nothing.
+    assert_eq!(ledger().admit(ProviderId::Brave, now + 2, 100, false), Ok(2));
+    assert_eq!(ledger().used(ProviderId::Brave, day).unwrap(), 2);
+    assert_eq!(ledger().used(ProviderId::Brave, day + 1).unwrap(), 0);
+
+    // The rate window is persisted, so a second handle (another orceld
+    // process) sees it.
+    for i in 2..RATE_MAX_PER_WINDOW as u64 {
+        ledger().admit(ProviderId::Brave, now + i, 100, true).unwrap();
+    }
+    assert!(matches!(
+        ledger().admit(ProviderId::Brave, now + 10, 100, true),
+        Err(Refusal::Rate { .. })
+    ));
+    assert_eq!(
+        ledger().admit(ProviderId::Brave, now + RATE_WINDOW_MS + 10, 100, true),
+        Ok(RATE_MAX_PER_WINDOW as u32 + 1)
+    );
+
+    // Concurrent writers never both pass the cap: 8 threads, each with its
+    // own handle, race for a cap of 5.
+    let racers: Vec<_> = (0..8u64)
+        .map(|i| {
+            let path = path.clone();
+            std::thread::spawn(move || {
+                FileUsage { path: Ok(path) }.admit(ProviderId::Serper, now + i, 5, true)
+            })
+        })
+        .collect();
+    let admitted = racers
+        .into_iter()
+        .map(|racer| racer.join().unwrap())
+        .filter(|outcome| outcome.is_ok())
+        .count();
+    // 5 by the daily cap, unless the rate window (6) refused first.
+    assert_eq!(admitted, 5);
+    assert_eq!(ledger().used(ProviderId::Serper, day).unwrap(), 5);
+    assert_eq!(
+        ledger().admit(ProviderId::Serper, now + RATE_WINDOW_MS * 2, 5, true),
+        Err(Refusal::DailyCap)
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

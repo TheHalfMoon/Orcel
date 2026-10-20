@@ -718,7 +718,17 @@ pub fn search(args: &mut Args) -> Result<Output, LifecycleError> {
         "status" => {
             args.finish()?;
             let request = ipc::request(&workspace, "search", "doctor", json!({}));
-            let response = ipc::call(&orceld, &config, &request, Duration::from_secs(60))?;
+            let providers: Vec<(&str, String)> = std::env::var("ORCEL_SEARCH_PROVIDERS_JSON")
+                .ok()
+                .map(|value| vec![("ORCEL_SEARCH_PROVIDERS_JSON", value)])
+                .unwrap_or_default();
+            let response = ipc::call_with_env(
+                &orceld,
+                &config,
+                &providers,
+                &request,
+                Duration::from_secs(60),
+            )?;
             let result = ipc::expect_ok(&response)?.clone();
             let mut human = String::new();
             for row in result["providers"].as_array().into_iter().flatten() {
@@ -738,7 +748,13 @@ pub fn search(args: &mut Args) -> Result<Output, LifecycleError> {
         "set-key" => {
             let provider = provider_key(args)?;
             let key_file = args.value("--key-file")?.map(PathBuf::from);
+            let delete_key_file = args.flag("--delete-key-file");
             args.finish()?;
+            if delete_key_file && key_file.is_none() {
+                return Err(LifecycleError::usage(
+                    "--delete-key-file needs --key-file <path>",
+                ));
+            }
             let key = match &key_file {
                 Some(path) => std::fs::read_to_string(path)
                     .map_err(|error| LifecycleError::io("read --key-file", error))?
@@ -761,10 +777,38 @@ pub fn search(args: &mut Args) -> Result<Output, LifecycleError> {
                 .and_then(Value::as_str)
                 .unwrap_or("unknown")
                 .to_string();
+            let mut human =
+                format!("Stored the {provider} API key in the {backend} secret store.\n");
+            let mut key_file_deleted = None;
+            if let Some(path) = &key_file {
+                if delete_key_file {
+                    let removed = std::fs::remove_file(path).is_ok();
+                    key_file_deleted = Some(removed);
+                    human.push_str(&if removed {
+                        format!("Deleted the key file {}.\n", path.display())
+                    } else {
+                        format!(
+                            "Could not delete the key file {}; delete it yourself.\n",
+                            path.display()
+                        )
+                    });
+                } else {
+                    human.push_str(&format!(
+                        "The key is still in plaintext at {}. Delete that file now (or pass --delete-key-file next time).\n",
+                        path.display()
+                    ));
+                }
+            }
             Ok(Output {
                 exit_code: 0,
-                human: format!("Stored the {provider} API key in the {backend} secret store.\n"),
-                json: json!({"ok": true, "provider": provider, "stored": true, "backend": backend}),
+                human,
+                json: json!({
+                    "ok": true,
+                    "provider": provider,
+                    "stored": true,
+                    "backend": backend,
+                    "key_file_deleted": key_file_deleted,
+                }),
             })
         }
         "delete-key" => {

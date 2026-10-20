@@ -44,7 +44,22 @@ struct Run {
     stderr: String,
 }
 
-fn run_orceld(state: &Path, workspace: &Path, config: Option<&str>, requests: &[Value]) -> Run {
+fn run_orceld(
+    state: &Path,
+    workspace: &Path,
+    config: Option<&str>,
+    requests: &[Value],
+) -> Run {
+    run_orceld_env(state, workspace, config, &[], requests)
+}
+
+fn run_orceld_env(
+    state: &Path,
+    workspace: &Path,
+    config: Option<&str>,
+    extra: &[(&str, &str)],
+    requests: &[Value],
+) -> Run {
     let mut command = Command::new(env!("CARGO_BIN_EXE_orceld"));
     command
         .env("ORCEL_WORKSPACE_ROOT", workspace)
@@ -58,6 +73,10 @@ fn run_orceld(state: &Path, workspace: &Path, config: Option<&str>, requests: &[
         .stderr(Stdio::piped());
     if let Some(config) = config {
         command.env("ORCEL_SEARCH_PROVIDERS_JSON", config);
+    }
+    command.env_remove("ORCEL_MCP_HOST");
+    for (name, value) in extra {
+        command.env(name, value);
     }
     if cfg!(windows) {
         command.env("LOCALAPPDATA", state);
@@ -252,6 +271,23 @@ fn wi06_real_orceld_search_is_off_and_never_leaks_a_key() {
             .as_str()
             .unwrap()
             .contains("no API key"));
+    }
+
+    // The tunnel host (orcel-mcp-host sets ORCEL_MCP_HOST=tunnel) refuses
+    // search even with providers configured.
+    let tunnel = run_orceld_env(
+        &state,
+        &workspace,
+        Some(config),
+        &[("ORCEL_MCP_HOST", "tunnel")],
+        &[
+            request("tq", "search", "query", None, json!({"query": "q"})),
+            request("td", "search", "doctor", None, json!({})),
+        ],
+    );
+    assert_eq!(tunnel.responses.len(), 2, "{}", tunnel.stderr);
+    for response in &tunnel.responses {
+        assert_eq!(code(response), "CAPABILITY_DENIED", "{response}");
     }
 
     // The canary never left orceld.

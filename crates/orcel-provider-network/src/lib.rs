@@ -553,6 +553,9 @@ fn native_send(
     impl Drop for Handle {
         fn drop(&mut self) {
             if !self.0.is_null() {
+                // SAFETY: the handle is a live WinHTTP handle this function
+                // opened and owns; it is closed exactly once, here. Handles
+                // drop in reverse order (request, connect, session).
                 unsafe {
                     WinHttpCloseHandle(self.0);
                 }
@@ -565,13 +568,19 @@ fn native_send(
     fn winerr(context: &str) -> NetworkError {
         unavailable(format!("{context}: {}", std::io::Error::last_os_error()))
     }
+    /// # Safety
+    /// `storage` must be a socket address WinHTTP filled in, whose
+    /// `ss_family` names the structure actually stored.
     unsafe fn peer_from_storage(storage: &SOCKADDR_STORAGE) -> Result<IpAddr, NetworkError> {
         if storage.ss_family == AF_INET {
+            // SAFETY: SOCKADDR_STORAGE is large and aligned enough for any
+            // socket address, and ss_family says it holds a SOCKADDR_IN.
             let sin = &*(storage as *const _ as *const SOCKADDR_IN);
             let raw = sin.sin_addr.S_un.S_addr;
             return Ok(IpAddr::V4(Ipv4Addr::from(raw.to_ne_bytes())));
         }
         if storage.ss_family == AF_INET6 {
+            // SAFETY: as above, for a SOCKADDR_IN6.
             let sin6 = &*(storage as *const _ as *const SOCKADDR_IN6);
             let bytes = sin6.sin6_addr.u.Byte;
             return Ok(IpAddr::V6(Ipv6Addr::from(bytes)));
@@ -582,6 +591,8 @@ fn native_send(
     }
 
     let agent = wide("Orcel/SG-000040");
+    // SAFETY: `agent` is a NUL-terminated UTF-16 string that outlives the
+    // call; the proxy name and bypass pointers are null as NO_PROXY allows.
     let session = Handle(unsafe {
         WinHttpOpen(
             agent.as_ptr(),
@@ -594,6 +605,7 @@ fn native_send(
     if session.0.is_null() {
         return Err(winerr("WinHttpOpen"));
     }
+    // SAFETY: `session` is a live session handle checked non-null above.
     if unsafe { WinHttpSetTimeouts(session.0, 5_000, 5_000, 5_000, 10_000) } == 0 {
         return Err(winerr("WinHttpSetTimeouts"));
     }
@@ -609,6 +621,8 @@ fn native_send(
 
     let target = request.target;
     let host = wide(&target.host);
+    // SAFETY: live session handle; `host` is NUL-terminated UTF-16 and
+    // outlives the call (WinHTTP copies it).
     let connect = Handle(unsafe { WinHttpConnect(session.0, host.as_ptr(), 443, 0) });
     if connect.0.is_null() {
         return Err(winerr("WinHttpConnect"));
@@ -616,6 +630,9 @@ fn native_send(
 
     let method = wide(request.method.as_str());
     let path = wide(&target.path_and_query);
+    // SAFETY: live connect handle; `method` and `path` are NUL-terminated
+    // UTF-16 strings alive across the call (WinHTTP copies them); version,
+    // referrer and accept types are null, meaning the defaults.
     let http = Handle(unsafe {
         WinHttpOpenRequest(
             connect.0,
@@ -635,6 +652,8 @@ fn native_send(
         | WINHTTP_DISABLE_AUTHENTICATION
         | WINHTTP_DISABLE_KEEP_ALIVE
         | WINHTTP_DISABLE_REDIRECTS;
+    // SAFETY: live request handle; the buffer is `disabled`, a u32 on the
+    // stack, and its length is exactly size_of::<u32>(). WinHTTP only reads.
     if unsafe {
         WinHttpSetOption(
             http.0,
@@ -658,6 +677,9 @@ fn native_send(
         return Err(denied("validated destination address is not public"));
     }
     let resolution_host = wide(&pinned_peer.to_string());
+    // SAFETY: live request handle; `resolution_host` is a UTF-16 buffer
+    // alive across the call, and the length passed is its exact size in
+    // bytes, including the terminating NUL. WinHTTP only reads it.
     if unsafe {
         WinHttpSetOption(
             http.0,
@@ -685,6 +707,15 @@ fn native_send(
         .map_err(|_| invalid("provider request body is too large"))?;
     let headers_len = u32::try_from(header_block.0.len())
         .map_err(|_| invalid("provider request headers are too large"))?;
+    // SAFETY: live request handle. The header pointer is null when there
+    // are no headers; otherwise it points at `header_block`, which stays
+    // alive until it is wiped and dropped after this synchronous call
+    // returns, and `headers_len` is its exact length in UTF-16 units (no
+    // terminating NUL is needed when a length is given). The body pointer is
+    // null for an empty body; otherwise it points at `request.body`, borrowed
+    // for the whole call, and `body_len` is its exact byte length. The total
+    // length equals `body_len` because nothing is sent with WinHttpWriteData.
+    // WinHTTP only reads both buffers; the `*mut` cast matches the binding.
     let sent = unsafe {
         WinHttpSendRequest(
             http.0,
@@ -708,13 +739,19 @@ fn native_send(
     if sent == 0 {
         return Err(winerr("WinHttpSendRequest"));
     }
+    // SAFETY: live request handle on which WinHttpSendRequest succeeded;
+    // the reserved argument must be null.
     if unsafe { WinHttpReceiveResponse(http.0, null_mut()) } == 0 {
         return Err(winerr("WinHttpReceiveResponse"));
     }
 
+    // SAFETY: WINHTTP_CONNECTION_INFO is plain data for which all-zero bytes
+    // are a valid value.
     let mut connection: WINHTTP_CONNECTION_INFO = unsafe { zeroed() };
     connection.cbSize = size_of::<WINHTTP_CONNECTION_INFO>() as u32;
     let mut connection_size = size_of::<WINHTTP_CONNECTION_INFO>() as u32;
+    // SAFETY: live request handle; the out buffer is `connection`, sized by
+    // `connection_size`, both alive and exclusively borrowed for the call.
     if unsafe {
         WinHttpQueryOption(
             http.0,
@@ -726,6 +763,8 @@ fn native_send(
     {
         return Err(winerr("WinHttpQueryOption(connection info)"));
     }
+    // SAFETY: WinHTTP filled `RemoteAddress` with the connected peer, and its
+    // family field names the stored structure.
     let peer = unsafe { peer_from_storage(&connection.RemoteAddress)? };
     if peer != pinned_peer {
         return Err(stale(
@@ -735,6 +774,8 @@ fn native_send(
 
     let mut status: u32 = 0;
     let mut status_size = size_of::<u32>() as u32;
+    // SAFETY: live request handle after a response; with FLAG_NUMBER the
+    // out buffer is `status`, a u32, and `status_size` is its exact size.
     if unsafe {
         WinHttpQueryHeaders(
             http.0,
@@ -752,6 +793,9 @@ fn native_send(
     let location = if (300..400).contains(&(status as u16)) {
         let mut buffer = vec![0u16; MAX_URL_CHARS + 1];
         let mut bytes = (buffer.len() * size_of::<u16>()) as u32;
+        // SAFETY: live request handle; the out buffer is `buffer`, whose
+        // exact byte size is passed in `bytes`. WinHTTP writes at most that
+        // many bytes and reports the length written, clamped below.
         let ok = unsafe {
             WinHttpQueryHeaders(
                 http.0,
@@ -776,6 +820,7 @@ fn native_send(
     let mut body = Vec::new();
     loop {
         let mut available: u32 = 0;
+        // SAFETY: live request handle; `available` is a valid out u32.
         if unsafe { WinHttpQueryDataAvailable(http.0, &mut available) } == 0 {
             return Err(winerr("WinHttpQueryDataAvailable"));
         }
@@ -791,6 +836,10 @@ fn native_send(
         let start = body.len();
         body.resize(start + available as usize, 0);
         let mut read: u32 = 0;
+        // SAFETY: live request handle; the destination is the `available`
+        // bytes just reserved at `body[start..]` and `available` is the read
+        // size, so WinHTTP cannot write past the vector; `read` reports what
+        // was written and the vector is truncated to it.
         if unsafe {
             WinHttpReadData(
                 http.0,

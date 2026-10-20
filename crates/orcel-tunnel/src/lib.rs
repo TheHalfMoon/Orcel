@@ -251,8 +251,6 @@ fn is_safe_orcel_env(name: &str) -> bool {
             | "ORCEL_DEFAULT_WORKSPACE"
             | "ORCEL_DAEMON"
             | "ORCEL_ORCEL_SESSION_ID"
-            // WI-06: which search providers the user enabled; never a key.
-            | "ORCEL_SEARCH_PROVIDERS_JSON"
     )
 }
 
@@ -326,6 +324,25 @@ mod tests {
         let rendered = plan.args.join(" ");
         assert!(rendered.contains("--control-plane.api-key file:"));
         assert!(!rendered.contains("sk-proj-test"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// WI-06: web search must never reach the tunnel, so its provider
+    /// configuration and launch marker never cross into the tunnel client.
+    #[test]
+    fn wi06_tunnel_drops_search_configuration() {
+        let (cfg, dir) = config();
+        let source = BTreeMap::from([
+            ("PATH".into(), "bin".into()),
+            (
+                "ORCEL_SEARCH_PROVIDERS_JSON".into(),
+                r#"{"providers":{"brave":{}}}"#.into(),
+            ),
+            ("ORCEL_MCP_HOST".into(), "local".into()),
+        ]);
+        let plan = cfg.launch_plan(&source).unwrap();
+        assert!(!plan.env.contains_key("ORCEL_SEARCH_PROVIDERS_JSON"));
+        assert!(!plan.env.contains_key("ORCEL_MCP_HOST"));
         let _ = fs::remove_dir_all(dir);
     }
 

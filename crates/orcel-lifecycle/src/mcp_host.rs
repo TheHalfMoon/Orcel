@@ -67,6 +67,25 @@ pub fn resolve(
     Ok((launch, config))
 }
 
+/// WI-06: the marker that tells the edge and orceld they serve the tunnel.
+pub const MCP_HOST_ENV: &str = "ORCEL_MCP_HOST";
+
+/// The Node.js environment for one tunnel session: the sanitized child
+/// environment, the matching `orceld`, the tunnel marker, and never the
+/// search provider configuration. Tunnel requests carry no remote context,
+/// so web search must not be reachable on this path (the edge hides
+/// `web_search` and orceld refuses `search/*` under the marker).
+pub fn host_environment(
+    config: &Config,
+    orceld: &Path,
+) -> std::collections::BTreeMap<String, String> {
+    let mut env = crate::ipc::child_environment(config);
+    env.remove("ORCEL_SEARCH_PROVIDERS_JSON");
+    env.insert("ORCEL_DAEMON".into(), orceld.to_string_lossy().into_owned());
+    env.insert(MCP_HOST_ENV.into(), "tunnel".into());
+    env
+}
+
 /// Runs the MCP app for the current process and returns its exit code.
 pub fn run() -> i32 {
     let platform = crate::host_platform();
@@ -80,11 +99,7 @@ pub fn run() -> i32 {
             return 2;
         }
     };
-    let mut env = crate::ipc::child_environment(&config);
-    env.insert(
-        "ORCEL_DAEMON".into(),
-        launch.orceld.to_string_lossy().into_owned(),
-    );
+    let env = host_environment(&config, &launch.orceld);
     let status = Command::new(&launch.node)
         .arg(&launch.script)
         .env_clear()
@@ -131,6 +146,18 @@ mod tests {
         .unwrap();
         let exe = layout.version_dir(version).join("orcel-mcp-host.exe");
         (layout, exe)
+    }
+
+    #[test]
+    fn wi06_tunnel_host_marks_the_launch_and_drops_search_configuration() {
+        let config = Config::default();
+        let env = host_environment(&config, Path::new("/x/orceld.exe"));
+        assert_eq!(env.get(MCP_HOST_ENV).map(String::as_str), Some("tunnel"));
+        assert!(!env.contains_key("ORCEL_SEARCH_PROVIDERS_JSON"));
+        assert_eq!(
+            env.get("ORCEL_DAEMON").map(String::as_str),
+            Some("/x/orceld.exe")
+        );
     }
 
     #[test]

@@ -5,6 +5,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { MAX_SEARCH_QUERY_CHARS, SEARCH_PROVIDERS, webSearchSchema } from "./web_search.js";
 import { TOOL_CONTRACT } from "./tool_contract.js";
+import type { KernelClient } from "./kernel.js";
+import { buildDaemonEnv } from "./kernel.js";
+import { MCP_HOST_ENV, allowedToolsFor, buildOrcelServer, localTransportContext } from "./server.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const srcDir = join(here, "..", "src");
@@ -62,4 +65,79 @@ test("wi06 web_search is local-only SOFT network egress", () => {
   assert.equal(entry.remote, "local_only");
   assert.equal(entry.effect, "network");
   assert.equal(entry.annotations.openWorldHint, true);
+});
+
+type Message = { jsonrpc: "2.0"; id?: number; method?: string; params?: unknown; result?: unknown; error?: unknown };
+
+class MemoryTransport {
+  onmessage?: (message: Message) => void;
+  onclose?: () => void;
+  onerror?: (error: Error) => void;
+  private readonly pending = new Map<number, (message: Message) => void>();
+  async start(): Promise<void> {}
+  async send(message: Message): Promise<void> {
+    if (message.id !== undefined && message.method === undefined) {
+      this.pending.get(message.id)?.(message);
+      this.pending.delete(message.id);
+    }
+  }
+  async close(): Promise<void> {
+    this.onclose?.();
+  }
+  request(id: number, method: string, params: unknown): Promise<Message> {
+    return new Promise((resolve) => {
+      this.pending.set(id, resolve);
+      this.onmessage?.({ jsonrpc: "2.0", id, method, params });
+    });
+  }
+  notify(method: string): void {
+    this.onmessage?.({ jsonrpc: "2.0", method });
+  }
+}
+
+/**
+ * WI-06: the ChatGPT Secure MCP Tunnel runs `orcel-mcp-host`, which sets
+ * ORCEL_MCP_HOST=tunnel. That edge never lists web_search, a call to it is
+ * refused without reaching the kernel, and the marker reaches orceld, which
+ * refuses search/* on its own.
+ */
+test("wi06 a tunnel-launched host neither lists nor serves web_search", async () => {
+  let kernelCalls = 0;
+  const kernel = {
+    sessionId: "wi06-tunnel",
+    call: async () => {
+      kernelCalls += 1;
+      return { ok: true, result: {} };
+    },
+    close: () => {},
+    pending: new Map(),
+    child: {} as never
+  } as unknown as KernelClient;
+  const tunnel = localTransportContext({ [MCP_HOST_ENV]: "tunnel" });
+  assert.equal(tunnel.tunnelHost, true);
+  assert.equal(allowedToolsFor(tunnel).has("web_search"), false);
+  assert.equal(allowedToolsFor(localTransportContext({})).has("web_search"), true);
+  assert.equal(localTransportContext({ [MCP_HOST_ENV]: "local" }).tunnelHost, undefined);
+
+  const server = buildOrcelServer(kernel, "default", tunnel);
+  const transport = new MemoryTransport();
+  await server.connect(transport as never);
+  await transport.request(1, "initialize", {
+    protocolVersion: "2025-06-18",
+    capabilities: {},
+    clientInfo: { name: "wi06", version: "1" }
+  });
+  transport.notify("notifications/initialized");
+  const listed = await transport.request(2, "tools/list", {});
+  const names = (listed.result as { tools: Array<{ name: string }> }).tools.map((tool) => tool.name);
+  assert.equal(names.includes("web_search"), false);
+  assert.ok(names.includes("fs_read"), "the rest of the surface is served");
+  const called = await transport.request(3, "tools/call", { name: "web_search", arguments: { query: "q" } });
+  const refused =
+    called.error !== undefined || (called.result as { isError?: boolean } | undefined)?.isError === true;
+  assert.ok(refused, JSON.stringify(called));
+  assert.equal(kernelCalls, 0);
+  await server.close();
+
+  assert.equal(buildDaemonEnv({ [MCP_HOST_ENV]: "tunnel" })[MCP_HOST_ENV], "tunnel");
 });

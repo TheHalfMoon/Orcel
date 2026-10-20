@@ -96,8 +96,9 @@ Remote sessions (outbound-only; no inbound port is opened):
 
 Optional web search (off until a provider is enabled in ORCEL_SEARCH_PROVIDERS_JSON):
   orcel search status                     Show each provider's readiness; never shows a key.
-  orcel search set-key <brave|tavily|exa|serper> [--key-file <path>]
+  orcel search set-key <brave|tavily|exa|serper> [--key-file <path> [--delete-key-file]]
       Store your own provider API key in the OS secret store (input hidden).
+      A key file stays plaintext on disk: delete it, or pass --delete-key-file.
   orcel search delete-key <provider>      Delete a stored provider API key.
 
 Every command accepts --json for machine-readable output.

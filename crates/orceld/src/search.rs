@@ -20,12 +20,20 @@
 //!   approval and checked again after it; the connection is pinned to that
 //!   set. Redirects are never followed: a cross-origin one is refused as
 //!   such, so credentials never travel to another origin.
+//! - A self-hosted SearXNG gets no exception: its configured origin must be
+//!   an `https://` DNS name on port 443 that resolves only to public
+//!   addresses. One on localhost, a LAN or private address, an IP literal
+//!   or another port is refused (fail closed by design), because a private
+//!   destination would turn search into a probe of the local network. Put
+//!   it behind a public HTTPS name to use it.
 //! - Responses are bounded ([`MAX_RESPONSE_BYTES`]); results, titles and
 //!   snippets are cut to fixed sizes and returned as untrusted data, as
 //!   browser extraction labels page text.
 //! - Each provider is limited to [`RATE_MAX_PER_WINDOW`] queries per
-//!   minute in this process and to a daily query cap recorded in the
-//!   private state root, charged before the request is sent. Orcel never
+//!   minute and to a daily query cap. Both are kept in one ledger in the
+//!   private state root, judged and charged under an exclusive file lock
+//!   (so they hold across every `orceld` process of the user), and charged
+//!   before the request is sent. Orcel never
 //!   pays for a provider and never creates an account; the cap bounds what
 //!   a user's own key can spend.
 //!
@@ -51,12 +59,16 @@ use orcel_provider_network::{
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 /// The local launch configuration that enables providers.
 pub const CONFIG_ENV: &str = "ORCEL_SEARCH_PROVIDERS_JSON";
+/// Set to `tunnel` by `orcel-mcp-host`, the stdio command the ChatGPT
+/// Secure MCP Tunnel runs. Tunnel requests carry no remote context, so
+/// search is refused outright on that launch path.
+pub const MCP_HOST_ENV: &str = "ORCEL_MCP_HOST";
 /// Largest provider response body read.
 pub const MAX_RESPONSE_BYTES: usize = 512 * 1024;
 /// Results returned when the caller does not ask for a number.
@@ -225,7 +237,9 @@ impl SearchConfig {
 }
 
 /// `https://<public DNS name>` with no path, query, userinfo or port other
-/// than 443; the same parser as `web_fetch` judges it.
+/// than 443; the same parser as `web_fetch` judges it. Whether the name
+/// resolves only to public addresses is checked on every query, so a
+/// SearXNG reachable only on a private network fails closed.
 fn origin_host(origin: &str) -> Option<String> {
     let origin = origin.strip_suffix('/').unwrap_or(origin);
     let target = orcel_provider_network::parse_target(&format!("{origin}/")).ok()?;
@@ -256,21 +270,100 @@ impl KeySource for DefaultKeys {
     }
 }
 
-/// Daily query counts per provider.
-pub trait UsageLedger {
-    fn used(&self, provider: ProviderId, day: u64) -> Result<u32, &'static str>;
-    /// Records one query and returns the new count. Called before the
-    /// request is sent, so a crash never under-counts.
-    fn charge(&self, provider: ProviderId, day: u64) -> Result<u32, &'static str>;
+/// Per-provider usage: the UTC day's query counts and the send times inside
+/// the current rate window. Both caps are judged and charged together.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, Deserialize)]
+pub struct UsageState {
+    #[serde(default)]
+    pub day: u64,
+    #[serde(default)]
+    pub counts: BTreeMap<String, u32>,
+    /// Send times (ms) of the queries inside the last [`RATE_WINDOW_MS`].
+    #[serde(default)]
+    pub recent: BTreeMap<String, Vec<u64>>,
 }
 
-/// `<state root>/state/search/usage.json`: `{"day": n, "counts": {...}}`,
-/// replaced atomically inside a private directory.
+/// Why a query was not admitted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Refusal {
+    DailyCap,
+    Rate { retry_after_ms: u64 },
+    Unavailable(&'static str),
+}
+
+impl UsageState {
+    /// Today's count for `provider`.
+    pub fn used(&self, provider: ProviderId, day: u64) -> u32 {
+        if self.day != day {
+            return 0;
+        }
+        self.counts.get(provider.as_str()).copied().unwrap_or(0)
+    }
+
+    /// Judges the daily cap and the rate window for one query at `now`;
+    /// with `charge` the query is recorded in both and the new daily count
+    /// returned.
+    pub fn admit(
+        &mut self,
+        provider: ProviderId,
+        now: u64,
+        daily_cap: u32,
+        charge: bool,
+    ) -> Result<u32, Refusal> {
+        let day = now / DAY_MS;
+        if self.day != day {
+            self.day = day;
+            self.counts.clear();
+        }
+        let used = self.used(provider, day);
+        if used >= daily_cap {
+            return Err(Refusal::DailyCap);
+        }
+        let window = self.recent.entry(provider.as_str().to_owned()).or_default();
+        window.retain(|at| *at <= now && now - *at < RATE_WINDOW_MS);
+        if window.len() >= RATE_MAX_PER_WINDOW {
+            let oldest = window.iter().copied().min().unwrap_or(now);
+            return Err(Refusal::Rate {
+                retry_after_ms: RATE_WINDOW_MS.saturating_sub(now.saturating_sub(oldest)),
+            });
+        }
+        if !charge {
+            return Ok(used);
+        }
+        window.push(now);
+        let count = self.counts.entry(provider.as_str().to_owned()).or_insert(0);
+        *count = count.saturating_add(1);
+        Ok(*count)
+    }
+}
+
+/// Where usage is kept. `admit` must judge and charge atomically, so two
+/// `orceld` processes can never both pass a cap.
+pub trait UsageLedger {
+    fn used(&self, provider: ProviderId, day: u64) -> Result<u32, &'static str>;
+    /// [`UsageState::admit`] on the stored state; a charge is persisted
+    /// before this returns, and so before the request is sent: a crash never
+    /// under-counts.
+    fn admit(
+        &self,
+        provider: ProviderId,
+        now: u64,
+        daily_cap: u32,
+        charge: bool,
+    ) -> Result<u32, Refusal>;
+}
+
+/// `<state root>/state/search/usage.json` (a [`UsageState`]), replaced
+/// atomically inside a private directory. Every read-modify-write holds an
+/// exclusive lock on `usage.lock` beside it, so the daily cap and the rate
+/// window hold across every `orceld` process of this user, not only one.
 pub struct FileUsage {
     path: Result<PathBuf, &'static str>,
 }
 
 const USAGE_UNAVAILABLE: &str = "WI-06 search usage ledger is unavailable";
+const USAGE_BUSY: &str = "WI-06 search usage ledger is busy in another Orcel process; retry";
+const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 impl FileUsage {
     pub fn open_default() -> Self {
@@ -280,80 +373,76 @@ impl FileUsage {
         Self { path }
     }
 
-    fn read(&self, day: u64) -> Result<BTreeMap<String, u32>, &'static str> {
-        let path = self.path.as_ref().map_err(|error| *error)?;
-        let raw = match std::fs::read(path) {
-            Ok(raw) => raw,
+    fn path(&self) -> Result<&PathBuf, &'static str> {
+        self.path.as_ref().map_err(|error| *error)
+    }
+
+    fn load(path: &std::path::Path) -> Result<UsageState, &'static str> {
+        match std::fs::read(path) {
+            Ok(raw) => serde_json::from_slice(&raw).map_err(|_| USAGE_UNAVAILABLE),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(BTreeMap::new())
+                Ok(UsageState::default())
             }
-            Err(_) => return Err(USAGE_UNAVAILABLE),
-        };
-        let value: Value = serde_json::from_slice(&raw).map_err(|_| USAGE_UNAVAILABLE)?;
-        if value.get("day").and_then(Value::as_u64) != Some(day) {
-            return Ok(BTreeMap::new());
+            Err(_) => Err(USAGE_UNAVAILABLE),
         }
-        serde_json::from_value(value.get("counts").cloned().unwrap_or(Value::Null))
-            .map_err(|_| USAGE_UNAVAILABLE)
+    }
+
+    /// The exclusive lock, released when the returned handle closes
+    /// (including when the process dies).
+    fn lock(parent: &std::path::Path) -> Result<std::fs::File, &'static str> {
+        orcel_platform::paths::ensure_private_dir(parent).map_err(|_| USAGE_UNAVAILABLE)?;
+        // Windows leaves creation to the first writer; on Unix the private
+        // directory exists by now.
+        std::fs::create_dir_all(parent).map_err(|_| USAGE_UNAVAILABLE)?;
+        let lock = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(parent.join("usage.lock"))
+            .map_err(|_| USAGE_UNAVAILABLE)?;
+        let deadline = std::time::Instant::now() + LOCK_WAIT;
+        loop {
+            match fs4::FileExt::try_lock(&lock) {
+                Ok(()) => return Ok(lock),
+                Err(fs4::TryLockError::WouldBlock) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(fs4::TryLockError::WouldBlock) => return Err(USAGE_BUSY),
+                Err(fs4::TryLockError::Error(_)) => return Err(USAGE_UNAVAILABLE),
+            }
+        }
     }
 }
 
 impl UsageLedger for FileUsage {
     fn used(&self, provider: ProviderId, day: u64) -> Result<u32, &'static str> {
-        Ok(self.read(day)?.get(provider.as_str()).copied().unwrap_or(0))
+        Ok(Self::load(self.path()?)?.used(provider, day))
     }
 
-    fn charge(&self, provider: ProviderId, day: u64) -> Result<u32, &'static str> {
-        let path = self.path.as_ref().map_err(|error| *error)?;
-        let mut counts = self.read(day)?;
-        let count = counts.entry(provider.as_str().to_owned()).or_insert(0);
-        *count = count.saturating_add(1);
-        let charged = *count;
-        let parent = path.parent().ok_or(USAGE_UNAVAILABLE)?;
-        orcel_platform::paths::ensure_private_dir(parent).map_err(|_| USAGE_UNAVAILABLE)?;
-        // Windows leaves creation to the first writer; on Unix the private
-        // directory exists by now.
-        std::fs::create_dir_all(parent).map_err(|_| USAGE_UNAVAILABLE)?;
-        let bytes = serde_json::to_vec(&json!({ "day": day, "counts": counts }))
-            .map_err(|_| USAGE_UNAVAILABLE)?;
-        let temp = parent.join(format!(".usage.json.tmp-{}", std::process::id()));
-        std::fs::write(&temp, bytes).map_err(|_| USAGE_UNAVAILABLE)?;
-        if std::fs::rename(&temp, path).is_err() {
-            let _ = std::fs::remove_file(&temp);
-            return Err(USAGE_UNAVAILABLE);
+    fn admit(
+        &self,
+        provider: ProviderId,
+        now: u64,
+        daily_cap: u32,
+        charge: bool,
+    ) -> Result<u32, Refusal> {
+        let path = self.path().map_err(Refusal::Unavailable)?;
+        let parent = path.parent().ok_or(Refusal::Unavailable(USAGE_UNAVAILABLE))?;
+        let _lock = Self::lock(parent).map_err(Refusal::Unavailable)?;
+        let mut state = Self::load(path).map_err(Refusal::Unavailable)?;
+        let admitted = state.admit(provider, now, daily_cap, charge)?;
+        if charge {
+            let bytes = serde_json::to_vec(&state)
+                .map_err(|_| Refusal::Unavailable(USAGE_UNAVAILABLE))?;
+            let temp = parent.join(format!(".usage.json.tmp-{}", std::process::id()));
+            std::fs::write(&temp, bytes).map_err(|_| Refusal::Unavailable(USAGE_UNAVAILABLE))?;
+            if std::fs::rename(&temp, path).is_err() {
+                let _ = std::fs::remove_file(&temp);
+                return Err(Refusal::Unavailable(USAGE_UNAVAILABLE));
+            }
         }
-        Ok(charged)
-    }
-}
-
-/// Per-provider sliding window in this process.
-#[derive(Default)]
-pub struct RateLimiter {
-    sent: Mutex<HashMap<ProviderId, VecDeque<u64>>>,
-}
-
-impl RateLimiter {
-    /// `Err(retry_after_ms)` when the window is full.
-    fn admit(&self, provider: ProviderId, now: u64, record: bool) -> Result<(), u64> {
-        let mut sent = self
-            .sent
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        let window = sent.entry(provider).or_default();
-        while window
-            .front()
-            .is_some_and(|at| now.saturating_sub(*at) >= RATE_WINDOW_MS)
-        {
-            window.pop_front();
-        }
-        if window.len() >= RATE_MAX_PER_WINDOW {
-            let oldest = window.front().copied().unwrap_or(now);
-            return Err(RATE_WINDOW_MS.saturating_sub(now.saturating_sub(oldest)));
-        }
-        if record {
-            window.push_back(now);
-        }
-        Ok(())
+        Ok(admitted)
     }
 }
 
@@ -362,10 +451,11 @@ pub struct SearchContext<'a, R: DnsResolver, T: ApiTransport> {
     pub config: Result<&'a SearchConfig, &'static str>,
     pub keys: &'a dyn KeySource,
     pub usage: &'a dyn UsageLedger,
-    pub limiter: &'a RateLimiter,
     pub resolver: &'a R,
     pub transport: &'a T,
     pub transport_available: bool,
+    /// This orceld serves the tunnel host (`ORCEL_MCP_HOST=tunnel`).
+    pub tunnel_host: bool,
     pub now_ms: &'a dyn Fn() -> u64,
 }
 
@@ -374,8 +464,8 @@ pub fn is_search_request(request: &RequestEnvelope) -> bool {
 }
 
 /// The production context: launch configuration, the platform secret
-/// store, the private usage ledger, this process's limiter and the native
-/// pinned HTTPS transport.
+/// store, the private locked usage ledger and the native pinned HTTPS
+/// transport.
 pub fn dispatch_default(
     workspace: &Workspace,
     approval: &impl ApprovalBroker,
@@ -385,7 +475,6 @@ pub fn dispatch_default(
         return Ok(None);
     }
     static CONFIG: OnceLock<Result<SearchConfig, &'static str>> = OnceLock::new();
-    static LIMITER: OnceLock<RateLimiter> = OnceLock::new();
     let config = CONFIG.get_or_init(|| {
         let raw = std::env::var(CONFIG_ENV).ok();
         SearchConfig::parse(raw.as_deref())
@@ -395,10 +484,10 @@ pub fn dispatch_default(
         config: config.as_ref().map_err(|error| *error),
         keys: &DefaultKeys,
         usage: &usage,
-        limiter: LIMITER.get_or_init(RateLimiter::default),
         resolver: &SystemResolver,
         transport: &SystemTransport,
         transport_available: orcel_provider_network::NATIVE_TRANSPORT_AVAILABLE,
+        tunnel_host: std::env::var_os(MCP_HOST_ENV).is_some_and(|value| value == "tunnel"),
         now_ms: &now_ms,
     };
     dispatch(&context, workspace, approval, request).map(Some)
@@ -410,6 +499,11 @@ pub fn dispatch<R: DnsResolver, T: ApiTransport>(
     approval: &impl ApprovalBroker,
     request: &RequestEnvelope,
 ) -> Result<Value, ProviderError> {
+    if context.tunnel_host {
+        return Err(denied(
+            "WI-06 search is not available to the ChatGPT Secure MCP Tunnel host",
+        ));
+    }
     match request.operation.as_str() {
         "doctor" => Ok(doctor(context)),
         "query" => query(context, workspace, approval, request),
@@ -766,37 +860,29 @@ fn query<R: DnsResolver, T: ApiTransport>(
     }))
 }
 
-/// Rate window and daily cap. With `charge` the query is recorded in both
-/// and the new daily count returned.
+/// Daily cap and rate window, judged (and with `charge`, recorded) in one
+/// locked step of the usage ledger; returns the daily count.
 fn check_caps<R: DnsResolver, T: ApiTransport>(
     context: &SearchContext<'_, R, T>,
     provider: &ProviderConfig,
     charge: bool,
 ) -> Result<u32, ProviderError> {
     let now = (context.now_ms)();
-    let day = now / DAY_MS;
-    let used = context.usage.used(provider.id, day).map_err(unavailable)?;
-    if used >= provider.daily_query_cap {
-        return Err(denied(format!(
-            "WI-06 daily query cap of {} reached for {}",
-            provider.daily_query_cap,
-            provider.id.as_str()
-        )));
-    }
     context
-        .limiter
-        .admit(provider.id, now, charge)
-        .map_err(|retry_after| {
-            denied(format!(
-                "WI-06 search rate limit of {RATE_MAX_PER_WINDOW} per minute reached for {}; retry after {} ms",
-                provider.id.as_str(),
-                retry_after
-            ))
-        })?;
-    if charge {
-        return context.usage.charge(provider.id, day).map_err(unavailable);
-    }
-    Ok(used)
+        .usage
+        .admit(provider.id, now, provider.daily_query_cap, charge)
+        .map_err(|refusal| match refusal {
+            Refusal::DailyCap => denied(format!(
+                "WI-06 daily query cap of {} reached for {}",
+                provider.daily_query_cap,
+                provider.id.as_str()
+            )),
+            Refusal::Rate { retry_after_ms } => denied(format!(
+                "WI-06 search rate limit of {RATE_MAX_PER_WINDOW} per minute reached for {}; retry after {retry_after_ms} ms",
+                provider.id.as_str()
+            )),
+            Refusal::Unavailable(message) => unavailable(message),
+        })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -34,7 +34,20 @@ export interface TransportContext {
   readonly transportKind: TransportKind;
   readonly providerKind: string;
   readonly toolSurfaceProfile: ToolSurfaceProfile;
+  /**
+   * WI-06: set when `orcel-mcp-host` launched this edge for the ChatGPT
+   * Secure MCP Tunnel (`ORCEL_MCP_HOST=tunnel`). Tunnel requests carry no
+   * remote context, so tools that must never be reachable through the
+   * tunnel are removed here and refused again by orceld.
+   */
+  readonly tunnelHost?: boolean;
 }
+
+/** The marker `orcel-mcp-host` sets for a tunnel-launched edge. */
+export const MCP_HOST_ENV = "ORCEL_MCP_HOST";
+
+/** Tools a tunnel-launched host never serves. */
+export const TUNNEL_EXCLUDED_TOOLS: readonly string[] = Object.freeze(["web_search"]);
 
 /**
  * Local transports (stdio and loopback HTTP) serve the `desktop_structured`
@@ -58,7 +71,8 @@ export function defaultTransportContext(): TransportContext {
 export function localTransportContext(env: NodeJS.ProcessEnv = process.env): TransportContext {
   return {
     ...defaultTransportContext(),
-    toolSurfaceProfile: localProfileFromConfig(env[TOOL_SURFACE_PROFILE_ENV])
+    toolSurfaceProfile: localProfileFromConfig(env[TOOL_SURFACE_PROFILE_ENV]),
+    ...(env[MCP_HOST_ENV] === "tunnel" ? { tunnelHost: true } : {})
   };
 }
 
@@ -75,7 +89,11 @@ export function allowedToolsFor(context: TransportContext): ReadonlySet<string> 
       throw new Error("TOOL_SURFACE_DENIED: the remote provider kind or tool surface profile is not mapped");
     }
   }
-  return profileTools(context.toolSurfaceProfile);
+  const tools = profileTools(context.toolSurfaceProfile);
+  if (context.tunnelHost === true) {
+    return new Set([...tools].filter((tool) => !TUNNEL_EXCLUDED_TOOLS.includes(tool)));
+  }
+  return tools;
 }
 
 /**

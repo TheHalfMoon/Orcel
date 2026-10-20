@@ -23,6 +23,11 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 
+# WI-06: termios for the hidden key prompt on macOS and Linux. libc is
+# already in the graph through orcel-platform.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.52", features = [
   "Win32_Foundation",
