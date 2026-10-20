@@ -966,6 +966,24 @@ fn cr01_a_symlinked_socket_path_is_refused_and_left_alone() {
 
 #[cfg(unix)]
 #[test]
+fn cr02_a_socket_path_over_the_sun_path_limit_is_refused_with_its_reason() {
+    let dir = private_dir();
+    let name = "s".repeat(120);
+    let path = dir.join(&name);
+    let refused = unix::bind(&path).map(|_| ());
+    assert!(
+        matches!(&refused, Err(StartError::Refused(reason))
+            if reason.contains("longer than the 100") && reason.contains("XDG_STATE_HOME")),
+        "{refused:?}"
+    );
+    // Nothing was created or truncated to a shorter name.
+    assert!(std::fs::symlink_metadata(&path).is_err());
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(unix)]
+#[test]
 fn cr01_a_path_that_is_not_a_socket_is_left_alone() {
     let dir = private_dir();
     let path = dir.join("s");
