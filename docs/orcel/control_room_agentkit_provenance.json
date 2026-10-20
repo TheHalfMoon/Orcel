@@ -1,0 +1,85 @@
+{
+  "schema": "orcel-adapted-source-provenance/1",
+  "task": "CR-02",
+  "donor": {
+    "id": "agent-native",
+    "repo": "BuilderIO/agent-native",
+    "commit": "9c277b79cb87eb27da538e572dd710986e2fa06d",
+    "license": "MIT (packages/agentkit/package.json)",
+    "notice": "docs/orcel/notices/agent-native-MIT.txt",
+    "authorization": "docs/orcel/grants/2026-10-18-founder-attestation.md"
+  },
+  "method": "COPY_ADAPT",
+  "trees": {
+    "T-AN-01": {
+      "path": "packages/agentkit/src/protocol",
+      "object": "5b8b266352f122f5696d777ec0daad7b37820c4d"
+    },
+    "T-AN-02": {
+      "path": "packages/agentkit/src/client",
+      "object": "bf86be8b4ff457680e4436b12a463b5d483c228e"
+    }
+  },
+  "files": [
+    {
+      "path": "apps/orcel-control-room/src/agentkit/protocol/version.ts",
+      "donor_path": "packages/agentkit/src/protocol/version.ts",
+      "donor_blob": "bc965e6bee84e5e2990aa1b87d5e87c34e1197e3",
+      "row": "T-AN-01"
+    },
+    {
+      "path": "apps/orcel-control-room/src/agentkit/protocol/errors.ts",
+      "donor_path": "packages/agentkit/src/protocol/errors.ts",
+      "donor_blob": "3027aa17937e8d8c6ff006c0071908112db96097",
+      "row": "T-AN-01"
+    },
+    {
+      "path": "apps/orcel-control-room/src/agentkit/protocol/validation.ts",
+      "donor_path": "packages/agentkit/src/protocol/validation.ts",
+      "donor_blob": "c8bdcef2aec209d52d6bb7773949448736433f8b",
+      "row": "T-AN-01"
+    },
+    {
+      "path": "apps/orcel-control-room/src/agentkit/protocol/index.ts",
+      "donor_path": "packages/agentkit/src/protocol/index.ts",
+      "donor_blob": "03ce1c836789a37cc110b16f64ef937be477133b",
+      "row": "T-AN-01"
+    },
+    {
+      "path": "apps/orcel-control-room/src/agentkit/client/client.ts",
+      "donor_path": "packages/agentkit/src/client/client.ts",
+      "donor_blob": "a91a960a147999d4874d3ff807b9e1bc91b57ae3",
+      "row": "T-AN-02"
+    },
+    {
+      "path": "apps/orcel-control-room/src/agentkit/client/state.ts",
+      "donor_path": "packages/agentkit/src/client/state.ts",
+      "donor_blob": "4bf130d4d58eb72d63e03979eecac87da4b7a981",
+      "row": "T-AN-02"
+    },
+    {
+      "path": "apps/orcel-control-room/src/agentkit/client/index.ts",
+      "donor_path": "packages/agentkit/src/client/index.ts",
+      "donor_blob": "f8a68bfe0dad105b3b63c1c69040b0468e3013a9",
+      "row": "T-AN-02"
+    },
+    {
+      "path": "apps/orcel-control-room/src/agentkit/conformance.test.ts",
+      "donor_path": "packages/agentkit/src/conformance/index.ts",
+      "donor_blob": "6eea1c5effef0ef317feb33cedc5708c88d3426f",
+      "row": "T-AN-03"
+    }
+  ],
+  "orcel_only_files": [
+    "apps/orcel-control-room/src/agentkit/transport/orceld-transport.ts",
+    "apps/orcel-control-room/src/agentkit/transport/framing.ts",
+    "apps/orcel-control-room/src/index.ts"
+  ],
+  "not_taken": [
+    "AgentKit's thread, run, message, queue, upload, action, connection-request and approval types and validators (protocol/index.ts, validation.ts): orcel-app-api/1 has none of them",
+    "every command that starts, resumes, continues, cancels or answers anything, including resolveApproval/resumeRun (client/client.ts): the Control Room has no approval or mutation path",
+    "protocol/agui.ts, agui-codec.ts and compatibility.ts and the @ag-ui/core dependency: AG-UI interop is not needed for a local read-only client",
+    "packages/agentkit/src/adapters (HTTP transport): replaced by orceldTransport over the CR-01 pipe or socket",
+    "conformance scenarios for runs, cancellation, abort, approval, queue and terminal failure"
+  ]
+}

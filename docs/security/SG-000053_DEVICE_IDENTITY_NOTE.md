@@ -38,6 +38,13 @@ widening, and no approval change is introduced here.
   boundary. The store file requires owner-only permissions. Workspace
   admission continues to refuse any workspace overlapping protected
   state, so workspace-scoped providers cannot reach the key.
+- Since XP-19 that file holds only the public identity. The private key
+  lives in the OS secret store behind `orceld` (`secret` capability, name
+  `device.key`): DPAPI on Windows, the user keychain on macOS, and the
+  Secret Service on Linux. With no store available the key is unavailable,
+  never written in plaintext. `orcel remote migrate-secrets` moves a key that
+  an earlier version left in the file into the store, then removes the
+  plaintext (SECURITY_INTEGRATION S-23).
 - The remote provider cannot create or replace device identity. Identity
   creation and rotation are local operations.
 

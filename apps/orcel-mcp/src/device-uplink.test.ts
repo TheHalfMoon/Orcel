@@ -34,7 +34,7 @@ import { DENIED_RELAY_CAPABILITIES, RELAY_BOUNDS, RELAY_PROTOCOL_VERSION } from 
 import { CANONICAL_TOOL_NAMES } from "./server.js";
 import { REMOTE_TOOL_NAMES } from "./tool_contract.js";
 import { parseUplinkFile } from "./transports/relay_device.js";
-import { loadDeviceKey, loadRevocations } from "./uplink_state.js";
+import { loadDeviceKey, loadDeviceRecord, loadRevocations } from "./uplink_state.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const srcDir = join(here, "..", "src");
@@ -479,14 +479,22 @@ test("pairing records, relay origins, and kernel remote context are strict", () 
   assert.throws(() => new DeviceUplinkCore({ deviceId: DEVICE, deviceEpoch: 1 }, [PAIRED, PAIRED], new StubDispatcher(), () => []));
 });
 
-test("uplink state loading fails closed", () => {
+test("uplink state loading fails closed", async () => {
   const dir = mkdtempSync(join(tmpdir(), "orcel-uplink-"));
-  assert.throws(() => loadDeviceKey(join(dir, "missing.json")), /PAIRING_REQUIRED/);
+  const secrets = new Map<string, string>();
+  const store = {
+    get: async (name: string) => secrets.get(name) ?? null,
+    put: async (name: string, value: string) => void secrets.set(name, value)
+  };
+  assert.throws(() => loadDeviceRecord(join(dir, "missing.json")), /PAIRING_REQUIRED/);
   writeFileSync(join(dir, "bad.json"), "{");
-  assert.throws(() => loadDeviceKey(join(dir, "bad.json")), /PAIRING_REQUIRED/);
+  assert.throws(() => loadDeviceRecord(join(dir, "bad.json")), /PAIRING_REQUIRED/);
   const pair = generateDeviceKeyPair(DEVICE, NOW, 1);
-  writeFileSync(join(dir, "key.json"), JSON.stringify(pair));
-  assert.equal(loadDeviceKey(join(dir, "key.json")).deviceId, DEVICE);
+  writeFileSync(join(dir, "key.json"), JSON.stringify(publicDeviceIdentity(pair)));
+  assert.equal(loadDeviceRecord(join(dir, "key.json")).deviceId, DEVICE);
+  await assert.rejects(loadDeviceKey(join(dir, "key.json"), store), /not in the secret store/);
+  secrets.set("device.key", pair.privateKeyJwkBase64);
+  assert.equal((await loadDeviceKey(join(dir, "key.json"), store)).privateKeyJwkBase64, pair.privateKeyJwkBase64);
   assert.deepEqual(loadRevocations(join(dir, "none.json")), []);
   writeFileSync(join(dir, "revocations.json"), "not json");
   const failClosed = loadRevocations(join(dir, "revocations.json"));
@@ -708,14 +716,14 @@ test("the relay transport fails closed with PAIRING_REQUIRED when protected pair
   const dir = mkdtempSync(join(tmpdir(), "orcel-relay-transport-"));
   try {
     delete process.env.ORCEL_UPLINK_CONFIG;
-    assert.throws(() => startRelayTransport(), /PAIRING_REQUIRED/);
+    await assert.rejects(startRelayTransport(), /PAIRING_REQUIRED/);
     process.env.ORCEL_UPLINK_CONFIG = join(dir, "missing.json");
-    assert.throws(() => startRelayTransport(), /PAIRING_REQUIRED/);
+    await assert.rejects(startRelayTransport(), /PAIRING_REQUIRED/);
     writeFileSync(join(dir, "uplink.json"), JSON.stringify({ schema: "orcel-uplink/1", relayOrigin: "https://relay.orcel.example", defaultWorkspace: "default", connections: [PAIRED] }));
     process.env.ORCEL_UPLINK_CONFIG = join(dir, "uplink.json");
     process.env.ORCEL_DEVICE_KEY_PATH = join(dir, "no-key.json");
     process.env.ORCEL_DEVICE_REVOCATIONS_PATH = join(dir, "revocations.json");
-    assert.throws(() => startRelayTransport(), /PAIRING_REQUIRED/);
+    await assert.rejects(startRelayTransport(), /PAIRING_REQUIRED/);
   } finally {
     for (const [name, value] of [
       ["ORCEL_UPLINK_CONFIG", saved.config],

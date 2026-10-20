@@ -5,11 +5,13 @@
  *   remote_admin.js enable --relay <origin> [--workspace <id>]
  *   remote_admin.js pair
  *
- * Reads ORCEL_DEVICE_KEY_PATH and ORCEL_UPLINK_CONFIG. Never prints the
- * private key; the pairing code is shown once on this console.
+ * Reads ORCEL_DEVICE_KEY_PATH and ORCEL_UPLINK_CONFIG, and keeps the
+ * private key in the `orceld` secret store (ORCEL_DAEMON, XP-19). Never
+ * prints the private key; the pairing code is shown once on this console.
  */
 import { createInterface } from "node:readline/promises";
 import { enableRemote, pairRemote } from "../remote_enrollment.js";
+import { withKernelSecretStore } from "../secret_store.js";
 
 function required(name: string): string {
   const value = process.env[name];
@@ -33,14 +35,18 @@ async function main(args: readonly string[]): Promise<void> {
     if (relayOrigin === undefined) {
       throw new Error("PAIRING_REQUIRED: --relay <origin> is required");
     }
-    const result = await enableRemote({
-      relayOrigin,
-      defaultWorkspace: option(args, "--workspace") ?? process.env.ORCEL_DEFAULT_WORKSPACE ?? "default",
-      deviceKeyPath,
-      uplinkPath,
-      fetch: fetchImpl,
-      nowMs: Date.now()
-    });
+    const defaultWorkspace = option(args, "--workspace") ?? process.env.ORCEL_DEFAULT_WORKSPACE ?? "default";
+    const result = await withKernelSecretStore(defaultWorkspace, (secrets) =>
+      enableRemote({
+        relayOrigin,
+        defaultWorkspace,
+        deviceKeyPath,
+        uplinkPath,
+        secrets,
+        fetch: fetchImpl,
+        nowMs: Date.now()
+      })
+    );
     process.stdout.write(
       `Remote access enabled for device ${result.deviceId}${result.created ? " (new device key)" : ""}.\n` +
         "Next: connect Orcel in your AI client, then run `orcel remote pair` when it asks for a pairing code.\n"
@@ -50,9 +56,10 @@ async function main(args: readonly string[]): Promise<void> {
   if (args[0] === "pair") {
     const console = createInterface({ input: process.stdin, output: process.stdout });
     try {
-      const paired = await pairRemote({
+      const paired = await withKernelSecretStore(process.env.ORCEL_DEFAULT_WORKSPACE ?? "default", (secrets) => pairRemote({
         deviceKeyPath,
         uplinkPath,
+        secrets,
         fetch: fetchImpl,
         now: Date.now,
         sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
@@ -68,7 +75,7 @@ async function main(args: readonly string[]): Promise<void> {
           const answer = await console.question("Type yes to approve: ");
           return answer.trim().toLowerCase() === "yes";
         }
-      });
+      }));
       if (paired === null) {
         process.stdout.write("Pairing was not completed.\n");
         process.exitCode = 1;

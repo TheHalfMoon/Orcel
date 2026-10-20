@@ -77,7 +77,14 @@ const SAFE_ENV_NAMES = new Set([
   "ProgramFiles",
   "ProgramFiles(x86)",
   "NUMBER_OF_PROCESSORS",
-  "PROCESSOR_ARCHITECTURE"
+  "PROCESSOR_ARCHITECTURE",
+  // XP-01/XP-19 on macOS and Linux: orceld resolves its private state root
+  // from HOME/XDG_STATE_HOME and reaches the Secret Service on the session
+  // bus. None of these carries a secret.
+  "HOME",
+  "XDG_STATE_HOME",
+  "XDG_RUNTIME_DIR",
+  "DBUS_SESSION_BUS_ADDRESS"
 ]);
 
 const SECRETISH = /(secret|token|password|passwd|credential|api[_-]?key|tunnel[_-]?key)/i;

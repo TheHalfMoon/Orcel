@@ -91,6 +91,8 @@ Remote sessions (outbound-only; no inbound port is opened):
       Without an active lease every remote request fails with REMOTE_SESSION_INACTIVE.
   orcel remote revoke [--connection <rc-id>]  End one or every remote session lease.
   orcel remote status                     Show remote session leases.
+  orcel remote migrate-secrets            Move a device key written by an earlier version
+      from a plaintext file into the OS secret store, then remove the plaintext.
 
 Every command accepts --json for machine-readable output.
 ";
