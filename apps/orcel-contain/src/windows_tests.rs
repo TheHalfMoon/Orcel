@@ -528,6 +528,49 @@ fn a_hard_link_made_after_the_open_is_caught_by_the_recheck() {
     );
 }
 
+/// Judge round on #378, L2: a writable root's inheritable ACE must not reach
+/// a child before the walk has validated it. This inspects the outside file
+/// at the moment a hard kill would freeze things: the walk has refused the
+/// hard-linked child and nothing has been rolled back yet. The outside file
+/// must carry no ACE, inherited or explicit.
+#[test]
+fn a_refused_writable_grant_never_propagated_to_an_unvalidated_child() {
+    let root = tempfile::tempdir().unwrap();
+    let root = canonical_test_root(&root);
+    let writable = root.join("writable");
+    let nested = writable.join("a-nested");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::write(writable.join("a-plain.txt"), b"plain").unwrap();
+    let outside = root.join("outside.secret");
+    std::fs::write(&outside, b"outside").unwrap();
+    std::fs::hard_link(&outside, nested.join("z-linked.secret")).unwrap();
+
+    let container = AppContainerSid::create_unique().unwrap();
+    let mut ledger = AclGrantLedger::default();
+    let refused = ledger
+        .merge_grant_tree(&writable, container.sid(), GENERIC_ALL, true)
+        .unwrap_err();
+    assert_eq!(
+        refused.message,
+        "a contained process ACL target has more than one hard link"
+    );
+    // Not yet rolled back: the ledger still holds the partial grant.
+    assert!(!ledger.entries.is_empty());
+    let (_, grants) = matching_grants(&outside, container.sid()).unwrap();
+    assert!(
+        grants.is_empty(),
+        "the outside file was granted before its link was validated: {grants:?}"
+    );
+    let (_, root_grants) = matching_grants(&writable, container.sid()).unwrap();
+    assert!(
+        root_grants
+            .iter()
+            .all(|(_, flags)| flags & (INHERIT_ONLY_ACE | 0x3) == 0),
+        "the root's grant was inheritable before the walk finished: {root_grants:?}"
+    );
+    ledger.revoke().unwrap();
+}
+
 #[test]
 fn a_partial_recursive_grant_is_rolled_back() {
     let root = tempfile::tempdir().unwrap();
