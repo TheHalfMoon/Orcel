@@ -17,7 +17,9 @@
 //!   a keychain prompt; a locked keychain is unavailable. Until XP-16/FD-05
 //!   sign `orceld`, the item's ACL trusts the unsigned creating binary by
 //!   path and hash, so a rebuilt `orceld` is asked (and here refused) like
-//!   any other application; no access group is set.
+//!   any other application; no access group is set. The item lives in the
+//!   legacy file keychain, which has no `kSecAttrAccessible` class: it is
+//!   readable whenever that keychain is unlocked.
 //! - Linux: the freedesktop Secret Service over the D-Bus session bus
 //!   (`zbus-secret-service-keyring-store`, libsecret-compatible items,
 //!   encrypted transport). With no session bus, no Secret Service or a locked
@@ -25,7 +27,13 @@
 //!
 //! Every stored value is wrapped in an envelope that names the secret, the
 //! owning account and a SHA-256 over both and the payload, so a value moved
-//! to another name, written for another account or damaged is refused. Values
+//! to another name, written for another account or damaged is refused. The
+//! SHA-256 is not keyed: on Windows DPAPI's MAC also refuses a deliberately
+//! altered blob, but on macOS and Linux the envelope only detects accidental
+//! damage and swaps. A same-user process that can write the keychain or
+//! Secret Service item can write a valid envelope; for the device key the
+//! binding that matters is the edge's check that the private key matches the
+//! recorded public identity (`privateKeyMatchesIdentity`). Values
 //! never appear in errors, `Debug` output, logs, argv or the environment; the
 //! buffers that hold them are wiped on drop where the code owns them.
 
@@ -235,6 +243,8 @@ pub fn current_owner() -> Result<String, SecretError> {
 }
 
 /// `MAGIC | VERSION | len name | len owner | u32 len payload | SHA-256`.
+/// The digest is unkeyed: it detects damage and name or account swaps, not a
+/// writer who recomputes it.
 pub fn seal(name: SecretName, owner: &str, value: &[u8]) -> SecretBytes {
     let name = name.as_str().as_bytes();
     let owner = owner.as_bytes();
@@ -350,6 +360,30 @@ impl Migration {
 /// Overwriting is best effort: file systems with copy-on-write, snapshots or
 /// SSD remapping can keep older copies.
 pub fn migrate_device_key(store: &SecretStore, record: &Path) -> Result<Migration, SecretError> {
+    migrate_with(store, record, &mut |_| Ok(()))
+}
+
+/// The points of a migration after which a crash leaves state on disk.
+/// Tests stop the migration at each one and check that the next run
+/// recovers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MigrationStep {
+    /// The key is in the store; the plaintext record is untouched.
+    Stored,
+    /// A public-only temp file is written and synced next to the record.
+    TempWritten,
+    /// The temp file replaced the record; the old file's bytes are reachable
+    /// only through the handle opened before the rename.
+    Renamed,
+    /// The old file's bytes were overwritten with zeros and synced.
+    Zeroed,
+}
+
+fn migrate_with(
+    store: &SecretStore,
+    record: &Path,
+    step: &mut dyn FnMut(MigrationStep) -> Result<(), SecretError>,
+) -> Result<Migration, SecretError> {
     let metadata = match std::fs::symlink_metadata(record) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -375,6 +409,18 @@ pub fn migrate_device_key(store: &SecretStore, record: &Path) -> Result<Migratio
         std::fs::read(record)
             .map_err(|_| SecretError::Unavailable("the device key record is unreadable"))?,
     );
+    // A record that an earlier build zeroed in place and then crashed before
+    // replacing: the plaintext is gone, so with the key already stored there
+    // is nothing left to migrate.
+    if !raw.as_slice().is_empty() && raw.as_slice().iter().all(|byte| *byte == 0) {
+        return match store.get(SecretName::DeviceKey) {
+            Ok(_) => Ok(Migration::AlreadyStored),
+            Err(SecretError::NotFound) => Err(SecretError::Refused(
+                "the device key record was destroyed and no key is stored; enroll again",
+            )),
+            Err(error) => Err(error),
+        };
+    }
     let mut fields: Map<String, Value> = serde_json::from_slice(raw.as_slice())
         .map_err(|_| SecretError::Refused("the device key record is malformed"))?;
     let private = match fields.remove("privateKeyJwkBase64") {
@@ -411,9 +457,10 @@ pub fn migrate_device_key(store: &SecretStore, record: &Path) -> Result<Migratio
         }
         Err(error) => return Err(error),
     };
+    step(MigrationStep::Stored)?;
     let public = serde_json::to_vec(&Value::Object(fields))
         .map_err(|_| SecretError::Refused("the device key record is malformed"))?;
-    scrub_and_replace(record, raw.as_slice().len(), &public)?;
+    replace_then_scrub(record, raw.as_slice().len(), &public, step)?;
     Ok(outcome)
 }
 
@@ -442,26 +489,54 @@ fn check_private_file(_metadata: &std::fs::Metadata) -> Result<(), SecretError> 
     Ok(())
 }
 
-/// Overwrites `len` bytes of `path` with zeros, syncs, then atomically
-/// replaces it with `public`.
-fn scrub_and_replace(path: &Path, len: usize, public: &[u8]) -> Result<(), SecretError> {
+/// Replaces `path` with `public` so that a crash at any point leaves either
+/// the old record or the public record at `path`, never a damaged one. A
+/// handle to the old file is opened first. The public record is written to
+/// a synced temp file and renamed over `path` (directory synced on Unix).
+/// Only then are the old file's bytes overwritten with zeros through that
+/// handle. A crash before the overwrite leaves the old bytes in an unlinked
+/// file that no path reaches.
+fn replace_then_scrub(
+    path: &Path,
+    len: usize,
+    public: &[u8],
+    step: &mut dyn FnMut(MigrationStep) -> Result<(), SecretError>,
+) -> Result<(), SecretError> {
     use std::io::Write;
     const FAILED: SecretError =
         SecretError::Unavailable("the plaintext device key could not be scrubbed");
-    {
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .open(path)
-            .map_err(|_| FAILED)?;
-        file.write_all(&vec![0u8; len]).map_err(|_| FAILED)?;
-        file.sync_all().map_err(|_| FAILED)?;
+    let mut old = std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .map_err(|_| FAILED)?;
+    let temp = write_private_temp(path, public).map_err(|_| FAILED)?;
+    step(MigrationStep::TempWritten)?;
+    if std::fs::rename(&temp, path).is_err() {
+        let _ = std::fs::remove_file(&temp);
+        return Err(FAILED);
     }
-    write_private_atomic(path, public).map_err(|_| FAILED)
+    sync_parent(path).map_err(|_| FAILED)?;
+    step(MigrationStep::Renamed)?;
+    old.write_all(&vec![0u8; len]).map_err(|_| FAILED)?;
+    old.sync_all().map_err(|_| FAILED)?;
+    step(MigrationStep::Zeroed)?;
+    Ok(())
 }
 
 /// Writes `bytes` to a fresh owner-only file next to `path` and renames it
 /// over `path`.
+#[cfg(windows)]
 fn write_private_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let temp = write_private_temp(path, bytes)?;
+    if let Err(error) = std::fs::rename(&temp, path) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(error);
+    }
+    sync_parent(path)
+}
+
+/// A fresh, synced, owner-only file next to `path` holding `bytes`.
+fn write_private_temp(path: &Path, bytes: &[u8]) -> std::io::Result<PathBuf> {
     use std::io::Write;
     let parent = path
         .parent()
@@ -484,21 +559,26 @@ fn write_private_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    let result = (|| {
-        let mut file = options.open(&temp)?;
+    let written = options.open(&temp).and_then(|mut file| {
         file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
-        std::fs::rename(&temp, path)
-    })();
-    if result.is_err() {
+        file.sync_all()
+    });
+    if let Err(error) = written {
         let _ = std::fs::remove_file(&temp);
+        return Err(error);
     }
-    result?;
+    Ok(temp)
+}
+
+/// Makes a rename in `path`'s directory durable on Unix; NTFS journals the
+/// rename itself.
+fn sync_parent(path: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
-    {
+    if let Some(parent) = path.parent() {
         std::fs::File::open(parent)?.sync_all()?;
     }
+    #[cfg(not(unix))]
+    let _ = path;
     Ok(())
 }
 

@@ -40,6 +40,11 @@ struct Run {
 }
 
 fn run_orceld(state: &Path, workspace: &Path, requests: &[Value]) -> Run {
+    let lines: Vec<String> = requests.iter().map(Value::to_string).collect();
+    run_orceld_lines(state, workspace, &lines)
+}
+
+fn run_orceld_lines(state: &Path, workspace: &Path, requests: &[String]) -> Run {
     let mut command = Command::new(env!("CARGO_BIN_EXE_orceld"));
     command
         .env("ORCEL_WORKSPACE_ROOT", workspace)
@@ -288,4 +293,31 @@ fn walk(dir: &Path) -> Vec<PathBuf> {
         }
     }
     out
+}
+
+/// A request line that does not parse is answered without quoting it, so a
+/// value in a malformed request never comes back in the failure.
+#[test]
+fn xp19_malformed_request_json_is_never_echoed() {
+    let state = unique("malformed");
+    let workspace = unique("malformed-ws");
+    private_dir(&state);
+    private_dir(&state.join("audit"));
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    let secret = canary();
+    let lines = vec![
+        format!(r#"{{"version":"{secret}"}}"#),
+        format!(r#"{{"version":1,"request_id":["{secret}"]}}"#),
+        format!(r#"{{"value":"{secret}""#),
+    ];
+    let run = run_orceld_lines(&state, &workspace, &lines);
+    assert_eq!(run.responses.len(), lines.len(), "{}", run.stderr);
+    for response in &run.responses {
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "INVALID_REQUEST");
+        assert!(!response.to_string().contains(&secret), "{response}");
+    }
+    assert!(!run.stderr.contains(&secret));
+    let _ = std::fs::remove_dir_all(&state);
+    let _ = std::fs::remove_dir_all(&workspace);
 }

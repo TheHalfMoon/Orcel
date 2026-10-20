@@ -750,3 +750,93 @@ fn xp19_linux_session_bus_must_be_a_local_unix_socket() {
         assert!(!session_bus_is_local(Some(OsStr::new(remote))), "{remote}");
     }
 }
+
+/// A crash after each durable migration step leaves a state the next run
+/// finishes: the key stays in the store and the record ends public-only,
+/// never zero-filled or malformed.
+#[test]
+fn xp19_migration_recovers_from_a_crash_at_every_step() {
+    for crash_at in [
+        MigrationStep::Stored,
+        MigrationStep::TempWritten,
+        MigrationStep::Renamed,
+        MigrationStep::Zeroed,
+    ] {
+        let dir = private_dir("crash");
+        let record = dir.join("device_key.json");
+        let (store, _) = memory_store("uid:1000");
+        let secret = canary();
+        write_record(&record, &legacy(&secret));
+        let crashed = migrate_with(&store, &record, &mut |step| {
+            if step == crash_at {
+                Err(SecretError::Unavailable("simulated crash"))
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(
+            crashed,
+            Err(SecretError::Unavailable("simulated crash")),
+            "{crash_at:?}"
+        );
+        // Whatever the crash left at the record's path parses as JSON.
+        let left: Value = serde_json::from_slice(&std::fs::read(&record).expect("record"))
+            .unwrap_or_else(|_| panic!("record damaged after a crash at {crash_at:?}"));
+        assert!(left.get("deviceId").is_some(), "{crash_at:?}");
+
+        let rerun = migrate_device_key(&store, &record).expect("rerun recovers");
+        let expected = match crash_at {
+            MigrationStep::Stored | MigrationStep::TempWritten => Migration::AlreadyStored,
+            MigrationStep::Renamed | MigrationStep::Zeroed => Migration::NothingToMigrate,
+        };
+        assert_eq!(rerun, expected, "{crash_at:?}");
+        assert_eq!(
+            store.get(SecretName::DeviceKey).expect("stored").as_slice(),
+            secret.as_bytes(),
+            "{crash_at:?}"
+        );
+        for entry in std::fs::read_dir(&dir).expect("list") {
+            let path = entry.expect("entry").path();
+            let text = String::from_utf8_lossy(&std::fs::read(&path).expect("read")).into_owned();
+            assert!(
+                !text.contains(&secret),
+                "{} holds the key after {crash_at:?}",
+                path.display()
+            );
+        }
+        let public: Value =
+            serde_json::from_str(&std::fs::read_to_string(&record).expect("public")).expect("json");
+        assert!(public.get("privateKeyJwkBase64").is_none(), "{crash_at:?}");
+        assert_eq!(
+            migrate_device_key(&store, &record),
+            Ok(Migration::NothingToMigrate),
+            "{crash_at:?}"
+        );
+        let _ = std::fs::remove_dir_all(dir.parent().and_then(Path::parent).expect("root"));
+    }
+}
+
+/// A record an earlier build zeroed in place before crashing counts as
+/// migrated when the key is stored, and asks for enrolment when it is not.
+#[test]
+fn xp19_a_zero_filled_record_is_already_migrated_when_the_key_is_stored() {
+    let dir = private_dir("zeroed");
+    let record = dir.join("device_key.json");
+    write_record(&record, &legacy(&canary()));
+    let len = std::fs::metadata(&record).expect("meta").len() as usize;
+    std::fs::write(&record, vec![0u8; len]).expect("zero");
+    let (empty, _) = memory_store("uid:1000");
+    assert!(matches!(
+        migrate_device_key(&empty, &record),
+        Err(SecretError::Refused(_))
+    ));
+    let (store, _) = memory_store("uid:1000");
+    store
+        .put(SecretName::DeviceKey, canary().as_bytes())
+        .expect("put");
+    assert_eq!(
+        migrate_device_key(&store, &record),
+        Ok(Migration::AlreadyStored)
+    );
+    let _ = std::fs::remove_dir_all(dir.parent().and_then(Path::parent).expect("root"));
+}

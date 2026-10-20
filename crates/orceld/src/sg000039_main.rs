@@ -108,7 +108,13 @@ fn run() -> Result<(), String> {
                 ResponseEnvelope::failure(
                     "unknown",
                     FailureCode::InvalidRequest,
-                    format!("invalid request JSON: {error}"),
+                    // Line and column only: serde's message can quote
+                    // fragments of the request, which may carry a secret.
+                    format!(
+                        "invalid request JSON at line {} column {}",
+                        error.line(),
+                        error.column()
+                    ),
                 ),
                 None,
             ),
