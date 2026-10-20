@@ -5,11 +5,13 @@
 // listens, never starts a server and never spawns orceld.
 //
 // Endpoint authentication follows CR-01's rules:
-// - Unix: the socket lives in the private state root. Before connecting the
-//   client checks, without following links, that `run/` is a directory this
-//   uid owns with no group or other permission and that the socket is a
-//   socket this uid owns. Another user's socket, a symbolic link or a
-//   non-socket is refused before any byte is sent.
+// - Unix: the socket lives in a private `orcel` directory of the user's
+//   short runtime directory (macOS DARWIN_USER_TEMP_DIR, Linux
+//   XDG_RUNTIME_DIR; #381), or in `run/` of the state root without one.
+//   Before connecting the client checks, without following links, that the
+//   directory is one this uid owns with no group or other permission and
+//   that the socket is a socket this uid owns. Another user's socket, a
+//   symbolic link or a non-socket is refused before any byte is sent.
 // - Windows: the pipe `\\.\pipe\orcel-<user SID>-app` carries a DACL for the
 //   user only, so another account cannot open orceld's pipe. But the pipe
 //   namespace is shared: another account can create that name first, and
@@ -17,8 +19,10 @@
 //   libuv opens pipes without SECURITY_SQOS_PRESENT (so the server could
 //   impersonate the client) and cannot read the server's process or token,
 //   so this connector cannot verify the server. It therefore REFUSES to
-//   connect on Windows unless the caller passes
-//   `allowUnverifiedWindowsPipe: true`, which only tests do. The Windows
+//   connect on Windows. The `allowUnverifiedWindowsPipe` opt-in is
+//   test-only and the code enforces it (#381 item 2): it is refused unless
+//   the process environment also sets UNVERIFIED_PIPE_TEST_ENV to "1",
+//   which only this package's `npm test` does (test.env). The Windows
 //   Control Room transport is the CR-03 Tauri bridge (Rust), which must open
 //   with SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION and compare the
 //   token user of GetNamedPipeServerProcessId with its own.
@@ -96,12 +100,57 @@ export function unixStateRoot(platform: NodeJS.Platform, env: Env): string {
   return path.posix.join(home, ".local", "state", "orcel");
 }
 
-export function unixSocketPath(platform: NodeJS.Platform, env: Env): string {
+/**
+ * The directory orceld binds its socket in, as CR-01 `unix::socket_dir`
+ * derives it (#381): `<darwinTempDir>/orcel` on macOS when the system names
+ * the per-user temp directory, `$XDG_RUNTIME_DIR/orcel` on Linux when it is
+ * an absolute path, and `<state root>/run` otherwise. HOME never decides
+ * the location when a runtime directory exists, so a long home still fits
+ * in a socket address.
+ */
+export function unixSocketDir(
+  platform: NodeJS.Platform,
+  env: Env,
+  darwinTempDir?: string,
+): string {
+  if (platform === "darwin") {
+    const temp = usableUnixAbsolute(darwinTempDir);
+    if (temp) return path.posix.join(temp, "orcel");
+  } else {
+    const runtime = usableUnixAbsolute(env.XDG_RUNTIME_DIR);
+    if (runtime) return path.posix.join(runtime, "orcel");
+  }
+  return path.posix.join(unixStateRoot(platform, env), "run");
+}
+
+export function unixSocketPath(
+  platform: NodeJS.Platform,
+  env: Env,
+  darwinTempDir?: string,
+): string {
   return path.posix.join(
-    unixStateRoot(platform, env),
-    "run",
+    unixSocketDir(platform, env, darwinTempDir),
     `app-api${instanceSuffix(env.ORCEL_APP_API_INSTANCE)}.sock`,
   );
+}
+
+/**
+ * macOS: the per-user temp directory (`/var/folders/<xx>/<id>/T/`), asked
+ * of the system with `getconf DARWIN_USER_TEMP_DIR`, the same confstr value
+ * orceld reads, never TMPDIR. Undefined when the system does not answer.
+ */
+export function darwinUserTempDir(): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    execFile(
+      "/usr/bin/getconf",
+      ["DARWIN_USER_TEMP_DIR"],
+      { timeout: 10_000 },
+      (error, stdout) => {
+        const dir = stdout.trim();
+        resolve(!error && dir.startsWith("/") ? dir : undefined);
+      },
+    );
+  });
 }
 
 export function windowsPipeName(sid: string, env: Env): string {
@@ -138,7 +187,8 @@ export async function defaultEndpoint(env: Env = process.env): Promise<string> {
   if (process.platform === "win32") {
     return windowsPipeName(await currentUserSid(env), env);
   }
-  return unixSocketPath(process.platform, env);
+  const darwinTempDir = process.platform === "darwin" ? await darwinUserTempDir() : undefined;
+  return unixSocketPath(process.platform, env, darwinTempDir);
 }
 
 /**
@@ -154,7 +204,7 @@ export async function assertPrivateUnixEndpoint(socketPath: string): Promise<voi
     // listening there; say why instead of failing with ENAMETOOLONG.
     throw new EndpointRefusedError(
       socketPath,
-      `is ${length} bytes, longer than the ${MAX_UNIX_SOCKET_PATH} a Unix socket allows; use a shorter HOME or XDG_STATE_HOME`,
+      `is ${length} bytes, longer than the ${MAX_UNIX_SOCKET_PATH} a Unix socket allows; set XDG_RUNTIME_DIR (Linux), or use a shorter HOME or XDG_STATE_HOME`,
     );
   }
   const directory = path.posix.dirname(socketPath);
@@ -188,29 +238,37 @@ export async function assertPrivateUnixEndpoint(socketPath: string): Promise<voi
 export const MAX_UNIX_SOCKET_PATH = 100;
 
 /**
- * Lines buffered for a consumer that lags. Past the high mark the socket is
- * paused, so at most this many frames (each at most 64 KiB) plus one read
- * chunk wait in memory; reading resumes at the low mark.
+ * Lines buffered for a consumer that lags. The queue never holds more than
+ * the high mark: bytes are decoded one line at a time and only while there
+ * is room (#381 item 3), and the socket is paused while any read bytes wait
+ * undecoded. So at most this many frames (each at most 64 KiB) plus the
+ * read chunks that arrived before the pause wait in memory. Reading resumes
+ * once those chunks are decoded and the queue is down to the low mark.
  */
 export const LINE_QUEUE_HIGH = 256;
 export const LINE_QUEUE_LOW = 64;
 
-class SocketConnection implements FrameConnection {
+const NEWLINE = 0x0a;
+
+/** The part of a net.Socket a connection uses. */
+export type LineSocket = Pick<
+  net.Socket,
+  "on" | "pause" | "resume" | "isPaused" | "destroy" | "write" | "destroyed" | "writable"
+>;
+
+export class SocketConnection implements FrameConnection {
   private readonly decoder = new LineDecoder();
   private readonly queue: string[] = [];
+  /** Read but not yet decoded: what arrived while the queue was full. */
+  private readonly held: Buffer[] = [];
   private failure: unknown;
   private ended = false;
   private wake: (() => void) | undefined;
 
-  public constructor(private readonly socket: net.Socket) {
+  public constructor(private readonly socket: LineSocket) {
     socket.on("data", (chunk: Buffer) => {
-      try {
-        this.queue.push(...this.decoder.push(chunk));
-        if (this.queue.length >= LINE_QUEUE_HIGH && !socket.isPaused()) socket.pause();
-      } catch (error) {
-        this.fail(error);
-        socket.destroy();
-      }
+      this.held.push(chunk);
+      this.fill();
       this.notify();
     });
     socket.on("end", () => {
@@ -225,6 +283,43 @@ class SocketConnection implements FrameConnection {
       this.fail(error);
       this.notify();
     });
+  }
+
+  /** Lines waiting for the consumer; never more than LINE_QUEUE_HIGH. */
+  public get queuedLines(): number {
+    return this.queue.length;
+  }
+
+  /**
+   * Decodes held bytes into the queue, one line at a time, while the queue
+   * has room, and pauses the socket while bytes are still held.
+   */
+  private fill(): void {
+    try {
+      while (this.queue.length < LINE_QUEUE_HIGH && this.held.length > 0) {
+        const chunk = this.held[0] as Buffer;
+        const newline = chunk.indexOf(NEWLINE);
+        if (newline === -1) {
+          // Part of a frame: the decoder buffers it (and enforces 64 KiB).
+          this.held.shift();
+          this.queue.push(...this.decoder.push(chunk));
+          continue;
+        }
+        const rest = chunk.subarray(newline + 1);
+        if (rest.length > 0) this.held[0] = rest;
+        else this.held.shift();
+        // Bytes up to one newline decode to at most one line.
+        this.queue.push(...this.decoder.push(chunk.subarray(0, newline + 1)));
+      }
+    } catch (error) {
+      this.held.length = 0;
+      this.fail(error);
+      this.socket.destroy();
+      return;
+    }
+    if ((this.held.length > 0 || this.queue.length >= LINE_QUEUE_HIGH) && !this.socket.isPaused()) {
+      this.socket.pause();
+    }
   }
 
   private fail(error: unknown): void {
@@ -251,7 +346,10 @@ class SocketConnection implements FrameConnection {
     for (;;) {
       const line = this.queue.shift();
       if (line !== undefined) {
-        if (this.queue.length <= LINE_QUEUE_LOW && this.socket.isPaused()) this.socket.resume();
+        this.fill();
+        if (this.held.length === 0 && this.queue.length <= LINE_QUEUE_LOW && this.socket.isPaused()) {
+          this.socket.resume();
+        }
         yield line;
         continue;
       }
@@ -278,6 +376,7 @@ export interface OrceldTransportOptions {
   /**
    * Windows only, tests only: connect although the pipe server's account
    * cannot be verified from Node (see the header). Default false: refuse.
+   * Refused anyway unless UNVERIFIED_PIPE_TEST_ENV is "1".
    */
   allowUnverifiedWindowsPipe?: boolean;
 }
@@ -292,6 +391,19 @@ export const UNVERIFIED_WINDOWS_PIPE =
   "the pipe server's account cannot be verified from Node (no SECURITY_IDENTIFICATION open, " +
   "no GetNamedPipeServerProcessId check); the Windows Control Room transport is the CR-03 Rust bridge";
 
+/**
+ * The variable without which `allowUnverifiedWindowsPipe` is refused. Only
+ * this package's test script sets it (`node --env-file=test.env`); the
+ * Control Room never does, so a caller that passes the option outside the
+ * tests gets an error instead of an unverified connection.
+ */
+export const UNVERIFIED_PIPE_TEST_ENV = "ORCEL_CONTROL_ROOM_UNVERIFIED_PIPE_TEST";
+
+/** Why the opt-in itself was refused. */
+export const UNVERIFIED_PIPE_TEST_ONLY =
+  `allowUnverifiedWindowsPipe is test-only: it is honoured only when ${UNVERIFIED_PIPE_TEST_ENV}=1, ` +
+  "which only this package's npm test sets";
+
 /** Connects to `endpoint` once its privacy checks pass. */
 export function connectEndpoint(
   endpoint: string,
@@ -302,6 +414,9 @@ export function connectEndpoint(
     if (process.platform === "win32") {
       if (options.allowUnverifiedWindowsPipe !== true) {
         throw new EndpointRefusedError(endpoint, UNVERIFIED_WINDOWS_PIPE);
+      }
+      if (process.env[UNVERIFIED_PIPE_TEST_ENV] !== "1") {
+        throw new EndpointRefusedError(endpoint, UNVERIFIED_PIPE_TEST_ONLY);
       }
     } else {
       await assertPrivateUnixEndpoint(endpoint);

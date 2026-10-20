@@ -263,6 +263,62 @@ pub fn private_file(path: PathBuf) -> Result<PathBuf, PlatformError> {
     Ok(path)
 }
 
+/// macOS: the per-user temporary directory that
+/// `confstr(_CS_DARWIN_USER_TEMP_DIR)` names (`/var/folders/<xx>/<id>/T/`).
+/// It comes from the system, not from `TMPDIR`, so every process of the
+/// user resolves the same directory. It is a 0700 directory of this user
+/// alone, not the shared temporary directory that XP-01B keeps state out
+/// of. `None` on other OSes, or when the
+/// system gives no absolute path. The directory is not checked; see
+/// [`ensure_private_dir`]. CR-01 binds its short-path socket there (#381).
+pub fn macos_per_user_runtime_dir() -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        let mut buf = vec![0u8; 1024];
+        // SAFETY: `buf` holds `buf.len()` bytes; confstr writes at most that
+        // many, NUL included, and returns the length it needed.
+        let needed = unsafe {
+            libc::confstr(
+                libc::_CS_DARWIN_USER_TEMP_DIR,
+                buf.as_mut_ptr().cast(),
+                buf.len(),
+            )
+        };
+        if needed == 0 || needed > buf.len() {
+            return None;
+        }
+        buf.truncate(needed - 1);
+        let path = PathBuf::from(OsString::from_vec(buf));
+        path.is_absolute().then_some(path)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
+/// Unix: takes an exclusive advisory `flock` on `file` without waiting.
+/// `Ok(false)` means another open file holds it. The lock belongs to this
+/// open file and the kernel releases it when the file is closed, including
+/// when the process dies. (`File::try_lock` is newer than the MSRV.)
+#[cfg(unix)]
+pub fn try_lock_exclusive(file: &std::fs::File) -> std::io::Result<bool> {
+    use std::os::fd::AsRawFd;
+    loop {
+        // SAFETY: the descriptor is valid while `file` is borrowed.
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+            return Ok(true);
+        }
+        let error = std::io::Error::last_os_error();
+        match error.raw_os_error() {
+            Some(libc::EWOULDBLOCK) => return Ok(false),
+            Some(libc::EINTR) => {}
+            _ => return Err(error),
+        }
+    }
+}
+
 fn unavailable(variables: &str) -> PlatformError {
     PlatformError::StateRootUnavailable(format!("{variables} is not set to an absolute path"))
 }
