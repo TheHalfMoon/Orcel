@@ -18,7 +18,12 @@ const targetIndex = process.argv.indexOf("--target");
 // XP-17: the Linux packages pass --target x86_64-unknown-linux-gnu.
 const TARGET = targetIndex === -1 ? "x86_64-pc-windows-msvc" : process.argv[targetIndex + 1];
 if (!TARGET || TARGET.startsWith("--")) fail("--target <triple> needs a value");
-const ROOT_PACKAGES = ["orceld", "orcel-lifecycle"];
+// Each Cargo workspace that ships a binary, with its shipped root packages.
+// XP-13b: the orcel-contain helper is its own workspace (AD-16).
+const WORKSPACES = [
+  { dir: ".", roots: ["orceld", "orcel-lifecycle"] },
+  { dir: "apps/orcel-contain", roots: ["orcel-contain"] }
+];
 const NOTICE_FILE = /^(licen[cs]e|copying|notice|unlicense)([-_.].*)?$/i;
 // Source vendored into this repository rather than resolved from a registry.
 // Its notice is maintained in-repo, and the upstream copyright line must
@@ -79,16 +84,21 @@ function noticeFiles(dir, declared) {
 }
 
 function crates() {
+  return WORKSPACES.flatMap((workspace) => workspaceCrates(workspace));
+}
+
+function workspaceCrates({ dir, roots }) {
   const metadata = JSON.parse(
-    execFileSync("cargo", ["metadata", "--format-version", "1", "--filter-platform", TARGET], {
-      cwd: repo,
+    execFileSync("cargo", ["metadata", "--locked", "--format-version", "1", "--filter-platform", TARGET], {
+      cwd: join(repo, dir),
       maxBuffer: 256 * 1024 * 1024
     }).toString()
   );
   const packages = new Map(metadata.packages.map((p) => [p.id, p]));
   const nodes = new Map(metadata.resolve.nodes.map((n) => [n.id, n]));
   const reached = new Set();
-  const stack = metadata.packages.filter((p) => ROOT_PACKAGES.includes(p.name) && !p.source).map((p) => p.id);
+  const stack = metadata.packages.filter((p) => roots.includes(p.name) && !p.source).map((p) => p.id);
+  if (stack.length !== roots.length) fail(`root packages ${roots.join(", ")} not found in ${dir}`);
   while (stack.length) {
     const id = stack.pop();
     if (reached.has(id)) continue;

@@ -5,7 +5,8 @@
 //   node scripts/generate-sbom.mjs --release <release-dir> --out <sbom.cdx.json>
 //
 // The Rust components are the crates actually linked into the shipped
-// binaries (orceld, orcel, orcel-mcp-host) for x86_64-pc-windows-msvc, taken
+// binaries (orceld, orcel, orcel-mcp-host, and the orcel-contain helper from
+// its own workspace, XP-13b) for x86_64-pc-windows-msvc, taken
 // from `cargo metadata` and following only normal (non-dev, non-build)
 // dependency edges. The npm components are the packages present in the
 // release's app/orcel-mcp/node_modules. Every payload file listed in the
@@ -19,7 +20,11 @@ import { fileURLToPath } from "node:url";
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const TARGET = "x86_64-pc-windows-msvc";
-const ROOT_PACKAGES = ["orceld", "orcel-lifecycle"];
+// Each Cargo workspace that ships a binary, with its shipped root packages.
+const WORKSPACES = [
+  { dir: ".", roots: ["orceld", "orcel-lifecycle"] },
+  { dir: "apps/orcel-contain", roots: ["orcel-contain"] }
+];
 
 function fail(message) {
   console.error(`generate-sbom: ${message}`);
@@ -49,14 +54,38 @@ function npmPurl(name, version) {
   return `pkg:npm/${name.replace("@", "%40")}@${version}`;
 }
 
+/** Every workspace's components, merged by bom-ref (a crate both graphs use appears once). */
 function cargoComponents() {
+  const components = new Map();
+  const dependsOn = new Map();
+  const rootRefs = [];
+  for (const workspace of WORKSPACES) {
+    const part = workspaceComponents(workspace);
+    for (const component of part.components) {
+      if (!components.has(component["bom-ref"])) components.set(component["bom-ref"], component);
+    }
+    for (const dependency of part.dependencies) {
+      const merged = dependsOn.get(dependency.ref) ?? new Set();
+      for (const ref of dependency.dependsOn) merged.add(ref);
+      dependsOn.set(dependency.ref, merged);
+    }
+    rootRefs.push(...part.rootRefs);
+  }
+  return {
+    components: [...components.values()],
+    dependencies: [...dependsOn.entries()].map(([ref, set]) => ({ ref, dependsOn: [...set].sort() })),
+    rootRefs: [...new Set(rootRefs)]
+  };
+}
+
+function workspaceComponents({ dir, roots: rootNames }) {
   const metadata = JSON.parse(
-    execFileSync("cargo", ["metadata", "--format-version", "1", "--filter-platform", TARGET], {
-      cwd: repo,
+    execFileSync("cargo", ["metadata", "--locked", "--format-version", "1", "--filter-platform", TARGET], {
+      cwd: join(repo, dir),
       maxBuffer: 256 * 1024 * 1024
     }).toString()
   );
-  const lock = readFileSync(join(repo, "Cargo.lock"), "utf8");
+  const lock = readFileSync(join(repo, dir, "Cargo.lock"), "utf8");
   const checksums = new Map();
   for (const block of lock.split("[[package]]")) {
     const name = block.match(/\nname = "([^"]+)"/)?.[1];
@@ -66,8 +95,8 @@ function cargoComponents() {
   }
   const packages = new Map(metadata.packages.map((p) => [p.id, p]));
   const nodes = new Map(metadata.resolve.nodes.map((n) => [n.id, n]));
-  const roots = metadata.packages.filter((p) => ROOT_PACKAGES.includes(p.name) && !p.source);
-  if (roots.length !== ROOT_PACKAGES.length) fail("workspace root packages not found");
+  const roots = metadata.packages.filter((p) => rootNames.includes(p.name) && !p.source);
+  if (roots.length !== rootNames.length) fail(`root packages ${rootNames.join(", ")} not found in ${dir}`);
 
   const reached = new Set();
   const edges = new Map();

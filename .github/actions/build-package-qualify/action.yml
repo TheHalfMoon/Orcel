@@ -32,6 +32,11 @@ runs:
       # dev-dependency features (including test-only approval support) into
       # the shipped binaries.
       run: cargo build --release --locked -p orceld -p orcel-lifecycle --bins
+    - name: Build the contained-tier helper (its own workspace)
+      shell: pwsh
+      working-directory: apps/orcel-contain
+      # XP-13b: shipped beside orceld.exe; the probe fixture is not built.
+      run: cargo build --release --locked --bin orcel-contain
     - name: Build the tunnel test fixture separately
       shell: pwsh
       run: cargo build --release --locked -p orcel-lifecycle --example fake_tunnel_client

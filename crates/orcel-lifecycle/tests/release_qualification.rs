@@ -227,6 +227,23 @@ fn packaged_release_installs_runs_updates_recovers_and_uninstalls() {
     let manifest: Value =
         serde_json::from_slice(&fs::read(release.join(MANIFEST_FILE)).unwrap()).unwrap();
     let base_version = manifest["version"].as_str().unwrap().to_string();
+    // XP-13b: the contained-tier helper ships beside orceld.exe, pinned by
+    // orcel-contain.sha256, and both are manifest files.
+    let helper =
+        fs::read(release.join("orcel-contain.exe")).expect("orcel-contain.exe is packaged");
+    let pin =
+        fs::read_to_string(release.join("orcel-contain.sha256")).expect("its pin is packaged");
+    assert_eq!(pin, format!("{}\n", sha256_bytes(&helper)));
+    for name in ["orcel-contain.exe", "orcel-contain.sha256"] {
+        assert!(
+            manifest["files"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|file| file["path"] == name),
+            "{name} is not a manifest file"
+        );
+    }
     let node = find_node_on_path().expect("Node.js is required on PATH");
     let tunnel = fake_tunnel();
     let local = temp_dir("local");
