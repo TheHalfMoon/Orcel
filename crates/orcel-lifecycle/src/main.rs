@@ -94,6 +94,12 @@ Remote sessions (outbound-only; no inbound port is opened):
   orcel remote migrate-secrets            Move a device key written by an earlier version
       from a plaintext file into the OS secret store, then remove the plaintext.
 
+Optional web search (off until a provider is enabled in ORCEL_SEARCH_PROVIDERS_JSON):
+  orcel search status                     Show each provider's readiness; never shows a key.
+  orcel search set-key <brave|tavily|exa|serper> [--key-file <path>]
+      Store your own provider API key in the OS secret store (input hidden).
+  orcel search delete-key <provider>      Delete a stored provider API key.
+
 Every command accepts --json for machine-readable output.
 ";
 
@@ -281,6 +287,7 @@ fn run(args: &mut Args) -> Result<Output, LifecycleError> {
         "full-control" => commands::full_control(args),
         "exec" => commands::exec(args),
         "remote" => commands::remote(args),
+        "search" => commands::search(args),
         "update" => commands::update(args),
         "rollback" => commands::rollback(args),
         "self-check" => commands::self_check(args),

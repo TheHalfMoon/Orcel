@@ -690,6 +690,109 @@ pub fn mcp(args: &mut Args) -> Result<i32, LifecycleError> {
     orcel_lifecycle::mcp::run_action(&action, port)
 }
 
+/// The WI-06 search providers that take an API key.
+const SEARCH_KEY_PROVIDERS: [&str; 4] = ["brave", "tavily", "exa", "serper"];
+
+/// `orcel search status|set-key|delete-key`: the user's own search provider
+/// keys go straight from a hidden prompt or a key file into the OS secret
+/// store through orceld; they are never printed, logged or returned.
+/// Providers are enabled in `ORCEL_SEARCH_PROVIDERS_JSON` (WI-06).
+pub fn search(args: &mut Args) -> Result<Output, LifecycleError> {
+    let action = args.positional("search action (status, set-key, delete-key)")?;
+    let layout = Layout::for_current_user()?;
+    let config = Config::load(&layout)?;
+    config.check_workspaces_with_policy()?;
+    let workspace = config.default_workspace().unwrap_or("default").to_string();
+    let version = active_version(&layout)?;
+    let orceld = layout.version_dir(&version).join("orceld.exe");
+    let provider_key = |args: &mut Args| -> Result<String, LifecycleError> {
+        let provider = args.positional("search provider (brave, tavily, exa, serper)")?;
+        if !SEARCH_KEY_PROVIDERS.contains(&provider.as_str()) {
+            return Err(LifecycleError::usage(format!(
+                "{provider:?} takes no key; key providers are brave, tavily, exa and serper"
+            )));
+        }
+        Ok(provider)
+    };
+    match action.as_str() {
+        "status" => {
+            args.finish()?;
+            let request = ipc::request(&workspace, "search", "doctor", json!({}));
+            let response = ipc::call(&orceld, &config, &request, Duration::from_secs(60))?;
+            let result = ipc::expect_ok(&response)?.clone();
+            let mut human = String::new();
+            for row in result["providers"].as_array().into_iter().flatten() {
+                human.push_str(&format!(
+                    "{:<8} {:<11} {}\n",
+                    row["provider"].as_str().unwrap_or("?"),
+                    row["status"].as_str().unwrap_or("?"),
+                    row["message"].as_str().unwrap_or("")
+                ));
+            }
+            Ok(Output {
+                exit_code: 0,
+                human,
+                json: json!({"ok": true, "search": result}),
+            })
+        }
+        "set-key" => {
+            let provider = provider_key(args)?;
+            let key_file = args.value("--key-file")?.map(PathBuf::from);
+            args.finish()?;
+            let key = match &key_file {
+                Some(path) => std::fs::read_to_string(path)
+                    .map_err(|error| LifecycleError::io("read --key-file", error))?
+                    .trim()
+                    .to_string(),
+                None => orcel_lifecycle::console::read_secret_line(&format!(
+                    "{provider} API key (input hidden): "
+                ))?,
+            };
+            if key.is_empty() || key.len() > 4096 || key.chars().any(char::is_control) {
+                return Err(LifecycleError::usage(
+                    "the API key must be one line of at most 4096 characters",
+                ));
+            }
+            let mut request = ipc::request(&workspace, "secret", "put", json!({ "value": key }));
+            request["target"] = json!(format!("search.{provider}.key"));
+            let response = ipc::call(&orceld, &config, &request, Duration::from_secs(60))?;
+            let backend = ipc::expect_ok(&response)?
+                .get("backend")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_string();
+            Ok(Output {
+                exit_code: 0,
+                human: format!("Stored the {provider} API key in the {backend} secret store.\n"),
+                json: json!({"ok": true, "provider": provider, "stored": true, "backend": backend}),
+            })
+        }
+        "delete-key" => {
+            let provider = provider_key(args)?;
+            args.finish()?;
+            let mut request = ipc::request(&workspace, "secret", "delete", json!({}));
+            request["target"] = json!(format!("search.{provider}.key"));
+            let response = ipc::call(&orceld, &config, &request, Duration::from_secs(60))?;
+            let deleted = ipc::expect_ok(&response)?
+                .get("deleted")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            Ok(Output {
+                exit_code: 0,
+                human: if deleted {
+                    format!("Deleted the {provider} API key.\n")
+                } else {
+                    format!("No {provider} API key was stored.\n")
+                },
+                json: json!({"ok": true, "provider": provider, "deleted": deleted}),
+            })
+        }
+        other => Err(LifecycleError::usage(format!(
+            "unknown search action {other:?}; run `orcel help`"
+        ))),
+    }
+}
+
 /// `orcel remote allow|revoke|status`: local remote-session leases.
 pub fn remote(args: &mut Args) -> Result<Output, LifecycleError> {
     use orcel_lifecycle::remote;

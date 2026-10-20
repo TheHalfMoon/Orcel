@@ -26,6 +26,7 @@ mod git_push;
 mod live_browser;
 mod profile_gate;
 mod remote_lease;
+mod search;
 mod secret_store;
 mod trust;
 mod uia;
@@ -548,6 +549,10 @@ fn dispatch_with(
         return Ok(result);
     }
     if let Some(result) = clipboard::dispatch_clipboard(workspace, approval, request)? {
+        return Ok(result);
+    }
+    // WI-06: optional search adapters, after policy admitted the shape.
+    if let Some(result) = search::dispatch_default(workspace, approval, request)? {
         return Ok(result);
     }
     if is_browser_request(request) {

@@ -9,6 +9,7 @@ import { registerGitPushTools } from "./git_push.js";
 import { KernelClient } from "./kernel.js";
 import { processSpawnInputSchema } from "./process.js";
 import { projectKernelResult } from "./result.js";
+import { registerWebSearchTools } from "./web_search.js";
 import {
   TOOL_CONTRACT,
   TOOL_SURFACE_PROFILE_ENV,
@@ -156,6 +157,7 @@ export const CANONICAL_TOOL_NAMES: readonly string[] = [
   "process_spawn",
   "system_status",
   "web_fetch",
+  "web_search",
   "workspace_get"
 ];
 
@@ -495,6 +497,7 @@ export function registerOrcelTools(
   registerFsMutationTools(server, kernel, defaultWorkspace);
   registerDesktopTools(server, kernel, defaultWorkspace);
   registerClipboardNetworkTools(server, kernel, defaultWorkspace);
+  registerWebSearchTools(server, kernel, defaultWorkspace);
   registerGitFetchTools(server, kernel, defaultWorkspace);
   registerGitPushTools(server, kernel, defaultWorkspace);
 }

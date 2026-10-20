@@ -61,12 +61,18 @@ const MAX_LEGACY_RECORD_BYTES: u64 = 64 * 1024;
 const MAGIC: &[u8; 8] = b"ORCELSEC";
 const VERSION: u8 = 1;
 
-/// The closed set of secrets `orceld` stores. New names (for example WI-06
-/// search API keys) are added here, never taken from a request.
+/// The closed set of secrets `orceld` stores. New names are added here,
+/// never taken from a request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SecretName {
     /// The SG-000053 Ed25519 device private key (JWK, base64).
     DeviceKey,
+    /// WI-06 search API keys, the user's own. Read only inside `orceld` by
+    /// the search adapters; `secret.get` refuses them.
+    SearchBrave,
+    SearchTavily,
+    SearchExa,
+    SearchSerper,
     /// Test builds only: a name the platform tests can write and delete
     /// without touching a developer's real device key.
     #[cfg(test)]
@@ -74,7 +80,13 @@ pub enum SecretName {
 }
 
 impl SecretName {
-    pub const ALL: [SecretName; 1] = [SecretName::DeviceKey];
+    pub const ALL: [SecretName; 5] = [
+        SecretName::DeviceKey,
+        SecretName::SearchBrave,
+        SecretName::SearchTavily,
+        SecretName::SearchExa,
+        SecretName::SearchSerper,
+    ];
 
     pub fn parse(name: &str) -> Option<Self> {
         Self::ALL
@@ -82,9 +94,25 @@ impl SecretName {
             .find(|candidate| candidate.as_str() == name)
     }
 
+    /// WI-06 search API keys can be stored and deleted over the request
+    /// protocol but never read back out of `orceld`.
+    pub fn is_write_only(self) -> bool {
+        matches!(
+            self,
+            SecretName::SearchBrave
+                | SecretName::SearchTavily
+                | SecretName::SearchExa
+                | SecretName::SearchSerper
+        )
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             SecretName::DeviceKey => "device.key",
+            SecretName::SearchBrave => "search.brave.key",
+            SecretName::SearchTavily => "search.tavily.key",
+            SecretName::SearchExa => "search.exa.key",
+            SecretName::SearchSerper => "search.serper.key",
             #[cfg(test)]
             SecretName::Probe => "xp19.test-probe",
         }
@@ -607,6 +635,12 @@ pub fn dispatch(
         return Err(ProviderError::new(
             FailureCode::InvalidRequest,
             "XP-19 secret operations are get, put, delete and migrate",
+        ));
+    }
+    if operation == "get" && name.is_write_only() {
+        return Err(ProviderError::new(
+            FailureCode::CapabilityDenied,
+            "WI-06 search API keys never leave orceld; secret.get refuses them",
         ));
     }
     let store = store.map_err(SecretError::into_provider)?;

@@ -48,6 +48,7 @@ const CANONICAL_TOOLS: &[&str] = &[
     "clipboard_read",
     "clipboard_write",
     "web_fetch",
+    "web_search",
     "process_spawn",
     "git_status",
     "git_diff",

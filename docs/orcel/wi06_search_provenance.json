@@ -1,0 +1,91 @@
+{
+  "schema": "orcel-wi06-search-provenance/1",
+  "task": "WI-06",
+  "donor": {
+    "repository": "Panniantong/Agent-Reach",
+    "commit": "a19a171fa980a0785849596492e0af4db800c82f",
+    "license": "MIT",
+    "license_path": "LICENSE",
+    "license_blob_sha": "85cfac9168cbcc87f55dc3939311e7f612e5c648",
+    "notice_path": "docs/orcel/notices/agent-reach-MIT.txt"
+  },
+  "imports": [
+    {
+      "source": "agent_reach/channels/base.py",
+      "source_blob_sha": "2afec0a72338bf3c54718c0945029d17c692f94b",
+      "destination": "crates/orceld/src/search.rs",
+      "reuse": "PORT",
+      "modified": true,
+      "modification_summary": "Semantics only, no code: the channel registry becomes the closed ProviderId set; the ordered backend list with a user override becomes the fixed preference order with the user's configured default (SearchConfig::preferred); tiers become 0 (self-hosted SearXNG, no key) and 1 (the user's own key); check() naming the serving backend becomes the doctor row's status and origin. Python, CLI install hints and upstream tool shims are not ported.",
+      "authority_delta": "None by itself: providers are enabled only by the user's local launch configuration and every query goes through orceld policy and SOFT approval."
+    },
+    {
+      "source": "agent_reach/probe.py",
+      "source_blob_sha": "3652d8b9219512dadfdfff12d429a62d01d4343f",
+      "destination": "crates/orceld/src/search.rs",
+      "reuse": "PORT",
+      "modified": true,
+      "modification_summary": "The missing/broken/ok distinction becomes the key states not_needed, missing and store_unavailable plus transport availability; health is never inferred from presence alone. Subprocess probing is not ported: doctor performs no network I/O and runs no program, because a live probe would spend the user's provider quota.",
+      "authority_delta": "None."
+    },
+    {
+      "source": "agent_reach/doctor.py",
+      "source_blob_sha": "9ee98cf2b335ccbe32765e328e215d8cb0473a1a",
+      "destination": "crates/orceld/src/search.rs",
+      "reuse": "PORT",
+      "modified": true,
+      "modification_summary": "check_all becomes search/doctor: one row per known provider, a failing key lookup degrades only that row, and the output boundary carries fixed messages so no credential or configured value is echoed (the donor scrubs URL credentials at the same boundary). Rich text rendering and config file permission hints are replaced by `orcel search status`.",
+      "authority_delta": "None: read-only, local-only, no secrets."
+    }
+  ],
+  "not_imported": [
+    {
+      "source": "agent_reach/cookie_extract.py",
+      "reason": "Browser cookie extraction is credential export (T-AR-01, REJECT)."
+    },
+    {
+      "source": "agent_reach/channels/_opencli_site.py and browser-session channels",
+      "reason": "They rely on the user's logged-in browser sessions outside Orcel's browser confinement (donor_registry.json, REJECT)."
+    },
+    {
+      "source": "agent_reach/channels/exa_search.py and the other channels",
+      "reason": "They drive upstream CLIs and MCP servers. Orcel calls each provider's HTTPS API directly from orceld, so a second MCP server or a donor approval path is never introduced."
+    }
+  ],
+  "providers": {
+    "searxng": {
+      "origin": "user-configured https origin (public DNS name, port 443)",
+      "method": "GET /search?q=&format=json",
+      "key": null,
+      "note": "AGPL upstream used only over HTTP; no SearXNG code is copied."
+    },
+    "brave": {
+      "origin": "https://api.search.brave.com",
+      "method": "GET /res/v1/web/search?q=&count=",
+      "key_header": "X-Subscription-Token"
+    },
+    "tavily": {
+      "origin": "https://api.tavily.com",
+      "method": "POST /search {query,max_results,search_depth}",
+      "key_header": "Authorization: Bearer"
+    },
+    "exa": {
+      "origin": "https://api.exa.ai",
+      "method": "POST /search {query,numResults}",
+      "key_header": "x-api-key"
+    },
+    "serper": {
+      "origin": "https://google.serper.dev",
+      "method": "POST /search {q,num}",
+      "key_header": "X-API-KEY"
+    }
+  },
+  "qualification": [
+    "loopback contract server tests, one per adapter (crates/orceld/src/search/tests.rs, wi06_contract_*)",
+    "negative tests: disabled provider, missing key, cross-origin redirect, oversize response, rate limit and daily cap, canary key",
+    "real orceld binary e2e (crates/orceld/tests/wi06_search.rs)",
+    "policy shape tests (crates/orcel-policy, wi06_search_query_is_soft_and_bounded)",
+    "edge tool tests (apps/orcel-mcp/src/web-search.test.ts)"
+  ],
+  "purchases": "none; no provider account was created and no paid API was called"
+}

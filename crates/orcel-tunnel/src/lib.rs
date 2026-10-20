@@ -251,6 +251,8 @@ fn is_safe_orcel_env(name: &str) -> bool {
             | "ORCEL_DEFAULT_WORKSPACE"
             | "ORCEL_DAEMON"
             | "ORCEL_ORCEL_SESSION_ID"
+            // WI-06: which search providers the user enabled; never a key.
+            | "ORCEL_SEARCH_PROVIDERS_JSON"
     )
 }
 

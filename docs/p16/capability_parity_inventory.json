@@ -353,6 +353,20 @@
       "note": "one approved HTTPS GET to a public destination bound to its address set (SG-000064)"
     },
     {
+      "capability": "search",
+      "operation": "query",
+      "status": "implemented_exposed",
+      "mcp_tool": "web_search",
+      "note": "optional search through a provider the user enabled locally; key in the OS secret store; SOFT approval per query; fixed origin; untrusted bounded results (WI-06)"
+    },
+    {
+      "capability": "search",
+      "operation": "doctor",
+      "status": "implemented_hidden",
+      "owner_grain": "outside_v0_2_target",
+      "note": "provider readiness without secrets or network I/O, read by `orcel search status`; not an MCP tool (WI-06)"
+    },
+    {
       "capability": "workspace.trust.get",
       "operation": "get",
       "status": "intentionally_denied",
