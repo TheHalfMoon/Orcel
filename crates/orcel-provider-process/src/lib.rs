@@ -79,6 +79,11 @@ pub struct ExecutionPlan {
     pub cwd: PathBuf,
     pub env: BTreeMap<String, String>,
     pub limits: ExecutionLimits,
+    /// XP-13b: the registered SHA-256 (lower-case hex) the caller verified.
+    /// On Linux and macOS the Safe tier hashes the file it opens against
+    /// it and runs that same open file. `None` (the default from
+    /// [`build_execution_plan`]) skips the digest, not the location check.
+    pub registered_sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,6 +143,7 @@ pub fn build_execution_plan(
         argv: argv.to_vec(),
         cwd,
         env: sanitized_execution_env(source_env),
+        registered_sha256: None,
         limits,
     })
 }
@@ -752,6 +758,12 @@ pub enum PrivateExecutionFailure {
     ProcessTimeout,
     OutputLimit(OutputStream),
     TerminationUnverified,
+    /// XP-13b: the executable could be replaced by another local user (its
+    /// file or a directory above it is shared-writable or foreign-owned).
+    ExecutableRejected(String),
+    /// XP-13b: the file opened for launch does not match the registered
+    /// digest, or changed between the check and the launch.
+    IdentityChanged,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3749,7 +3761,11 @@ mod contained_launch_tests {
     /// into the job, as the other descendant tests do: on the hosted runner
     /// an AppContainer child is refused process creation outright (Access
     /// denied even for System32's cmd.exe), so the child cannot be the one
-    /// to start it there.
+    /// to start it there. A descendant the child itself creates is therefore
+    /// not exercised on hosted runners: that path relies on Windows placing
+    /// every child process in its parent's job, which holds because the job
+    /// never sets `JOB_OBJECT_LIMIT_BREAKAWAY_OK` (or
+    /// `SILENT_BREAKAWAY_OK`), so no descendant can leave it.
     #[test]
     fn xp13b_windows_a_descendant_that_outlives_the_child_is_cleaned_up() {
         let suffix = SystemTime::now()

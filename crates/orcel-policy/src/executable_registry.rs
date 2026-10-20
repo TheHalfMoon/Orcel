@@ -427,6 +427,29 @@ pub fn check_admissible_path(path: &Path) -> Result<(), PolicyError> {
     Ok(())
 }
 
+/// XP-13b: refuse an executable another local user could replace between the
+/// digest check and the launch (see
+/// `orcel_platform::paths::check_owned_executable_location`). Checked at
+/// registration and again before every launch.
+fn check_location(path: &Path) -> Result<(), PolicyError> {
+    paths::check_owned_executable_location(path).map_err(|reason| {
+        denied(format!(
+            "registered executables must not be replaceable by other users: {reason}"
+        ))
+    })
+}
+
+/// XP-13b: compare a canonical path with a registered one: exact on Linux,
+/// ASCII case-insensitive where the file system usually is (Windows, macOS).
+/// The registered digest is re-checked either way.
+fn same_path(left: &str, right: &str) -> bool {
+    if cfg!(target_os = "linux") {
+        left == right
+    } else {
+        left.eq_ignore_ascii_case(right)
+    }
+}
+
 /// XP-13b: on Linux and macOS, a registrable file starts with the native
 /// image magic: ELF on Linux; thin or universal Mach-O on macOS. Scripts
 /// (`#!`) and anything else are refused. The registered digest then pins the
@@ -544,6 +567,7 @@ pub fn build_entry(
         return Err(invalid("max_args must be at most 64"));
     }
     check_native_image(&canonical)?;
+    check_location(&canonical)?;
     let (sha256, size) = file_identity(&canonical)?;
     Ok(RegisteredExecutable {
         id: id.to_owned(),
@@ -575,7 +599,7 @@ pub fn check_spawn<'a>(
     let canonical = canonical.to_string_lossy().into_owned();
     let entry = entries
         .iter()
-        .find(|entry| entry.path.eq_ignore_ascii_case(&canonical))
+        .find(|entry| same_path(&entry.path, &canonical))
         .ok_or_else(|| {
             denied("process.spawn executable is not in the protected executable registry")
         })?;
@@ -618,12 +642,10 @@ pub fn verify_identity(
             "registered executable is no longer resolvable: {error}"
         ))
     })?;
-    if !canonical
-        .to_string_lossy()
-        .eq_ignore_ascii_case(&entry.path)
-    {
+    if !same_path(&canonical.to_string_lossy(), &entry.path) {
         return Err(denied("registered executable path changed"));
     }
+    check_location(&canonical)?;
     let (sha256, size) = file_identity(&canonical)?;
     if size != entry.size || sha256 != entry.sha256 {
         return Err(PolicyError {
@@ -643,9 +665,7 @@ pub fn upsert(
 ) -> Result<Vec<RegisteredExecutable>, PolicyError> {
     let mut next: Vec<RegisteredExecutable> = entries
         .iter()
-        .filter(|existing| {
-            existing.id != entry.id && !existing.path.eq_ignore_ascii_case(&entry.path)
-        })
+        .filter(|existing| existing.id != entry.id && !same_path(&existing.path, &entry.path))
         .cloned()
         .collect();
     if next.len() >= MAX_ENTRIES {
@@ -824,6 +844,45 @@ mod tests {
             ExecutionTier::Contained
         );
         assert!(ExecutionTier::parse(Some("sandboxed")).is_err());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// XP-13b (judge M1): an executable another local user could swap
+    /// between the digest check and the launch is refused at registration
+    /// and again before launch: a group- or world-writable file, or a
+    /// writable directory above it (sticky only counts when root owns it).
+    #[cfg(unix)]
+    #[test]
+    fn xp13b_executables_others_can_replace_are_refused() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp("shared");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = fake_exe(&dir, "tool", b" body");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let entry = build_entry("tool", &path, vec![], vec![], 0, &[], 1).unwrap();
+        assert!(verify_identity(&entry, &path).is_ok());
+
+        for mode in [0o775, 0o757, 0o777] {
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+            assert!(
+                build_entry("tool", &path, vec![], vec![], 0, &[], 1).is_err(),
+                "{mode:o}"
+            );
+            assert!(verify_identity(&entry, &path).is_err(), "{mode:o}");
+        }
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        // The user's own sticky directory is not root's /tmp: still refused.
+        for mode in [0o775, 0o777, 0o1777] {
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(mode)).unwrap();
+            assert!(
+                build_entry("tool", &path, vec![], vec![], 0, &[], 1).is_err(),
+                "{mode:o}"
+            );
+            assert!(verify_identity(&entry, &path).is_err(), "{mode:o}");
+        }
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(verify_identity(&entry, &path).is_ok());
         let _ = std::fs::remove_dir_all(dir);
     }
 

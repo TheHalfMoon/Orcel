@@ -27,6 +27,10 @@ impl Workspace {
             NEXT_WORKSPACE.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir_all(&path).unwrap();
+        // Explicit, whatever the umask (a systemd unit may use 0002): the
+        // Safe tier refuses executables under group-writable directories.
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         Self(std::fs::canonicalize(path).unwrap())
     }
 }
@@ -441,4 +445,85 @@ fn xp13b_cpu_limits_never_exceed_the_current_hard_limit() {
     let (_, cpu) = limits[1];
     assert!(cpu.current <= cpu.maximum);
     assert!(cpu.maximum <= 32);
+}
+
+/// A copy of this test binary in a fresh directory, both owner-only writable.
+fn copied_executable(workspace: &Workspace, name: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = workspace.0.join(format!("{name}-bin"));
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let copy = dir.join(name);
+    std::fs::copy(std::env::current_exe().unwrap(), &copy).unwrap();
+    std::fs::set_permissions(&copy, std::fs::Permissions::from_mode(0o755)).unwrap();
+    copy
+}
+
+fn digest_of(path: &Path) -> String {
+    crate::contained::sha256_hex(&std::fs::read(path).unwrap())
+}
+
+/// XP-13b (judge M1): the launched file is the one whose digest matched.
+/// The right digest runs; a wrong one, or a file swapped in after the
+/// digest was taken, is refused before anything starts.
+#[test]
+fn xp13b_the_launched_file_must_match_the_registered_digest() {
+    let workspace = Workspace::new();
+    let mut good = plan(&workspace, "fixture_report_and_exit", limits(20));
+    good.registered_sha256 = Some(digest_of(&good.executable));
+    assert_eq!(execute(good.clone()).unwrap().exit_code, 7);
+
+    let mut wrong = good.clone();
+    wrong.registered_sha256 = Some("0".repeat(64));
+    assert_eq!(
+        execute(wrong).unwrap_err(),
+        PrivateExecutionFailure::IdentityChanged
+    );
+
+    // Pin a copy, then swap other bytes in under the same name.
+    let copy = copied_executable(&workspace, "swapped");
+    let mut swapped = good.clone();
+    swapped.executable = copy.clone();
+    swapped.registered_sha256 = Some(digest_of(&copy));
+    let replacement = copy.with_file_name("replacement");
+    std::fs::write(&replacement, b"\x7fELF not the registered bytes").unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&replacement, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    std::fs::rename(&replacement, &copy).unwrap();
+    assert_eq!(
+        execute(swapped).unwrap_err(),
+        PrivateExecutionFailure::IdentityChanged
+    );
+}
+
+/// XP-13b (judge M1): an executable another local user could replace is
+/// refused before it is opened: a group- or world-writable file, or a
+/// group- or world-writable directory above it (a user-owned sticky one too).
+#[test]
+fn xp13b_an_executable_others_can_replace_is_refused() {
+    use std::os::unix::fs::PermissionsExt;
+    let workspace = Workspace::new();
+    let copy = copied_executable(&workspace, "shared");
+    let mut shared = plan(&workspace, "fixture_report_and_exit", limits(20));
+    shared.executable = copy.clone();
+    let rejected = |plan: &ExecutionPlan| {
+        matches!(
+            execute(plan.clone()),
+            Err(PrivateExecutionFailure::ExecutableRejected(_))
+        )
+    };
+    for mode in [0o775, 0o757] {
+        std::fs::set_permissions(&copy, std::fs::Permissions::from_mode(mode)).unwrap();
+        assert!(rejected(&shared), "file mode {mode:o}");
+    }
+    std::fs::set_permissions(&copy, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let dir = copy.parent().unwrap().to_path_buf();
+    for mode in [0o775, 0o777, 0o1777] {
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(mode)).unwrap();
+        assert!(rejected(&shared), "directory mode {mode:o}");
+    }
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(!rejected(&shared));
 }

@@ -21,11 +21,26 @@
 //! - **Parent death (Linux).** `PR_SET_PDEATHSIG(SIGKILL)` is set before
 //!   `exec`, and the child refuses to continue if its parent already changed.
 //! - **rlimits.** No core dumps; CPU time is capped just above the timeout.
+//! - **Exact executable.** The file is refused when another local user could
+//!   replace it (it or an ancestor directory is group- or world-writable, or
+//!   owned by someone other than the user or root; root's sticky `/tmp` is
+//!   the one exception). It is opened once and, when the plan carries the
+//!   registered digest, hashed through that descriptor. Linux then executes
+//!   that same descriptor (`/proc/self/fd/N`). macOS has no `fexecve`, so it
+//!   re-reads the path's device, inode, size, mode and modification time
+//!   immediately before launch and refuses any difference from the open
+//!   file; a swap inside that last window is the remaining macOS residual.
+//! - **Descriptors.** Every descriptor above stderr is marked close-on-exec
+//!   in the child before `exec` (`close_range(CLOSE_RANGE_CLOEXEC)` on Linux,
+//!   `fcntl` on each otherwise), so nothing of orceld's leaks into it.
 //! - **Cleanup.** After the leader exits, after a timeout or an output limit,
 //!   and on drop, the whole tree is sent `SIGKILL` and must be seen gone
 //!   within five seconds, or the run is `TerminationUnverified`.
 //!
 //! Residual risks (documented, not closed here):
+//! - The cgroup is best effort against a cooperative child: a delegated
+//!   subtree belongs to the user, so a child running as the user can move
+//!   itself to another cgroup in it before `cgroup.kill`.
 //! - Without a delegated cgroup, a descendant that calls `setsid` or
 //!   `setpgid` leaves the process group and outlives the run. Under the
 //!   packaged `orceld@.service` the unit's own cgroup and
@@ -89,8 +104,21 @@ type PollCount = std::ffi::c_ulong;
 #[cfg(target_os = "macos")]
 type PollCount = std::ffi::c_uint;
 
+const F_SETFD: c_int = 2;
+const FD_CLOEXEC: c_int = 1;
+#[cfg(target_os = "linux")]
+const RLIMIT_NOFILE: c_int = 7;
+#[cfg(target_os = "macos")]
+const RLIMIT_NOFILE: c_int = 8;
+/// Descriptors above this are not walked one by one (the limit can be huge).
+const MAX_DESCRIPTOR_WALK: u64 = 65_536;
+/// The registry's own size bound for a registered executable.
+const MAX_EXECUTABLE_BYTES: u64 = 512 * 1024 * 1024;
+
 extern "C" {
     fn poll(fds: *mut PollFd, count: PollCount, timeout_ms: c_int) -> c_int;
+    fn fcntl(fd: c_int, command: c_int, ...) -> c_int;
+    fn geteuid() -> u32;
     fn kill(pid: c_int, signal: c_int) -> c_int;
     fn getppid() -> c_int;
     fn getrlimit(resource: c_int, limit: *mut Rlimit) -> c_int;
@@ -106,6 +134,10 @@ extern "C" {
 
 #[cfg(target_os = "linux")]
 const SYS_PIDFD_OPEN: c_long = 434;
+#[cfg(target_os = "linux")]
+const SYS_CLOSE_RANGE: c_long = 436;
+#[cfg(target_os = "linux")]
+const CLOSE_RANGE_CLOEXEC: std::ffi::c_uint = 1 << 2;
 #[cfg(target_os = "linux")]
 const PR_SET_PDEATHSIG: c_int = 1;
 
@@ -166,9 +198,12 @@ impl ProcessTree {
         let cgroup = cgroup::Cgroup::create_if_delegated().map_err(provider)?;
         let cgroup_procs: Option<RawFd> = cgroup.as_ref().map(cgroup::Cgroup::procs_fd);
         let limits = child_rlimits(plan.limits.timeout).map_err(provider)?;
+        let descriptors = descriptor_walk_limit();
         let parent = std::process::id() as c_int;
+        // Held open until spawn returns: on Linux the child executes it.
+        let executable = open_verified_executable(plan)?;
 
-        let mut command = Command::new(&plan.executable);
+        let mut command = launch_command(plan, &executable)?;
         command
             .args(&plan.argv)
             .env_clear()
@@ -178,16 +213,17 @@ impl ProcessTree {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .process_group(0);
-        let prepare = move || prepare_child(parent, cgroup_procs, &limits);
+        let prepare = move || prepare_child(parent, cgroup_procs, &limits, descriptors);
         // SAFETY: `prepare_child` runs in the forked child before exec and only makes
-        // async-signal-safe calls (prctl, getppid, write, setrlimit) on values captured by copy;
-        // it allocates nothing and takes no lock.
+        // async-signal-safe calls (prctl, getppid, write, setrlimit, close_range, fcntl) on values
+        // captured by copy; it allocates nothing and takes no lock.
         unsafe {
             command.pre_exec(prepare);
         }
         let mut child = command
             .spawn()
             .map_err(|error| provider(format!("process spawn failed: {error}")))?;
+        drop(executable);
         let pgid = child.id() as c_int;
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
@@ -528,11 +564,160 @@ fn child_rlimits(timeout: Duration) -> Result<[(c_int, Rlimit); 2], String> {
     ])
 }
 
+/// Refuse an executable another local user could replace, open it, and
+/// check the open file against the registered digest. See the module header.
+fn open_verified_executable(
+    plan: &ExecutionPlan,
+) -> Result<std::fs::File, PrivateExecutionFailure> {
+    use std::os::unix::fs::MetadataExt;
+    check_owned_location(&plan.executable).map_err(PrivateExecutionFailure::ExecutableRejected)?;
+    let file = std::fs::File::open(&plan.executable).map_err(|error| {
+        PrivateExecutionFailure::Provider(format!("the executable cannot be opened: {error}"))
+    })?;
+    let metadata = file.metadata().map_err(|error| {
+        PrivateExecutionFailure::Provider(format!("the executable cannot be inspected: {error}"))
+    })?;
+    if !metadata.is_file() || metadata.mode() & 0o022 != 0 {
+        return Err(PrivateExecutionFailure::IdentityChanged);
+    }
+    if let Some(expected) = &plan.registered_sha256 {
+        if metadata.len() > MAX_EXECUTABLE_BYTES {
+            return Err(PrivateExecutionFailure::IdentityChanged);
+        }
+        let mut bytes = Vec::with_capacity(metadata.len() as usize);
+        (&file).read_to_end(&mut bytes).map_err(|error| {
+            PrivateExecutionFailure::Provider(format!("the executable cannot be read: {error}"))
+        })?;
+        if crate::contained::sha256_hex(&bytes) != *expected {
+            return Err(PrivateExecutionFailure::IdentityChanged);
+        }
+    }
+    Ok(file)
+}
+
+/// Linux: execute the open, checked file itself.
+#[cfg(target_os = "linux")]
+fn launch_command(
+    plan: &ExecutionPlan,
+    executable: &std::fs::File,
+) -> Result<Command, PrivateExecutionFailure> {
+    let mut command = Command::new(format!("/proc/self/fd/{}", executable.as_raw_fd()));
+    command.arg0(&plan.executable);
+    Ok(command)
+}
+
+/// macOS: no `fexecve`; the path must still name the open, checked file.
+#[cfg(target_os = "macos")]
+fn launch_command(
+    plan: &ExecutionPlan,
+    executable: &std::fs::File,
+) -> Result<Command, PrivateExecutionFailure> {
+    use std::os::unix::fs::MetadataExt;
+    let open = executable
+        .metadata()
+        .map_err(|_| PrivateExecutionFailure::IdentityChanged)?;
+    let named = std::fs::symlink_metadata(&plan.executable)
+        .map_err(|_| PrivateExecutionFailure::IdentityChanged)?;
+    let identity = |m: &std::fs::Metadata| {
+        (
+            m.dev(),
+            m.ino(),
+            m.size(),
+            m.mode(),
+            m.mtime(),
+            m.mtime_nsec(),
+        )
+    };
+    if identity(&open) != identity(&named) {
+        return Err(PrivateExecutionFailure::IdentityChanged);
+    }
+    Ok(Command::new(&plan.executable))
+}
+
+/// The same rule as `orcel_platform::paths::check_owned_executable_location`
+/// (this crate takes no dependency): the file and every ancestor owned by
+/// the user or root and not group- or world-writable, except a root-owned
+/// sticky directory.
+fn check_owned_location(path: &std::path::Path) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+    // SAFETY: geteuid takes no arguments and cannot fail.
+    let uid = unsafe { geteuid() };
+    let trusted = |metadata: &std::fs::Metadata| metadata.uid() == uid || metadata.uid() == 0;
+    let file = std::fs::symlink_metadata(path)
+        .map_err(|error| format!("{} cannot be inspected: {error}", path.display()))?;
+    if !file.file_type().is_file() {
+        return Err(format!("{} is not a regular file", path.display()));
+    }
+    if !trusted(&file) || file.mode() & 0o022 != 0 {
+        return Err(format!(
+            "{} could be replaced by another user (owner or mode)",
+            path.display()
+        ));
+    }
+    for ancestor in path.ancestors().skip(1) {
+        if ancestor.as_os_str().is_empty() {
+            continue;
+        }
+        let directory = std::fs::metadata(ancestor)
+            .map_err(|error| format!("{} cannot be inspected: {error}", ancestor.display()))?;
+        let shared_sticky = directory.mode() & 0o1000 != 0 && directory.uid() == 0;
+        if !trusted(&directory) || (directory.mode() & 0o022 != 0 && !shared_sticky) {
+            return Err(format!(
+                "{} could be changed by another user (owner or mode)",
+                ancestor.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// How many descriptors the child walks when `close_range` is unavailable.
+fn descriptor_walk_limit() -> c_int {
+    let mut limit = Rlimit {
+        current: 0,
+        maximum: 0,
+    };
+    // SAFETY: `limit` is a live, writable rlimit struct of the platform's 64-bit layout.
+    let known = unsafe { getrlimit(RLIMIT_NOFILE, &mut limit) } == 0;
+    let count = if known {
+        limit.current
+    } else {
+        MAX_DESCRIPTOR_WALK
+    };
+    count.min(MAX_DESCRIPTOR_WALK) as c_int
+}
+
+/// Mark every descriptor above stderr close-on-exec. Runs in the child.
+fn close_inherited_descriptors(walk_limit: c_int) {
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: close_range(first, last, flags) takes three integers; with
+        // CLOSE_RANGE_CLOEXEC it only sets a flag on each open descriptor.
+        let marked = unsafe {
+            syscall(
+                SYS_CLOSE_RANGE,
+                3 as std::ffi::c_uint,
+                std::ffi::c_uint::MAX,
+                CLOSE_RANGE_CLOEXEC,
+            )
+        };
+        if marked == 0 {
+            return;
+        }
+    }
+    for fd in 3..walk_limit {
+        // SAFETY: fcntl(F_SETFD) on a descriptor number only changes that descriptor's flag,
+        // or fails with EBADF when it is not open.
+        unsafe { fcntl(fd, F_SETFD, FD_CLOEXEC) };
+    }
+}
+
 /// Runs in the forked child, before exec. Only async-signal-safe calls.
 fn prepare_child(
     parent: c_int,
     cgroup_procs: Option<RawFd>,
     limits: &[(c_int, Rlimit); 2],
+    descriptor_walk_limit: c_int,
 ) -> std::io::Result<()> {
     #[cfg(target_os = "linux")]
     {
@@ -563,6 +748,7 @@ fn prepare_child(
             return Err(std::io::Error::last_os_error());
         }
     }
+    close_inherited_descriptors(descriptor_walk_limit);
     Ok(())
 }
 
@@ -665,6 +851,11 @@ fn already_readable() -> Result<OwnedFd, String> {
     // SAFETY: `fds` is a live array of two descriptors for pipe to fill.
     if unsafe { pipe(fds.as_mut_ptr()) } != 0 {
         return Err(format!("pipe failed: {}", std::io::Error::last_os_error()));
+    }
+    for fd in fds {
+        // SAFETY: fcntl(F_SETFD) only sets the close-on-exec flag on a descriptor pipe just
+        // created.
+        unsafe { fcntl(fd, F_SETFD, FD_CLOEXEC) };
     }
     // SAFETY: pipe returned two fresh descriptors that nothing else owns; the write end is
     // closed at once.

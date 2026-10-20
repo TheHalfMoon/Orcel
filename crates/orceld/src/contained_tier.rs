@@ -93,8 +93,26 @@ pub fn installed_helper_pin() -> Result<HelperPin, ProviderError> {
 
 /// `dir/orcel-contain[.exe]`, pinned by the single lowercase SHA-256 line in
 /// `dir/orcel-contain.sha256`.
+///
+/// The pin is only as trustworthy as the directory holding it: whoever can
+/// write there can replace the helper and its pin together. Off Windows both
+/// files, and every directory above them, must therefore be owned by the
+/// user or root and not writable by group or others
+/// (`check_owned_executable_location`), or the tier is unavailable. On
+/// Windows the install root's DACL is not checked yet (the residual
+/// `contained.rs` documents); the signed per-user or administrator install
+/// root is relied on.
 pub fn helper_pin_in(dir: &Path) -> Result<HelperPin, ProviderError> {
     let helper = dir.join(HELPER_NAME);
+    for file in [dir.join(PIN_NAME), helper.clone()] {
+        if file.exists() {
+            orcel_platform::paths::check_owned_executable_location(&file).map_err(|reason| {
+                unavailable(format!(
+                    "the contained-tier helper or its pin could be replaced by another user: {reason}"
+                ))
+            })?;
+        }
+    }
     let pin = std::fs::read(dir.join(PIN_NAME)).map_err(|error| {
         unavailable(format!(
             "the contained tier is not installed ({PIN_NAME}: {error})"

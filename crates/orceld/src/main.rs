@@ -368,7 +368,7 @@ fn process_spawn(
     }
 
     let source_env = std::env::vars().collect::<BTreeMap<_, _>>();
-    let plan = build_execution_plan(
+    let mut plan = build_execution_plan(
         &workspace.root,
         executable,
         &argv,
@@ -417,7 +417,7 @@ fn process_spawn(
         )
         .map_err(|error| ProviderError::new(error.code, error.message))?;
 
-    verify_registered_identity(&plan)?;
+    plan.registered_sha256 = verify_registered_identity(&plan)?;
     if crate::contained_tier::registered_tier(&plan)? != tier {
         return Err(ProviderError::new(
             FailureCode::TargetStale,
@@ -446,14 +446,18 @@ fn process_spawn(
 /// still be registered, match its argv grammar, and keep its registered path,
 /// size, and SHA-256. Any drift fails closed. This holds on every OS
 /// (XP-13b); only Windows has a built-in baseline executable.
-fn verify_registered_identity(plan: &orcel_provider_process::ExecutionPlan) -> Result<(), ProviderError> {
+/// Returns the registered digest, so the Safe tier on Linux and macOS can
+/// check the very file it launches against it (`None` for the baseline).
+fn verify_registered_identity(
+    plan: &orcel_provider_process::ExecutionPlan,
+) -> Result<Option<String>, ProviderError> {
     #[cfg(windows)]
     if let Some(system_root) = std::env::var_os("SystemRoot") {
         let baseline = std::fs::canonicalize(
             PathBuf::from(system_root).join("System32").join("whoami.exe"),
         );
         if baseline.as_ref().is_ok_and(|path| *path == plan.executable) {
-            return Ok(());
+            return Ok(None);
         }
     }
     let registry_path = orcel_policy::executable_registry::default_registry_path().map_err(|error| {
@@ -466,7 +470,8 @@ fn verify_registered_identity(plan: &orcel_provider_process::ExecutionPlan) -> R
     let entry = orcel_policy::executable_registry::check_spawn(&entries, &plan.executable, &plan.argv)
         .map_err(|error| ProviderError::new(error.code, error.message))?;
     orcel_policy::executable_registry::verify_identity(entry, &plan.executable)
-        .map_err(|error| ProviderError::new(error.code, error.message))
+        .map_err(|error| ProviderError::new(error.code, error.message))?;
+    Ok(Some(entry.sha256.clone()))
 }
 
 fn process_approval_digest(
@@ -544,6 +549,13 @@ fn map_process_failure(error: PrivateExecutionFailure) -> ProviderError {
                     "process stderr exceeded the approved bound and the Job was verified quiescent"
                 }
             },
+        ),
+        PrivateExecutionFailure::ExecutableRejected(message) => {
+            ProviderError::new(FailureCode::CapabilityDenied, message)
+        }
+        PrivateExecutionFailure::IdentityChanged => ProviderError::new(
+            FailureCode::TargetStale,
+            "registered executable changed before launch; nothing was started",
         ),
         PrivateExecutionFailure::TerminationUnverified => ProviderError::new(
             FailureCode::ProcessTerminationUnverified,

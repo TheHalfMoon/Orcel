@@ -89,3 +89,35 @@ fn xp13b_the_spec_grants_the_cwd_read_only_and_nothing_writable() {
     let _ = std::fs::remove_dir_all(workspace);
     let _ = std::fs::remove_dir_all(scratch);
 }
+
+/// Judge nit on #380: the pin is only as good as its directory, so a pin or
+/// helper that another user could replace makes the tier unavailable.
+#[cfg(unix)]
+#[test]
+fn xp13b_a_replaceable_pin_or_helper_is_refused() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = temp_dir("pin-shared");
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(dir.join(PIN_NAME), format!("{DIGEST}\n")).unwrap();
+    std::fs::write(dir.join(HELPER_NAME), b"helper").unwrap();
+    for file in [PIN_NAME, HELPER_NAME] {
+        std::fs::set_permissions(dir.join(file), std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
+    assert!(helper_pin_in(&dir).is_ok());
+    for file in [PIN_NAME, HELPER_NAME] {
+        std::fs::set_permissions(dir.join(file), std::fs::Permissions::from_mode(0o666)).unwrap();
+        assert_eq!(
+            helper_pin_in(&dir).unwrap_err().code,
+            FailureCode::ProviderUnavailable,
+            "{file}"
+        );
+        std::fs::set_permissions(dir.join(file), std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o777)).unwrap();
+    assert_eq!(
+        helper_pin_in(&dir).unwrap_err().code,
+        FailureCode::ProviderUnavailable
+    );
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let _ = std::fs::remove_dir_all(dir);
+}
