@@ -380,9 +380,7 @@ impl FileUsage {
     fn load(path: &std::path::Path) -> Result<UsageState, &'static str> {
         match std::fs::read(path) {
             Ok(raw) => serde_json::from_slice(&raw).map_err(|_| USAGE_UNAVAILABLE),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                Ok(UsageState::default())
-            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(UsageState::default()),
             Err(_) => Err(USAGE_UNAVAILABLE),
         }
     }
@@ -428,13 +426,15 @@ impl UsageLedger for FileUsage {
         charge: bool,
     ) -> Result<u32, Refusal> {
         let path = self.path().map_err(Refusal::Unavailable)?;
-        let parent = path.parent().ok_or(Refusal::Unavailable(USAGE_UNAVAILABLE))?;
+        let parent = path
+            .parent()
+            .ok_or(Refusal::Unavailable(USAGE_UNAVAILABLE))?;
         let _lock = Self::lock(parent).map_err(Refusal::Unavailable)?;
         let mut state = Self::load(path).map_err(Refusal::Unavailable)?;
         let admitted = state.admit(provider, now, daily_cap, charge)?;
         if charge {
-            let bytes = serde_json::to_vec(&state)
-                .map_err(|_| Refusal::Unavailable(USAGE_UNAVAILABLE))?;
+            let bytes =
+                serde_json::to_vec(&state).map_err(|_| Refusal::Unavailable(USAGE_UNAVAILABLE))?;
             let temp = parent.join(format!(".usage.json.tmp-{}", std::process::id()));
             std::fs::write(&temp, bytes).map_err(|_| Refusal::Unavailable(USAGE_UNAVAILABLE))?;
             if std::fs::rename(&temp, path).is_err() {

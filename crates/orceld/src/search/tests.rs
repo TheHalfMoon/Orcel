@@ -12,9 +12,10 @@ use orcel_approval::ApprovalDecision;
 use orcel_contracts::INTERNAL_PROTOCOL_VERSION;
 use orcel_provider_network::TransportResponse;
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{IpAddr, TcpListener, TcpStream};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const PUBLIC: &str = "8.8.8.8";
@@ -1011,14 +1012,19 @@ fn wi06_file_usage_ledger_is_locked_and_shared_across_handles() {
     assert_eq!(ledger().admit(ProviderId::Brave, now + 1, 100, true), Ok(2));
     assert_eq!(ledger().admit(ProviderId::Exa, now, 100, true), Ok(1));
     // Judging without charging records nothing.
-    assert_eq!(ledger().admit(ProviderId::Brave, now + 2, 100, false), Ok(2));
+    assert_eq!(
+        ledger().admit(ProviderId::Brave, now + 2, 100, false),
+        Ok(2)
+    );
     assert_eq!(ledger().used(ProviderId::Brave, day).unwrap(), 2);
     assert_eq!(ledger().used(ProviderId::Brave, day + 1).unwrap(), 0);
 
     // The rate window is persisted, so a second handle (another orceld
     // process) sees it.
     for i in 2..RATE_MAX_PER_WINDOW as u64 {
-        ledger().admit(ProviderId::Brave, now + i, 100, true).unwrap();
+        ledger()
+            .admit(ProviderId::Brave, now + i, 100, true)
+            .unwrap();
     }
     assert!(matches!(
         ledger().admit(ProviderId::Brave, now + 10, 100, true),

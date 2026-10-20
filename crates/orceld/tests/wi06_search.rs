@@ -44,12 +44,7 @@ struct Run {
     stderr: String,
 }
 
-fn run_orceld(
-    state: &Path,
-    workspace: &Path,
-    config: Option<&str>,
-    requests: &[Value],
-) -> Run {
+fn run_orceld(state: &Path, workspace: &Path, config: Option<&str>, requests: &[Value]) -> Run {
     run_orceld_env(state, workspace, config, &[], requests)
 }
 

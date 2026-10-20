@@ -35,7 +35,7 @@ export interface TransportContext {
   readonly providerKind: string;
   readonly toolSurfaceProfile: ToolSurfaceProfile;
   /**
-   * WI-06: set when `orcel-mcp-host` launched this edge for the ChatGPT
+   * WI-06: set when the tunnel's MCP host launcher started this edge for the ChatGPT
    * Secure MCP Tunnel (`ORCEL_MCP_HOST=tunnel`). Tunnel requests carry no
    * remote context, so tools that must never be reachable through the
    * tunnel are removed here and refused again by orceld.
@@ -43,7 +43,7 @@ export interface TransportContext {
   readonly tunnelHost?: boolean;
 }
 
-/** The marker `orcel-mcp-host` sets for a tunnel-launched edge. */
+/** The marker the tunnel's MCP host launcher sets for its edge. */
 export const MCP_HOST_ENV = "ORCEL_MCP_HOST";
 
 /** Tools a tunnel-launched host never serves. */
