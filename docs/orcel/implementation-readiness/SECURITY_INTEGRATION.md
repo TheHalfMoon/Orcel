@@ -99,6 +99,27 @@ The GitHub macOS runner grants no Accessibility or Screen Recording to the host,
 
 Record the macOS version, hardware and outcome on the XP-06 pull request.
 
+### XP-07 exact-window capture: rules and manual live check (macOS)
+
+The host captures one bound window and nothing else (`apps/orcel-native-host/src/capture.rs`, vendored patch P-08):
+
+- No display, monitor or region capture is reachable: the request has no such field, no Cua capture tool is registered, and a host test fails if host code names Cua's display, root-region, probe-frame or Wayland output capture.
+- Protected surfaces are refused before any pixel is read: Orcel's approval, trust and revoke windows, lock screens, and authentication and password dialogs (`SecurityAgent`, `coreautha`, `AuthorizationHost`, `loginwindow`; polkit agents, pinentry, ssh-askpass, the GNOME keyring prompter, KWallet and screen lockers on Linux). The host's markers are the kernel's `is_protected_window` lists, and a host test requires them to stay equal.
+- Minimized, hidden and off-Space windows are refused as unavailable and are never restored, raised or focused. On X11 a covered or clipped window is refused too, because X11 capture reads the screen's copy of the window. ScreenCaptureKit's window filter reads the window's own buffer.
+- Frames are at most 7680x4320 and 8 MiB of RGBA, are never scaled down, and carry no pointer.
+- In process only. The `screencapture` CLI, SkyLight and ImageMagick fallbacks are not used, so no file is written and no subprocess is started.
+- Never a prompt (P-04). Capture needs Screen Recording, read without prompting. From macOS 15, the first capture by an app raises replayd's "bypass the private window picker" alert. The host therefore captures only when replayd has already recorded that consent for the app macOS holds responsible for it. It finds that app with libSystem's `responsibility_get_pid_responsible_for_pid`, then reads `~/Library/Group Containers/group.com.apple.replayd/ScreenCaptureApprovals.plist`. Anything unknown counts as missing, so capture is unavailable with `permission_missing` and a reason. The hello reports `permissions.direct_capture_consent`. Until XP-16 gives the host its own signed bundle, the responsible app is the terminal (or the app that starts orceld).
+
+CI captures live on Linux (Xvfb and Openbox, GTK3 probe). On the macOS runner the responsible process is not an app bundle, so CI checks only that capture is unavailable with `permission_missing` and that a capture request is refused with that reason (`live_capture.rs` in `report` mode). Check the rest by hand, on a Mac at the keyboard:
+
+1. Build: `cd apps/orcel-native-host && cargo build --locked --release -p orcel-native-host`.
+2. Grant Screen Recording and Accessibility to the terminal app (as in XP-06 step 2). If you are on macOS 15 or later and that terminal has never captured the screen, run `screencapture -x /tmp/xp07-consent.png` once in it and choose Allow on the alert. Then delete the file. This records the consent the host will not ask for.
+3. Host frames: `ORCEL_XP07_LIVE=deliver cargo test --locked --release -p orcel-native-host --test live_capture -- --nocapture`. Three probe windows open (`tests/fixtures/appkit_capture_probe.js`). The test passes only if the probe window's frame has the marker colour at its centre and holds no pixel of the green window placed over it, the `Orcel Approval Probe` window is refused with `protected_surface`, a binding to another window id is `target_stale`, and, once the probe minimizes its capture window to the Dock after 30 seconds, capture is refused as `provider_unavailable` and the window stays in the Dock. It prints `XP-07 M-NAT-02 "ax": ...` with P50/P95 timings.
+4. Registry end to end, from the repository root: `ORCEL_XP07_LIVE=deliver ORCEL_COMPUTER_HOST_BIN="$PWD/apps/orcel-native-host/target/release/orcel-native-host" cargo test -p orcel-provider-uia --test xp07_native_capture_live -- --nocapture`.
+5. Negative: turn Screen Recording off for the terminal, reopen it, and run `ORCEL_XP07_LIVE=report cargo test --locked --release -p orcel-native-host --test live_capture -- --nocapture`. It must print `reason=permission_missing`. No permission or capture-consent dialog may appear at any point in steps 3 to 5.
+
+Record the macOS version, hardware and outcome on the XP-07 pull request.
+
 ## 4. Forbidden introductions (checked at review)
 
 - A second privileged MCP execution authority (Cua `cua-driver mcp`, Playwright MCP server, Desktop Commander server, Cua Spaces `/mcp`).
