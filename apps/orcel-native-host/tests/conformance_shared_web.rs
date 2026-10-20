@@ -247,11 +247,7 @@ fn run_ax_cell(
     controls_observable: bool,
     journal: &Journal,
 ) {
-    let case = format!(
-        "{}/ax/{}",
-        conformance::segment(cell.action),
-        cell.delivery
-    );
+    let case = format!("{}/ax/{}", conformance::segment(cell.action), cell.delivery);
     let measured = match cell.action {
         "left_click" => Some(("invoke", "Increment", "Button", true)),
         "child_window" => Some(("invoke", "Open child window", "Button", false)),
@@ -272,7 +268,9 @@ fn run_ax_cell(
             holds_desktop,
         };
         let done: Box<dyn Fn(&Value) -> bool> = match cell.action {
-            "left_click" => Box::new(|now| conformance::journal_text(now, "lbl-counter") == "counter=1"),
+            "left_click" => {
+                Box::new(|now| conformance::journal_text(now, "lbl-counter") == "counter=1")
+            }
             "child_window" => Box::new(|now| {
                 conformance::journal_text(now, "lbl-child-window-state") == "child_windows=1"
             }),
@@ -302,15 +300,9 @@ fn run_ax_cell(
         // No semantic verb: upstream's action name is not in the closed set.
         _ => "invalid_request",
     };
-    conformance::refused_action(
-        host,
-        report,
-        prefix,
-        &case,
-        fields,
-        expected,
-        || journal.settled(),
-    );
+    conformance::refused_action(host, report, prefix, &case, fields, expected, || {
+        journal.settled()
+    });
 }
 
 fn run_host(spec: &WebHost, report: &mut Report, cdp_port: u16) {

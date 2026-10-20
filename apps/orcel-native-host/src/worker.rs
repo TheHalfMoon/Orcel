@@ -15,11 +15,11 @@
 use crate::capture::{self, FrameRefusal};
 use crate::cua_adapter::{CuaCall, CuaFailure, CuaRuntime, SemanticCall};
 use crate::map::{self, Omission, ProcessIdentity};
-use crate::semantic;
 use crate::protocol::{
     self, code, Availability, CursorFact, HostPlatform, ProcessFact, Request, Response,
     WindowBinding, MAX_REQUEST_BYTES,
 };
+use crate::semantic;
 use cua_driver_contract::{
     GetCursorPositionInput, GetScreenSizeInput, ListWindowsOutput, WindowElement, WindowInfo,
 };
@@ -1043,7 +1043,12 @@ mod tests {
             structured: None,
         };
         assert_eq!(
-            action_failure(5, &long).error.unwrap().message.chars().count(),
+            action_failure(5, &long)
+                .error
+                .unwrap()
+                .message
+                .chars()
+                .count(),
             MAX_MESSAGE_CHARS
         );
     }

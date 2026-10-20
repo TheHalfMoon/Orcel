@@ -152,7 +152,9 @@ impl SemanticCall {
     /// button, count, modifier or delivery-mode field to send.
     pub fn arguments(&self) -> Result<Value, CuaFailure> {
         if self.pid == 0 || self.window_id == 0 {
-            return Err(CuaFailure::invalid("a semantic action needs an exact window"));
+            return Err(CuaFailure::invalid(
+                "a semantic action needs an exact window",
+            ));
         }
         if self.element_token.is_empty()
             || self.element_token.len() > MAX_TOKEN_BYTES
@@ -162,7 +164,9 @@ impl SemanticCall {
             return Err(CuaFailure::invalid("the element token is malformed"));
         }
         if self.expect_role.is_empty() || self.expect_role.len() > 128 {
-            return Err(CuaFailure::invalid("the element role is missing or too long"));
+            return Err(CuaFailure::invalid(
+                "the element role is missing or too long",
+            ));
         }
         let mut arguments = serde_json::json!({
             "pid": self.pid,
@@ -386,12 +390,21 @@ mod tests {
     /// scope, so no argument of the host can ask the tool for pointer input.
     #[test]
     fn semantic_arguments_carry_no_position_key_or_delivery_field() {
-        let arguments = semantic_call(Verb::SetValue, Some("hello")).arguments().unwrap();
+        let arguments = semantic_call(Verb::SetValue, Some("hello"))
+            .arguments()
+            .unwrap();
         let mut keys: Vec<_> = arguments.as_object().unwrap().keys().cloned().collect();
         keys.sort();
         assert_eq!(
             keys,
-            vec!["element_token", "expect_role", "pid", "value", "verb", "window_id"]
+            vec![
+                "element_token",
+                "expect_role",
+                "pid",
+                "value",
+                "verb",
+                "window_id"
+            ]
         );
         assert_eq!(arguments["verb"], "set_value");
         let invoke = semantic_call(Verb::Invoke, None).arguments().unwrap();
@@ -420,7 +433,9 @@ mod tests {
         assert!(semantic_call(Verb::Toggle, Some("x")).arguments().is_err());
         assert!(semantic_call(Verb::SetValue, None).arguments().is_err());
         let long = "a".repeat(MAX_TEXT_BYTES + 1);
-        assert!(semantic_call(Verb::SetValue, Some(&long)).arguments().is_err());
+        assert!(semantic_call(Verb::SetValue, Some(&long))
+            .arguments()
+            .is_err());
         assert!(semantic_call(Verb::SetValue, Some("")).arguments().is_ok());
     }
 
@@ -592,9 +607,19 @@ mod tests {
             .block_on(runtime.invoke_for_test(SEMANTIC_ACTION_TOOL, base.clone()))
             .unwrap_err();
         let text = format!("{stale:?}").to_ascii_lowercase();
-        assert!(text.contains("stale") || text.contains("unknown") || text.contains("snapshot"), "{text}");
+        assert!(
+            text.contains("stale") || text.contains("unknown") || text.contains("snapshot"),
+            "{text}"
+        );
         // Upstream's own tools are not in this registry to be reached by name.
-        for name in ["click", "set_value", "scroll", "type_text", "press_key", "hotkey"] {
+        for name in [
+            "click",
+            "set_value",
+            "scroll",
+            "type_text",
+            "press_key",
+            "hotkey",
+        ] {
             let refused = executor
                 .block_on(runtime.invoke_for_test(name, base.clone()))
                 .unwrap_err();

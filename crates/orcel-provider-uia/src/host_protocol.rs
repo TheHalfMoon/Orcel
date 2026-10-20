@@ -674,7 +674,8 @@ mod tests {
         let pixel_or_key: Vec<_> = V1_OPERATIONS
             .iter()
             .filter(|op| {
-                !NATIVE_OBSERVATION_OPERATIONS.contains(op) && !NATIVE_ACTION_OPERATIONS.contains(op)
+                !NATIVE_OBSERVATION_OPERATIONS.contains(op)
+                    && !NATIVE_ACTION_OPERATIONS.contains(op)
             })
             .copied()
             .collect();
@@ -730,7 +731,10 @@ mod tests {
         let no_capture = negotiate("linux", |_| Ok(frame(V2_LINUX_HELLO))).unwrap();
         let no_action = no_capture.require("semantic_action").unwrap_err();
         assert_eq!(no_action.code, FailureCode::ProviderUnavailable);
-        assert!(!no_action.message.contains("observation_only"), "{no_action:?}");
+        assert!(
+            !no_action.message.contains("observation_only"),
+            "{no_action:?}"
+        );
         let error = no_capture.require("capture_window").unwrap_err();
         assert_eq!(error.code, FailureCode::ProviderUnavailable);
         assert!(!error.message.contains("observation_only"), "{error:?}");

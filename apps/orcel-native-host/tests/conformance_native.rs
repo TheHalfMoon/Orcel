@@ -262,15 +262,9 @@ fn run_ax_cells(
             "set_value alone saved the note"
         );
     }
-    conformance::run_action(
-        host,
-        report,
-        prefix,
-        reference,
-        &saved,
-        &mut state,
-        |now| now["note_saved"] == "conformance",
-    );
+    conformance::run_action(host, report, prefix, reference, &saved, &mut state, |now| {
+        now["note_saved"] == "conformance"
+    });
     for action in ["click", "toggle", "select", "set-value"] {
         report.background_only(format!("{prefix}/{action}/ax/foreground"));
     }

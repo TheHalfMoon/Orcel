@@ -414,8 +414,14 @@ pub fn runtime_ids(elements: &[WindowElement]) -> HashMap<u64, String> {
         }
         hasher.update(parent);
         let digest: [u8; 32] = hasher.finalize().into();
-        let short: String = digest[..8].iter().map(|byte| format!("{byte:02x}")).collect();
-        ids.insert(element.element_index, format!("e{}-{short}", element.element_index));
+        let short: String = digest[..8]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        ids.insert(
+            element.element_index,
+            format!("e{}-{short}", element.element_index),
+        );
         digests.insert(element.element_index, digest);
     }
     ids

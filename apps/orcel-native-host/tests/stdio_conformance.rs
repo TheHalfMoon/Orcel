@@ -187,7 +187,10 @@ fn semantic_actions_are_element_addressed_and_refused_without_a_live_target() {
         assert!(
             matches!(
                 error_code(&reply),
-                "target_stale" | "provider_unavailable" | "permission_missing" | "protected_surface"
+                "target_stale"
+                    | "provider_unavailable"
+                    | "permission_missing"
+                    | "protected_surface"
             ),
             "{extra}: {reply}"
         );

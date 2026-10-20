@@ -24,7 +24,6 @@ use crate::protocol::{code, ElementFact, MAX_RUNTIME_ID_BYTES, MAX_TEXT_BYTES};
 use cua_driver_contract::WindowElement;
 use std::collections::HashMap;
 
-
 /// A verb the host delivers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verb {
@@ -158,10 +157,7 @@ pub fn plan(
         ));
     }
     if !fact.enabled {
-        return Err(refuse(
-            code::CAPABILITY_DENIED,
-            "the element is disabled",
-        ));
+        return Err(refuse(code::CAPABILITY_DENIED, "the element is disabled"));
     }
     let control = control_type(&element.role);
     let has = |pattern: &str| fact.patterns.iter().any(|candidate| candidate == pattern);
@@ -202,10 +198,8 @@ pub fn plan(
             }
         }
         Verb::Select => {
-            if !matches!(
-                control,
-                "RadioButton" | "TabItem" | "ListItem" | "TreeItem"
-            ) || !has("SelectionItem")
+            if !matches!(control, "RadioButton" | "TabItem" | "ListItem" | "TreeItem")
+                || !has("SelectionItem")
             {
                 return Err(refuse(
                     code::CAPABILITY_DENIED,
@@ -233,12 +227,7 @@ pub fn plan(
                 ));
             }
             match value {
-                None => {
-                    return Err(refuse(
-                        code::INVALID_REQUEST,
-                        "set_value needs a value",
-                    ))
-                }
+                None => return Err(refuse(code::INVALID_REQUEST, "set_value needs a value")),
                 Some(text) if text.len() > MAX_TEXT_BYTES => {
                     return Err(refuse(
                         code::INVALID_REQUEST,
@@ -335,11 +324,20 @@ mod tests {
     fn an_element_without_an_activation_action_has_no_fallback() {
         // The pointer route would be the only way to press this.
         let mute = element(1, "AXButton", "Mute", &["AXShowMenu"]);
-        assert_eq!(denied(judge(Verb::Invoke, &mute, None)), code::CAPABILITY_DENIED);
+        assert_eq!(
+            denied(judge(Verb::Invoke, &mute, None)),
+            code::CAPABILITY_DENIED
+        );
         let bare = element(1, "AXButton", "Bare", &[]);
-        assert_eq!(denied(judge(Verb::Invoke, &bare, None)), code::CAPABILITY_DENIED);
+        assert_eq!(
+            denied(judge(Verb::Invoke, &bare, None)),
+            code::CAPABILITY_DENIED
+        );
         let row = element(2, "list item", "Row", &[]);
-        assert_eq!(denied(judge(Verb::Select, &row, None)), code::CAPABILITY_DENIED);
+        assert_eq!(
+            denied(judge(Verb::Select, &row, None)),
+            code::CAPABILITY_DENIED
+        );
     }
 
     #[test]
@@ -366,10 +364,16 @@ mod tests {
     fn disabled_elements_and_web_values_are_refused() {
         let mut disabled = element(1, "AXButton", "Go", &["AXPress"]);
         disabled.enabled = Some(false);
-        assert_eq!(denied(judge(Verb::Invoke, &disabled, None)), code::CAPABILITY_DENIED);
+        assert_eq!(
+            denied(judge(Verb::Invoke, &disabled, None)),
+            code::CAPABILITY_DENIED
+        );
         let mut web = element(2, "AXTextField", "Search", &[]);
         web.in_web_content = Some(true);
-        assert_eq!(denied(judge(Verb::SetValue, &web, Some("q"))), code::CAPABILITY_DENIED);
+        assert_eq!(
+            denied(judge(Verb::SetValue, &web, Some("q"))),
+            code::CAPABILITY_DENIED
+        );
         // A web button can still be invoked.
         let mut link = element(3, "AXLink", "Docs", &["AXPress"]);
         link.in_web_content = Some(true);
@@ -379,7 +383,10 @@ mod tests {
     #[test]
     fn set_value_needs_a_bounded_value() {
         let field = element(1, "AXTextField", "Note", &[]);
-        assert_eq!(denied(judge(Verb::SetValue, &field, None)), code::INVALID_REQUEST);
+        assert_eq!(
+            denied(judge(Verb::SetValue, &field, None)),
+            code::INVALID_REQUEST
+        );
         let long = "a".repeat(MAX_TEXT_BYTES + 1);
         assert_eq!(
             denied(judge(Verb::SetValue, &field, Some(&long))),
@@ -389,9 +396,16 @@ mod tests {
 
     #[test]
     fn scroll_and_unknown_verbs_are_refused_without_a_native_call() {
-        assert_eq!(parse_verb("scroll").unwrap_err().code, code::CAPABILITY_DENIED);
+        assert_eq!(
+            parse_verb("scroll").unwrap_err().code,
+            code::CAPABILITY_DENIED
+        );
         for name in ["", "click", "type", "INVOKE", "invoke ", "drag"] {
-            assert_eq!(parse_verb(name).unwrap_err().code, code::INVALID_REQUEST, "{name:?}");
+            assert_eq!(
+                parse_verb(name).unwrap_err().code,
+                code::INVALID_REQUEST,
+                "{name:?}"
+            );
         }
         assert_eq!(parse_verb("invoke"), Ok(Verb::Invoke));
         assert_eq!(parse_verb("set_value"), Ok(Verb::SetValue));
@@ -424,13 +438,68 @@ mod tests {
         assert!(locate(&observable, &ids, "s00000001:2").is_none());
     }
 
+    /// The self-approval click: no verb may reach the windows Orcel's own
+    /// approval brokers draw (the XP-10 helper's "Orcel approval SOFT" and
+    /// "Orcel approval STRONG", the XP-09 alert drawn by
+    /// UserNotificationCenter) or an OS authentication surface. The worker
+    /// applies exactly these two predicates before it reads a tree.
+    #[test]
+    fn orcel_approval_windows_and_their_owners_are_never_targets() {
+        use crate::capture::is_protected_window;
+        use crate::map::is_protected_executable;
+        for (title, class) in [
+            (
+                "Orcel approval SOFT",
+                "orcel-approval-helper-linux orcel-approval-helper-linux",
+            ),
+            ("Orcel approval STRONG", "orcel-approval-helper-linux"),
+            ("Orcel Trust", "Orcel orcel"),
+            ("Orcel Emergency Revoke", "orceld"),
+            ("", "OrcelApprove"),
+        ] {
+            assert!(is_protected_window(title, class), "{title:?} {class:?}");
+        }
+        for exe in ["orcel-approval-helper-linux", "orceld", "orcel", "Orcel"] {
+            assert!(is_protected_executable(exe), "{exe}");
+        }
+        #[cfg(target_os = "macos")]
+        for class in ["UserNotificationCenter", "SecurityAgent", "loginwindow"] {
+            assert!(is_protected_window("", class), "{class}");
+            assert!(is_protected_executable(class), "{class}");
+        }
+        #[cfg(not(target_os = "macos"))]
+        for class in [
+            "polkit-gnome-authentication-agent-1",
+            "swaylock",
+            "pinentry-gtk",
+        ] {
+            assert!(is_protected_window("", class), "{class}");
+        }
+        assert!(!is_protected_window("Editor", "gedit"));
+    }
+
     #[test]
     fn activation_names_cover_both_platforms_and_nothing_else() {
         let names = |list: &[&str]| list.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>();
-        for good in ["AXPress", "AXPick", "click", "Activate", "toggle", "win.activate", "check"] {
+        for good in [
+            "AXPress",
+            "AXPick",
+            "click",
+            "Activate",
+            "toggle",
+            "win.activate",
+            "check",
+        ] {
             assert!(has_activation(&names(&[good])), "{good}");
         }
-        for bad in ["AXShowMenu", "AXScrollToVisible", "scroll", "clipboard.copy", "delete", ""] {
+        for bad in [
+            "AXShowMenu",
+            "AXScrollToVisible",
+            "scroll",
+            "clipboard.copy",
+            "delete",
+            "",
+        ] {
             assert!(!has_activation(&names(&[bad])), "{bad}");
         }
     }

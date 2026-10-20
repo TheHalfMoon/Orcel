@@ -649,7 +649,10 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
-        let script = format!("cat >/dev/null; echo ran >> '{}'; exit 3", counter.display());
+        let script = format!(
+            "cat >/dev/null; echo ran >> '{}'; exit 3",
+            counter.display()
+        );
         let action = Request {
             id: 4,
             protocol: PROTOCOL_V2.into(),
@@ -660,11 +663,17 @@ mod tests {
         let error = response.error.unwrap();
         assert_eq!(error.code, "provider_unavailable");
         assert!(error.message.contains("do not repeat"), "{}", error.message);
-        assert_eq!(std::fs::read_to_string(&counter).unwrap().lines().count(), 1);
+        assert_eq!(
+            std::fs::read_to_string(&counter).unwrap().lines().count(),
+            1
+        );
         // The same crash on an observation is tried twice.
         let _ = std::fs::remove_file(&counter);
         shell(&script, 2000).dispatch(&list_request());
-        assert_eq!(std::fs::read_to_string(&counter).unwrap().lines().count(), 2);
+        assert_eq!(
+            std::fs::read_to_string(&counter).unwrap().lines().count(),
+            2
+        );
         let _ = std::fs::remove_file(&counter);
         // A timed-out action is killed once, too.
         let started = std::time::Instant::now();
@@ -679,14 +688,27 @@ mod tests {
         let mut dispatch = scripted(|request| Response::success(request.id));
         let bound = r#""window":{"kind":"x11","id":3,"expected_pid":1,"expected_start_generation":2,"expected_window_nonce":3}"#;
         let frames = [
-            format!(r#"{{"id":1,"protocol":"orcel-computer-host/2","op":"semantic_action","semantic_action":"invoke","element_runtime_id":"e1-00","x":4,"y":4,{bound}}}"#),
-            format!(r#"{{"id":2,"protocol":"orcel-computer-host/2","op":"semantic_action","semantic_action":"scroll","element_runtime_id":"e1-00",{bound}}}"#),
-            format!(r#"{{"id":3,"protocol":"orcel-computer-host/2","op":"window_action","window_action":"close","expected_last_input_tick":1,{bound}}}"#),
-            format!(r#"{{"id":4,"protocol":"orcel-computer-host/2","op":"input_click","x":4,"y":4,"button":"left","click_count":1,"expected_last_input_tick":1,{bound}}}"#),
+            format!(
+                r#"{{"id":1,"protocol":"orcel-computer-host/2","op":"semantic_action","semantic_action":"invoke","element_runtime_id":"e1-00","x":4,"y":4,{bound}}}"#
+            ),
+            format!(
+                r#"{{"id":2,"protocol":"orcel-computer-host/2","op":"semantic_action","semantic_action":"scroll","element_runtime_id":"e1-00",{bound}}}"#
+            ),
+            format!(
+                r#"{{"id":3,"protocol":"orcel-computer-host/2","op":"window_action","window_action":"close","expected_last_input_tick":1,{bound}}}"#
+            ),
+            format!(
+                r#"{{"id":4,"protocol":"orcel-computer-host/2","op":"input_click","x":4,"y":4,"button":"left","click_count":1,"expected_last_input_tick":1,{bound}}}"#
+            ),
         ];
-        let responses = exchange(&(frames.join("
-") + "
-"), &mut dispatch);
+        let responses = exchange(
+            &(frames.join(
+                "
+",
+            ) + "
+"),
+            &mut dispatch,
+        );
         assert!(dispatch.seen.is_empty());
         let codes: Vec<_> = responses
             .iter()
@@ -716,11 +738,19 @@ mod tests {
             response
         });
         let line = r#"{"id":7,"protocol":"orcel-computer-host/2","op":"semantic_action","semantic_action":"invoke","element_runtime_id":"e1-00","window":{"kind":"x11","id":3,"expected_pid":1,"expected_start_generation":2,"expected_window_nonce":3}}"#;
-        let responses = exchange(&format!("{line}
-"), &mut dispatch);
+        let responses = exchange(
+            &format!(
+                "{line}
+"
+            ),
+            &mut dispatch,
+        );
         assert_eq!(dispatch.seen, vec!["semantic_action".to_owned()]);
         let action = responses[0].action.as_ref().unwrap();
-        assert_eq!((action.state.as_str(), action.action.as_str()), ("completed", "semantic_invoke"));
+        assert_eq!(
+            (action.state.as_str(), action.action.as_str()),
+            ("completed", "semantic_invoke")
+        );
         assert!(responses[0].platform.is_none());
     }
 }

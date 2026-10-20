@@ -2077,8 +2077,7 @@ mod tests {
         move |frame| match frame["op"].as_str().unwrap_or_default() {
             "list_windows" => {
                 let mut window = window_fact(11, "Editor");
-                window["window_nonce"] =
-                    json!(nonce.load(std::sync::atomic::Ordering::SeqCst));
+                window["window_nonce"] = json!(nonce.load(std::sync::atomic::Ordering::SeqCst));
                 Some(native_reply(frame, json!({ "windows": [window] })))
             }
             "semantic_action" => Some(native_reply(
@@ -2139,7 +2138,16 @@ mod tests {
             sent[0]["window"],
             json!({"kind": "x11", "id": 11, "expected_pid": 4410, "expected_start_generation": 133702, "expected_window_nonce": 99})
         );
-        for field in ["x", "y", "to_x", "to_y", "button", "click_count", "text", "key"] {
+        for field in [
+            "x",
+            "y",
+            "to_x",
+            "to_y",
+            "button",
+            "click_count",
+            "text",
+            "key",
+        ] {
             assert!(sent[0].get(field).is_none(), "{field}");
         }
 

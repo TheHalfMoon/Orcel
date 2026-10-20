@@ -638,7 +638,10 @@ pub fn check_hello(host: &mut Host, report: &mut Report, prefix: &str) -> Value 
         table["semantic_action"]["support"], "delivered",
         "semantic_action is not served here: {hello}"
     );
-    assert_eq!(table["semantic_action"]["delivery"], "background", "{hello}");
+    assert_eq!(
+        table["semantic_action"]["delivery"], "background",
+        "{hello}"
+    );
     for op in PIXEL_OPS {
         assert_eq!(
             table[op]["support"], "refused",
@@ -1014,7 +1017,11 @@ pub fn run_action(
     let reply = host.request("semantic_action", fields);
     let elapsed = started.elapsed();
     assert_eq!(reply["ok"], true, "{}: {reply}", cell.case);
-    assert_eq!(reply["action"]["state"], "completed", "{}: {reply}", cell.case);
+    assert_eq!(
+        reply["action"]["state"], "completed",
+        "{}: {reply}",
+        cell.case
+    );
     assert_eq!(
         reply["action"]["action"],
         format!("semantic_{}", cell.verb),
@@ -1105,9 +1112,7 @@ pub fn negative_action_cells(
     let nodes = fresh_nodes(host, reference);
     let button = strict_element_id(&nodes, targets.button, Some("Button"));
     let check_box = strict_element_id(&nodes, targets.check_box, Some("CheckBox"));
-    let frame = |verb: &str, id: &str| {
-        json!({"window": reference, "semantic_action": verb, "element_runtime_id": id})
-    };
+    let frame = |verb: &str, id: &str| json!({"window": reference, "semantic_action": verb, "element_runtime_id": id});
     let mut refuse = |host: &mut Host, case: &str, fields: Value, expected: &str| {
         refused_action(host, report, prefix, case, fields, expected, &mut state);
     };

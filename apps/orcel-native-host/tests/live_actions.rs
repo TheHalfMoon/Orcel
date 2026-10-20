@@ -65,10 +65,7 @@ fn find_window(host: &mut Host, title: &str) -> Value {
         {
             return window.clone();
         }
-        assert!(
-            Instant::now() < deadline,
-            "{title} never listed: {listed}"
-        );
+        assert!(Instant::now() < deadline, "{title} never listed: {listed}");
         std::thread::sleep(Duration::from_millis(500));
     }
 }
@@ -107,7 +104,10 @@ fn xp11_live_refusals_and_one_real_action() {
         hello["capabilities"]["semantic_action"]["support"], "delivered",
         "this session cannot act: {hello}"
     );
-    assert_eq!(hello["capabilities"]["semantic_action"]["delivery"], "background");
+    assert_eq!(
+        hello["capabilities"]["semantic_action"]["delivery"],
+        "background"
+    );
 
     let window = find_window(&mut host, &format!("Orcel XP06 Probe {nonce}"));
     assert_eq!(window["process"]["pid"], probe.0.id(), "{window}");

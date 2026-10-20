@@ -640,7 +640,11 @@ fn validate_semantic(request: &Request) -> Result<(), Refusal> {
         return invalid("semantic_action needs a verb");
     };
     let verb = crate::semantic::parse_verb(name).map_err(|refusal| {
-        Refusal(Box::new(Response::failure(id, refusal.code, refusal.message)))
+        Refusal(Box::new(Response::failure(
+            id,
+            refusal.code,
+            refusal.message,
+        )))
     })?;
     if request
         .element_runtime_id
@@ -742,7 +746,11 @@ mod tests {
             "input_key",
             "input_hotkey",
         ] {
-            assert_eq!(table[op].reason.as_deref(), Some("capability_denied"), "{op}");
+            assert_eq!(
+                table[op].reason.as_deref(),
+                Some("capability_denied"),
+                "{op}"
+            );
         }
     }
 
@@ -777,7 +785,9 @@ mod tests {
     const BOUND: &str = r#""window":{"kind":"x11","id":9,"expected_pid":1,"expected_start_generation":2,"expected_window_nonce":3}"#;
 
     fn semantic(fields: &str) -> String {
-        format!(r#"{{"id":6,"protocol":"orcel-computer-host/2","op":"semantic_action",{fields},{BOUND}}}"#)
+        format!(
+            r#"{{"id":6,"protocol":"orcel-computer-host/2","op":"semantic_action",{fields},{BOUND}}}"#
+        )
     }
 
     /// XP-11: a semantic action names its window and element and nothing

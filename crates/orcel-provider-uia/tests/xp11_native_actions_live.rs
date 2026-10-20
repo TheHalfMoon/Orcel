@@ -59,7 +59,12 @@ fn spawn_probe(nonce: &str, secret: &str) -> Probe {
     )
 }
 
-fn approve(binding_hwnd: u64, runtime_id: &str, verb: &str, value: Option<&str>) -> ApprovedSemantic {
+fn approve(
+    binding_hwnd: u64,
+    runtime_id: &str,
+    verb: &str,
+    value: Option<&str>,
+) -> ApprovedSemantic {
     ApprovedSemantic {
         hwnd: binding_hwnd,
         runtime_id: runtime_id.to_owned(),
@@ -164,7 +169,14 @@ fn xp11_registry_acts_through_the_native_host_only_under_an_armed_approval() {
     let tree = observe(&mut registry, &adapter, &title);
     let submit = tree.element("Button", "Submit");
     let error = registry
-        .invoke_element(&adapter, &submit, tree.tree_generation, "Button", WORKSPACE, POLICY)
+        .invoke_element(
+            &adapter,
+            &submit,
+            tree.tree_generation,
+            "Button",
+            WORKSPACE,
+            POLICY,
+        )
         .unwrap_err();
     assert_eq!(error.code, FailureCode::CapabilityDenied, "{error:?}");
     assert!(error.message.contains("approval"), "{error:?}");
@@ -178,20 +190,44 @@ fn xp11_registry_acts_through_the_native_host_only_under_an_armed_approval() {
         .authorize_semantic(approve(binding.hwnd, &binding.runtime_id, "invoke", None))
         .expect("armed on the live window");
     let evidence = registry
-        .invoke_element(&adapter, &submit, tree.tree_generation, "Button", WORKSPACE, POLICY)
+        .invoke_element(
+            &adapter,
+            &submit,
+            tree.tree_generation,
+            "Button",
+            WORKSPACE,
+            POLICY,
+        )
         .expect("one approved invoke");
     assert_eq!(evidence["action"], "invoke");
-    assert_ne!(evidence["new_tree_generation"], evidence["prior_tree_generation"]);
+    assert_ne!(
+        evidence["new_tree_generation"],
+        evidence["prior_tree_generation"]
+    );
 
     // 3. The approval is spent, and the old tree generation is stale.
     let stale = registry
-        .invoke_element(&adapter, &submit, tree.tree_generation, "Button", WORKSPACE, POLICY)
+        .invoke_element(
+            &adapter,
+            &submit,
+            tree.tree_generation,
+            "Button",
+            WORKSPACE,
+            POLICY,
+        )
         .unwrap_err();
     assert_eq!(stale.code, FailureCode::TargetStale, "{stale:?}");
     let tree = observe(&mut registry, &adapter, &title);
     let submit = tree.element("Button", "Submit");
     let again = registry
-        .invoke_element(&adapter, &submit, tree.tree_generation, "Button", WORKSPACE, POLICY)
+        .invoke_element(
+            &adapter,
+            &submit,
+            tree.tree_generation,
+            "Button",
+            WORKSPACE,
+            POLICY,
+        )
         .unwrap_err();
     assert_eq!(again.code, FailureCode::CapabilityDenied, "{again:?}");
 
@@ -199,10 +235,22 @@ fn xp11_registry_acts_through_the_native_host_only_under_an_armed_approval() {
     let plain = tree.element("Edit", "Plain field");
     let typed = format!("typed-through-the-registry-{nonce}");
     let binding = registry
-        .value_binding(&plain, tree.tree_generation, "Edit", &typed, WORKSPACE, POLICY)
+        .value_binding(
+            &plain,
+            tree.tree_generation,
+            "Edit",
+            &typed,
+            WORKSPACE,
+            POLICY,
+        )
         .expect("value binding");
     adapter
-        .authorize_semantic(approve(binding.hwnd, &binding.runtime_id, "set_value", Some(&typed)))
+        .authorize_semantic(approve(
+            binding.hwnd,
+            &binding.runtime_id,
+            "set_value",
+            Some(&typed),
+        ))
         .unwrap();
     let wrong = registry
         .set_value_element(
@@ -217,7 +265,12 @@ fn xp11_registry_acts_through_the_native_host_only_under_an_armed_approval() {
         .unwrap_err();
     assert_eq!(wrong.code, FailureCode::CapabilityDenied, "{wrong:?}");
     adapter
-        .authorize_semantic(approve(binding.hwnd, &binding.runtime_id, "set_value", Some(&typed)))
+        .authorize_semantic(approve(
+            binding.hwnd,
+            &binding.runtime_id,
+            "set_value",
+            Some(&typed),
+        ))
         .unwrap();
     registry
         .set_value_element(
@@ -250,10 +303,20 @@ fn xp11_registry_acts_through_the_native_host_only_under_an_armed_approval() {
         .unwrap()
         .to_owned();
     let refused = registry
-        .value_binding(&hidden, tree.tree_generation, "Edit", "x", WORKSPACE, POLICY)
+        .value_binding(
+            &hidden,
+            tree.tree_generation,
+            "Edit",
+            "x",
+            WORKSPACE,
+            POLICY,
+        )
         .unwrap_err();
     assert_eq!(refused.code, FailureCode::CapabilityDenied, "{refused:?}");
-    assert!(!tree.nodes.iter().any(|node| node.to_string().contains(&secret)));
+    assert!(!tree
+        .nodes
+        .iter()
+        .any(|node| node.to_string().contains(&secret)));
     assert!(tree.window_generation > 0 && !tree.window_id.is_empty());
     eprintln!("XP-11 registry live evidence: nodes={}", tree.nodes.len());
 }
