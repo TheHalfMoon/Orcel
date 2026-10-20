@@ -722,17 +722,30 @@ pub fn identity_and_bounds(host: &mut Host, report: &mut Report, prefix: &str, r
         assert_eq!(error_code(&reply), "target_stale", "{field}: {reply}");
     }
     report.pass(format!("{prefix}/observe/stale-binding"), "refused", &[], 2);
+    // The node bound cuts a non-empty tree to at most two nodes. The depth
+    // bound can leave nothing (GTK nests its controls below depth 1), but
+    // never more than the full-depth tree holds.
     let small = host.request(
         "observe_window",
-        json!({"window": reference, "max_nodes": 2, "max_depth": 1}),
+        json!({"window": reference, "max_nodes": 2, "max_depth": 8}),
     );
     assert_eq!(small["ok"], true, "{small}");
     let count = flatten(&small["elements"]).len();
     assert!(
         (1..=2).contains(&count),
-        "bounded observation returned {count} nodes: {small}"
+        "node-bounded observation returned {count} nodes: {small}"
     );
-    report.pass(format!("{prefix}/observe/bounds"), "delivered", &[], 1);
+    let full = host.request("observe_window", json!({ "window": reference }));
+    let shallow = host.request(
+        "observe_window",
+        json!({"window": reference, "max_depth": 1}),
+    );
+    assert_eq!(shallow["ok"], true, "{shallow}");
+    assert!(
+        flatten(&shallow["elements"]).len() <= flatten(&full["elements"]).len(),
+        "depth bound grew the tree: {shallow}"
+    );
+    report.pass(format!("{prefix}/observe/bounds"), "delivered", &[], 3);
 }
 
 /// The cursor as the host reports it, checked against the screen it states.
