@@ -12,14 +12,16 @@
 //! Orcel's changes:
 //! - the N-API, tokio and tracing glue is removed: this runs once, in its own
 //!   confined process, on bytes it was handed (no path, no `detect_pdf`);
-//! - pre-flight checks with `lopdf` that fail closed before any extraction:
+//! - pre-flight checks with `lopdf`, on exactly the bytes pdf-inspector
+//!   parses (after its bare-name rewrite) loaded with exactly its options
+//!   (`as_inspector_reads`), that fail closed before any extraction:
 //!   an encrypted document (the donor, through pdf-inspector, falls back to
 //!   the empty password; Orcel never decrypts), JavaScript or launch actions
 //!   anywhere in the object graph, object nesting deeper than
 //!   [`MAX_NESTING`], more than [`MAX_PAGES`] pages (refused, not cut), and
 //!   any stream that inflates past [`MAX_ARCHIVE_BYTES`] (or all of them past
-//!   [`MAX_PDF_INFLATED_BYTES`]), whether lopdf decodes it while loading or
-//!   pdf-inspector would decode it later (`bound_stream_inflation`);
+//!   [`MAX_PDF_INFLATED_BYTES`]) in one decode of each, which is what
+//!   pdf-inspector later decodes without a bound (`bound_stream_inflation`);
 //! - every error is one closed [`ParseRefusal`] code; no text from the
 //!   document reaches an error;
 //! - a scanned PDF (no text layer) is refused as `no_text`: Orcel runs no OCR.
@@ -50,9 +52,14 @@ pub fn convert(bytes: &[u8]) -> Result<PdfText, ParseRefusal> {
     if !bytes.starts_with(b"%PDF-") {
         return Err(ParseRefusal::Malformed);
     }
+    let bytes = &as_inspector_reads(bytes)?;
     let pages = preflight(bytes)?;
     // The donor's `process_pdf` with `max_pages`: only the pages counted
-    // above are extracted.
+    // above are extracted. pdf-inspector receives the exact bytes the
+    // pre-flight loaded, and loads them with the same options
+    // (`as_inspector_reads`, `INSPECTOR_LOAD_BOUND`), so it builds the same
+    // document the pre-flight checked and never reaches its repair
+    // fallbacks: those only run when that load fails, and here it succeeded.
     let last = u32::try_from(pages).map_err(|_| ParseRefusal::TooManyPages)?;
     let result =
         pdf_inspector::process_pdf_mem_with_options(bytes, PdfOptions::new().pages(1..=last))
@@ -67,11 +74,34 @@ pub fn convert(bytes: &[u8]) -> Result<PdfText, ParseRefusal> {
     Ok(PdfText { markdown, pages })
 }
 
-/// Load the document once with a bounded inflater, refuse what Orcel never
+/// pdf-inspector's own load bound (`MAX_STREAM_DECOMPRESSED_BYTES` in
+/// pdf-inspector 1.21.0, pinned exactly in Cargo.toml): the pre-flight loads
+/// with the same options, so both loads keep and drop the same objects.
+const INSPECTOR_LOAD_BOUND: usize = 8 * 1024 * 1024;
+
+/// The bytes pdf-inspector actually parses. Before loading, it rewrites bare
+/// structure names (`/S Code` to `/S /Code`, `fix_bare_struct_names`, when a
+/// `/StructTreeRoot` is present), because lopdf drops objects written the
+/// bare way. A pre-flight over the original bytes would miss every object
+/// the rewrite brings back, so the pre-flight and pdf-inspector both get the
+/// rewritten bytes. pdf-inspector rewrites them again; that second pass must
+/// change nothing, or the file is refused.
+fn as_inspector_reads(bytes: &[u8]) -> Result<Vec<u8>, ParseRefusal> {
+    let fixed = pdf_inspector::structure_tree::fix_bare_struct_names(bytes).into_owned();
+    if matches!(
+        pdf_inspector::structure_tree::fix_bare_struct_names(&fixed),
+        std::borrow::Cow::Owned(_)
+    ) {
+        return Err(ParseRefusal::Malformed);
+    }
+    Ok(fixed)
+}
+
+/// Load the document exactly as pdf-inspector will, refuse what Orcel never
 /// parses, and return the page count.
 fn preflight(bytes: &[u8]) -> Result<usize, ParseRefusal> {
     let options = LoadOptions {
-        max_decompressed_size: usize::try_from(MAX_ARCHIVE_BYTES).ok(),
+        max_decompressed_size: Some(INSPECTOR_LOAD_BOUND),
         ..LoadOptions::default()
     };
     let document = Document::load_mem_with_options(bytes, options).map_err(load_refusal)?;
@@ -92,29 +122,47 @@ fn preflight(bytes: &[u8]) -> Result<usize, ParseRefusal> {
 }
 
 /// pdf-inspector decodes content, form XObject, font and ToUnicode streams
-/// with lopdf's unbounded `decompressed_content`. It reads the same bytes
-/// this pass reads, so every stream is decoded here first under a bound: no
-/// stream may inflate past [`MAX_ARCHIVE_BYTES`] (each filter layer is
-/// capped while it decodes, never after), and all of them together not past
-/// [`MAX_PDF_INFLATED_BYTES`]. Whatever pdf-inspector decodes later is
-/// therefore within those bounds. A stream whose filter lopdf does not decode
-/// (images: DCT, JPX, JBIG2, CCITT) is skipped, because pdf-inspector cannot
-/// decode it either; a corrupt stream is skipped for the same reason.
+/// with lopdf's unbounded `decompressed_content`, on the same document this
+/// pass loaded (`as_inspector_reads`). So every stream is decoded here first
+/// under a bound: no one decode of a stream may inflate past
+/// [`MAX_ARCHIVE_BYTES`] (each filter layer is capped while it decodes, never
+/// after), and one decode of every stream together not past
+/// [`MAX_PDF_INFLATED_BYTES`]. The bound is per decode: pdf-inspector may
+/// decode one stream more than once (a form XObject drawn on many pages),
+/// and those repeats are bounded by the memory, CPU and time ceilings of the
+/// contained run, not by this budget.
+///
+/// A stream lopdf cannot decode (images: DCT, JPX, JBIG2, CCITT; or a corrupt
+/// stream) is charged its raw length, which is what pdf-inspector falls back
+/// to reading.
 fn bound_stream_inflation(document: &Document) -> Result<(), ParseRefusal> {
-    let per_stream = usize::try_from(MAX_ARCHIVE_BYTES).map_err(|_| ParseRefusal::ArchiveLimit)?;
-    let mut remaining =
-        usize::try_from(MAX_PDF_INFLATED_BYTES).map_err(|_| ParseRefusal::ArchiveLimit)?;
+    bound_stream_inflation_within(
+        document,
+        usize::try_from(MAX_ARCHIVE_BYTES).map_err(|_| ParseRefusal::ArchiveLimit)?,
+        usize::try_from(MAX_PDF_INFLATED_BYTES).map_err(|_| ParseRefusal::ArchiveLimit)?,
+    )
+}
+
+fn bound_stream_inflation_within(
+    document: &Document,
+    per_stream: usize,
+    total: usize,
+) -> Result<(), ParseRefusal> {
+    let mut remaining = total;
     for object in document.objects.values() {
         let Object::Stream(stream) = object else {
             continue;
         };
-        match stream.decompressed_content_with_limit(per_stream.min(remaining)) {
-            Ok(content) => remaining -= content.len(),
+        let charged = match stream.decompressed_content_with_limit(per_stream.min(remaining)) {
+            Ok(content) => content.len(),
             Err(lopdf::Error::Decompress(DecompressError::MemoryLimitExceeded { .. })) => {
                 return Err(ParseRefusal::ArchiveLimit)
             }
-            Err(_) => {}
-        }
+            Err(_) => stream.content.len(),
+        };
+        remaining = remaining
+            .checked_sub(charged)
+            .ok_or(ParseRefusal::ArchiveLimit)?;
     }
     Ok(())
 }

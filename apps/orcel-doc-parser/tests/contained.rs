@@ -256,6 +256,11 @@ fn wi05_hostile_inputs_fail_closed_under_containment_with_their_type() {
             ParseRefusal::ArchiveLimit,
         ),
         (
+            "PDF flate bomb behind a bare structure name",
+            fixtures::struct_name_bomb_pdf(),
+            ParseRefusal::ArchiveLimit,
+        ),
+        (
             "zip bomb DOCX",
             fixtures::zip_bomb_docx(),
             ParseRefusal::ArchiveLimit,

@@ -413,33 +413,16 @@ pub fn zlib_zeros(zeros: usize) -> Vec<u8> {
     stream
 }
 
-/// A page whose content stream is a small FlateDecode stream that inflates
-/// past the per-stream bound (a PDF flate bomb).
-pub fn flate_bomb_pdf() -> Vec<u8> {
-    let zeros = 1 + 258 * 270_000; // about 66 MiB
+/// A PDF from binary object bodies numbered 1.. (object 1 is the catalog).
+pub fn binary_pdf(objects: &[Vec<u8>]) -> Vec<u8> {
     let mut out = b"%PDF-1.7\n".to_vec();
     let mut offsets = Vec::new();
-    let mut object = |out: &mut Vec<u8>, body: &[u8]| {
+    for (index, body) in objects.iter().enumerate() {
         offsets.push(out.len());
-        out.extend_from_slice(format!("{} 0 obj\n", offsets.len()).as_bytes());
+        out.extend_from_slice(format!("{} 0 obj\n", index + 1).as_bytes());
         out.extend_from_slice(body);
         out.extend_from_slice(b"\nendobj\n");
-    };
-    object(&mut out, b"<< /Type /Catalog /Pages 2 0 R >>");
-    object(&mut out, b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
-    object(
-        &mut out,
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>",
-    );
-    let data = zlib_zeros(zeros);
-    let mut stream = format!(
-        "<< /Length {} /Filter /FlateDecode >>\nstream\n",
-        data.len()
-    )
-    .into_bytes();
-    stream.extend_from_slice(&data);
-    stream.extend_from_slice(b"\nendstream");
-    object(&mut out, &stream);
+    }
     let xref = out.len();
     out.extend_from_slice(
         format!("xref\n0 {}\n0000000000 65535 f \n", offsets.len() + 1).as_bytes(),
@@ -455,6 +438,55 @@ pub fn flate_bomb_pdf() -> Vec<u8> {
         .as_bytes(),
     );
     out
+}
+
+/// A FlateDecode stream object of about 66 MiB of zeros (past the
+/// per-stream bound) from about 450 KiB, with `dict_extra` in its dictionary.
+fn bomb_stream(dict_extra: &str) -> Vec<u8> {
+    let data = zlib_zeros(1 + 258 * 270_000);
+    let mut stream = format!(
+        "<< {dict_extra}/Length {} /Filter /FlateDecode >>\nstream\n",
+        data.len()
+    )
+    .into_bytes();
+    stream.extend_from_slice(&data);
+    stream.extend_from_slice(b"\nendstream");
+    stream
+}
+
+/// A page whose content stream is a small FlateDecode stream that inflates
+/// past the per-stream bound (a PDF flate bomb).
+pub fn flate_bomb_pdf() -> Vec<u8> {
+    binary_pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>".to_vec(),
+        bomb_stream(""),
+    ])
+}
+
+/// The flate bomb in a form XObject whose dictionary uses a bare structure
+/// name (`/S Code`) in a tagged document. lopdf drops that object as written;
+/// pdf-inspector rewrites `/S Code` to `/S /Code` before loading, which
+/// brings it back, and would then decode it without a bound. The page also
+/// carries text, so a pre-flight that missed the bomb would let it through.
+pub fn struct_name_bomb_pdf() -> Vec<u8> {
+    let content = "BT /F1 12 Tf 72 720 Td (Orcel WI-05 fixture) Tj ET /X1 Do";
+    binary_pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 6 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] \
+          /Resources << /Font << /F1 7 0 R >> /XObject << /X1 4 0 R >> >> /Contents 5 0 R >>"
+            .to_vec(),
+        bomb_stream("/Type /XObject /Subtype /Form /BBox [0 0 1 1] /S Code "),
+        format!(
+            "<< /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        )
+        .into_bytes(),
+        b"<< /Type /StructTreeRoot >>".to_vec(),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_vec(),
+    ])
 }
 
 /// Debug builds only: the input that makes the parser abort, so a test can

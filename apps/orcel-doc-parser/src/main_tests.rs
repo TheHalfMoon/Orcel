@@ -80,7 +80,7 @@ fn hostile_pdfs_fail_closed_with_their_type() {
         ParseRefusal::ArchiveLimit
     );
     assert_eq!(
-        refusal(&fixtures::flate_bomb_pdf()),
+        refusal(&fixtures::struct_name_bomb_pdf()),
         ParseRefusal::ArchiveLimit
     );
 }
