@@ -6,6 +6,8 @@ use std::time::Duration;
 /// XP-13: the contained tier (no network, exact read/write allowlist, no
 /// process creation), run through the pinned `orcel-contain` helper.
 pub mod contained;
+/// WI-05: the confined document parser's spec and output frame.
+pub mod document_parser;
 
 /// XP-13b: the Safe tier on Linux and macOS (process group, pidfd or
 /// kqueue, cgroup v2 when delegated, rlimits, owned cleanup).

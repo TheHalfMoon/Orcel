@@ -1,0 +1,61 @@
+# orcel-doc-parser: the confined document parser (WI-05).
+#
+# Its own Cargo workspace, like apps/orcel-contain: the PDF and Office
+# parsers never enter orceld's lockfile, and orceld never links them. orceld
+# runs this binary only through the contained tier (apps/orcel-contain): no
+# network, read access to one staged input file, no writable root, no process
+# creation, CPU, memory and output limits and a timeout. The contract (spec,
+# bounds and the stdout frame) is crates/orcel-provider-process/src/document_parser.rs.
+#
+# src/pdf.rs and src/document.rs are COPY_ADAPT of Firecrawl's native
+# converters (firecrawl/firecrawl@f84845c864b6e2af22791c18fcf89ac2a21f1434,
+# apps/api/native/src/{pdf,document}.rs, AGPL-3.0, founder authorization
+# docs/orcel/grants/2026-10-13-founder-source-authorization.md; transplant
+# rows T-FC-06 and T-FC-07). Each file names its donor blob and lists
+# Orcel's changes; the notice is docs/orcel/notices/firecrawl-AGPL-3.0.txt.
+[workspace]
+resolver = "2"
+members = ["."]
+
+[package]
+name = "orcel-doc-parser"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/TheHalfMoon/Orcel"
+rust-version = "1.88"
+publish = false
+description = "Orcel's confined PDF and Office to Markdown converter"
+
+[[bin]]
+name = "orcel-doc-parser"
+path = "src/main.rs"
+
+[dependencies]
+# The donor's converters, at the versions its Cargo.toml names. Both are MIT
+# (firecrawl/pdf-inspector, firecrawl/anydoc). No default features: no OCR,
+# no rendering, no model download.
+pdf-inspector = { version = "=1.21.0", default-features = false }
+anydoc = { version = "=0.2.2", default-features = false }
+# Already in the graph through pdf-inspector; named for the pre-flight checks
+# (encryption, active content, page count, nesting) and the thread pool size.
+lopdf = { version = "=0.45.0", default-features = false }
+rayon = "1.10"
+# Already in the graph (pdf-inspector and anydoc log through it). The parser
+# installs one logger that only watches pdf-inspector's input-changing paths
+# (src/pdf.rs, `parity`); nothing is printed.
+log = "0.4"
+# The donor's header and footer pass (deflate only, as in the donor).
+zip = { version = "=8.6.0", default-features = false, features = ["deflate"] }
+roxmltree = "=0.20.0"
+# The spec, bounds and stdout frame shared with orceld (std only).
+orcel-provider-process = { path = "../../crates/orcel-provider-process" }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+panic = "abort"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "deny"
