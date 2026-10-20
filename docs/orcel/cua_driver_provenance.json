@@ -12,7 +12,7 @@
     "notice_path": "docs/orcel/notices/cua-MIT.txt",
     "authorization": "docs/orcel/grants/2026-10-18-founder-attestation.md"
   },
-  "verification": "scripts/check-vendored-cua.mjs rebuilds each crate's git tree from the committed files, substituting the upstream blob for every path listed in patched_files, and requires the result to equal tree_sha. Run: node scripts/check-vendored-cua.mjs",
+  "verification": "scripts/check-vendored-cua.mjs rebuilds each crate's git tree from the committed files, substituting the upstream blob for every path listed in patched_files, and requires the result to equal tree_sha. Run: node scripts/check-vendored-cua.mjs XP-08: each fixtures entry is rebuilt the same way, without its orcel_files and with removed_files put back as their upstream blobs.",
   "patch_queue": "apps/orcel-native-host/third_party/cua-driver/PATCHES.md",
   "crates": [
     {
@@ -345,6 +345,38 @@
       "source": "libs/cua-driver/rust/THIRD_PARTY_NOTICES.md",
       "blob_sha": "8a111b26105f46a203da69d9fed0be54d91a44d8",
       "destination": "apps/orcel-native-host/third_party/cua-driver/THIRD_PARTY_NOTICES.md"
+    }
+  ],
+  "fixtures": [
+    {
+      "matrix_id": "T-CUA-07",
+      "name": "native-fixtures",
+      "task": "XP-08",
+      "source": "libs/cua-driver/tests/fixtures",
+      "tree_sha": "995d16166d72cd059443a1e5ed373b1fb6ffc7ac",
+      "destination": "tests/native-fixtures",
+      "files": 69,
+      "notes": "ORCEL.md",
+      "license": "LICENSE.md",
+      "orcel_files": [
+        "LICENSE.md",
+        "ORCEL.md",
+        "orcel-stage.sh"
+      ],
+      "removed_files": [
+        {
+          "path": "apps/cross-platform/tauri/src-tauri/icons/icon.ico",
+          "upstream_blob_sha": "d1d851e27483bcbcaec8560ae668d0a5410735ef",
+          "upstream_mode": "100644",
+          "reason": "binary icon (2,066 bytes); the exact-diff review refuses binary files, and Orcel CI does not build the Tauri host"
+        },
+        {
+          "path": "apps/cross-platform/tauri/src-tauri/icons/icon.png",
+          "upstream_blob_sha": "4c5379663166c9c4fbb57a88ae98cc0a64120567",
+          "upstream_mode": "100644",
+          "reason": "binary icon (2,044 bytes); the exact-diff review refuses binary files, and Orcel CI does not build the Tauri host"
+        }
+      ]
     }
   ]
 }
