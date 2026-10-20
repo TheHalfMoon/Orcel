@@ -16,6 +16,8 @@
 [workspace]
 resolver = "2"
 members = ["."]
+# The vendored lopdf is a patched dependency, not a member (#391).
+exclude = ["third_party"]
 
 [package]
 name = "orcel-doc-parser"
@@ -50,6 +52,14 @@ zip = { version = "=8.6.0", default-features = false, features = ["deflate"] }
 roxmltree = "=0.20.0"
 # The spec, bounds and stdout frame shared with orceld (std only).
 orcel-provider-process = { path = "../../crates/orcel-provider-process" }
+
+# #391: lopdf 0.45.0, vendored with Orcel's patch queue
+# (third_party/lopdf/PATCHES.md; provenance docs/orcel/lopdf_provenance.json,
+# checked by scripts/check-vendored-lopdf.mjs). P-02 charges every stream
+# decode in the process, pdf-inspector's included, to one decode budget that
+# src/pdf.rs opens per document.
+[patch.crates-io]
+lopdf = { path = "third_party/lopdf" }
 
 [dev-dependencies]
 tempfile = "3"

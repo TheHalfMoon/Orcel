@@ -68,15 +68,27 @@ export interface Sandbox {
   dispose(): Promise<void>;
 }
 
+export interface SandboxOptions {
+  /** The home (macOS) or XDG_STATE_HOME (Linux) directory name; long names act as a user's long real home. */
+  home?: string;
+  /**
+   * Linux: the XDG_RUNTIME_DIR orceld binds its socket in. "own" (default)
+   * is a short private directory of this sandbox, as logind gives a user;
+   * "none" leaves it unset, so orceld falls back to the state root; a path
+   * shares another sandbox's, so two daemons contend for one endpoint.
+   */
+  runtime?: "own" | "none" | string;
+}
+
 /**
  * A private temporary state root and workspace for one or more daemons.
- * Unix roots live under /tmp, not os.tmpdir(): macOS's per-user temp
- * directory is about 50 bytes long, and with `Library/Application
- * Support/Orcel/run/app-api-<instance>.sock` below it the socket path would
- * pass the 100-byte limit orceld enforces. A long `home` makes the path as
- * long as a user's long real home would.
+ * Unix roots live under /tmp, not os.tmpdir(), so a short `home` keeps the
+ * state-root fallback path short too. With a runtime directory (macOS's
+ * per-user temp directory, Linux's XDG_RUNTIME_DIR) the socket does not
+ * live below the home at all (#381).
  */
-export async function createSandbox(instance: string, home = "h"): Promise<Sandbox> {
+export async function createSandbox(instance: string, options: SandboxOptions = {}): Promise<Sandbox> {
+  const home = options.home ?? "h";
   const base = process.platform === "win32" ? os.tmpdir() : "/tmp";
   const root = await mkdtemp(path.join(base, "oc-"));
   await chmod(root, 0o700);
@@ -101,6 +113,16 @@ export async function createSandbox(instance: string, home = "h"): Promise<Sandb
     const state = path.join(root, home);
     await mkdir(state, { recursive: true, mode: 0o700 });
     env.XDG_STATE_HOME = state;
+    const runtime = options.runtime ?? "own";
+    if (runtime === "own") {
+      const own = path.join(root, "r");
+      await mkdir(own, { mode: 0o700 });
+      env.XDG_RUNTIME_DIR = own;
+    } else {
+      // Empty overrides one the runner may set: orceld and the client both
+      // ignore an XDG_RUNTIME_DIR that is not an absolute path.
+      env.XDG_RUNTIME_DIR = runtime === "none" ? "" : runtime;
+    }
   }
   return {
     root,
@@ -127,11 +149,16 @@ async function kill(child: ChildProcessWithoutNullStreams, exited: Promise<void>
 }
 
 /**
- * Starts orceld and resolves with its endpoint once it is listening.
- * Rejects (after killing it) when orceld reports the endpoint unavailable,
- * exits, or does not listen within 30 s.
+ * Starts orceld and resolves with its endpoint once it is listening, or,
+ * with `until: "waiting"`, once it reports that another server holds the
+ * endpoint (#375 item 1). Rejects (after killing it) when orceld reports
+ * the endpoint unavailable, exits, or gets neither far within 30 s.
  */
-export async function startOrceld(sandbox: Sandbox): Promise<RunningOrceld> {
+export async function startOrceld(
+  sandbox: Sandbox,
+  options: { until?: "listening" | "waiting" } = {},
+): Promise<RunningOrceld> {
+  const until = options.until ?? "listening";
   const binary = orceldBinary();
   if (!binary) throw new Error("no orceld binary");
   const child = spawn(binary, [], {
@@ -153,9 +180,14 @@ export async function startOrceld(sandbox: Sandbox): Promise<RunningOrceld> {
       createInterface({ input: child.stderr }).on("line", (line) => {
         stderr.push(line);
         const listening = /^orceld app api: listening on (.+)$/u.exec(line);
+        const waiting = /^orceld app api: waiting for (.+?): /u.exec(line);
         if (listening?.[1]) {
           clearTimeout(timer);
-          resolve(listening[1]);
+          if (until === "listening") resolve(listening[1]);
+          else reject(new Error(`orceld took the endpoint instead of waiting: ${line}`));
+        } else if (waiting?.[1] && until === "waiting") {
+          clearTimeout(timer);
+          resolve(waiting[1]);
         } else if (/^orceld app api: (unavailable|disabled)/u.test(line)) {
           clearTimeout(timer);
           reject(new Error(`orceld reported its app API unavailable: ${line}`));

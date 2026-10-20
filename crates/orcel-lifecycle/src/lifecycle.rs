@@ -435,11 +435,9 @@ mod imp {
         let event = StopEvent::create(&runtime::stop_event_name(&layout.root))?;
         runtime::disinherit_standard_handles();
         let job = Job::kill_on_close()?;
-        let mut host_env = crate::ipc::host_environment();
-        host_env.insert(
-            crate::full_control::RUNTIME_SESSION_ENV.into(),
-            session.session_id.clone(),
-        );
+        // #395: the runtime session binding stays local. The tunnel is a
+        // remote transport, and its launch plan carries no Orcel variable.
+        let host_env = crate::ipc::host_environment();
         let plan = match tunnel.launch_plan(&host_env) {
             Ok(plan) => plan,
             Err(message) => {

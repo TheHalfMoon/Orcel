@@ -178,6 +178,15 @@ export async function assertAppApiConformance(
   }
   checks.push("snapshot on gap", "snapshot on epoch");
 
+  // #375 item 4: a cursor without the epoch it belongs to is refused, so a
+  // cursor from an earlier run never silently receives this run's events.
+  const unanchored = await call(connector, "events.subscribe", { after_seq: 1 });
+  check(
+    unanchored.type === "error" && unanchored.error.code === "INVALID_REQUEST",
+    "a cursor without its epoch is refused",
+  );
+  checks.push("cursor requires its epoch");
+
   // Resubscribe never re-dispatches: subscribing publishes nothing.
   const before = parseStatus(await resultOf(connector, "status.get")).events.head_seq;
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -217,6 +226,7 @@ test("orceld's app API passes the conformance suite", { skip: skip ?? false, tim
     "cursor replay",
     "snapshot on gap",
     "snapshot on epoch",
+    "cursor requires its epoch",
     "resubscribe never re-dispatches",
   ]);
   assert.ok(report.eventCount >= 11);

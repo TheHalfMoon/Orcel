@@ -489,6 +489,54 @@ pub fn struct_name_bomb_pdf() -> Vec<u8> {
     ])
 }
 
+/// The zero bytes of the largest `zlib_zeros` stream that stays within the
+/// per-stream bound (64 MiB): 67,108,639 bytes from about 413 KiB.
+pub const FORM_ZEROS: usize = 1 + 258 * 260_111;
+
+/// #391: one form XObject that inflates to just under 64 MiB, drawn by every
+/// one of `pages` pages, each of which also carries text. Its one decode
+/// fits the pre-flight's bounds (64 MiB per stream, 256 MiB in all), so it
+/// gets past them; pdf-inspector decodes it again on every page that draws
+/// it, so four draws exhaust the decode budget. `zeros` sets the form's
+/// size (at most [`FORM_ZEROS`]).
+pub fn repeated_form_pdf(pages: usize, zeros: usize) -> Vec<u8> {
+    let data = zlib_zeros(zeros);
+    let mut form = format!(
+        "<< /Type /XObject /Subtype /Form /BBox [0 0 1 1] /Length {} /Filter /FlateDecode >>\nstream\n",
+        data.len()
+    )
+    .into_bytes();
+    form.extend_from_slice(&data);
+    form.extend_from_slice(b"\nendstream");
+    let content = "BT /F1 12 Tf 72 720 Td (Orcel WI-05 fixture) Tj ET /X1 Do";
+    let kids: Vec<String> = (0..pages)
+        .map(|index| format!("{} 0 R", index + 6))
+        .collect();
+    let mut objects = vec![
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        format!(
+            "<< /Type /Pages /Kids [{}] /Count {pages} >>",
+            kids.join(" ")
+        )
+        .into_bytes(),
+        form,
+        format!(
+            "<< /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        )
+        .into_bytes(),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_vec(),
+    ];
+    for _ in 0..pages {
+        objects.push(
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] \
+              /Resources << /Font << /F1 5 0 R >> /XObject << /X1 3 0 R >> >> /Contents 4 0 R >>"
+                .to_vec(),
+        );
+    }
+    binary_pdf(&objects)
+}
+
 /// Debug builds only: the input that makes the parser abort, so a test can
 /// prove a crash is contained and reported (`src/main.rs`).
 pub const ABORT_TRIGGER: &[u8] = b"ORCEL-WI05-TEST-ABORT";

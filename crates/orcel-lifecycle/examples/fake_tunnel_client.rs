@@ -4,7 +4,9 @@
 //! publishes a loopback health URL, runs the MCP command over stdio, performs
 //! an MCP `initialize`, `tools/list`, and `tools/call system_status`
 //! exchange, and reports what it observed on stdout (which the supervisor
-//! logs). It proves Orcel's supervision, launch, and MCP-to-orceld path only;
+//! logs). Since #395 the call reaches `orceld` as a remote request and is
+//! refused by the remote-session lease gate, which the report records. It
+//! proves Orcel's supervision, launch, and MCP-to-orceld path only;
 //! it does not prove the OpenAI service.
 
 use serde_json::{json, Value};
@@ -163,11 +165,12 @@ fn main() {
     let call = read_response(&lines, 3);
     let text = call.to_string();
     println!(
-        "fake-tunnel: mcp-call is_error={} orceld_answered={} raw={}",
+        "fake-tunnel: mcp-call is_error={} orceld_answered={} remote_session_inactive={} raw={}",
         call.pointer("/result/isError")
             .and_then(Value::as_bool)
             .unwrap_or(false),
         text.contains("internal_protocol_version") || text.contains(r#""orceld_ok":true"#),
+        text.contains("REMOTE_SESSION_INACTIVE"),
         short(&call)
     );
 
