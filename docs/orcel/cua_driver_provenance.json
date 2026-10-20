@@ -158,6 +158,11 @@
           "upstream_blocker_lines": []
         },
         {
+          "path": "src/authorization.rs",
+          "upstream_blob_sha": "a5ce1cc99c4759d1fcd629d69193f89808e7728d",
+          "upstream_blocker_lines": []
+        },
+        {
           "path": "src/browser/download.rs",
           "upstream_blob_sha": "3a2a4677056a88ec3540dc1dac5579ea786a9876",
           "upstream_blocker_lines": []

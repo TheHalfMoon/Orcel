@@ -12,10 +12,13 @@
 //! against the fixture journal plus the focus, z-order, cursor and
 //! no-input-leak oracles in `conformance/mod.rs`.
 //!
-//! Today the host observes only, so the observation cells are measured and
-//! all 40 action cells are typed skips: `ax` cells wait for XP-11
-//! (`semantic_action`), `px` cells for XP-12 (raw input). Each skip still
-//! sends its frame and requires the exact refusal with every oracle
+//! The observation cells are measured. Of the 40 action cells, the 20 `ax`
+//! cells run through `semantic_action` (XP-11): the foreground rung is
+//! reported as background-only; a background cell is measured where the
+//! page's controls are observable and an accessibility action can cause the
+//! effect, and otherwise sends its frame and requires the exact refusal.
+//! The 20 `px` cells wait for XP-12 (raw input): each is a typed skip that
+//! still sends its frame and requires the exact refusal with every oracle
 //! unchanged.
 
 mod conformance;
@@ -97,9 +100,9 @@ fn element_name(action: &str) -> &'static str {
 
 /// The `/2` frame of a cell. `ax` cells name the element; `/2`'s closed
 /// semantic verbs are invoke, set_value, select, toggle and scroll, and a
-/// cell whose action has no verb yet (right and double click, keys) carries
-/// upstream's action name, which XP-11 must map or refuse. `px` cells name
-/// the point (`conformance::screen_centre`).
+/// cell whose action has no verb (right and double click, keys) carries
+/// upstream's action name, which the host refuses as `invalid_request`. `px`
+/// cells name the point (`conformance::screen_centre`).
 fn frame(cell: &Cell, element: &str, point: (i64, i64)) -> (&'static str, Value) {
     let (x, y) = point;
     if cell.addressing == "ax" {
@@ -224,6 +227,92 @@ fn free_port() -> u16 {
         .port()
 }
 
+/// One background `ax` cell of the catalog.
+///
+/// Three actions have a semantic verb and an accessibility route to the
+/// page's handler: a button, the child-window button and the editor save
+/// (their handlers listen for `click`). Upstream's left-click target listens
+/// for `mousedown`, which an accessibility action does not raise, so the
+/// cell presses the page's Increment button instead and reports that
+/// choice here. Right and double click and the key cells have no verb, text
+/// values written into web content are not verifiable, and scroll is a
+/// wheel event: all are refused on purpose, and the cell requires the exact
+/// refusal with the page unchanged.
+fn run_ax_cell(
+    host: &mut Host,
+    report: &mut Report,
+    prefix: &str,
+    observed: &conformance::Observed,
+    cell: &Cell,
+    controls_observable: bool,
+    journal: &Journal,
+) {
+    let case = format!(
+        "{}/ax/{}",
+        conformance::segment(cell.action),
+        cell.delivery
+    );
+    let measured = match cell.action {
+        "left_click" => Some(("invoke", "Increment", "Button", true)),
+        "child_window" => Some(("invoke", "Open child window", "Button", false)),
+        "editor_save" => Some(("invoke", "editor-save", "Button", true)),
+        _ => None,
+    };
+    if let Some((verb, element, control, holds_desktop)) = measured {
+        if !controls_observable {
+            report.not_observable(format!("{prefix}/{case}"));
+            return;
+        }
+        let action = conformance::ActionCell {
+            case,
+            verb,
+            element,
+            control: Some(control),
+            value: None,
+            holds_desktop,
+        };
+        let done: Box<dyn Fn(&Value) -> bool> = match cell.action {
+            "left_click" => Box::new(|now| conformance::journal_text(now, "lbl-counter") == "counter=1"),
+            "child_window" => Box::new(|now| {
+                conformance::journal_text(now, "lbl-child-window-state") == "child_windows=1"
+            }),
+            _ => Box::new(|now| {
+                conformance::journal_text(now, "editor-status").starts_with("editor_status=saved")
+            }),
+        };
+        conformance::run_action(
+            host,
+            report,
+            prefix,
+            &observed.reference,
+            &action,
+            || journal.settled(),
+            done,
+        );
+        return;
+    }
+    // Refused on purpose.
+    let element = conformance::element_for(&observed.nodes, element_name(cell.action));
+    let (_, fields) = frame(cell, &element, (0, 0));
+    let mut fields = fields;
+    fields["window"] = observed.reference.clone();
+    let expected = match cell.action {
+        // A web value write cannot be verified; scroll is a wheel event.
+        "type_text" | "type_submit" | "scroll" => "capability_denied",
+        // No semantic verb: upstream's action name is not in the closed set.
+        _ => "invalid_request",
+    };
+    conformance::refused_action(
+        host,
+        report,
+        prefix,
+        &case,
+        fields,
+        expected,
+        || journal.settled(),
+    );
+}
+
 fn run_host(spec: &WebHost, report: &mut Report, cdp_port: u16) {
     let prefix = format!("shared-web/{}/{}", conformance::window_system(), spec.name);
     let journal = Journal::start();
@@ -318,37 +407,59 @@ fn run_host(spec: &WebHost, report: &mut Report, cdp_port: u16) {
     });
 
     let point = conformance::screen_centre(&mut host);
-    let cells: Vec<InputCell> = catalog()
-        .iter()
-        .map(|cell| {
+    let mut pixel_cells = Vec::new();
+    for cell in catalog() {
+        let case = format!(
+            "{}/{}/{}",
+            conformance::segment(cell.action),
+            cell.addressing,
+            cell.delivery
+        );
+        if cell.addressing == "px" {
             let element = conformance::element_for(&observed.nodes, element_name(cell.action));
-            let (op, fields) = frame(cell, &element, point);
-            InputCell {
-                case: format!(
-                    "{}/{}/{}",
-                    conformance::segment(cell.action),
-                    cell.addressing,
-                    cell.delivery
-                ),
-                op,
-                fields,
-            }
-        })
-        .collect();
+            let (op, fields) = frame(&cell, &element, point);
+            pixel_cells.push(InputCell { case, op, fields });
+        } else if cell.delivery == "foreground" {
+            // Semantic actions never take the foreground.
+            report.background_only(format!("{prefix}/{case}"));
+        } else {
+            run_ax_cell(
+                &mut host,
+                report,
+                &prefix,
+                &observed,
+                &cell,
+                spec.controls_within_depth,
+                &journal,
+            );
+        }
+    }
+    // XP-12: the pixel cells are typed skips; their frames are refused and
+    // move no oracle.
     conformance::pending_input_cells(
         &mut host,
         report,
         &prefix,
         &observed.reference,
-        &cells,
+        &pixel_cells,
         || journal.settled(),
     );
-    // Nothing the suite sent reached the page.
-    assert_eq!(
-        journal.settled(),
-        initial,
-        "the page state changed during the suite"
-    );
+    // The page holds exactly what the measured actions did and nothing else.
+    let end = journal.settled();
+    let text = |id: &str| conformance::journal_text(&end, id).to_owned();
+    if spec.controls_within_depth {
+        assert_eq!(text("lbl-counter"), "counter=1", "{end}");
+        assert_eq!(text("lbl-child-window-state"), "child_windows=1", "{end}");
+        assert!(
+            text("editor-status").starts_with("editor_status=saved"),
+            "{end}"
+        );
+    } else {
+        assert_eq!(end, initial, "the page state changed during the suite");
+    }
+    for id in ["keyboard-status", "drag-status", "lbl-input-mirror"] {
+        assert_eq!(text(id), conformance::journal_text(&initial, id), "{id}");
+    }
 
     drop(harness);
     conformance::closed_window_is_stale(&mut host, report, &prefix, &observed.reference);
@@ -372,13 +483,34 @@ fn xp08_shared_web_catalog_is_conformant() {
         "shared-web/{}/tauri/catalog",
         conformance::window_system()
     ));
-    let skipped = report
-        .rows()
-        .iter()
-        .filter(|row| row["status"] == "skip" && row["observed"] == "refused")
-        .count();
     let hosts = if cfg!(target_os = "macos") { 2 } else { 1 };
-    assert_eq!(skipped, 40 * hosts, "every catalog cell must be reported");
+    let rows_of = |addressing: &str| {
+        report
+            .rows()
+            .iter()
+            .filter(|row| {
+                row["case"]
+                    .as_str()
+                    .is_some_and(|case| case.contains(&format!("/{addressing}/")))
+            })
+            .collect::<Vec<_>>()
+    };
+    // Twenty px cells per host, every one a typed skip waiting for XP-12.
+    let pixel = rows_of("px");
+    assert_eq!(pixel.len(), 20 * hosts, "every px cell must be reported");
+    assert!(pixel
+        .iter()
+        .all(|row| row["status"] == "skip" && row["observed"] == "refused"));
+    // Twenty ax cells per host: ten foreground rungs reported as
+    // background-only, and ten background cells measured, refused or (where
+    // the page's controls are beyond the depth bound) not observable.
+    let ax = rows_of("ax");
+    assert_eq!(ax.len(), 20 * hosts, "every ax cell must be reported");
+    let background_only = ax
+        .iter()
+        .filter(|row| row["observed"] == "background-only")
+        .count();
+    assert_eq!(background_only, 10 * hosts);
     report.write(&format!(
         "shared-web.{}.{}",
         std::env::consts::OS,
@@ -418,7 +550,10 @@ fn frames_use_the_closed_v2_vocabulary() {
     let semantic_verbs = ["invoke", "set_value", "select", "toggle", "scroll"];
     for cell in catalog() {
         let (op, fields) = frame(&cell, "1:2", (10, 20));
-        assert!(conformance::INPUT_OPS.contains(&op), "{op}");
+        assert!(
+            op == "semantic_action" || conformance::PIXEL_OPS.contains(&op),
+            "{op}"
+        );
         if cell.addressing == "ax" {
             assert_eq!(op, "semantic_action");
             assert_eq!(fields["element_runtime_id"], "1:2");
@@ -428,7 +563,6 @@ fn frames_use_the_closed_v2_vocabulary() {
                 "right_click" | "double_click" | "press_key" | "hotkey"
             );
             assert_eq!(semantic_verbs.contains(&verb), !unmapped, "{cell:?}");
-            assert_eq!(conformance::Pending::for_op(op).task(), "XP-11");
         } else {
             assert!(op.starts_with("input_"), "{op}");
             assert_eq!(fields["expected_last_input_tick"], 0);

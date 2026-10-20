@@ -264,7 +264,7 @@ mod imp {
 
         /// Test-only raw dispatch, to show what the registered tools do
         /// with arguments the adapter itself never sends.
-        #[cfg(all(test, target_os = "macos"))]
+        #[cfg(test)]
         pub async fn invoke_for_test(
             &self,
             name: &str,
@@ -513,6 +513,96 @@ mod tests {
         assert_eq!(status["direct_capture_status"], "not_checked", "{status}");
         assert!(status["accessibility"].is_boolean());
         assert!(status["screen_recording"].is_boolean());
+    }
+
+    /// A refusal of malformed arguments: the registry's own schema check
+    /// (`invalid_arguments`, its `unknown argument` refusal) or the tool's
+    /// (`invalid_request`). Either one happens before any accessibility call.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn refused_as_invalid(failure: &CuaFailure) -> bool {
+        let code = failure.structured.as_ref().and_then(|value| {
+            value
+                .get("code")
+                .or_else(|| value.pointer("/refusal/code"))
+                .and_then(Value::as_str)
+        });
+        matches!(code, Some("invalid_request" | "invalid_arguments"))
+    }
+
+    /// XP-11 / P-09: the action tool takes an element and a verb. Every name
+    /// that could carry a position, a key, a button, a count, a modifier, a
+    /// delivery mode or a scope is refused before any accessibility call,
+    /// and so is a token that is not one `get_window_state` minted. None of
+    /// this needs a desktop session or a permission.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn the_action_tool_refuses_every_argument_that_could_address_a_pixel() {
+        let runtime = CuaRuntime::new();
+        let executor = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let base = serde_json::json!({
+            "pid": 4242,
+            "window_id": 77,
+            "element_token": "s00000001:3",
+            "verb": "invoke",
+            "expect_role": "push button",
+        });
+        for (name, extra) in [
+            ("x", serde_json::json!(10)),
+            ("y", serde_json::json!(10)),
+            ("button", serde_json::json!("left")),
+            ("count", serde_json::json!(2)),
+            ("modifier", serde_json::json!(["cmd"])),
+            ("delivery_mode", serde_json::json!("foreground")),
+            ("scope", serde_json::json!("desktop")),
+            ("capture_id", serde_json::json!("c1")),
+            ("text", serde_json::json!("typed")),
+            ("action", serde_json::json!("press")),
+            ("from_zoom", serde_json::json!(true)),
+        ] {
+            let mut arguments = base.clone();
+            arguments[name] = extra;
+            let refused = executor
+                .block_on(runtime.invoke_for_test(SEMANTIC_ACTION_TOOL, arguments))
+                .unwrap_err();
+            assert!(refused_as_invalid(&refused), "{name}: {refused:?}");
+        }
+        // A bare row number or a malformed token is not an element token.
+        for token in ["3", "x:3", "s0000000g:3", ""] {
+            let mut arguments = base.clone();
+            arguments["element_token"] = serde_json::json!(token);
+            let refused = executor
+                .block_on(runtime.invoke_for_test(SEMANTIC_ACTION_TOOL, arguments))
+                .unwrap_err();
+            assert!(refused_as_invalid(&refused), "{token:?}: {refused:?}");
+        }
+        // Verbs outside the closed set, scroll included.
+        for verb in ["scroll", "click", "type", "drag", "press", ""] {
+            let mut arguments = base.clone();
+            arguments["verb"] = serde_json::json!(verb);
+            let refused = executor
+                .block_on(runtime.invoke_for_test(SEMANTIC_ACTION_TOOL, arguments))
+                .unwrap_err();
+            assert!(refused_as_invalid(&refused), "{verb:?}: {refused:?}");
+        }
+        // A well-formed call for a snapshot this process never took is stale.
+        let stale = executor
+            .block_on(runtime.invoke_for_test(SEMANTIC_ACTION_TOOL, base.clone()))
+            .unwrap_err();
+        let text = format!("{stale:?}").to_ascii_lowercase();
+        assert!(text.contains("stale") || text.contains("unknown") || text.contains("snapshot"), "{text}");
+        // Upstream's own tools are not in this registry to be reached by name.
+        for name in ["click", "set_value", "scroll", "type_text", "press_key", "hotkey"] {
+            let refused = executor
+                .block_on(runtime.invoke_for_test(name, base.clone()))
+                .unwrap_err();
+            assert!(
+                refused.message.to_ascii_lowercase().contains("unknown"),
+                "{name}: {refused:?}"
+            );
+        }
     }
 
     /// The registry the host builds holds the five tools the adapter calls

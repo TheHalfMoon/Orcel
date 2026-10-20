@@ -324,8 +324,8 @@ crates expose only `register_all` / `build_registry`, which register every
 tool. The Orcel host calls `retain_tools(&ALLOWED_TOOLS)` right after
 construction (`apps/orcel-native-host/src/cua_adapter.rs`), so the registry
 holds exactly `list_windows`, `get_window_state`, `get_cursor_position`,
-`get_screen_size` and `check_permissions`; any other name is unknown to
-`invoke`. This is defence in depth under the closed `CuaCall` enum.
+`get_screen_size`, `check_permissions` and (P-09) `orcel_semantic_action`; any
+other name is unknown to `invoke`. This is defence in depth under the closed `CuaCall` enum.
 `registry_holds_the_allowlist_and_no_compiled_out_tool` (macOS and Linux CI)
 requires the registered names to equal the allowlist exactly. Lines added
 only; with the feature off the file compiles exactly as upstream.
@@ -377,6 +377,80 @@ pixels. The host refuses that case itself before and after the capture
 (`capture.rs`, `x11_exposure`). Cua's Wayland backend captures whole outputs
 only, so the host never calls it, and Wayland capture stays unavailable.
 
+## P-09: one accessibility-only action tool (XP-11)
+
+The Orcel host delivers semantic actions (invoke, set_value, select, toggle)
+through one added tool, `orcel_semantic_action`, and registers no other
+action tool. Upstream's `click`, `set_value` and `scroll` stay out of the
+host's registry (P-07 keeps the allowlist at six names) because each of them
+can leave the accessibility route when it fails:
+
+- macOS `click`: a CGEvent pixel click (`button=middle`, the list-selection
+  fallback, any `x,y`), a private SkyLight activation to prime the key window,
+  a menu opened by the press. macOS `set_value`: an Apple Event to Finder or
+  Safari (the first use raises a TCC Automation prompt, which P-04 forbids),
+  synthesized key presses, a popup menu opened and its item pressed, a
+  document key edit to mark it changed. macOS `scroll`: wheel events.
+- Linux `click`: when `doAction` is declined, an XTest or uinput pointer click
+  at the element, and for entries and menu items a real pointer click first.
+  Linux `set_value`: a click, select-all and virtual key typing; a combo box
+  popup opened with the pointer. Linux `scroll`: Button4/5 and uinput wheel.
+
+Patching each branch out of 15,000 lines of tool code would leave a registry
+whose safety is a negative property of many edits. The tool is instead added
+with `orcel-minimal` only, so the property is positive and short enough to
+read: it calls only the accessibility primitives upstream's tools are built
+on, on the element a `get_window_state` snapshot of the same process resolved,
+and has no other route. Nothing upstream is deleted or reworded; with the
+feature off each file compiles exactly as upstream.
+
+- `platform-macos/src/tools/mod.rs`: a `tools::orcel_semantic` module and one
+  registration. It resolves the token through upstream's snapshot store
+  (which also binds it to the asked window), takes upstream's exact-window
+  gate (`gate_background_window_action`, `AxSemantic`), wraps the call in
+  upstream's focus suppression and window-change watch, then reads the live
+  `AXRole`/`AXSubrole`/`AXEnabled` and refuses a secure text field, a role
+  the verb does not act on, a role that differs from the one the host listed,
+  and a disabled element. Invoke, toggle and select send `AXPress` through
+  `ax_actions::perform_ax_action`, only when the element advertises it.
+  Set value writes `AXValue` (a CFNumber for a number, else a CFString), only
+  when `AXValue` is settable, on a text field, slider, stepper or date
+  field. Every `unsafe` call has a SAFETY comment. No CGEvent, no
+  SkyLight, no Apple Event, no key event, no menu.
+- `platform-linux/src/tools/impl_.rs`: a private `orcel_semantic` module and
+  one registration. It resolves the token the same way, compares the
+  snapshot's AT-SPI role with the host's, and acts on the object the
+  snapshot observed: invoke, toggle and select call
+  `atspi::perform_action_observed` (`Action.doAction`) under the focus guard,
+  set value calls `atspi::native::set_value_ref` (`EditableText` or `Value`).
+  It never re-resolves an element by index: a vanished object is
+  `target_stale`. A declined `doAction` is `postcondition_failed`, an
+  unacknowledged one `outcome_unknown`; neither is retried or followed by a
+  pointer click.
+- Both tools take exactly `pid`, `window_id`, `element_token`, `verb`,
+  `expect_role` and, for set value, `value`. A name that could carry a
+  position, key, button, count, modifier, delivery mode, scope, capture id or
+  zoom flag is refused before any accessibility call, a token must be one
+  `get_window_state` minted (a bare row number is refused), and `scroll` is
+  not a verb. The host's own `CuaCall::SemanticAction` cannot build any of
+  those fields, and `the_action_tool_refuses_every_argument_that_could_address_a_pixel`
+  (macOS and Linux CI) calls the registered tool with each of them.
+- `cua-driver-core/src/authorization.rs`: one arm in `advertised_risk_for`
+  classifies `orcel_semantic_action` as R1, the class of the `click` and
+  `set_value` it replaces. Upstream's coordinator denies a tool with no
+  reviewed risk class. The tool is deliberately not one of
+  `DESKTOP_INPUT_OPERATIONS`: it sends no input, so upstream's `desktop_input`
+  grant adapter does not apply, and Orcel's kernel (approval bound to the
+  exact target) is the authority.
+
+What P-09 does not do: scroll. Upstream scrolls by wheel event at a screen
+position on both platforms, which is pixel-addressed input, so the host
+refuses the `scroll` verb (`capability_denied`) until XP-12. Set value on web
+content is refused by the host (an AXValue write there is echoed back without
+reaching the page), and a value write that moves text into a document does
+not mark the document edited, because upstream's way of doing that sends key
+events.
+
 ## Patched file index
 
 Every vendored file that differs from upstream, as recorded in the
@@ -402,6 +476,7 @@ to be named here.
 - `platform-linux/src/tools/impl_.rs` (upstream blob `3be700798b93`)
 - `platform-linux/src/tools/mod.rs` (upstream blob `38b9c42d143b`)
 - `cua-driver-core/Cargo.toml` (upstream blob `de9e618d6b51`)
+- `cua-driver-core/src/authorization.rs` (upstream blob `a5ce1cc99c47`)
 - `cua-driver-core/src/browser/download.rs` (upstream blob `3a2a4677056a`)
 - `cua-driver-core/src/browser/mod.rs` (upstream blob `070d6c0734fa`)
 - `cua-driver-core/src/capture_registry.rs` (upstream blob `f7e6be0d533e`)
