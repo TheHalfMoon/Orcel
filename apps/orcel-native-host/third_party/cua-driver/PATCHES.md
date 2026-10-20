@@ -417,6 +417,12 @@ feature off each file compiles exactly as upstream.
   when `AXValue` is settable, on a text field, slider, stepper or date
   field. Every `unsafe` call has a SAFETY comment. No CGEvent, no
   SkyLight, no Apple Event, no key event, no menu.
+- `platform-linux/src/atspi/native.rs`: one added function,
+  `live_role_and_checked_ref`, which reads the live role name and `Checked`
+  state of a snapshot-cached object (one state read, one role read, no walk).
+  The Linux tool calls it right before acting: the role must still be the one
+  the host listed, must not be a password field, and a toggle must not already
+  be in the state it asks for.
 - `platform-linux/src/tools/impl_.rs`: a private `orcel_semantic` module and
   one registration. It resolves the token the same way, compares the
   snapshot's AT-SPI role with the host's, and acts on the object the
@@ -427,8 +433,12 @@ feature off each file compiles exactly as upstream.
   `target_stale`. A declined `doAction` is `postcondition_failed`, an
   unacknowledged one `outcome_unknown`; neither is retried or followed by a
   pointer click.
+- Toggle never flips blindly. The host passes the state it asks for
+  (`toggle_to`); macOS reads `AXValue` and Linux the `Checked` state on the live
+  element immediately before pressing, and an element already in that state, or
+  one whose state is unreadable, is refused (`target_stale`, `capability_denied`).
 - Both tools take exactly `pid`, `window_id`, `element_token`, `verb`,
-  `expect_role` and, for set value, `value`. A name that could carry a
+  `expect_role` and, for set value, `value`, for toggle `toggle_to`. A name that could carry a
   position, key, button, count, modifier, delivery mode, scope, capture id or
   zoom flag is refused before any accessibility call, a token must be one
   `get_window_state` minted (a bare row number is refused), and `scroll` is
@@ -468,6 +478,7 @@ to be named here.
 - `platform-macos/src/tools/mod.rs` (upstream blob `771e6717e3e5`)
 - `platform-linux/Cargo.toml` (upstream blob `dfb5ec0fdc3f`)
 - `platform-linux/src/atspi/mod.rs` (upstream blob `77c5608cf2f5`)
+- `platform-linux/src/atspi/native.rs` (upstream blob `36451e533335`)
 - `platform-linux/src/capture.rs` (upstream blob `b2c04867dcfa`)
 - `platform-linux/src/browser_platform.rs` (upstream blob `ddecce24e400`)
 - `platform-linux/src/input/mod.rs` (upstream blob `7a0cd50dae20`)

@@ -938,6 +938,16 @@ mod platform {
             Ok(())
         }
 
+        /// Clears any armed approval. The caller that armed it calls this once
+        /// the registry call returns, success or not, so an approval whose
+        /// action never reached the adapter (a revalidation failure, a lock
+        /// error) is not left in the process-wide slot.
+        pub fn disarm_semantic(&self) {
+            if let Ok(mut armed) = self.armed.lock() {
+                *armed = None;
+            }
+        }
+
         /// Spends the armed approval against the action about to be sent.
         fn spend_semantic(
             &self,
@@ -1273,9 +1283,17 @@ mod platform {
             &self,
             hwnd: u64,
             runtime_id: &str,
-            _toggled: bool,
+            toggled: bool,
         ) -> Result<(), UiaError> {
-            self.semantic_action(hwnd, runtime_id, "toggle", None, 0, 0)
+            // A native host is told the state the approval asks for, so it
+            // acts only when the live element is not already there. The
+            // Windows host keeps its frame.
+            let wanted = if self.is_native()? {
+                Some(if toggled { "true" } else { "false" })
+            } else {
+                None
+            };
+            self.semantic_action(hwnd, runtime_id, "toggle", wanted, 0, 0)
         }
 
         fn scroll_element(
@@ -2234,17 +2252,17 @@ mod tests {
         let adapter = adapter.unwrap();
         adapter.list_processes().unwrap();
         adapter
-            .authorize_semantic(approved(11, "1:1", "toggle", None))
+            .authorize_semantic(approved(11, "1:1", "toggle", Some("true")))
             .unwrap();
         // The window id is reused by another window; a listing sees it.
         nonce.store(100, std::sync::atomic::Ordering::SeqCst);
         adapter.list_processes().unwrap();
         let error = adapter.toggle_element(11, "1:1", true).unwrap_err();
-        assert_eq!(error.code, FailureCode::TargetStale);
+        assert_eq!(error.code, FailureCode::TargetStale, "{error:?}");
         assert!(semantic_ops(&frames).is_empty());
         // Re-arming on the new window works.
         adapter
-            .authorize_semantic(approved(11, "1:1", "toggle", None))
+            .authorize_semantic(approved(11, "1:1", "toggle", Some("true")))
             .unwrap();
         adapter.toggle_element(11, "1:1", true).unwrap();
         let sent = semantic_ops(&frames);
@@ -2328,5 +2346,75 @@ mod tests {
         let sent = semantic_ops(&frames);
         assert_eq!(sent.len(), 1);
         assert_eq!(sent[0]["window"]["kind"], "hwnd");
+    }
+
+    /// A toggle names the state it asks for, the approval covers exactly
+    /// that state, and the frame carries it so the host never flips blindly.
+    #[test]
+    fn a_toggle_approval_covers_the_requested_state_and_the_frame_carries_it() {
+        let nonce = Arc::new(std::sync::atomic::AtomicU64::new(99));
+        let (adapter, frames) = scripted("linux", acting_desktop(nonce));
+        let adapter = adapter.unwrap();
+        adapter.list_processes().unwrap();
+        adapter
+            .authorize_semantic(approved(11, "1:1", "toggle", Some("true")))
+            .unwrap();
+        let error = adapter.toggle_element(11, "1:1", false).unwrap_err();
+        assert_eq!(error.code, FailureCode::CapabilityDenied, "{error:?}");
+        assert!(semantic_ops(&frames).is_empty());
+        adapter
+            .authorize_semantic(approved(11, "1:1", "toggle", Some("true")))
+            .unwrap();
+        adapter.toggle_element(11, "1:1", true).unwrap();
+        let sent = semantic_ops(&frames);
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0]["semantic_action"], "toggle");
+        assert_eq!(sent[0]["value"], "true");
+    }
+
+    /// The caller that armed an approval clears it when the registry call
+    /// fails before the adapter is reached, so nothing is left armed.
+    #[test]
+    fn a_disarmed_approval_cannot_be_spent() {
+        let nonce = Arc::new(std::sync::atomic::AtomicU64::new(99));
+        let (adapter, frames) = scripted("linux", acting_desktop(nonce));
+        let adapter = adapter.unwrap();
+        adapter.list_processes().unwrap();
+        adapter
+            .authorize_semantic(approved(11, "1:1", "invoke", None))
+            .unwrap();
+        // The registry refused the call (a stale tree, say): nothing reached
+        // the adapter. The caller disarms.
+        adapter.disarm_semantic();
+        let error = adapter.invoke_element(11, "1:1").unwrap_err();
+        assert_eq!(error.code, FailureCode::CapabilityDenied, "{error:?}");
+        assert!(error.message.contains("approval"), "{error:?}");
+        assert!(semantic_ops(&frames).is_empty());
+        // Disarming with nothing armed is harmless.
+        adapter.disarm_semantic();
+    }
+
+    /// A registry refusal leaves an armed approval behind unless the caller
+    /// disarms it: this is the sequence orceld runs.
+    #[test]
+    fn a_registry_failure_followed_by_disarm_leaves_nothing_armed() {
+        let nonce = Arc::new(std::sync::atomic::AtomicU64::new(99));
+        let (adapter, frames) = scripted("linux", acting_desktop(nonce));
+        let adapter = adapter.unwrap();
+        let mut registry = crate::UiaRegistry::new();
+        registry.list_windows(&adapter, "ws", "pol").unwrap();
+        adapter
+            .authorize_semantic(approved(11, "1:1", "invoke", None))
+            .unwrap();
+        let refused = registry
+            .invoke_element(&adapter, "no-such-element", 1, "Button", "ws", "pol")
+            .unwrap_err();
+        assert_ne!(refused.code, FailureCode::ProviderUnavailable);
+        adapter.disarm_semantic();
+        assert_eq!(
+            adapter.invoke_element(11, "1:1").unwrap_err().code,
+            FailureCode::CapabilityDenied
+        );
+        assert!(semantic_ops(&frames).is_empty());
     }
 }

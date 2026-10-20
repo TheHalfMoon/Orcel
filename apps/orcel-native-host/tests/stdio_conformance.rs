@@ -179,7 +179,7 @@ fn semantic_actions_are_element_addressed_and_refused_without_a_live_target() {
         json!({"semantic_action": "invoke", "element_runtime_id": "e1-0011223344556677"}),
         json!({"semantic_action": "set_value", "element_runtime_id": "e1-0011223344556677", "value": "x"}),
         json!({"semantic_action": "select", "element_runtime_id": "e1-0011223344556677"}),
-        json!({"semantic_action": "toggle", "element_runtime_id": "e1-0011223344556677"}),
+        json!({"semantic_action": "toggle", "element_runtime_id": "e1-0011223344556677", "value": "true"}),
     ] {
         let reply = host.request("semantic_action", with(extra.clone()));
         assert_eq!(reply["ok"], false, "{extra}: {reply}");

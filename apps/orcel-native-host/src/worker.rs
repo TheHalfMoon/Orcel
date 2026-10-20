@@ -780,7 +780,11 @@ async fn semantic_action(
         element_token: token,
         verb,
         expect_role: element.role.clone(),
-        value: request.value.clone(),
+        value: (verb == semantic::Verb::SetValue)
+            .then(|| request.value.clone())
+            .flatten(),
+        toggle_to: (verb == semantic::Verb::Toggle)
+            .then(|| request.value.as_deref() == Some("true")),
     });
     match runtime.call(&call).await {
         Ok(_) => {

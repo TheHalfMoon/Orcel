@@ -1112,7 +1112,14 @@ pub fn negative_action_cells(
     let nodes = fresh_nodes(host, reference);
     let button = strict_element_id(&nodes, targets.button, Some("Button"));
     let check_box = strict_element_id(&nodes, targets.check_box, Some("CheckBox"));
-    let frame = |verb: &str, id: &str| json!({"window": reference, "semantic_action": verb, "element_runtime_id": id});
+    let frame = |verb: &str, id: &str| {
+        let mut fields =
+            json!({"window": reference, "semantic_action": verb, "element_runtime_id": id});
+        if verb == "toggle" {
+            fields["value"] = json!("true");
+        }
+        fields
+    };
     let mut refuse = |host: &mut Host, case: &str, fields: Value, expected: &str| {
         refused_action(host, report, prefix, case, fields, expected, &mut state);
     };
@@ -1170,6 +1177,20 @@ pub fn negative_action_cells(
         "invoke/check-box/refused",
         frame("invoke", &check_box),
         "capability_denied",
+    );
+    // A toggle never flips blindly: asking for the state the live element
+    // already has is refused as stale, and a toggle without a state is
+    // malformed.
+    let mut already = frame("toggle", &check_box);
+    already["value"] = json!("false");
+    refuse(host, "toggle/already/refused", already, "target_stale");
+    let mut stateless = frame("toggle", &check_box);
+    stateless.as_object_mut().unwrap().remove("value");
+    refuse(
+        host,
+        "toggle/stateless/refused",
+        stateless,
+        "invalid_request",
     );
     // Scroll is a wheel event at a position: pixel-addressed, XP-12.
     refuse(

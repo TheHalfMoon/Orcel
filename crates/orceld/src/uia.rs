@@ -111,6 +111,13 @@ fn computer_host() -> Result<&'static ComputerHostAdapter, ProviderError> {
     })
 }
 
+/// XP-11: clears the approval `arm_semantic` armed, whatever the registry
+/// call did. The adapter spends it when an action reaches it; this covers a
+/// call that failed before that.
+fn disarm_semantic(adapter: &ComputerHostAdapter) {
+    adapter.disarm_semantic();
+}
+
 /// XP-11: on a macOS or Linux host the adapter delivers a semantic action only
 /// while the approval just consumed is armed on the exact target. The
 /// identity comes from the registry's server-resolved binding, never from the
@@ -773,17 +780,20 @@ fn invoke_with_approval(
     require_full_user_desktop()?;
     let adapter = computer_host()?;
     arm_semantic(adapter, binding.hwnd, &binding.runtime_id, "invoke", None)?;
-    let mut guard = locked_registry()?;
-    let evidence = guard
-        .invoke_element(
-            adapter,
-            &element_id,
-            expected_tree_generation,
-            &expected_control_type,
-            &workspace.id,
-            POLICY_REVISION,
-        )
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
+    let result = locked_registry().and_then(|mut guard| {
+        guard
+            .invoke_element(
+                adapter,
+                &element_id,
+                expected_tree_generation,
+                &expected_control_type,
+                &workspace.id,
+                POLICY_REVISION,
+            )
+            .map_err(|error| ProviderError::new(error.code, error.message))
+    });
+    disarm_semantic(adapter);
+    let evidence = result?;
     let mut stamped = evidence;
     stamped["approval_record"] = Value::String(token.record_id);
     Ok(stamped)
@@ -892,18 +902,21 @@ fn set_value_with_approval(
         "set_value",
         Some(&binding.value_digest),
     )?;
-    let mut guard = locked_registry()?;
-    let evidence = guard
-        .set_value_element(
-            adapter,
-            &element_id,
-            expected_tree_generation,
-            &expected_control_type,
-            &value,
-            &workspace.id,
-            POLICY_REVISION,
-        )
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
+    let result = locked_registry().and_then(|mut guard| {
+        guard
+            .set_value_element(
+                adapter,
+                &element_id,
+                expected_tree_generation,
+                &expected_control_type,
+                &value,
+                &workspace.id,
+                POLICY_REVISION,
+            )
+            .map_err(|error| ProviderError::new(error.code, error.message))
+    });
+    disarm_semantic(adapter);
+    let evidence = result?;
     let mut stamped = evidence;
     stamped["approval_record"] = Value::String(token.record_id);
     Ok(stamped)
@@ -998,19 +1011,22 @@ fn select_with_approval(
     require_full_user_desktop()?;
     let adapter = computer_host()?;
     arm_semantic(adapter, binding.hwnd, &binding.runtime_id, "select", None)?;
-    let mut guard = locked_registry()?;
-    let evidence = guard
-        .select_element(
-            adapter,
-            &element_id,
-            expected_tree_generation,
-            &expected_control_type,
-            expected_selected,
-            selected,
-            &workspace.id,
-            POLICY_REVISION,
-        )
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
+    let result = locked_registry().and_then(|mut guard| {
+        guard
+            .select_element(
+                adapter,
+                &element_id,
+                expected_tree_generation,
+                &expected_control_type,
+                expected_selected,
+                selected,
+                &workspace.id,
+                POLICY_REVISION,
+            )
+            .map_err(|error| ProviderError::new(error.code, error.message))
+    });
+    disarm_semantic(adapter);
+    let evidence = result?;
     let mut stamped = evidence;
     stamped["approval_record"] = Value::String(token.record_id);
     Ok(stamped)
@@ -1592,20 +1608,33 @@ fn toggle_with_approval(
         .map_err(|error| ProviderError::new(error.code, error.message))?;
     require_full_user_desktop()?;
     let adapter = computer_host()?;
-    arm_semantic(adapter, binding.hwnd, &binding.runtime_id, "toggle", None)?;
-    let mut guard = locked_registry()?;
-    let evidence = guard
-        .toggle_element(
-            adapter,
-            &element_id,
-            expected_tree_generation,
-            &expected_control_type,
-            expected_toggled,
-            toggled,
-            &workspace.id,
-            POLICY_REVISION,
-        )
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
+    arm_semantic(
+        adapter,
+        binding.hwnd,
+        &binding.runtime_id,
+        "toggle",
+        Some(&orcel_provider_uia::value_content_digest(if toggled {
+            "true"
+        } else {
+            "false"
+        })),
+    )?;
+    let result = locked_registry().and_then(|mut guard| {
+        guard
+            .toggle_element(
+                adapter,
+                &element_id,
+                expected_tree_generation,
+                &expected_control_type,
+                expected_toggled,
+                toggled,
+                &workspace.id,
+                POLICY_REVISION,
+            )
+            .map_err(|error| ProviderError::new(error.code, error.message))
+    });
+    disarm_semantic(adapter);
+    let evidence = result?;
     let mut stamped = evidence;
     stamped["approval_record"] = Value::String(token.record_id);
     Ok(stamped)

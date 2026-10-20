@@ -14861,13 +14861,14 @@ mod orcel_semantic {
 
     /// The only argument names the tool accepts. A name that starts with `_`
     /// is a transport field the core strips and injects itself.
-    const ARGUMENTS: [&str; 6] = [
+    const ARGUMENTS: [&str; 7] = [
         "pid",
         "window_id",
         "element_token",
         "verb",
         "expect_role",
         "value",
+        "toggle_to",
     ];
 
     /// Longest text `set_value` writes, as the host protocol bounds it.
@@ -14950,7 +14951,8 @@ mod orcel_semantic {
                     "element_token": { "type": "string" },
                     "verb": { "type": "string", "enum": ["invoke", "set_value", "select", "toggle"] },
                     "expect_role": { "type": "string" },
-                    "value": { "type": "string" }
+                    "value": { "type": "string" },
+                    "toggle_to": { "type": "boolean" }
                 },
                 "additionalProperties": false
             }),
@@ -14968,6 +14970,7 @@ mod orcel_semantic {
         verb: Verb,
         expect_role: String,
         value: Option<String>,
+        toggle_to: Option<bool>,
     }
 
     fn decode(args: &Value) -> Result<Call, ToolResult> {
@@ -15027,12 +15030,19 @@ mod orcel_semantic {
             (_, None) => None,
             (_, Some(_)) => return invalid("only set_value takes a value"),
         };
+        let toggle_to = match (verb, object.get("toggle_to")) {
+            (Verb::Toggle, Some(Value::Bool(wanted))) => Some(*wanted),
+            (Verb::Toggle, _) => return invalid("toggle needs toggle_to, the state it asks for"),
+            (_, None) => None,
+            (_, Some(_)) => return invalid("only toggle takes toggle_to"),
+        };
         Ok(Call {
             pid,
             window_id,
             verb,
             expect_role: expect_role.to_owned(),
             value,
+            toggle_to,
         })
     }
 
@@ -15119,10 +15129,42 @@ mod orcel_semantic {
             let pid = call.pid;
             let verb = call.verb;
             let value = call.value.clone();
+            let expect_role_live = role.clone();
+            let toggle_to = call.toggle_to;
             let work = tokio::task::spawn_blocking(move || -> anyhow::Result<ToolResult> {
                 // An AT-SPI action can map a dialog or open a menu that the
                 // toolkit then focuses: snapshot the focus, act, restore.
                 let (result, _guard) = crate::input::focus_guard::guarded(Some(pid), || {
+                    // Re-read the live object immediately before acting, as
+                    // macOS re-reads AXRole: its role must still be the one
+                    // listed, it must not have become a password field, and
+                    // a toggle must not already be in the state it asks for.
+                    let Some(live_ref) = observed.object_ref.as_ref() else {
+                        return Err(crate::atspi::native::CachedElementGone(
+                            "observed element has no D-Bus address".into(),
+                        )
+                        .into());
+                    };
+                    let (live_role, checked) = crate::atspi::native::live_role_and_checked_ref(live_ref)?;
+                    let live_role = normalized(&live_role);
+                    if live_role.contains("password") {
+                        return Ok(refusal(
+                            "protected_surface",
+                            "the live element is a password field",
+                        ));
+                    }
+                    if live_role != expect_role_live {
+                        return Ok(refusal(
+                            "target_stale",
+                            "the live element's role is no longer the one the host listed",
+                        ));
+                    }
+                    if verb == Verb::Toggle && toggle_to == Some(checked) {
+                        return Ok(refusal(
+                            "target_stale",
+                            "the element is already in the requested state; it changed since it was observed",
+                        ));
+                    }
                     if verb == Verb::SetValue {
                         let text = value.as_deref().unwrap_or_default();
                         let Some(object_ref) = observed.object_ref.as_ref() else {

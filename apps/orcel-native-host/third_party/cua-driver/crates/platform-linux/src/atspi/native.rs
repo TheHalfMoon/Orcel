@@ -5338,6 +5338,26 @@ pub fn set_value_ref(object_ref: &ObjectRef, value: &str) -> Result<()> {
     )
 }
 
+/// Orcel P-09 (XP-11): the live role name and checked state of a
+/// snapshot-cached object, read right before an action. One state read and
+/// one role read; no tree walk.
+#[cfg(feature = "orcel-minimal")]
+pub fn live_role_and_checked_ref(object_ref: &ObjectRef) -> Result<(String, bool)> {
+    bounded_for(
+        REF_ACTION_BUDGET,
+        async {
+            let conn = shared_connection().await?;
+            let (acc, role) = live_accessible(conn, object_ref).await?;
+            let checked = match call(acc.get_state()).await {
+                Some(Ok(state)) => state.contains(State::Checked),
+                Some(Err(_)) | None => false,
+            };
+            Ok((role, checked))
+        },
+        || Err(anyhow!("live state read (cached element) timed out")),
+    )
+}
+
 /// Error prefix: a selection container (combo box, list) has no option
 /// with the requested text.
 pub const NO_SUCH_OPTION: &str = "no_such_option";

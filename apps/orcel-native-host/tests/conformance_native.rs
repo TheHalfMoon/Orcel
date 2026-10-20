@@ -213,7 +213,10 @@ fn run_ax_cells(
         report,
         prefix,
         reference,
-        &cell("toggle", "toggle", "I agree", "CheckBox"),
+        &conformance::ActionCell {
+            value: Some("true"),
+            ..cell("toggle", "toggle", "I agree", "CheckBox")
+        },
         &mut state,
         |now| now["agreed"] == true,
     );

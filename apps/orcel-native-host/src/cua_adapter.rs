@@ -72,6 +72,9 @@ pub struct SemanticCall {
     /// when the live element's role differs.
     pub expect_role: String,
     pub value: Option<String>,
+    /// The state a toggle asks for. The tool reads the live state first and
+    /// refuses as stale when the element is already there.
+    pub toggle_to: Option<bool>,
 }
 
 /// The only Cua tools the host calls.
@@ -175,6 +178,14 @@ impl SemanticCall {
             "verb": self.verb.as_str(),
             "expect_role": self.expect_role,
         });
+        match (self.verb, self.toggle_to) {
+            (Verb::Toggle, Some(wanted)) => arguments["toggle_to"] = Value::Bool(wanted),
+            (Verb::Toggle, None) => {
+                return Err(CuaFailure::invalid("toggle needs the state it asks for"))
+            }
+            (_, None) => {}
+            (_, Some(_)) => return Err(CuaFailure::invalid("only toggle takes toggle_to")),
+        }
         match (self.verb, &self.value) {
             (Verb::SetValue, Some(value)) if value.len() <= MAX_TEXT_BYTES => {
                 arguments["value"] = Value::String(value.clone());
@@ -382,6 +393,7 @@ mod tests {
             verb,
             expect_role: "AXButton".into(),
             value: value.map(str::to_owned),
+            toggle_to: (verb == Verb::Toggle).then_some(true),
         }
     }
 
@@ -530,28 +542,16 @@ mod tests {
         assert!(status["screen_recording"].is_boolean());
     }
 
-    /// A refusal of malformed arguments: the registry's own schema check
-    /// (`invalid_arguments`, its `unknown argument` refusal) or the tool's
-    /// (`invalid_request`). Either one happens before any accessibility call.
+    /// The code a refusal carries: the tool's own (`code`) or the registry's
+    /// envelope (`refusal.code`).
     #[cfg(any(target_os = "macos", target_os = "linux"))]
-    fn refused_as_invalid(failure: &CuaFailure) -> bool {
-        let code = failure.structured.as_ref().and_then(|value| {
+    fn refusal_code(failure: &CuaFailure) -> Option<&str> {
+        failure.structured.as_ref().and_then(|value| {
             value
                 .get("code")
                 .or_else(|| value.pointer("/refusal/code"))
                 .and_then(Value::as_str)
-        });
-        // The registry's argument normalisation names its own refusals
-        // (macOS: `invalid_action_target` for a scope next to a pid). What
-        // matters is that the call was refused before the tool looked up the
-        // snapshot: a call the tool accepted would reach the stale-snapshot
-        // refusal that the well-formed base call gets.
-        matches!(
-            code,
-            Some("invalid_request" | "invalid_arguments" | "invalid_action_target")
-        ) || !format!("{failure:?}")
-            .to_ascii_lowercase()
-            .contains("stale")
+        })
     }
 
     /// XP-11 / P-09: the action tool takes an element and a verb. Every name
@@ -574,25 +574,49 @@ mod tests {
             "verb": "invoke",
             "expect_role": "push button",
         });
-        for (name, extra) in [
-            ("x", serde_json::json!(10)),
-            ("y", serde_json::json!(10)),
-            ("button", serde_json::json!("left")),
-            ("count", serde_json::json!(2)),
-            ("modifier", serde_json::json!(["cmd"])),
-            ("delivery_mode", serde_json::json!("foreground")),
-            ("scope", serde_json::json!("desktop")),
-            ("capture_id", serde_json::json!("c1")),
-            ("text", serde_json::json!("typed")),
-            ("action", serde_json::json!("press")),
-            ("from_zoom", serde_json::json!(true)),
+        // Each argument that could address a pixel, with the exact refusal
+        // the registry gives it on this OS. The registry rejects an unknown
+        // argument itself (`invalid_arguments`); the one that differs is
+        // `scope`, which macOS refuses in its action-target normalisation
+        // (`invalid_action_target`) and Linux rewrites to a desktop
+        // `coordinate_frame`, which is then an unknown argument.
+        let scope_code = if cfg!(target_os = "macos") {
+            "invalid_action_target"
+        } else {
+            "invalid_arguments"
+        };
+        for (name, extra, expected) in [
+            ("x", serde_json::json!(10), "invalid_arguments"),
+            ("y", serde_json::json!(10), "invalid_arguments"),
+            ("button", serde_json::json!("left"), "invalid_arguments"),
+            ("count", serde_json::json!(2), "invalid_arguments"),
+            ("modifier", serde_json::json!(["cmd"]), "invalid_arguments"),
+            (
+                "delivery_mode",
+                serde_json::json!("foreground"),
+                "invalid_arguments",
+            ),
+            ("scope", serde_json::json!("desktop"), scope_code),
+            (
+                "coordinate_frame",
+                serde_json::json!("desktop"),
+                "invalid_arguments",
+            ),
+            ("capture_id", serde_json::json!("c1"), "invalid_arguments"),
+            ("text", serde_json::json!("typed"), "invalid_arguments"),
+            ("action", serde_json::json!("press"), "invalid_arguments"),
+            ("from_zoom", serde_json::json!(true), "invalid_arguments"),
         ] {
             let mut arguments = base.clone();
             arguments[name] = extra;
             let refused = executor
                 .block_on(runtime.invoke_for_test(SEMANTIC_ACTION_TOOL, arguments))
                 .unwrap_err();
-            assert!(refused_as_invalid(&refused), "{name}: {refused:?}");
+            assert_eq!(
+                refusal_code(&refused),
+                Some(expected),
+                "{name}: {refused:?}"
+            );
         }
         // A bare row number or a malformed token is not an element token.
         for token in ["3", "x:3", "s0000000g:3", ""] {
@@ -601,7 +625,11 @@ mod tests {
             let refused = executor
                 .block_on(runtime.invoke_for_test(SEMANTIC_ACTION_TOOL, arguments))
                 .unwrap_err();
-            assert!(refused_as_invalid(&refused), "{token:?}: {refused:?}");
+            assert_eq!(
+                refusal_code(&refused),
+                Some("invalid_request"),
+                "{token:?}: {refused:?}"
+            );
         }
         // Verbs outside the closed set, scroll included.
         for verb in ["scroll", "click", "type", "drag", "press", ""] {
@@ -610,7 +638,27 @@ mod tests {
             let refused = executor
                 .block_on(runtime.invoke_for_test(SEMANTIC_ACTION_TOOL, arguments))
                 .unwrap_err();
-            assert!(refused_as_invalid(&refused), "{verb:?}: {refused:?}");
+            assert_eq!(
+                refusal_code(&refused),
+                Some("invalid_request"),
+                "{verb:?}: {refused:?}"
+            );
+        }
+        // A toggle names the state it asks for, and nothing else may.
+        for (verb, extra) in [("toggle", None), ("invoke", Some(true))] {
+            let mut arguments = base.clone();
+            arguments["verb"] = serde_json::json!(verb);
+            if let Some(wanted) = extra {
+                arguments["toggle_to"] = serde_json::json!(wanted);
+            }
+            let refused = executor
+                .block_on(runtime.invoke_for_test(SEMANTIC_ACTION_TOOL, arguments))
+                .unwrap_err();
+            assert_eq!(
+                refusal_code(&refused),
+                Some("invalid_request"),
+                "{verb:?}: {refused:?}"
+            );
         }
         // A well-formed call for a snapshot this process never took is stale.
         let stale = executor

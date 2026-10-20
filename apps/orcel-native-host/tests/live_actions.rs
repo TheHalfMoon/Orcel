@@ -150,7 +150,7 @@ fn xp11_live_refusals_and_one_real_action() {
     for (verb, value) in [
         ("set_value", Some("typed-into-a-password-field")),
         ("invoke", None),
-        ("toggle", None),
+        ("toggle", Some("true")),
         ("select", None),
     ] {
         let reply = action(&mut host, &reference, verb, &password, value);
@@ -162,7 +162,11 @@ fn xp11_live_refusals_and_one_real_action() {
     // An Orcel approval surface takes no action: an agent can never press
     // Approve. The window is listed and bound exactly, and the refusal comes
     // before its tree is read.
-    for (verb, value) in [("invoke", None), ("set_value", Some("x")), ("toggle", None)] {
+    for (verb, value) in [
+        ("invoke", None),
+        ("set_value", Some("x")),
+        ("toggle", Some("true")),
+    ] {
         let reply = action(
             &mut host,
             &approval_reference,
@@ -175,7 +179,7 @@ fn xp11_live_refusals_and_one_real_action() {
     }
 
     // A verb that does not suit the element, and a pixel-addressed frame.
-    let reply = action(&mut host, &reference, "toggle", &submit, None);
+    let reply = action(&mut host, &reference, "toggle", &submit, Some("true"));
     assert_eq!(error_code(&reply), "capability_denied", "{reply}");
     let reply = action(&mut host, &reference, "invoke", &plain, None);
     assert_eq!(error_code(&reply), "capability_denied", "{reply}");

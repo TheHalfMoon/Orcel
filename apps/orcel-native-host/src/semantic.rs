@@ -196,6 +196,24 @@ pub fn plan(
                     "the element does not advertise an activation action; there is no pointer fallback",
                 ));
             }
+            // Never flip blindly: the live element must not already be in
+            // the state the approved action asks for.
+            let wanted = match value {
+                Some("true") => true,
+                Some("false") => false,
+                _ => {
+                    return Err(refuse(
+                        code::INVALID_REQUEST,
+                        "toggle needs the state it asks for, \"true\" or \"false\"",
+                    ))
+                }
+            };
+            if fact.toggled == wanted {
+                return Err(refuse(
+                    code::TARGET_STALE,
+                    "the element is already in the requested state; it changed since it was observed",
+                ));
+            }
         }
         Verb::Select => {
             if !matches!(control, "RadioButton" | "TabItem" | "ListItem" | "TreeItem")
@@ -268,7 +286,36 @@ mod tests {
 
     fn judge(verb: Verb, element: &WindowElement, value: Option<&str>) -> Result<(), Refusal> {
         let fact = element_fact(element, "e");
+        let value = match (verb, value) {
+            (Verb::Toggle, None) => Some("true"),
+            (_, value) => value,
+        };
         plan(verb, element, &fact, value)
+    }
+
+    #[test]
+    fn a_toggle_acts_only_when_the_live_state_differs() {
+        let mut checkbox = element(2, "AXCheckBox", "I agree", &["AXPress"]);
+        // Unchecked: asking for checked acts, asking for unchecked does not.
+        assert_eq!(judge(Verb::Toggle, &checkbox, Some("true")), Ok(()));
+        assert_eq!(
+            denied(judge(Verb::Toggle, &checkbox, Some("false"))),
+            code::TARGET_STALE
+        );
+        // Checked since it was observed.
+        checkbox.selected = Some(true);
+        assert_eq!(judge(Verb::Toggle, &checkbox, Some("false")), Ok(()));
+        assert_eq!(
+            denied(judge(Verb::Toggle, &checkbox, Some("true"))),
+            code::TARGET_STALE
+        );
+        for bad in ["", "1", "maybe", "True"] {
+            assert_eq!(
+                denied(judge(Verb::Toggle, &checkbox, Some(bad))),
+                code::INVALID_REQUEST,
+                "{bad:?}"
+            );
+        }
     }
 
     fn denied(result: Result<(), Refusal>) -> &'static str {

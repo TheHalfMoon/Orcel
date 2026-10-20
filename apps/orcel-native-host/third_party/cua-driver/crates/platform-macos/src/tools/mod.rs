@@ -1456,7 +1456,8 @@ pub(crate) mod orcel_semantic {
     use super::{finish_window_observation, gate_background_window_action, ToolState};
     use crate::apps;
     use crate::ax::bindings::{
-        copy_action_names, copy_bool_attr, copy_string_attr, is_attribute_settable,
+        copy_action_names, copy_bool_attr, copy_number_attr, copy_string_attr,
+        is_attribute_settable,
         kAXErrorSuccess, set_number_attr, set_string_attr, AXUIElementRef,
     };
     use crate::focus_guard;
@@ -1472,13 +1473,14 @@ pub(crate) mod orcel_semantic {
 
     /// The only argument names the tool accepts. A name that starts with `_`
     /// is a transport field the core strips and injects itself.
-    const ARGUMENTS: [&str; 6] = [
+    const ARGUMENTS: [&str; 7] = [
         "pid",
         "window_id",
         "element_token",
         "verb",
         "expect_role",
         "value",
+        "toggle_to",
     ];
 
     /// Longest text `set_value` writes, as the host protocol bounds it.
@@ -1561,7 +1563,8 @@ pub(crate) mod orcel_semantic {
                     "element_token": { "type": "string" },
                     "verb": { "type": "string", "enum": ["invoke", "set_value", "select", "toggle"] },
                     "expect_role": { "type": "string" },
-                    "value": { "type": "string" }
+                    "value": { "type": "string" },
+                    "toggle_to": { "type": "boolean" }
                 },
                 "additionalProperties": false
             }),
@@ -1579,6 +1582,7 @@ pub(crate) mod orcel_semantic {
         verb: Verb,
         expect_role: String,
         value: Option<String>,
+        toggle_to: Option<bool>,
     }
 
     fn decode(args: &Value) -> Result<Call, ToolResult> {
@@ -1639,12 +1643,19 @@ pub(crate) mod orcel_semantic {
             (_, None) => None,
             (_, Some(_)) => return invalid("only set_value takes a value"),
         };
+        let toggle_to = match (verb, object.get("toggle_to")) {
+            (Verb::Toggle, Some(Value::Bool(wanted))) => Some(*wanted),
+            (Verb::Toggle, _) => return invalid("toggle needs toggle_to, the state it asks for"),
+            (_, None) => None,
+            (_, Some(_)) => return invalid("only toggle takes toggle_to"),
+        };
         Ok(Call {
             pid,
             window_id,
             verb,
             expect_role: expect_role.to_owned(),
             value,
+            toggle_to,
         })
     }
 
@@ -1747,6 +1758,27 @@ pub(crate) mod orcel_semantic {
         // SAFETY: as above.
         if unsafe { copy_bool_attr(element, "AXEnabled") } == Some(false) {
             return refusal("capability_denied", "the element is disabled");
+        }
+        if call.verb == Verb::Toggle {
+            // Never flip blindly: read the live state now and act only when
+            // it is not already the one asked for.
+            // SAFETY: as above.
+            let live = unsafe { copy_number_attr(element, "AXValue") };
+            match (live, call.toggle_to) {
+                (Some(value), Some(wanted)) if (value != 0.0) == wanted => {
+                    return refusal(
+                        "target_stale",
+                        "the element is already in the requested state; it changed since it was observed",
+                    )
+                }
+                (Some(_), Some(_)) => {}
+                _ => {
+                    return refusal(
+                        "capability_denied",
+                        "the element's state is not readable, so a toggle would be a blind flip",
+                    )
+                }
+            }
         }
         match call.verb {
             Verb::SetValue => set_value(element, element_index, &role, call),

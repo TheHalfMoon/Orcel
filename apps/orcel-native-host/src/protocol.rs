@@ -670,8 +670,16 @@ fn validate_semantic(request: &Request) -> Result<(), Refusal> {
     if addressed_by_position_or_key {
         return invalid("semantic_action names its target by window and element only");
     }
-    if verb != crate::semantic::Verb::SetValue && request.value.is_some() {
-        return invalid("only set_value carries a value");
+    match (verb, request.value.as_deref()) {
+        (crate::semantic::Verb::SetValue, _) => {}
+        // A toggle names the state it asks for, so the host acts only when
+        // the live element is not already there and never flips blindly.
+        (crate::semantic::Verb::Toggle, Some("true" | "false")) => {}
+        (crate::semantic::Verb::Toggle, _) => {
+            return invalid("toggle carries value \"true\" or \"false\", the state it asks for");
+        }
+        (_, Some(_)) => return invalid("only set_value and toggle carry a value"),
+        (_, None) => {}
     }
     Ok(())
 }
@@ -797,7 +805,7 @@ mod tests {
     fn semantic_action_names_window_and_element_only() {
         for (verb, extra) in [
             ("invoke", ""),
-            ("toggle", ""),
+            ("toggle", r#","value":"true""#),
             ("select", ""),
             ("set_value", r#","value":"hello""#),
         ] {
@@ -821,6 +829,7 @@ mod tests {
             r#","window_action":"close""#,
             r#","max_nodes":10"#,
             r#","value":"not a set_value""#,
+            r#","value":"maybe""#,
         ] {
             let line = semantic(&format!(
                 r#""semantic_action":"invoke","element_runtime_id":"e3-0011223344556677"{extra}"#
