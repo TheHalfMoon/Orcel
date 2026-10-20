@@ -7,6 +7,14 @@ use std::time::Duration;
 /// process creation), run through the pinned `orcel-contain` helper.
 pub mod contained;
 
+/// XP-13b: the Safe tier on Linux and macOS (process group, pidfd or
+/// kqueue, cgroup v2 when delegated, rlimits, owned cleanup).
+#[cfg(all(
+    any(target_os = "linux", target_os = "macos"),
+    target_pointer_width = "64"
+))]
+mod unix;
+
 const SECRETISH: &[&str] = &[
     "SECRET",
     "TOKEN",
@@ -71,6 +79,11 @@ pub struct ExecutionPlan {
     pub cwd: PathBuf,
     pub env: BTreeMap<String, String>,
     pub limits: ExecutionLimits,
+    /// XP-13b: the registered SHA-256 (lower-case hex) the caller verified.
+    /// On Linux and macOS the Safe tier hashes the file it opens against
+    /// it and runs that same open file. `None` (the default from
+    /// [`build_execution_plan`]) skips the digest, not the location check.
+    pub registered_sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,6 +143,7 @@ pub fn build_execution_plan(
         argv: argv.to_vec(),
         cwd,
         env: sanitized_execution_env(source_env),
+        registered_sha256: None,
         limits,
     })
 }
@@ -744,6 +758,12 @@ pub enum PrivateExecutionFailure {
     ProcessTimeout,
     OutputLimit(OutputStream),
     TerminationUnverified,
+    /// XP-13b: the executable could be replaced by another local user (its
+    /// file or a directory above it is shared-writable or foreign-owned).
+    ExecutableRejected(String),
+    /// XP-13b: the file opened for launch does not match the registered
+    /// digest, or changed between the check and the launch.
+    IdentityChanged,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -761,6 +781,9 @@ pub(crate) enum PrivateExecutionMode {
     StdoutLimit,
     StderrLimit,
     DescendantDrain,
+    /// XP-13b: a descendant in the job that holds none of the run's pipes and
+    /// outlives the primary; owned cleanup must end it.
+    DetachedDescendant,
 }
 
 #[cfg(windows)]
@@ -771,13 +794,35 @@ pub fn execute_contained(
     qualify_private_execution_mode(plan, profile_name, PrivateExecutionMode::Public)
 }
 
-#[cfg(not(windows))]
+/// Linux and macOS: the profile name names a Windows AppContainer and is
+/// unused. The result's `appcontainer_verified` is false;
+/// `assigned_to_job_before_resume` and `job_quiescent` report the process
+/// group (and cgroup, when delegated) set before exec and seen empty after
+/// the run. See `unix.rs`.
+#[cfg(all(
+    any(target_os = "linux", target_os = "macos"),
+    target_pointer_width = "64"
+))]
+pub fn execute_contained(
+    plan: ExecutionPlan,
+    _profile_name: &str,
+) -> Result<PrivateExecutionResult, PrivateExecutionFailure> {
+    unix::execute(plan)
+}
+
+#[cfg(not(any(
+    windows,
+    all(
+        any(target_os = "linux", target_os = "macos"),
+        target_pointer_width = "64"
+    )
+)))]
 pub fn execute_contained(
     _plan: ExecutionPlan,
     _profile_name: &str,
 ) -> Result<PrivateExecutionResult, PrivateExecutionFailure> {
     Err(PrivateExecutionFailure::Provider(
-        "contained execution is available only on Windows".into(),
+        "registered executable execution is not available on this platform".into(),
     ))
 }
 
@@ -1080,7 +1125,7 @@ mod windows_contained_launch {
             flags_and_attributes: u32,
             template_file: Handle,
         ) -> Handle;
-        fn SetHandleInformation(handle: Handle, mask: u32, flags: u32) -> i32;
+        fn SetHandleInformation(handle: *mut core::ffi::c_void, mask: u32, flags: u32) -> i32;
         fn PeekNamedPipe(
             pipe: Handle,
             buffer: *mut c_void,
@@ -2321,7 +2366,8 @@ mod windows_contained_launch {
             PrivateExecutionMode::Timeout
             | PrivateExecutionMode::StdoutLimit
             | PrivateExecutionMode::StderrLimit
-            | PrivateExecutionMode::DescendantDrain => std::env::current_exe()
+            | PrivateExecutionMode::DescendantDrain
+            | PrivateExecutionMode::DetachedDescendant => std::env::current_exe()
                 .map_err(|error| PrivateExecutionFailure::InvalidPlan(error.to_string()))?,
         };
         let expected_executable = std::fs::canonicalize(expected_executable)
@@ -2344,11 +2390,13 @@ mod windows_contained_launch {
                 "contained_launch_tests::private_stderr_fixture_child".into(),
                 "--nocapture".into(),
             ],
-            PrivateExecutionMode::DescendantDrain => vec![
-                "--exact".into(),
-                "contained_launch_tests::private_descendant_primary_child".into(),
-                "--nocapture".into(),
-            ],
+            PrivateExecutionMode::DescendantDrain | PrivateExecutionMode::DetachedDescendant => {
+                vec![
+                    "--exact".into(),
+                    "contained_launch_tests::private_descendant_primary_child".into(),
+                    "--nocapture".into(),
+                ]
+            }
         };
         if expected_executable != plan.executable || expected_argv != plan.argv {
             return Err(PrivateExecutionFailure::InvalidPlan(
@@ -2372,15 +2420,18 @@ mod windows_contained_launch {
             Ok(child) => child,
             Err(error) => return Err(PrivateExecutionFailure::Provider(error.message)),
         };
+        // Keeps a detached descendant's pipe read ends open for the run.
+        let mut _detached_pipes = None;
         let mut descendant = if matches!(
             mode,
             PrivateExecutionMode::Timeout
                 | PrivateExecutionMode::StdoutLimit
                 | PrivateExecutionMode::StderrLimit
                 | PrivateExecutionMode::DescendantDrain
+                | PrivateExecutionMode::DetachedDescendant
         ) {
             let descendant_argv = match mode {
-                PrivateExecutionMode::Timeout => vec![
+                PrivateExecutionMode::Timeout | PrivateExecutionMode::DetachedDescendant => vec![
                     "--exact".to_owned(),
                     "contained_launch_tests::private_timeout_descendant".to_owned(),
                     "--nocapture".to_owned(),
@@ -2396,12 +2447,25 @@ mod windows_contained_launch {
             };
             let mut descendant_plan = plan.clone();
             descendant_plan.argv = descendant_argv;
+            // A detached descendant writes to pipes of its own, so the run's
+            // output closes when the primary exits.
+            let (descendant_stdout, descendant_stderr) =
+                if mode == PrivateExecutionMode::DetachedDescendant {
+                    let (reader, writer) = PrivatePipe::create()
+                        .map_err(|e| PrivateExecutionFailure::Provider(e.message))?;
+                    let (error_reader, error_writer) = PrivatePipe::create()
+                        .map_err(|e| PrivateExecutionFailure::Provider(e.message))?;
+                    _detached_pipes = Some((reader, error_reader));
+                    (Some(writer), Some(error_writer))
+                } else {
+                    (None, None)
+                };
             Some(
                 match ChildProcess::create_suspended_with_pipes(
                     profile.sid(),
                     &descendant_plan,
-                    &stdout_write,
-                    &stderr_write,
+                    descendant_stdout.as_ref().unwrap_or(&stdout_write),
+                    descendant_stderr.as_ref().unwrap_or(&stderr_write),
                 ) {
                     Ok(descendant) => descendant,
                     Err(error) => return Err(PrivateExecutionFailure::Provider(error.message)),
@@ -2537,6 +2601,15 @@ mod windows_contained_launch {
                     }
                 }
             }
+        }
+        // XP-13b: owned cleanup, as on Linux and macOS. A descendant still
+        // running once the primary has exited and its output is drained is
+        // ended with the job, not waited on.
+        let active = job
+            .active_processes()
+            .map_err(|_| PrivateExecutionFailure::TerminationUnverified)?;
+        if active > 0 && job.terminate().is_err() {
+            return Err(PrivateExecutionFailure::TerminationUnverified);
         }
         let quiescent = job
             .wait_for_quiescence()
@@ -3677,6 +3750,52 @@ mod contained_launch_tests {
             result,
             Err(PrivateExecutionFailure::OutputLimit(OutputStream::Stderr))
         );
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    /// XP-13b, the card's negative test on Windows: a descendant in the
+    /// run's job that outlives the primary and holds none of its pipes. The
+    /// run completes and owned cleanup ends the descendant with the job; if
+    /// it were waited on instead, the run would end `TerminationUnverified`
+    /// after the 5 s quiescence wait. The harness creates the descendant
+    /// into the job, as the other descendant tests do: on the hosted runner
+    /// an AppContainer child is refused process creation outright (Access
+    /// denied even for System32's cmd.exe), so the child cannot be the one
+    /// to start it there. A descendant the child itself creates is therefore
+    /// not exercised on hosted runners: that path relies on Windows placing
+    /// every child process in its parent's job, which holds because the job
+    /// never sets `JOB_OBJECT_LIMIT_BREAKAWAY_OK` (or
+    /// `SILENT_BREAKAWAY_OK`), so no descendant can leave it.
+    #[test]
+    fn xp13b_windows_a_descendant_that_outlives_the_child_is_cleaned_up() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let limits = ExecutionLimits {
+            timeout: Duration::from_secs(20),
+            stdout_bytes: 16 * 1024,
+            stderr_bytes: 16 * 1024,
+        };
+        let (workspace, plan) = private_fixture_plan(
+            suffix,
+            "contained_launch_tests::private_descendant_primary_child",
+            limits,
+        );
+        let started = std::time::Instant::now();
+        let result = qualify_private_execution_mode(
+            plan,
+            &format!("Orcel.Private.DetachedDescendant.{suffix}"),
+            PrivateExecutionMode::DetachedDescendant,
+        )
+        .expect("a run whose descendant outlives the primary completes");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            started.elapsed()
+        );
+        assert_eq!(result.exit_code, 0);
+        assert!(result.job_quiescent);
         let _ = std::fs::remove_dir_all(workspace);
     }
 

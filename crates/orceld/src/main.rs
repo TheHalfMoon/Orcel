@@ -367,7 +367,7 @@ fn process_spawn(
     }
 
     let source_env = std::env::vars().collect::<BTreeMap<_, _>>();
-    let plan = build_execution_plan(
+    let mut plan = build_execution_plan(
         &workspace.root,
         executable,
         &argv,
@@ -406,7 +406,7 @@ fn process_spawn(
         )
         .map_err(|error| ProviderError::new(error.code, error.message))?;
 
-    verify_registered_identity(&plan)?;
+    plan.registered_sha256 = verify_registered_identity(&plan)?;
     let profile = process_profile_name(&request.request_id);
     let result = execute_contained(plan, &profile).map_err(map_process_failure)?;
     Ok(json!({
@@ -423,15 +423,20 @@ fn process_spawn(
 
 /// SG-000060: immediately before launch, a non-baseline executable must
 /// still be registered, match its argv grammar, and keep its registered path,
-/// size, and SHA-256. Any drift fails closed.
-#[cfg(windows)]
-fn verify_registered_identity(plan: &orcel_provider_process::ExecutionPlan) -> Result<(), ProviderError> {
+/// size, and SHA-256. Any drift fails closed. This holds on every OS
+/// (XP-13b); only Windows has a built-in baseline executable.
+/// Returns the registered digest, so the Safe tier on Linux and macOS can
+/// check the very file it launches against it (`None` for the baseline).
+fn verify_registered_identity(
+    plan: &orcel_provider_process::ExecutionPlan,
+) -> Result<Option<String>, ProviderError> {
+    #[cfg(windows)]
     if let Some(system_root) = std::env::var_os("SystemRoot") {
         let baseline = std::fs::canonicalize(
             PathBuf::from(system_root).join("System32").join("whoami.exe"),
         );
         if baseline.as_ref().is_ok_and(|path| *path == plan.executable) {
-            return Ok(());
+            return Ok(None);
         }
     }
     let registry_path = orcel_policy::executable_registry::default_registry_path().map_err(|error| {
@@ -444,12 +449,8 @@ fn verify_registered_identity(plan: &orcel_provider_process::ExecutionPlan) -> R
     let entry = orcel_policy::executable_registry::check_spawn(&entries, &plan.executable, &plan.argv)
         .map_err(|error| ProviderError::new(error.code, error.message))?;
     orcel_policy::executable_registry::verify_identity(entry, &plan.executable)
-        .map_err(|error| ProviderError::new(error.code, error.message))
-}
-
-#[cfg(not(windows))]
-fn verify_registered_identity(_plan: &orcel_provider_process::ExecutionPlan) -> Result<(), ProviderError> {
-    Ok(())
+        .map_err(|error| ProviderError::new(error.code, error.message))?;
+    Ok(Some(entry.sha256.clone()))
 }
 
 fn process_approval_digest(
@@ -522,6 +523,13 @@ fn map_process_failure(error: PrivateExecutionFailure) -> ProviderError {
                     "process stderr exceeded the approved bound and the Job was verified quiescent"
                 }
             },
+        ),
+        PrivateExecutionFailure::ExecutableRejected(message) => {
+            ProviderError::new(FailureCode::CapabilityDenied, message)
+        }
+        PrivateExecutionFailure::IdentityChanged => ProviderError::new(
+            FailureCode::TargetStale,
+            "registered executable changed before launch; nothing was started",
         ),
         PrivateExecutionFailure::TerminationUnverified => ProviderError::new(
             FailureCode::ProcessTerminationUnverified,
@@ -605,9 +613,7 @@ fn content(request: &RequestEnvelope) -> Result<&str, ProviderError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(windows)]
     use orcel_approval::test_support::FixedApprovalBroker;
-    #[cfg(windows)]
     use orcel_approval::ApprovalDecision;
     use orcel_approval::{ApprovalError, ApprovalPrompt};
     use serde_json::json;
@@ -664,6 +670,26 @@ mod tests {
                 message: "approval unavailable in test".into(),
             })
         }
+    }
+
+    /// Tests that point `ORCEL_EXECUTABLE_REGISTRY_PATH` at their own
+    /// registry hold this, so they never read each other's.
+    static REGISTRY_ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn registry_env() -> std::sync::MutexGuard<'static, ()> {
+        REGISTRY_ENV
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// A registry file in a private (0700) directory, as the override
+    /// requires off Windows.
+    #[cfg(not(windows))]
+    fn private_registry(label: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_root(label);
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).expect("private registry dir");
+        dir.join("executable_registry.json")
     }
 
     fn temp_root(label: &str) -> PathBuf {
@@ -752,8 +778,20 @@ mod tests {
                 .join("System32")
                 .join("whoami.exe")
         };
+        // Off Windows there is no baseline: register this test binary (it
+        // never runs here, both brokers refuse first).
+        let _registry = registry_env();
         #[cfg(not(windows))]
-        let executable = std::env::current_exe().expect("test executable");
+        let executable = {
+            use orcel_policy::executable_registry::{build_entry, save_registry};
+            let executable =
+                fs::canonicalize(std::env::current_exe().expect("test executable")).expect("canonical");
+            let registry = private_registry("process-approval-registry");
+            let entry = build_entry("fixture", &executable, vec![], vec![], 0, &[], 1).expect("registrable");
+            save_registry(&registry, &[entry]).expect("save registry");
+            std::env::set_var("ORCEL_EXECUTABLE_REGISTRY_PATH", &registry);
+            executable
+        };
         let request = process_request(&workspace, executable);
         policy
             .authorize(&request)
@@ -844,6 +882,7 @@ mod tests {
     #[test]
     fn sg000060_registered_executables_run_contained_and_drift_fails_closed() {
         use orcel_policy::executable_registry::{build_entry, save_registry, RegisteredExecutable};
+        let _registry = registry_env();
         let root = temp_root("process-registry");
         let workspace = Workspace {
             id: "default".into(),
@@ -913,6 +952,83 @@ mod tests {
         assert_eq!(result["job_quiescent"], true);
         assert_eq!(result["network_class"], "NONE");
         let _ = fs::remove_file(&registry);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// XP-13b: SG-000060 on Linux and macOS. The registry is enforced by
+    /// policy and again before launch, and an intact registered executable
+    /// runs through the Unix Safe tier (process group, owned cleanup).
+    #[cfg(unix)]
+    #[test]
+    fn xp13b_registered_executables_run_in_the_safe_tier_off_windows() {
+        use orcel_policy::executable_registry::{build_entry, save_registry, RegisteredExecutable};
+        let _registry = registry_env();
+        let root = temp_root("process-registry-unix");
+        let workspace = Workspace {
+            id: "default".into(),
+            root: fs::canonicalize(&root).expect("canonical workspace"),
+        };
+        let registry = private_registry("process-registry-unix-store");
+        save_registry(&registry, &[]).expect("empty registry");
+        std::env::set_var("ORCEL_EXECUTABLE_REGISTRY_PATH", &registry);
+        let policy = PolicyEngine::new(vec![workspace.clone()]).expect("policy");
+        let hostname = fs::canonicalize("/bin/hostname").expect("hostname");
+        let mut request = process_request(&workspace, hostname.clone());
+        request.request_id = "process-registry-unix-test-request".into();
+
+        // Unregistered: denied by policy before any approval.
+        let error = policy.authorize(&request).expect_err("unregistered executable");
+        assert_eq!(error.code, FailureCode::CapabilityDenied);
+
+        // Registered with an empty grammar: argv must be empty.
+        let entry = build_entry("hostname", &hostname, vec![], vec![], 0, std::slice::from_ref(&workspace.root), 1)
+            .expect("registrable system executable");
+        save_registry(&registry, std::slice::from_ref(&entry)).expect("save registry");
+        policy.authorize(&request).expect("registered executable");
+        let mut with_args = request.clone();
+        with_args.arguments["argv"] = json!(["-f"]);
+        assert_eq!(
+            policy.authorize(&with_args).expect_err("grammar").code,
+            FailureCode::CapabilityDenied
+        );
+        let mut shell = request.clone();
+        shell.arguments["executable"] = json!(fs::canonicalize("/bin/sh").expect("sh"));
+        assert_eq!(
+            policy.authorize(&shell).expect_err("shell").code,
+            FailureCode::CapabilityDenied
+        );
+
+        // Drifted identity: approved, but refused before launch.
+        let drifted = RegisteredExecutable {
+            sha256: "0".repeat(64),
+            ..entry.clone()
+        };
+        save_registry(&registry, &[drifted]).expect("save drifted registry");
+        let stale = dispatch(
+            &policy,
+            &workspace,
+            &FixedApprovalBroker(ApprovalDecision::Approved),
+            &request,
+        )
+        .expect_err("hash drift fails closed before launch");
+        assert_eq!(stale.code, FailureCode::TargetStale);
+
+        // Intact identity: runs through the Unix Safe tier.
+        save_registry(&registry, std::slice::from_ref(&entry)).expect("save registry");
+        let result = dispatch(
+            &policy,
+            &workspace,
+            &FixedApprovalBroker(ApprovalDecision::Approved),
+            &request,
+        )
+        .expect("registered executable runs through the Safe tier");
+        assert_eq!(result["exit_code"], 0);
+        assert!(result["stdout"].as_str().is_some_and(|value| !value.trim().is_empty()));
+        assert_eq!(result["appcontainer_verified"], false);
+        assert_eq!(result["assigned_to_job_before_resume"], true);
+        assert_eq!(result["job_quiescent"], true);
+        assert_eq!(result["network_class"], "NONE");
+        let _ = fs::remove_dir_all(registry.parent().expect("registry dir"));
         let _ = fs::remove_dir_all(root);
     }
 }

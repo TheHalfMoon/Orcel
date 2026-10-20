@@ -221,6 +221,18 @@ pub fn ensure_private_dir(path: &Path) -> Result<(), PlatformError> {
     imp::ensure_private_dir(path)
 }
 
+/// XP-13b: an executable Orcel registers, hashes and runs must not be
+/// replaceable by anyone but the user or root. The file is a regular file,
+/// not a link, and it and every ancestor directory are owned by the user or
+/// root and not writable by group or others. A world-writable ancestor is
+/// accepted only when it is root-owned and sticky, like `/tmp`, because there
+/// nobody else can rename or remove the user's own entries. Windows has no
+/// equivalent check yet; its executables run from the per-user or
+/// administrator install roots.
+pub fn check_owned_executable_location(path: &Path) -> Result<(), String> {
+    imp::check_owned_executable_location(path)
+}
+
 /// A file location from an `ORCEL_*_PATH` override. Empty and relative
 /// values are refused, so an override never resolves against the working
 /// directory of whichever process reads it.
@@ -421,6 +433,43 @@ mod imp {
         Ok(())
     }
 
+    pub(super) fn check_owned_executable_location(path: &Path) -> Result<(), String> {
+        const GROUP_OR_OTHER_WRITE: u32 = 0o022;
+        const STICKY: u32 = 0o1000;
+        let uid = current_uid();
+        let trusted_owner = |metadata: &Metadata| metadata.uid() == uid || metadata.uid() == 0;
+        let file = std::fs::symlink_metadata(path)
+            .map_err(|error| format!("{} cannot be inspected: {error}", path.display()))?;
+        if !file.file_type().is_file() {
+            return Err(format!("{} is not a regular file", path.display()));
+        }
+        if !trusted_owner(&file) {
+            return Err(format!("{} is owned by another user", path.display()));
+        }
+        if file.permissions().mode() & GROUP_OR_OTHER_WRITE != 0 {
+            return Err(format!("{} is writable by group or others", path.display()));
+        }
+        for ancestor in path.ancestors().skip(1) {
+            if ancestor.as_os_str().is_empty() {
+                continue;
+            }
+            let directory = std::fs::metadata(ancestor)
+                .map_err(|error| format!("{} cannot be inspected: {error}", ancestor.display()))?;
+            if !trusted_owner(&directory) {
+                return Err(format!("{} is owned by another user", ancestor.display()));
+            }
+            let mode = directory.permissions().mode();
+            let shared_sticky = mode & STICKY != 0 && directory.uid() == 0;
+            if mode & GROUP_OR_OTHER_WRITE != 0 && !shared_sticky {
+                return Err(format!(
+                    "{} is writable by group or others",
+                    ancestor.display()
+                ));
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn current_uid() -> u32 {
         extern "C" {
             fn geteuid() -> u32;
@@ -436,6 +485,10 @@ mod imp {
 mod imp {
     use super::{io_error, PlatformError};
     use std::path::Path;
+
+    pub(super) fn check_owned_executable_location(_path: &Path) -> Result<(), String> {
+        Ok(())
+    }
 
     pub(super) fn ensure_private_dir(path: &Path) -> Result<(), PlatformError> {
         match std::fs::metadata(path) {

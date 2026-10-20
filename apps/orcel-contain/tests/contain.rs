@@ -23,6 +23,7 @@ const WRITE_FAILED: i64 = 10;
 const READ_FAILED: i64 = 11;
 const NETWORK_FAILED: i64 = 12;
 const SPAWN_FAILED: i64 = 13;
+const LINK_FAILED: i64 = 14;
 
 fn helper_path() -> PathBuf {
     std::fs::canonicalize(env!("CARGO_BIN_EXE_orcel-contain")).unwrap()
@@ -814,4 +815,89 @@ fn xp13_a_link_planted_in_a_write_root_never_widens_a_later_grant() {
         ),
         "{result:?}"
     );
+}
+
+/// XP-13b: the contained process cannot give a file it may only read, or
+/// cannot reach at all, a second name inside its write root. Such a link
+/// would outlive the run and widen a later grant of that root: on Unix the
+/// path rules would then allow writes through it, and on Windows the grant
+/// walk would refuse the root (see the next test). Landlock withholds
+/// `REFER` from read-only roots, AppContainer has no write-attributes right
+/// on them, and Seatbelt allows a link only where both names are writable.
+/// A link between two names inside the write root widens nothing, and it
+/// works on every OS: that is this test's contained positive control.
+#[test]
+fn xp13_the_contained_process_cannot_create_a_hard_link() {
+    let fixture = Fixture::new();
+    for (source, name) in [
+        (fixture.readable.join("granted.txt"), "from-readable"),
+        (fixture.outside.join("secret.txt"), "from-outside"),
+    ] {
+        let link = fixture.writable.join(name);
+        let run = fixture.contained(&["link", path_arg(&source), path_arg(&link)]);
+        assert_eq!(
+            exited(&run),
+            LINK_FAILED,
+            "{} was linked into the write root: {}",
+            source.display(),
+            String::from_utf8_lossy(&run.stderr)
+        );
+        assert!(!link.exists(), "{} was created", link.display());
+        // Positive control: the same link works without containment.
+        assert_eq!(
+            fixture.uncontained(&["link", path_arg(&source), path_arg(&link)]),
+            0
+        );
+        std::fs::remove_file(&link).unwrap();
+    }
+
+    let own = fixture.writable.join("own.txt");
+    std::fs::write(&own, b"own").unwrap();
+    let link = fixture.writable.join("own-link");
+    let run = fixture.contained(&["link", path_arg(&own), path_arg(&link)]);
+    assert_eq!(
+        exited(&run),
+        0,
+        "a link inside the write root failed: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert!(link.exists());
+}
+
+/// XP-13b: a hard link that already exists in a granted root. On Windows the
+/// grant walk refuses it, because an ACE on the link would land on the
+/// outside file it shares a security descriptor with. On Linux and macOS the
+/// boundary is path based, so the contained process reads the linked file
+/// through the granted path: this is the residual risk the README documents,
+/// pinned here so a change in either direction is noticed.
+#[test]
+fn xp13_a_hard_link_already_in_a_granted_root() {
+    let fixture = Fixture::new();
+    let secret = fixture.outside.join("secret.txt");
+    let link = fixture.writable.join("secret-link.txt");
+    std::fs::hard_link(&secret, &link).unwrap();
+    let spec = fixture.spec(&["read", path_arg(&link)]);
+    let result = run_contained(&helper_pin(), &spec);
+    #[cfg(windows)]
+    assert!(
+        matches!(
+            result,
+            Err(ContainedError::Refused {
+                kind: RefusalKind::LaunchFailed,
+                ..
+            })
+        ),
+        "{result:?}"
+    );
+    #[cfg(unix)]
+    {
+        let run = result.unwrap();
+        assert_eq!(exited(&run), 0);
+        assert_eq!(run.stdout, b"outside bytes");
+    }
+
+    // Without the second name the same spec launches on every OS.
+    std::fs::remove_file(&link).unwrap();
+    let run = run_contained(&helper_pin(), &fixture.spec(&["noop"])).unwrap();
+    assert_eq!(exited(&run), 0);
 }
