@@ -54,8 +54,10 @@ pub const PARSER_PIN_NAME: &str = "orcel-doc-parser.sha256";
 
 /// Domain separation for the approval digest.
 const APPROVAL_DOMAIN: &str = "orcel-wi05-document-parse/1";
-/// A parser larger than this is not the parser.
-const MAX_PARSER_BYTES: u64 = 128 * 1024 * 1024;
+/// A parser larger than this is not the parser. A release build is a few
+/// MiB; a Linux debug build (debug info inline, as the CI end-to-end test
+/// runs it) is well over 128 MiB.
+const MAX_PARSER_BYTES: u64 = 512 * 1024 * 1024;
 
 fn unavailable(message: impl Into<String>) -> ProviderError {
     ProviderError::new(FailureCode::ProviderUnavailable, message)
@@ -161,7 +163,12 @@ impl ParserPin {
         file.take(MAX_PARSER_BYTES + 1)
             .read_to_end(&mut bytes)
             .map_err(|error| unavailable(format!("the document parser cannot be read: {error}")))?;
-        if bytes.len() as u64 > MAX_PARSER_BYTES || sha256_hex(&bytes) != self.sha256 {
+        if bytes.len() as u64 > MAX_PARSER_BYTES {
+            return Err(unavailable(
+                "the document parser is larger than any parser build; nothing was launched",
+            ));
+        }
+        if sha256_hex(&bytes) != self.sha256 {
             return Err(ProviderError::new(
                 FailureCode::TargetStale,
                 "the document parser does not match its pin; nothing was launched",
