@@ -541,7 +541,17 @@ mod tests {
                 .or_else(|| value.pointer("/refusal/code"))
                 .and_then(Value::as_str)
         });
-        matches!(code, Some("invalid_request" | "invalid_arguments"))
+        // The registry's argument normalisation names its own refusals
+        // (macOS: `invalid_action_target` for a scope next to a pid). What
+        // matters is that the call was refused before the tool looked up the
+        // snapshot: a call the tool accepted would reach the stale-snapshot
+        // refusal that the well-formed base call gets.
+        matches!(
+            code,
+            Some("invalid_request" | "invalid_arguments" | "invalid_action_target")
+        ) || !format!("{failure:?}")
+            .to_ascii_lowercase()
+            .contains("stale")
     }
 
     /// XP-11 / P-09: the action tool takes an element and a verb. Every name
