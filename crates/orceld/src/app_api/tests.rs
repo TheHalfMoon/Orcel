@@ -152,6 +152,9 @@ fn cr01_methods_are_read_only_and_unknown_methods_are_refused() {
         br#"{"v":"orcel-app-api/1","method":"status.get","params":[]}"#,
         br#"{"v":"orcel-app-api/1","method":"events.subscribe","params":{"after_seq":-1}}"#,
         br#"{"v":"orcel-app-api/1","method":"events.subscribe","params":{"cursor":1}}"#,
+        // #375 item 4: a cursor without the epoch it belongs to.
+        br#"{"v":"orcel-app-api/1","method":"events.subscribe","params":{"after_seq":3}}"#,
+        br#"{"v":"orcel-app-api/1","method":"events.subscribe","params":{"after_seq":3,"epoch":null}}"#,
         br#"{"v":"orcel-app-api/1"}"#,
     ] {
         let frame = reply_frame(handle_frame(&shared, &peer, bad));
@@ -172,6 +175,19 @@ fn cr01_methods_are_read_only_and_unknown_methods_are_refused() {
             id: json!("r1"),
             after_seq: 3,
             epoch: Some("e".into()),
+        }
+    );
+    // From the start, the epoch stays optional.
+    assert_eq!(
+        handle_frame(
+            &shared,
+            &peer,
+            &request("events.subscribe", json!({ "after_seq": 0 }))
+        ),
+        Reply::Subscribe {
+            id: json!("r1"),
+            after_seq: 0,
+            epoch: None,
         }
     );
 }
@@ -660,11 +676,15 @@ fn cr01_subscription_resumes_from_a_cursor() {
         log.publish("tick", json!({ "n": n }));
     }
     let mut client = TestClient::connect(&server.endpoint);
-    client.send("events.subscribe", json!({ "after_seq": 2 }));
+    let epoch = log.epoch().to_owned();
+    client.send(
+        "events.subscribe",
+        json!({ "after_seq": 2, "epoch": epoch }),
+    );
     let ack = client.recv().unwrap();
     assert_eq!(ack["ok"], true, "{ack}");
     assert_eq!(ack["result"]["head_seq"], 5);
-    let epoch = ack["result"]["epoch"].as_str().unwrap().to_owned();
+    assert_eq!(ack["result"]["epoch"], epoch.as_str());
     for seq in 3..=5 {
         let frame = client.recv_event().unwrap();
         assert_eq!(frame["event"]["seq"], seq);
@@ -702,9 +722,13 @@ fn cr01_gap_and_restart_answer_with_a_snapshot() {
     for n in 1..=10 {
         log.publish("tick", json!({ "n": n }));
     }
+    let epoch = log.epoch().to_owned();
     // Gap: events after 1 were dropped from the ring.
     let mut client = TestClient::connect(&server.endpoint);
-    client.send("events.subscribe", json!({ "after_seq": 1 }));
+    client.send(
+        "events.subscribe",
+        json!({ "after_seq": 1, "epoch": epoch }),
+    );
     assert_eq!(client.recv().unwrap()["ok"], true);
     let snapshot = client.recv_event().unwrap();
     assert_eq!(snapshot["event"]["kind"], "snapshot", "{snapshot}");
@@ -731,14 +755,24 @@ fn cr01_gap_and_restart_answer_with_a_snapshot() {
     assert_eq!(resume["after_seq"], 10);
     assert_eq!(client.recv(), None);
 
-    // A cursor past the head (a restarted daemon without an epoch) too.
+    // A cursor past the head of this run is a gap too.
     let mut client = TestClient::connect(&server.endpoint);
-    client.send("events.subscribe", json!({ "after_seq": 500 }));
+    client.send(
+        "events.subscribe",
+        json!({ "after_seq": 500, "epoch": epoch }),
+    );
     assert_eq!(client.recv().unwrap()["ok"], true);
     assert_eq!(
         client.recv_event().unwrap()["event"]["data"]["reason"],
         "gap"
     );
+
+    // #375 item 4: a cursor without its epoch is refused, never served
+    // from whatever run is current; the connection stays usable.
+    let mut client = TestClient::connect(&server.endpoint);
+    let refused = client.call("events.subscribe", json!({ "after_seq": 3 }));
+    assert_eq!(refused["error"]["code"], "INVALID_REQUEST", "{refused}");
+    assert_eq!(client.call("status.get", json!({}))["ok"], true);
 
     // Resubscribing from the snapshot resumes cleanly.
     let mut client = TestClient::connect(&server.endpoint);
@@ -1004,7 +1038,7 @@ fn cr01_stale_sockets_are_replaced_and_live_ones_kept() {
     let (listener, bound) = unix::bind(&path).expect("stale socket replaced");
     // Live: another server answers there; it is neither removed nor taken.
     let again = unix::bind(&path).map(|_| ());
-    assert_eq!(again, Err(StartError::InUse));
+    assert!(matches!(again, Err(StartError::InUse(_))), "{again:?}");
     assert!(std::fs::symlink_metadata(&path).is_ok());
     drop((listener, bound));
     let _ = std::fs::remove_dir_all(&dir);
@@ -1029,10 +1063,10 @@ fn cr01_a_socket_owned_by_another_user_is_refused() {
         stale_decision(Existing::Socket { owner: ours }, ours, || false),
         Ok(Stale::RemoveThenBind)
     );
-    assert_eq!(
+    assert!(matches!(
         stale_decision(Existing::Socket { owner: ours }, ours, || true),
-        Err(StartError::InUse)
-    );
+        Err(StartError::InUse(_))
+    ));
     assert_eq!(
         stale_decision(Existing::Missing, ours, unreachable_probe),
         Ok(Stale::Bind)
@@ -1168,7 +1202,10 @@ fn cr01_pipe_dacl_is_the_current_user_only() {
     ] {
         assert!(!sddl.contains(group), "{group} in {sddl}");
     }
-    assert_eq!(win::sddl(&sid), format!("D:P(A;;GA;;;{sid})"));
+    assert_eq!(
+        win::sddl(&sid),
+        format!("D:P(A;;GA;;;{sid})S:(ML;;NWNR;;;ME)")
+    );
 }
 
 /// The `S-1-...` form of an SDDL trustee, which may be an alias like `LA`.
@@ -1216,7 +1253,13 @@ fn cr01_sddl_aliases_resolve_to_their_sid() {
 fn cr01_a_second_server_cannot_take_the_pipe_name() {
     let name = format!(r"\\.\pipe\orcel-test-cr01-{}", unique());
     let _first = win::create_first(&name).unwrap();
-    assert!(matches!(win::create_first(&name), Err(StartError::InUse)));
+    let taken = win::create_first(&name).map(|_| ());
+    // #375 item 1: the reason names who holds it; here, this account.
+    assert!(
+        matches!(&taken, Err(StartError::InUse(reason))
+            if reason.contains("already exists") && reason.contains("runs as this account")),
+        "{taken:?}"
+    );
     // The owner can still add instances of its own pipe.
     let _more = win::create_instance(&name, false).unwrap();
 }
@@ -1232,5 +1275,639 @@ fn cr01_the_default_pipe_name_carries_the_user_sid() {
     assert_eq!(
         win::pipe_name("-ci").unwrap(),
         format!(r"\\.\pipe\orcel-{sid}-app-ci")
+    );
+}
+
+// ---------------------------------------------------------------------------
+// #375 items 1 and 5: endpoint waits and streaming peer re-checks
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cr375_an_endpoint_held_by_another_server_is_noted_once_and_reported() {
+    let shared = shared_with(test_limits());
+    let peer = own_peer();
+    let status = reply_frame(handle_frame(
+        &shared,
+        &peer,
+        &request("status.get", json!({})),
+    ));
+    assert_eq!(status["result"]["endpoint_wait"], Value::Null);
+    // The first attempt is the one that logs; later ones only count.
+    assert!(shared.note_in_use("the pipe name already exists; squatted"));
+    assert!(!shared.note_in_use("the pipe name already exists; squatted"));
+    assert!(!shared.note_in_use("something else"));
+    let status = reply_frame(handle_frame(
+        &shared,
+        &peer,
+        &request("status.get", json!({})),
+    ));
+    let wait = &status["result"]["endpoint_wait"];
+    assert_eq!(wait["attempts"], 3, "{wait}");
+    assert_eq!(wait["reason"], "the pipe name already exists; squatted");
+    assert!(wait["since_ms"].as_u64().unwrap() > 0);
+}
+
+/// A connection that records what the server writes and never sends.
+#[derive(Default)]
+struct Recorder {
+    written: Vec<u8>,
+}
+
+impl Read for Recorder {
+    fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+        Ok(0)
+    }
+}
+
+impl Write for Recorder {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.written.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Transport for Recorder {
+    fn set_timeouts(
+        &mut self,
+        _read: Option<Duration>,
+        _write: Option<Duration>,
+    ) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn finish(&mut self) {}
+}
+
+#[test]
+fn cr375_a_subscription_ends_once_its_peer_is_no_longer_the_admitted_instance() {
+    let shared = shared_with(test_limits());
+    // Our own pid with a start generation it never had: what a reused pid
+    // looks like once the admitted peer exited.
+    let mut process = process::current_instance().expect("own instance");
+    process.generation = process.generation.wrapping_add(1);
+    let stale = PeerInfo {
+        process,
+        source: "test",
+    };
+    let (done, finished) = std::sync::mpsc::channel();
+    let streaming = Arc::clone(&shared);
+    std::thread::spawn(move || {
+        let mut conn = Recorder::default();
+        stream_events(&mut conn, &streaming, &stale, &json!("s1"), 0, None);
+        let _ = done.send(conn.written);
+    });
+    // The heartbeat is 200 ms: the first idle wake-up re-reads the peer.
+    let written = finished
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the subscription of a stale peer ended");
+    let frames: Vec<Value> = written
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+        .map(|line| serde_json::from_slice(line).unwrap())
+        .collect();
+    assert_eq!(frames.len(), 1, "{frames:?}");
+    assert_eq!(frames[0]["ok"], true);
+    assert!(frames.iter().all(|frame| frame.get("heartbeat").is_none()));
+
+    // The same stream for the live peer keeps going with heartbeats.
+    let (done, finished) = std::sync::mpsc::channel();
+    let streaming = Arc::clone(&shared);
+    std::thread::spawn(move || {
+        struct Counted(Recorder, std::sync::mpsc::Sender<()>);
+        impl Read for Counted {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                self.0.read(buf)
+            }
+        }
+        impl Write for Counted {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                if self.1.send(()).is_err() {
+                    return Err(io::Error::from(io::ErrorKind::BrokenPipe));
+                }
+                self.0.write(buf)
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        impl Transport for Counted {
+            fn set_timeouts(
+                &mut self,
+                _read: Option<Duration>,
+                _write: Option<Duration>,
+            ) -> io::Result<()> {
+                Ok(())
+            }
+            fn finish(&mut self) {}
+        }
+        let mut conn = Counted(Recorder::default(), done);
+        stream_events(&mut conn, &streaming, &own_peer(), &json!("s2"), 0, None);
+    });
+    // The acknowledgement and then at least two heartbeats arrive.
+    for _ in 0..3 {
+        finished
+            .recv_timeout(Duration::from_secs(10))
+            .expect("a live peer keeps its subscription");
+    }
+    drop(finished);
+}
+
+// ---------------------------------------------------------------------------
+// #381: a short socket location whatever HOME is
+// ---------------------------------------------------------------------------
+
+#[cfg(unix)]
+fn env_lookup(pairs: &[(&str, String)]) -> impl Fn(&str) -> Option<std::ffi::OsString> {
+    let pairs: Vec<(String, String)> = pairs
+        .iter()
+        .map(|(name, value)| ((*name).to_owned(), value.clone()))
+        .collect();
+    move |name: &str| {
+        pairs
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.into())
+    }
+}
+
+#[cfg(unix)]
+fn long_home() -> String {
+    format!("/home/{}", "a-very-long-home-directory-name".repeat(5))
+}
+
+#[cfg(unix)]
+#[test]
+fn cr381_the_socket_directory_does_not_depend_on_home() {
+    use orcel_platform::paths::StateLayout;
+    use std::path::PathBuf;
+    let home = long_home();
+    assert!(home.len() > unix::MAX_SOCKET_PATH);
+
+    // macOS: the per-user temp directory confstr names, whatever HOME is.
+    let darwin = Some(PathBuf::from(
+        "/var/folders/zz/zyxvpxvq6csfxvn_n0000000000000/T/",
+    ));
+    let lookup = env_lookup(&[("HOME", home.clone())]);
+    let dir = unix::socket_dir(StateLayout::MacOs, &lookup, darwin).unwrap();
+    assert_eq!(
+        dir,
+        PathBuf::from("/var/folders/zz/zyxvpxvq6csfxvn_n0000000000000/T/orcel")
+    );
+    // The longest instance suffix still fits in sun_path there.
+    let socket = dir.join(format!("app-api-{}.sock", "x".repeat(32)));
+    assert!(
+        socket.as_os_str().len() <= unix::MAX_SOCKET_PATH,
+        "{socket:?}"
+    );
+    // Without an answer from confstr: the state root, as in CR-01.
+    assert_eq!(
+        unix::socket_dir(StateLayout::MacOs, &lookup, None).unwrap(),
+        PathBuf::from(&home).join("Library/Application Support/Orcel/run")
+    );
+
+    // Linux: $XDG_RUNTIME_DIR/orcel, whatever HOME and XDG_STATE_HOME are.
+    let lookup = env_lookup(&[
+        ("HOME", home.clone()),
+        ("XDG_STATE_HOME", format!("{home}/.state")),
+        ("XDG_RUNTIME_DIR", "/run/user/1000".into()),
+    ]);
+    assert_eq!(
+        unix::socket_dir(StateLayout::Xdg, &lookup, None).unwrap(),
+        PathBuf::from("/run/user/1000/orcel")
+    );
+    // confstr is macOS only; it never decides a Linux location.
+    assert_eq!(
+        unix::socket_dir(StateLayout::Xdg, &lookup, Some(PathBuf::from("/x"))).unwrap(),
+        PathBuf::from("/run/user/1000/orcel")
+    );
+    // A relative or dotted XDG_RUNTIME_DIR is ignored, as XDG requires.
+    for bad in ["run/user/1000", "/run/user/../1000", ""] {
+        let lookup = env_lookup(&[("HOME", "/home/a".into()), ("XDG_RUNTIME_DIR", bad.into())]);
+        assert_eq!(
+            unix::socket_dir(StateLayout::Xdg, &lookup, None).unwrap(),
+            PathBuf::from("/home/a/.local/state/orcel/run"),
+            "{bad:?}"
+        );
+    }
+    // No runtime directory and no usable HOME: no location at all.
+    assert!(unix::socket_dir(StateLayout::Xdg, &env_lookup(&[]), None).is_err());
+}
+
+/// The production location, resolved with a long HOME (and, on Linux, a
+/// long XDG_STATE_HOME), binds, serves and is removed on exit.
+#[cfg(unix)]
+#[test]
+fn cr381_a_long_home_still_gets_the_app_api() {
+    use orcel_platform::paths::StateLayout;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let home = long_home();
+    let layout = StateLayout::current().unwrap();
+    #[cfg(target_os = "macos")]
+    let (lookup, runtime, darwin) = {
+        let darwin = orcel_platform::paths::darwin_user_temp_dir()
+            .expect("confstr(_CS_DARWIN_USER_TEMP_DIR)");
+        (env_lookup(&[("HOME", home.clone())]), None, Some(darwin))
+    };
+    #[cfg(not(target_os = "macos"))]
+    let (lookup, runtime, darwin) = {
+        let runtime = private_dir();
+        let lookup = env_lookup(&[
+            ("HOME", home.clone()),
+            ("XDG_STATE_HOME", format!("{home}/.state")),
+            ("XDG_RUNTIME_DIR", runtime.display().to_string()),
+        ]);
+        (lookup, Some(runtime), None)
+    };
+    let dir = unix::socket_dir(layout, &lookup, darwin).unwrap();
+    assert!(!dir.starts_with(&home), "{dir:?} is below HOME");
+    let path = dir.join(format!("app-api-t{}.sock", unique()));
+    assert!(path.as_os_str().len() <= unix::MAX_SOCKET_PATH, "{path:?}");
+
+    let shared = shared_with(test_limits());
+    let (listener, bound) = unix::bind(&path).expect("bind under the runtime directory");
+    let meta = std::fs::symlink_metadata(&dir).unwrap();
+    assert_eq!(meta.permissions().mode() & 0o777, 0o700);
+    assert_eq!(meta.uid(), our_uid());
+    let serving = Arc::clone(&shared);
+    let server = std::thread::spawn(move || unix::serve(listener, &serving));
+    let mut client = TestClient::connect(path.to_str().unwrap());
+    assert_eq!(client.call("status.get", json!({}))["ok"], true);
+    drop(client);
+    drop(bound);
+    assert!(!path.exists(), "the socket outlived its binding");
+    drop(server);
+    let _ = std::fs::remove_file(unix::lock_path(&path));
+    if let Some(runtime) = runtime {
+        let _ = std::fs::remove_dir_all(runtime);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// #375 item 3: one endpoint per user
+// ---------------------------------------------------------------------------
+
+#[cfg(unix)]
+fn inode(path: &std::path::Path) -> (u64, u64) {
+    use std::os::unix::fs::MetadataExt;
+    let meta = std::fs::symlink_metadata(path).expect("the socket exists");
+    (meta.dev(), meta.ino())
+}
+
+#[cfg(unix)]
+#[test]
+fn cr375_concurrent_instances_never_unlink_a_live_socket() {
+    use std::os::unix::net::UnixStream;
+    use std::sync::Barrier;
+    const CONTENDERS: usize = 6;
+    for round in 0..40 {
+        let dir = private_dir();
+        let path = dir.join("s");
+        // Every round starts from a stale socket, the case where each
+        // contender would decide to remove it.
+        drop(std::os::unix::net::UnixListener::bind(&path).unwrap());
+        let barrier = Arc::new(Barrier::new(CONTENDERS));
+        let contenders: Vec<_> = (0..CONTENDERS)
+            .map(|_| {
+                let barrier = Arc::clone(&barrier);
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    unix::bind(&path)
+                })
+            })
+            .collect();
+        let results: Vec<_> = contenders
+            .into_iter()
+            .map(|contender| contender.join().unwrap())
+            .collect();
+        let mut winners = Vec::new();
+        for result in results {
+            match result {
+                Ok(won) => winners.push(won),
+                Err(StartError::InUse(_)) => {}
+                Err(error) => panic!("round {round}: {error}"),
+            }
+        }
+        assert_eq!(winners.len(), 1, "round {round}: one endpoint per user");
+        // The socket at the path is the winner's, and it answers.
+        let (listener, bound) = winners.pop().unwrap();
+        let (dev, ino) = inode(&path);
+        let local = listener.local_addr().unwrap();
+        assert_eq!(local.as_pathname(), Some(path.as_path()));
+        assert!(UnixStream::connect(&path).is_ok(), "round {round}");
+        // A late contender, after everyone else gave up, changes nothing.
+        assert!(matches!(unix::bind(&path), Err(StartError::InUse(_))));
+        assert_eq!(inode(&path), (dev, ino), "round {round}");
+        assert!(UnixStream::connect(&path).is_ok(), "round {round}");
+        drop((listener, bound));
+        assert!(!path.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(unix)]
+const BIND_HELPER_PATH: &str = "CR375_BIND_HELPER_PATH";
+
+/// The child half of `cr375_a_second_process_never_unlinks_a_live_socket`:
+/// it tries to take the endpoint while the parent holds it, and exits 3 if
+/// it was told the endpoint is in use. Without the variable it does nothing.
+#[cfg(unix)]
+#[test]
+fn cr375_bind_helper_child() {
+    let Some(path) = std::env::var_os(BIND_HELPER_PATH) else {
+        return;
+    };
+    match unix::bind(std::path::Path::new(&path)) {
+        Err(StartError::InUse(_)) => std::process::exit(3),
+        Err(StartError::Refused(reason)) => {
+            eprintln!("refused: {reason}");
+            std::process::exit(4)
+        }
+        Ok(_) => std::process::exit(5),
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn cr375_a_second_process_never_unlinks_a_live_socket() {
+    use std::os::unix::net::UnixStream;
+    let dir = private_dir();
+    let path = dir.join("s");
+    let (listener, bound) = unix::bind(&path).unwrap();
+    let before = inode(&path);
+    for _ in 0..3 {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "app_api::tests::cr375_bind_helper_child",
+                "--test-threads=1",
+            ])
+            .env(BIND_HELPER_PATH, &path)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .status()
+            .expect("run the bind helper");
+        assert_eq!(
+            status.code(),
+            Some(3),
+            "the second process was not told InUse"
+        );
+        assert_eq!(inode(&path), before, "the live socket was replaced");
+        assert!(UnixStream::connect(&path).is_ok());
+    }
+    drop((listener, bound));
+    // Once the holder is gone, the next process takes over.
+    let (_listener, _bound) = unix::bind(&path).expect("taken over after the holder left");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn cr375_a_lock_path_that_is_not_a_regular_file_is_refused_and_left_alone() {
+    let dir = private_dir();
+    let path = dir.join("s");
+    std::fs::create_dir(unix::lock_path(&path)).unwrap();
+    let refused = unix::bind(&path).map(|_| ());
+    assert!(
+        matches!(&refused, Err(StartError::Refused(reason)) if reason.contains("lock path")),
+        "{refused:?}"
+    );
+    assert!(unix::lock_path(&path).is_dir());
+    assert!(std::fs::symlink_metadata(&path).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---------------------------------------------------------------------------
+// #375 items 2 and 6: the pipe's integrity label and OpenProcess failures
+// ---------------------------------------------------------------------------
+
+/// The SDDL of `handle`'s security descriptor parts named by `info`.
+#[cfg(windows)]
+fn handle_sddl(handle: windows_sys::Win32::Foundation::HANDLE, info: u32) -> String {
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertSecurityDescriptorToStringSecurityDescriptorW, GetSecurityInfo, SDDL_REVISION_1,
+        SE_KERNEL_OBJECT,
+    };
+    use windows_sys::Win32::Security::PSECURITY_DESCRIPTOR;
+    let mut descriptor: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+    // SAFETY: `handle` is live; `descriptor` receives a LocalAlloc'd
+    // descriptor freed below.
+    let status = unsafe {
+        GetSecurityInfo(
+            handle,
+            SE_KERNEL_OBJECT,
+            info,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut descriptor,
+        )
+    };
+    assert_eq!(status, 0, "GetSecurityInfo failed");
+    let mut text: *mut u16 = std::ptr::null_mut();
+    // SAFETY: `descriptor` is live; `text` receives a LocalAlloc'd string.
+    let converted = unsafe {
+        ConvertSecurityDescriptorToStringSecurityDescriptorW(
+            descriptor,
+            SDDL_REVISION_1,
+            info,
+            &mut text,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_ne!(converted, 0);
+    // SAFETY: `text` is NUL-terminated; both allocations are freed once.
+    unsafe {
+        let mut len = 0;
+        while *text.add(len) != 0 {
+            len += 1;
+        }
+        let sddl = String::from_utf16_lossy(std::slice::from_raw_parts(text, len));
+        LocalFree(text.cast());
+        LocalFree(descriptor.cast());
+        sddl
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn cr375_the_pipe_carries_an_explicit_medium_label() {
+    use windows_sys::Win32::Security::LABEL_SECURITY_INFORMATION;
+    let name = format!(r"\\.\pipe\orcel-test-cr375-{}", unique());
+    let pipe = win::create_first(&name).unwrap();
+    let label = handle_sddl(pipe.handle.0, LABEL_SECURITY_INFORMATION);
+    // The system may add SACL control flags such as AI (auto-inherited);
+    // the one ACE is the explicit Medium label with no-write-up and
+    // no-read-up.
+    assert!(label.starts_with("S:"), "{label}");
+    assert_eq!(label.matches('(').count(), 1, "more than one ACE: {label}");
+    assert!(label.ends_with("(ML;;NWNR;;;ME)"), "{label}");
+}
+
+/// Opens `name` the way the server's clients do, from the calling thread's
+/// token, and returns the Win32 error of a failed open.
+#[cfg(windows)]
+fn try_open_pipe(name: &str, access: u32) -> Result<(), u32> {
+    use windows_sys::Win32::Foundation::{GetLastError, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, OPEN_EXISTING, SECURITY_IDENTIFICATION, SECURITY_SQOS_PRESENT,
+    };
+    let wide = win::wide(name);
+    // SAFETY: `wide` is NUL-terminated; `Owned` closes the handle.
+    let handle = win::Owned(unsafe {
+        CreateFileW(
+            wide.as_ptr(),
+            access,
+            0,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
+            0,
+        )
+    });
+    if handle.0 == INVALID_HANDLE_VALUE {
+        // SAFETY: plain read of this thread's last error.
+        Err(unsafe { GetLastError() })
+    } else {
+        Ok(())
+    }
+}
+
+/// Real evidence for #375 item 2 on any Windows host, hosted runners
+/// included: a thread of this process impersonates a Low-integrity copy of
+/// this process's own token (same user, same session, same groups) and
+/// cannot open the pipe for reading, writing or both. The same opens from
+/// the process's own token succeed, so the label is what refuses them.
+#[cfg(windows)]
+#[test]
+fn cr375_a_low_integrity_process_of_this_user_cannot_open_the_pipe() {
+    use windows_sys::Win32::Foundation::{
+        LocalFree, ERROR_ACCESS_DENIED, GENERIC_READ, GENERIC_WRITE, HANDLE, PSID,
+    };
+    use windows_sys::Win32::Security::Authorization::ConvertStringSidToSidW;
+    use windows_sys::Win32::Security::{
+        DuplicateTokenEx, GetLengthSid, RevertToSelf, SecurityImpersonation, SetTokenInformation,
+        TokenImpersonation, TokenIntegrityLevel, SID_AND_ATTRIBUTES, TOKEN_ADJUST_DEFAULT,
+        TOKEN_DUPLICATE, TOKEN_IMPERSONATE, TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
+    };
+    use windows_sys::Win32::System::Threading::{
+        GetCurrentProcess, OpenProcessToken, SetThreadToken,
+    };
+    /// `SE_GROUP_INTEGRITY` (winnt.h).
+    const SE_GROUP_INTEGRITY: u32 = 0x20;
+
+    let name = format!(r"\\.\pipe\orcel-test-cr375-{}", unique());
+    let first = win::create_first(&name).unwrap();
+    // Spare instances, so every open below finds a free one.
+    let _spare: Vec<_> = (0..6)
+        .map(|_| win::create_instance(&name, false).unwrap())
+        .collect();
+    let opener = name.clone();
+    let low_results = std::thread::spawn(move || {
+        let mut token: HANDLE = 0;
+        // SAFETY: the pseudo handle needs no closing; `token` is closed by
+        // `Owned`.
+        assert_ne!(
+            unsafe {
+                OpenProcessToken(
+                    GetCurrentProcess(),
+                    TOKEN_DUPLICATE | TOKEN_QUERY,
+                    &mut token,
+                )
+            },
+            0
+        );
+        let token = win::Owned(token);
+        let mut low: HANDLE = 0;
+        // SAFETY: duplicates a live token into `low`, closed by `Owned`.
+        assert_ne!(
+            unsafe {
+                DuplicateTokenEx(
+                    token.0,
+                    TOKEN_QUERY | TOKEN_IMPERSONATE | TOKEN_ADJUST_DEFAULT,
+                    std::ptr::null(),
+                    SecurityImpersonation,
+                    TokenImpersonation,
+                    &mut low,
+                )
+            },
+            0
+        );
+        let low = win::Owned(low);
+        let sid_text = win::wide("S-1-16-4096");
+        let mut sid: PSID = std::ptr::null_mut();
+        // SAFETY: `sid_text` is NUL-terminated; `sid` is LocalAlloc'd.
+        assert_ne!(
+            unsafe { ConvertStringSidToSidW(sid_text.as_ptr(), &mut sid) },
+            0
+        );
+        let label = TOKEN_MANDATORY_LABEL {
+            Label: SID_AND_ATTRIBUTES {
+                Sid: sid,
+                Attributes: SE_GROUP_INTEGRITY,
+            },
+        };
+        // SAFETY: `label` and the SID it points to live through the call.
+        let lowered = unsafe {
+            SetTokenInformation(
+                low.0,
+                TokenIntegrityLevel,
+                std::ptr::addr_of!(label).cast(),
+                std::mem::size_of::<TOKEN_MANDATORY_LABEL>() as u32 + GetLengthSid(sid),
+            )
+        };
+        assert_ne!(lowered, 0, "{}", io::Error::last_os_error());
+        // SAFETY: impersonates on this thread only, reverted below.
+        assert_ne!(unsafe { SetThreadToken(std::ptr::null(), low.0) }, 0);
+        let results: Vec<_> = [GENERIC_READ, GENERIC_WRITE, GENERIC_READ | GENERIC_WRITE]
+            .into_iter()
+            .map(|access| try_open_pipe(&opener, access))
+            .collect();
+        // SAFETY: ends this thread's impersonation.
+        unsafe { RevertToSelf() };
+        // SAFETY: the SID was LocalAlloc'd above and is freed once.
+        unsafe { LocalFree(sid) };
+        results
+    })
+    .join()
+    .unwrap();
+    for result in low_results {
+        assert_eq!(result, Err(ERROR_ACCESS_DENIED), "a Low-integrity open");
+    }
+    // Control: the same opens from this process's own token succeed.
+    for access in [GENERIC_READ, GENERIC_WRITE, GENERIC_READ | GENERIC_WRITE] {
+        assert_eq!(try_open_pipe(&name, access), Ok(()), "access {access:#x}");
+    }
+    drop(first);
+}
+
+#[cfg(windows)]
+#[test]
+fn cr375_open_process_failures_are_reported_as_what_they_are() {
+    use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER};
+    assert_eq!(
+        win::open_process_failure(77, ERROR_INVALID_PARAMETER),
+        PlatformError::ProcessGone(77)
+    );
+    let denied = win::open_process_failure(77, ERROR_ACCESS_DENIED);
+    assert!(
+        matches!(&denied, PlatformError::IdentityUnavailable(reason) if reason.contains("ACCESS_DENIED")),
+        "{denied:?}"
+    );
+    // Either way the connection is refused; only a missing pid is "gone".
+    assert!(matches!(refusal_from(denied), Refusal::Unavailable(_)));
+    assert!(matches!(
+        refusal_from(win::open_process_failure(77, 1450)),
+        Refusal::Unavailable(_)
+    ));
+    assert_eq!(
+        refusal_from(win::open_process_failure(77, ERROR_INVALID_PARAMETER)),
+        Refusal::PeerGone(77)
     );
 }

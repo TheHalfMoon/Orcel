@@ -7,11 +7,16 @@
 //! any other local client of the same user) reads daemon state from:
 //!
 //! - Windows: the named pipe `\\.\pipe\orcel-<user SID>-app`, created with a
-//!   protected DACL that grants the current user's SID and nobody else
-//!   (`D:P(A;;GA;;;<sid>)`), `FILE_FLAG_FIRST_PIPE_INSTANCE` so no other
-//!   server can already hold the name, and `PIPE_REJECT_REMOTE_CLIENTS`.
-//! - macOS and Linux: the Unix domain socket `run/app-api.sock` inside the
-//!   0700 private state root of XP-01 (`orcel_platform::paths`), mode 0600.
+//!   protected DACL that grants the current user's SID and nobody else, and
+//!   an explicit Medium mandatory label (`D:P(A;;GA;;;<sid>)S:(ML;;NWNR;;;ME)`,
+//!   #375 item 2), `FILE_FLAG_FIRST_PIPE_INSTANCE` so no other server can
+//!   already hold the name, and `PIPE_REJECT_REMOTE_CLIENTS`.
+//! - macOS and Linux: the Unix domain socket `app-api.sock`, mode 0600, in a
+//!   0700 `orcel` directory of a short per-user runtime directory (#381):
+//!   macOS's `confstr(_CS_DARWIN_USER_TEMP_DIR)`, Linux's `$XDG_RUNTIME_DIR`.
+//!   Without one it falls back to `run/` in the XP-01 state root. An
+//!   advisory lock file next to the socket, held for as long as the socket
+//!   is served, makes the endpoint single-instance per user (#375 item 3).
 //!
 //! No TCP listener exists. Every connection is identified from the kernel
 //! before any byte is read from it, and a peer that is not this user's live
@@ -29,8 +34,10 @@
 //!   connected after these reads, so an exited client is refused.
 //!
 //! Each connection is bound to the peer instance it was admitted as: before
-//! every request the instance is read again, and a connection whose peer
-//! has exited or whose pid now names another process is closed unanswered.
+//! every request, and at least every [`PEER_RECHECK`] while it streams
+//! events (#375 item 5), the instance is read again, and a connection whose
+//! peer has exited or whose pid now names another process is closed
+//! unanswered.
 //!
 //! The API is read-only. Its methods (`status.get`, `capabilities.get`,
 //! `events.subscribe`) read daemon facts and the event log; nothing reaches
@@ -85,6 +92,8 @@ const EVENT_BATCH: usize = 64;
 /// How long the endpoint thread waits before trying again to take an
 /// endpoint that another live orceld holds.
 const REBIND_INTERVAL: Duration = Duration::from_secs(5);
+/// How often a streaming subscription reads its peer's instance again.
+const PEER_RECHECK: Duration = Duration::from_secs(1);
 
 /// The methods this revision serves. All of them only read.
 pub(crate) const METHODS: &[&str] = &["status.get", "capabilities.get", "events.subscribe"];
@@ -308,6 +317,17 @@ struct Shared {
     started_at_ms: u64,
     active: AtomicUsize,
     endpoint: String,
+    /// Set the first time the endpoint was found held (#375 item 1).
+    wait: Mutex<Option<EndpointWait>>,
+}
+
+/// Why and since when this orceld waited for an endpoint another server
+/// held, as `status.get` reports it in `endpoint_wait`.
+#[derive(Debug, Clone)]
+struct EndpointWait {
+    since_ms: u64,
+    reason: String,
+    attempts: u64,
 }
 
 impl Shared {
@@ -320,6 +340,46 @@ impl Shared {
             started_at_ms: now_ms(),
             active: AtomicUsize::new(0),
             endpoint,
+            wait: Mutex::new(None),
+        }
+    }
+
+    /// Records one attempt that found the endpoint held. Returns true the
+    /// first time, so the caller logs the reason once rather than every
+    /// [`REBIND_INTERVAL`].
+    fn note_in_use(&self, reason: &str) -> bool {
+        let mut wait = self
+            .wait
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match wait.as_mut() {
+            Some(wait) => {
+                wait.attempts += 1;
+                false
+            }
+            None => {
+                *wait = Some(EndpointWait {
+                    since_ms: now_ms(),
+                    reason: reason.to_owned(),
+                    attempts: 1,
+                });
+                true
+            }
+        }
+    }
+
+    fn endpoint_wait(&self) -> Value {
+        let wait = self
+            .wait
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match wait.as_ref() {
+            None => Value::Null,
+            Some(wait) => json!({
+                "since_ms": wait.since_ms,
+                "reason": wait.reason,
+                "attempts": wait.attempts,
+            }),
         }
     }
 }
@@ -677,6 +737,16 @@ fn subscribe_request(id: Value, params: &serde_json::Map<String, Value>) -> Repl
             ))
         }
     };
+    // #375 item 4: a cursor names a position in one daemon run, so resuming
+    // needs the run's epoch; otherwise a cursor from an earlier run could
+    // silently receive this run's events.
+    if after_seq > 0 && epoch.is_none() {
+        return Reply::Frame(error_frame(
+            &id,
+            "INVALID_REQUEST",
+            "epoch is required when after_seq is greater than 0",
+        ));
+    }
     Reply::Subscribe {
         id,
         after_seq,
@@ -699,6 +769,7 @@ fn status(shared: &Shared, peer: Option<&PeerInfo>) -> Value {
         "started_at_ms": shared.started_at_ms,
         "uptime_ms": u64::try_from(shared.started.elapsed().as_millis()).unwrap_or(u64::MAX),
         "endpoint": shared.endpoint,
+        "endpoint_wait": shared.endpoint_wait(),
         "events": {
             "epoch": shared.log.epoch(),
             "head_seq": shared.log.head(),
@@ -789,7 +860,7 @@ fn serve_connection(mut conn: impl Transport, peer: PeerInfo, shared: &Shared) {
                 after_seq,
                 epoch,
             } => {
-                stream_events(&mut conn, shared, &id, after_seq, epoch.as_deref());
+                stream_events(&mut conn, shared, &peer, &id, after_seq, epoch.as_deref());
                 conn.finish();
                 return;
             }
@@ -816,11 +887,14 @@ fn snapshot_event(shared: &Shared, reason: &str, head: u64, oldest: u64) -> Valu
 }
 
 /// Streams events after `after_seq` until the client falls behind, a write
-/// fails or times out. Ends with a `snapshot` event when the cursor cannot
-/// be served; the client then resubscribes from the snapshot's head.
+/// fails or times out, or the peer is no longer the admitted instance (read
+/// again at least every [`PEER_RECHECK`] and before every heartbeat). Ends
+/// with a `snapshot` event when the cursor cannot be served; the client then
+/// resubscribes from the snapshot's head.
 fn stream_events(
     conn: &mut impl Transport,
     shared: &Shared,
+    peer: &PeerInfo,
     id: &Value,
     after_seq: u64,
     epoch: Option<&str>,
@@ -842,8 +916,28 @@ fn stream_events(
     let mut window = Instant::now();
     let mut sent_in_window = 0u64;
     let mut cursor = after_seq;
+    // serve_connection read the instance just before this request.
+    let mut checked = Instant::now();
+    let peer_left = || {
+        let left = !still_same_instance(peer);
+        if left {
+            eprintln!(
+                "orceld app api: closed a subscription whose peer {} is no longer the admitted instance",
+                peer.process.pid
+            );
+        }
+        left
+    };
     loop {
-        match log.next_after(cursor, EVENT_BATCH, shared.limits.heartbeat) {
+        let batch = log.next_after(cursor, EVENT_BATCH, shared.limits.heartbeat);
+        let due = matches!(batch, Batch::Idle { .. }) || checked.elapsed() >= PEER_RECHECK;
+        if due {
+            if peer_left() {
+                return;
+            }
+            checked = Instant::now();
+        }
+        match batch {
             Batch::Events(events) => {
                 for event in events {
                     if sent_in_window >= rate {
@@ -927,8 +1021,9 @@ where
 /// Why the endpoint could not be taken.
 #[derive(Debug, PartialEq, Eq)]
 enum StartError {
-    /// Another live server holds the endpoint; try again later.
-    InUse,
+    /// Another live server holds the endpoint; try again later. The text
+    /// says who holds it, as far as this process can tell.
+    InUse(String),
     /// The endpoint location is unsafe or unusable; never retried.
     Refused(String),
 }
@@ -936,8 +1031,7 @@ enum StartError {
 impl fmt::Display for StartError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InUse => f.write_str("another live server holds the endpoint"),
-            Self::Refused(reason) => f.write_str(reason),
+            Self::InUse(reason) | Self::Refused(reason) => f.write_str(reason),
         }
     }
 }
@@ -1062,6 +1156,17 @@ pub(crate) fn start(facts: DaemonFacts) -> AppApi {
             let taken = win::create_first(&endpoint);
             match taken {
                 Ok(listener) => {
+                    if let Some(wait) = shared
+                        .wait
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .as_ref()
+                    {
+                        eprintln!(
+                            "orceld app api: took over the endpoint after {} attempts; it was held: {}",
+                            wait.attempts, wait.reason
+                        );
+                    }
                     eprintln!("orceld app api: listening on {}", shared.endpoint);
                     #[cfg(unix)]
                     unix::serve(listener, &shared);
@@ -1069,7 +1174,22 @@ pub(crate) fn start(facts: DaemonFacts) -> AppApi {
                     win::serve(&endpoint, listener, &shared);
                     return;
                 }
-                Err(StartError::InUse) => std::thread::sleep(REBIND_INTERVAL),
+                Err(StartError::InUse(reason)) => {
+                    // #375 item 1: once, with the reason, so a squatted pipe
+                    // name or a second daemon is visible; status.get of the
+                    // orceld that finally takes the endpoint reports it too.
+                    if shared.note_in_use(&reason) {
+                        eprintln!(
+                            "orceld app api: waiting for {}: {reason}; retrying every {} s",
+                            shared.endpoint,
+                            REBIND_INTERVAL.as_secs()
+                        );
+                        shared
+                            .log
+                            .publish("app_api.endpoint_in_use", json!({ "reason": reason }));
+                    }
+                    std::thread::sleep(REBIND_INTERVAL);
+                }
                 Err(error) => {
                     eprintln!(
                         "orceld app api: unavailable at {}: {error}",
@@ -1092,16 +1212,19 @@ pub(crate) fn start(facts: DaemonFacts) -> AppApi {
 #[cfg(unix)]
 mod unix {
     use super::{admit_unix, dispatch_connection, Shared, StartError, Transport};
+    use orcel_platform::paths::StateLayout;
+    use std::ffi::OsString;
+    use std::fs::File;
     use std::io;
     use std::net::Shutdown;
-    use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
+    use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use std::time::Duration;
 
     /// `sun_path` holds 104 bytes on macOS and 108 on Linux, NUL included.
-    const MAX_SOCKET_PATH: usize = 100;
+    pub(super) const MAX_SOCKET_PATH: usize = 100;
 
     impl Transport for UnixStream {
         fn set_timeouts(
@@ -1118,10 +1241,101 @@ mod unix {
         }
     }
 
-    /// `<state root>/run/app-api<suffix>.sock`.
+    /// `<socket dir>/app-api<suffix>.sock`; see [`socket_dir`].
     pub(super) fn default_path(suffix: &str) -> Result<PathBuf, String> {
-        let root = orcel_platform::paths::state_root().map_err(|error| error.to_string())?;
-        Ok(root.join("run").join(format!("app-api{suffix}.sock")))
+        let layout = StateLayout::current()
+            .ok_or_else(|| "the app API has no socket location on this OS".to_owned())?;
+        let dir = socket_dir(
+            layout,
+            &|name| std::env::var_os(name),
+            orcel_platform::paths::darwin_user_temp_dir(),
+        )?;
+        Ok(dir.join(format!("app-api{suffix}.sock")))
+    }
+
+    /// The directory the socket lives in (#381). A `sun_path` holds about
+    /// 100 bytes, too few for a socket below a long home, so the socket
+    /// goes to a short per-user runtime directory when the OS has one:
+    ///
+    /// - macOS: `<DARWIN_USER_TEMP_DIR>/orcel`, the per-user
+    ///   `/var/folders/<xx>/<id>/T/` that `confstr` names (`darwin_temp`);
+    /// - Linux: `$XDG_RUNTIME_DIR/orcel` when it is set to an absolute path
+    ///   (normally `/run/user/<uid>`, where XP-17's `orceld.socket` puts its
+    ///   own socket too).
+    ///
+    /// Without one it is `<state root>/run`, as in CR-01. Either way [`bind`]
+    /// holds the directory to XP-01's private directory rules (0700, this
+    /// user, no symlink, no ancestor another user can modify) before it
+    /// takes the lock.
+    /// `HOME` never decides the location when a runtime directory exists.
+    pub(super) fn socket_dir(
+        layout: StateLayout,
+        lookup: &dyn Fn(&str) -> Option<OsString>,
+        darwin_temp: Option<PathBuf>,
+    ) -> Result<PathBuf, String> {
+        let runtime = match layout {
+            StateLayout::MacOs => darwin_temp,
+            StateLayout::Xdg => {
+                orcel_platform::paths::absolute_var(layout, lookup, "XDG_RUNTIME_DIR")
+            }
+            StateLayout::Windows => None,
+        };
+        if let Some(runtime) = runtime {
+            return Ok(runtime.join("orcel"));
+        }
+        orcel_platform::paths::state_root_for(layout, lookup)
+            .map(|root| root.join("run"))
+            .map_err(|error| error.to_string())
+    }
+
+    /// The lock file of the socket at `path`: `app-api<suffix>.lock`.
+    pub(super) fn lock_path(path: &Path) -> PathBuf {
+        path.with_extension("lock")
+    }
+
+    /// Takes the advisory lock that makes the endpoint single-instance per
+    /// user (#375 item 3). Whoever holds it is the only process that may
+    /// inspect, remove or bind the socket, so two orcelds that both find a
+    /// stale socket can never unlink each other's live one. The lock is
+    /// `flock`, tied to this open file and released by the kernel when the
+    /// process exits however it exits, so a crashed holder never leaves the
+    /// endpoint locked. The file itself is never removed: unlinking a lock
+    /// file lets two processes lock two different inodes.
+    pub(super) fn take_lock(path: &Path, our_uid: u32) -> Result<File, StartError> {
+        match std::fs::symlink_metadata(path) {
+            Ok(meta) if !meta.file_type().is_file() => {
+                return Err(StartError::Refused(format!(
+                    "the lock path {} is not a regular file; it was left in place",
+                    path.display()
+                )))
+            }
+            _ => {}
+        }
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .mode(0o600)
+            .open(path)
+            .map_err(|error| io_refused("open the lock file", error))?;
+        let meta = file
+            .metadata()
+            .map_err(|error| io_refused("inspect the lock file", error))?;
+        if !meta.is_file() || meta.uid() != our_uid {
+            return Err(StartError::Refused(format!(
+                "the lock file {} is not this user's regular file; it was left in place",
+                path.display()
+            )));
+        }
+        match orcel_platform::paths::try_lock_exclusive(&file) {
+            Ok(true) => Ok(file),
+            Ok(false) => Err(StartError::InUse(format!(
+                "another orceld of this user holds the lock {}",
+                path.display()
+            ))),
+            Err(error) => Err(io_refused("lock the endpoint", error)),
+        }
     }
 
     /// What occupies the socket path now, read without following links.
@@ -1168,17 +1382,22 @@ mod unix {
             Existing::Socket { owner } if owner != our_uid => Err(StartError::Refused(format!(
                 "the socket at the path is owned by uid {owner}, not {our_uid}; it was left in place"
             ))),
-            Existing::Socket { .. } if live() => Err(StartError::InUse),
+            Existing::Socket { .. } if live() => Err(StartError::InUse(
+                "a live server of this user answers on the socket".into(),
+            )),
             Existing::Socket { .. } => Ok(Stale::RemoveThenBind),
         }
     }
 
     /// The socket this process bound; dropping it removes the socket if the
-    /// path still names the same inode.
+    /// path still names the same inode, and only then releases the lock.
     pub(super) struct Bound {
         path: PathBuf,
         dev: u64,
         ino: u64,
+        /// Dropped after `drop` ran, so the socket is gone before another
+        /// orceld can take the lock.
+        _lock: File,
     }
 
     impl Drop for Bound {
@@ -1209,14 +1428,20 @@ mod unix {
             // reason reaches stderr once (CR-02 review).
             return Err(StartError::Refused(format!(
                 "the socket path is {length} bytes, longer than the {MAX_SOCKET_PATH} \
-                 a Unix socket allows; use a shorter HOME or XDG_STATE_HOME"
+                 a Unix socket allows; set XDG_RUNTIME_DIR (Linux), or use a shorter \
+                 HOME or XDG_STATE_HOME"
             )));
         }
         let our_uid = orcel_platform::session::effective_uid()
             .ok_or_else(|| StartError::Refused("the effective uid is unreadable".into()))?;
+        // Everything below runs under the lock, so no other orceld inspects,
+        // removes or binds the socket meanwhile.
+        let lock = take_lock(&lock_path(path), our_uid)?;
         let found = existing(path).map_err(|error| io_refused("inspect the socket path", error))?;
         // The private parent keeps other users from swapping the entry
-        // between this check and the removal.
+        // between this check and the removal. The live probe still matters
+        // under the lock: a server that does not take it (an older orceld)
+        // keeps its socket.
         if stale_decision(found, our_uid, || UnixStream::connect(path).is_ok())?
             == Stale::RemoveThenBind
         {
@@ -1226,7 +1451,9 @@ mod unix {
         let listener = match UnixListener::bind(path) {
             Ok(listener) => listener,
             Err(error) if error.kind() == io::ErrorKind::AddrInUse => {
-                return Err(StartError::InUse)
+                return Err(StartError::InUse(
+                    "another server bound the socket path first".into(),
+                ))
             }
             Err(error) => return Err(io_refused("bind the socket", error)),
         };
@@ -1243,6 +1470,7 @@ mod unix {
             path: path.to_path_buf(),
             dev: meta.dev(),
             ino: meta.ino(),
+            _lock: lock,
         };
         Ok((listener, bound))
     }
@@ -1285,8 +1513,8 @@ mod win {
     use std::time::Duration;
     use windows_sys::Win32::Foundation::{
         CloseHandle, GetLastError, LocalFree, ERROR_ACCESS_DENIED, ERROR_BROKEN_PIPE,
-        ERROR_IO_PENDING, ERROR_NO_DATA, ERROR_PIPE_BUSY, ERROR_PIPE_CONNECTED, HANDLE,
-        INVALID_HANDLE_VALUE, WAIT_OBJECT_0,
+        ERROR_INVALID_PARAMETER, ERROR_IO_PENDING, ERROR_NO_DATA, ERROR_PIPE_BUSY,
+        ERROR_PIPE_CONNECTED, GENERIC_READ, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0,
     };
     use windows_sys::Win32::Security::Authorization::{
         ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
@@ -1297,13 +1525,14 @@ mod win {
         TOKEN_QUERY, TOKEN_USER,
     };
     use windows_sys::Win32::Storage::FileSystem::{
-        ReadFile, WriteFile, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED,
-        PIPE_ACCESS_DUPLEX,
+        CreateFileW, ReadFile, WriteFile, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED,
+        OPEN_EXISTING, PIPE_ACCESS_DUPLEX, SECURITY_IDENTIFICATION, SECURITY_SQOS_PRESENT,
     };
     use windows_sys::Win32::System::Pipes::{
         ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, GetNamedPipeClientProcessId,
-        GetNamedPipeClientSessionId, PeekNamedPipe, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS,
-        PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+        GetNamedPipeClientSessionId, GetNamedPipeServerProcessId, PeekNamedPipe,
+        PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES,
+        PIPE_WAIT,
     };
     use windows_sys::Win32::System::RemoteDesktop::ProcessIdToSessionId;
     use windows_sys::Win32::System::Threading::{
@@ -1398,9 +1627,15 @@ mod win {
         Ok(format!(r"\\.\pipe\orcel-{sid}-app{suffix}"))
     }
 
-    /// Generic-all for this account, nobody else, not inherited.
+    /// Generic-all for this account, nobody else, not inherited; and an
+    /// explicit Medium mandatory label (#375 item 2), so a Low-integrity
+    /// process of this account (a sandboxed renderer, say) cannot open the
+    /// pipe whatever the DACL says, rather than relying on the implicit
+    /// label of an unlabeled object. The label carries no-read-up as well as
+    /// no-write-up: no-write-up alone would still let a Low process open the
+    /// pipe read-only and hold a client slot.
     pub(super) fn sddl(sid: &str) -> String {
-        format!("D:P(A;;GA;;;{sid})")
+        format!("D:P(A;;GA;;;{sid})S:(ML;;NWNR;;;ME)")
     }
 
     /// One end of a pipe opened for overlapped I/O, so every read, write and
@@ -1631,11 +1866,62 @@ mod win {
         create_instance(name, true).map_err(|error| {
             let code = error.raw_os_error().map(|code| code as u32);
             if code == Some(ERROR_ACCESS_DENIED) || code == Some(ERROR_PIPE_BUSY) {
-                StartError::InUse
+                StartError::InUse(format!(
+                    "the pipe name already exists ({error}); {}",
+                    describe_holder(name)
+                ))
             } else {
                 StartError::Refused(format!("create the pipe: {error}"))
             }
         })
+    }
+
+    /// Who holds `name`, for the one log line and `endpoint_wait` (#375
+    /// item 1): a pipe another account created first (squatting) and a
+    /// second orceld of this user read differently. Opens the pipe as a
+    /// client with identification-only impersonation and reads the server's
+    /// pid and account; it sends nothing and closes at once.
+    pub(super) fn describe_holder(name: &str) -> String {
+        let wide = wide(name);
+        // SAFETY: `wide` is NUL-terminated; `Owned` closes the handle.
+        let handle = Owned(unsafe {
+            CreateFileW(
+                wide.as_ptr(),
+                GENERIC_READ,
+                0,
+                std::ptr::null(),
+                OPEN_EXISTING,
+                SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION,
+                0,
+            )
+        });
+        if handle.0 == INVALID_HANDLE_VALUE {
+            let error = io::Error::last_os_error();
+            return match error.raw_os_error().map(|code| code as u32) {
+                Some(ERROR_ACCESS_DENIED) => format!(
+                    "its security refuses this account, so another account created it first \
+                     (the name is squatted): {error}"
+                ),
+                Some(ERROR_PIPE_BUSY) => {
+                    "its server has no free instance, so its holder is unknown".to_owned()
+                }
+                _ => format!("its holder could not be opened: {error}"),
+            };
+        }
+        let mut pid = 0u32;
+        // SAFETY: `pid` receives the id; a failure leaves it 0.
+        if unsafe { GetNamedPipeServerProcessId(handle.0, &mut pid) } == 0 || pid == 0 {
+            return "its server process could not be read".to_owned();
+        }
+        match same_account(pid) {
+            Ok(true) => {
+                format!("it is held by process {pid}, which runs as this account (another orceld?)")
+            }
+            Ok(false) => format!(
+                "it is held by process {pid}, which runs as another account (the name is squatted)"
+            ),
+            Err(error) => format!("it is held by process {pid}, whose account is unknown: {error}"),
+        }
     }
 
     fn own_session() -> Option<u32> {
@@ -1644,13 +1930,29 @@ mod win {
         (unsafe { ProcessIdToSessionId(std::process::id(), &mut session) } != 0).then_some(session)
     }
 
+    /// What an `OpenProcess` failure with `code` means for `pid` (#375 item
+    /// 6). Every failure refuses the connection; only a pid that names no
+    /// process (`ERROR_INVALID_PARAMETER`) is reported as gone, and a denied
+    /// open says so instead of claiming the process exited.
+    pub(super) fn open_process_failure(pid: u32, code: u32) -> PlatformError {
+        match code {
+            ERROR_INVALID_PARAMETER => PlatformError::ProcessGone(pid),
+            ERROR_ACCESS_DENIED => PlatformError::IdentityUnavailable(format!(
+                "OpenProcess({pid}) was denied (ERROR_ACCESS_DENIED)"
+            )),
+            code => PlatformError::IdentityUnavailable(format!(
+                "OpenProcess({pid}) failed with Win32 error {code}"
+            )),
+        }
+    }
+
     /// Whether `pid` runs as this account.
     fn same_account(pid: u32) -> Result<bool, PlatformError> {
         // SAFETY: plain call; `Owned` closes the handle.
         let process = Owned(unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) });
         if process.0 == 0 {
-            // An exited process can no longer be opened.
-            return Err(PlatformError::ProcessGone(pid));
+            // SAFETY: plain read of this thread's last error.
+            return Err(open_process_failure(pid, unsafe { GetLastError() }));
         }
         let unavailable = |error: io::Error| PlatformError::IdentityUnavailable(error.to_string());
         let theirs = token_user(process.0).map_err(unavailable)?;
