@@ -14,10 +14,12 @@ decision FD-03, so this package makes no UI framework choice.
   the shipped sources and build for each of these.
 - **Connects only to this user's endpoint.** On Windows that is the pipe
   `\\.\pipe\orcel-<user SID>-app`, whose DACL admits this user only. On
-  macOS and Linux it is `<state root>/run/app-api.sock`. Before connecting
-  on Unix, the client checks without following links that `run/` is this
-  uid's directory with no group or other access, and that the socket is a
-  socket owned by this uid.
+  macOS and Linux it is `orcel/app-api.sock` in the user's short runtime
+  directory (macOS `getconf DARWIN_USER_TEMP_DIR`, Linux `$XDG_RUNTIME_DIR`),
+  or `<state root>/run/app-api.sock` without one, exactly as orceld derives
+  it (#381). Before connecting on Unix, the client checks without following
+  links that the socket's directory is this uid's with no group or other
+  access, and that the socket is a socket owned by this uid.
 - **Follows events with epoch-aware cursors.** Every `events.subscribe`
   carries the epoch its cursor belongs to (#375 item 4). Events must be
   contiguous within the epoch. A gap is reported and rejected before the
@@ -36,24 +38,30 @@ The pipe namespace is shared, so another account can create
 without `SECURITY_SQOS_PRESENT` (the server could impersonate the client) and
 cannot read the server's process or token, so this connector cannot verify
 the server as ORCEL_APP_API_1.md section 7 requires. It therefore **refuses
-to connect on Windows** unless the caller passes
-`allowUnverifiedWindowsPipe: true`, which only the tests do (they start the
-daemon themselves). The Windows Control Room transport is the CR-03 Tauri
+to connect on Windows**. The `allowUnverifiedWindowsPipe: true` opt-in is
+test-only, and the code enforces it (#381 item 2): it is refused unless
+`ORCEL_CONTROL_ROOM_UNVERIFIED_PIPE_TEST=1` is set, which only `npm test`
+does, through `node --env-file=test.env` (the tests start the daemon
+themselves). The Windows Control Room transport is the CR-03 Tauri
 bridge, which must open the pipe from Rust with
 `SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION` and require the token user
 of `GetNamedPipeServerProcessId` to equal its own.
 
 ## Unix: socket path limit
 
-`sun_path` holds 104 bytes on macOS and 108 on Linux, and orceld refuses a
-socket path over 100 bytes with a reason on stderr (it never truncates or
-waits). The client refuses the same path before connecting and names the
-fix: a shorter `HOME` (macOS) or `XDG_STATE_HOME` (Linux).
+`sun_path` holds 104 bytes on macOS and 108 on Linux. The runtime directory
+keeps the socket path short whatever `HOME` is, so a long home still gets
+the app API (#381). Only on the state-root fallback can a path pass 100
+bytes; orceld then refuses it with a reason on stderr (it never truncates or
+waits), and the client refuses the same path before connecting and names
+the fix.
 
 ## Backpressure
 
-A consumer that lags never makes the client buffer without bound: past 256
-queued frames the socket is paused, and it resumes at 64.
+A consumer that lags never makes the client buffer without bound. The queue
+holds at most 256 frames: bytes are decoded one line at a time while there
+is room, the socket is paused while read bytes wait, and reading resumes
+once they are decoded and the queue is down to 64 (#381 item 3).
 
 ## Provenance
 

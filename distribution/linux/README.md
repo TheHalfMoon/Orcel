@@ -76,6 +76,12 @@ exit. The socket is `AF_UNIX` in the user's 0700 runtime directory with
 mode 0600, so only that user's processes can connect. Those processes could
 already run `orceld` themselves, so the socket grants no new authority.
 
+The read-only app API (CR-01) binds `$XDG_RUNTIME_DIR/orcel/app-api.sock`
+in the same directory. Every per-connection instance tries to take it, but
+an advisory lock on `app-api.lock` beside it admits one holder at a time;
+the others retry every 5 seconds and never touch the holder's socket
+(#375 item 3). The lock file stays after the holder exits, by design.
+
 ## Service hardening
 
 Every directive below works in a per-user service manager without user
