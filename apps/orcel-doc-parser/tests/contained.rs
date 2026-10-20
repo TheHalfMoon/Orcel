@@ -251,6 +251,11 @@ fn wi05_hostile_inputs_fail_closed_under_containment_with_their_type() {
             ParseRefusal::NestingTooDeep,
         ),
         (
+            "PDF flate bomb",
+            fixtures::flate_bomb_pdf(),
+            ParseRefusal::ArchiveLimit,
+        ),
+        (
             "zip bomb DOCX",
             fixtures::zip_bomb_docx(),
             ParseRefusal::ArchiveLimit,
@@ -284,6 +289,23 @@ fn wi05_hostile_inputs_fail_closed_under_containment_with_their_type() {
         assert_eq!(code, EXIT_REFUSED, "{name}");
         assert_eq!(frame, Err(FrameError::Refused(expected)), "{name}");
     }
+}
+
+/// A parser crash (the debug-only abort trigger) ends inside the contained
+/// process: the helper reports it, and there is no frame to accept.
+#[test]
+fn wi05_a_parser_crash_is_contained_and_yields_no_frame() {
+    let Some(scene) = Scene::new(fixtures::ABORT_TRIGGER) else {
+        return;
+    };
+    let run = scene.run(&scene.parser_spec());
+    assert!(
+        run.outcome != ContainedOutcome::Exited(0)
+            && run.outcome != ContainedOutcome::Exited(EXIT_REFUSED),
+        "{:?}",
+        run.outcome
+    );
+    assert!(decode_frame(&run.stdout).is_err());
 }
 
 #[test]

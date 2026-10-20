@@ -238,13 +238,15 @@ pub fn parse_committed(
         ContainedOutcome::TimedOut => {
             return Err(ProviderError::new(
                 FailureCode::ProcessTimeout,
-                "the document parser exceeded its timeout and was ended",
+                "document_parse_failed:timeout: the document parser exceeded its timeout and was ended",
             ))
         }
+        // FailureCode has no resource-ceiling variant (adding one changes the
+        // wire contract), so the ceiling keeps its own message code.
         ContainedOutcome::ResourceLimit => {
             return Err(ProviderError::new(
-                FailureCode::ProcessTimeout,
-                "the document parser reached its CPU or memory ceiling and was ended",
+                FailureCode::PostconditionFailed,
+                "document_parse_failed:resource_limit: the document parser reached its CPU or memory ceiling and was ended",
             ))
         }
         ContainedOutcome::OutputLimit(_) => {
@@ -286,7 +288,7 @@ fn result(download: &CommittedDownload, parser: &ParserPin, document: &ParsedDoc
 fn crashed() -> ProviderError {
     ProviderError::new(
         FailureCode::PostconditionFailed,
-        "the document parser ended without a valid result; nothing was returned",
+        "document_parse_failed:crashed: the document parser ended without a valid result; nothing was returned",
     )
 }
 
@@ -419,7 +421,15 @@ impl Stage {
             .map_err(|error| unavailable(format!("document parse root: {error}")))?;
         orcel_platform::paths::ensure_private_dir(&runs)
             .map_err(|error| unavailable(format!("document parse root: {error}")))?;
-        let root = runs.join(format!("{}-{}", std::process::id(), &digest[..16]));
+        // Unique per parse (process, sequence, digest), so two parses of one
+        // download never share, or remove, each other's stage.
+        static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let root = runs.join(format!(
+            "{}-{sequence}-{}",
+            std::process::id(),
+            &digest[..16]
+        ));
         // A leftover from a crashed run with the same name is not reused.
         let _ = std::fs::remove_dir_all(&root);
         let made = |path: &Path| {

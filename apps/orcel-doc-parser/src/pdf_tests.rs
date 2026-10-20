@@ -31,3 +31,15 @@ fn nesting_is_bounded() {
 fn a_non_pdf_is_malformed() {
     assert_eq!(convert(b"%PDX-").map(|_| ()), Err(ParseRefusal::Malformed));
 }
+
+#[test]
+fn the_hand_written_zlib_fixture_is_valid() {
+    let stream = lopdf::Stream::new(
+        lopdf::dictionary! { "Filter" => Object::Name(b"FlateDecode".to_vec()) },
+        crate::fixtures::zlib_zeros(1 + 258 * 4),
+    );
+    assert_eq!(
+        stream.decompressed_content_with_limit(1 << 20).unwrap(),
+        vec![0; 1 + 258 * 4]
+    );
+}

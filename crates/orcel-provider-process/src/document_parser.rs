@@ -58,6 +58,9 @@ pub const MAX_ARCHIVE_ENTRIES: usize = 1_000;
 pub const MAX_ARCHIVE_BYTES: u64 = 64 * 1024 * 1024;
 pub const MAX_ENTRY_RATIO: u64 = 100;
 pub const RATIO_FLOOR_BYTES: u64 = 1024 * 1024;
+/// PDFs: no one stream may inflate past [`MAX_ARCHIVE_BYTES`], and all of a
+/// document's streams together not past this.
+pub const MAX_PDF_INFLATED_BYTES: u64 = 256 * 1024 * 1024;
 
 const MAX_HEADER_BYTES: usize = 256;
 

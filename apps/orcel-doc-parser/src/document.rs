@@ -26,7 +26,10 @@
 //!   times; every entry actually inflated through a counting reader, all of
 //!   them together at most [`MAX_ARCHIVE_BYTES`] (declared sizes are not
 //!   trusted); every XML part free of a DTD and nested at most
-//!   [`MAX_XML_NESTING`] deep; at most [`MAX_PAGES`] slides or sheets;
+//!   [`MAX_XML_NESTING`] deep; at most [`MAX_PAGES`] slides or sheets. Macros,
+//!   ActiveX and slides or sheets are recognised from what the package
+//!   declares (`[Content_Types].xml` and every relationship part), with the
+//!   well-known part names as a second check (`classify_package`);
 //! - the donor's part budget (128 MiB) is replaced by [`MAX_ARCHIVE_BYTES`];
 //! - every error is one closed [`ParseRefusal`] code.
 //!
@@ -141,6 +144,7 @@ fn preflight_archive(bytes: &[u8]) -> Result<usize, ParseRefusal> {
     }
     let mut inflated_total: u64 = 0;
     let mut pages = 0_usize;
+    let mut package_xml = Vec::new();
     for index in 0..archive.len() {
         let (name, declared, compressed, encrypted) = {
             let entry = archive
@@ -186,7 +190,74 @@ fn preflight_archive(bytes: &[u8]) -> Result<usize, ParseRefusal> {
         inflated_total += read;
         if is_xml_part(&name) {
             check_xml(&content)?;
+            if name == "[Content_Types].xml" || name.to_ascii_lowercase().ends_with(".rels") {
+                package_xml.push(String::from_utf8(content).map_err(|_| ParseRefusal::Malformed)?);
+            }
         }
+    }
+    let declared = classify_package(&package_xml)?;
+    Ok(pages.max(declared))
+}
+
+/// Content types that mark a macro project, macro data, an ActiveX control
+/// or a macro-enabled main part, wherever the package names it.
+const ACTIVE_CONTENT_TYPES: [&str; 4] = ["vbaproject", "vbadata", "activex", "macroenabled"];
+/// Relationship types (the last path segment) to the same.
+const ACTIVE_RELATIONSHIPS: [&str; 4] = [
+    "vbaproject",
+    "wordvbadata",
+    "activexcontrol",
+    "activexcontrolbinary",
+];
+const SLIDE_CONTENT_TYPE: &str =
+    "application/vnd.openxmlformats-officedocument.presentationml.slide+xml";
+const SHEET_CONTENT_TYPE: &str =
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml";
+
+/// Classify the package by what it declares, not by part names (which a
+/// package chooses freely): `[Content_Types].xml` defaults and overrides and
+/// every relationship part. Refuses active content; returns the larger of
+/// the declared slide or sheet parts and the slide or sheet relationships.
+fn classify_package(package_xml: &[String]) -> Result<usize, ParseRefusal> {
+    let mut typed_pages = 0_usize;
+    let mut related_pages = 0_usize;
+    for xml in package_xml {
+        let document = Document::parse(xml).map_err(|_| ParseRefusal::Malformed)?;
+        for node in document.descendants().filter(|node| node.is_element()) {
+            match node.tag_name().name() {
+                "Default" | "Override" => {
+                    let content_type = node.attribute("ContentType").unwrap_or_default();
+                    let lower = content_type.to_ascii_lowercase();
+                    if ACTIVE_CONTENT_TYPES
+                        .iter()
+                        .any(|marker| lower.contains(marker))
+                    {
+                        return Err(ParseRefusal::ActiveContent);
+                    }
+                    if content_type == SLIDE_CONTENT_TYPE || content_type == SHEET_CONTENT_TYPE {
+                        typed_pages += 1;
+                    }
+                }
+                "Relationship" => {
+                    let kind = node
+                        .attribute("Type")
+                        .and_then(|kind| kind.rsplit('/').next())
+                        .unwrap_or_default()
+                        .to_ascii_lowercase();
+                    if ACTIVE_RELATIONSHIPS.contains(&kind.as_str()) {
+                        return Err(ParseRefusal::ActiveContent);
+                    }
+                    if kind == "slide" || kind == "worksheet" {
+                        related_pages += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let pages = typed_pages.max(related_pages);
+    if pages > MAX_PAGES {
+        return Err(ParseRefusal::TooManyPages);
     }
     Ok(pages)
 }

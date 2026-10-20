@@ -362,3 +362,138 @@ pub fn long_docx(chars: usize) -> Vec<u8> {
     let refs: Vec<&str> = paragraphs.iter().map(String::as_str).collect();
     docx_with(&refs, Vec::new())
 }
+
+/// A zlib stream that inflates to `zeros` zero bytes, written by hand so the
+/// test never inflates it itself: one fixed-Huffman deflate block holding a
+/// literal 0 and then length-258, distance-1 copies (13 bits per 258 bytes).
+pub fn zlib_zeros(zeros: usize) -> Vec<u8> {
+    struct Bits {
+        out: Vec<u8>,
+        bit: u32,
+    }
+    impl Bits {
+        // Huffman codes go most significant bit first.
+        fn code(&mut self, code: u32, length: u32) {
+            for index in (0..length).rev() {
+                self.push((code >> index) & 1);
+            }
+        }
+        fn push(&mut self, bit: u32) {
+            if self.bit == 0 {
+                self.out.push(0);
+            }
+            if bit == 1 {
+                *self.out.last_mut().expect("a byte") |= 1 << self.bit;
+            }
+            self.bit = (self.bit + 1) % 8;
+        }
+    }
+    assert!(
+        zeros >= 1 && (zeros - 1).is_multiple_of(258),
+        "1 + 258 * n zeros"
+    );
+    let mut bits = Bits {
+        out: Vec::new(),
+        bit: 0,
+    };
+    bits.push(1); // BFINAL
+    bits.push(1); // BTYPE = 01 (fixed Huffman), low bit first
+    bits.push(0);
+    bits.code(0b0011_0000, 8); // literal 0
+    for _ in 0..(zeros - 1) / 258 {
+        bits.code(0b1100_0101, 8); // length symbol 285 = 258
+        bits.code(0, 5); // distance symbol 0 = 1
+    }
+    bits.code(0, 7); // end of block (256)
+    let mut stream = vec![0x78, 0x01];
+    stream.extend_from_slice(&bits.out);
+    // Adler-32 of `zeros` zero bytes: a stays 1, b grows by 1 per byte.
+    let b = (zeros % 65_521) as u32;
+    stream.extend_from_slice(&((b << 16) | 1).to_be_bytes());
+    stream
+}
+
+/// A page whose content stream is a small FlateDecode stream that inflates
+/// past the per-stream bound (a PDF flate bomb).
+pub fn flate_bomb_pdf() -> Vec<u8> {
+    let zeros = 1 + 258 * 270_000; // about 66 MiB
+    let mut out = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    let mut object = |out: &mut Vec<u8>, body: &[u8]| {
+        offsets.push(out.len());
+        out.extend_from_slice(format!("{} 0 obj\n", offsets.len()).as_bytes());
+        out.extend_from_slice(body);
+        out.extend_from_slice(b"\nendobj\n");
+    };
+    object(&mut out, b"<< /Type /Catalog /Pages 2 0 R >>");
+    object(&mut out, b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+    object(
+        &mut out,
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>",
+    );
+    let data = zlib_zeros(zeros);
+    let mut stream = format!(
+        "<< /Length {} /Filter /FlateDecode >>\nstream\n",
+        data.len()
+    )
+    .into_bytes();
+    stream.extend_from_slice(&data);
+    stream.extend_from_slice(b"\nendstream");
+    object(&mut out, &stream);
+    let xref = out.len();
+    out.extend_from_slice(
+        format!("xref\n0 {}\n0000000000 65535 f \n", offsets.len() + 1).as_bytes(),
+    );
+    for offset in &offsets {
+        out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    out.extend_from_slice(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+            offsets.len() + 1
+        )
+        .as_bytes(),
+    );
+    out
+}
+
+/// Debug builds only: the input that makes the parser abort, so a test can
+/// prove a crash is contained and reported (`src/main.rs`).
+pub const ABORT_TRIGGER: &[u8] = b"ORCEL-WI05-TEST-ABORT";
+
+/// A macro project under an innocent name, recognisable only by the content
+/// type the package declares for it.
+pub fn renamed_macro_docx() -> Vec<u8> {
+    zip(&[
+        (
+            "[Content_Types].xml",
+            content_types(
+                "<Override PartName=\"/word/data.bin\" \
+                 ContentType=\"application/vnd.ms-office.vbaProject\"/>",
+            ),
+        ),
+        ("_rels/.rels", root_rels()),
+        ("word/document.xml", document_xml(&paragraph("x"), "")),
+        ("word/data.bin", b"Attribute VB_Name = \"Module1\"".to_vec()),
+    ])
+}
+
+/// `slides` slides under names that are not `ppt/slides/slideN.xml`,
+/// recognisable only by their declared content type.
+pub fn renamed_slides_pptx(slides: usize) -> Vec<u8> {
+    let overrides: String = (1..=slides)
+        .map(|index| {
+            format!(
+                "<Override PartName=\"/ppt/p{index}.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.presentationml.slide+xml\"/>"
+            )
+        })
+        .collect();
+    let names: Vec<String> = (1..=slides)
+        .map(|index| format!("ppt/p{index}.xml"))
+        .collect();
+    let mut entries = vec![("[Content_Types].xml", content_types(&overrides))];
+    for name in &names {
+        entries.push((name.as_str(), b"<p:sld/>".to_vec()));
+    }
+    zip(&entries)
+}

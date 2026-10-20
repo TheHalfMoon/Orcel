@@ -16,8 +16,10 @@
 //!   an encrypted document (the donor, through pdf-inspector, falls back to
 //!   the empty password; Orcel never decrypts), JavaScript or launch actions
 //!   anywhere in the object graph, object nesting deeper than
-//!   [`MAX_NESTING`], more than [`MAX_PAGES`] pages (refused, not cut), and a
-//!   stream that inflates past [`MAX_ARCHIVE_BYTES`] while loading;
+//!   [`MAX_NESTING`], more than [`MAX_PAGES`] pages (refused, not cut), and
+//!   any stream that inflates past [`MAX_ARCHIVE_BYTES`] (or all of them past
+//!   [`MAX_PDF_INFLATED_BYTES`]), whether lopdf decodes it while loading or
+//!   pdf-inspector would decode it later (`bound_stream_inflation`);
 //! - every error is one closed [`ParseRefusal`] code; no text from the
 //!   document reaches an error;
 //! - a scanned PDF (no text layer) is refused as `no_text`: Orcel runs no OCR.
@@ -28,7 +30,7 @@
 
 use lopdf::{DecompressError, Document, LoadOptions, Object};
 use orcel_provider_process::document_parser::{
-    ParseRefusal, MAX_ARCHIVE_BYTES, MAX_NESTING, MAX_PAGES,
+    ParseRefusal, MAX_ARCHIVE_BYTES, MAX_NESTING, MAX_PAGES, MAX_PDF_INFLATED_BYTES,
 };
 use pdf_inspector::{PdfError, PdfOptions, PdfType};
 
@@ -80,12 +82,41 @@ fn preflight(bytes: &[u8]) -> Result<usize, ParseRefusal> {
     for object in document.objects.values() {
         inspect(object, 0)?;
     }
+    bound_stream_inflation(&document)?;
     let pages = document.page_iter().take(MAX_PAGES + 1).count();
     match pages {
         0 => Err(ParseRefusal::Malformed),
         count if count > MAX_PAGES => Err(ParseRefusal::TooManyPages),
         count => Ok(count),
     }
+}
+
+/// pdf-inspector decodes content, form XObject, font and ToUnicode streams
+/// with lopdf's unbounded `decompressed_content`. It reads the same bytes
+/// this pass reads, so every stream is decoded here first under a bound: no
+/// stream may inflate past [`MAX_ARCHIVE_BYTES`] (each filter layer is
+/// capped while it decodes, never after), and all of them together not past
+/// [`MAX_PDF_INFLATED_BYTES`]. Whatever pdf-inspector decodes later is
+/// therefore within those bounds. A stream whose filter lopdf does not decode
+/// (images: DCT, JPX, JBIG2, CCITT) is skipped, because pdf-inspector cannot
+/// decode it either; a corrupt stream is skipped for the same reason.
+fn bound_stream_inflation(document: &Document) -> Result<(), ParseRefusal> {
+    let per_stream = usize::try_from(MAX_ARCHIVE_BYTES).map_err(|_| ParseRefusal::ArchiveLimit)?;
+    let mut remaining =
+        usize::try_from(MAX_PDF_INFLATED_BYTES).map_err(|_| ParseRefusal::ArchiveLimit)?;
+    for object in document.objects.values() {
+        let Object::Stream(stream) = object else {
+            continue;
+        };
+        match stream.decompressed_content_with_limit(per_stream.min(remaining)) {
+            Ok(content) => remaining -= content.len(),
+            Err(lopdf::Error::Decompress(DecompressError::MemoryLimitExceeded { .. })) => {
+                return Err(ParseRefusal::ArchiveLimit)
+            }
+            Err(_) => {}
+        }
+    }
+    Ok(())
 }
 
 /// Walk one object (references are not followed: every object is visited

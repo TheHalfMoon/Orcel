@@ -63,8 +63,23 @@ fn run() -> Result<ParsedDocument, ParseRefusal> {
         return Err(ParseRefusal::Usage);
     };
     let bytes = read_bounded(Path::new(&path))?;
+    abort_on_test_trigger(&bytes);
     convert(&bytes)
 }
+
+/// Debug builds only (never a release build, which is what ships): an input
+/// that is exactly the test trigger aborts the process, so the end-to-end
+/// tests can prove a parser crash stays inside the contained process and
+/// reaches orceld as a failure, not a result.
+#[cfg(debug_assertions)]
+fn abort_on_test_trigger(bytes: &[u8]) {
+    if bytes == b"ORCEL-WI05-TEST-ABORT" {
+        std::process::abort();
+    }
+}
+
+#[cfg(not(debug_assertions))]
+fn abort_on_test_trigger(_bytes: &[u8]) {}
 
 /// Read the input, refusing anything past [`MAX_INPUT_BYTES`] without
 /// reading more than one byte beyond it.

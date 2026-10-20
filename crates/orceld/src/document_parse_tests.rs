@@ -351,6 +351,18 @@ fn wi05_orceld_parses_a_committed_download_under_the_contained_tier() {
         error.message
     );
 
+    // A parser crash (the debug build's abort trigger) is a failure, never a
+    // result.
+    let crash = committed(&folder, "crash.pdf", b"ORCEL-WI05-TEST-ABORT");
+    let error =
+        parse_committed(&workspace(&folder), &approved, &crash, &helper, &parser).unwrap_err();
+    assert_eq!(error.code, FailureCode::PostconditionFailed, "{}", error.message);
+    assert!(
+        error.message.starts_with("document_parse_failed:crashed"),
+        "{}",
+        error.message
+    );
+
     // A parser whose bytes no longer match its pin is never launched.
     let tampered = ParserPin::for_test(parser_path, "a".repeat(64));
     let error = parse_committed(
@@ -365,4 +377,14 @@ fn wi05_orceld_parses_a_committed_download_under_the_contained_tier() {
 
     let _ = std::fs::remove_dir_all(bin);
     let _ = std::fs::remove_dir_all(folder);
+}
+
+#[test]
+fn wi05_each_parse_gets_its_own_stage() {
+    let first = Stage::create(DIGEST).expect("a stage");
+    let second = Stage::create(DIGEST).expect("a second stage for the same digest");
+    assert_ne!(first.root, second.root);
+    std::fs::write(first.input.join(INPUT_NAME), b"first").unwrap();
+    drop(second);
+    assert_eq!(std::fs::read(first.input.join(INPUT_NAME)).unwrap(), b"first");
 }

@@ -1,11 +1,22 @@
 # cargo-audit configuration for the orcel-doc-parser workspace only (WI-05).
 # Every ignore names its reason; anything new fails the CI job.
+#
+# Not ignored, reported as a warning only (cargo audit does not fail on it):
+# RUSTSEC-2026-0192, ttf-parser 0.25.1 is unmaintained. pdf-inspector uses it
+# to read the cmap of fonts embedded in a PDF, which is attacker input. That
+# parse runs only inside the contained parser, under the stream inflation
+# bound (src/pdf.rs, bound_stream_inflation) and the memory, CPU and time
+# ceilings, and a fault there is a contained crash that orceld reports as
+# document_parse_failed:crashed. Revisit when pdf-inspector moves to a
+# maintained font parser (for example skrifa or read-fonts).
 [advisories]
 ignore = [
-  # zip 8.6.0: `ZipArchive::extract` and `ZipStreamReader::extract` preserve
-  # SUID/SGID bits, create links whose targets leave the destination, and
-  # apply permissions through links. Fixed in zip 9.0.0, but anydoc (every
-  # release up to 0.2.4) requires ^8.6. Not reachable here: the parser and
+  # zip 8.6.0, three advisories, all in archive *extraction* to disk:
+  # - RUSTSEC-2026-0367: `extract` preserves SUID/SGID bits;
+  # - RUSTSEC-2026-0368: `extract` creates links whose targets leave the
+  #   destination;
+  # - RUSTSEC-2026-0369: `extract` applies permissions through links.
+  # Fixed in zip 9.0.0, but anydoc (every release up to 0.2.4) requires ^8.6. Not reachable here: the parser and
   # anydoc only read entries into memory (`by_index`, `by_name`) and never
   # call `extract`, and the parser runs with no writable root at all (the
   # contained tier's spec, document_parser.rs). Drop these when anydoc

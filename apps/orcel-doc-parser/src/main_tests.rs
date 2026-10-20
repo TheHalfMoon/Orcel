@@ -75,6 +75,14 @@ fn hostile_pdfs_fail_closed_with_their_type() {
         ParseRefusal::NestingTooDeep
     );
     assert_eq!(refusal(&fixtures::blank_pdf()), ParseRefusal::NoText);
+    assert_eq!(
+        refusal(&fixtures::flate_bomb_pdf()),
+        ParseRefusal::ArchiveLimit
+    );
+    assert_eq!(
+        refusal(&fixtures::flate_bomb_pdf()),
+        ParseRefusal::ArchiveLimit
+    );
 }
 
 #[test]
@@ -100,6 +108,14 @@ fn hostile_office_files_fail_closed_with_their_type() {
     assert_eq!(
         refusal(&fixtures::macro_docx()),
         ParseRefusal::ActiveContent
+    );
+    assert_eq!(
+        refusal(&fixtures::renamed_macro_docx()),
+        ParseRefusal::ActiveContent
+    );
+    assert_eq!(
+        refusal(&fixtures::renamed_slides_pptx(MAX_PAGES + 1)),
+        ParseRefusal::TooManyPages
     );
     assert_eq!(
         refusal(&fixtures::nested_docx(200)),
