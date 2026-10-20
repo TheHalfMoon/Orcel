@@ -253,28 +253,74 @@ fn host_holds_only_inherited_stdio() {
     assert!(host.shutdown().success());
 }
 
+/// Descriptors of `pid` numbered 0..1023, one `lsof` line each.
+#[cfg(target_os = "macos")]
+fn descriptors(pid: u32) -> Vec<String> {
+    let output = std::process::Command::new("lsof")
+        .args(["-n", "-P", "-a", "-p", &pid.to_string(), "-d", "0-1023"])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .skip(1)
+        .map(str::to_owned)
+        .collect()
+}
+
+/// A NetworkStatistics kernel-control socket. On the macOS runner every
+/// process gets these from libSystem's own start-up: in the XP-06 diagnostic
+/// (run 39352665447, job 118400225275) a C program linking nothing but
+/// libSystem held the same two as the host, and linking any of the host's
+/// frameworks added none. They carry no route, address or connection.
+#[cfg(target_os = "macos")]
+fn is_netsrc_control(line: &str) -> bool {
+    line.split_whitespace().nth(4) == Some("systm") && line.contains("[ctl com.apple.netsrc ")
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn host_holds_only_inherited_stdio() {
     let mut host = Host::spawn();
     host.hello();
     let pid = host.child.id();
-    let output = std::process::Command::new("lsof")
-        .args(["-n", "-P", "-a", "-p", &pid.to_string(), "-d", "0-1023"])
-        .output()
-        .unwrap();
-    let listing = String::from_utf8_lossy(&output.stdout).into_owned();
-    for line in listing.lines().skip(1) {
+    let listing = descriptors(pid);
+    let mut netsrc = 0;
+    for line in &listing {
+        if is_netsrc_control(line) {
+            netsrc += 1;
+            continue;
+        }
         let kind = line.split_whitespace().nth(4).unwrap_or_default();
         assert!(
             matches!(kind, "PIPE" | "CHR" | "REG" | "DIR"),
-            "unexpected descriptor: {line}\n{listing}"
+            "unexpected descriptor: {line}
+{listing:#?}"
         );
         assert!(
             !line.contains("TCP") && !line.contains("UDP") && kind != "unix",
             "{line}"
         );
     }
+    // The host may hold no more of those sockets than a plain system
+    // process started the same way: anything beyond the baseline would be
+    // the host's own.
+    let mut baseline = std::process::Command::new("/bin/sleep")
+        .arg("5")
+        .stdin(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let baseline_netsrc = descriptors(baseline.id())
+        .iter()
+        .filter(|line| is_netsrc_control(line))
+        .count();
+    let _ = baseline.kill();
+    let _ = baseline.wait();
+    assert!(
+        netsrc <= baseline_netsrc,
+        "host holds {netsrc} netsrc control sockets, a plain process {baseline_netsrc}: {listing:#?}"
+    );
+    eprintln!("XP-06 macOS descriptors: netsrc host={netsrc} baseline={baseline_netsrc}; others pipes/devices only");
     assert!(host.shutdown().success());
 }
 

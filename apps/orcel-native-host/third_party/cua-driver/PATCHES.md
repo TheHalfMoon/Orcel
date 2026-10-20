@@ -72,6 +72,21 @@ which P-03 compiles out, so with `orcel-minimal` nothing calls them. P-03
 gates code, not manifests, so the crates are still compiled. The
 graph-level guarantee covers HTTP clients only, not WebSocket libraries.
 
+XP-06 finding (no patch): on the GitHub macOS runner the live host holds two
+`[ctl com.apple.netsrc]` kernel-control sockets (NetworkStatistics) from the
+moment it starts, before it reads a request. The diagnostic in CI run
+39352665447 (job 118400225275) linked a trivial C program against each
+framework the host links, plus CFNetwork, Network and SystemConfiguration:
+every variant, including the one that links nothing but libSystem, held the
+same two sockets and no more. They come from libSystem's process start-up,
+not from any vendored or host code, and they carry no route, address or
+connection. `stdio_conformance::host_holds_only_inherited_stdio` therefore
+allows exactly that socket, and only as many of them as a plain `/bin/sleep`
+started beside it holds; every other descriptor must be a pipe, a character
+device or a file. (CloudKit and CoreData are linked through `clipboard-rs`,
+but they add no socket; the clipboard tool is not in the host's registry,
+P-07.)
+
 ## P-03: feature `orcel-minimal`
 
 `orcel-minimal` compiles out every Cua surface the Orcel host must not carry.
