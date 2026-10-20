@@ -22,6 +22,12 @@
 //!   any stream that inflates past [`MAX_ARCHIVE_BYTES`] (or all of them past
 //!   [`MAX_PDF_INFLATED_BYTES`]) in one decode of each, which is what
 //!   pdf-inspector later decodes without a bound (`bound_stream_inflation`);
+//! - parity between the pre-flight and pdf-inspector is required and
+//!   checked, not assumed: only a canonical `%PDF-d.d` header at byte 0 is
+//!   admitted, and pdf-inspector's three input-changing paths (header strip,
+//!   bare-name rewrite, container repair) are observed through its own log
+//!   records while it runs; any of them, or a page count that differs from
+//!   the pre-flight's, refuses the file (`inspect_with_parity`);
 //! - every error is one closed [`ParseRefusal`] code; no text from the
 //!   document reaches an error;
 //! - a scanned PDF (no text layer) is refused as `no_text`: Orcel runs no OCR.
@@ -49,21 +55,14 @@ pub struct PdfText {
 }
 
 pub fn convert(bytes: &[u8]) -> Result<PdfText, ParseRefusal> {
-    if !bytes.starts_with(b"%PDF-") {
+    if !has_canonical_header_at_start(bytes) {
         return Err(ParseRefusal::Malformed);
     }
     let bytes = &as_inspector_reads(bytes)?;
     let pages = preflight(bytes)?;
     // The donor's `process_pdf` with `max_pages`: only the pages counted
-    // above are extracted. pdf-inspector receives the exact bytes the
-    // pre-flight loaded, and loads them with the same options
-    // (`as_inspector_reads`, `INSPECTOR_LOAD_BOUND`), so it builds the same
-    // document the pre-flight checked and never reaches its repair
-    // fallbacks: those only run when that load fails, and here it succeeded.
-    let last = u32::try_from(pages).map_err(|_| ParseRefusal::TooManyPages)?;
-    let result =
-        pdf_inspector::process_pdf_mem_with_options(bytes, PdfOptions::new().pages(1..=last))
-            .map_err(inspector_refusal)?;
+    // above are extracted.
+    let result = inspect_with_parity(bytes, pages)?;
     let markdown = match result.pdf_type {
         PdfType::TextBased | PdfType::Mixed => result.markdown.unwrap_or_default(),
         PdfType::Scanned | PdfType::ImageBased => String::new(),
@@ -72,6 +71,116 @@ pub fn convert(bytes: &[u8]) -> Result<PdfText, ParseRefusal> {
         return Err(ParseRefusal::NoText);
     }
     Ok(PdfText { markdown, pages })
+}
+
+/// The bounds above hold for what pdf-inspector decodes only if it parses
+/// the very document the pre-flight checked. pdf-inspector 1.21.0 changes its
+/// input on three paths before it loads, each of which logs (`log::debug!`):
+/// - it drops bytes before the header it prefers ("dropping N leading
+///   bytes"); [`has_canonical_header_at_start`] makes that a no-op;
+/// - it rewrites bare structure names ("fix_bare_struct_names: patched");
+///   [`as_inspector_reads`] applies that rewrite first, so a second pass
+///   changes nothing;
+/// - if the load fails, it retries on repaired copies of the container
+///   ("loaded PDF after repairing"). The pre-flight already loaded the same
+///   bytes with the same options and succeeded, so the load cannot fail.
+///
+/// Parity is checked here as well as argued: a logger records those three
+/// messages, and if any of them is emitted while pdf-inspector runs, or its
+/// page count differs from the pre-flight's, the file is refused. The
+/// messages are pinned with pdf-inspector (=1.21.0), and
+/// `pdf_tests::parity_breaks_are_observed` proves each one is still caught.
+fn inspect_with_parity(
+    bytes: &[u8],
+    pages: usize,
+) -> Result<pdf_inspector::PdfProcessResult, ParseRefusal> {
+    let last = u32::try_from(pages).map_err(|_| ParseRefusal::TooManyPages)?;
+    // Without the logger the check cannot run, so nothing is parsed.
+    if !parity::watch() {
+        return Err(ParseRefusal::Malformed);
+    }
+    let result =
+        pdf_inspector::process_pdf_mem_with_options(bytes, PdfOptions::new().pages(1..=last));
+    if parity::broken() {
+        return Err(ParseRefusal::Malformed);
+    }
+    let result = result.map_err(inspector_refusal)?;
+    if result.page_count as usize != pages {
+        return Err(ParseRefusal::Malformed);
+    }
+    Ok(result)
+}
+
+/// pdf-inspector picks its own header: a canonical `%PDF-d.d` at a line
+/// start within the first KiB wins over an earlier one (its
+/// `pdf_header_offset`), while lopdf starts at the first `%PDF-`. Only a file
+/// whose first bytes are a canonical header, which both agree on, is
+/// admitted.
+fn has_canonical_header_at_start(bytes: &[u8]) -> bool {
+    matches!(bytes, [b'%', b'P', b'D', b'F', b'-', major, b'.', minor, rest @ ..]
+        if major.is_ascii_digit()
+            && minor.is_ascii_digit()
+            && rest.first().is_none_or(|b| matches!(b, b'\r' | b'\n')))
+}
+
+/// Records, per thread, whether pdf-inspector logged one of the
+/// input-changing paths [`inspect_with_parity`] names. pdf-inspector loads
+/// on the calling thread, so a per-thread flag cannot see another parse.
+mod parity {
+    use std::cell::Cell;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Once;
+
+    const MESSAGES: [&str; 3] = [
+        "dropping ",
+        "fix_bare_struct_names: patched",
+        "loaded PDF after repairing",
+    ];
+
+    thread_local! {
+        static BROKEN: Cell<bool> = const { Cell::new(false) };
+    }
+
+    struct ParityLog;
+
+    impl log::Log for ParityLog {
+        fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+            metadata.target().starts_with("pdf_inspector")
+        }
+
+        fn log(&self, record: &log::Record<'_>) {
+            if !self.enabled(record.metadata()) {
+                return;
+            }
+            let message = record.args().to_string();
+            if MESSAGES.iter().any(|prefix| message.starts_with(prefix)) {
+                BROKEN.with(|broken| broken.set(true));
+            }
+        }
+
+        fn flush(&self) {}
+    }
+
+    static LOGGER: ParityLog = ParityLog;
+    static INSTALL: Once = Once::new();
+    static INSTALLED: AtomicBool = AtomicBool::new(false);
+
+    /// Install the logger (once per process) and clear this thread's flag.
+    /// False if another logger holds the slot, so nothing would be observed.
+    pub(super) fn watch() -> bool {
+        INSTALL.call_once(|| {
+            if log::set_logger(&LOGGER).is_ok() {
+                log::set_max_level(log::LevelFilter::Debug);
+                INSTALLED.store(true, Ordering::SeqCst);
+            }
+        });
+        BROKEN.with(|broken| broken.set(false));
+        INSTALLED.load(Ordering::SeqCst)
+    }
+
+    pub(super) fn broken() -> bool {
+        BROKEN.with(Cell::get)
+    }
 }
 
 /// pdf-inspector's own load bound (`MAX_STREAM_DECOMPRESSED_BYTES` in
@@ -136,11 +245,16 @@ fn preflight(bytes: &[u8]) -> Result<usize, ParseRefusal> {
 /// stream) is charged its raw length, which is what pdf-inspector falls back
 /// to reading.
 fn bound_stream_inflation(document: &Document) -> Result<(), ParseRefusal> {
-    bound_stream_inflation_within(
-        document,
+    let (per_stream, total) = stream_budget()?;
+    bound_stream_inflation_within(document, per_stream, total)
+}
+
+/// The per-stream and per-document inflation bounds, in bytes.
+fn stream_budget() -> Result<(usize, usize), ParseRefusal> {
+    Ok((
         usize::try_from(MAX_ARCHIVE_BYTES).map_err(|_| ParseRefusal::ArchiveLimit)?,
         usize::try_from(MAX_PDF_INFLATED_BYTES).map_err(|_| ParseRefusal::ArchiveLimit)?,
-    )
+    ))
 }
 
 fn bound_stream_inflation_within(

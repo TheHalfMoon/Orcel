@@ -83,6 +83,11 @@ fn hostile_pdfs_fail_closed_with_their_type() {
         refusal(&fixtures::struct_name_bomb_pdf()),
         ParseRefusal::ArchiveLimit
     );
+    assert_eq!(
+        refusal(&fixtures::shifted_header_pdf()),
+        ParseRefusal::Malformed
+    );
+    assert_eq!(refusal(&fixtures::short_xref_pdf()), ParseRefusal::NoText);
 }
 
 #[test]

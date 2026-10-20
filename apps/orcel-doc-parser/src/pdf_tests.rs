@@ -109,3 +109,117 @@ fn a_stream_lopdf_cannot_decode_is_charged_its_raw_length() {
         Ok(())
     );
 }
+
+/// Each input-changing path of pdf-inspector is observed, so a file that
+/// would make it parse something other than what the pre-flight checked is
+/// refused even if the pre-flight's own guards were bypassed. The header
+/// strip and the bare-name rewrite are triggered for real here.
+#[test]
+fn parity_breaks_are_observed() {
+    let text = crate::fixtures::text_pdf();
+    assert!(inspect_with_parity(&text, 1).is_ok(), "the normal PDF");
+    for (name, bytes) in [
+        ("shifted header", crate::fixtures::shifted_header_pdf()),
+        (
+            "bare structure name",
+            crate::fixtures::bare_struct_name_pdf(),
+        ),
+    ] {
+        assert_eq!(
+            inspect_with_parity(&bytes, 1).map(|_| ()),
+            Err(ParseRefusal::Malformed),
+            "{name}"
+        );
+    }
+    // The page count must agree with the pre-flight's.
+    assert_eq!(
+        inspect_with_parity(&text, 2).map(|_| ()),
+        Err(ParseRefusal::Malformed)
+    );
+}
+
+/// pdf-inspector's container repair runs only after its load fails, and
+/// lopdf 0.45 reconstructs the cross-reference table itself for every
+/// corruption that repair targets (19-byte entries, a wrong or missing
+/// `startxref`, a missing `%%EOF`, a damaged `xref` keyword). So the load
+/// pdf-inspector repeats on the pre-flight's bytes cannot fail and the
+/// repair cannot run. This pins that: each repair-shaped input loads
+/// directly, pdf-inspector reports no repair, and the parse still ends in a
+/// typed result. If a lopdf upgrade ever makes one of them fail to load, the
+/// pre-flight refuses it as malformed before pdf-inspector runs, and this
+/// test fails so the reasoning is revisited.
+#[test]
+fn repair_shaped_inputs_load_directly_and_never_take_the_repair_path() {
+    let short = crate::fixtures::short_xref_pdf();
+    let text = crate::fixtures::text_pdf();
+    let at = text
+        .windows(10)
+        .rposition(|window| window == b"startxref\n")
+        .unwrap();
+    let mut wrong_pointer = text[..at + 10].to_vec();
+    wrong_pointer.extend_from_slice(b"99999999\n%%EOF\n");
+    let mut no_eof = text.clone();
+    no_eof.truncate(text.len() - 6);
+    let mut bad_keyword = text.clone();
+    let xref = bad_keyword
+        .windows(5)
+        .position(|window| window == b"xref\n")
+        .unwrap();
+    bad_keyword[xref] = b'X';
+    for (name, bytes, expected) in [
+        ("short entries", short, Err(ParseRefusal::NoText)),
+        ("wrong startxref", wrong_pointer, Ok(())),
+        ("no %%EOF", no_eof, Ok(())),
+        ("damaged xref keyword", bad_keyword, Ok(())),
+    ] {
+        let options = LoadOptions {
+            max_decompressed_size: Some(INSPECTOR_LOAD_BOUND),
+            ..LoadOptions::default()
+        };
+        assert!(
+            Document::load_mem_with_options(&bytes, options).is_ok(),
+            "{name}: lopdf no longer loads it directly"
+        );
+        assert!(inspect_with_parity(&bytes, 1).is_ok(), "{name}: parity");
+        assert_eq!(convert(&bytes).map(|_| ()), expected, "{name}");
+    }
+}
+
+/// The repair message itself, as pdf-inspector 1.21.0 writes it (lib.rs,
+/// `load_document_from_mem_with_password`), is caught.
+#[test]
+fn the_repair_message_is_observed() {
+    assert!(parity::watch());
+    assert!(!parity::broken());
+    log::debug!(target: "pdf_inspector", "loaded PDF after repairing malformed container bytes");
+    assert!(parity::broken());
+    // Other crates' records and other messages are ignored.
+    assert!(parity::watch());
+    log::debug!(target: "lopdf::reader", "loaded PDF after repairing malformed container bytes");
+    log::debug!(target: "pdf_inspector", "TextBased PDF has garbage text");
+    assert!(!parity::broken());
+}
+
+#[test]
+fn only_a_canonical_header_at_the_first_byte_is_admitted() {
+    assert!(has_canonical_header_at_start(b"%PDF-1.7\n"));
+    assert!(has_canonical_header_at_start(b"%PDF-2.0\r\n"));
+    for bytes in [
+        &b"%PDF-x\n%PDF-1.7\n"[..],
+        b"%PDF-1.7 trailing\n",
+        b"%PDF-17\n",
+        b" %PDF-1.7\n",
+        b"\xEF\xBB\xBF%PDF-1.7\n",
+    ] {
+        assert!(!has_canonical_header_at_start(bytes), "{bytes:?}");
+    }
+}
+
+#[test]
+fn the_inflation_bound_is_wired_to_the_contract() {
+    assert_eq!(
+        stream_budget(),
+        Ok((MAX_ARCHIVE_BYTES as usize, MAX_PDF_INFLATED_BYTES as usize))
+    );
+    assert_eq!(MAX_PDF_INFLATED_BYTES, 256 * 1024 * 1024);
+}

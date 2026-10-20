@@ -41,6 +41,10 @@ anydoc = { version = "=0.2.2", default-features = false }
 # (encryption, active content, page count, nesting) and the thread pool size.
 lopdf = { version = "=0.45.0", default-features = false }
 rayon = "1.10"
+# Already in the graph (pdf-inspector and anydoc log through it). The parser
+# installs one logger that only watches pdf-inspector's input-changing paths
+# (src/pdf.rs, `parity`); nothing is printed.
+log = "0.4"
 # The donor's header and footer pass (deflate only, as in the donor).
 zip = { version = "=8.6.0", default-features = false, features = ["deflate"] }
 roxmltree = "=0.20.0"

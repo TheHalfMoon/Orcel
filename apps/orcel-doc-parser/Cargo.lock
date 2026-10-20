@@ -770,6 +770,7 @@ name = "orcel-doc-parser"
 version = "0.1.0"
 dependencies = [
  "anydoc",
+ "log",
  "lopdf",
  "orcel-provider-process",
  "pdf-inspector",

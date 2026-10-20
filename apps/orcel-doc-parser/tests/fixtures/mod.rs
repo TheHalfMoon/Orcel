@@ -529,3 +529,42 @@ pub fn renamed_slides_pptx(slides: usize) -> Vec<u8> {
     }
     zip(&entries)
 }
+
+/// A non-canonical `%PDF-` marker first and the real, canonical header on
+/// a later line: pdf-inspector would start at the second, lopdf at the first.
+pub fn shifted_header_pdf() -> Vec<u8> {
+    let mut bytes = b"%PDF-x not a version\n".to_vec();
+    bytes.extend_from_slice(&text_pdf());
+    bytes
+}
+
+/// A one-page PDF whose cross-reference entries are 19 bytes (a bare LF
+/// instead of the two-byte end of line): lopdf alone refuses to load it, and
+/// pdf-inspector loads it only through its container repair
+/// (`rebuild_short_xref_entries`). The shape is pdf-inspector 1.21.0's own
+/// test document for that path (`synthetic_pdf_with_xref_terminator`).
+pub fn short_xref_pdf() -> Vec<u8> {
+    let header = "%PDF-1.7\n";
+    let obj1 = "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n";
+    let obj2 = "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n";
+    let obj3 = "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>\nendobj\n";
+    let o1 = header.len();
+    let o2 = o1 + obj1.len();
+    let o3 = o2 + obj2.len();
+    let body = format!("{header}{obj1}{obj2}{obj3}");
+    let xref = body.len();
+    format!(
+        "{body}xref\n0 4\n0000000000 65535 f\n{o1:010} 00000 n\n{o2:010} 00000 n\n\
+         {o3:010} 00000 n\ntrailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n"
+    )
+    .into_bytes()
+}
+
+/// A tagged PDF with a bare structure name that pdf-inspector rewrites.
+pub fn bare_struct_name_pdf() -> Vec<u8> {
+    text_pdf_with(
+        &["Orcel WI-05 fixture"],
+        "/StructTreeRoot << /Type /StructTreeRoot >> ",
+        "/OrcelTag << /S P >> ",
+    )
+}

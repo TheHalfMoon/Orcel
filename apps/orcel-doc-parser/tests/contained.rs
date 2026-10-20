@@ -261,6 +261,16 @@ fn wi05_hostile_inputs_fail_closed_under_containment_with_their_type() {
             ParseRefusal::ArchiveLimit,
         ),
         (
+            "PDF with a non-canonical first header",
+            fixtures::shifted_header_pdf(),
+            ParseRefusal::Malformed,
+        ),
+        (
+            "PDF with repair-shaped (19-byte) cross-reference entries",
+            fixtures::short_xref_pdf(),
+            ParseRefusal::NoText,
+        ),
+        (
             "zip bomb DOCX",
             fixtures::zip_bomb_docx(),
             ParseRefusal::ArchiveLimit,
