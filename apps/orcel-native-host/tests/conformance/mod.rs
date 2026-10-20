@@ -647,6 +647,17 @@ pub const INPUT_OPS: [&str; 9] = [
     "input_hotkey",
 ];
 
+/// The listed title is the harness title, exactly or followed by the
+/// ` [app id]` suffix Cua's Wayland listing appends (first Sway CI run).
+pub fn title_matches(listed: &str, title: &str) -> bool {
+    listed == title
+        || listed.strip_prefix(title).is_some_and(|rest| {
+            rest.starts_with(" [")
+                && rest.ends_with(']')
+                && !rest[2..rest.len() - 1].contains(['[', ']'])
+        })
+}
+
 /// list_windows until the harness window appears; its owner must be the
 /// harness process with a live start generation.
 pub fn find_window(host: &mut Host, report: &mut Report, target: &Target) -> Value {
@@ -659,10 +670,11 @@ pub fn find_window(host: &mut Host, report: &mut Report, target: &Target) -> Val
         assert_eq!(listed["ok"], true, "{listed}");
         let windows = listed["windows"].as_array().unwrap();
         assert!(windows.len() <= 64, "{listed}");
-        if let Some(window) = windows
-            .iter()
-            .find(|window| window["title"] == target.title)
-        {
+        if let Some(window) = windows.iter().find(|window| {
+            window["title"]
+                .as_str()
+                .is_some_and(|title| title_matches(title, target.title))
+        }) {
             break window.clone();
         }
         assert!(

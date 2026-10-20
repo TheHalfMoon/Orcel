@@ -481,6 +481,35 @@ fn a_journal_post_without_length_or_json_is_ignored() {
 }
 
 #[test]
+fn titles_match_exactly_or_with_one_wayland_app_id() {
+    use conformance::title_matches;
+    assert!(title_matches(
+        "CuaTestHarness GTK3 Tasks",
+        "CuaTestHarness GTK3 Tasks"
+    ));
+    assert!(title_matches(
+        "CuaTestHarness GTK3 Tasks [main.py]",
+        "CuaTestHarness GTK3 Tasks"
+    ));
+    assert!(title_matches(
+        "CuaTestHarness Electron [cdp=9] [electron]",
+        "CuaTestHarness Electron [cdp=9]"
+    ));
+    assert!(!title_matches(
+        "CuaTestHarness GTK3 Tasks 2",
+        "CuaTestHarness GTK3 Tasks"
+    ));
+    assert!(!title_matches(
+        "CuaTestHarness GTK3 Tasks [a] [b]",
+        "CuaTestHarness GTK3 Tasks"
+    ));
+    assert!(!title_matches(
+        "CuaTestHarness Electron [cdp=1]",
+        "CuaTestHarness Electron [cdp=9]"
+    ));
+}
+
+#[test]
 fn sway_oracle_reads_focus_and_order_from_the_tree() {
     let tree = json!({"id": 1, "nodes": [
         {"id": 4, "nodes": [{"id": 7, "pid": 70, "focused": false}],
