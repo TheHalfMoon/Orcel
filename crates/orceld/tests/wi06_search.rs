@@ -69,7 +69,7 @@ fn run_orceld_env(
     if let Some(config) = config {
         command.env("ORCEL_SEARCH_PROVIDERS_JSON", config);
     }
-    command.env_remove("ORCEL_MCP_HOST");
+    command.env_remove("ORCEL_MCP_TRANSPORT");
     for (name, value) in extra {
         command.env(name, value);
     }
@@ -268,13 +268,13 @@ fn wi06_real_orceld_search_is_off_and_never_leaks_a_key() {
             .contains("no API key"));
     }
 
-    // The tunnel host (orcel-mcp-host sets ORCEL_MCP_HOST=tunnel) refuses
+    // The tunnel host (orcel-mcp-host sets ORCEL_MCP_TRANSPORT=tunnel) refuses
     // search even with providers configured.
     let tunnel = run_orceld_env(
         &state,
         &workspace,
         Some(config),
-        &[("ORCEL_MCP_HOST", "tunnel")],
+        &[("ORCEL_MCP_TRANSPORT", "tunnel")],
         &[
             request("tq", "search", "query", None, json!({"query": "q"})),
             request("td", "search", "doctor", None, json!({})),

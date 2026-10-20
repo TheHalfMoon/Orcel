@@ -28,26 +28,18 @@ import {
  * The frozen vocabulary comes from SG-000047:
  * transport_kind, provider_kind, tool_surface_profile.
  */
-export type TransportKind = "stdio" | "loopback_http" | "relay";
+export type TransportKind = "stdio" | "loopback_http" | "relay" | "tunnel";
+
+/** Remote transports serve only the profile mapped for their provider. */
+export function isRemoteTransport(kind: TransportKind): boolean {
+  return kind === "relay" || kind === "tunnel";
+}
 
 export interface TransportContext {
   readonly transportKind: TransportKind;
   readonly providerKind: string;
   readonly toolSurfaceProfile: ToolSurfaceProfile;
-  /**
-   * WI-06: set when the tunnel's MCP host launcher started this edge for the ChatGPT
-   * Secure MCP Tunnel (`ORCEL_MCP_HOST=tunnel`). Tunnel requests carry no
-   * remote context, so tools that must never be reachable through the
-   * tunnel are removed here and refused again by orceld.
-   */
-  readonly tunnelHost?: boolean;
 }
-
-/** The marker the tunnel's MCP host launcher sets for its edge. */
-export const MCP_HOST_ENV = "ORCEL_MCP_HOST";
-
-/** Tools a tunnel-launched host never serves. */
-export const TUNNEL_EXCLUDED_TOOLS: readonly string[] = Object.freeze(["web_search"]);
 
 /**
  * Local transports (stdio and loopback HTTP) serve the `desktop_structured`
@@ -71,29 +63,36 @@ export function defaultTransportContext(): TransportContext {
 export function localTransportContext(env: NodeJS.ProcessEnv = process.env): TransportContext {
   return {
     ...defaultTransportContext(),
-    toolSurfaceProfile: localProfileFromConfig(env[TOOL_SURFACE_PROFILE_ENV]),
-    ...(env[MCP_HOST_ENV] === "tunnel" ? { tunnelHost: true } : {})
+    toolSurfaceProfile: localProfileFromConfig(env[TOOL_SURFACE_PROFILE_ENV])
   };
 }
 
 /**
- * Resolve the tools a transport context may register. The relay transport
- * may serve only the profile mapped for its provider kind, which is `core`
- * for every known provider; unknown provider kinds and unmapped profiles
- * fail closed.
+ * #395: the ChatGPT Secure MCP Tunnel's context. It is remote, so it serves
+ * the `core` profile; no local configuration can select another one.
+ */
+export function tunnelTransportContext(providerKind: string): TransportContext {
+  return {
+    transportKind: "tunnel",
+    providerKind,
+    toolSurfaceProfile: "core"
+  };
+}
+
+/**
+ * Resolve the tools a transport context may register. A remote transport
+ * (the relay or the tunnel) may serve only the profile mapped for its
+ * provider kind, which is `core` for every known provider; unknown provider
+ * kinds and unmapped profiles fail closed.
  */
 export function allowedToolsFor(context: TransportContext): ReadonlySet<string> {
-  if (context.transportKind === "relay") {
+  if (isRemoteTransport(context.transportKind)) {
     const mapped = remoteProfileForProvider(context.providerKind);
     if (mapped === null || mapped !== context.toolSurfaceProfile) {
       throw new Error("TOOL_SURFACE_DENIED: the remote provider kind or tool surface profile is not mapped");
     }
   }
-  const tools = profileTools(context.toolSurfaceProfile);
-  if (context.tunnelHost === true) {
-    return new Set([...tools].filter((tool) => !TUNNEL_EXCLUDED_TOOLS.includes(tool)));
-  }
-  return tools;
+  return profileTools(context.toolSurfaceProfile);
 }
 
 /**

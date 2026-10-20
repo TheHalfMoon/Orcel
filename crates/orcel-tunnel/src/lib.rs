@@ -112,9 +112,20 @@ impl TunnelConfig {
         Ok(LaunchPlan {
             program: self.tunnel_client.clone(),
             args,
-            env: sanitized_env(source),
+            env: tunnel_client_env(source),
         })
     }
+}
+
+/// #395: the tunnel client's environment carries OS execution variables
+/// only. It runs `orcel-mcp-host`, which rebuilds its whole environment from
+/// the local configuration, so no `ORCEL_*` variable (workspace overrides,
+/// a daemon path, the runtime session binding, provider configuration) has
+/// any reason to cross the remote transport, and none may widen it.
+pub fn tunnel_client_env(source: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    let mut env = sanitized_env(source);
+    env.retain(|name, _| is_os_execution_env(name));
+    env
 }
 
 pub fn sanitized_env(source: &BTreeMap<String, String>) -> BTreeMap<String, String> {
@@ -242,6 +253,8 @@ fn is_os_execution_env(name: &str) -> bool {
     )
 }
 
+/// Orcel variables passed to local Orcel children (`orceld`, the local stdio
+/// MCP app). Never passed to the tunnel client (see [`tunnel_client_env`]).
 fn is_safe_orcel_env(name: &str) -> bool {
     matches!(
         name,
@@ -320,7 +333,7 @@ mod tests {
         assert!(!plan.env.contains_key("CONTROL_PLANE_API_KEY"));
         assert!(!plan.env.contains_key("OPENAI_API_KEY"));
         assert!(!plan.env.contains_key("ORCEL_TUNNEL_KEY"));
-        assert_eq!(plan.env.get("ORCEL_WORKSPACE_ID").unwrap(), "default");
+        assert_eq!(plan.env.get("PATH").unwrap(), "bin");
         let rendered = plan.args.join(" ");
         assert!(rendered.contains("--control-plane.api-key file:"));
         assert!(!rendered.contains("sk-proj-test"));
@@ -328,7 +341,7 @@ mod tests {
     }
 
     /// WI-06: web search must never reach the tunnel, so its provider
-    /// configuration and launch marker never cross into the tunnel client.
+    /// configuration never crosses into the tunnel client.
     #[test]
     fn wi06_tunnel_drops_search_configuration() {
         let (cfg, dir) = config();
@@ -338,11 +351,40 @@ mod tests {
                 "ORCEL_SEARCH_PROVIDERS_JSON".into(),
                 r#"{"providers":{"brave":{}}}"#.into(),
             ),
-            ("ORCEL_MCP_HOST".into(), "local".into()),
         ]);
         let plan = cfg.launch_plan(&source).unwrap();
         assert!(!plan.env.contains_key("ORCEL_SEARCH_PROVIDERS_JSON"));
-        assert!(!plan.env.contains_key("ORCEL_MCP_HOST"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn tunnel_client_env_carries_no_orcel_variable() {
+        // #395: every Orcel variable the local children accept, and the ones
+        // that would widen the tunnel host, stay out of the tunnel client.
+        let (cfg, dir) = config();
+        let source = BTreeMap::from([
+            ("PATH".into(), "bin".into()),
+            ("SystemRoot".into(), r"C:\Windows".into()),
+            ("ORCEL_WORKSPACES_JSON".into(), "[]".into()),
+            ("ORCEL_WORKSPACE_ROOT".into(), "/w".into()),
+            ("ORCEL_WORKSPACE_ID".into(), "default".into()),
+            ("ORCEL_DEFAULT_WORKSPACE".into(), "default".into()),
+            ("ORCEL_DAEMON".into(), "/elsewhere/orceld".into()),
+            ("ORCEL_ORCEL_SESSION_ID".into(), "session".into()),
+            (
+                "ORCEL_TOOL_SURFACE_PROFILE".into(),
+                "desktop_structured".into(),
+            ),
+            ("ORCEL_SEARCH_PROVIDERS_JSON".into(), "{}".into()),
+            ("ORCEL_MCP_TRANSPORT".into(), "stdio".into()),
+        ]);
+        let plan = cfg.launch_plan(&source).unwrap();
+        assert_eq!(
+            plan.env.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["PATH", "SystemRoot"]
+        );
+        // The local children keep their allowlist.
+        assert!(sanitized_env(&source).contains_key("ORCEL_ORCEL_SESSION_ID"));
         let _ = fs::remove_dir_all(dir);
     }
 

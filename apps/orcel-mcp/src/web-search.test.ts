@@ -7,7 +7,8 @@ import { MAX_SEARCH_QUERY_CHARS, SEARCH_PROVIDERS, webSearchSchema } from "./web
 import { TOOL_CONTRACT } from "./tool_contract.js";
 import type { KernelClient } from "./kernel.js";
 import { buildDaemonEnv } from "./kernel.js";
-import { MCP_HOST_ENV, allowedToolsFor, buildOrcelServer, localTransportContext } from "./server.js";
+import { allowedToolsFor, buildOrcelServer, localTransportContext, tunnelTransportContext } from "./server.js";
+import { TRANSPORT_ENV, TUNNEL_TRANSPORT } from "./tunnel_route.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const srcDir = join(here, "..", "src");
@@ -96,10 +97,10 @@ class MemoryTransport {
 }
 
 /**
- * WI-06: the ChatGPT Secure MCP Tunnel runs `orcel-mcp-host`, which sets
- * ORCEL_MCP_HOST=tunnel. That edge never lists web_search, a call to it is
- * refused without reaching the kernel, and the marker reaches orceld, which
- * refuses search/* on its own.
+ * WI-06 with #395: the ChatGPT Secure MCP Tunnel is a remote transport that
+ * serves `core`. web_search is local-only, so the tunnel never lists it, a
+ * call to it is refused without reaching the kernel, and the transport
+ * marker reaches orceld, which refuses search/* on its own.
  */
 test("wi06 a tunnel-launched host neither lists nor serves web_search", async () => {
   let kernelCalls = 0;
@@ -113,11 +114,9 @@ test("wi06 a tunnel-launched host neither lists nor serves web_search", async ()
     pending: new Map(),
     child: {} as never
   } as unknown as KernelClient;
-  const tunnel = localTransportContext({ [MCP_HOST_ENV]: "tunnel" });
-  assert.equal(tunnel.tunnelHost, true);
+  const tunnel = tunnelTransportContext("openai");
   assert.equal(allowedToolsFor(tunnel).has("web_search"), false);
   assert.equal(allowedToolsFor(localTransportContext({})).has("web_search"), true);
-  assert.equal(localTransportContext({ [MCP_HOST_ENV]: "local" }).tunnelHost, undefined);
 
   const server = buildOrcelServer(kernel, "default", tunnel);
   const transport = new MemoryTransport();
@@ -139,5 +138,5 @@ test("wi06 a tunnel-launched host neither lists nor serves web_search", async ()
   assert.equal(kernelCalls, 0);
   await server.close();
 
-  assert.equal(buildDaemonEnv({ [MCP_HOST_ENV]: "tunnel" })[MCP_HOST_ENV], "tunnel");
+  assert.equal(buildDaemonEnv({ [TRANSPORT_ENV]: TUNNEL_TRANSPORT })[TRANSPORT_ENV], "tunnel");
 });

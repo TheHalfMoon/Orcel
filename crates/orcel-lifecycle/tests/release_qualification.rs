@@ -18,9 +18,22 @@ use std::time::{Duration, Instant};
 const SECRET: &str = "sk-release-qualification-key-0123456789";
 const TUNNEL_ID: &str = "tunnel_0123456789abcdefghijklmnopqrstuv";
 
-/// The closed MCP tool set the tunnel-launched `orcel-mcp-host` serves: the
-/// canonical `apps/orcel-mcp` catalog minus [`TUNNEL_EXCLUDED_TOOLS`].
-const TUNNEL_TOOLS: &[&str] = &[
+/// What the fake tunnel's `tools/call system_status` must observe. #395:
+/// the tunnel is a remote transport, so the call reaches `orceld` with the
+/// tunnel's remote context and is refused by the remote-session lease gate.
+/// Qualification cannot create a lease (that needs STRONG local presence),
+/// so a successful call here would mean the lease gate was bypassed.
+const TUNNEL_CALL_LEASE_GATED: &str =
+    "fake-tunnel: mcp-call is_error=true orceld_answered=false remote_session_inactive=true";
+
+/// The exact MCP tool set the tunnel serves: the remote `core` profile
+/// (`REMOTE_TOOL_NAMES` in `apps/orcel-mcp/src/tool_contract.ts`).
+///
+/// #395: this list used to pin the local `desktop_structured` surface (the
+/// eleven `desktop_*` tools, `clipboard_read`, `clipboard_write` and
+/// `web_fetch`), which was the exposure bug itself. The tunnel is a remote
+/// transport and serves only `core`; any other tool is exposure drift.
+const TUNNEL_CORE_TOOLS: &[&str] = &[
     "system_status",
     "workspace_get",
     "fs_stat",
@@ -35,20 +48,6 @@ const TUNNEL_TOOLS: &[&str] = &[
     "fs_move",
     "fs_remove",
     "fs_edit",
-    "desktop_window_list",
-    "desktop_window_tree",
-    "desktop_cursor_get",
-    "desktop_window_capture",
-    "desktop_element_invoke",
-    "desktop_element_set_value",
-    "desktop_element_select",
-    "desktop_element_toggle",
-    "desktop_element_scroll",
-    "desktop_input_execute",
-    "desktop_window_action",
-    "clipboard_read",
-    "clipboard_write",
-    "web_fetch",
     "process_spawn",
     "git_status",
     "git_diff",
@@ -62,11 +61,6 @@ const TUNNEL_TOOLS: &[&str] = &[
     "git_push_preview",
     "git_push",
 ];
-
-/// WI-06: canonical tools the tunnel host never serves. `web_search` is in
-/// the local catalog but must not be reachable through the ChatGPT Secure
-/// MCP Tunnel, whose requests carry no remote context.
-const TUNNEL_EXCLUDED_TOOLS: &[&str] = &["web_search"];
 
 fn temp_dir(label: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("orcel-rq-{label}-{}", orcel_lifecycle::nonce()));
@@ -333,9 +327,10 @@ fn packaged_release_installs_runs_updates_recovers_and_uninstalls() {
         .find(|line| line.contains("fake-tunnel: mcp-tools"))
         .unwrap()
         .to_string();
-    // The exposed MCP surface must be exactly the canonical closed tool set:
-    // any added tool (clipboard, network, browser, UI automation, trust,
-    // shell, ...) is exposure drift and fails qualification.
+    // The tunnel's MCP surface must be exactly the remote `core` profile
+    // (exact equality, never a subset): any added tool (desktop, clipboard,
+    // network, browser, UI automation, trust, shell, ...) is exposure drift
+    // and fails qualification.
     let listed = tools_line
         .split_once('[')
         .and_then(|(_, rest)| rest.split_once(']'))
@@ -343,22 +338,18 @@ fn packaged_release_installs_runs_updates_recovers_and_uninstalls() {
         .unwrap();
     let mut listed_sorted = listed.clone();
     listed_sorted.sort();
-    for excluded in TUNNEL_EXCLUDED_TOOLS {
-        assert!(
-            !listed.iter().any(|name| name == excluded),
-            "{excluded} must never be served through the tunnel: {tools_line}"
-        );
-    }
-    let mut canonical = TUNNEL_TOOLS
+    let mut core = TUNNEL_CORE_TOOLS
         .iter()
         .map(|name| name.to_string())
         .collect::<Vec<_>>();
-    canonical.sort();
-    assert_eq!(listed_sorted, canonical, "MCP exposure drift: {tools_line}");
+    core.sort();
+    assert_eq!(listed_sorted, core, "MCP exposure drift: {tools_line}");
+    // WI-06: web_search is local-only; the tunnel must never serve it.
     assert!(
-        log.contains("fake-tunnel: mcp-call is_error=false orceld_answered=true"),
-        "{log}"
+        !listed.iter().any(|name| name == "web_search"),
+        "web_search must never be served through the tunnel: {tools_line}"
     );
+    assert!(log.contains(TUNNEL_CALL_LEASE_GATED), "{log}");
     assert!(log.contains("fake-tunnel: env-clean=true"), "{log}");
     assert!(log.contains("api_key=[REDACTED]"), "{log}");
 
@@ -388,11 +379,7 @@ fn packaged_release_installs_runs_updates_recovers_and_uninstalls() {
     ));
     assert_eq!(updated["update"]["to"], next.as_str());
     assert_eq!(updated["update"]["restarted"], true, "{updated}");
-    wait_for_count(
-        &tunnel_log,
-        "fake-tunnel: mcp-call is_error=false orceld_answered=true",
-        2,
-    );
+    wait_for_count(&tunnel_log, TUNNEL_CALL_LEASE_GATED, 2);
     let version = json_ok(&orcel(&cli, &local, &["version", "--json"]));
     assert_eq!(version["installed"], next.as_str());
     assert_eq!(version["previous"], base_version.as_str());
@@ -409,11 +396,7 @@ fn packaged_release_installs_runs_updates_recovers_and_uninstalls() {
     let rolled = json_ok(&orcel(&cli, &local, &["rollback", "--json"]));
     assert_eq!(rolled["rollback"]["to"], base_version.as_str());
     assert_eq!(rolled["rollback"]["restarted"], true);
-    wait_for_count(
-        &tunnel_log,
-        "fake-tunnel: mcp-call is_error=false orceld_answered=true",
-        3,
-    );
+    wait_for_count(&tunnel_log, TUNNEL_CALL_LEASE_GATED, 3);
 
     // A release whose CLI cannot verify itself must be rolled back automatically.
     let bad_version = bump_patch(&base_version, 2);

@@ -32,6 +32,10 @@ Configuration:
       is read from a hidden console prompt. The key is stored owner-only and passed to
       the tunnel client by file reference; it is never printed or logged.
   orcel tunnel show                       Show the tunnel configuration (never the key).
+  orcel tunnel allow [--workspaces <a,b>] [--scopes <s,...>] [--minutes <1-15>] [--read-mode <m>]
+      Allow one finite ChatGPT tunnel session (Windows Hello). Tunnel clients see
+      only the `core` profile, and every tunnel request needs this lease.
+  orcel tunnel revoke                     End the tunnel session lease now.
 
 Updates:
   orcel update --source <release-dir> [--check] [--allow-downgrade] [--reinstall]

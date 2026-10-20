@@ -9,6 +9,7 @@ import {
   assertPrivateUnixEndpoint,
   connectEndpoint,
   currentUserSid,
+  darwinUserTempDir,
   instanceSuffix,
   unixSocketPath,
   unixStateRoot,
@@ -34,6 +35,41 @@ test("the Unix endpoint follows orcel_platform's state root rules", () => {
     unixSocketPath("linux", { HOME: "/h", ORCEL_APP_API_INSTANCE: "t-1" }),
     "/h/.local/state/orcel/run/app-api-t-1.sock",
   );
+});
+
+test("the socket lives in a short runtime directory whatever HOME is (#381)", () => {
+  const home = `/Users/${"h".repeat(150)}`;
+  assert.equal(
+    unixSocketPath("darwin", { HOME: home }, "/var/folders/zz/abc/T/"),
+    "/var/folders/zz/abc/T/orcel/app-api.sock",
+  );
+  // Without the system's answer, the state root as in CR-01.
+  assert.equal(
+    unixSocketPath("darwin", { HOME: "/Users/a" }),
+    "/Users/a/Library/Application Support/Orcel/run/app-api.sock",
+  );
+  assert.equal(
+    unixSocketPath("linux", { HOME: home, XDG_STATE_HOME: `${home}/s`, XDG_RUNTIME_DIR: "/run/user/1000" }),
+    "/run/user/1000/orcel/app-api.sock",
+  );
+  // A relative, dotted or empty XDG_RUNTIME_DIR is ignored, as orceld ignores it.
+  for (const bad of ["run/user/1000", "/run/../x", ""]) {
+    assert.equal(
+      unixSocketPath("linux", { HOME: "/home/a", XDG_RUNTIME_DIR: bad }),
+      "/home/a/.local/state/orcel/run/app-api.sock",
+      bad,
+    );
+  }
+  // The macOS directory never decides a Linux location.
+  assert.equal(
+    unixSocketPath("linux", { HOME: "/home/a" }, "/var/folders/x/T"),
+    "/home/a/.local/state/orcel/run/app-api.sock",
+  );
+});
+
+test("macOS: the per-user temp directory comes from the system", { skip: process.platform === "darwin" ? false : "macOS only" }, async () => {
+  const dir = await darwinUserTempDir();
+  assert.match(dir ?? "", /^\/var\/folders\/.+\/T\/?$/u);
 });
 
 test("instance suffixes and pipe names match orceld", () => {

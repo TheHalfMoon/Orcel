@@ -130,6 +130,7 @@ Everything else is denied. Remote clients (ChatGPT through the tunnel or relay, 
 
 1. `orcel start` — starts the official tunnel client under Orcel's supervisor. It reports `running` only when the tunnel client is alive and its local health endpoint answers.
 2. In ChatGPT, connect to your Secure MCP Tunnel as described in OpenAI's documentation. ChatGPT then sees the 26-tool core profile above.
+3. `orcel tunnel allow` — confirm with Windows Hello to allow one finite tunnel session (at most 15 minutes; `--scopes`, `--workspaces`, `--minutes` and `--read-mode` narrow it). The tunnel is a remote transport, exactly like the relay: every tunnel request carries a remote context and fails with `REMOTE_SESSION_INACTIVE` until this lease exists. The lease binds to the first tunnel session that uses it, so a new session needs a new `orcel tunnel allow`. `orcel tunnel revoke` ends it early.
 
 ## Connect local MCP clients (no tunnel required)
 
@@ -183,6 +184,7 @@ Mistral Vibe Code HTTP mode and generic Streamable HTTP clients connect to the p
 | `orcel stop` | Stops the tunnel client and everything it started, and confirms they exited |
 | `orcel workspace list` | Workspaces and their trust state |
 | `orcel tunnel show` | Tunnel configuration (never the key) |
+| `orcel tunnel allow` / `orcel tunnel revoke` | Allow or end one finite ChatGPT tunnel session (Windows Hello) |
 | `orcel help` | All commands |
 
 ## Diagnose problems

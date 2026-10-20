@@ -66,9 +66,10 @@ use std::sync::OnceLock;
 /// The local launch configuration that enables providers.
 pub const CONFIG_ENV: &str = "ORCEL_SEARCH_PROVIDERS_JSON";
 /// Set to `tunnel` by `orcel-mcp-host`, the stdio command the ChatGPT
-/// Secure MCP Tunnel runs. Tunnel requests carry no remote context, so
-/// search is refused outright on that launch path.
-pub const MCP_HOST_ENV: &str = "ORCEL_MCP_HOST";
+/// Secure MCP Tunnel runs (#395). Tunnel requests already carry a remote
+/// context, which no search scope admits; search is also refused outright
+/// on that launch path, before any lease or scope check.
+pub const TRANSPORT_ENV: &str = "ORCEL_MCP_TRANSPORT";
 /// Largest provider response body read.
 pub const MAX_RESPONSE_BYTES: usize = 512 * 1024;
 /// Results returned when the caller does not ask for a number.
@@ -454,7 +455,7 @@ pub struct SearchContext<'a, R: DnsResolver, T: ApiTransport> {
     pub resolver: &'a R,
     pub transport: &'a T,
     pub transport_available: bool,
-    /// This orceld serves the tunnel host (`ORCEL_MCP_HOST=tunnel`).
+    /// This orceld serves the tunnel host (`ORCEL_MCP_TRANSPORT=tunnel`).
     pub tunnel_host: bool,
     pub now_ms: &'a dyn Fn() -> u64,
 }
@@ -487,7 +488,7 @@ pub fn dispatch_default(
         resolver: &SystemResolver,
         transport: &SystemTransport,
         transport_available: orcel_provider_network::NATIVE_TRANSPORT_AVAILABLE,
-        tunnel_host: std::env::var_os(MCP_HOST_ENV).is_some_and(|value| value == "tunnel"),
+        tunnel_host: std::env::var_os(TRANSPORT_ENV).is_some_and(|value| value == "tunnel"),
         now_ms: &now_ms,
     };
     dispatch(&context, workspace, approval, request).map(Some)

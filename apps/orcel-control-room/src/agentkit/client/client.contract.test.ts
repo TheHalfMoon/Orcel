@@ -8,6 +8,8 @@ import { test } from "node:test";
 
 import { APP_API_PROTOCOL, MAX_FRAME_BYTES, READ_METHODS } from "../protocol/index.js";
 import {
+  MAX_UNIX_SOCKET_PATH,
+  UNVERIFIED_PIPE_TEST_ENV,
   connectEndpoint,
   defaultEndpoint,
   orceldTransport,
@@ -208,13 +210,44 @@ test("an oversize frame is refused by orceld and the connection closed", { skip,
   });
 });
 
-test("a socket path over the Unix limit is reported at once, never waited on", { skip, timeout: 60_000 }, async (t) => {
+test("a user with a long home still gets the app API (#381)", { skip, timeout: 60_000 }, async (t) => {
   if (process.platform === "win32") {
     t.skip("Unix socket path limit");
     return;
   }
-  // As a user whose home (macOS) or XDG_STATE_HOME (Linux) is long.
-  const sandbox = await createSandbox(uniqueInstance("long"), "h".repeat(80));
+  // As a user whose home (macOS) or XDG_STATE_HOME (Linux) alone is longer
+  // than a socket address: the socket lives in the runtime directory.
+  const home = "h".repeat(120);
+  const sandbox = await createSandbox(uniqueInstance("long"), { home });
+  try {
+    const daemon = await startOrceld(sandbox);
+    try {
+      assert.ok(!daemon.endpoint.includes(home), daemon.endpoint);
+      assert.ok(Buffer.byteLength(daemon.endpoint) <= MAX_UNIX_SOCKET_PATH, daemon.endpoint);
+      if (process.platform === "darwin") {
+        assert.ok(daemon.endpoint.startsWith("/var/folders/"), daemon.endpoint);
+      }
+      // The client finds the same endpoint from the same environment.
+      assert.equal(await defaultEndpoint({ ...process.env, ...sandbox.env }), daemon.endpoint);
+      const client = new ControlRoomClient({ connector: await testTransport(daemon.endpoint) });
+      const status = await client.getStatus();
+      assert.equal(status.pid, daemon.child.pid);
+      assert.equal(status.endpoint, daemon.endpoint);
+    } finally {
+      await daemon.stop();
+    }
+  } finally {
+    await sandbox.dispose();
+  }
+});
+
+test("Linux without a runtime directory: a socket path over the limit is reported at once", { skip, timeout: 60_000 }, async (t) => {
+  if (process.platform !== "linux") {
+    // macOS always has its per-user temp directory.
+    t.skip("the state-root fallback is reachable on Linux only");
+    return;
+  }
+  const sandbox = await createSandbox(uniqueInstance("long"), { home: "h".repeat(80), runtime: "none" });
   try {
     const started = Date.now();
     await assert.rejects(startOrceld(sandbox), /app API unavailable: .*longer than the 100 a Unix socket allows/u);
@@ -227,6 +260,59 @@ test("a socket path over the Unix limit is reported at once, never waited on", {
   }
 });
 
+test("a second orceld of the same user waits, says why once, and never takes a live endpoint (#375)", { skip, timeout: 120_000 }, async () => {
+  const instance = uniqueInstance("twice");
+  const first = await createSandbox(instance);
+  // The same endpoint: the same instance name (and, on Linux, the same
+  // runtime directory), but a workspace and audit log of its own.
+  const second = await createSandbox(instance, {
+    ...(first.env.XDG_RUNTIME_DIR ? { runtime: first.env.XDG_RUNTIME_DIR } : {}),
+  });
+  const holder = await startOrceld(first);
+  let waiter: RunningOrceld | undefined;
+  try {
+    waiter = await startOrceld(second, { until: "waiting" });
+    assert.equal(waiter.endpoint, holder.endpoint);
+    const reason = waiter.stderr.find((line) => line.startsWith("orceld app api: waiting for")) ?? "";
+    if (process.platform === "win32") {
+      assert.match(reason, /already exists.*runs as this account/u);
+    } else {
+      assert.match(reason, /another orceld of this user holds the lock/u);
+    }
+    // Across the waiter's retries (every 5 s) the holder keeps serving at
+    // the same endpoint, and the waiter logged its reason only once.
+    const connector = await testTransport(holder.endpoint);
+    for (let check = 0; check < 3; check += 1) {
+      const status = await new ControlRoomClient({ connector }).getStatus();
+      assert.equal(status.pid, holder.child.pid);
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+    }
+    assert.equal(waiter.stderr.filter((line) => line.startsWith("orceld app api: waiting for")).length, 1);
+    // Once the holder exits, the waiter takes over and reports the wait.
+    await holder.stop();
+    await waitForLine(waiter, /^orceld app api: listening on /u, 30_000);
+    const status = await new ControlRoomClient({ connector }).getStatus();
+    assert.equal(status.pid, waiter.child.pid);
+    const wait = status.endpoint_wait as { reason: string; attempts: number; since_ms: number } | null;
+    assert.ok(wait, "status.endpoint_wait names the wait");
+    assert.ok(reason.includes(wait.reason), `${wait.reason} vs ${reason}`);
+    assert.ok(wait.attempts >= 1);
+  } finally {
+    await waiter?.stop();
+    await holder.stop();
+    await first.dispose();
+    await second.dispose();
+  }
+});
+
+async function waitForLine(daemon: RunningOrceld, pattern: RegExp, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!daemon.stderr.some((line) => pattern.test(line))) {
+    if (Date.now() > deadline) throw new Error(`no ${pattern} within ${timeoutMs} ms:\n${daemon.stderr.join("\n")}`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
 test("Windows: the default connector refuses a pipe it cannot verify", { skip, timeout: 60_000 }, async (t) => {
   if (process.platform !== "win32") {
     t.skip("Windows pipe rule");
@@ -238,6 +324,15 @@ test("Windows: the default connector refuses a pipe it cannot verify", { skip, t
     await assert.rejects(connector.connect(), /cannot be verified from Node/u);
     const client = new ControlRoomClient({ connector });
     await assert.rejects(client.getStatus(), /cannot be verified from Node/u);
+    // #381 item 2: the opt-in is refused outside the test environment.
+    const saved = process.env[UNVERIFIED_PIPE_TEST_ENV];
+    delete process.env[UNVERIFIED_PIPE_TEST_ENV];
+    try {
+      const optedIn = await orceldTransport({ endpoint: daemon.endpoint, allowUnverifiedWindowsPipe: true });
+      await assert.rejects(optedIn.connect(), /allowUnverifiedWindowsPipe is test-only/u);
+    } finally {
+      if (saved !== undefined) process.env[UNVERIFIED_PIPE_TEST_ENV] = saved;
+    }
   });
 });
 
