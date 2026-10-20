@@ -148,6 +148,40 @@ tokio's own graph adds bytes, mio, socket2, pin-project-lite, signal-hook-regist
 The helper is not yet in a release package: XP-16 (macOS bundle), XP-17 (Linux packages) and the Windows lifecycle payload (SG-000106) ship it, and `scripts/generate-sbom.mjs` and `scripts/third-party-notices.mjs` must add this workspace when they do.
 
 
+## orceld secret store (XP-19)
+
+Admitted 2026-10-19 for `crates/orceld/src/secret_store.rs`, the per-OS store for the device private key. Orcel WRAPs the `keyring` project's per-OS store crates directly. That is the crate family Cua's `cua-auth` uses (transplant row T-CUA-34, REFERENCE only, so no code was copied and no notice is needed). The umbrella `keyring` crate is not used, so each OS builds only its own store.
+
+- **Windows:** no new crate. orceld's existing `windows-sys` 0.52.0 edge gains the feature `Win32_Security_Cryptography` for `CryptProtectData`/`CryptUnprotectData` (DPAPI). That feature is already in the graph through orcel-policy. The Windows x64 release, its SBOM and `THIRD_PARTY_NOTICES.txt` are unchanged: `cargo tree -p orceld -e normal --target x86_64-pc-windows-msvc` reaches none of the crates below.
+- **Packages:** the root `Cargo.lock` grows from 112 to 210 packages (98 added, none removed). 13 of them are lockfile-only: build dependencies or crates for other targets (wasm-bindgen family, js-sys, bumpalo, r-efi, hermit-abi, uds_windows, tempfile, memoffset, rustversion, autocfg).
+- **Release age:** packages released less than 14 days before admission were pinned back with `cargo update --precise` to an older compatible release. These are keyring-core 1.0.0, sha2 0.11.0, uuid 1.27.0, zvariant/zvariant_derive 5.15.0, zbus_names 4.3.4, inout 0.2.2, ctutils 0.4.2, and toml_datetime/toml_edit/toml_parser 1.1.1/0.25.15/1.1.3. keyring-core 1.0.0 and zbus-secret-service-keyring-store 1.0.x are the versions `apps/orcel-native-host` already locks.
+
+Built for macOS (`aarch64-apple-darwin`, normal edges, new to orceld):
+
+| Crate | Version | License | Purpose in Orcel |
+|---|---|---|---|
+| keyring-core | 1.0.0 | MIT OR Apache-2.0 | Entry/store API the per-OS stores implement |
+| apple-native-keyring-store | 1.0.2 | MIT OR Apache-2.0 | Generic-password items in the user's default keychain (feature `keychain`) |
+| security-framework, security-framework-sys | 3.7.0 / 2.17.0 | MIT OR Apache-2.0 | Keychain Services; `SecKeychain::disable_user_interaction` so orceld never prompts |
+| core-foundation, core-foundation-sys | 0.10.1 / 0.8.7 | MIT OR Apache-2.0 | CoreFoundation types used by security-framework |
+
+Built for Linux (`x86_64-unknown-linux-gnu`, normal edges, new to orceld; 80 crates):
+
+| Crate | Version | License | Purpose in Orcel |
+|---|---|---|---|
+| keyring-core | 1.0.0 | MIT OR Apache-2.0 | Entry/store API |
+| zbus-secret-service-keyring-store | 1.0.1 | MIT OR Apache-2.0 | Secret Service items (feature `rt-async-io-crypto-rust`) |
+| secret-service | 5.2.0 | MIT OR Apache-2.0 | freedesktop Secret Service client; encrypted session (`dh-ietf1024-sha256-aes128-cbc-pkcs7`) |
+| zbus, zbus_macros, zbus_names, zvariant, zvariant_derive, zvariant_utils, zcheapstr, endi | 5.19.0 / 5.19.0 / 4.3.4 / 5.15.0 / 5.15.0 / 4.2.0 / 1.1.0 / 1.1.1 | MIT | Pure-Rust D-Bus client (no libdbus) |
+| aes, cbc, cipher, block-padding, inout, hkdf, hmac, sha2, digest, block-buffer, crypto-common, hybrid-array, const-oid, cmov, ctutils, cpubits, cpufeatures | 0.9.3 / 0.2.1 / 0.5.2 / 0.4.2 / 0.2.2 / 0.13.0 / 0.13.0 / 0.11.0 / 0.11.3 / 0.12.1 / 0.2.2 / 0.4.15 / 0.10.2 / 0.5.4 / 0.4.2 / 0.1.1 / 0.3.1 | MIT OR Apache-2.0 | RustCrypto primitives of the Secret Service session encryption |
+| num, num-bigint, num-complex, num-integer, num-iter, num-rational, num-traits | 0.4.3 / 0.4.8 / 0.4.6 / 0.1.47 / 0.1.46 / 0.4.2 / 0.2.19 | MIT OR Apache-2.0 | Diffie-Hellman arithmetic (secret-service) |
+| async-io, async-executor, async-channel, async-lock, async-broadcast, async-task, async-process, async-signal, async-recursion, async-trait, blocking, polling, piper, futures-core, futures-io, futures-lite, futures-macro, futures-task, futures-util, event-listener, event-listener-strategy, concurrent-queue, atomic-waker, parking, slab, pin-project-lite, ordered-stream, fastrand, crossbeam-utils, signal-hook-registry, once_cell | various | MIT OR Apache-2.0 (slab MIT) | zbus's async-io runtime; zbus is driven through secret-service's blocking API on the calling thread |
+| enumflags2, enumflags2_derive, serde_repr, hex, uuid, getrandom | 0.7.12 / 0.7.12 / 0.1.21 / 0.4.3 / 1.27.0 / 0.4.3 | MIT OR Apache-2.0 | zbus and secret-service support |
+| tracing, tracing-core, tracing-attributes | 0.1.44 / 0.1.36 / 0.1.31 | MIT | zbus diagnostics; orceld installs no subscriber, so nothing is emitted |
+| proc-macro-crate, toml_edit, toml_datetime, toml_parser, winnow | 3.5.0 / 0.25.15 / 1.1.1 / 1.1.3 / 1.0.4 | MIT OR Apache-2.0 (winnow MIT) | Compile-time support for zbus's proc macros; not linked |
+
+Every license is permissive (MIT, Apache-2.0); none carries copyleft obligations. No crate adds a listener: zbus connects as a client to the session bus. orceld refuses any `DBUS_SESSION_BUS_ADDRESS` that is not a local `unix:path=`/`unix:abstract=` socket before zbus reads it, so zbus's `tcp:`, `nonce-tcp:`, `unixexec:` (which would spawn a program through async-process) and `launchd:` transports are never used. These crates become part of the shipped closure in the Linux packages (XP-17 runs `scripts/third-party-notices.mjs --target x86_64-unknown-linux-gnu`) and in the macOS bundle (XP-16).
+
 ## npm packages in the release
 
 Pinned by `package-lock.json` and copied into the release from the locked production dependency closure.

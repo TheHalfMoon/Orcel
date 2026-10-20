@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   createMcpFrameDispatcher,
   runDeviceUplink,
@@ -12,7 +12,9 @@ import {
 import type { KernelClient } from "@orcel/mcp/dist/kernel.js";
 import { generatePkceVerifier, pkceS256Challenge } from "@orcel/mcp/dist/oauth_authorization.js";
 import { enableRemote, pairRemote } from "@orcel/mcp/dist/remote_enrollment.js";
-import { loadDeviceKey } from "@orcel/mcp/dist/uplink_state.js";
+import type { DeviceKeyPair } from "@orcel/mcp/dist/device_identity.js";
+import { DEVICE_KEY_SECRET, type SecretStore } from "@orcel/mcp/dist/secret_store.js";
+import { loadDeviceRecord } from "@orcel/mcp/dist/uplink_state.js";
 import { CANONICAL_TOOL_NAMES } from "@orcel/mcp/dist/server.js";
 import { REMOTE_TOOL_NAMES, securitySchemesFor } from "@orcel/mcp/dist/tool_contract.js";
 import { parseRelayConfig } from "./config.js";
@@ -103,10 +105,40 @@ interface LinkOptions {
   readonly devicePaths?: { readonly key: string; readonly uplink: string };
 }
 
+/**
+ * XP-19: the device keeps its private key in the orceld secret store; these
+ * tests stand in for it with one in-memory store per device key record.
+ */
+const deviceSecrets = new Map<string, Map<string, string>>();
+function secretsFor(keyPath: string): SecretStore {
+  let values = deviceSecrets.get(keyPath);
+  if (values === undefined) {
+    values = new Map();
+    deviceSecrets.set(keyPath, values);
+  }
+  const store = values;
+  return {
+    get: async (name) => store.get(name) ?? null,
+    put: async (name, value) => void store.set(name, value)
+  };
+}
+function devicePair(keyPath: string): DeviceKeyPair {
+  const privateKeyJwkBase64 = deviceSecrets.get(keyPath)?.get(DEVICE_KEY_SECRET);
+  assert.ok(privateKeyJwkBase64 !== undefined, "the device key is in the secret store");
+  return { ...loadDeviceRecord(keyPath), privateKeyJwkBase64 };
+}
+/** No file the device side wrote holds its private key (XP-19 acceptance). */
+function assertNoSecretFile(dir: string, keyPath: string): void {
+  const secret = devicePair(keyPath).privateKeyJwkBase64;
+  for (const name of readdirSync(dir)) {
+    assert.ok(!readFileSync(join(dir, name), "utf8").includes(secret), `${name} holds the device private key`);
+  }
+}
+
 async function link(r: Relay, approve = true, options: LinkOptions = {}): Promise<Linked | { denied: string }> {
   const deviceDir = mkdtempSync(join(tmpdir(), "orcel-device-"));
   const devicePaths = options.devicePaths ?? { key: join(deviceDir, "device_key.json"), uplink: join(deviceDir, "uplink.json") };
-  await enableRemote({ relayOrigin: r.origin, defaultWorkspace: "default", deviceKeyPath: devicePaths.key, uplinkPath: devicePaths.uplink, fetch: fetchImpl, nowMs: Date.now() });
+  await enableRemote({ relayOrigin: r.origin, defaultWorkspace: "default", deviceKeyPath: devicePaths.key, uplinkPath: devicePaths.uplink, secrets: secretsFor(devicePaths.key), fetch: fetchImpl, nowMs: Date.now() });
   const registerRedirect = options.registerRedirect ?? "http://127.0.0.1:9/callback";
   const redirect = options.useRedirect ?? registerRedirect;
   const clientName = options.clientName ?? "Test client";
@@ -142,6 +174,7 @@ async function link(r: Relay, approve = true, options: LinkOptions = {}): Promis
   const paired = await pairRemote({
     deviceKeyPath: devicePaths.key,
     uplinkPath: devicePaths.uplink,
+    secrets: secretsFor(devicePaths.key),
     fetch: fetchImpl,
     now: Date.now,
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, Math.min(ms, 50))),
@@ -167,6 +200,7 @@ async function link(r: Relay, approve = true, options: LinkOptions = {}): Promis
     return { denied: location.searchParams.get("error") ?? "" };
   }
   assert.ok(paired !== null);
+  assertNoSecretFile(dirname(devicePaths.key), devicePaths.key);
   const code = location.searchParams.get("code") ?? "";
   const tokens = await form(r.origin, "/oauth/token", {
     grant_type: "authorization_code",
@@ -191,7 +225,7 @@ async function link(r: Relay, approve = true, options: LinkOptions = {}): Promis
 
 function startUplink(r: Relay, linked: Linked): { stop: () => Promise<void>; calls: string[] } {
   const calls: string[] = [];
-  const pair = loadDeviceKey(linked.devicePaths.key);
+  const pair = devicePair(linked.devicePaths.key);
   const uplink = JSON.parse(readFileSync(linked.devicePaths.uplink, "utf8")) as { connections: PairedConnection[] };
   const controller = new AbortController();
   const done = runDeviceUplink(
@@ -255,7 +289,7 @@ test("a standards OAuth client links through device pairing and reaches the devi
       return;
     }
     uplink = startUplink(r, linked);
-    const deviceId = loadDeviceKey(linked.devicePaths.key).deviceId;
+    const deviceId = devicePair(linked.devicePaths.key).deviceId;
     await waitFor(() => r.relay.hub.isOnline(deviceId), "device channel");
     const init = await mcp(r, linked.accessToken, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "1" } } });
     assert.equal(init.status, 200, await init.clone().text());
@@ -307,7 +341,7 @@ test("SG-000068: Claude web and Claude Code connector flows reach the device wit
       if ("denied" in linked) continue;
       const uplink = startUplink(r, linked);
       try {
-        const deviceId = loadDeviceKey(linked.devicePaths.key).deviceId;
+        const deviceId = devicePair(linked.devicePaths.key).deviceId;
         await waitFor(() => r.relay.hub.isOnline(deviceId), "device channel");
         const init = await mcp(r, linked.accessToken, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: options.clientName, version: "1" } } });
         assert.equal(init.status, 200);
@@ -376,7 +410,7 @@ test("SG-000069: a Vibe Work-style OAuth connector reaches the core profile and 
     if ("denied" in linked) return;
     const uplink = startUplink(r, linked);
     try {
-      const deviceId = loadDeviceKey(linked.devicePaths.key).deviceId;
+      const deviceId = devicePair(linked.devicePaths.key).deviceId;
       await waitFor(() => r.relay.hub.isOnline(deviceId), "device channel");
       const init = await mcp(r, linked.accessToken, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "Vibe Work", version: "1" } } });
       assert.equal(init.status, 200);
@@ -421,7 +455,7 @@ test("SG-000070: a Codex-style OAuth client with a loopback redirect reaches the
     if ("denied" in linked) return;
     const uplink = startUplink(r, linked);
     try {
-      const deviceId = loadDeviceKey(linked.devicePaths.key).deviceId;
+      const deviceId = devicePair(linked.devicePaths.key).deviceId;
       await waitFor(() => r.relay.hub.isOnline(deviceId), "device channel");
       const init = await mcp(r, linked.accessToken, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "codex", version: "1" } } });
       assert.equal(init.status, 200);
@@ -455,7 +489,7 @@ test("SG-000071: two providers on one device never share credentials, sessions, 
 
     // One uplink serves both connections; record which connection each
     // dispatched call carries.
-    const pair = loadDeviceKey(devicePaths.key);
+    const pair = devicePair(devicePaths.key);
     const uplinkDocument = JSON.parse(readFileSync(devicePaths.uplink, "utf8")) as { connections: PairedConnection[] };
     assert.equal(uplinkDocument.connections.length, 2);
     const dispatched: string[] = [];
@@ -546,7 +580,7 @@ test("SG-000071: two providers on one device never share credentials, sessions, 
     await gone.text();
   } finally {
     controller.abort();
-    r.relay.hub.closeChannel(loadDeviceKey(devicePaths.key).deviceId);
+    r.relay.hub.closeChannel(devicePair(devicePaths.key).deviceId);
     await done;
     await r.close();
   }
@@ -830,8 +864,8 @@ test("relay backup restores device identities, client registrations, and revocat
   if ("denied" in revoked) {
     throw new Error("unexpected denial");
   }
-  const keptId = loadDeviceKey(kept.devicePaths.key).deviceId;
-  const revokedId = loadDeviceKey(revoked.devicePaths.key).deviceId;
+  const keptId = devicePair(kept.devicePaths.key).deviceId;
+  const revokedId = devicePair(revoked.devicePaths.key).deviceId;
   first.store.revokeDevice(revokedId);
   const port = first.port;
   await first.close();

@@ -693,7 +693,8 @@ pub fn mcp(args: &mut Args) -> Result<i32, LifecycleError> {
 /// `orcel remote allow|revoke|status`: local remote-session leases.
 pub fn remote(args: &mut Args) -> Result<Output, LifecycleError> {
     use orcel_lifecycle::remote;
-    let action = args.positional("remote action (allow, revoke, status, connect)")?;
+    let action =
+        args.positional("remote action (allow, revoke, status, connect, migrate-secrets)")?;
     let layout = Layout::for_current_user()?;
     match action.as_str() {
         "allow" => {
@@ -820,6 +821,45 @@ pub fn remote(args: &mut Args) -> Result<Output, LifecycleError> {
                 exit_code: 0,
                 human,
                 json: json!({"ok": true, "leases": leases}),
+            })
+        }
+        "migrate-secrets" => {
+            args.finish()?;
+            let config = Config::load(&layout)?;
+            config.check_workspaces_with_policy()?;
+            let workspace = config.default_workspace().unwrap_or("default").to_string();
+            let version = active_version(&layout)?;
+            let mut request = ipc::request(&workspace, "secret", "migrate", json!({}));
+            request["target"] = json!(remote::DEVICE_KEY_SECRET);
+            let response = ipc::call(
+                &layout.version_dir(&version).join("orceld.exe"),
+                &config,
+                &request,
+                Duration::from_secs(60),
+            )?;
+            let result = ipc::expect_ok(&response)?.clone();
+            let migration = result
+                .get("migration")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_string();
+            let backend = result
+                .get("backend")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_string();
+            let human = match migration.as_str() {
+                "migrated" => format!("Moved the device key into the {backend} secret store and removed the plaintext copy.
+"),
+                "already_stored" => format!("The device key was already in the {backend} secret store; removed the plaintext copy.
+"),
+                _ => "No plaintext device key to migrate.
+".to_string(),
+            };
+            Ok(Output {
+                exit_code: 0,
+                human,
+                json: json!({"ok": true, "migration": migration, "backend": backend}),
             })
         }
         other => Err(LifecycleError::usage(format!(

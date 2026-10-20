@@ -99,6 +99,52 @@ jobs:
           ORCEL_APP_API_OTHER_USER_TEST: "1"
         run: cargo test -p orceld -- --exact app_api::tests::cr01_other_user_cannot_reach_the_socket --nocapture
 
+      # XP-19: the real per-OS secret store. The tests fail instead of
+      # skipping when ORCEL_REQUIRE_XP19_KEYRING is set. Windows uses DPAPI
+      # for the runner account; macOS a temporary keychain this step creates,
+      # makes the user default and deletes; Linux a headless gnome-keyring
+      # under its own dbus-run-session. The Linux no-keyring leg points the
+      # session bus nowhere: the store must be unavailable and write nothing
+      # (S-23: never a plaintext fallback).
+      - name: Secret store round trip (Windows DPAPI)
+        if: runner.os == 'Windows'
+        env:
+          ORCEL_REQUIRE_XP19_KEYRING: "1"
+        run: cargo test -p orceld -- xp19_ --nocapture
+      - name: Secret store round trip (macOS temporary keychain)
+        if: runner.os == 'macOS'
+        env:
+          ORCEL_REQUIRE_XP19_KEYRING: "1"
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/orcel-xp19.keychain-db"
+          original="$(security default-keychain -d user | xargs)"
+          searched="$(security list-keychains -d user | xargs)"
+          restore() {
+            security default-keychain -d user -s "$original" || true
+            security list-keychains -d user -s $searched || true
+            security delete-keychain "$keychain" || true
+          }
+          trap restore EXIT
+          security create-keychain -p orcel-xp19-ci "$keychain"
+          security set-keychain-settings "$keychain"
+          security unlock-keychain -p orcel-xp19-ci "$keychain"
+          security list-keychains -d user -s "$keychain" $searched
+          security default-keychain -d user -s "$keychain"
+          cargo test -p orceld -- xp19_ --nocapture
+      - name: Secret store round trip (Linux gnome-keyring) and no-keyring refusal
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gnome-keyring dbus-daemon dbus-x11
+          dbus-run-session -- bash -c '
+            set -euo pipefail
+            printf %s orcel-xp19-ci | gnome-keyring-daemon --unlock --components=secrets > /dev/null
+            ORCEL_REQUIRE_XP19_KEYRING=1 cargo test -p orceld -- xp19_ --nocapture
+          '
+          env -u XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent/orcel-xp19             ORCEL_XP19_EXPECT_NO_KEYRING=1 cargo test -p orceld -- xp19_ --nocapture
+
   # XP-05: the macOS/Linux native host is its own Cargo workspace with the
   # vendored Cua Driver crates (apps/orcel-native-host/third_party/cua-driver).
   # It is compile-only; nothing reaches it from orceld yet.
@@ -378,6 +424,41 @@ jobs:
         run: npm run typecheck
       - name: Test
         run: npm test
+
+  # CR-02: the headless Control Room client against the real orceld app API
+  # (CR-01) on each OS. ORCEL_REQUIRE_LIVE_ORCELD makes the contract and
+  # conformance tests fail instead of skipping without the daemon;
+  # ORCEL_APP_API_OTHER_USER_TEST runs the connect as `nobody` (passwordless
+  # sudo on the hosted Linux and macOS runners).
+  control-room:
+    name: Control Room client / ${{ matrix.os }}
+    # A daemon that never listens fails its test within 30 s; this bounds
+    # the job however a test misbehaves (the first macOS run hung 6 h).
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24.19.0"
+      - name: Build orceld
+        run: cargo build --locked -p orceld
+      - name: Install
+        run: npm ci --prefix apps/orcel-control-room --ignore-scripts
+      - name: Typecheck
+        run: npm --prefix apps/orcel-control-room run typecheck
+      - name: Test against the real orceld
+        env:
+          ORCEL_REQUIRE_LIVE_ORCELD: "1"
+          ORCEL_APP_API_OTHER_USER_TEST: ${{ runner.os != 'Windows' && '1' || '' }}
+        run: npm --prefix apps/orcel-control-room test
 
   web:
     name: Web / ubuntu-latest

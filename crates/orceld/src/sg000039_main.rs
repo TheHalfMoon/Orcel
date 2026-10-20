@@ -25,6 +25,7 @@ mod git_push;
 mod live_browser;
 mod profile_gate;
 mod remote_lease;
+mod secret_store;
 mod trust;
 mod uia;
 mod workstation;
@@ -107,7 +108,13 @@ fn run() -> Result<(), String> {
                 ResponseEnvelope::failure(
                     "unknown",
                     FailureCode::InvalidRequest,
-                    format!("invalid request JSON: {error}"),
+                    // Line and column only: serde's message can quote
+                    // fragments of the request, which may carry a secret.
+                    format!(
+                        "invalid request JSON at line {} column {}",
+                        error.line(),
+                        error.column()
+                    ),
                 ),
                 None,
             ),
@@ -189,6 +196,10 @@ fn handle_envelope(
     {
         let _ = audit.record(&request, POLICY_REVISION, "PROFILE_DENIED");
         return ResponseEnvelope::failure(request.request_id, code, message);
+    }
+    // XP-19: secrets are local-only and never reach workspace dispatch.
+    if secret_store::is_secret_request(&request.capability) {
+        return handle_secret(policy, audit, &request, remote.is_some());
     }
     // XP-01B: an unavailable lease store fails only the requests that need
     // it, below.
@@ -317,6 +328,61 @@ fn handle_envelope(
         };
     }
     handle_request(policy, audit, approval, request)
+}
+
+/// XP-19 `secret.*`: refused for remote-context requests, then served by
+/// the platform secret store of this account. The audit record carries the
+/// fixed secret name only.
+fn handle_secret(
+    policy: &PolicyEngine,
+    audit: &AuditLogger,
+    request: &RequestEnvelope,
+    remote: bool,
+) -> ResponseEnvelope {
+    // The target is recorded only when it is one of the fixed names, so a
+    // misused target can never carry a value into the audit log.
+    let audited = RequestEnvelope {
+        target: Some(
+            request
+                .target
+                .as_deref()
+                .and_then(secret_store::SecretName::parse)
+                .map_or("invalid", secret_store::SecretName::as_str)
+                .to_owned(),
+        ),
+        arguments: Value::Null,
+        ..request.clone()
+    };
+    let fail = |outcome: &str, code: FailureCode, message: String| {
+        let _ = audit.record(&audited, POLICY_REVISION, outcome);
+        ResponseEnvelope::failure(request.request_id.clone(), code, message)
+    };
+    if remote {
+        return fail(
+            "REMOTE_DENIED",
+            FailureCode::CapabilityDenied,
+            "XP-19 secret storage is local-only".into(),
+        );
+    }
+    if policy.workspace(&request.workspace_id).is_none() {
+        return fail(
+            "DENIED",
+            FailureCode::WorkspaceDenied,
+            "requested workspace is not configured".into(),
+        );
+    }
+    let lookup = |name: &str| std::env::var_os(name);
+    match secret_store::dispatch(
+        secret_store::SecretStore::open_default(),
+        secret_store::legacy_device_key_path(&lookup),
+        request,
+    ) {
+        Ok(value) => {
+            let _ = audit.record(&audited, POLICY_REVISION, "SUCCESS");
+            ResponseEnvelope::success(request, value, POLICY_REVISION)
+        }
+        Err(error) => fail("FAILED", error.code, error.message),
+    }
 }
 
 /// XP-01B: a default state store whose private root cannot be established

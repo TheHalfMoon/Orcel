@@ -1203,9 +1203,13 @@ mod unix {
         // XP-01: 0700, owned by us, no symlink, no ancestor others can write.
         orcel_platform::paths::ensure_private_dir(parent)
             .map_err(|error| StartError::Refused(error.to_string()))?;
-        if path.as_os_str().len() > MAX_SOCKET_PATH {
+        let length = path.as_os_str().len();
+        if length > MAX_SOCKET_PATH {
+            // Never truncated or retried: the endpoint stays off and this
+            // reason reaches stderr once (CR-02 review).
             return Err(StartError::Refused(format!(
-                "the socket path is longer than {MAX_SOCKET_PATH} bytes"
+                "the socket path is {length} bytes, longer than the {MAX_SOCKET_PATH} \
+                 a Unix socket allows; use a shorter HOME or XDG_STATE_HOME"
             )));
         }
         let our_uid = orcel_platform::session::effective_uid()
