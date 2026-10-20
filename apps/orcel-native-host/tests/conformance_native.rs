@@ -14,10 +14,14 @@
 //! observes or is refused.
 //!
 //! The input cells follow upstream's harness matrix
-//! (`harness_gtk3_test.rs`, `harness_appkit_test.rs`): click, double and
-//! right click, drag, scroll, set value, type and key, element-addressed
-//! (`ax`, XP-11) and pixel-addressed (`px`, XP-12), each a typed skip until
-//! its task lands.
+//! (`harness_gtk3_test.rs`, `harness_appkit_test.rs`): click, toggle,
+//! select and set value, element-addressed (`ax`, XP-11), and double and
+//! right click, drag, scroll, set value, type and key, pixel-addressed
+//! (`px`, XP-12). The `ax` cells are measured: each action is delivered in
+//! the background and read back from the task-state file, and focus,
+//! stacking and the pointer must not move. Their foreground rung has
+//! nothing to measure (semantic actions never take the foreground). The
+//! `px` cells stay typed skips until XP-12 lands.
 
 mod conformance;
 mod support;
@@ -100,12 +104,12 @@ fn wait_state(path: &PathBuf) -> Value {
     }
 }
 
-/// Upstream's harness matrix as `/2` frames. Element-addressed cells use the
-/// closed semantic verbs; pixel cells name the point.
-fn cells(nodes: &[Value], point: (i64, i64)) -> Vec<InputCell> {
+/// The pixel-addressed part of upstream's harness matrix as `/2` frames
+/// (XP-12). The element-addressed part runs as measured cells in
+/// [`run_ax_cells`]. Pixel cells name the point.
+fn cells(point: (i64, i64)) -> Vec<InputCell> {
     let (x, y) = point;
     let tick = json!(0);
-    let element = |needle: &str| conformance::element_for(nodes, needle);
     let mut cells = Vec::new();
     for delivery in ["background", "foreground"] {
         let mut push = |action: &str, addressing: &str, op: &'static str, fields: Value| {
@@ -115,30 +119,6 @@ fn cells(nodes: &[Value], point: (i64, i64)) -> Vec<InputCell> {
                 fields,
             });
         };
-        push(
-            "click",
-            "ax",
-            "semantic_action",
-            json!({"semantic_action": "invoke", "element_runtime_id": element("Increment")}),
-        );
-        push(
-            "toggle",
-            "ax",
-            "semantic_action",
-            json!({"semantic_action": "toggle", "element_runtime_id": element("I agree")}),
-        );
-        push(
-            "select",
-            "ax",
-            "semantic_action",
-            json!({"semantic_action": "select", "element_runtime_id": element("Small")}),
-        );
-        push(
-            "set-value",
-            "ax",
-            "semantic_action",
-            json!({"semantic_action": "set_value", "element_runtime_id": element("Note"), "value": "conformance"}),
-        );
         push(
             "click",
             "px",
@@ -195,6 +175,102 @@ fn cells(nodes: &[Value], point: (i64, i64)) -> Vec<InputCell> {
         );
     }
     cells
+}
+
+/// The measured `ax` cells (XP-11): background delivery of click, toggle,
+/// select and set value, each checked against the task-state file the
+/// harness rewrites on every change. The foreground rung is reported as
+/// background-only. Set value is read back through "Save note": the entry's
+/// text reaches the state file only when the harness saves it.
+fn run_ax_cells(
+    host: &mut Host,
+    report: &mut Report,
+    prefix: &str,
+    reference: &Value,
+    mut state: impl FnMut() -> Value,
+) {
+    let cell = |case: &str, verb: &'static str, element: &'static str, control: &'static str| {
+        conformance::ActionCell {
+            case: format!("{case}/ax/background"),
+            verb,
+            element,
+            control: Some(control),
+            value: None,
+            holds_desktop: true,
+        }
+    };
+    conformance::run_action(
+        host,
+        report,
+        prefix,
+        reference,
+        &cell("click", "invoke", "Increment", "Button"),
+        &mut state,
+        |now| now["counter"] == 1,
+    );
+    conformance::run_action(
+        host,
+        report,
+        prefix,
+        reference,
+        &conformance::ActionCell {
+            value: Some("true"),
+            ..cell("toggle", "toggle", "I agree", "CheckBox")
+        },
+        &mut state,
+        |now| now["agreed"] == true,
+    );
+    conformance::run_action(
+        host,
+        report,
+        prefix,
+        reference,
+        &cell("select", "select", "Small", "RadioButton"),
+        &mut state,
+        |now| now["size"] == "small",
+    );
+    // Set value: the text is in the entry, not yet in the state file.
+    let note = conformance::ActionCell {
+        case: "set-value/ax/background".to_owned(),
+        verb: "set_value",
+        element: "Note",
+        control: Some("Edit"),
+        value: Some("conformance"),
+        holds_desktop: true,
+    };
+    let mut saved = cell("save-note", "invoke", "Save note", "Button");
+    saved.case = "set-value/ax/background/save".to_owned();
+    // Written by the first action and read by the second one: the entry
+    // holds the text, and the state file still has no note.
+    let before = state();
+    assert_eq!(before["note_saved"], Value::Null, "{before}");
+    {
+        let nodes = conformance::fresh_nodes(host, reference);
+        let id = conformance::strict_element_id(&nodes, note.element, note.control);
+        let reply = host.request(
+            "semantic_action",
+            json!({
+                "window": reference,
+                "semantic_action": "set_value",
+                "element_runtime_id": id,
+                "value": "conformance",
+            }),
+        );
+        assert_eq!(reply["ok"], true, "{reply}");
+        assert_eq!(reply["action"]["action"], "semantic_set_value", "{reply}");
+        std::thread::sleep(Duration::from_millis(500));
+        assert_eq!(
+            state()["note_saved"],
+            Value::Null,
+            "set_value alone saved the note"
+        );
+    }
+    conformance::run_action(host, report, prefix, reference, &saved, &mut state, |now| {
+        now["note_saved"] == "conformance"
+    });
+    for action in ["click", "toggle", "select", "set-value"] {
+        report.background_only(format!("{prefix}/{action}/ax/foreground"));
+    }
 }
 
 #[test]
@@ -264,9 +340,32 @@ fn xp08_native_harness_is_conformant() {
         state,
     );
 
+    // XP-11: refusals first, while the fixture is untouched, then the
+    // measured actions.
+    conformance::negative_action_cells(
+        &mut host,
+        &mut report,
+        &prefix,
+        &observed.reference,
+        &conformance::NegativeTargets {
+            button: "Increment",
+            check_box: "I agree",
+        },
+        state,
+    );
+    assert_eq!(
+        state(),
+        initial,
+        "a refused action changed the harness state"
+    );
+    run_ax_cells(&mut host, &mut report, &prefix, &observed.reference, state);
+
+    // XP-12: the pixel cells stay typed skips. Their frames are refused and
+    // move no oracle; the fixture holds what the ax cells left in it.
     let point = conformance::screen_centre(&mut host);
-    let cells = cells(&observed.nodes, point);
-    assert_eq!(cells.len(), 26);
+    let cells = cells(point);
+    assert_eq!(cells.len(), 18);
+    let left_by_ax = state();
     conformance::pending_input_cells(
         &mut host,
         &mut report,
@@ -277,8 +376,8 @@ fn xp08_native_harness_is_conformant() {
     );
     assert_eq!(
         state(),
-        initial,
-        "the harness state changed during the suite"
+        left_by_ax,
+        "a pixel frame changed the harness state"
     );
 
     drop(harness);
@@ -293,35 +392,35 @@ fn xp08_native_harness_is_conformant() {
 }
 
 #[test]
-fn native_cells_cover_upstreams_matrix_per_delivery() {
-    let nodes = vec![json!({"runtime_id": "r:1", "name": "Increment"})];
-    let cells = cells(&nodes, (5, 5));
-    assert_eq!(cells.len(), 26);
+fn native_pixel_cells_cover_upstreams_matrix_per_delivery() {
+    let cells = cells((5, 5));
+    assert_eq!(cells.len(), 18);
     for action in [
         "click",
         "double-click",
         "right-click",
         "drag",
         "scroll",
-        "set-value",
         "type-text",
         "press-key",
+        "hotkey",
+        "move",
     ] {
-        assert!(
-            cells
-                .iter()
-                .any(|cell| cell.case.starts_with(&format!("{action}/"))),
-            "{action}"
-        );
+        for delivery in ["background", "foreground"] {
+            assert!(
+                cells
+                    .iter()
+                    .any(|cell| cell.case == format!("{action}/px/{delivery}")),
+                "{action}/px/{delivery}"
+            );
+        }
     }
     for cell in &cells {
-        assert!(conformance::INPUT_OPS.contains(&cell.op), "{}", cell.op);
-        let addressing = cell.case.split('/').nth(1).unwrap();
-        assert_eq!(
-            addressing == "ax",
-            cell.op == "semantic_action",
-            "{}",
-            cell.case
+        assert!(
+            conformance::PIXEL_OPS.contains(&cell.op),
+            "{} is not a pixel- or key-addressed operation",
+            cell.op
         );
+        assert!(cell.case.contains("/px/"), "{}", cell.case);
     }
 }

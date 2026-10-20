@@ -49,11 +49,9 @@ pub(crate) const V1_OPERATIONS: [&str; 16] = [
     "shutdown",
 ];
 
-/// The operations the kernel accepts from the macOS and Linux host (XP-06).
+/// The observations the kernel accepts from the macOS and Linux host (XP-06).
 /// XP-07 adds `capture_window`, an observation: it reads the pixels of one
-/// exact window and changes nothing. Every other operation is unavailable
-/// there until XP-11 and XP-12 qualify semantic actions and input, even if a
-/// host advertises it.
+/// exact window and changes nothing.
 pub(crate) const NATIVE_OBSERVATION_OPERATIONS: [&str; 7] = [
     "hello",
     "ping",
@@ -63,6 +61,17 @@ pub(crate) const NATIVE_OBSERVATION_OPERATIONS: [&str; 7] = [
     "cursor_position",
     "capture_window",
 ];
+
+/// XP-11: the one mutation the kernel accepts from the macOS and Linux host,
+/// the accessibility-addressed `semantic_action` (invoke, set_value, select,
+/// toggle). Naming it here only stops the negotiation from capping it. It is
+/// not enough to send one: the adapter delivers it only while an approval
+/// bound to the exact target is armed (`ComputerHostAdapter::authorize_semantic`),
+/// and the registry still binds, redacts and revalidates the element. Every
+/// other mutation (`window_action` and the seven `input_*` operations) is
+/// pixel- or key-addressed, belongs to XP-12, and stays unavailable
+/// (`observation_only`) whatever the host advertises.
+pub(crate) const NATIVE_ACTION_OPERATIONS: [&str; 1] = ["semantic_action"];
 
 const PLATFORMS: [&str; 3] = ["windows", "macos", "linux"];
 const BACKENDS: [&str; 4] = ["uia", "ax", "atspi-x11", "atspi-wayland"];
@@ -166,6 +175,11 @@ impl NegotiatedHost {
 
     pub(crate) fn generation(&self) -> ProtocolGeneration {
         self.generation
+    }
+
+    /// Whether this is the macOS and Linux host (`orcel-native-host`).
+    pub(crate) fn is_native(&self) -> bool {
+        self.identity == NATIVE_HOST_IDENTITY
     }
 
     /// The host identity every response must echo.
@@ -321,10 +335,12 @@ fn accept_v2(expected_platform: &str, reply: HelloFrame) -> Result<NegotiatedHos
                 support: CapabilitySupport::parse(&wire.support),
                 reason,
             };
-            // XP-06 kernel cap: off Windows the host is observation only
-            // until XP-11, whatever its hello claims.
+            // Kernel cap: off Windows the kernel accepts observation and, since
+            // XP-11, semantic actions, whatever the hello claims. Pixel- and
+            // key-addressed operations wait for XP-12.
             if expected_platform != "windows"
                 && !NATIVE_OBSERVATION_OPERATIONS.contains(&op.as_str())
+                && !NATIVE_ACTION_OPERATIONS.contains(&op.as_str())
             {
                 capability = HostCapability {
                     support: CapabilitySupport::Unavailable,
@@ -646,6 +662,38 @@ mod tests {
         }
     }
 
+    /// XP-11: exactly one mutation is let through the native cap, and it is
+    /// not a pixel- or key-addressed one.
+    #[test]
+    fn native_action_set_is_exactly_semantic_action() {
+        assert_eq!(NATIVE_ACTION_OPERATIONS, ["semantic_action"]);
+        for op in NATIVE_ACTION_OPERATIONS {
+            assert!(V1_OPERATIONS.contains(&op));
+            assert!(!NATIVE_OBSERVATION_OPERATIONS.contains(&op));
+        }
+        let pixel_or_key: Vec<_> = V1_OPERATIONS
+            .iter()
+            .filter(|op| {
+                !NATIVE_OBSERVATION_OPERATIONS.contains(op)
+                    && !NATIVE_ACTION_OPERATIONS.contains(op)
+            })
+            .copied()
+            .collect();
+        assert_eq!(
+            pixel_or_key,
+            vec![
+                "window_action",
+                "input_move",
+                "input_click",
+                "input_drag",
+                "input_scroll",
+                "input_type_text",
+                "input_key",
+                "input_hotkey"
+            ]
+        );
+    }
+
     #[test]
     fn native_hello_claiming_input_or_capture_is_capped_to_observation() {
         let claims_everything = V2_LINUX_HELLO
@@ -662,12 +710,7 @@ mod tests {
                 claims_everything.clone()
             };
             let host = negotiate(platform, |_| Ok(frame(&raw))).unwrap();
-            for op in [
-                "input_click",
-                "input_hotkey",
-                "semantic_action",
-                "window_action",
-            ] {
+            for op in ["input_click", "input_hotkey", "window_action"] {
                 let error = host.require(op).unwrap_err();
                 assert_eq!(error.code, FailureCode::ProviderUnavailable, "{op}");
                 assert!(
@@ -675,14 +718,23 @@ mod tests {
                     "{op}: {error:?}"
                 );
             }
+            // XP-11: a semantic action is no longer capped; the host's own
+            // claim decides, and the adapter still needs an armed approval.
+            assert!(host.require("semantic_action").is_ok());
             assert!(host.require("list_windows").is_ok());
             assert!(host.require("cursor_position").is_ok());
             // XP-07: capture is an observation; the host's own claim decides.
             assert!(host.require("capture_window").is_ok());
         }
-        // A native host that does not deliver capture keeps it unavailable,
-        // with its own reason.
+        // A native host that does not deliver capture or actions keeps them
+        // unavailable, with its own reason.
         let no_capture = negotiate("linux", |_| Ok(frame(V2_LINUX_HELLO))).unwrap();
+        let no_action = no_capture.require("semantic_action").unwrap_err();
+        assert_eq!(no_action.code, FailureCode::ProviderUnavailable);
+        assert!(
+            !no_action.message.contains("observation_only"),
+            "{no_action:?}"
+        );
         let error = no_capture.require("capture_window").unwrap_err();
         assert_eq!(error.code, FailureCode::ProviderUnavailable);
         assert!(!error.message.contains("observation_only"), "{error:?}");

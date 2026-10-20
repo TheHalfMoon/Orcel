@@ -1058,18 +1058,18 @@
       },
       "dependencies": "none",
       "steps": [
-        "Map semantic_action{invoke} -> Cua click with element_token and AX addressing only (pixel path disabled for semantic_action).",
-        "set_value -> Cua set_value; refuse secure fields before the call.",
-        "select/toggle -> Cua click on the exact element when the element's advertised action matches; otherwise refused (no fallback to coordinates).",
-        "scroll -> Cua scroll by element; bounded ticks.",
-        "Each action returns delivered/refused with Cua's exact reason mapped; host never retries.",
-        "Registry re-observes the window after every action (existing rule)."
+        "Map semantic_action{invoke} to one accessibility action on the exact element, through the P-09 orcel_semantic_action tool (Cua click falls back to pixel clicks, so it is not registered). The tool takes an element and a verb and no position, key, button or delivery mode.",
+        "set_value -> AXValue write (macOS) or EditableText/Value (Linux) on a text field, slider or spin button; secure and password fields and web content are refused before the call.",
+        "select/toggle -> the advertised activation action (AXPress, AT-SPI doAction) of the exact element when its control type suits the verb; otherwise refused (no fallback to coordinates).",
+        "scroll -> refused (capability_denied): Cua scrolls by wheel event at a screen position on both platforms, which is pixel-addressed input (XP-12).",
+        "Each action returns completed or a typed refusal; the host never retries (one worker attempt). Every action re-finds the element by its stable runtime id in the same worker that acts; a moved or changed element is target_stale.",
+        "Registry re-observes the window after every action (existing rule). The kernel adapter delivers an action to a native host only while an approval bound to the exact target is armed."
       ],
       "interfaces": "semantic_action over /2 with the existing request fields",
       "platforms": {
         "windows": "unchanged",
-        "macos": "AX background delivery per Cua evidence",
-        "linux": "AT-SPI on X11 and Sway; GNOME/KDE after XP-12"
+        "macos": "AX actions (AXPress, AXValue write) in the background through the P-09 accessibility-only tool; CI runs the AppKit conformance cells, and the live password and approval-window checks are manual",
+        "linux": "AT-SPI doAction and EditableText/Value on X11 and Sway (CI: GTK3 conformance cells and live checks under Xvfb/Openbox and headless Sway). Web controls of Linux Chromium sit below the /2 depth ceiling, so the shared-web action cells report beyond-depth-bound there. GNOME/KDE after XP-12"
       },
       "security": "Same SOFT approval per action; digest binds element runtime id + window generation + value digest.",
       "tests": {

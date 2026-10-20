@@ -28,6 +28,7 @@
 use crate::protocol::{ElementFact, ProcessFact, WindowFact, MAX_TEXT_BYTES, MAX_WINDOWS};
 use cua_driver_contract::{WindowElement, WindowInfo};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 
 /// Longest title, application name or element name sent, in characters.
 pub const MAX_NAME_CHARS: usize = 1024;
@@ -80,11 +81,21 @@ pub const PROTECTED_EXECUTABLES: &[&str] = &[
 /// `PASSWORD_MARKERS` in `crates/orcel-provider-uia/src/lib.rs`.
 const PASSWORD_MARKERS: &[&str] = &["password", "passwd", "secret", "token"];
 
+/// Whether a process image is never listed, observed or acted on: the OS
+/// authentication and lock surfaces, and every Orcel executable. Orcel's own
+/// approval dialog (the XP-10 helper `orcel-approval-helper-linux`, `orceld`)
+/// must never be a target, or an agent could press Approve itself (XP-11).
 pub fn is_protected_executable(exe_name: &str) -> bool {
     PROTECTED_EXECUTABLES
         .iter()
         .any(|name| exe_name.eq_ignore_ascii_case(name))
+        || exe_name
+            .get(..ORCEL_EXECUTABLE_PREFIX.len())
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(ORCEL_EXECUTABLE_PREFIX))
 }
+
+/// Every binary Orcel ships is named `orcel` or `orcel-*` / `orceld`.
+const ORCEL_EXECUTABLE_PREFIX: &str = "orcel";
 
 /// Truncates to at most `limit` characters.
 pub fn bound_chars(raw: &str, limit: usize) -> String {
@@ -331,8 +342,9 @@ pub fn patterns(role: &str, actions: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// One Cua element as an element fact without children.
-pub fn element_fact(element: &WindowElement) -> ElementFact {
+/// One Cua element as an element fact without children. `runtime_id` is the
+/// stable identity from [`runtime_ids`].
+pub fn element_fact(element: &WindowElement, runtime_id: &str) -> ElementFact {
     let role = element.role.as_str();
     let name = bound_chars(element.label.as_deref().unwrap_or_default(), MAX_NAME_CHARS);
     let secure = is_secure_role(role);
@@ -344,13 +356,9 @@ pub fn element_fact(element: &WindowElement) -> ElementFact {
             .as_deref()
             .map(|value| bound_bytes(value, MAX_TEXT_BYTES))
     };
-    let runtime_id = element
-        .element_token
-        .clone()
-        .unwrap_or_else(|| element.element_index.to_string());
     let selected = element.selected.unwrap_or(false);
     ElementFact {
-        runtime_id: bound_bytes(&runtime_id, MAX_RUNTIME_ID_BYTES),
+        runtime_id: bound_bytes(runtime_id, MAX_RUNTIME_ID_BYTES),
         control_type: control_type(role).to_owned(),
         automation_id: String::new(),
         name,
@@ -366,20 +374,75 @@ pub fn element_fact(element: &WindowElement) -> ElementFact {
     }
 }
 
-/// Rebuilds the element tree from Cua's depth-first list, keeping at most
-/// `node_limit` nodes and `depth_limit` levels. A node whose parent was
-/// dropped is dropped with it, so no subtree is re-rooted.
-pub fn element_tree(
-    elements: &[WindowElement],
-    node_limit: usize,
-    depth_limit: usize,
-) -> Vec<ElementFact> {
-    let mut slots: Vec<Option<ElementFact>> = Vec::new();
-    let mut parents: Vec<Option<usize>> = Vec::new();
-    let mut depths: Vec<usize> = Vec::new();
-    let mut slot_of = std::collections::HashMap::<u64, Option<usize>>::new();
+/// The stable runtime id of every element of one Cua list, keyed by
+/// `element_index`.
+///
+/// Cua's own `element_token` names a snapshot of one process, so it means
+/// nothing to the worker that acts later (each worker mints `s00000001`
+/// again). The id here is derived from what the element is: its index in the
+/// document-order list, its role, label and advertised actions, and the
+/// digest of its parent. A later worker lists the window again, recomputes
+/// the ids and acts only on an element whose id equals the one the kernel
+/// observed (`semantic::locate`), so a tree that moved or an element that
+/// changed is `target_stale`, never retargeted. The id never carries a value.
+pub fn runtime_ids(elements: &[WindowElement]) -> HashMap<u64, String> {
+    let mut digests = HashMap::<u64, [u8; 32]>::new();
+    let mut ids = HashMap::new();
     for element in elements {
-        if slots.len() >= node_limit {
+        let parent = element
+            .parent_index
+            .and_then(|index| digests.get(&index))
+            .copied()
+            .unwrap_or([0u8; 32]);
+        let mut actions: Vec<String> = element
+            .actions
+            .iter()
+            .flatten()
+            .map(|action| action.trim().to_ascii_lowercase())
+            .collect();
+        actions.sort();
+        let mut hasher = Sha256::new();
+        hasher.update(b"orcel-native-host/element/v1|");
+        hasher.update(element.element_index.to_le_bytes());
+        for part in [
+            element.role.as_str(),
+            element.label.as_deref().unwrap_or_default(),
+            &actions.join(","),
+        ] {
+            hasher.update((part.len() as u64).to_le_bytes());
+            hasher.update(part.as_bytes());
+        }
+        hasher.update(parent);
+        let digest: [u8; 32] = hasher.finalize().into();
+        let short: String = digest[..8]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        ids.insert(
+            element.element_index,
+            format!("e{}-{short}", element.element_index),
+        );
+        digests.insert(element.element_index, digest);
+    }
+    ids
+}
+
+/// One element the bounded tree keeps: its position in the Cua list, the slot
+/// of its kept parent and its depth.
+struct Kept {
+    position: usize,
+    parent: Option<usize>,
+}
+
+/// The elements a tree of at most `node_limit` nodes and `depth_limit`
+/// levels keeps, in list order. A node whose parent was dropped is dropped
+/// with it, so no subtree is re-rooted.
+fn kept_elements(elements: &[WindowElement], node_limit: usize, depth_limit: usize) -> Vec<Kept> {
+    let mut kept: Vec<Kept> = Vec::new();
+    let mut depths: Vec<usize> = Vec::new();
+    let mut slot_of = HashMap::<u64, Option<usize>>::new();
+    for (position, element) in elements.iter().enumerate() {
+        if kept.len() >= node_limit {
             break;
         }
         let parent = match element.parent_index {
@@ -400,17 +463,49 @@ pub fn element_tree(
             slot_of.insert(element.element_index, None);
             continue;
         }
-        slot_of.insert(element.element_index, Some(slots.len()));
-        slots.push(Some(element_fact(element)));
-        parents.push(parent);
+        slot_of.insert(element.element_index, Some(kept.len()));
+        kept.push(Kept { position, parent });
         depths.push(depth);
     }
+    kept
+}
+
+/// The elements `element_tree` returns, flattened in list order. An action
+/// may address only an element of this set: the one the kernel could have
+/// observed under the same bounds.
+pub fn observable_elements(
+    elements: &[WindowElement],
+    node_limit: usize,
+    depth_limit: usize,
+) -> Vec<&WindowElement> {
+    kept_elements(elements, node_limit, depth_limit)
+        .into_iter()
+        .map(|kept| &elements[kept.position])
+        .collect()
+}
+
+/// Rebuilds the element tree from Cua's depth-first list, keeping at most
+/// `node_limit` nodes and `depth_limit` levels (see [`kept_elements`]).
+pub fn element_tree(
+    elements: &[WindowElement],
+    node_limit: usize,
+    depth_limit: usize,
+) -> Vec<ElementFact> {
+    let ids = runtime_ids(elements);
+    let kept = kept_elements(elements, node_limit, depth_limit);
+    let mut slots: Vec<Option<ElementFact>> = kept
+        .iter()
+        .map(|kept| {
+            let element = &elements[kept.position];
+            Some(element_fact(element, &ids[&element.element_index]))
+        })
+        .collect();
     let mut roots = Vec::new();
     for index in (0..slots.len()).rev() {
         let Some(node) = slots[index].take() else {
             continue;
         };
-        match parents[index] {
+        match kept[index].parent {
             Some(parent) => {
                 if let Some(parent) = slots[parent].as_mut() {
                     parent.children.push(node);
@@ -549,6 +644,25 @@ mod tests {
         assert!(!is_protected_executable("gedit"));
     }
 
+    /// XP-11: no Orcel binary, the approval helper included, is a target.
+    #[test]
+    fn every_orcel_executable_is_protected() {
+        for name in [
+            "orcel",
+            "orceld",
+            "Orcel",
+            "orcel-native-host",
+            "orcel-approval-helper-linux",
+            "ORCEL-APPROVAL-HELPER",
+            "orcel-mcp",
+        ] {
+            assert!(is_protected_executable(name), "{name}");
+        }
+        for name in ["", "orce", "porcel", "gedit", "or", "ocel", "é"] {
+            assert!(!is_protected_executable(name), "{name:?}");
+        }
+    }
+
     /// XP-07 review: a window owned by UserNotificationCenter (the XP-09
     /// SOFT approval alert) or another system alert or authentication agent
     /// is never listed. The same owner check refuses observation and
@@ -625,7 +739,7 @@ mod tests {
             let mut field = element(1, role, None);
             field.value = Some("hunter2-secret-value".into());
             field.label = Some("Sign in".into());
-            let fact = element_fact(&field);
+            let fact = element_fact(&field, "t");
             assert!(fact.value_is_password, "{role}");
             assert_eq!(fact.value, None, "{role}");
             assert_eq!(fact.control_type, "Edit");
@@ -636,11 +750,11 @@ mod tests {
         // as on Windows, but its value is not sent either.
         let mut named = element(2, "AXTextField", None);
         named.label = Some("API token".into());
-        let fact = element_fact(&named);
+        let fact = element_fact(&named, "t");
         assert!(!fact.value_is_password);
         assert_eq!(fact.value, None);
         // An ordinary field keeps its value.
-        let plain = element_fact(&element(3, "entry", None));
+        let plain = element_fact(&element(3, "entry", None), "t");
         assert_eq!(plain.value.as_deref(), Some("value 3"));
     }
 
@@ -655,15 +769,16 @@ mod tests {
         ];
         let tree = element_tree(&elements, 256, 8);
         assert_eq!(tree.len(), 2);
-        assert_eq!(tree[0].runtime_id, "42:0");
+        let ids = runtime_ids(&elements);
+        assert_eq!(tree[0].runtime_id, ids[&0]);
         let children: Vec<_> = tree[0]
             .children
             .iter()
             .map(|c| c.runtime_id.as_str())
             .collect();
-        assert_eq!(children, vec!["42:1", "42:2"]);
+        assert_eq!(children, vec![ids[&1].as_str(), ids[&2].as_str()]);
         assert_eq!(tree[0].children[1].children[0].control_type, "CheckBox");
-        assert_eq!(tree[1].runtime_id, "42:4");
+        assert_eq!(tree[1].runtime_id, ids[&4]);
 
         // Depth 2 drops the checkbox, and nothing re-roots under it.
         let shallow = element_tree(&elements, 256, 2);
@@ -683,6 +798,70 @@ mod tests {
         assert_eq!(count_nodes(&element_tree(&wide, 256, 8)), 256);
     }
 
+    /// The id survives a new walk of the same tree, and moves when anything
+    /// it stands for moves, so an action never lands on a neighbour.
+    #[test]
+    fn runtime_ids_are_stable_and_follow_what_the_element_is() {
+        let list = vec![
+            element(0, "AXWindow", None),
+            element(1, "AXButton", Some(0)),
+            element(2, "AXButton", Some(0)),
+        ];
+        // A second worker mints another snapshot token for the same tree.
+        let mut again = list.clone();
+        for element in &mut again {
+            element.element_token = Some(format!("77:{}", element.element_index));
+            element.value = Some("changed".into());
+        }
+        assert_eq!(runtime_ids(&list), runtime_ids(&again));
+        let ids = runtime_ids(&list);
+        assert_ne!(ids[&1], ids[&2]);
+        for id in ids.values() {
+            assert!(id.len() <= MAX_RUNTIME_ID_BYTES);
+            assert!(!id.contains("node"), "{id}");
+        }
+        // A renamed element, a different role, other actions, another parent
+        // and a shifted index each give another id.
+        let mut renamed = list.clone();
+        renamed[1].label = Some("Delete".into());
+        assert_ne!(runtime_ids(&renamed)[&1], ids[&1]);
+        assert_eq!(runtime_ids(&renamed)[&2], ids[&2]);
+        let mut other_role = list.clone();
+        other_role[1].role = "AXCheckBox".into();
+        assert_ne!(runtime_ids(&other_role)[&1], ids[&1]);
+        let mut other_actions = list.clone();
+        other_actions[1].actions = Some(vec!["AXShowMenu".into()]);
+        assert_ne!(runtime_ids(&other_actions)[&1], ids[&1]);
+        let mut reparented = list.clone();
+        reparented[2].parent_index = Some(1);
+        assert_ne!(runtime_ids(&reparented)[&2], ids[&2]);
+        let mut shifted = list.clone();
+        shifted.insert(1, element(1, "AXGroup", Some(0)));
+        shifted[2].element_index = 2;
+        shifted[3].element_index = 3;
+        // The button that was element 1 is element 2 now, so its old id
+        // names nothing, and the old element 2's id names another button.
+        let moved = runtime_ids(&shifted);
+        assert_ne!(moved[&2], ids[&1]);
+        assert_ne!(moved[&3], ids[&2]);
+        assert!(!moved.values().any(|id| *id == ids[&1] || *id == ids[&2]));
+    }
+
+    #[test]
+    fn observable_elements_are_the_tree_nodes_and_no_others() {
+        let wide: Vec<_> = (0..1000)
+            .map(|i| element(i, "AXButton", if i == 0 { None } else { Some(0) }))
+            .collect();
+        let observable = observable_elements(&wide, 256, 8);
+        assert_eq!(observable.len(), 256);
+        assert_eq!(observable[255].element_index, 255);
+        let tree_ids = runtime_ids(&wide);
+        let tree = element_tree(&wide, 256, 8);
+        assert_eq!(count_nodes(&tree), observable.len());
+        assert!(!observable.iter().any(|e| e.element_index == 256));
+        assert_eq!(tree[0].runtime_id, tree_ids[&0]);
+    }
+
     #[test]
     fn role_table_and_patterns_are_closed() {
         assert_eq!(control_type("AXButton"), "Button");
@@ -699,7 +878,7 @@ mod tests {
         assert_eq!(patterns("AXTextField", &[]), vec!["Value"]);
         let mut checked = element(1, "AXCheckBox", None);
         checked.selected = Some(true);
-        assert!(element_fact(&checked).toggled);
+        assert!(element_fact(&checked, "t").toggled);
     }
 
     #[test]

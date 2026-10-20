@@ -3,7 +3,7 @@
 //! The one-shot sacrificial worker (`orcel-native-host --worker`).
 //!
 //! It reads one request the supervisor already validated, validates it
-//! again, runs exactly one observation or capture through
+//! again, runs exactly one observation, capture or semantic action through
 //! [`crate::cua_adapter`], writes one response line and exits. All AX,
 //! AT-SPI, ScreenCaptureKit and X11 work happens here, so a hang or crash in
 //! those stacks costs one worker, never the supervisor. The worker never
@@ -13,12 +13,13 @@
 //! permission and session probes run here, never in the supervisor.
 
 use crate::capture::{self, FrameRefusal};
-use crate::cua_adapter::{CuaCall, CuaFailure, CuaRuntime};
+use crate::cua_adapter::{CuaCall, CuaFailure, CuaRuntime, SemanticCall};
 use crate::map::{self, Omission, ProcessIdentity};
 use crate::protocol::{
     self, code, Availability, CursorFact, HostPlatform, ProcessFact, Request, Response,
     WindowBinding, MAX_REQUEST_BYTES,
 };
+use crate::semantic;
 use cua_driver_contract::{
     GetCursorPositionInput, GetScreenSizeInput, ListWindowsOutput, WindowElement, WindowInfo,
 };
@@ -91,6 +92,9 @@ async fn answer(request: &Request, platform: HostPlatform) -> Response {
             ("capture_window", protocol::LINUX_WAYLAND) => {
                 "; Wayland exposes no exact-window capture to this host"
             }
+            ("semantic_action", protocol::MACOS) => {
+                "; actions need Accessibility and Screen Recording, and the host never prompts"
+            }
             _ => "",
         };
         return Response::failure(
@@ -106,6 +110,7 @@ async fn answer(request: &Request, platform: HostPlatform) -> Response {
         "list_windows" => list_windows(&runtime, request, platform).await,
         "observe_window" => observe_window(&runtime, request, platform).await,
         "capture_window" => capture_window(&runtime, request, platform).await,
+        "semantic_action" => semantic_action(&runtime, request, platform).await,
         "cursor_position" => cursor_position(&runtime, request).await,
         _ => Response::failure(
             request.id,
@@ -165,7 +170,8 @@ pub fn macos_availability(status: &Value) -> Availability {
         list_windows: observation.clone(),
         observe_window: observation.clone(),
         cursor_position: None,
-        capture_window: observation,
+        capture_window: observation.clone(),
+        semantic_action: observation,
         permissions,
     }
 }
@@ -225,8 +231,10 @@ pub fn linux_availability(platform: HostPlatform, session: &LinuxSession) -> Ava
         capture_window: if wayland {
             Some(code::PROVIDER_UNAVAILABLE.to_owned())
         } else {
-            tree
+            tree.clone()
         },
+        // AT-SPI actions need the tree and a window id, as observation does.
+        semantic_action: tree,
         permissions: BTreeMap::new(),
     }
 }
@@ -644,6 +652,153 @@ async fn capture_window(
     }
 }
 
+/// How a failure of the P-09 action tool maps onto the closed codes. The tool
+/// states its own code in the structured result; anything else is the
+/// backend failing.
+fn action_failure(id: u64, failure: &CuaFailure) -> Response {
+    let structured = failure
+        .structured
+        .as_ref()
+        .and_then(|value| value.get("code").or_else(|| value.pointer("/refusal/code")))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let mapped = match structured {
+        "target_stale" | "stale_element_token" => code::TARGET_STALE,
+        "protected_surface" => code::PROTECTED_SURFACE,
+        "capability_denied" => code::CAPABILITY_DENIED,
+        "invalid_request" => code::INVALID_REQUEST,
+        "timeout" => code::TIMEOUT,
+        _ if is_stale(failure) => code::TARGET_STALE,
+        _ => code::PROVIDER_UNAVAILABLE,
+    };
+    Response::failure(id, mapped, bounded_message(&failure.message))
+}
+
+/// XP-11: one accessibility action on one element of one exact window.
+///
+/// Nothing the kernel said is taken on trust. In this worker, in this order:
+/// the window binding and owner identity are re-proved (`bound_window`); the
+/// window must not be a protected surface and must be on screen; the window's
+/// tree is listed again and the element is found by its stable runtime id,
+/// among the nodes a bounded observation returns, or the action is
+/// `target_stale`; the verb must suit the live element and the element must
+/// not be a password or secret (`semantic::plan`); the owner's start
+/// generation is read again; and only then one action is delivered through
+/// the P-09 tool, which has accessibility routes only. The host never
+/// retries (the supervisor runs this worker once), and the kernel registry
+/// observes the window again after every action.
+async fn semantic_action(
+    runtime: &CuaRuntime,
+    request: &Request,
+    platform: HostPlatform,
+) -> Response {
+    let id = request.id;
+    let refuse = |code: &str, message: &str| Response::failure(id, code, message.to_owned());
+    let verb = match semantic::parse_verb(request.semantic_action.as_deref().unwrap_or_default()) {
+        Ok(verb) => verb,
+        Err(refusal) => return refuse(refusal.code, &refusal.message),
+    };
+    let Some(wanted) = request.element_runtime_id.as_deref() else {
+        return refuse(code::INVALID_REQUEST, "the element runtime id is required");
+    };
+    let bound = match bound_window(runtime, request, platform).await {
+        Ok(bound) => bound,
+        Err(refusal) => return refusal,
+    };
+    let window = &bound.window;
+    let class = format!("{} {}", window.app_name, bound.process.fact.exe_name);
+    if capture::is_protected_window(&window.title, &class) {
+        return refuse(
+            code::PROTECTED_SURFACE,
+            "window is a protected surface; no action is delivered to it",
+        );
+    }
+    if !window.is_on_screen || window.minimized == Some(true) {
+        return refuse(
+            code::PROVIDER_UNAVAILABLE,
+            "window is minimized, hidden or on another Space; the host acts only on a window the user can see",
+        );
+    }
+    let node_limit = protocol::MAX_TREE_NODES;
+    let depth_limit = protocol::MAX_TREE_DEPTH;
+    let observed = runtime
+        .call(&CuaCall::observe(
+            bound.binding.pid,
+            bound.binding.id,
+            node_limit as u32,
+            depth_limit as u32,
+        ))
+        .await;
+    let state = match observed {
+        Ok(state) => state,
+        Err(failure) if is_stale(&failure) => {
+            return refuse(code::TARGET_STALE, "window closed while it was observed")
+        }
+        Err(failure) => return cua_unavailable(id, &failure),
+    };
+    let elements: Vec<WindowElement> = match state.get("elements").cloned() {
+        None => Vec::new(),
+        Some(elements) => match serde_json::from_value(elements) {
+            Ok(elements) => elements,
+            Err(error) => {
+                return refuse(
+                    code::PROVIDER_UNAVAILABLE,
+                    &bounded_message(&format!(
+                        "the Cua element list did not match its contract: {error}"
+                    )),
+                )
+            }
+        },
+    };
+    let ids = map::runtime_ids(&elements);
+    let observable = map::observable_elements(&elements, node_limit, depth_limit);
+    let Some(element) = semantic::locate(&observable, &ids, wanted) else {
+        return refuse(
+            code::TARGET_STALE,
+            "the element is not in the window's tree as observed; observe the window again",
+        );
+    };
+    let fact = map::element_fact(element, wanted);
+    if let Err(refusal) = semantic::plan(verb, element, &fact, request.value.as_deref()) {
+        return refuse(refusal.code, &refusal.message);
+    }
+    let Some(token) = element.element_token.clone() else {
+        return refuse(
+            code::TARGET_STALE,
+            "the element has no token in this snapshot",
+        );
+    };
+    // The listing and the walk took time: the owner must still be the
+    // instance the binding names, immediately before the action.
+    match orcel_platform::process::start_generation(bound.binding.pid) {
+        Ok(now) if now.generation == bound.binding.start_generation => {}
+        _ => return refuse(code::TARGET_STALE, "window owner changed before the action"),
+    }
+    let call = CuaCall::SemanticAction(SemanticCall {
+        pid: bound.binding.pid,
+        window_id: bound.binding.id,
+        element_token: token,
+        verb,
+        expect_role: element.role.clone(),
+        value: (verb == semantic::Verb::SetValue)
+            .then(|| request.value.clone())
+            .flatten(),
+        toggle_to: (verb == semantic::Verb::Toggle)
+            .then(|| request.value.as_deref() == Some("true")),
+    });
+    match runtime.call(&call).await {
+        Ok(_) => {
+            let mut response = Response::success(id);
+            response.action = Some(protocol::ActionFact {
+                state: "completed".to_owned(),
+                action: format!("semantic_{}", verb.as_str()),
+            });
+            response
+        }
+        Err(failure) => action_failure(id, &failure),
+    }
+}
+
 /// X11 capture reads the screen's copy of the window, so the window must be
 /// wholly its own on screen (see `capture::x11`). `None` lets it through.
 #[cfg(target_os = "linux")]
@@ -774,9 +929,19 @@ mod tests {
             no_screen_recording.capture_window.as_deref(),
             Some("permission_missing")
         );
+        // Actions need what observation needs, and nothing more.
+        assert_eq!(
+            missing.semantic_action.as_deref(),
+            Some("permission_missing")
+        );
+        assert_eq!(
+            no_screen_recording.semantic_action.as_deref(),
+            Some("permission_missing")
+        );
         let granted = macos_availability(&json!({"accessibility": true, "screen_recording": true}));
         assert_eq!(granted.list_windows, None);
         assert_eq!(granted.observe_window, None);
+        assert_eq!(granted.semantic_action, None);
         // The direct-capture consent is read separately, in the probe.
         assert_eq!(granted.capture_window, None);
         // A malformed answer never counts as granted.
@@ -803,6 +968,10 @@ mod tests {
             no_bus.capture_window.as_deref(),
             Some("provider_unavailable")
         );
+        assert_eq!(
+            no_bus.semantic_action.as_deref(),
+            Some("provider_unavailable")
+        );
         assert_eq!(no_bus.cursor_position, None);
         let full = LinuxSession {
             display: true,
@@ -813,13 +982,16 @@ mod tests {
         assert_eq!(x11.list_windows, None);
         assert_eq!(x11.cursor_position, None);
         assert_eq!(x11.capture_window, None);
+        assert_eq!(x11.semantic_action, None);
         let wayland = linux_availability(protocol::LINUX_WAYLAND, &full);
         assert_eq!(wayland.list_windows, None);
-        // Wayland has no exact-window capture for this host.
+        // Wayland has no exact-window capture for this host, but AT-SPI
+        // actions work wherever a window is attested (Sway).
         assert_eq!(
             wayland.capture_window.as_deref(),
             Some("provider_unavailable")
         );
+        assert_eq!(wayland.semantic_action, None);
         assert_eq!(
             wayland.cursor_position.as_deref(),
             Some("provider_unavailable")
@@ -834,6 +1006,55 @@ mod tests {
             },
         );
         assert_eq!(xwayland_only, Availability::none("provider_unavailable"));
+    }
+
+    #[test]
+    fn action_tool_failures_map_onto_the_closed_codes() {
+        let failure = |message: &str, code: &str| CuaFailure {
+            message: message.to_owned(),
+            structured: Some(json!({ "code": code })),
+        };
+        for (tool_code, expected) in [
+            ("target_stale", "target_stale"),
+            ("stale_element_token", "target_stale"),
+            ("protected_surface", "protected_surface"),
+            ("capability_denied", "capability_denied"),
+            ("invalid_request", "invalid_request"),
+            ("timeout", "timeout"),
+            ("ax_failed", "provider_unavailable"),
+            ("anything else", "provider_unavailable"),
+        ] {
+            let response = action_failure(5, &failure("the tool said no", tool_code));
+            assert!(!response.ok);
+            assert_eq!(response.error.unwrap().code, expected, "{tool_code}");
+        }
+        // The core's own refusal envelope, and a bare stale message.
+        let envelope = CuaFailure {
+            message: "x".into(),
+            structured: Some(json!({"refusal": {"code": "stale_element_token"}})),
+        };
+        assert_eq!(
+            action_failure(5, &envelope).error.unwrap().code,
+            "target_stale"
+        );
+        let bare = CuaFailure {
+            message: "the element is stale".into(),
+            structured: None,
+        };
+        assert_eq!(action_failure(5, &bare).error.unwrap().code, "target_stale");
+        let long = CuaFailure {
+            message: "m".repeat(5000),
+            structured: None,
+        };
+        assert_eq!(
+            action_failure(5, &long)
+                .error
+                .unwrap()
+                .message
+                .chars()
+                .count(),
+            MAX_MESSAGE_CHARS
+        );
     }
 
     #[test]

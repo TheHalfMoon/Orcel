@@ -1195,6 +1195,11 @@ pub fn register_all(
     registry.register(Box::new(check_permissions::CheckPermissionsTool::new(
         state.clone(),
     )));
+    // Orcel P-09 (XP-11): the accessibility-only action tool.
+    #[cfg(feature = "orcel-minimal")]
+    registry.register(Box::new(orcel_semantic::OrcelSemanticTool::new(
+        state.clone(),
+    )));
     // `health_report` — single-call end-to-end diagnostics. Stable
     // schema_version="1" contract aimed at downstream consumers who must
     // not have to know cua-driver internals. Provider is platform-specific; tool plumbing is in
@@ -1427,5 +1432,464 @@ mod windowserver_refusal_tests {
             .as_str()
             .unwrap()
             .contains("open -n -g -a CuaDriver --args serve"));
+    }
+}
+
+// Orcel P-09 (XP-11): the accessibility-only action tool. Everything below is
+// added by the Orcel patch queue and compiled only with `orcel-minimal`.
+#[cfg(feature = "orcel-minimal")]
+pub(crate) mod orcel_semantic {
+    //! `orcel_semantic_action`: one accessibility action on one element of the
+    //! calling process's latest snapshot, and nothing else.
+    //!
+    //! Upstream's `click`, `set_value` and `scroll` are not registered by the
+    //! Orcel host, because each one can leave the accessibility route: a
+    //! pixel click through the CGEvent tap, a synthesized key press, an Apple
+    //! Event to Finder or Safari (which raises a TCC prompt), a menu opened
+    //! and pressed, a private SkyLight focus change. This tool has none of
+    //! those. It calls the AX primitives those tools are built on
+    //! (`AXUIElementPerformAction`, `AXUIElementSetAttributeValue`) on the
+    //! element a `get_window_state` snapshot resolved, after upstream's own
+    //! exact-window gate (`gate_background_window_action`), and refuses
+    //! rather than falling back when the element lacks the action.
+
+    use super::{finish_window_observation, gate_background_window_action, ToolState};
+    use crate::apps;
+    use crate::ax::bindings::{
+        copy_action_names, copy_bool_attr, copy_number_attr, copy_string_attr,
+        is_attribute_settable,
+        kAXErrorSuccess, set_number_attr, set_string_attr, AXUIElementRef,
+    };
+    use crate::focus_guard;
+    use crate::window_change_detector::WindowChangeDetector;
+    use async_trait::async_trait;
+    use cua_driver_core::background_input::BackgroundAction;
+    use cua_driver_core::protocol::ToolResult;
+    use cua_driver_core::tool::{Tool, ToolDef};
+    use serde_json::{json, Value};
+    use std::sync::Arc;
+
+    pub const TOOL_NAME: &str = "orcel_semantic_action";
+
+    /// The only argument names the tool accepts. A name that starts with `_`
+    /// is a transport field the core strips and injects itself.
+    const ARGUMENTS: [&str; 7] = [
+        "pid",
+        "window_id",
+        "element_token",
+        "verb",
+        "expect_role",
+        "value",
+        "toggle_to",
+    ];
+
+    /// Longest text `set_value` writes, as the host protocol bounds it.
+    const MAX_VALUE_BYTES: usize = 16 * 1024;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Verb {
+        Invoke,
+        SetValue,
+        Select,
+        Toggle,
+    }
+
+    fn parse_verb(name: &str) -> Option<Verb> {
+        match name {
+            "invoke" => Some(Verb::Invoke),
+            "set_value" => Some(Verb::SetValue),
+            "select" => Some(Verb::Select),
+            "toggle" => Some(Verb::Toggle),
+            _ => None,
+        }
+    }
+
+    /// What a verb may do on a role: the AX action it sends, or `None` for a
+    /// role it never touches. Press is the only action sent. `AXPopUpButton`,
+    /// `AXMenuButton` and the like are absent on purpose: pressing one opens
+    /// a menu.
+    fn press_roles(verb: Verb) -> &'static [&'static str] {
+        match verb {
+            Verb::Invoke => &["AXButton", "AXLink", "AXMenuItem", "AXMenuBarItem"],
+            Verb::Toggle => &["AXCheckBox"],
+            Verb::Select => &["AXRadioButton"],
+            Verb::SetValue => &[],
+        }
+    }
+
+    const VALUE_ROLES: &[&str] = &[
+        "AXTextField",
+        "AXTextArea",
+        "AXSlider",
+        "AXStepper",
+        "AXIncrementor",
+        "AXDateField",
+        "AXTimeField",
+    ];
+
+    fn refusal(code: &str, message: impl Into<String>) -> ToolResult {
+        ToolResult::error(message.into()).with_structured(json!({
+            "code": code,
+            "effect": "none",
+        }))
+    }
+
+    pub struct OrcelSemanticTool {
+        state: Arc<ToolState>,
+    }
+
+    impl OrcelSemanticTool {
+        pub fn new(state: Arc<ToolState>) -> Self {
+            Self { state }
+        }
+    }
+
+    static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
+
+    fn def() -> &'static ToolDef {
+        DEF.get_or_init(|| ToolDef {
+            name: TOOL_NAME.into(),
+            description: "Orcel host only. One accessibility action (invoke, toggle, select \
+                or set_value) on the exact element a get_window_state snapshot of this process \
+                resolved, through AX actions and AXValue writes. It sends no pointer or key \
+                event and has no fallback."
+                .into(),
+            input_schema: json!({
+                "type": "object",
+                "required": ["pid", "window_id", "element_token", "verb", "expect_role"],
+                "properties": {
+                    "pid": { "type": "integer" },
+                    "window_id": { "type": "integer" },
+                    "element_token": { "type": "string" },
+                    "verb": { "type": "string", "enum": ["invoke", "set_value", "select", "toggle"] },
+                    "expect_role": { "type": "string" },
+                    "value": { "type": "string" },
+                    "toggle_to": { "type": "boolean" }
+                },
+                "additionalProperties": false
+            }),
+            read_only: false,
+            destructive: true,
+            idempotent: false,
+            open_world: false,
+        })
+    }
+
+    /// The decoded, validated call.
+    struct Call {
+        pid: i32,
+        window_id: u32,
+        verb: Verb,
+        expect_role: String,
+        value: Option<String>,
+        toggle_to: Option<bool>,
+    }
+
+    fn decode(args: &Value) -> Result<Call, ToolResult> {
+        let invalid = |message: &str| Err(refusal("invalid_request", message));
+        let Some(object) = args.as_object() else {
+            return invalid("arguments must be an object");
+        };
+        if let Some(name) = object
+            .keys()
+            .find(|name| !name.starts_with('_') && !ARGUMENTS.contains(&name.as_str()))
+        {
+            return invalid(&format!(
+                "{name} is not an argument of this tool: it takes an element, never a position or a key"
+            ));
+        }
+        let Some(pid) = object
+            .get("pid")
+            .and_then(Value::as_i64)
+            .and_then(|pid| i32::try_from(pid).ok())
+            .filter(|pid| *pid > 0)
+        else {
+            return invalid("pid is required");
+        };
+        let Some(window_id) = object
+            .get("window_id")
+            .and_then(Value::as_u64)
+            .and_then(|id| u32::try_from(id).ok())
+            .filter(|id| *id != 0)
+        else {
+            return invalid("window_id is required");
+        };
+        let token_is_strict = object
+            .get("element_token")
+            .and_then(Value::as_str)
+            .is_some_and(|token| cua_driver_core::element_token::parse_token(token).is_some());
+        if !token_is_strict {
+            return invalid("element_token must be a token from get_window_state");
+        }
+        let Some(verb) = object
+            .get("verb")
+            .and_then(Value::as_str)
+            .and_then(parse_verb)
+        else {
+            return invalid("verb must be invoke, set_value, select or toggle");
+        };
+        let Some(expect_role) = object
+            .get("expect_role")
+            .and_then(Value::as_str)
+            .filter(|role| !role.is_empty())
+        else {
+            return invalid("expect_role is required");
+        };
+        let value = match (verb, object.get("value")) {
+            (Verb::SetValue, Some(Value::String(text))) if text.len() <= MAX_VALUE_BYTES => {
+                Some(text.clone())
+            }
+            (Verb::SetValue, _) => return invalid("set_value needs a text value within 16 KiB"),
+            (_, None) => None,
+            (_, Some(_)) => return invalid("only set_value takes a value"),
+        };
+        let toggle_to = match (verb, object.get("toggle_to")) {
+            (Verb::Toggle, Some(Value::Bool(wanted))) => Some(*wanted),
+            (Verb::Toggle, _) => return invalid("toggle needs toggle_to, the state it asks for"),
+            (_, None) => None,
+            (_, Some(_)) => return invalid("only toggle takes toggle_to"),
+        };
+        Ok(Call {
+            pid,
+            window_id,
+            verb,
+            expect_role: expect_role.to_owned(),
+            value,
+            toggle_to,
+        })
+    }
+
+    #[async_trait]
+    impl Tool for OrcelSemanticTool {
+        fn def(&self) -> &ToolDef {
+            def()
+        }
+
+        async fn invoke(&self, args: Value) -> ToolResult {
+            let call = match decode(&args) {
+                Ok(call) => call,
+                Err(refusal) => return refusal,
+            };
+            let (element_index, window_id, element_guard) =
+                match self.state.snapshots.resolve(call.pid, &args) {
+                    Ok(cua_driver_core::element_token::ResolvedElement::Element {
+                        window_id,
+                        element_index,
+                        element,
+                    }) => match u32::try_from(window_id) {
+                        // The snapshot's window must be the window asked for.
+                        Ok(snapshot_window) if snapshot_window == call.window_id => {
+                            (element_index, snapshot_window, element)
+                        }
+                        _ => {
+                            return refusal(
+                                "target_stale",
+                                "the element belongs to another window than the one asked for",
+                            )
+                        }
+                    },
+                    Ok(cua_driver_core::element_token::ResolvedElement::None) => {
+                        return refusal("invalid_request", "an element token is required")
+                    }
+                    Err(stale) => return stale,
+                };
+            let element_ptr = element_guard.as_ptr();
+
+            // Upstream's exact-window proof: the retained element still
+            // belongs to this window, immediately before any AX work.
+            let _mutation_lease = match gate_background_window_action(
+                call.pid,
+                window_id,
+                Some(element_ptr),
+                BackgroundAction::AxSemantic,
+            )
+            .await
+            {
+                Ok(lease) => lease,
+                Err(gate_refusal) => return gate_refusal,
+            };
+
+            let prior_front = apps::frontmost_pid();
+            let snapshot = WindowChangeDetector::snapshot(prior_front);
+            let pid = call.pid;
+            let outcome = focus_guard::with_focus_suppressed(
+                Some(pid),
+                prior_front,
+                "orcel.semantic",
+                || async move {
+                    tokio::task::spawn_blocking(move || {
+                        perform(element_guard.as_ptr(), element_index, &call)
+                    })
+                    .await
+                },
+            )
+            .await;
+            let _changes = finish_window_observation(snapshot).await;
+            match outcome {
+                Ok(result) => result,
+                Err(error) => ToolResult::error(format!("task error: {error}")).with_structured(
+                    json!({ "code": "provider_unavailable", "effect": "unknown" }),
+                ),
+            }
+        }
+    }
+
+    /// Blocking: the live checks and the one AX call.
+    fn perform(element_ptr: usize, element_index: usize, call: &Call) -> ToolResult {
+        let element = element_ptr as AXUIElementRef;
+        // SAFETY: `element` is the retained AX element of the snapshot guard
+        // the caller keeps alive until this function returns.
+        let role = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
+        // SAFETY: as above.
+        let subrole = unsafe { copy_string_attr(element, "AXSubrole") }.unwrap_or_default();
+        let secure = role == "AXSecureTextField" || subrole == "AXSecureTextField";
+        if secure || call.expect_role == "AXSecureTextField" {
+            return refusal(
+                "protected_surface",
+                "a secure text field takes no semantic action",
+            );
+        }
+        if role != call.expect_role {
+            return refusal(
+                "target_stale",
+                "the live element is not the one the host listed (its role changed)",
+            );
+        }
+        // SAFETY: as above.
+        if unsafe { copy_bool_attr(element, "AXEnabled") } == Some(false) {
+            return refusal("capability_denied", "the element is disabled");
+        }
+        if call.verb == Verb::Toggle {
+            // Never flip blindly: read the live state now and act only when
+            // it is not already the one asked for.
+            // SAFETY: as above.
+            let live = unsafe { copy_number_attr(element, "AXValue") };
+            match (live, call.toggle_to) {
+                (Some(value), Some(wanted)) if (value != 0.0) == wanted => {
+                    return refusal(
+                        "target_stale",
+                        "the element is already in the requested state; it changed since it was observed",
+                    )
+                }
+                (Some(_), Some(_)) => {}
+                _ => {
+                    return refusal(
+                        "capability_denied",
+                        "the element's state is not readable, so a toggle would be a blind flip",
+                    )
+                }
+            }
+        }
+        match call.verb {
+            Verb::SetValue => set_value(element, element_index, &role, call),
+            verb => press(element, element_index, &role, verb),
+        }
+    }
+
+    fn press(element: AXUIElementRef, element_index: usize, role: &str, verb: Verb) -> ToolResult {
+        if !press_roles(verb).contains(&role) {
+            return refusal(
+                "capability_denied",
+                format!("{role} is not a control this action acts on"),
+            );
+        }
+        // SAFETY: `element` is kept alive by the caller's snapshot guard.
+        let advertised = unsafe { copy_action_names(element) };
+        if !advertised.iter().any(|action| action == "AXPress") {
+            return refusal(
+                "capability_denied",
+                "the element does not advertise AXPress; there is no pointer fallback",
+            );
+        }
+        match crate::input::ax_actions::perform_ax_action(element as usize, "press") {
+            Ok(()) => ToolResult::text(format!(
+                "Sent AXPress to [{element_index}] {role} (accessibility action; effect unverified)."
+            ))
+            .with_structured(json!({
+                "path": "ax",
+                "verb": match verb {
+                    Verb::Invoke => "invoke",
+                    Verb::Toggle => "toggle",
+                    Verb::Select => "select",
+                    Verb::SetValue => "set_value",
+                },
+                "verified": false,
+                "effect": "unverifiable",
+            })),
+            Err(error) => action_error(&error),
+        }
+    }
+
+    fn set_value(
+        element: AXUIElementRef,
+        element_index: usize,
+        role: &str,
+        call: &Call,
+    ) -> ToolResult {
+        if !VALUE_ROLES.contains(&role) {
+            return refusal(
+                "capability_denied",
+                format!("{role} does not take a value write"),
+            );
+        }
+        let Some(value) = call.value.as_deref() else {
+            return refusal("invalid_request", "set_value needs a value");
+        };
+        // SAFETY: `element` is kept alive by the caller's snapshot guard.
+        if !unsafe { is_attribute_settable(element, "AXValue") } {
+            return refusal(
+                "capability_denied",
+                "AXValue is not writable on this element; there is no keyboard fallback",
+            );
+        }
+        // Numeric controls (slider, stepper) take a CFNumber; a text field
+        // takes a CFString. Try the number first only when the text is one.
+        let error = match value.trim().parse::<f64>() {
+            // SAFETY: as above.
+            Ok(number) if number.is_finite() => {
+                let error = unsafe { set_number_attr(element, "AXValue", number) };
+                if error == kAXErrorSuccess {
+                    error
+                } else {
+                    // SAFETY: as above.
+                    unsafe { set_string_attr(element, "AXValue", value) }
+                }
+            }
+            // SAFETY: as above.
+            _ => unsafe { set_string_attr(element, "AXValue", value) },
+        };
+        if error == kAXErrorSuccess {
+            ToolResult::text(format!(
+                "Wrote AXValue on [{element_index}] {role} (accessibility write; effect unverified)."
+            ))
+            .with_structured(json!({
+                "path": "ax",
+                "verb": "set_value",
+                "verified": false,
+                "effect": "unverifiable",
+            }))
+        } else if error == crate::ax::bindings::kAXErrorInvalidUIElement {
+            refusal("target_stale", "the element no longer exists")
+        } else {
+            refusal(
+                "provider_unavailable",
+                format!("AXUIElementSetAttributeValue(AXValue) failed with error {error}"),
+            )
+        }
+    }
+
+    fn action_error(error: &anyhow::Error) -> ToolResult {
+        let message = error.to_string();
+        if message.contains("AXEnabled=false") {
+            refusal("capability_denied", "the element is disabled")
+        } else if message.contains(&format!(
+            "failed with error {}",
+            crate::ax::bindings::kAXErrorInvalidUIElement
+        )) {
+            refusal("target_stale", "the element no longer exists")
+        } else {
+            ToolResult::error(message)
+                .with_structured(json!({ "code": "provider_unavailable", "effect": "unknown" }))
+        }
     }
 }

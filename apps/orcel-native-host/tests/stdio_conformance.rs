@@ -76,9 +76,9 @@ fn hello_reports_platform_backend_and_exactly_one_entry_per_operation() {
                     );
                 }
             }
-            // XP-07: delivered in the background where the session allows
-            // exact-window capture, otherwise unavailable with a reason.
-            "capture_window" => match support {
+            // XP-07 and XP-11: delivered in the background where the session
+            // allows it, otherwise unavailable with a reason.
+            "capture_window" | "semantic_action" => match support {
                 "delivered" => assert_eq!(table[op]["delivery"], "background"),
                 "unavailable" => {
                     let reason = table[op]["reason"].as_str().unwrap();
@@ -87,7 +87,7 @@ fn hello_reports_platform_backend_and_exactly_one_entry_per_operation() {
                         "{op}: {reason}"
                     );
                 }
-                other => panic!("capture_window support {other}"),
+                other => panic!("{op} support {other}"),
             },
             _ => {
                 assert_eq!(support, "refused", "{op}");
@@ -107,10 +107,6 @@ fn session_ops_unknown_ops_and_mutations_are_answered_without_native_work() {
     let binding = json!({"window": {"kind": support::window_kind(), "id": 9, "expected_pid": 1,
         "expected_start_generation": 2, "expected_window_nonce": 3}});
     for (op, extra) in [
-        (
-            "semantic_action",
-            json!({"semantic_action": "invoke", "element_runtime_id": "1:1"}),
-        ),
         (
             "window_action",
             json!({"window_action": "focus", "expected_last_input_tick": 1}),
@@ -132,6 +128,72 @@ fn session_ops_unknown_ops_and_mutations_are_answered_without_native_work() {
         let reply = host.request(op, fields);
         assert_eq!(reply["ok"], false, "{op}");
         assert_eq!(error_code(&reply), "capability_denied", "{op}");
+    }
+    assert!(host.shutdown().success());
+}
+
+/// XP-11: a semantic action names a window and an element and nothing else.
+/// A frame that names a point, a key or text, a scroll (a wheel event) and an
+/// unbound frame are refused before any native work; a bound frame no live
+/// window of this user holds is refused with a typed code and acts on
+/// nothing.
+#[test]
+fn semantic_actions_are_element_addressed_and_refused_without_a_live_target() {
+    let mut host = Host::spawn();
+    let binding = json!({"window": {"kind": support::window_kind(), "id": 9, "expected_pid": 1,
+        "expected_start_generation": 2, "expected_window_nonce": 3}});
+    let with = |extra: Value| {
+        let mut fields = binding.clone();
+        fields
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        fields
+    };
+    for extra in [
+        json!({"semantic_action": "invoke", "element_runtime_id": "e1-00", "x": 1, "y": 1}),
+        json!({"semantic_action": "invoke", "element_runtime_id": "e1-00", "button": "left"}),
+        json!({"semantic_action": "invoke", "element_runtime_id": "e1-00", "text": "typed"}),
+        json!({"semantic_action": "invoke", "element_runtime_id": "e1-00", "key": "enter"}),
+        json!({"semantic_action": "invoke", "element_runtime_id": "e1-00", "expected_last_input_tick": 0}),
+        json!({"semantic_action": "invoke", "element_runtime_id": "e1-00", "value": "not a set_value"}),
+        json!({"semantic_action": "click", "element_runtime_id": "e1-00"}),
+        json!({"semantic_action": "invoke"}),
+        json!({"element_runtime_id": "e1-00"}),
+    ] {
+        let reply = host.request("semantic_action", with(extra.clone()));
+        assert_eq!(error_code(&reply), "invalid_request", "{extra}: {reply}");
+    }
+    let unbound = host.request(
+        "semantic_action",
+        json!({"semantic_action": "invoke", "element_runtime_id": "e1-00"}),
+    );
+    assert_eq!(error_code(&unbound), "invalid_request", "{unbound}");
+    let scroll = host.request(
+        "semantic_action",
+        with(json!({"semantic_action": "scroll", "element_runtime_id": "e1-00"})),
+    );
+    assert_eq!(error_code(&scroll), "capability_denied", "{scroll}");
+    // A binding no live window holds: never delivered.
+    for extra in [
+        json!({"semantic_action": "invoke", "element_runtime_id": "e1-0011223344556677"}),
+        json!({"semantic_action": "set_value", "element_runtime_id": "e1-0011223344556677", "value": "x"}),
+        json!({"semantic_action": "select", "element_runtime_id": "e1-0011223344556677"}),
+        json!({"semantic_action": "toggle", "element_runtime_id": "e1-0011223344556677", "value": "true"}),
+    ] {
+        let reply = host.request("semantic_action", with(extra.clone()));
+        assert_eq!(reply["ok"], false, "{extra}: {reply}");
+        assert!(reply.get("action").is_none(), "{reply}");
+        assert!(
+            matches!(
+                error_code(&reply),
+                "target_stale"
+                    | "provider_unavailable"
+                    | "permission_missing"
+                    | "protected_surface"
+            ),
+            "{extra}: {reply}"
+        );
     }
     assert!(host.shutdown().success());
 }

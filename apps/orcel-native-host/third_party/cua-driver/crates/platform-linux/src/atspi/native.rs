@@ -5338,6 +5338,40 @@ pub fn set_value_ref(object_ref: &ObjectRef, value: &str) -> Result<()> {
     )
 }
 
+/// Orcel P-09 (XP-11): whether a state read says the element is on, from the
+/// read's `(Checked, Pressed)` flags. A check box reports `Checked`, a GTK4
+/// toggle button `Pressed`. A read that failed or returned nothing is an
+/// error, never "off": a toggle must not act on a state it could not read.
+#[cfg(feature = "orcel-minimal")]
+pub fn toggled_from_state_read<E: std::fmt::Display>(
+    read: Option<Result<(bool, bool), E>>,
+) -> Result<bool> {
+    match read {
+        Some(Ok((checked, pressed))) => Ok(checked || pressed),
+        Some(Err(error)) => Err(anyhow!("the live state could not be read: {error}")),
+        None => Err(anyhow!("the live state read did not answer in time")),
+    }
+}
+
+/// Orcel P-09 (XP-11): the live role name and checked state of a
+/// snapshot-cached object, read right before an action. One state read and
+/// one role read; no tree walk.
+#[cfg(feature = "orcel-minimal")]
+pub fn live_role_and_checked_ref(object_ref: &ObjectRef) -> Result<(String, bool)> {
+    bounded_for(
+        REF_ACTION_BUDGET,
+        async {
+            let conn = shared_connection().await?;
+            let (acc, role) = live_accessible(conn, object_ref).await?;
+            let checked = toggled_from_state_read(call(acc.get_state()).await.map(|read| {
+                read.map(|state| (state.contains(State::Checked), state.contains(State::Pressed)))
+            }))?;
+            Ok((role, checked))
+        },
+        || Err(anyhow!("live state read (cached element) timed out")),
+    )
+}
+
 /// Error prefix: a selection container (combo box, list) has no option
 /// with the requested text.
 pub const NO_SUCH_OPTION: &str = "no_such_option";

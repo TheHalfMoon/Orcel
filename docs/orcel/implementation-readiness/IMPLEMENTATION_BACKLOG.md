@@ -357,7 +357,7 @@ Gates every task inherits:
 - **Change.** `apps/orcel-native-host/src/cua_adapter.rs`; `apps/orcel-native-host/src/protocol.rs`; `crates/orcel-provider-uia/src/lib.rs (is_protected_window per OS)`
 - **Dependencies to admit.** none beyond XP-05
 - **Interface.** capture_window(window ref) -> captureFact
-- **Platforms.** windows: unchanged; macos: ScreenCaptureKit path in Cua capture.rs; linux: X11 SHM / wlroots screencopy
+- **Platforms.** windows: unchanged; macos: ScreenCaptureKit path in Cua capture.rs; linux: X11 SHM / XGetImage (delivered in XP-07). Wayland/Sway deferred: Cua's wlr-screencopy and ext-image-copy-capture paths capture whole outputs, not one toplevel, so XP-07 reports capture unavailable on Wayland until an exact-toplevel source (ext-foreign-toplevel-image-capture-source) is wrapped (XP-12)
 - **Security and authority.** Same window-only scope; protected surfaces return denial before pixels are read. Authority delta: Existing capture tool on two more OSes.
 - **Steps.**
   1. Allowlist Cua screenshot for an exact window id only; refuse desktop/display scope.
@@ -502,15 +502,15 @@ Gates every task inherits:
 - **Change.** `apps/orcel-native-host/src/cua_adapter.rs`; `apps/orcel-native-host/src/protocol.rs`; `crates/orcel-provider-uia/src/computer_host.rs (UiaAdapter action methods for the host adapter on macOS/Linux)`
 - **Dependencies to admit.** none
 - **Interface.** semantic_action over /2 with the existing request fields
-- **Platforms.** windows: unchanged; macos: AX background delivery per Cua evidence; linux: AT-SPI on X11 and Sway; GNOME/KDE after XP-12
+- **Platforms.** windows: unchanged; macos: AX actions (AXPress, AXValue write) in the background through the P-09 accessibility-only tool; CI runs the AppKit conformance cells, and the live password and approval-window checks are manual; linux: AT-SPI doAction and EditableText/Value on X11 and Sway (CI: GTK3 conformance cells and live checks under Xvfb/Openbox and headless Sway). Web controls of Linux Chromium sit below the /2 depth ceiling, so the shared-web action cells report beyond-depth-bound there. GNOME/KDE after XP-12
 - **Security and authority.** Same SOFT approval per action; digest binds element runtime id + window generation + value digest. Authority delta: Existing approval-gated actions on two more OSes.
 - **Steps.**
-  1. Map semantic_action{invoke} -> Cua click with element_token and AX addressing only (pixel path disabled for semantic_action).
-  2. set_value -> Cua set_value; refuse secure fields before the call.
-  3. select/toggle -> Cua click on the exact element when the element's advertised action matches; otherwise refused (no fallback to coordinates).
-  4. scroll -> Cua scroll by element; bounded ticks.
-  5. Each action returns delivered/refused with Cua's exact reason mapped; host never retries.
-  6. Registry re-observes the window after every action (existing rule).
+  1. Map semantic_action{invoke} to one accessibility action on the exact element, through the P-09 orcel_semantic_action tool (Cua click falls back to pixel clicks, so it is not registered). The tool takes an element and a verb and no position, key, button or delivery mode.
+  2. set_value -> AXValue write (macOS) or EditableText/Value (Linux) on a text field, slider or spin button; secure and password fields and web content are refused before the call.
+  3. select/toggle -> the advertised activation action (AXPress, AT-SPI doAction) of the exact element when its control type suits the verb; otherwise refused (no fallback to coordinates).
+  4. scroll -> refused (capability_denied): Cua scrolls by wheel event at a screen position on both platforms, which is pixel-addressed input (XP-12).
+  5. Each action returns completed or a typed refusal; the host never retries (one worker attempt). Every action re-finds the element by its stable runtime id in the same worker that acts; a moved or changed element is target_stale.
+  6. Registry re-observes the window after every action (existing rule). The kernel adapter delivers an action to a native host only while an approval bound to the exact target is armed.
 - **Tests.**
   - positive: fixture state changes for each action on AppKit and GTK3
   - negative: stale element -> TargetStale; secure field set_value refused before dispatch; approval digest mismatch refused

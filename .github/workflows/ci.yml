@@ -293,10 +293,16 @@ jobs:
         # XP-07: a GTK3 capture probe captured exactly (marker colour, 320x200
         # client area), its protected surface refused, a covered and a
         # minimized window refused, through the host and the registry.
+        # XP-11: the same probe refuses every action on its password field and
+        # on its Orcel approval window, keeps pixel-addressed frames denied,
+        # and takes one real value write and press; through the registry, an
+        # action reaches the host only under an approval armed on its exact
+        # target, and one approval is one action.
         # Every test fails instead of skipping when its variable is set.
         env:
           ORCEL_XP06_LIVE: "1"
           ORCEL_XP07_LIVE: deliver
+          ORCEL_XP11_LIVE: "1"
         run: |
           set -euo pipefail
           export ORCEL_COMPUTER_HOST_BIN="$PWD/target/release/orcel-native-host"
@@ -308,9 +314,11 @@ jobs:
             sleep 1
             cargo test --locked --release -p orcel-native-host --test live_observation -- --nocapture
             cargo test --locked --release -p orcel-native-host --test live_capture -- --nocapture
+            cargo test --locked --release -p orcel-native-host --test live_actions -- --nocapture
             cd ../..
             cargo test --locked -p orcel-provider-uia --test xp06_native_host_live -- --nocapture
             cargo test --locked -p orcel-provider-uia --test xp07_native_capture_live -- --nocapture
+            cargo test --locked -p orcel-provider-uia --test xp11_native_actions_live -- --nocapture
           '
       - name: Capture availability on the macOS runner (XP-07, report mode)
         if: runner.os == 'macOS'

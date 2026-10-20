@@ -89,6 +89,13 @@
           "upstream_blocker_lines": []
         },
         {
+          "path": "src/atspi/native.rs",
+          "upstream_blob_sha": "36451e533335892864981f6f36a69ad318309199",
+          "upstream_blocker_lines": [
+            "4b89a467d5826939dcfb526114f265be81c0f662f12d0d883976a5091b13bafe"
+          ]
+        },
+        {
           "path": "src/browser_platform.rs",
           "upstream_blob_sha": "ddecce24e4008b0502b8fe25a35364d883600afa",
           "upstream_blocker_lines": []
@@ -155,6 +162,11 @@
         {
           "path": "Cargo.toml",
           "upstream_blob_sha": "de9e618d6b514fa4508b8a247a3cd66213574b8a",
+          "upstream_blocker_lines": []
+        },
+        {
+          "path": "src/authorization.rs",
+          "upstream_blob_sha": "a5ce1cc99c4759d1fcd629d69193f89808e7728d",
           "upstream_blocker_lines": []
         },
         {

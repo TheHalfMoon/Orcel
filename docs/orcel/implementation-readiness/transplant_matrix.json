@@ -12,7 +12,7 @@
       "dest_state": "NEW",
       "method": "WRAP",
       "task": "XP-05",
-      "notes": "Vendored unmodified except the recorded patch queue (third_party/cua-driver/PATCHES.md). Invoked only through the Orcel host's allowlisted tool adapter; browser/, history.rs, recording_hooks.rs, video_sckit.rs, pip/ are never constructed and are compiled out by patch P-03.",
+      "notes": "Vendored unmodified except the recorded patch queue (third_party/cua-driver/PATCHES.md). Invoked only through the Orcel host's allowlisted tool adapter; browser/, history.rs, recording_hooks.rs, video_sckit.rs, pip/ are never constructed and are compiled out by patch P-03. XP-11 (patch P-09) adds one accessibility-only action tool, orcel_semantic_action, built on ax_actions and AXValue writes; upstream click, set_value and scroll are not registered because each can fall back to pixel, key, Apple Event or menu routes.",
       "object": "ad71d18fb2cdd257c86e861e1acf13ead4ebf787"
     },
     {
@@ -24,7 +24,7 @@
       "dest_state": "NEW",
       "method": "WRAP",
       "task": "XP-05",
-      "notes": "Default features only (X11 + AT-SPI + wlroots/Sway). portal-input/portal-capture (GNOME/KDE libei, PipeWire) are enabled in XP-12 after their own qualification. XP-07 wraps only the X11 window capture (capture.rs, patch P-08); the wlroots screencopy path is output-level, so Wayland/Sway capture is deferred to XP-12.",
+      "notes": "Default features only (X11 + AT-SPI + wlroots/Sway). portal-input/portal-capture (GNOME/KDE libei, PipeWire) are enabled in XP-12 after their own qualification. XP-07 wraps only the X11 window capture (capture.rs, patch P-08); the wlroots screencopy path is output-level, so Wayland/Sway capture is deferred to XP-12. XP-11 (patch P-09) adds one accessibility-only action tool, orcel_semantic_action, built on AT-SPI doAction and EditableText/Value writes; upstream click, set_value and scroll are not registered because each can fall back to XTest, uinput or virtual-key routes.",
       "object": "131729601863cac56d291657e58ac5b7ec931210"
     },
     {
@@ -36,7 +36,7 @@
       "dest_state": "NEW",
       "method": "WRAP",
       "task": "XP-05",
-      "notes": "default-features = false (drops yaml, rego, and the QuickJS run_script engine). server.rs, daemon.rs, browser/, cdp*.rs, history.rs, recording.rs, perception_client* are unreachable from the Orcel host and compiled out by patch P-03.",
+      "notes": "default-features = false (drops yaml, rego, and the QuickJS run_script engine). server.rs, daemon.rs, browser/, cdp*.rs, history.rs, recording.rs, perception_client* are unreachable from the Orcel host and compiled out by patch P-03. XP-11 (patch P-09) classifies orcel_semantic_action as R1 in authorization.rs, the class of the click and set_value it replaces; it is not a desktop-input operation.",
       "object": "e30a399d3bd1001aa6d33d5f790314538686100a"
     },
     {

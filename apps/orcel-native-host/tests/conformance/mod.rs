@@ -16,11 +16,15 @@
 //!   gives no client the pointer position, so the host does not serve
 //!   `cursor_position` there and Sway cells carry no cursor oracle.
 //!
-//! Input cells exist for every action of the catalog, but `semantic_action`
-//! waits for XP-11 and raw `input_*` for XP-12. Until then each input cell
-//! sends its `/2` frame, requires the exact `capability_denied` refusal with
-//! every oracle unchanged, and is reported as a typed skip
-//! ([`Pending`]) that names the task. When the hello stops refusing an
+//! Input cells exist for every action of the catalog. The accessibility-
+//! addressed (`ax`) cells run through `semantic_action` (XP-11): the verb is
+//! delivered in the background, the effect is read from the fixture's own
+//! state, and focus, stacking and the pointer must not move. A delivery mode
+//! the host does not have (foreground) and an action with no semantic verb
+//! are typed skips that say so. The pixel-addressed (`px`) cells wait for
+//! raw `input_*` (XP-12): each sends its `/2` frame, requires the exact
+//! `capability_denied` refusal with every oracle unchanged, and is reported
+//! as a typed skip ([`Pending`]). When the hello stops refusing a pixel
 //! operation, the cell fails: the task that landed must port it.
 //!
 //! The suites run only when `ORCEL_XP08_FIXTURES` names a directory staged by
@@ -336,26 +340,24 @@ pub fn host_serves_cursor() -> bool {
 /// whose landing turns the cell into a delivered-or-refused measurement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pending {
-    /// `semantic_action` (accessibility-addressed actions): XP-11.
-    Xp11SemanticActions,
-    /// Raw `input_*` (pixel-addressed delivery): XP-12.
+    /// Raw `input_*` and `window_action` (pixel- and key-addressed
+    /// delivery): XP-12. Accessibility-addressed actions landed with XP-11.
     Xp12RawInput,
 }
 
 impl Pending {
     pub fn task(self) -> &'static str {
         match self {
-            Self::Xp11SemanticActions => "XP-11",
             Self::Xp12RawInput => "XP-12",
         }
     }
 
     pub fn for_op(op: &str) -> Self {
-        if op == "semantic_action" {
-            Self::Xp11SemanticActions
-        } else {
-            Self::Xp12RawInput
-        }
+        assert_ne!(
+            op, "semantic_action",
+            "semantic_action is delivered (XP-11); its cells are measured, not pending"
+        );
+        Self::Xp12RawInput
     }
 }
 
@@ -439,6 +441,19 @@ impl Report {
     /// every oracle unchanged, and the cell waits for `pending`.
     pub fn pending(&mut self, case: String, pending: Pending) {
         eprintln!("XP-08 skip: pending {} for {case}", pending.task());
+        self.push(case, "skip", "refused", &[], 1);
+    }
+
+    /// A delivery mode the host does not have: semantic actions are
+    /// delivered in the background and never take the foreground, so the
+    /// foreground rung of the matrix has nothing to measure.
+    pub fn background_only(&mut self, case: String) {
+        self.push(case, "skip", "background-only", &[], 0);
+    }
+
+    /// An action that has no semantic verb, or that the host refuses on
+    /// purpose; the cell sent its frame and saw the exact refusal.
+    pub fn refused_by_design(&mut self, case: String) {
         self.push(case, "skip", "refused", &[], 1);
     }
 
@@ -592,9 +607,10 @@ pub struct Observed {
     pub nodes: Vec<Value>,
 }
 
-/// The hello must serve observation and refuse every mutation. A refused
-/// operation is what makes the input cells pending; if one is served, the
-/// task that landed it has to port its cells.
+/// The hello must serve observation and semantic actions and refuse every
+/// pixel- or key-addressed operation. A refused operation is what makes the
+/// `px` cells pending; if one is served, the task that landed it has to port
+/// its cells.
 pub fn check_hello(host: &mut Host, report: &mut Report, prefix: &str) -> Value {
     let started = Instant::now();
     let hello = host.hello();
@@ -618,7 +634,15 @@ pub fn check_hello(host: &mut Host, report: &mut Report, prefix: &str) -> Value 
             "{hello}"
         );
     }
-    for op in INPUT_OPS {
+    assert_eq!(
+        table["semantic_action"]["support"], "delivered",
+        "semantic_action is not served here: {hello}"
+    );
+    assert_eq!(
+        table["semantic_action"]["delivery"], "background",
+        "{hello}"
+    );
+    for op in PIXEL_OPS {
         assert_eq!(
             table[op]["support"], "refused",
             "{op} is no longer refused: {} landed, so port its XP-08 cells from pending to measured. {hello}",
@@ -635,8 +659,8 @@ pub fn check_hello(host: &mut Host, report: &mut Report, prefix: &str) -> Value 
     hello
 }
 
-pub const INPUT_OPS: [&str; 9] = [
-    "semantic_action",
+/// The pixel- and key-addressed operations, refused until XP-12.
+pub const PIXEL_OPS: [&str; 8] = [
     "window_action",
     "input_move",
     "input_click",
@@ -902,6 +926,294 @@ pub fn pending_input_cells(
         report.pending(
             format!("{prefix}/{}/{names}", cell.case),
             Pending::for_op(cell.op),
+        );
+    }
+}
+
+/// The runtime id of the one node named `needle` (exactly, else containing
+/// it), of control type `control` when given. Panics with the tree when no
+/// node matches: an action cell never falls back to another element.
+pub fn strict_element_id(nodes: &[Value], needle: &str, control: Option<&str>) -> String {
+    let matches = |node: &Value, exact: bool| {
+        let text = |field: &str| node[field].as_str().unwrap_or_default().to_owned();
+        let name = text("name");
+        let named = if exact {
+            name == needle
+        } else {
+            name.contains(needle)
+        };
+        named && control.is_none_or(|control| node["control_type"] == control)
+    };
+    nodes
+        .iter()
+        .find(|node| matches(node, true))
+        .or_else(|| nodes.iter().find(|node| matches(node, false)))
+        .and_then(|node| node["runtime_id"].as_str())
+        .unwrap_or_else(|| {
+            let names: Vec<_> = nodes
+                .iter()
+                .map(|node| format!("{}:{}", node["control_type"], node["name"]))
+                .collect();
+            panic!("no {control:?} element named {needle:?} in {names:?}")
+        })
+        .to_owned()
+}
+
+/// A fresh bounded observation of the window, flattened.
+pub fn fresh_nodes(host: &mut Host, reference: &Value) -> Vec<Value> {
+    let tree = host.request(
+        "observe_window",
+        json!({"window": reference, "max_nodes": 256, "max_depth": 8}),
+    );
+    assert_eq!(tree["ok"], true, "{tree}");
+    flatten(&tree["elements"])
+}
+
+/// What an `ax` cell expects of its fixture.
+pub struct ActionCell<'a> {
+    /// `<action>/ax/background`.
+    pub case: String,
+    pub verb: &'static str,
+    /// The accessible name of the element, and its control type.
+    pub element: &'a str,
+    pub control: Option<&'static str>,
+    pub value: Option<&'a str>,
+    /// Whether focus and stacking must stay exactly as they were. An action
+    /// that opens a window the app raises itself (a child window) says no.
+    pub holds_desktop: bool,
+}
+
+/// Delivers one accessibility-addressed action and checks it against the
+/// oracles the host cannot write: the fixture's own state must show the
+/// effect (`done`), and the window system's focus and stacking and the
+/// pointer must be where they were. The reply must be the typed completion.
+pub fn run_action(
+    host: &mut Host,
+    report: &mut Report,
+    prefix: &str,
+    reference: &Value,
+    cell: &ActionCell,
+    mut state: impl FnMut() -> Value,
+    done: impl Fn(&Value) -> bool,
+) {
+    let nodes = fresh_nodes(host, reference);
+    let id = strict_element_id(&nodes, cell.element, cell.control);
+    let before = oracles(host, state());
+    assert!(
+        !done(&before.fixture),
+        "{}: the fixture already shows the effect: {}",
+        cell.case,
+        before.fixture
+    );
+    let mut fields = json!({
+        "window": reference,
+        "semantic_action": cell.verb,
+        "element_runtime_id": id,
+    });
+    if let Some(value) = cell.value {
+        fields["value"] = json!(value);
+    }
+    let started = Instant::now();
+    let reply = host.request("semantic_action", fields);
+    let elapsed = started.elapsed();
+    assert_eq!(reply["ok"], true, "{}: {reply}", cell.case);
+    assert_eq!(
+        reply["action"]["state"], "completed",
+        "{}: {reply}",
+        cell.case
+    );
+    assert_eq!(
+        reply["action"]["action"],
+        format!("semantic_{}", cell.verb),
+        "{}: {reply}",
+        cell.case
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let now = state();
+        if done(&now) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{}: the fixture never showed the effect: {now}",
+            cell.case
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    // Give a leaked or late event time to reach the desktop.
+    std::thread::sleep(Duration::from_millis(300));
+    let after = oracles(host, state());
+    assert_eq!(
+        before.cursor, after.cursor,
+        "{}: the pointer moved",
+        cell.case
+    );
+    if cell.holds_desktop {
+        assert_eq!(
+            before.desktop, after.desktop,
+            "{}: focus or stacking changed",
+            cell.case
+        );
+    }
+    let mut names = oracle_names(&before.desktop);
+    if !cell.holds_desktop {
+        names.retain(|name| !matches!(*name, "focus" | "z-order"));
+    }
+    report.pass(
+        format!("{prefix}/{}/{}", cell.case, names.join(".")),
+        "delivered",
+        &[elapsed],
+        1,
+    );
+}
+
+/// Sends `fields` as a `semantic_action` and requires the exact refusal
+/// `expected`, with every oracle, fixture state included, unchanged.
+pub fn refused_action(
+    host: &mut Host,
+    report: &mut Report,
+    prefix: &str,
+    case: &str,
+    fields: Value,
+    expected: &str,
+    mut state: impl FnMut() -> Value,
+) {
+    let before = oracles(host, state());
+    let reply = host.request("semantic_action", fields);
+    assert_eq!(reply["ok"], false, "{case} was not refused: {reply}");
+    assert!(reply.get("action").is_none(), "{case}: {reply}");
+    assert_eq!(error_code(&reply), expected, "{case}: {reply}");
+    std::thread::sleep(Duration::from_millis(250));
+    let after = oracles(host, state());
+    assert_eq!(before, after, "{case}: a refused action changed an oracle");
+    let names = oracle_names(&before.desktop).join(".");
+    report.pass(format!("{prefix}/{case}/{names}"), "refused", &[], 1);
+}
+
+/// The negative cells every host must pass, whatever the toolkit: a forged,
+/// altered or stale target, a verb that does not suit the element, scroll
+/// (a wheel event), and a frame that smuggles a position or a key. Every
+/// one is refused with a typed code and moves no oracle. `wrong_verb` names
+/// a button, a check box and a radio button of the fixture.
+pub struct NegativeTargets<'a> {
+    pub button: &'a str,
+    pub check_box: &'a str,
+}
+
+pub fn negative_action_cells(
+    host: &mut Host,
+    report: &mut Report,
+    prefix: &str,
+    reference: &Value,
+    targets: &NegativeTargets,
+    mut state: impl FnMut() -> Value,
+) {
+    let nodes = fresh_nodes(host, reference);
+    let button = strict_element_id(&nodes, targets.button, Some("Button"));
+    let check_box = strict_element_id(&nodes, targets.check_box, Some("CheckBox"));
+    let frame = |verb: &str, id: &str| {
+        let mut fields =
+            json!({"window": reference, "semantic_action": verb, "element_runtime_id": id});
+        if verb == "toggle" {
+            fields["value"] = json!("true");
+        }
+        fields
+    };
+    let mut refuse = |host: &mut Host, case: &str, fields: Value, expected: &str| {
+        refused_action(host, report, prefix, case, fields, expected, &mut state);
+    };
+
+    // A target the tree never held, and a real one with one digit changed.
+    refuse(
+        host,
+        "invoke/forged-element/refused",
+        frame("invoke", "e999-0000000000000000"),
+        "target_stale",
+    );
+    let mut altered = button.clone();
+    let last = altered.pop().unwrap();
+    altered.push(if last == '0' { '1' } else { '0' });
+    refuse(
+        host,
+        "invoke/altered-element/refused",
+        frame("invoke", &altered),
+        "target_stale",
+    );
+    // A window binding that no longer matches.
+    for (field, name) in [
+        ("expected_window_nonce", "stale-window"),
+        ("expected_start_generation", "stale-process"),
+    ] {
+        let mut stale = reference.clone();
+        stale[field] = json!(stale[field].as_u64().unwrap().wrapping_add(1));
+        let mut fields = frame("invoke", &button);
+        fields["window"] = stale;
+        refuse(
+            host,
+            &format!("invoke/{name}/refused"),
+            fields,
+            "target_stale",
+        );
+    }
+    // A verb that does not suit the element.
+    refuse(
+        host,
+        "toggle/button/refused",
+        frame("toggle", &button),
+        "capability_denied",
+    );
+    refuse(
+        host,
+        "select/button/refused",
+        frame("select", &button),
+        "capability_denied",
+    );
+    let mut value = frame("set_value", &button);
+    value["value"] = json!("typed into a button");
+    refuse(host, "set-value/button/refused", value, "capability_denied");
+    refuse(
+        host,
+        "invoke/check-box/refused",
+        frame("invoke", &check_box),
+        "capability_denied",
+    );
+    // A toggle never flips blindly: asking for the state the live element
+    // already has is refused as stale, and a toggle without a state is
+    // malformed.
+    let mut already = frame("toggle", &check_box);
+    already["value"] = json!("false");
+    refuse(host, "toggle/already/refused", already, "target_stale");
+    let mut stateless = frame("toggle", &check_box);
+    stateless.as_object_mut().unwrap().remove("value");
+    refuse(
+        host,
+        "toggle/stateless/refused",
+        stateless,
+        "invalid_request",
+    );
+    // Scroll is a wheel event at a position: pixel-addressed, XP-12.
+    refuse(
+        host,
+        "scroll/ax/refused",
+        frame("scroll", &button),
+        "capability_denied",
+    );
+    // A semantic frame cannot carry a point, a key, text or a button.
+    for (field, extra) in [
+        ("x", json!(10)),
+        ("button", json!("left")),
+        ("text", json!("typed")),
+        ("key", json!("enter")),
+        ("expected_last_input_tick", json!(0)),
+    ] {
+        let mut fields = frame("invoke", &button);
+        fields[field] = extra;
+        refuse(
+            host,
+            &format!("invoke/with-{}/refused", segment(field)),
+            fields,
+            "invalid_request",
         );
     }
 }

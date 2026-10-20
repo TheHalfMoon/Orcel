@@ -907,6 +907,13 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
 
         "clipboard_write" => RiskClass::R1,
 
+        // Orcel P-09 (XP-11): the accessibility-only action tool. The same
+        // reviewed class as the click and set_value it replaces. It is
+        // deliberately not one of DESKTOP_INPUT_OPERATIONS: it sends no
+        // pointer or key input, and Orcel's kernel owns approval.
+        #[cfg(feature = "orcel-minimal")]
+        "orcel_semantic_action" => RiskClass::R1,
+
         // Surfaces that can reveal or control sensitive local/authenticated
         // state. Active adapters still decide their exact resource scope at
         // the canonical registry boundary before platform dispatch.
