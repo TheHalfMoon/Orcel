@@ -22,10 +22,16 @@ const DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789
 
 #[test]
 fn xp13b_the_pin_file_holds_exactly_one_lowercase_sha256() {
-    assert_eq!(parse_pin(DIGEST.as_bytes()).unwrap(), DIGEST);
-    assert_eq!(parse_pin(format!("{DIGEST}\n").as_bytes()).unwrap(), DIGEST);
     assert_eq!(
-        parse_pin(format!("{DIGEST}\r\n").as_bytes()).unwrap(),
+        parse_pin_named(DIGEST.as_bytes(), PIN_NAME).unwrap(),
+        DIGEST
+    );
+    assert_eq!(
+        parse_pin_named(format!("{DIGEST}\n").as_bytes(), PIN_NAME).unwrap(),
+        DIGEST
+    );
+    assert_eq!(
+        parse_pin_named(format!("{DIGEST}\r\n").as_bytes(), PIN_NAME).unwrap(),
         DIGEST
     );
     for bad in [
@@ -36,7 +42,7 @@ fn xp13b_the_pin_file_holds_exactly_one_lowercase_sha256() {
         format!("{DIGEST}\n\n"),
         format!(" {DIGEST}"),
     ] {
-        let error = parse_pin(bad.as_bytes()).unwrap_err();
+        let error = parse_pin_named(bad.as_bytes(), PIN_NAME).unwrap_err();
         assert_eq!(error.code, FailureCode::ProviderUnavailable, "{bad:?}");
     }
 }

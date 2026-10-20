@@ -468,6 +468,9 @@ pub struct LiveBrowser {
     recovered: Vec<Recovered>,
     outcomes: Vec<ApprovalOutcome>,
     pending_download: Option<DownloadIntent>,
+    /// WI-05: the downloads the host committed in this lifetime, the only
+    /// files `parse_download` will hand to the confined document parser.
+    committed: Vec<crate::document_parse::CommittedDownload>,
     /// None while the host is (or may be) running; once ended, whether the
     /// whole family was confirmed gone. Set once, never revised: a later
     /// shutdown finds no host and would report a vacuous success.
@@ -578,6 +581,7 @@ impl LiveBrowser {
             recovered,
             outcomes: Vec::new(),
             pending_download: None,
+            committed: Vec::new(),
             host_ended: None,
             #[cfg(test)]
             reply_timeout: None,
@@ -924,6 +928,7 @@ impl LiveBrowser {
         relative: &str,
     ) -> Result<LiveDownload, ProviderError> {
         let folder = folder.to_string_lossy().into_owned();
+        let folder_for_record = folder.clone();
         let (token, digest, binding) = self.ask(
             workspace,
             approval,
@@ -984,17 +989,51 @@ impl LiveBrowser {
                 sha256,
                 bytes,
                 source_url,
-            } => Ok(LiveDownload {
-                relative,
-                sha256,
-                bytes,
-                source_url,
-            }),
+            } => {
+                self.committed
+                    .push(crate::document_parse::CommittedDownload::new(
+                        record_id.clone(),
+                        PathBuf::from(&folder_for_record),
+                        relative.clone(),
+                        sha256.clone(),
+                        bytes,
+                        source_url.clone(),
+                    ));
+                Ok(LiveDownload {
+                    relative,
+                    sha256,
+                    bytes,
+                    source_url,
+                })
+            }
             _ => Err(ProviderError::new(
                 FailureCode::InternalError,
                 "unexpected browser host reply",
             )),
         }
+    }
+
+    /// WI-05: convert a download this lifetime committed to Markdown in the
+    /// confined document parser, under its own approval
+    /// (`document_parse::parse_download`). Any other record is refused
+    /// before anything is read or asked.
+    pub fn parse_download(
+        &self,
+        workspace: &Workspace,
+        approval: &impl ApprovalBroker,
+        record_id: &str,
+    ) -> Result<serde_json::Value, ProviderError> {
+        let download = self
+            .committed
+            .iter()
+            .find(|download| download.record_id() == record_id)
+            .ok_or_else(|| {
+                ProviderError::new(
+                    FailureCode::InvalidRequest,
+                    "no download with that record was committed in this browser lifetime",
+                )
+            })?;
+        crate::document_parse::parse_download(workspace, approval, download)
     }
 
     /// Whether the host still answers in step.
@@ -1114,6 +1153,7 @@ mod tests {
                 folder: folder.to_path_buf(),
                 relative: "a.pdf".into(),
             }),
+            committed: Vec::new(),
             host_ended,
             reply_timeout: None,
             after_consume: None,
@@ -1131,6 +1171,47 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// WI-05: only a download this lifetime committed reaches the document
+    /// parser, and an uninstalled parser fails before any approval.
+    #[test]
+    fn wi05_only_a_committed_download_is_handed_to_the_document_parser() {
+        let folder = scratch("wi05-parse");
+        std::fs::write(folder.join("a.pdf"), b"%PDF-1.4 committed").unwrap();
+        let mut browser = hostless(false, Some(true), &folder);
+        let workspace = Workspace {
+            id: "default".into(),
+            root: folder.clone(),
+        };
+        let approve = orcel_approval::test_support::FixedApprovalBroker(
+            orcel_approval::ApprovalDecision::Approved,
+        );
+        let error = browser
+            .parse_download(&workspace, &approve, "never-committed")
+            .unwrap_err();
+        assert_eq!(error.code, FailureCode::InvalidRequest, "{}", error.message);
+        browser
+            .committed
+            .push(crate::document_parse::CommittedDownload::new(
+                "r1",
+                folder.clone(),
+                "a.pdf",
+                orcel_provider_process::contained::sha256_hex(b"%PDF-1.4 committed"),
+                18,
+                "https://example.test/a.pdf",
+            ));
+        // No helper or parser is installed beside the test binary.
+        let error = browser
+            .parse_download(&workspace, &approve, "r1")
+            .unwrap_err();
+        assert_eq!(
+            error.code,
+            FailureCode::ProviderUnavailable,
+            "{}",
+            error.message
+        );
+        let _ = std::fs::remove_dir_all(folder);
     }
 
     fn pending(record_id: &str, folder: &Path, relative: &str, pid: u32, started: u64) -> String {

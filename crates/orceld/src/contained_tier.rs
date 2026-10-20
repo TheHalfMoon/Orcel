@@ -118,7 +118,7 @@ pub fn helper_pin_in(dir: &Path) -> Result<HelperPin, ProviderError> {
             "the contained tier is not installed ({PIN_NAME}: {error})"
         ))
     })?;
-    let digest = parse_pin(&pin)?;
+    let digest = parse_pin_named(&pin, PIN_NAME)?;
     HelperPin::new(helper, digest).map_err(|error| {
         unavailable(format!(
             "the contained-tier helper cannot be pinned: {error:?}"
@@ -126,9 +126,11 @@ pub fn helper_pin_in(dir: &Path) -> Result<HelperPin, ProviderError> {
     })
 }
 
-fn parse_pin(bytes: &[u8]) -> Result<&str, ProviderError> {
+/// The single lowercase SHA-256 line of a pin file named `name` (this
+/// helper's, or WI-05's document parser's).
+pub(crate) fn parse_pin_named<'a>(bytes: &'a [u8], name: &str) -> Result<&'a str, ProviderError> {
     let text =
-        std::str::from_utf8(bytes).map_err(|_| unavailable(format!("{PIN_NAME} is not text")))?;
+        std::str::from_utf8(bytes).map_err(|_| unavailable(format!("{name} is not text")))?;
     let digest = text.strip_suffix('\n').unwrap_or(text);
     let digest = digest.strip_suffix('\r').unwrap_or(digest);
     if digest.len() != 64
@@ -137,7 +139,7 @@ fn parse_pin(bytes: &[u8]) -> Result<&str, ProviderError> {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     {
         return Err(unavailable(format!(
-            "{PIN_NAME} must hold one lowercase SHA-256"
+            "{name} must hold one lowercase SHA-256"
         )));
     }
     Ok(digest)
@@ -171,7 +173,7 @@ impl Scratch {
 
 /// Directories created owner-only (0700) off Windows, where the state root's
 /// private-directory check requires it.
-fn private_dir_builder(recursive: bool) -> std::fs::DirBuilder {
+pub(crate) fn private_dir_builder(recursive: bool) -> std::fs::DirBuilder {
     let mut builder = std::fs::DirBuilder::new();
     builder.recursive(recursive);
     #[cfg(unix)]
@@ -252,7 +254,7 @@ pub fn execute(
     }))
 }
 
-fn map_contained_error(error: ContainedError) -> ProviderError {
+pub(crate) fn map_contained_error(error: ContainedError) -> ProviderError {
     match error {
         ContainedError::InvalidSpec(message) => ProviderError::new(
             FailureCode::InvalidRequest,
