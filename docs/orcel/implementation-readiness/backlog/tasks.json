@@ -1297,12 +1297,13 @@
         ]
       },
       "progress": {
-        "state": "PARTIAL",
+        "state": "MERGED",
         "prs": [
           371,
-          378
+          378,
+          380
         ],
-        "qualification": "Part 1 (#371, contained tier) and XP-13b part A (#378) merged. Part B (orceld wiring and packaging, #380) is open, so contained-tier confinement is not yet usable end to end."
+        "qualification": "Contained tier (#371), XP-13b part A (#378) and part B (#380, orceld wiring and orcel-contain packaging) merged. Follow-ups in #376 and #384."
       }
     },
     {
