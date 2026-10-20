@@ -241,6 +241,47 @@ pub struct RegisteredExecutable {
     pub denied_args: Vec<String>,
     pub max_args: usize,
     pub registered_at_ms: u64,
+    /// XP-13b: the execution tier, chosen at registration under the same
+    /// STRONG approval. Absent in older registries, which stay `Safe`; it is
+    /// stored only when `Contained`, so existing checksums are unchanged.
+    #[serde(default, skip_serializing_if = "ExecutionTier::is_safe")]
+    pub tier: ExecutionTier,
+}
+
+/// XP-13b: how a registered executable runs.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ExecutionTier {
+    /// The Safe tier: argv only, bounded output, owned process tree
+    /// (Windows Job Object and AppContainer; Linux and macOS process group).
+    #[default]
+    Safe,
+    /// Opt-in: the pinned `orcel-contain` helper. No network, no process
+    /// creation, the requested cwd read-only and nothing else of the user's
+    /// writable. A contained entry never falls back to the Safe tier.
+    Contained,
+}
+
+impl ExecutionTier {
+    pub fn is_safe(&self) -> bool {
+        *self == Self::Safe
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Safe => "safe",
+            Self::Contained => "contained",
+        }
+    }
+
+    /// `None`, `"safe"` or `"contained"`; anything else is refused.
+    pub fn parse(value: Option<&str>) -> Result<Self, PolicyError> {
+        match value {
+            None | Some("safe") => Ok(Self::Safe),
+            Some("contained") => Ok(Self::Contained),
+            Some(_) => Err(invalid("tier must be \"safe\" or \"contained\"")),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -537,6 +578,7 @@ pub fn build_entry(
         denied_args,
         max_args,
         registered_at_ms: now_ms,
+        tier: ExecutionTier::Safe,
     })
 }
 
@@ -650,6 +692,14 @@ pub fn registration_digest(entry: &RegisteredExecutable, policy_revision: &str) 
         hasher.update((field.len() as u64).to_be_bytes());
         hasher.update(field.as_bytes());
     }
+    // XP-13b: a contained registration binds its tier; a Safe one hashes as
+    // before.
+    if !entry.tier.is_safe() {
+        for field in ["tier", entry.tier.as_str()] {
+            hasher.update((field.len() as u64).to_be_bytes());
+            hasher.update(field.as_bytes());
+        }
+    }
     hex_lower(&hasher.finalize())
 }
 
@@ -761,6 +811,39 @@ mod tests {
         // The real test binary is a native image.
         let current = std::env::current_exe().unwrap();
         assert!(check_native_image(&current).is_ok());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// XP-13b: the tier is stored only when contained, so a Safe registry
+    /// keeps its bytes and checksum; the contained tier changes the
+    /// registration digest the STRONG approval binds.
+    #[test]
+    fn xp13b_the_tier_round_trips_and_binds_the_registration_digest() {
+        let dir = temp("tier");
+        let registry = dir.join("executable_registry.json");
+        let path = fake_exe(&dir, "tool.exe", b"MZ tool");
+        let safe = build_entry("tool", &path, vec![], vec![], 0, &[], 1).unwrap();
+        assert_eq!(safe.tier, ExecutionTier::Safe);
+        assert!(!serde_json::to_string(&safe).unwrap().contains("\"tier\":"));
+        let contained = RegisteredExecutable {
+            tier: ExecutionTier::Contained,
+            ..safe.clone()
+        };
+        assert!(serde_json::to_string(&contained)
+            .unwrap()
+            .contains("\"tier\":\"contained\""));
+        assert_ne!(
+            registration_digest(&safe, "p"),
+            registration_digest(&contained, "p")
+        );
+        save_registry(&registry, std::slice::from_ref(&contained)).unwrap();
+        assert_eq!(load_registry(&registry), vec![contained]);
+        assert_eq!(ExecutionTier::parse(None).unwrap(), ExecutionTier::Safe);
+        assert_eq!(
+            ExecutionTier::parse(Some("contained")).unwrap(),
+            ExecutionTier::Contained
+        );
+        assert!(ExecutionTier::parse(Some("sandboxed")).is_err());
         let _ = std::fs::remove_dir_all(dir);
     }
 
