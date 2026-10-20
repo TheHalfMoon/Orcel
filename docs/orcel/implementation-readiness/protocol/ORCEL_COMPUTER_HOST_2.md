@@ -6,7 +6,7 @@ Implementations:
 
 - Windows host (Go): `apps/orcel-computer-host/protocol.go` (`decodeRequest`, `handleFrame`, `helloV2`, `windowsCapabilities`).
 - Kernel adapter (Rust): `crates/orcel-provider-uia/src/host_protocol.rs` (negotiation, capability table, refusal mapping) and `crates/orcel-provider-uia/src/computer_host.rs` (session framing).
-- macOS and Linux host (Rust, `orcel-native-host`): XP-06.
+- macOS and Linux host (Rust, `orcel-native-host`, XP-06): `apps/orcel-native-host/src/protocol.rs` (frames, bounds, capability table), `supervisor.rs` (stdio loop, worker spawning), `worker.rs` (one observation per worker), `cua_adapter.rs` (the allowlisted Cua tools) and `map.rs` (window and element facts). Observation only: section 5.2.
 
 ## 1. Design rules
 
@@ -19,11 +19,11 @@ Implementations:
 ## 2. Transport and frames
 
 - Transport: JSON lines over the host process's inherited stdin and stdout pipes. One request line, then exactly one response line. No listener, socket, port or second channel. Stderr is discarded by the adapter.
-- Environment: the adapter starts the host with a cleared environment plus `SystemRoot`, `WINDIR`, `COMSPEC`, `TEMP`, `TMP` and `PATH` (unchanged from `/1`).
+- Environment: the adapter starts the host with a cleared environment plus, on Windows, `SystemRoot`, `WINDIR`, `COMSPEC`, `TEMP`, `TMP` and `PATH` (unchanged from `/1`); on macOS `PATH`, `LANG` and `TMPDIR`; on Linux `PATH`, `LANG`, `HOME` and the display, session-bus and desktop variables X11, Wayland and AT-SPI clients read (`DISPLAY`, `XAUTHORITY`, `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`, `XDG_SESSION_TYPE`, `XDG_CURRENT_DESKTOP`, `XDG_SESSION_DESKTOP`, `DESKTOP_SESSION`, `SWAYSOCK`, `KDE_FULL_SESSION`). The native host passes its workers the same allowlist and nothing else, so no `CUA_*` switch reaches the vendored code; it adds `CUA_DRIVER_RS_ENABLE_WAYLAND=1` itself exactly when it serves the session as Wayland.
 - Request bound: 64 KiB per line (`maxRequestBytes`). A longer line ends the host's read loop.
 - Response bound: 16 MiB per line (`maxResponseBytes`, `MAX_HOST_RESPONSE_BYTES`). The host replaces an oversized response with `output_limit`; the adapter refuses a longer line with `OutputLimit`.
 - Other bounds (unchanged from `/1`): 64 windows, 256 tree nodes, tree depth 8, 8 MiB capture at most 7680x4320, 16 KiB text or value, 64-byte key, scroll of at most 20 ticks per axis, worker timeout 8000 ms, 2 worker attempts for observation and 1 for mutation.
-- Request ids: the adapter numbers requests from 1 and never reuses an id within a session. Every response must echo the request `id`, the negotiated `protocol` and the host identity `host`. Any mismatch is `ProviderUnavailable`.
+- Request ids: the adapter numbers requests from 1 and never reuses an id within a session. Every response must echo the request `id`, the negotiated `protocol` and the host identity `host`: `orcel-windows-computer-host` on Windows, `orcel-native-host` on macOS and Linux. Any mismatch is `ProviderUnavailable`.
 
 ### 2.1 Request frame
 
@@ -70,8 +70,8 @@ Any other `op` is refused with `capability_denied`.
 
 1. The adapter sends `{"id": 1, "protocol": "orcel-computer-host/2", "op": "hello"}`.
 2. A `/2` host answers `ok: true` in `/2` with the hello fields of section 5. The adapter checks `host`, `platform` (in the closed set and equal to the platform the build serves) and `backend` (in the closed set), and bounds the table at 64 entries. Every later frame in the session uses `/2`.
-3. A `/1` host answers with a refusal with `error.code` `invalid_request` in `/1` framing (`ok: false`, `protocol: "orcel-computer-host/1"`; the `/1` host says "protocol generation mismatch"). Only such a refusal makes the adapter send `{"id": 2, "protocol": "orcel-computer-host/1", "op": "hello"}` and run the session in `/1`.
-4. Any other answer is a failed handshake (`ProviderUnavailable`): a refusal with another code, a `/1` frame claiming success to a `/2` hello, a wrong host identity, or an unknown or foreign platform or backend.
+3. A `/1` host answers with a refusal with `error.code` `invalid_request` in `/1` framing (`ok: false`, `protocol: "orcel-computer-host/1"`; the `/1` host says "protocol generation mismatch"). Only such a refusal makes the adapter send `{"id": 2, "protocol": "orcel-computer-host/1", "op": "hello"}` and run the session in `/1`, and only on Windows. On macOS and Linux there is no `/1` host and `/1` has no window kind, so the same refusal is a failed handshake. `orcel-native-host` itself answers any `/1` frame with exactly that refusal.
+4. Any other answer is a failed handshake (`ProviderUnavailable`): a refusal with another code, a `/1` frame claiming success to a `/2` hello, a wrong host identity, an unknown or foreign platform or backend, or a backend the platform does not serve (Windows: `uia`; macOS: `ax`; Linux: `atspi-x11` or `atspi-wayland`). The negotiated backend fixes the window kind of every bound request in the session (section 6).
 5. A transport failure during hello (the host exits, the pipe closes, or the JSON is corrupt) is a failed handshake at once. The adapter does not retry the hello and does not respawn. The provider reports unavailable until the next adapter construction.
 
 A `/1` session has no capability table. The 16 `/1` operations keep their historical availability, and every other operation is unavailable.
@@ -102,7 +102,7 @@ Future generations follow the same pattern. `/N` is offered first and the adapte
 | `capabilities.*.support` | `delivered`, `foreground_only`, `refused`, `unavailable` | Closed. Any other value is read as `unavailable`. |
 | `capabilities.*.delivery` | `background`, `foreground` | Optional and informational. |
 | `capabilities.*.reason` | a refusal code from section 7 | Optional. The adapter keeps it only when it is ASCII and at most 128 bytes, and uses it only in error text. |
-| `host_version`, `donor`, `permissions` | informational | Optional. Reserved for the macOS and Linux host (XP-06). The adapter ignores them. |
+| `host_version`, `donor`, `permissions` | informational | Optional. Sent by the macOS and Linux host (XP-06): its crate version, the Cua pin, and on macOS the Accessibility and Screen Recording booleans. The adapter ignores them. |
 
 `delivered` and `foreground_only` are usable. Before sending a frame, the adapter refuses an operation whose support is `refused`, `unavailable` or absent, with `ProviderUnavailable` ("computer host does not deliver <op> on this machine (<reason>)"). `hello` itself is never gated.
 
@@ -119,6 +119,20 @@ Future generations follow the same pattern. `/N` is offered first and the adapte
 
 The Go test `TestProtocolV2HelloReportsPlatformBackendAndCapabilities` requires exactly one entry for each of the 16 operations, with no extras.
 
+### 5.2 macOS and Linux capability table (`orcel-native-host`, XP-06)
+
+| Operation | support | reason when not delivered | Basis |
+|---|---|---|---|
+| `hello`, `ping`, `shutdown` | delivered | - | supervisor-only |
+| `list_windows`, `observe_window` | delivered or unavailable | `permission_missing` (macOS without Accessibility or Screen Recording) or `provider_unavailable` (no display or session bus) | Cua `list_windows` and `get_window_state` in a one-shot worker |
+| `cursor_position` | delivered or unavailable | `provider_unavailable` (no display; native Wayland, where a client cannot read the pointer) | Cua `get_cursor_position` and `get_screen_size` |
+| `capture_window` | unavailable | `provider_unavailable` | XP-07 |
+| `semantic_action`, `window_action`, `input_*` | refused | `capability_denied` | observation only (XP-11, XP-12) |
+
+The kernel caps this table (`host_protocol::NATIVE_OBSERVATION_OPERATIONS`): on macOS and Linux every operation other than `hello`, `ping`, `shutdown`, `list_windows`, `observe_window` and `cursor_position` is unavailable (reason `observation_only`) whatever the host advertises, until XP-11 and XP-12 qualify more. orceld starts the host only from a pinned path (`orcel_provider_uia::trusted_native_host_path`, the XP-10 helper rule): `ORCEL_COMPUTER_HOST_BIN` must be an absolute canonical path next to orceld or at `/usr/libexec/orcel/orcel-native-host`, a file owned by root or this user that nobody else can write, in directories nobody else can write; `PATH` is never searched. The check records the file's device and inode, and the adapter re-reads them, with owner and mode, immediately before the spawn (`TrustedHostBinary::verify_unchanged`); a file swapped or loosened in between is refused. A host under `/Applications` (`root:admin` 0775) is refused by the ancestor rule; see the XP-16 note in CROSS_PLATFORM_ARCHITECTURE.md section 7.
+
+The availability comes from a worker probe at hello time (macOS: the Cua `check_permissions` tool, read without prompting; Linux: the session variables). A failed probe never fails the handshake; it marks observation unavailable. Every observation request re-checks in its own worker and refuses with the same code. The host never prompts for a permission. A refused or unavailable operation sent anyway is answered with `capability_denied`, or with the code of the probe, before any native work.
+
 ## 6. Window identity
 
 Every bound request carries a platform-tagged window reference:
@@ -133,6 +147,7 @@ Every bound request carries a platform-tagged window reference:
 - `id` is opaque to the kernel. It is meaningful only to the host that issued it, together with `expected_pid`, `expected_start_generation` (process start generation; Windows: creation time) and `expected_window_nonce` (host-issued). If any of these no longer matches the live window, the host refuses with `target_stale`.
 - The legacy `/1` fields (`hwnd` plus the three `expected_*` fields) stay accepted in `/2` frames from Windows callers. A frame that sends both `window` and any legacy window field is refused with `invalid_request`.
 - The Windows host turns `window` into the `/1` fields before any native work, and gives the sacrificial worker a `/1` frame, so the worker and its response binding are unchanged. The Rust adapter sends `window` under `/2` and the legacy fields under `/1`.
+- `orcel-native-host` serves `cgwindow` on macOS, `x11` on Linux X11 and `wl_toplevel` on Linux Wayland, and refuses the legacy `/1` fields with `invalid_request`. `id` is the Cua window id (CGWindowID, X11 window id, or the Wayland toplevel id that a Cua compositor route attests). `expected_start_generation` is the start generation of the owner from `orcel-platform` (XP-03). The nonce hashes the kind, id, pid, start generation, Linux boot id and owning application. Before observing, the worker lists the live windows of the pid, re-reads the facts of the owner and recomputes the nonce; after the tree walk it reads the start generation again. Any difference is `target_stale`. Windows without an attested owner pid are never listed; identity is never inferred from a title. Windows of processes running as another user, and of protected executables (Orcel itself, `loginwindow`, `SecurityAgent`, `ScreenSaverEngine`, `coreautha`; polkit agents and screen lockers on Linux), are never listed or observed.
 
 Process facts in `list_windows` (`pid`, `start_generation`, `generation_source`, `session_id`, `session_verified`) are unchanged. XP-03 supplies the macOS and Linux generation sources.
 
@@ -208,3 +223,10 @@ The `background_*` codes come from the Cua Driver action-result contract (`libs/
 | Real Go host answers `/1` and `/2` hello on windows-latest | Node `apps/orcel-mcp/src/sg000094-host-ci.test.ts` |
 | Per-generation framing of bound requests | Rust `computer_host::tests::bound_requests_are_framed_per_negotiated_generation` (Windows) |
 | Real host negotiates `/2` | Rust `configured_host_handshake_is_exact` (Windows, with `ORCEL_COMPUTER_HOST_BIN`) |
+| Kernel cap: a native hello claiming input, capture or semantic actions is held to observation | Rust `host_protocol::tests::native_hello_claiming_input_or_capture_is_capped_to_observation` (all OSes) |
+| Pinned host path: `/tmp`, `PATH` names, symlinks and writable files refused | Rust `native_host_path::tests::*` (Linux and macOS), orceld `xp06_tests::xp06_unpinned_host_bins_are_refused` |
+| Native identity, platform/backend pairing, window kind per backend, no `/1` fallback off Windows | Rust `host_protocol::tests::native_host_negotiates_identity_and_window_kind_per_backend`, `native_platforms_never_fall_back_to_v1` (all OSes) |
+| Adapter over a scripted native host: bound frames carry the kind of the backend; mutations and capture refused before any frame; `permission_missing` unavailable; identity echo; output bound; refusal mapping | Rust `computer_host::tests::native_*`, `missing_permission_makes_observation_unavailable_without_a_frame`, `responses_must_echo_the_native_identity`, `oversize_native_response_is_output_limit` (all OSes) |
+| Native host frames, bounds, table, refusals | Rust `orcel-native-host` `protocol::tests`, `supervisor::tests` (timeout kill, crash, oversized worker output on Unix) |
+| Real native host over stdio: hello table, refusals, oversize line, unavailability with reason, inherited stdio only | Rust `apps/orcel-native-host/tests/stdio_conformance.rs` (macOS and Linux CI) |
+| Live observation of a GTK3 probe, secret never in any frame, recycled binding refused, closed window stale | Rust `apps/orcel-native-host/tests/live_observation.rs` and `crates/orcel-provider-uia/tests/xp06_native_host_live.rs` (Linux CI under Xvfb and AT-SPI with `ORCEL_XP06_LIVE=1`; macOS manual) |

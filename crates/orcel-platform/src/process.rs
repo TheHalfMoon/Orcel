@@ -78,9 +78,10 @@ fn same_instance(
     }
 }
 
-/// The effective uid of the process holding `pid` now.
-#[cfg(target_os = "linux")]
-pub(crate) fn effective_uid_of(pid: u32) -> Result<u32, PlatformError> {
+/// The effective uid of the process holding `pid` now. XP-06: the native
+/// host lists only windows of processes that run as the same user.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub fn effective_uid_of(pid: u32) -> Result<u32, PlatformError> {
     imp::effective_uid_of(pid)
 }
 
@@ -293,6 +294,32 @@ mod imp {
     pub(super) const SOURCE: &str = "macos-bsd-start-time";
 
     pub(super) fn start_generation(pid: u32) -> Result<ProcessGeneration, PlatformError> {
+        let info = bsdinfo(pid)?;
+        generation_from_bsdinfo(
+            pid,
+            info.pbi_pid,
+            info.pbi_status,
+            info.pbi_start_tvsec,
+            info.pbi_start_tvusec,
+        )
+    }
+
+    /// `pbi_uid` is the effective uid (`pbi_ruid` is the real one).
+    pub(super) fn effective_uid_of(pid: u32) -> Result<u32, PlatformError> {
+        let info = bsdinfo(pid)?;
+        if info.pbi_status == libc::SZOMB {
+            return Err(PlatformError::ProcessGone(pid));
+        }
+        if info.pbi_pid != pid {
+            return Err(PlatformError::IdentityUnavailable(format!(
+                "proc_pidinfo({pid}) described pid {}",
+                info.pbi_pid
+            )));
+        }
+        Ok(info.pbi_uid)
+    }
+
+    fn bsdinfo(pid: u32) -> Result<libc::proc_bsdinfo, PlatformError> {
         let Ok(raw_pid) = libc::pid_t::try_from(pid) else {
             return Err(PlatformError::ProcessGone(pid));
         };
@@ -326,13 +353,7 @@ mod imp {
                 "proc_pidinfo({pid}, PROC_PIDTBSDINFO) returned {written} of {size} bytes"
             )));
         }
-        generation_from_bsdinfo(
-            pid,
-            info.pbi_pid,
-            info.pbi_status,
-            info.pbi_start_tvsec,
-            info.pbi_start_tvusec,
-        )
+        Ok(info)
     }
 
     pub(super) fn generation_from_bsdinfo(
@@ -719,6 +740,16 @@ Uid:	1000	1001	1000	1000
             imp::generation_from_bsdinfo(4242, 4242, 2, 0, 0),
             Err(PlatformError::IdentityUnavailable(_))
         ));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_effective_uid_of_reads_this_process() {
+        assert_eq!(
+            effective_uid_of(std::process::id()),
+            Ok(crate::session::effective_uid().unwrap())
+        );
+        assert!(effective_uid_of(u32::MAX).is_err());
     }
 
     #[cfg(windows)]

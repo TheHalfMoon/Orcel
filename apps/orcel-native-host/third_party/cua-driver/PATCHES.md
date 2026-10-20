@@ -72,6 +72,21 @@ which P-03 compiles out, so with `orcel-minimal` nothing calls them. P-03
 gates code, not manifests, so the crates are still compiled. The
 graph-level guarantee covers HTTP clients only, not WebSocket libraries.
 
+XP-06 finding (no patch): on the GitHub macOS runner the live host holds two
+`[ctl com.apple.netsrc]` kernel-control sockets (NetworkStatistics) from the
+moment it starts, before it reads a request. The diagnostic in CI run
+39352665447 (job 118400225275) linked a trivial C program against each
+framework the host links, plus CFNetwork, Network and SystemConfiguration:
+every variant, including the one that links nothing but libSystem, held the
+same two sockets and no more. They come from libSystem's process start-up,
+not from any vendored or host code, and they carry no route, address or
+connection. `stdio_conformance::host_holds_only_inherited_stdio` therefore
+allows exactly that socket, and only as many of them as a plain `/bin/sleep`
+started beside it holds; every other descriptor must be a pipe, a character
+device or a file. (CloudKit and CoreData are linked through `clipboard-rs`,
+but they add no socket; the clipboard tool is not in the host's registry,
+P-07.)
+
 ## P-03: feature `orcel-minimal`
 
 `orcel-minimal` compiles out every Cua surface the Orcel host must not carry.
@@ -210,11 +225,19 @@ neither.
 
 platform-linux has no counterpart, because no TCC exists there.
 
-For XP-06: `ToolState::host_owns_permission_ux` is a `pub` field, so code that
-holds a `ToolState` (any of `platform_macos::tools`) could still overwrite it
-after construction. Nothing does today. The Orcel adapter must never write
-it, and XP-06 should add a test that the registered `check_permissions`
-reports `direct_runtime` without prompting.
+`ToolState::host_owns_permission_ux` is a `pub` field, so code that holds a
+`ToolState` (any of `platform_macos::tools`) could still overwrite it after
+construction. Nothing does. XP-06 settles it from the host side:
+- The adapter (`apps/orcel-native-host/src/cua_adapter.rs`) never holds a
+  `ToolState`. It builds the registry with `register_all(.., compat: false,
+  cursor_overlay_available: false, host_owns_permission_ux: true, None)` and
+  only ever sees the registry. `host_source_never_touches_the_permission_ux_field`
+  fails if any host source file reads or writes the field.
+- `registered_check_permissions_is_a_direct_runtime_that_never_prompts`
+  (macOS CI) calls the registered `check_permissions` with `prompt: true`,
+  an argument the adapter itself never sends, and requires
+  `source.direct_runtime == true` and `direct_capture_status == "not_checked"`:
+  the request calls and the capture probe were not reached.
 
 ## P-05: no file the exact-diff review cannot read
 
@@ -260,9 +283,52 @@ the files restored from the pin first:
   case upstream already handles. The Orcel host never installs the overlay
   (`cursor_overlay_available = false`, CUA_INTEGRATION.md 2.3), so it never
   draws a badge either way.
+- XP-06 (issue #355, item 4): the observation host still never installs the
+  overlay, so the empty font changes nothing it can do. The decision is left
+  to the first task that installs the overlay (raw input, XP-12): it must
+  either build with `upstream-assets` from restored upstream bytes or vendor
+  a reviewed font, and test that the badge is drawn.
 
 cursor-overlay and cua-cursor-motion tests pass without the feature, and CI
 now runs them.
+
+## P-06: secure text values never leave the AX read (XP-06)
+
+`platform-macos/src/ax/tree.rs` (already patched by P-03), with
+`orcel-minimal` only. Upstream's tree walk copies `AXValue` (and
+`AXPlaceholderValue`) of every node, and its structured `elements` carry the
+role but not the subrole, so a consumer cannot tell an `NSSecureTextField`
+(role `AXTextField`, subrole `AXSecureTextField`) from a plain field. The
+patch adds, in `walk_element`:
+
+- after the value reads: `secure_text` is true for role `AXSecureTextField`,
+  or role `AXTextField` with subrole `AXSecureTextField` (one extra AX read,
+  for text fields only); for such a node `copied_value` and `value` become
+  `None`, so neither `value` nor `value_state` is ever filled;
+- before the node is built: the node's `role` becomes `AXSecureTextField`.
+
+The Orcel host maps that role to `control_type: "Edit"`,
+`value_is_password: true` and no value (`map.rs`, as the Windows host does
+with UIA `IsPassword`). Lines added only; nothing upstream is deleted or
+reworded; with the feature off the file compiles exactly as upstream.
+Linux needs no counterpart: upstream's `atspi/native.rs` never reads the
+text of a `password text` node, and the host marks that role the same way.
+
+## P-07: a host narrows the registry to its allowlist (XP-06)
+
+`cua-driver-core/src/tool.rs` (already patched by P-03), with `orcel-minimal`
+only: one added method, `ToolRegistry::retain_tools(keep: &[&str])`, which
+drops every registered tool whose name is not in `keep` from the tool map and
+the ordered name list. Upstream has no way to remove a tool, and the platform
+crates expose only `register_all` / `build_registry`, which register every
+tool. The Orcel host calls `retain_tools(&ALLOWED_TOOLS)` right after
+construction (`apps/orcel-native-host/src/cua_adapter.rs`), so the registry
+holds exactly `list_windows`, `get_window_state`, `get_cursor_position`,
+`get_screen_size` and `check_permissions`; any other name is unknown to
+`invoke`. This is defence in depth under the closed `CuaCall` enum.
+`registry_holds_the_allowlist_and_no_compiled_out_tool` (macOS and Linux CI)
+requires the registered names to equal the allowlist exactly. Lines added
+only; with the feature off the file compiles exactly as upstream.
 
 ## Patched file index
 

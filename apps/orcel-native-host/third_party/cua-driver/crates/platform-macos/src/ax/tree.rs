@@ -502,6 +502,18 @@ unsafe fn walk_element(
     let value = value
         .filter(|v| !v.trim().is_empty())
         .or_else(|| copy_string_attr(element, "AXPlaceholderValue"));
+    // Orcel P-06: a secure text field's value never leaves this read, and the
+    // node reports the role AXSecureTextField so the Orcel host marks it.
+    #[cfg(feature = "orcel-minimal")]
+    let secure_text = role == "AXSecureTextField"
+        || (role == "AXTextField"
+            && copy_string_attr(element, "AXSubrole").as_deref() == Some("AXSecureTextField"));
+    #[cfg(feature = "orcel-minimal")]
+    let (copied_value, value) = if secure_text {
+        (None, None)
+    } else {
+        (copied_value, value)
+    };
     let description = copy_string_attr(element, "AXDescription");
     let identifier = copy_string_attr(element, "AXIdentifier");
     let help = copy_string_attr(element, "AXHelp").filter(|h| !h.trim().is_empty());
@@ -553,6 +565,12 @@ unsafe fn walk_element(
         return;
     }
 
+    #[cfg(feature = "orcel-minimal")]
+    let role = if secure_text {
+        "AXSecureTextField".to_owned()
+    } else {
+        role
+    };
     let element_ptr = element as usize;
     let frame = element_screen_rect(element);
     // Structured `elements` only contains actionable nodes. Keep all new AX

@@ -56,11 +56,13 @@ apps/orcel-native-host (Orcel-owned binary, separate Cargo workspace)          �
   supervisor (never touches AX/AT-SPI) ◄───────────────────────────────────────┘
     └─ one-shot worker per request
          └─ cua_adapter.rs: enum-dispatched allowlist
-              list_windows | get_window_state | get_cursor_position | check_permissions
+              list_windows | get_window_state | get_cursor_position | get_screen_size | check_permissions
               | click(AX) | set_value | scroll | type_text | press_key | hotkey | drag
               | launch_app (later, approval-gated) | bring_to_front (window_action focus)
               └─ third_party/cua-driver/crates/platform-{macos,linux} tools (vendored, patched)
 ```
+
+XP-06 implements the observation part of this allowlist: `CuaCall` in `apps/orcel-native-host/src/cua_adapter.rs` holds the typed `cua-driver-contract` input of `list_windows`, `get_window_state` (tree only, no screenshot), `get_cursor_position` and `get_screen_size` (for the cursor reply's screen size), plus `check_permissions` with `prompt: false`. The tool name is the input type's `TOOL_NAME`; no request field names a tool. Patch P-06 keeps secure text values inside the AX read.
 
 Rules inside the host:
 1. No listener, no MCP, no HTTP, no daemon socket. Patch P-03 compiles out `server.rs`, `daemon.rs`, `browser/`, `cdp*.rs`, `history.rs`, `recording*.rs`, `perception_client*`, platform `browser/`, `video_*`, `pip/`.
