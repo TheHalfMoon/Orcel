@@ -1,0 +1,29 @@
+Firecrawl (firecrawl/firecrawl) - adapted source notice
+
+Orcel adapts two files from firecrawl/firecrawl at commit
+f84845c864b6e2af22791c18fcf89ac2a21f1434:
+
+- apps/api/native/src/pdf.rs (blob a4f019f072b13729610a2241cd51db5e34eed0c6)
+  -> apps/orcel-doc-parser/src/pdf.rs (transplant row T-FC-06)
+- apps/api/native/src/document.rs (blob ee75ba34f7a6b45b5bdad7317f895cd029c3d95b)
+  -> apps/orcel-doc-parser/src/document.rs (transplant row T-FC-07)
+
+Each adapted file names its donor blob and lists Orcel's changes in its
+header; docs/orcel/firecrawl_doc_parser_provenance.json records the
+provenance (WI-05).
+
+Upstream license: GNU Affero General Public License v3.0 (the repository's
+LICENSE; apps/api/native/package.json declares "AGPL").
+https://github.com/firecrawl/firecrawl/blob/f84845c864b6e2af22791c18fcf89ac2a21f1434/LICENSE
+
+Permission: Orcel copies, modifies, integrates, redistributes and relicenses
+this grantor-owned code under the founder authorization recorded in
+docs/orcel/grants/2026-10-13-founder-source-authorization.md and
+docs/orcel/grants/2026-10-18-founder-attestation.md (see
+docs/orcel/SOURCE_PERMISSIONS.md). The permission documents are confidential
+and are not part of this repository.
+
+Third-party crates the adapted code calls (pdf-inspector 1.21.0 and anydoc
+0.2.2, both MIT, by Firecrawl; lopdf, zip, roxmltree and their dependencies)
+are separate works under their own licenses, admitted through
+apps/orcel-doc-parser/Cargo.lock, deny.toml and .cargo/audit.toml.

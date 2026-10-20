@@ -1,0 +1,36 @@
+{
+  "schema": "orcel-adapted-source-provenance/1",
+  "task": "WI-05",
+  "donor": {
+    "id": "firecrawl",
+    "repo": "firecrawl/firecrawl",
+    "commit": "f84845c864b6e2af22791c18fcf89ac2a21f1434",
+    "license": "AGPL-3.0 (LICENSE; apps/api/native/package.json)",
+    "notice": "docs/orcel/notices/firecrawl-AGPL-3.0.txt",
+    "authorization": "docs/orcel/grants/2026-10-13-founder-source-authorization.md"
+  },
+  "method": "COPY_ADAPT",
+  "files": [
+    {
+      "path": "apps/orcel-doc-parser/src/pdf.rs",
+      "donor_path": "apps/api/native/src/pdf.rs",
+      "donor_blob": "a4f019f072b13729610a2241cd51db5e34eed0c6",
+      "row": "T-FC-06",
+      "changes": "N-API, tokio and tracing glue removed; lopdf pre-flight refuses encryption, JavaScript and launch actions, nesting past 32, more than 500 pages and stream inflation past 64 MiB; closed refusal codes; scanned PDFs refused as no_text."
+    },
+    {
+      "path": "apps/orcel-doc-parser/src/document.rs",
+      "donor_path": "apps/api/native/src/document.rs",
+      "donor_blob": "ee75ba34f7a6b45b5bdad7317f895cd029c3d95b",
+      "row": "T-FC-07",
+      "changes": "N-API glue and extension hint removed; only DOCX, PPTX and XLSX admitted; whole-archive pre-flight (entries, encryption, macros and ActiveX, inflation ratio, counted inflated total, XML depth and DTDs, slide and sheet count); donor part budget lowered to 64 MiB; header and footer pass otherwise unchanged."
+    }
+  ],
+  "dependencies": {
+    "pdf-inspector": "=1.21.0 (MIT, firecrawl/pdf-inspector), default features off",
+    "anydoc": "=0.2.2 (MIT, firecrawl/anydoc), default features off",
+    "lopdf": "=0.45.0 (MIT)",
+    "zip": "=8.6.0 (MIT), deflate only",
+    "roxmltree": "=0.20.0 (MIT OR Apache-2.0)"
+  }
+}
