@@ -28,6 +28,12 @@
 //!   bare-name rewrite, container repair) are observed through its own log
 //!   records while it runs; any of them, or a page count that differs from
 //!   the pre-flight's, refuses the file (`inspect_with_parity`);
+//! - every stream decode in the process, pdf-inspector's included, draws
+//!   from one decode budget per phase of the parse (`within_budget`,
+//!   #391): at most [`MAX_ARCHIVE_BYTES`] from one decode and
+//!   [`MAX_PDF_INFLATED_BYTES`] from all of them, repeats included, or the
+//!   file is refused as `archive_limit`. This needs no parity with the
+//!   pre-flight; the parity checks above are defence in depth;
 //! - every error is one closed [`ParseRefusal`] code; no text from the
 //!   document reaches an error;
 //! - a scanned PDF (no text layer) is refused as `no_text`: Orcel runs no OCR.
@@ -60,10 +66,10 @@ pub fn convert(bytes: &[u8]) -> Result<PdfText, ParseRefusal> {
         return Err(ParseRefusal::Malformed);
     }
     let bytes = &as_inspector_reads(bytes)?;
-    let pages = preflight(bytes)?;
+    let pages = within_budget(|| preflight(bytes))?;
     // The donor's `process_pdf` with `max_pages`: only the pages counted
     // above are extracted.
-    let result = inspect_with_parity(bytes, pages)?;
+    let result = within_budget(|| inspect_with_parity(bytes, pages))?;
     let markdown = match result.pdf_type {
         PdfType::TextBased | PdfType::Mixed => result.markdown.unwrap_or_default(),
         PdfType::Scanned | PdfType::ImageBased => String::new(),
@@ -72,6 +78,46 @@ pub fn convert(bytes: &[u8]) -> Result<PdfText, ParseRefusal> {
         return Err(ParseRefusal::NoText);
     }
     Ok(PdfText { markdown, pages })
+}
+
+/// Set once by `main` (the parser binary): what to do the moment a decode
+/// budget runs out. Unset (unit tests), the phase runs to its end and is
+/// refused afterwards.
+static ON_BUDGET_EXHAUSTED: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
+
+/// Make the binary answer `archive_limit` as soon as a decode budget runs
+/// out, instead of letting pdf-inspector carry on with the raw stream bytes
+/// it falls back to after a refused decode.
+pub fn on_budget_exhausted(handler: fn()) {
+    let _ = ON_BUDGET_EXHAUSTED.set(handler);
+}
+
+/// Run one phase of a parse (the pre-flight, then pdf-inspector) under a
+/// fresh decode budget (#391, vendored lopdf P-02,
+/// `third_party/lopdf/PATCHES.md`). Every stream decode in the process
+/// while it runs, on any thread, draws from it: lopdf's loads of object and
+/// xref streams, the pre-flight's own decodes and all of pdf-inspector's,
+/// whichever lopdf method it calls and however often it decodes the same
+/// stream. One decode may produce at most [`MAX_ARCHIVE_BYTES`], and all of
+/// them together at most [`MAX_PDF_INFLATED_BYTES`]; a decode that fails
+/// is charged the stream's raw length, which is what pdf-inspector then
+/// reads instead. Once the budget is exhausted every later decode is refused
+/// and the phase is refused as `archive_limit`, whatever it returned.
+///
+/// This bound holds on its own terms, without parity between the pre-flight
+/// and pdf-inspector: a stream the pre-flight never saw is still decoded
+/// under it. The parity checks below stay as defence in depth.
+fn within_budget<T>(phase: impl FnOnce() -> Result<T, ParseRefusal>) -> Result<T, ParseRefusal> {
+    let (per_decode, total) = stream_budget()?;
+    let mut scope = lopdf::decode_budget::Scope::enter(total, per_decode);
+    if let Some(&handler) = ON_BUDGET_EXHAUSTED.get() {
+        scope = scope.on_exhausted(handler);
+    }
+    let outcome = phase();
+    if scope.exhausted() {
+        return Err(ParseRefusal::ArchiveLimit);
+    }
+    outcome
 }
 
 /// The bounds above hold for what pdf-inspector decodes only if it parses
@@ -297,10 +343,9 @@ fn refuse_ambiguous_object_stream_members(document: &Document) -> Result<(), Par
 /// under a bound: no one decode of a stream may inflate past
 /// [`MAX_ARCHIVE_BYTES`] (each filter layer is capped while it decodes, never
 /// after), and one decode of every stream together not past
-/// [`MAX_PDF_INFLATED_BYTES`]. The bound is per decode: pdf-inspector may
-/// decode one stream more than once (a form XObject drawn on many pages),
-/// and those repeats are bounded by the memory, CPU and time ceilings of the
-/// contained run, not by this budget.
+/// [`MAX_PDF_INFLATED_BYTES`]. pdf-inspector may decode one stream more
+/// than once (a form XObject drawn on many pages); those repeats are charged
+/// to its own phase's decode budget ([`within_budget`]), not to this pass.
 ///
 /// A stream lopdf cannot decode (images: DCT, JPX, JBIG2, CCITT; or a corrupt
 /// stream) is charged its raw length, which is what pdf-inspector falls back

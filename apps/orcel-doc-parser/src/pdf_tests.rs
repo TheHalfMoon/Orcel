@@ -1,4 +1,22 @@
 use super::*;
+use lopdf::decode_budget::Scope;
+
+/// Direct lopdf calls in these tests run under an open but unlimited decode
+/// budget. Without one an unbounded decode is refused (P-02), and a decode
+/// made while another test's scope is open would be charged to it; scopes
+/// are serialised, so this also keeps the tests apart.
+fn unlimited<T>(call: impl FnOnce() -> T) -> T {
+    let _scope = Scope::enter(usize::MAX, usize::MAX);
+    call()
+}
+
+/// `inspect_with_parity` under the decode budget `convert` gives it.
+fn parity_only(
+    bytes: &[u8],
+    pages: usize,
+) -> Result<pdf_inspector::PdfProcessResult, ParseRefusal> {
+    within_budget(|| inspect_with_parity(bytes, pages))
+}
 
 #[test]
 fn active_names_are_found_in_keys_and_values_at_any_depth() {
@@ -39,7 +57,7 @@ fn the_hand_written_zlib_fixture_is_valid() {
         crate::fixtures::zlib_zeros(1 + 258 * 4),
     );
     assert_eq!(
-        stream.decompressed_content_with_limit(1 << 20).unwrap(),
+        unlimited(|| stream.decompressed_content_with_limit(1 << 20)).unwrap(),
         vec![0; 1 + 258 * 4]
     );
 }
@@ -50,12 +68,15 @@ fn the_hand_written_zlib_fixture_is_valid() {
 fn the_bomb_hidden_behind_a_bare_struct_name_is_found_in_the_bytes_inspector_reads() {
     let raw = crate::fixtures::struct_name_bomb_pdf();
     assert!(
-        preflight(&raw).is_ok(),
+        within_budget(|| preflight(&raw)).is_ok(),
         "lopdf on the raw bytes must not see the bomb, or the fixture tests nothing"
     );
     let rewritten = as_inspector_reads(&raw).unwrap();
     assert_ne!(rewritten, raw);
-    assert_eq!(preflight(&rewritten), Err(ParseRefusal::ArchiveLimit));
+    assert_eq!(
+        within_budget(|| preflight(&rewritten)),
+        Err(ParseRefusal::ArchiveLimit)
+    );
 }
 
 fn document_with_streams(streams: Vec<lopdf::Stream>) -> Document {
@@ -79,16 +100,16 @@ fn the_total_budget_spans_every_stream() {
     let document = document_with_streams((0..4).map(|_| flate(mib)).collect());
     // Each stream fits the per-stream bound; four of them do not fit three.
     assert_eq!(
-        bound_stream_inflation_within(&document, 2 << 20, 3 << 20),
+        unlimited(|| bound_stream_inflation_within(&document, 2 << 20, 3 << 20)),
         Err(ParseRefusal::ArchiveLimit)
     );
     assert_eq!(
-        bound_stream_inflation_within(&document, 2 << 20, 5 << 20),
+        unlimited(|| bound_stream_inflation_within(&document, 2 << 20, 5 << 20)),
         Ok(())
     );
     // Each stream past a per-stream bound just below its size.
     assert_eq!(
-        bound_stream_inflation_within(&document, 1_048_512, 64 << 20),
+        unlimited(|| bound_stream_inflation_within(&document, 1_048_512, 64 << 20)),
         Err(ParseRefusal::ArchiveLimit)
     );
 }
@@ -101,11 +122,11 @@ fn a_stream_lopdf_cannot_decode_is_charged_its_raw_length() {
     );
     let document = document_with_streams(vec![image]);
     assert_eq!(
-        bound_stream_inflation_within(&document, 64 << 20, 2 << 20),
+        unlimited(|| bound_stream_inflation_within(&document, 64 << 20, 2 << 20)),
         Err(ParseRefusal::ArchiveLimit)
     );
     assert_eq!(
-        bound_stream_inflation_within(&document, 64 << 20, 4 << 20),
+        unlimited(|| bound_stream_inflation_within(&document, 64 << 20, 4 << 20)),
         Ok(())
     );
 }
@@ -117,7 +138,7 @@ fn a_stream_lopdf_cannot_decode_is_charged_its_raw_length() {
 #[test]
 fn parity_breaks_are_observed() {
     let text = crate::fixtures::text_pdf();
-    assert!(inspect_with_parity(&text, 1).is_ok(), "the normal PDF");
+    assert!(parity_only(&text, 1).is_ok(), "the normal PDF");
     for (name, bytes) in [
         ("shifted header", crate::fixtures::shifted_header_pdf()),
         (
@@ -126,14 +147,14 @@ fn parity_breaks_are_observed() {
         ),
     ] {
         assert_eq!(
-            inspect_with_parity(&bytes, 1).map(|_| ()),
+            parity_only(&bytes, 1).map(|_| ()),
             Err(ParseRefusal::Malformed),
             "{name}"
         );
     }
     // The page count must agree with the pre-flight's.
     assert_eq!(
-        inspect_with_parity(&text, 2).map(|_| ()),
+        parity_only(&text, 2).map(|_| ()),
         Err(ParseRefusal::Malformed)
     );
 }
@@ -177,10 +198,10 @@ fn repair_shaped_inputs_load_directly_and_never_take_the_repair_path() {
             ..LoadOptions::default()
         };
         assert!(
-            Document::load_mem_with_options(&bytes, options).is_ok(),
+            unlimited(|| Document::load_mem_with_options(&bytes, options)).is_ok(),
             "{name}: lopdf no longer loads it directly"
         );
-        assert!(inspect_with_parity(&bytes, 1).is_ok(), "{name}: parity");
+        assert!(parity_only(&bytes, 1).is_ok(), "{name}: parity");
         assert_eq!(convert(&bytes).map(|_| ()), expected, "{name}");
     }
 }
@@ -227,18 +248,21 @@ fn the_inflation_bound_is_wired_to_the_contract() {
 #[test]
 fn an_unplaced_member_of_two_object_streams_is_refused() {
     let once = crate::fixtures::object_stream_member_pdf(1);
-    let document = Document::load_mem(&once).unwrap();
+    let document = unlimited(|| Document::load_mem(&once)).unwrap();
     assert!(
         document.objects.contains_key(&(9, 0)),
         "lopdf loads the member, or the fixture tests nothing"
     );
-    assert_eq!(refuse_ambiguous_object_stream_members(&document), Ok(()));
+    assert_eq!(
+        unlimited(|| refuse_ambiguous_object_stream_members(&document)),
+        Ok(())
+    );
     assert!(convert(&once).is_ok());
 
     let twice = crate::fixtures::object_stream_member_pdf(2);
-    let document = Document::load_mem(&twice).unwrap();
+    let document = unlimited(|| Document::load_mem(&twice)).unwrap();
     assert_eq!(
-        refuse_ambiguous_object_stream_members(&document),
+        unlimited(|| refuse_ambiguous_object_stream_members(&document)),
         Err(ParseRefusal::Malformed)
     );
     assert_eq!(convert(&twice).map(|_| ()), Err(ParseRefusal::Malformed));
@@ -250,5 +274,134 @@ fn an_unplaced_member_of_two_object_streams_is_refused() {
 fn the_parity_logger_proves_itself_before_each_parse() {
     assert!(parity::watch(), "the self-test record was not observed");
     assert!(!parity::broken(), "the self-test must not count as a break");
-    assert!(inspect_with_parity(&crate::fixtures::text_pdf(), 1).is_ok());
+    assert!(parity_only(&crate::fixtures::text_pdf(), 1).is_ok());
+}
+
+// #391: the decode budget (vendored lopdf P-02) holds on its own terms.
+
+fn spaces(len: usize) -> lopdf::Stream {
+    lopdf::Stream::new(lopdf::Dictionary::new(), vec![b' '; len])
+}
+
+#[test]
+fn every_decode_of_a_stream_is_charged_until_the_budget_runs_out() {
+    let stream = flate(1 + 258 * 4); // 1,033 bytes
+    let scope = Scope::enter(2_500, 1_100);
+    assert!(stream.decompressed_content().is_ok());
+    assert!(stream.decompressed_content().is_ok());
+    assert!(!scope.exhausted());
+    assert_eq!(scope.charged(), 2 * 1_033);
+    assert!(stream.decompressed_content().is_err(), "434 bytes left");
+    assert!(scope.exhausted());
+    // Once exhausted, every decode is refused, even a bounded one.
+    assert!(flate(1).decompressed_content_with_limit(10).is_err());
+}
+
+#[test]
+fn one_decode_past_the_per_decode_cap_exhausts_the_budget() {
+    let scope = Scope::enter(1 << 20, 1_000);
+    assert!(flate(1 + 258 * 4)
+        .decompressed_content_with_limit(1 << 20)
+        .is_err());
+    assert!(scope.exhausted());
+}
+
+#[test]
+fn a_callers_own_smaller_limit_does_not_exhaust_the_budget() {
+    let scope = Scope::enter(1 << 20, 1 << 20);
+    assert!(flate(1 + 258 * 4)
+        .decompressed_content_with_limit(500)
+        .is_err());
+    assert!(!scope.exhausted());
+    assert!(flate(1 + 258 * 4).decompressed_content().is_ok());
+}
+
+#[test]
+fn unfiltered_and_undecodable_streams_are_charged_their_raw_length() {
+    let scope = Scope::enter(1_000, 1_000);
+    assert!(spaces(600).decompressed_content().is_ok());
+    assert!(spaces(600).decompressed_content().is_err());
+    assert!(scope.exhausted());
+    drop(scope);
+    let image = lopdf::Stream::new(
+        lopdf::dictionary! { "Filter" => Object::Name(b"DCTDecode".to_vec()) },
+        vec![0xFF; 700],
+    );
+    let scope = Scope::enter(1_000, 1_000);
+    assert!(image.decompressed_content().is_err());
+    assert!(!scope.exhausted(), "700 of 1,000 charged");
+    assert!(image.decompressed_content().is_err());
+    assert!(scope.exhausted(), "the raw fallback is charged too");
+}
+
+#[test]
+fn the_exhaustion_handler_runs_once() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static RUNS: AtomicUsize = AtomicUsize::new(0);
+    fn count() {
+        RUNS.fetch_add(1, Ordering::SeqCst);
+    }
+    let scope = Scope::enter(100, 100).on_exhausted(count);
+    assert!(spaces(200).decompressed_content().is_err());
+    assert!(spaces(1).decompressed_content().is_err());
+    assert!(scope.exhausted());
+    assert_eq!(RUNS.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn with_no_budget_open_an_unbounded_decode_is_refused() {
+    let _closed = lopdf::decode_budget::closed();
+    assert!(spaces(10).decompressed_content().is_err());
+    assert!(spaces(10).decompressed_content_with_limit(10).is_ok());
+}
+
+/// The parity checks are bypassed here altogether: pdf-inspector runs with
+/// no pre-flight and no parity watch, on documents whose bomb the pre-flight
+/// would never see (the bare-name XObject lopdf drops) or that sits in the
+/// page content itself. The decode budget alone still refuses them, and a
+/// page's content is a stream pdf-inspector bounds with its own, smaller
+/// limit (`MAX_PAGE_CONTENT_BYTES`), so the form XObject case is the one its
+/// own code leaves unbounded.
+#[test]
+fn a_stream_the_preflight_never_saw_still_fails_closed_with_archive_limit() {
+    let hidden = crate::fixtures::struct_name_bomb_pdf();
+    assert!(
+        within_budget(|| preflight(&hidden)).is_ok(),
+        "the pre-flight must not see the bomb, or the fixture tests nothing"
+    );
+    for (name, bytes) in [
+        ("bare-name form XObject", hidden),
+        ("page content", crate::fixtures::flate_bomb_pdf()),
+    ] {
+        let unchecked = within_budget(|| {
+            let _ =
+                pdf_inspector::process_pdf_mem_with_options(&bytes, PdfOptions::new().pages(1..=1));
+            Ok(())
+        });
+        assert_eq!(unchecked, Err(ParseRefusal::ArchiveLimit), "{name}");
+    }
+}
+
+/// A form of just under 64 MiB fits every pre-flight bound, but each page
+/// that draws it decodes it again. Drawn on 64 pages it would inflate 4 GiB;
+/// the budget refuses it after the fourth decode.
+#[test]
+fn a_large_form_drawn_on_many_pages_is_refused_as_archive_limit() {
+    use crate::fixtures::{repeated_form_pdf, FORM_ZEROS};
+    let bytes = repeated_form_pdf(64, FORM_ZEROS);
+    assert!(
+        within_budget(|| preflight(&bytes)).is_ok(),
+        "one decode of each stream fits the pre-flight"
+    );
+    assert_eq!(convert(&bytes).map(|_| ()), Err(ParseRefusal::ArchiveLimit));
+}
+
+/// The budget does not refuse ordinary repetition: a 1 MiB form drawn on
+/// every one of 16 pages converts.
+#[test]
+fn a_small_form_drawn_on_every_page_converts() {
+    let bytes = crate::fixtures::repeated_form_pdf(16, 1 + 258 * 4_064);
+    let text = convert(&bytes).expect("converts");
+    assert_eq!(text.pages, 16);
+    assert!(text.markdown.contains("Orcel WI-05 fixture"));
 }
