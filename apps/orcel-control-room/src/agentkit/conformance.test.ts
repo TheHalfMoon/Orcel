@@ -7,7 +7,7 @@
 // refused, event ordering and deduplication, version compatibility, cursor
 // replay, and resubscribe never re-dispatches.
 // Orcel changes: the transport under test is orceld's app API through
-// orceldTransport, run against the real daemon binary; AgentKit's run,
+// run against the real daemon binary; AgentKit's run,
 // cancellation, approval, queue and terminal-failure scenarios have no
 // counterpart in a read-only API and are not taken; snapshot-on-gap and
 // snapshot-on-epoch checks are added for ORCEL_APP_API_1.md section 5.
@@ -25,10 +25,11 @@ import {
   type AppApiEvent,
   type ServerFrame,
 } from "./protocol/index.js";
-import { orceldTransport, type AppApiConnector } from "./transport/orceld-transport.js";
+import { type AppApiConnector } from "./transport/orceld-transport.js";
 import { exchange } from "../tests/raw.js";
 import {
   createSandbox,
+  testTransport,
   liveSkipReason,
   startOrceld,
   uniqueInstance,
@@ -206,7 +207,7 @@ after(async () => {
 
 test("orceld's app API passes the conformance suite", { skip: skip ?? false, timeout: 120_000 }, async () => {
   assert.ok(daemon);
-  const connector = await orceldTransport({ endpoint: daemon.endpoint });
+  const connector = await testTransport(daemon.endpoint);
   const report = await assertAppApiConformance(connector, daemon);
   assert.deepEqual(report.checks, [
     "version compatibility",

@@ -372,6 +372,9 @@ jobs:
   # sudo on the hosted Linux and macOS runners).
   control-room:
     name: Control Room client / ${{ matrix.os }}
+    # A daemon that never listens fails its test within 30 s; this bounds
+    # the job however a test misbehaves (the first macOS run hung 6 h).
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:

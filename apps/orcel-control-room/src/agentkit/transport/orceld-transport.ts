@@ -11,12 +11,17 @@
 //   socket this uid owns. Another user's socket, a symbolic link or a
 //   non-socket is refused before any byte is sent.
 // - Windows: the pipe `\\.\pipe\orcel-<user SID>-app` carries a DACL for the
-//   user only, so another account's open is refused by the OS. Node's
-//   libuv opens pipes without SECURITY_SQOS_PRESENT, so this connector
-//   cannot meet ORCEL_APP_API_1.md section 7's identification-only open or
-//   confirm the server's account; the CR-03 Tauri bridge (Rust) must, and
-//   until then this connector is for headless and test use. The client
-//   sends nothing but read-only requests either way.
+//   user only, so another account cannot open orceld's pipe. But the pipe
+//   namespace is shared: another account can create that name first, and
+//   the client must then refuse it (ORCEL_APP_API_1.md section 7). Node's
+//   libuv opens pipes without SECURITY_SQOS_PRESENT (so the server could
+//   impersonate the client) and cannot read the server's process or token,
+//   so this connector cannot verify the server. It therefore REFUSES to
+//   connect on Windows unless the caller passes
+//   `allowUnverifiedWindowsPipe: true`, which only tests do. The Windows
+//   Control Room transport is the CR-03 Tauri bridge (Rust), which must open
+//   with SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION and compare the
+//   token user of GetNamedPipeServerProcessId with its own.
 
 import { execFile } from "node:child_process";
 import { lstat } from "node:fs/promises";
@@ -143,6 +148,15 @@ export async function defaultEndpoint(env: Env = process.env): Promise<string> {
 export async function assertPrivateUnixEndpoint(socketPath: string): Promise<void> {
   const uid = process.getuid?.();
   if (uid === undefined) return;
+  const length = Buffer.byteLength(socketPath, "utf8");
+  if (length > MAX_UNIX_SOCKET_PATH) {
+    // orceld refuses the same path (CR-01 unix::bind), so nothing can be
+    // listening there; say why instead of failing with ENAMETOOLONG.
+    throw new EndpointRefusedError(
+      socketPath,
+      `is ${length} bytes, longer than the ${MAX_UNIX_SOCKET_PATH} a Unix socket allows; use a shorter HOME or XDG_STATE_HOME`,
+    );
+  }
   const directory = path.posix.dirname(socketPath);
   const dir = await lstat(directory).catch((error: NodeJS.ErrnoException) => {
     throw new EndpointRefusedError(socketPath, `${directory}: ${error.code ?? error.message}`);
@@ -170,6 +184,17 @@ export async function assertPrivateUnixEndpoint(socketPath: string): Promise<voi
   }
 }
 
+/** orceld's limit: `sun_path` holds 104 bytes on macOS, 108 on Linux. */
+export const MAX_UNIX_SOCKET_PATH = 100;
+
+/**
+ * Lines buffered for a consumer that lags. Past the high mark the socket is
+ * paused, so at most this many frames (each at most 64 KiB) plus one read
+ * chunk wait in memory; reading resumes at the low mark.
+ */
+export const LINE_QUEUE_HIGH = 256;
+export const LINE_QUEUE_LOW = 64;
+
 class SocketConnection implements FrameConnection {
   private readonly decoder = new LineDecoder();
   private readonly queue: string[] = [];
@@ -181,6 +206,7 @@ class SocketConnection implements FrameConnection {
     socket.on("data", (chunk: Buffer) => {
       try {
         this.queue.push(...this.decoder.push(chunk));
+        if (this.queue.length >= LINE_QUEUE_HIGH && !socket.isPaused()) socket.pause();
       } catch (error) {
         this.fail(error);
         socket.destroy();
@@ -225,6 +251,7 @@ class SocketConnection implements FrameConnection {
     for (;;) {
       const line = this.queue.shift();
       if (line !== undefined) {
+        if (this.queue.length <= LINE_QUEUE_LOW && this.socket.isPaused()) this.socket.resume();
         yield line;
         continue;
       }
@@ -248,15 +275,37 @@ export interface OrceldTransportOptions {
   endpoint?: string;
   /** Milliseconds to wait for the connection to open. */
   connectTimeoutMs?: number;
+  /**
+   * Windows only, tests only: connect although the pipe server's account
+   * cannot be verified from Node (see the header). Default false: refuse.
+   */
+  allowUnverifiedWindowsPipe?: boolean;
 }
+
+export interface ConnectOptions {
+  connectTimeoutMs?: number;
+  allowUnverifiedWindowsPipe?: boolean;
+}
+
+/** Why the default connector refuses Windows pipes. */
+export const UNVERIFIED_WINDOWS_PIPE =
+  "the pipe server's account cannot be verified from Node (no SECURITY_IDENTIFICATION open, " +
+  "no GetNamedPipeServerProcessId check); the Windows Control Room transport is the CR-03 Rust bridge";
 
 /** Connects to `endpoint` once its privacy checks pass. */
 export function connectEndpoint(
   endpoint: string,
-  connectTimeoutMs = 5_000,
+  options: ConnectOptions = {},
 ): Promise<FrameConnection> {
+  const connectTimeoutMs = options.connectTimeoutMs ?? 5_000;
   return (async () => {
-    if (process.platform !== "win32") await assertPrivateUnixEndpoint(endpoint);
+    if (process.platform === "win32") {
+      if (options.allowUnverifiedWindowsPipe !== true) {
+        throw new EndpointRefusedError(endpoint, UNVERIFIED_WINDOWS_PIPE);
+      }
+    } else {
+      await assertPrivateUnixEndpoint(endpoint);
+    }
     return new Promise<FrameConnection>((resolve, reject) => {
       const socket = net.createConnection({ path: endpoint });
       const timer = setTimeout(() => {
@@ -283,6 +332,10 @@ export async function orceldTransport(
   const endpoint = options.endpoint ?? (await defaultEndpoint());
   return {
     endpoint,
-    connect: () => connectEndpoint(endpoint, options.connectTimeoutMs),
+    connect: () =>
+      connectEndpoint(endpoint, {
+        ...(options.connectTimeoutMs === undefined ? {} : { connectTimeoutMs: options.connectTimeoutMs }),
+        allowUnverifiedWindowsPipe: options.allowUnverifiedWindowsPipe === true,
+      }),
   };
 }

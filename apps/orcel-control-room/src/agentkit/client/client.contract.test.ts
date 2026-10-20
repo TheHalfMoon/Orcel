@@ -17,6 +17,7 @@ import {
 import { exchange } from "../../tests/raw.js";
 import {
   createSandbox,
+  testTransport,
   liveSkipReason,
   startOrceld,
   uniqueInstance,
@@ -81,7 +82,7 @@ test("status and capabilities round-trip, and orceld identifies this process", {
   await withDaemon("status", async (sandbox, daemon) => {
     // The client derives the same endpoint orceld chose for this user.
     assert.equal(await defaultEndpoint({ ...process.env, ...sandbox.env }), daemon.endpoint);
-    const client = new ControlRoomClient({ connector: await orceldTransport({ endpoint: daemon.endpoint }) });
+    const client = new ControlRoomClient({ connector: await testTransport(daemon.endpoint) });
     const status = await client.getStatus();
     assert.equal(status.app_api, APP_API_PROTOCOL);
     assert.equal(status.read_only, true);
@@ -97,7 +98,7 @@ test("status and capabilities round-trip, and orceld identifies this process", {
 
 test("the client follows events in order without duplicates", { skip, timeout: 60_000 }, async () => {
   await withDaemon("follow", async (_sandbox, daemon) => {
-    const connector = recording(await orceldTransport({ endpoint: daemon.endpoint }));
+    const connector = recording(await testTransport(daemon.endpoint));
     const client = new ControlRoomClient({ connector });
     const reports: IntegrityReport[] = [];
     client.onIntegrity((report) => reports.push(report));
@@ -116,7 +117,7 @@ test("the client follows events in order without duplicates", { skip, timeout: 6
 
 test("a cursor the ring no longer holds gets a gap snapshot and the client resyncs", { skip, timeout: 120_000 }, async () => {
   await withDaemon("gap", async (_sandbox, daemon) => {
-    const connector = recording(await orceldTransport({ endpoint: daemon.endpoint }));
+    const connector = recording(await testTransport(daemon.endpoint));
     const client = new ControlRoomClient({ connector, reconnect: { initialDelayMs: 20, maxDelayMs: 200 } });
     void client.start();
     await waitForState(client, (s) => s.connection === "connected" && s.cursor === 1, "first event");
@@ -142,7 +143,7 @@ test("a cursor the ring no longer holds gets a gap snapshot and the client resyn
 test("a daemon restart is seen as a new epoch; the client reconnects and resubscribes", { skip, timeout: 120_000 }, async () => {
   const sandbox = await createSandbox(uniqueInstance("epoch"));
   let daemon = await startOrceld(sandbox);
-  const connector = recording(await orceldTransport({ endpoint: daemon.endpoint }));
+  const connector = recording(await testTransport(daemon.endpoint));
   const client = new ControlRoomClient({ connector, reconnect: { initialDelayMs: 50, maxDelayMs: 250 } });
   const reports: IntegrityReport[] = [];
   client.onIntegrity((report) => reports.push(report));
@@ -187,8 +188,10 @@ test("a daemon restart is seen as a new epoch; the client reconnects and resubsc
 
 test("an oversize frame is refused by orceld and the connection closed", { skip, timeout: 60_000 }, async () => {
   await withDaemon("frame", async (_sandbox, daemon) => {
-    const connector = await orceldTransport({ endpoint: daemon.endpoint });
-    const { frames, ended } = await exchange(connector, `${"x".repeat(MAX_FRAME_BYTES)}\n`, () => false);
+    const connector = await testTransport(daemon.endpoint);
+    const { frames, ended } = await exchange(connector, `${"x".repeat(MAX_FRAME_BYTES)}\n`, () => false, 20_000, {
+      peerMayReset: true,
+    });
     assert.equal(frames.length, 1);
     const frame = frames[0];
     assert.ok(frame?.type === "error");
@@ -202,6 +205,39 @@ test("an oversize frame is refused by orceld and the connection closed", { skip,
     assert.equal(Buffer.byteLength(exact), MAX_FRAME_BYTES);
     const served = await exchange(connector, exact);
     assert.equal(served.frames[0]?.type, "result");
+  });
+});
+
+test("a socket path over the Unix limit is reported at once, never waited on", { skip, timeout: 60_000 }, async (t) => {
+  if (process.platform === "win32") {
+    t.skip("Unix socket path limit");
+    return;
+  }
+  // As a user whose home (macOS) or XDG_STATE_HOME (Linux) is long.
+  const sandbox = await createSandbox(uniqueInstance("long"), "h".repeat(80));
+  try {
+    const started = Date.now();
+    await assert.rejects(startOrceld(sandbox), /app API unavailable: .*longer than the 100 a Unix socket allows/u);
+    assert.ok(Date.now() - started < 20_000, "the reason arrives without waiting for a timeout");
+    // The client names the same reason instead of ENAMETOOLONG.
+    const endpoint = await defaultEndpoint({ ...process.env, ...sandbox.env });
+    await assert.rejects(connectEndpoint(endpoint), /longer than the 100 a Unix socket allows/u);
+  } finally {
+    await sandbox.dispose();
+  }
+});
+
+test("Windows: the default connector refuses a pipe it cannot verify", { skip, timeout: 60_000 }, async (t) => {
+  if (process.platform !== "win32") {
+    t.skip("Windows pipe rule");
+    return;
+  }
+  await withDaemon("winref", async (_sandbox, daemon) => {
+    // orceld is really listening here, and the default still refuses.
+    const connector = await orceldTransport({ endpoint: daemon.endpoint });
+    await assert.rejects(connector.connect(), /cannot be verified from Node/u);
+    const client = new ControlRoomClient({ connector });
+    await assert.rejects(client.getStatus(), /cannot be verified from Node/u);
   });
 });
 

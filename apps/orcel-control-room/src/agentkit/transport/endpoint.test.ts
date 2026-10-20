@@ -89,5 +89,5 @@ test("the pipe name carries this user's SID; another account's pipe is not ours"
   assert.match(sid, /^S-1-5-/u);
   // SYSTEM's name for the same instance: this user never reaches it.
   const foreign = windowsPipeName("S-1-5-18", { ORCEL_APP_API_INSTANCE: "cr02-none" });
-  await assert.rejects(connectEndpoint(foreign, 2_000));
+  await assert.rejects(connectEndpoint(foreign, { connectTimeoutMs: 2_000, allowUnverifiedWindowsPipe: true }));
 });
