@@ -30,6 +30,20 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo test --workspace
+      # XP-13b: the Linux Safe tier's cgroup path. Under a unit with
+      # Delegate=yes the provider's unix tests must put the child in its own
+      # cgroup (they fail instead of skipping when ORCEL_REQUIRE_SAFE_CGROUP
+      # is set), so a grandchild that leaves the process group is killed too.
+      - name: Safe tier under a delegated cgroup (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          test_bin=$(cargo test -p orcel-provider-process --lib --no-run --message-format=json \
+            | jq -r 'select(.reason == "compiler-artifact" and .executable != null and (.package_id | contains("orcel-provider-process")) and .target.kind == ["lib"]) | .executable')
+          test -x "$test_bin"
+          sudo systemd-run --uid="$(id -u)" --gid="$(id -g)" -p Delegate=yes --pipe --wait --collect \
+            -p WorkingDirectory="$PWD" -E TMPDIR=/tmp -E ORCEL_REQUIRE_SAFE_CGROUP=1 \
+            "$test_bin" unix:: --test-threads=4
       # XP-15: the live clipboard tests (roundtrip, SG-000064, and the
       # ownership-loss test, which takes no filter) must run for real off
       # Windows; they fail instead of skipping when

@@ -194,6 +194,19 @@ mod tests {
     };
     use orcel_approval::ApprovalDecision;
 
+    /// A fake executable the registry admits on this OS: off Windows it
+    /// must start with the native image magic (XP-13b).
+    fn native_image(body: &[u8]) -> Vec<u8> {
+        let magic: &[u8] = if cfg!(windows) {
+            b""
+        } else if cfg!(target_os = "macos") {
+            &[0xcf, 0xfa, 0xed, 0xfe]
+        } else {
+            &[0x7f, b'E', b'L', b'F']
+        };
+        [magic, body].concat()
+    }
+
     fn temp(label: &str) -> PathBuf {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -224,7 +237,7 @@ mod tests {
     fn registration_requires_strong_presence_and_records_hash_pinned_identity() {
         let dir = temp("add");
         let exe = dir.join("tool.exe");
-        std::fs::write(&exe, b"MZ tool").unwrap();
+        std::fs::write(&exe, native_image(b"MZ tool")).unwrap();
         let registry = dir.join("executable_registry.json");
         let add = request(
             "executable.registry.add",
@@ -289,7 +302,7 @@ mod tests {
             broker_with_presence(dir.join("approval.jsonl"), TestPresenceVerifier::verified());
         let registry = dir.join("executable_registry.json");
         let shell = dir.join("powershell.exe");
-        std::fs::write(&shell, b"MZ").unwrap();
+        std::fs::write(&shell, native_image(b"MZ")).unwrap();
         assert!(dispatch_registry(
             &registry,
             &[],
@@ -303,7 +316,7 @@ mod tests {
         )
         .is_err());
         let tool = dir.join("tool.exe");
-        std::fs::write(&tool, b"MZ").unwrap();
+        std::fs::write(&tool, native_image(b"MZ")).unwrap();
         assert!(dispatch_registry(
             &registry,
             std::slice::from_ref(&dir),

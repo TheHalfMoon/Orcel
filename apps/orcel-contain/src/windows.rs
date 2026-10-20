@@ -47,6 +47,30 @@
 //! admits only the user. Recovery (a journal under the state root, replayed
 //! before the next launch) is tracked as follow-up XP-13b.
 //!
+//! Hard links: every file the grant walk reaches must have exactly one link.
+//! A hard link shares its file's security descriptor, so stamping an ACE on
+//! `root\x` would also grant whatever outside file `x` is a second name for
+//! (say `%USERPROFILE%\.ssh\id_rsa`). A file with more than one link aborts
+//! the launch, and the count is read again after the ACE is applied, so a
+//! link created between the check and the grant also aborts it and the grant
+//! is rolled back. Directories cannot be hard linked.
+//!
+//! Order matters because `SetSecurityInfo` propagates an inheritable ACE to
+//! the existing children at once. A tree is therefore granted in three
+//! phases: the walk validates every object (and grants a merged root
+//! non-inheritably); then the directories' ACEs become inheritable, parents
+//! first, and the private working directory gets its protected DACL; then a
+//! last walk refuses the grant if anything in the tree is unledgered or has
+//! gained a link. So an unvalidated child never receives a grant, not even
+//! for the moment before a rollback that a hard kill could interrupt.
+//!
+//! Denial of service, by design: a junction, symbolic link or other reparse
+//! point anywhere inside a root, or a hard-linked file, makes every later
+//! grant of that root refuse to launch until it is removed. Only someone with
+//! write access to the root can plant one (a contained child with a writable
+//! root included), and the effect is a refusal, never a wider grant. Failing
+//! closed is the intended outcome.
+//!
 //! Provenance (T-CUA-22, COPY_ADAPT): adapted from
 //! cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f
 //! `libs/cua-driver/rust/crates/cua-driver-core/src/perception_client/containment/windows.rs`
@@ -1762,6 +1786,13 @@ struct SavedDacl {
 }
 
 impl SavedDacl {
+    /// The DACL as it was before any grant (null when there was none).
+    fn original_dacl(&self) -> *mut c_void {
+        self.dacl_offset.map_or(std::ptr::null_mut(), |offset| {
+            (self.descriptor.0 as usize + offset) as *mut c_void
+        })
+    }
+
     fn capture(target: AclTarget) -> Result<Self, ContainError> {
         let mut dacl: *mut c_void = std::ptr::null_mut();
         let mut descriptor: *mut c_void = std::ptr::null_mut();
@@ -1841,20 +1872,22 @@ impl AclGrantLedger {
         path: &Path,
         grants: &[(*mut c_void, u32)],
     ) -> Result<(), ContainError> {
+        let start = self.entries.len();
         walk_acl_tree(path, &mut |target| {
             if self.contains(target.identity) {
                 return Ok(());
             }
-            let saved = SavedDacl::capture(target)?;
-            let acl = build_acl(grants, saved.target.inheritance(true), std::ptr::null_mut())?;
-            apply_dacl(
-                saved.target.handle.get(),
-                acl.0,
-                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-                "failed to apply the private access control list to the contained process directory",
-            )?;
-            self.entries.push(saved);
+            // Phase one only captures and validates: replacing a directory's
+            // DACL here would strip what its unvisited children inherit, and
+            // the walk could no longer open them.
+            self.entries.push(SavedDacl::capture(target)?);
             Ok(())
+        })?;
+        self.finish_inheritance(path, start, true, |saved| {
+            Ok((
+                build_acl(grants, saved.target.inheritance(true), std::ptr::null_mut())?,
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            ))
         })
     }
 
@@ -1865,6 +1898,7 @@ impl AclGrantLedger {
         access: u32,
         inherit_children: bool,
     ) -> Result<(), ContainError> {
+        let start = self.entries.len();
         walk_acl_tree(path, &mut |target| {
             // Writable trees are processed first. Skipping an already-seen
             // identity prevents a later overlapping read root from adding a
@@ -1873,22 +1907,74 @@ impl AclGrantLedger {
                 return Ok(());
             }
             let saved = SavedDacl::capture(target)?;
-            let existing = saved.dacl_offset.map_or(std::ptr::null_mut(), |offset| {
-                (saved.descriptor.0 as usize + offset) as *mut c_void
-            });
-            let acl = build_acl(
-                &[(sid, access)],
-                saved.target.inheritance(inherit_children),
-                existing,
-            )?;
+            // Phase one: nothing inheritable yet (see `finish_inheritance`).
+            let acl = build_acl(&[(sid, access)], NO_INHERITANCE, saved.original_dacl())?;
+            self.entries.push(saved);
+            let saved = &self.entries[self.entries.len() - 1];
             apply_dacl(
                 saved.target.handle.get(),
                 acl.0,
                 DACL_SECURITY_INFORMATION,
                 "failed to grant the contained process access to a spec root",
             )?;
-            self.entries.push(saved);
-            Ok(())
+            saved.target.ensure_single_link()
+        })?;
+        if !inherit_children {
+            return Ok(());
+        }
+        self.finish_inheritance(path, start, false, |saved| {
+            Ok((
+                build_acl(
+                    &[(sid, access)],
+                    saved.target.inheritance(true),
+                    saved.original_dacl(),
+                )?,
+                DACL_SECURITY_INFORMATION,
+            ))
+        })
+    }
+
+    /// Phase two and three of a tree grant (judge round on #378, L2).
+    /// `SetSecurityInfo` propagates an inheritable ACE to the existing
+    /// children at once, so applying it during the walk could stamp a child
+    /// the walk has not validated yet, such as a hard link to an outside
+    /// file, and a hard kill before rollback would leave that behind. So the
+    /// walk (phase one) validates every object first (and, for a merged grant,
+    /// grants it non-inheritably); only then are the entries this walk
+    /// ledgered (from `start`, parents first) given their final, inheritable
+    /// ACL: every entry when `every_entry` (the private working directory),
+    /// otherwise its directories. A last walk (phase three) refuses the grant
+    /// if any object in the tree is not ledgered (something appeared
+    /// meanwhile) or has gained a second link; either refusal rolls back.
+    fn finish_inheritance(
+        &mut self,
+        path: &Path,
+        start: usize,
+        every_entry: bool,
+        build: impl Fn(&SavedDacl) -> Result<(LocalAcl, u32), ContainError>,
+    ) -> Result<(), ContainError> {
+        for saved in &self.entries[start..] {
+            if !every_entry && !saved.target.is_directory() {
+                continue;
+            }
+            let (acl, information) = build(saved)?;
+            apply_dacl(
+                saved.target.handle.get(),
+                acl.0,
+                information,
+                "failed to make a contained process grant inheritable",
+            )?;
+            saved.target.ensure_single_link()?;
+        }
+        walk_acl_tree(path, &mut |target| {
+            if self.contains(target.identity) {
+                Ok(())
+            } else {
+                Err(containment_error(
+                    "a contained process ACL root changed while it was granted",
+                    None,
+                ))
+            }
         })
     }
 
@@ -1926,6 +2012,7 @@ fn walk_acl_tree(
     apply: &mut impl FnMut(AclTarget) -> Result<(), ContainError>,
 ) -> Result<(), ContainError> {
     let target = AclTarget::open(path)?;
+    check_single_link(&target, target.links)?;
     let is_directory = target.is_directory();
     let resolved = target.path.clone();
     apply(target)?;
@@ -1990,6 +2077,9 @@ struct AclTarget {
     path: PathBuf,
     identity: FileIdentity,
     file_attributes: u32,
+    /// The link count when the handle was opened; the walk refuses more than
+    /// one before granting.
+    links: u32,
 }
 
 impl AclTarget {
@@ -2053,18 +2143,8 @@ impl AclTarget {
                 None,
             ));
         }
-        let mut information = std::mem::MaybeUninit::<ByHandleFileInformation>::uninit();
-        // SAFETY: `handle` is open and the out-pointer addresses a MaybeUninit of exactly
-        // BY_HANDLE_FILE_INFORMATION.
-        if unsafe { GetFileInformationByHandle(handle.get(), information.as_mut_ptr()) } == FALSE {
-            return Err(last_error(
-                "failed to identify a contained process ACL target",
-            ));
-        }
-        // SAFETY: GetFileInformationByHandle returned success, which means it filled every
-        // field.
-        let information = unsafe { information.assume_init() };
-        Ok(Self {
+        let information = file_information(&handle)?;
+        let target = Self {
             handle,
             path: resolved,
             identity: FileIdentity {
@@ -2073,7 +2153,15 @@ impl AclTarget {
                 file_index_low: information.file_index_low,
             },
             file_attributes: tag.file_attributes,
-        })
+            links: information.number_of_links,
+        };
+        Ok(target)
+    }
+
+    /// Read the link count again through the retained handle (see the
+    /// module header: a link made after `open` must not survive the grant).
+    fn ensure_single_link(&self) -> Result<(), ContainError> {
+        check_single_link(self, file_information(&self.handle)?.number_of_links)
     }
 
     fn is_directory(&self) -> bool {
@@ -2087,6 +2175,31 @@ impl AclTarget {
             NO_INHERITANCE
         }
     }
+}
+
+fn file_information(handle: &OwnedHandle) -> Result<ByHandleFileInformation, ContainError> {
+    let mut information = std::mem::MaybeUninit::<ByHandleFileInformation>::uninit();
+    // SAFETY: `handle` is open and the out-pointer addresses a MaybeUninit of exactly
+    // BY_HANDLE_FILE_INFORMATION.
+    if unsafe { GetFileInformationByHandle(handle.get(), information.as_mut_ptr()) } == FALSE {
+        return Err(last_error(
+            "failed to identify a contained process ACL target",
+        ));
+    }
+    // SAFETY: GetFileInformationByHandle returned success, which means it filled every field.
+    Ok(unsafe { information.assume_init() })
+}
+
+/// A file reachable under a second name outside the root would receive the
+/// root's grant through their shared security descriptor.
+fn check_single_link(target: &AclTarget, links: u32) -> Result<(), ContainError> {
+    if !target.is_directory() && links != 1 {
+        return Err(containment_error(
+            "a contained process ACL target has more than one hard link",
+            Some(format!("{links} links")),
+        ));
+    }
+    Ok(())
 }
 
 fn final_path(handle: &OwnedHandle) -> Result<std::path::PathBuf, ContainError> {

@@ -436,12 +436,25 @@ fn enforce_sg000010_executable_policy(
         .map_err(|error| PolicyError::new(error.code, error.message))
 }
 
+/// XP-13b: off Windows there is no baseline executable, and the SG-000060
+/// registry applies exactly as on Windows, now that the Safe tier runs on
+/// Linux and macOS too. An unregistered executable, or argv outside its
+/// registered grammar, is denied before any approval.
 #[cfg(not(windows))]
 fn enforce_sg000010_executable_policy(
-    _executable: &str,
-    _argv: &[String],
+    executable: &str,
+    argv: &[String],
 ) -> Result<(), PolicyError> {
-    Ok(())
+    let registry_path = crate::executable_registry::default_registry_path().map_err(|error| {
+        PolicyError::new(
+            FailureCode::ProviderUnavailable,
+            format!("SG-000060 executable registry is unavailable: {error}"),
+        )
+    })?;
+    let entries = crate::executable_registry::load_registry(&registry_path);
+    crate::executable_registry::check_spawn(&entries, Path::new(executable), argv)
+        .map(|_| ())
+        .map_err(|error| PolicyError::new(error.code, error.message))
 }
 
 pub fn validate_relative_target(target: &str) -> Result<(), PolicyError> {
@@ -553,9 +566,101 @@ mod tests {
             .join("whoami.exe")
     }
 
+    /// Off Windows there is no baseline executable, so the fixture is this
+    /// test binary, registered in the private test registry.
     #[cfg(not(windows))]
     fn process_fixture_executable() -> PathBuf {
-        std::env::current_exe().expect("current executable")
+        registered_fixture_executable()
+    }
+
+    /// A native executable registered (grammar: `--version` only) in a
+    /// private test registry that `ORCEL_EXECUTABLE_REGISTRY_PATH` names for
+    /// the whole test process: this test binary off Windows, `hostname.exe`
+    /// on Windows.
+    fn registered_fixture_executable() -> PathBuf {
+        static REGISTERED: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+        REGISTERED
+            .get_or_init(|| {
+                #[cfg(windows)]
+                let executable = PathBuf::from(std::env::var_os("SystemRoot").expect("SystemRoot"))
+                    .join("System32")
+                    .join("hostname.exe");
+                #[cfg(not(windows))]
+                let executable = std::fs::canonicalize(std::env::current_exe().unwrap()).unwrap();
+                let dir = crate::test_support::unique_temp_dir("orcel-policy-registry");
+                std::fs::create_dir_all(&dir).unwrap();
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+                }
+                let registry = dir.join("executable_registry.json");
+                let entry = crate::executable_registry::build_entry(
+                    "fixture",
+                    &executable,
+                    vec!["--version".into()],
+                    vec![],
+                    1,
+                    &[],
+                    1,
+                )
+                .unwrap();
+                crate::executable_registry::save_registry(&registry, &[entry]).unwrap();
+                std::env::set_var("ORCEL_EXECUTABLE_REGISTRY_PATH", &registry);
+                executable
+            })
+            .clone()
+    }
+
+    /// A native executable that is never registered.
+    fn unregistered_native_executable() -> PathBuf {
+        #[cfg(windows)]
+        return PathBuf::from(std::env::var_os("SystemRoot").expect("SystemRoot"))
+            .join("System32")
+            .join("ipconfig.exe");
+        #[cfg(not(windows))]
+        return std::fs::canonicalize("/bin/hostname").unwrap();
+    }
+
+    /// XP-13b: the policy engine checks the SG-000060 registry on every OS.
+    /// Only Windows keeps a baseline (`whoami.exe`); anywhere else an
+    /// executable that is not registered, or whose argv leaves its grammar,
+    /// is denied before any approval.
+    #[test]
+    fn xp13b_process_spawn_needs_a_registered_executable_on_every_os() {
+        let root = temp_root();
+        let registered = registered_fixture_executable();
+        engine(&root)
+            .authorize(&process_request(&registered))
+            .expect("a registered executable within its grammar");
+
+        let mut outside_grammar = process_request(&registered);
+        outside_grammar.arguments["argv"] = json!(["--help"]);
+        assert_eq!(
+            engine(&root).authorize(&outside_grammar).unwrap_err().code,
+            FailureCode::CapabilityDenied
+        );
+
+        let unregistered = engine(&root)
+            .authorize(&process_request(&unregistered_native_executable()))
+            .unwrap_err();
+        assert_eq!(
+            unregistered.code,
+            FailureCode::CapabilityDenied,
+            "{}",
+            unregistered.message
+        );
+        assert!(
+            unregistered.message.contains("registry"),
+            "{}",
+            unregistered.message
+        );
+
+        #[cfg(windows)]
+        engine(&root)
+            .authorize(&process_request(&process_fixture_executable()))
+            .expect("the Windows whoami.exe baseline needs no registration");
+        let _ = std::fs::remove_dir_all(root);
     }
 
     fn engine(root: &Path) -> PolicyEngine {

@@ -122,8 +122,111 @@ pub const DENIED_EXECUTABLE_STEMS: &[&str] = &[
     "where",
 ];
 
-/// Only native `.exe` images are admissible.
+/// XP-13b: Unix shells, command runners, privilege tools and interpreters,
+/// denied on Linux and macOS in addition to the list above. A command runner
+/// (`env`, `xargs`, `nohup`, ...) would let a registered argv start anything.
+pub const DENIED_UNIX_EXECUTABLE_STEMS: &[&str] = &[
+    "ksh",
+    "mksh",
+    "csh",
+    "tcsh",
+    "ash",
+    "busybox",
+    "toybox",
+    "env",
+    "xargs",
+    "nohup",
+    "setsid",
+    "nice",
+    "timeout",
+    "stdbuf",
+    "chroot",
+    "flock",
+    "script",
+    "expect",
+    "watch",
+    "time",
+    "sudo",
+    "su",
+    "doas",
+    "pkexec",
+    "runuser",
+    "systemd-run",
+    "systemctl",
+    "launchctl",
+    "osascript",
+    "open",
+    "awk",
+    "gawk",
+    "mawk",
+    "nawk",
+    "sed",
+    "find",
+    "vi",
+    "vim",
+    "nvim",
+    "ex",
+    "ed",
+    "emacs",
+    "nano",
+    "less",
+    "more",
+    "man",
+    "gdb",
+    "lldb",
+    "strace",
+    "ltrace",
+    "dtrace",
+    "tmux",
+    "screen",
+    "make",
+    "rlwrap",
+    "parallel",
+    "ssh-agent",
+];
+
+/// Only native `.exe` images are admissible on Windows.
 pub const ALLOWED_EXTENSION: &str = "exe";
+
+/// XP-13b: on Linux and macOS there is no extension rule, so these script
+/// and archive extensions are denied by name, and the file itself must start
+/// with the native image magic (ELF, or Mach-O) when it is registered; a
+/// `#!` script never qualifies.
+pub const DENIED_UNIX_EXTENSIONS: &[&str] = &[
+    "sh",
+    "bash",
+    "zsh",
+    "ksh",
+    "csh",
+    "fish",
+    "py",
+    "pyc",
+    "pyw",
+    "pl",
+    "pm",
+    "rb",
+    "js",
+    "mjs",
+    "cjs",
+    "ts",
+    "php",
+    "lua",
+    "tcl",
+    "r",
+    "jar",
+    "command",
+    "tool",
+    "scpt",
+    "applescript",
+    "workflow",
+    "app",
+    "pkg",
+    "dmg",
+    "deb",
+    "rpm",
+    "appimage",
+    "desktop",
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -253,9 +356,16 @@ pub fn check_admissible_path(path: &Path) -> Result<(), PolicyError> {
         .extension()
         .map(|e| e.to_string_lossy().to_ascii_lowercase())
         .unwrap_or_default();
+    #[cfg(windows)]
     if extension != ALLOWED_EXTENSION {
         return Err(denied(
             "only native .exe images can be registered; scripts, batch files, shortcuts, and installers are denied",
+        ));
+    }
+    #[cfg(not(windows))]
+    if DENIED_UNIX_EXTENSIONS.contains(&extension.as_str()) {
+        return Err(denied(
+            "only native executable images can be registered; scripts, archives, bundles, and installers are denied",
         ));
     }
     let stem = path
@@ -264,9 +374,68 @@ pub fn check_admissible_path(path: &Path) -> Result<(), PolicyError> {
         .unwrap_or_default();
     let base =
         stem.trim_end_matches(|c: char| c.is_ascii_digit() || c == '.' || c == '-' || c == '_');
-    if DENIED_EXECUTABLE_STEMS.contains(&stem.as_str()) || DENIED_EXECUTABLE_STEMS.contains(&base) {
+    let denied_stem = |name: &str| {
+        DENIED_EXECUTABLE_STEMS.contains(&name)
+            || (cfg!(not(windows)) && DENIED_UNIX_EXECUTABLE_STEMS.contains(&name))
+    };
+    if denied_stem(&stem) || denied_stem(base) {
         return Err(denied(
             "shells, interpreters, script hosts, and system administration tools are never registrable",
+        ));
+    }
+    Ok(())
+}
+
+/// XP-13b: refuse an executable another local user could replace between the
+/// digest check and the launch (see
+/// `orcel_platform::paths::check_owned_executable_location`). Checked at
+/// registration and again before every launch.
+fn check_location(path: &Path) -> Result<(), PolicyError> {
+    paths::check_owned_executable_location(path).map_err(|reason| {
+        denied(format!(
+            "registered executables must not be replaceable by other users: {reason}"
+        ))
+    })
+}
+
+/// XP-13b: compare a canonical path with a registered one: exact on Linux,
+/// ASCII case-insensitive where the file system usually is (Windows, macOS).
+/// The registered digest is re-checked either way.
+fn same_path(left: &str, right: &str) -> bool {
+    if cfg!(target_os = "linux") {
+        left == right
+    } else {
+        left.eq_ignore_ascii_case(right)
+    }
+}
+
+/// XP-13b: on Linux and macOS, a registrable file starts with the native
+/// image magic: ELF on Linux; thin or universal Mach-O on macOS. Scripts
+/// (`#!`) and anything else are refused. The registered digest then pins the
+/// bytes, so this is checked once, at registration. Windows keeps its
+/// extension rule.
+pub fn check_native_image(path: &Path) -> Result<(), PolicyError> {
+    if cfg!(windows) {
+        return Ok(());
+    }
+    let mut magic = [0_u8; 4];
+    std::fs::File::open(path)
+        .and_then(|mut file| file.read_exact(&mut magic))
+        .map_err(|error| invalid(format!("executable cannot be read: {error}")))?;
+    let native: &[[u8; 4]] = if cfg!(target_os = "macos") {
+        &[
+            [0xfe, 0xed, 0xfa, 0xcf],
+            [0xcf, 0xfa, 0xed, 0xfe],
+            [0xfe, 0xed, 0xfa, 0xce],
+            [0xce, 0xfa, 0xed, 0xfe],
+            [0xca, 0xfe, 0xba, 0xbe],
+        ]
+    } else {
+        &[[0x7f, b'E', b'L', b'F']]
+    };
+    if !native.contains(&magic) {
+        return Err(denied(
+            "only native executable images can be registered; this file is a script or not an executable",
         ));
     }
     Ok(())
@@ -356,6 +525,8 @@ pub fn build_entry(
     if max_args > MAX_ARGS_CEILING {
         return Err(invalid("max_args must be at most 64"));
     }
+    check_native_image(&canonical)?;
+    check_location(&canonical)?;
     let (sha256, size) = file_identity(&canonical)?;
     Ok(RegisteredExecutable {
         id: id.to_owned(),
@@ -386,7 +557,7 @@ pub fn check_spawn<'a>(
     let canonical = canonical.to_string_lossy().into_owned();
     let entry = entries
         .iter()
-        .find(|entry| entry.path.eq_ignore_ascii_case(&canonical))
+        .find(|entry| same_path(&entry.path, &canonical))
         .ok_or_else(|| {
             denied("process.spawn executable is not in the protected executable registry")
         })?;
@@ -429,12 +600,10 @@ pub fn verify_identity(
             "registered executable is no longer resolvable: {error}"
         ))
     })?;
-    if !canonical
-        .to_string_lossy()
-        .eq_ignore_ascii_case(&entry.path)
-    {
+    if !same_path(&canonical.to_string_lossy(), &entry.path) {
         return Err(denied("registered executable path changed"));
     }
+    check_location(&canonical)?;
     let (sha256, size) = file_identity(&canonical)?;
     if size != entry.size || sha256 != entry.sha256 {
         return Err(PolicyError {
@@ -454,9 +623,7 @@ pub fn upsert(
 ) -> Result<Vec<RegisteredExecutable>, PolicyError> {
     let mut next: Vec<RegisteredExecutable> = entries
         .iter()
-        .filter(|existing| {
-            existing.id != entry.id && !existing.path.eq_ignore_ascii_case(&entry.path)
-        })
+        .filter(|existing| existing.id != entry.id && !same_path(&existing.path, &entry.path))
         .cloned()
         .collect();
     if next.len() >= MAX_ENTRIES {
@@ -494,9 +661,20 @@ mod tests {
         crate::test_support::unique_temp_dir(&format!("orcel-registry-{label}"))
     }
 
+    /// The native image magic `check_native_image` wants on this OS.
+    fn native_magic() -> &'static [u8] {
+        if cfg!(windows) {
+            b""
+        } else if cfg!(target_os = "macos") {
+            &[0xcf, 0xfa, 0xed, 0xfe]
+        } else {
+            b"\x7fELF"
+        }
+    }
+
     fn fake_exe(dir: &Path, name: &str, body: &[u8]) -> PathBuf {
         let path = dir.join(name);
-        std::fs::write(&path, body).unwrap();
+        std::fs::write(&path, [native_magic(), body].concat()).unwrap();
         path
     }
 
@@ -523,7 +701,8 @@ mod tests {
                 "{name}"
             );
         }
-        for name in [
+        #[cfg(windows)]
+        let refused_names = [
             "build.cmd",
             "build.bat",
             "run.ps1",
@@ -533,7 +712,27 @@ mod tests {
             "a.com",
             "a.msi",
             "noext",
-        ] {
+        ];
+        #[cfg(not(windows))]
+        let refused_names = [
+            "build.sh",
+            "run.py",
+            "a.pl",
+            "a.rb",
+            "a.js",
+            "a.command",
+            "x.jar",
+            "bash",
+            "sh",
+            "env",
+            "sudo",
+            "busybox",
+            "xargs",
+            "awk",
+            "osascript",
+            "python3.12",
+        ];
+        for name in refused_names {
             let path = fake_exe(&dir, name, b"MZ");
             assert!(
                 build_entry("x", &path, vec![], vec![], 0, &[], 1).is_err(),
@@ -542,6 +741,65 @@ mod tests {
         }
         assert!(check_admissible_path(Path::new(r"\\server\share\tool.exe")).is_err());
         assert!(check_admissible_path(Path::new("relative\\tool.exe")).is_err());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// XP-13b: on Linux and macOS a registrable file must be a native image,
+    /// whatever its name; a `#!` script with an innocent name is refused.
+    #[cfg(not(windows))]
+    #[test]
+    fn xp13b_only_native_images_are_registrable_off_windows() {
+        let dir = temp("native");
+        let script = dir.join("tool");
+        std::fs::write(&script, b"#!/bin/sh\nexit 0\n").unwrap();
+        assert!(build_entry("tool", &script, vec![], vec![], 0, &[], 1).is_err());
+        let empty = dir.join("empty");
+        std::fs::write(&empty, b"").unwrap();
+        assert!(build_entry("empty", &empty, vec![], vec![], 0, &[], 1).is_err());
+        let native = fake_exe(&dir, "tool-native", b" body");
+        assert!(build_entry("tool", &native, vec![], vec![], 0, &[], 1).is_ok());
+        // The real test binary is a native image.
+        let current = std::env::current_exe().unwrap();
+        assert!(check_native_image(&current).is_ok());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// XP-13b (judge M1): an executable another local user could swap
+    /// between the digest check and the launch is refused at registration
+    /// and again before launch: a group- or world-writable file, or a
+    /// writable directory above it (sticky only counts when root owns it).
+    #[cfg(unix)]
+    #[test]
+    fn xp13b_executables_others_can_replace_are_refused() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp("shared");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path = fake_exe(&dir, "tool", b" body");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let entry = build_entry("tool", &path, vec![], vec![], 0, &[], 1).unwrap();
+        assert!(verify_identity(&entry, &path).is_ok());
+
+        for mode in [0o775, 0o757, 0o777] {
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+            assert!(
+                build_entry("tool", &path, vec![], vec![], 0, &[], 1).is_err(),
+                "{mode:o}"
+            );
+            assert!(verify_identity(&entry, &path).is_err(), "{mode:o}");
+        }
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        // The user's own sticky directory is not root's /tmp: still refused.
+        for mode in [0o775, 0o777, 0o1777] {
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(mode)).unwrap();
+            assert!(
+                build_entry("tool", &path, vec![], vec![], 0, &[], 1).is_err(),
+                "{mode:o}"
+            );
+            assert!(verify_identity(&entry, &path).is_err(), "{mode:o}");
+        }
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(verify_identity(&entry, &path).is_ok());
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -572,7 +830,7 @@ mod tests {
             1,
         )
         .unwrap();
-        assert_eq!(ok.size, 7);
+        assert_eq!(ok.size, 7 + native_magic().len() as u64);
         assert_eq!(ok.sha256.len(), 64);
         let _ = std::fs::remove_dir_all(dir);
     }

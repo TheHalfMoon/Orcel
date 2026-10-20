@@ -42,7 +42,40 @@ and again by the helper, which opens it without following links.
 No namespace of any type is created, so `RestrictNamespaces=yes` in
 `orceld@.service` does not affect it (issue #369, item 1).
 
+## Hard links and junctions
+
+A hard link is a second name for a file, and the name can sit inside a root
+while the file's other name is outside every root.
+
+- Windows refuses it. A hard link shares its file's security descriptor, so an
+  ACE on the link would land on the outside file. The grant walk refuses any
+  file with more than one link, in every root and for the executable, and
+  reads the count again after the ACE is applied; either refusal rolls back
+  every grant made so far.
+- Linux and macOS cannot refuse it, which is a residual risk (below). The
+  boundary there is path based, so a hard link that already exists inside a
+  granted root lets the contained process read (or, in a write root, write)
+  the linked file through the granted path. The helper does not walk the
+  roots to look for links. The contained process cannot create such a link
+  itself, to a file it may only read or cannot reach: Landlock withholds
+  `REFER` from every root that is not writable, Seatbelt allows a link only
+  where both names are writable, and on Windows the AppContainer has no
+  write-attributes right on read-only roots. A link between two names inside
+  the write root is allowed on every OS; it widens nothing.
+  `xp13_the_contained_process_cannot_create_a_hard_link` checks this on every
+  OS, and `xp13_a_hard_link_already_in_a_granted_root` pins the behaviour of
+  each OS for a link that already exists.
+
 ## Residual risks
+
+- Linux and macOS: a hard link that already exists inside a granted root
+  reaches its target, wherever that is (see above). Grant only roots that
+  only Orcel and the user write to.
+- Windows, denial of service by design: a junction, symbolic link or other
+  reparse point anywhere inside a root, or a hard-linked file, makes every
+  later launch that grants that root refuse with `launch_failed` until it is
+  removed. Anyone with write access to a shared write root, a contained child
+  included, can plant one. The launch fails closed: it never grants more.
 
 - Linux: "exact executable" limits what `execve` may start, not which bytes
   run. Landlock does not mediate `mmap(PROT_EXEC)`, so readable code can be
