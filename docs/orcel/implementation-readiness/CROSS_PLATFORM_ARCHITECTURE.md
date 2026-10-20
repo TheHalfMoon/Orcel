@@ -35,7 +35,7 @@ orcel-platform   providers (fs, git,     computer host          browser host
 | STRONG presence | Windows Hello `UserConsentVerifier` | LocalAuthentication in a signed helper | polkit `auth_self` action `ai.orcel.approve.strong` | XP-09, XP-10 |
 | Accessibility tree | UIA (Go host) | AX via Cua `platform-macos/src/ax` | AT-SPI via Cua `platform-linux/src/atspi` (pure Rust zbus) | XP-06 |
 | Window list and identity | HWND + pid + generation + nonce | CGWindowID + pid + generation + nonce | X11 window id or Wayland toplevel token + pid + generation | XP-06 |
-| Window capture | Go host `native_capture_windows.go` | ScreenCaptureKit via Cua `capture.rs` | X11 MIT-SHM, wlroots screencopy; GNOME/KDE via portal (later) | XP-07 |
+| Window capture | Go host `native_capture_windows.go` | ScreenCaptureKit window filter via Cua `capture.rs` (P-08: no CLI or SkyLight fallback, no pointer; never raises the direct-capture alert) | X11 MIT-SHM or `XGetImage` via Cua `capture.rs` (P-08: no ImageMagick), refused when covered or clipped; Wayland unavailable: Cua's screencopy is output-level, so not exact-window; GNOME/KDE via portal (later) | XP-07 |
 | Semantic actions | UIA patterns | AX actions (background) | AT-SPI actions (background) | XP-11 |
 | Raw input | `SendInput`, fresh human-input tick | CGEvent / SkyLight post-to-pid; idle via `CGEventSourceSecondsSinceLastEventType` | XTest/MPX on X11; Sway; GNOME portal/libei; KDE refused | XP-12 |
 | Clipboard | Win32 | NSPasteboard via `clipboard-rs` | X11/Wayland via `clipboard-rs` | XP-15 |
@@ -100,7 +100,7 @@ Public tool names (`desktop_window_tree` → `uia.tree/observe`, `desktop_elemen
 | Capability | Windows | macOS | Linux X11 | Linux Sway | Linux GNOME | Linux KDE | Task |
 |---|---|---|---|---|---|---|---|
 | list/observe windows | qualified | T | T | T | T (helper) | T (identity only) | XP-06 |
-| window capture | qualified | T | T | T | T (portal) | T (portal) | XP-07, XP-12 |
+| window capture | qualified | XP-07 (CI: unavailable without recorded consent; live check manual) | XP-07 (CI live under Xvfb) | unavailable until an exact-toplevel capture path exists | T (portal) | T (portal) | XP-07, XP-12 |
 | semantic actions | qualified | T | T | T | T | T | XP-11 |
 | raw input | qualified (foreground) | T (background + foreground) | T | T | T (portal/libei) | refused by design | XP-12 |
 | approvals SOFT/STRONG | qualified | T | T | T | T | T | XP-09, XP-10 |

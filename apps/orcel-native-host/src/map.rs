@@ -49,6 +49,13 @@ pub const PROTECTED_EXECUTABLES: &[&str] = &[
     "securityagent",
     "screensaverengine",
     "coreautha",
+    // XP-07 review: system alert and authentication agents. The XP-09 SOFT
+    // approval is an untitled UserNotificationCenter alert.
+    "usernotificationcenter",
+    "universalaccessauthwarn",
+    "coreservicesuiagent",
+    "authorizationhost",
+    "localauthenticationremoteservice",
 ];
 #[cfg(not(target_os = "macos"))]
 pub const PROTECTED_EXECUTABLES: &[&str] = &[
@@ -540,6 +547,29 @@ mod tests {
             assert!(is_protected_executable(name), "{name}");
         }
         assert!(!is_protected_executable("gedit"));
+    }
+
+    /// XP-07 review: a window owned by UserNotificationCenter (the XP-09
+    /// SOFT approval alert) or another system alert or authentication agent
+    /// is never listed. The same owner check refuses observation and
+    /// capture (`worker::process_identity`, `protected_surface`).
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn system_alert_agents_are_never_listed() {
+        for exe in [
+            "UserNotificationCenter",
+            "universalAccessAuthWarn",
+            "CoreServicesUIAgent",
+            "AuthorizationHost",
+            "LocalAuthenticationRemoteService",
+        ] {
+            assert!(is_protected_executable(exe), "{exe}");
+            let windows = vec![window(7, Some(21), "Orcel approval SOFT", exe)];
+            let (facts, omitted) =
+                map_windows(&windows, "cgwindow", 1, |pid| Some(identity(pid, 3, exe)));
+            assert!(facts.is_empty(), "{exe}");
+            assert_eq!(omitted, vec![Omission::Protected], "{exe}");
+        }
     }
 
     #[test]

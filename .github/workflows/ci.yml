@@ -290,9 +290,13 @@ jobs:
         # XP-06: a GTK3 probe with a password field and a protected Orcel
         # surface, observed through the real host (frame log must never hold
         # the secret) and through orcel-provider-uia's registry end to end.
-        # Both tests fail instead of skipping when ORCEL_XP06_LIVE is set.
+        # XP-07: a GTK3 capture probe captured exactly (marker colour, 320x200
+        # client area), its protected surface refused, a covered and a
+        # minimized window refused, through the host and the registry.
+        # Every test fails instead of skipping when its variable is set.
         env:
           ORCEL_XP06_LIVE: "1"
+          ORCEL_XP07_LIVE: deliver
         run: |
           set -euo pipefail
           export ORCEL_COMPUTER_HOST_BIN="$PWD/target/release/orcel-native-host"
@@ -303,9 +307,22 @@ jobs:
             openbox >/dev/null 2>&1 &
             sleep 1
             cargo test --locked --release -p orcel-native-host --test live_observation -- --nocapture
+            cargo test --locked --release -p orcel-native-host --test live_capture -- --nocapture
             cd ../..
             cargo test --locked -p orcel-provider-uia --test xp06_native_host_live -- --nocapture
+            cargo test --locked -p orcel-provider-uia --test xp07_native_capture_live -- --nocapture
           '
+      - name: Capture availability on the macOS runner (XP-07, report mode)
+        if: runner.os == 'macOS'
+        # The host captures only with Screen Recording granted and replayd's
+        # direct-capture consent already recorded for the app macOS holds
+        # responsible for it; it never raises either prompt. The runner's
+        # responsible process is not an app bundle, so capture is expected
+        # to be unavailable with permission_missing here, and the test checks
+        # that refusal. Where it is delivered, the full AppKit check runs.
+        env:
+          ORCEL_XP07_LIVE: report
+        run: cargo test --locked --release -p orcel-native-host --test live_capture -- --nocapture
       # XP-08: the shared native conformance suite. The harness apps are Cua's
       # MIT fixtures (tests/native-fixtures, T-CUA-07), built from source on
       # the runner: GTK3 runs as PyGObject source, AppKit and WKWebView are

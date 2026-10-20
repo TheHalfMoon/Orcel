@@ -76,7 +76,19 @@ fn hello_reports_platform_backend_and_exactly_one_entry_per_operation() {
                     );
                 }
             }
-            "capture_window" => assert_eq!(support, "unavailable"),
+            // XP-07: delivered in the background where the session allows
+            // exact-window capture, otherwise unavailable with a reason.
+            "capture_window" => match support {
+                "delivered" => assert_eq!(table[op]["delivery"], "background"),
+                "unavailable" => {
+                    let reason = table[op]["reason"].as_str().unwrap();
+                    assert!(
+                        matches!(reason, "permission_missing" | "provider_unavailable"),
+                        "{op}: {reason}"
+                    );
+                }
+                other => panic!("capture_window support {other}"),
+            },
             _ => {
                 assert_eq!(support, "refused", "{op}");
                 assert_eq!(table[op]["reason"], "capability_denied", "{op}");
@@ -111,7 +123,6 @@ fn session_ops_unknown_ops_and_mutations_are_answered_without_native_work() {
             "input_type_text",
             json!({"text": "x", "expected_last_input_tick": 1}),
         ),
-        ("capture_window", json!({})),
     ] {
         let mut fields = binding.clone();
         fields
@@ -121,6 +132,37 @@ fn session_ops_unknown_ops_and_mutations_are_answered_without_native_work() {
         let reply = host.request(op, fields);
         assert_eq!(reply["ok"], false, "{op}");
         assert_eq!(error_code(&reply), "capability_denied", "{op}");
+    }
+    assert!(host.shutdown().success());
+}
+
+/// XP-07: capture is served as an observation. A binding no live window of
+/// this user holds is refused with a typed code and no pixels; it is never
+/// `capability_denied`, and never answered with a frame.
+#[test]
+fn capture_of_a_window_that_is_not_a_target_is_refused_without_pixels() {
+    let mut host = Host::spawn();
+    let hello = host.hello();
+    let entry = hello["capabilities"]["capture_window"].clone();
+    for pid in [1u64, 4_000_000] {
+        let reply = host.request(
+            "capture_window",
+            json!({"window": {"kind": support::window_kind(), "id": 9, "expected_pid": pid,
+                "expected_start_generation": 2, "expected_window_nonce": 3}}),
+        );
+        assert_eq!(reply["ok"], false, "{reply}");
+        assert!(reply.get("capture").is_none(), "{reply}");
+        let code = error_code(&reply);
+        if entry["support"] == "delivered" {
+            // pid 1 runs as another user (excluded); no process holds the
+            // other pid (stale).
+            assert!(
+                matches!(code, "protected_surface" | "target_stale"),
+                "{pid}: {reply}"
+            );
+        } else {
+            assert_eq!(code, entry["reason"].as_str().unwrap(), "{reply}");
+        }
     }
     assert!(host.shutdown().success());
 }
@@ -203,7 +245,12 @@ fn missing_session_or_permission_is_unavailable_with_its_reason() {
     let hello = host.hello();
     let table = hello["capabilities"].clone();
     if cfg!(not(target_os = "macos")) {
-        for op in ["list_windows", "observe_window", "cursor_position"] {
+        for op in [
+            "list_windows",
+            "observe_window",
+            "cursor_position",
+            "capture_window",
+        ] {
             assert_eq!(table[op]["support"], "unavailable", "{op}");
             assert_eq!(table[op]["reason"], "provider_unavailable", "{op}");
         }
@@ -216,6 +263,12 @@ fn missing_session_or_permission_is_unavailable_with_its_reason() {
         assert_eq!(table["list_windows"]["support"], expected, "{hello}");
         if !granted {
             assert_eq!(table["list_windows"]["reason"], "permission_missing");
+            assert_eq!(table["capture_window"]["reason"], "permission_missing");
+        }
+        // XP-07: capture also needs the direct-capture consent recorded.
+        if permissions["direct_capture_consent"] == false {
+            assert_eq!(table["capture_window"]["support"], "unavailable");
+            assert_eq!(table["capture_window"]["reason"], "permission_missing");
         }
         eprintln!("XP-06 macOS permissions on this runner: {permissions}");
     }
