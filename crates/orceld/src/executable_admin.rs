@@ -1,7 +1,8 @@
 //! SG-000060 local protected executable registry management.
 //!
 //! `executable.registry.add` requires STRONG platform presence bound to a
-//! digest of the exact entry (path, hash, size, grammar). `remove` is
+//! digest of the exact entry (path, hash, size, grammar, and the tier when
+//! it is the opt-in contained tier, XP-13b). `remove` is
 //! authority-reducing and needs no approval. `list` is read-only. Remote
 //! contexts can never reach these capabilities (local-only `executable.`
 //! prefix), and no MCP tool exists for them.
@@ -9,7 +10,7 @@
 use orcel_approval::{ApprovalBroker, ApprovalPrompt, ConsumeExpectation};
 use orcel_contracts::{FailureCode, RequestEnvelope};
 use orcel_policy::executable_registry::{
-    build_entry, load_registry, registration_digest, save_registry, upsert,
+    build_entry, load_registry, registration_digest, save_registry, upsert, ExecutionTier,
 };
 use orcel_policy::POLICY_REVISION;
 use orcel_provider_fs::ProviderError;
@@ -50,6 +51,7 @@ fn summary(entry: &orcel_policy::executable_registry::RegisteredExecutable) -> V
         "subcommands": entry.subcommands,
         "denied_args": entry.denied_args,
         "max_args": entry.max_args,
+        "tier": entry.tier.as_str(),
     })
 }
 
@@ -57,7 +59,7 @@ fn summary(entry: &orcel_policy::executable_registry::RegisteredExecutable) -> V
 pub fn registered_summaries(path: &Path) -> Vec<Value> {
     load_registry(path)
         .iter()
-        .map(|entry| json!({ "id": entry.id, "path": entry.path, "subcommands": entry.subcommands, "max_args": entry.max_args }))
+        .map(|entry| json!({ "id": entry.id, "path": entry.path, "subcommands": entry.subcommands, "max_args": entry.max_args, "tier": entry.tier.as_str() }))
         .collect()
 }
 
@@ -94,13 +96,31 @@ pub fn dispatch_registry(
             let object = arguments.as_object().ok_or_else(|| {
                 ProviderError::new(FailureCode::InvalidRequest, "arguments must be an object")
             })?;
-            const FIELDS: [&str; 5] = ["id", "path", "subcommands", "denied_args", "max_args"];
+            const FIELDS: [&str; 6] = [
+                "id",
+                "path",
+                "subcommands",
+                "denied_args",
+                "max_args",
+                "tier",
+            ];
             if object.keys().any(|key| !FIELDS.contains(&key.as_str())) {
                 return Err(ProviderError::new(
                     FailureCode::InvalidRequest,
-                    "registration accepts only id, path, subcommands, denied_args, and max_args",
+                    "registration accepts only id, path, subcommands, denied_args, max_args, and tier",
                 ));
             }
+            let tier = match arguments.get("tier") {
+                None | Some(Value::Null) => ExecutionTier::Safe,
+                Some(Value::String(tier)) => ExecutionTier::parse(Some(tier))
+                    .map_err(|error| ProviderError::new(error.code, error.message))?,
+                Some(_) => {
+                    return Err(ProviderError::new(
+                        FailureCode::InvalidRequest,
+                        "tier must be a string",
+                    ))
+                }
+            };
             let id = arguments
                 .get("id")
                 .and_then(Value::as_str)
@@ -115,7 +135,7 @@ pub fn dispatch_registry(
                 .get("max_args")
                 .and_then(Value::as_u64)
                 .unwrap_or(16) as usize;
-            let entry = build_entry(
+            let mut entry = build_entry(
                 id,
                 Path::new(path),
                 strings(arguments, "subcommands")?,
@@ -125,6 +145,7 @@ pub fn dispatch_registry(
                 now_ms,
             )
             .map_err(|error| ProviderError::new(error.code, error.message))?;
+            entry.tier = tier;
             let digest = registration_digest(&entry, POLICY_REVISION);
             let prompt = ApprovalPrompt::new_strong(
                 request.workspace_id.clone(),
@@ -132,13 +153,14 @@ pub fn dispatch_registry(
                 "register a protected executable",
                 entry.path.clone(),
                 format!(
-                    "id={} sha256={} size={} subcommands={} denied_args={} max_args={}",
+                    "id={} sha256={} size={} subcommands={} denied_args={} max_args={} tier={}",
                     entry.id,
                     entry.sha256,
                     entry.size,
                     entry.subcommands.join(","),
                     entry.denied_args.join(","),
-                    entry.max_args
+                    entry.max_args,
+                    entry.tier.as_str()
                 ),
                 digest.clone(),
             );
@@ -292,6 +314,37 @@ mod tests {
             "removal is authority-reducing and needs no approval"
         );
         assert!(load_registry(&registry).is_empty());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// XP-13b: the contained tier is chosen at registration, under the same
+    /// STRONG approval, and an unknown tier is refused.
+    #[test]
+    fn xp13b_a_registration_can_choose_the_contained_tier() {
+        let dir = temp("tier");
+        let exe = dir.join("tool.exe");
+        std::fs::write(&exe, native_image(b"MZ tool")).unwrap();
+        let registry = dir.join("executable_registry.json");
+        let broker =
+            broker_with_presence(dir.join("approval.jsonl"), TestPresenceVerifier::verified());
+        let add = |tier: Value| {
+            request(
+                "executable.registry.add",
+                "add",
+                json!({ "id": "tool", "path": exe.to_string_lossy(), "max_args": 2, "tier": tier }),
+            )
+        };
+        for bad in [json!("sandboxed"), json!(true)] {
+            assert!(dispatch_registry(&registry, &[], &broker, &add(bad), 1).is_err());
+        }
+        assert!(load_registry(&registry).is_empty());
+        let added =
+            dispatch_registry(&registry, &[], &broker, &add(json!("contained")), 1).unwrap();
+        assert_eq!(added["tier"], "contained");
+        assert_eq!(load_registry(&registry)[0].tier, ExecutionTier::Contained);
+        let safe = dispatch_registry(&registry, &[], &broker, &add(Value::Null), 1).unwrap();
+        assert_eq!(safe["tier"], "safe");
+        assert_eq!(load_registry(&registry)[0].tier, ExecutionTier::Safe);
         let _ = std::fs::remove_dir_all(dir);
     }
 

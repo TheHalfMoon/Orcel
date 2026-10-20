@@ -38,6 +38,8 @@ runs:
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         cargo build --release --locked -p orceld -p orcel-lifecycle --bins
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        cargo build --release --locked --manifest-path apps/orcel-contain/Cargo.toml --bin orcel-contain
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         node scripts/package-release.mjs --out $second
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         node scripts/archive-release.mjs --release $second --out "$second.zip"
@@ -51,7 +53,7 @@ runs:
         New-Item -ItemType Directory -Force $out | Out-Null
         $identical = $true
         $binaries = [ordered]@{}
-        foreach ($name in "orcel.exe", "orcel-mcp-host.exe", "orceld.exe") {
+        foreach ($name in "orcel.exe", "orcel-mcp-host.exe", "orceld.exe", "orcel-contain.exe") {
           $a = (Get-FileHash (Join-Path $first $name) -Algorithm SHA256).Hash.ToLower()
           $b = (Get-FileHash (Join-Path $second $name) -Algorithm SHA256).Hash.ToLower()
           $binaries[$name] = [ordered]@{ first = $a; second = $b; identical = ($a -eq $b) }

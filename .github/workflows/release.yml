@@ -122,12 +122,14 @@ jobs:
           echo "VERSION=$version" >> "$GITHUB_ENV"
       - name: Build orceld (release, locked)
         run: cargo build --release --locked -p orceld
+      - name: Build the orcel-contain helper (release, locked, its own workspace)
+        run: cargo build --release --locked --manifest-path apps/orcel-contain/Cargo.toml --bin orcel-contain
       - name: Install the pinned nfpm (checksum-verified)
         run: |
           bash distribution/linux/install-nfpm.sh "$RUNNER_TEMP/nfpm-bin"
           echo "$RUNNER_TEMP/nfpm-bin" >> "$GITHUB_PATH"
       - name: Build the deb, rpm and tarball
-        run: bash distribution/linux/package.sh "$VERSION" target/release/orceld "$RUNNER_TEMP/linux-dist"
+        run: bash distribution/linux/package.sh "$VERSION" target/release/orceld apps/orcel-contain/target/release/orcel-contain "$RUNNER_TEMP/linux-dist"
       - name: Attest build provenance for the Linux packages
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:

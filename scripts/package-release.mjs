@@ -3,9 +3,14 @@
 //
 // Usage:
 //   node scripts/package-release.mjs --out <empty-or-new-dir> [--target-dir target/release]
+//     [--contain-target-dir apps/orcel-contain/target/release]
 //
 // Prerequisites: `cargo build --release -p orceld -p orcel-lifecycle` on
-// Windows and `npm run build` for the MCP app. The script copies only runtime
+// Windows, `cargo build --release --locked --bin orcel-contain` in
+// apps/orcel-contain (its own workspace, XP-13b), and `npm run build` for the
+// MCP app. The helper ships beside orceld.exe with its pin,
+// orcel-contain.sha256, which orceld reads to pin it (both are manifest
+// files, so the installer verifies them too). The script copies only runtime
 // payload (no tests, type declarations, or source maps), installs the MCP
 // app's production dependencies, and writes a manifest whose paths satisfy
 // the same rules the installer enforces.
@@ -87,6 +92,7 @@ function sha256(path) {
 const out = resolve(arg("--out", ""));
 if (!process.argv.includes("--out")) fail("--out <dir> is required");
 const targetDir = resolve(repo, arg("--target-dir", "target/release"));
+const containTargetDir = resolve(repo, arg("--contain-target-dir", "apps/orcel-contain/target/release"));
 const version = workspaceVersion();
 
 if (existsSync(out) && readdirSync(out).length > 0) fail(`${out} must be empty or absent`);
@@ -97,6 +103,14 @@ for (const binary of BINARIES) {
   if (!existsSync(from)) fail(`missing ${from}; run cargo build --release on Windows first`);
   copyFileSync(from, join(out, binary));
 }
+// XP-13b: the contained-tier helper and its pin. orceld resolves both only
+// beside its own executable.
+const containHelper = join(containTargetDir, "orcel-contain.exe");
+if (!existsSync(containHelper)) {
+  fail(`missing ${containHelper}; run cargo build --release --locked --bin orcel-contain in apps/orcel-contain first`);
+}
+copyFileSync(containHelper, join(out, "orcel-contain.exe"));
+writeFileSync(join(out, "orcel-contain.sha256"), `${sha256(join(out, "orcel-contain.exe"))}\n`);
 copyFileSync(join(repo, "LICENSE"), join(out, "LICENSE"));
 
 const appSource = join(repo, "apps/orcel-mcp");

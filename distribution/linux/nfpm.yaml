@@ -3,8 +3,8 @@
 # per-user tarball. package.sh runs nfpm inside a staging directory that
 # holds every `src` below, and sets ORCEL_VERSION and ORCEL_ARCH.
 #
-# The package installs read-only, root-owned files only: orceld and two
-# systemd *user* units. It has no maintainer scripts, nothing setuid or
+# The package installs read-only, root-owned files only: orceld, the
+# orcel-contain helper with its pin (XP-13b), and two systemd *user* units. It has no maintainer scripts, nothing setuid or
 # setgid, no system unit and no network listener. Nothing is enabled at
 # install time; each user opts in with
 # `systemctl --user enable --now orceld.socket`. All state stays in the
@@ -44,6 +44,20 @@ contents:
     dst: /usr/lib/orcel/orceld
     file_info:
       mode: 0755
+      owner: root
+      group: root
+  # XP-13b: the contained-tier helper and its pin, beside orceld, which
+  # resolves them only there.
+  - src: orcel-contain
+    dst: /usr/lib/orcel/orcel-contain
+    file_info:
+      mode: 0755
+      owner: root
+      group: root
+  - src: orcel-contain.sha256
+    dst: /usr/lib/orcel/orcel-contain.sha256
+    file_info:
+      mode: 0644
       owner: root
       group: root
   - src: orceld.socket
