@@ -96,6 +96,13 @@
         "risks": [],
         "matrix_rows": [],
         "build_new_justification": "Path resolution and permission checks are Orcel's own state contract; Cua's state-dir handling (CUA_DRIVER_RS_HOME, keyvault paths) is product-specific and weaker on ancestor checks. Already implemented in PR #345."
+      },
+      "progress": {
+        "state": "MERGED",
+        "prs": [
+          345
+        ],
+        "qualification": "Per PR evidence."
       }
     },
     {
@@ -180,6 +187,13 @@
         "risks": [],
         "matrix_rows": [],
         "build_new_justification": "Applies XP-01's crate to Orcel's own stores; no donor code applies."
+      },
+      "progress": {
+        "state": "MERGED",
+        "prs": [
+          357
+        ],
+        "qualification": "Per PR evidence."
       }
     },
     {
@@ -247,6 +261,13 @@
         "risks": [],
         "matrix_rows": [],
         "build_new_justification": "CI matrix configuration of Orcel's own workflow; nothing to reuse. In PR #346."
+      },
+      "progress": {
+        "state": "MERGED",
+        "prs": [
+          346
+        ],
+        "qualification": "Per PR evidence."
       }
     },
     {
@@ -333,6 +354,13 @@
           "T-CUA-23",
           "T-CUA-24"
         ]
+      },
+      "progress": {
+        "state": "MERGED",
+        "prs": [
+          360
+        ],
+        "qualification": "Per PR evidence. Follow-ups for CR-01 in #367."
       }
     },
     {
@@ -417,6 +445,13 @@
         "risks": [],
         "matrix_rows": [],
         "build_new_justification": "Orcel's private protocol is a compatibility contract with the qualified Go host; adopting Cua's MCP or envelope protocol would add a second protocol and a second authority surface. Refusal codes are reused from Cua's action-result contract (REFERENCE)."
+      },
+      "progress": {
+        "state": "MERGED",
+        "prs": [
+          348
+        ],
+        "qualification": "Per PR evidence."
       }
     },
     {
@@ -512,6 +547,13 @@
         "maintenance": "none beyond normal",
         "risks": [],
         "matrix_rows": []
+      },
+      "progress": {
+        "state": "MERGED",
+        "prs": [
+          354
+        ],
+        "qualification": "Per PR evidence. Follow-ups in #355."
       }
     },
     {
@@ -611,6 +653,13 @@
         "maintenance": "none beyond normal",
         "risks": [],
         "matrix_rows": []
+      },
+      "progress": {
+        "state": "MERGED",
+        "prs": [
+          372
+        ],
+        "qualification": "Read-only observation on macOS and Linux; capture unavailable until XP-07. macOS live check still open (#383)."
       }
     },
     {
@@ -871,6 +920,14 @@
           "T-CUA-20",
           "T-CUA-27"
         ]
+      },
+      "progress": {
+        "state": "MERGED",
+        "prs": [
+          361,
+          365
+        ],
+        "qualification": "XP-09 approvals only: real-hardware macOS qualification (Apple M2, macOS 26.6.2, code at ceec7a0; evidence on #362). The macOS product is not qualified; signing and packaging remain XP-16/FD-05."
       }
     },
     {
@@ -960,6 +1017,13 @@
         "matrix_rows": [
           "T-CUA-20"
         ]
+      },
+      "progress": {
+        "state": "MERGED",
+        "prs": [
+          364
+        ],
+        "qualification": "Not release-qualified until a live Linux desktop check (#373)."
       }
     },
     {
@@ -1231,6 +1295,14 @@
           "T-CUA-21",
           "T-CUA-22"
         ]
+      },
+      "progress": {
+        "state": "PARTIAL",
+        "prs": [
+          371,
+          378
+        ],
+        "qualification": "Part 1 (#371, contained tier) and XP-13b part A (#378) merged. Part B (orceld wiring and packaging, #380) is open, so contained-tier confinement is not yet usable end to end."
       }
     },
     {
@@ -1393,6 +1465,13 @@
         "maintenance": "none beyond normal",
         "risks": [],
         "matrix_rows": []
+      },
+      "progress": {
+        "state": "MERGED",
+        "prs": [
+          353
+        ],
+        "qualification": "Per PR evidence. Follow-ups in #356."
       }
     },
     {
@@ -1573,6 +1652,13 @@
           "T-CUA-36"
         ],
         "build_new_justification": "No donor ships per-user Linux packaging without Nix or Electron. Two small templates are reused: Cua's polkit action file (COPY_ADAPT) and a systemd user unit (REFERENCE); the nfpm config and lifecycle code are new."
+      },
+      "progress": {
+        "state": "MERGED",
+        "prs": [
+          363
+        ],
+        "qualification": "Packaging merged; no live install or release qualification. Follow-ups in #369."
       }
     },
     {
@@ -1720,6 +1806,13 @@
         "matrix_rows": [
           "T-CUA-34"
         ]
+      },
+      "progress": {
+        "state": "MERGED",
+        "prs": [
+          379
+        ],
+        "qualification": "Per PR evidence. Follow-ups in #382."
       }
     },
     {
@@ -1875,6 +1968,13 @@
           "T-CUA-25",
           "T-CUA-26"
         ]
+      },
+      "progress": {
+        "state": "MERGED",
+        "prs": [
+          370
+        ],
+        "qualification": "Read-only app API on Windows, macOS and Linux. Code-identity check of the client is not yet enforced; follow-ups in #375."
       }
     },
     {
@@ -1947,6 +2047,13 @@
         "maintenance": "none beyond normal",
         "risks": [],
         "matrix_rows": []
+      },
+      "progress": {
+        "state": "MERGED",
+        "prs": [
+          377
+        ],
+        "qualification": "Headless client only. Follow-ups in #381."
       }
     },
     {
@@ -3798,6 +3905,13 @@
         "risks": [],
         "matrix_rows": [],
         "build_new_justification": "A ~1-day schema; Cua's e2e results-summary design is used as REFERENCE for dimensions."
+      },
+      "progress": {
+        "state": "MERGED",
+        "prs": [
+          347
+        ],
+        "qualification": "Per PR evidence."
       }
     },
     {
