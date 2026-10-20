@@ -50,15 +50,18 @@ pub(crate) const V1_OPERATIONS: [&str; 16] = [
 ];
 
 /// The operations the kernel accepts from the macOS and Linux host (XP-06).
-/// Every other operation is unavailable there until XP-11 and XP-12 qualify
-/// semantic actions, capture and input, even if a host advertises it.
-pub(crate) const NATIVE_OBSERVATION_OPERATIONS: [&str; 6] = [
+/// XP-07 adds `capture_window`, an observation: it reads the pixels of one
+/// exact window and changes nothing. Every other operation is unavailable
+/// there until XP-11 and XP-12 qualify semantic actions and input, even if a
+/// host advertises it.
+pub(crate) const NATIVE_OBSERVATION_OPERATIONS: [&str; 7] = [
     "hello",
     "ping",
     "shutdown",
     "list_windows",
     "observe_window",
     "cursor_position",
+    "capture_window",
 ];
 
 const PLATFORMS: [&str; 3] = ["windows", "macos", "linux"];
@@ -630,6 +633,19 @@ mod tests {
         assert!(negotiate("macos", |_| Ok(frame(&atspi_on_macos))).is_err());
     }
 
+    /// XP-07: capture is an observation the kernel accepts from the native
+    /// host, and the cap still never lets it enable input or actions.
+    #[test]
+    fn native_observation_set_holds_capture_and_no_mutation() {
+        assert!(NATIVE_OBSERVATION_OPERATIONS.contains(&"capture_window"));
+        for op in NATIVE_OBSERVATION_OPERATIONS {
+            assert!(
+                !op.starts_with("input_") && op != "semantic_action" && op != "window_action",
+                "{op}"
+            );
+        }
+    }
+
     #[test]
     fn native_hello_claiming_input_or_capture_is_capped_to_observation() {
         let claims_everything = V2_LINUX_HELLO
@@ -650,7 +666,6 @@ mod tests {
                 "input_click",
                 "input_hotkey",
                 "semantic_action",
-                "capture_window",
                 "window_action",
             ] {
                 let error = host.require(op).unwrap_err();
@@ -662,7 +677,15 @@ mod tests {
             }
             assert!(host.require("list_windows").is_ok());
             assert!(host.require("cursor_position").is_ok());
+            // XP-07: capture is an observation; the host's own claim decides.
+            assert!(host.require("capture_window").is_ok());
         }
+        // A native host that does not deliver capture keeps it unavailable,
+        // with its own reason.
+        let no_capture = negotiate("linux", |_| Ok(frame(V2_LINUX_HELLO))).unwrap();
+        let error = no_capture.require("capture_window").unwrap_err();
+        assert_eq!(error.code, FailureCode::ProviderUnavailable);
+        assert!(!error.message.contains("observation_only"), "{error:?}");
         // Windows keeps whatever its host reports.
         let windows = negotiate("windows", |_| Ok(frame(V2_WINDOWS_HELLO))).unwrap();
         assert!(windows.require("input_click").is_ok());

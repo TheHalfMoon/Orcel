@@ -10,10 +10,10 @@
 //! never falls back on outside Windows.
 //!
 //! The host is observation only. `hello`, `ping` and `shutdown` are answered
-//! by the supervisor; `list_windows`, `observe_window` and `cursor_position`
-//! run in a one-shot worker. Every other operation of the closed set of 16 is
-//! refused with `capability_denied`, and the hello capability table says so
-//! up front.
+//! by the supervisor; `list_windows`, `observe_window`, `cursor_position` and
+//! (XP-07) `capture_window` run in a one-shot worker. Every other operation
+//! of the closed set of 16 is refused with `capability_denied`, and the hello
+//! capability table says so up front.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -35,6 +35,11 @@ pub const MAX_TREE_DEPTH: usize = 8;
 pub const MAX_TEXT_BYTES: usize = 16 * 1024;
 pub const MAX_KEY_BYTES: usize = 64;
 pub const MAX_RUNTIME_ID_BYTES: usize = 512;
+/// Capture bounds shared with the Windows host (`maxCaptureBytes`,
+/// `maxCaptureWidth`, `maxCaptureHeight`) and the kernel registry.
+pub const MAX_CAPTURE_BYTES: usize = 8 * 1024 * 1024;
+pub const MAX_CAPTURE_WIDTH: u32 = 7680;
+pub const MAX_CAPTURE_HEIGHT: u32 = 4320;
 pub const WORKER_TIMEOUT: Duration = Duration::from_millis(8000);
 pub const WORKER_ATTEMPTS: usize = 2;
 
@@ -266,6 +271,16 @@ pub struct CursorFact {
     pub last_input_tick: u32,
 }
 
+/// One exact-window frame: 8-bit RGBA rows, top to bottom, no padding, as
+/// the Windows host sends it (`captureFact` in `protocol.go`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CaptureFact {
+    pub width: u32,
+    pub height: u32,
+    pub pixel_format: String,
+    pub pixels_b64: String,
+}
+
 /// One `/2` capability table entry. Advisory: it only lets the adapter skip
 /// a call that cannot work; the kernel registry still enforces everything.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -289,6 +304,8 @@ pub struct Response {
     pub windows: Option<Vec<WindowFact>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub elements: Option<Vec<ElementFact>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture: Option<CaptureFact>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<CursorFact>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -360,6 +377,8 @@ pub struct Availability {
     pub list_windows: Option<String>,
     pub observe_window: Option<String>,
     pub cursor_position: Option<String>,
+    /// XP-07 exact-window capture.
+    pub capture_window: Option<String>,
     /// Permission facts reported informationally (macOS).
     #[serde(default)]
     pub permissions: BTreeMap<String, bool>,
@@ -372,6 +391,7 @@ impl Availability {
             list_windows: Some(reason.to_owned()),
             observe_window: Some(reason.to_owned()),
             cursor_position: Some(reason.to_owned()),
+            capture_window: Some(reason.to_owned()),
             permissions: BTreeMap::new(),
         }
     }
@@ -381,6 +401,7 @@ impl Availability {
             "list_windows" => self.list_windows.as_deref(),
             "observe_window" => self.observe_window.as_deref(),
             "cursor_position" => self.cursor_position.as_deref(),
+            "capture_window" => self.capture_window.as_deref(),
             _ => Some(code::CAPABILITY_DENIED),
         }
     }
@@ -395,8 +416,9 @@ fn entry(support: &str, reason: Option<&str>) -> CapabilityFact {
 }
 
 /// The `/2` capability table: exactly one entry for each of the 16
-/// operations. Observation follows `availability`; capture waits for XP-07
-/// and every mutation is refused, because this host is read-only.
+/// operations. Observation and capture follow `availability`; every mutation
+/// is refused, because this host is read-only. Capture is delivered in the
+/// background: it never raises, focuses, restores or moves the window.
 pub fn capability_table(availability: &Availability) -> BTreeMap<String, CapabilityFact> {
     let mut table = BTreeMap::new();
     for op in OPERATIONS {
@@ -408,7 +430,14 @@ pub fn capability_table(availability: &Availability) -> BTreeMap<String, Capabil
                     Some(reason) => entry("unavailable", Some(reason)),
                 }
             }
-            "capture_window" => entry("unavailable", Some(code::PROVIDER_UNAVAILABLE)),
+            "capture_window" => match availability.refusal_for(op) {
+                None => CapabilityFact {
+                    support: "delivered".to_owned(),
+                    delivery: Some("background".to_owned()),
+                    reason: None,
+                },
+                Some(reason) => entry("unavailable", Some(reason)),
+            },
             _ => entry("refused", Some(code::CAPABILITY_DENIED)),
         };
         table.insert(op.to_owned(), fact);
@@ -556,7 +585,13 @@ fn validate(request: &Request, platform: HostPlatform) -> Result<(), Refusal> {
     }
     if !matches!(
         request.op.as_str(),
-        "hello" | "ping" | "shutdown" | "list_windows" | "observe_window" | "cursor_position"
+        "hello"
+            | "ping"
+            | "shutdown"
+            | "list_windows"
+            | "observe_window"
+            | "cursor_position"
+            | "capture_window"
     ) {
         return Err(refuse(
             id,
@@ -602,6 +637,7 @@ mod tests {
             list_windows: None,
             observe_window: None,
             cursor_position: None,
+            capture_window: None,
             permissions: BTreeMap::new(),
         };
         let response = hello(1, MACOS, &available);
@@ -616,12 +652,15 @@ mod tests {
             let support = table[op].support.as_str();
             let expected = match op {
                 "hello" | "ping" | "shutdown" | "list_windows" | "observe_window"
-                | "cursor_position" => "delivered",
-                "capture_window" => "unavailable",
+                | "cursor_position" | "capture_window" => "delivered",
                 _ => "refused",
             };
             assert_eq!(support, expected, "{op}");
         }
+        assert_eq!(
+            table["capture_window"].delivery.as_deref(),
+            Some("background")
+        );
     }
 
     #[test]
@@ -629,9 +668,10 @@ mod tests {
         let mut availability = Availability::none(code::PERMISSION_MISSING);
         availability.cursor_position = None;
         let table = capability_table(&availability);
-        for op in ["list_windows", "observe_window"] {
+        for op in ["list_windows", "observe_window", "capture_window"] {
             assert_eq!(table[op].support, "unavailable");
             assert_eq!(table[op].reason.as_deref(), Some("permission_missing"));
+            assert_eq!(table[op].delivery, None);
         }
         assert_eq!(table["cursor_position"].support, "delivered");
     }
@@ -644,8 +684,25 @@ mod tests {
         );
         let mutation = r#"{"id":4,"protocol":"orcel-computer-host/2","op":"input_click","x":1,"y":1,"button":"left","click_count":1,"expected_last_input_tick":1,"window":{"kind":"x11","id":9,"expected_pid":1,"expected_start_generation":2,"expected_window_nonce":3}}"#;
         assert_eq!(refusal_code(mutation), "capability_denied");
-        let capture = r#"{"id":5,"protocol":"orcel-computer-host/2","op":"capture_window","window":{"kind":"x11","id":9,"expected_pid":1,"expected_start_generation":2,"expected_window_nonce":3}}"#;
-        assert_eq!(refusal_code(capture), "capability_denied");
+    }
+
+    /// XP-07: capture names one exact window and nothing else. There is no
+    /// display, monitor or region form: a scope or rectangle field is
+    /// refused, and so is an unbound capture, before any native work.
+    #[test]
+    fn capture_is_exact_window_only() {
+        let bound = r#"{"id":5,"protocol":"orcel-computer-host/2","op":"capture_window","window":{"kind":"x11","id":9,"expected_pid":1,"expected_start_generation":2,"expected_window_nonce":3}}"#;
+        assert_eq!(decode(bound).unwrap().window.unwrap().id, 9);
+        for line in [
+            r#"{"id":5,"protocol":"orcel-computer-host/2","op":"capture_window"}"#,
+            r#"{"id":5,"protocol":"orcel-computer-host/2","op":"capture_window","window":{"kind":"x11","id":0,"expected_pid":1,"expected_start_generation":2,"expected_window_nonce":3}}"#,
+            r#"{"id":5,"protocol":"orcel-computer-host/2","op":"capture_window","window":{"kind":"x11","id":9}}"#,
+            r#"{"id":5,"protocol":"orcel-computer-host/2","op":"capture_window","scope":"display","window":{"kind":"x11","id":9,"expected_pid":1,"expected_start_generation":2,"expected_window_nonce":3}}"#,
+            r#"{"id":5,"protocol":"orcel-computer-host/2","op":"capture_window","x":0,"y":0,"to_x":10,"to_y":10}"#,
+            r#"{"id":5,"protocol":"orcel-computer-host/2","op":"capture_window","hwnd":9,"expected_pid":1,"expected_start_generation":2,"expected_window_nonce":3}"#,
+        ] {
+            assert_eq!(refusal_code(line), "invalid_request", "{line}");
+        }
     }
 
     #[test]

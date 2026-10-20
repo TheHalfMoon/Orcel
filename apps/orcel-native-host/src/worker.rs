@@ -3,23 +3,24 @@
 //! The one-shot sacrificial worker (`orcel-native-host --worker`).
 //!
 //! It reads one request the supervisor already validated, validates it
-//! again, runs exactly one observation through [`crate::cua_adapter`],
-//! writes one response line and exits. All AX and AT-SPI work happens here,
-//! so a hang or crash in the accessibility stack costs one worker, never
-//! the supervisor. The worker never retries and never falls back to another
-//! route.
+//! again, runs exactly one observation or capture through
+//! [`crate::cua_adapter`], writes one response line and exits. All AX,
+//! AT-SPI, ScreenCaptureKit and X11 work happens here, so a hang or crash in
+//! those stacks costs one worker, never the supervisor. The worker never
+//! retries and never falls back to another route.
 //!
 //! The worker answers `hello` too: the supervisor forwards it so the
 //! permission and session probes run here, never in the supervisor.
 
+use crate::capture::{self, FrameRefusal};
 use crate::cua_adapter::{CuaCall, CuaFailure, CuaRuntime};
 use crate::map::{self, Omission, ProcessIdentity};
 use crate::protocol::{
     self, code, Availability, CursorFact, HostPlatform, ProcessFact, Request, Response,
-    MAX_REQUEST_BYTES,
+    WindowBinding, MAX_REQUEST_BYTES,
 };
 use cua_driver_contract::{
-    GetCursorPositionInput, GetScreenSizeInput, ListWindowsOutput, WindowElement,
+    GetCursorPositionInput, GetScreenSizeInput, ListWindowsOutput, WindowElement, WindowInfo,
 };
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -82,15 +83,29 @@ async fn answer(request: &Request, platform: HostPlatform) -> Response {
         return protocol::hello(request.id, platform, &availability);
     }
     if let Some(reason) = availability.refusal_for(&request.op) {
+        let detail = match (request.op.as_str(), platform) {
+            ("capture_window", protocol::MACOS) => {
+                "; capture needs Accessibility, Screen Recording and, from macOS 15, \
+                 the direct-capture consent already recorded, and the host never prompts"
+            }
+            ("capture_window", protocol::LINUX_WAYLAND) => {
+                "; Wayland exposes no exact-window capture to this host"
+            }
+            _ => "",
+        };
         return Response::failure(
             request.id,
             reason,
-            format!("{} is unavailable on this machine ({reason})", request.op),
+            format!(
+                "{} is unavailable on this machine ({reason}){detail}",
+                request.op
+            ),
         );
     }
     match request.op.as_str() {
         "list_windows" => list_windows(&runtime, request, platform).await,
         "observe_window" => observe_window(&runtime, request, platform).await,
+        "capture_window" => capture_window(&runtime, request, platform).await,
         "cursor_position" => cursor_position(&runtime, request).await,
         _ => Response::failure(
             request.id,
@@ -103,11 +118,26 @@ async fn answer(request: &Request, platform: HostPlatform) -> Response {
 /// Which observations can work here. macOS needs Accessibility and Screen
 /// Recording for window listing and trees (titles are Screen Recording
 /// gated, and protected-surface checks need them); the cursor needs neither.
-/// Linux needs a display, and a session bus for AT-SPI. Nothing prompts.
+/// Capture needs what listing needs (the binding is checked against the
+/// live list) and, on macOS 15 and later, replayd's direct-capture consent
+/// already recorded. Linux needs a display, and a session bus for AT-SPI.
+/// Nothing prompts.
 async fn probe(runtime: &CuaRuntime, platform: HostPlatform) -> Availability {
     if platform == protocol::MACOS {
         return match runtime.call(&CuaCall::CheckPermissions).await {
-            Ok(status) => macos_availability(&status),
+            Ok(status) => {
+                let mut availability = macos_availability(&status);
+                if availability.capture_window.is_none() {
+                    let consent = direct_capture_consent();
+                    availability
+                        .permissions
+                        .insert("direct_capture_consent".to_owned(), consent.is_ok());
+                    if consent.is_err() {
+                        availability.capture_window = Some(code::PERMISSION_MISSING.to_owned());
+                    }
+                }
+                availability
+            }
             Err(_) => {
                 let mut availability = Availability::none(code::PROVIDER_UNAVAILABLE);
                 availability.cursor_position = None;
@@ -133,10 +163,22 @@ pub fn macos_availability(status: &Value) -> Availability {
     permissions.insert("screen_recording".to_owned(), screen_recording);
     Availability {
         list_windows: observation.clone(),
-        observe_window: observation,
+        observe_window: observation.clone(),
         cursor_position: None,
+        capture_window: observation,
         permissions,
     }
+}
+
+/// Whether a capture can run without replayd's consent alert (macOS).
+#[cfg(target_os = "macos")]
+fn direct_capture_consent() -> Result<(), String> {
+    capture::macos::direct_capture_consent()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn direct_capture_consent() -> Result<(), String> {
+    Ok(())
 }
 
 /// The session facts the Linux probe reads from the worker's environment.
@@ -161,7 +203,10 @@ impl LinuxSession {
 /// Linux availability: no display means nothing works; no session bus
 /// means no AT-SPI, so no window list or tree. On Wayland the pointer
 /// position is not observable by a client (Cua reports only its own
-/// synthetic moves), so the cursor is unavailable there.
+/// synthetic moves), so the cursor is unavailable there. Capture follows
+/// the window list on X11. On Wayland it is unavailable: Cua captures whole
+/// outputs only, which would include other windows, and a portal capture
+/// asks the user (XP-12).
 pub fn linux_availability(platform: HostPlatform, session: &LinuxSession) -> Availability {
     let display = if platform == protocol::LINUX_WAYLAND {
         session.wayland_display
@@ -172,11 +217,16 @@ pub fn linux_availability(platform: HostPlatform, session: &LinuxSession) -> Ava
         return Availability::none(code::PROVIDER_UNAVAILABLE);
     }
     let tree = (!session.session_bus).then(|| code::PROVIDER_UNAVAILABLE.to_owned());
+    let wayland = platform == protocol::LINUX_WAYLAND;
     Availability {
         list_windows: tree.clone(),
-        observe_window: tree,
-        cursor_position: (platform == protocol::LINUX_WAYLAND)
-            .then(|| code::PROVIDER_UNAVAILABLE.to_owned()),
+        observe_window: tree.clone(),
+        cursor_position: wayland.then(|| code::PROVIDER_UNAVAILABLE.to_owned()),
+        capture_window: if wayland {
+            Some(code::PROVIDER_UNAVAILABLE.to_owned())
+        } else {
+            tree
+        },
         permissions: BTreeMap::new(),
     }
 }
@@ -328,6 +378,12 @@ mod facts {
     }
 }
 
+/// The executable path of a live pid, for the macOS responsible-app lookup.
+#[cfg(target_os = "macos")]
+pub(crate) fn executable_path(pid: u32) -> Option<String> {
+    facts::executable_path(pid)
+}
+
 fn cua_unavailable(id: u64, failure: &CuaFailure) -> Response {
     Response::failure(
         id,
@@ -391,57 +447,89 @@ fn is_stale(failure: &CuaFailure) -> bool {
         || structured_code.contains("stale")
 }
 
+/// The live window an exact binding names, after every identity check:
+/// the owner is the same process instance, not the host, not excluded, and
+/// still lists this window id under the same application, so the nonce
+/// matches. Any drift is `target_stale`; nothing is retargeted.
+struct BoundWindow {
+    binding: WindowBinding,
+    process: ProcessIdentity,
+    window: WindowInfo,
+}
+
+async fn bound_window(
+    runtime: &CuaRuntime,
+    request: &Request,
+    platform: HostPlatform,
+) -> Result<BoundWindow, Response> {
+    let id = request.id;
+    let Some(binding) = request.window.as_ref().and_then(|window| window.binding()) else {
+        return Err(Response::failure(
+            id,
+            code::INVALID_REQUEST,
+            "exact window binding is required",
+        ));
+    };
+    let stale = |message: &str| Response::failure(id, code::TARGET_STALE, message.to_owned());
+    if binding.pid == 0 || binding.pid == std::process::id() {
+        return Err(Response::failure(
+            id,
+            code::CAPABILITY_DENIED,
+            "window is not a target",
+        ));
+    }
+    let process = match process_identity(binding.pid) {
+        Ok(process) => process,
+        Err(IdentityRefusal::Gone) => return Err(stale("window owner exited; list windows again")),
+        Err(IdentityRefusal::Excluded) => {
+            return Err(Response::failure(
+                id,
+                code::PROTECTED_SURFACE,
+                "window owner is excluded from observation",
+            ))
+        }
+        Err(IdentityRefusal::Unreadable) => {
+            return Err(Response::failure(
+                id,
+                code::PROVIDER_UNAVAILABLE,
+                "window owner facts are unreadable",
+            ))
+        }
+    };
+    let listed = match live_windows(runtime, Some(binding.pid)).await {
+        Ok(listed) => listed,
+        Err(failure) => return Err(cua_unavailable(id, &failure)),
+    };
+    let Some(window) = listed
+        .windows
+        .into_iter()
+        .find(|window| window.window_id == binding.id && window.pid == Some(binding.pid))
+    else {
+        return Err(stale("window is stale or closed; list windows again"));
+    };
+    let class = map::bound_chars(&window.app_name, map::MAX_NAME_CHARS);
+    let nonce = map::window_nonce(platform.kind, binding.id, &process, &class);
+    if process.fact.start_generation != binding.start_generation || nonce != binding.window_nonce {
+        return Err(stale("window binding is stale"));
+    }
+    Ok(BoundWindow {
+        binding,
+        process,
+        window,
+    })
+}
+
 async fn observe_window(
     runtime: &CuaRuntime,
     request: &Request,
     platform: HostPlatform,
 ) -> Response {
     let id = request.id;
-    let Some(binding) = request.window.as_ref().and_then(|window| window.binding()) else {
-        return Response::failure(
-            id,
-            code::INVALID_REQUEST,
-            "exact window binding is required",
-        );
-    };
     let stale = |message: &str| Response::failure(id, code::TARGET_STALE, message.to_owned());
-    if binding.pid == 0 || binding.pid == std::process::id() {
-        return Response::failure(id, code::CAPABILITY_DENIED, "window is not a target");
-    }
-    let process = match process_identity(binding.pid) {
-        Ok(process) => process,
-        Err(IdentityRefusal::Gone) => return stale("window owner exited; list windows again"),
-        Err(IdentityRefusal::Excluded) => {
-            return Response::failure(
-                id,
-                code::PROTECTED_SURFACE,
-                "window owner is excluded from observation",
-            )
-        }
-        Err(IdentityRefusal::Unreadable) => {
-            return Response::failure(
-                id,
-                code::PROVIDER_UNAVAILABLE,
-                "window owner facts are unreadable",
-            )
-        }
+    let binding = match bound_window(runtime, request, platform).await {
+        Ok(bound) => bound.binding,
+        Err(refusal) => return refusal,
     };
-    let listed = match live_windows(runtime, Some(binding.pid)).await {
-        Ok(listed) => listed,
-        Err(failure) => return cua_unavailable(id, &failure),
-    };
-    let Some(window) = listed
-        .windows
-        .iter()
-        .find(|window| window.window_id == binding.id && window.pid == Some(binding.pid))
-    else {
-        return stale("window is stale or closed; list windows again");
-    };
-    let class = map::bound_chars(&window.app_name, map::MAX_NAME_CHARS);
-    let nonce = map::window_nonce(platform.kind, binding.id, &process, &class);
-    if process.fact.start_generation != binding.start_generation || nonce != binding.window_nonce {
-        return stale("window binding is stale");
-    }
     let node_limit = request.node_limit();
     let depth_limit = request.depth_limit();
     let observed = runtime
@@ -480,6 +568,119 @@ async fn observe_window(
     let mut response = Response::success(id);
     response.elements = Some(map::element_tree(&elements, node_limit, depth_limit));
     response
+}
+
+/// XP-07: one frame of exactly the bound window. Every refusal comes before
+/// any pixel is read, except a change seen after the capture (another owner
+/// instance, or a window now covered), which discards the frame. The window
+/// is never raised, focused, restored or moved.
+async fn capture_window(
+    runtime: &CuaRuntime,
+    request: &Request,
+    platform: HostPlatform,
+) -> Response {
+    let id = request.id;
+    let refuse = |code: &str, message: &str| Response::failure(id, code, message.to_owned());
+    let bound = match bound_window(runtime, request, platform).await {
+        Ok(bound) => bound,
+        Err(refusal) => return refusal,
+    };
+    let window = &bound.window;
+    let class = format!("{} {}", window.app_name, bound.process.fact.exe_name);
+    if capture::is_protected_window(&window.title, &class) {
+        return refuse(
+            code::PROTECTED_SURFACE,
+            "window is a protected surface; capture is denied before any pixel is read",
+        );
+    }
+    if !window.is_on_screen || window.minimized == Some(true) {
+        return refuse(
+            code::PROVIDER_UNAVAILABLE,
+            "window is minimized, hidden or on another Space; the host never restores, raises or focuses it",
+        );
+    }
+    if capture::reported_size_exceeds_bounds(window.bounds.width, window.bounds.height) {
+        return refuse(
+            code::OUTPUT_LIMIT,
+            "window exceeds the 7680x4320, 8 MiB capture bound; frames are never scaled down",
+        );
+    }
+    if let Some(refusal) = exposure_refusal(id, platform, bound.binding.id) {
+        return refusal;
+    }
+    let png = match runtime.capture_window(bound.binding.id) {
+        Ok(png) => png,
+        Err(failure) if is_stale(&failure) => {
+            return refuse(code::TARGET_STALE, "window closed while it was captured")
+        }
+        Err(failure) => return cua_unavailable(id, &failure),
+    };
+    // The frame leaves only if the bound owner instance still holds the
+    // window and nothing came to cover it meanwhile.
+    match orcel_platform::process::start_generation(bound.binding.pid) {
+        Ok(now) if now.generation == bound.binding.start_generation => {}
+        _ => {
+            return refuse(
+                code::TARGET_STALE,
+                "window owner changed while it was captured",
+            )
+        }
+    }
+    if let Some(refusal) = exposure_refusal(id, platform, bound.binding.id) {
+        return refusal;
+    }
+    match capture::frame_from_png(&png) {
+        Ok(frame) => {
+            let mut response = Response::success(id);
+            response.capture = Some(frame);
+            response
+        }
+        Err(FrameRefusal::TooLarge(message)) => {
+            Response::failure(id, code::OUTPUT_LIMIT, bounded_message(&message))
+        }
+        Err(FrameRefusal::Unreadable(message)) => {
+            Response::failure(id, code::PROVIDER_UNAVAILABLE, bounded_message(&message))
+        }
+    }
+}
+
+/// X11 capture reads the screen's copy of the window, so the window must be
+/// wholly its own on screen (see `capture::x11`). `None` lets it through.
+#[cfg(target_os = "linux")]
+fn exposure_refusal(id: u64, platform: HostPlatform, window_id: u64) -> Option<Response> {
+    use capture::x11::Exposure;
+    let refuse = |message: &str| {
+        Some(Response::failure(
+            id,
+            code::PROVIDER_UNAVAILABLE,
+            message.to_owned(),
+        ))
+    };
+    if platform != protocol::LINUX_X11 {
+        return refuse("this session exposes no exact-window capture");
+    }
+    match capture::x11::exposure(window_id) {
+        Ok(Exposure::Exposed) => None,
+        Ok(Exposure::Covered) => refuse(
+            "window_obscured: another window covers part of it, and the host never raises it",
+        ),
+        Ok(Exposure::Clipped) => {
+            refuse("window_clipped: part of the window is off screen or outside its frame")
+        }
+        Ok(Exposure::NotViewable) => {
+            refuse("window is minimized or hidden; the host never restores, raises or focuses it")
+        }
+        Err(error) => refuse(&bounded_message(&format!(
+            "the window's X11 exposure is unreadable: {error}"
+        ))),
+    }
+}
+
+/// ScreenCaptureKit's desktop-independent window filter reads the window's
+/// own buffer, so covering windows never reach the frame.
+#[cfg(not(target_os = "linux"))]
+fn exposure_refusal(_id: u64, _platform: HostPlatform, _window_id: u64) -> Option<Response> {
+    None
 }
 
 fn coordinate(value: &Value, key: &str) -> Option<i32> {
@@ -569,9 +770,15 @@ mod tests {
             no_screen_recording.list_windows.as_deref(),
             Some("permission_missing")
         );
+        assert_eq!(
+            no_screen_recording.capture_window.as_deref(),
+            Some("permission_missing")
+        );
         let granted = macos_availability(&json!({"accessibility": true, "screen_recording": true}));
         assert_eq!(granted.list_windows, None);
         assert_eq!(granted.observe_window, None);
+        // The direct-capture consent is read separately, in the probe.
+        assert_eq!(granted.capture_window, None);
         // A malformed answer never counts as granted.
         let malformed = macos_availability(&json!({"accessibility": "yes"}));
         assert_eq!(
@@ -592,6 +799,10 @@ mod tests {
             },
         );
         assert_eq!(no_bus.list_windows.as_deref(), Some("provider_unavailable"));
+        assert_eq!(
+            no_bus.capture_window.as_deref(),
+            Some("provider_unavailable")
+        );
         assert_eq!(no_bus.cursor_position, None);
         let full = LinuxSession {
             display: true,
@@ -601,8 +812,14 @@ mod tests {
         let x11 = linux_availability(protocol::LINUX_X11, &full);
         assert_eq!(x11.list_windows, None);
         assert_eq!(x11.cursor_position, None);
+        assert_eq!(x11.capture_window, None);
         let wayland = linux_availability(protocol::LINUX_WAYLAND, &full);
         assert_eq!(wayland.list_windows, None);
+        // Wayland has no exact-window capture for this host.
+        assert_eq!(
+            wayland.capture_window.as_deref(),
+            Some("provider_unavailable")
+        );
         assert_eq!(
             wayland.cursor_position.as_deref(),
             Some("provider_unavailable")

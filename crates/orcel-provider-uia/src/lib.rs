@@ -102,10 +102,19 @@ const PROTECTED_WINDOW_MARKERS: &[&str] = &[
 /// native host serves, matched like [`PROTECTED_WINDOW_MARKERS`] against the
 /// window title and class (the owning application on macOS and Linux). The
 /// host also refuses their executables outright. Windows adds nothing, so its
-/// behaviour is unchanged.
+/// behaviour is unchanged. XP-07 adds the password and passphrase dialogs
+/// (macOS AuthorizationHost; Linux pinentry, ssh-askpass, the GNOME keyring
+/// prompter and KWallet), so capture refuses them as well as observation.
+/// `orcel-native-host` mirrors these lists (`src/capture.rs`) and a host test
+/// requires them to stay equal.
 #[cfg(target_os = "macos")]
-const OS_PROTECTED_WINDOW_MARKERS: &[&str] =
-    &["loginwindow", "securityagent", "screensaver", "coreautha"];
+const OS_PROTECTED_WINDOW_MARKERS: &[&str] = &[
+    "loginwindow",
+    "securityagent",
+    "screensaver",
+    "coreautha",
+    "authorizationhost",
+];
 #[cfg(all(unix, not(target_os = "macos")))]
 const OS_PROTECTED_WINDOW_MARKERS: &[&str] = &[
     "polkit",
@@ -115,6 +124,10 @@ const OS_PROTECTED_WINDOW_MARKERS: &[&str] = &[
     "light-locker",
     "kscreenlocker",
     "xsecurelock",
+    "pinentry",
+    "askpass",
+    "gcr-prompter",
+    "kwalletd",
 ];
 #[cfg(not(unix))]
 const OS_PROTECTED_WINDOW_MARKERS: &[&str] = &[];

@@ -10,6 +10,7 @@
 //! the sole authority: its registry allocates identities, redacts, bounds
 //! and excludes protected surfaces again on everything this host reports.
 
+mod capture;
 mod cua_adapter;
 mod map;
 mod protocol;

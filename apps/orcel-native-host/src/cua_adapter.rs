@@ -12,6 +12,13 @@
 //! `cursor_overlay_available = false` and `host_owns_permission_ux = true`
 //! on macOS (patch P-04 forces the latter anyway). The adapter never holds a
 //! `ToolState`, so it cannot overwrite either field after construction.
+//!
+//! XP-07 adds one entry outside the registry: [`CuaRuntime::capture_window`],
+//! Cua's own window capture for one window id (patch P-08: in process, no
+//! pointer, no subprocess). No capture tool is registered, so Cua's display,
+//! region and Wayland output captures stay unreachable; the worker applies
+//! the scope, protected-surface, exposure and size rules of `capture.rs`
+//! around the call.
 
 use cua_driver_contract::{
     GetCursorPositionInput, GetScreenSizeInput, GetWindowStateInput, ListWindowsInput, ToolInput,
@@ -156,6 +163,28 @@ mod imp {
             settle(result)
         }
 
+        /// The PNG of exactly one window, from Cua's capture module:
+        /// ScreenCaptureKit's desktop-independent window filter on macOS,
+        /// MIT-SHM or `XGetImage` of the X11 window on Linux (P-08).
+        pub fn capture_window(&self, window_id: u64) -> Result<Vec<u8>, CuaFailure> {
+            fn failed(error: impl std::fmt::Display) -> CuaFailure {
+                CuaFailure {
+                    message: format!("{error:#}"),
+                    structured: None,
+                }
+            }
+            #[cfg(target_os = "macos")]
+            let png = {
+                let window_id = u32::try_from(window_id)
+                    .map_err(|_| CuaFailure::invalid("window id is not a CGWindowID"))?;
+                platform_macos::capture::screenshot_window_bytes(window_id).map_err(failed)?
+            };
+            #[cfg(target_os = "linux")]
+            let png =
+                platform_linux::capture::screenshot_window_bytes(window_id).map_err(failed)?;
+            Ok(png)
+        }
+
         /// Test-only raw dispatch, to show what the registered tools do
         /// with arguments the adapter itself never sends.
         #[cfg(all(test, target_os = "macos"))]
@@ -217,6 +246,13 @@ mod imp {
                     "no Cua platform backend on this OS for {}",
                     call.tool_name()
                 ),
+                structured: None,
+            })
+        }
+
+        pub fn capture_window(&self, _window_id: u64) -> Result<Vec<u8>, CuaFailure> {
+            Err(CuaFailure {
+                message: "no Cua platform backend on this OS for window capture".to_owned(),
                 structured: None,
             })
         }
@@ -285,9 +321,40 @@ mod tests {
             ("worker.rs", include_str!("worker.rs")),
             ("cua_adapter.rs", include_str!("cua_adapter.rs")),
             ("map.rs", include_str!("map.rs")),
+            ("capture.rs", include_str!("capture.rs")),
         ] {
             assert!(!source.contains(&field), "{name} touches {field}");
         }
+    }
+
+    /// XP-07: the host reaches Cua's window capture and nothing broader. No
+    /// host source names a display, root-region, probe-frame or Wayland
+    /// output capture, the capture consent prompt flow, or a capture tool.
+    #[test]
+    fn host_source_reaches_only_exact_window_capture() {
+        let forbidden = [
+            ["screenshot", "_display"].concat(),
+            ["screenshot_root", "_region"].concat(),
+            ["capture_probe", "_frame"].concat(),
+            ["screenshot_via", "_ext_copy"].concat(),
+            ["wayland::", "capture"].concat(),
+            ["request_screen", "_recording"].concat(),
+            ["capture_blocked", "_reason"].concat(),
+        ];
+        for (name, source) in [
+            ("main.rs", include_str!("main.rs")),
+            ("protocol.rs", include_str!("protocol.rs")),
+            ("supervisor.rs", include_str!("supervisor.rs")),
+            ("worker.rs", include_str!("worker.rs")),
+            ("cua_adapter.rs", include_str!("cua_adapter.rs")),
+            ("map.rs", include_str!("map.rs")),
+            ("capture.rs", include_str!("capture.rs")),
+        ] {
+            for word in &forbidden {
+                assert!(!source.contains(word.as_str()), "{name} names {word}");
+            }
+        }
+        assert!(!ALLOWED_TOOLS.iter().any(|tool| tool.contains("screenshot")));
     }
 
     /// P-04 on the registry the host builds: `check_permissions` answers as

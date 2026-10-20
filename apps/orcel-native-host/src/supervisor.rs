@@ -308,6 +308,7 @@ fn availability_from(response: &Response) -> Availability {
         list_windows: reason("list_windows"),
         observe_window: reason("observe_window"),
         cursor_position: reason("cursor_position"),
+        capture_window: reason("capture_window"),
         permissions: response.permissions.clone().unwrap_or_default(),
     }
 }

@@ -1409,8 +1409,12 @@ mod tests {
                 "list_windows" | "observe_window" => {
                     json!({"support": "unavailable", "reason": observation})
                 }
+                // XP-07: capture follows the window list it is bound by.
+                "capture_window" if observation == "delivered" => {
+                    json!({"support": "delivered", "delivery": "background"})
+                }
                 "capture_window" => {
-                    json!({"support": "unavailable", "reason": "provider_unavailable"})
+                    json!({"support": "unavailable", "reason": observation})
                 }
                 _ => json!({"support": "refused", "reason": "capability_denied"}),
             };
@@ -1496,6 +1500,11 @@ mod tests {
                 frame,
                 json!({"cursor": {"x": 5, "y": 6, "screen_width": 1280, "screen_height": 800, "last_input_tick": 0}}),
             )),
+            // Two RGBA pixels: (224, 17, 157, 255) and (1, 2, 3, 255).
+            "capture_window" => Some(native_reply(
+                frame,
+                json!({"capture": {"width": 2, "height": 1, "pixel_format": "rgba8", "pixels_b64": "4BGd/wECA/8="}}),
+            )),
             "ping" | "shutdown" => Some(native_reply(frame, json!({}))),
             _ => Some(native_refusal(frame, "capability_denied")),
         }
@@ -1564,8 +1573,115 @@ mod tests {
         assert!(observe.get("hwnd").is_none());
     }
 
+    /// XP-07: the registry captures one exact window through the native
+    /// host. The frame carries the native window kind and binding, the
+    /// pixels arrive as sent, and nothing but list and capture is framed.
     #[test]
-    fn native_host_mutations_and_capture_are_refused_before_any_frame() {
+    fn native_host_capture_is_bound_and_decoded() {
+        let (adapter, frames) = scripted("linux", linux_desktop);
+        let adapter = adapter.unwrap();
+        let mut registry = crate::UiaRegistry::new();
+        let listing = registry
+            .list_windows(&adapter, "xp07-ws", "xp07-policy")
+            .unwrap();
+        let window = &listing["windows"][0];
+        assert_eq!(window["title"], "Editor");
+        let window_id = window["window_id"].as_str().unwrap().to_owned();
+        let generation = window["window_generation"].as_u64().unwrap();
+        // Display scope never reaches the host.
+        let display = registry
+            .capture_window(
+                &adapter,
+                &window_id,
+                generation,
+                "display",
+                "xp07-ws",
+                "xp07-policy",
+            )
+            .unwrap_err();
+        assert_eq!(display.code, FailureCode::CapabilityDenied);
+        let frame = registry
+            .capture_window(
+                &adapter,
+                &window_id,
+                generation,
+                crate::CAPTURE_SCOPE_TARGET_WINDOW,
+                "xp07-ws",
+                "xp07-policy",
+            )
+            .unwrap();
+        assert_eq!(
+            (frame["width"].as_u64(), frame["height"].as_u64()),
+            (Some(2), Some(1))
+        );
+        assert_eq!(frame["pixel_format"], "rgba8");
+        assert_eq!(frame["pixels_b64"], "4BGd/wECA/8=");
+        assert_eq!(frame["scope"], crate::CAPTURE_SCOPE_TARGET_WINDOW);
+        let frames = frames.lock().unwrap();
+        let capture = frames
+            .iter()
+            .find(|frame| frame["op"] == "capture_window")
+            .unwrap();
+        assert_eq!(
+            capture["window"],
+            json!({"kind": "x11", "id": 11, "expected_pid": 4410, "expected_start_generation": 133702, "expected_window_nonce": 99})
+        );
+        assert!(capture.get("hwnd").is_none());
+        let sent: Vec<_> = frames
+            .iter()
+            .map(|frame| frame["op"].as_str().unwrap_or_default())
+            .collect();
+        assert!(
+            sent.iter()
+                .all(|op| matches!(*op, "hello" | "list_windows" | "capture_window")),
+            "{sent:?}"
+        );
+        assert_eq!(sent.iter().filter(|op| **op == "capture_window").count(), 1);
+    }
+
+    /// A native frame in another pixel format, or whose pixels do not match
+    /// its geometry, is refused; nothing is converted or scaled.
+    #[test]
+    fn native_capture_with_foreign_format_or_size_is_refused() {
+        for capture in [
+            json!({"width": 2, "height": 1, "pixel_format": "bgra8", "pixels_b64": "4BGd/wECA/8="}),
+            json!({"width": 7681, "height": 1, "pixel_format": "rgba8", "pixels_b64": "4BGd/wECA/8="}),
+            json!({"width": 3, "height": 1, "pixel_format": "rgba8", "pixels_b64": "4BGd/wECA/8="}),
+        ] {
+            let (adapter, _frames) = scripted("linux", move |frame| match frame["op"].as_str() {
+                Some("capture_window") => {
+                    Some(native_reply(frame, json!({ "capture": capture.clone() })))
+                }
+                _ => linux_desktop(frame),
+            });
+            let adapter = adapter.unwrap();
+            let mut registry = crate::UiaRegistry::new();
+            let listing = registry.list_windows(&adapter, "ws", "policy").unwrap();
+            let window = &listing["windows"][0];
+            let error = registry
+                .capture_window(
+                    &adapter,
+                    window["window_id"].as_str().unwrap(),
+                    window["window_generation"].as_u64().unwrap(),
+                    crate::CAPTURE_SCOPE_TARGET_WINDOW,
+                    "ws",
+                    "policy",
+                )
+                .unwrap_err();
+            assert!(
+                matches!(
+                    error.code,
+                    FailureCode::ProviderUnavailable
+                        | FailureCode::InvalidRequest
+                        | FailureCode::OutputLimit
+                ),
+                "{error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn native_host_mutations_are_refused_before_any_frame() {
         let (adapter, frames) = scripted("linux", linux_desktop);
         let adapter = adapter.unwrap();
         assert_eq!(adapter.list_processes().unwrap().len(), 1);
@@ -1577,7 +1693,6 @@ mod tests {
                 .execute_window_action(11, DesktopWindowAction::Focus, 0)
                 .unwrap_err(),
             adapter.invoke_element(11, "1:1").unwrap_err(),
-            adapter.capture_window(11).unwrap_err(),
         ];
         for error in &refused {
             assert_eq!(error.code, FailureCode::ProviderUnavailable, "{error:?}");
