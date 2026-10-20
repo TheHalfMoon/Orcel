@@ -554,6 +554,20 @@ mod tests {
         })
     }
 
+    /// P-09 (Linux): a toggle acts on a state it read. Checked or pressed is
+    /// on; a failed or missing read is an error, never "off", so a checked
+    /// box is never turned off for want of a state.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_unreadable_toggle_state_is_an_error_never_off() {
+        use platform_linux::atspi::native::toggled_from_state_read as read;
+        assert!(read::<String>(Some(Ok((true, false)))).unwrap());
+        assert!(read::<String>(Some(Ok((false, true)))).unwrap());
+        assert!(!read::<String>(Some(Ok((false, false)))).unwrap());
+        assert!(read(Some(Err("bus error".to_owned()))).is_err());
+        assert!(read::<String>(None).is_err());
+    }
+
     /// XP-11 / P-09: the action tool takes an element and a verb. Every name
     /// that could carry a position, a key, a button, a count, a modifier, a
     /// delivery mode or a scope is refused before any accessibility call,
