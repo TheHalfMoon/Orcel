@@ -1248,7 +1248,7 @@ mod unix {
         let dir = socket_dir(
             layout,
             &|name| std::env::var_os(name),
-            orcel_platform::paths::darwin_user_temp_dir(),
+            orcel_platform::paths::macos_per_user_runtime_dir(),
         )?;
         Ok(dir.join(format!("app-api{suffix}.sock")))
     }

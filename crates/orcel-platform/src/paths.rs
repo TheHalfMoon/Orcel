@@ -266,10 +266,12 @@ pub fn private_file(path: PathBuf) -> Result<PathBuf, PlatformError> {
 /// macOS: the per-user temporary directory that
 /// `confstr(_CS_DARWIN_USER_TEMP_DIR)` names (`/var/folders/<xx>/<id>/T/`).
 /// It comes from the system, not from `TMPDIR`, so every process of the
-/// user resolves the same directory. `None` on other OSes, or when the
+/// user resolves the same directory. It is a 0700 directory of this user
+/// alone, not the shared temporary directory that XP-01B keeps state out
+/// of. `None` on other OSes, or when the
 /// system gives no absolute path. The directory is not checked; see
 /// [`ensure_private_dir`]. CR-01 binds its short-path socket there (#381).
-pub fn darwin_user_temp_dir() -> Option<PathBuf> {
+pub fn macos_per_user_runtime_dir() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     {
         use std::os::unix::ffi::OsStringExt;

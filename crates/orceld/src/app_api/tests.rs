@@ -1508,9 +1508,13 @@ fn cr381_a_long_home_still_gets_the_app_api() {
     let layout = StateLayout::current().unwrap();
     #[cfg(target_os = "macos")]
     let (lookup, runtime, darwin) = {
-        let darwin = orcel_platform::paths::darwin_user_temp_dir()
+        let darwin = orcel_platform::paths::macos_per_user_runtime_dir()
             .expect("confstr(_CS_DARWIN_USER_TEMP_DIR)");
-        (env_lookup(&[("HOME", home.clone())]), None, Some(darwin))
+        (
+            env_lookup(&[("HOME", home.clone())]),
+            None::<std::path::PathBuf>,
+            Some(darwin),
+        )
     };
     #[cfg(not(target_os = "macos"))]
     let (lookup, runtime, darwin) = {
