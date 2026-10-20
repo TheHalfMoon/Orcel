@@ -91,7 +91,9 @@
         {
           "path": "src/atspi/native.rs",
           "upstream_blob_sha": "36451e533335892864981f6f36a69ad318309199",
-          "upstream_blocker_lines": []
+          "upstream_blocker_lines": [
+            "4b89a467d5826939dcfb526114f265be81c0f662f12d0d883976a5091b13bafe"
+          ]
         },
         {
           "path": "src/browser_platform.rs",
