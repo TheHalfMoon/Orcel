@@ -2741,8 +2741,10 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 name = "orcel-native-host"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "cua-driver-contract",
  "cua-driver-core",
+ "image",
  "libc",
  "orcel-platform",
  "platform-linux",
@@ -2751,6 +2753,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tokio",
+ "x11rb",
 ]
 
 [[package]]

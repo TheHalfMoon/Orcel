@@ -88,6 +88,40 @@ pub fn capture_blocked_reason() -> Option<String> {
     }
 }
 
+/// P-08 (orcel-minimal): whether a capture attributed to the app `bundle`
+/// (a canonical `.app` path) would run without the consent alert. True
+/// before macOS 15, which has no such alert, or when the approvals file
+/// under `home` records the bundle by file URL or bundle identifier. Unlike
+/// [`capture_blocked_reason`], an unknown macOS version and an unreadable or
+/// unparsable approvals file count as not recorded, so an embedder that must
+/// never raise the alert fails closed.
+#[cfg(feature = "orcel-minimal")]
+pub fn direct_capture_consent_recorded(home: &Path, bundle: &Path) -> bool {
+    let major = crate::tools::macos_product_version()
+        .and_then(|version| version.split('.').next()?.parse::<u32>().ok());
+    match major {
+        Some(major) if major < 15 => true,
+        Some(_) => {
+            let bundle_id = bundle_identifier_of(bundle);
+            consent_state(&home.join(APPROVALS_RELATIVE_PATH), bundle, bundle_id.as_deref())
+                == ConsentState::Recorded
+        }
+        None => false,
+    }
+}
+
+/// P-08 (orcel-minimal): `CFBundleIdentifier` from the bundle's Info.plist.
+#[cfg(feature = "orcel-minimal")]
+fn bundle_identifier_of(bundle: &Path) -> Option<String> {
+    use core_foundation::string::CFString;
+
+    let url = core_foundation::url::CFURL::from_path(bundle, true)?;
+    let info = core_foundation::bundle::CFBundle::new(url)?.info_dictionary();
+    let key = CFString::from_static_string("CFBundleIdentifier");
+    let id = info.find(&key)?.downcast::<CFString>()?.to_string();
+    (!id.is_empty()).then_some(id)
+}
+
 fn blocked_message(bundle: &Path) -> String {
     format!(
         "{CONSENT_REQUIRED_CODE}: screen capture skipped. macOS has not yet asked whether {} \

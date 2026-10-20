@@ -213,6 +213,7 @@ impl Drop for SecureCapturePath {
 /// On non-empty native success, returns those bytes without invoking
 /// fallback. When both paths fail, the error message preserves both
 /// contexts. Closures are not required to be `Send`/`Sync`.
+#[cfg_attr(feature = "orcel-minimal", allow(dead_code))]
 fn capture_window_with_backends<N, F>(
     window_id: u32,
     native: N,
@@ -242,6 +243,7 @@ where
 }
 
 /// Shell compatibility path: `screencapture -l <id> -x -o <tmp.png>`.
+#[cfg_attr(feature = "orcel-minimal", allow(dead_code))]
 fn screenshot_window_bytes_shell(window_id: u32) -> anyhow::Result<Vec<u8>> {
     let capture = SecureCapturePath::new("window.png")?;
     let tmp_path = capture.file.to_string_lossy().into_owned();
@@ -522,6 +524,9 @@ fn build_window_capture_plan(
     let config = SCStreamConfiguration::new()
         .with_width(out_w)
         .with_height(out_h);
+    // P-08 (orcel-minimal): the window frame never carries the pointer.
+    #[cfg(feature = "orcel-minimal")]
+    let config = config.with_shows_cursor(false);
 
     Ok(std::sync::Arc::new(WindowCapturePlan {
         filter,
@@ -748,6 +753,7 @@ fn screenshot_window_bytes_sck(window_id: u32) -> anyhow::Result<Vec<u8>> {
 ///
 /// Tries ScreenCaptureKit first; falls back to the `screencapture` CLI on
 /// native error or empty output.
+#[cfg(not(feature = "orcel-minimal"))]
 pub fn screenshot_window_bytes(window_id: u32) -> anyhow::Result<Vec<u8>> {
     refuse_without_direct_capture_consent()?;
     let off_space = crate::windows::window_on_current_space_by_id(window_id) == Some(false);
@@ -765,12 +771,25 @@ pub fn screenshot_window_bytes(window_id: u32) -> anyhow::Result<Vec<u8>> {
     )
 }
 
+/// P-08 (orcel-minimal): the capture of one window id through
+/// ScreenCaptureKit's desktop-independent window filter only. The
+/// `screencapture` CLI fallback (a PATH-resolved subprocess that writes a
+/// temporary file) and the private SkyLight read are not used; a window
+/// ScreenCaptureKit cannot capture, for example one on another Space, is an
+/// error.
+#[cfg(feature = "orcel-minimal")]
+pub fn screenshot_window_bytes(window_id: u32) -> anyhow::Result<Vec<u8>> {
+    refuse_without_direct_capture_consent()?;
+    screenshot_window_bytes_sck(window_id)
+}
+
 /// Route a window capture by Space.
 ///
 /// Off the current Space, the public backends return nothing useful, so the
 /// SkyLight capture goes first and the public chain is the fallback. On the
 /// current Space the public chain goes first and SkyLight is the last resort.
 /// When everything fails the error keeps every backend's context.
+#[cfg_attr(feature = "orcel-minimal", allow(dead_code))]
 fn capture_window_with_space_route<P, S>(
     window_id: u32,
     off_space: bool,
@@ -809,6 +828,7 @@ where
 }
 
 /// Off-Space capture through `SLSHWCaptureWindowList` (see module docs).
+#[cfg_attr(feature = "orcel-minimal", allow(dead_code))]
 fn screenshot_window_bytes_skylight(window_id: u32) -> anyhow::Result<Vec<u8>> {
     let image = crate::input::skylight::hw_capture_window(window_id).ok_or_else(|| {
         anyhow::anyhow!("SLSHWCaptureWindowList returned no image for window {window_id}")
@@ -819,6 +839,7 @@ fn screenshot_window_bytes_skylight(window_id: u32) -> anyhow::Result<Vec<u8>> {
 /// Encode a CoreGraphics image of any pixel layout as an RGBA PNG by drawing
 /// it into an RGBA8 bitmap. Fails on a fully transparent image, which is what
 /// WindowServer hands back for a window with no backing store.
+#[cfg_attr(feature = "orcel-minimal", allow(dead_code))]
 fn core_cgimage_to_png(
     image: &core_graphics::image::CGImage,
     label: &str,
@@ -859,6 +880,7 @@ fn core_cgimage_to_png(
 
 /// Convert premultiplied RGBA8 to straight alpha in place. Returns whether
 /// any pixel is visible (alpha > 0).
+#[cfg_attr(feature = "orcel-minimal", allow(dead_code))]
 fn unpremultiply_rgba(rgba: &mut [u8]) -> bool {
     let mut visible = false;
     for pixel in rgba.chunks_exact_mut(4) {

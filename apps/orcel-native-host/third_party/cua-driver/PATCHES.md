@@ -330,6 +330,53 @@ holds exactly `list_windows`, `get_window_state`, `get_cursor_position`,
 requires the registered names to equal the allowlist exactly. Lines added
 only; with the feature off the file compiles exactly as upstream.
 
+## P-08: exact-window capture only, in process, never prompting (XP-07)
+
+The Orcel host captures one window by calling Cua's own capture modules
+(`apps/orcel-native-host/src/capture.rs`, through `cua_adapter.rs`). No
+capture tool is registered (P-07 still keeps five tools), so no display or
+region capture is reachable from the protocol. With `orcel-minimal` only,
+three files change; nothing upstream is deleted or reworded, and with the
+feature off each compiles exactly as upstream.
+
+- `platform-macos/src/capture.rs`:
+  - `screenshot_window_bytes` is cfg-selected. The replacement checks Cua's
+    consent gate, then runs only the ScreenCaptureKit path
+    (`screenshot_window_bytes_sck`: a desktop-independent window filter, the
+    WindowServer identity re-checked after the frame, a 3 s bounded worker).
+    It drops the `screencapture` CLI fallback, a PATH-resolved subprocess
+    that writes a temporary file, and the private SkyLight
+    `SLSHWCaptureWindowList` read. A window ScreenCaptureKit cannot capture,
+    for example one on another Space, is an error, and the host reports it as
+    unavailable.
+  - `build_window_capture_plan` adds `with_shows_cursor(false)`. The
+    `SCStreamConfiguration` default draws the pointer into the frame.
+  - The six functions only the upstream route uses get
+    `#[cfg_attr(feature = "orcel-minimal", allow(dead_code))]`, so the build
+    adds no warning.
+- `platform-macos/src/capture_consent.rs`: one added function,
+  `direct_capture_consent_recorded(home, bundle)`, and its helper
+  `bundle_identifier_of`. From macOS 15 the first capture by an app raises
+  replayd's "bypass the private window picker" alert (module docs). Upstream's
+  `capture_blocked_reason` can look only at the process's own bundle. A
+  bare binary is let through, and an unreadable approvals file counts as
+  consent. The host is a bare binary until XP-16, so it asks this function
+  about the app macOS holds responsible for it. The function fails closed:
+  an unknown macOS version and an unreadable file both count as not
+  recorded.
+- `platform-linux/src/capture.rs`: `screenshot_window_bytes` is
+  cfg-selected. The replacement runs MIT-SHM, then plain `XGetImage`, both in
+  process on the session's own X connection. It drops the ImageMagick
+  `import` fallback, a PATH-resolved subprocess that, for a window id the
+  server no longer knows, falls back to an interactive grab of the whole
+  X server. `capture_via_import` gets the same `allow(dead_code)`.
+
+What P-08 does not do: Cua's X11 capture reads the window's area of the
+screen, so a window covered by another one would carry the other window's
+pixels. The host refuses that case itself before and after the capture
+(`capture.rs`, `x11_exposure`). Cua's Wayland backend captures whole outputs
+only, so the host never calls it, and Wayland capture stays unavailable.
+
 ## Patched file index
 
 Every vendored file that differs from upstream, as recorded in the
@@ -341,10 +388,13 @@ to be named here.
 - `platform-macos/src/browser/browser_js.rs` (upstream blob `5d1e2c2adf62`)
 - `platform-macos/src/browser/electron_js.rs` (upstream blob `c22f3e9989f2`)
 - `platform-macos/src/browser/mod.rs` (upstream blob `859243557ed7`)
+- `platform-macos/src/capture.rs` (upstream blob `fd519a81c9fd`)
+- `platform-macos/src/capture_consent.rs` (upstream blob `62752a2f054b`)
 - `platform-macos/src/lib.rs` (upstream blob `329c62985332`)
 - `platform-macos/src/tools/mod.rs` (upstream blob `771e6717e3e5`)
 - `platform-linux/Cargo.toml` (upstream blob `dfb5ec0fdc3f`)
 - `platform-linux/src/atspi/mod.rs` (upstream blob `77c5608cf2f5`)
+- `platform-linux/src/capture.rs` (upstream blob `b2c04867dcfa`)
 - `platform-linux/src/browser_platform.rs` (upstream blob `ddecce24e400`)
 - `platform-linux/src/input/mod.rs` (upstream blob `7a0cd50dae20`)
 - `platform-linux/src/lib.rs` (upstream blob `fc866c39a61b`)

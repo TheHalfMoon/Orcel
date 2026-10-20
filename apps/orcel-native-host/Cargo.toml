@@ -66,10 +66,15 @@ publish = false
 # engine, Computer History, recording, perception client and PiP preview.
 # XP-06: the adapter builds typed inputs through cua-driver-contract and reads
 # process identity through orcel-platform (XP-03), outside this workspace.
+# XP-07: image and base64 turn Cua's window PNG into the RGBA wire frame, and
+# x11rb reads a window's exposure on Linux. All three are already in this
+# graph through the vendored crates, at the same versions.
 [dependencies]
 cua-driver-core = { path = "third_party/cua-driver/crates/cua-driver-core", default-features = false, features = ["orcel-minimal"] }
 cua-driver-contract = { path = "third_party/cua-driver/crates/cua-driver-contract" }
 orcel-platform = { path = "../../crates/orcel-platform" }
+base64 = { workspace = true }
+image = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
@@ -81,3 +86,4 @@ libc = "0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 platform-linux = { path = "third_party/cua-driver/crates/platform-linux", features = ["orcel-minimal"] }
+x11rb = "0.13"

@@ -30,6 +30,20 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo test --workspace
+      # XP-08 (follow-up from the #348 judge): the Rust adapter's /2
+      # negotiation test against the freshly built Go host, not a script. The
+      # native-host job does the same with orcel-native-host on macOS and
+      # Linux. The grep fails the step if the filter matched no test.
+      - name: Adapter /2 handshake against the live Go host (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/orcel-host/orcel-computer-host.exe"
+          (cd apps/orcel-computer-host && go build -trimpath -o "$bin" .)
+          ORCEL_COMPUTER_HOST_BIN="$bin" cargo test -p orcel-provider-uia --lib -- --exact \
+            computer_host::tests::configured_host_handshake_is_exact --nocapture 2>&1 | tee "$RUNNER_TEMP/handshake.log"
+          grep -q "test result: ok. 1 passed" "$RUNNER_TEMP/handshake.log"
       # XP-13b: the Linux Safe tier's cgroup path. Under a unit with
       # Delegate=yes the provider's unix tests must put the child in its own
       # cgroup (they fail instead of skipping when ORCEL_REQUIRE_SAFE_CGROUP
@@ -276,9 +290,13 @@ jobs:
         # XP-06: a GTK3 probe with a password field and a protected Orcel
         # surface, observed through the real host (frame log must never hold
         # the secret) and through orcel-provider-uia's registry end to end.
-        # Both tests fail instead of skipping when ORCEL_XP06_LIVE is set.
+        # XP-07: a GTK3 capture probe captured exactly (marker colour, 320x200
+        # client area), its protected surface refused, a covered and a
+        # minimized window refused, through the host and the registry.
+        # Every test fails instead of skipping when its variable is set.
         env:
           ORCEL_XP06_LIVE: "1"
+          ORCEL_XP07_LIVE: deliver
         run: |
           set -euo pipefail
           export ORCEL_COMPUTER_HOST_BIN="$PWD/target/release/orcel-native-host"
@@ -289,9 +307,142 @@ jobs:
             openbox >/dev/null 2>&1 &
             sleep 1
             cargo test --locked --release -p orcel-native-host --test live_observation -- --nocapture
+            cargo test --locked --release -p orcel-native-host --test live_capture -- --nocapture
             cd ../..
             cargo test --locked -p orcel-provider-uia --test xp06_native_host_live -- --nocapture
+            cargo test --locked -p orcel-provider-uia --test xp07_native_capture_live -- --nocapture
           '
+      - name: Capture availability on the macOS runner (XP-07, report mode)
+        if: runner.os == 'macOS'
+        # The host captures only with Screen Recording granted and replayd's
+        # direct-capture consent already recorded for the app macOS holds
+        # responsible for it; it never raises either prompt. The runner's
+        # responsible process is not an app bundle, so capture is expected
+        # to be unavailable with permission_missing here, and the test checks
+        # that refusal. Where it is delivered, the full AppKit check runs.
+        env:
+          ORCEL_XP07_LIVE: report
+        run: cargo test --locked --release -p orcel-native-host --test live_capture -- --nocapture
+      # XP-08: the shared native conformance suite. The harness apps are Cua's
+      # MIT fixtures (tests/native-fixtures, T-CUA-07), built from source on
+      # the runner: GTK3 runs as PyGObject source, AppKit and WKWebView are
+      # compiled with swiftc, and Electron comes from the pinned lockfile.
+      # The spec's .github/workflows/native-e2e.yml is not added, because the
+      # governed workflow set is exactly four files
+      # (release_blocker_sweep::workflow_set_is_exactly_the_governed_quartet).
+      # The spec's self-hosted macOS runner waits for FD-05, so the macOS leg
+      # runs on the hosted runner, which grants the host Accessibility and
+      # Screen Recording. ORCEL_XP08_FIXTURES makes both suites run and fail
+      # rather than skip.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24.19.0"
+      - name: Install the XP-08 Linux session tools (Sway, xprop, xdotool, Electron runtime libraries)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y --no-install-recommends \
+            sway x11-utils xdotool libglib2.0-bin libnss3 libgbm1 libasound2t64
+      - name: Stage the XP-08 harness apps from tests/native-fixtures
+        run: |
+          set -euo pipefail
+          SECONDS=0
+          bash ../../tests/native-fixtures/orcel-stage.sh "$RUNNER_TEMP/orcel-fixtures"
+          echo "- XP-08 harness staging on ${{ runner.os }}: ${SECONDS}s" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: XP-08 conformance under Xvfb and Openbox (X11)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          export ORCEL_XP08_FIXTURES="$RUNNER_TEMP/orcel-fixtures" ORCEL_XP08_REPORT_DIR="$RUNNER_TEMP/xp08-reports"
+          SECONDS=0
+          dbus-run-session -- bash -euo pipefail -c '
+            Xvfb :98 -screen 0 1280x1024x24 -nolisten tcp >/dev/null 2>&1 &
+            export DISPLAY=:98
+            sleep 2
+            openbox >/dev/null 2>&1 &
+            sleep 1
+            # Chromium exposes its web tree on AT-SPI only when the bus says
+            # accessibility is on (Cua sets the same in its Linux runners).
+            gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus \
+              --method org.freedesktop.DBus.Properties.Set org.a11y.Status IsEnabled "<true>"
+            cargo test --locked --release -p orcel-native-host \
+              --test conformance_native --test conformance_shared_web -- --nocapture --test-threads=1
+          '
+          echo "- XP-08 suite on Linux X11: ${SECONDS}s" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: XP-08 conformance under headless Sway (Wayland)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          export ORCEL_XP08_FIXTURES="$RUNNER_TEMP/orcel-fixtures" ORCEL_XP08_REPORT_DIR="$RUNNER_TEMP/xp08-reports"
+          XDG_RUNTIME_DIR="$(mktemp -d)"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          export XDG_RUNTIME_DIR
+          # The upstream Wayland runner's headless Sway settings
+          # (scripts/ci/linux/run-rust-e2e-wayland.sh at the pin).
+          printf '%s\n' 'xwayland disable' 'output HEADLESS-1 mode 1920x1080' \
+            'focus_follows_mouse no' 'for_window [title="^CuaTestHarness"] floating enable' > "$XDG_RUNTIME_DIR/sway.conf"
+          SECONDS=0
+          env -u DISPLAY dbus-run-session -- bash -euo pipefail -c '
+            export WLR_BACKENDS=headless WLR_RENDERER=pixman WLR_RENDERER_ALLOW_SOFTWARE=1
+            export WLR_LIBINPUT_NO_DEVICES=1 WLR_HEADLESS_OUTPUTS=1
+            sway --unsupported-gpu --config "$XDG_RUNTIME_DIR/sway.conf" >"$RUNNER_TEMP/sway.log" 2>&1 &
+            for _ in $(seq 1 50); do
+              SWAYSOCK="$(find "$XDG_RUNTIME_DIR" -maxdepth 1 -type s -name "sway-ipc.*.sock" -print -quit)"
+              display="$(find "$XDG_RUNTIME_DIR" -maxdepth 1 -type s -name "wayland-*" -printf "%f\n" -quit)"
+              [ -n "$SWAYSOCK" ] && [ -n "$display" ] && break
+              sleep 0.2
+            done
+            test -n "$SWAYSOCK" || { cat "$RUNNER_TEMP/sway.log"; exit 1; }
+            export SWAYSOCK WAYLAND_DISPLAY="$display"
+            export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=sway XDG_SESSION_DESKTOP=sway
+            swaymsg -t get_version
+            gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus \
+              --method org.freedesktop.DBus.Properties.Set org.a11y.Status IsEnabled "<true>"
+            cargo test --locked --release -p orcel-native-host \
+              --test conformance_native --test conformance_shared_web -- --nocapture --test-threads=1
+          '
+          echo "- XP-08 suite on Linux Sway: ${SECONDS}s" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: XP-08 conformance on the hosted macOS session (Quartz)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          export ORCEL_XP08_FIXTURES="$RUNNER_TEMP/orcel-fixtures" ORCEL_XP08_REPORT_DIR="$RUNNER_TEMP/xp08-reports"
+          SECONDS=0
+          cargo test --locked --release -p orcel-native-host \
+            --test conformance_native --test conformance_shared_web -- --nocapture --test-threads=1
+          echo "- XP-08 suite on macOS: ${SECONDS}s" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Check the XP-08 reports against orcel-benchmark-report/1
+        # Linux: shared web and native, each for X11 and Sway. macOS: both
+        # suites for Quartz.
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/xp08-reports"
+          expected=$([ "$RUNNER_OS" = Linux ] && echo 4 || echo 2)
+          test "$(find "$dir" -name '*.report.json' | wc -l | tr -d ' ')" = "$expected"
+          node ../../scripts/check-benchmark-report.mjs "$dir"
+          node -e '
+            const fs = require("fs"), path = require("path"), dir = process.argv[1];
+            for (const file of fs.readdirSync(dir).sort()) {
+              const report = JSON.parse(fs.readFileSync(path.join(dir, file), "utf8"));
+              const count = (status) => report.rows.filter((row) => row.status === status).length;
+              console.log(`- ${file}: ${count("pass")} pass, ${count("skip")} skip (pending XP-11/XP-12 or not built), ${count("fail")} fail, ${count("error")} error`);
+            }
+          ' "$dir" | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: xp08-native-conformance-${{ runner.os }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/xp08-reports
+          if-no-files-found: error
+      - name: Adapter /2 handshake against the live native host
+        # XP-08 (follow-up from the #348 judge): the Rust adapter negotiates
+        # /2 with the binary this job built. The grep fails the step if the
+        # filter matched no test.
+        working-directory: .
+        run: |
+          set -euo pipefail
+          ORCEL_COMPUTER_HOST_BIN="$PWD/apps/orcel-native-host/target/release/orcel-native-host" \
+            cargo test -p orcel-provider-uia --lib -- --exact \
+            computer_host::tests::configured_native_host_handshake_is_exact --nocapture 2>&1 | tee "$RUNNER_TEMP/handshake.log"
+          grep -q "test result: ok. 1 passed" "$RUNNER_TEMP/handshake.log"
       - uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
         if: runner.os == 'Linux'
         id: native-host-tools-cache

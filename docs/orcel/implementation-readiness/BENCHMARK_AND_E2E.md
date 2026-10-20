@@ -16,6 +16,15 @@ Fixture apps copied from Cua (`tests/native-fixtures`, MIT): shared web harness 
 
 Runners: Linux Xvfb + Openbox and headless Sway on GitHub-hosted Ubuntu; macOS on a founder-provided self-hosted runner with Accessibility and Screen Recording granted (FD-05); Windows on `windows-latest` interactive session for observation and the existing native suites for input.
 
+As built (XP-08):
+- Suites: `apps/orcel-native-host/tests/conformance_shared_web.rs` (upstream's 40-cell catalog on the shared page in Electron, plus WKWebView on macOS) and `conformance_native.rs` (GTK3 on Linux, AppKit on macOS, in their task-state mode). Fixture provenance: `tests/native-fixtures/ORCEL.md`; build: `tests/native-fixtures/orcel-stage.sh`.
+- CI: steps in the `native-host` job of `.github/workflows/ci.yml`, not a separate `native-e2e.yml`. The governed workflow set is exactly four files (`release_blocker_sweep::workflow_set_is_exactly_the_governed_quartet`).
+- macOS: the GitHub-hosted `macos-latest` runner until FD-05. It grants the host Accessibility and Screen Recording (XP-06 CI log), so observation cells run there. A self-hosted run is still wanted for real-hardware latency.
+- Oracles: fixture state is the page's loopback journal or the harness's task-state file, never the host's tree. Focus and z-order come from the window system (`xprop` on X11, `swaymsg` on Sway, `lsappinfo` on macOS). The cursor comes from `xdotool` on X11, and on macOS from the host's `cursor_position`, named `cursor-host` in the case id. Sway has no cursor oracle: Wayland gives no client the pointer position, and the suite requires the host to report `cursor_position` as `unavailable`/`provider_unavailable` there.
+- Report: one `orcel-benchmark-report/1` file (schema `protocol/BENCHMARK_REPORT_1.schema.json`, checker `scripts/check-benchmark-report.mjs`) per suite and window system, uploaded as the `xp08-native-conformance-<os>-<sha>` artifact. The dimensions sit in the case id: `<suite>/<window system>/<harness>/<action>/<targeting>/<delivery>/<oracles>` for input cells and `<suite>/<window system>/<harness>/observe/<cell>` for observation cells. The OS is `machine.os`.
+- Input cells until their task lands: the cell sends its `/2` frame and requires `capability_denied` with every oracle unchanged. It is reported as `status: skip, observed: refused`. `ax` cells wait for XP-11 (`semantic_action`), `px` cells for XP-12 (raw `input_*`). When the hello stops refusing an operation, the suite fails until its cells are ported. Tauri is reported `not_run`: its icons are binary and are not copied, and the build is too heavy for CI.
+- Finding (first CI runs): the host's AX and AT-SPI trees hold interactive elements only, so static labels are never observed. Fixture agreement therefore compares controls: button names with the journal, and checkbox and radio state with the task-state file. Under Linux Chromium, AT-SPI reaches the page's Document at depth 8, the `/2` depth ceiling, so the shared page's controls are not observable through Electron on Linux. That row is reported `skip` / `beyond-depth-bound`, and the suite fails if the controls ever come within the bound. macOS (Electron and WKWebView) and the GTK3 harness observe their controls.
+
 ### 2.2 Native metrics
 
 | Id | Metric | Method | Target (ESTIMATE) |
@@ -70,6 +79,6 @@ No page text, screenshots or secrets go into reports.
 
 - Unit and contract tests on ubuntu, windows, macos legs (XP-02).
 - Native host build and core tests on macOS and Linux (XP-05).
-- `native-e2e.yml` for Linux on every PR touching `apps/orcel-native-host` or `crates/orcel-provider-uia`; macOS on label.
+- Native conformance (XP-08) for Linux X11, Linux Sway and hosted macOS on every PR, in the `native-host` job of `ci.yml` (the spec's `native-e2e.yml` would be a fifth governed workflow).
 - Existing SG-000094/95/108 native suites stay required on Windows.
 - Readiness checks on planning changes: `python -I docs/orcel/implementation-readiness/tools/readiness_check.py` and `render_tables.py --check`.

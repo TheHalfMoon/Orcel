@@ -35,12 +35,27 @@ const MAX_CAPTURE_BYTES: usize = 1 << 30;
 const XSHM_INIT_RETRY_BACKOFF: Duration = Duration::from_secs(30);
 
 /// Capture a window by X11 XID. Returns raw PNG bytes.
+#[cfg(not(feature = "orcel-minimal"))]
 pub fn screenshot_window_bytes(xid: u64) -> Result<Vec<u8>> {
     capture_window_with_backends(
         xid,
         capture_via_xshm,
         capture_via_persistent_xgetimage,
         capture_via_import,
+    )
+}
+
+/// P-08 (orcel-minimal): in-process MIT-SHM, then plain `XGetImage`. The
+/// ImageMagick `import` fallback is not used: it is a PATH-resolved
+/// subprocess, and for a window id the server no longer knows it falls back
+/// to an interactive grab of the whole X server.
+#[cfg(feature = "orcel-minimal")]
+pub fn screenshot_window_bytes(xid: u64) -> Result<Vec<u8>> {
+    capture_window_with_backends(
+        xid,
+        capture_via_xshm,
+        capture_via_persistent_xgetimage,
+        |_| bail!("the ImageMagick fallback is not built (orcel-minimal)"),
     )
 }
 
@@ -94,6 +109,7 @@ fn capture_window_with_backends(
 /// hangs with it until the process dies. Killing it releases the grab.
 const IMPORT_TIMEOUT: Duration = Duration::from_secs(5);
 
+#[cfg_attr(feature = "orcel-minimal", allow(dead_code))]
 fn capture_via_import(xid: u64) -> Result<Vec<u8>> {
     if !crate::x11::window_exists(xid) {
         bail!("window {xid} no longer exists");
