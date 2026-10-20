@@ -58,6 +58,7 @@ const EXPECTED_TOOLS = [
   "process_spawn",
   "system_status",
   "web_fetch",
+  "web_search",
   "workspace_get"
 ];
 

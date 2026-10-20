@@ -3442,7 +3442,11 @@
         "runtime_overhead": "negligible",
         "maintenance": "none beyond normal",
         "risks": [],
-        "matrix_rows": []
+        "matrix_rows": [
+          "T-AR-02",
+          "T-AR-03",
+          "T-AR-04"
+        ]
       }
     },
     {

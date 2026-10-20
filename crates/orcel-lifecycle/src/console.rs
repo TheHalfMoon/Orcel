@@ -93,9 +93,107 @@ pub fn read_secret_line(prompt: &str) -> Result<String, LifecycleError> {
     Ok(line.trim_end_matches(['\r', '\n']).to_string())
 }
 
-#[cfg(not(windows))]
+/// Unix: the same contract through termios. Echo is turned off on the
+/// terminal behind stdin and restored on return, on error, and on SIGINT,
+/// SIGTERM or SIGHUP (the handler restores the saved mode, then re-raises
+/// the signal with its default action). Stdin that is not a terminal is
+/// refused, so a key is never read from a pipe; use `--key-file` instead.
+#[cfg(unix)]
+pub fn read_secret_line(prompt: &str) -> Result<String, LifecycleError> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Mutex;
+
+    /// The terminal mode to restore, readable from the signal handler.
+    /// Written only while `PROMPT` is held and before `ARMED` is set.
+    static mut SAVED: Option<libc::termios> = None;
+    static ARMED: AtomicBool = AtomicBool::new(false);
+    static PROMPT: Mutex<()> = Mutex::new(());
+    const SIGNALS: [libc::c_int; 3] = [libc::SIGINT, libc::SIGTERM, libc::SIGHUP];
+
+    extern "C" fn restore_on_signal(signal: libc::c_int) {
+        if ARMED.swap(false, Ordering::SeqCst) {
+            // SAFETY: `SAVED` was written before `ARMED` was set and is not
+            // written again while armed; tcsetattr, signal and raise are
+            // async-signal-safe.
+            unsafe {
+                if let Some(saved) = (*std::ptr::addr_of!(SAVED)).as_ref() {
+                    libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, saved);
+                }
+            }
+        }
+        // SAFETY: restores the default action and re-raises the signal.
+        unsafe {
+            libc::signal(signal, libc::SIG_DFL);
+            libc::raise(signal);
+        }
+    }
+
+    struct Restore {
+        previous: [libc::sighandler_t; 3],
+    }
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            if ARMED.swap(false, Ordering::SeqCst) {
+                // SAFETY: restores the mode saved below on the same fd.
+                unsafe {
+                    if let Some(saved) = (*std::ptr::addr_of!(SAVED)).as_ref() {
+                        libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, saved);
+                    }
+                }
+            }
+            for (signal, previous) in SIGNALS.iter().zip(self.previous) {
+                // SAFETY: reinstalls the handler that was active before.
+                unsafe {
+                    libc::signal(*signal, previous);
+                }
+            }
+        }
+    }
+
+    let _prompt = PROMPT
+        .lock()
+        .map_err(|_| LifecycleError::internal("hidden prompt lock poisoned"))?;
+    // SAFETY: an all-zero termios is a valid out buffer for tcgetattr.
+    let mut mode: libc::termios = unsafe { std::mem::zeroed() };
+    // SAFETY: valid fd and out-pointer; failure means stdin is not a tty.
+    if unsafe { libc::isatty(libc::STDIN_FILENO) } != 1
+        || unsafe { libc::tcgetattr(libc::STDIN_FILENO, &mut mode) } != 0
+    {
+        return Err(LifecycleError::usage(
+            "no interactive terminal for the hidden key prompt; pass --key-file <path>",
+        ));
+    }
+    // SAFETY: `PROMPT` is held and `ARMED` is false, so no handler reads
+    // `SAVED` while it is written.
+    unsafe {
+        *std::ptr::addr_of_mut!(SAVED) = Some(mode);
+    }
+    ARMED.store(true, Ordering::SeqCst);
+    let handler = restore_on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t;
+    // SAFETY: installs a handler with the signature signal(2) expects.
+    let previous = SIGNALS.map(|signal| unsafe { libc::signal(signal, handler) });
+    let restore = Restore { previous };
+    let mut hidden = mode;
+    hidden.c_lflag &= !(libc::ECHO | libc::ECHONL);
+    hidden.c_lflag |= libc::ICANON;
+    // SAFETY: valid fd and a termios derived from the one just read.
+    if unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSAFLUSH, &hidden) } != 0 {
+        return Err(LifecycleError::platform(
+            "terminal echo could not be disabled, so the key was not read; pass --key-file <path>",
+        ));
+    }
+    eprint!("{prompt}");
+    let mut line = String::new();
+    let read = std::io::stdin().read_line(&mut line);
+    drop(restore);
+    eprintln!();
+    read.map_err(|error| LifecycleError::io("read key", error))?;
+    Ok(line.trim_end_matches(['\r', '\n']).to_string())
+}
+
+#[cfg(not(any(windows, unix)))]
 pub fn read_secret_line(_prompt: &str) -> Result<String, LifecycleError> {
     Err(LifecycleError::usage(
-        "the hidden key prompt is available on Windows only; pass --key-file <path>",
+        "the hidden key prompt is unavailable on this platform; pass --key-file <path>",
     ))
 }

@@ -931,7 +931,8 @@ test("scope to tool matrix covers exactly the canonical catalog with default den
     "desktop_window_capture",
     "desktop_window_list",
     "desktop_window_tree",
-    "web_fetch"
+    "web_fetch",
+    "web_search"
   ]);
   for (const tool of LOCAL_ONLY_TOOL_NAMES) {
     assert.ok(CANONICAL_TOOL_NAMES.includes(tool), `${tool} is canonical`);

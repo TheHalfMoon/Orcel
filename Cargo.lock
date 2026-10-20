@@ -973,6 +973,7 @@ dependencies = [
 name = "orcel-lifecycle"
 version = "0.2.0"
 dependencies = [
+ "libc",
  "orcel-approval",
  "orcel-contracts",
  "orcel-platform",
@@ -1098,6 +1099,7 @@ name = "orceld"
 version = "0.2.0"
 dependencies = [
  "apple-native-keyring-store",
+ "fs4",
  "keyring-core",
  "orcel-approval",
  "orcel-audit",

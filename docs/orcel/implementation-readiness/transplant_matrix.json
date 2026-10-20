@@ -1026,6 +1026,45 @@
       "notes": "Extracts browser cookies; credential export is forbidden.",
       "at": "94f06c1969dfc1834001269d79d3ad0972d9dee6",
       "object": "d2f6595225b427af9a79f40fa3394cf5dcbf3b1b"
+    },
+    {
+      "id": "T-AR-02",
+      "donor": "agent-reach",
+      "path": "agent_reach/channels/base.py",
+      "kind": "blob",
+      "dest": "crates/orceld/src/search.rs",
+      "dest_state": "NEW",
+      "method": "PORT",
+      "task": "WI-06",
+      "at": "a19a171fa980a0785849596492e0af4db800c82f",
+      "object": "2afec0a72338bf3c54718c0945029d17c692f94b",
+      "notes": "MIT. Channel registry, ordered backends with user override and tiers, PORTED as the WI-06 provider registry (semantics only)."
+    },
+    {
+      "id": "T-AR-03",
+      "donor": "agent-reach",
+      "path": "agent_reach/probe.py",
+      "kind": "blob",
+      "dest": "crates/orceld/src/search.rs",
+      "dest_state": "NEW",
+      "method": "PORT",
+      "task": "WI-06",
+      "at": "a19a171fa980a0785849596492e0af4db800c82f",
+      "object": "3652d8b9219512dadfdfff12d429a62d01d4343f",
+      "notes": "MIT. Missing versus broken health distinction, PORTED as doctor key and transport states; no subprocess or network probe."
+    },
+    {
+      "id": "T-AR-04",
+      "donor": "agent-reach",
+      "path": "agent_reach/doctor.py",
+      "kind": "blob",
+      "dest": "crates/orceld/src/search.rs",
+      "dest_state": "NEW",
+      "method": "PORT",
+      "task": "WI-06",
+      "at": "a19a171fa980a0785849596492e0af4db800c82f",
+      "object": "9ee98cf2b335ccbe32765e328e215d8cb0473a1a",
+      "notes": "MIT. One report that survives a failing channel and scrubs credentials at the output boundary, PORTED as search/doctor."
     }
   ]
 }

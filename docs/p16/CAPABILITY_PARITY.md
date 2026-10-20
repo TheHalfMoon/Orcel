@@ -54,7 +54,7 @@ Totals: implemented_exposed: 23, implemented_hidden: 0, missing: 2, intentionall
 
 ## Capability shapes
 
-Totals: implemented_exposed: 40, implemented_hidden: 3, missing: 0, intentionally_denied: 28.
+Totals: implemented_exposed: 41, implemented_hidden: 4, missing: 0, intentionally_denied: 28.
 
 | Shape | Status | MCP tool, owner, or reason |
 | --- | --- | --- |
@@ -113,6 +113,8 @@ Totals: implemented_exposed: 40, implemented_hidden: 3, missing: 0, intentionall
 | `clipboard/read` | implemented_exposed | `clipboard_read` |
 | `clipboard/write` | implemented_exposed | `clipboard_write` |
 | `network/fetch` | implemented_exposed | `web_fetch` |
+| `search/query` | implemented_exposed | `web_search` |
+| `search/doctor` | implemented_hidden | outside_v0_2_target |
 | `workspace.trust.get/get` | intentionally_denied | local authority management: trust is read and changed only through the local CLI; an agent must never inspect or move its own trust boundary |
 | `workspace.trust.grant/grant` | intentionally_denied | agent self-grant of workspace trust; STRONG local presence only |
 | `workspace.trust.revoke/revoke` | intentionally_denied | trust changes are local STRONG decisions, never MCP tools |
