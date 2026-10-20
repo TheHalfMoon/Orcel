@@ -20,6 +20,12 @@
 // actually has, which needs no file in this repository to be trusted. A token
 // in GH_TOKEN or GITHUB_TOKEN raises the rate limit.
 //
+// XP-08: the native conformance fixtures under tests/native-fixtures/ are
+// upstream's libs/cua-driver/tests/fixtures tree (the provenance file's
+// `fixtures` entries) and get the same proof. Their Orcel-owned files are
+// listed by path and left out of the rebuilt tree; files Orcel does not copy
+// go back in as their upstream blobs and must be named in the tree's notes.
+//
 // Every vendored file must also be reviewable by the exact-diff gate: text,
 // with no line longer than MAX_REVIEWABLE_LINE.
 //
@@ -154,7 +160,10 @@ export async function check({ upstream = false } = {}) {
   const matrix = new Map(JSON.parse(readFileSync(matrixPath, "utf8")).rows.map((row) => [row.id, row]));
   const registry = JSON.parse(readFileSync(registryPath, "utf8")).donors.find((d) => d.id === provenance.donor?.id);
   const upstreamTrees = upstream
-    ? await upstreamTreeIds(provenance.donor.commit, (provenance.crates ?? []).map((c) => c.source))
+    ? await upstreamTreeIds(
+        provenance.donor.commit,
+        [...(provenance.crates ?? []), ...(provenance.fixtures ?? [])].map((c) => c.source),
+      )
     : null;
   const errors = [];
   if (!SHA.test(provenance.donor?.commit ?? "")) errors.push("donor.commit is not a 40-hex id");
@@ -256,12 +265,61 @@ export async function check({ upstream = false } = {}) {
         `${removed.size} removed, ${(crate.added_files ?? []).length} added, tree ${tree}`,
     );
   }
+  // XP-08: copied fixture trees. Orcel-owned files (the notes, the staging
+  // script, the license copy) stay out of the rebuilt tree.
+  const fixtureFiles = [];
+  for (const tree of provenance.fixtures ?? []) {
+    const prefix = `${tree.destination}/`;
+    const entries = indexEntries(prefix);
+    const own = new Set(tree.orcel_files ?? []);
+    const files = new Map();
+    for (const [path, entry] of entries) {
+      fixtureFiles.push(path);
+      const relative = path.slice(prefix.length);
+      if (!own.has(relative)) files.set(relative, { ...entry });
+    }
+    for (const relative of own) {
+      if (!entries.has(`${prefix}${relative}`)) errors.push(`${prefix}${relative}: Orcel-owned file is missing`);
+    }
+    if (!own.has(tree.notes)) errors.push(`${tree.name}: notes ${tree.notes} must be an Orcel-owned file`);
+    const notes = entries.has(`${prefix}${tree.notes}`) ? readFileSync(join(repoRoot, prefix, tree.notes), "utf8") : "";
+    for (const file of tree.removed_files ?? []) {
+      const full = `${prefix}${file.path}`;
+      if (files.has(file.path)) errors.push(`${full}: listed as removed but present`);
+      if (!SHA.test(file.upstream_blob_sha ?? "")) errors.push(`${full}: removed file needs its upstream blob id`);
+      if (!notes.includes(file.path)) errors.push(`${full}: removed but not named in ${tree.notes}`);
+      files.set(file.path, { mode: file.upstream_mode ?? "100644", sha: file.upstream_blob_sha });
+    }
+    // The MIT notice travels with the copy: the license is upstream's blob.
+    const license = entries.get(`${prefix}${tree.license}`);
+    if (!own.has(tree.license) || license?.sha !== provenance.donor?.license_blob_sha) {
+      errors.push(`${tree.name}: ${tree.license} is not the donor license blob ${provenance.donor?.license_blob_sha}`);
+    }
+    const rebuilt = files.size ? mktree(files) : "(empty)";
+    if (rebuilt !== tree.tree_sha) {
+      errors.push(`${tree.name}: rebuilt tree ${rebuilt} is not upstream ${tree.tree_sha}`);
+    }
+    const row = matrix.get(tree.matrix_id);
+    if (!row) errors.push(`${tree.name}: matrix row ${tree.matrix_id} is missing`);
+    else if (row.object !== tree.tree_sha || row.path !== tree.source || row.dest !== tree.destination) {
+      errors.push(`${tree.name}: provenance does not match matrix row ${tree.matrix_id}`);
+    }
+    if (upstreamTrees && upstreamTrees.get(tree.source) !== tree.tree_sha) {
+      errors.push(
+        `${tree.name}: trycua/cua@${provenance.donor.commit} has ${tree.source} as ${upstreamTrees.get(tree.source)}, not ${tree.tree_sha}`,
+      );
+    }
+    summary.push(
+      `${tree.name}: ${files.size - (tree.removed_files ?? []).length} upstream files, ` +
+        `${(tree.removed_files ?? []).length} removed, ${own.size} Orcel-owned, tree ${rebuilt}`,
+    );
+  }
   if (registry?.commit !== provenance.donor?.commit) {
     errors.push(`donor_registry.json pins cua at ${registry?.commit}, provenance at ${provenance.donor?.commit}`);
   }
   // Every vendored file must pass the exact-diff review gate as text: no
   // binary content and no line longer than its per-slice budget allows.
-  for (const path of all.keys()) {
+  for (const path of [...all.keys(), ...fixtureFiles]) {
     const bytes = readFileSync(join(repoRoot, path));
     if (bytes.subarray(0, 8192).includes(0) || !isUtf8(bytes)) {
       errors.push(`${path}: binary content cannot pass exact-diff review`);
@@ -299,7 +357,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     process.exit(1);
   }
   console.log(
-    `vendored Cua Driver crates match the upstream pin outside PATCHES.md` +
+    `vendored Cua Driver crates and native fixtures match the upstream pin outside their recorded patches` +
       (upstream ? " (tree ids confirmed against trycua/cua on GitHub)" : ""),
   );
 }
