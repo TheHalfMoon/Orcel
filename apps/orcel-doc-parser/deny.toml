@@ -1,0 +1,27 @@
+# cargo-deny configuration for the orcel-doc-parser workspace only (WI-05).
+# CI runs `cargo deny check licenses bans sources`. Every crate in the
+# resolved graph (all targets) must carry a license on this list, come from
+# crates.io or a path in this repository, and appear once.
+[licenses]
+confidence-threshold = 0.93
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Unicode-3.0",
+  # Beyond MIT and Apache-2.0, both permissive:
+  # - BSD-3-Clause: brotli-decompressor, alloc-no-stdlib and alloc-stdlib
+  #   (lopdf's Brotli filter) and encoding_rs's lookup tables;
+  # - Zlib: zlib-rs (lopdf's inflater).
+  "BSD-3-Clause",
+  "Zlib",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
