@@ -54,11 +54,52 @@ fn locked_registry() -> Result<std::sync::MutexGuard<'static, UiaRegistry>, Prov
         .map_err(|_| ProviderError::new(FailureCode::InternalError, "uia registry is unavailable"))
 }
 
+/// Whether observation goes through the private computer host. On every OS
+/// the host is selected by ORCEL_COMPUTER_HOST_BIN; unset, the fail-closed
+/// NativeAdapter answers instead (rollback for XP-06 is unsetting it).
+fn computer_host_selected() -> bool {
+    std::env::var_os("ORCEL_COMPUTER_HOST_BIN").is_some()
+}
+
+/// XP-06: off Windows ORCEL_COMPUTER_HOST_BIN must name the pinned
+/// `orcel-native-host`: an absolute canonical path next to orceld or at
+/// `/usr/libexec/orcel/orcel-native-host`, owned by root or this user and
+/// writable by nobody else, in directories nobody else can write
+/// (`orcel_provider_uia::trusted_native_host_path`, the XP-10 rule). Any
+/// other binary is refused before it is started. Whatever the host then
+/// advertises, the kernel accepts only observation from it until XP-11.
+#[cfg(not(windows))]
+fn trusted_native_host(
+    configured: Option<std::ffi::OsString>,
+) -> Result<orcel_provider_uia::TrustedHostBinary, ProviderError> {
+    let configured = configured.ok_or_else(|| {
+        ProviderError::new(
+            FailureCode::ProviderUnavailable,
+            "ORCEL_COMPUTER_HOST_BIN is not configured",
+        )
+    })?;
+    let orceld_dir = std::env::current_exe()
+        .ok()
+        .and_then(|exe| std::fs::canonicalize(exe).ok())
+        .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf));
+    orcel_provider_uia::trusted_native_host_path(
+        std::path::Path::new(&configured),
+        orceld_dir.as_deref(),
+    )
+    .map_err(|error| ProviderError::new(error.code, error.message))
+}
+
 fn computer_host() -> Result<&'static ComputerHostAdapter, ProviderError> {
     static HOST: OnceLock<ComputerHostAdapter> = OnceLock::new();
     if let Some(host) = HOST.get() {
         return Ok(host);
     }
+    #[cfg(not(windows))]
+    let host = ComputerHostAdapter::from_trusted(&trusted_native_host(std::env::var_os(
+        "ORCEL_COMPUTER_HOST_BIN",
+    ))?)
+    .map_err(|error| ProviderError::new(error.code, error.message))?;
+    #[cfg(windows)]
     let host = ComputerHostAdapter::from_env()
         .map_err(|error| ProviderError::new(error.code, error.message))?;
     let _ = HOST.set(host);
@@ -546,7 +587,7 @@ pub fn dispatch_uia(
         ("uia.window", "list") => {
             reject_uia_arguments(request, &[])?;
             let mut guard = locked_registry()?;
-            if std::env::var_os("ORCEL_COMPUTER_HOST_BIN").is_some() {
+            if computer_host_selected() {
                 let adapter = computer_host()?;
                 guard
                     .list_windows(adapter, &workspace.id, POLICY_REVISION)
@@ -575,7 +616,7 @@ pub fn dispatch_uia(
             let max_depth = optional_u64(request, "max_depth")?;
             let max_nodes = optional_u64(request, "max_nodes")?;
             let mut guard = locked_registry()?;
-            if std::env::var_os("ORCEL_COMPUTER_HOST_BIN").is_some() {
+            if computer_host_selected() {
                 let adapter = computer_host()?;
                 guard
                     .observe_tree(
@@ -1634,4 +1675,28 @@ fn reject_uia_arguments(request: &RequestEnvelope, allowed: &[&str]) -> Result<(
         ));
     }
     Ok(())
+}
+
+#[cfg(all(test, not(windows)))]
+mod xp06_tests {
+    use super::trusted_native_host;
+
+    /// The path rule itself is tested in orcel-provider-uia
+    /// (native_host_path); this checks orceld applies it.
+    #[test]
+    fn xp06_unpinned_host_bins_are_refused() {
+        for value in [
+            None,
+            Some("orcel-native-host"),
+            Some("/tmp/x/orcel-native-host"),
+            Some("/usr/bin/orcel-native-host"),
+        ] {
+            let error = trusted_native_host(value.map(Into::into)).unwrap_err();
+            assert_eq!(
+                error.code,
+                orcel_contracts::FailureCode::ProviderUnavailable,
+                "{value:?}"
+            );
+        }
+    }
 }

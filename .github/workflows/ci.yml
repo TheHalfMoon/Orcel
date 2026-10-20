@@ -147,7 +147,8 @@ jobs:
 
   # XP-05: the macOS/Linux native host is its own Cargo workspace with the
   # vendored Cua Driver crates (apps/orcel-native-host/third_party/cua-driver).
-  # It is compile-only; nothing reaches it from orceld yet.
+  # XP-06: it serves read-only observation over orcel-computer-host/2; orceld
+  # reaches it through ORCEL_COMPUTER_HOST_BIN.
   native-host:
     name: Native host / ${{ matrix.os }}
     strategy:
@@ -176,22 +177,43 @@ jobs:
             libxtst-dev libxext-dev libxcb1-dev libwayland-dev
       - name: Build (release, locked)
         run: cargo build --locked --release -p orcel-native-host
-      - name: The binary only prints its protocol version
-        run: test "$(./target/release/orcel-native-host)" = "orcel-computer-host/2"
-      - name: Reachability (no run_script, remote debugging, server, daemon or browser code)
-        # In XP-05 main.rs calls no vendored code, so these checks pass
-        # trivially and only pin the baseline. They start to mean something
-        # in XP-06, when the adapter links the platform crates.
+      - name: The binary prints its protocol version
+        run: test "$(./target/release/orcel-native-host --version)" = "orcel-computer-host/2"
+      - name: Reachability (no script engine, CDP client, server, daemon or browser code)
+        # XP-06 links the platform crates through the adapter, so these checks
+        # now cover real code. The words run_script and remote-debugging are
+        # no longer a usable signal: linked core code names them in its
+        # authorization and capability tables and in launch_guard.rs, the
+        # refusal that blocks launching an app with --remote-debugging-port.
+        # What must be absent is the QuickJS engine and every CDP client, so
+        # the binary may hold neither QuickJS nor the CDP-only protocol
+        # literals, nor any rquickjs or script_tool symbol. The registry test
+        # registry_holds_the_allowlist_and_no_compiled_out_tool checks that
+        # run_script, page, kill_app and the browser tools are not registered.
+        # P-03 keeps a few named items in otherwise compiled-out modules
+        # (PATCHES.md): server.rs's observation vocabulary, browser::types and
+        # download, BrowserJs::supports, ElectronJs::is_electron and
+        # execute_main, and Linux is_chromium_identity. Only those may appear;
+        # any other symbol of those modules fails.
         run: |
           set -euo pipefail
           bin=target/release/orcel-native-host
-          if grep -a -q -e run_script -e remote-debugging "$bin"; then
-            echo "::error::the native host binary contains run_script or remote-debugging"
+          if grep -a -q -e QuickJS -e webSocketDebuggerUrl -e Runtime.evaluate -e /json/version "$bin"; then
+            echo "::error::the native host binary holds the script engine or a CDP client"
             exit 1
           fi
           symbols=$(nm -C "$bin" 2>/dev/null || true)
           test -n "$symbols"
-          if grep -E 'cua_driver_core::(server|daemon|browser|cdp|history|recording|perception_client)::|platform_(macos|linux)::(browser|browser_platform|history|recording_hooks|video_[a-z]+|pip)::' <<<"$symbols"; then
+          if grep -E 'rquickjs|cua_driver_core::script_tool' <<<"$symbols"; then
+            echo "::error::the native host binary links the run_script engine"
+            exit 1
+          fi
+          compiled_out='cua_driver_core::(server|daemon|browser|cdp|history|recording|perception_client)::|platform_(macos|linux)::(browser|browser_platform|history|recording_hooks|video_[a-z]+|pip)::'
+          retained='cua_driver_core::server::(ToolOperation|tool_operation|is_computer_action|ToolCompletionObservation|DurationBucket|OutputType|OutputSizeBucket|ToolErrorClass|ToolRefusalCode)|cua_driver_core::browser::(types|download)::|platform_macos::browser::(browser_js::BrowserJs>?::supports|electron_js::ElectronJs>?::(is_electron|execute_main))|platform_linux::browser_platform::is_chromium_identity'
+          # nm -C prints inherent methods as <Type>::method, hence the optional >.
+          hits=$(grep -E "$compiled_out" <<<"$symbols" | grep -vE "$retained" || true)
+          if [ -n "$hits" ]; then
+            head -n 40 <<<"$hits"
             echo "::error::the native host binary links a compiled-out Cua module"
             exit 1
           fi
@@ -239,6 +261,37 @@ jobs:
       - name: cursor-overlay and cua-cursor-motion tests (P-05 asset changes)
         # Exercises the re-encoded default theme and the font-less badge path.
         run: cargo test --locked -p cursor-overlay -p cua-cursor-motion --features cua-cursor-motion/serde
+      - name: orcel-native-host tests (unit and stdio protocol conformance)
+        # XP-06: the protocol, supervisor, worker, adapter and mapping unit
+        # tests, then the real binary over stdio. Without a session (Linux:
+        # no display or bus; macOS: no TCC grant on the runner) observation
+        # must be unavailable with a reason, never prompted for.
+        run: cargo test --locked --release -p orcel-native-host -- --nocapture
+      - name: Install a Linux GUI session for live observation (Xvfb, Openbox, AT-SPI, GTK3)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y --no-install-recommends             xvfb openbox at-spi2-core dbus-x11 python3-gi gir1.2-gtk-3.0
+      - name: Live observation under Xvfb and AT-SPI (host frames and kernel registry)
+        if: runner.os == 'Linux'
+        # XP-06: a GTK3 probe with a password field and a protected Orcel
+        # surface, observed through the real host (frame log must never hold
+        # the secret) and through orcel-provider-uia's registry end to end.
+        # Both tests fail instead of skipping when ORCEL_XP06_LIVE is set.
+        env:
+          ORCEL_XP06_LIVE: "1"
+        run: |
+          set -euo pipefail
+          export ORCEL_COMPUTER_HOST_BIN="$PWD/target/release/orcel-native-host"
+          dbus-run-session -- bash -euo pipefail -c '
+            Xvfb :99 -screen 0 1280x800x24 -nolisten tcp >/dev/null 2>&1 &
+            export DISPLAY=:99
+            sleep 2
+            openbox >/dev/null 2>&1 &
+            sleep 1
+            cargo test --locked --release -p orcel-native-host --test live_observation -- --nocapture
+            cd ../..
+            cargo test --locked -p orcel-provider-uia --test xp06_native_host_live -- --nocapture
+          '
       - uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
         if: runner.os == 'Linux'
         id: native-host-tools-cache

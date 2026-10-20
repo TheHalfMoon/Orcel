@@ -3,7 +3,9 @@
 //
 // XP-04 private computer host protocol generations. The adapter offers
 // `orcel-computer-host/2` first and falls back to `/1` only when the host
-// refuses `/2` with `invalid_request`. The capability table a `/2` host
+// refuses `/2` with `invalid_request`, and only on Windows: the macOS and
+// Linux host (`orcel-native-host`, XP-06) has no `/1` history, and `/1` has no
+// window kind to name its windows with. The capability table a `/2` host
 // returns is advisory: it can only make the adapter skip a call that cannot
 // work. It never grants anything; the kernel registry still enforces every
 // binding and approval. Specification:
@@ -16,7 +18,10 @@ use std::collections::BTreeMap;
 
 pub(crate) const PROTOCOL_V1: &str = "orcel-computer-host/1";
 pub(crate) const PROTOCOL_V2: &str = "orcel-computer-host/2";
-pub(crate) const HOST_IDENTITY: &str = "orcel-windows-computer-host";
+/// The Windows host (`apps/orcel-computer-host`).
+pub(crate) const WINDOWS_HOST_IDENTITY: &str = "orcel-windows-computer-host";
+/// The macOS and Linux host (`apps/orcel-native-host`, XP-06).
+pub(crate) const NATIVE_HOST_IDENTITY: &str = "orcel-native-host";
 
 /// Upper bound on capability entries accepted from one `/2` hello.
 const MAX_CAPABILITY_ENTRIES: usize = 64;
@@ -42,6 +47,18 @@ pub(crate) const V1_OPERATIONS: [&str; 16] = [
     "input_key",
     "input_hotkey",
     "shutdown",
+];
+
+/// The operations the kernel accepts from the macOS and Linux host (XP-06).
+/// Every other operation is unavailable there until XP-11 and XP-12 qualify
+/// semantic actions, capture and input, even if a host advertises it.
+pub(crate) const NATIVE_OBSERVATION_OPERATIONS: [&str; 6] = [
+    "hello",
+    "ping",
+    "shutdown",
+    "list_windows",
+    "observe_window",
+    "cursor_position",
 ];
 
 const PLATFORMS: [&str; 3] = ["windows", "macos", "linux"];
@@ -123,23 +140,39 @@ struct HostCapability {
     reason: Option<String>,
 }
 
-/// The negotiated generation and, for `/2`, the capability table.
+/// The negotiated generation and, for `/2`, the capability table, the host
+/// identity every response must echo and the window kind bound requests use.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct NegotiatedHost {
     generation: ProtocolGeneration,
     capabilities: BTreeMap<String, HostCapability>,
+    identity: &'static str,
+    window_kind: &'static str,
 }
 
 impl NegotiatedHost {
+    /// A `/1` session with the Windows host.
     pub(crate) fn v1() -> Self {
         Self {
             generation: ProtocolGeneration::V1,
             capabilities: BTreeMap::new(),
+            identity: WINDOWS_HOST_IDENTITY,
+            window_kind: "hwnd",
         }
     }
 
     pub(crate) fn generation(&self) -> ProtocolGeneration {
         self.generation
+    }
+
+    /// The host identity every response must echo.
+    pub(crate) fn identity(&self) -> &'static str {
+        self.identity
+    }
+
+    /// The `/2` window reference kind the negotiated backend serves.
+    pub(crate) fn window_kind(&self) -> &'static str {
+        self.window_kind
     }
 
     /// Unknown or omitted capabilities are unavailable.
@@ -184,6 +217,28 @@ pub(crate) fn current_platform() -> &'static str {
     }
 }
 
+/// The host identity a host serving `platform` must report.
+pub(crate) fn expected_host_identity(platform: &str) -> &'static str {
+    if platform == "windows" {
+        WINDOWS_HOST_IDENTITY
+    } else {
+        NATIVE_HOST_IDENTITY
+    }
+}
+
+/// The window kind of a backend, when the backend serves `platform`. Each
+/// platform has its own closed backend set, so a host cannot claim, for
+/// example, UIA on Linux.
+fn window_kind(platform: &str, backend: &str) -> Option<&'static str> {
+    match (platform, backend) {
+        ("windows", "uia") => Some("hwnd"),
+        ("macos", "ax") => Some("cgwindow"),
+        ("linux", "atspi-x11") => Some("x11"),
+        ("linux", "atspi-wayland") => Some("wl_toplevel"),
+        _ => None,
+    }
+}
+
 fn handshake_error(message: &str) -> UiaError {
     UiaError::new(FailureCode::ProviderUnavailable, message.to_owned())
 }
@@ -195,8 +250,9 @@ pub(crate) fn negotiate(
     expected_platform: &str,
     mut hello: impl FnMut(&'static str) -> Result<HelloFrame, UiaError>,
 ) -> Result<NegotiatedHost, UiaError> {
+    let identity = expected_host_identity(expected_platform);
     let reply = hello(PROTOCOL_V2)?;
-    if reply.host != HOST_IDENTITY {
+    if reply.host != identity {
         return Err(handshake_error("computer host handshake identity mismatch"));
     }
     if reply.ok {
@@ -215,8 +271,13 @@ pub(crate) fn negotiate(
             "computer host refused the protocol handshake",
         ));
     }
+    if expected_platform != "windows" {
+        return Err(handshake_error(
+            "computer host on this platform must speak orcel-computer-host/2",
+        ));
+    }
     let legacy = hello(PROTOCOL_V1)?;
-    if !legacy.ok || legacy.protocol != PROTOCOL_V1 || legacy.host != HOST_IDENTITY {
+    if !legacy.ok || legacy.protocol != PROTOCOL_V1 || legacy.host != identity {
         return Err(handshake_error("computer host handshake identity mismatch"));
     }
     Ok(NegotiatedHost::v1())
@@ -233,6 +294,11 @@ fn accept_v2(expected_platform: &str, reply: HelloFrame) -> Result<NegotiatedHos
     if !BACKENDS.contains(&backend) {
         return Err(handshake_error("computer host reported an unknown backend"));
     }
+    let Some(window_kind) = window_kind(platform, backend) else {
+        return Err(handshake_error(
+            "computer host reported a backend its platform does not serve",
+        ));
+    };
     let table = reply.capabilities.unwrap_or_default();
     if table.len() > MAX_CAPABILITY_ENTRIES {
         return Err(handshake_error(
@@ -248,18 +314,28 @@ fn accept_v2(expected_platform: &str, reply: HelloFrame) -> Result<NegotiatedHos
             let reason = wire
                 .reason
                 .filter(|reason| reason.len() <= MAX_REASON_BYTES && reason.is_ascii());
-            (
-                op,
-                HostCapability {
-                    support: CapabilitySupport::parse(&wire.support),
-                    reason,
-                },
-            )
+            let mut capability = HostCapability {
+                support: CapabilitySupport::parse(&wire.support),
+                reason,
+            };
+            // XP-06 kernel cap: off Windows the host is observation only
+            // until XP-11, whatever its hello claims.
+            if expected_platform != "windows"
+                && !NATIVE_OBSERVATION_OPERATIONS.contains(&op.as_str())
+            {
+                capability = HostCapability {
+                    support: CapabilitySupport::Unavailable,
+                    reason: Some("observation_only".to_owned()),
+                };
+            }
+            (op, capability)
         })
         .collect();
     Ok(NegotiatedHost {
         generation: ProtocolGeneration::V2,
         capabilities,
+        identity: expected_host_identity(expected_platform),
+        window_kind,
     })
 }
 
@@ -413,7 +489,14 @@ mod tests {
     fn v2_hello_must_match_identity_platform_and_backend() {
         let wrong_platform = V2_WINDOWS_HELLO.replace("\"windows\"", "\"macos\"");
         assert!(negotiate("windows", |_| Ok(frame(&wrong_platform))).is_err());
-        assert!(negotiate("macos", |_| Ok(frame(&wrong_platform))).is_ok());
+        // The Windows identity with a macOS tag is not the macOS host, and
+        // UIA is not a macOS backend.
+        assert!(negotiate("macos", |_| Ok(frame(&wrong_platform))).is_err());
+        let uia_on_macos =
+            wrong_platform.replace("orcel-windows-computer-host", NATIVE_HOST_IDENTITY);
+        assert!(negotiate("macos", |_| Ok(frame(&uia_on_macos))).is_err());
+        let ax_on_macos = uia_on_macos.replace("\"uia\"", "\"ax\"");
+        assert!(negotiate("macos", |_| Ok(frame(&ax_on_macos))).is_ok());
         let unknown_platform = V2_WINDOWS_HELLO.replace("\"windows\"", "\"plan9\"");
         assert!(negotiate("plan9", |_| Ok(frame(&unknown_platform))).is_err());
         let unknown_backend = V2_WINDOWS_HELLO.replace("\"uia\"", "\"vnc\"");
@@ -514,6 +597,88 @@ mod tests {
         assert!(host.require("launch_process").is_err());
         assert!(host.require("ping").is_ok());
         assert!(!host.capabilities.contains_key("launch_process"));
+    }
+
+    const V2_LINUX_HELLO: &str = r#"{"id":1,"ok":true,"protocol":"orcel-computer-host/2","host":"orcel-native-host","platform":"linux","backend":"atspi-x11","capabilities":{"hello":{"support":"delivered"},"list_windows":{"support":"delivered"},"observe_window":{"support":"unavailable","reason":"permission_missing"},"input_click":{"support":"refused","reason":"capability_denied"}}}"#;
+
+    #[test]
+    fn native_host_negotiates_identity_and_window_kind_per_backend() {
+        let host = negotiate("linux", |_| Ok(frame(V2_LINUX_HELLO))).unwrap();
+        assert_eq!(host.generation(), ProtocolGeneration::V2);
+        assert_eq!(host.identity(), NATIVE_HOST_IDENTITY);
+        assert_eq!(host.window_kind(), "x11");
+        let error = host.require("observe_window").unwrap_err();
+        assert_eq!(error.code, FailureCode::ProviderUnavailable);
+        assert!(error.message.contains("permission_missing"));
+        assert!(host.require("input_click").is_err());
+        let wayland = V2_LINUX_HELLO.replace("atspi-x11", "atspi-wayland");
+        let host = negotiate("linux", |_| Ok(frame(&wayland))).unwrap();
+        assert_eq!(host.window_kind(), "wl_toplevel");
+        let macos = V2_LINUX_HELLO
+            .replace("\"linux\"", "\"macos\"")
+            .replace("atspi-x11", "ax");
+        let host = negotiate("macos", |_| Ok(frame(&macos))).unwrap();
+        assert_eq!(host.window_kind(), "cgwindow");
+        let windows = negotiate("windows", |_| Ok(frame(V2_WINDOWS_HELLO))).unwrap();
+        assert_eq!(windows.identity(), WINDOWS_HOST_IDENTITY);
+        assert_eq!(windows.window_kind(), "hwnd");
+        // The Windows host is not accepted on Linux, nor the native host on
+        // Windows, nor an AT-SPI backend on macOS.
+        assert!(negotiate("linux", |_| Ok(frame(V2_WINDOWS_HELLO))).is_err());
+        assert!(negotiate("windows", |_| Ok(frame(V2_LINUX_HELLO))).is_err());
+        let atspi_on_macos = V2_LINUX_HELLO.replace("\"linux\"", "\"macos\"");
+        assert!(negotiate("macos", |_| Ok(frame(&atspi_on_macos))).is_err());
+    }
+
+    #[test]
+    fn native_hello_claiming_input_or_capture_is_capped_to_observation() {
+        let claims_everything = V2_LINUX_HELLO
+            .replace(
+                r#""input_click":{"support":"refused","reason":"capability_denied"}"#,
+                r#""input_click":{"support":"delivered"},"input_hotkey":{"support":"foreground_only"},"semantic_action":{"support":"delivered"},"capture_window":{"support":"delivered"},"window_action":{"support":"delivered"},"cursor_position":{"support":"delivered"}"#,
+            );
+        for platform in ["linux", "macos"] {
+            let raw = if platform == "macos" {
+                claims_everything
+                    .replace("\"linux\"", "\"macos\"")
+                    .replace("atspi-x11", "ax")
+            } else {
+                claims_everything.clone()
+            };
+            let host = negotiate(platform, |_| Ok(frame(&raw))).unwrap();
+            for op in [
+                "input_click",
+                "input_hotkey",
+                "semantic_action",
+                "capture_window",
+                "window_action",
+            ] {
+                let error = host.require(op).unwrap_err();
+                assert_eq!(error.code, FailureCode::ProviderUnavailable, "{op}");
+                assert!(
+                    error.message.contains("observation_only"),
+                    "{op}: {error:?}"
+                );
+            }
+            assert!(host.require("list_windows").is_ok());
+            assert!(host.require("cursor_position").is_ok());
+        }
+        // Windows keeps whatever its host reports.
+        let windows = negotiate("windows", |_| Ok(frame(V2_WINDOWS_HELLO))).unwrap();
+        assert!(windows.require("input_click").is_ok());
+    }
+
+    #[test]
+    fn native_platforms_never_fall_back_to_v1() {
+        let offered = RefCell::new(Vec::new());
+        let refuses_v2 = V1_REFUSES_V2.replace("orcel-windows-computer-host", NATIVE_HOST_IDENTITY);
+        let error = negotiate("linux", |protocol| {
+            offered.borrow_mut().push(protocol);
+            Ok(frame(&refuses_v2))
+        })
+        .unwrap_err();
+        assert_eq!(error.code, FailureCode::ProviderUnavailable);
+        assert_eq!(offered.into_inner(), vec![PROTOCOL_V2]);
     }
 
     #[test]

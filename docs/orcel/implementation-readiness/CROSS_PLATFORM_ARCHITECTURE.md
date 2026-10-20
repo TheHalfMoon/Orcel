@@ -116,6 +116,7 @@ A cross-platform UI toolkit does not give native capability. Tauri or any other 
 
 - **Windows:** existing per-user lifecycle; adds the Control Room payload when CR-03 lands.
 - **macOS:** `Orcel.app` (Control Room) and an embedded `Orcel Computer Host.app` helper with its own bundle id so Accessibility and Screen Recording grants attach to a stable signature; LaunchAgent for `orceld`; Developer ID signing and notarization (FD-05).
+  XP-06 constraint for XP-16: orceld starts `orcel-native-host` only from a pinned path whose file and every ancestor directory are owned by root or the user and writable by nobody else (`orcel_provider_uia::trusted_native_host_path`). `/Applications` is `root:admin` mode 0775, so a host under `/Applications/Orcel.app` is refused. This is deliberate: allowing admin-group directories would let any admin user swap another user's host. XP-16 must install the host where that rule holds (for example a per-user `~/Applications` bundle, or a root:wheel 0755 location next to orceld), or change the rule under review with a test.
 - **Linux:** per-user tarball with a systemd user unit; a small deb/rpm only for the polkit action file; AppImage not planned (no system integration for polkit).
 
 ## 8. Order

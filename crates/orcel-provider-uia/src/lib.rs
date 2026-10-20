@@ -46,13 +46,17 @@ use std::collections::HashMap;
 mod native_desktop;
 
 mod computer_host;
-#[cfg(any(windows, test))]
-#[cfg_attr(not(windows), allow(dead_code))]
 mod host_protocol;
+mod native_host_path;
 pub use computer_host::{
     ComputerHostAdapter, DesktopActionResult, DesktopCursorPosition, DesktopInputAction,
     DesktopWindowAction,
 };
+pub use native_host_path::{
+    owner_and_mode_trusted, NATIVE_HOST_FILE_NAME, SYSTEM_NATIVE_HOST_PATH,
+};
+#[cfg(unix)]
+pub use native_host_path::{trusted_native_host_path, TrustedHostBinary};
 
 pub const UIA_SCHEMA: &str = "orcel-uia-observation-v1";
 pub const INVOKE_SCHEMA: &str = "orcel-uia-invoke-v1";
@@ -93,6 +97,27 @@ const PROTECTED_WINDOW_MARKERS: &[&str] = &[
     "orcel trust",
     "orcel emergency revoke",
 ];
+
+/// XP-06: the OS authentication and lock surfaces of each platform the
+/// native host serves, matched like [`PROTECTED_WINDOW_MARKERS`] against the
+/// window title and class (the owning application on macOS and Linux). The
+/// host also refuses their executables outright. Windows adds nothing, so its
+/// behaviour is unchanged.
+#[cfg(target_os = "macos")]
+const OS_PROTECTED_WINDOW_MARKERS: &[&str] =
+    &["loginwindow", "securityagent", "screensaver", "coreautha"];
+#[cfg(all(unix, not(target_os = "macos")))]
+const OS_PROTECTED_WINDOW_MARKERS: &[&str] = &[
+    "polkit",
+    "screensaver",
+    "i3lock",
+    "swaylock",
+    "light-locker",
+    "kscreenlocker",
+    "xsecurelock",
+];
+#[cfg(not(unix))]
+const OS_PROTECTED_WINDOW_MARKERS: &[&str] = &[];
 
 /// Substrings that mark a control as password or secret bearing. Matching is
 /// ASCII case-insensitive and applies to the control type, the automation id,
@@ -4907,6 +4932,7 @@ pub fn is_protected_window(title: &str, class: &str) -> bool {
     let haystack = format!("{title} {class}").to_ascii_lowercase();
     PROTECTED_WINDOW_MARKERS
         .iter()
+        .chain(OS_PROTECTED_WINDOW_MARKERS)
         .any(|marker| haystack.contains(marker))
 }
 
