@@ -653,7 +653,7 @@
       "platforms": {
         "windows": "unchanged",
         "macos": "ScreenCaptureKit path in Cua capture.rs",
-        "linux": "X11 SHM / wlroots screencopy"
+        "linux": "X11 SHM / XGetImage (delivered in XP-07). Wayland/Sway deferred: Cua's wlr-screencopy and ext-image-copy-capture paths capture whole outputs, not one toplevel, so XP-07 reports capture unavailable on Wayland until an exact-toplevel source (ext-foreign-toplevel-image-capture-source) is wrapped (XP-12)"
       },
       "security": "Same window-only scope; protected surfaces return denial before pixels are read.",
       "tests": {

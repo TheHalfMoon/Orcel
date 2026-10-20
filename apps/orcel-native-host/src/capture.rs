@@ -16,7 +16,13 @@
 //! 3. Exposure. On X11, Cua reads the window's area of the screen, so a
 //!    window covered by another one would carry the other window's pixels.
 //!    [`x11::exposure`] refuses a covered, clipped or unmapped window before
-//!    the capture and again after it.
+//!    the capture and again after it. Residual risk, accepted: a window that
+//!    covers the target only between those two reads (about 26 ms on the CI
+//!    runner) can reach the frame. A server grab cannot close that gap here:
+//!    Cua reads the pixels on its own X connection, and a grab held on the
+//!    host's connection would stall that read until the ungrab, so the two
+//!    would deadlock. Closing it would mean reading the pixels on the
+//!    grabbing connection instead of through Cua's module.
 //! 4. Bounds. At most 7680x4320 and 8 MiB of RGBA, as on Windows. A larger
 //!    window is refused with `output_limit`, never scaled down.
 //! 5. Prompts. Nothing here or in the capture path raises a permission
@@ -53,6 +59,10 @@ pub const OS_PROTECTED_WINDOW_MARKERS: &[&str] = &[
     "screensaver",
     "coreautha",
     "authorizationhost",
+    "usernotificationcenter",
+    "universalaccessauthwarn",
+    "coreservicesuiagent",
+    "localauthentication",
 ];
 #[cfg(not(target_os = "macos"))]
 pub const OS_PROTECTED_WINDOW_MARKERS: &[&str] = &[
@@ -482,6 +492,12 @@ mod tests {
         ("Login", "loginwindow"),
         ("", "ScreenSaverEngine"),
         ("", "AuthorizationHost"),
+        // The XP-09 SOFT approval: an untitled UserNotificationCenter alert.
+        ("", "UserNotificationCenter UserNotificationCenter"),
+        ("", "com.apple.UserNotificationCenter"),
+        ("", "universalAccessAuthWarn"),
+        ("", "CoreServicesUIAgent"),
+        ("", "LocalAuthenticationRemoteService"),
     ];
     #[cfg(not(target_os = "macos"))]
     const OS_SURFACES: &[(&str, &str)] = &[

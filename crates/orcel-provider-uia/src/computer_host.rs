@@ -1849,7 +1849,55 @@ mod tests {
             crate::is_protected_window("", "SecurityAgent"),
             cfg!(target_os = "macos")
         );
+        // XP-07 review: the XP-09 SOFT approval is an untitled
+        // UserNotificationCenter alert, refused by its owner alone; the
+        // other system alert and authentication agents likewise.
+        for class in [
+            "UserNotificationCenter",
+            "com.apple.UserNotificationCenter",
+            "universalAccessAuthWarn",
+            "CoreServicesUIAgent",
+            "LocalAuthenticationRemoteService",
+            "coreautha",
+            "loginwindow",
+            "ScreenSaverEngine",
+        ] {
+            assert_eq!(
+                crate::is_protected_window("", class),
+                cfg!(target_os = "macos"),
+                "{class}"
+            );
+        }
         assert!(!crate::is_protected_window("Editor", "gedit"));
+    }
+
+    /// The registry never lists an untitled UserNotificationCenter alert,
+    /// so it can be neither observed nor captured (macOS).
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn user_notification_center_alerts_are_omitted_from_the_registry() {
+        let (adapter, _frames) = scripted("macos", |frame| match frame["op"].as_str() {
+            Some("hello") => Some(native_reply(
+                frame,
+                json!({"platform": "macos", "backend": "ax", "capabilities": observing_table("delivered")}),
+            )),
+            Some("list_windows") => {
+                let mut alert = window_fact(13, "");
+                alert["class"] = json!("UserNotificationCenter");
+                alert["process"]["exe_name"] = json!("UserNotificationCenter");
+                Some(native_reply(
+                    frame,
+                    json!({"windows": [window_fact(11, "Editor"), alert]}),
+                ))
+            }
+            _ => linux_desktop(frame),
+        });
+        let adapter = adapter.unwrap();
+        let mut registry = crate::UiaRegistry::new();
+        let listing = registry.list_windows(&adapter, "ws", "policy").unwrap();
+        let windows = listing["windows"].as_array().unwrap();
+        assert_eq!(windows.len(), 1, "{listing}");
+        assert_eq!(windows[0]["title"], "Editor");
     }
 
     #[cfg(windows)]

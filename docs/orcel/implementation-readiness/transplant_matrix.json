@@ -24,7 +24,7 @@
       "dest_state": "NEW",
       "method": "WRAP",
       "task": "XP-05",
-      "notes": "Default features only (X11 + AT-SPI + wlroots/Sway). portal-input/portal-capture (GNOME/KDE libei, PipeWire) are enabled in XP-12 after their own qualification.",
+      "notes": "Default features only (X11 + AT-SPI + wlroots/Sway). portal-input/portal-capture (GNOME/KDE libei, PipeWire) are enabled in XP-12 after their own qualification. XP-07 wraps only the X11 window capture (capture.rs, patch P-08); the wlroots screencopy path is output-level, so Wayland/Sway capture is deferred to XP-12.",
       "object": "131729601863cac56d291657e58ac5b7ec931210"
     },
     {

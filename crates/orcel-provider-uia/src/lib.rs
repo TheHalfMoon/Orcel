@@ -106,7 +106,11 @@ const PROTECTED_WINDOW_MARKERS: &[&str] = &[
 /// (macOS AuthorizationHost; Linux pinentry, ssh-askpass, the GNOME keyring
 /// prompter and KWallet), so capture refuses them as well as observation.
 /// `orcel-native-host` mirrors these lists (`src/capture.rs`) and a host test
-/// requires them to stay equal.
+/// requires them to stay equal. On macOS the system alert agents count too:
+/// the XP-09 SOFT approval is a `CFUserNotification` alert that
+/// UserNotificationCenter (`com.apple.UserNotificationCenter`) draws with an
+/// empty window title, so the owner, not the title, must mark it.
+/// `usernotificationcenter` matches both the executable and the bundle id.
 #[cfg(target_os = "macos")]
 const OS_PROTECTED_WINDOW_MARKERS: &[&str] = &[
     "loginwindow",
@@ -114,6 +118,10 @@ const OS_PROTECTED_WINDOW_MARKERS: &[&str] = &[
     "screensaver",
     "coreautha",
     "authorizationhost",
+    "usernotificationcenter",
+    "universalaccessauthwarn",
+    "coreservicesuiagent",
+    "localauthentication",
 ];
 #[cfg(all(unix, not(target_os = "macos")))]
 const OS_PROTECTED_WINDOW_MARKERS: &[&str] = &[
