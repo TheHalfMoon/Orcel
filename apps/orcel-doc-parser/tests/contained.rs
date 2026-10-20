@@ -306,6 +306,30 @@ fn wi05_hostile_inputs_fail_closed_under_containment_with_their_type() {
     }
 }
 
+/// #391: a form XObject of just under 64 MiB passes every pre-flight bound,
+/// and pdf-inspector decodes it again on each page that draws it. Drawn on
+/// 64 pages, that would be 4 GiB of decodes. The decode budget ends the run
+/// as a typed `archive_limit` after the fourth, inside the contained tier's
+/// memory, CPU and time ceilings, instead of leaving it to them (on macOS
+/// the memory ceiling is a sampling watcher, not a hard cap).
+#[test]
+fn wi05_a_large_form_drawn_on_many_pages_ends_as_archive_limit_under_containment() {
+    let bytes = fixtures::repeated_form_pdf(64, fixtures::FORM_ZEROS);
+    let Some(scene) = Scene::new(&bytes) else {
+        return;
+    };
+    let (code, frame) = scene.parse();
+    assert_eq!(code, EXIT_REFUSED);
+    assert_eq!(frame, Err(FrameError::Refused(ParseRefusal::ArchiveLimit)));
+    // The control: a small form on every page converts under the same spec.
+    let Some(scene) = Scene::new(&fixtures::repeated_form_pdf(16, 1 + 258 * 4_064)) else {
+        return;
+    };
+    let (code, frame) = scene.parse();
+    assert_eq!(code, 0);
+    assert_eq!(frame.expect("converts").pages, 16);
+}
+
 /// A parser crash (the debug-only abort trigger) ends inside the contained
 /// process: the helper reports it, and there is no frame to accept.
 #[test]
