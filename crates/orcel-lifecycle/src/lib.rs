@@ -21,6 +21,7 @@ pub mod platform;
 pub mod remote;
 #[cfg(windows)]
 pub mod runtime;
+pub mod tunnel_route;
 pub mod update;
 pub mod version;
 

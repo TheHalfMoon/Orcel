@@ -27,7 +27,12 @@ import {
  * The frozen vocabulary comes from SG-000047:
  * transport_kind, provider_kind, tool_surface_profile.
  */
-export type TransportKind = "stdio" | "loopback_http" | "relay";
+export type TransportKind = "stdio" | "loopback_http" | "relay" | "tunnel";
+
+/** Remote transports serve only the profile mapped for their provider. */
+export function isRemoteTransport(kind: TransportKind): boolean {
+  return kind === "relay" || kind === "tunnel";
+}
 
 export interface TransportContext {
   readonly transportKind: TransportKind;
@@ -62,13 +67,25 @@ export function localTransportContext(env: NodeJS.ProcessEnv = process.env): Tra
 }
 
 /**
- * Resolve the tools a transport context may register. The relay transport
- * may serve only the profile mapped for its provider kind, which is `core`
- * for every known provider; unknown provider kinds and unmapped profiles
- * fail closed.
+ * #395: the ChatGPT Secure MCP Tunnel's context. It is remote, so it serves
+ * the `core` profile; no local configuration can select another one.
+ */
+export function tunnelTransportContext(providerKind: string): TransportContext {
+  return {
+    transportKind: "tunnel",
+    providerKind,
+    toolSurfaceProfile: "core"
+  };
+}
+
+/**
+ * Resolve the tools a transport context may register. A remote transport
+ * (the relay or the tunnel) may serve only the profile mapped for its
+ * provider kind, which is `core` for every known provider; unknown provider
+ * kinds and unmapped profiles fail closed.
  */
 export function allowedToolsFor(context: TransportContext): ReadonlySet<string> {
-  if (context.transportKind === "relay") {
+  if (isRemoteTransport(context.transportKind)) {
     const mapped = remoteProfileForProvider(context.providerKind);
     if (mapped === null || mapped !== context.toolSurfaceProfile) {
       throw new Error("TOOL_SURFACE_DENIED: the remote provider kind or tool surface profile is not mapped");
