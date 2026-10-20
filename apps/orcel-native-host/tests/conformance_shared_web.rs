@@ -166,8 +166,13 @@ fn upstream_cell_id(host: &str, cell: &Cell) -> String {
     .replace('_', "-")
 }
 
+/// The shared page's `<title>`, repeated by its `page-heading`.
+const PAGE_TITLE: &str = "cua-driver Web Harness";
+
 struct WebHost {
     name: &'static str,
+    /// Whether the page's controls sit within the /2 depth bound of 8.
+    controls_within_depth: bool,
     title: String,
     program: std::path::PathBuf,
     args: Vec<String>,
@@ -193,6 +198,7 @@ fn web_hosts(fixtures: &Path, cdp_port: u16) -> Vec<WebHost> {
     args.extend(electron_args);
     let mut hosts = vec![WebHost {
         name: "electron",
+        controls_within_depth: cfg!(target_os = "macos"),
         title: format!("CuaTestHarness Electron [cdp={cdp_port}]"),
         program: read_binary(),
         args,
@@ -200,6 +206,7 @@ fn web_hosts(fixtures: &Path, cdp_port: u16) -> Vec<WebHost> {
     if cfg!(target_os = "macos") {
         hosts.push(WebHost {
             name: "wkwebview",
+            controls_within_depth: true,
             title: "CuaTestHarness WKWebView".to_owned(),
             program: fixtures
                 .join("harness-wkwebview/CuaTestHarness.WKWebView.app/Contents/MacOS/CuaTestHarness.WKWebView"),
@@ -255,23 +262,55 @@ fn run_host(spec: &WebHost, report: &mut Report, cdp_port: u16) {
         prefix: prefix.clone(),
         title: &spec.title,
         pid: harness.pid(),
-        markers: &["Increment", "Reset"],
+        markers: if spec.controls_within_depth {
+            &["Increment", "Reset"]
+        } else {
+            &[PAGE_TITLE]
+        },
     };
     let window = conformance::find_window(&mut host, report, &target);
     let observed = conformance::observe_markers(&mut host, report, &target, &window);
-    // The tree agrees with the page's own journal, not just with itself:
-    // the buttons the host names are the ones the DOM holds. The hosts'
-    // trees carry interactive elements only, so static text is not compared.
     let state = journal.settled();
-    for id in ["btn-increment", "btn-reset"] {
-        let text = conformance::journal_text(&state, id);
+    if spec.controls_within_depth {
+        // The tree agrees with the page's own journal, not just with itself:
+        // the buttons the host names are the ones the DOM holds. The hosts'
+        // trees carry interactive elements only, so static text is not
+        // compared.
+        for id in ["btn-increment", "btn-reset"] {
+            let text = conformance::journal_text(&state, id);
+            assert!(
+                observed
+                    .nodes
+                    .iter()
+                    .any(|node| node["control_type"] == "Button" && node["name"] == text),
+                "{id}={text} is not a button in the observed tree"
+            );
+        }
+    } else {
+        // Chromium's AT-SPI tree on Linux reaches the page's Document node at
+        // depth 8, the /2 depth ceiling, so the page's controls lie below
+        // what the host may return (first CI run). The cell checks what is
+        // observable: the Document is the page the journal publishes (its
+        // heading repeats the page title). The gap is reported, not hidden.
+        assert_eq!(
+            conformance::journal_text(&state, "page-heading"),
+            PAGE_TITLE
+        );
         assert!(
             observed
                 .nodes
                 .iter()
-                .any(|node| node["control_type"] == "Button" && node["name"] == text),
-            "{id}={text} is not a button in the observed tree"
+                .any(|node| node["control_type"] == "Document" && node["name"] == PAGE_TITLE),
+            "the page Document is not in the observed tree"
         );
+        assert!(
+            !observed
+                .nodes
+                .iter()
+                .any(|node| node["control_type"] == "Button"),
+            "page controls are now within the depth bound: compare them with the journal"
+        );
+        report.not_observable(format!("{prefix}/observe/page-controls"));
     }
     conformance::identity_and_bounds(&mut host, report, &prefix, &observed.reference);
     conformance::observation_has_no_effect(&mut host, report, &prefix, &observed.reference, || {

@@ -434,6 +434,11 @@ impl Report {
         self.push(case, "skip", "refused", &[], 1);
     }
 
+    /// An observation the `/2` bounds do not reach on this window system.
+    pub fn not_observable(&mut self, case: String) {
+        self.push(case, "skip", "beyond-depth-bound", &[], 0);
+    }
+
     /// A harness this runner does not build (`ORCEL.md` says why).
     pub fn not_run(&mut self, case: String) {
         self.push(case, "skip", "not_run", &[], 0);
