@@ -32,17 +32,19 @@ COVER = (16, 200, 32)
 
 
 def painted(title, width, height, rgb, x, y):
+    # The colour is a CSS background, so no cairo binding is needed.
     win = Gtk.Window(title=title)
     win.set_resizable(False)
-    area = Gtk.DrawingArea()
+    name = "probe%d%d%d" % rgb
+    win.set_name(name)
+    css = Gtk.CssProvider()
+    css.load_from_data(
+        ("#%s { background-color: rgb(%d, %d, %d); background-image: none; }"
+         % ((name,) + rgb)).encode()
+    )
+    win.get_style_context().add_provider(css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+    area = Gtk.Box()
     area.set_size_request(width, height)
-
-    def draw(_widget, cr):
-        cr.set_source_rgb(rgb[0] / 255.0, rgb[1] / 255.0, rgb[2] / 255.0)
-        cr.paint()
-        return False
-
-    area.connect("draw", draw)
     win.add(area)
     win.move(x, y)
     win.show_all()

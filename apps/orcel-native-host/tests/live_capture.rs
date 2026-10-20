@@ -174,9 +174,21 @@ fn capture_until(
         if accept(&reply) {
             return reply;
         }
-        assert!(Instant::now() < deadline, "{what}: {reply}");
+        assert!(Instant::now() < deadline, "{what}: {}", summary(&reply));
         std::thread::sleep(Duration::from_millis(250));
     }
+}
+
+/// A reply without its pixels: the error, or the frame size and centre.
+fn summary(reply: &Value) -> String {
+    if reply["ok"] != true || reply.get("capture").is_none() {
+        return reply.to_string();
+    }
+    let (width, height, raw) = pixels(reply);
+    format!(
+        "{width}x{height} frame, centre pixel {:?}",
+        pixel(&raw, width, width / 2, height / 2)
+    )
 }
 
 #[test]
@@ -255,13 +267,18 @@ fn xp07_live_capture_of_a_probe_window() {
         let started = Instant::now();
         let reply = capture(&mut host, &reference);
         timings.push(started.elapsed());
-        assert_eq!(reply["ok"], true, "{reply}");
+        assert_eq!(reply["ok"], true, "{}", summary(&reply));
     }
 
     // A protected Orcel surface is refused before any pixel is read.
     let protected = find_window(&mut host, &format!("Orcel Approval Probe {nonce}"));
     let reply = capture(&mut host, &window_ref(&protected));
-    assert_eq!(error_code(&reply), "protected_surface", "{reply}");
+    assert_eq!(
+        error_code(&reply),
+        "protected_surface",
+        "{}",
+        summary(&reply)
+    );
     assert!(reply.get("capture").is_none());
 
     // A binding is one exact window: the target's binding with another
@@ -270,7 +287,7 @@ fn xp07_live_capture_of_a_probe_window() {
     let mut other = reference.clone();
     other["id"] = cover["hwnd"].clone();
     let reply = capture(&mut host, &other);
-    assert_eq!(error_code(&reply), "target_stale", "{reply}");
+    assert_eq!(error_code(&reply), "target_stale", "{}", summary(&reply));
 
     if cfg!(target_os = "macos") {
         // The cover sits over the target from the start; ScreenCaptureKit's
