@@ -145,3 +145,15 @@ Publishing never waits for a client. It holds the ring lock only to append. Each
 - **Unix location.** A symlinked socket path, a non-socket file, a directory others can reach, and a socket owned by another user (synthetic seam) are each refused and left in place. A stale socket of ours is replaced. A live socket is kept. The socket mode is 0600 and the directory mode is 0700.
 - **Windows pipe.** The pipe's DACL, read back with `GetSecurityInfo`, is protected and has exactly one ACE, for the current user's SID. A second server cannot take the name.
 - **Another user.** On the Linux and macOS CI legs, `ORCEL_APP_API_OTHER_USER_TEST=1` runs a connect as `nobody` through `sudo`. It must fail with EACCES, and the server must see no connection.
+
+## 9. Reference client (CR-02)
+
+`apps/orcel-control-room` is the headless Control Room client. Its protocol layer, client and conformance suite are adapted from Agent-Native AgentKit (`docs/orcel/control_room_agentkit_provenance.json`). It renders nothing, and the UI is CR-03.
+
+- It sends only `status.get`, `capabilities.get` and `events.subscribe`, and refuses every other method name before writing.
+- Every `events.subscribe` it sends carries `epoch`, so a cursor from an earlier daemon run always gets an `epoch` snapshot rather than the new run's events (#375 item 4). The server still accepts a subscription without `epoch`, and making it required is the server-side half of that item.
+- It rejects any frame field this section does not define, and it rejects a sequence gap before advancing its cursor (AgentKit invariant 22).
+- On Unix it refuses an endpoint whose `run/` directory or socket is not this user's, or whose path is over 100 bytes, before connecting.
+- On Windows it refuses to connect by default: libuv cannot request `SECURITY_IDENTIFICATION` or read the server's account (section 7), so a pipe another account created first cannot be told apart. Only tests opt in. The CR-03 Tauri bridge must open the pipe from Rust with `SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION` and compare the token user of `GetNamedPipeServerProcessId` with its own.
+- **Socket path limit.** A Unix socket path holds at most 104 bytes on macOS and 108 on Linux. `orceld` refuses a path over 100 bytes, reports the length and the fix (a shorter `HOME` on macOS, `XDG_STATE_HOME` on Linux) on stderr once, and keeps its stdio loop running. Users with very long home paths therefore get no app API until the endpoint moves to a short per-user directory (follow-up).
+- `npm --prefix apps/orcel-control-room test` runs its contract tests and the conformance suite against the real `orceld` on all three OSes in CI.
