@@ -391,32 +391,13 @@ fn validate_process_executable(executable: &str, argv: &[String]) -> Result<(), 
     Ok(())
 }
 
-/// SG-000010 baseline (`whoami.exe`, Windows only) or, from SG-000060, a
-/// locally registered, hash-pinned executable whose argv matches its
-/// grammar. XP-13b: the registry applies on every OS, now that the Safe tier
-/// runs on Linux and macOS too.
+/// SG-000010 baseline (`whoami.exe`) or, from SG-000060, a locally
+/// registered, hash-pinned executable whose argv matches its grammar.
+#[cfg(windows)]
 fn enforce_sg000010_executable_policy(
     executable: &str,
     argv: &[String],
 ) -> Result<(), PolicyError> {
-    #[cfg(windows)]
-    if is_sg000010_baseline(executable)? {
-        return Ok(());
-    }
-    let registry_path = crate::executable_registry::default_registry_path().map_err(|error| {
-        PolicyError::new(
-            FailureCode::ProviderUnavailable,
-            format!("SG-000060 executable registry is unavailable: {error}"),
-        )
-    })?;
-    let entries = crate::executable_registry::load_registry(&registry_path);
-    crate::executable_registry::check_spawn(&entries, Path::new(executable), argv)
-        .map(|_| ())
-        .map_err(|error| PolicyError::new(error.code, error.message))
-}
-
-#[cfg(windows)]
-fn is_sg000010_baseline(executable: &str) -> Result<bool, PolicyError> {
     let requested = std::fs::canonicalize(executable).map_err(|error| {
         PolicyError::new(
             FailureCode::InvalidRequest,
@@ -440,7 +421,40 @@ fn is_sg000010_baseline(executable: &str) -> Result<bool, PolicyError> {
             format!("SG-000010 whoami.exe fixture could not be resolved: {error}"),
         )
     })?;
-    Ok(requested == allowed)
+    if requested == allowed {
+        return Ok(());
+    }
+    let registry_path = crate::executable_registry::default_registry_path().map_err(|error| {
+        PolicyError::new(
+            FailureCode::ProviderUnavailable,
+            format!("SG-000060 executable registry is unavailable: {error}"),
+        )
+    })?;
+    let entries = crate::executable_registry::load_registry(&registry_path);
+    crate::executable_registry::check_spawn(&entries, Path::new(executable), argv)
+        .map(|_| ())
+        .map_err(|error| PolicyError::new(error.code, error.message))
+}
+
+/// XP-13b: off Windows there is no baseline executable, and the SG-000060
+/// registry applies exactly as on Windows, now that the Safe tier runs on
+/// Linux and macOS too. An unregistered executable, or argv outside its
+/// registered grammar, is denied before any approval.
+#[cfg(not(windows))]
+fn enforce_sg000010_executable_policy(
+    executable: &str,
+    argv: &[String],
+) -> Result<(), PolicyError> {
+    let registry_path = crate::executable_registry::default_registry_path().map_err(|error| {
+        PolicyError::new(
+            FailureCode::ProviderUnavailable,
+            format!("SG-000060 executable registry is unavailable: {error}"),
+        )
+    })?;
+    let entries = crate::executable_registry::load_registry(&registry_path);
+    crate::executable_registry::check_spawn(&entries, Path::new(executable), argv)
+        .map(|_| ())
+        .map_err(|error| PolicyError::new(error.code, error.message))
 }
 
 pub fn validate_relative_target(target: &str) -> Result<(), PolicyError> {

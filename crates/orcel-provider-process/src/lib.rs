@@ -769,6 +769,9 @@ pub(crate) enum PrivateExecutionMode {
     StdoutLimit,
     StderrLimit,
     DescendantDrain,
+    /// XP-13b: a descendant in the job that holds none of the run's pipes and
+    /// outlives the primary; owned cleanup must end it.
+    DetachedDescendant,
 }
 
 #[cfg(windows)]
@@ -2351,7 +2354,8 @@ mod windows_contained_launch {
             PrivateExecutionMode::Timeout
             | PrivateExecutionMode::StdoutLimit
             | PrivateExecutionMode::StderrLimit
-            | PrivateExecutionMode::DescendantDrain => std::env::current_exe()
+            | PrivateExecutionMode::DescendantDrain
+            | PrivateExecutionMode::DetachedDescendant => std::env::current_exe()
                 .map_err(|error| PrivateExecutionFailure::InvalidPlan(error.to_string()))?,
         };
         let expected_executable = std::fs::canonicalize(expected_executable)
@@ -2374,11 +2378,13 @@ mod windows_contained_launch {
                 "contained_launch_tests::private_stderr_fixture_child".into(),
                 "--nocapture".into(),
             ],
-            PrivateExecutionMode::DescendantDrain => vec![
-                "--exact".into(),
-                "contained_launch_tests::private_descendant_primary_child".into(),
-                "--nocapture".into(),
-            ],
+            PrivateExecutionMode::DescendantDrain | PrivateExecutionMode::DetachedDescendant => {
+                vec![
+                    "--exact".into(),
+                    "contained_launch_tests::private_descendant_primary_child".into(),
+                    "--nocapture".into(),
+                ]
+            }
         };
         if expected_executable != plan.executable || expected_argv != plan.argv {
             return Err(PrivateExecutionFailure::InvalidPlan(
@@ -2402,15 +2408,18 @@ mod windows_contained_launch {
             Ok(child) => child,
             Err(error) => return Err(PrivateExecutionFailure::Provider(error.message)),
         };
+        // Keeps a detached descendant's pipe read ends open for the run.
+        let mut _detached_pipes = None;
         let mut descendant = if matches!(
             mode,
             PrivateExecutionMode::Timeout
                 | PrivateExecutionMode::StdoutLimit
                 | PrivateExecutionMode::StderrLimit
                 | PrivateExecutionMode::DescendantDrain
+                | PrivateExecutionMode::DetachedDescendant
         ) {
             let descendant_argv = match mode {
-                PrivateExecutionMode::Timeout => vec![
+                PrivateExecutionMode::Timeout | PrivateExecutionMode::DetachedDescendant => vec![
                     "--exact".to_owned(),
                     "contained_launch_tests::private_timeout_descendant".to_owned(),
                     "--nocapture".to_owned(),
@@ -2426,12 +2435,25 @@ mod windows_contained_launch {
             };
             let mut descendant_plan = plan.clone();
             descendant_plan.argv = descendant_argv;
+            // A detached descendant writes to pipes of its own, so the run's
+            // output closes when the primary exits.
+            let (descendant_stdout, descendant_stderr) =
+                if mode == PrivateExecutionMode::DetachedDescendant {
+                    let (reader, writer) = PrivatePipe::create()
+                        .map_err(|e| PrivateExecutionFailure::Provider(e.message))?;
+                    let (error_reader, error_writer) = PrivatePipe::create()
+                        .map_err(|e| PrivateExecutionFailure::Provider(e.message))?;
+                    _detached_pipes = Some((reader, error_reader));
+                    (Some(writer), Some(error_writer))
+                } else {
+                    (None, None)
+                };
             Some(
                 match ChildProcess::create_suspended_with_pipes(
                     profile.sid(),
                     &descendant_plan,
-                    &stdout_write,
-                    &stderr_write,
+                    descendant_stdout.as_ref().unwrap_or(&stdout_write),
+                    descendant_stderr.as_ref().unwrap_or(&stderr_write),
                 ) {
                     Ok(descendant) => descendant,
                     Err(error) => return Err(PrivateExecutionFailure::Provider(error.message)),
@@ -3719,62 +3741,17 @@ mod contained_launch_tests {
         let _ = std::fs::remove_dir_all(workspace);
     }
 
-    /// XP-13b fixture: start a grandchild that holds none of the run's
-    /// stdio, report its pid, and exit while it keeps running. The grandchild
-    /// is the system `cmd.exe` (every AppContainer may read and execute
-    /// System32) spinning in a builtin loop: no other image, no network.
+    /// XP-13b, the card's negative test on Windows: a descendant in the
+    /// run's job that outlives the primary and holds none of its pipes. The
+    /// run completes and owned cleanup ends the descendant with the job; if
+    /// it were waited on instead, the run would end `TerminationUnverified`
+    /// after the 5 s quiescence wait. The harness creates the descendant
+    /// into the job, as the other descendant tests do: on the hosted runner
+    /// an AppContainer child is refused process creation outright (Access
+    /// denied even for System32's cmd.exe), so the child cannot be the one
+    /// to start it there.
     #[test]
-    fn private_grandchild_primary_child() {
-        if std::env::args().any(|argument| argument == "--exact") {
-            // Keep the run's pipes out of the grandchild (std inherits every
-            // inheritable handle), so the run's output closes when this
-            // process exits and only the job ends the grandchild.
-            #[link(name = "kernel32")]
-            extern "system" {
-                fn GetStdHandle(which: u32) -> *mut core::ffi::c_void;
-                fn SetHandleInformation(
-                    handle: *mut core::ffi::c_void,
-                    mask: u32,
-                    flags: u32,
-                ) -> i32;
-            }
-            for which in [-11_i32 as u32, -12_i32 as u32] {
-                // SAFETY: GetStdHandle and SetHandleInformation take plain values; clearing
-                // HANDLE_FLAG_INHERIT (1) on this process's own stdio handle changes nothing else.
-                unsafe { SetHandleInformation(GetStdHandle(which), 1, 0) };
-            }
-            let cmd = windows_contained_launch::fixed_system_executable().expect("cmd.exe");
-            let grandchild = std::process::Command::new(cmd)
-                .args(["/d", "/c", "for /l %i in (1,1,2000000000) do @rem"])
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn()
-                .expect("grandchild");
-            let mut grandchild = grandchild;
-            std::thread::sleep(Duration::from_millis(500));
-            let running = matches!(grandchild.try_wait(), Ok(None));
-            println!("ORCEL:running={running}");
-            println!("ORCEL:grandchild={}", grandchild.id());
-            std::process::exit(0);
-        }
-    }
-
-    /// XP-13b, the card's negative test on Windows: a child that creates a
-    /// grandchild and exits. The run succeeds through the public path, and
-    /// the grandchild does not outlive it (the job is ended once the
-    /// primary has exited).
-    #[test]
-    fn xp13b_windows_a_child_that_creates_a_grandchild_is_cleaned_up() {
-        use core::ffi::c_void;
-        #[link(name = "kernel32")]
-        extern "system" {
-            fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut c_void;
-            fn WaitForSingleObject(handle: *mut c_void, milliseconds: u32) -> u32;
-            fn CloseHandle(handle: *mut c_void) -> i32;
-        }
-        const SYNCHRONIZE: u32 = 0x0010_0000;
-        const WAIT_OBJECT_0: u32 = 0;
+    fn xp13b_windows_a_descendant_that_outlives_the_child_is_cleaned_up() {
         let suffix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock")
@@ -3786,39 +3763,23 @@ mod contained_launch_tests {
         };
         let (workspace, plan) = private_fixture_plan(
             suffix,
-            "contained_launch_tests::private_grandchild_primary_child",
+            "contained_launch_tests::private_descendant_primary_child",
             limits,
         );
-        let result = execute_contained(plan, &format!("Orcel.Private.Grandchild.{suffix}"))
-            .expect("a run whose child created a grandchild completes");
-        assert_eq!(
-            result.exit_code,
-            0,
-            "{}",
-            bounded_child_diagnostic("stderr", &result.stderr)
-        );
-        assert!(result.job_quiescent);
-        let stdout = String::from_utf8_lossy(&result.stdout);
+        let started = std::time::Instant::now();
+        let result = qualify_private_execution_mode(
+            plan,
+            &format!("Orcel.Private.DetachedDescendant.{suffix}"),
+            PrivateExecutionMode::DetachedDescendant,
+        )
+        .expect("a run whose descendant outlives the primary completes");
         assert!(
-            stdout.contains("ORCEL:running=true"),
-            "the grandchild never ran: {stdout}"
+            started.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            started.elapsed()
         );
-        let pid: u32 = stdout
-            .lines()
-            .find_map(|line| line.strip_prefix("ORCEL:grandchild="))
-            .expect("the fixture reports its grandchild's pid")
-            .trim()
-            .parse()
-            .expect("grandchild pid");
-        // SAFETY: OpenProcess takes plain values; a null result means the process is gone.
-        let handle = unsafe { OpenProcess(SYNCHRONIZE, 0, pid) };
-        if !handle.is_null() {
-            // SAFETY: `handle` was just opened with SYNCHRONIZE and is closed right after.
-            let wait = unsafe { WaitForSingleObject(handle, 5_000) };
-            // SAFETY: `handle` is open and owned here.
-            unsafe { CloseHandle(handle) };
-            assert_eq!(wait, WAIT_OBJECT_0, "the grandchild outlived the run");
-        }
+        assert_eq!(result.exit_code, 0);
+        assert!(result.job_quiescent);
         let _ = std::fs::remove_dir_all(workspace);
     }
 
