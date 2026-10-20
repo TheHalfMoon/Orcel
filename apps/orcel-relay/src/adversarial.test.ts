@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   createMcpFrameDispatcher,
   runDeviceUplink,
@@ -12,7 +12,9 @@ import {
 import type { KernelClient, RemoteDispatchContext } from "@orcel/mcp/dist/kernel.js";
 import { generatePkceVerifier, pkceS256Challenge } from "@orcel/mcp/dist/oauth_authorization.js";
 import { enableRemote, pairRemote } from "@orcel/mcp/dist/remote_enrollment.js";
-import { loadDeviceKey } from "@orcel/mcp/dist/uplink_state.js";
+import type { DeviceKeyPair } from "@orcel/mcp/dist/device_identity.js";
+import { DEVICE_KEY_SECRET, type SecretStore } from "@orcel/mcp/dist/secret_store.js";
+import { loadDeviceRecord } from "@orcel/mcp/dist/uplink_state.js";
 
 interface KernelCall {
   readonly capability: string;
@@ -100,11 +102,41 @@ interface Linked {
   readonly devicePaths: { key: string; uplink: string };
 }
 
+/**
+ * XP-19: the device keeps its private key in the orceld secret store; these
+ * tests stand in for it with one in-memory store per device key record.
+ */
+const deviceSecrets = new Map<string, Map<string, string>>();
+function secretsFor(keyPath: string): SecretStore {
+  let values = deviceSecrets.get(keyPath);
+  if (values === undefined) {
+    values = new Map();
+    deviceSecrets.set(keyPath, values);
+  }
+  const store = values;
+  return {
+    get: async (name) => store.get(name) ?? null,
+    put: async (name, value) => void store.set(name, value)
+  };
+}
+function devicePair(keyPath: string): DeviceKeyPair {
+  const privateKeyJwkBase64 = deviceSecrets.get(keyPath)?.get(DEVICE_KEY_SECRET);
+  assert.ok(privateKeyJwkBase64 !== undefined, "the device key is in the secret store");
+  return { ...loadDeviceRecord(keyPath), privateKeyJwkBase64 };
+}
+/** No file the device side wrote holds its private key (XP-19 acceptance). */
+function assertNoSecretFile(dir: string, keyPath: string): void {
+  const secret = devicePair(keyPath).privateKeyJwkBase64;
+  for (const name of readdirSync(dir)) {
+    assert.ok(!readFileSync(join(dir, name), "utf8").includes(secret), `${name} holds the device private key`);
+  }
+}
+
 /** Run the complete standards-based linking flow against a self-hosted relay. */
 async function link(r: Relay, approve = true): Promise<Linked | { denied: string }> {
   const deviceDir = mkdtempSync(join(tmpdir(), "orcel-device-"));
   const devicePaths = { key: join(deviceDir, "device_key.json"), uplink: join(deviceDir, "uplink.json") };
-  await enableRemote({ relayOrigin: r.origin, defaultWorkspace: "default", deviceKeyPath: devicePaths.key, uplinkPath: devicePaths.uplink, fetch: fetchImpl, nowMs: Date.now() });
+  await enableRemote({ relayOrigin: r.origin, defaultWorkspace: "default", deviceKeyPath: devicePaths.key, uplinkPath: devicePaths.uplink, secrets: secretsFor(devicePaths.key), fetch: fetchImpl, nowMs: Date.now() });
   const redirect = "http://127.0.0.1:9/callback";
   const registered = await fetch(`${r.origin}/oauth/register`, {
     method: "POST",
@@ -138,6 +170,7 @@ async function link(r: Relay, approve = true): Promise<Linked | { denied: string
   const paired = await pairRemote({
     deviceKeyPath: devicePaths.key,
     uplinkPath: devicePaths.uplink,
+    secrets: secretsFor(devicePaths.key),
     fetch: fetchImpl,
     now: Date.now,
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, Math.min(ms, 50))),
@@ -163,6 +196,7 @@ async function link(r: Relay, approve = true): Promise<Linked | { denied: string
     return { denied: location.searchParams.get("error") ?? "" };
   }
   assert.ok(paired !== null);
+  assertNoSecretFile(dirname(devicePaths.key), devicePaths.key);
   const code = location.searchParams.get("code") ?? "";
   const tokens = await form(r.origin, "/oauth/token", {
     grant_type: "authorization_code",
@@ -187,7 +221,7 @@ async function link(r: Relay, approve = true): Promise<Linked | { denied: string
 
 function startUplink(r: Relay, linked: Linked): { stop: () => Promise<void>; calls: KernelCall[] } {
   const calls: KernelCall[] = [];
-  const pair = loadDeviceKey(linked.devicePaths.key);
+  const pair = devicePair(linked.devicePaths.key);
   const uplink = JSON.parse(readFileSync(linked.devicePaths.uplink, "utf8")) as { connections: PairedConnection[] };
   const controller = new AbortController();
   const done = runDeviceUplink(
@@ -250,7 +284,7 @@ async function tenant(r: Relay): Promise<Tenant> {
     throw new Error("unexpected denial");
   }
   const uplink = startUplink(r, linked);
-  const deviceId = loadDeviceKey(linked.devicePaths.key).deviceId;
+  const deviceId = devicePair(linked.devicePaths.key).deviceId;
   await waitFor(() => r.relay.hub.isOnline(deviceId), "device channel");
   return { linked, uplink, deviceId };
 }
@@ -353,7 +387,7 @@ test("adversarial: relay restart drops sessions, devices reconnect, and nothing 
   if ("denied" in linked) {
     throw new Error("unexpected denial");
   }
-  const pair = loadDeviceKey(linked.devicePaths.key);
+  const pair = devicePair(linked.devicePaths.key);
   const port = first.port;
   let uplink = startUplink(first, linked);
   await waitFor(() => first.relay.hub.isOnline(pair.deviceId), "device channel");
@@ -422,7 +456,7 @@ test("adversarial: relay and uplink logs carry classes only, never tokens, codes
     for (const secret of [a.linked.accessToken, a.linked.refreshToken, "secret-plan"]) {
       assert.ok(!state.includes(secret), "relay state holds no tokens or payloads");
     }
-    assert.ok(!state.includes(loadDeviceKey(a.linked.devicePaths.key).privateKeyJwkBase64), "relay state never holds device private keys");
+    assert.ok(!state.includes(devicePair(a.linked.devicePaths.key).privateKeyJwkBase64), "relay state never holds device private keys");
   } finally {
     await a.uplink.stop();
     await r.close();

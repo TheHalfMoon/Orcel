@@ -43,12 +43,26 @@ windows-sys = { version = "0.52", features = [
   "Win32_Foundation",
   "Win32_Security",
   "Win32_Security_Authorization",
+  "Win32_Security_Cryptography",
   "Win32_Storage_FileSystem",
   "Win32_System_IO",
   "Win32_System_Pipes",
   "Win32_System_RemoteDesktop",
   "Win32_System_Threading",
 ] }
+
+# XP-19 secret storage. Windows uses DPAPI through windows-sys above
+# (Win32_Security_Cryptography, already in the graph through orcel-policy).
+# macOS and Linux WRAP the `keyring` project's per-OS stores, the crate
+# family Cua's cua-auth uses (T-CUA-34, REFERENCE): MIT OR Apache-2.0.
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring-core = "1.0.0"
+apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }
+security-framework = "3.7"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring-core = "1.0.0"
+zbus-secret-service-keyring-store = { version = "1.0.0", features = ["rt-async-io-crypto-rust"] }
 
 [dev-dependencies]
 orcel-approval = { path = "../orcel-approval", features = ["test-support"] }

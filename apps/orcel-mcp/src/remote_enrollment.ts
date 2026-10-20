@@ -12,6 +12,9 @@
  *
  * Both run from the local lifecycle CLI after STRONG presence; neither is an
  * MCP tool. The private key never leaves this machine.
+ *
+ * XP-19: the private key goes to the `orceld` secret store; the device key
+ * record on disk holds only the public identity.
  */
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -26,6 +29,7 @@ import {
   type DeviceKeyPair
 } from "./device_identity.js";
 import { isPairedConnection, isRelayOrigin, readBoundedJson, type FetchLike, type PairedConnection } from "./device_uplink.js";
+import { DEVICE_KEY_SECRET, type SecretStore } from "./secret_store.js";
 import { loadDeviceKey } from "./uplink_state.js";
 
 export const UPLINK_SCHEMA = "orcel-uplink/1";
@@ -100,6 +104,7 @@ export async function enableRemote(options: {
   readonly defaultWorkspace: string;
   readonly deviceKeyPath: string;
   readonly uplinkPath: string;
+  readonly secrets: SecretStore;
   readonly fetch: FetchLike;
   readonly nowMs: number;
 }): Promise<{ readonly deviceId: string; readonly created: boolean }> {
@@ -112,10 +117,12 @@ export async function enableRemote(options: {
   let pair: DeviceKeyPair;
   let created = false;
   if (existsSync(options.deviceKeyPath)) {
-    pair = loadDeviceKey(options.deviceKeyPath);
+    pair = await loadDeviceKey(options.deviceKeyPath, options.secrets);
   } else {
     pair = generateDeviceKeyPair(generateDeviceId(), options.nowMs, 1);
-    writeAtomic(options.deviceKeyPath, JSON.stringify(pair));
+    // The secret store first: a record is written only for a stored key.
+    await options.secrets.put(DEVICE_KEY_SECRET, pair.privateKeyJwkBase64);
+    writeAtomic(options.deviceKeyPath, JSON.stringify(publicDeviceIdentity(pair)));
     created = true;
   }
   const existing = readUplinkDocument(options.uplinkPath);
@@ -170,6 +177,7 @@ function isPairingRequest(value: unknown): value is PairingRequest {
 export async function pairRemote(options: {
   readonly deviceKeyPath: string;
   readonly uplinkPath: string;
+  readonly secrets: SecretStore;
   readonly fetch: FetchLike;
   readonly now: () => number;
   readonly display: (code: string, expiresAtMs: number) => void;
@@ -177,7 +185,7 @@ export async function pairRemote(options: {
   readonly sleep: (ms: number) => Promise<void>;
   readonly pollIntervalMs?: number;
 }): Promise<PairedConnection | null> {
-  const pair = loadDeviceKey(options.deviceKeyPath);
+  const pair = await loadDeviceKey(options.deviceKeyPath, options.secrets);
   const uplink = readUplinkDocument(options.uplinkPath);
   if (uplink === null) {
     throw new Error("PAIRING_REQUIRED: run `orcel remote enable` first");

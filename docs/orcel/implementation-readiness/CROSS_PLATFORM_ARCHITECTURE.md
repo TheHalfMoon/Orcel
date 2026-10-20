@@ -42,7 +42,7 @@ orcel-platform   providers (fs, git,     computer host          browser host
 | Process confinement | Job Objects, AppContainer | process group, rlimits, kqueue; Seatbelt only as defense in depth | process group, pidfd, cgroup v2, Landlock, seccomp | XP-13 |
 | Browser engine discovery and verification | Authenticode | `SecStaticCodeCheckValidity` with vendor team id | package ownership + signature status (weaker) | XP-14 |
 | Browser no-route proxy | `0.0.0.0:9` | host-owned loopback sink | host-owned loopback sink | XP-14 |
-| Secrets | DPAPI | Keychain | Secret Service (unavailable without a keyring daemon) | XP-19 |
+| Secrets | DPAPI (current user) | Keychain (default user keychain; unsigned-binary ACL until XP-16) | Secret Service over a local session bus (unavailable without a keyring daemon, never plaintext) | XP-19 (store done; the macOS/Linux pairing journey also needs XP-16/XP-17; S-23) |
 | Daemon lifecycle | per-user install | LaunchAgent, signed app bundles | systemd `--user` unit | XP-16, XP-17 |
 | Node runtime | pinned (SG-000106) | pinned per arch | pinned per arch | XP-18 |
 | Privileged operations | gsudo-derived broker (SG-000098) | Authorization Services / SMAppService (new, later) | polkit/pkexec (new, later) | after SG-000098 |
