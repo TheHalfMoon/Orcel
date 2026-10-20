@@ -974,6 +974,7 @@ name = "orcel-lifecycle"
 version = "0.2.0"
 dependencies = [
  "orcel-approval",
+ "orcel-contracts",
  "orcel-platform",
  "orcel-policy",
  "orcel-tunnel",

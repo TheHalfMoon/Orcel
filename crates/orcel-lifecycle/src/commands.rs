@@ -155,7 +155,7 @@ pub fn workspace(args: &mut Args) -> Result<Output, LifecycleError> {
 
 pub fn tunnel(args: &mut Args) -> Result<Output, LifecycleError> {
     let layout = Layout::for_current_user()?;
-    let action = args.positional("tunnel action (setup, show)")?;
+    let action = args.positional("tunnel action (setup, show, allow, revoke)")?;
     match action.as_str() {
         "setup" => {
             let client = PathBuf::from(args.value("--client")?.ok_or_else(|| {
@@ -247,10 +247,11 @@ pub fn tunnel(args: &mut Args) -> Result<Output, LifecycleError> {
                 .unwrap_or(false);
             let human = match &config.tunnel {
                 Some(tunnel) => format!(
-                    "tunnel id: {}\nclient: {}\nruntime key: {} (value never displayed)\n",
+                    "tunnel id: {}\nclient: {}\nruntime key: {} (value never displayed)\nremote connection: {} (profile core; `orcel tunnel allow` leases it)\n",
                     tunnel.tunnel_id,
                     tunnel.client.display(),
-                    if key_present { "present" } else { "missing" }
+                    if key_present { "present" } else { "missing" },
+                    orcel_lifecycle::tunnel_route::remote_connection_id(&tunnel.tunnel_id)
                 ),
                 None => "The tunnel is not configured. Run `orcel tunnel setup`.\n".into(),
             };
@@ -260,10 +261,63 @@ pub fn tunnel(args: &mut Args) -> Result<Output, LifecycleError> {
                 json: json!({"ok": true, "tunnel": config.tunnel, "runtime_key_present": key_present}),
             })
         }
+        // #395: tunnel requests carry a remote context, so a ChatGPT session
+        // through the tunnel needs a finite, STRONG-approved lease, exactly
+        // like a relay connection.
+        "allow" => {
+            let tunnel_id = configured_tunnel_id(&layout)?;
+            let connection = orcel_lifecycle::tunnel_route::remote_connection_id(&tunnel_id);
+            let (device_id, device_epoch) =
+                orcel_lifecycle::tunnel_route::device_identity(&tunnel_id);
+            let route = orcel_lifecycle::tunnel_route::route(&tunnel_id);
+            allow_remote_session(args, &layout, &connection, &route, &device_id, device_epoch)
+        }
+        "revoke" => {
+            args.finish()?;
+            let tunnel_id = configured_tunnel_id(&layout)?;
+            let connection = orcel_lifecycle::tunnel_route::remote_connection_id(&tunnel_id);
+            let config = Config::load(&layout)?;
+            config.check_workspaces_with_policy()?;
+            let workspace = config.default_workspace().unwrap_or("default").to_string();
+            let version = active_version(&layout)?;
+            let request = ipc::request(
+                &workspace,
+                "remote.lease.revoke",
+                "revoke",
+                json!({ "remote_connection_id": connection }),
+            );
+            let response = ipc::call(
+                &layout.version_dir(&version).join("orceld.exe"),
+                &config,
+                &request,
+                Duration::from_secs(30),
+            )?;
+            let result = ipc::expect_ok(&response)?.clone();
+            Ok(Output {
+                exit_code: 0,
+                human: format!(
+                    "Revoked {} tunnel session lease(s).\n",
+                    result
+                        .get("revoked")
+                        .map(Value::to_string)
+                        .unwrap_or_default()
+                ),
+                json: json!({"ok": true, "revoke": result}),
+            })
+        }
         other => Err(LifecycleError::usage(format!(
             "unknown tunnel action {other:?}; run `orcel help`"
         ))),
     }
+}
+
+fn configured_tunnel_id(layout: &Layout) -> Result<String, LifecycleError> {
+    Config::load(layout)?
+        .tunnel
+        .map(|tunnel| tunnel.tunnel_id)
+        .ok_or_else(|| {
+            LifecycleError::state("the tunnel is not configured; run `orcel tunnel setup`")
+        })
 }
 
 fn wait_seconds(args: &mut Args, default: u64) -> Result<Duration, LifecycleError> {
@@ -690,6 +744,63 @@ pub fn mcp(args: &mut Args) -> Result<i32, LifecycleError> {
     orcel_lifecycle::mcp::run_action(&action, port)
 }
 
+/// Creates a finite remote-session lease for one remote route after STRONG
+/// local presence (`orcel remote allow`, `orcel tunnel allow`).
+fn allow_remote_session(
+    args: &mut Args,
+    layout: &Layout,
+    connection: &str,
+    paired: &Value,
+    device_id: &str,
+    device_epoch: u64,
+) -> Result<Output, LifecycleError> {
+    use orcel_lifecycle::remote;
+    let workspaces = args.value("--workspaces")?;
+    let scopes = args.value("--scopes")?;
+    let minutes = match args.value("--minutes")? {
+        Some(value) => value
+            .parse::<u64>()
+            .map_err(|_| LifecycleError::usage("--minutes must be from 1 to 15"))?,
+        None => remote::MAX_LEASE_MINUTES,
+    };
+    let read_mode = args
+        .value("--read-mode")?
+        .unwrap_or_else(|| "session".into());
+    args.finish()?;
+    let config = Config::load(layout)?;
+    config.check_workspaces_with_policy()?;
+    let workspaces: Vec<String> = match workspaces {
+        Some(list) => list.split(',').map(|s| s.trim().to_owned()).collect(),
+        None => vec![config.default_workspace().unwrap_or("default").to_owned()],
+    };
+    let options = remote::AllowOptions {
+        remote_connection_id: connection.to_owned(),
+        workspaces: workspaces.clone(),
+        scopes: scopes.map(|list| list.split(',').map(|s| s.trim().to_owned()).collect()),
+        minutes,
+        read_mode,
+    };
+    let arguments = remote::lease_arguments(&options, paired, device_id, device_epoch)?;
+    let version = active_version(layout)?;
+    eprintln!("Confirm with Windows Hello when prompted. A remote session lease is a STRONG approval and cannot be granted remotely or by an agent.");
+    let request = ipc::request(&workspaces[0], "remote.lease.create", "create", arguments);
+    let response = ipc::call(
+        &layout.version_dir(&version).join("orceld.exe"),
+        &config,
+        &request,
+        Duration::from_secs(180),
+    )?;
+    let lease = ipc::expect_ok(&response)?.clone();
+    Ok(Output {
+        exit_code: 0,
+        human: format!(
+            "Remote session allowed for {connection} on {} for {minutes} minute(s). It never extends itself; run `orcel remote revoke` to end it early.\n",
+            workspaces.join(", ")
+        ),
+        json: json!({"ok": true, "lease": lease}),
+    })
+}
+
 /// `orcel remote allow|revoke|status`: local remote-session leases.
 pub fn remote(args: &mut Args) -> Result<Output, LifecycleError> {
     use orcel_lifecycle::remote;
@@ -701,54 +812,18 @@ pub fn remote(args: &mut Args) -> Result<Output, LifecycleError> {
             let connection = args.value("--connection")?.ok_or_else(|| {
                 LifecycleError::usage("--connection <remote connection id> is required")
             })?;
-            let workspaces = args.value("--workspaces")?;
-            let scopes = args.value("--scopes")?;
-            let minutes = match args.value("--minutes")? {
-                Some(value) => value
-                    .parse::<u64>()
-                    .map_err(|_| LifecycleError::usage("--minutes must be from 1 to 15"))?,
-                None => remote::MAX_LEASE_MINUTES,
-            };
-            let read_mode = args
-                .value("--read-mode")?
-                .unwrap_or_else(|| "session".into());
-            args.finish()?;
-            let config = Config::load(&layout)?;
-            config.check_workspaces_with_policy()?;
-            let workspaces: Vec<String> = match workspaces {
-                Some(list) => list.split(',').map(|s| s.trim().to_owned()).collect(),
-                None => vec![config.default_workspace().unwrap_or("default").to_owned()],
-            };
-            let options = remote::AllowOptions {
-                remote_connection_id: connection.clone(),
-                workspaces: workspaces.clone(),
-                scopes: scopes.map(|list| list.split(',').map(|s| s.trim().to_owned()).collect()),
-                minutes,
-                read_mode,
-            };
             let (device_id, device_epoch) =
                 remote::device_identity(&remote::device_key_path(&layout))?;
             let paired =
                 remote::paired_connection(&remote::uplink_config_path(&layout), &connection)?;
-            let arguments = remote::lease_arguments(&options, &paired, &device_id, device_epoch)?;
-            let version = active_version(&layout)?;
-            eprintln!("Confirm with Windows Hello when prompted. A remote session lease is a STRONG approval and cannot be granted remotely or by an agent.");
-            let request = ipc::request(&workspaces[0], "remote.lease.create", "create", arguments);
-            let response = ipc::call(
-                &layout.version_dir(&version).join("orceld.exe"),
-                &config,
-                &request,
-                Duration::from_secs(180),
-            )?;
-            let lease = ipc::expect_ok(&response)?.clone();
-            Ok(Output {
-                exit_code: 0,
-                human: format!(
-                    "Remote session allowed for {connection} on {} for {minutes} minute(s). It never extends itself; run `orcel remote revoke` to end it early.\n",
-                    workspaces.join(", ")
-                ),
-                json: json!({"ok": true, "lease": lease}),
-            })
+            allow_remote_session(
+                args,
+                &layout,
+                &connection,
+                &paired,
+                &device_id,
+                device_epoch,
+            )
         }
         "revoke" => {
             let connection = args.value("--connection")?;
