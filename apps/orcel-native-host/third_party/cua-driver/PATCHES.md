@@ -324,8 +324,10 @@ crates expose only `register_all` / `build_registry`, which register every
 tool. The Orcel host calls `retain_tools(&ALLOWED_TOOLS)` right after
 construction (`apps/orcel-native-host/src/cua_adapter.rs`), so the registry
 holds exactly `list_windows`, `get_window_state`, `get_cursor_position`,
-`get_screen_size`, `check_permissions` and (P-09) `orcel_semantic_action`; any
-other name is unknown to `invoke`. This is defence in depth under the closed `CuaCall` enum.
+`get_screen_size`, `check_permissions`, (P-09) `orcel_semantic_action` and,
+since XP-12, the five raw input tools `click`, `drag`, `scroll`, `type_text`
+and `press_key` (eleven names; "XP-12: raw input through upstream's tools,
+no vendored change" below); any other name is unknown to `invoke`. This is defence in depth under the closed `CuaCall` enum.
 `registry_holds_the_allowlist_and_no_compiled_out_tool` (macOS and Linux CI)
 requires the registered names to equal the allowlist exactly. Lines added
 only; with the feature off the file compiles exactly as upstream.
@@ -382,8 +384,9 @@ only, so the host never calls it, and Wayland capture stays unavailable.
 The Orcel host delivers semantic actions (invoke, set_value, select, toggle)
 through one added tool, `orcel_semantic_action`, and registers no other
 action tool. Upstream's `click`, `set_value` and `scroll` stay out of the
-host's registry (P-07 keeps the allowlist at six names) because each of them
-can leave the accessibility route when it fails:
+host's registry (when P-09 landed, P-07 kept the allowlist at six names;
+XP-12 later added the raw input tools for the pixel-addressed operations only,
+see below) because each of them can leave the accessibility route when it fails:
 
 - macOS `click`: a CGEvent pixel click (`button=middle`, the list-selection
   fallback, any `x,y`), a private SkyLight activation to prime the key window,
@@ -455,11 +458,50 @@ feature off each file compiles exactly as upstream.
 
 What P-09 does not do: scroll. Upstream scrolls by wheel event at a screen
 position on both platforms, which is pixel-addressed input, so the host
-refuses the `scroll` verb (`capability_denied`) until XP-12. Set value on web
+refuses the `scroll` verb of `semantic_action` (`capability_denied`); wheel
+input is the `input_scroll` operation of XP-12, under its own approval. Set value on web
 content is refused by the host (an AXValue write there is echoed back without
 reaching the page), and a value write that moves text into a document does
 not mark the document edited, because upstream's way of doing that sends key
 events.
+
+## XP-12: raw input through upstream's tools, no vendored change
+
+XP-12 vendors no file and changes no vendored byte, so it adds no patch and
+`scripts/check-vendored-cua.mjs --upstream` is unaffected. The host reaches
+Cua's own `click`, `drag`, `scroll`, `type_text` and `press_key` tools through
+the adapter (`apps/orcel-native-host/src/cua_adapter.rs`, `InputCall`), which
+only widens the allowlist P-07 enforces (`ALLOWED_TOOLS`, eleven names). What
+keeps the tools inside the approval is on the Orcel side of the adapter:
+
+- The adapter builds each argument object field by field: an exact `pid` and
+  `window_id`, window-local physical pixels, `delivery_mode: "background"`,
+  and the tool's own button, count, direction, amount, text or key. It never
+  sends `scope` (so no desktop-wide coordinate), a modifier, an `element_token`,
+  a `capture_id`, `from_zoom`, a coordinate frame or a foreground mode. The
+  registry is called with `invoke_with_native_window_pixels`, upstream's
+  in-process entry that declares the coordinates are physical window pixels;
+  a `_native_window_pixels` field in the arguments is ignored by the registry.
+- The worker decides everything the tools would otherwise decide for it: the
+  point is inside the live frame (never clamped), the key is in a closed set
+  with no chord, the text is bounded and chunked, the window is neither
+  protected, covered nor moved, and the person has not touched the machine,
+  each re-proved before every delivery unit (`input.rs`, `worker.rs`).
+- The registry holds no `hotkey`, `move_cursor`, `set_value`,
+  `bring_to_front`, `set_window_frame` or `launch_app`, so a failed input
+  tool cannot be followed by another route.
+
+What XP-12 does not do, and why it is not a patch: it does not gate
+macOS's SkyLight SPI (`SLEventPostToPid`, the focus-without-raise recipe)
+behind a capability. `platform-macos/src/input/skylight.rs` resolves its
+symbols through one `find_sym`, but the SPI is also reached from
+`click.rs`, `drag.rs`, `scroll.rs`, `type_text.rs`, `press_key.rs`,
+`tools/mod.rs` and `mouse.rs`/`keyboard.rs` directly, and a gate at the
+resolver would also switch off the public fallbacks that share it. A patch
+that disables the SPI and keeps every public route working needs its own
+qualification; SECURITY_INTEGRATION.md (S-05) records the risk and the
+follow-up. The cursor overlay (P-05) is still never installed, so the
+decision it left to this task is unchanged: the host draws no badge.
 
 ## Patched file index
 

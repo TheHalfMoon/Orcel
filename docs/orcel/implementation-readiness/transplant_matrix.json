@@ -24,7 +24,7 @@
       "dest_state": "NEW",
       "method": "WRAP",
       "task": "XP-05",
-      "notes": "Default features only (X11 + AT-SPI + wlroots/Sway). portal-input/portal-capture (GNOME/KDE libei, PipeWire) are enabled in XP-12 after their own qualification. XP-07 wraps only the X11 window capture (capture.rs, patch P-08); the wlroots screencopy path is output-level, so Wayland/Sway capture is deferred to XP-12. XP-11 (patch P-09) adds one accessibility-only action tool, orcel_semantic_action, built on AT-SPI doAction and EditableText/Value writes; upstream click, set_value and scroll are not registered because each can fall back to XTest, uinput or virtual-key routes.",
+      "notes": "Default features only (X11 + AT-SPI + wlroots/Sway). portal-input/portal-capture (GNOME/KDE libei, PipeWire) are enabled in XP-12 after their own qualification. XP-07 wraps only the X11 window capture (capture.rs, patch P-08); the wlroots screencopy path is output-level, so Wayland/Sway capture is deferred to XP-12. XP-11 (patch P-09) adds one accessibility-only action tool, orcel_semantic_action, built on AT-SPI doAction and EditableText/Value writes; upstream click, set_value and scroll are not registered because each can fall back to XTest, uinput or virtual-key routes. XP-12 registers click, drag, scroll, type_text and press_key for the pixel-addressed operations only, under the adapter and worker rules of PATCHES.md (no vendored change); portal-input stays disabled.",
       "object": "131729601863cac56d291657e58ac5b7ec931210"
     },
     {
@@ -216,7 +216,7 @@
       "dest_state": "NEW",
       "method": "WRAP",
       "task": "XP-12",
-      "notes": "GNOME Shell extension winrects@cua: stable window ids, geometry, stacking, verified activation for Mutter. Optional, user-enabled.",
+      "notes": "GNOME Shell extension winrects@cua: stable window ids, geometry, stacking, verified activation for Mutter. Optional, user-enabled. XP-12 did not vendor it: installing a Shell extension is an interactive, user-visible step with a consent screen and a session restart, and raw input on Wayland returns Unavailable unless a non-interactive path exists, so the row waits for a task that defines one.",
       "object": "93e52c75157733ce66244f8b5e294a635d75479e"
     },
     {
@@ -228,7 +228,7 @@
       "dest_state": "NEW",
       "method": "WRAP",
       "task": "XP-12",
-      "notes": "KWin identity helper; raw target-addressed input stays refused on KWin.",
+      "notes": "KWin identity helper; raw target-addressed input stays refused on KWin. XP-12 did not vendor it: Wayland raw input is Unavailable (no non-interactive path), KDE included, and the helper would serve identity only.",
       "object": "ba1c383d81638f4d446e0e1430f27b8c3101477d"
     },
     {

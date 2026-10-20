@@ -156,6 +156,10 @@ async fn probe(runtime: &CuaRuntime, platform: HostPlatform) -> Availability {
                         availability.input = Some(code::PERMISSION_MISSING.to_owned());
                     }
                 }
+                // The human-input binding needs a readable idle clock.
+                if availability.input.is_none() && input::tick::current().is_err() {
+                    availability.input = Some(code::PROVIDER_UNAVAILABLE.to_owned());
+                }
                 availability
             }
             Err(_) => {
