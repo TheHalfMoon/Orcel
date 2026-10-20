@@ -8,8 +8,9 @@
 //! `CUA_APPKIT_TASK_STATE`). In that mode it rewrites an app-owned JSON
 //! state file, with its pid and a sequence number, on launch and on every
 //! change. That file is the fixture oracle: the window the host lists must
-//! belong to the pid the file names, the counter the tree shows must be the
-//! counter the file holds, and the file must not change while the suite
+//! belong to the pid the file names, the checked state of "I agree" and of
+//! the Small/Medium/Large radios in the tree must be the `agreed` and `size`
+//! the file holds, and the file must not change while the suite
 //! observes or is refused.
 //!
 //! The input cells follow upstream's harness matrix
@@ -28,6 +29,19 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 use support::Host;
 
+/// The task controls both harnesses label alike (their task modes share
+/// candidate ids across platforms). Both hosts' trees hold interactive
+/// elements only, so a static label such as `counter=0` is never observed.
+const TASK_CONTROLS: &[&str] = &[
+    "Increment",
+    "Reset",
+    "I agree",
+    "Small",
+    "Medium",
+    "Large",
+    "Save note",
+];
+
 struct NativeHarness {
     name: &'static str,
     title: &'static str,
@@ -45,7 +59,7 @@ fn harness(fixtures: &Path) -> NativeHarness {
             command: Command::new(fixtures.join(
                 "harness-appkit/CuaTestHarness.AppKit.app/Contents/MacOS/CuaTestHarness.AppKit",
             )),
-            markers: &["counter=0", "Increment", "Reset"],
+            markers: TASK_CONTROLS,
         }
     } else {
         let mut command = Command::new("python3");
@@ -60,7 +74,7 @@ fn harness(fixtures: &Path) -> NativeHarness {
             title: "CuaTestHarness GTK3 Tasks",
             state_env: "CUA_GTK3_TASK_STATE",
             command,
-            markers: &["counter=0", "Increment", "Reset", "Save note"],
+            markers: TASK_CONTROLS,
         }
     }
 }
@@ -225,11 +239,22 @@ fn xp08_native_harness_is_conformant() {
     // Fixture-owned identity: the listed owner is the pid the app wrote.
     assert_eq!(window["process"]["pid"], initial["pid"], "{window}");
     let observed = conformance::observe_markers(&mut host, &mut report, &target, &window);
-    let counter = format!("counter={}", state()["counter"]);
-    assert!(
-        conformance::has_text(&observed.nodes, &counter),
-        "{counter} is not in the observed tree"
+    // Fixture agreement: what the tree shows checked is what the app wrote.
+    let now = state();
+    let agreed = now["agreed"].as_bool().expect("agreed is a boolean");
+    assert_eq!(
+        conformance::checked(&observed.nodes, "I agree"),
+        agreed,
+        "I agree vs {now}"
     );
+    for size in ["Small", "Medium", "Large"] {
+        let expected = now["size"] == size.to_ascii_lowercase();
+        assert_eq!(
+            conformance::checked(&observed.nodes, size),
+            expected,
+            "{size} vs {now}"
+        );
+    }
     conformance::identity_and_bounds(&mut host, &mut report, &prefix, &observed.reference);
     conformance::observation_has_no_effect(
         &mut host,

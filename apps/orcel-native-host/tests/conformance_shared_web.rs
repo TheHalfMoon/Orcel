@@ -255,17 +255,22 @@ fn run_host(spec: &WebHost, report: &mut Report, cdp_port: u16) {
         prefix: prefix.clone(),
         title: &spec.title,
         pid: harness.pid(),
-        markers: &["WEB_HARNESS_MARKER_v1", "counter=0"],
+        markers: &["Increment", "Reset"],
     };
     let window = conformance::find_window(&mut host, report, &target);
     let observed = conformance::observe_markers(&mut host, report, &target, &window);
-    // The tree agrees with the page's own journal, not just with itself.
+    // The tree agrees with the page's own journal, not just with itself:
+    // the buttons the host names are the ones the DOM holds. The hosts'
+    // trees carry interactive elements only, so static text is not compared.
     let state = journal.settled();
-    for id in ["page-marker", "lbl-counter"] {
+    for id in ["btn-increment", "btn-reset"] {
         let text = conformance::journal_text(&state, id);
         assert!(
-            conformance::has_text(&observed.nodes, text),
-            "{id}={text} is not in the observed tree"
+            observed
+                .nodes
+                .iter()
+                .any(|node| node["control_type"] == "Button" && node["name"] == text),
+            "{id}={text} is not a button in the observed tree"
         );
     }
     conformance::identity_and_bounds(&mut host, report, &prefix, &observed.reference);

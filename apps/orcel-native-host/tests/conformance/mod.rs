@@ -534,6 +534,16 @@ pub fn has_text(nodes: &[Value], text: &str) -> bool {
         .any(|node| node["name"] == text || node["value"] == text)
 }
 
+/// Whether the control named `name` is checked: AX reports a checkbox or
+/// radio button as value `1`, AT-SPI as the toggled state.
+pub fn checked(nodes: &[Value], name: &str) -> bool {
+    let node = nodes
+        .iter()
+        .find(|node| node["name"] == name)
+        .unwrap_or_else(|| panic!("{name} is not in the observed tree"));
+    node["toggled"] == true || node["value"] == "1"
+}
+
 /// The runtime id of the first node whose name or value contains `needle`,
 /// else of the tree's first node.
 pub fn element_for(nodes: &[Value], needle: &str) -> String {
