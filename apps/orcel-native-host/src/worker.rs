@@ -194,6 +194,7 @@ pub fn macos_availability(status: &Value) -> Availability {
         // Raw input needs what observation needs: it lists the window again
         // before each unit, and scales points by a capture of the window.
         input: observation,
+        input_keys: None,
         permissions,
     }
 }
@@ -217,6 +218,10 @@ pub struct LinuxSession {
     pub session_bus: bool,
     /// The X server answers the idle query the human-input binding reads.
     pub input_clock: bool,
+    /// The session has the real input backend Cua's background keyboard
+    /// route needs on X11: an Xorg server (not Xvfb) and a uinput device this
+    /// user can open.
+    pub real_input_backend: bool,
 }
 
 impl LinuxSession {
@@ -227,8 +232,21 @@ impl LinuxSession {
             wayland_display: set("WAYLAND_DISPLAY"),
             session_bus: set("DBUS_SESSION_BUS_ADDRESS"),
             input_clock: set("DISPLAY") && input::tick::current().is_ok(),
+            real_input_backend: set("DISPLAY") && real_input_backend(),
         }
     }
+}
+
+/// Whether Cua's real pointer and keyboard backend is usable on this X
+/// session (Xorg with a writable uinput device, not Xvfb).
+#[cfg(target_os = "linux")]
+fn real_input_backend() -> bool {
+    platform_linux::input::real_pointer_input_available()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn real_input_backend() -> bool {
+    false
 }
 
 /// Linux availability: no display means nothing works; no session bus
@@ -255,6 +273,8 @@ pub fn linux_availability(platform: HostPlatform, session: &LinuxSession) -> Ava
     let input = tree.clone().or_else(|| {
         (wayland || !session.input_clock).then(|| code::PROVIDER_UNAVAILABLE.to_owned())
     });
+    // The keyboard operations also need Cua's virtual master keyboard.
+    let input_keys = (!session.real_input_backend).then(|| code::PROVIDER_UNAVAILABLE.to_owned());
     Availability {
         list_windows: tree.clone(),
         observe_window: tree.clone(),
@@ -267,6 +287,7 @@ pub fn linux_availability(platform: HostPlatform, session: &LinuxSession) -> Ava
         // AT-SPI actions need the tree and a window id, as observation does.
         semantic_action: tree,
         input,
+        input_keys,
         permissions: BTreeMap::new(),
     }
 }
@@ -1327,6 +1348,7 @@ mod tests {
             wayland_display: true,
             session_bus: true,
             input_clock: true,
+            real_input_backend: true,
         };
         let x11 = linux_availability(protocol::LINUX_X11, &full);
         assert_eq!(x11.list_windows, None);
@@ -1334,6 +1356,27 @@ mod tests {
         assert_eq!(x11.capture_window, None);
         assert_eq!(x11.semantic_action, None);
         assert_eq!(x11.input, None);
+        assert_eq!(x11.refusal_for("input_key"), None);
+        // X11 without the real input backend (Xvfb, or no uinput) serves the
+        // pointer operations and not the keyboard ones.
+        let headless = linux_availability(
+            protocol::LINUX_X11,
+            &LinuxSession {
+                real_input_backend: false,
+                ..full.clone()
+            },
+        );
+        assert_eq!(headless.refusal_for("input_click"), None);
+        assert_eq!(headless.refusal_for("input_drag"), None);
+        assert_eq!(headless.refusal_for("input_scroll"), None);
+        assert_eq!(
+            headless.refusal_for("input_type_text"),
+            Some("provider_unavailable")
+        );
+        assert_eq!(
+            headless.refusal_for("input_key"),
+            Some("provider_unavailable")
+        );
         // X11 without a readable human-input clock serves no raw input.
         let no_clock = linux_availability(
             protocol::LINUX_X11,
@@ -1367,6 +1410,7 @@ mod tests {
                 wayland_display: false,
                 session_bus: true,
                 input_clock: true,
+                real_input_backend: true,
             },
         );
         assert_eq!(xwayland_only, Availability::none("provider_unavailable"));

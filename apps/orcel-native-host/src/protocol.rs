@@ -409,9 +409,14 @@ pub struct Availability {
     /// XP-11 semantic actions. They need what observation needs: the action
     /// worker lists the window and its tree again before it acts.
     pub semantic_action: Option<String>,
-    /// XP-12 raw input. It needs what a semantic action needs and a readable
-    /// human-input clock; on Wayland it is unavailable.
+    /// XP-12 raw input to a point (click, drag, scroll). It needs what a
+    /// semantic action needs and a readable human-input clock; on Wayland it
+    /// is unavailable. The keyboard operations also need `input_keys`.
     pub input: Option<String>,
+    /// Why the keyboard operations (`input_type_text`, `input_key`) are
+    /// unavailable although `input` may be usable: on X11 their background
+    /// route needs a uinput virtual master keyboard, which Xvfb cannot have.
+    pub input_keys: Option<String>,
     /// Permission facts reported informationally (macOS).
     #[serde(default)]
     pub permissions: BTreeMap<String, bool>,
@@ -427,6 +432,7 @@ impl Availability {
             capture_window: Some(reason.to_owned()),
             semantic_action: Some(reason.to_owned()),
             input: Some(reason.to_owned()),
+            input_keys: Some(reason.to_owned()),
             permissions: BTreeMap::new(),
         }
     }
@@ -438,6 +444,9 @@ impl Availability {
             "cursor_position" => self.cursor_position.as_deref(),
             "capture_window" => self.capture_window.as_deref(),
             "semantic_action" => self.semantic_action.as_deref(),
+            op if crate::input::is_keyboard_operation(op) => {
+                self.input.as_deref().or(self.input_keys.as_deref())
+            }
             op if crate::input::is_input_operation(op) => self.input.as_deref(),
             _ => Some(code::CAPABILITY_DENIED),
         }
@@ -757,6 +766,7 @@ mod tests {
             capture_window: None,
             semantic_action: None,
             input: None,
+            input_keys: None,
             permissions: BTreeMap::new(),
         };
         let response = hello(1, MACOS, &available);

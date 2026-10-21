@@ -154,7 +154,7 @@ fn frame(cell: &Cell, element: &str, point: (i64, i64)) -> (&'static str, Value)
         ),
         "drag" => (
             "input_drag",
-            json!({"x": x, "y": y, "to_x": x + 120, "to_y": y, "button": "left", "expected_last_input_tick": tick}),
+            json!({"x": x, "y": y, "to_x": x + 120, "to_y": y, "expected_last_input_tick": tick}),
         ),
         other => panic!("no px frame for {other}"),
     }

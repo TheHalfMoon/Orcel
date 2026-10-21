@@ -186,18 +186,28 @@ fn xp12_raw_input_lands_where_approved_and_nowhere_else() {
         report_only(&mut host, &probe, &hello, &nonce);
         return;
     }
-    for op in [
-        "input_click",
-        "input_drag",
-        "input_scroll",
-        "input_type_text",
-        "input_key",
-    ] {
+    for op in ["input_click", "input_drag", "input_scroll"] {
         assert_eq!(
             hello["capabilities"][op]["support"], "delivered",
             "{op}: this session cannot deliver input: {hello}"
         );
         assert_eq!(hello["capabilities"][op]["delivery"], "background", "{op}");
+    }
+    // The keyboard operations need Cua's virtual master keyboard on X11: Xorg
+    // with a writable uinput device. A headless Xvfb session serves the
+    // pointer operations and says plainly that it does not serve these.
+    let keys = hello["capabilities"]["input_key"]["support"] == "delivered";
+    for op in ["input_type_text", "input_key"] {
+        if keys {
+            assert_eq!(hello["capabilities"][op]["support"], "delivered", "{op}");
+            assert_eq!(hello["capabilities"][op]["delivery"], "background", "{op}");
+        } else {
+            assert_eq!(hello["capabilities"][op]["support"], "unavailable", "{op}");
+            assert_eq!(
+                hello["capabilities"][op]["reason"], "provider_unavailable",
+                "{op}"
+            );
+        }
     }
     for op in ["input_move", "input_hotkey", "window_action"] {
         assert_eq!(hello["capabilities"][op]["support"], "refused", "{op}");
@@ -298,28 +308,41 @@ fn xp12_raw_input_lands_where_approved_and_nowhere_else() {
     assert!(down, "{got:?}");
     seen += got.len();
 
-    let text = "hello 12";
-    let reply = input(
-        &mut host,
-        &reference,
-        "input_type_text",
-        json!({ "text": text }),
-    );
-    assert_eq!(reply["ok"], true, "{reply}");
-    let got = wait_for_events(&probe, seen, text.chars().count(), "typed text");
-    let typed: String = got
-        .iter()
-        .filter(|event| event["kind"] == "key")
-        .map(|event| event["string"].as_str().unwrap_or_default().to_owned())
-        .collect();
-    assert_eq!(typed, text, "{got:?}");
-    seen += got.len();
+    if keys {
+        let text = "hello 12";
+        let reply = input(
+            &mut host,
+            &reference,
+            "input_type_text",
+            json!({ "text": text }),
+        );
+        assert_eq!(reply["ok"], true, "{reply}");
+        let got = wait_for_events(&probe, seen, text.chars().count(), "typed text");
+        let typed: String = got
+            .iter()
+            .filter(|event| event["kind"] == "key")
+            .map(|event| event["string"].as_str().unwrap_or_default().to_owned())
+            .collect();
+        assert_eq!(typed, text, "{got:?}");
+        seen += got.len();
 
-    let reply = input(&mut host, &reference, "input_key", json!({"key": "tab"}));
-    assert_eq!(reply["ok"], true, "{reply}");
-    let got = wait_for_events(&probe, seen, 1, "tab");
-    assert!(got.iter().all(|event| event["kind"] == "key"), "{got:?}");
-    seen += got.len();
+        let reply = input(&mut host, &reference, "input_key", json!({"key": "tab"}));
+        assert_eq!(reply["ok"], true, "{reply}");
+        let got = wait_for_events(&probe, seen, 1, "tab");
+        assert!(got.iter().all(|event| event["kind"] == "key"), "{got:?}");
+        seen += got.len();
+    } else {
+        // Said plainly, and nothing is typed behind the caller back.
+        let before = read_state(&probe.state).unwrap();
+        for (op, fields) in [
+            ("input_type_text", json!({"text": "hello 12"})),
+            ("input_key", json!({"key": "tab"})),
+        ] {
+            let reply = input(&mut host, &reference, op, fields);
+            assert_refused(&reply, "provider_unavailable", op);
+        }
+        assert_unchanged(&probe, &before, "an unavailable keyboard");
+    }
 
     // ---- refused, with the journal untouched.
     let before = read_state(&probe.state).unwrap();
@@ -423,11 +446,13 @@ fn xp12_raw_input_lands_where_approved_and_nowhere_else() {
                "click_count": 1, "expected_last_input_tick": stale}),
     );
     assert_refused(&reply, "cancelled", "a click on a stale tick");
-    let reply = host.request(
-        "input_type_text",
-        json!({"window": reference, "text": "abc", "expected_last_input_tick": 1}),
-    );
-    assert_refused(&reply, "cancelled", "typing on a stale tick");
+    if keys {
+        let reply = host.request(
+            "input_type_text",
+            json!({"window": reference, "text": "abc", "expected_last_input_tick": 1}),
+        );
+        assert_refused(&reply, "cancelled", "typing on a stale tick");
+    }
     assert_unchanged(&probe, &before, "stale ticks");
 
     // A binding that does not name the live window.
@@ -445,10 +470,10 @@ fn xp12_raw_input_lands_where_approved_and_nowhere_else() {
     let reply = input(
         &mut host,
         &wrong_generation,
-        "input_key",
-        json!({"key": "a"}),
+        "input_scroll",
+        json!({"x": 10, "y": 10, "scroll_x": 0, "scroll_y": 1}),
     );
-    assert_refused(&reply, "target_stale", "a key on another generation");
+    assert_refused(&reply, "target_stale", "a scroll on another generation");
     assert_unchanged(&probe, &before, "stale bindings");
 
     // An Orcel approval surface takes no input: an agent can never press
@@ -458,8 +483,6 @@ fn xp12_raw_input_lands_where_approved_and_nowhere_else() {
             "input_click",
             json!({"x": 20, "y": 20, "button": "left", "click_count": 1}),
         ),
-        ("input_type_text", json!({"text": "approve"})),
-        ("input_key", json!({"key": "enter"})),
         (
             "input_scroll",
             json!({"x": 20, "y": 20, "scroll_x": 0, "scroll_y": 1}),
@@ -468,7 +491,12 @@ fn xp12_raw_input_lands_where_approved_and_nowhere_else() {
             "input_drag",
             json!({"x": 5, "y": 5, "to_x": 50, "to_y": 50}),
         ),
-    ] {
+        ("input_type_text", json!({"text": "approve"})),
+        ("input_key", json!({"key": "enter"})),
+    ]
+    .into_iter()
+    .filter(|(op, _)| keys || !matches!(*op, "input_type_text" | "input_key"))
+    {
         let reply = input(&mut host, &approval_reference, op, fields);
         assert_refused(&reply, "protected_surface", op);
     }
@@ -487,7 +515,10 @@ fn xp12_raw_input_lands_where_approved_and_nowhere_else() {
         ),
         ("input_key", json!({"key": "a"})),
         ("input_type_text", json!({"text": "covered"})),
-    ] {
+    ]
+    .into_iter()
+    .filter(|(op, _)| keys || !matches!(*op, "input_type_text" | "input_key"))
+    {
         let reply = input(&mut host, &reference, op, fields);
         assert_eq!(reply["ok"], false, "{op} reached a covered window: {reply}");
         assert_eq!(error_code(&reply), "provider_unavailable", "{op}: {reply}");
@@ -514,7 +545,7 @@ fn xp12_raw_input_lands_where_approved_and_nowhere_else() {
     assert_eq!(after_cover[0]["kind"], "down", "{after_cover:?}");
 
     #[cfg(target_os = "linux")]
-    human_input_cancels(&mut host, &reference, &probe);
+    human_input_cancels(&mut host, &reference, &probe, keys);
 
     for line in &host.log {
         assert!(!line.contains("\"pixels_b64\""), "no frame is read back");
@@ -528,7 +559,7 @@ fn xp12_raw_input_lands_where_approved_and_nowhere_else() {
 /// the person; its XTest motion moves the X server's idle clock the way a
 /// real device does.
 #[cfg(target_os = "linux")]
-fn human_input_cancels(host: &mut Host, reference: &Value, probe: &Probe) {
+fn human_input_cancels(host: &mut Host, reference: &Value, probe: &Probe, keys: bool) {
     let before = read_state(&probe.state).unwrap();
     let read = tick(host);
     std::thread::sleep(Duration::from_millis(1500));
@@ -544,11 +575,13 @@ fn human_input_cancels(host: &mut Host, reference: &Value, probe: &Probe) {
                "click_count": 1, "expected_last_input_tick": read}),
     );
     assert_refused(&reply, "cancelled", "a click after human input");
-    let reply = host.request(
-        "input_type_text",
-        json!({"window": reference, "text": "typed over a person", "expected_last_input_tick": read}),
-    );
-    assert_refused(&reply, "cancelled", "typing after human input");
+    if keys {
+        let reply = host.request(
+            "input_type_text",
+            json!({"window": reference, "text": "typed over a person", "expected_last_input_tick": read}),
+        );
+        assert_refused(&reply, "cancelled", "typing after human input");
+    }
     assert_unchanged(probe, &before, "human input");
     // With the tick read again, the same click goes through.
     let reply = input(

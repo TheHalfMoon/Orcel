@@ -1117,6 +1117,15 @@ mod platform {
             Ok(())
         }
 
+        /// Stamps the end of a raw input sequence for the pacing check.
+        fn mark_input_done(&self) {
+            if let Ok(mut last) = self.last_input.lock() {
+                if last.is_some() {
+                    *last = Some(std::time::Instant::now());
+                }
+            }
+        }
+
         /// Clears any armed input approval; see `disarm_semantic`.
         pub fn disarm_input(&self) {
             if let Ok(mut armed) = self.armed_input.lock() {
@@ -1313,7 +1322,12 @@ mod platform {
             request.bind_window(hwnd, binding);
             request.expected_last_input_tick = Some(expected_last_input_tick);
             let operation = request.op.to_owned();
-            let response = self.exchange_host(request)?;
+            let response = self.exchange_host(request);
+            // The pacing runs from the end of the last sequence, not from its
+            // start: a sequence that took longer than the interval must not
+            // let the next one in at once.
+            self.mark_input_done();
+            let response = response?;
             if response.ok {
                 let action = response.action.ok_or_else(|| {
                     UiaError::new(

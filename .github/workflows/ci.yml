@@ -303,7 +303,9 @@ jobs:
         # which Xvfb cannot have), through the real host (window-relative
         # landing, the refusals, the covered and protected windows, a stale
         # and a human-moved input tick) and through the adapter under an
-        # armed approval.
+        # armed approval. Keyboard delivery needs Cua's uinput virtual master
+        # keyboard, which Xvfb cannot have: the hello says so and those cells
+        # are typed skips.
         # Every test fails instead of skipping when its variable is set.
         env:
           ORCEL_XP06_LIVE: "1"

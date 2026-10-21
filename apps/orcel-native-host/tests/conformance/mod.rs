@@ -1091,11 +1091,35 @@ pub fn run_probe_cells(
     prefix: &str,
     reference: &Value,
     probe: &crate::support::Probe,
+    hello: &Value,
 ) {
     let state = || crate::support::read_state(&probe.state).expect("the probe keeps its state");
     for cell in probe_cells() {
         let case = format!("{}/px/background", cell.case);
         let before = oracles(host, state());
+        let served = &hello["capabilities"][cell.op];
+        if served["support"] != "delivered" {
+            // The keyboard operations are unavailable on a session with no
+            // real input backend (Xvfb): the frame is refused with the
+            // hello's reason and the application receives nothing.
+            let mut fields = cell.fields.clone();
+            fields["window"] = reference.clone();
+            fields["expected_last_input_tick"] = json!(0);
+            let reply = host.request(cell.op, fields);
+            assert_eq!(reply["ok"], false, "{case} was not refused: {reply}");
+            assert_eq!(
+                error_code(&reply),
+                served["reason"].as_str().unwrap_or("provider_unavailable"),
+                "{case}: {reply}"
+            );
+            std::thread::sleep(Duration::from_millis(250));
+            let after = oracles(host, state());
+            assert_eq!(before, after, "{case}: a refused frame changed an oracle");
+            let names = oracle_names(&before.desktop).join(".");
+            report.refused_with(format!("{prefix}/{case}/{names}"), "unavailable");
+            report.background_only(format!("{prefix}/{}/px/foreground", cell.case));
+            continue;
+        }
         let seen = crate::support::events(&before.fixture).len();
         let mut fields = cell.fields.clone();
         fields["window"] = reference.clone();

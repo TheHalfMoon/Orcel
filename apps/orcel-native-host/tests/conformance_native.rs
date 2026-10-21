@@ -146,7 +146,7 @@ fn cells(point: (i64, i64)) -> Vec<InputCell> {
             "drag",
             "px",
             "input_drag",
-            json!({"x": x, "y": y, "to_x": x + 80, "to_y": y, "button": "left", "expected_last_input_tick": tick}),
+            json!({"x": x, "y": y, "to_x": x + 80, "to_y": y, "expected_last_input_tick": tick}),
         );
         push(
             "scroll",
@@ -395,6 +395,7 @@ fn xp08_native_harness_is_conformant() {
             &prefix,
             &support::window_ref(&window),
             &probe,
+            &hello,
         );
         drop(probe);
     } else {

@@ -41,9 +41,23 @@ pub const INPUT_OPERATIONS: [&str; 5] = [
     "input_key",
 ];
 
+/// The raw input operations that address a point.
+pub const POINTER_OPERATIONS: [&str; 3] = ["input_click", "input_drag", "input_scroll"];
+
+/// The raw input operations that address the focused control of the window.
+/// On X11 their background route needs a virtual master keyboard fed by a
+/// uinput device, which a headless Xvfb cannot have, so a session can serve
+/// the pointer operations and not these.
+pub const KEYBOARD_OPERATIONS: [&str; 2] = ["input_type_text", "input_key"];
+
 /// Whether `op` is one of [`INPUT_OPERATIONS`].
 pub fn is_input_operation(op: &str) -> bool {
     INPUT_OPERATIONS.contains(&op)
+}
+
+/// Whether `op` is one of [`KEYBOARD_OPERATIONS`].
+pub fn is_keyboard_operation(op: &str) -> bool {
+    KEYBOARD_OPERATIONS.contains(&op)
 }
 
 /// The most characters one `input_type_text` types.
@@ -1260,6 +1274,8 @@ mod tests {
         for op in INPUT_OPERATIONS {
             assert!(is_input_operation(op));
             assert!(field_rules(op).is_some());
+            assert_eq!(is_keyboard_operation(op), KEYBOARD_OPERATIONS.contains(&op));
+            assert!(POINTER_OPERATIONS.contains(&op) != is_keyboard_operation(op));
         }
         for op in [
             "input_move",

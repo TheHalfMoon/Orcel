@@ -104,12 +104,21 @@ canvas.bind(
     "<B1-Motion>",
     lambda event: record(kind="motion", x=event.x, y=event.y),
 )
-for number, direction in ((4, "up"), (5, "down"), (6, "left"), (7, "right")):
+for number, direction in ((4, "up"), (5, "down")):
     canvas.bind(f"<Button-{number}>", wheel(direction))
 root.bind("<KeyPress>", key)
 
 
+def ensure_mapped():
+    # A window manager that is still starting can drop the first map request.
+    for window in (root, approval):
+        if not window.winfo_viewable():
+            window.withdraw()
+            window.deiconify()
+
+
 def sync_cover():
+    ensure_mapped()
     wanted = os.path.exists(COVER_FLAG)
     shown = cover.state() == "normal"
     if wanted and not shown:

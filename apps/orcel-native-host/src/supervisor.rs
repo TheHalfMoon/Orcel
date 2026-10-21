@@ -338,8 +338,12 @@ fn availability_from(response: &Response) -> Availability {
         cursor_position: reason("cursor_position"),
         capture_window: reason("capture_window"),
         semantic_action: reason("semantic_action"),
-        // One reason for the five operations: the first one not delivered.
-        input: crate::input::INPUT_OPERATIONS
+        // The pointer operations share one reason; the keyboard operations
+        // may add their own.
+        input: crate::input::POINTER_OPERATIONS
+            .iter()
+            .find_map(|op| reason(op)),
+        input_keys: crate::input::KEYBOARD_OPERATIONS
             .iter()
             .find_map(|op| reason(op)),
         permissions: response.permissions.clone().unwrap_or_default(),
