@@ -19,10 +19,9 @@
 //   libuv opens pipes without SECURITY_SQOS_PRESENT (so the server could
 //   impersonate the client) and cannot read the server's process or token,
 //   so this connector cannot verify the server. It therefore REFUSES to
-//   connect on Windows. The `allowUnverifiedWindowsPipe` opt-in is
-//   test-only and the code enforces it (#381 item 2): it is refused unless
-//   the process environment also sets UNVERIFIED_PIPE_TEST_ENV to "1",
-//   which only this package's `npm test` does (test.env). The Windows
+//   connect on Windows, and has no option to do otherwise (#398 item 4):
+//   the tests' unverified pipe connector lives in src/tests/, which the
+//   production build (tsconfig.build.json) does not compile. The Windows
 //   Control Room transport is the CR-03 Tauri bridge (Rust), which must open
 //   with SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION and compare the
 //   token user of GetNamedPipeServerProcessId with its own.
@@ -373,36 +372,16 @@ export interface OrceldTransportOptions {
   endpoint?: string;
   /** Milliseconds to wait for the connection to open. */
   connectTimeoutMs?: number;
-  /**
-   * Windows only, tests only: connect although the pipe server's account
-   * cannot be verified from Node (see the header). Default false: refuse.
-   * Refused anyway unless UNVERIFIED_PIPE_TEST_ENV is "1".
-   */
-  allowUnverifiedWindowsPipe?: boolean;
 }
 
 export interface ConnectOptions {
   connectTimeoutMs?: number;
-  allowUnverifiedWindowsPipe?: boolean;
 }
 
 /** Why the default connector refuses Windows pipes. */
 export const UNVERIFIED_WINDOWS_PIPE =
   "the pipe server's account cannot be verified from Node (no SECURITY_IDENTIFICATION open, " +
   "no GetNamedPipeServerProcessId check); the Windows Control Room transport is the CR-03 Rust bridge";
-
-/**
- * The variable without which `allowUnverifiedWindowsPipe` is refused. Only
- * this package's test script sets it (`node --env-file=test.env`); the
- * Control Room never does, so a caller that passes the option outside the
- * tests gets an error instead of an unverified connection.
- */
-export const UNVERIFIED_PIPE_TEST_ENV = "ORCEL_CONTROL_ROOM_UNVERIFIED_PIPE_TEST";
-
-/** Why the opt-in itself was refused. */
-export const UNVERIFIED_PIPE_TEST_ONLY =
-  `allowUnverifiedWindowsPipe is test-only: it is honoured only when ${UNVERIFIED_PIPE_TEST_ENV}=1, ` +
-  "which only this package's npm test sets";
 
 /** Connects to `endpoint` once its privacy checks pass. */
 export function connectEndpoint(
@@ -412,12 +391,7 @@ export function connectEndpoint(
   const connectTimeoutMs = options.connectTimeoutMs ?? 5_000;
   return (async () => {
     if (process.platform === "win32") {
-      if (options.allowUnverifiedWindowsPipe !== true) {
-        throw new EndpointRefusedError(endpoint, UNVERIFIED_WINDOWS_PIPE);
-      }
-      if (process.env[UNVERIFIED_PIPE_TEST_ENV] !== "1") {
-        throw new EndpointRefusedError(endpoint, UNVERIFIED_PIPE_TEST_ONLY);
-      }
+      throw new EndpointRefusedError(endpoint, UNVERIFIED_WINDOWS_PIPE);
     } else {
       await assertPrivateUnixEndpoint(endpoint);
     }
@@ -448,9 +422,9 @@ export async function orceldTransport(
   return {
     endpoint,
     connect: () =>
-      connectEndpoint(endpoint, {
-        ...(options.connectTimeoutMs === undefined ? {} : { connectTimeoutMs: options.connectTimeoutMs }),
-        allowUnverifiedWindowsPipe: options.allowUnverifiedWindowsPipe === true,
-      }),
+      connectEndpoint(
+        endpoint,
+        options.connectTimeoutMs === undefined ? {} : { connectTimeoutMs: options.connectTimeoutMs },
+      ),
   };
 }

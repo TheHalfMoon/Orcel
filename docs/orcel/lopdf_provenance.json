@@ -15,6 +15,8 @@
   },
   "verification": "scripts/check-vendored-lopdf.mjs rebuilds the crate's git tree from the committed files: patched_files go back as their upstream blobs, removed_files as their upstream blobs or trees, added_files and orcel_files are left out. The result must equal tree_sha. With --upstream it downloads the crate from crates.io, requires crate_sha256, and computes tree_sha from the archive itself. Run: node scripts/check-vendored-lopdf.mjs --upstream",
   "patch_queue": "apps/orcel-doc-parser/third_party/lopdf/PATCHES.md",
+  "advisory_watch": "scripts/check-lopdf-advisories.mjs lists the RustSec advisories for lopdf (cargo audit cannot, for a path dependency) and fails on one that affects the vendored version unless reviewed_advisories names it with its reason.",
+  "reviewed_advisories": [],
   "consumer": {
     "workspace": "apps/orcel-doc-parser",
     "lockfile": "apps/orcel-doc-parser/Cargo.lock",

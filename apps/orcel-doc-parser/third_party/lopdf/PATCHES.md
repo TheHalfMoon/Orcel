@@ -105,6 +105,37 @@ scope to close, and `decode_budget::closed()` holds the budget closed. The
 parser handles one document per process; the serialisation keeps unit tests
 from charging each other.
 
+Behaviour to know (#399; none of it weakens the bound, and the parser fails
+closed in every case):
+
+- The budget is per phase, not per document. The parser opens one scope for
+  the pre-flight and a second, fresh one for pdf-inspector, so a document can
+  cost up to twice `MAX_PDF_INFLATED_BYTES` of decoding in all (512 MiB).
+- `reserve` takes the whole grant of a decode up front: up to
+  `min(per_decode, remaining)`, so up to `MAX_ARCHIVE_BYTES` (64 MiB), and
+  `settle` hands back what the decode did not use. With rayon decoding object
+  streams in parallel, several grants can be out at once and the unreserved
+  budget can reach zero while most of it is still unused. A later decode then
+  finds nothing left and the scope is exhausted: the document is refused as
+  `archive_limit` although its decodes would have fitted one after another.
+  Refusing is the safe side, and ordinary documents stay far below the
+  budget.
+- `Scope::enter` is not re-entrant. A second `enter` on the thread that holds
+  a scope waits for itself and deadlocks; open one scope per phase and never
+  nest them.
+- A decode on a thread with no scope of its own is charged to whichever scope
+  is open in the process, because the budget is process-wide. The parser
+  handles one document per process, so this only matters to tests that run
+  decodes concurrently; they should hold `decode_budget::closed()` or a scope
+  of their own for the whole test.
+
+Advisories: `cargo audit` cannot match a path dependency against RustSec, so
+`scripts/check-lopdf-advisories.mjs` (CI job Governance) lists the RustSec
+advisories filed for `lopdf` and fails on one that affects the vendored
+version unless `reviewed_advisories` in
+`docs/orcel/lopdf_provenance.json` names it with the reason it does not apply.
+Run it by hand after any rebase of this copy.
+
 The decode error stays `DecompressError::MemoryLimitExceeded` (with
 `limit: 0` when the budget refuses the decode outright). lopdf's public
 error types are unchanged, so pdf-inspector compiles against the patched

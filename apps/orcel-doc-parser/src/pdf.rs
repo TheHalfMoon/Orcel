@@ -32,8 +32,11 @@
 //!   from one decode budget per phase of the parse (`within_budget`,
 //!   #391): at most [`MAX_ARCHIVE_BYTES`] from one decode and
 //!   [`MAX_PDF_INFLATED_BYTES`] from all of them, repeats included, or the
-//!   file is refused as `archive_limit`. This needs no parity with the
-//!   pre-flight; the parity checks above are defence in depth;
+//!   file is refused as `archive_limit`. The budget is per phase, not per
+//!   document: the pre-flight and pdf-inspector each open a fresh one, so a
+//!   document costs at most twice [`MAX_PDF_INFLATED_BYTES`] of decoding in
+//!   all. This needs no parity with the pre-flight; the parity checks above
+//!   are defence in depth;
 //! - every error is one closed [`ParseRefusal`] code; no text from the
 //!   document reaches an error;
 //! - a scanned PDF (no text layer) is refused as `no_text`: Orcel runs no OCR.
@@ -78,6 +81,18 @@ pub fn convert(bytes: &[u8]) -> Result<PdfText, ParseRefusal> {
         return Err(ParseRefusal::NoText);
     }
     Ok(PdfText { markdown, pages })
+}
+
+/// Debug builds only: pdf-inspector alone, under the decode budget, with no
+/// pre-flight and no parity watch. The contained end-to-end tests reach it
+/// through a trigger input (`src/main.rs`) to run the parity-bypass fixtures
+/// under the same tier they are meant to cover.
+#[cfg(debug_assertions)]
+pub(crate) fn inspect_without_preflight(bytes: &[u8]) -> Result<(), ParseRefusal> {
+    within_budget(|| {
+        let _ = pdf_inspector::process_pdf_mem_with_options(bytes, PdfOptions::new().pages(1..=1));
+        Ok(())
+    })
 }
 
 /// Set once by `main` (the parser binary): what to do the moment a decode
@@ -355,7 +370,9 @@ fn bound_stream_inflation(document: &Document) -> Result<(), ParseRefusal> {
     bound_stream_inflation_within(document, per_stream, total)
 }
 
-/// The per-stream and per-document inflation bounds, in bytes.
+/// The per-stream and per-phase inflation bounds, in bytes. A phase is the
+/// pre-flight or pdf-inspector's run; each opens its own budget of the second
+/// number, so one document can inflate up to twice that in all.
 fn stream_budget() -> Result<(usize, usize), ParseRefusal> {
     Ok((
         usize::try_from(MAX_ARCHIVE_BYTES).map_err(|_| ParseRefusal::ArchiveLimit)?,

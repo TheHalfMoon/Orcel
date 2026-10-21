@@ -1452,7 +1452,7 @@ fn cr381_the_socket_directory_does_not_depend_on_home() {
         "/var/folders/zz/zyxvpxvq6csfxvn_n0000000000000/T/",
     ));
     let lookup = env_lookup(&[("HOME", home.clone())]);
-    let dir = unix::socket_dir(StateLayout::MacOs, &lookup, darwin).unwrap();
+    let dir = unix::socket_dir(StateLayout::MacOs, &lookup, darwin, &|_| true).unwrap();
     assert_eq!(
         dir,
         PathBuf::from("/var/folders/zz/zyxvpxvq6csfxvn_n0000000000000/T/orcel")
@@ -1465,7 +1465,7 @@ fn cr381_the_socket_directory_does_not_depend_on_home() {
     );
     // Without an answer from confstr: the state root, as in CR-01.
     assert_eq!(
-        unix::socket_dir(StateLayout::MacOs, &lookup, None).unwrap(),
+        unix::socket_dir(StateLayout::MacOs, &lookup, None, &|_| true).unwrap(),
         PathBuf::from(&home).join("Library/Application Support/Orcel/run")
     );
 
@@ -1476,25 +1476,31 @@ fn cr381_the_socket_directory_does_not_depend_on_home() {
         ("XDG_RUNTIME_DIR", "/run/user/1000".into()),
     ]);
     assert_eq!(
-        unix::socket_dir(StateLayout::Xdg, &lookup, None).unwrap(),
+        unix::socket_dir(StateLayout::Xdg, &lookup, None, &|_| true).unwrap(),
         PathBuf::from("/run/user/1000/orcel")
     );
     // confstr is macOS only; it never decides a Linux location.
     assert_eq!(
-        unix::socket_dir(StateLayout::Xdg, &lookup, Some(PathBuf::from("/x"))).unwrap(),
+        unix::socket_dir(
+            StateLayout::Xdg,
+            &lookup,
+            Some(PathBuf::from("/x")),
+            &|_| true
+        )
+        .unwrap(),
         PathBuf::from("/run/user/1000/orcel")
     );
     // A relative or dotted XDG_RUNTIME_DIR is ignored, as XDG requires.
     for bad in ["run/user/1000", "/run/user/../1000", ""] {
         let lookup = env_lookup(&[("HOME", "/home/a".into()), ("XDG_RUNTIME_DIR", bad.into())]);
         assert_eq!(
-            unix::socket_dir(StateLayout::Xdg, &lookup, None).unwrap(),
+            unix::socket_dir(StateLayout::Xdg, &lookup, None, &|_| true).unwrap(),
             PathBuf::from("/home/a/.local/state/orcel/run"),
             "{bad:?}"
         );
     }
     // No runtime directory and no usable HOME: no location at all.
-    assert!(unix::socket_dir(StateLayout::Xdg, &env_lookup(&[]), None).is_err());
+    assert!(unix::socket_dir(StateLayout::Xdg, &env_lookup(&[]), None, &|_| true).is_err());
 }
 
 /// The production location, resolved with a long HOME (and, on Linux, a
@@ -1526,7 +1532,7 @@ fn cr381_a_long_home_still_gets_the_app_api() {
         ]);
         (lookup, Some(runtime), None)
     };
-    let dir = unix::socket_dir(layout, &lookup, darwin).unwrap();
+    let dir = unix::socket_dir(layout, &lookup, darwin, &unix::runtime_dir_is_private).unwrap();
     assert!(!dir.starts_with(&home), "{dir:?} is below HOME");
     let path = dir.join(format!("app-api-t{}.sock", unique()));
     assert!(path.as_os_str().len() <= unix::MAX_SOCKET_PATH, "{path:?}");
@@ -1914,4 +1920,212 @@ fn cr375_open_process_failures_are_reported_as_what_they_are() {
         refusal_from(win::open_process_failure(77, ERROR_INVALID_PARAMETER)),
         Refusal::PeerGone(77)
     );
+}
+
+// ---------------------------------------------------------------------------
+// #398: endpoint upkeep, idle re-check, shared runtime directory
+// ---------------------------------------------------------------------------
+
+/// #398 item 2: with a heartbeat far longer than [`PEER_RECHECK`], an idle
+/// subscription still re-reads its peer about every second and ends without
+/// ever sending a heartbeat.
+#[test]
+fn cr398_an_idle_subscription_rechecks_its_peer_every_second() {
+    let shared = shared_with(Limits {
+        heartbeat: Duration::from_secs(60),
+        ..test_limits()
+    });
+    let mut process = process::current_instance().expect("own instance");
+    process.generation = process.generation.wrapping_add(1);
+    let stale = PeerInfo {
+        process,
+        source: "test",
+    };
+    let (done, finished) = std::sync::mpsc::channel();
+    let streaming = Arc::clone(&shared);
+    let started = Instant::now();
+    std::thread::spawn(move || {
+        let mut conn = Recorder::default();
+        stream_events(&mut conn, &streaming, &stale, &json!("s1"), 0, None);
+        let _ = done.send(conn.written);
+    });
+    let written = finished
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the idle subscription of a stale peer ended");
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "took {:?}",
+        started.elapsed()
+    );
+    let text = String::from_utf8(written).unwrap();
+    assert_eq!(text.lines().count(), 1, "{text}");
+    assert!(!text.contains("heartbeat"), "{text}");
+}
+
+/// #398 item 3: a runtime directory that is not this user's private
+/// directory (a shared sticky `/tmp`, or one readable by others) is passed
+/// over for the state root.
+#[cfg(unix)]
+#[test]
+fn cr398_a_shared_runtime_directory_falls_back_to_the_state_root() {
+    use orcel_platform::paths::StateLayout;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
+    let private = private_dir();
+    let open = private.join("open");
+    std::fs::create_dir(&open).unwrap();
+    std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(unix::runtime_dir_is_private(&private));
+    assert!(!unix::runtime_dir_is_private(&open));
+    assert!(!unix::runtime_dir_is_private(std::path::Path::new("/tmp")));
+    assert!(!unix::runtime_dir_is_private(&private.join("missing")));
+    let link = private.join("link");
+    std::os::unix::fs::symlink(&private, &link).unwrap();
+    assert!(!unix::runtime_dir_is_private(&link));
+
+    for (runtime, expected) in [
+        (private.display().to_string(), private.join("orcel")),
+        (
+            open.display().to_string(),
+            PathBuf::from("/home/a/.local/state/orcel/run"),
+        ),
+        (
+            "/tmp".to_owned(),
+            PathBuf::from("/home/a/.local/state/orcel/run"),
+        ),
+    ] {
+        let lookup = env_lookup(&[("HOME", "/home/a".into()), ("XDG_RUNTIME_DIR", runtime)]);
+        assert_eq!(
+            unix::socket_dir(
+                StateLayout::Xdg,
+                &lookup,
+                None,
+                &unix::runtime_dir_is_private
+            )
+            .unwrap(),
+            expected
+        );
+    }
+    // macOS: a confstr answer that is not private is passed over too.
+    let lookup = env_lookup(&[("HOME", "/Users/a".into())]);
+    assert_eq!(
+        unix::socket_dir(
+            StateLayout::MacOs,
+            &lookup,
+            Some(PathBuf::from("/tmp")),
+            &unix::runtime_dir_is_private
+        )
+        .unwrap(),
+        PathBuf::from("/Users/a/Library/Application Support/Orcel/run")
+    );
+    let _ = std::fs::remove_dir_all(&private);
+}
+
+/// Runs [`unix::serve_watched`] on a fresh binding with a short check
+/// interval; returns the binding's slot and the receiver of its result.
+#[cfg(unix)]
+fn watched_server(
+    path: &std::path::Path,
+) -> (
+    Arc<Mutex<Option<unix::Bound>>>,
+    std::sync::mpsc::Receiver<String>,
+) {
+    let (listener, bound) = unix::bind(path).expect("bind test socket");
+    let slot = Arc::new(Mutex::new(Some(bound)));
+    let shared = shared_with(test_limits());
+    let (done, finished) = std::sync::mpsc::channel();
+    let watching = Arc::clone(&slot);
+    std::thread::spawn(move || {
+        let reason = unix::serve_watched(
+            listener,
+            &shared,
+            &watching,
+            Duration::from_millis(50),
+            Duration::from_secs(3600),
+        );
+        let _ = done.send(reason);
+    });
+    (slot, finished)
+}
+
+/// #398 item 1: a socket or lock file removed under a running orceld (a
+/// runtime directory clean-up) ends the watched serve loop with the reason,
+/// and the endpoint can be bound again at once.
+#[cfg(unix)]
+#[test]
+fn cr398_a_removed_socket_or_lock_file_is_noticed_and_bound_again() {
+    let dir = private_dir();
+    let path = dir.join("s");
+    for removed in [path.clone(), unix::lock_path(&path)] {
+        let (slot, finished) = watched_server(&path);
+        let mut client = TestClient::connect(path.to_str().unwrap());
+        assert_eq!(client.call("status.get", json!({}))["ok"], true);
+        drop(client);
+        assert!(finished.recv_timeout(Duration::from_millis(300)).is_err());
+
+        std::fs::remove_file(&removed).unwrap();
+        let reason = finished
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the loss was noticed");
+        let expected = if removed == path {
+            "socket"
+        } else {
+            "lock file"
+        };
+        assert!(reason.contains(expected), "{reason}");
+        // What orceld's start loop does next: release, then bind again.
+        drop(slot.lock().unwrap().take());
+        let (listener, bound) = unix::bind(&path).expect("bound again");
+        drop(std::os::unix::net::UnixStream::connect(&path).expect("connect"));
+        drop((listener, bound));
+        assert!(!path.exists());
+    }
+    // A socket replaced by another file is noticed and left in place.
+    let (slot, finished) = watched_server(&path);
+    std::fs::remove_file(&path).unwrap();
+    std::fs::write(&path, b"not ours").unwrap();
+    let reason = finished.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(reason.contains("socket"), "{reason}");
+    drop(slot.lock().unwrap().take());
+    assert_eq!(std::fs::read(&path).unwrap(), b"not ours");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// #398 item 1: touching sets the times of both files to now and never
+/// follows a link.
+#[cfg(unix)]
+#[test]
+fn cr398_touch_refreshes_the_socket_and_lock_times() {
+    use std::os::unix::fs::MetadataExt;
+    let dir = private_dir();
+    let path = dir.join("s");
+    let (_listener, bound) = unix::bind(&path).unwrap();
+    let old = std::time::SystemTime::now() - Duration::from_secs(7 * 24 * 3600);
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(unix::lock_path(&path))
+        .unwrap()
+        .set_times(
+            std::fs::FileTimes::new()
+                .set_accessed(old)
+                .set_modified(old),
+        )
+        .unwrap();
+    let before = std::fs::symlink_metadata(unix::lock_path(&path))
+        .unwrap()
+        .mtime();
+    bound.touch().unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    for file in [path.clone(), unix::lock_path(&path)] {
+        let meta = std::fs::symlink_metadata(&file).unwrap();
+        assert!(meta.mtime() >= now - 60, "{file:?}");
+        assert!(meta.atime() >= now - 60, "{file:?}");
+    }
+    assert!(before < now - 3600);
+    bound.intact().unwrap();
+    drop(bound);
+    let _ = std::fs::remove_dir_all(&dir);
 }

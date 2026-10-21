@@ -9,7 +9,6 @@ import { test } from "node:test";
 import { APP_API_PROTOCOL, MAX_FRAME_BYTES, READ_METHODS } from "../protocol/index.js";
 import {
   MAX_UNIX_SOCKET_PATH,
-  UNVERIFIED_PIPE_TEST_ENV,
   connectEndpoint,
   defaultEndpoint,
   orceldTransport,
@@ -324,15 +323,11 @@ test("Windows: the default connector refuses a pipe it cannot verify", { skip, t
     await assert.rejects(connector.connect(), /cannot be verified from Node/u);
     const client = new ControlRoomClient({ connector });
     await assert.rejects(client.getStatus(), /cannot be verified from Node/u);
-    // #381 item 2: the opt-in is refused outside the test environment.
-    const saved = process.env[UNVERIFIED_PIPE_TEST_ENV];
-    delete process.env[UNVERIFIED_PIPE_TEST_ENV];
-    try {
-      const optedIn = await orceldTransport({ endpoint: daemon.endpoint, allowUnverifiedWindowsPipe: true });
-      await assert.rejects(optedIn.connect(), /allowUnverifiedWindowsPipe is test-only/u);
-    } finally {
-      if (saved !== undefined) process.env[UNVERIFIED_PIPE_TEST_ENV] = saved;
-    }
+    // #398 item 4: the production connector has no opt-in at all; the
+    // removed allowUnverifiedWindowsPipe option changes nothing.
+    const legacyOptions = { endpoint: daemon.endpoint, allowUnverifiedWindowsPipe: true };
+    const optedIn = await orceldTransport(legacyOptions);
+    await assert.rejects(optedIn.connect(), /cannot be verified from Node/u);
   });
 });
 
