@@ -95,13 +95,13 @@ pub fn installed_helper_pin() -> Result<HelperPin, ProviderError> {
 /// `dir/orcel-contain.sha256`.
 ///
 /// The pin is only as trustworthy as the directory holding it: whoever can
-/// write there can replace the helper and its pin together. Off Windows both
-/// files, and every directory above them, must therefore be owned by the
-/// user or root and not writable by group or others
-/// (`check_owned_executable_location`), or the tier is unavailable. On
-/// Windows the install root's DACL is not checked yet (the residual
-/// `contained.rs` documents); the signed per-user or administrator install
-/// root is relied on.
+/// write there can replace the helper and its pin together. Both files, and
+/// every directory above them, must therefore pass
+/// `check_owned_executable_location`, or the tier is unavailable: owned by
+/// the user or root and not writable by group or others (no write-granting
+/// ACL entry on macOS); on Windows, owned by the user, SYSTEM,
+/// Administrators or TrustedInstaller with no DACL entry that lets anyone
+/// else change them (#384 item 4).
 pub fn helper_pin_in(dir: &Path) -> Result<HelperPin, ProviderError> {
     let helper = dir.join(HELPER_NAME);
     for file in [dir.join(PIN_NAME), helper.clone()] {
@@ -187,10 +187,19 @@ impl Drop for Scratch {
     }
 }
 
-/// The spec the helper receives for an approved, identity-checked plan.
-pub fn spec_for(plan: &ExecutionPlan, workdir: PathBuf) -> ContainedSpec {
-    ContainedSpec {
+/// The spec the helper receives for an approved, identity-checked plan. It
+/// carries the registered digest, which the helper checks through the
+/// descriptor it executes (#384 item 2); a plan without one is refused.
+pub fn spec_for(plan: &ExecutionPlan, workdir: PathBuf) -> Result<ContainedSpec, ProviderError> {
+    let executable_sha256 = plan.registered_sha256.clone().ok_or_else(|| {
+        ProviderError::new(
+            FailureCode::TargetStale,
+            "a contained run needs the executable's registered digest; nothing was launched",
+        )
+    })?;
+    Ok(ContainedSpec {
         executable: plan.executable.clone(),
+        executable_sha256,
         argv: plan.argv.clone(),
         workdir,
         readable: vec![plan.cwd.clone()],
@@ -203,7 +212,7 @@ pub fn spec_for(plan: &ExecutionPlan, workdir: PathBuf) -> ContainedSpec {
             cpu_seconds: plan.limits.timeout.as_secs().max(1),
             open_files: OPEN_FILES,
         },
-    }
+    })
 }
 
 /// Run an approved, identity-checked plan through the pinned helper.
@@ -213,7 +222,7 @@ pub fn execute(
     request_digest: &str,
 ) -> Result<Value, ProviderError> {
     let scratch = Scratch::create(request_digest)?;
-    let spec = spec_for(plan, scratch.0.clone());
+    let spec = spec_for(plan, scratch.0.clone())?;
     let run = run_contained(pin, &spec).map_err(map_contained_error)?;
     let exit_code = match run.outcome {
         ContainedOutcome::Exited(code) => code,
@@ -268,6 +277,13 @@ pub(crate) fn map_contained_error(error: ContainedError) -> ProviderError {
             FailureCode::TargetStale,
             "the contained-tier helper does not match its pin; nothing was launched",
         ),
+        ContainedError::Refused {
+            kind: RefusalKind::ExecutableChanged,
+            ..
+        } => ProviderError::new(
+            FailureCode::TargetStale,
+            "the executable no longer matches its registered digest when the helper opened it; nothing was launched",
+        ),
         ContainedError::Refused { kind, message } => unavailable(format!(
             "the contained-tier helper refused ({}): {message}",
             match kind {
@@ -277,6 +293,7 @@ pub(crate) fn map_contained_error(error: ContainedError) -> ProviderError {
                 RefusalKind::Crashed => "crashed",
                 RefusalKind::SpecTooLarge => "spec_too_large",
                 RefusalKind::InvalidSpec => "invalid_spec",
+                RefusalKind::ExecutableChanged => "executable_changed",
             }
         )),
         other => unavailable(format!("the contained-tier helper failed: {other:?}")),

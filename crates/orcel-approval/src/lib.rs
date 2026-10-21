@@ -2453,8 +2453,11 @@ mod state_root_tests {
             path.as_os_str().as_encoded_bytes(),
             previous.as_os_str().as_encoded_bytes()
         );
-        // Resolution does not create the directory on Windows.
-        assert!(!local_app_data.join("Orcel").exists());
+        // Resolution creates the directory private, as on Unix (#358 item
+        // 2), so it passes the private-directory check again.
+        let orcel = local_app_data.join("Orcel");
+        assert!(orcel.is_dir());
+        assert_eq!(orcel_platform::paths::ensure_private_dir(&orcel), Ok(()));
         let _ = std::fs::remove_dir_all(local_app_data);
     }
 }

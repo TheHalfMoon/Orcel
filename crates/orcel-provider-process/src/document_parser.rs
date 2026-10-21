@@ -78,9 +78,17 @@ pub fn limits() -> ContainedLimits {
 
 /// The spec for one parse: `parser` reads `input_dir/input` and nothing
 /// else. Every path must be canonical (the helper refuses links).
-pub fn spec(parser: PathBuf, input_dir: &Path, workdir: PathBuf) -> ContainedSpec {
+/// `parser_sha256` is the parser's pinned digest, which the helper checks
+/// through the descriptor it executes (#384 item 2).
+pub fn spec(
+    parser: PathBuf,
+    parser_sha256: &str,
+    input_dir: &Path,
+    workdir: PathBuf,
+) -> ContainedSpec {
     ContainedSpec {
         executable: parser,
+        executable_sha256: parser_sha256.to_owned(),
         argv: vec![input_dir.join(INPUT_NAME).to_string_lossy().into_owned()],
         workdir,
         readable: vec![input_dir.to_path_buf()],

@@ -63,8 +63,10 @@ fn the_spec_grants_only_the_input_directory_read_only() {
     let input = std::env::temp_dir().join("wi05-spec-input");
     let work = std::env::temp_dir().join("wi05-spec-work");
     let parser = std::env::temp_dir().join("orcel-doc-parser");
-    let spec = spec(parser.clone(), &input, work.clone());
+    let digest = "cd".repeat(32);
+    let spec = spec(parser.clone(), &digest, &input, work.clone());
     assert_eq!(spec.executable, parser);
+    assert_eq!(spec.executable_sha256, digest);
     assert_eq!(
         spec.argv,
         vec![input.join(INPUT_NAME).to_string_lossy().into_owned()]

@@ -24,7 +24,9 @@
 //! - **Exact executable.** The file is refused when another local user could
 //!   replace it (it or an ancestor directory is group- or world-writable, or
 //!   owned by someone other than the user or root; root's sticky `/tmp` is
-//!   the one exception). It is opened once and, when the plan carries the
+//!   the one exception; on macOS also when an extended ACL entry grants
+//!   another user a write on it or on an ancestor, #384). It is opened once
+//!   and, when the plan carries the
 //!   registered digest, hashed through that descriptor. Linux then executes
 //!   that same descriptor (`/proc/self/fd/N`). macOS has no `fexecve`, so it
 //!   re-reads the path's device, inode, size, mode and modification time
@@ -654,6 +656,7 @@ fn check_owned_location(path: &std::path::Path) -> Result<(), String> {
             path.display()
         ));
     }
+    refuse_write_acl(path, false)?;
     for ancestor in path.ancestors().skip(1) {
         if ancestor.as_os_str().is_empty() {
             continue;
@@ -667,8 +670,124 @@ fn check_owned_location(path: &std::path::Path) -> Result<(), String> {
                 ancestor.display()
             ));
         }
+        refuse_write_acl(ancestor, true)?;
     }
     Ok(())
+}
+
+/// Linux: a POSIX ACL entry for a named user or group raises the group
+/// class bits (the ACL mask) in the mode, so the mode check sees it.
+#[cfg(not(target_os = "macos"))]
+fn refuse_write_acl(_path: &std::path::Path, _follow: bool) -> Result<(), String> {
+    Ok(())
+}
+
+/// macOS (#384 item 1): an extended ACL entry added with `chmod +a` does
+/// not show in the mode bits. An `allow` entry that grants a write, delete,
+/// security or ownership change is refused; deny entries only take access
+/// away. The same rule as `orcel_platform`'s `macos_acl` (this crate takes
+/// no dependency).
+#[cfg(target_os = "macos")]
+fn refuse_write_acl(path: &std::path::Path, follow: bool) -> Result<(), String> {
+    use std::os::unix::ffi::OsStrExt;
+    type Acl = *mut c_void;
+    const ACL_TYPE_EXTENDED: c_int = 0x0000_0100;
+    const ACL_FIRST_ENTRY: c_int = 0;
+    const ACL_NEXT_ENTRY: c_int = -1;
+    const ACL_EXTENDED_ALLOW: c_int = 1;
+    const ENOENT: i32 = 2;
+    const ENOTSUP: i32 = 45;
+    const EOPNOTSUPP: i32 = 102;
+    // `__DARWIN_ACL_*`: write_data/add_file, delete, append_data/
+    // add_subdirectory, delete_child, write_attributes, write_extattributes,
+    // write_security, change_owner.
+    const WRITE_PERMS: [c_int; 8] = [
+        1 << 2,
+        1 << 4,
+        1 << 5,
+        1 << 6,
+        1 << 8,
+        1 << 10,
+        1 << 12,
+        1 << 13,
+    ];
+    extern "C" {
+        fn acl_get_file(path: *const std::ffi::c_char, kind: c_int) -> Acl;
+        fn acl_get_link_np(path: *const std::ffi::c_char, kind: c_int) -> Acl;
+        fn acl_get_entry(acl: Acl, entry_id: c_int, entry: *mut *mut c_void) -> c_int;
+        fn acl_get_tag_type(entry: *mut c_void, tag: *mut c_int) -> c_int;
+        fn acl_get_permset(entry: *mut c_void, permset: *mut *mut c_void) -> c_int;
+        fn acl_get_perm_np(permset: *mut c_void, perm: c_int) -> c_int;
+        fn acl_free(object: *mut c_void) -> c_int;
+    }
+    struct Owned(Acl);
+    impl Drop for Owned {
+        fn drop(&mut self) {
+            // SAFETY: the ACL came from acl_get_file/acl_get_link_np and is
+            // freed exactly once.
+            unsafe {
+                acl_free(self.0);
+            }
+        }
+    }
+    let name = std::ffi::CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| format!("{} contains NUL", path.display()))?;
+    // SAFETY: `name` is NUL-terminated and outlives the call; the returned
+    // ACL is owned here and freed by `Owned`.
+    let acl = unsafe {
+        if follow {
+            acl_get_file(name.as_ptr(), ACL_TYPE_EXTENDED)
+        } else {
+            acl_get_link_np(name.as_ptr(), ACL_TYPE_EXTENDED)
+        }
+    };
+    if acl.is_null() {
+        let error = std::io::Error::last_os_error();
+        return match error.raw_os_error() {
+            Some(ENOENT) | Some(ENOTSUP) | Some(EOPNOTSUPP) => Ok(()),
+            _ => Err(format!(
+                "the ACL of {} cannot be read: {error}",
+                path.display()
+            )),
+        };
+    }
+    let acl = Owned(acl);
+    let unreadable = || format!("an ACL entry of {} is unreadable", path.display());
+    let mut entry_id = ACL_FIRST_ENTRY;
+    loop {
+        let mut entry: *mut c_void = std::ptr::null_mut();
+        // SAFETY: `acl.0` is a live ACL and `entry` a valid out pointer.
+        if unsafe { acl_get_entry(acl.0, entry_id, &mut entry) } != 0 {
+            return Ok(());
+        }
+        entry_id = ACL_NEXT_ENTRY;
+        let mut tag: c_int = 0;
+        // SAFETY: `entry` came from acl_get_entry on a live ACL.
+        if unsafe { acl_get_tag_type(entry, &mut tag) } != 0 {
+            return Err(unreadable());
+        }
+        if tag != ACL_EXTENDED_ALLOW {
+            continue;
+        }
+        let mut permset: *mut c_void = std::ptr::null_mut();
+        // SAFETY: as above; the permset belongs to the entry.
+        if unsafe { acl_get_permset(entry, &mut permset) } != 0 {
+            return Err(unreadable());
+        }
+        for perm in WRITE_PERMS {
+            // SAFETY: `permset` came from acl_get_permset on a live entry.
+            match unsafe { acl_get_perm_np(permset, perm) } {
+                0 => {}
+                1 => {
+                    return Err(format!(
+                        "{} has an ACL entry that lets another user change it",
+                        path.display()
+                    ))
+                }
+                _ => return Err(unreadable()),
+            }
+        }
+    }
 }
 
 /// How many descriptors the child walks when `close_range` is unavailable.

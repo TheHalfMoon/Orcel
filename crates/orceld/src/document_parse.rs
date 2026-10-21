@@ -225,7 +225,12 @@ pub fn parse_committed(
     std::fs::write(stage.input.join(INPUT_NAME), &bytes)
         .map_err(|error| unavailable(format!("the parser input cannot be staged: {error}")))?;
     parser.verify()?;
-    let spec = document_parser::spec(parser.path.clone(), &stage.input, stage.work.clone());
+    let spec = document_parser::spec(
+        parser.path.clone(),
+        &parser.sha256,
+        &stage.input,
+        stage.work.clone(),
+    );
     let run = run_contained(helper, &spec).map_err(contained_tier::map_contained_error)?;
     let document = match run.outcome {
         ContainedOutcome::Exited(0) => decode_frame(&run.stdout).map_err(frame_error)?,

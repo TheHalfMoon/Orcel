@@ -778,7 +778,7 @@ fn an_app_container_profile_that_cannot_be_created_is_a_refusal() {
     };
     let refused = runtime.block_on(spawn_named(
         &name,
-        &executable,
+        &crate::pinned::PinnedExecutable::for_test(&executable),
         &[],
         root.path(),
         &boundary,
