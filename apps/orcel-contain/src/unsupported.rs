@@ -51,7 +51,7 @@ impl Process {
 }
 
 pub(crate) async fn spawn(
-    _executable: &Path,
+    _executable: &crate::pinned::PinnedExecutable,
     _args: &[String],
     _working_directory: &Path,
     _boundary: &FilesystemBoundary,

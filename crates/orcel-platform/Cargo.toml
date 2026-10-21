@@ -15,9 +15,14 @@ rust-version.workspace = true
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# #358/#384: Security, Security_Authorization and Storage_FileSystem read
+# owners and DACLs and create owner-only directories (no new crates).
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
     "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
     "Win32_System_RemoteDesktop",
     "Win32_System_Threading",
 ] }

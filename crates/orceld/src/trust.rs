@@ -502,15 +502,19 @@ mod tests {
         #[cfg(windows)]
         #[test]
         fn windows_path_is_byte_identical_to_the_previous_default() {
+            // A real directory: resolving creates the private state root
+            // with an owner-only DACL (#358 item 2).
+            let local = sandbox("windows-bytes");
             let path = resolve(&lookup(vec![(
                 "LOCALAPPDATA",
-                OsString::from(r"C:\Users\u\AppData\Local"),
+                local.clone().into_os_string(),
             )]))
             .expect("default");
             assert_eq!(
                 path.as_os_str(),
-                r"C:\Users\u\AppData\Local\Orcel\trust.jsonl"
+                format!(r"{}\Orcel\trust.jsonl", local.display()).as_str()
             );
+            let _ = std::fs::remove_dir_all(local);
         }
 
         /// Recovery: trust records already at the default location are read
