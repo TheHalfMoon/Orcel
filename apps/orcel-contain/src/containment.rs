@@ -100,6 +100,9 @@ pub enum ErrorCode {
     ResourceLimitExceeded,
     /// The supervisor lost track of the contained process.
     Crashed,
+    /// The executable did not match the digest in the spec when the helper
+    /// opened it (#384 item 2).
+    ExecutableChanged,
 }
 
 impl ErrorCode {
@@ -109,6 +112,7 @@ impl ErrorCode {
             Self::LaunchFailed => "launch_failed",
             Self::ResourceLimitExceeded => "resource_limit_exceeded",
             Self::Crashed => "crashed",
+            Self::ExecutableChanged => "executable_changed",
         }
     }
 }
@@ -583,11 +587,20 @@ impl ContainedChild {
 /// launched. Neither case executes child code.
 pub(crate) async fn spawn(
     executable: &Path,
+    expected_sha256: &[u8; 32],
     args: &[String],
     working_directory: &Path,
     limits: &ContainmentLimits,
 ) -> Result<ContainedChild, ContainError> {
-    spawn_checked(capabilities(), executable, args, working_directory, limits).await
+    spawn_checked(
+        capabilities(),
+        executable,
+        expected_sha256,
+        args,
+        working_directory,
+        limits,
+    )
+    .await
 }
 
 /// [`spawn`] with the capability report as a parameter, so the fail-closed
@@ -595,6 +608,7 @@ pub(crate) async fn spawn(
 pub(crate) async fn spawn_checked(
     reported: ContainmentCapabilities,
     executable: &Path,
+    expected_sha256: &[u8; 32],
     args: &[String],
     working_directory: &Path,
     limits: &ContainmentLimits,
@@ -611,6 +625,8 @@ pub(crate) async fn spawn_checked(
     // `/private/var` and Seatbelt evaluates the path used by `exec`.
     let executable = canonical_file(executable)?;
     let working_directory = canonical_directory(working_directory)?;
+    // #384 item 2: verified through the open file the platform launches.
+    let executable = crate::pinned::PinnedExecutable::open(&executable, expected_sha256)?;
     platform::spawn(&executable, args, &working_directory, &boundary, limits).await
 }
 
@@ -669,6 +685,7 @@ const TERMINATION_GRACE: Duration = Duration::from_secs(5);
 /// launch, so no child instruction runs before every boundary is in place.
 pub async fn run(
     executable: &Path,
+    expected_sha256: &[u8; 32],
     args: &[String],
     working_directory: &Path,
     limits: &ContainmentLimits,
@@ -683,7 +700,7 @@ pub async fn run(
             None,
         ));
     }
-    let mut contained = spawn(executable, args, working_directory, limits).await?;
+    let mut contained = spawn(executable, expected_sha256, args, working_directory, limits).await?;
     supervise(&mut contained, bounds, parent_gone).await
 }
 
