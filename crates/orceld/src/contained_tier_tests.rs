@@ -82,8 +82,16 @@ fn xp13b_the_spec_grants_the_cwd_read_only_and_nothing_writable() {
         },
     )
     .unwrap();
-    let spec = spec_for(&plan, scratch.clone());
+    // #384 item 2: no registered digest, no contained run.
+    assert_eq!(
+        spec_for(&plan, scratch.clone()).unwrap_err().code,
+        FailureCode::TargetStale
+    );
+    let mut plan = plan;
+    plan.registered_sha256 = Some(DIGEST.to_owned());
+    let spec = spec_for(&plan, scratch.clone()).unwrap();
     assert_eq!(spec.executable, plan.executable);
+    assert_eq!(spec.executable_sha256, DIGEST);
     assert_eq!(spec.argv, plan.argv);
     assert_eq!(spec.workdir, scratch);
     assert_eq!(spec.readable, vec![workspace.clone()]);
@@ -126,4 +134,20 @@ fn xp13b_a_replaceable_pin_or_helper_is_refused() {
     );
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
     let _ = std::fs::remove_dir_all(dir);
+}
+
+/// #384 item 2: the helper's digest refusal reaches the caller as a stale
+/// target, like a tampered helper, not as an unavailable tier.
+#[test]
+fn xp13b_a_digest_mismatch_in_the_helper_is_a_stale_target() {
+    let error = map_contained_error(ContainedError::Refused {
+        kind: RefusalKind::ExecutableChanged,
+        message: "digest mismatch".into(),
+    });
+    assert_eq!(error.code, FailureCode::TargetStale);
+    let error = map_contained_error(ContainedError::Refused {
+        kind: RefusalKind::LaunchFailed,
+        message: "no".into(),
+    });
+    assert_eq!(error.code, FailureCode::ProviderUnavailable);
 }

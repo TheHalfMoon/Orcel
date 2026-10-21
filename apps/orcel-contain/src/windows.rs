@@ -61,8 +61,12 @@
 //! non-inheritably); then the directories' ACEs become inheritable, parents
 //! first, and the private working directory gets its protected DACL; then a
 //! last walk refuses the grant if anything in the tree is unledgered or has
-//! gained a link. So an unvalidated child never receives a grant, not even
-//! for the moment before a rollback that a hard kill could interrupt.
+//! gained a link. So, absent a concurrent linker, an unvalidated child never
+//! receives a grant. A hard link created during the walk can share a grant
+//! for the moment before the last walk refuses it and the grant is rolled
+//! back; a hard kill in that moment leaves the ACE behind, which the
+//! residual-risk note above explains is harmless (it names an AppContainer
+//! SID no later token can hold).
 //!
 //! Denial of service, by design: a junction, symbolic link or other reparse
 //! point anywhere inside a root, or a hard-linked file, makes every later
@@ -102,6 +106,7 @@ use crate::containment::{
     containment_error, os_detail, spawn_error, ContainError, ContainedChild, ContainmentLimits,
     FilesystemBoundary, RawExit, MAX_PROCESSES,
 };
+use crate::pinned::PinnedExecutable;
 
 pub(crate) type ChildStdin = NamedPipeServer;
 pub(crate) type ChildStdout = NamedPipeServer;
@@ -764,7 +769,7 @@ impl Drop for Process {
 }
 
 pub(crate) async fn spawn(
-    executable: &Path,
+    executable: &PinnedExecutable,
     args: &[String],
     working_directory: &Path,
     boundary: &FilesystemBoundary,
@@ -786,13 +791,13 @@ pub(crate) async fn spawn(
 /// fresh random name.
 pub(crate) async fn spawn_named(
     profile_name: &str,
-    executable: &Path,
+    executable: &PinnedExecutable,
     args: &[String],
     working_directory: &Path,
     boundary: &FilesystemBoundary,
     limits: &ContainmentLimits,
 ) -> Result<ContainedChild, ContainError> {
-    if !executable.is_file() {
+    if !executable.path().is_file() {
         return Err(spawn_error(std::io::Error::from_raw_os_error(2)));
     }
     let user = current_user_sid()?;
@@ -819,8 +824,11 @@ pub(crate) async fn spawn_named(
     let job = OwnedHandle::create_job(limits, &job_security)?;
     let mut desktop = PrivateDesktop::create(&token, &desktop_security)?;
 
+    // #384 item 2: `executable` holds the verified file open with
+    // FILE_SHARE_READ only until this returns, so the image CreateProcessW
+    // maps is the one whose digest matched.
     let information = create_suspended(
-        executable,
+        executable.path(),
         args,
         working_directory,
         &desktop,

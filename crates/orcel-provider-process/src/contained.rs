@@ -14,7 +14,10 @@
 //!    and deletes while it is open;
 //! 2. writes the closed, bounded spec (refusing one larger than
 //!    [`MAX_SPEC_BYTES`] before anything starts) and keeps the helper's stdin
-//!    open, so the helper sees end of file if orceld dies;
+//!    open, so the helper sees end of file if orceld dies. The spec carries
+//!    the executable's SHA-256; the helper hashes the executable through the
+//!    descriptor it then runs and refuses a mismatch
+//!    ([`RefusalKind::ExecutableChanged`], #384 item 2);
 //! 3. reads one bounded result: a header line and exactly the byte counts it
 //!    names, never more than the run's own output bounds;
 //! 4. enforces its own deadline (the run's timeout plus a grace period) and
@@ -31,7 +34,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-const SPEC_MAGIC: &str = "orcel-contain-spec 1";
+const SPEC_MAGIC: &str = "orcel-contain-spec 2";
 const RESULT_MAGIC: &str = "orcel-contain-result 1";
 
 /// The helper's own bound on the spec, `end` line included.
@@ -104,6 +107,12 @@ impl ContainedLimits {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContainedSpec {
     pub executable: PathBuf,
+    /// The executable's 64-digit lower-case SHA-256 (#384 item 2): the
+    /// registered digest for a contained-tier entry, the pinned digest for
+    /// WI-05's parser. The helper hashes the file through the descriptor it
+    /// then executes and refuses a mismatch, so a file swapped in after
+    /// orceld's own check never runs.
+    pub executable_sha256: String,
     pub argv: Vec<String>,
     pub workdir: PathBuf,
     pub readable: Vec<PathBuf>,
@@ -183,6 +192,9 @@ pub enum RefusalKind {
     Crashed,
     SpecTooLarge,
     InvalidSpec,
+    /// The executable did not match `executable_sha256` when the helper
+    /// opened it (#384 item 2).
+    ExecutableChanged,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -223,6 +235,17 @@ pub fn encode_spec(spec: &ContainedSpec, parent: u32) -> Result<Vec<u8>, Contain
     out.push('\n');
     out.push_str(&format!("parent {parent}\n"));
     push_path(&mut out, "exe", &spec.executable)?;
+    if spec.executable_sha256.len() != 64
+        || !spec
+            .executable_sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(ContainedError::InvalidSpec(
+            "executable_sha256 must be 64 lower-case hex digits".into(),
+        ));
+    }
+    out.push_str(&format!("sha256 {}\n", spec.executable_sha256));
     for arg in &spec.argv {
         push_text(&mut out, "arg", arg)?;
     }
@@ -438,6 +461,7 @@ fn parse_result(bytes: &[u8], limits: &ContainedLimits) -> Result<Parsed, Contai
             "crashed" => RefusalKind::Crashed,
             "spec_too_large" => RefusalKind::SpecTooLarge,
             "invalid_spec" => RefusalKind::InvalidSpec,
+            "executable_changed" => RefusalKind::ExecutableChanged,
             _ => return Err(broken("unknown refusal kind")),
         };
         return Ok(Parsed::Refused {
@@ -583,13 +607,12 @@ fn check_not_shared_writable(
     Ok(())
 }
 
-/// Windows: no DACL check yet. Residual risk, tracked as XP-13b: a helper
-/// in a directory other accounts may write could be replaced *before* the
-/// digest check, which then refuses it (so this fails closed, as tampering),
-/// and the share mode in `open_helper` stops a swap between the check and the
-/// spawn. What the missing check would add is refusing such an install root
-/// up front; the signed install root (SG-000106) is expected to be
-/// user-or-admin only.
+/// Windows: this crate takes no dependency, so the owner and DACL rule
+/// (#384 item 4) is applied where orceld forms the pin
+/// (`contained_tier::helper_pin_in`, through
+/// `orcel_platform::paths::check_owned_executable_location`). Here a helper
+/// replaced before the digest check is refused as tampering, and the share
+/// mode in `open_helper` stops a swap between the check and the spawn.
 #[cfg(not(unix))]
 fn check_not_shared_writable(
     _path: &Path,
