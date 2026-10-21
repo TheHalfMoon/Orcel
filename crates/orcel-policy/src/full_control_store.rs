@@ -218,9 +218,11 @@ pub fn ensure_key(path: &Path) -> Result<[u8; AUTHORITY_KEY_BYTES], PolicyError>
     std::fs::create_dir_all(parent).map_err(|error| {
         unavailable(format!("create full-control authority directory: {error}"))
     })?;
-    match files::write_private_atomic(path, &key) {
+    // #358 item 4: never replace a key another process created meanwhile;
+    // whoever loses the race adopts the winner's key.
+    match files::write_private_new(path, &key) {
         Ok(()) => Ok(key),
-        Err(_error) if path.exists() => read_key(path),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => read_key(path),
         Err(error) => Err(unavailable(format!(
             "install full-control authority key: {error}"
         ))),
@@ -527,6 +529,35 @@ mod tests {
 
     fn key() -> [u8; 32] {
         [0xA5; 32]
+    }
+
+    /// #358 item 4: processes racing to create the authority key all end up
+    /// with the one key on disk; none overwrites another's.
+    #[cfg(windows)]
+    #[test]
+    fn concurrent_key_creation_yields_one_key() {
+        let dir = temp("key-race");
+        std::fs::create_dir_all(&dir).unwrap();
+        for round in 0..10 {
+            let path = dir.join(format!("authority-{round}.key"));
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+            let keys: Vec<_> = (0..8)
+                .map(|_| {
+                    let path = path.clone();
+                    let barrier = barrier.clone();
+                    std::thread::spawn(move || {
+                        barrier.wait();
+                        ensure_key(&path).unwrap()
+                    })
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|thread| thread.join().unwrap())
+                .collect();
+            let on_disk = read_key(&path).unwrap();
+            assert!(keys.iter().all(|key| *key == on_disk), "round {round}");
+        }
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

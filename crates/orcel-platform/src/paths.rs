@@ -78,9 +78,22 @@ pub enum PlatformError {
         kind: std::io::ErrorKind,
         message: String,
     },
+    /// Windows: the owner or DACL lets another principal reach or change the
+    /// path; macOS: an extended ACL entry does (#358, #384). `reason` names
+    /// the grant.
+    InsecureAcl {
+        path: PathBuf,
+        reason: String,
+    },
     /// The process does not exist, has exited, or is a zombie waiting to be
-    /// reaped (XP-03). The pid is 0 when the kernel no longer names it, as
-    /// for a macOS socket peer that has closed its end.
+    /// reaped (XP-03).
+    ///
+    /// For a socket peer (`peer`) this means only "refuse this connection"
+    /// (#367); it does not prove the process exited. The pid is 0, a
+    /// sentinel that names no process, when the kernel no longer names one,
+    /// as for a macOS peer that has closed its end of the socket while it
+    /// still runs. A consumer must never clean up, revoke or record state
+    /// about a process because of this error.
     ProcessGone(u32),
     /// An identity fact (process start time, boot id, session or socket peer
     /// credentials) could not be read or parsed (XP-03).
@@ -135,6 +148,11 @@ impl fmt::Display for PlatformError {
                 kind: _,
                 message,
             } => write!(f, "state directory {}: {message}", path.display()),
+            Self::InsecureAcl { path, reason } => write!(
+                f,
+                "{} could be reached or changed by another user: {reason}",
+                path.display()
+            ),
             Self::ProcessGone(pid) => write!(f, "process {pid} is not running"),
             Self::IdentityUnavailable(reason) => {
                 write!(f, "platform identity is unavailable: {reason}")
@@ -209,11 +227,22 @@ pub fn state_root_for(
 /// their parent passed. The directory itself is created with mode 0700 when
 /// missing, and is refused when it is a symbolic link, is not a directory,
 /// is owned by another uid, or grants any group or other permission.
-/// Nothing is repaired.
+/// Nothing is repaired. On macOS an extended ACL `allow` entry is refused
+/// too: any entry on the directory, and a write-granting entry on an
+/// ancestor ([`PlatformError::InsecureAcl`]).
 ///
-/// On Windows the directory keeps its existing behavior: it inherits the
-/// per-user `%LOCALAPPDATA%` ACL and is created by its first writer, so
-/// only an existing non-directory is refused.
+/// On Windows (#358 item 2) the owner and DACL take the place of the owner
+/// and mode bits. Missing directories are created one at a time with a
+/// protected DACL that admits only the user, `SYSTEM` and Administrators.
+/// The directory must be owned by one of those (or TrustedInstaller), and no
+/// other principal may hold any access to it. Every ancestor must have such
+/// an owner, and no other principal may hold a right that deletes, renames
+/// or re-points an entry (`DELETE`, `FILE_DELETE_CHILD`, `WRITE_DAC`,
+/// `WRITE_OWNER`, `GENERIC_ALL`); adding entries is allowed, as under a
+/// sticky `/tmp`. Junctions and symbolic links are refused on the directory
+/// and on every ancestor. So an `ORCEL_*_PATH` override in a shared
+/// directory such as `C:\Users\Public` is refused, while a private directory
+/// created beneath it is accepted. Nothing is repaired.
 pub fn ensure_private_dir(path: &Path) -> Result<(), PlatformError> {
     if !path.is_absolute() {
         return Err(PlatformError::NotAbsolute(path.to_path_buf()));
@@ -226,9 +255,16 @@ pub fn ensure_private_dir(path: &Path) -> Result<(), PlatformError> {
 /// not a link, and it and every ancestor directory are owned by the user or
 /// root and not writable by group or others. A world-writable ancestor is
 /// accepted only when it is root-owned and sticky, like `/tmp`, because there
-/// nobody else can rename or remove the user's own entries. Windows has no
-/// equivalent check yet; its executables run from the per-user or
-/// administrator install roots.
+/// nobody else can rename or remove the user's own entries. On macOS, an
+/// extended ACL entry that grants a write on the file or an ancestor is
+/// refused too (#384 item 1).
+///
+/// On Windows (#384 item 4) the file and every ancestor must be owned by the
+/// user, `SYSTEM`, Administrators or TrustedInstaller. No other principal may
+/// hold a right that changes, renames or deletes the file or re-points its
+/// DACL or owner. On an ancestor, no other principal may hold a right that
+/// deletes, renames or re-points an entry (adding one is allowed). Junctions
+/// and symbolic links on the path are refused.
 pub fn check_owned_executable_location(path: &Path) -> Result<(), String> {
     imp::check_owned_executable_location(path)
 }
@@ -461,6 +497,26 @@ mod imp {
                 mode,
             });
         }
+        acl_check(path, false, AclRefuse::Write).map_err(|reason| PlatformError::InsecureAcl {
+            path: path.to_path_buf(),
+            reason,
+        })
+    }
+
+    /// macOS: refuse an extended ACL entry (#384 item 1). Elsewhere the mode
+    /// bits already cover POSIX ACLs (see `macos_acl`).
+    #[cfg(target_os = "macos")]
+    use crate::macos_acl::{check as acl_check, Refuse as AclRefuse};
+
+    #[cfg(not(target_os = "macos"))]
+    #[derive(Clone, Copy)]
+    enum AclRefuse {
+        AnyAllow,
+        Write,
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn acl_check(_path: &Path, _follow: bool, _refuse: AclRefuse) -> Result<(), String> {
         Ok(())
     }
 
@@ -486,7 +542,10 @@ mod imp {
                 mode,
             });
         }
-        Ok(())
+        acl_check(path, false, AclRefuse::AnyAllow).map_err(|reason| PlatformError::InsecureAcl {
+            path: path.to_path_buf(),
+            reason,
+        })
     }
 
     pub(super) fn check_owned_executable_location(path: &Path) -> Result<(), String> {
@@ -505,6 +564,7 @@ mod imp {
         if file.permissions().mode() & GROUP_OR_OTHER_WRITE != 0 {
             return Err(format!("{} is writable by group or others", path.display()));
         }
+        acl_check(path, false, AclRefuse::Write)?;
         for ancestor in path.ancestors().skip(1) {
             if ancestor.as_os_str().is_empty() {
                 continue;
@@ -522,6 +582,7 @@ mod imp {
                     ancestor.display()
                 ));
             }
+            acl_check(ancestor, true, AclRefuse::Write)?;
         }
         Ok(())
     }
@@ -537,22 +598,113 @@ mod imp {
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
 mod imp {
     use super::{io_error, PlatformError};
+    use crate::acl::{self, Role};
+    use std::os::windows::fs::MetadataExt;
     use std::path::Path;
 
-    pub(super) fn check_owned_executable_location(_path: &Path) -> Result<(), String> {
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+
+    fn is_reparse_point(metadata: &std::fs::Metadata) -> bool {
+        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+
+    fn judge(path: &Path, user: &str, role: Role) -> Result<(), String> {
+        let (owner, dacl) = acl::security_of(path)?;
+        acl::judge(&owner, dacl.as_deref(), user, role)
+    }
+
+    fn insecure(path: &Path) -> impl FnOnce(String) -> PlatformError + '_ {
+        move |reason| PlatformError::InsecureAcl {
+            path: path.to_path_buf(),
+            reason,
+        }
+    }
+
+    /// The directory at `path`, created private when missing, refused when
+    /// it is a junction, a link or not a directory.
+    fn directory(path: &Path, user: &str) -> Result<(), PlatformError> {
+        let metadata = match std::fs::symlink_metadata(path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                create_private(path, user)?
+            }
+            Err(error) => return Err(io_error(path, error)),
+        };
+        if is_reparse_point(&metadata) {
+            return Err(PlatformError::Symlink(path.to_path_buf()));
+        }
+        if !metadata.is_dir() {
+            return Err(PlatformError::NotDirectory(path.to_path_buf()));
+        }
         Ok(())
     }
 
     pub(super) fn ensure_private_dir(path: &Path) -> Result<(), PlatformError> {
-        match std::fs::metadata(path) {
-            Ok(metadata) if metadata.is_dir() => Ok(()),
-            Ok(_) => Err(PlatformError::NotDirectory(path.to_path_buf())),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(io_error(path, error)),
+        let user = acl::current_user_sid().map_err(PlatformError::IdentityUnavailable)?;
+        let ancestors: Vec<&Path> = path.ancestors().skip(1).collect();
+        // From the volume root down, so each directory is accepted or created
+        // only after its parent passed.
+        for ancestor in ancestors.iter().rev() {
+            directory(ancestor, &user)?;
+            judge(ancestor, &user, Role::Ancestor).map_err(insecure(ancestor))?;
         }
+        directory(path, &user)?;
+        judge(path, &user, Role::PrivateDir).map_err(insecure(path))
+    }
+
+    /// Creates one directory with a protected owner-only DACL and returns
+    /// what is there afterwards. A directory another process created first
+    /// is returned too, so it faces the same checks as one that existed.
+    fn create_private(path: &Path, user: &str) -> Result<std::fs::Metadata, PlatformError> {
+        match acl::create_private_dir(path, user) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(io_error(path, error)),
+        }
+        std::fs::symlink_metadata(path).map_err(|error| io_error(path, error))
+    }
+
+    pub(super) fn check_owned_executable_location(path: &Path) -> Result<(), String> {
+        let user = acl::current_user_sid()?;
+        let file = std::fs::symlink_metadata(path)
+            .map_err(|error| format!("{} cannot be inspected: {error}", path.display()))?;
+        if !file.is_file() || is_reparse_point(&file) {
+            return Err(format!("{} is not a regular file", path.display()));
+        }
+        judge(path, &user, Role::File).map_err(|reason| format!("{} {reason}", path.display()))?;
+        for ancestor in path.ancestors().skip(1) {
+            if ancestor.as_os_str().is_empty() {
+                continue;
+            }
+            let directory = std::fs::symlink_metadata(ancestor)
+                .map_err(|error| format!("{} cannot be inspected: {error}", ancestor.display()))?;
+            if !directory.is_dir() || is_reparse_point(&directory) {
+                return Err(format!(
+                    "{} is a link or not a directory",
+                    ancestor.display()
+                ));
+            }
+            judge(ancestor, &user, Role::Ancestor)
+                .map_err(|reason| format!("{} {reason}", ancestor.display()))?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+mod imp {
+    use super::PlatformError;
+    use std::path::Path;
+
+    pub(super) fn check_owned_executable_location(_path: &Path) -> Result<(), String> {
+        Err("this platform has no ownership check".into())
+    }
+
+    pub(super) fn ensure_private_dir(_path: &Path) -> Result<(), PlatformError> {
+        Err(PlatformError::UnsupportedPlatform)
     }
 }
 
@@ -753,22 +905,166 @@ mod tests {
         );
     }
 
-    #[cfg(not(unix))]
-    #[test]
-    fn windows_keeps_missing_and_existing_directories_and_refuses_files() {
-        let base = sandbox("win");
-        let missing = base.join("missing").join("Orcel");
-        assert_eq!(ensure_private_dir(&missing), Ok(()));
-        // No directory is created on Windows; its first writer creates it.
-        assert!(!missing.exists());
-        assert_eq!(ensure_private_dir(&base), Ok(()));
-        let file = base.join("file");
-        std::fs::write(&file, b"x").expect("file");
-        assert_eq!(
-            ensure_private_dir(&file),
-            Err(PlatformError::NotDirectory(file.clone()))
-        );
-        let _ = std::fs::remove_dir_all(base);
+    /// #358 item 2 and #384 item 4 on a real NTFS volume. `icacls` adds the
+    /// entries another principal (Everyone, `S-1-1-0`) would hold.
+    #[cfg(windows)]
+    mod windows {
+        use super::*;
+        use crate::acl::{self, AceKind};
+
+        const EVERYONE: &str = "S-1-1-0";
+
+        fn grant(path: &Path, rights: &str) {
+            let status = std::process::Command::new("icacls")
+                .arg(path)
+                .arg("/grant")
+                .arg(format!("*{EVERYONE}:{rights}"))
+                .stdout(std::process::Stdio::null())
+                .status()
+                .expect("icacls");
+            assert!(status.success(), "icacls {} {rights}", path.display());
+        }
+
+        fn grants_everyone(path: &Path) -> bool {
+            let (_, dacl) = acl::security_of(path).expect("security");
+            dacl.expect("dacl")
+                .iter()
+                .any(|ace| ace.kind == AceKind::Allow && ace.sid == EVERYONE)
+        }
+
+        fn insecure(result: Result<(), PlatformError>, expected: &Path) {
+            assert!(
+                matches!(&result, Err(PlatformError::InsecureAcl { path, .. }) if path == expected),
+                "{result:?}"
+            );
+        }
+
+        #[test]
+        fn missing_root_and_ancestors_are_created_with_a_protected_dacl() {
+            let base = sandbox("win-create");
+            // Everyone may read the parent, and that entry is inheritable.
+            grant(&base, "(OI)(CI)(RX)");
+            let root = base.join("missing").join("Orcel");
+            assert_eq!(ensure_private_dir(&root), Ok(()));
+            for created in [base.join("missing"), root.clone()] {
+                assert!(created.is_dir());
+                assert!(!grants_everyone(&created), "{}", created.display());
+            }
+            // Idempotent, and files created inside inherit the private DACL.
+            assert_eq!(ensure_private_dir(&root), Ok(()));
+            std::fs::write(root.join("state.json"), b"{}").expect("file");
+            assert!(!grants_everyone(&root.join("state.json")));
+            let _ = std::fs::remove_dir_all(base);
+        }
+
+        #[test]
+        fn an_existing_directory_others_can_reach_is_refused() {
+            let base = sandbox("win-shared");
+            let shared = base.join("shared");
+            std::fs::create_dir(&shared).expect("dir");
+            assert_eq!(ensure_private_dir(&shared), Ok(()));
+            grant(&shared, "(RX)");
+            insecure(ensure_private_dir(&shared), &shared);
+            let _ = std::fs::remove_dir_all(base);
+        }
+
+        #[test]
+        fn an_ancestor_others_can_delete_from_is_refused_and_nothing_is_created() {
+            let base = sandbox("win-ancestor");
+            grant(&base, "(DC)");
+            let root = base.join("Orcel");
+            insecure(ensure_private_dir(&root), &base);
+            assert!(!root.exists());
+            let _ = std::fs::remove_dir_all(base);
+        }
+
+        /// Like a sticky `/tmp`: others may add entries, not replace ours.
+        #[test]
+        fn an_ancestor_others_can_only_add_to_is_accepted() {
+            let base = sandbox("win-add");
+            grant(&base, "(AD,WD)");
+            assert_eq!(ensure_private_dir(&base.join("Orcel")), Ok(()));
+            let _ = std::fs::remove_dir_all(base);
+        }
+
+        #[test]
+        fn files_and_junctions_are_refused() {
+            let base = sandbox("win-links");
+            let file = base.join("file");
+            std::fs::write(&file, b"x").expect("file");
+            assert_eq!(
+                ensure_private_dir(&file),
+                Err(PlatformError::NotDirectory(file.clone()))
+            );
+            let target = base.join("target");
+            std::fs::create_dir(&target).expect("target");
+            let junction = base.join("junction");
+            let status = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(&junction)
+                .arg(&target)
+                .stdout(std::process::Stdio::null())
+                .status()
+                .expect("mklink");
+            assert!(status.success());
+            assert_eq!(
+                ensure_private_dir(&junction),
+                Err(PlatformError::Symlink(junction.clone()))
+            );
+            assert_eq!(
+                ensure_private_dir(&junction.join("Orcel")),
+                Err(PlatformError::Symlink(junction.clone()))
+            );
+            assert!(!target.join("Orcel").exists());
+            let _ = std::fs::remove_dir(&junction);
+            let _ = std::fs::remove_dir_all(base);
+        }
+
+        /// The case #358 names: an `ORCEL_*_PATH` override in
+        /// `C:\Users\Public`, which every interactive user can write.
+        #[test]
+        fn an_override_in_users_public_is_refused() {
+            let public = Path::new(r"C:\Users\Public");
+            if !public.is_dir() {
+                return;
+            }
+            insecure(ensure_private_dir(public), public);
+            assert!(matches!(
+                private_file_override(OsString::from(r"C:\Users\Public\trust.jsonl")),
+                Err(PlatformError::InsecureAcl { .. })
+            ));
+        }
+
+        #[test]
+        fn executables_others_can_replace_are_refused() {
+            let base = sandbox("win-exe");
+            let bin = base.join("bin");
+            std::fs::create_dir(&bin).expect("bin");
+            let tool = bin.join("tool.exe");
+            std::fs::write(&tool, b"MZ").expect("tool");
+            assert_eq!(check_owned_executable_location(&tool), Ok(()));
+            // Reading and running are fine.
+            grant(&tool, "(RX)");
+            assert_eq!(check_owned_executable_location(&tool), Ok(()));
+            grant(&tool, "(W)");
+            assert!(check_owned_executable_location(&tool).is_err());
+
+            let other = bin.join("other.exe");
+            std::fs::write(&other, b"MZ").expect("other");
+            grant(&bin, "(M)");
+            let error = check_owned_executable_location(&other).expect_err("ancestor");
+            assert!(error.contains(&bin.display().to_string()), "{error}");
+            let _ = std::fs::remove_dir_all(base);
+        }
+
+        /// The system's own images pass: TrustedInstaller owns them and
+        /// users may only read and run them.
+        #[test]
+        fn a_system32_image_is_accepted() {
+            let root = std::env::var_os("SystemRoot").expect("SystemRoot");
+            let whoami = Path::new(&root).join("System32").join("whoami.exe");
+            assert_eq!(check_owned_executable_location(&whoami), Ok(()));
+        }
     }
 
     #[cfg(unix)]
@@ -1048,6 +1344,79 @@ mod tests {
                 "{error:?}"
             );
             assert!(std::fs::symlink_metadata(&root).is_err());
+            let _ = std::fs::remove_dir_all(base);
+        }
+    }
+
+    /// #384 item 1: a `chmod +a` grant does not show in the mode bits.
+    #[cfg(target_os = "macos")]
+    mod macos {
+        use super::*;
+        use std::os::unix::fs::PermissionsExt;
+
+        fn add_acl(path: &Path, entry: &str) {
+            let status = std::process::Command::new("/bin/chmod")
+                .arg("+a")
+                .arg(entry)
+                .arg(path)
+                .status()
+                .expect("chmod +a");
+            assert!(status.success(), "chmod +a {entry} {}", path.display());
+        }
+
+        fn acl_refused(result: Result<(), PlatformError>, expected: &Path) {
+            assert!(
+                matches!(&result, Err(PlatformError::InsecureAcl { path, .. }) if path == expected),
+                "{result:?}"
+            );
+        }
+
+        #[test]
+        fn an_acl_entry_on_the_private_dir_is_refused() {
+            let base = sandbox("acl-root");
+            let root = base.join("orcel");
+            assert_eq!(ensure_private_dir(&root), Ok(()));
+            // Even a read-only grant: the directory is the 0700 counterpart.
+            add_acl(&root, "everyone allow list,search");
+            acl_refused(ensure_private_dir(&root), &root);
+            let _ = std::fs::remove_dir_all(base);
+        }
+
+        #[test]
+        fn a_write_acl_on_an_ancestor_is_refused_and_a_deny_is_not() {
+            let base = sandbox("acl-ancestor");
+            let parent = base.join("parent");
+            std::fs::create_dir(&parent).expect("parent");
+            add_acl(&parent, "everyone deny delete");
+            assert_eq!(ensure_private_dir(&parent.join("a")), Ok(()));
+            add_acl(&parent, "everyone allow add_file,delete_child");
+            acl_refused(ensure_private_dir(&parent.join("b")), &parent);
+            assert!(!parent.join("b").exists());
+            let _ = std::fs::remove_dir_all(base);
+        }
+
+        #[test]
+        fn a_write_acl_on_an_executable_or_its_directory_is_refused() {
+            let base = sandbox("acl-exe");
+            let bin = base.join("bin");
+            std::fs::create_dir(&bin).expect("bin");
+            std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+            let tool = bin.join("tool");
+            std::fs::write(&tool, b"\xcf\xfa\xed\xfe").expect("tool");
+            std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+            assert_eq!(check_owned_executable_location(&tool), Ok(()));
+            add_acl(&tool, "everyone allow read,execute");
+            assert_eq!(check_owned_executable_location(&tool), Ok(()));
+            add_acl(&tool, "everyone allow write");
+            assert!(check_owned_executable_location(&tool).is_err());
+
+            let other = bin.join("other");
+            std::fs::write(&other, b"\xcf\xfa\xed\xfe").expect("other");
+            std::fs::set_permissions(&other, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod");
+            add_acl(&bin, "everyone allow delete_child");
+            let error = check_owned_executable_location(&other).expect_err("ancestor");
+            assert!(error.contains("delete_child"), "{error}");
             let _ = std::fs::remove_dir_all(base);
         }
     }

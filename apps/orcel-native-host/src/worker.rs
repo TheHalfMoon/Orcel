@@ -1178,68 +1178,232 @@ async fn input_action(runtime: &CuaRuntime, request: &Request, platform: HostPla
         Ok(scale) => scale,
         Err(message) => return refuse(code::PROVIDER_UNAVAILABLE, &message),
     };
-    let total = plan.units.len();
-    // The person must have been quiet before the first unit. The kernel read
-    // its baseline right after the Approve click, so a person still typing or
-    // moving then has the tick moving under the wait below, and the input is
-    // cancelled.
-    if let (Ok(clock), Ok(last)) = (input::tick::clock_ms(), input::tick::current()) {
-        let remaining = input::quiet_remaining_ms(clock, last);
-        if remaining > 0 {
-            tokio::time::sleep(std::time::Duration::from_millis(u64::from(remaining))).await;
-            match input::tick::current() {
-                Ok(now) if input::tick_is_fresh(last, now) => {}
-                _ => {
-                    return refuse(
-                        code::CANCELLED,
-                        "human input continued after the approval, so the input was not sent",
-                    )
-                }
-            }
-        }
+    let mut units = LiveUnits {
+        runtime,
+        request,
+        platform,
+        frame,
+        units: &plan.units,
+        scale,
+        bound: None,
+    };
+    let mut response = deliver_sequence(
+        id,
+        expected_tick,
+        input::OwnEvents::on(platform),
+        &SystemClock,
+        &mut units,
+    )
+    .await;
+    if let Some(action) = response.action.as_mut() {
+        action.action = request.op.clone();
     }
-    // The tick the person is held to. The host's own events move the X
-    // server's idle clock, so after each unit the tick is read again and must
-    // be explained by that unit's own delivery time (or not have moved). The
-    // person's keystrokes between units are neither, so they cancel the rest;
-    // they are never adopted as the new baseline.
-    let mut baseline = expected_tick;
-    for (index, unit) in plan.units.iter().enumerate() {
+    response
+}
+
+/// The human-input clock the delivery sequence reads, and its waits: the real
+/// one is [`input::tick`] and tokio's timer; a test supplies a fake one.
+pub(crate) trait InputClock {
+    /// The machine's monotonic clock, in the tick's milliseconds.
+    fn clock_ms(&self) -> Result<u32, String>;
+    /// The tick: when the person last touched the keyboard or pointer.
+    fn last_input(&self) -> Result<u32, String>;
+    async fn sleep(&self, duration: std::time::Duration);
+}
+
+struct SystemClock;
+
+impl InputClock for SystemClock {
+    fn clock_ms(&self) -> Result<u32, String> {
+        input::tick::clock_ms()
+    }
+
+    fn last_input(&self) -> Result<u32, String> {
+        input::tick::current()
+    }
+
+    async fn sleep(&self, duration: std::time::Duration) {
+        tokio::time::sleep(duration).await;
+    }
+}
+
+/// The per-unit work of a delivery sequence: the whole gate before a unit and
+/// the delivery itself. The real one goes through the vendored runtime; a test
+/// supplies a fake one.
+pub(crate) trait UnitDriver {
+    fn count(&self) -> usize;
+    /// Everything `input_gate` proves, held to `baseline`, plus a fresh tree
+    /// read before a later keyboard unit.
+    async fn gate(&mut self, index: usize, baseline: u32) -> Result<(), Response>;
+    async fn deliver(&mut self, index: usize) -> Result<(), Response>;
+}
+
+/// The live units of one planned input, delivered through the vendored route.
+struct LiveUnits<'a> {
+    runtime: &'a CuaRuntime,
+    request: &'a Request,
+    platform: HostPlatform,
+    frame: input::Frame,
+    units: &'a [input::Unit],
+    scale: f64,
+    /// The binding the last gate proved, which the delivery addresses.
+    bound: Option<BoundWindow>,
+}
+
+impl UnitDriver for LiveUnits<'_> {
+    fn count(&self) -> usize {
+        self.units.len()
+    }
+
+    async fn gate(&mut self, index: usize, baseline: u32) -> Result<(), Response> {
+        let unit = &self.units[index];
         let mut points = unit.points();
         if points.is_empty() {
-            points.push(((frame.width / 2.0) as i64, (frame.height / 2.0) as i64));
+            points.push((
+                (self.frame.width / 2.0) as i64,
+                (self.frame.height / 2.0) as i64,
+            ));
         }
-        let bound =
-            match input_gate(runtime, request, platform, Some(&frame), &points, baseline).await {
-                Ok(bound) => bound,
-                Err(refusal) if index == 0 => return refusal,
-                Err(refusal) => return partial_input(id, index, total, refusal),
-            };
+        let bound = input_gate(
+            self.runtime,
+            self.request,
+            self.platform,
+            Some(&self.frame),
+            &points,
+            baseline,
+        )
+        .await?;
         // Each keyboard unit re-reads the tree: a secure field may have
         // appeared, or the window changed what it shows.
         if index > 0 && matches!(unit, input::Unit::Text(_) | input::Unit::Key(_)) {
-            let refusal = match observe_elements(runtime, id, &bound).await {
-                Ok(elements) => keyboard_tree_refusal(id, &elements),
-                Err(refusal) => Some(refusal),
-            };
-            if let Some(refusal) = refusal {
+            let elements = observe_elements(self.runtime, self.request.id, &bound).await?;
+            if let Some(refusal) = keyboard_tree_refusal(self.request.id, &elements) {
+                return Err(refusal);
+            }
+        }
+        self.bound = Some(bound);
+        Ok(())
+    }
+
+    async fn deliver(&mut self, index: usize) -> Result<(), Response> {
+        let id = self.request.id;
+        let Some(bound) = self.bound.take() else {
+            return Err(Response::failure(
+                id,
+                code::PROVIDER_UNAVAILABLE,
+                "no gate proved the binding for this unit",
+            ));
+        };
+        let call = CuaCall::Input(input_call(
+            &self.units[index],
+            bound.binding.pid,
+            bound.binding.id,
+            self.scale,
+        ));
+        self.runtime
+            .call(&call)
+            .await
+            .map(|_| ())
+            .map_err(|failure| action_failure(id, &failure))
+    }
+}
+
+/// The human-input binding around a planned sequence of delivery units.
+///
+/// The person must have been quiet before the first unit: the kernel read its
+/// baseline right after the Approve click, so a person still typing or moving
+/// then has the tick moving under the wait, and the input is cancelled. A
+/// clock that cannot be read refuses the input; it never skips the wait.
+///
+/// After each unit but the last the tick is read again and must be explained
+/// by the host's own events (`rule`): on macOS it must not have moved at all,
+/// on X11 it may lie inside the delivery call. The person's touches between
+/// units are neither, so they cancel the rest; they are never adopted as the
+/// new baseline. A unit refused after an earlier one was delivered is
+/// `outcome_unknown`.
+pub(crate) async fn deliver_sequence(
+    id: u64,
+    expected_tick: u32,
+    rule: input::OwnEvents,
+    clock: &impl InputClock,
+    units: &mut impl UnitDriver,
+) -> Response {
+    let refuse = |code: &str, message: &str| Response::failure(id, code, message.to_owned());
+    let unreadable = |message: String| {
+        refuse(
+            code::PROVIDER_UNAVAILABLE,
+            &bounded_message(&format!("the human-input clock is unreadable: {message}")),
+        )
+    };
+    let total = units.count();
+    let (clock_now, last) = match (clock.clock_ms(), clock.last_input()) {
+        (Ok(clock_now), Ok(last)) => (clock_now, last),
+        (Err(message), _) | (_, Err(message)) => return unreadable(message),
+    };
+    let remaining = input::quiet_remaining_ms(clock_now, last);
+    if remaining > 0 {
+        clock
+            .sleep(std::time::Duration::from_millis(u64::from(remaining)))
+            .await;
+        match clock.last_input() {
+            Ok(now) if input::tick_is_fresh(last, now) => {}
+            Ok(_) => {
+                return refuse(
+                    code::CANCELLED,
+                    "human input continued after the approval, so the input was not sent",
+                )
+            }
+            Err(message) => return unreadable(message),
+        }
+    }
+    // The tick the person is held to.
+    let mut baseline = expected_tick;
+    for index in 0..total {
+        if let Err(refusal) = units.gate(index, baseline).await {
+            if index == 0 {
+                return refusal;
+            }
+            return partial_input(id, index, total, refusal);
+        }
+        // The gate can take a while (a keyboard unit re-reads the tree). A
+        // touch made during it would otherwise be masked by this unit's own
+        // event on X11 and adopted as the next baseline, so the tick is read
+        // once more immediately before the call (#407 review).
+        match clock.last_input() {
+            Ok(now) if input::still_at_baseline(rule, baseline, now) => {}
+            Ok(_) => {
+                let refusal = refuse(
+                    code::CANCELLED,
+                    "human input arrived before the unit was sent, so the rest was not sent",
+                );
+                if index == 0 {
+                    return refusal;
+                }
+                return partial_input(id, index, total, refusal);
+            }
+            Err(message) => {
+                let refusal = unreadable(message);
+                if index == 0 {
+                    return refusal;
+                }
                 return partial_input(id, index, total, refusal);
             }
         }
-        let started = input::tick::clock_ms();
-        let call = CuaCall::Input(input_call(unit, bound.binding.pid, bound.binding.id, scale));
-        if let Err(failure) = runtime.call(&call).await {
+        let started = clock.clock_ms();
+        if let Err(failure) = units.deliver(index).await {
             if index == 0 {
-                return action_failure(id, &failure);
+                return failure;
             }
-            return partial_input(id, index, total, action_failure(id, &failure));
+            return partial_input(id, index, total, failure);
         }
+        // The call has returned: the window that explains a moved X11 tick
+        // ends here, before the settle wait.
+        let ended = clock.clock_ms();
         if index + 1 < total {
-            tokio::time::sleep(INPUT_SETTLE).await;
-            let ended = input::tick::clock_ms();
-            match (started, ended, input::tick::current()) {
+            clock.sleep(INPUT_SETTLE).await;
+            match (started, ended, clock.last_input()) {
                 (Ok(start), Ok(end), Ok(after))
-                    if input::explained_by_own_events(baseline, after, start, end) =>
+                    if input::explained_by_own_events(rule, baseline, after, start, end) =>
                 {
                     baseline = after;
                 }
@@ -1260,7 +1424,7 @@ async fn input_action(runtime: &CuaRuntime, request: &Request, platform: HostPla
     let mut response = Response::success(id);
     response.action = Some(protocol::ActionFact {
         state: "completed".to_owned(),
-        action: request.op.clone(),
+        action: String::new(),
     });
     response
 }
@@ -1615,5 +1779,326 @@ mod tests {
         let response: Response = serde_json::from_slice(trim_line(&out)).unwrap();
         assert_eq!(response.id, 5);
         assert_eq!(response.error.unwrap().code, "capability_denied");
+    }
+}
+
+/// #404: the human-input wiring of a raw input sequence (the quiet period,
+/// the cancel branch and the baseline update), driven through
+/// `deliver_sequence` with a fake runtime and a fake tick source. Every
+/// clock reading comes from one simulated timeline in which the person
+/// touches the machine at chosen instants.
+#[cfg(test)]
+mod sequence_tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    /// The simulated machine: its clock, the last input, the instants the
+    /// person will touch it, and what the fake runtime was asked to do.
+    #[derive(Default)]
+    struct World {
+        now: u32,
+        last: u32,
+        touches: Vec<u32>,
+        unreadable: bool,
+        own_events_move_clock: bool,
+        gate_baselines: Vec<u32>,
+        delivered: Vec<usize>,
+        sleeps: Vec<u32>,
+        refuse_gate_at: Option<usize>,
+        /// How long each gate takes (a keyboard unit's tree read).
+        gate_ms: u32,
+    }
+
+    impl World {
+        fn advance(&mut self, ms: u32) {
+            let until = self.now + ms;
+            for touch in &self.touches {
+                if *touch > self.now && *touch <= until {
+                    self.last = *touch;
+                }
+            }
+            self.now = until;
+        }
+    }
+
+    type Shared = Rc<RefCell<World>>;
+
+    struct FakeClock(Shared);
+
+    impl InputClock for FakeClock {
+        fn clock_ms(&self) -> Result<u32, String> {
+            let world = self.0.borrow();
+            if world.unreadable {
+                return Err("no clock in this test".to_owned());
+            }
+            Ok(world.now)
+        }
+
+        fn last_input(&self) -> Result<u32, String> {
+            let world = self.0.borrow();
+            if world.unreadable {
+                return Err("no clock in this test".to_owned());
+            }
+            Ok(world.last)
+        }
+
+        async fn sleep(&self, duration: std::time::Duration) {
+            let ms = duration.as_millis() as u32;
+            let mut world = self.0.borrow_mut();
+            world.sleeps.push(ms);
+            world.advance(ms);
+        }
+    }
+
+    /// The fake runtime: every gate passes unless told otherwise, and each
+    /// delivery takes 10 ms, in the middle of which the host's own event
+    /// lands (moving the clock only where the platform's events do).
+    struct FakeUnits {
+        world: Shared,
+        count: usize,
+    }
+
+    impl UnitDriver for FakeUnits {
+        fn count(&self) -> usize {
+            self.count
+        }
+
+        async fn gate(&mut self, index: usize, baseline: u32) -> Result<(), Response> {
+            let mut world = self.world.borrow_mut();
+            world.gate_baselines.push(baseline);
+            let gate_ms = world.gate_ms;
+            world.advance(gate_ms);
+            if world.refuse_gate_at == Some(index) {
+                return Err(Response::failure(
+                    7,
+                    code::TARGET_STALE,
+                    "the window moved or resized since the input was planned",
+                ));
+            }
+            Ok(())
+        }
+
+        async fn deliver(&mut self, index: usize) -> Result<(), Response> {
+            let mut world = self.world.borrow_mut();
+            world.advance(5);
+            if world.own_events_move_clock {
+                world.last = world.now;
+            }
+            world.advance(5);
+            world.delivered.push(index);
+            Ok(())
+        }
+    }
+
+    /// The person last touched the machine at 1_000; the kernel read that
+    /// tick right after Approve; the worker starts at 10_000.
+    fn quiet_world() -> World {
+        World {
+            now: 10_000,
+            last: 1_000,
+            ..World::default()
+        }
+    }
+
+    fn run(world: World, rule: input::OwnEvents, units: usize) -> (Response, World) {
+        let shared = Rc::new(RefCell::new(world));
+        let clock = FakeClock(shared.clone());
+        let mut driver = FakeUnits {
+            world: shared.clone(),
+            count: units,
+        };
+        let expected = shared.borrow().last;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let response = runtime.block_on(deliver_sequence(7, expected, rule, &clock, &mut driver));
+        drop(clock);
+        drop(driver);
+        let world = Rc::try_unwrap(shared).ok().unwrap().into_inner();
+        (response, world)
+    }
+
+    fn code_of(response: &Response) -> &str {
+        response
+            .error
+            .as_ref()
+            .map_or("", |error| error.code.as_str())
+    }
+
+    fn message_of(response: &Response) -> &str {
+        response
+            .error
+            .as_ref()
+            .map_or("", |error| error.message.as_str())
+    }
+
+    #[test]
+    fn on_x11_the_hosts_own_events_become_the_next_baseline() {
+        let mut world = quiet_world();
+        world.own_events_move_clock = true;
+        let (response, world) = run(world, input::OwnEvents::MoveTheClock, 3);
+        assert!(response.ok, "{response:?}");
+        assert_eq!(world.delivered, vec![0, 1, 2]);
+        // The first unit is held to the kernel's tick; each later one to the
+        // tick the previous unit's own event left (its mid-call instant).
+        assert_eq!(world.gate_baselines.len(), 3);
+        assert_eq!(world.gate_baselines[0], 1_000);
+        assert_eq!(world.gate_baselines[1], 10_005);
+        assert_eq!(world.gate_baselines[2], 10_005 + 10 + 40);
+        // No quiet wait was needed; one settle after each unit but the last.
+        assert_eq!(world.sleeps, vec![40, 40]);
+    }
+
+    #[test]
+    fn a_person_touching_the_machine_mid_sequence_cancels_the_rest() {
+        // The first unit runs 10_000..10_010; the person moves the pointer
+        // 25 ms into the settle wait that follows it.
+        let mut world = quiet_world();
+        world.own_events_move_clock = true;
+        world.touches = vec![10_035];
+        let (response, world) = run(world, input::OwnEvents::MoveTheClock, 3);
+        assert_eq!(code_of(&response), code::OUTCOME_UNKNOWN, "{response:?}");
+        assert!(message_of(&response).contains("1 of 3"), "{response:?}");
+        assert!(
+            message_of(&response).contains("human input arrived between units"),
+            "{response:?}"
+        );
+        assert_eq!(world.delivered, vec![0]);
+        // The person's touch was never adopted as a baseline.
+        assert_eq!(world.gate_baselines, vec![1_000]);
+    }
+
+    /// #407 review: a keystroke made while a later unit's gate re-reads the
+    /// tree would be masked by that unit's own X11 event and adopted as the
+    /// baseline. The tick read right before the call catches it, and the
+    /// unit is never delivered.
+    #[test]
+    fn a_touch_during_a_slow_gate_is_caught_before_the_call() {
+        // Each gate takes 100 ms. Unit 0: gate 10_000..10_100, call
+        // 10_100..10_110 (own event at 10_105), settle to 10_150. Unit 1's
+        // gate runs 10_150..10_250, and the person types at 10_200.
+        let mut world = quiet_world();
+        world.own_events_move_clock = true;
+        world.gate_ms = 100;
+        world.touches = vec![10_200];
+        let (response, world) = run(world, input::OwnEvents::MoveTheClock, 3);
+        assert_eq!(code_of(&response), code::OUTCOME_UNKNOWN, "{response:?}");
+        assert!(message_of(&response).contains("1 of 3"), "{response:?}");
+        assert!(
+            message_of(&response).contains("before the unit was sent"),
+            "{response:?}"
+        );
+        assert_eq!(world.delivered, vec![0]);
+        assert_eq!(world.gate_baselines, vec![1_000, 10_105]);
+        // The same on macOS, and a touch during the first gate sends nothing.
+        for rule in [
+            input::OwnEvents::MoveTheClock,
+            input::OwnEvents::LeaveTheClock,
+        ] {
+            let mut world = quiet_world();
+            world.gate_ms = 100;
+            world.touches = vec![10_050];
+            let (response, world) = run(world, rule, 2);
+            assert_eq!(
+                code_of(&response),
+                code::CANCELLED,
+                "{rule:?}: {response:?}"
+            );
+            assert!(world.delivered.is_empty(), "{rule:?}");
+        }
+        // A slow gate with nobody touching anything delivers everything.
+        let mut world = quiet_world();
+        world.own_events_move_clock = true;
+        world.gate_ms = 100;
+        let (response, world) = run(world, input::OwnEvents::MoveTheClock, 3);
+        assert!(response.ok, "{response:?}");
+        assert_eq!(world.delivered, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn on_macos_the_tick_must_not_move_between_units() {
+        // The host's events leave the session clock alone: every unit is held
+        // to the kernel's own tick.
+        let (response, world) = run(quiet_world(), input::OwnEvents::LeaveTheClock, 3);
+        assert!(response.ok, "{response:?}");
+        assert_eq!(world.delivered, vec![0, 1, 2]);
+        assert_eq!(world.gate_baselines, vec![1_000, 1_000, 1_000]);
+        // Any movement, even one inside the delivery call that X11 would
+        // explain, stops the sequence.
+        let mut world = quiet_world();
+        world.own_events_move_clock = true;
+        let (response, world) = run(world, input::OwnEvents::LeaveTheClock, 3);
+        assert_eq!(code_of(&response), code::OUTCOME_UNKNOWN, "{response:?}");
+        assert_eq!(world.delivered, vec![0]);
+        // A person typing mid-sequence, likewise.
+        let mut world = quiet_world();
+        world.touches = vec![10_030];
+        let (response, world) = run(world, input::OwnEvents::LeaveTheClock, 2);
+        assert_eq!(code_of(&response), code::OUTCOME_UNKNOWN, "{response:?}");
+        assert_eq!(world.delivered, vec![0]);
+    }
+
+    #[test]
+    fn a_person_still_moving_after_approve_is_caught_by_the_quiet_period() {
+        // Their last touch was 100 ms before the worker started, so it waits
+        // the remaining 150 ms, and they move again 50 ms into it.
+        let mut world = quiet_world();
+        world.last = 9_900;
+        world.touches = vec![10_050];
+        let (response, world) = run(world, input::OwnEvents::MoveTheClock, 2);
+        assert_eq!(code_of(&response), code::CANCELLED, "{response:?}");
+        assert!(
+            message_of(&response).contains("continued after the approval"),
+            "{response:?}"
+        );
+        assert_eq!(world.sleeps, vec![input::QUIET_MS - 100]);
+        assert!(world.gate_baselines.is_empty());
+        assert!(world.delivered.is_empty());
+    }
+
+    #[test]
+    fn a_person_who_stops_in_time_gets_the_input_after_the_quiet_period() {
+        let mut world = quiet_world();
+        world.last = 9_900;
+        let (response, world) = run(world, input::OwnEvents::MoveTheClock, 1);
+        assert!(response.ok, "{response:?}");
+        assert_eq!(world.sleeps, vec![input::QUIET_MS - 100]);
+        assert_eq!(world.delivered, vec![0]);
+    }
+
+    #[test]
+    fn an_unreadable_clock_refuses_instead_of_skipping_the_quiet_period() {
+        let mut world = quiet_world();
+        world.unreadable = true;
+        let (response, world) = run(world, input::OwnEvents::MoveTheClock, 2);
+        assert_eq!(
+            code_of(&response),
+            code::PROVIDER_UNAVAILABLE,
+            "{response:?}"
+        );
+        assert!(
+            message_of(&response).contains("clock is unreadable"),
+            "{response:?}"
+        );
+        assert!(world.sleeps.is_empty());
+        assert!(world.gate_baselines.is_empty());
+        assert!(world.delivered.is_empty());
+    }
+
+    #[test]
+    fn a_gate_refused_after_a_delivered_unit_is_outcome_unknown() {
+        let mut world = quiet_world();
+        world.refuse_gate_at = Some(1);
+        let (response, world) = run(world, input::OwnEvents::MoveTheClock, 3);
+        assert_eq!(code_of(&response), code::OUTCOME_UNKNOWN, "{response:?}");
+        assert!(message_of(&response).contains("1 of 3"), "{response:?}");
+        assert_eq!(world.delivered, vec![0]);
+        // Refused at the first unit, nothing landed: the refusal itself.
+        let mut world = quiet_world();
+        world.refuse_gate_at = Some(0);
+        let (response, world) = run(world, input::OwnEvents::MoveTheClock, 3);
+        assert_eq!(code_of(&response), code::TARGET_STALE, "{response:?}");
+        assert!(world.delivered.is_empty());
     }
 }
