@@ -4,6 +4,7 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const PUSH_TRACKING_NAMESPACE: &str = "refs/remotes/orcel";
 pub const PUSH_APPROVAL_VERSION: &str = "ORCEL_GIT_PUSH_APPROVAL_V1";
@@ -744,6 +745,70 @@ impl Drop for DisabledPushHooksDir {
     }
 }
 
+/// Creates `path` exclusively, owner-only from the first instant (mode 0700 on
+/// Unix; on Windows it inherits the per-user temp ACL, as the XP-01B state
+/// files do). It fails if the path exists.
+fn create_private_dir(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt as _;
+        std::fs::DirBuilder::new().mode(0o700).create(path)
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::DirBuilder::new().create(path)
+    }
+}
+
+/// Writes a new file that is never readable by anyone else: created
+/// exclusively with `mode` in the same call (no write-then-chmod window).
+fn create_private_file(path: &Path, mode: u32, content: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(mode);
+    }
+    #[cfg(not(unix))]
+    let _ = mode;
+    let mut file = options.open(path)?;
+    file.write_all(content)
+}
+
+static ASKPASS_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+/// Creates a fresh, exclusively owned credential directory. The name carries a
+/// process-wide sequence so concurrent callers never draw the same name even on
+/// clocks with microsecond resolution, and `create_dir` (never
+/// `create_dir_all`) fails on an existing directory so one is never reused.
+fn create_exclusive_askpass_dir() -> Result<PathBuf, GitProviderError> {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| provider_error(format!("read clock for credential isolation: {error}")))?
+        .as_nanos();
+    for _ in 0..16u32 {
+        let sequence = ASKPASS_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "orcel-git-push-askpass-{}-{nonce}-{sequence}",
+            std::process::id()
+        ));
+        match create_private_dir(&dir) {
+            Ok(()) => return Ok(dir),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(provider_error(format!(
+                    "create credential isolation directory: {error}"
+                )))
+            }
+        }
+    }
+    Err(provider_error(
+        "could not allocate a unique credential isolation directory",
+    ))
+}
+
 pub struct ProtectedAskpass {
     dir: PathBuf,
     script: PathBuf,
@@ -754,56 +819,23 @@ impl ProtectedAskpass {
         if secret.is_empty() {
             return Err(invalid("protected credential material must not be empty"));
         }
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|error| {
-                provider_error(format!("read clock for credential isolation: {error}"))
-            })?
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!(
-            "orcel-git-push-askpass-{}-{nonce}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).map_err(|error| {
-            provider_error(format!("create credential isolation directory: {error}"))
-        })?;
+        let dir = create_exclusive_askpass_dir()?;
         let dir = std::fs::canonicalize(&dir).map_err(|error| {
             provider_error(format!(
                 "canonicalize credential isolation directory: {error}"
             ))
         })?;
         let secret_path = dir.join("secret");
-        std::fs::write(&secret_path, secret.as_str()).map_err(|error| {
+        create_private_file(&secret_path, 0o600, secret.as_str().as_bytes()).map_err(|error| {
             provider_error(format!("stage protected credential material: {error}"))
         })?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-            let mut permissions = std::fs::metadata(&secret_path)
-                .map_err(|error| provider_error(format!("inspect credential material: {error}")))?
-                .permissions();
-            permissions.set_mode(0o600);
-            std::fs::set_permissions(&secret_path, permissions).map_err(|error| {
-                provider_error(format!("restrict credential material: {error}"))
-            })?;
-        }
         #[cfg(windows)]
         let script = dir.join("askpass.bat");
         #[cfg(not(windows))]
         let script = dir.join("askpass.sh");
         let content = askpass_script_content(&secret_path);
-        std::fs::write(&script, content)
+        create_private_file(&script, 0o700, content.as_bytes())
             .map_err(|error| provider_error(format!("stage protected askpass helper: {error}")))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-            let mut permissions = std::fs::metadata(&script)
-                .map_err(|error| provider_error(format!("inspect askpass helper: {error}")))?
-                .permissions();
-            permissions.set_mode(0o700);
-            std::fs::set_permissions(&script, permissions)
-                .map_err(|error| provider_error(format!("restrict askpass helper: {error}")))?;
-        }
         Ok(Self { dir, script })
     }
 
@@ -1538,6 +1570,86 @@ fn postcondition(message: impl Into<String>) -> GitProviderError {
 mod tests {
     use super::*;
     use std::net::{Ipv4Addr, Ipv6Addr};
+
+    #[test]
+    fn concurrent_askpass_creations_get_distinct_fresh_directories() {
+        let handles: Vec<_> = (0..16)
+            .map(|_| {
+                std::thread::spawn(|| {
+                    ProtectedAskpass::create(&PushSecret::new("token".to_string()))
+                        .expect("create askpass")
+                })
+            })
+            .collect();
+        let askpasses: Vec<ProtectedAskpass> = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("thread"))
+            .collect();
+        let mut dirs: Vec<&Path> = askpasses.iter().map(ProtectedAskpass::directory).collect();
+        dirs.sort();
+        dirs.dedup();
+        assert_eq!(dirs.len(), askpasses.len(), "directories must be distinct");
+        for askpass in &askpasses {
+            let entries = std::fs::read_dir(askpass.directory())
+                .expect("read dir")
+                .count();
+            assert_eq!(
+                entries, 2,
+                "each directory holds only its own secret and script"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn askpass_directory_and_files_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = |path: &Path| {
+            std::fs::metadata(path)
+                .expect("metadata")
+                .permissions()
+                .mode()
+                & 0o777
+        };
+        let askpass =
+            ProtectedAskpass::create(&PushSecret::new("token".to_string())).expect("create");
+        assert_eq!(mode(askpass.directory()), 0o700);
+        assert_eq!(mode(&askpass.directory().join("secret")), 0o600);
+        assert_eq!(mode(askpass.path()), 0o700);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_creation_is_exclusive_and_owner_only_at_creation() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = create_exclusive_askpass_dir().expect("dir");
+        let file = dir.join("f");
+        create_private_file(&file, 0o600, b"x").expect("create");
+        assert_eq!(
+            std::fs::metadata(&file).expect("m").permissions().mode() & 0o777,
+            0o600
+        );
+        assert!(
+            create_private_file(&file, 0o600, b"y").is_err(),
+            "never reuses a file"
+        );
+        assert!(
+            create_private_dir(&dir).is_err(),
+            "never reuses a directory"
+        );
+        std::fs::remove_file(&file).expect("rm");
+        std::fs::remove_dir(&dir).expect("rmdir");
+    }
+
+    #[test]
+    fn askpass_directory_creation_never_reuses_an_existing_directory() {
+        let first = create_exclusive_askpass_dir().expect("first");
+        let second = create_exclusive_askpass_dir().expect("second");
+        assert_ne!(first, second);
+        assert_eq!(std::fs::read_dir(&first).expect("read").count(), 0);
+        std::fs::remove_dir(&first).expect("cleanup first");
+        std::fs::remove_dir(&second).expect("cleanup second");
+    }
 
     #[test]
     fn push_destination_policy_accepts_only_canonical_https_443_with_reference() {

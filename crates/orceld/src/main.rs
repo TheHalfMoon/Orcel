@@ -718,11 +718,20 @@ mod tests {
         dir.join("executable_registry.json")
     }
 
+    fn next_temp_sequence() -> u64 {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        // macOS clocks tick in microseconds, so a timestamp alone can repeat
+        // across parallel tests in one process.
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    }
+
     fn temp_root(label: &str) -> PathBuf {
         let suffix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock")
             .as_nanos();
+        let suffix = format!("{suffix}-{}", next_temp_sequence());
         let root = std::env::temp_dir().join(format!("orcel-daemon-{label}-{suffix}"));
         fs::create_dir_all(&root).expect("create temp workspace");
         root
