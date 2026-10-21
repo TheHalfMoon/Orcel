@@ -55,6 +55,16 @@ tokio = { version = "1.47", default-features = false, features = ["net"] }
 orcel-provider-process = { path = "../../crates/orcel-provider-process" }
 tempfile = "3"
 
+# The helper and the kernel client each hash the whole contained executable
+# with their own SHA-256 (#384). Unoptimized, that costs tens of seconds per
+# contained run on a Linux debug build (DWARF makes the binary large), which
+# pushed the Document parser job past its timeout. Optimize just this code.
+[profile.dev.package.orcel-contain]
+opt-level = 3
+
+[profile.dev.package.orcel-provider-process]
+opt-level = 3
+
 [profile.release]
 panic = "abort"
 
