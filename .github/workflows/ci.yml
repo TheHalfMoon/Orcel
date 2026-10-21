@@ -5,6 +5,18 @@ on:
   push:
     branches:
       - main
+  # Manual only: the doc-parser-fuzz job (#389). Not a required check; the
+  # other jobs also run on a dispatch, which is harmless.
+  workflow_dispatch:
+    inputs:
+      fuzz_seconds:
+        description: "Seconds the document parser mutation fuzz runs (doc-parser-fuzz)"
+        default: "600"
+        required: false
+      fuzz_seed:
+        description: "Non-zero seed for the mutation sequence (doc-parser-fuzz)"
+        default: "2654435769"
+        required: false
 
 permissions:
   contents: read
@@ -677,6 +689,49 @@ jobs:
       - name: License, ban and source check of the orcel-doc-parser graph
         if: runner.os == 'Linux'
         run: cargo deny check licenses bans sources
+
+  # #389: the WI-05 acceptance item "fuzz 10 minutes without a crash escaping
+  # the process", run on demand. A time-boxed mutation run of a wider fixture
+  # corpus through the real parser under the real contained tier
+  # (tests/contained.rs, wi05_mutated_inputs_never_escape_the_contained_process).
+  # A crash, ceiling or timeout is contained and counted; its input is kept
+  # as a build artifact for replay. A crash that escaped the contained
+  # process, or a malformed frame, fails the job. Dispatch with:
+  #   gh workflow run CI --ref <branch> -f fuzz_seconds=600
+  doc-parser-fuzz:
+    name: Document parser fuzz (manual)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+        working-directory: apps/orcel-doc-parser
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - name: Build the orcel-contain helper and its probe (its own workspace)
+        run: cargo build --locked --manifest-path ../orcel-contain/Cargo.toml --bins
+      - name: Mutation fuzz under containment
+        env:
+          ORCEL_REQUIRE_CONTAINED_PARSER: "1"
+          ORCEL_WI05_FUZZ_SECONDS: ${{ inputs.fuzz_seconds }}
+          ORCEL_WI05_FUZZ_SEED: ${{ inputs.fuzz_seed }}
+          ORCEL_WI05_FUZZ_CRASH_DIR: ${{ runner.temp }}/doc-parser-fuzz-crashes
+        run: |
+          set -euo pipefail
+          contain=$(cd ../orcel-contain/target/debug && pwd)
+          ORCEL_TEST_CONTAIN_DIR="$contain" cargo test --locked --test contained wi05_mutated -- --nocapture 2>&1 | tee "$RUNNER_TEMP/fuzz.log"
+          {
+            echo "### Document parser fuzz"
+            grep 'wi05 mutation run' "$RUNNER_TEMP/fuzz.log" | sed 's/^/- /'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: doc-parser-fuzz-crashes
+          path: ${{ runner.temp }}/doc-parser-fuzz-crashes
+          if-no-files-found: ignore
 
   # XP-10: the GTK4 approval dialog orceld spawns on Linux. Its own Cargo
   # workspace, so the root build never needs the GTK development files.
