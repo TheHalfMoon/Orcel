@@ -1004,6 +1004,20 @@ mod platform {
             self.request(op, Some(hwnd), Some(binding), max_nodes, max_depth)
         }
 
+        /// XP-12 (#404): the route raw input takes on this host, as the
+        /// kernel checked it at the handshake (on macOS, the hello's
+        /// `macos_background_spi` against orceld's own opt-in). The approval
+        /// prompt names it.
+        pub fn input_route(&self) -> Result<&'static str, UiaError> {
+            let session = self.session.lock().map_err(|_| {
+                UiaError::new(
+                    FailureCode::ProviderUnavailable,
+                    "computer host session lock is poisoned",
+                )
+            })?;
+            Ok(session.negotiated.input_route().describe())
+        }
+
         fn require_native_capability(&self, op: &str) -> Result<(), UiaError> {
             self.session
                 .lock()
@@ -2698,6 +2712,37 @@ mod tests {
         adapter.authorize_input(11, &click(1, 1)).unwrap();
         let error = adapter.execute_raw_input(11, &click(1, 1), 1).unwrap_err();
         assert_eq!(error.code, FailureCode::ProviderUnavailable);
+        assert!(input_ops(&frames).is_empty());
+    }
+
+    /// #404: the adapter names the route the handshake settled, for the
+    /// approval prompt; a macOS host whose SPI report the kernel could not
+    /// match names none and delivers no raw input.
+    #[test]
+    fn the_adapter_names_the_negotiated_input_route() {
+        let (adapter, _) = scripted("linux", |frame| match frame["op"].as_str() {
+            Some("hello") => Some(native_hello(frame, "delivered")),
+            _ => linux_desktop(frame),
+        });
+        let route = adapter.unwrap().input_route().unwrap();
+        assert!(route.starts_with("x11-"), "{route}");
+        let (adapter, frames) = scripted("macos", |frame| match frame["op"].as_str() {
+            Some("hello") => Some(native_reply(
+                frame,
+                json!({"platform": "macos", "backend": "ax", "capabilities": observing_table("delivered")}),
+            )),
+            _ => linux_desktop(frame),
+        });
+        let adapter = adapter.unwrap();
+        assert_eq!(adapter.input_route().unwrap(), "none");
+        adapter.list_processes().unwrap();
+        adapter.authorize_input(11, &click(1, 1)).unwrap();
+        let error = adapter.execute_raw_input(11, &click(1, 1), 1).unwrap_err();
+        assert_eq!(error.code, FailureCode::ProviderUnavailable);
+        assert!(
+            error.message.contains("macos_background_spi_unreported"),
+            "{error:?}"
+        );
         assert!(input_ops(&frames).is_empty());
     }
 
