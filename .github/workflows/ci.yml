@@ -1177,6 +1177,13 @@ jobs:
         # --upstream downloads the crate from crates.io and checks its
         # checksum and tree id, so the ids recorded here are not trusted alone.
         run: node scripts/check-vendored-lopdf.mjs --upstream
+      - name: No unreviewed RustSec advisory affects the vendored lopdf
+        # cargo audit cannot match a path dependency against RustSec (#399).
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node --test scripts/check-lopdf-advisories.test.mjs
+          node scripts/check-lopdf-advisories.mjs
       - name: Validate SpecGrain JSON and canonical evidence
         shell: python
         run: |

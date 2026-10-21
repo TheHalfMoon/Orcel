@@ -541,6 +541,11 @@ pub fn repeated_form_pdf(pages: usize, zeros: usize) -> Vec<u8> {
 /// prove a crash is contained and reported (`src/main.rs`).
 pub const ABORT_TRIGGER: &[u8] = b"ORCEL-WI05-TEST-ABORT";
 
+/// Debug builds only: a prefix that makes the parser run the PDF after it
+/// through pdf-inspector alone, with no pre-flight and no parity watch
+/// (`src/main.rs`).
+pub const UNCHECKED_TRIGGER: &[u8] = b"ORCEL-WI05-TEST-UNCHECKED\n";
+
 /// A macro project under an innocent name, recognisable only by the content
 /// type the package declares for it.
 pub fn renamed_macro_docx() -> Vec<u8> {
