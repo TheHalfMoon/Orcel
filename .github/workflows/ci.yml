@@ -1130,9 +1130,17 @@ jobs:
       - name: Vendored Cua Driver crates match the upstream pin outside PATCHES.md
         # --upstream also reads each tree id from trycua/cua on GitHub, so the
         # ids recorded in this repository are not trusted on their own.
+        # --require-anchor also checks the matrix and registry against
+        # origin/main (#355): matching edits to the provenance and the matrix
+        # fail, and a missing origin/main is a failure, not a note. A re-pin
+        # of the donor therefore fails this step until the re-pin itself is
+        # reviewed and merged as a governance change.
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/check-vendored-cua.mjs --upstream
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin +refs/heads/main:refs/remotes/origin/main
+          node scripts/check-vendored-cua.mjs --upstream --require-anchor
       - name: Vendored lopdf matches its crates.io release outside PATCHES.md
         # --upstream downloads the crate from crates.io and checks its
         # checksum and tree id, so the ids recorded here are not trusted alone.

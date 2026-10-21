@@ -37,8 +37,11 @@
 // another ref), each tree id must also equal that ref's transplant matrix row
 // and donor registry pin, so matching edits to the provenance and the matrix
 // fail locally. A re-pin is checked with --upstream, against GitHub.
+// --require-anchor makes a missing anchor ref a failure instead of a note, and
+// runs the anchor check even with --upstream; CI's Governance job uses it
+// after fetching origin/main, so the anchor is enforced there too.
 //
-// Usage: node scripts/check-vendored-cua.mjs [--upstream] [--anchor <ref>]
+// Usage: node scripts/check-vendored-cua.mjs [--upstream] [--anchor <ref>] [--require-anchor]
 // Dependency-free; needs git on PATH. Exits 1 on any mismatch.
 import { Buffer, isUtf8 } from "node:buffer";
 import { execFileSync } from "node:child_process";
@@ -175,7 +178,7 @@ function mktree(files) {
   return git(["mktree", "--missing", "-z"], lines.map((l) => `${l}\0`).join("")).trim();
 }
 
-export async function check({ upstream = false, anchor = "origin/main" } = {}) {
+export async function check({ upstream = false, anchor = "origin/main", requireAnchor = false } = {}) {
   const provenance = JSON.parse(readFileSync(provenancePath, "utf8"));
   const patches = readFileSync(join(repoRoot, vendorRoot, "PATCHES.md"), "utf8");
   const matrix = new Map(JSON.parse(readFileSync(matrixPath, "utf8")).rows.map((row) => [row.id, row]));
@@ -190,7 +193,7 @@ export async function check({ upstream = false, anchor = "origin/main" } = {}) {
   const summaryHead = [];
   // The local anchor: the matrix and registry as the reviewed branch has them.
   let anchorMatrix = null;
-  if (!upstream) {
+  if (!upstream || requireAnchor) {
     const anchoredRows = anchoredJson(anchor, matrixRelative);
     const anchoredRegistry = anchoredJson(anchor, registryRelative);
     if (anchoredRows && anchoredRegistry) {
@@ -201,7 +204,8 @@ export async function check({ upstream = false, anchor = "origin/main" } = {}) {
       }
       summaryHead.push(`anchor: matrix and registry also checked against ${anchor}`);
     } else {
-      summaryHead.push(`anchor: ${anchor} is not available; the working-tree matrix is not cross-checked (run with --upstream)`);
+      if (requireAnchor) errors.push(`anchor ${anchor} is not available; fetch it (git fetch origin main)`);
+      else summaryHead.push(`anchor: ${anchor} is not available; the working-tree matrix is not cross-checked (run with --upstream)`);
     }
   }
   const anchored = (name, id, record) => {
@@ -411,7 +415,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     console.error("error: --anchor needs a git ref");
     process.exit(1);
   }
-  const { errors, summary } = await check({ upstream, anchor });
+  const requireAnchor = process.argv.includes("--require-anchor");
+  const { errors, summary } = await check({ upstream, anchor, requireAnchor });
   for (const line of summary) console.log(line);
   if (errors.length) {
     for (const e of errors) console.error(`error: ${e}`);
