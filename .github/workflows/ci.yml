@@ -67,6 +67,35 @@ jobs:
         env:
           ORCEL_REQUIRE_LIVE_CLIPBOARD: "1"
         run: xvfb-run -a cargo test -p orcel-provider-clipboard -- xp15_ sg000064_ --test-threads=1
+      # #356 item 2: the Wayland path (wl-clipboard-rs get_contents into the
+      # bounded pipe reader, and the bounded serving threads) against a real
+      # data-control compositor: a headless sway (wlroots). The tests fail
+      # instead of skipping when ORCEL_REQUIRE_LIVE_WAYLAND is set.
+      - name: Live clipboard roundtrip (Linux, headless sway)
+        if: runner.os == 'Linux'
+        env:
+          ORCEL_REQUIRE_LIVE_WAYLAND: "1"
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends sway
+          runtime=$(mktemp -d)
+          chmod 0700 "$runtime"
+          export XDG_RUNTIME_DIR="$runtime"
+          unset DISPLAY WAYLAND_DISPLAY
+          WLR_BACKENDS=headless WLR_RENDERER=pixman WLR_LIBINPUT_NO_DEVICES=1 \
+            sway -c /dev/null > "$RUNNER_TEMP/sway.log" 2>&1 &
+          sway_pid=$!
+          for attempt in $(seq 1 50); do
+            if [ -S "$runtime/wayland-1" ]; then break; fi
+            sleep 0.1
+          done
+          export WAYLAND_DISPLAY=wayland-1
+          status=0
+          cargo test -p orcel-provider-clipboard --lib -- xp15_wayland --test-threads=1 || status=$?
+          kill "$sway_pid" || true
+          tail -n 20 "$RUNNER_TEMP/sway.log"
+          exit "$status"
       - name: Live clipboard roundtrip (macOS)
         if: runner.os == 'macOS'
         env:
