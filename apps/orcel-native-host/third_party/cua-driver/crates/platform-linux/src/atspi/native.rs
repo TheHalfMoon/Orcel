@@ -5372,35 +5372,57 @@ pub fn set_value_ref(object_ref: &ObjectRef, value: &str) -> Result<()> {
     )
 }
 
-/// Orcel P-09 (XP-11): whether a state read says the element is on, from the
-/// read's `(Checked, Pressed)` flags. A check box reports `Checked`, a GTK4
-/// toggle button `Pressed`. A read that failed or returned nothing is an
-/// error, never "off": a toggle must not act on a state it could not read.
+/// Orcel P-09 (XP-11), P-12 (#401): the live two-state reading of a toggle.
+#[cfg(feature = "orcel-minimal")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiveToggle {
+    Off,
+    On,
+    /// `Indeterminate`: a half-checked box. A toggle refuses it, as macOS
+    /// refuses an `AXValue` of 2: pressing it reaches no state the approval
+    /// named.
+    Mixed,
+}
+
+/// Orcel P-09 (XP-11), P-12 (#401): the toggle state a state read shows, from
+/// the read's `(Checked, Pressed, Indeterminate)` flags. A check box reports
+/// `Checked`, a GTK4 toggle button `Pressed`, a half-checked box
+/// `Indeterminate` (mixed, whatever else it reports). A read that failed or
+/// returned nothing is an error, never "off": a toggle must not act on a state
+/// it could not read.
 #[cfg(feature = "orcel-minimal")]
 pub fn toggled_from_state_read<E: std::fmt::Display>(
-    read: Option<Result<(bool, bool), E>>,
-) -> Result<bool> {
+    read: Option<Result<(bool, bool, bool), E>>,
+) -> Result<LiveToggle> {
     match read {
-        Some(Ok((checked, pressed))) => Ok(checked || pressed),
+        Some(Ok((_, _, true))) => Ok(LiveToggle::Mixed),
+        Some(Ok((checked, pressed, false))) if checked || pressed => Ok(LiveToggle::On),
+        Some(Ok(_)) => Ok(LiveToggle::Off),
         Some(Err(error)) => Err(anyhow!("the live state could not be read: {error}")),
         None => Err(anyhow!("the live state read did not answer in time")),
     }
 }
 
-/// Orcel P-09 (XP-11): the live role name and checked state of a
+/// Orcel P-09 (XP-11): the live role name and toggle state of a
 /// snapshot-cached object, read right before an action. One state read and
 /// one role read; no tree walk.
 #[cfg(feature = "orcel-minimal")]
-pub fn live_role_and_checked_ref(object_ref: &ObjectRef) -> Result<(String, bool)> {
+pub fn live_role_and_toggle_ref(object_ref: &ObjectRef) -> Result<(String, LiveToggle)> {
     bounded_for(
         REF_ACTION_BUDGET,
         async {
             let conn = shared_connection().await?;
             let (acc, role) = live_accessible(conn, object_ref).await?;
-            let checked = toggled_from_state_read(call(acc.get_state()).await.map(|read| {
-                read.map(|state| (state.contains(State::Checked), state.contains(State::Pressed)))
+            let toggle = toggled_from_state_read(call(acc.get_state()).await.map(|read| {
+                read.map(|state| {
+                    (
+                        state.contains(State::Checked),
+                        state.contains(State::Pressed),
+                        state.contains(State::Indeterminate),
+                    )
+                })
             }))?;
-            Ok((role, checked))
+            Ok((role, toggle))
         },
         || Err(anyhow!("live state read (cached element) timed out")),
     )

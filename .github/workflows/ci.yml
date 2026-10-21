@@ -326,7 +326,9 @@ jobs:
         # on its Orcel approval window, keeps pixel-addressed frames denied,
         # and takes one real value write and press; through the registry, an
         # action reaches the host only under an approval armed on its exact
-        # target, and one approval is one action.
+        # target, and one approval is one action. The P-09 tool's own live
+        # AT-SPI re-read is driven directly on Cua's GTK3 harness check
+        # button and on a mixed (half-checked) box, which it refuses (#401).
         # XP-12: raw input to a Tk probe that journals what it receives (Cua
         # refuses background pointer input to GTK without a uinput pointer,
         # which Xvfb cannot have), through the real host (window-relative
@@ -353,6 +355,7 @@ jobs:
             cargo test --locked --release -p orcel-native-host --test live_observation -- --nocapture
             cargo test --locked --release -p orcel-native-host --test live_capture -- --nocapture
             cargo test --locked --release -p orcel-native-host --test live_actions -- --nocapture
+            cargo test --locked --release -p orcel-native-host --bin orcel-native-host -- --exact cua_adapter::atspi_reread_tests::xp11_live_atspi_reread_acts_on_the_live_toggle_state --nocapture
             cargo test --locked --release -p orcel-native-host --test live_input -- --nocapture
             cd ../..
             cargo test --locked -p orcel-provider-uia --test xp06_native_host_live -- --nocapture

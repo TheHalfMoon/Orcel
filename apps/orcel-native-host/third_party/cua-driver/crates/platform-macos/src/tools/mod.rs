@@ -1765,6 +1765,14 @@ pub(crate) mod orcel_semantic {
             // SAFETY: as above.
             let live = unsafe { copy_number_attr(element, "AXValue") };
             match (live, call.toggle_to) {
+                // P-12: AXValue 2 is a mixed (half-checked) box; any value
+                // but 0 or 1 reaches no state the approval named.
+                (Some(value), Some(_)) if value != 0.0 && value != 1.0 => {
+                    return refusal(
+                        "capability_denied",
+                        "the element is in a mixed state, so a toggle would not reach the requested state",
+                    )
+                }
                 (Some(value), Some(wanted)) if (value != 0.0) == wanted => {
                     return refusal(
                         "target_stale",
