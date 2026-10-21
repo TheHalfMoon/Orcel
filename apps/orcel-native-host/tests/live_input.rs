@@ -562,13 +562,14 @@ fn xp12_raw_input_lands_where_approved_and_nowhere_else() {
 fn human_input_cancels(host: &mut Host, reference: &Value, probe: &Probe, keys: bool) {
     let before = read_state(&probe.state).unwrap();
     let read = tick(host);
-    std::thread::sleep(Duration::from_millis(1500));
+    // A touch tens of milliseconds after the read is enough: the tolerance is
+    // clock jitter (30 ms), not half a second.
+    std::thread::sleep(Duration::from_millis(100));
     let moved = Command::new("xdotool")
         .args(["mousemove_relative", "--", "1", "1"])
         .status()
         .expect("xdotool runs");
     assert!(moved.success());
-    std::thread::sleep(Duration::from_millis(500));
     let reply = host.request(
         "input_click",
         json!({"window": reference, "x": 30, "y": 30, "button": "left",
@@ -583,6 +584,33 @@ fn human_input_cancels(host: &mut Host, reference: &Value, probe: &Probe, keys: 
         assert_refused(&reply, "cancelled", "typing after human input");
     }
     assert_unchanged(probe, &before, "human input");
+
+    // A person who keeps moving through the Approve click and the start of the
+    // sequence: the baseline the kernel reads right after Approve already
+    // includes their last touch, so only the quiet period catches them. The
+    // pointer moves every 40 ms for 800 ms while the input is requested.
+    let mover = std::thread::spawn(|| {
+        for _ in 0..20 {
+            let _ = Command::new("xdotool")
+                .args(["mousemove_relative", "--", "1", "0"])
+                .status();
+            std::thread::sleep(Duration::from_millis(40));
+        }
+    });
+    std::thread::sleep(Duration::from_millis(120));
+    let during = tick(host);
+    let reply = host.request(
+        "input_click",
+        json!({"window": reference, "x": 30, "y": 30, "button": "left",
+               "click_count": 1, "expected_last_input_tick": during}),
+    );
+    assert_refused(
+        &reply,
+        "cancelled",
+        "a click while the person is still moving",
+    );
+    mover.join().unwrap();
+    assert_unchanged(probe, &before, "a person still moving");
     // With the tick read again, the same click goes through.
     let reply = input(
         host,

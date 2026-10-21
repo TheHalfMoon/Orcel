@@ -963,6 +963,65 @@ async fn input_gate(
     Ok(bound)
 }
 
+/// The window's observed tree, or the refusal that says why it cannot be used.
+async fn observe_elements(
+    runtime: &CuaRuntime,
+    id: u64,
+    bound: &BoundWindow,
+) -> Result<Vec<WindowElement>, Response> {
+    let observed = runtime
+        .call(&CuaCall::observe(
+            bound.binding.pid,
+            bound.binding.id,
+            protocol::MAX_TREE_NODES as u32,
+            protocol::MAX_TREE_DEPTH as u32,
+        ))
+        .await;
+    match observed {
+        Ok(state) => match state.get("elements").cloned() {
+            None => Ok(Vec::new()),
+            Some(elements) => serde_json::from_value(elements).map_err(|error| {
+                Response::failure(
+                    id,
+                    code::PROVIDER_UNAVAILABLE,
+                    bounded_message(&format!(
+                        "the Cua element list did not match its contract: {error}"
+                    )),
+                )
+            }),
+        },
+        Err(failure) if is_stale(&failure) => Err(Response::failure(
+            id,
+            code::TARGET_STALE,
+            "window closed while it was observed",
+        )),
+        Err(failure) => Err(cua_unavailable(id, &failure)),
+    }
+}
+
+/// Typed text and keys land in whatever control holds the focus, which the host
+/// cannot see. They are delivered only to a window whose accessibility tree
+/// can be read and shows no secure field; a window with no readable tree (Tk,
+/// a bare Xlib or SDL program) cannot be shown to have none, so it takes no
+/// keyboard input.
+fn keyboard_tree_refusal(id: u64, elements: &[WindowElement]) -> Option<Response> {
+    if input::shows_secure_field(elements) {
+        return Some(Response::failure(
+            id,
+            code::PROTECTED_SURFACE,
+            "the window shows a password or secure field; no input is delivered to it",
+        ));
+    }
+    if elements.is_empty() {
+        return Some(Response::failure(
+            id,
+            code::PROTECTED_SURFACE,
+            "the window exposes no accessibility tree, so a secure field cannot be excluded; typed input is not delivered to it",
+        ));
+    }
+    None
+}
+
 /// Physical window pixels per point: what a capture of the window measures
 /// on macOS, where a Retina window captures at twice its point size; 1 on X11.
 async fn input_scale(
@@ -1068,33 +1127,13 @@ async fn input_action(runtime: &CuaRuntime, request: &Request, platform: HostPla
         Ok(plan) => plan,
         Err(refusal) => return refuse(refusal.code, &refusal.message),
     };
-    let observed = runtime
-        .call(&CuaCall::observe(
-            first.binding.pid,
-            first.binding.id,
-            protocol::MAX_TREE_NODES as u32,
-            protocol::MAX_TREE_DEPTH as u32,
-        ))
-        .await;
-    let elements: Vec<WindowElement> = match observed {
-        Ok(state) => match state.get("elements").cloned() {
-            None => Vec::new(),
-            Some(elements) => match serde_json::from_value(elements) {
-                Ok(elements) => elements,
-                Err(error) => {
-                    return refuse(
-                        code::PROVIDER_UNAVAILABLE,
-                        &bounded_message(&format!(
-                            "the Cua element list did not match its contract: {error}"
-                        )),
-                    )
-                }
-            },
-        },
-        Err(failure) if is_stale(&failure) => {
-            return refuse(code::TARGET_STALE, "window closed while it was observed")
-        }
-        Err(failure) => return cua_unavailable(id, &failure),
+    let keyboard = plan
+        .units
+        .iter()
+        .any(|unit| matches!(unit, input::Unit::Text(_) | input::Unit::Key(_)));
+    let elements = match observe_elements(runtime, id, &first).await {
+        Ok(elements) => elements,
+        Err(refusal) => return refusal,
     };
     if input::shows_secure_field(&elements) {
         return refuse(
@@ -1102,16 +1141,40 @@ async fn input_action(runtime: &CuaRuntime, request: &Request, platform: HostPla
             "the window shows a password or secure field; no input is delivered to it",
         );
     }
+    if keyboard {
+        if let Some(refusal) = keyboard_tree_refusal(id, &elements) {
+            return refusal;
+        }
+    }
     let scale = match input_scale(runtime, platform, &first.window).await {
         Ok(scale) => scale,
         Err(message) => return refuse(code::PROVIDER_UNAVAILABLE, &message),
     };
     let total = plan.units.len();
-    // The tick the person is held to. Delivering a unit moves the X server's
-    // idle clock (the host's own events count as input there), so after each
-    // unit the baseline is read again once the event has been processed. Only
-    // a touch of the keyboard or pointer after that read, before the next
-    // unit's gate, cancels the rest.
+    // The person must have been quiet before the first unit. The kernel read
+    // its baseline right after the Approve click, so a person still typing or
+    // moving then has the tick moving under the wait below, and the input is
+    // cancelled.
+    if let (Ok(clock), Ok(last)) = (input::tick::clock_ms(), input::tick::current()) {
+        let remaining = input::quiet_remaining_ms(clock, last);
+        if remaining > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(u64::from(remaining))).await;
+            match input::tick::current() {
+                Ok(now) if input::tick_is_fresh(last, now) => {}
+                _ => {
+                    return refuse(
+                        code::CANCELLED,
+                        "human input continued after the approval, so the input was not sent",
+                    )
+                }
+            }
+        }
+    }
+    // The tick the person is held to. The host's own events move the X
+    // server's idle clock, so after each unit the tick is read again and must
+    // be explained by that unit's own delivery time (or not have moved). The
+    // person's keystrokes between units are neither, so they cancel the rest;
+    // they are never adopted as the new baseline.
     let mut baseline = expected_tick;
     for (index, unit) in plan.units.iter().enumerate() {
         let mut points = unit.points();
@@ -1124,6 +1187,18 @@ async fn input_action(runtime: &CuaRuntime, request: &Request, platform: HostPla
                 Err(refusal) if index == 0 => return refusal,
                 Err(refusal) => return partial_input(id, index, total, refusal),
             };
+        // Each keyboard unit re-reads the tree: a secure field may have
+        // appeared, or the window changed what it shows.
+        if index > 0 && matches!(unit, input::Unit::Text(_) | input::Unit::Key(_)) {
+            let refusal = match observe_elements(runtime, id, &bound).await {
+                Ok(elements) => keyboard_tree_refusal(id, &elements),
+                Err(refusal) => Some(refusal),
+            };
+            if let Some(refusal) = refusal {
+                return partial_input(id, index, total, refusal);
+            }
+        }
+        let started = input::tick::clock_ms();
         let call = CuaCall::Input(input_call(unit, bound.binding.pid, bound.binding.id, scale));
         if let Err(failure) = runtime.call(&call).await {
             if index == 0 {
@@ -1133,8 +1208,24 @@ async fn input_action(runtime: &CuaRuntime, request: &Request, platform: HostPla
         }
         if index + 1 < total {
             tokio::time::sleep(INPUT_SETTLE).await;
-            if let Ok(now) = input::tick::current() {
-                baseline = now;
+            let ended = input::tick::clock_ms();
+            match (started, ended, input::tick::current()) {
+                (Ok(start), Ok(end), Ok(after))
+                    if input::explained_by_own_events(baseline, after, start, end) =>
+                {
+                    baseline = after;
+                }
+                _ => {
+                    return partial_input(
+                        id,
+                        index + 1,
+                        total,
+                        refuse(
+                            code::CANCELLED,
+                            "human input arrived between units, so the rest was not sent",
+                        ),
+                    )
+                }
             }
         }
     }

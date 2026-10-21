@@ -70,10 +70,16 @@ pub const MAX_SCROLL_LINES: i64 = 20;
 pub const MAX_CLICK_COUNT: i64 = 3;
 /// Window-relative coordinates beyond this are malformed, not merely outside.
 const MAX_COORDINATE: i64 = 1_000_000;
-/// How far the human-input tick may differ from the one the kernel read.
-/// The readers have 10 ms resolution and the two reads are separated by the
-/// kernel's own bookkeeping; a keystroke or pointer move is far above this.
-pub const TICK_TOLERANCE_MS: u32 = 500;
+/// How far the human-input tick may differ from the one it is held to: clock
+/// jitter only. The readers have at most 10 ms resolution, so a keystroke or a
+/// pointer move after the read is above this.
+pub const TICK_TOLERANCE_MS: u32 = 30;
+/// The person must have been quiet this long before the first unit: the
+/// baseline the kernel read is taken right after the Approve click, and a
+/// person still typing or moving at that moment is not a person who agreed to
+/// this input. The worker waits out the remainder and requires the tick not to
+/// move meanwhile.
+pub const QUIET_MS: u32 = 250;
 /// The most a window may move or resize between the plan and a unit, in
 /// points, before the plan is stale.
 pub const FRAME_DRIFT_POINTS: f64 = 1.0;
@@ -507,6 +513,31 @@ pub fn tick_is_fresh(expected: u32, now: u32) -> bool {
     delta.unsigned_abs() <= TICK_TOLERANCE_MS
 }
 
+/// Whether the tick read after a delivery unit is explained by the host's own
+/// events or by nothing happening: it equals the baseline (the host's events
+/// did not move this clock, as with `CGEventPostToPid`), or it lies in the
+/// time the unit was being delivered (`start` to `end`, with a settle margin,
+/// all in the tick clock). Anything else is the person touching the keyboard
+/// or pointer, and the rest of the sequence is not sent.
+pub fn explained_by_own_events(baseline: u32, after: u32, start: u32, end: u32) -> bool {
+    if tick_is_fresh(baseline, after) {
+        return true;
+    }
+    let from = start.wrapping_sub(TICK_TOLERANCE_MS);
+    let span = end.wrapping_sub(from).wrapping_add(TICK_TOLERANCE_MS);
+    after.wrapping_sub(from) <= span
+}
+
+/// How long the person must still stay quiet before the first unit, given the
+/// current tick clock and the last input: zero when they already were.
+pub fn quiet_remaining_ms(clock: u32, last_input: u32) -> u32 {
+    let idle = clock.wrapping_sub(last_input) as i32;
+    if idle < 0 {
+        return QUIET_MS;
+    }
+    QUIET_MS.saturating_sub(idle as u32)
+}
+
 /// Physical capture pixels per point: 1 or 2, the only coherent macOS window
 /// capture ratios, within a rounding tolerance. Anything else is a frame the
 /// capture and the window list disagree on, and input is not delivered.
@@ -592,6 +623,12 @@ pub mod tick {
         imp::current()
     }
 
+    /// The clock the tick is measured on, in milliseconds: the machine's
+    /// monotonic clock.
+    pub fn clock_ms() -> Result<u32, String> {
+        imp::clock_ms()
+    }
+
     #[cfg(target_os = "linux")]
     mod imp {
         use x11rb::connection::Connection as _;
@@ -608,6 +645,10 @@ pub mod tick {
                 .and_then(|field| field.parse().ok())
                 .ok_or_else(|| "/proc/uptime is malformed".to_owned())?;
             Ok((seconds * 1000.0) as u64)
+        }
+
+        pub fn clock_ms() -> Result<u32, String> {
+            uptime_ms().map(|ms| ms as u32)
         }
 
         pub fn current() -> Result<u32, String> {
@@ -656,6 +697,10 @@ pub mod tick {
             Ok(now.tv_sec as u64 * 1000 + now.tv_nsec as u64 / 1_000_000)
         }
 
+        pub fn clock_ms() -> Result<u32, String> {
+            monotonic_ms().map(|ms| ms as u32)
+        }
+
         pub fn current() -> Result<u32, String> {
             // SAFETY: a plain CoreGraphics query taking two integers and
             // returning a number of seconds; it reads no memory of ours.
@@ -672,6 +717,10 @@ pub mod tick {
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     mod imp {
         pub fn current() -> Result<u32, String> {
+            Err("no human-input clock exists on this platform".to_owned())
+        }
+
+        pub fn clock_ms() -> Result<u32, String> {
             Err("no human-input clock exists on this platform".to_owned())
         }
     }
@@ -1099,8 +1148,63 @@ mod tests {
         // A tick the kernel could not read (0) never matches a live one.
         assert!(!tick_is_fresh(0, 5_000_000));
         // The tick wraps every 49.7 days.
-        assert!(tick_is_fresh(u32::MAX - 100, 100));
+        assert!(tick_is_fresh(u32::MAX - 10, 10));
         assert!(!tick_is_fresh(u32::MAX - 100, 2_000));
+        // Keystrokes arrive tens of milliseconds apart: the blind spot is
+        // clock jitter, not half a second.
+        assert!(!tick_is_fresh(1_000, 1_000 + 100));
+        assert!(TICK_TOLERANCE_MS <= 30);
+    }
+
+    #[test]
+    fn the_hosts_own_events_move_the_baseline_and_a_persons_do_not() {
+        // A unit delivered between 5_000 and 5_020 moves the idle clock to
+        // 5_010: that is explained. No movement at all is explained too.
+        assert!(explained_by_own_events(1_000, 5_010, 5_000, 5_020));
+        assert!(explained_by_own_events(1_000, 1_005, 5_000, 5_020));
+        // A person typing keeps the tick newer than the unit: not explained,
+        // however many times it is read.
+        assert!(!explained_by_own_events(1_000, 5_150, 5_000, 5_020));
+        assert!(!explained_by_own_events(1_000, 5_100, 5_000, 5_020));
+        // A touch before the unit began and after the baseline.
+        assert!(!explained_by_own_events(1_000, 3_000, 5_000, 5_020));
+        // The clock wraps.
+        assert!(explained_by_own_events(
+            u32::MAX - 500,
+            5,
+            u32::MAX - 20,
+            30
+        ));
+        assert!(!explained_by_own_events(
+            u32::MAX - 500,
+            500,
+            u32::MAX - 20,
+            30
+        ));
+        // A person who keeps typing through a whole sequence is caught at the
+        // first unit that follows a keystroke outside the unit's own window.
+        let strokes = [5_150u32, 5_400, 5_650];
+        let mut baseline = 1_000u32;
+        let mut cancelled = false;
+        for (index, stroke) in strokes.iter().enumerate() {
+            let start = 5_000 + index as u32 * 250;
+            if !explained_by_own_events(baseline, *stroke, start, start + 20) {
+                cancelled = true;
+                break;
+            }
+            baseline = *stroke;
+        }
+        assert!(cancelled);
+    }
+
+    #[test]
+    fn the_person_must_have_been_quiet_before_the_first_unit() {
+        assert_eq!(quiet_remaining_ms(10_000, 9_000), 0);
+        assert_eq!(quiet_remaining_ms(10_000, 10_000 - QUIET_MS), 0);
+        assert_eq!(quiet_remaining_ms(10_000, 9_900), QUIET_MS - 100);
+        assert_eq!(quiet_remaining_ms(10_000, 10_000), QUIET_MS);
+        // An input stamped in the future of the clock is not quiet either.
+        assert_eq!(quiet_remaining_ms(10_000, 10_500), QUIET_MS);
     }
 
     fn window(id: u64, x: f64, y: f64, w: f64, h: f64, z: Option<i64>) -> WindowInfo {
