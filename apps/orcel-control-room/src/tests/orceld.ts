@@ -13,7 +13,8 @@ import path from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
-import { orceldTransport, type AppApiConnector } from "../agentkit/transport/orceld-transport.js";
+import type { AppApiConnector } from "../agentkit/transport/orceld-transport.js";
+import { unverifiedTestConnector } from "./unverified-pipe.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // dist/tests -> apps/orcel-control-room -> repository root
@@ -54,12 +55,13 @@ export function uniqueInstance(label: string): string {
 }
 
 /**
- * The connector for tests. On Windows it opts in to the unverified pipe
- * connect that the default connector refuses (orceld-transport.ts header):
- * the test itself started the daemon that owns the pipe.
+ * The connector for tests. On Windows it uses the unverified pipe connect
+ * that the production connector refuses (orceld-transport.ts header) and
+ * that only test builds contain (./unverified-pipe.ts): the test itself
+ * started the daemon that owns the pipe.
  */
 export function testTransport(endpoint: string): Promise<AppApiConnector> {
-  return orceldTransport({ endpoint, allowUnverifiedWindowsPipe: true });
+  return Promise.resolve(unverifiedTestConnector(endpoint));
 }
 
 export interface Sandbox {

@@ -110,6 +110,14 @@ mod x11_owner {
         /// Answers with INCR, then sends these chunks and the empty end
         /// marker; `None` sends 4 KiB chunks forever.
         Incremental(Option<Vec<Vec<u8>>>),
+        /// Answers with INCR, then sends 16-byte chunks forever, waiting
+        /// this long before each: far below the size cap, so only the
+        /// overall deadline can end the read (#356 item 3).
+        Trickle(Duration),
+        /// First sends SelectionNotify events that do not answer the
+        /// request (another selection, another target, another property),
+        /// then answers with this text (#356 item 5).
+        SpoofThenDirect(Vec<u8>),
     }
 
     struct FakeOwner {
@@ -187,9 +195,38 @@ mod x11_owner {
                 };
                 match (event, &behavior) {
                     (Event::SelectionRequest(_), Behavior::Silent) => {}
-                    (Event::SelectionRequest(request), Behavior::Direct(_))
-                    | (Event::SelectionRequest(request), Behavior::Incremental(_)) => {
-                        if let Behavior::Direct(data) = &behavior {
+                    (Event::SelectionRequest(request), _) => {
+                        if let Behavior::SpoofThenDirect(_) = &behavior {
+                            let primary = u32::from(x11rb::protocol::xproto::AtomEnum::PRIMARY);
+                            let string = u32::from(x11rb::protocol::xproto::AtomEnum::STRING);
+                            let none = u32::from(x11rb::protocol::xproto::AtomEnum::NONE);
+                            for (selection, target, property) in [
+                                (primary, request.target, none),
+                                (request.selection, string, none),
+                                (request.selection, request.target, utf8),
+                            ] {
+                                let spoof = SelectionNotifyEvent {
+                                    response_type: SELECTION_NOTIFY_EVENT,
+                                    sequence: 0,
+                                    time: request.time,
+                                    requestor: request.requestor,
+                                    selection,
+                                    target,
+                                    property,
+                                };
+                                conn.send_event(
+                                    false,
+                                    request.requestor,
+                                    EventMask::NO_EVENT,
+                                    spoof,
+                                )
+                                .unwrap();
+                            }
+                            conn.flush().unwrap();
+                            std::thread::sleep(Duration::from_millis(100));
+                        }
+                        if let Behavior::Direct(data) | Behavior::SpoofThenDirect(data) = &behavior
+                        {
                             conn.change_property8(
                                 PropMode::REPLACE,
                                 request.requestor,
@@ -230,7 +267,10 @@ mod x11_owner {
                             .unwrap();
                         conn.flush().unwrap();
                     }
-                    (Event::PropertyNotify(event), Behavior::Incremental(chunks)) => {
+                    (
+                        Event::PropertyNotify(event),
+                        Behavior::Incremental(_) | Behavior::Trickle(_),
+                    ) => {
                         let Some((requestor, property, index)) = sending else {
                             continue;
                         };
@@ -240,9 +280,16 @@ mod x11_owner {
                         {
                             continue;
                         }
-                        let chunk = match chunks {
-                            None => vec![b'a'; 4096],
-                            Some(chunks) => chunks.get(index).cloned().unwrap_or_default(),
+                        let chunk = match &behavior {
+                            Behavior::Incremental(None) => vec![b'a'; 4096],
+                            Behavior::Incremental(Some(chunks)) => {
+                                chunks.get(index).cloned().unwrap_or_default()
+                            }
+                            Behavior::Trickle(delay) => {
+                                std::thread::sleep(*delay);
+                                vec![b't'; 16]
+                            }
+                            _ => continue,
                         };
                         let finished = chunk.is_empty();
                         // Writes after the reader has gone fail; ignore them.
@@ -332,5 +379,182 @@ mod x11_owner {
             .expect("INCR text");
         assert_eq!(text.len(), 6003);
         assert!(text.starts_with('x') && text.ends_with("yend"));
+    }
+
+    /// #356 item 3: an INCR owner that keeps sending small chunks slowly
+    /// never reaches the size cap; the overall deadline still ends the read.
+    #[test]
+    fn xp15_x11_slow_incr_trickle_hits_the_overall_deadline() {
+        let _guard = crate::tests::native_clipboard_test_lock();
+        if !display_or_skip("xp15_x11_slow_incr_trickle_hits_the_overall_deadline") {
+            return;
+        }
+        let _owner = spawn_owner(Behavior::Trickle(Duration::from_millis(150)));
+        let started = Instant::now();
+        let error = x11_read_text(Duration::from_secs(1), MAX_CLIPBOARD_BYTES)
+            .expect_err("a trickling INCR owner must not hold the read");
+        assert_eq!(error.code, FailureCode::ProviderUnavailable);
+        assert!(error.message.contains("deadline"), "{}", error.message);
+        let elapsed = started.elapsed();
+        assert!(elapsed >= Duration::from_millis(900), "{elapsed:?}");
+        assert!(elapsed < Duration::from_secs(4), "{elapsed:?}");
+    }
+
+    /// #356 item 1: a client that holds the X server grabbed stalls every
+    /// other client's requests. The read still ends at its deadline,
+    /// whether the grab started before the connection setup or not.
+    #[test]
+    fn xp15_x11_a_grabbed_server_cannot_stall_the_read() {
+        let _guard = crate::tests::native_clipboard_test_lock();
+        if !display_or_skip("xp15_x11_a_grabbed_server_cannot_stall_the_read") {
+            return;
+        }
+        let stop = Arc::new(AtomicBool::new(false));
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let grab_stop = Arc::clone(&stop);
+        let grabber = std::thread::spawn(move || {
+            let (conn, _) = x11rb::connect(None).unwrap();
+            conn.grab_server().unwrap();
+            // A round trip, so the grab is in force before the read starts.
+            conn.get_input_focus().unwrap().reply().unwrap();
+            ready_tx.send(()).unwrap();
+            while !grab_stop.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            conn.ungrab_server().unwrap();
+            conn.flush().unwrap();
+        });
+        ready_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the grab is in force");
+        let started = Instant::now();
+        let error = x11_read_text(Duration::from_millis(500), MAX_CLIPBOARD_BYTES)
+            .expect_err("a grabbed server must not block the read");
+        let elapsed = started.elapsed();
+        stop.store(true, Ordering::SeqCst);
+        grabber.join().unwrap();
+        assert_eq!(error.code, FailureCode::ProviderUnavailable);
+        assert!(error.message.contains("deadline"), "{}", error.message);
+        assert!(elapsed < Duration::from_secs(3), "{elapsed:?}");
+    }
+
+    /// #356 item 5: SelectionNotify events that do not answer this request
+    /// (another selection, another target, another property) are ignored;
+    /// the real answer is still read.
+    #[test]
+    fn xp15_x11_a_spoofed_selection_notify_is_ignored() {
+        let _guard = crate::tests::native_clipboard_test_lock();
+        if !display_or_skip("xp15_x11_a_spoofed_selection_notify_is_ignored") {
+            return;
+        }
+        let _owner = spawn_owner(Behavior::SpoofThenDirect(b"real answer".to_vec()));
+        let text = x11_read_text(Duration::from_secs(5), MAX_CLIPBOARD_BYTES).unwrap();
+        assert_eq!(text.as_deref(), Some("real answer"));
+    }
+}
+
+/// The Wayland path end to end, from `get_contents` through
+/// `read_pipe_bounded`, against a real data-control compositor (#356 item
+/// 2). CI starts a headless sway (wlroots, `wlr-data-control`) and sets
+/// `ORCEL_REQUIRE_LIVE_WAYLAND=1`; without `WAYLAND_DISPLAY` the live tests
+/// report why and pass unless that variable is set.
+#[cfg(target_os = "linux")]
+mod wayland {
+    use super::super::linux::{current_text, place_text, MAX_WAYLAND_SERVERS, WAYLAND_SERVERS};
+    use crate::{FailureCode, MAX_CLIPBOARD_BYTES};
+    use std::sync::atomic::Ordering;
+    use std::time::{Duration, Instant};
+
+    fn compositor_or_skip(test: &str) -> bool {
+        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            return true;
+        }
+        assert!(
+            std::env::var("ORCEL_REQUIRE_LIVE_WAYLAND").as_deref() != Ok("1"),
+            "{test}: a live Wayland compositor was required but WAYLAND_DISPLAY is not set"
+        );
+        eprintln!("{test} skipped: WAYLAND_DISPLAY is not set");
+        false
+    }
+
+    /// Waits until at most `live` serving threads remain.
+    fn settle(live: usize) -> usize {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let now = WAYLAND_SERVERS.load(Ordering::SeqCst);
+            if now <= live || Instant::now() > deadline {
+                return now;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    fn xp15_wayland_text_round_trips_through_data_control() {
+        let _guard = crate::tests::native_clipboard_test_lock();
+        if !compositor_or_skip("xp15_wayland_text_round_trips_through_data_control") {
+            return;
+        }
+        let text = format!("orcel wayland caf\u{e9} {}", std::process::id());
+        place_text(&text).expect("placed through data-control");
+        assert_eq!(
+            current_text().expect("read back").as_deref(),
+            Some(text.as_str())
+        );
+
+        // More than the cap, placed below the provider's own write bound:
+        // the bounded pipe reader refuses it without buffering it all.
+        place_text(&"w".repeat(MAX_CLIPBOARD_BYTES + 1)).expect("placed");
+        let error = current_text().expect_err("an oversize selection is refused");
+        assert_eq!(error.code, FailureCode::OutputLimit);
+
+        // Exactly the cap is read whole.
+        let full = "z".repeat(MAX_CLIPBOARD_BYTES);
+        place_text(&full).expect("placed");
+        assert_eq!(
+            current_text().expect("read").map(|text| text.len()),
+            Some(full.len())
+        );
+    }
+
+    /// #356 item 4: each placement takes the selection from the previous
+    /// one, whose serving thread then ends, so many placements leave one
+    /// serving thread, not one each.
+    #[test]
+    fn xp15_wayland_replaced_placements_end_their_serving_threads() {
+        let _guard = crate::tests::native_clipboard_test_lock();
+        if !compositor_or_skip("xp15_wayland_replaced_placements_end_their_serving_threads") {
+            return;
+        }
+        for round in 0..20 {
+            place_text(&format!("placement {round}")).expect("placed");
+            assert!(settle(MAX_WAYLAND_SERVERS - 1) < MAX_WAYLAND_SERVERS);
+        }
+        assert!(
+            settle(1) <= 1,
+            "{} serving threads",
+            WAYLAND_SERVERS.load(Ordering::SeqCst)
+        );
+        assert_eq!(
+            current_text().expect("read").as_deref(),
+            Some("placement 19")
+        );
+    }
+
+    /// #356 item 4: once the bound of live serving threads is reached, a
+    /// placement fails closed before it touches the compositor.
+    #[test]
+    fn xp15_wayland_serving_threads_are_bounded() {
+        let _guard = crate::tests::native_clipboard_test_lock();
+        let before = WAYLAND_SERVERS.swap(MAX_WAYLAND_SERVERS, Ordering::SeqCst);
+        let refused = super::super::linux::wayland_place_text("over the bound");
+        WAYLAND_SERVERS.store(before, Ordering::SeqCst);
+        let error = refused.expect_err("placement over the bound is refused");
+        assert_eq!(error.code, FailureCode::ProviderUnavailable);
+        assert!(
+            error.message.contains("still being served"),
+            "{}",
+            error.message
+        );
     }
 }

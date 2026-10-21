@@ -809,6 +809,11 @@ trait Transport: Read + Write {
     fn set_timeouts(&mut self, read: Option<Duration>, write: Option<Duration>) -> io::Result<()>;
     /// Ends the connection after the last frame was written.
     fn finish(&mut self);
+    /// Reads and discards what the peer still sends, for a bounded time and
+    /// size, after [`Transport::finish`]. Closing a socket with unread input
+    /// makes some kernels (macOS) reset the connection, which can destroy the
+    /// last frame before the peer reads it (#400).
+    fn linger(&mut self) {}
 }
 
 fn serve_connection(mut conn: impl Transport, peer: PeerInfo, shared: &Shared) {
@@ -836,6 +841,7 @@ fn serve_connection(mut conn: impl Transport, peer: PeerInfo, shared: &Shared) {
                     ),
                 );
                 conn.finish();
+                conn.linger();
                 return;
             }
         };
@@ -888,7 +894,7 @@ fn snapshot_event(shared: &Shared, reason: &str, head: u64, oldest: u64) -> Valu
 
 /// Streams events after `after_seq` until the client falls behind, a write
 /// fails or times out, or the peer is no longer the admitted instance (read
-/// again at least every [`PEER_RECHECK`] and before every heartbeat). Ends
+/// again at least every [`PEER_RECHECK`], whether events flow or not). Ends
 /// with a `snapshot` event when the cursor cannot be served; the client then
 /// resubscribes from the snapshot's head.
 fn stream_events(
@@ -918,6 +924,11 @@ fn stream_events(
     let mut cursor = after_seq;
     // serve_connection read the instance just before this request.
     let mut checked = Instant::now();
+    // #398 item 2: wait for events at most PEER_RECHECK at a time, so an
+    // idle stream re-reads its peer every second too, and send a heartbeat
+    // only once nothing was written for a whole heartbeat interval.
+    let wait = shared.limits.heartbeat.min(PEER_RECHECK);
+    let mut written = Instant::now();
     let peer_left = || {
         let left = !still_same_instance(peer);
         if left {
@@ -929,7 +940,7 @@ fn stream_events(
         left
     };
     loop {
-        let batch = log.next_after(cursor, EVENT_BATCH, shared.limits.heartbeat);
+        let batch = log.next_after(cursor, EVENT_BATCH, wait);
         let due = matches!(batch, Batch::Idle { .. }) || checked.elapsed() >= PEER_RECHECK;
         if due {
             if peer_left() {
@@ -953,6 +964,7 @@ fn stream_events(
                     }
                     cursor = event.seq;
                     sent_in_window += 1;
+                    written = Instant::now();
                 }
             }
             Batch::Gap { head, oldest } => {
@@ -961,8 +973,11 @@ fn stream_events(
                 return;
             }
             Batch::Idle { head } => {
-                if write_frame(conn, &heartbeat_frame(id, head)).is_err() {
-                    return;
+                if written.elapsed() >= shared.limits.heartbeat {
+                    if write_frame(conn, &heartbeat_frame(id, head)).is_err() {
+                        return;
+                    }
+                    written = Instant::now();
                 }
             }
         }
@@ -1169,10 +1184,34 @@ pub(crate) fn start(facts: DaemonFacts) -> AppApi {
                     }
                     eprintln!("orceld app api: listening on {}", shared.endpoint);
                     #[cfg(unix)]
-                    unix::serve(listener, &shared);
+                    {
+                        let reason = unix::serve_watched(
+                            listener,
+                            &shared,
+                            &bound,
+                            unix::ENDPOINT_CHECK,
+                            unix::ENDPOINT_TOUCH,
+                        );
+                        // Remove our socket if the path still names it and
+                        // release the lock, then take both again (#398).
+                        let released = bound
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner())
+                            .take();
+                        drop(released);
+                        eprintln!(
+                            "orceld app api: {reason}; binding {} again",
+                            shared.endpoint
+                        );
+                        shared
+                            .log
+                            .publish("app_api.endpoint_lost", json!({ "reason": reason }));
+                    }
                     #[cfg(windows)]
-                    win::serve(&endpoint, listener, &shared);
-                    return;
+                    {
+                        win::serve(&endpoint, listener, &shared);
+                        return;
+                    }
                 }
                 Err(StartError::InUse(reason)) => {
                     // #375 item 1: once, with the reason, so a squatted pipe
@@ -1215,13 +1254,26 @@ mod unix {
     use orcel_platform::paths::StateLayout;
     use std::ffi::OsString;
     use std::fs::File;
-    use std::io;
+    use std::io::{self, Read as _};
     use std::net::Shutdown;
     use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::path::{Path, PathBuf};
-    use std::sync::Arc;
-    use std::time::Duration;
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    /// How often [`serve_watched`] checks that the socket and lock paths
+    /// still name the files this process bound and locked (#398 item 1).
+    pub(super) const ENDPOINT_CHECK: Duration = Duration::from_secs(5);
+    /// How often it sets their access and modification times to now. The
+    /// XDG Base Directory spec lets `$XDG_RUNTIME_DIR` be cleaned of files
+    /// not touched for 6 hours, and macOS's dirhelper purges files under
+    /// `DARWIN_USER_TEMP_DIR` that were not accessed for about 3 days.
+    pub(super) const ENDPOINT_TOUCH: Duration = Duration::from_secs(60 * 60);
+
+    /// Longest and largest drain after a refused frame; see [`Transport::linger`].
+    const LINGER_MAX: Duration = Duration::from_secs(2);
+    const LINGER_MAX_BYTES: usize = 1024 * 1024;
 
     /// `sun_path` holds 104 bytes on macOS and 108 on Linux, NUL included.
     pub(super) const MAX_SOCKET_PATH: usize = 100;
@@ -1239,6 +1291,24 @@ mod unix {
         fn finish(&mut self) {
             let _ = self.shutdown(Shutdown::Write);
         }
+
+        fn linger(&mut self) {
+            let deadline = Instant::now() + LINGER_MAX;
+            let mut drained = 0usize;
+            let mut buffer = [0u8; 8192];
+            while drained < LINGER_MAX_BYTES {
+                let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+                    return;
+                };
+                if self.set_read_timeout(Some(remaining)).is_err() {
+                    return;
+                }
+                match self.read(&mut buffer) {
+                    Ok(0) | Err(_) => return,
+                    Ok(read) => drained += read,
+                }
+            }
+        }
     }
 
     /// `<socket dir>/app-api<suffix>.sock`; see [`socket_dir`].
@@ -1249,6 +1319,7 @@ mod unix {
             layout,
             &|name| std::env::var_os(name),
             orcel_platform::paths::macos_per_user_runtime_dir(),
+            &runtime_dir_is_private,
         )?;
         Ok(dir.join(format!("app-api{suffix}.sock")))
     }
@@ -1263,15 +1334,20 @@ mod unix {
     ///   (normally `/run/user/<uid>`, where XP-17's `orceld.socket` puts its
     ///   own socket too).
     ///
-    /// Without one it is `<state root>/run`, as in CR-01. Either way [`bind`]
-    /// holds the directory to XP-01's private directory rules (0700, this
-    /// user, no symlink, no ancestor another user can modify) before it
-    /// takes the lock.
+    /// Without one it is `<state root>/run`, as in CR-01. It is also the
+    /// state root when the runtime directory is not this user's private
+    /// directory (`private_runtime`, #398 item 3): an `XDG_RUNTIME_DIR` set
+    /// to a shared sticky directory such as `/tmp` would let another user
+    /// pre-create `orcel` there and keep the endpoint off. Either way
+    /// [`bind`] holds the directory to XP-01's private directory rules
+    /// (0700, this user, no symlink, no ancestor another user can modify)
+    /// before it takes the lock.
     /// `HOME` never decides the location when a runtime directory exists.
     pub(super) fn socket_dir(
         layout: StateLayout,
         lookup: &dyn Fn(&str) -> Option<OsString>,
         darwin_temp: Option<PathBuf>,
+        private_runtime: &dyn Fn(&Path) -> bool,
     ) -> Result<PathBuf, String> {
         let runtime = match layout {
             StateLayout::MacOs => darwin_temp,
@@ -1280,12 +1356,25 @@ mod unix {
             }
             StateLayout::Windows => None,
         };
-        if let Some(runtime) = runtime {
+        if let Some(runtime) = runtime.filter(|runtime| private_runtime(runtime)) {
             return Ok(runtime.join("orcel"));
         }
         orcel_platform::paths::state_root_for(layout, lookup)
             .map(|root| root.join("run"))
             .map_err(|error| error.to_string())
+    }
+
+    /// Whether `dir` is a runtime directory as the XDG Base Directory spec
+    /// requires one: a real directory (not a link) owned by this user, with
+    /// no access for group or others. `/run/user/<uid>` and macOS's
+    /// per-user temp directory are; a shared sticky `/tmp` is not.
+    pub(super) fn runtime_dir_is_private(dir: &Path) -> bool {
+        let Some(our_uid) = orcel_platform::session::effective_uid() else {
+            return false;
+        };
+        std::fs::symlink_metadata(dir).is_ok_and(|meta| {
+            meta.file_type().is_dir() && meta.uid() == our_uid && meta.mode() & 0o077 == 0
+        })
     }
 
     /// The lock file of the socket at `path`: `app-api<suffix>.lock`.
@@ -1395,9 +1484,71 @@ mod unix {
         path: PathBuf,
         dev: u64,
         ino: u64,
+        /// The lock file's identity, so a removed or replaced lock file is
+        /// noticed: a lock on an unlinked inode no longer keeps a second
+        /// orceld out.
+        lock_dev: u64,
+        lock_ino: u64,
         /// Dropped after `drop` ran, so the socket is gone before another
         /// orceld can take the lock.
         _lock: File,
+    }
+
+    impl Bound {
+        /// `Ok` while the socket path and the lock path still name the
+        /// socket this process bound and the file it locked; otherwise the
+        /// reason. Links are never followed.
+        pub(super) fn intact(&self) -> Result<(), String> {
+            let same = |path: &Path, dev: u64, ino: u64| {
+                std::fs::symlink_metadata(path)
+                    .map(|meta| meta.dev() == dev && meta.ino() == ino)
+                    .unwrap_or(false)
+            };
+            if !same(&self.path, self.dev, self.ino) {
+                return Err(format!(
+                    "the socket {} was removed or replaced",
+                    self.path.display()
+                ));
+            }
+            let lock = lock_path(&self.path);
+            if !same(&lock, self.lock_dev, self.lock_ino) {
+                return Err(format!(
+                    "the lock file {} was removed or replaced",
+                    lock.display()
+                ));
+            }
+            Ok(())
+        }
+
+        /// Sets the access and modification times of the socket and the
+        /// lock file to now, without following links, so periodic clean-up
+        /// of the runtime directory keeps them.
+        pub(super) fn touch(&self) -> io::Result<()> {
+            touch_nofollow(&self.path)?;
+            touch_nofollow(&lock_path(&self.path))
+        }
+    }
+
+    fn touch_nofollow(path: &Path) -> io::Result<()> {
+        use std::os::unix::ffi::OsStrExt;
+        let path = std::ffi::CString::new(path.as_os_str().as_bytes())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path holds a NUL byte"))?;
+        // SAFETY: `path` is a NUL-terminated string that outlives the call.
+        // A null `times` sets both times to now, and AT_SYMLINK_NOFOLLOW
+        // makes the call act on a link itself, never on its target.
+        let result = unsafe {
+            libc::utimensat(
+                libc::AT_FDCWD,
+                path.as_ptr(),
+                std::ptr::null(),
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
     }
 
     impl Drop for Bound {
@@ -1466,32 +1617,130 @@ mod unix {
                 "the bound socket path does not name this user's socket".into(),
             ));
         }
+        let lock_meta = lock
+            .metadata()
+            .map_err(|error| io_refused("inspect the lock file", error))?;
         let bound = Bound {
             path: path.to_path_buf(),
             dev: meta.dev(),
             ino: meta.ino(),
+            lock_dev: lock_meta.dev(),
+            lock_ino: lock_meta.ino(),
             _lock: lock,
         };
         Ok((listener, bound))
     }
 
+    /// Serves `listener` without endpoint upkeep; the tests' in-process
+    /// servers own their binding themselves. orceld uses [`serve_watched`].
+    #[cfg(test)]
     pub(super) fn serve(listener: UnixListener, shared: &Arc<Shared>) {
         let our_uid = orcel_platform::session::effective_uid();
         // Bounded by the process lifetime: one iteration per accepted peer.
         for stream in listener.incoming() {
-            let stream = match stream {
-                Ok(stream) => stream,
+            match stream {
+                Ok(stream) => admit_and_dispatch(stream, our_uid, shared),
                 Err(error) => {
                     eprintln!("orceld app api: accept failed: {error}");
                     std::thread::sleep(Duration::from_millis(50));
-                    continue;
                 }
+            }
+        }
+    }
+
+    fn admit_and_dispatch(stream: UnixStream, our_uid: Option<u32>, shared: &Arc<Shared>) {
+        let admitted = admit_unix(
+            orcel_platform::peer::unix_peer_credentials(&stream),
+            our_uid,
+        );
+        dispatch_connection(stream, admitted, shared);
+    }
+
+    /// [`serve`] for the endpoint `bound` describes, which also keeps that
+    /// endpoint alive (#398 item 1): at least every `check` it confirms that
+    /// the socket and lock paths still name what this process bound and
+    /// locked, and every `touch` it refreshes their times. It returns the
+    /// reason as soon as either was removed or replaced (a runtime directory
+    /// clean-up, or a user), so the caller releases the binding and binds
+    /// again under a fresh lock instead of serving an endpoint no client
+    /// can reach while a second orceld binds beside it.
+    pub(super) fn serve_watched(
+        listener: UnixListener,
+        shared: &Arc<Shared>,
+        bound: &Mutex<Option<Bound>>,
+        check: Duration,
+        touch: Duration,
+    ) -> String {
+        let our_uid = orcel_platform::session::effective_uid();
+        if let Err(error) = listener.set_nonblocking(true) {
+            return format!("the listener could not be polled: {error}");
+        }
+        let mut touched = Instant::now();
+        loop {
+            match wait_readable(&listener, check) {
+                Ok(true) => match listener.accept() {
+                    // macOS hands out accepted sockets with the listener's
+                    // O_NONBLOCK; connections are served blocking.
+                    Ok((stream, _)) => match stream.set_nonblocking(false) {
+                        Ok(()) => admit_and_dispatch(stream, our_uid, shared),
+                        Err(error) => eprintln!("orceld app api: accept failed: {error}"),
+                    },
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                        ) => {}
+                    Err(error) => {
+                        eprintln!("orceld app api: accept failed: {error}");
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
+                },
+                Ok(false) => {}
+                Err(error) => {
+                    eprintln!("orceld app api: poll failed: {error}");
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            }
+            let guard = bound
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let Some(current) = guard.as_ref() else {
+                return "the endpoint was released".into();
             };
-            let admitted = admit_unix(
-                orcel_platform::peer::unix_peer_credentials(&stream),
-                our_uid,
-            );
-            dispatch_connection(stream, admitted, shared);
+            if let Err(reason) = current.intact() {
+                return reason;
+            }
+            if touched.elapsed() >= touch {
+                if let Err(error) = current.touch() {
+                    eprintln!("orceld app api: could not refresh the endpoint files: {error}");
+                }
+                touched = Instant::now();
+            }
+        }
+    }
+
+    /// Waits up to `timeout` for a pending connection on `listener`.
+    fn wait_readable(listener: &UnixListener, timeout: Duration) -> io::Result<bool> {
+        use std::os::fd::AsRawFd;
+        let mut entry = libc::pollfd {
+            fd: listener.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let millis = libc::c_int::try_from(timeout.as_millis()).unwrap_or(libc::c_int::MAX);
+        // SAFETY: `entry` is one valid `pollfd` that outlives the call, and
+        // its descriptor stays open while `listener` is borrowed.
+        match unsafe { libc::poll(&mut entry, 1, millis) } {
+            0 => Ok(false),
+            ready if ready > 0 => Ok(true),
+            _ => {
+                let error = io::Error::last_os_error();
+                if error.kind() == io::ErrorKind::Interrupted {
+                    Ok(false)
+                } else {
+                    Err(error)
+                }
+            }
         }
     }
 }

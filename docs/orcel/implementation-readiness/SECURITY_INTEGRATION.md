@@ -91,15 +91,15 @@ Record the distribution, desktop, session type, agent and the outcome of every s
 
 Status 2026-10-19: **NOT RUN**. No Linux desktop is available. Linux approvals are implemented and fail closed in CI (the real headless path in debug and release, and the real GTK helper under Xvfb timing out to deny), but they are not release-qualified until steps 1-5 pass on GNOME and KDE.
 
-### XP-06 manual live check (macOS)
+### XP-06 manual live check (macOS): NOT RUN
 
-The GitHub macOS runner grants no Accessibility or Screen Recording to the host, so CI checks only that observation is unavailable with `permission_missing` and that nothing prompts (`stdio_conformance.rs`). Live observation is checked by hand on a Mac at the keyboard, in a GUI login session. macOS attributes TCC grants of a command-line child to its responsible app, so until XP-16 gives the host a signed bundle identity the grants go to the terminal app that runs the commands.
+The hosted GitHub macOS runner grants Accessibility and Screen Recording to the host (the XP-08 macOS conformance leg relies on it), so in CI `missing_session_or_permission_is_unavailable_with_its_reason` (`stdio_conformance.rs`) takes its granted branch. The missing-permission path, observation unavailable with `permission_missing` and nothing prompted, is covered on macOS only by the unit test `worker::tests::missing_macos_permission_is_unavailable_with_a_reason`, and by step 5 below by hand (#383). Live observation on real Mac hardware has not been run either. Live observation is checked by hand on a Mac at the keyboard, in a GUI login session. macOS attributes TCC grants of a command-line child to its responsible app, so until XP-16 gives the host a signed bundle identity the grants go to the terminal app that runs the commands.
 
 1. Build: `cd apps/orcel-native-host && cargo build --locked --release -p orcel-native-host`.
 2. In System Settings > Privacy & Security, turn on Accessibility and Screen Recording for the terminal app (Terminal or iTerm), then quit and reopen it. The host never asks for either.
 3. Host frames: `cd apps/orcel-native-host && ORCEL_XP06_LIVE=1 cargo test --locked --release -p orcel-native-host --test live_observation -- --nocapture`. Two probe windows open (AppKit via `osascript`, `tests/fixtures/appkit_probe.js`). The test passes only if the probe window is listed with its start generation, its tree holds the plain value and a `value_is_password` node without a value, a recycled binding and the closed window are `target_stale`, and no response line holds the secret. It prints `XP-06 M-NAT-01 "ax": ...` with P50/P95 timings.
 4. Kernel registry end to end, from the repository root: `ORCEL_XP06_LIVE=1 ORCEL_COMPUTER_HOST_BIN="$PWD/apps/orcel-native-host/target/release/orcel-native-host" cargo test -p orcel-provider-uia --test xp06_native_host_live -- --nocapture`. The protected `Orcel Approval Probe` window must be omitted and the password node redacted.
-5. Negative: turn Screen Recording off for the terminal app, reopen it, and run `cd apps/orcel-native-host && cargo test --locked --release -p orcel-native-host --test stdio_conformance -- --nocapture`. `missing_session_or_permission_is_unavailable_with_its_reason` must print `screen_recording: false`, and no permission dialog may appear at any point.
+5. Negative, with the permissions revoked: turn Screen Recording off for the terminal app, reopen it, and run `cd apps/orcel-native-host && cargo test --locked --release -p orcel-native-host --test stdio_conformance -- --nocapture`. `missing_session_or_permission_is_unavailable_with_its_reason` must print `screen_recording: false`, `list_windows` and `capture_window` must be `unavailable` with `permission_missing`, and no permission dialog may appear at any point. Repeat with Accessibility off as well (`accessibility: false`), then turn both back on.
 
 Record the macOS version, hardware and outcome on the XP-06 pull request.
 
@@ -171,7 +171,7 @@ cargo build --release
 ORCEL_XP12_LIVE=deliver cargo test --release --test live_input -- --nocapture
 ORCEL_MACOS_BACKGROUND_SPI=1 ORCEL_XP12_LIVE=deliver cargo test --release --test live_input -- --nocapture
 cd ../.. && ORCEL_XP12_LIVE=deliver ORCEL_COMPUTER_HOST_BIN=$PWD/apps/orcel-native-host/target/release/orcel-native-host cargo test -p orcel-provider-uia --test xp12_native_input_live -- --nocapture
-ORCEL_XP08_FIXTURES=<dir staged by tests/native-fixtures/orcel-stage.sh> cargo test --release -p orcel-native-host --test conformance_native -- --nocapture --test-threads=1
+ORCEL_XP08_FIXTURES=<dir staged by tests/native-fixtures/orcel-stage.sh> cargo test --release -p orcel-native-host --test conformance_native -- --include-ignored --nocapture --test-threads=1
 ```
 
 Record the macOS version, hardware, which runs passed with the SPI off and on, and whether focus or stacking moved, on the PR. A pass with the SPI off means the public route delivers; a failure there means macOS delivery needs the SPI capability.
