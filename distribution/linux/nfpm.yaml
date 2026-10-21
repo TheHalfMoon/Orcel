@@ -4,8 +4,14 @@
 # holds every `src` below, and sets ORCEL_VERSION and ORCEL_ARCH.
 #
 # The package installs read-only, root-owned files only: orceld, the
-# orcel-contain helper with its pin (XP-13b), and two systemd *user* units. It has no maintainer scripts, nothing setuid or
-# setgid, no system unit and no network listener. Nothing is enabled at
+# orcel-contain helper with its pin (XP-13b), the XP-10 approval dialog
+# helper and its polkit action (#369 item 6, #373 item 5), and two systemd
+# *user* units. It has no maintainer scripts, nothing setuid or setgid, no
+# system unit and no network listener.
+#
+# GTK 4 (the dialog) and polkit (pkcheck, for STRONG) are recommended, not
+# required: a headless server runs orceld without them, and approvals there
+# fail closed as unavailable, as they do without a graphical session. Nothing is enabled at
 # install time; each user opts in with
 # `systemctl --user enable --now orceld.socket`. All state stays in the
 # user's private XDG state root (XP-01, mode 0700).
@@ -25,6 +31,16 @@ description: |
 vendor: Orcel
 homepage: https://github.com/TheHalfMoon/Orcel
 license: Apache-2.0
+
+overrides:
+  deb:
+    recommends:
+      - libgtk-4-1
+      - polkitd | policykit-1
+  rpm:
+    recommends:
+      - gtk4
+      - polkit
 
 contents:
   # Owned directories, so `dnf remove` and `apt remove` leave none behind.
@@ -56,6 +72,20 @@ contents:
       group: root
   - src: orcel-contain.sha256
     dst: /usr/lib/orcel/orcel-contain.sha256
+    file_info:
+      mode: 0644
+      owner: root
+      group: root
+  # XP-10: the approval dialog helper, beside orceld, where orceld looks
+  # first, and the polkit action STRONG approvals check.
+  - src: orcel-approval-helper-linux
+    dst: /usr/lib/orcel/orcel-approval-helper-linux
+    file_info:
+      mode: 0755
+      owner: root
+      group: root
+  - src: ai.orcel.approve.policy
+    dst: /usr/share/polkit-1/actions/ai.orcel.approve.policy
     file_info:
       mode: 0644
       owner: root

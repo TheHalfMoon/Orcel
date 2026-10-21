@@ -423,7 +423,9 @@ pub(crate) fn decide(
         HelperOutcome::TimedOut => Err(ApprovalError::unavailable(
             "the Linux approval helper did not answer in time; SOFT approval fails closed",
         )),
-        HelperOutcome::Crashed(detail) => Err(ApprovalError::denied(format!(
+        // #373 item 2: no answer is "unavailable", like the other outcomes
+        // without one; only an explicit deny is "denied".
+        HelperOutcome::Crashed(detail) => Err(ApprovalError::unavailable(format!(
             "the Linux approval helper exited without an answer ({detail}); SOFT approval fails closed"
         ))),
         HelperOutcome::Malformed(detail) => Err(ApprovalError::unavailable(format!(
@@ -587,7 +589,7 @@ pub(crate) fn verify_with(
             ))
         }
         HelperOutcome::Crashed(detail) => {
-            return Err(PresenceError::denied(format!(
+            return Err(PresenceError::unavailable(format!(
                 "the Linux approval helper exited without an answer ({detail}); STRONG approval fails closed"
             )))
         }
@@ -1509,7 +1511,7 @@ mod tests {
             (HelperOutcome::TimedOut, FailureCode::ApprovalUnavailable),
             (
                 HelperOutcome::Crashed("signal 11".into()),
-                FailureCode::ApprovalDenied,
+                FailureCode::ApprovalUnavailable,
             ),
             (
                 HelperOutcome::Malformed("forged".into()),
@@ -1584,7 +1586,7 @@ mod tests {
             (HelperOutcome::TimedOut, PresenceFailureReason::Timeout),
             (
                 HelperOutcome::Crashed("exit status 1".into()),
-                PresenceFailureReason::Denied,
+                PresenceFailureReason::Unavailable,
             ),
             (
                 HelperOutcome::Malformed("forged".into()),

@@ -2969,6 +2969,81 @@ mod xp10_linux_tests {
         );
     }
 
+    /// #373 item 3, CI under Xvfb: a same-user process that substitutes the
+    /// request between orceld and the real GTK4 helper (here a wrapper that
+    /// rewrites the action text, keeping the nonce, before the real helper
+    /// reads it) gets an answer orceld refuses, because the helper answers
+    /// with the SHA-256 of the bytes it read. The unmodified pipe through the
+    /// same wrapper is the control: its timeout answers deny normally.
+    #[test]
+    fn xp10_real_helper_refuses_a_substituted_request_under_xvfb() {
+        use std::os::unix::fs::PermissionsExt;
+        let required = std::env::var_os("ORCEL_REQUIRE_XP10_HELPER").is_some();
+        let binary = std::env::var_os("ORCEL_XP10_HELPER_BINARY").map(PathBuf::from);
+        let display = std::env::var_os("DISPLAY").is_some();
+        let Some(binary) = binary.filter(|_| display) else {
+            assert!(
+                !required,
+                "ORCEL_REQUIRE_XP10_HELPER is set without ORCEL_XP10_HELPER_BINARY and DISPLAY"
+            );
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!(
+            "orcel-xp10-substitute-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default()
+        ));
+        std::fs::create_dir(&dir).expect("dir");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).expect("chmod");
+        let wrapper = |name: &str, filter: &str| {
+            let path = dir.join(name);
+            std::fs::write(
+                &path,
+                format!(
+                    "#!/bin/sh\n{filter} | '{}'\n",
+                    binary.display().to_string().replace('\'', r"'\''")
+                ),
+            )
+            .expect("wrapper");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).expect("chmod");
+            path
+        };
+        let control = wrapper("control", "/bin/cat");
+        let substitute = wrapper(
+            "substitute",
+            "/usr/bin/sed 's/Action: delete the draft/Action: delete everything/'",
+        );
+        let env: Vec<(std::ffi::OsString, std::ffi::OsString)> = linux::HELPER_ENV_ALLOWLIST
+            .iter()
+            .filter_map(|name| std::env::var_os(name).map(|value| ((*name).into(), value)))
+            .collect();
+        let body = "Orcel requests a local action.\n\nAction: delete the draft\n\nNobody answers; the dialog times out.";
+        let run = |path: &std::path::Path| {
+            linux::sys::run_helper(
+                path,
+                ApprovalClass::Soft,
+                soft_macos::DIALOG_HEADER,
+                body,
+                2,
+                Duration::from_secs(60),
+                env.clone(),
+            )
+        };
+        let outcome = run(&control);
+        eprintln!("xp10 helper behind an unmodified pipe: {outcome:?}");
+        assert_eq!(outcome, linux::HelperOutcome::Answered(false));
+        let outcome = run(&substitute);
+        eprintln!("xp10 helper behind a substituting pipe: {outcome:?}");
+        assert!(
+            matches!(outcome, linux::HelperOutcome::Malformed(_)),
+            "{outcome:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Manual live check on a Linux desktop at the keyboard (never in CI).
     /// See SECURITY_INTEGRATION.md, "XP-10 manual live check (Linux)".
     #[test]

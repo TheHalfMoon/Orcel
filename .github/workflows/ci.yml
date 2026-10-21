@@ -918,6 +918,13 @@ jobs:
         run: cargo build --release --locked -p orceld
       - name: Build the orcel-contain helper (release, locked, its own workspace)
         run: cargo build --release --locked --manifest-path apps/orcel-contain/Cargo.toml --bin orcel-contain
+      # #369 item 6, #373 item 5: the XP-10 approval dialog helper ships in
+      # the packages; it links GTK 4.
+      - name: Build the XP-10 approval helper (release, locked, its own workspace)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgtk-4-dev
+          cargo build --release --locked --manifest-path apps/orcel-approval-helper-linux/Cargo.toml
       - name: Install the pinned nfpm (checksum-verified)
         run: |
           bash distribution/linux/install-nfpm.sh "$RUNNER_TEMP/nfpm-bin"
@@ -926,7 +933,8 @@ jobs:
         run: |
           version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
           echo "VERSION=$version" >> "$GITHUB_ENV"
-          bash distribution/linux/package.sh "$version" target/release/orceld apps/orcel-contain/target/release/orcel-contain "$DIST"
+          bash distribution/linux/package.sh "$version" target/release/orceld apps/orcel-contain/target/release/orcel-contain \
+            apps/orcel-approval-helper-linux/target/release/orcel-approval-helper-linux "$DIST"
           ls -l "$DIST"
       - name: Package file list and modes (dpkg -c), no maintainer scripts
         run: |
@@ -937,6 +945,8 @@ jobs:
           -rwxr-xr-x root/root ./usr/lib/orcel/orceld
           -rwxr-xr-x root/root ./usr/lib/orcel/orcel-contain
           -rw-r--r-- root/root ./usr/lib/orcel/orcel-contain.sha256
+          -rwxr-xr-x root/root ./usr/lib/orcel/orcel-approval-helper-linux
+          -rw-r--r-- root/root ./usr/share/polkit-1/actions/ai.orcel.approve.policy
           -rw-r--r-- root/root ./usr/lib/systemd/user/orceld.socket
           -rw-r--r-- root/root ./usr/lib/systemd/user/orceld@.service
           -rw-r--r-- root/root ./usr/share/doc/orcel/LICENSE
@@ -970,6 +980,17 @@ jobs:
           test -z "$(dpkg --verify orcel)"
           # XP-13b: the installed pin names the installed helper.
           test "$(cat /usr/lib/orcel/orcel-contain.sha256)" = "$(sha256sum /usr/lib/orcel/orcel-contain | cut -d ' ' -f 1)"
+          # XP-10 (#369 item 6, #373 item 5): the approval helper beside
+          # orceld and the polkit action are the built ones, and polkit
+          # (installed as a recommendation) parses the action.
+          cmp /usr/lib/orcel/orcel-approval-helper-linux apps/orcel-approval-helper-linux/target/release/orcel-approval-helper-linux
+          cmp /usr/share/polkit-1/actions/ai.orcel.approve.policy distribution/linux/ai.orcel.approve.policy
+          test "$(stat -c '%a %U' /usr/lib/orcel/orcel-approval-helper-linux)" = "755 root"
+          test "$(stat -c '%a %U' /usr/share/polkit-1/actions/ai.orcel.approve.policy)" = "644 root"
+          pkaction --action-id ai.orcel.approve.strong --verbose
+          pkaction --action-id ai.orcel.approve.strong --verbose | grep -E 'implicit active: +auth_self$'
+          pkaction --action-id ai.orcel.approve.strong --verbose | grep -E 'implicit any: +no$'
+          pkaction --action-id ai.orcel.approve.strong --verbose | grep -E 'implicit inactive: +no$'
           sudo loginctl enable-linger "$USER"
           uid=$(id -u)
           echo "XDG_RUNTIME_DIR=/run/user/$uid" >> "$GITHUB_ENV"
@@ -987,6 +1008,26 @@ jobs:
           cp /usr/lib/systemd/user/orceld.socket "$RUNNER_TEMP/units/"
           cp /usr/lib/systemd/user/orceld@.service "$RUNNER_TEMP/units/orceld@probe.service"
           systemd-analyze verify --user "$RUNNER_TEMP/units/orceld.socket" "$RUNNER_TEMP/units/orceld@probe.service"
+      # #369 item 4: systemd itself reports each scored hardening directive
+      # of the installed unit as applied, through the user manager and
+      # offline on the unit file.
+      - name: systemd-analyze security --user on the installed unit
+        run: |
+          check() {
+            echo "$1"
+            for want in NoNewPrivileges= RestrictSUIDSGID= RestrictRealtime= LockPersonality= \
+              SystemCallArchitectures= RestrictNamespaces=~user RestrictNamespaces=~pid \
+              RestrictNamespaces=~net RestrictNamespaces=~uts RestrictNamespaces=~mnt \
+              RestrictNamespaces=~cgroup RestrictNamespaces=~ipc \
+              RestrictAddressFamilies=~AF_PACKET RestrictAddressFamilies=~AF_NETLINK; do
+              if ! grep -qE "^✓ ${want}( |$)" <<<"$1"; then
+                echo "systemd-analyze security does not report $want as applied" >&2
+                exit 1
+              fi
+            done
+          }
+          check "$(systemd-analyze security --user --no-pager orceld@probe.service)"
+          check "$(cd "$RUNNER_TEMP/units" && systemd-analyze security --offline=true --no-pager orceld@probe.service)"
       - name: orceld answers through the user socket
         run: |
           mkdir -p "$HOME/orcel-ci-workspace" "$HOME/.config/orcel"
@@ -1041,6 +1082,8 @@ jobs:
           mkdir -p "$HOME/.local/share/orcel" "$HOME/.config/systemd/user"
           tar -xzf "$DIST/orcel-${VERSION}-linux-x86_64.tar.gz" --strip-components=1 -C "$HOME/.local/share/orcel"
           install -m 0644 "$HOME/.local/share/orcel/systemd/orceld.socket" "$HOME/.local/share/orcel/systemd/orceld@.service" "$HOME/.config/systemd/user/"
+          test -x "$HOME/.local/share/orcel/bin/orcel-approval-helper-linux"
+          cmp "$HOME/.local/share/orcel/doc/ai.orcel.approve.policy" distribution/linux/ai.orcel.approve.policy
           cp "$HOME/.config/systemd/user/orceld@.service" "$RUNNER_TEMP/units/orceld@tarball.service"
           systemd-analyze verify --user "$HOME/.config/systemd/user/orceld.socket" "$RUNNER_TEMP/units/orceld@tarball.service"
           systemctl --user daemon-reload

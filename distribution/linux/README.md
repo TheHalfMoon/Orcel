@@ -12,10 +12,12 @@ every OS.
 
 | Purpose | Path |
 | --- | --- |
-| State: audit, approvals, trust, leases | `$XDG_STATE_HOME/orcel`, else `~/.local/state/orcel`. This is the XP-01 root, mode 0700, and is never under `/tmp`. |
+| State: audit, approvals, trust, leases | `$XDG_STATE_HOME/orcel`, else `~/.local/state/orcel`. This is the XP-01 root, mode 0700. The defaults are never under `/tmp`. XP-01 accepts an ancestor that others can write only when it is root-owned and sticky, like `/tmp` itself, so an explicit `XDG_STATE_HOME=/tmp/x` is accepted: the 0700 root still keeps other users out, but another user can pre-create the path and leave Orcel without state. Keep `XDG_STATE_HOME` out of shared directories (#369 item 5). |
 | `orceld` from the deb or rpm | `/usr/lib/orcel/orceld` (root-owned, 0755) |
 | `orceld` from the tarball | `~/.local/share/orcel/bin/orceld` |
 | Contained-tier helper and its pin (XP-13b) | `orcel-contain` and `orcel-contain.sha256` beside `orceld`, in either layout. `orceld` pins the helper by that file and looks nowhere else. |
+| XP-10 approval dialog helper | `orcel-approval-helper-linux` beside `orceld`, in either layout. `orceld` looks there first, then `/usr/libexec/orcel/`, never on `PATH`. |
+| XP-10 polkit action (STRONG) | `/usr/share/polkit-1/actions/ai.orcel.approve.policy` from the deb or rpm. The tarball ships it in `doc/`: polkit reads actions only from that root-owned directory, so STRONG approvals of a tarball install fail closed until an administrator copies it there. |
 | User units from the deb or rpm | `/usr/lib/systemd/user/orceld.socket`, `orceld@.service` |
 | User units from the tarball | `~/.config/systemd/user/` |
 | Workspaces for `orceld` | `$XDG_CONFIG_HOME/orcel/orceld.env`, else `~/.config/orcel/orceld.env` |
@@ -119,8 +121,31 @@ namespaces. Unit tests in `linux.rs` keep them in the unit.
   privileges that a user manager does not have. A user service holds no
   capabilities anyway.
 
-## Polkit action
+`systemd-analyze security --user orceld@probe.service` runs in the CI job
+`Linux packages` on the installed unit and requires each directive above
+that it scores (`NoNewPrivileges=`, `RestrictSUIDSGID=`,
+`RestrictAddressFamilies=`, `RestrictNamespaces=`, `RestrictRealtime=`,
+`LockPersonality=`, `SystemCallArchitectures=`) to be reported as applied
+(#369 item 4).
 
-`distribution/linux/ai.orcel.approve.policy` belongs to XP-10. It is the
-only file that would need root to install, and the packages add it once it
-exists.
+## Approvals (XP-10)
+
+The deb and rpm install the GTK 4 approval dialog helper,
+`/usr/lib/orcel/orcel-approval-helper-linux`, and the polkit action
+`/usr/share/polkit-1/actions/ai.orcel.approve.policy` (`allow_active=auth_self`,
+nothing for inactive or remote sessions). They *recommend* GTK 4
+(`libgtk-4-1` / `gtk4`) and polkit (`polkitd` / `polkit`) instead of
+requiring them. A headless server runs `orceld` without them, and its
+approvals are unavailable there anyway: no graphical session can show the
+dialog, and a missing library or `pkcheck` fails closed as unavailable,
+never as approved. The helper makes itself non-dumpable before it reads a
+request (#373 item 1).
+
+The tarball carries the helper in `bin/` and the action in `doc/`. polkit
+reads actions only from its root-owned directory, so a tarball install's
+STRONG approvals fail closed until an administrator runs
+`sudo install -m 0644 ~/.local/share/orcel/doc/ai.orcel.approve.policy /usr/share/polkit-1/actions/`.
+
+Linux approvals are implemented but not release-qualified: the GNOME and KDE
+live check in SECURITY_INTEGRATION.md (including the socket-activated
+user-service case) has NOT RUN on a real desktop.
