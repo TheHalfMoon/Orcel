@@ -751,22 +751,93 @@ fn xp19_linux_session_bus_must_be_a_local_unix_socket() {
     }
 }
 
+/// Standard base64 with padding, as Node's `Buffer` writes it.
+fn base64_encode(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for chunk in bytes.chunks(3) {
+        let block = (u32::from(chunk[0]) << 16)
+            | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8)
+            | u32::from(*chunk.get(2).unwrap_or(&0));
+        for index in 0..4 {
+            if index <= chunk.len() {
+                out.push(ALPHABET[(block >> (18 - 6 * index) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+/// A private and a public Ed25519 JWK, base64-encoded the way the edge
+/// stores them, sharing the public `x`. The private `d` is a fresh canary.
+fn jwk_pair(x: &str) -> (String, String) {
+    let private = json!({ "kty": "OKP", "crv": "Ed25519", "x": x, "d": canary() });
+    let public = json!({ "kty": "OKP", "crv": "Ed25519", "x": x });
+    (
+        base64_encode(&serde_json::to_vec(&private).expect("json")),
+        base64_encode(&serde_json::to_vec(&public).expect("json")),
+    )
+}
+
+fn legacy_pair(private: &str, public: &str) -> Value {
+    let mut record = legacy(private);
+    record["publicKeyJwkBase64"] = json!(public);
+    record
+}
+
+fn temp_files(dir: &Path) -> Vec<PathBuf> {
+    std::fs::read_dir(dir)
+        .expect("list")
+        .map(|entry| entry.expect("entry").path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(".device_key.json.tmp-"))
+        })
+        .collect()
+}
+
+#[test]
+fn xp19_base64_decode_matches_node_buffer() {
+    for input in [
+        &b""[..],
+        b"f",
+        b"fo",
+        b"foo",
+        b"foob",
+        b"fooba",
+        b"foobar",
+        &[0xff, 0xfe, 0x00],
+    ] {
+        assert_eq!(
+            base64_decode(base64_encode(input).as_bytes()).as_deref(),
+            Some(input)
+        );
+    }
+    assert_eq!(base64_decode(b"Zm9v").as_deref(), Some(&b"foo"[..]));
+    assert_eq!(base64_decode(b"Zg").as_deref(), Some(&b"f"[..]));
+    assert_eq!(base64_decode(b"Zm9v!"), None);
+    assert_eq!(base64_decode(b"Zm\n9v"), None);
+}
+
 /// A crash after each durable migration step leaves a state the next run
-/// finishes: the key stays in the store and the record ends public-only,
-/// never zero-filled or malformed.
+/// finishes: the key stays in the store, the record ends public-only, and
+/// no plaintext copy or temp file is left behind.
 #[test]
 fn xp19_migration_recovers_from_a_crash_at_every_step() {
     for crash_at in [
         MigrationStep::Stored,
         MigrationStep::TempWritten,
-        MigrationStep::Renamed,
         MigrationStep::Zeroed,
+        MigrationStep::Renamed,
     ] {
         let dir = private_dir("crash");
         let record = dir.join("device_key.json");
         let (store, _) = memory_store("uid:1000");
-        let secret = canary();
-        write_record(&record, &legacy(&secret));
+        let (secret, public_key) = jwk_pair("crash-x");
+        write_record(&record, &legacy_pair(&secret, &public_key));
         let crashed = migrate_with(&store, &record, &mut |step| {
             if step == crash_at {
                 Err(SecretError::Unavailable("simulated crash"))
@@ -779,15 +850,24 @@ fn xp19_migration_recovers_from_a_crash_at_every_step() {
             Err(SecretError::Unavailable("simulated crash")),
             "{crash_at:?}"
         );
-        // Whatever the crash left at the record's path parses as JSON.
-        let left: Value = serde_json::from_slice(&std::fs::read(&record).expect("record"))
-            .unwrap_or_else(|_| panic!("record damaged after a crash at {crash_at:?}"));
-        assert!(left.get("deviceId").is_some(), "{crash_at:?}");
+        // Whatever the crash left at the record's path parses as JSON, or is
+        // the zero-filled record whose public copy waits in the temp file.
+        let left = std::fs::read(&record).expect("record");
+        if crash_at == MigrationStep::Zeroed {
+            assert!(left.iter().all(|byte| *byte == 0), "{crash_at:?}");
+            assert_eq!(temp_files(&dir).len(), 1, "{crash_at:?}");
+        } else {
+            let left: Value = serde_json::from_slice(&left)
+                .unwrap_or_else(|_| panic!("record damaged after a crash at {crash_at:?}"));
+            assert!(left.get("deviceId").is_some(), "{crash_at:?}");
+        }
 
         let rerun = migrate_device_key(&store, &record).expect("rerun recovers");
         let expected = match crash_at {
-            MigrationStep::Stored | MigrationStep::TempWritten => Migration::AlreadyStored,
-            MigrationStep::Renamed | MigrationStep::Zeroed => Migration::NothingToMigrate,
+            MigrationStep::Stored | MigrationStep::TempWritten | MigrationStep::Zeroed => {
+                Migration::AlreadyStored
+            }
+            MigrationStep::Renamed => Migration::NothingToMigrate,
         };
         assert_eq!(rerun, expected, "{crash_at:?}");
         assert_eq!(
@@ -804,9 +884,23 @@ fn xp19_migration_recovers_from_a_crash_at_every_step() {
                 path.display()
             );
         }
+        assert!(
+            temp_files(&dir).is_empty(),
+            "temp files left after {crash_at:?}"
+        );
         let public: Value =
             serde_json::from_str(&std::fs::read_to_string(&record).expect("public")).expect("json");
         assert!(public.get("privateKeyJwkBase64").is_none(), "{crash_at:?}");
+        assert_eq!(
+            public["publicKeyJwkBase64"],
+            json!(public_key),
+            "{crash_at:?}"
+        );
+        assert_eq!(
+            public["deviceId"],
+            legacy(&secret)["deviceId"],
+            "{crash_at:?}"
+        );
         assert_eq!(
             migrate_device_key(&store, &record),
             Ok(Migration::NothingToMigrate),
@@ -816,27 +910,145 @@ fn xp19_migration_recovers_from_a_crash_at_every_step() {
     }
 }
 
-/// A record an earlier build zeroed in place before crashing counts as
-/// migrated when the key is stored, and asks for enrolment when it is not.
+/// #382 item 2: a zero-filled record is restored from the public temp file
+/// the interrupted run left, and only when that file records the public half
+/// of the stored key. Without one the user is told to enroll again.
 #[test]
-fn xp19_a_zero_filled_record_is_already_migrated_when_the_key_is_stored() {
+fn xp19_a_zero_filled_record_is_restored_only_from_its_own_public_record() {
     let dir = private_dir("zeroed");
     let record = dir.join("device_key.json");
-    write_record(&record, &legacy(&canary()));
+    let (secret, public_key) = jwk_pair("zeroed-x");
+    write_record(&record, &legacy_pair(&secret, &public_key));
     let len = std::fs::metadata(&record).expect("meta").len() as usize;
-    std::fs::write(&record, vec![0u8; len]).expect("zero");
+    let zero = || std::fs::write(&record, vec![0u8; len]).expect("zero");
+    zero();
+
+    // No key stored: nothing to restore.
     let (empty, _) = memory_store("uid:1000");
     assert!(matches!(
         migrate_device_key(&empty, &record),
         Err(SecretError::Refused(_))
     ));
+
+    // Key stored but no public record left: enroll again, record untouched.
     let (store, _) = memory_store("uid:1000");
     store
-        .put(SecretName::DeviceKey, canary().as_bytes())
+        .put(SecretName::DeviceKey, secret.as_bytes())
         .expect("put");
+    assert!(matches!(
+        migrate_device_key(&store, &record),
+        Err(SecretError::Refused(_))
+    ));
+    assert!(std::fs::read(&record)
+        .unwrap()
+        .iter()
+        .all(|byte| *byte == 0));
+
+    // A temp record for another key, or one still holding a private key, is
+    // never restored.
+    let (_, other_public) = jwk_pair("other-x");
+    let mut public_only = legacy_pair(&secret, &public_key);
+    public_only
+        .as_object_mut()
+        .expect("object")
+        .remove("privateKeyJwkBase64");
+    let mut foreign = public_only.clone();
+    foreign["publicKeyJwkBase64"] = json!(other_public);
+    write_record(&dir.join(".device_key.json.tmp-1-1"), &foreign);
+    write_record(
+        &dir.join(".device_key.json.tmp-1-2"),
+        &legacy_pair(&secret, &public_key),
+    );
+    assert!(matches!(
+        migrate_device_key(&store, &record),
+        Err(SecretError::Refused(_))
+    ));
+    assert!(std::fs::read(&record)
+        .unwrap()
+        .iter()
+        .all(|byte| *byte == 0));
+
+    // A link named like a temp file is ignored.
+    #[cfg(unix)]
+    {
+        let outside = dir.join("outside.json");
+        write_record(&outside, &public_only);
+        std::os::unix::fs::symlink(&outside, dir.join(".device_key.json.tmp-1-3"))
+            .expect("symlink");
+        assert!(matches!(
+            migrate_device_key(&store, &record),
+            Err(SecretError::Refused(_))
+        ));
+        std::fs::remove_file(dir.join(".device_key.json.tmp-1-3")).expect("unlink");
+    }
+
+    // The matching public record is restored and the other temps go.
+    write_record(&dir.join(".device_key.json.tmp-1-0"), &public_only);
     assert_eq!(
         migrate_device_key(&store, &record),
         Ok(Migration::AlreadyStored)
     );
+    let restored: Value =
+        serde_json::from_slice(&std::fs::read(&record).expect("record")).expect("json");
+    assert_eq!(restored, public_only);
+    assert!(temp_files(&dir).is_empty());
+    assert_eq!(
+        migrate_device_key(&store, &record),
+        Ok(Migration::NothingToMigrate)
+    );
+    let _ = std::fs::remove_dir_all(dir.parent().and_then(Path::parent).expect("root"));
+}
+
+/// #382 item 3: the plaintext bytes themselves are overwritten, so another
+/// name of the same file (a hard link made before migrating) reads zeros.
+#[test]
+fn xp19_migration_zeroes_the_plaintext_bytes_through_every_link() {
+    let dir = private_dir("hardlink");
+    let record = dir.join("device_key.json");
+    let (store, _) = memory_store("uid:1000");
+    let (secret, public_key) = jwk_pair("link-x");
+    write_record(&record, &legacy_pair(&secret, &public_key));
+    let len = std::fs::metadata(&record).expect("meta").len();
+    let link = dir.join("device_key.json.link");
+    std::fs::hard_link(&record, &link).expect("hard link");
+    assert!(std::fs::read_to_string(&link).unwrap().contains(&secret));
+
+    assert_eq!(migrate_device_key(&store, &record), Ok(Migration::Migrated));
+    let old = std::fs::read(&link).expect("link");
+    assert_eq!(old.len() as u64, len);
+    assert!(
+        old.iter().all(|byte| *byte == 0),
+        "the old bytes were not zeroed"
+    );
+    assert!(!std::fs::read_to_string(&record).unwrap().contains(&secret));
+    let _ = std::fs::remove_dir_all(dir.parent().and_then(Path::parent).expect("root"));
+}
+
+/// #382 item 5: temp files an interrupted run left are removed by the next
+/// run, while files that merely look similar stay.
+#[test]
+fn xp19_orphan_migration_temp_files_are_removed() {
+    let dir = private_dir("orphans");
+    let record = dir.join("device_key.json");
+    let (store, _) = memory_store("uid:1000");
+    let mut public = legacy(&canary());
+    public
+        .as_object_mut()
+        .expect("object")
+        .remove("privateKeyJwkBase64");
+    write_record(&record, &public);
+    let orphan = dir.join(".device_key.json.tmp-42-1");
+    write_record(&orphan, &public);
+    let unrelated = dir.join(".other.json.tmp-42-1");
+    write_record(&unrelated, &public);
+    let nested = dir.join(".device_key.json.tmp-dir");
+    std::fs::create_dir(&nested).expect("dir");
+    assert_eq!(
+        migrate_device_key(&store, &record),
+        Ok(Migration::NothingToMigrate)
+    );
+    assert!(!orphan.exists());
+    assert!(unrelated.exists());
+    assert!(nested.is_dir());
     let _ = std::fs::remove_dir_all(dir.parent().and_then(Path::parent).expect("root"));
 }
