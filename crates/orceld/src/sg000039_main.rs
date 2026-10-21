@@ -928,11 +928,20 @@ mod tests {
         }
     }
 
+    pub(super) fn next_temp_sequence() -> u64 {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        // macOS clocks tick in microseconds, so a timestamp alone can repeat
+        // across parallel tests in one process.
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    }
+
     fn temp_root() -> PathBuf {
         let suffix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock")
             .as_nanos();
+        let suffix = format!("{suffix}-{}", next_temp_sequence());
         let root = std::env::temp_dir().join(format!("orcel-sg21-main-{suffix}"));
         fs::create_dir_all(&root).expect("root");
         root
@@ -943,6 +952,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("clock")
             .as_nanos();
+        let suffix = format!("{suffix}-{}", next_temp_sequence());
         std::env::temp_dir().join(format!(
             "orcel-sg21-trust-{}-{suffix}.jsonl",
             std::process::id()
@@ -954,6 +964,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("clock")
             .as_nanos();
+        let suffix = format!("{suffix}-{}", next_temp_sequence());
         std::env::temp_dir().join(format!(
             "orcel-sg21-browser-{label}-{}-{suffix}",
             std::process::id()
@@ -2295,6 +2306,7 @@ mod tests {
 
 #[cfg(test)]
 mod sg000055_envelope_tests {
+    use super::tests::next_temp_sequence;
     use super::*;
     use orcel_approval::test_support::FixedApprovalBroker;
     use orcel_approval::ApprovalDecision;
@@ -2306,6 +2318,7 @@ mod sg000055_envelope_tests {
             .duration_since(UNIX_EPOCH)
             .expect("clock")
             .as_nanos();
+        let suffix = format!("{suffix}-{}", next_temp_sequence());
         let root = std::env::temp_dir().join(format!(
             "orcel-sg55-envelope-{}-{suffix}",
             std::process::id()
@@ -2446,6 +2459,7 @@ mod sg000055_envelope_tests {
 
 #[cfg(test)]
 mod sg000058_lease_boundary_tests {
+    use super::tests::next_temp_sequence;
     use super::*;
     use orcel_approval::test_support::FixedApprovalBroker;
     use orcel_approval::ApprovalDecision;
@@ -2500,6 +2514,7 @@ mod sg000058_lease_boundary_tests {
             .duration_since(UNIX_EPOCH)
             .expect("clock")
             .as_nanos();
+        let suffix = format!("{suffix}-{}", next_temp_sequence());
         let root = std::env::temp_dir().join(format!("orcel-sg58-{}-{suffix}", std::process::id()));
         std::fs::create_dir_all(root.join("workspace")).expect("workspace");
         // XP-01B: the store overrides below must sit in a private directory.
