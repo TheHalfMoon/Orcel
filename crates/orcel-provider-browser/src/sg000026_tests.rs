@@ -10,11 +10,20 @@ use super::*;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+fn next_temp_sequence() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    // macOS clocks tick in microseconds, so a timestamp alone can repeat
+    // across parallel tests in one process.
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    SEQUENCE.fetch_add(1, Ordering::Relaxed)
+}
+
 fn temp_root(label: &str) -> PathBuf {
     let suffix = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock")
         .as_nanos();
+    let suffix = format!("{suffix}-{}", next_temp_sequence());
     let root = std::env::temp_dir().join(format!(
         "orcel-upload-{label}-{}-{suffix}",
         std::process::id()
@@ -28,6 +37,7 @@ fn temp_upload_registry(label: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .expect("clock")
         .as_nanos();
+    let suffix = format!("{suffix}-{}", next_temp_sequence());
     std::env::temp_dir().join(format!(
         "orcel-upload-registry-{label}-{}-{suffix}.jsonl",
         std::process::id()
