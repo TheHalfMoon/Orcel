@@ -90,6 +90,7 @@ fn an_incomplete_capability_report_refuses_to_spawn() {
     let refused = runtime.block_on(spawn_checked(
         weaker,
         &executable,
+        &[0; 32],
         &[],
         root.path(),
         &limits(),
