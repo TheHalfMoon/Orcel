@@ -275,6 +275,30 @@ jobs:
       - name: cursor-overlay and cua-cursor-motion tests (P-05 asset changes)
         # Exercises the re-encoded default theme and the font-less badge path.
         run: cargo test --locked -p cursor-overlay -p cua-cursor-motion --features cua-cursor-motion/serde
+      - name: Upstream-asset parity tests (P-05 files restored by blob id)
+        # #355: the six files P-05 does not vendor are fetched from trycua/cua
+        # by the blob ids the provenance records (each must hash to its id;
+        # the governance job proves those ids are the pinned trees'), into this
+        # checkout only. The tests behind the upstream-assets features then
+        # run: cua-cursor-motion golden and motion_parity, cursor-overlay
+        # motion_equivalence, the session badge with the font, and the theme
+        # artifact compiled from the lottie. Each named test must have run and
+        # passed, so a motion regression cannot pass CI.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node ../../scripts/restore-cua-upstream-assets.mjs
+          cargo test --locked -p cursor-overlay -p cua-cursor-motion \
+            --features cursor-overlay/upstream-assets,cua-cursor-motion/upstream-assets,cua-cursor-motion/serde \
+            2>&1 | tee "$RUNNER_TEMP/upstream-assets.log"
+          for name in golden_fixture_matches_the_crate shipped_styles_match_the_motion_lab \
+            render_state::motion_equivalence_tests:: session_badge::tests:: \
+            embedded_default_was_compiled_from_the_checked_in_lottie \
+            minimal_name_shows_on_hover_and_with_peers_but_never_while_moving; do
+            grep -Eq "^test [^ ]*${name}[^ ]* \.\.\. ok$" "$RUNNER_TEMP/upstream-assets.log" \
+              || { echo "upstream-asset test ${name} did not run and pass"; exit 1; }
+          done
       - name: orcel-native-host tests (unit and stdio protocol conformance)
         # XP-06: the protocol, supervisor, worker, adapter and mapping unit
         # tests, then the real binary over stdio. Without a session (Linux:
