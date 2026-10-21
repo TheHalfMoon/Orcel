@@ -12,8 +12,9 @@
 //!
 //! It checks what the measured conformance cells (`conformance_native.rs`)
 //! cannot: a password field takes no action, an Orcel approval window takes
-//! no action (an agent can never press Approve), pixel-addressed frames stay
-//! denied, and the secret never appears in a frame.
+//! no action (an agent can never press Approve), a pixel-addressed frame on
+//! a stale human-input tick delivers nothing, and the secret never appears in
+//! a frame.
 
 mod support;
 
@@ -183,12 +184,20 @@ fn xp11_live_refusals_and_one_real_action() {
     assert_eq!(error_code(&reply), "capability_denied", "{reply}");
     let reply = action(&mut host, &reference, "invoke", &plain, None);
     assert_eq!(error_code(&reply), "capability_denied", "{reply}");
+    // XP-12 serves raw input, but never on a tick the person has moved past:
+    // tick 0 is not the live one, so the frame is cancelled (or the window
+    // cannot be proved clear), and nothing is delivered.
     let pixel = host.request(
         "input_click",
         json!({"window": reference, "x": 20, "y": 20, "button": "left",
                "click_count": 1, "expected_last_input_tick": 0}),
     );
-    assert_eq!(error_code(&pixel), "capability_denied", "{pixel}");
+    assert_eq!(pixel["ok"], false, "{pixel}");
+    assert!(pixel.get("action").is_none(), "{pixel}");
+    assert!(
+        matches!(error_code(&pixel), "cancelled" | "provider_unavailable"),
+        "{pixel}"
+    );
 
     // One real action each: the plain field takes a value, the button a press.
     let typed = format!("typed-by-host-{nonce}");

@@ -21,7 +21,10 @@
 //! the background and read back from the task-state file, and focus,
 //! stacking and the pointer must not move. Their foreground rung has
 //! nothing to measure (semantic actions never take the foreground). The
-//! `px` cells stay typed skips until XP-12 lands.
+//! `px` cells are measured on X11 and macOS against the XP-12 input probe,
+//! an application that journals the pointer, scroll and key events it
+//! receives (the harness exposes no control geometry to aim at); a hover and
+//! a key chord are refused by policy, and Wayland says unavailable.
 
 mod conformance;
 mod support;
@@ -31,6 +34,7 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
+use support::spawn_probe;
 use support::Host;
 
 /// The task controls both harnesses label alike (their task modes share
@@ -106,7 +110,8 @@ fn wait_state(path: &PathBuf) -> Value {
 
 /// The pixel-addressed part of upstream's harness matrix as `/2` frames
 /// (XP-12). The element-addressed part runs as measured cells in
-/// [`run_ax_cells`]. Pixel cells name the point.
+/// [`run_ax_cells`]. Pixel cells name a window-relative point. The frames
+/// carry the human-input tick 0: they are the ones that must be refused.
 fn cells(point: (i64, i64)) -> Vec<InputCell> {
     let (x, y) = point;
     let tick = json!(0);
@@ -141,7 +146,7 @@ fn cells(point: (i64, i64)) -> Vec<InputCell> {
             "drag",
             "px",
             "input_drag",
-            json!({"x": x, "y": y, "to_x": x + 80, "to_y": y, "button": "left", "expected_last_input_tick": tick}),
+            json!({"x": x, "y": y, "to_x": x + 80, "to_y": y, "expected_last_input_tick": tick}),
         );
         push(
             "scroll",
@@ -304,7 +309,7 @@ fn xp08_native_harness_is_conformant() {
     let state = || read_state(&state_path).expect("the harness keeps its state file");
 
     let mut host = Host::spawn();
-    conformance::check_hello(&mut host, &mut report, &prefix);
+    let hello = conformance::check_hello(&mut host, &mut report, &prefix);
     let target = Target {
         prefix: prefix.clone(),
         title: spec.title,
@@ -360,20 +365,51 @@ fn xp08_native_harness_is_conformant() {
     );
     run_ax_cells(&mut host, &mut report, &prefix, &observed.reference, state);
 
-    // XP-12: the pixel cells stay typed skips. Their frames are refused and
-    // move no oracle; the fixture holds what the ax cells left in it.
-    let point = conformance::screen_centre(&mut host);
-    let cells = cells(point);
+    // XP-12: the pixel cells. A hover and a key chord are refused by policy
+    // on every window system; Wayland serves no raw input; X11 and macOS
+    // deliver, measured on the input probe.
+    let cells = cells((20, 20));
     assert_eq!(cells.len(), 18);
     let left_by_ax = state();
-    conformance::pending_input_cells(
+    let (policy, others): (Vec<_>, Vec<_>) = cells
+        .into_iter()
+        .partition(|cell| conformance::POLICY_REFUSED_OPS.contains(&cell.op));
+    conformance::refused_input_cells(
         &mut host,
         &mut report,
         &prefix,
         &observed.reference,
-        &cells,
+        &policy,
+        "capability_denied",
+        "refused",
         state,
     );
+    if conformance::input_delivered(&hello) {
+        let nonce = format!("{}-{}", std::process::id(), harness.pid());
+        let probe = spawn_probe(&nonce);
+        let window = conformance::probe_window(&mut host, &nonce);
+        assert_eq!(window["process"]["pid"], probe.child.id(), "{window}");
+        conformance::run_probe_cells(
+            &mut host,
+            &mut report,
+            &prefix,
+            &support::window_ref(&window),
+            &probe,
+            &hello,
+        );
+        drop(probe);
+    } else {
+        conformance::refused_input_cells(
+            &mut host,
+            &mut report,
+            &prefix,
+            &observed.reference,
+            &others,
+            &conformance::input_unavailable_reason(&hello),
+            "unavailable",
+            state,
+        );
+    }
     assert_eq!(
         state(),
         left_by_ax,
@@ -417,7 +453,8 @@ fn native_pixel_cells_cover_upstreams_matrix_per_delivery() {
     }
     for cell in &cells {
         assert!(
-            conformance::PIXEL_OPS.contains(&cell.op),
+            conformance::POLICY_REFUSED_OPS.contains(&cell.op)
+                || conformance::INPUT_OPS.contains(&cell.op),
             "{} is not a pixel- or key-addressed operation",
             cell.op
         );

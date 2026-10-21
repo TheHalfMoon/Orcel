@@ -12,6 +12,7 @@
 
 mod capture;
 mod cua_adapter;
+mod input;
 mod map;
 mod protocol;
 mod semantic;

@@ -67,6 +67,18 @@
           "path": "src/tools/mod.rs",
           "upstream_blob_sha": "771e6717e3e5b64ff160d149ad7a6cebd433e132",
           "upstream_blocker_lines": []
+        },
+  {
+          "path": "src/input/skylight.rs",
+          "upstream_blob_sha": "70e87b39bd5c13bd1d7f0bec46a571c0404dc260",
+          "upstream_blocker_lines": [
+        "3b52c48a52d6b73dc92b3ba88279decc1dede3f2954cc701ae3b96b0d22456d0",
+        "efd34582d53091692c3ca8f05c6e5a81141fa8f20f9af3744581f8446d6a80ea",
+        "efd34582d53091692c3ca8f05c6e5a81141fa8f20f9af3744581f8446d6a80ea",
+        "efd34582d53091692c3ca8f05c6e5a81141fa8f20f9af3744581f8446d6a80ea",
+        "efd34582d53091692c3ca8f05c6e5a81141fa8f20f9af3744581f8446d6a80ea",
+        "efd34582d53091692c3ca8f05c6e5a81141fa8f20f9af3744581f8446d6a80ea"
+      ]
         }
       ]
     },

@@ -409,9 +409,49 @@ fn ensure_skylight_loaded() {
     });
 }
 
+/// P-11 (Orcel): the private symbols that post, authenticate, locate or steer
+/// input. With `orcel-minimal` they resolve only after the host enabled them
+/// (`orcel_set_background_spi`, the `macos_background_spi` capability); until
+/// then every caller takes the `None` path it already has for a symbol that
+/// does not resolve, which is the public `CGEvent` route. The read-only space
+/// and capture-list symbols are not input and stay available.
+#[cfg(feature = "orcel-minimal")]
+const ORCEL_INPUT_SPI: &[&[u8]] = &[
+    b"SLEventPostToPid\0",
+    b"SLEventSetAuthenticationMessage\0",
+    b"SLEventSetIntegerValueField\0",
+    b"SLPSGetKeyFocusProcess\0",
+    b"SLPSPostEventRecordTo\0",
+    b"SLPSReleaseKeyFocusWithID\0",
+    b"SLPSSetFrontProcessWithOptions\0",
+    b"SLPSStealKeyFocusReturningID\0",
+    b"_SLPSGetFrontProcess\0",
+    b"CGEventSetWindowLocation\0",
+];
+
+#[cfg(feature = "orcel-minimal")]
+static ORCEL_SPI_ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// P-11 (Orcel): enables the input SPI for this process. Called once, before
+/// the first input, because each handle is resolved once and cached.
+#[cfg(feature = "orcel-minimal")]
+pub fn orcel_set_background_spi(enabled: bool) {
+    ORCEL_SPI_ENABLED.store(enabled, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// P-11 (Orcel): whether the input SPI is enabled.
+#[cfg(feature = "orcel-minimal")]
+pub fn orcel_background_spi_enabled() -> bool {
+    ORCEL_SPI_ENABLED.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 /// Look up a symbol by name via RTLD_DEFAULT (after loading SkyLight).
 /// Returns `None` when the symbol doesn't resolve.
 fn find_sym(name: &[u8]) -> Option<*mut c_void> {
+    #[cfg(feature = "orcel-minimal")]
+    if !orcel_background_spi_enabled() && ORCEL_INPUT_SPI.contains(&name) {
+        return None;
+    }
     ensure_skylight_loaded();
     let ptr = unsafe { libc::dlsym(libc::RTLD_DEFAULT, name.as_ptr() as *const c_char) };
     if ptr.is_null() {

@@ -86,4 +86,4 @@ libc = "0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 platform-linux = { path = "third_party/cua-driver/crates/platform-linux", features = ["orcel-minimal"] }
-x11rb = "0.13"
+x11rb = { version = "0.13", features = ["screensaver"] }

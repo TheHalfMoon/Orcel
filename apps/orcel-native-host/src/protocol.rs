@@ -9,14 +9,14 @@
 //! is refused with `invalid_request` in `/1` framing, the answer the adapter
 //! never falls back on outside Windows.
 //!
-//! The host observes, captures one window (XP-07) and delivers
-//! accessibility-addressed semantic actions (XP-11). `hello`, `ping` and
-//! `shutdown` are answered by the supervisor; `list_windows`,
-//! `observe_window`, `cursor_position`, `capture_window` and
-//! `semantic_action` run in a one-shot worker. Every other operation of the
-//! closed set of 16 (`window_action` and the seven `input_*` operations,
-//! which are pixel- or key-addressed) is refused with `capability_denied`,
-//! and the hello capability table says so up front.
+//! The host observes, captures one window (XP-07), delivers
+//! accessibility-addressed semantic actions (XP-11) and, since XP-12, five
+//! bounded raw input operations (`input_click`, `input_drag`, `input_scroll`,
+//! `input_type_text`, `input_key`). `hello`, `ping` and `shutdown` are
+//! answered by the supervisor; every other served operation runs in a
+//! one-shot worker. The rest of the closed set of 16 (`window_action`,
+//! `input_move` and `input_hotkey`) is refused with `capability_denied`, and
+//! the hello capability table says so up front.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -272,8 +272,9 @@ pub struct CursorFact {
     pub y: i32,
     pub screen_width: i32,
     pub screen_height: i32,
-    /// The Windows human-input tick. Raw input is not served here, so the
-    /// host reports 0 and the adapter never binds input to it.
+    /// The human-input tick (XP-12): milliseconds on the machine's monotonic
+    /// clock at which the person last touched the keyboard or pointer, or 0
+    /// when this session cannot read it. Raw input is bound to it.
     pub last_input_tick: u32,
 }
 
@@ -383,6 +384,16 @@ pub mod code {
     pub const OUTPUT_LIMIT: &str = "output_limit";
     pub const TIMEOUT: &str = "timeout";
     pub const PROVIDER_UNAVAILABLE: &str = "provider_unavailable";
+    /// Execution states of a raw input (spec section 7): human input arrived
+    /// after the bound tick so nothing was sent, and a delivery that may have
+    /// reached the target but whose result is lost.
+    pub const CANCELLED: &str = "cancelled";
+    /// The vendored tool cannot deliver without taking the foreground (a GTK,
+    /// WebKit or Chromium target with no real pointer backend in the session),
+    /// or the target is covered. The host never takes the foreground.
+    pub const BACKGROUND_UNAVAILABLE: &str = "background_unavailable";
+    pub const BACKGROUND_OCCLUDED: &str = "background_occluded";
+    pub const OUTCOME_UNKNOWN: &str = "outcome_unknown";
 }
 
 /// Why the worker operations are or are not usable on this machine, as the
@@ -398,6 +409,14 @@ pub struct Availability {
     /// XP-11 semantic actions. They need what observation needs: the action
     /// worker lists the window and its tree again before it acts.
     pub semantic_action: Option<String>,
+    /// XP-12 raw input to a point (click, drag, scroll). It needs what a
+    /// semantic action needs and a readable human-input clock; on Wayland it
+    /// is unavailable. The keyboard operations also need `input_keys`.
+    pub input: Option<String>,
+    /// Why the keyboard operations (`input_type_text`, `input_key`) are
+    /// unavailable although `input` may be usable: on X11 their background
+    /// route needs a uinput virtual master keyboard, which Xvfb cannot have.
+    pub input_keys: Option<String>,
     /// Permission facts reported informationally (macOS).
     #[serde(default)]
     pub permissions: BTreeMap<String, bool>,
@@ -412,6 +431,8 @@ impl Availability {
             cursor_position: Some(reason.to_owned()),
             capture_window: Some(reason.to_owned()),
             semantic_action: Some(reason.to_owned()),
+            input: Some(reason.to_owned()),
+            input_keys: Some(reason.to_owned()),
             permissions: BTreeMap::new(),
         }
     }
@@ -423,6 +444,10 @@ impl Availability {
             "cursor_position" => self.cursor_position.as_deref(),
             "capture_window" => self.capture_window.as_deref(),
             "semantic_action" => self.semantic_action.as_deref(),
+            op if crate::input::is_keyboard_operation(op) => {
+                self.input.as_deref().or(self.input_keys.as_deref())
+            }
+            op if crate::input::is_input_operation(op) => self.input.as_deref(),
             _ => Some(code::CAPABILITY_DENIED),
         }
     }
@@ -437,11 +462,12 @@ fn entry(support: &str, reason: Option<&str>) -> CapabilityFact {
 }
 
 /// The `/2` capability table: exactly one entry for each of the 16
-/// operations. Observation, capture and semantic actions follow
-/// `availability`; `window_action` and the `input_*` operations are refused,
-/// because they are pixel- or key-addressed (XP-12). Capture and semantic
-/// actions are delivered in the background: they never raise, focus, restore
-/// or move the window.
+/// operations. Observation, capture, semantic actions and the five raw input
+/// operations follow `availability`; `window_action`, `input_move` and
+/// `input_hotkey` are refused (a window-manager command, a hover with no
+/// verifiable effect, and a key chord that can reach a system shortcut).
+/// Capture, semantic actions and raw input are delivered in the background:
+/// they never raise, focus, restore or move the window.
 pub fn capability_table(availability: &Availability) -> BTreeMap<String, CapabilityFact> {
     let mut table = BTreeMap::new();
     for op in OPERATIONS {
@@ -454,6 +480,14 @@ pub fn capability_table(availability: &Availability) -> BTreeMap<String, Capabil
                 }
             }
             "capture_window" | "semantic_action" => match availability.refusal_for(op) {
+                None => CapabilityFact {
+                    support: "delivered".to_owned(),
+                    delivery: Some("background".to_owned()),
+                    reason: None,
+                },
+                Some(reason) => entry("unavailable", Some(reason)),
+            },
+            op if crate::input::is_input_operation(op) => match availability.refusal_for(op) {
                 None => CapabilityFact {
                     support: "delivered".to_owned(),
                     delivery: Some("background".to_owned()),
@@ -616,12 +650,22 @@ fn validate(request: &Request, platform: HostPlatform) -> Result<(), Refusal> {
             | "cursor_position"
             | "capture_window"
             | "semantic_action"
-    ) {
+    ) && !crate::input::is_input_operation(&request.op)
+    {
         return Err(refuse(
             id,
             code::CAPABILITY_DENIED,
-            "operation is pixel- or key-addressed and is not served by the native host (XP-12)",
+            "operation is not served by the native host: a window command, a hover and a key chord are refused",
         ));
+    }
+    if crate::input::is_input_operation(&request.op) {
+        crate::input::validate_shape(request).map_err(|refusal| {
+            Refusal(Box::new(Response::failure(
+                id,
+                refusal.code,
+                refusal.message,
+            )))
+        })?;
     }
     if request.op == "semantic_action" {
         validate_semantic(request)?;
@@ -721,6 +765,8 @@ mod tests {
             cursor_position: None,
             capture_window: None,
             semantic_action: None,
+            input: None,
+            input_keys: None,
             permissions: BTreeMap::new(),
         };
         let response = hello(1, MACOS, &available);
@@ -735,25 +781,25 @@ mod tests {
             let support = table[op].support.as_str();
             let expected = match op {
                 "hello" | "ping" | "shutdown" | "list_windows" | "observe_window"
-                | "cursor_position" | "capture_window" | "semantic_action" => "delivered",
+                | "cursor_position" | "capture_window" | "semantic_action" | "input_click"
+                | "input_drag" | "input_scroll" | "input_type_text" | "input_key" => "delivered",
                 _ => "refused",
             };
             assert_eq!(support, expected, "{op}");
         }
-        for op in ["capture_window", "semantic_action"] {
-            assert_eq!(table[op].delivery.as_deref(), Some("background"), "{op}");
-        }
-        // Pixel- and key-addressed operations stay refused, with the reason.
         for op in [
-            "window_action",
-            "input_move",
+            "capture_window",
+            "semantic_action",
             "input_click",
             "input_drag",
             "input_scroll",
             "input_type_text",
             "input_key",
-            "input_hotkey",
         ] {
+            assert_eq!(table[op].delivery.as_deref(), Some("background"), "{op}");
+        }
+        // A window command, a hover and a key chord stay refused, with the reason.
+        for op in ["window_action", "input_move", "input_hotkey"] {
             assert_eq!(
                 table[op].reason.as_deref(),
                 Some("capability_denied"),
@@ -772,6 +818,11 @@ mod tests {
             "observe_window",
             "capture_window",
             "semantic_action",
+            "input_click",
+            "input_drag",
+            "input_scroll",
+            "input_type_text",
+            "input_key",
         ] {
             assert_eq!(table[op].support, "unavailable");
             assert_eq!(table[op].reason.as_deref(), Some("permission_missing"));
@@ -786,8 +837,22 @@ mod tests {
             refusal_code(r#"{"id":3,"protocol":"orcel-computer-host/2","op":"run_script"}"#),
             "capability_denied"
         );
-        let mutation = r#"{"id":4,"protocol":"orcel-computer-host/2","op":"input_click","x":1,"y":1,"button":"left","click_count":1,"expected_last_input_tick":1,"window":{"kind":"x11","id":9,"expected_pid":1,"expected_start_generation":2,"expected_window_nonce":3}}"#;
-        assert_eq!(refusal_code(mutation), "capability_denied");
+        // A window command, a hover and a key chord are never served.
+        for op in ["window_action", "input_move", "input_hotkey"] {
+            let line = format!(
+                r#"{{"id":4,"protocol":"orcel-computer-host/2","op":"{op}","x":1,"y":1,"key":"a","expected_last_input_tick":1,"window":{{"kind":"x11","id":9,"expected_pid":1,"expected_start_generation":2,"expected_window_nonce":3}}}}"#
+            );
+            assert_eq!(refusal_code(&line), "capability_denied", "{op}");
+        }
+        // A raw input is served, with exactly its own fields.
+        let click = r#"{"id":4,"protocol":"orcel-computer-host/2","op":"input_click","x":1,"y":1,"button":"left","click_count":1,"expected_last_input_tick":1,"window":{"kind":"x11","id":9,"expected_pid":1,"expected_start_generation":2,"expected_window_nonce":3}}"#;
+        assert!(decode(click).is_ok());
+        let widened = click.replace(r#""button":"left""#, r#""button":"left","key":"a""#);
+        assert_eq!(refusal_code(&widened), "invalid_request");
+        let untied = click.replace(r#""expected_last_input_tick":1,"#, "");
+        assert_eq!(refusal_code(&untied), "invalid_request");
+        let unbound = r#"{"id":4,"protocol":"orcel-computer-host/2","op":"input_key","key":"a","expected_last_input_tick":1}"#;
+        assert_eq!(refusal_code(unbound), "invalid_request");
     }
 
     const BOUND: &str = r#""window":{"kind":"x11","id":9,"expected_pid":1,"expected_start_generation":2,"expected_window_nonce":3}"#;

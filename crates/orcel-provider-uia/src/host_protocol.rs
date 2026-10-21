@@ -62,16 +62,26 @@ pub(crate) const NATIVE_OBSERVATION_OPERATIONS: [&str; 7] = [
     "capture_window",
 ];
 
-/// XP-11: the one mutation the kernel accepts from the macOS and Linux host,
-/// the accessibility-addressed `semantic_action` (invoke, set_value, select,
-/// toggle). Naming it here only stops the negotiation from capping it. It is
-/// not enough to send one: the adapter delivers it only while an approval
-/// bound to the exact target is armed (`ComputerHostAdapter::authorize_semantic`),
-/// and the registry still binds, redacts and revalidates the element. Every
-/// other mutation (`window_action` and the seven `input_*` operations) is
-/// pixel- or key-addressed, belongs to XP-12, and stays unavailable
+/// The mutations the kernel accepts from the macOS and Linux host: XP-11's
+/// accessibility-addressed `semantic_action` and, since XP-12, five raw input
+/// operations (`input_click`, `input_drag`, `input_scroll`, `input_type_text`
+/// and `input_key`). Naming an operation here only stops the negotiation from
+/// capping it. It is not enough to send one: the adapter delivers each only
+/// while an approval bound to the exact target is armed
+/// (`ComputerHostAdapter::authorize_semantic` and `authorize_input`), and the
+/// registry still binds, redacts and revalidates the target. `input_move` and
+/// `input_hotkey` have no bounded native delivery (a hover is not an effect the
+/// registry can verify, and a key chord can reach a system shortcut), and
+/// `window_action` is a window-manager command; the three stay unavailable
 /// (`observation_only`) whatever the host advertises.
-pub(crate) const NATIVE_ACTION_OPERATIONS: [&str; 1] = ["semantic_action"];
+pub(crate) const NATIVE_ACTION_OPERATIONS: [&str; 6] = [
+    "semantic_action",
+    "input_click",
+    "input_drag",
+    "input_scroll",
+    "input_type_text",
+    "input_key",
+];
 
 const PLATFORMS: [&str; 3] = ["windows", "macos", "linux"];
 const BACKENDS: [&str; 4] = ["uia", "ax", "atspi-x11", "atspi-wayland"];
@@ -335,9 +345,9 @@ fn accept_v2(expected_platform: &str, reply: HelloFrame) -> Result<NegotiatedHos
                 support: CapabilitySupport::parse(&wire.support),
                 reason,
             };
-            // Kernel cap: off Windows the kernel accepts observation and, since
-            // XP-11, semantic actions, whatever the hello claims. Pixel- and
-            // key-addressed operations wait for XP-12.
+            // Kernel cap: off Windows the kernel accepts observation, semantic
+            // actions (XP-11) and five raw input operations (XP-12), whatever
+            // the hello claims. The rest stay unavailable.
             if expected_platform != "windows"
                 && !NATIVE_OBSERVATION_OPERATIONS.contains(&op.as_str())
                 && !NATIVE_ACTION_OPERATIONS.contains(&op.as_str())
@@ -662,16 +672,27 @@ mod tests {
         }
     }
 
-    /// XP-11: exactly one mutation is let through the native cap, and it is
-    /// not a pixel- or key-addressed one.
+    /// XP-11 and XP-12: the mutations let through the native cap are the
+    /// semantic action and five raw input operations. A hover, a key chord
+    /// and a window command stay capped.
     #[test]
-    fn native_action_set_is_exactly_semantic_action() {
-        assert_eq!(NATIVE_ACTION_OPERATIONS, ["semantic_action"]);
+    fn native_action_set_is_semantic_action_and_five_input_operations() {
+        assert_eq!(
+            NATIVE_ACTION_OPERATIONS,
+            [
+                "semantic_action",
+                "input_click",
+                "input_drag",
+                "input_scroll",
+                "input_type_text",
+                "input_key"
+            ]
+        );
         for op in NATIVE_ACTION_OPERATIONS {
             assert!(V1_OPERATIONS.contains(&op));
             assert!(!NATIVE_OBSERVATION_OPERATIONS.contains(&op));
         }
-        let pixel_or_key: Vec<_> = V1_OPERATIONS
+        let still_capped: Vec<_> = V1_OPERATIONS
             .iter()
             .filter(|op| {
                 !NATIVE_OBSERVATION_OPERATIONS.contains(op)
@@ -680,17 +701,8 @@ mod tests {
             .copied()
             .collect();
         assert_eq!(
-            pixel_or_key,
-            vec![
-                "window_action",
-                "input_move",
-                "input_click",
-                "input_drag",
-                "input_scroll",
-                "input_type_text",
-                "input_key",
-                "input_hotkey"
-            ]
+            still_capped,
+            vec!["window_action", "input_move", "input_hotkey"]
         );
     }
 
@@ -699,7 +711,7 @@ mod tests {
         let claims_everything = V2_LINUX_HELLO
             .replace(
                 r#""input_click":{"support":"refused","reason":"capability_denied"}"#,
-                r#""input_click":{"support":"delivered"},"input_hotkey":{"support":"foreground_only"},"semantic_action":{"support":"delivered"},"capture_window":{"support":"delivered"},"window_action":{"support":"delivered"},"cursor_position":{"support":"delivered"}"#,
+                r#""input_click":{"support":"delivered"},"input_move":{"support":"delivered"},"input_hotkey":{"support":"foreground_only"},"semantic_action":{"support":"delivered"},"capture_window":{"support":"delivered"},"window_action":{"support":"delivered"},"cursor_position":{"support":"delivered"}"#,
             );
         for platform in ["linux", "macos"] {
             let raw = if platform == "macos" {
@@ -710,7 +722,7 @@ mod tests {
                 claims_everything.clone()
             };
             let host = negotiate(platform, |_| Ok(frame(&raw))).unwrap();
-            for op in ["input_click", "input_hotkey", "window_action"] {
+            for op in ["input_move", "input_hotkey", "window_action"] {
                 let error = host.require(op).unwrap_err();
                 assert_eq!(error.code, FailureCode::ProviderUnavailable, "{op}");
                 assert!(
@@ -718,9 +730,11 @@ mod tests {
                     "{op}: {error:?}"
                 );
             }
-            // XP-11: a semantic action is no longer capped; the host's own
-            // claim decides, and the adapter still needs an armed approval.
+            // XP-11 and XP-12: a semantic action and five raw input
+            // operations are no longer capped; the host's own claim decides,
+            // and the adapter still needs an armed approval.
             assert!(host.require("semantic_action").is_ok());
+            assert!(host.require("input_click").is_ok());
             assert!(host.require("list_windows").is_ok());
             assert!(host.require("cursor_position").is_ok());
             // XP-07: capture is an observation; the host's own claim decides.

@@ -804,6 +804,31 @@ fn process_name(pid: u32) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// P-10 (Orcel): whether one process is an ancestor of the other, read from
+/// `/proc/<pid>/stat`. Unreadable or deeper than 64 levels is not related.
+#[cfg(feature = "orcel-minimal")]
+fn orcel_related_processes(a: u32, b: u32) -> bool {
+    fn parent_of(pid: u32) -> Option<u32> {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        // The command name is parenthesised and may contain spaces: the
+        // fields start after the last `)`.
+        let rest = stat.rsplit_once(')')?.1;
+        rest.split_whitespace().nth(1)?.parse().ok()
+    }
+    fn has_ancestor(pid: u32, ancestor: u32) -> bool {
+        let mut current = pid;
+        for _ in 0..64 {
+            match parent_of(current) {
+                Some(parent) if parent == ancestor => return true,
+                Some(parent) if parent > 1 => current = parent,
+                _ => return false,
+            }
+        }
+        false
+    }
+    a == b || has_ancestor(a, b) || has_ancestor(b, a)
+}
+
 async fn resolve_app_for_pid<'a>(
     conn: &'a AccessibilityConnection,
     pid: u32,
@@ -911,6 +936,15 @@ async fn resolve_app_for_pid<'a>(
             };
             let mut name_matches: Vec<(atspi::ObjectRefOwned, u32)> = Vec::new();
             for (child, cpid) in other_apps {
+                // P-10 (Orcel): the same executable name is not the same
+                // application. Another process that merely shares the name
+                // (a second `python3`, a second editor) is refused; only an
+                // ancestor or descendant of the target (a launcher shim, a
+                // forked helper) is accepted.
+                #[cfg(feature = "orcel-minimal")]
+                if !orcel_related_processes(pid, cpid) {
+                    continue;
+                }
                 if process_name(cpid).as_deref() == Some(target_name.as_str()) {
                     name_matches.push((child, cpid));
                 }

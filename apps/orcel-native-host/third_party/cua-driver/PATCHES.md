@@ -324,8 +324,10 @@ crates expose only `register_all` / `build_registry`, which register every
 tool. The Orcel host calls `retain_tools(&ALLOWED_TOOLS)` right after
 construction (`apps/orcel-native-host/src/cua_adapter.rs`), so the registry
 holds exactly `list_windows`, `get_window_state`, `get_cursor_position`,
-`get_screen_size`, `check_permissions` and (P-09) `orcel_semantic_action`; any
-other name is unknown to `invoke`. This is defence in depth under the closed `CuaCall` enum.
+`get_screen_size`, `check_permissions`, (P-09) `orcel_semantic_action` and,
+since XP-12, the five raw input tools `click`, `drag`, `scroll`, `type_text`
+and `press_key` (eleven names; "XP-12: raw input through upstream's tools"
+below); any other name is unknown to `invoke`. This is defence in depth under the closed `CuaCall` enum.
 `registry_holds_the_allowlist_and_no_compiled_out_tool` (macOS and Linux CI)
 requires the registered names to equal the allowlist exactly. Lines added
 only; with the feature off the file compiles exactly as upstream.
@@ -382,8 +384,9 @@ only, so the host never calls it, and Wayland capture stays unavailable.
 The Orcel host delivers semantic actions (invoke, set_value, select, toggle)
 through one added tool, `orcel_semantic_action`, and registers no other
 action tool. Upstream's `click`, `set_value` and `scroll` stay out of the
-host's registry (P-07 keeps the allowlist at six names) because each of them
-can leave the accessibility route when it fails:
+host's registry (when P-09 landed, P-07 kept the allowlist at six names;
+XP-12 later added the raw input tools for the pixel-addressed operations only,
+see below) because each of them can leave the accessibility route when it fails:
 
 - macOS `click`: a CGEvent pixel click (`button=middle`, the list-selection
   fallback, any `x,y`), a private SkyLight activation to prime the key window,
@@ -455,11 +458,87 @@ feature off each file compiles exactly as upstream.
 
 What P-09 does not do: scroll. Upstream scrolls by wheel event at a screen
 position on both platforms, which is pixel-addressed input, so the host
-refuses the `scroll` verb (`capability_denied`) until XP-12. Set value on web
+refuses the `scroll` verb of `semantic_action` (`capability_denied`); wheel
+input is the `input_scroll` operation of XP-12, under its own approval. Set value on web
 content is refused by the host (an AXValue write there is echoed back without
 reaching the page), and a value write that moves text into a document does
 not mark the document edited, because upstream's way of doing that sends key
 events.
+
+## XP-12: raw input through upstream's tools
+
+XP-12's vendored changes are P-10 and P-11 above; the raw input path itself
+adds no patch. The host reaches
+Cua's own `click`, `drag`, `scroll`, `type_text` and `press_key` tools through
+the adapter (`apps/orcel-native-host/src/cua_adapter.rs`, `InputCall`), which
+only widens the allowlist P-07 enforces (`ALLOWED_TOOLS`, eleven names). What
+keeps the tools inside the approval is on the Orcel side of the adapter:
+
+- The adapter builds each argument object field by field: an exact `pid` and
+  `window_id`, window-local physical pixels, `delivery_mode: "background"`,
+  and the tool's own button, count, direction, amount, text or key. It never
+  sends `scope` (so no desktop-wide coordinate), a modifier, an `element_token`,
+  a `capture_id`, `from_zoom`, a coordinate frame or a foreground mode. The
+  registry is called with `invoke_with_native_window_pixels`, upstream's
+  in-process entry that declares the coordinates are physical window pixels;
+  a `_native_window_pixels` field in the arguments is ignored by the registry.
+- The worker decides everything the tools would otherwise decide for it: the
+  point is inside the live frame (never clamped), the key is in a closed set
+  with no chord, the text is bounded and chunked, the window is neither
+  protected, covered nor moved, and the person has not touched the machine,
+  each re-proved before every delivery unit (`input.rs`, `worker.rs`).
+- The registry holds no `hotkey`, `move_cursor`, `set_value`,
+  `bring_to_front`, `set_window_frame` or `launch_app`, so a failed input
+  tool cannot be followed by another route.
+
+What XP-12 leaves alone: the cursor overlay (P-05) is still never installed, so the
+decision it left to this task is unchanged: the host draws no badge.
+
+## P-10: an AT-SPI application is the target's own, not a namesake (XP-12)
+
+`platform-linux/src/atspi/native.rs`, with `orcel-minimal` only. When no
+AT-SPI application registered under the target's exact pid (any application
+that draws no accessible tree: Tk, a bare Xlib or SDL program, a game),
+`resolve_app_for_pid` falls back to the one other application whose process
+executable name equals the target's. Cua uses that for launcher shims. The
+fallback matched *any* process with the name, and XP-12 showed its reach: a
+Tk probe run by `python3` was resolved to a GTK harness that was also
+`python3`, and a pixel click at a point of the probe window fired the
+`I agree` check box of the harness, an action on another application that the
+click's approval never named. The same resolution feeds `get_window_state`
+and the P-09 tool, so an observation of such a window could have shown another
+process's tree.
+
+The patch adds `orcel_related_processes` (the two pids are equal, or one is an
+ancestor of the other, read from `/proc/<pid>/stat`, at most 64 levels) and
+skips a name match that is not related. A launcher shim or a forked helper
+still resolves; a sibling or unrelated process of the same name does not, and
+the window then has no accessibility tree, which every caller already handles.
+Lines added only; with the feature off the file compiles exactly as upstream.
+The XP-08 native conformance run (`conformance_native.rs`) is the regression:
+its GTK3 harness and the Tk probe are both `python3`, and the px cells require
+that the probe's journal shows the click and that the harness state file does
+not change.
+
+## P-11: the input SPI is a capability, off by default (XP-12)
+
+`platform-macos/src/input/skylight.rs`, with `orcel-minimal` only. Upstream's
+macOS input posts events through private SkyLight symbols (`SLEventPostToPid`,
+the authentication message, the focus-without-raise recipe) and falls back to
+the public `CGEvent` route when a symbol does not resolve. Private API
+behaviour changes with an OS update, so SECURITY_INTEGRATION.md (S-05) requires
+it to be a capability. The patch adds an `AtomicBool`, off by default,
+`orcel_set_background_spi` and `orcel_background_spi_enabled`, and makes
+`find_sym` refuse the ten symbols that post, authenticate, locate or steer
+input until the flag is set. Each caller already has a `None` path, so a
+disabled SPI is the public route. The read-only space and capture-list symbols
+(`SLS*`, `CGS*`) are not input and stay available. The flag must be set before
+the first input, since each handle is resolved once and cached.
+
+The host sets it from `ORCEL_MACOS_BACKGROUND_SPI=1` in the worker environment,
+which orceld forwards only when its own environment carries it, and reports the
+state in the hello `permissions` map as `macos_background_spi`. Lines added
+only; with the feature off the file compiles exactly as upstream.
 
 ## Patched file index
 
@@ -476,6 +555,7 @@ to be named here.
 - `platform-macos/src/capture_consent.rs` (upstream blob `62752a2f054b`)
 - `platform-macos/src/lib.rs` (upstream blob `329c62985332`)
 - `platform-macos/src/tools/mod.rs` (upstream blob `771e6717e3e5`)
+- `platform-macos/src/input/skylight.rs` (upstream blob `70e87b39bd5c`)
 - `platform-linux/Cargo.toml` (upstream blob `dfb5ec0fdc3f`)
 - `platform-linux/src/atspi/mod.rs` (upstream blob `77c5608cf2f5`)
 - `platform-linux/src/atspi/native.rs` (upstream blob `36451e533335`)

@@ -151,6 +151,31 @@ fn arm_semantic(
     Ok(())
 }
 
+/// XP-12: on a macOS or Linux host the adapter delivers raw input only while
+/// the approval just consumed is armed on the exact window and the exact input
+/// (its digest). The window comes from the registry's server-resolved binding
+/// and the input from the request the approval's digest covers, never from the
+/// host. A Windows host is unchanged and is not armed.
+#[cfg(not(windows))]
+fn arm_input(
+    adapter: &ComputerHostAdapter,
+    hwnd: u64,
+    action: &DesktopInputAction,
+) -> Result<(), ProviderError> {
+    adapter
+        .authorize_input(hwnd, action)
+        .map_err(|error| ProviderError::new(error.code, error.message))
+}
+
+#[cfg(windows)]
+fn arm_input(
+    _adapter: &ComputerHostAdapter,
+    _hwnd: u64,
+    _action: &DesktopInputAction,
+) -> Result<(), ProviderError> {
+    Ok(())
+}
+
 fn require_full_user_desktop() -> Result<(), ProviderError> {
     full_control_store::check_current_desktop_input()
         .map(|_| ())
@@ -339,6 +364,56 @@ fn desktop_input_action(
     }
 }
 
+/// What the person is asked to approve, in words they can check: the points
+/// (window-relative), the button, the text typed (escaped, at most 64
+/// characters shown, its length always) or the key. Bounded, so a long text
+/// cannot push the rest of the prompt out of view.
+fn describe_input(action: &DesktopInputAction) -> String {
+    const SHOWN: usize = 64;
+    match action {
+        DesktopInputAction::Move { x, y } => format!("move to ({x}, {y})"),
+        DesktopInputAction::Click {
+            x,
+            y,
+            button,
+            count,
+        } => format!("{button} click x{count} at ({x}, {y})"),
+        DesktopInputAction::Drag { x, y, to_x, to_y } => {
+            format!("drag ({x}, {y}) to ({to_x}, {to_y})")
+        }
+        DesktopInputAction::Scroll {
+            x,
+            y,
+            scroll_x,
+            scroll_y,
+        } => format!("scroll ({scroll_x}, {scroll_y}) lines at ({x}, {y})"),
+        DesktopInputAction::TypeText { text } => {
+            let shown: String = text
+                .chars()
+                .take(SHOWN)
+                .flat_map(char::escape_default)
+                .collect();
+            let more = text.chars().count().saturating_sub(SHOWN);
+            if more > 0 {
+                format!(
+                    "type \"{shown}\" and {more} more characters ({} total)",
+                    text.chars().count()
+                )
+            } else {
+                format!("type \"{shown}\" ({} characters)", text.chars().count())
+            }
+        }
+        DesktopInputAction::Key { key } | DesktopInputAction::Hotkey { key } => {
+            let shown: String = key
+                .chars()
+                .take(SHOWN)
+                .flat_map(char::escape_default)
+                .collect();
+            format!("press \"{shown}\"")
+        }
+    }
+}
+
 fn full_user_input_with_approval(
     workspace: &Workspace,
     approval: &impl ApprovalBroker,
@@ -360,6 +435,11 @@ fn full_user_input_with_approval(
     let expected_window_generation = required_u64(request, "expected_window_generation")?;
     let action_name = required_string(request, "action")?;
     let action = desktop_input_action(request, &action_name)?;
+    // XP-12: a native host's input limits are judged before any approval is
+    // requested, so an input it would refuse never costs the user a prompt.
+    #[cfg(not(windows))]
+    orcel_provider_uia::check_native_input_limits(&action)
+        .map_err(|error| ProviderError::new(error.code, error.message))?;
 
     require_full_user_desktop()?;
     let binding = {
@@ -382,8 +462,13 @@ fn full_user_input_with_approval(
         "execute Full User desktop input",
         window_id.clone(),
         format!(
-            "process={} window={} window_generation={} action={} arguments_digest={}",
-            binding.process_id, binding.window_id, binding.window_generation, action_name, digest,
+            "process={} window={} window_generation={} action={} input={} arguments_digest={}",
+            binding.process_id,
+            binding.window_id,
+            binding.window_generation,
+            action_name,
+            describe_input(&action),
+            digest,
         ),
         digest.clone(),
     );
@@ -426,9 +511,12 @@ fn full_user_input_with_approval(
             "desktop input target changed after approval",
         ));
     }
-    let outcome = host
-        .execute_raw_input(rebound.hwnd, &action, cursor.last_input_tick)
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
+    // XP-12: arm the approval just consumed for this exact input, and clear
+    // it whatever the adapter did, so none is left in the process-wide slot.
+    arm_input(host, rebound.hwnd, &action)?;
+    let outcome = host.execute_raw_input(rebound.hwnd, &action, cursor.last_input_tick);
+    host.disarm_input();
+    let outcome = outcome.map_err(|error| ProviderError::new(error.code, error.message))?;
     Ok(json!({
         "schema": "orcel-desktop-input/1",
         "state": outcome.state,
@@ -1770,5 +1858,33 @@ mod xp06_tests {
                 "{value:?}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod xp12_prompt_tests {
+    use super::describe_input;
+    use orcel_provider_uia::DesktopInputAction;
+
+    #[test]
+    fn the_prompt_shows_what_will_be_typed_escaped_and_bounded() {
+        let typed = describe_input(&DesktopInputAction::TypeText {
+            text: "rm -rf \"x\"\u{202e}".into(),
+        });
+        assert!(typed.contains("rm -rf"), "{typed}");
+        assert!(!typed.contains('\u{202e}'), "{typed}");
+        assert!(typed.contains("characters"), "{typed}");
+        let long = describe_input(&DesktopInputAction::TypeText {
+            text: "a".repeat(256),
+        });
+        assert!(long.len() < 200, "{long}");
+        assert!(long.contains("192 more"), "{long}");
+        let click = describe_input(&DesktopInputAction::Click {
+            x: 4,
+            y: 5,
+            button: "left".into(),
+            count: 2,
+        });
+        assert_eq!(click, "left click x2 at (4, 5)");
     }
 }
