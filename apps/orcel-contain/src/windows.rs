@@ -61,8 +61,12 @@
 //! non-inheritably); then the directories' ACEs become inheritable, parents
 //! first, and the private working directory gets its protected DACL; then a
 //! last walk refuses the grant if anything in the tree is unledgered or has
-//! gained a link. So an unvalidated child never receives a grant, not even
-//! for the moment before a rollback that a hard kill could interrupt.
+//! gained a link. So, absent a concurrent linker, an unvalidated child never
+//! receives a grant. A hard link created during the walk can share a grant
+//! for the moment before the last walk refuses it and the grant is rolled
+//! back; a hard kill in that moment leaves the ACE behind, which the
+//! residual-risk note above explains is harmless (it names an AppContainer
+//! SID no later token can hold).
 //!
 //! Denial of service, by design: a junction, symbolic link or other reparse
 //! point anywhere inside a root, or a hard-linked file, makes every later
