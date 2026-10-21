@@ -29,7 +29,19 @@
 // Every vendored file must also be reviewable by the exact-diff gate: text,
 // with no line longer than MAX_REVIEWABLE_LINE.
 //
-// Usage: node scripts/check-vendored-cua.mjs [--upstream]
+// #355: each patched file also records the blob it has now
+// (`patched_blob_sha`), so a later edit to an already-patched file fails until
+// its provenance record (and PATCHES.md entry) is updated with it. Without
+// --upstream the matrix and registry in the working tree are not trusted on
+// their own either: when origin/main is available (`--anchor <ref>` names
+// another ref), each tree id must also equal that ref's transplant matrix row
+// and donor registry pin, so matching edits to the provenance and the matrix
+// fail locally. A re-pin is checked with --upstream, against GitHub.
+// --require-anchor makes a missing anchor ref a failure instead of a note, and
+// runs the anchor check even with --upstream; CI's Governance job uses it
+// after fetching origin/main, so the anchor is enforced there too.
+//
+// Usage: node scripts/check-vendored-cua.mjs [--upstream] [--anchor <ref>] [--require-anchor]
 // Dependency-free; needs git on PATH. Exits 1 on any mismatch.
 import { Buffer, isUtf8 } from "node:buffer";
 import { execFileSync } from "node:child_process";
@@ -39,8 +51,10 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const provenancePath = join(repoRoot, "docs/orcel/cua_driver_provenance.json");
-const matrixPath = join(repoRoot, "docs/orcel/implementation-readiness/transplant_matrix.json");
-const registryPath = join(repoRoot, "docs/orcel/implementation-readiness/donor_registry.json");
+const matrixRelative = "docs/orcel/implementation-readiness/transplant_matrix.json";
+const registryRelative = "docs/orcel/implementation-readiness/donor_registry.json";
+const matrixPath = join(repoRoot, matrixRelative);
+const registryPath = join(repoRoot, registryRelative);
 const vendorRoot = "apps/orcel-native-host/third_party/cua-driver";
 const SHA = /^[0-9a-f]{40}$/;
 // Jev's exact-diff review packs each slice into 10,000 characters, including
@@ -110,6 +124,16 @@ export function lockPackages(text) {
   return [...text.matchAll(/^name = "([^"]+)"$/gm)].map((m) => m[1]);
 }
 
+/** `path` as committed at `ref`, parsed as JSON, or null when the ref is absent. */
+function anchoredJson(ref, path) {
+  try {
+    git(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
+  } catch {
+    return null;
+  }
+  return JSON.parse(git(["show", `${ref}:${path}`]));
+}
+
 function git(args, input) {
   return execFileSync("git", args, {
     cwd: repoRoot,
@@ -154,7 +178,7 @@ function mktree(files) {
   return git(["mktree", "--missing", "-z"], lines.map((l) => `${l}\0`).join("")).trim();
 }
 
-export async function check({ upstream = false } = {}) {
+export async function check({ upstream = false, anchor = "origin/main", requireAnchor = false } = {}) {
   const provenance = JSON.parse(readFileSync(provenancePath, "utf8"));
   const patches = readFileSync(join(repoRoot, vendorRoot, "PATCHES.md"), "utf8");
   const matrix = new Map(JSON.parse(readFileSync(matrixPath, "utf8")).rows.map((row) => [row.id, row]));
@@ -166,6 +190,31 @@ export async function check({ upstream = false } = {}) {
       )
     : null;
   const errors = [];
+  const summaryHead = [];
+  // The local anchor: the matrix and registry as the reviewed branch has them.
+  let anchorMatrix = null;
+  if (!upstream || requireAnchor) {
+    const anchoredRows = anchoredJson(anchor, matrixRelative);
+    const anchoredRegistry = anchoredJson(anchor, registryRelative);
+    if (anchoredRows && anchoredRegistry) {
+      anchorMatrix = new Map(anchoredRows.rows.map((row) => [row.id, row]));
+      const pinned = anchoredRegistry.donors.find((d) => d.id === provenance.donor?.id);
+      if (pinned?.commit !== provenance.donor?.commit) {
+        errors.push(`${anchor}'s donor_registry.json pins cua at ${pinned?.commit}, provenance at ${provenance.donor?.commit}`);
+      }
+      summaryHead.push(`anchor: matrix and registry also checked against ${anchor}`);
+    } else {
+      if (requireAnchor) errors.push(`anchor ${anchor} is not available; fetch it (git fetch origin main)`);
+      else summaryHead.push(`anchor: ${anchor} is not available; the working-tree matrix is not cross-checked (run with --upstream)`);
+    }
+  }
+  const anchored = (name, id, record) => {
+    if (!anchorMatrix) return;
+    const row = anchorMatrix.get(id);
+    if (!row || row.object !== record.tree_sha || row.path !== record.source || row.dest !== record.destination) {
+      errors.push(`${name}: provenance does not match ${anchor}'s matrix row ${id}`);
+    }
+  };
   if (!SHA.test(provenance.donor?.commit ?? "")) errors.push("donor.commit is not a 40-hex id");
 
   const all = indexEntries(`${vendorRoot}/`);
@@ -180,7 +229,7 @@ export async function check({ upstream = false } = {}) {
   }
   claimed.add(`${vendorRoot}/PATCHES.md`);
 
-  const summary = [];
+  const summary = summaryHead;
   for (const crate of provenance.crates ?? []) {
     const prefix = `${crate.destination}/`;
     const files = new Map();
@@ -238,6 +287,14 @@ export async function check({ upstream = false } = {}) {
       if (entry.sha === patched.upstream_blob_sha) {
         errors.push(`${full}: listed as patched but identical to upstream`);
       }
+      if (!SHA.test(patched.patched_blob_sha ?? "")) {
+        errors.push(`${full}: patched file needs its patched_blob_sha`);
+      } else if (entry.sha !== patched.patched_blob_sha) {
+        errors.push(
+          `${full}: blob ${entry.sha} is not the recorded patched blob ${patched.patched_blob_sha}; ` +
+            "record the change in PATCHES.md and update patched_blob_sha",
+        );
+      }
       if (!patches.includes(`${crate.name}/${patched.path}`)) {
         errors.push(`${full}: patched but not named in PATCHES.md`);
       }
@@ -255,6 +312,7 @@ export async function check({ upstream = false } = {}) {
     else if (row.object !== crate.tree_sha || row.path !== crate.source || row.dest !== crate.destination) {
       errors.push(`${crate.name}: provenance does not match matrix row ${crate.matrix_id}`);
     }
+    anchored(crate.name, crate.matrix_id, crate);
     if (upstreamTrees && upstreamTrees.get(crate.source) !== crate.tree_sha) {
       errors.push(
         `${crate.name}: trycua/cua@${provenance.donor.commit} has ${crate.source} as ${upstreamTrees.get(crate.source)}, not ${crate.tree_sha}`,
@@ -304,6 +362,7 @@ export async function check({ upstream = false } = {}) {
     else if (row.object !== tree.tree_sha || row.path !== tree.source || row.dest !== tree.destination) {
       errors.push(`${tree.name}: provenance does not match matrix row ${tree.matrix_id}`);
     }
+    anchored(tree.name, tree.matrix_id, tree);
     if (upstreamTrees && upstreamTrees.get(tree.source) !== tree.tree_sha) {
       errors.push(
         `${tree.name}: trycua/cua@${provenance.donor.commit} has ${tree.source} as ${upstreamTrees.get(tree.source)}, not ${tree.tree_sha}`,
@@ -350,7 +409,14 @@ export async function check({ upstream = false } = {}) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const upstream = process.argv.includes("--upstream");
-  const { errors, summary } = await check({ upstream });
+  const at = process.argv.indexOf("--anchor");
+  const anchor = at > 0 ? process.argv[at + 1] : "origin/main";
+  if (!anchor || anchor.startsWith("-")) {
+    console.error("error: --anchor needs a git ref");
+    process.exit(1);
+  }
+  const requireAnchor = process.argv.includes("--require-anchor");
+  const { errors, summary } = await check({ upstream, anchor, requireAnchor });
   for (const line of summary) console.log(line);
   if (errors.length) {
     for (const e of errors) console.error(`error: ${e}`);
