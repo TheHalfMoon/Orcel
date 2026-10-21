@@ -503,6 +503,32 @@ qualification; SECURITY_INTEGRATION.md (S-05) records the risk and the
 follow-up. The cursor overlay (P-05) is still never installed, so the
 decision it left to this task is unchanged: the host draws no badge.
 
+## P-10: an AT-SPI application is the target's own, not a namesake (XP-12)
+
+`platform-linux/src/atspi/native.rs`, with `orcel-minimal` only. When no
+AT-SPI application registered under the target's exact pid (any application
+that draws no accessible tree: Tk, a bare Xlib or SDL program, a game),
+`resolve_app_for_pid` falls back to the one other application whose process
+executable name equals the target's. Cua uses that for launcher shims. The
+fallback matched *any* process with the name, and XP-12 showed its reach: a
+Tk probe run by `python3` was resolved to a GTK harness that was also
+`python3`, and a pixel click at a point of the probe window fired the
+`I agree` check box of the harness, an action on another application that the
+click's approval never named. The same resolution feeds `get_window_state`
+and the P-09 tool, so an observation of such a window could have shown another
+process's tree.
+
+The patch adds `orcel_related_processes` (the two pids are equal, or one is an
+ancestor of the other, read from `/proc/<pid>/stat`, at most 64 levels) and
+skips a name match that is not related. A launcher shim or a forked helper
+still resolves; a sibling or unrelated process of the same name does not, and
+the window then has no accessibility tree, which every caller already handles.
+Lines added only; with the feature off the file compiles exactly as upstream.
+The XP-08 native conformance run (`conformance_native.rs`) is the regression:
+its GTK3 harness and the Tk probe are both `python3`, and the px cells require
+that the probe's journal shows the click and that the harness state file does
+not change.
+
 ## Patched file index
 
 Every vendored file that differs from upstream, as recorded in the
