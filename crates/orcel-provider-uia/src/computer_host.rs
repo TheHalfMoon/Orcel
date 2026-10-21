@@ -863,6 +863,13 @@ mod platform {
         /// is opened and verified (identity, size, digest, owner, mode)
         /// right before the start; on Linux the host is started from that
         /// descriptor, so the path is not resolved again.
+        ///
+        /// The descriptor pins the inode, not its bytes: on Linux a process
+        /// of the same user, or root, can still rewrite the file in place
+        /// between the digest and the exec (#383). That is the trust level of
+        /// the macOS window, where the host is started by path right after
+        /// the check: only root and this user can write the file or any
+        /// directory above it, and they can already replace orceld.
         #[cfg(unix)]
         pub fn from_trusted(binary: &crate::TrustedHostBinary) -> Result<Self, UiaError> {
             let path = binary.path().to_path_buf();
