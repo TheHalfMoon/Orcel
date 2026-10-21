@@ -567,7 +567,7 @@ mod platform {
     #[cfg(windows)]
     const HOST_ENV: &[&str] = &["SystemRoot", "WINDIR", "COMSPEC", "TEMP", "TMP", "PATH"];
     #[cfg(target_os = "macos")]
-    const HOST_ENV: &[&str] = &["PATH", "LANG", "TMPDIR"];
+    const HOST_ENV: &[&str] = &["PATH", "LANG", "TMPDIR", "ORCEL_MACOS_BACKGROUND_SPI"];
     #[cfg(not(any(windows, target_os = "macos")))]
     const HOST_ENV: &[&str] = &[
         "PATH",

@@ -364,6 +364,56 @@ fn desktop_input_action(
     }
 }
 
+/// What the person is asked to approve, in words they can check: the points
+/// (window-relative), the button, the text typed (escaped, at most 64
+/// characters shown, its length always) or the key. Bounded, so a long text
+/// cannot push the rest of the prompt out of view.
+fn describe_input(action: &DesktopInputAction) -> String {
+    const SHOWN: usize = 64;
+    match action {
+        DesktopInputAction::Move { x, y } => format!("move to ({x}, {y})"),
+        DesktopInputAction::Click {
+            x,
+            y,
+            button,
+            count,
+        } => format!("{button} click x{count} at ({x}, {y})"),
+        DesktopInputAction::Drag { x, y, to_x, to_y } => {
+            format!("drag ({x}, {y}) to ({to_x}, {to_y})")
+        }
+        DesktopInputAction::Scroll {
+            x,
+            y,
+            scroll_x,
+            scroll_y,
+        } => format!("scroll ({scroll_x}, {scroll_y}) lines at ({x}, {y})"),
+        DesktopInputAction::TypeText { text } => {
+            let shown: String = text
+                .chars()
+                .take(SHOWN)
+                .flat_map(char::escape_default)
+                .collect();
+            let more = text.chars().count().saturating_sub(SHOWN);
+            if more > 0 {
+                format!(
+                    "type \"{shown}\" and {more} more characters ({} total)",
+                    text.chars().count()
+                )
+            } else {
+                format!("type \"{shown}\" ({} characters)", text.chars().count())
+            }
+        }
+        DesktopInputAction::Key { key } | DesktopInputAction::Hotkey { key } => {
+            let shown: String = key
+                .chars()
+                .take(SHOWN)
+                .flat_map(char::escape_default)
+                .collect();
+            format!("press \"{shown}\"")
+        }
+    }
+}
+
 fn full_user_input_with_approval(
     workspace: &Workspace,
     approval: &impl ApprovalBroker,
@@ -412,8 +462,13 @@ fn full_user_input_with_approval(
         "execute Full User desktop input",
         window_id.clone(),
         format!(
-            "process={} window={} window_generation={} action={} arguments_digest={}",
-            binding.process_id, binding.window_id, binding.window_generation, action_name, digest,
+            "process={} window={} window_generation={} action={} input={} arguments_digest={}",
+            binding.process_id,
+            binding.window_id,
+            binding.window_generation,
+            action_name,
+            describe_input(&action),
+            digest,
         ),
         digest.clone(),
     );
@@ -1803,5 +1858,33 @@ mod xp06_tests {
                 "{value:?}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod xp12_prompt_tests {
+    use super::describe_input;
+    use orcel_provider_uia::DesktopInputAction;
+
+    #[test]
+    fn the_prompt_shows_what_will_be_typed_escaped_and_bounded() {
+        let typed = describe_input(&DesktopInputAction::TypeText {
+            text: "rm -rf \"x\"\u{202e}".into(),
+        });
+        assert!(typed.contains("rm -rf"), "{typed}");
+        assert!(!typed.contains('\u{202e}'), "{typed}");
+        assert!(typed.contains("characters"), "{typed}");
+        let long = describe_input(&DesktopInputAction::TypeText {
+            text: "a".repeat(256),
+        });
+        assert!(long.len() < 200, "{long}");
+        assert!(long.contains("192 more"), "{long}");
+        let click = describe_input(&DesktopInputAction::Click {
+            x: 4,
+            y: 5,
+            button: "left".into(),
+            count: 2,
+        });
+        assert_eq!(click, "left click x2 at (4, 5)");
     }
 }

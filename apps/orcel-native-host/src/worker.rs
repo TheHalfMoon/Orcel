@@ -56,6 +56,7 @@ pub fn run(input: impl BufRead, mut output: impl Write) -> std::io::Result<()> {
         return Err(std::io::Error::other("worker request exceeds the bound"));
     }
     let platform = HostPlatform::current();
+    enable_background_spi();
     let response = match protocol::decode_request(trim_line(&line), platform) {
         Err(refusal) => *refusal.0,
         Ok(request) => {
@@ -69,6 +70,29 @@ pub fn run(input: impl BufRead, mut output: impl Write) -> std::io::Result<()> {
     raw.push(b'\n');
     output.write_all(&raw)?;
     output.flush()
+}
+
+/// P-11: the macOS input SPI is off unless the operator opted in, before any
+/// input handle is resolved.
+#[cfg(target_os = "macos")]
+fn enable_background_spi() {
+    let enabled = std::env::var_os("ORCEL_MACOS_BACKGROUND_SPI").is_some_and(|value| value == "1");
+    platform_macos::input::skylight::orcel_set_background_spi(enabled);
+}
+
+#[cfg(not(target_os = "macos"))]
+fn enable_background_spi() {}
+
+/// Whether the macOS input SPI capability is enabled (always false elsewhere).
+fn background_spi_enabled() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        platform_macos::input::skylight::orcel_background_spi_enabled()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
 }
 
 fn trim_line(line: &[u8]) -> &[u8] {
@@ -156,6 +180,10 @@ async fn probe(runtime: &CuaRuntime, platform: HostPlatform) -> Availability {
                         availability.input = Some(code::PERMISSION_MISSING.to_owned());
                     }
                 }
+                // The private input route is a capability of its own.
+                availability
+                    .permissions
+                    .insert("macos_background_spi".to_owned(), background_spi_enabled());
                 // The human-input binding needs a readable idle clock.
                 if availability.input.is_none() && input::tick::current().is_err() {
                     availability.input = Some(code::PROVIDER_UNAVAILABLE.to_owned());

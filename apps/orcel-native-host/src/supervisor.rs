@@ -27,7 +27,7 @@ use std::time::Duration;
 /// Wayland clients read; on macOS only the basics (no `HOME`, so Cua reads
 /// no per-user config file).
 #[cfg(target_os = "macos")]
-const WORKER_ENV: &[&str] = &["PATH", "LANG", "TMPDIR"];
+const WORKER_ENV: &[&str] = &["PATH", "LANG", "TMPDIR", "ORCEL_MACOS_BACKGROUND_SPI"];
 #[cfg(not(target_os = "macos"))]
 const WORKER_ENV: &[&str] = &[
     "PATH",

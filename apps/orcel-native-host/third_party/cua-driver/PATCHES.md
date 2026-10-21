@@ -326,8 +326,8 @@ construction (`apps/orcel-native-host/src/cua_adapter.rs`), so the registry
 holds exactly `list_windows`, `get_window_state`, `get_cursor_position`,
 `get_screen_size`, `check_permissions`, (P-09) `orcel_semantic_action` and,
 since XP-12, the five raw input tools `click`, `drag`, `scroll`, `type_text`
-and `press_key` (eleven names; "XP-12: raw input through upstream's tools,
-no vendored change" below); any other name is unknown to `invoke`. This is defence in depth under the closed `CuaCall` enum.
+and `press_key` (eleven names; "XP-12: raw input through upstream's tools"
+below); any other name is unknown to `invoke`. This is defence in depth under the closed `CuaCall` enum.
 `registry_holds_the_allowlist_and_no_compiled_out_tool` (macOS and Linux CI)
 requires the registered names to equal the allowlist exactly. Lines added
 only; with the feature off the file compiles exactly as upstream.
@@ -465,10 +465,10 @@ reaching the page), and a value write that moves text into a document does
 not mark the document edited, because upstream's way of doing that sends key
 events.
 
-## XP-12: raw input through upstream's tools, no vendored change
+## XP-12: raw input through upstream's tools
 
-XP-12 vendors no file and changes no vendored byte, so it adds no patch and
-`scripts/check-vendored-cua.mjs --upstream` is unaffected. The host reaches
+XP-12's vendored changes are P-10 and P-11 above; the raw input path itself
+adds no patch. The host reaches
 Cua's own `click`, `drag`, `scroll`, `type_text` and `press_key` tools through
 the adapter (`apps/orcel-native-host/src/cua_adapter.rs`, `InputCall`), which
 only widens the allowlist P-07 enforces (`ALLOWED_TOOLS`, eleven names). What
@@ -491,16 +491,7 @@ keeps the tools inside the approval is on the Orcel side of the adapter:
   `bring_to_front`, `set_window_frame` or `launch_app`, so a failed input
   tool cannot be followed by another route.
 
-What XP-12 does not do, and why it is not a patch: it does not gate
-macOS's SkyLight SPI (`SLEventPostToPid`, the focus-without-raise recipe)
-behind a capability. `platform-macos/src/input/skylight.rs` resolves its
-symbols through one `find_sym`, but the SPI is also reached from
-`click.rs`, `drag.rs`, `scroll.rs`, `type_text.rs`, `press_key.rs`,
-`tools/mod.rs` and `mouse.rs`/`keyboard.rs` directly, and a gate at the
-resolver would also switch off the public fallbacks that share it. A patch
-that disables the SPI and keeps every public route working needs its own
-qualification; SECURITY_INTEGRATION.md (S-05) records the risk and the
-follow-up. The cursor overlay (P-05) is still never installed, so the
+What XP-12 leaves alone: the cursor overlay (P-05) is still never installed, so the
 decision it left to this task is unchanged: the host draws no badge.
 
 ## P-10: an AT-SPI application is the target's own, not a namesake (XP-12)
@@ -529,6 +520,26 @@ its GTK3 harness and the Tk probe are both `python3`, and the px cells require
 that the probe's journal shows the click and that the harness state file does
 not change.
 
+## P-11: the input SPI is a capability, off by default (XP-12)
+
+`platform-macos/src/input/skylight.rs`, with `orcel-minimal` only. Upstream's
+macOS input posts events through private SkyLight symbols (`SLEventPostToPid`,
+the authentication message, the focus-without-raise recipe) and falls back to
+the public `CGEvent` route when a symbol does not resolve. Private API
+behaviour changes with an OS update, so SECURITY_INTEGRATION.md (S-05) requires
+it to be a capability. The patch adds an `AtomicBool`, off by default,
+`orcel_set_background_spi` and `orcel_background_spi_enabled`, and makes
+`find_sym` refuse the ten symbols that post, authenticate, locate or steer
+input until the flag is set. Each caller already has a `None` path, so a
+disabled SPI is the public route. The read-only space and capture-list symbols
+(`SLS*`, `CGS*`) are not input and stay available. The flag must be set before
+the first input, since each handle is resolved once and cached.
+
+The host sets it from `ORCEL_MACOS_BACKGROUND_SPI=1` in the worker environment,
+which orceld forwards only when its own environment carries it, and reports the
+state in the hello `permissions` map as `macos_background_spi`. Lines added
+only; with the feature off the file compiles exactly as upstream.
+
 ## Patched file index
 
 Every vendored file that differs from upstream, as recorded in the
@@ -544,6 +555,7 @@ to be named here.
 - `platform-macos/src/capture_consent.rs` (upstream blob `62752a2f054b`)
 - `platform-macos/src/lib.rs` (upstream blob `329c62985332`)
 - `platform-macos/src/tools/mod.rs` (upstream blob `771e6717e3e5`)
+- `platform-macos/src/input/skylight.rs` (upstream blob `70e87b39bd5c`)
 - `platform-linux/Cargo.toml` (upstream blob `dfb5ec0fdc3f`)
 - `platform-linux/src/atspi/mod.rs` (upstream blob `77c5608cf2f5`)
 - `platform-linux/src/atspi/native.rs` (upstream blob `36451e533335`)
