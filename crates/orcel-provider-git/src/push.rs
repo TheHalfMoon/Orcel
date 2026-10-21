@@ -758,12 +758,12 @@ fn create_exclusive_askpass_dir() -> Result<PathBuf, GitProviderError> {
         .as_nanos();
     for _ in 0..16u32 {
         let sequence = ASKPASS_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
+        let dir = std::env::temp_dir().join(format!(
             "orcel-git-push-askpass-{}-{nonce}-{sequence}",
             std::process::id()
         ));
-        match std::fs::create_dir(&path) {
-            Ok(()) => return Ok(path),
+        match std::fs::create_dir(&dir) {
+            Ok(()) => return Ok(dir),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => {
                 return Err(provider_error(format!(
