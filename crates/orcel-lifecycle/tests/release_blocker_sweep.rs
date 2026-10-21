@@ -434,6 +434,11 @@ fn only_the_documented_ignored_tests_exist() {
                         && line.contains(
                             "performs one real HTTPS request; run with --ignored for live evidence",
                         ))
+                    || ((relative == "apps/orcel-native-host/tests/conformance_native.rs"
+                        || relative == "apps/orcel-native-host/tests/conformance_shared_web.rs")
+                        && line.contains(
+                            "requires ORCEL_XP08_FIXTURES (staged native fixtures); run by the native-host CI job with --include-ignored",
+                        ))
                     || ((relative == "crates/orcel-browser-host/src/worker_launch_tests.rs"
                         || relative == "crates/orcel-browser-host/tests/sg000108_worker_host.rs"
                         || relative == "crates/orceld/src/live_browser.rs")

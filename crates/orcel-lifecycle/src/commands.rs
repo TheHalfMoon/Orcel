@@ -22,6 +22,30 @@ fn active_version(layout: &Layout) -> Result<String, LifecycleError> {
         .version)
 }
 
+/// The `orceld` a one-shot local request runs in: the active version of the
+/// verified per-user install on Windows; on Linux and macOS, which have no
+/// such payload, the pinned binary next to `orcel` or from the package
+/// (#382 item 6, [`orcel_lifecycle::orceld_path`]).
+fn local_orceld(layout: &Layout) -> Result<PathBuf, LifecycleError> {
+    #[cfg(windows)]
+    {
+        let version = active_version(layout)?;
+        Ok(layout.version_dir(&version).join("orceld.exe"))
+    }
+    #[cfg(unix)]
+    {
+        let _ = layout;
+        orcel_lifecycle::orceld_path::resolve()
+    }
+    #[cfg(not(any(windows, unix)))]
+    {
+        let _ = layout;
+        Err(LifecycleError::prerequisite(
+            "orceld is not supported on this OS",
+        ))
+    }
+}
+
 pub fn workspace(args: &mut Args) -> Result<Output, LifecycleError> {
     let layout = Layout::for_current_user()?;
     let action = args.positional("workspace action (add, remove, list, trust, untrust)")?;
@@ -1062,12 +1086,13 @@ pub fn remote(args: &mut Args) -> Result<Output, LifecycleError> {
             let config = Config::load(&layout)?;
             config.check_workspaces_with_policy()?;
             let workspace = config.default_workspace().unwrap_or("default").to_string();
-            let version = active_version(&layout)?;
+            let orceld = local_orceld(&layout)?;
             let mut request = ipc::request(&workspace, "secret", "migrate", json!({}));
             request["target"] = json!(remote::DEVICE_KEY_SECRET);
-            let response = ipc::call(
-                &layout.version_dir(&version).join("orceld.exe"),
+            let response = ipc::call_with_env(
+                &orceld,
                 &config,
+                &orcel_lifecycle::orceld_path::session_env(&|name| std::env::var(name).ok()),
                 &request,
                 Duration::from_secs(60),
             )?;

@@ -79,8 +79,22 @@ fn run() -> Result<ParsedDocument, ParseRefusal> {
     };
     let bytes = read_bounded(Path::new(&path))?;
     abort_on_test_trigger(&bytes);
+    #[cfg(debug_assertions)]
+    if let Some(pdf) = bytes.strip_prefix(UNCHECKED_TEST_TRIGGER) {
+        // Only the decode budget stands here; a run it does not end is not
+        // a conversion.
+        pdf::inspect_without_preflight(pdf)?;
+        return Err(ParseRefusal::Usage);
+    }
     convert(&bytes)
 }
+
+/// Debug builds only: an input that starts with this trigger runs the rest
+/// through pdf-inspector with no pre-flight and no parity watch, so the
+/// end-to-end tests can show the decode budget alone ends a decode bomb
+/// under containment.
+#[cfg(debug_assertions)]
+const UNCHECKED_TEST_TRIGGER: &[u8] = b"ORCEL-WI05-TEST-UNCHECKED\n";
 
 /// Debug builds only (never a release build, which is what ships): an input
 /// that is exactly the test trigger aborts the process, so the end-to-end

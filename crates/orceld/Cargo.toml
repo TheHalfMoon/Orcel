@@ -36,6 +36,12 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+# #398: poll(2) for the app API accept loop and utimensat(2) to keep its
+# socket and lock file from runtime-directory clean-up. Already in the graph
+# through orcel-platform (same version).
+libc = "0.2"
+
 [target.'cfg(windows)'.dependencies]
 # CR-01 adds the named-pipe app API: Security (token user, SID, DACL from
 # SDDL), Storage_FileSystem (pipe open flags, ReadFile/WriteFile), System_IO

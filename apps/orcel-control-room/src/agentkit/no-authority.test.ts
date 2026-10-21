@@ -29,6 +29,7 @@ const FORBIDDEN: Array<[RegExp, string]> = [
   [/\bcreateServer\s*\(|\.listen\s*\(/u, "a listener"],
   [/@modelcontextprotocol|McpServer/u, "an MCP server"],
   [/\bspawn\s*\(|\bfork\s*\(/u, "a child process other than whoami"],
+  [/allowUnverified|unverifiedTestConnector|UNVERIFIED_PIPE_TEST/u, "the tests' unverified pipe connect (#398)"],
 ];
 
 test("the shipped bundle has no approval, mutation, listener or MCP path", () => {
@@ -46,6 +47,28 @@ test("the shipped bundle has no approval, mutation, listener or MCP path", () =>
       });
   }
   assert.deepEqual(hits, []);
+});
+
+test("the production build compiles no test support (#398 item 4)", () => {
+  const build = JSON.parse(readFileSync(path.join(packageRoot, "tsconfig.build.json"), "utf8")) as {
+    extends?: string;
+    exclude?: string[];
+  };
+  assert.equal(build.extends, "./tsconfig.json");
+  assert.deepEqual(build.exclude, ["src/tests/**", "src/**/*.test.ts"]);
+  const scripts = (
+    JSON.parse(readFileSync(path.join(packageRoot, "package.json"), "utf8")) as { scripts: Record<string, string> }
+  ).scripts;
+  assert.equal(scripts.build, "tsc -p tsconfig.build.json");
+  // The unverified pipe connector exists only in the excluded test support.
+  const unverified = files(path.join(packageRoot, "src"), ".ts").filter((file) =>
+    readFileSync(file, "utf8").includes("connectUnverifiedPipe"),
+  );
+  assert.deepEqual(unverified, []);
+  assert.match(
+    readFileSync(path.join(packageRoot, "src", "tests", "unverified-pipe.ts"), "utf8"),
+    /function connectUnverifiedPipe/u,
+  );
 });
 
 test("the client's surface is read-only", () => {

@@ -38,11 +38,11 @@ The pipe namespace is shared, so another account can create
 without `SECURITY_SQOS_PRESENT` (the server could impersonate the client) and
 cannot read the server's process or token, so this connector cannot verify
 the server as ORCEL_APP_API_1.md section 7 requires. It therefore **refuses
-to connect on Windows**. The `allowUnverifiedWindowsPipe: true` opt-in is
-test-only, and the code enforces it (#381 item 2): it is refused unless
-`ORCEL_CONTROL_ROOM_UNVERIFIED_PIPE_TEST=1` is set, which only `npm test`
-does, through `node --env-file=test.env` (the tests start the daemon
-themselves). The Windows Control Room transport is the CR-03 Tauri
+to connect on Windows**, and it has no option to do otherwise (#398 item 4).
+The tests start the daemon themselves and connect through
+`src/tests/unverified-pipe.ts`. The production build (`npm run build`,
+`tsconfig.build.json`) excludes `src/tests/` and every `*.test.ts`, so that
+connector is never compiled into it. The Windows Control Room transport is the CR-03 Tauri
 bridge, which must open the pipe from Rust with
 `SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION` and require the token user
 of `GetNamedPipeServerProcessId` to equal its own.

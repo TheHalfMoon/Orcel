@@ -340,6 +340,32 @@ fn wi05_a_large_form_drawn_on_many_pages_ends_as_archive_limit_under_containment
     assert_eq!(frame.expect("converts").pages, 16);
 }
 
+/// The parity checks are bypassed altogether (the debug-only unchecked
+/// trigger): pdf-inspector runs with no pre-flight and no parity watch, on
+/// the bomb the pre-flight never sees and on the one in the page content. The
+/// decode budget alone ends both as `archive_limit`, under the contained tier
+/// they are meant to be covered by (#399). The in-process counterpart is
+/// `a_stream_the_preflight_never_saw_still_fails_closed_with_archive_limit`.
+#[test]
+fn wi05_the_decode_budget_alone_ends_a_parity_bypass_under_containment() {
+    for (name, pdf) in [
+        ("bare-name form XObject", fixtures::struct_name_bomb_pdf()),
+        ("page content", fixtures::flate_bomb_pdf()),
+    ] {
+        let input = [fixtures::UNCHECKED_TRIGGER, pdf.as_slice()].concat();
+        let Some(scene) = Scene::new(&input) else {
+            return;
+        };
+        let (code, frame) = scene.parse();
+        assert_eq!(code, EXIT_REFUSED, "{name}");
+        assert_eq!(
+            frame,
+            Err(FrameError::Refused(ParseRefusal::ArchiveLimit)),
+            "{name}"
+        );
+    }
+}
+
 /// A parser crash (the debug-only abort trigger) ends inside the contained
 /// process: the helper reports it, and there is no frame to accept.
 #[test]
@@ -460,21 +486,56 @@ fn wi05_a_run_past_its_timeout_is_killed() {
 /// a mutant does to the parser, the result is a well-formed frame whose kind
 /// matches the exit status, or a crash the helper reports. No crash escapes
 /// the contained process. `ORCEL_WI05_FUZZ_CASES` raises the count.
+///
+/// `ORCEL_WI05_FUZZ_SECONDS` switches to a timed run (#389, the manually
+/// dispatched `doc-parser-fuzz` job): a wider corpus, mutated until the time
+/// is up, with `ORCEL_WI05_FUZZ_SEED` to vary the sequence. A crash, ceiling
+/// or timeout is contained and counted; with `ORCEL_WI05_FUZZ_CRASH_DIR` set
+/// its input is kept there so it can be replayed under containment.
 #[test]
 fn wi05_mutated_inputs_never_escape_the_contained_process() {
     let cases: usize = std::env::var("ORCEL_WI05_FUZZ_CASES")
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(12);
-    let mut seed = 0x9e37_79b9_u32;
+    let timed = std::env::var("ORCEL_WI05_FUZZ_SECONDS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(|seconds| Instant::now() + Duration::from_secs(seconds));
+    let mut seed = std::env::var("ORCEL_WI05_FUZZ_SEED")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .filter(|seed| *seed != 0)
+        .unwrap_or(0x9e37_79b9_u32);
+    eprintln!("wi05 mutation run: seed {seed}, timed {}", timed.is_some());
     let mut next = move || {
         seed ^= seed << 13;
         seed ^= seed >> 17;
         seed ^= seed << 5;
         seed as usize
     };
-    for (name, original) in [("pdf", fixtures::text_pdf()), ("docx", fixtures::docx())] {
-        for case in 0..cases {
+    let mut corpus = vec![("pdf", fixtures::text_pdf()), ("docx", fixtures::docx())];
+    if timed.is_some() {
+        corpus.extend([
+            ("pptx", fixtures::pptx(3)),
+            ("object-stream pdf", fixtures::object_stream_member_pdf(2)),
+            ("bare-name pdf", fixtures::bare_struct_name_pdf()),
+            (
+                "repeated-form pdf",
+                fixtures::repeated_form_pdf(4, 1 + 258 * 4),
+            ),
+        ]);
+    }
+    let crash_dir = std::env::var_os("ORCEL_WI05_FUZZ_CRASH_DIR").map(PathBuf::from);
+    let (mut total, mut contained_crashes) = (0usize, 0usize);
+    let mut case = 0usize;
+    loop {
+        match timed {
+            Some(deadline) if Instant::now() >= deadline => break,
+            None if case >= cases => break,
+            _ => {}
+        }
+        for (name, original) in &corpus {
             let mut bytes = original.clone();
             for _ in 0..1 + next() % 8 {
                 let at = next() % bytes.len();
@@ -487,6 +548,7 @@ fn wi05_mutated_inputs_never_escape_the_contained_process() {
                 return;
             };
             let run = scene.run(&scene.parser_spec());
+            total += 1;
             match run.outcome {
                 ContainedOutcome::Exited(0) => {
                     assert!(decode_frame(&run.stdout).is_ok(), "{name} case {case}")
@@ -496,8 +558,17 @@ fn wi05_mutated_inputs_never_escape_the_contained_process() {
                     "{name} case {case}"
                 ),
                 // A crash, a ceiling or the timeout: contained and reported.
-                other => eprintln!("{name} case {case}: contained crash {other:?}"),
+                other => {
+                    contained_crashes += 1;
+                    eprintln!("{name} case {case}: contained crash {other:?}");
+                    if let Some(dir) = &crash_dir {
+                        let _ = std::fs::create_dir_all(dir);
+                        let _ = std::fs::write(dir.join(format!("crash-{total}.bin")), &bytes);
+                    }
+                }
             }
         }
+        case += 1;
     }
+    eprintln!("wi05 mutation run: {total} contained runs, {contained_crashes} contained crashes");
 }

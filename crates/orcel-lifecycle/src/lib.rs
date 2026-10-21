@@ -17,6 +17,7 @@ pub mod logs;
 pub mod manifest;
 pub mod mcp;
 pub mod mcp_host;
+pub mod orceld_path;
 pub mod platform;
 pub mod remote;
 #[cfg(windows)]
