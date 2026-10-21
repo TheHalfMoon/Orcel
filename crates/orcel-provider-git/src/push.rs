@@ -745,6 +745,38 @@ impl Drop for DisabledPushHooksDir {
     }
 }
 
+/// Creates `path` exclusively, owner-only from the first instant (mode 0700 on
+/// Unix; on Windows it inherits the per-user temp ACL, as the XP-01B state
+/// files do). It fails if the path exists.
+fn create_private_dir(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt as _;
+        std::fs::DirBuilder::new().mode(0o700).create(path)
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::DirBuilder::new().create(path)
+    }
+}
+
+/// Writes a new file that is never readable by anyone else: created
+/// exclusively with `mode` in the same call (no write-then-chmod window).
+fn create_private_file(path: &Path, mode: u32, content: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(mode);
+    }
+    #[cfg(not(unix))]
+    let _ = mode;
+    let mut file = options.open(path)?;
+    file.write_all(content)
+}
+
 static ASKPASS_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// Creates a fresh, exclusively owned credential directory. The name carries a
@@ -762,7 +794,7 @@ fn create_exclusive_askpass_dir() -> Result<PathBuf, GitProviderError> {
             "orcel-git-push-askpass-{}-{nonce}-{sequence}",
             std::process::id()
         ));
-        match std::fs::create_dir(&dir) {
+        match create_private_dir(&dir) {
             Ok(()) => return Ok(dir),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => {
@@ -794,37 +826,16 @@ impl ProtectedAskpass {
             ))
         })?;
         let secret_path = dir.join("secret");
-        std::fs::write(&secret_path, secret.as_str()).map_err(|error| {
+        create_private_file(&secret_path, 0o600, secret.as_str().as_bytes()).map_err(|error| {
             provider_error(format!("stage protected credential material: {error}"))
         })?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-            let mut permissions = std::fs::metadata(&secret_path)
-                .map_err(|error| provider_error(format!("inspect credential material: {error}")))?
-                .permissions();
-            permissions.set_mode(0o600);
-            std::fs::set_permissions(&secret_path, permissions).map_err(|error| {
-                provider_error(format!("restrict credential material: {error}"))
-            })?;
-        }
         #[cfg(windows)]
         let script = dir.join("askpass.bat");
         #[cfg(not(windows))]
         let script = dir.join("askpass.sh");
         let content = askpass_script_content(&secret_path);
-        std::fs::write(&script, content)
+        create_private_file(&script, 0o700, content.as_bytes())
             .map_err(|error| provider_error(format!("stage protected askpass helper: {error}")))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-            let mut permissions = std::fs::metadata(&script)
-                .map_err(|error| provider_error(format!("inspect askpass helper: {error}")))?
-                .permissions();
-            permissions.set_mode(0o700);
-            std::fs::set_permissions(&script, permissions)
-                .map_err(|error| provider_error(format!("restrict askpass helper: {error}")))?;
-        }
         Ok(Self { dir, script })
     }
 
@@ -1587,6 +1598,47 @@ mod tests {
                 "each directory holds only its own secret and script"
             );
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn askpass_directory_and_files_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = |path: &Path| {
+            std::fs::metadata(path)
+                .expect("metadata")
+                .permissions()
+                .mode()
+                & 0o777
+        };
+        let askpass =
+            ProtectedAskpass::create(&PushSecret::new("token".to_string())).expect("create");
+        assert_eq!(mode(askpass.directory()), 0o700);
+        assert_eq!(mode(&askpass.directory().join("secret")), 0o600);
+        assert_eq!(mode(askpass.path()), 0o700);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_creation_is_exclusive_and_owner_only_at_creation() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = create_exclusive_askpass_dir().expect("dir");
+        let file = dir.join("f");
+        create_private_file(&file, 0o600, b"x").expect("create");
+        assert_eq!(
+            std::fs::metadata(&file).expect("m").permissions().mode() & 0o777,
+            0o600
+        );
+        assert!(
+            create_private_file(&file, 0o600, b"y").is_err(),
+            "never reuses a file"
+        );
+        assert!(
+            create_private_dir(&dir).is_err(),
+            "never reuses a directory"
+        );
+        std::fs::remove_file(&file).expect("rm");
+        std::fs::remove_dir(&dir).expect("rmdir");
     }
 
     #[test]
