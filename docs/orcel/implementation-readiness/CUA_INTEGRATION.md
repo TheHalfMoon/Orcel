@@ -109,7 +109,7 @@ Notable dependency risks: `meval` (math-expression evaluator used by `parallel_m
 ### 2.7 Tests Orcel inherits
 
 - Unit: `cua-driver-core` lib tests with `--no-default-features` (XP-05).
-- Native conformance: the shared web harness 40-cell catalog per host app, AppKit/SwiftUI/GTK3/GTK4 harnesses, with fixture-owned state oracles and focus/z-order/cursor/no-leak oracles (XP-08). Upstream CI scripts at repo root: `scripts/ci/linux/run-rust-e2e.sh`, `run-rust-e2e-wayland.sh`, `scripts/ci/macos/run-rust-e2e.sh` are the reference for runner setup.
+- Native conformance: the shared web harness 40-cell catalog per host app, and the AppKit (macOS) and GTK3 (Linux) harnesses, with fixture-owned state oracles and focus/z-order/cursor/no-leak oracles (XP-08). The pinned fixture tree also holds SwiftUI and GTK4 harnesses; Orcel does not stage or run them (`tests/native-fixtures/orcel-stage.sh` builds GTK3, AppKit, WKWebView and Electron only), so they are not conformance evidence (#390). Upstream CI scripts at repo root: `scripts/ci/linux/run-rust-e2e.sh`, `run-rust-e2e-wayland.sh`, `scripts/ci/macos/run-rust-e2e.sh` are the reference for runner setup.
 
 ## 3. Cua SDK (`libs/cua`)
 

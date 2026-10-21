@@ -277,9 +277,13 @@ jobs:
         run: cargo test --locked -p cursor-overlay -p cua-cursor-motion --features cua-cursor-motion/serde
       - name: orcel-native-host tests (unit and stdio protocol conformance)
         # XP-06: the protocol, supervisor, worker, adapter and mapping unit
-        # tests, then the real binary over stdio. Without a session (Linux:
-        # no display or bus; macOS: no TCC grant on the runner) observation
-        # must be unavailable with a reason, never prompted for.
+        # tests, then the real binary over stdio. Without a session (Linux: no
+        # display or bus) observation must be unavailable with a reason, never
+        # prompted for. The hosted macOS runner grants Accessibility and Screen
+        # Recording, so there the stdio test takes its granted branch; the
+        # macOS missing-permission path is covered by the worker unit test
+        # missing_macos_permission_is_unavailable_with_a_reason and by the
+        # manual check in SECURITY_INTEGRATION.md (#383).
         run: cargo test --locked --release -p orcel-native-host -- --nocapture
       - name: Install a Linux GUI session for live observation (Xvfb, Openbox, AT-SPI, GTK3)
         if: runner.os == 'Linux'
@@ -364,8 +368,10 @@ jobs:
       # (release_blocker_sweep::workflow_set_is_exactly_the_governed_quartet).
       # The spec's self-hosted macOS runner waits for FD-05, so the macOS leg
       # runs on the hosted runner, which grants the host Accessibility and
-      # Screen Recording. ORCEL_XP08_FIXTURES makes both suites run and fail
-      # rather than skip.
+      # Screen Recording. Both suites are #[ignore]d without their fixtures, so
+      # a plain cargo test reports them as not run (#390); these steps pass
+      # --include-ignored with ORCEL_XP08_FIXTURES set, and a suite then
+      # fails rather than skips when its fixtures are missing.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "24.19.0"
@@ -397,7 +403,7 @@ jobs:
             gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus \
               --method org.freedesktop.DBus.Properties.Set org.a11y.Status IsEnabled "<true>"
             cargo test --locked --release -p orcel-native-host \
-              --test conformance_native --test conformance_shared_web -- --nocapture --test-threads=1
+              --test conformance_native --test conformance_shared_web -- --include-ignored --nocapture --test-threads=1
           '
           echo "- XP-08 suite on Linux X11: ${SECONDS}s" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: XP-08 conformance under headless Sway (Wayland)
@@ -430,7 +436,7 @@ jobs:
             gdbus call --session --dest org.a11y.Bus --object-path /org/a11y/bus \
               --method org.freedesktop.DBus.Properties.Set org.a11y.Status IsEnabled "<true>"
             cargo test --locked --release -p orcel-native-host \
-              --test conformance_native --test conformance_shared_web -- --nocapture --test-threads=1
+              --test conformance_native --test conformance_shared_web -- --include-ignored --nocapture --test-threads=1
           '
           echo "- XP-08 suite on Linux Sway: ${SECONDS}s" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: XP-08 conformance on the hosted macOS session (Quartz)
@@ -440,7 +446,7 @@ jobs:
           export ORCEL_XP08_FIXTURES="$RUNNER_TEMP/orcel-fixtures" ORCEL_XP08_REPORT_DIR="$RUNNER_TEMP/xp08-reports"
           SECONDS=0
           cargo test --locked --release -p orcel-native-host \
-            --test conformance_native --test conformance_shared_web -- --nocapture --test-threads=1
+            --test conformance_native --test conformance_shared_web -- --include-ignored --nocapture --test-threads=1
           echo "- XP-08 suite on macOS: ${SECONDS}s" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Check the XP-08 reports against orcel-benchmark-report/1
         # Linux: shared web and native, each for X11 and Sway. macOS: both
