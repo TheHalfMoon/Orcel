@@ -15145,7 +15145,8 @@ mod orcel_semantic {
                         )
                         .into());
                     };
-                    let (live_role, checked) = crate::atspi::native::live_role_and_checked_ref(live_ref)?;
+                    let (live_role, toggle) =
+                        crate::atspi::native::live_role_and_toggle_ref(live_ref)?;
                     let live_role = normalized(&live_role);
                     if live_role.contains("password") {
                         return Ok(refusal(
@@ -15159,11 +15160,22 @@ mod orcel_semantic {
                             "the live element's role is no longer the one the host listed",
                         ));
                     }
-                    if verb == Verb::Toggle && toggle_to == Some(checked) {
-                        return Ok(refusal(
-                            "target_stale",
-                            "the element is already in the requested state; it changed since it was observed",
-                        ));
+                    if verb == Verb::Toggle {
+                        use crate::atspi::native::LiveToggle;
+                        // P-12: a mixed (half-checked) box is refused, as
+                        // macOS refuses an AXValue of 2.
+                        if toggle == LiveToggle::Mixed {
+                            return Ok(refusal(
+                                "capability_denied",
+                                "the element is in a mixed state, so a toggle would not reach the requested state",
+                            ));
+                        }
+                        if toggle_to == Some(toggle == LiveToggle::On) {
+                            return Ok(refusal(
+                                "target_stale",
+                                "the element is already in the requested state; it changed since it was observed",
+                            ));
+                        }
                     }
                     if verb == Verb::SetValue {
                         let text = value.as_deref().unwrap_or_default();
