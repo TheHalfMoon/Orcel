@@ -530,6 +530,10 @@ mod imp {
 
 pub use imp::CuaRuntime;
 
+/// #401: the live AT-SPI re-read of the P-09 tool, on a GTK3 session.
+#[cfg(all(test, target_os = "linux"))]
+mod atspi_reread_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -996,14 +1000,33 @@ mod tests {
 
     /// P-09 (Linux): a toggle acts on a state it read. Checked or pressed is
     /// on; a failed or missing read is an error, never "off", so a checked
-    /// box is never turned off for want of a state.
+    /// box is never turned off for want of a state. P-12 (#401): a
+    /// half-checked box (`Indeterminate`) is mixed whatever else it reports,
+    /// never "off", and the tool refuses to toggle it.
     #[cfg(target_os = "linux")]
     #[test]
     fn an_unreadable_toggle_state_is_an_error_never_off() {
         use platform_linux::atspi::native::toggled_from_state_read as read;
-        assert!(read::<String>(Some(Ok((true, false)))).unwrap());
-        assert!(read::<String>(Some(Ok((false, true)))).unwrap());
-        assert!(!read::<String>(Some(Ok((false, false)))).unwrap());
+        use platform_linux::atspi::native::LiveToggle;
+        assert_eq!(
+            read::<String>(Some(Ok((true, false, false)))).unwrap(),
+            LiveToggle::On
+        );
+        assert_eq!(
+            read::<String>(Some(Ok((false, true, false)))).unwrap(),
+            LiveToggle::On
+        );
+        assert_eq!(
+            read::<String>(Some(Ok((false, false, false)))).unwrap(),
+            LiveToggle::Off
+        );
+        for (checked, pressed) in [(false, false), (true, false), (false, true), (true, true)] {
+            assert_eq!(
+                read::<String>(Some(Ok((checked, pressed, true)))).unwrap(),
+                LiveToggle::Mixed,
+                "checked {checked}, pressed {pressed}"
+            );
+        }
         assert!(read(Some(Err("bus error".to_owned()))).is_err());
         assert!(read::<String>(None).is_err());
     }
