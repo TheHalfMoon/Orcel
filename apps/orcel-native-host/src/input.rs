@@ -28,7 +28,7 @@
 //!   exposure check). A window the stacking order cannot prove clear is not
 //!   a target.
 
-use crate::protocol::{code, Request};
+use crate::protocol::{code, HostPlatform, Request};
 pub use crate::semantic::Refusal;
 use cua_driver_contract::{WindowElement, WindowInfo};
 
@@ -513,19 +513,70 @@ pub fn tick_is_fresh(expected: u32, now: u32) -> bool {
     delta.unsigned_abs() <= TICK_TOLERANCE_MS
 }
 
-/// Whether the tick read after a delivery unit is explained by the host's own
-/// events or by nothing happening: it equals the baseline (the host's events
-/// did not move this clock, as with `CGEventPostToPid`), or it lies in the
-/// time the unit was being delivered (`start` to `end`, with a settle margin,
-/// all in the tick clock). Anything else is the person touching the keyboard
-/// or pointer, and the rest of the sequence is not sent.
-pub fn explained_by_own_events(baseline: u32, after: u32, start: u32, end: u32) -> bool {
-    if tick_is_fresh(baseline, after) {
-        return true;
+/// How the host's own delivered events show on the human-input clock, per
+/// platform. The rule decides which tick changes between delivery units are
+/// the host's own and which are the person's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OwnEvents {
+    /// The host's events move the clock. X11: XTest events on Cua's virtual
+    /// master device reset the X server's idle counter, so a tick that lies
+    /// inside the call that delivered the unit is the host's own.
+    MoveTheClock,
+    /// The host's events never move the clock. macOS: events posted to one
+    /// process (`CGEventPostToPid`, and the SkyLight `SLEventPostToPid` route)
+    /// bypass the HID event stream that the combined session state reads, so
+    /// the tick must stay exactly what it was. Any change is the person.
+    LeaveTheClock,
+}
+
+impl OwnEvents {
+    /// The rule for the platform the worker runs on.
+    pub fn on(platform: HostPlatform) -> Self {
+        if platform == crate::protocol::MACOS {
+            Self::LeaveTheClock
+        } else {
+            Self::MoveTheClock
+        }
     }
-    let from = start.wrapping_sub(TICK_TOLERANCE_MS);
-    let span = end.wrapping_sub(from).wrapping_add(TICK_TOLERANCE_MS);
-    after.wrapping_sub(from) <= span
+}
+
+/// Clock-reading slack on either side of a delivery call when the host's own
+/// events move the X11 clock: `/proc/uptime` and the tick derived from it each
+/// have 10 ms resolution. The settle wait after the call is outside the window.
+pub const OWN_EVENT_MARGIN_MS: u32 = 20;
+
+/// The macOS tick is one millisecond count derived from two clock reads, so
+/// two reads of the same last event may round one millisecond apart. Exactly
+/// equal means equal up to that rounding.
+pub const MACOS_TICK_ROUNDING_MS: u32 = 1;
+
+/// Whether the tick read after a delivery unit is explained by the host's own
+/// events or by nothing happening. Under [`OwnEvents::LeaveTheClock`] (macOS)
+/// only an unchanged tick is. Under [`OwnEvents::MoveTheClock`] (X11) the tick
+/// may also lie inside the delivery call itself: `start` is read just before
+/// the call and `end` just after it returns, before any settle wait, all in
+/// the tick clock. Anything else is the person touching the keyboard or
+/// pointer, and the rest of the sequence is not sent.
+pub fn explained_by_own_events(
+    rule: OwnEvents,
+    baseline: u32,
+    after: u32,
+    start: u32,
+    end: u32,
+) -> bool {
+    match rule {
+        OwnEvents::LeaveTheClock => {
+            (after.wrapping_sub(baseline) as i32).unsigned_abs() <= MACOS_TICK_ROUNDING_MS
+        }
+        OwnEvents::MoveTheClock => {
+            if tick_is_fresh(baseline, after) {
+                return true;
+            }
+            let from = start.wrapping_sub(OWN_EVENT_MARGIN_MS);
+            let span = end.wrapping_sub(from).wrapping_add(OWN_EVENT_MARGIN_MS);
+            after.wrapping_sub(from) <= span
+        }
+    }
 }
 
 /// How long the person must still stay quiet before the first unit, given the
@@ -683,7 +734,8 @@ pub mod tick {
         /// `kCGAnyInputEventType`.
         const ANY_INPUT_EVENT_TYPE: u32 = u32::MAX;
 
-        fn monotonic_ms() -> Result<u64, String> {
+        /// The monotonic clock in milliseconds, with its fraction kept.
+        fn monotonic_ms() -> Result<f64, String> {
             let mut now = libc::timespec {
                 tv_sec: 0,
                 tv_nsec: 0,
@@ -694,13 +746,16 @@ pub mod tick {
             if status != 0 {
                 return Err("the monotonic clock is unreadable".to_owned());
             }
-            Ok(now.tv_sec as u64 * 1000 + now.tv_nsec as u64 / 1_000_000)
+            Ok(now.tv_sec as f64 * 1000.0 + now.tv_nsec as f64 / 1_000_000.0)
         }
 
         pub fn clock_ms() -> Result<u32, String> {
-            monotonic_ms().map(|ms| ms as u32)
+            monotonic_ms().map(|ms| ms as u64 as u32)
         }
 
+        /// The last event's instant, rounded once from the unrounded
+        /// difference, so two reads of the same event agree to within one
+        /// millisecond (`MACOS_TICK_ROUNDING_MS`).
         pub fn current() -> Result<u32, String> {
             // SAFETY: a plain CoreGraphics query taking two integers and
             // returning a number of seconds; it reads no memory of ours.
@@ -710,7 +765,11 @@ pub mod tick {
             if !idle.is_finite() || idle < 0.0 {
                 return Err("the last input time is unreadable".to_owned());
             }
-            Ok(monotonic_ms()?.wrapping_sub((idle * 1000.0) as u64) as u32)
+            let last = (monotonic_ms()? - idle * 1000.0).round();
+            if !last.is_finite() || last < 0.0 {
+                return Err("the last input time is unreadable".to_owned());
+            }
+            Ok(last as u64 as u32)
         }
     }
 
@@ -1158,24 +1217,27 @@ mod tests {
 
     #[test]
     fn the_hosts_own_events_move_the_baseline_and_a_persons_do_not() {
+        let x11 = OwnEvents::MoveTheClock;
         // A unit delivered between 5_000 and 5_020 moves the idle clock to
         // 5_010: that is explained. No movement at all is explained too.
-        assert!(explained_by_own_events(1_000, 5_010, 5_000, 5_020));
-        assert!(explained_by_own_events(1_000, 1_005, 5_000, 5_020));
+        assert!(explained_by_own_events(x11, 1_000, 5_010, 5_000, 5_020));
+        assert!(explained_by_own_events(x11, 1_000, 1_005, 5_000, 5_020));
         // A person typing keeps the tick newer than the unit: not explained,
         // however many times it is read.
-        assert!(!explained_by_own_events(1_000, 5_150, 5_000, 5_020));
-        assert!(!explained_by_own_events(1_000, 5_100, 5_000, 5_020));
+        assert!(!explained_by_own_events(x11, 1_000, 5_150, 5_000, 5_020));
+        assert!(!explained_by_own_events(x11, 1_000, 5_100, 5_000, 5_020));
         // A touch before the unit began and after the baseline.
-        assert!(!explained_by_own_events(1_000, 3_000, 5_000, 5_020));
+        assert!(!explained_by_own_events(x11, 1_000, 3_000, 5_000, 5_020));
         // The clock wraps.
         assert!(explained_by_own_events(
+            x11,
             u32::MAX - 500,
             5,
             u32::MAX - 20,
             30
         ));
         assert!(!explained_by_own_events(
+            x11,
             u32::MAX - 500,
             500,
             u32::MAX - 20,
@@ -1188,13 +1250,79 @@ mod tests {
         let mut cancelled = false;
         for (index, stroke) in strokes.iter().enumerate() {
             let start = 5_000 + index as u32 * 250;
-            if !explained_by_own_events(baseline, *stroke, start, start + 20) {
+            if !explained_by_own_events(x11, baseline, *stroke, start, start + 20) {
                 cancelled = true;
                 break;
             }
             baseline = *stroke;
         }
         assert!(cancelled);
+    }
+
+    /// #404: the window that explains a tick is the delivery call and the
+    /// clock-reading margin only. The settle wait after the call is not in
+    /// it, so a person who touches the pointer while the host waits for its
+    /// unit to be processed is caught.
+    #[test]
+    fn the_explained_window_is_the_call_and_the_reading_margin_only() {
+        let x11 = OwnEvents::MoveTheClock;
+        let (start, end) = (5_000u32, 5_020u32);
+        assert!(explained_by_own_events(
+            x11,
+            1_000,
+            end + OWN_EVENT_MARGIN_MS,
+            start,
+            end
+        ));
+        assert!(!explained_by_own_events(
+            x11,
+            1_000,
+            end + OWN_EVENT_MARGIN_MS + 1,
+            start,
+            end
+        ));
+        assert!(explained_by_own_events(
+            x11,
+            1_000,
+            start - OWN_EVENT_MARGIN_MS,
+            start,
+            end
+        ));
+        assert!(!explained_by_own_events(
+            x11,
+            1_000,
+            start - OWN_EVENT_MARGIN_MS - 1,
+            start,
+            end
+        ));
+        // A touch 25 ms into the 40 ms settle wait: the old window (call,
+        // settle and 30 ms either side) explained it; this one does not.
+        assert!(!explained_by_own_events(x11, 1_000, end + 25, start, end));
+    }
+
+    /// #404: on macOS the host's events never move the session clock, so the
+    /// tick must stay what it was, up to the reader's millisecond rounding.
+    /// A change inside the delivery call is the person, not the host.
+    #[test]
+    fn on_macos_the_tick_must_stay_exactly_equal() {
+        let mac = OwnEvents::LeaveTheClock;
+        assert_eq!(OwnEvents::on(crate::protocol::MACOS), mac);
+        assert_eq!(
+            OwnEvents::on(crate::protocol::LINUX_X11),
+            OwnEvents::MoveTheClock
+        );
+        assert!(explained_by_own_events(mac, 1_000, 1_000, 5_000, 5_020));
+        assert!(explained_by_own_events(mac, 1_000, 1_001, 5_000, 5_020));
+        assert!(explained_by_own_events(mac, 1_000, 999, 5_000, 5_020));
+        assert!(!explained_by_own_events(mac, 1_000, 1_002, 5_000, 5_020));
+        assert!(!explained_by_own_events(mac, 1_000, 998, 5_000, 5_020));
+        // Inside the call, where X11 would accept it, and within the 30 ms
+        // jitter tolerance of the baseline: both refused on macOS.
+        assert!(!explained_by_own_events(mac, 1_000, 5_010, 5_000, 5_020));
+        assert!(!explained_by_own_events(mac, 1_000, 1_020, 5_000, 5_020));
+        // The clock wraps.
+        assert!(explained_by_own_events(mac, u32::MAX, 0, 5_000, 5_020));
+        assert!(!explained_by_own_events(mac, u32::MAX, 1, 5_000, 5_020));
     }
 
     #[test]
