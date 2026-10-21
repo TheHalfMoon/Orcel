@@ -188,8 +188,8 @@ Pinned by `package-lock.json` and copied into the release from the locked produc
 
 | Package | Version | License | Purpose |
 |---|---|---|---|
-| @modelcontextprotocol/server | 2.1.0 | MIT | MCP server (stdio transport, tool registration) |
-| @modelcontextprotocol/core | 2.1.0 | MIT | Protocol types used by the server |
+| @modelcontextprotocol/server | 2.3.1 | Apache-2.0 (MIT through 2.2.0) | MCP server (stdio transport, tool registration); 2.3.x fixes GHSA-jm63-cq47-j5jp, GHSA-46jr-4wx8-v453 and GHSA-rvq5-wwqv-78pq |
+| @modelcontextprotocol/core | 2.3.1 | Apache-2.0 (MIT through 2.2.0) | Protocol types used by the server |
 | zod | 4.2.0 | MIT | Tool input schemas |
 
 ## Development-only dependencies (not distributed)
