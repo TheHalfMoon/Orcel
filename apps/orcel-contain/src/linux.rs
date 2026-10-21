@@ -55,6 +55,7 @@ use crate::containment::{
     containment_error, os_detail, spawn_error, unsupported_error, ContainError, ContainedChild,
     ContainmentLimits, FilesystemBoundary,
 };
+use crate::pinned::PinnedExecutable;
 use crate::unix::{apply_resource_limits, base_command, ProcessGroupGuard};
 
 pub(crate) type Guard = ProcessGroupGuard;
@@ -231,7 +232,7 @@ struct SockFprog {
 }
 
 pub(crate) async fn spawn(
-    executable: &Path,
+    executable: &PinnedExecutable,
     args: &[String],
     working_directory: &Path,
     boundary: &FilesystemBoundary,
@@ -243,7 +244,9 @@ pub(crate) async fn spawn(
     let ruleset = build_landlock_ruleset(landlock_abi(), boundary)?;
     let mut filter = build_seccomp_filter()?;
 
-    let mut command = base_command(executable, working_directory);
+    // #384 item 2: run the verified open file itself, under its own name.
+    let mut command = base_command(&executable.exec_path(), working_directory);
+    std::os::unix::process::CommandExt::arg0(command.as_std_mut(), executable.path());
     command.args(args).current_dir(working_directory);
     command.process_group(0);
 

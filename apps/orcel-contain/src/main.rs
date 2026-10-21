@@ -15,10 +15,12 @@
 //! sentinel pipe (macOS) or the kill-on-close Job Object (Windows).
 
 mod containment;
+mod digest;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
+mod pinned;
 mod spec;
 #[cfg(unix)]
 mod unix;
@@ -93,6 +95,7 @@ fn main() -> ExitCode {
     };
     let result = runtime.block_on(containment::run(
         &spec.executable,
+        &spec.executable_sha256,
         &spec.args,
         &spec.workdir,
         &limits,

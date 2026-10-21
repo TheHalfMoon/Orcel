@@ -6,9 +6,10 @@
 //! Spec, ASCII lines, every value hex-encoded UTF-8 or a decimal integer:
 //!
 //! ```text
-//! orcel-contain-spec 1
+//! orcel-contain-spec 2
 //! parent <pid>
 //! exe <hex>
+//! sha256 <64 hex>    the executable's SHA-256, lower case (#384 item 2)
 //! arg <hex>          zero or more, in order
 //! workdir <hex>
 //! read <hex>         zero or more
@@ -38,12 +39,13 @@
 //! `stdout_limit`, `stderr_limit`, `parent_gone` or `refused`. A refusal
 //! carries `<kind>: <message>` as its detail, where `kind` is
 //! `unsupported_platform`, `launch_failed`, `resource_limit_exceeded`,
-//! `crashed`, `spec_too_large` or `invalid_spec`.
+//! `crashed`, `spec_too_large`, `invalid_spec` or `executable_changed` (the
+//! executable did not match `sha256` when the helper opened it).
 
 use std::io::Read;
 use std::path::PathBuf;
 
-pub const SPEC_MAGIC: &str = "orcel-contain-spec 1";
+pub const SPEC_MAGIC: &str = "orcel-contain-spec 2";
 pub const RESULT_MAGIC: &str = "orcel-contain-result 1";
 
 /// The whole spec, `end` line included.
@@ -66,6 +68,8 @@ pub const MAX_OPEN_FILES: u64 = 4096;
 pub struct Spec {
     pub parent: u32,
     pub executable: PathBuf,
+    /// The SHA-256 the executable must have when the helper opens it.
+    pub executable_sha256: [u8; 32],
     pub args: Vec<String>,
     pub workdir: PathBuf,
     pub read: Vec<PathBuf>,
@@ -157,6 +161,7 @@ pub fn parse(bytes: &[u8]) -> Result<Spec, SpecError> {
     }
     let mut parent = None;
     let mut executable = None;
+    let mut executable_sha256 = None;
     let mut args = Vec::new();
     let mut workdir = None;
     let mut read = Vec::new();
@@ -178,6 +183,7 @@ pub fn parse(bytes: &[u8]) -> Result<Spec, SpecError> {
         match key {
             "parent" => once(&mut parent, number(value, 1, u64::from(u32::MAX))?)?,
             "exe" => once(&mut executable, PathBuf::from(text_value(value)?))?,
+            "sha256" => once(&mut executable_sha256, digest_value(value)?)?,
             "arg" => {
                 if args.len() == MAX_ARGS {
                     return Err(SpecError::Invalid("the spec has too many arguments"));
@@ -214,6 +220,7 @@ pub fn parse(bytes: &[u8]) -> Result<Spec, SpecError> {
         parent: u32::try_from(parent.ok_or(missing.clone())?)
             .map_err(|_| SpecError::Invalid("the spec's parent is out of range"))?,
         executable: executable.ok_or(missing.clone())?,
+        executable_sha256: executable_sha256.ok_or(missing.clone())?,
         args,
         workdir: workdir.ok_or(missing.clone())?,
         read,
@@ -256,6 +263,16 @@ fn number(value: &str, min: u64, max: u64) -> Result<u64, SpecError> {
         return Err(SpecError::Invalid("a spec limit is out of range"));
     }
     Ok(number)
+}
+
+/// Exactly 64 lower-case hex digits: a SHA-256.
+fn digest_value(value: &str) -> Result<[u8; 32], SpecError> {
+    let bytes = decode_hex(value)
+        .filter(|bytes| bytes.len() == 32)
+        .ok_or(SpecError::Invalid("the spec's sha256 is not 64 hex digits"))?;
+    let mut digest = [0_u8; 32];
+    digest.copy_from_slice(&bytes);
+    Ok(digest)
 }
 
 /// Lower-case hex of UTF-8 text, at most [`MAX_VALUE_BYTES`] decoded, with no
