@@ -1101,6 +1101,7 @@ dependencies = [
  "apple-native-keyring-store",
  "fs4",
  "keyring-core",
+ "libc",
  "orcel-approval",
  "orcel-audit",
  "orcel-browser-host",
