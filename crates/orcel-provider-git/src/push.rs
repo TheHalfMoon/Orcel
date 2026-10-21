@@ -4,6 +4,7 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const PUSH_TRACKING_NAMESPACE: &str = "refs/remotes/orcel";
 pub const PUSH_APPROVAL_VERSION: &str = "ORCEL_GIT_PUSH_APPROVAL_V1";
@@ -744,6 +745,38 @@ impl Drop for DisabledPushHooksDir {
     }
 }
 
+static ASKPASS_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+/// Creates a fresh, exclusively owned credential directory. The name carries a
+/// process-wide sequence so concurrent callers never draw the same name even on
+/// clocks with microsecond resolution, and `create_dir` (never
+/// `create_dir_all`) fails on an existing directory so one is never reused.
+fn create_exclusive_askpass_dir() -> Result<PathBuf, GitProviderError> {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| provider_error(format!("read clock for credential isolation: {error}")))?
+        .as_nanos();
+    for _ in 0..16u32 {
+        let sequence = ASKPASS_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "orcel-git-push-askpass-{}-{nonce}-{sequence}",
+            std::process::id()
+        ));
+        match std::fs::create_dir(&path) {
+            Ok(()) => return Ok(path),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(provider_error(format!(
+                    "create credential isolation directory: {error}"
+                )))
+            }
+        }
+    }
+    Err(provider_error(
+        "could not allocate a unique credential isolation directory",
+    ))
+}
+
 pub struct ProtectedAskpass {
     dir: PathBuf,
     script: PathBuf,
@@ -754,19 +787,7 @@ impl ProtectedAskpass {
         if secret.is_empty() {
             return Err(invalid("protected credential material must not be empty"));
         }
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|error| {
-                provider_error(format!("read clock for credential isolation: {error}"))
-            })?
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!(
-            "orcel-git-push-askpass-{}-{nonce}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).map_err(|error| {
-            provider_error(format!("create credential isolation directory: {error}"))
-        })?;
+        let dir = create_exclusive_askpass_dir()?;
         let dir = std::fs::canonicalize(&dir).map_err(|error| {
             provider_error(format!(
                 "canonicalize credential isolation directory: {error}"
@@ -1538,6 +1559,45 @@ fn postcondition(message: impl Into<String>) -> GitProviderError {
 mod tests {
     use super::*;
     use std::net::{Ipv4Addr, Ipv6Addr};
+
+    #[test]
+    fn concurrent_askpass_creations_get_distinct_fresh_directories() {
+        let handles: Vec<_> = (0..16)
+            .map(|_| {
+                std::thread::spawn(|| {
+                    ProtectedAskpass::create(&PushSecret::new("token".to_string()))
+                        .expect("create askpass")
+                })
+            })
+            .collect();
+        let askpasses: Vec<ProtectedAskpass> = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("thread"))
+            .collect();
+        let mut dirs: Vec<&Path> = askpasses.iter().map(ProtectedAskpass::directory).collect();
+        dirs.sort();
+        dirs.dedup();
+        assert_eq!(dirs.len(), askpasses.len(), "directories must be distinct");
+        for askpass in &askpasses {
+            let entries = std::fs::read_dir(askpass.directory())
+                .expect("read dir")
+                .count();
+            assert_eq!(
+                entries, 2,
+                "each directory holds only its own secret and script"
+            );
+        }
+    }
+
+    #[test]
+    fn askpass_directory_creation_never_reuses_an_existing_directory() {
+        let first = create_exclusive_askpass_dir().expect("first");
+        let second = create_exclusive_askpass_dir().expect("second");
+        assert_ne!(first, second);
+        assert_eq!(std::fs::read_dir(&first).expect("read").count(), 0);
+        std::fs::remove_dir(&first).expect("cleanup first");
+        std::fs::remove_dir(&second).expect("cleanup second");
+    }
 
     #[test]
     fn push_destination_policy_accepts_only_canonical_https_443_with_reference() {
