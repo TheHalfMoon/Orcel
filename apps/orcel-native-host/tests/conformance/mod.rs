@@ -638,6 +638,11 @@ pub fn check_hello(host: &mut Host, report: &mut Report, prefix: &str) -> Value 
             ("x11", Some("delivered")) | ("quartz", Some("delivered")) => {
                 assert_eq!(table[op]["delivery"], "background", "{op}: {hello}");
             }
+            // X11 without Cua's real input backend (Xvfb) serves the pointer
+            // operations only.
+            ("x11", Some("unavailable")) if matches!(op, "input_type_text" | "input_key") => {
+                assert_eq!(table[op]["reason"], "provider_unavailable", "{op}: {hello}");
+            }
             // The hosted macOS runner has no recorded direct-capture consent,
             // which Cua's pixel tools need: unavailable, with the reason.
             ("quartz", Some("unavailable")) => {
