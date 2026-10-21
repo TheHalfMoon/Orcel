@@ -517,18 +517,50 @@ fn host_holds_only_inherited_stdio() {
     assert!(host.shutdown().success());
 }
 
-/// Descriptors of `pid` numbered 0..1023, one `lsof` line each.
+/// Every numbered descriptor of `pid`, one `lsof` line each. `lsof` is not
+/// given a descriptor range (`-d 0-1023` never showed descriptors 1024 and
+/// above, #383); the lines it adds for the process's working directory, text
+/// and mapped files (an FD column that is not a number) are left out, so what
+/// remains is every open descriptor, whatever its number.
 #[cfg(target_os = "macos")]
 fn descriptors(pid: u32) -> Vec<String> {
     let output = std::process::Command::new("lsof")
-        .args(["-n", "-P", "-a", "-p", &pid.to_string(), "-d", "0-1023"])
+        .args(["-n", "-P", "-a", "-p", &pid.to_string()])
         .output()
         .unwrap();
     String::from_utf8_lossy(&output.stdout)
         .lines()
         .skip(1)
+        .filter(|line| {
+            line.split_whitespace()
+                .nth(3)
+                .is_some_and(|fd| fd.starts_with(|c: char| c.is_ascii_digit()))
+        })
         .map(str::to_owned)
         .collect()
+}
+
+/// The descriptor listing reaches past 1023: a shell that opens descriptor
+/// 1500 shows it (#383).
+#[cfg(target_os = "macos")]
+#[test]
+fn descriptor_listing_covers_descriptors_above_1023() {
+    let mut shell = std::process::Command::new("/bin/bash")
+        // The default soft limit (256) is below 1500, so it is raised first.
+        .args(["-c", "ulimit -n 4096 && exec 1500</dev/null && sleep 5"])
+        .stdin(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let listing = descriptors(shell.id());
+    let _ = shell.kill();
+    let _ = shell.wait();
+    assert!(
+        listing
+            .iter()
+            .any(|line| line.split_whitespace().nth(3) == Some("1500r")),
+        "{listing:#?}"
+    );
 }
 
 /// A NetworkStatistics kernel-control socket. On the macOS runner every
@@ -548,6 +580,17 @@ fn host_holds_only_inherited_stdio() {
     host.hello();
     let pid = host.child.id();
     let listing = descriptors(pid);
+    // The inherited stdio is there, so the listing is not empty by mistake.
+    for fd in ["0", "1", "2"] {
+        assert!(
+            listing
+                .iter()
+                .any(|line| line.split_whitespace().nth(3).is_some_and(|f| {
+                    f.trim_end_matches(|c: char| c.is_ascii_alphabetic()) == fd
+                })),
+            "descriptor {fd} is missing: {listing:#?}"
+        );
+    }
     let mut netsrc = 0;
     for line in &listing {
         if is_netsrc_control(line) {
@@ -565,9 +608,9 @@ fn host_holds_only_inherited_stdio() {
             "{line}"
         );
     }
-    // The host may hold no more of those sockets than a plain system
-    // process started the same way: anything beyond the baseline would be
-    // the host's own.
+    // The host holds exactly as many of those sockets as a plain system
+    // process started the same way: one more would be the host's own, and
+    // one fewer would mean the allowlist describes something else (#383).
     let mut baseline = std::process::Command::new("/bin/sleep")
         .arg("5")
         .stdin(std::process::Stdio::null())
@@ -580,8 +623,8 @@ fn host_holds_only_inherited_stdio() {
         .count();
     let _ = baseline.kill();
     let _ = baseline.wait();
-    assert!(
-        netsrc <= baseline_netsrc,
+    assert_eq!(
+        netsrc, baseline_netsrc,
         "host holds {netsrc} netsrc control sockets, a plain process {baseline_netsrc}: {listing:#?}"
     );
     eprintln!("XP-06 macOS descriptors: netsrc host={netsrc} baseline={baseline_netsrc}; others pipes/devices only");

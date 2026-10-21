@@ -1,0 +1,5 @@
+{
+  "//": "The production build (#398 item 4): no tests and no test support, so the tests' unverified Windows pipe connector (src/tests/unverified-pipe.ts) is never compiled into it.",
+  "extends": "./tsconfig.json",
+  "exclude": ["src/tests/**", "src/**/*.test.ts"]
+}

@@ -24,7 +24,13 @@
 //! within the deadline, as `ProviderUnavailable` (timeout) or
 //! `OutputLimit` (too large), instead of blocking or growing memory.
 //! arboard's own Linux reads are not used because they wait for EOF with
-//! no deadline (Wayland) or let the owner choose the size (X11).
+//! no deadline (Wayland) or let the owner choose the size (X11). On X11
+//! the deadline covers every wait on the server, from the connection setup
+//! through each reply, flush and event (#356 item 1, `DeadlineStream`),
+//! so a client that holds the server grabbed cannot stall orceld either,
+//! and an INCR owner that trickles small chunks ends at the deadline too.
+//! Only a SelectionNotify for this request's window, selection, target
+//! and property counts as the answer; others are ignored (#356 item 5).
 //!
 //! Standard output: orceld speaks line-delimited JSON on stdout and holds
 //! the stdout lock for its session, so nothing in this adapter may print.
@@ -56,7 +62,11 @@
 //! clipboard as unavailable. A successful data-control probe is kept for
 //! the life of the process; a failed probe is not, so a compositor that
 //! was not ready yet is picked up later. A failed probe opens and closes
-//! one Wayland connection and starts no thread.
+//! one Wayland connection and starts no thread. Each placement is served
+//! from a thread of its own until another client takes the selection;
+//! the number of live serving threads is bounded (`MAX_WAYLAND_SERVERS`,
+//! #356 item 4). The path from `get_contents` to `read_pipe_bounded` is
+//! tested live against a headless sway in CI (#356 item 2).
 //!
 //! Limitations:
 //! - macOS reads go through NSPasteboard, which copies the whole string
@@ -67,6 +77,12 @@
 //!   server closes it, arboard keeps that dead connection and writes stay
 //!   unavailable (fail closed) until the process restarts. This was seen
 //!   only on WSLg's XWayland with `WAYLAND_DISPLAY` removed by hand.
+//! - The X11 socket `connect(2)` is not bounded by the read deadline. For a
+//!   local display it returns at once; only a TCP `DISPLAY` (for example
+//!   SSH X11 forwarding) can wait for the kernel's connect timeout.
+//! - A same-user Wayland paster that shrinks its pipe and never reads can
+//!   hold one serving thread for the life of the process; at
+//!   `MAX_WAYLAND_SERVERS` such threads, placements fail closed.
 
 use crate::{ClipboardError, MAX_CLIPBOARD_BYTES};
 use orcel_contracts::FailureCode;
@@ -199,22 +215,224 @@ mod linux {
         }
     }
 
-    fn wayland_place_text(text: &str) -> Result<(), ClipboardError> {
+    /// Most Wayland placements whose serving threads may be alive at once
+    /// (#356 item 4).
+    pub(crate) const MAX_WAYLAND_SERVERS: usize = 4;
+
+    /// Wayland placements whose serving threads are still running.
+    pub(crate) static WAYLAND_SERVERS: std::sync::atomic::AtomicUsize =
+        std::sync::atomic::AtomicUsize::new(0);
+
+    /// Decrements [`WAYLAND_SERVERS`] when a serving thread ends, however
+    /// it ends.
+    struct Serving;
+
+    impl Drop for Serving {
+        fn drop(&mut self) {
+            WAYLAND_SERVERS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// Places `text` as the Wayland selection. A Wayland selection lives
+    /// with its source, so each placement is served from a thread of its
+    /// own until another client takes the selection, which normally is
+    /// the next placement (#356 item 4). A paste is written with a blocking
+    /// write; at most 64 KiB fits in a default pipe, but a same-user paster
+    /// that shrinks its pipe and never reads can hold that write, and with
+    /// it the thread, for the life of the process. No thread can be stopped
+    /// from outside, so instead of reaping, the number of live serving
+    /// threads is bounded: at [`MAX_WAYLAND_SERVERS`] further placements
+    /// fail closed as unavailable, and each held thread keeps at most its
+    /// 64 KiB copy and an idle stack.
+    pub(super) fn wayland_place_text(text: &str) -> Result<(), ClipboardError> {
+        use std::sync::atomic::Ordering;
         use wl_clipboard_rs::copy::{ClipboardType, MimeType, Options, Source};
-        let mut options = Options::new();
-        // Background serving: wl-clipboard-rs serves the source from its
-        // own thread until another client replaces the selection.
-        options.foreground(false);
-        options.clipboard(ClipboardType::Regular);
-        options
-            .copy(Source::Bytes(text.as_bytes().into()), MimeType::Text)
-            .map_err(|_| unavailable("clipboard placement was rejected in this session"))
+
+        let reserved = WAYLAND_SERVERS.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |live| {
+            (live < MAX_WAYLAND_SERVERS).then_some(live + 1)
+        });
+        if reserved.is_err() {
+            return Err(unavailable(
+                "earlier clipboard placements are still being served to a paster that does not read them, so this placement is refused",
+            ));
+        }
+        let guard = Serving;
+        let bytes: Box<[u8]> = text.as_bytes().into();
+        let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
+        // wl-clipboard-rs needs the copy prepared on the thread that serves
+        // it (its prepared copy is not Send), as its own background mode
+        // does; this thread also owns the counter guard.
+        let spawned = std::thread::Builder::new()
+            .name("orcel-wayland-clipboard".into())
+            .spawn(move || {
+                let _guard = guard;
+                let mut options = Options::new();
+                options.foreground(true);
+                options.clipboard(ClipboardType::Regular);
+                match options.prepare_copy(Source::Bytes(bytes), MimeType::Text) {
+                    Ok(prepared) => {
+                        let _ = ready_tx.send(true);
+                        // Returns once the selection is taken or a write
+                        // fails; nobody is waiting for its result.
+                        let _ = prepared.serve();
+                    }
+                    Err(_) => {
+                        let _ = ready_tx.send(false);
+                    }
+                }
+            });
+        if spawned.is_err() {
+            return Err(unavailable(
+                "clipboard placement was rejected in this session",
+            ));
+        }
+        match ready_rx.recv() {
+            Ok(true) => Ok(()),
+            _ => Err(unavailable(
+                "clipboard placement was rejected in this session",
+            )),
+        }
+    }
+
+    /// An x11rb stream whose every wait ends at `deadline` (#356 item 1).
+    /// x11rb blocks only in [`Stream::poll`](x11rb::rust_connection::Stream::poll)
+    /// (its reads and writes never block), so bounding `poll` bounds the
+    /// connection setup, every reply, every flush and every event wait: an
+    /// X server another client holds grabbed (`GrabServer`), or one that
+    /// stops answering, can stall a read only until the deadline. A wait
+    /// that reaches the deadline fails with `TimedOut` and sets `expired`.
+    pub(crate) struct DeadlineStream {
+        inner: x11rb::rust_connection::DefaultStream,
+        deadline: Instant,
+        expired: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl x11rb::rust_connection::Stream for DeadlineStream {
+        fn poll(&self, mode: x11rb::rust_connection::PollMode) -> std::io::Result<()> {
+            let mut events = 0;
+            if mode.readable() {
+                events |= libc::POLLIN;
+            }
+            if mode.writable() {
+                events |= libc::POLLOUT;
+            }
+            loop {
+                let remaining = self.deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    self.expired
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "the X11 clipboard read deadline passed",
+                    ));
+                }
+                let mut pollfd = libc::pollfd {
+                    fd: self.inner.as_raw_fd(),
+                    events,
+                    revents: 0,
+                };
+                let millis = remaining.as_millis().clamp(1, i32::MAX as u128) as i32;
+                // SAFETY: one valid pollfd for the descriptor `inner` owns,
+                // which stays open while `self` is borrowed.
+                let ready = unsafe { libc::poll(&mut pollfd, 1, millis) };
+                if ready > 0 {
+                    // Errors (POLLERR, POLLHUP) surface in the next read or
+                    // write, as with x11rb's own stream.
+                    return Ok(());
+                }
+                if ready < 0 {
+                    let error = std::io::Error::last_os_error();
+                    if error.kind() != std::io::ErrorKind::Interrupted {
+                        return Err(error);
+                    }
+                }
+            }
+        }
+
+        fn read(
+            &self,
+            buf: &mut [u8],
+            fd_storage: &mut Vec<x11rb::utils::RawFdContainer>,
+        ) -> std::io::Result<usize> {
+            self.inner.read(buf, fd_storage)
+        }
+
+        fn write(
+            &self,
+            buf: &[u8],
+            fds: &mut Vec<x11rb::utils::RawFdContainer>,
+        ) -> std::io::Result<usize> {
+            self.inner.write(buf, fds)
+        }
+
+        fn write_vectored(
+            &self,
+            bufs: &[std::io::IoSlice<'_>],
+            fds: &mut Vec<x11rb::utils::RawFdContainer>,
+        ) -> std::io::Result<usize> {
+            self.inner.write_vectored(bufs, fds)
+        }
+    }
+
+    /// Opens the `DISPLAY` connection with every wait bounded by
+    /// `deadline`, authenticating as `x11rb::connect` does (Xauthority).
+    /// The socket `connect(2)` itself is not bounded; for a local display it
+    /// returns at once, and only a TCP `DISPLAY` (for example SSH X11
+    /// forwarding) can wait for the kernel's connect timeout there.
+    pub(crate) fn connect_with_deadline(
+        deadline: Instant,
+        expired: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<
+        (
+            x11rb::rust_connection::RustConnection<DeadlineStream>,
+            usize,
+        ),
+        ClipboardError,
+    > {
+        use x11rb::reexports::x11rb_protocol::{parse_display::parse_display, xauth::get_auth};
+        use x11rb::rust_connection::{DefaultStream, RustConnection};
+
+        let unreachable =
+            || unavailable("no X11 or Wayland clipboard is reachable in this session");
+        let parsed = parse_display(None).map_err(|_| unreachable())?;
+        let screen = usize::from(parsed.screen);
+        for address in parsed.connect_instruction() {
+            if Instant::now() >= deadline {
+                return Err(read_timeout());
+            }
+            let Ok((inner, (family, peer))) = DefaultStream::connect(&address) else {
+                continue;
+            };
+            let (auth_name, auth_data) = get_auth(family, &peer, parsed.display)
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+            let stream = DeadlineStream {
+                inner,
+                deadline,
+                expired: std::sync::Arc::clone(expired),
+            };
+            return RustConnection::connect_to_stream_with_auth_info(
+                stream, screen, auth_name, auth_data,
+            )
+            .map(|conn| (conn, screen))
+            .map_err(|_| {
+                if expired.load(std::sync::atomic::Ordering::SeqCst) {
+                    read_timeout()
+                } else {
+                    unreachable()
+                }
+            });
+        }
+        Err(unreachable())
     }
 
     /// Read the CLIPBOARD selection as UTF-8 text over a connection owned
     /// by this call, finishing by `timeout`. Plain and INCR transfers are
     /// both capped at `cap` bytes; the owner's announced INCR size is
-    /// ignored, so it cannot drive an allocation.
+    /// ignored, so it cannot drive an allocation. Every wait on the X
+    /// server, from the connection setup on, ends at the deadline
+    /// ([`DeadlineStream`]).
     pub(crate) fn x11_read_text(
         timeout: Duration,
         cap: usize,
@@ -225,15 +443,18 @@ mod linux {
         };
         use x11rb::protocol::Event;
 
-        fn failed<E>(_: E) -> ClipboardError {
-            unavailable("clipboard Unicode text is unreadable in this session")
-        }
-
         let deadline = Instant::now() + timeout;
-        let (conn, screen_index) = x11rb::connect(None)
-            .map_err(|_| unavailable("no X11 or Wayland clipboard is reachable in this session"))?;
+        let expired = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let failed = || {
+            if expired.load(std::sync::atomic::Ordering::SeqCst) {
+                read_timeout()
+            } else {
+                unavailable("clipboard Unicode text is unreadable in this session")
+            }
+        };
+        let (conn, screen_index) = connect_with_deadline(deadline, &expired)?;
         let screen = &conn.setup().roots[screen_index];
-        let window = conn.generate_id().map_err(failed)?;
+        let window = conn.generate_id().map_err(|_| failed())?;
         conn.create_window(
             x11rb::COPY_DEPTH_FROM_PARENT,
             window,
@@ -247,13 +468,13 @@ mod linux {
             screen.root_visual,
             &CreateWindowAux::new().event_mask(EventMask::PROPERTY_CHANGE),
         )
-        .map_err(failed)?;
+        .map_err(|_| failed())?;
         let atom = |name: &[u8]| -> Result<u32, ClipboardError> {
             Ok(conn
                 .intern_atom(false, name)
-                .map_err(failed)?
+                .map_err(|_| failed())?
                 .reply()
-                .map_err(failed)?
+                .map_err(|_| failed())?
                 .atom)
         };
         let clipboard = atom(b"CLIPBOARD")?;
@@ -261,32 +482,37 @@ mod linux {
         let incr = atom(b"INCR")?;
         let property = atom(b"ORCEL_CLIPBOARD_READ")?;
         conn.convert_selection(window, clipboard, utf8, property, x11rb::CURRENT_TIME)
-            .map_err(failed)?;
-        conn.flush().map_err(failed)?;
+            .map_err(|_| failed())?;
+        conn.flush().map_err(|_| failed())?;
 
         // One property read, capped one word above `cap` so that a larger
         // value is detected (bytes_after or length) without being fetched.
         let cap_words = (cap / 4 + 1) as u32;
         let mut buffer: Vec<u8> = Vec::new();
         let mut incremental = false;
-        while Instant::now() < deadline {
-            let event = match conn.poll_for_event().map_err(failed)? {
-                Some(event) => event,
-                None => {
-                    std::thread::sleep(Duration::from_millis(2));
-                    continue;
-                }
-            };
+        loop {
+            // Bounded by the deadline through `DeadlineStream::poll`.
+            let event = conn.wait_for_event().map_err(|_| failed())?;
             match event {
-                Event::SelectionNotify(event) if event.requestor == window && !incremental => {
+                // #356 item 5: only the answer to this request counts. Any
+                // client can send a SelectionNotify; one for another
+                // selection, target or property is ignored.
+                Event::SelectionNotify(event)
+                    if event.requestor == window
+                        && event.selection == clipboard
+                        && event.target == utf8
+                        && (event.property == property
+                            || event.property == u32::from(AtomEnum::NONE))
+                        && !incremental =>
+                {
                     if event.property == u32::from(AtomEnum::NONE) {
                         return Ok(None);
                     }
                     let reply = conn
                         .get_property(true, window, property, AtomEnum::ANY, 0, cap_words)
-                        .map_err(failed)?
+                        .map_err(|_| failed())?
                         .reply()
-                        .map_err(failed)?;
+                        .map_err(|_| failed())?;
                     if reply.type_ == incr {
                         // Deleting the INCR property (above) asks the owner
                         // to start sending chunks.
@@ -309,9 +535,9 @@ mod linux {
                 {
                     let reply = conn
                         .get_property(true, window, property, AtomEnum::ANY, 0, cap_words)
-                        .map_err(failed)?
+                        .map_err(|_| failed())?
                         .reply()
-                        .map_err(failed)?;
+                        .map_err(|_| failed())?;
                     if reply.value.is_empty() {
                         return decode(buffer).map(Some);
                     }
@@ -323,7 +549,6 @@ mod linux {
                 _ => {}
             }
         }
-        Err(read_timeout())
     }
 
     /// Run `f` against arboard's process-lifetime X11 handle. A failed

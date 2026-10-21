@@ -25,7 +25,15 @@
 //! process, inside a scope or outside one.
 //!
 //! Scopes are serialised: [`Scope::enter`] waits for any open scope to
-//! close.
+//! close. It is not re-entrant: a second `enter` on the thread that holds a
+//! scope waits for itself. The budget is process-wide, so a decode on a
+//! thread with no scope of its own is charged to whichever scope is open.
+//!
+//! A decode reserves its whole grant up front (`min(per_decode, remaining)`)
+//! and gives back what it did not use. Under parallel decodes the unreserved
+//! budget can reach zero while most of it is unused, which exhausts the
+//! scope; callers fail closed. The parser opens one scope per phase, so a
+//! document can draw up to twice the total across its phases.
 
 use crate::{DecompressError, Error, Result};
 use std::sync::{Mutex, MutexGuard, PoisonError};

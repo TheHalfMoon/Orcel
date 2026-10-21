@@ -278,12 +278,15 @@ fn run_ax_cells(
     }
 }
 
+/// Ignored by default, so an absent fixture directory is reported as not
+/// run, never counted as a pass (#390). Run with `--include-ignored` and
+/// `ORCEL_XP08_FIXTURES` set; without the fixtures it then fails.
 #[test]
+#[ignore = "requires ORCEL_XP08_FIXTURES (staged native fixtures); run by the native-host CI job with --include-ignored"]
 fn xp08_native_harness_is_conformant() {
-    let Some(fixtures) = conformance::fixtures() else {
-        eprintln!("XP-08 native conformance not run: ORCEL_XP08_FIXTURES is not set");
-        return;
-    };
+    let fixtures = conformance::fixtures().expect(
+        "ORCEL_XP08_FIXTURES must name the fixtures staged by tests/native-fixtures/orcel-stage.sh",
+    );
     let mut spec = harness(&fixtures);
     let prefix = format!("native/{}/{}", conformance::window_system(), spec.name);
     let mut report = Report::new();

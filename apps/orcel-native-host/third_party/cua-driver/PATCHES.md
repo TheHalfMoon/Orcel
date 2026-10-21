@@ -284,13 +284,23 @@ the files restored from the pin first:
   (`cursor_overlay_available = false`, CUA_INTEGRATION.md 2.3), so it never
   draws a badge either way.
 - XP-06 (issue #355, item 4): the observation host still never installs the
-  overlay, so the empty font changes nothing it can do. The decision is left
-  to the first task that installs the overlay (raw input, XP-12): it must
+  overlay, so the empty font changes nothing it can do. XP-12 did not install
+  it either (raw input runs with `cursor_overlay_available = false`). The
+  decision is left to the first task that installs the overlay: it must
   either build with `upstream-assets` from restored upstream bytes or vendor
   a reviewed font, and test that the badge is drawn.
 
 cursor-overlay and cua-cursor-motion tests pass without the feature, and CI
-now runs them.
+now runs them. Since #355 CI also runs them with the feature: the native-host
+job restores the six removed files from trycua/cua by their recorded blob ids
+(`scripts/restore-cua-upstream-assets.mjs`, which requires each to hash to
+its id), in the CI checkout only, and runs the golden, motion_parity,
+motion_equivalence, session badge and theme artifact tests.
+
+Every patched file's current blob is recorded too (`patched_blob_sha` in the
+provenance), so an edit to an already-patched file fails
+`check-vendored-cua.mjs` until its record here and the pin are updated
+together.
 
 ## P-06: secure text values never leave the AX read (XP-06)
 
