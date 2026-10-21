@@ -74,7 +74,7 @@
         {
           "path": "src/tools/mod.rs",
           "upstream_blob_sha": "771e6717e3e5b64ff160d149ad7a6cebd433e132",
-          "patched_blob_sha": "08196bef2c5a1382b2983daa17c2c8d680f0bd0c",
+          "patched_blob_sha": "52ffea4157698c68007d02c262cffad4469bc051",
           "upstream_blocker_lines": []
         },
   {
@@ -115,7 +115,7 @@
         {
           "path": "src/atspi/native.rs",
           "upstream_blob_sha": "36451e533335892864981f6f36a69ad318309199",
-          "patched_blob_sha": "47770350f175cb05712230b307876223bb94d186",
+          "patched_blob_sha": "c9885dfd858018f182d3a7c186c65d9b4eadafe3",
           "upstream_blocker_lines": [
             "4b89a467d5826939dcfb526114f265be81c0f662f12d0d883976a5091b13bafe"
           ]
@@ -166,7 +166,7 @@
         {
           "path": "src/tools/impl_.rs",
           "upstream_blob_sha": "3be700798b9310b6cf931725f97ae7c02c619b5a",
-          "patched_blob_sha": "b149f31554b0bb0da5cd486942cab6d53988ff63",
+          "patched_blob_sha": "a210245b04780d85683ae35477c8f6c40343a79e",
           "upstream_blocker_lines": [
             "19d34976a3acac9d4681a196728b226a0bc2d5edfb81aa8613e9db28dfacaaaa",
             "4b89a467d5826939dcfb526114f265be81c0f662f12d0d883976a5091b13bafe",
