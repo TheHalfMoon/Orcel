@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 
 const HARNESS: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/tests/native-fixtures/apps/linux/gtk3/main.py"
+    "/../../tests/native-fixtures/apps/linux/gtk3/main.py"
 );
 const HARNESS_TITLE: &str = "CuaTestHarness GTK3 Tasks";
 
