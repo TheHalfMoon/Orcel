@@ -572,7 +572,7 @@ platforms:
 Lines changed are in Orcel-added code (`orcel-minimal` only); with the feature
 off each file compiles exactly as upstream. Regressions: the host unit test
 above (every flag combination), and the live AT-SPI re-read test in
-`tests/live_actions.rs`, which toggles a GTK3 check button under Xvfb and
+`src/cua_adapter/atspi_reread_tests.rs`, which toggles a GTK3 check button under Xvfb and
 re-reads it through AT-SPI after each step.
 
 ## Patched file index

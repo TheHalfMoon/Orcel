@@ -1365,6 +1365,30 @@ pub(crate) async fn deliver_sequence(
             }
             return partial_input(id, index, total, refusal);
         }
+        // The gate can take a while (a keyboard unit re-reads the tree). A
+        // touch made during it would otherwise be masked by this unit's own
+        // event on X11 and adopted as the next baseline, so the tick is read
+        // once more immediately before the call (#407 review).
+        match clock.last_input() {
+            Ok(now) if input::still_at_baseline(rule, baseline, now) => {}
+            Ok(_) => {
+                let refusal = refuse(
+                    code::CANCELLED,
+                    "human input arrived before the unit was sent, so the rest was not sent",
+                );
+                if index == 0 {
+                    return refusal;
+                }
+                return partial_input(id, index, total, refusal);
+            }
+            Err(message) => {
+                let refusal = unreadable(message);
+                if index == 0 {
+                    return refusal;
+                }
+                return partial_input(id, index, total, refusal);
+            }
+        }
         let started = clock.clock_ms();
         if let Err(failure) = units.deliver(index).await {
             if index == 0 {
@@ -1782,6 +1806,8 @@ mod sequence_tests {
         delivered: Vec<usize>,
         sleeps: Vec<u32>,
         refuse_gate_at: Option<usize>,
+        /// How long each gate takes (a keyboard unit's tree read).
+        gate_ms: u32,
     }
 
     impl World {
@@ -1841,6 +1867,8 @@ mod sequence_tests {
         async fn gate(&mut self, index: usize, baseline: u32) -> Result<(), Response> {
             let mut world = self.world.borrow_mut();
             world.gate_baselines.push(baseline);
+            let gate_ms = world.gate_ms;
+            world.advance(gate_ms);
             if world.refuse_gate_at == Some(index) {
                 return Err(Response::failure(
                     7,
@@ -1939,6 +1967,53 @@ mod sequence_tests {
         assert_eq!(world.delivered, vec![0]);
         // The person's touch was never adopted as a baseline.
         assert_eq!(world.gate_baselines, vec![1_000]);
+    }
+
+    /// #407 review: a keystroke made while a later unit's gate re-reads the
+    /// tree would be masked by that unit's own X11 event and adopted as the
+    /// baseline. The tick read right before the call catches it, and the
+    /// unit is never delivered.
+    #[test]
+    fn a_touch_during_a_slow_gate_is_caught_before_the_call() {
+        // Each gate takes 100 ms. Unit 0: gate 10_000..10_100, call
+        // 10_100..10_110 (own event at 10_105), settle to 10_150. Unit 1's
+        // gate runs 10_150..10_250, and the person types at 10_200.
+        let mut world = quiet_world();
+        world.own_events_move_clock = true;
+        world.gate_ms = 100;
+        world.touches = vec![10_200];
+        let (response, world) = run(world, input::OwnEvents::MoveTheClock, 3);
+        assert_eq!(code_of(&response), code::OUTCOME_UNKNOWN, "{response:?}");
+        assert!(message_of(&response).contains("1 of 3"), "{response:?}");
+        assert!(
+            message_of(&response).contains("before the unit was sent"),
+            "{response:?}"
+        );
+        assert_eq!(world.delivered, vec![0]);
+        assert_eq!(world.gate_baselines, vec![1_000, 10_105]);
+        // The same on macOS, and a touch during the first gate sends nothing.
+        for rule in [
+            input::OwnEvents::MoveTheClock,
+            input::OwnEvents::LeaveTheClock,
+        ] {
+            let mut world = quiet_world();
+            world.gate_ms = 100;
+            world.touches = vec![10_050];
+            let (response, world) = run(world, rule, 2);
+            assert_eq!(
+                code_of(&response),
+                code::CANCELLED,
+                "{rule:?}: {response:?}"
+            );
+            assert!(world.delivered.is_empty(), "{rule:?}");
+        }
+        // A slow gate with nobody touching anything delivers everything.
+        let mut world = quiet_world();
+        world.own_events_move_clock = true;
+        world.gate_ms = 100;
+        let (response, world) = run(world, input::OwnEvents::MoveTheClock, 3);
+        assert!(response.ok, "{response:?}");
+        assert_eq!(world.delivered, vec![0, 1, 2]);
     }
 
     #[test]

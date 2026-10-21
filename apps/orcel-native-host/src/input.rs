@@ -579,6 +579,21 @@ pub fn explained_by_own_events(
     }
 }
 
+/// Whether the tick read right before a delivery call is still the baseline:
+/// nothing has touched the machine since the last check. Under
+/// [`OwnEvents::LeaveTheClock`] (macOS) that is equality up to the reader's
+/// rounding; under [`OwnEvents::MoveTheClock`] (X11) the clock-jitter
+/// tolerance of [`tick_is_fresh`]. No own event lies between the gate and the
+/// call, so nothing else explains a change.
+pub fn still_at_baseline(rule: OwnEvents, baseline: u32, now: u32) -> bool {
+    match rule {
+        OwnEvents::LeaveTheClock => {
+            (now.wrapping_sub(baseline) as i32).unsigned_abs() <= MACOS_TICK_ROUNDING_MS
+        }
+        OwnEvents::MoveTheClock => tick_is_fresh(baseline, now),
+    }
+}
+
 /// How long the person must still stay quiet before the first unit, given the
 /// current tick clock and the last input: zero when they already were.
 pub fn quiet_remaining_ms(clock: u32, last_input: u32) -> u32 {
@@ -1263,6 +1278,17 @@ mod tests {
     /// clock-reading margin only. The settle wait after the call is not in
     /// it, so a person who touches the pointer while the host waits for its
     /// unit to be processed is caught.
+    #[test]
+    fn right_before_the_call_the_tick_must_still_be_the_baseline() {
+        let (x11, mac) = (OwnEvents::MoveTheClock, OwnEvents::LeaveTheClock);
+        assert!(still_at_baseline(x11, 10_105, 10_105));
+        assert!(still_at_baseline(x11, 10_105, 10_105 + TICK_TOLERANCE_MS));
+        assert!(!still_at_baseline(x11, 10_105, 10_200));
+        assert!(still_at_baseline(mac, 1_000, 1_001));
+        assert!(!still_at_baseline(mac, 1_000, 1_002));
+        assert!(!still_at_baseline(mac, 1_000, 1_020));
+    }
+
     #[test]
     fn the_explained_window_is_the_call_and_the_reading_margin_only() {
         let x11 = OwnEvents::MoveTheClock;
