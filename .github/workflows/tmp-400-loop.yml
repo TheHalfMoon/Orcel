@@ -25,8 +25,7 @@ jobs:
         run: |
           pass=0; fail=0
           for i in $(seq 1 30); do
-            if node --env-file=test.env --test --test-concurrency=1 --test-name-pattern="oversize frame" "dist/**/client.contract.test.js" >out.txt 2>&1 && grep -q "^# pass 1$" out.txt; then pass=$((pass+1)); else fail=$((fail+1)); cat out.txt; fi
-            if [ "$i" = 1 ]; then cat out.txt; fi
+            if node --env-file=test.env --test --test-concurrency=1 --test-name-pattern="oversize frame" "dist/**/client.contract.test.js" >out.txt 2>&1 && grep -q "ℹ pass 1$" out.txt; then pass=$((pass+1)); else fail=$((fail+1)); cat out.txt; fi
             echo "iteration $i: pass=$pass fail=$fail"
           done
           echo "RESULT pass=$pass fail=$fail"
