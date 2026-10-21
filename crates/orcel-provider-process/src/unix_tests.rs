@@ -527,3 +527,41 @@ fn xp13b_an_executable_others_can_replace_is_refused() {
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
     assert!(!rejected(&shared));
 }
+
+/// #384 item 1: on macOS a `chmod +a` write grant does not show in the mode
+/// bits, but it lets another user replace the executable all the same, so it
+/// is refused on the file and on a directory above it.
+#[cfg(target_os = "macos")]
+#[test]
+fn xp13b_an_acl_write_grant_on_macos_is_refused() {
+    let workspace = Workspace::new();
+    let copy = copied_executable(&workspace, "acl");
+    let mut plan = plan(&workspace, "fixture_report_and_exit", limits(20));
+    plan.executable = copy.clone();
+    let chmod_acl = |path: &Path, entry: &str| {
+        let status = std::process::Command::new("/bin/chmod")
+            .arg("+a")
+            .arg(entry)
+            .arg(path)
+            .status()
+            .unwrap();
+        assert!(status.success(), "chmod +a {entry}");
+    };
+    let rejected = |plan: &ExecutionPlan| {
+        matches!(
+            execute(plan.clone()),
+            Err(PrivateExecutionFailure::ExecutableRejected(_))
+        )
+    };
+    chmod_acl(&copy, "everyone allow read,execute");
+    chmod_acl(&copy, "everyone deny write");
+    assert!(!rejected(&plan), "read and deny entries grant no write");
+    chmod_acl(&copy, "everyone allow write");
+    assert!(rejected(&plan), "file write grant");
+
+    let other = copied_executable(&workspace, "acl-dir");
+    plan.executable = other.clone();
+    assert!(!rejected(&plan));
+    chmod_acl(other.parent().unwrap(), "everyone allow delete_child");
+    assert!(rejected(&plan), "directory delete_child grant");
+}
