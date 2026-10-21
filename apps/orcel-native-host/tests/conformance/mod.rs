@@ -1098,6 +1098,9 @@ pub fn run_probe_cells(
     probe: &crate::support::Probe,
     hello: &Value,
 ) {
+    crate::support::wait_for(&probe.state, "the probe state", |state| {
+        state["size"][0].is_number()
+    });
     let state = || crate::support::read_state(&probe.state).expect("the probe keeps its state");
     for cell in probe_cells() {
         let case = format!("{}/px/background", cell.case);
