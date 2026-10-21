@@ -128,12 +128,22 @@ impl Scene {
     }
 
     fn parser_spec(&self) -> ContainedSpec {
-        spec(self.parser.clone(), &self.input_dir, self.work.clone())
+        spec(
+            self.parser.clone(),
+            &sha256_hex(&std::fs::read(&self.parser).unwrap()),
+            &self.input_dir,
+            self.work.clone(),
+        )
     }
 
     /// The probe under the parser's spec, with the probe's own arguments.
     fn probe_spec(&self, args: &[&str]) -> ContainedSpec {
-        let mut spec = spec(self.probe.clone(), &self.input_dir, self.work.clone());
+        let mut spec = spec(
+            self.probe.clone(),
+            &sha256_hex(&std::fs::read(&self.probe).unwrap()),
+            &self.input_dir,
+            self.work.clone(),
+        );
         spec.argv = args.iter().map(|arg| (*arg).to_owned()).collect();
         spec
     }
