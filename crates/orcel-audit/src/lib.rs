@@ -99,12 +99,21 @@ mod tests {
     use serde_json::json;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    fn next_temp_sequence() -> u64 {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        // macOS clocks tick in microseconds, so a timestamp alone can repeat
+        // across parallel tests in one process.
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    }
+
     #[test]
     fn writes_structured_event_without_arguments() {
         let suffix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock")
             .as_nanos();
+        let suffix = format!("{suffix}-{}", next_temp_sequence());
         let path = std::env::temp_dir()
             .join(format!("orcel-audit-{suffix}"))
             .join("audit.jsonl");
@@ -139,6 +148,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("clock")
             .as_nanos();
+        let suffix = format!("{suffix}-{}", next_temp_sequence());
         let dir = std::env::temp_dir().join(format!("orcel-audit-{label}-{suffix}"));
         std::fs::create_dir_all(&dir).expect("sandbox");
         // Independent of the umask, so the ancestor checks see a private base.
