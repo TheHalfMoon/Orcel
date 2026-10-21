@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@orcel/mcp": "0.2.0",
-    "@modelcontextprotocol/server": "2.1.0"
+    "@modelcontextprotocol/server": "2.3.1"
   },
   "devDependencies": {
     "@types/node": "24.10.1",

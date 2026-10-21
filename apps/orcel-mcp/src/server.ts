@@ -520,6 +520,15 @@ export function registerOrcelTools(
 }
 
 /**
+ * GHSA-46jr-4wx8-v453: the SDK validates every array element and object
+ * member of a `tools/call` payload, so a request within the body bound
+ * could exhaust memory. The largest legitimate input is `git_stage` with
+ * 128 paths and four other fields; anything above this bound is refused
+ * before schema validation, on every transport.
+ */
+export const MAX_TOOL_INPUT_ELEMENTS = 1024;
+
+/**
  * Build a Orcel MCP server using the authoritative tool catalog.
  *
  * The caller supplies the kernel so tests can inject a stub without
@@ -531,10 +540,13 @@ export function buildOrcelServer(
   defaultWorkspace: string,
   context: TransportContext = defaultTransportContext()
 ): McpServer {
-  const server = new McpServer({
-    name: "orcel",
-    version: "0.2.0"
-  });
+  const server = new McpServer(
+    {
+      name: "orcel",
+      version: "0.2.0"
+    },
+    { maxToolInputElements: MAX_TOOL_INPUT_ELEMENTS }
+  );
 
   trackKernel(kernel);
   registerOrcelTools(server, kernel, defaultWorkspace, context);
