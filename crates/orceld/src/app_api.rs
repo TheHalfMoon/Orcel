@@ -809,6 +809,11 @@ trait Transport: Read + Write {
     fn set_timeouts(&mut self, read: Option<Duration>, write: Option<Duration>) -> io::Result<()>;
     /// Ends the connection after the last frame was written.
     fn finish(&mut self);
+    /// Reads and discards what the peer still sends, for a bounded time and
+    /// size, after [`Transport::finish`]. Closing a socket with unread input
+    /// makes some kernels (macOS) reset the connection, which can destroy the
+    /// last frame before the peer reads it (#400).
+    fn linger(&mut self) {}
 }
 
 fn serve_connection(mut conn: impl Transport, peer: PeerInfo, shared: &Shared) {
@@ -836,6 +841,7 @@ fn serve_connection(mut conn: impl Transport, peer: PeerInfo, shared: &Shared) {
                     ),
                 );
                 conn.finish();
+                conn.linger();
                 return;
             }
         };
@@ -1248,7 +1254,7 @@ mod unix {
     use orcel_platform::paths::StateLayout;
     use std::ffi::OsString;
     use std::fs::File;
-    use std::io;
+    use std::io::{self, Read as _};
     use std::net::Shutdown;
     use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
     use std::os::unix::net::{UnixListener, UnixStream};
@@ -1265,6 +1271,10 @@ mod unix {
     /// `DARWIN_USER_TEMP_DIR` that were not accessed for about 3 days.
     pub(super) const ENDPOINT_TOUCH: Duration = Duration::from_secs(60 * 60);
 
+    /// Longest and largest drain after a refused frame; see [`Transport::linger`].
+    const LINGER_MAX: Duration = Duration::from_secs(2);
+    const LINGER_MAX_BYTES: usize = 1024 * 1024;
+
     /// `sun_path` holds 104 bytes on macOS and 108 on Linux, NUL included.
     pub(super) const MAX_SOCKET_PATH: usize = 100;
 
@@ -1280,6 +1290,24 @@ mod unix {
 
         fn finish(&mut self) {
             let _ = self.shutdown(Shutdown::Write);
+        }
+
+        fn linger(&mut self) {
+            let deadline = Instant::now() + LINGER_MAX;
+            let mut drained = 0usize;
+            let mut buffer = [0u8; 8192];
+            while drained < LINGER_MAX_BYTES {
+                let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+                    return;
+                };
+                if self.set_read_timeout(Some(remaining)).is_err() {
+                    return;
+                }
+                match self.read(&mut buffer) {
+                    Ok(0) | Err(_) => return,
+                    Ok(read) => drained += read,
+                }
+            }
         }
     }
 
