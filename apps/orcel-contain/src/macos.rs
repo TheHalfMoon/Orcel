@@ -55,6 +55,7 @@ use crate::containment::{
     containment_error, os_detail, spawn_error, unsupported_error, ContainError, ContainedChild,
     ContainmentLimits, FilesystemBoundary,
 };
+use crate::pinned::PinnedExecutable;
 use crate::unix::{
     apply_resource_limits, base_command, close_inherited_descriptors, ProcessGroupGuard,
 };
@@ -197,7 +198,7 @@ impl Drop for Guard {
 }
 
 pub(crate) async fn spawn(
-    executable: &Path,
+    executable: &PinnedExecutable,
     args: &[String],
     working_directory: &Path,
     boundary: &FilesystemBoundary,
@@ -220,7 +221,7 @@ pub(crate) async fn spawn(
 pub(crate) async fn spawn_with_tools(
     shell: &Path,
     sandbox_exec: &Path,
-    executable: &Path,
+    executable: &PinnedExecutable,
     args: &[String],
     working_directory: &Path,
     boundary: &FilesystemBoundary,
@@ -235,7 +236,7 @@ pub(crate) async fn spawn_with_tools(
     }
     // `/bin/sh` is what is actually spawned, so a missing child would
     // otherwise surface as a crashed child instead of a failed launch.
-    if !executable.is_file() {
+    if !executable.path().is_file() {
         return Err(spawn_error(std::io::Error::from_raw_os_error(libc::ENOENT)));
     }
     // The profile travels as an argument, not a file: nothing the child can
@@ -253,7 +254,7 @@ pub(crate) async fn spawn_with_tools(
         .arg(sandbox_exec)
         .arg("-p")
         .arg(&profile)
-        .arg(executable)
+        .arg(executable.path())
         .args(args);
     command.current_dir(working_directory);
     command.process_group(0);
@@ -285,6 +286,9 @@ pub(crate) async fn spawn_with_tools(
         });
     }
 
+    // #384 item 2: `sandbox-exec` execs a path, so it must still name the
+    // verified open file (the residual is the window after this check).
+    executable.check_still_named()?;
     let mut child = command.spawn().map_err(spawn_error)?;
     drop(sentinel_read);
     let stdin = child.stdin.take();

@@ -6,6 +6,10 @@ fn line(key: &str, text: &str) -> String {
     format!("{key} {}\n", encode_hex(text.as_bytes()))
 }
 
+fn sha256_line(digest: &str) -> String {
+    format!("sha256 {digest}\n")
+}
+
 fn sample() -> String {
     let (exe, work) = if cfg!(windows) {
         (r"C:\orcel\parser.exe", r"C:\orcel\work")
@@ -14,6 +18,7 @@ fn sample() -> String {
     };
     let mut spec = format!("{SPEC_MAGIC}\nparent 42\n");
     spec += &line("exe", exe);
+    spec += &sha256_line(&"ab".repeat(32));
     spec += &line("arg", "--input");
     spec += &line("arg", "a b");
     spec += &line("workdir", work);
@@ -25,6 +30,7 @@ fn sample() -> String {
 fn a_well_formed_spec_round_trips_every_field() {
     let spec = parse(sample().as_bytes()).unwrap();
     assert_eq!(spec.parent, 42);
+    assert_eq!(spec.executable_sha256, [0xab; 32]);
     assert_eq!(spec.args, vec!["--input".to_owned(), "a b".to_owned()]);
     assert!(spec.read.is_empty() && spec.write.is_empty());
     assert_eq!(spec.memory_bytes, 1 << 30);
@@ -67,9 +73,24 @@ fn unknown_repeated_missing_and_out_of_range_keys_are_refused() {
         base.replace("memory 1073741824\n", "memory 1\n"),
         base.replace("stdout 1024\n", "stdout 99999999999\n"),
         base.replace("timeout_ms 5000\n", "timeout_ms -5\n"),
-        base.replace(SPEC_MAGIC, "orcel-contain-spec 2"),
+        base.replace(SPEC_MAGIC, "orcel-contain-spec 1"),
+        base.replace(SPEC_MAGIC, "orcel-contain-spec 3"),
         base.replace("end\n", ""),
         base.replace("parent 42\n", "parent 0\n"),
+        // #384 item 2: the digest is required, once, as 64 lower-case hex.
+        base.replace(&sha256_line(&"ab".repeat(32)), ""),
+        base.replace(
+            &sha256_line(&"ab".repeat(32)),
+            &sha256_line(&"AB".repeat(32)),
+        ),
+        base.replace(
+            &sha256_line(&"ab".repeat(32)),
+            &sha256_line(&"ab".repeat(31)),
+        ),
+        base.replace(
+            &sha256_line(&"ab".repeat(32)),
+            &(sha256_line(&"ab".repeat(32)) + &sha256_line(&"cd".repeat(32))),
+        ),
     ] {
         assert!(
             matches!(parse(broken.as_bytes()), Err(SpecError::Invalid(_))),
