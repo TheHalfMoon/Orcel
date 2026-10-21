@@ -20,10 +20,13 @@ const TARGET = targetIndex === -1 ? "x86_64-pc-windows-msvc" : process.argv[targ
 if (!TARGET || TARGET.startsWith("--")) fail("--target <triple> needs a value");
 // Each Cargo workspace that ships a binary, with its shipped root packages.
 // XP-13b: the orcel-contain helper is its own workspace (AD-16).
+// #369/#373: the XP-10 approval helper (GTK 4) ships in the Linux packages
+// only.
 const WORKSPACES = [
   { dir: ".", roots: ["orceld", "orcel-lifecycle"] },
-  { dir: "apps/orcel-contain", roots: ["orcel-contain"] }
-];
+  { dir: "apps/orcel-contain", roots: ["orcel-contain"] },
+  { dir: "apps/orcel-approval-helper-linux", roots: ["orcel-approval-helper-linux"], linuxOnly: true }
+].filter((workspace) => !workspace.linuxOnly || TARGET.includes("-linux-"));
 const NOTICE_FILE = /^(licen[cs]e|copying|notice|unlicense)([-_.].*)?$/i;
 // Source vendored into this repository rather than resolved from a registry.
 // Its notice is maintained in-repo, and the upstream copyright line must

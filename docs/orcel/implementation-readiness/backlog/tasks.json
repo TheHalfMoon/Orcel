@@ -1593,7 +1593,8 @@
       "orcel_files": {
         "create": [
           "crates/orcel-lifecycle/src/linux.rs",
-          "distribution/linux/orceld.service",
+          "distribution/linux/orceld.socket",
+          "distribution/linux/orceld@.service",
           "distribution/linux/ai.orcel.approve.policy",
           "distribution/linux/nfpm.yaml"
         ],
@@ -1605,16 +1606,16 @@
       "dependencies": "nfpm (MIT) as a build tool only.",
       "steps": [
         "Tarball install under ~/.local/share/orcel with systemd --user unit.",
-        "deb/rpm only for the polkit action file (system path) and optional desktop entry; core stays per-user.",
+        "deb/rpm install root-owned, read-only binaries under /usr/lib/orcel (orceld, orcel-contain and its pin, the XP-10 approval helper), the polkit action and the user units; every location the user writes stays per-user (reconciled in #369: a per-user-only core would leave the binaries user-writable, which the pinned-helper rules of XP-06, XP-10 and XP-13b refuse).",
         "Signed checksums like the Windows release.",
         "Ship the GNOME Shell identity extension (from XP-12) as an optional component that the user enables explicitly; doctor reports whether it is active.",
         "Include the apps/orcel-contain helper (XP-13) in the payload at a pinned path."
       ],
-      "interfaces": "orcel install/update/rollback/doctor on Linux",
+      "interfaces": "systemctl --user enable --now orceld.socket (deb, rpm or tarball); orcel install/update/rollback/doctor stay Windows-only, and off Windows the CLI refuses them before touching the state root (#369, #382)",
       "platforms": {
         "linux": "new"
       },
-      "security": "Only the polkit action requires root install; documented.",
+      "security": "The deb/rpm need root to install, like any system package; they carry no maintainer script, setuid bit, system unit or listener. The tarball needs no root, but its STRONG approvals need the polkit action copied to /usr/share/polkit-1/actions by an administrator and fail closed until then.",
       "tests": {
         "positive": [
           "install in Ubuntu 24.04 and Fedora 41 containers (non-GUI parts)"
@@ -1659,7 +1660,15 @@
         "prs": [
           363
         ],
-        "qualification": "Packaging merged; no live install or release qualification. Follow-ups in #369."
+        "qualification": "Packaging merged; no live install or release qualification. Follow-ups in #369.",
+        "deviations": [
+          "Unit: orceld.socket (Accept=yes) plus the per-connection template orceld@.service, not a plain orceld.service: orceld speaks JSON lines on stdin/stdout and exits at EOF.",
+          "deb/rpm put orceld and its helpers under root-owned /usr/lib/orcel, not only the polkit action (see steps).",
+          "orcel install/update/rollback/doctor are not implemented on Linux; packages and the tarball replace install, the package manager replaces update and rollback.",
+          "Tamper refusal is tested by SHA256SUMS-linux.txt (a flipped byte fails) and dpkg --verify / rpm -V, not by a refusing installer.",
+          "Only orceld and its helpers are packaged; the orcel CLI is not (crates/orcel-lifecycle/src/linux.rs).",
+          "RestrictNamespaces=yes stays: orcel-contain creates no namespace (#369 item 1, resolved in #371 with a CI probe). A registered Chromium or Electron executable that needs user namespaces for its own sandbox fails under the unit; that belongs with the browser tasks."
+        ]
       }
     },
     {

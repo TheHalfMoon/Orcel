@@ -10,8 +10,9 @@
 //!
 //! The deb and rpm packages install read-only, root-owned binaries in
 //! [`PACKAGE_LIB_DIR`] and the user units in [`PACKAGE_USER_UNIT_DIR`];
-//! every location the user writes stays per-user. Nothing resolves under
-//! `/tmp`.
+//! every location the user writes stays per-user. No default resolves under
+//! `/tmp`; an explicit `XDG_STATE_HOME` there is accepted only as XP-01
+//! allows (see `distribution/linux/README.md`).
 //!
 //! Every variable goes through XP-01's rules
 //! ([`orcel_platform::paths::absolute_var`]): a relative or `.`/`..`-bearing
@@ -25,7 +26,9 @@ use orcel_platform::paths::{self, PlatformError, StateLayout};
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-/// Where the deb and rpm packages install `orceld` and `orcel`.
+/// Where the deb and rpm packages install `orceld` and its helpers
+/// (`orcel-contain` with its pin, the XP-10 approval helper). The `orcel`
+/// CLI is not packaged on Linux (#369).
 pub const PACKAGE_LIB_DIR: &str = "/usr/lib/orcel";
 /// Where the deb and rpm packages install the systemd user units.
 pub const PACKAGE_USER_UNIT_DIR: &str = "/usr/lib/systemd/user";
@@ -299,7 +302,7 @@ mod tests {
             .collect();
         assert_eq!(
             modes,
-            [0o755, 0o755, 0o755, 0o755, 0o644, 0o644, 0o644, 0o644, 0o644, 0o644]
+            [0o755, 0o755, 0o755, 0o755, 0o644, 0o755, 0o644, 0o644, 0o644, 0o644, 0o644, 0o644]
         );
         assert!(modes.iter().all(|mode| mode & 0o7022 == 0));
         let owners: Vec<&str> = NFPM
@@ -307,13 +310,25 @@ mod tests {
             .filter_map(|line| line.trim().strip_prefix("owner:"))
             .map(str::trim)
             .collect();
-        assert_eq!(owners, ["root"; 10]);
+        assert_eq!(owners, ["root"; 12]);
         assert!(NFPM.contains(&format!("dst: {PACKAGE_LIB_DIR}/orceld")));
         // XP-13b: the contained-tier helper and its pin sit beside orceld.
         for helper in ["orcel-contain", "orcel-contain.sha256"] {
             let dst = format!("dst: {PACKAGE_LIB_DIR}/{helper}");
             assert!(NFPM.lines().any(|line| line.trim() == dst), "{dst}");
         }
+        // XP-10 (#369 item 6, #373 item 5): the approval helper beside
+        // orceld, where orceld looks first, and the polkit action where
+        // polkit reads it (orcel_approval's POLKIT_POLICY_PATH).
+        for dst in [
+            format!("dst: {PACKAGE_LIB_DIR}/orcel-approval-helper-linux"),
+            "dst: /usr/share/polkit-1/actions/ai.orcel.approve.policy".to_owned(),
+        ] {
+            assert!(NFPM.lines().any(|line| line.trim() == dst), "{dst}");
+        }
+        // GTK 4 and polkit are recommended, never required: a headless
+        // install keeps working and its approvals fail closed.
+        assert!(!NFPM.contains("depends:"));
         assert!(NFPM.contains(&format!("dst: {PACKAGE_USER_UNIT_DIR}/{SOCKET_UNIT}")));
         assert!(NFPM.contains(&format!("dst: {PACKAGE_USER_UNIT_DIR}/{SERVICE_UNIT}")));
     }

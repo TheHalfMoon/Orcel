@@ -27,6 +27,10 @@ use std::io::{Read, Write};
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+    if !make_non_dumpable() {
+        eprintln!("orcel-approval-helper-linux: cannot make the process non-dumpable");
+        return ExitCode::from(2);
+    }
     if !stdin_is_pipe() {
         eprintln!("orcel-approval-helper-linux: stdin is not a pipe");
         return ExitCode::from(2);
@@ -64,6 +68,26 @@ fn main() -> ExitCode {
         return ExitCode::from(4);
     }
     ExitCode::SUCCESS
+}
+
+/// #373 item 1: before the request is read, the helper makes itself
+/// non-dumpable. With Yama `ptrace_scope=0` another process of the same user
+/// could otherwise attach (or write `/proc/<pid>/mem`) and change the text
+/// after it was hashed and before it is shown. A non-dumpable process can
+/// only be traced with `CAP_SYS_PTRACE`, its `/proc/<pid>` files belong to
+/// root, and it writes no core dump. If the call fails the helper answers
+/// nothing, which orceld treats as unavailable.
+#[cfg(target_os = "linux")]
+fn make_non_dumpable() -> bool {
+    // SAFETY: PR_SET_DUMPABLE reads only its integer arguments and touches
+    // no memory of this process; the unused arguments are 0, as prctl(2)
+    // requires.
+    unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) == 0 }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn make_non_dumpable() -> bool {
+    true
 }
 
 /// orceld always starts the helper with a pipe it owns on stdin.
