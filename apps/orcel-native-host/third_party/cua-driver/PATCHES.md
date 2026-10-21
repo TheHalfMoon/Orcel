@@ -420,12 +420,18 @@ feature off each file compiles exactly as upstream.
   when `AXValue` is settable, on a text field, slider, stepper or date
   field. Every `unsafe` call has a SAFETY comment. No CGEvent, no
   SkyLight, no Apple Event, no key event, no menu.
-- `platform-linux/src/atspi/native.rs`: one added function,
-  `live_role_and_checked_ref`, which reads the live role name and `Checked`
-  state of a snapshot-cached object (one state read, one role read, no walk).
-  The Linux tool calls it right before acting: the role must still be the one
-  the host listed, must not be a password field, and a toggle must not already
-  be in the state it asks for.
+- `platform-linux/src/atspi/native.rs`: two added public functions and one
+  added type. `toggled_from_state_read` turns one state read into a
+  `LiveToggle`: on when the read reports `Checked` (a check box) or `Pressed`
+  (a GTK4 toggle button), off when it reports neither, mixed when it reports
+  `Indeterminate` (P-12), and an error, never off, when the read failed or did
+  not answer. It is public so the host's unit test
+  (`an_unreadable_toggle_state_is_an_error_never_off`) calls it directly.
+  `live_role_and_toggle_ref` reads the live role name and that toggle state of
+  a snapshot-cached object (one state read, one role read, no walk). The Linux
+  tool calls it right before acting: the role must still be the one the host
+  listed, must not be a password field, and a toggle must not already be in
+  the state it asks for, nor mixed (P-12).
 - `platform-linux/src/tools/impl_.rs`: a private `orcel_semantic` module and
   one registration. It resolves the token the same way, compares the
   snapshot's AT-SPI role with the host's, and acts on the object the
@@ -437,9 +443,10 @@ feature off each file compiles exactly as upstream.
   unacknowledged one `outcome_unknown`; neither is retried or followed by a
   pointer click.
 - Toggle never flips blindly. The host passes the state it asks for
-  (`toggle_to`); macOS reads `AXValue` and Linux the `Checked` state on the live
-  element immediately before pressing, and an element already in that state, or
-  one whose state is unreadable, is refused (`target_stale`, `capability_denied`).
+  (`toggle_to`); macOS reads `AXValue` and Linux the `Checked`, `Pressed` and
+  `Indeterminate` states on the live element immediately before pressing. An
+  element already in that state is refused (`target_stale`); one whose state is
+  unreadable, or mixed (P-12), is refused (`capability_denied`).
 - Both tools take exactly `pid`, `window_id`, `element_token`, `verb`,
   `expect_role` and, for set value, `value`, for toggle `toggle_to`. A name that could carry a
   position, key, button, count, modifier, delivery mode, scope, capture id or
@@ -537,8 +544,36 @@ the first input, since each handle is resolved once and cached.
 
 The host sets it from `ORCEL_MACOS_BACKGROUND_SPI=1` in the worker environment,
 which orceld forwards only when its own environment carries it, and reports the
-state in the hello `permissions` map as `macos_background_spi`. Lines added
+state in the hello `permissions` map as `macos_background_spi`. Since #404 the
+kernel checks that report: a macOS hello must carry `macos_background_spi` as
+a boolean equal to orceld's own opt-in, or every raw input operation stays
+unavailable (`macos_background_spi_mismatch` or `_unreported`), and the input
+approval prompt names the route the kernel settled (`route=`). Lines added
 only; with the feature off the file compiles exactly as upstream.
+
+## P-12: a mixed toggle state is refused on both platforms (#401)
+
+A half-checked (mixed) check box has no state that a toggle approval can name.
+Before this patch the two platforms disagreed: macOS read `AXValue` 2 as on, so
+a toggle asking for off pressed it, while Linux read a box reporting
+`Indeterminate` with neither `Checked` nor `Pressed` as off, so a toggle asking
+for on pressed it. In both cases the press lands on a toolkit-defined next
+state. The patch refuses the toggle instead, with `capability_denied`, on both
+platforms:
+
+- `platform-macos/src/tools/mod.rs` (the P-09 tool): an `AXValue` other than
+  0 or 1 is refused before the already-in-state check.
+- `platform-linux/src/atspi/native.rs`: `toggled_from_state_read` takes the
+  `Indeterminate` flag with `Checked` and `Pressed` and returns
+  `LiveToggle::Mixed` for it, whatever else the read reports (P-09 above).
+- `platform-linux/src/tools/impl_.rs` (the P-09 tool): `LiveToggle::Mixed` is
+  refused before the already-in-state check.
+
+Lines changed are in Orcel-added code (`orcel-minimal` only); with the feature
+off each file compiles exactly as upstream. Regressions: the host unit test
+above (every flag combination), and the live AT-SPI re-read test in
+`src/cua_adapter/atspi_reread_tests.rs`, which toggles a GTK3 check button under Xvfb and
+re-reads it through AT-SPI after each step.
 
 ## Patched file index
 

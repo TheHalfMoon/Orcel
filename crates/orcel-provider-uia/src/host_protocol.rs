@@ -84,6 +84,50 @@ pub(crate) const NATIVE_ACTION_OPERATIONS: [&str; 6] = [
 ];
 
 const PLATFORMS: [&str; 3] = ["windows", "macos", "linux"];
+
+/// The hello `permissions` key that reports the macOS SkyLight input SPI
+/// capability (P-11).
+pub(crate) const MACOS_BACKGROUND_SPI: &str = "macos_background_spi";
+
+/// The kernel's own opt-in to the macOS SkyLight input SPI: the variable it
+/// forwards to the host, read by the same rule the host applies. The host's
+/// hello must report the same value, or raw input stays unavailable.
+pub(crate) fn kernel_background_spi_opt_in() -> bool {
+    std::env::var_os("ORCEL_MACOS_BACKGROUND_SPI").is_some_and(|value| value == "1")
+}
+
+/// The route raw input takes on the negotiated host. The kernel derives it
+/// from the platform, the backend and, on macOS, the SPI capability it checked
+/// against its own opt-in; the approval prompt names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InputRoute {
+    /// The Windows host (`/1` or `/2`), unchanged.
+    WindowsHost,
+    /// macOS, P-11 on: SkyLight `SLEventPostToPid` (a private API).
+    MacosSkyLightSpi,
+    /// macOS, P-11 off: the public `CGEvent` post-to-pid route.
+    MacosPublicCgEvent,
+    /// X11: XTest events on Cua's virtual master device, addressed to the
+    /// window.
+    X11VirtualMaster,
+    /// No raw input route: Wayland, or a host whose SPI report did not match
+    /// the kernel's opt-in.
+    None,
+}
+
+impl InputRoute {
+    pub(crate) fn describe(self) -> &'static str {
+        match self {
+            Self::WindowsHost => "windows-computer-host",
+            Self::MacosSkyLightSpi => {
+                "macos-skylight-spi (private SLEventPostToPid, background, opted in)"
+            }
+            Self::MacosPublicCgEvent => "macos-cgevent-post-to-pid (public CGEvent, background)",
+            Self::X11VirtualMaster => "x11-xtest-virtual-master (Cua MPX device, background)",
+            Self::None => "none",
+        }
+    }
+}
 const BACKENDS: [&str; 4] = ["uia", "ax", "atspi-x11", "atspi-wayland"];
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -152,6 +196,10 @@ pub(crate) struct HelloFrame {
     backend: Option<String>,
     #[serde(default)]
     capabilities: Option<BTreeMap<String, WireCapability>>,
+    /// Informational capability facts. A value that is not a boolean reads
+    /// as not reported.
+    #[serde(default)]
+    permissions: Option<BTreeMap<String, serde_json::Value>>,
     #[serde(default)]
     error: Option<WireError>,
 }
@@ -170,6 +218,7 @@ pub(crate) struct NegotiatedHost {
     capabilities: BTreeMap<String, HostCapability>,
     identity: &'static str,
     window_kind: &'static str,
+    input_route: InputRoute,
 }
 
 impl NegotiatedHost {
@@ -180,7 +229,13 @@ impl NegotiatedHost {
             capabilities: BTreeMap::new(),
             identity: WINDOWS_HOST_IDENTITY,
             window_kind: "hwnd",
+            input_route: InputRoute::WindowsHost,
         }
+    }
+
+    /// The route raw input takes on this host.
+    pub(crate) fn input_route(&self) -> InputRoute {
+        self.input_route
     }
 
     pub(crate) fn generation(&self) -> ProtocolGeneration {
@@ -272,9 +327,19 @@ fn handshake_error(message: &str) -> UiaError {
 
 /// Negotiates the protocol generation. `hello` performs one hello exchange
 /// in the given generation. A transport failure (for example a host crash)
-/// is returned at once: there is no retry.
+/// is returned at once: there is no retry. The macOS SPI report is checked
+/// against the kernel's own opt-in (`kernel_background_spi_opt_in`).
 pub(crate) fn negotiate(
     expected_platform: &str,
+    hello: impl FnMut(&'static str) -> Result<HelloFrame, UiaError>,
+) -> Result<NegotiatedHost, UiaError> {
+    negotiate_with(expected_platform, kernel_background_spi_opt_in(), hello)
+}
+
+/// [`negotiate`] with the kernel's SPI opt-in given explicitly.
+pub(crate) fn negotiate_with(
+    expected_platform: &str,
+    background_spi_opt_in: bool,
     mut hello: impl FnMut(&'static str) -> Result<HelloFrame, UiaError>,
 ) -> Result<NegotiatedHost, UiaError> {
     let identity = expected_host_identity(expected_platform);
@@ -286,7 +351,7 @@ pub(crate) fn negotiate(
         if reply.protocol != PROTOCOL_V2 {
             return Err(handshake_error("computer host handshake identity mismatch"));
         }
-        return accept_v2(expected_platform, reply);
+        return accept_v2(expected_platform, background_spi_opt_in, reply);
     }
     let refused_as_invalid = reply.protocol == PROTOCOL_V1
         && reply
@@ -310,7 +375,47 @@ pub(crate) fn negotiate(
     Ok(NegotiatedHost::v1())
 }
 
-fn accept_v2(expected_platform: &str, reply: HelloFrame) -> Result<NegotiatedHost, UiaError> {
+/// The raw input route a host serves, and the reason its input operations
+/// are capped when it serves none it may use. On macOS the hello must report
+/// `macos_background_spi` as a boolean equal to the kernel's own opt-in: the
+/// SPI is gated by orceld's environment, and this is where the kernel checks
+/// that the host applied it. A host that reports another value, or none, gets
+/// no raw input. A host off macOS never reports the SPI on.
+fn native_input_route(
+    platform: &str,
+    backend: &str,
+    background_spi_opt_in: bool,
+    permissions: Option<&BTreeMap<String, serde_json::Value>>,
+) -> (InputRoute, Option<&'static str>) {
+    let reported = permissions
+        .and_then(|permissions| permissions.get(MACOS_BACKGROUND_SPI))
+        .map(serde_json::Value::as_bool);
+    match platform {
+        "windows" => (InputRoute::WindowsHost, None),
+        "macos" => match reported {
+            Some(Some(spi)) if spi == background_spi_opt_in => {
+                if spi {
+                    (InputRoute::MacosSkyLightSpi, None)
+                } else {
+                    (InputRoute::MacosPublicCgEvent, None)
+                }
+            }
+            Some(Some(_)) => (InputRoute::None, Some("macos_background_spi_mismatch")),
+            _ => (InputRoute::None, Some("macos_background_spi_unreported")),
+        },
+        _ if reported.is_some_and(|spi| spi != Some(false)) => {
+            (InputRoute::None, Some("macos_background_spi_mismatch"))
+        }
+        _ if backend == "atspi-x11" => (InputRoute::X11VirtualMaster, None),
+        _ => (InputRoute::None, None),
+    }
+}
+
+fn accept_v2(
+    expected_platform: &str,
+    background_spi_opt_in: bool,
+    reply: HelloFrame,
+) -> Result<NegotiatedHost, UiaError> {
     let platform = reply.platform.as_deref().unwrap_or_default();
     if !PLATFORMS.contains(&platform) || platform != expected_platform {
         return Err(handshake_error(
@@ -326,6 +431,12 @@ fn accept_v2(expected_platform: &str, reply: HelloFrame) -> Result<NegotiatedHos
             "computer host reported a backend its platform does not serve",
         ));
     };
+    let (input_route, input_cap) = native_input_route(
+        platform,
+        backend,
+        background_spi_opt_in,
+        reply.permissions.as_ref(),
+    );
     let table = reply.capabilities.unwrap_or_default();
     if table.len() > MAX_CAPABILITY_ENTRIES {
         return Err(handshake_error(
@@ -356,6 +467,11 @@ fn accept_v2(expected_platform: &str, reply: HelloFrame) -> Result<NegotiatedHos
                     support: CapabilitySupport::Unavailable,
                     reason: Some("observation_only".to_owned()),
                 };
+            } else if let Some(reason) = input_cap.filter(|_| op.starts_with("input_")) {
+                capability = HostCapability {
+                    support: CapabilitySupport::Unavailable,
+                    reason: Some(reason.to_owned()),
+                };
             }
             (op, capability)
         })
@@ -365,6 +481,7 @@ fn accept_v2(expected_platform: &str, reply: HelloFrame) -> Result<NegotiatedHos
         capabilities,
         identity: expected_host_identity(expected_platform),
         window_kind,
+        input_route,
     })
 }
 
@@ -706,6 +823,125 @@ mod tests {
         );
     }
 
+    /// #404: a macOS hello whose input operations all claim delivery, with
+    /// the given `permissions` object spliced in (or none).
+    fn macos_input_hello(permissions: Option<&str>) -> String {
+        let permissions = permissions
+            .map(|permissions| format!(r#""permissions":{permissions},"#))
+            .unwrap_or_default();
+        format!(
+            r#"{{"id":1,"ok":true,"protocol":"orcel-computer-host/2","host":"orcel-native-host","platform":"macos","backend":"ax",{permissions}"capabilities":{{"hello":{{"support":"delivered"}},"list_windows":{{"support":"delivered"}},"semantic_action":{{"support":"delivered"}},"input_click":{{"support":"delivered","delivery":"background"}},"input_key":{{"support":"delivered","delivery":"background"}}}}}}"#
+        )
+    }
+
+    /// #404: the SPI is gated by orceld's environment, and the kernel checks
+    /// the host applied it. A macOS host whose hello reports the SPI as the
+    /// kernel opted in serves raw input on the matching route; any other
+    /// report, or none, leaves raw input unavailable with the reason, and
+    /// nothing else changes.
+    #[test]
+    fn macos_raw_input_needs_the_spi_report_to_match_the_kernels_opt_in() {
+        for (opt_in, route) in [
+            (false, InputRoute::MacosPublicCgEvent),
+            (true, InputRoute::MacosSkyLightSpi),
+        ] {
+            let raw = macos_input_hello(Some(&format!(
+                r#"{{"accessibility":true,"macos_background_spi":{opt_in}}}"#
+            )));
+            let host = negotiate_with("macos", opt_in, |_| Ok(frame(&raw))).unwrap();
+            assert_eq!(host.input_route(), route);
+            assert!(host.require("input_click").is_ok());
+            assert!(host.require("input_key").is_ok());
+        }
+        let refused = [
+            (
+                false,
+                Some(r#"{"macos_background_spi":true}"#),
+                "macos_background_spi_mismatch",
+            ),
+            (
+                true,
+                Some(r#"{"macos_background_spi":false}"#),
+                "macos_background_spi_mismatch",
+            ),
+            (false, None, "macos_background_spi_unreported"),
+            (true, None, "macos_background_spi_unreported"),
+            (
+                false,
+                Some(r#"{"accessibility":true}"#),
+                "macos_background_spi_unreported",
+            ),
+            (
+                false,
+                Some(r#"{"macos_background_spi":"false"}"#),
+                "macos_background_spi_unreported",
+            ),
+            (
+                true,
+                Some(r#"{"macos_background_spi":1}"#),
+                "macos_background_spi_unreported",
+            ),
+        ];
+        for (opt_in, permissions, reason) in refused {
+            let raw = macos_input_hello(permissions);
+            let host = negotiate_with("macos", opt_in, |_| Ok(frame(&raw))).unwrap();
+            assert_eq!(host.input_route(), InputRoute::None, "{permissions:?}");
+            for op in ["input_click", "input_key"] {
+                let error = host.require(op).unwrap_err();
+                assert_eq!(error.code, FailureCode::ProviderUnavailable, "{op}");
+                assert!(error.message.contains(reason), "{op}: {error:?}");
+            }
+            // Observation and semantic actions do not depend on the SPI.
+            assert!(host.require("list_windows").is_ok());
+            assert!(host.require("semantic_action").is_ok());
+        }
+    }
+
+    /// #404: the route the approval prompt names, for every host.
+    #[test]
+    fn the_input_route_is_named_for_every_host() {
+        assert_eq!(NegotiatedHost::v1().input_route(), InputRoute::WindowsHost);
+        let windows = negotiate_with("windows", false, |_| Ok(frame(V2_WINDOWS_HELLO))).unwrap();
+        assert_eq!(windows.input_route(), InputRoute::WindowsHost);
+        let x11 = negotiate_with("linux", false, |_| Ok(frame(V2_LINUX_HELLO))).unwrap();
+        assert_eq!(x11.input_route(), InputRoute::X11VirtualMaster);
+        let wayland = V2_LINUX_HELLO.replace("atspi-x11", "atspi-wayland");
+        let wayland = negotiate_with("linux", false, |_| Ok(frame(&wayland))).unwrap();
+        assert_eq!(wayland.input_route(), InputRoute::None);
+        // A Linux host claiming the macOS SPI is on is not one the kernel
+        // can name a route for.
+        let claims_spi = V2_LINUX_HELLO
+            .replace(
+                r#""capabilities":"#,
+                r#""permissions":{"macos_background_spi":true},"capabilities":"#,
+            )
+            .replace(
+                r#""input_click":{"support":"refused","reason":"capability_denied"}"#,
+                r#""input_click":{"support":"delivered"}"#,
+            );
+        for opt_in in [false, true] {
+            let host = negotiate_with("linux", opt_in, |_| Ok(frame(&claims_spi))).unwrap();
+            assert_eq!(host.input_route(), InputRoute::None);
+            let error = host.require("input_click").unwrap_err();
+            assert!(
+                error.message.contains("macos_background_spi_mismatch"),
+                "{error:?}"
+            );
+        }
+        for route in [
+            InputRoute::WindowsHost,
+            InputRoute::MacosSkyLightSpi,
+            InputRoute::MacosPublicCgEvent,
+            InputRoute::X11VirtualMaster,
+            InputRoute::None,
+        ] {
+            let named = route.describe();
+            assert!(!named.is_empty() && named.is_ascii(), "{route:?}");
+        }
+        assert!(InputRoute::MacosSkyLightSpi.describe().contains("private"));
+        assert!(InputRoute::MacosPublicCgEvent.describe().contains("public"));
+    }
+
     #[test]
     fn native_hello_claiming_input_or_capture_is_capped_to_observation() {
         let claims_everything = V2_LINUX_HELLO
@@ -714,14 +950,21 @@ mod tests {
                 r#""input_click":{"support":"delivered"},"input_move":{"support":"delivered"},"input_hotkey":{"support":"foreground_only"},"semantic_action":{"support":"delivered"},"capture_window":{"support":"delivered"},"window_action":{"support":"delivered"},"cursor_position":{"support":"delivered"}"#,
             );
         for platform in ["linux", "macos"] {
+            // A macOS hello must report the SPI capability for raw input to
+            // be usable at all (#404); this one reports it off, as the
+            // kernel opted out.
             let raw = if platform == "macos" {
                 claims_everything
                     .replace("\"linux\"", "\"macos\"")
                     .replace("atspi-x11", "ax")
+                    .replace(
+                        r#""capabilities":"#,
+                        r#""permissions":{"macos_background_spi":false},"capabilities":"#,
+                    )
             } else {
                 claims_everything.clone()
             };
-            let host = negotiate(platform, |_| Ok(frame(&raw))).unwrap();
+            let host = negotiate_with(platform, false, |_| Ok(frame(&raw))).unwrap();
             for op in ["input_move", "input_hotkey", "window_action"] {
                 let error = host.require(op).unwrap_err();
                 assert_eq!(error.code, FailureCode::ProviderUnavailable, "{op}");
