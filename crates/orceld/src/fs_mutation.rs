@@ -250,11 +250,20 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
+    fn next_temp_sequence() -> u64 {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        // macOS clocks tick in microseconds, so a timestamp alone can repeat
+        // across parallel tests in one process.
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    }
+
     fn fixture(label: &str) -> (Workspace, PathBuf) {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
+        let nanos = format!("{nanos}-{}", next_temp_sequence());
         let root =
             std::env::temp_dir().join(format!("orceld-fs-{label}-{}-{nanos}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
