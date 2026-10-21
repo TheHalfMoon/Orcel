@@ -400,11 +400,11 @@ enum MigrationStep {
     Stored,
     /// A public-only temp file is written and synced next to the record.
     TempWritten,
-    /// The temp file replaced the record; the old file's bytes are reachable
-    /// only through the handle opened before the rename.
-    Renamed,
-    /// The old file's bytes were overwritten with zeros and synced.
+    /// The record's bytes were overwritten with zeros in place and synced;
+    /// the public record exists only as the temp file.
     Zeroed,
+    /// The temp file replaced the zero-filled record.
+    Renamed,
 }
 
 fn migrate_with(
@@ -437,22 +437,30 @@ fn migrate_with(
         std::fs::read(record)
             .map_err(|_| SecretError::Unavailable("the device key record is unreadable"))?,
     );
-    // A record that an earlier build zeroed in place and then crashed before
-    // replacing: the plaintext is gone, so with the key already stored there
-    // is nothing left to migrate.
+    // A record zeroed in place by a run that crashed before the rename: the
+    // plaintext is gone and the public record is still in a temp file next
+    // to it. Put that record back when it matches the stored key.
     if !raw.as_slice().is_empty() && raw.as_slice().iter().all(|byte| *byte == 0) {
-        return match store.get(SecretName::DeviceKey) {
-            Ok(_) => Ok(Migration::AlreadyStored),
-            Err(SecretError::NotFound) => Err(SecretError::Refused(
-                "the device key record was destroyed and no key is stored; enroll again",
-            )),
-            Err(error) => Err(error),
+        let key = match store.get(SecretName::DeviceKey) {
+            Ok(key) => key,
+            Err(SecretError::NotFound) => {
+                return Err(SecretError::Refused(
+                    "the device key record was destroyed and no key is stored; enroll again",
+                ))
+            }
+            Err(error) => return Err(error),
         };
+        restore_public_record(record, &key)?;
+        remove_orphan_temps(record);
+        return Ok(Migration::AlreadyStored);
     }
     let mut fields: Map<String, Value> = serde_json::from_slice(raw.as_slice())
         .map_err(|_| SecretError::Refused("the device key record is malformed"))?;
     let private = match fields.remove("privateKeyJwkBase64") {
-        None => return Ok(Migration::NothingToMigrate),
+        None => {
+            remove_orphan_temps(record);
+            return Ok(Migration::NothingToMigrate);
+        }
         Some(Value::String(private)) if !private.is_empty() => SecretBytes(private.into_bytes()),
         Some(_) => return Err(SecretError::Refused("the device key record is malformed")),
     };
@@ -488,7 +496,8 @@ fn migrate_with(
     step(MigrationStep::Stored)?;
     let public = serde_json::to_vec(&Value::Object(fields))
         .map_err(|_| SecretError::Refused("the device key record is malformed"))?;
-    replace_then_scrub(record, raw.as_slice().len(), &public, step)?;
+    scrub_then_replace(record, &public, step)?;
+    remove_orphan_temps(record);
     Ok(outcome)
 }
 
@@ -517,16 +526,24 @@ fn check_private_file(_metadata: &std::fs::Metadata) -> Result<(), SecretError> 
     Ok(())
 }
 
-/// Replaces `path` with `public` so that a crash at any point leaves either
-/// the old record or the public record at `path`, never a damaged one. A
-/// handle to the old file is opened first. The public record is written to
-/// a synced temp file and renamed over `path` (directory synced on Unix).
-/// Only then are the old file's bytes overwritten with zeros through that
-/// handle. A crash before the overwrite leaves the old bytes in an unlinked
-/// file that no path reaches.
-fn replace_then_scrub(
+/// Replaces the plaintext record at `path` with `public`. The public
+/// record is first written to a synced, owner-only temp file next to `path`.
+/// Only then are the record's own bytes overwritten with zeros in place and
+/// synced, so every name of that file (a hard link included) reads zeros.
+/// Finally the temp file is renamed over `path` (directory synced on Unix).
+///
+/// A crash before the overwrite leaves the plaintext record, and the next
+/// run starts again. A crash after it leaves a zero-filled record and the
+/// temp file, which the next run renames into place
+/// ([`restore_public_record`]). No crash leaves the plaintext in a file
+/// that no path reaches. The handle is closed before the rename, so the
+/// rename replaces a file this process no longer holds open, which Windows
+/// file systems without POSIX rename semantics (FAT, exFAT, many SMB shares)
+/// also accept. If another process holds the record open without
+/// delete sharing, the rename fails, the record stays zero-filled with the
+/// temp file beside it, and the next run retries the restore.
+fn scrub_then_replace(
     path: &Path,
-    len: usize,
     public: &[u8],
     step: &mut dyn FnMut(MigrationStep) -> Result<(), SecretError>,
 ) -> Result<(), SecretError> {
@@ -539,16 +556,158 @@ fn replace_then_scrub(
         .map_err(|_| FAILED)?;
     let temp = write_private_temp(path, public).map_err(|_| FAILED)?;
     step(MigrationStep::TempWritten)?;
-    if std::fs::rename(&temp, path).is_err() {
-        let _ = std::fs::remove_file(&temp);
-        return Err(FAILED);
-    }
+    let zeroed = old
+        .metadata()
+        .and_then(|metadata| {
+            let len = usize::try_from(metadata.len()).map_err(std::io::Error::other)?;
+            old.write_all(&vec![0u8; len])
+        })
+        .and_then(|()| old.sync_all());
+    drop(old);
+    // On failure the record may be partly zeroed; the temp file stays as the
+    // public record a later run restores, and so it does if the rename fails.
+    zeroed.map_err(|_| FAILED)?;
+    step(MigrationStep::Zeroed)?;
+    std::fs::rename(&temp, path).map_err(|_| FAILED)?;
     sync_parent(path).map_err(|_| FAILED)?;
     step(MigrationStep::Renamed)?;
-    old.write_all(&vec![0u8; len]).map_err(|_| FAILED)?;
-    old.sync_all().map_err(|_| FAILED)?;
-    step(MigrationStep::Zeroed)?;
     Ok(())
+}
+
+/// The name prefix of the temp files [`write_private_temp`] creates for
+/// `path`.
+fn temp_prefix(path: &Path) -> Option<String> {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| format!(".{name}.tmp-"))
+}
+
+/// The temp files next to `path` that [`write_private_temp`] left: regular
+/// files only (never a link or a directory), sorted by name.
+fn temp_siblings(path: &Path) -> Vec<PathBuf> {
+    let (Some(parent), Some(prefix)) = (path.parent(), temp_prefix(path)) else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return Vec::new();
+    };
+    let mut found: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.starts_with(&prefix))
+        })
+        .map(|entry| entry.path())
+        .filter(|candidate| {
+            std::fs::symlink_metadata(candidate)
+                .is_ok_and(|metadata| metadata.file_type().is_file())
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+/// Removes the temp files an interrupted migration left next to `record`.
+/// They only ever hold public fields, so this is housekeeping and failures
+/// are ignored.
+fn remove_orphan_temps(record: &Path) {
+    for orphan in temp_siblings(record) {
+        let _ = std::fs::remove_file(orphan);
+    }
+}
+
+/// Puts back the public record of a migration that zeroed `record` and
+/// stopped before the rename: the newest owner-only temp file that is a
+/// public record for the stored `key` is renamed over `record`. Without one
+/// the user must enroll again. The record is never rebuilt from anything
+/// else, because the device id, creation time and epoch are not derivable
+/// from the key.
+fn restore_public_record(record: &Path, key: &SecretBytes) -> Result<(), SecretError> {
+    let candidate = temp_siblings(record).into_iter().rev().find(|candidate| {
+        let Ok(metadata) = std::fs::symlink_metadata(candidate) else {
+            return false;
+        };
+        if metadata.len() > MAX_LEGACY_RECORD_BYTES || check_private_file(&metadata).is_err() {
+            return false;
+        }
+        std::fs::read(candidate)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Map<String, Value>>(&bytes).ok())
+            .is_some_and(|fields| is_public_record_for(&fields, key))
+    });
+    let Some(candidate) = candidate else {
+        return Err(SecretError::Refused(
+            "the device key record was zeroed and no public record for the stored key remains; enroll again",
+        ));
+    };
+    std::fs::rename(&candidate, record)
+        .and_then(|()| sync_parent(record))
+        .map_err(|_| SecretError::Unavailable("the public device record could not be restored"))
+}
+
+/// True when `fields` is a public-only device record whose public key is
+/// the one recorded in the stored private `key` (an Ed25519 private JWK
+/// carries its public `x`). The edge still checks the whole key pair with
+/// `privateKeyMatchesIdentity` before it signs anything.
+fn is_public_record_for(fields: &Map<String, Value>, key: &SecretBytes) -> bool {
+    if fields.contains_key("privateKeyJwkBase64")
+        || !fields
+            .get("deviceId")
+            .and_then(Value::as_str)
+            .is_some_and(is_device_id)
+    {
+        return false;
+    }
+    let public = fields
+        .get("publicKeyJwkBase64")
+        .and_then(Value::as_str)
+        .and_then(|encoded| ed25519_jwk_x(encoded.as_bytes()));
+    matches!(
+        (public, ed25519_jwk_x(key.as_slice())),
+        (Some(public), Some(private)) if public == private
+    )
+}
+
+/// The `x` member of a base64-encoded Ed25519 JWK.
+fn ed25519_jwk_x(encoded: &[u8]) -> Option<String> {
+    let decoded = SecretBytes(base64_decode(encoded)?);
+    let jwk: Map<String, Value> = serde_json::from_slice(decoded.as_slice()).ok()?;
+    if jwk.get("kty").and_then(Value::as_str) != Some("OKP")
+        || jwk.get("crv").and_then(Value::as_str) != Some("Ed25519")
+    {
+        return None;
+    }
+    jwk.get("x").and_then(Value::as_str).map(str::to_owned)
+}
+
+/// Standard base64 with optional padding, as Node's `Buffer` writes it.
+fn base64_decode(encoded: &[u8]) -> Option<Vec<u8>> {
+    let trimmed = match encoded {
+        [rest @ .., b'=', b'='] | [rest @ .., b'='] => rest,
+        all => all,
+    };
+    let mut out = Vec::with_capacity(trimmed.len() * 3 / 4);
+    let (mut buffer, mut bits) = (0u32, 0u32);
+    for &byte in trimmed {
+        let value = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return None,
+        };
+        buffer = (buffer << 6) | u32::from(value);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buffer >> bits) as u8);
+            buffer &= (1 << bits) - 1;
+        }
+    }
+    Some(out)
 }
 
 /// Writes `bytes` to a fresh owner-only file next to `path` and renames it
@@ -573,13 +732,8 @@ fn write_private_temp(path: &Path, bytes: &[u8]) -> std::io::Result<PathBuf> {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_nanos())
         .unwrap_or_default();
-    let temp = parent.join(format!(
-        ".{}.tmp-{}-{nanos}",
-        path.file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("secret"),
-        std::process::id()
-    ));
+    let prefix = temp_prefix(path).unwrap_or_else(|| ".secret.tmp-".to_string());
+    let temp = parent.join(format!("{prefix}{}-{nanos}", std::process::id()));
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]

@@ -12,6 +12,14 @@ pub const INSTALL_SCHEMA: &str = "orcel-install-v1";
 
 /// Paths of the per-user install rooted at the XP-01 state root
 /// (`%LOCALAPPDATA%\Orcel` on Windows).
+///
+/// On Linux and macOS the same root is the XDG or Application Support state
+/// root, and only the state paths apply there (`state_dir`, `config_file`,
+/// `logs_dir`, the ledgers). The payload paths (`bin_dir`, `versions_dir`,
+/// `current.json`, `install.json`) are Windows-only: on other OSes the
+/// host platform refuses `install`, `update`, `rollback` and `uninstall`
+/// before any of them is created or removed, and `orceld` comes from the
+/// package or tarball location instead (`commands::local_orceld`, XP-17).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Layout {
     pub root: PathBuf,

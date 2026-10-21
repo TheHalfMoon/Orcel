@@ -349,6 +349,11 @@ impl<'a> Installer<'a> {
     }
 
     pub fn uninstall(&self, options: &UninstallOptions) -> Result<UninstallReport, LifecycleError> {
+        // #369 item 3: the payload layout exists on Windows only. On Linux
+        // and macOS the layout root is the live XDG or Application Support
+        // state root, so `--purge-data` must never walk it; the platform
+        // refuses first, as it does for install, update and rollback.
+        self.platform.windows_build()?;
         let root_exists = self.layout.root.is_dir();
         let record: Option<InstallRecord> = if root_exists {
             // Tolerant read: uninstall only consults `path_entry_added` and
