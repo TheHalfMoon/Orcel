@@ -330,6 +330,32 @@ fn wi05_a_large_form_drawn_on_many_pages_ends_as_archive_limit_under_containment
     assert_eq!(frame.expect("converts").pages, 16);
 }
 
+/// The parity checks are bypassed altogether (the debug-only unchecked
+/// trigger): pdf-inspector runs with no pre-flight and no parity watch, on
+/// the bomb the pre-flight never sees and on the one in the page content. The
+/// decode budget alone ends both as `archive_limit`, under the contained tier
+/// they are meant to be covered by (#399). The in-process counterpart is
+/// `a_stream_the_preflight_never_saw_still_fails_closed_with_archive_limit`.
+#[test]
+fn wi05_the_decode_budget_alone_ends_a_parity_bypass_under_containment() {
+    for (name, pdf) in [
+        ("bare-name form XObject", fixtures::struct_name_bomb_pdf()),
+        ("page content", fixtures::flate_bomb_pdf()),
+    ] {
+        let input = [fixtures::UNCHECKED_TRIGGER, pdf.as_slice()].concat();
+        let Some(scene) = Scene::new(&input) else {
+            return;
+        };
+        let (code, frame) = scene.parse();
+        assert_eq!(code, EXIT_REFUSED, "{name}");
+        assert_eq!(
+            frame,
+            Err(FrameError::Refused(ParseRefusal::ArchiveLimit)),
+            "{name}"
+        );
+    }
+}
+
 /// A parser crash (the debug-only abort trigger) ends inside the contained
 /// process: the helper reports it, and there is no frame to accept.
 #[test]
