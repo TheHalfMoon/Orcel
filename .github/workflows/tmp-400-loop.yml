@@ -1,0 +1,32 @@
+name: tmp-400-loop
+on:
+  push:
+    branches: [fix/400-frame-too-large]
+permissions:
+  contents: read
+jobs:
+  loop:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24.19.0"
+      - run: cargo build --locked -p orceld
+      - run: npm ci --prefix apps/orcel-control-room --ignore-scripts
+      - run: npm --prefix apps/orcel-control-room run build
+      - name: 30x oversize-frame test
+        working-directory: apps/orcel-control-room
+        env:
+          ORCEL_REQUIRE_LIVE_ORCELD: "1"
+          ORCEL_APP_API_OTHER_USER_TEST: "1"
+        run: |
+          pass=0; fail=0
+          for i in $(seq 1 30); do
+            if node --env-file=test.env --test --test-concurrency=1 --test-name-pattern="oversize frame" "dist/**/client.contract.test.js" >out.txt 2>&1; then pass=$((pass+1)); else fail=$((fail+1)); cat out.txt; fi
+            echo "iteration $i: pass=$pass fail=$fail"
+          done
+          echo "RESULT pass=$pass fail=$fail"
+          test "$fail" -eq 0
