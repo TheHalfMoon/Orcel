@@ -127,19 +127,21 @@ fn missing_state_root_is_an_error_never_temp() {
 #[cfg(windows)]
 #[test]
 fn windows_paths_are_byte_identical_to_the_previous_defaults() {
-    let lookup = lookup(vec![(
-        "LOCALAPPDATA",
-        OsString::from(r"C:\Users\u\AppData\Local"),
-    )]);
+    // A real local app data directory: resolving now creates the private
+    // directories with an owner-only DACL (#358 item 2), as on Unix.
+    let local = sandbox("windows-bytes");
+    let lookup = lookup(vec![("LOCALAPPDATA", local.clone().into_os_string())]);
+    let local = local.display().to_string();
     let expected = [
-        r"C:\Users\u\AppData\Local\Orcel\state\authority",
-        r"C:\Users\u\AppData\Local\Orcel\executable_registry.json",
-        r"C:\Users\u\AppData\Local\Orcel\remote_leases.json",
+        format!(r"{local}\Orcel\state\authority"),
+        format!(r"{local}\Orcel\executable_registry.json"),
+        format!(r"{local}\Orcel\remote_leases.json"),
     ];
     for (store, expected) in STORES.iter().zip(expected) {
         let path = (store.resolve)(&lookup).expect(store.name);
-        assert_eq!(path.as_os_str(), expected, "{}", store.name);
+        assert_eq!(path.as_os_str(), expected.as_str(), "{}", store.name);
     }
+    let _ = std::fs::remove_dir_all(local);
 }
 
 #[test]
