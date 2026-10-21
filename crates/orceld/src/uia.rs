@@ -455,6 +455,13 @@ fn full_user_input_with_approval(
             .map_err(|error| ProviderError::new(error.code, error.message))?
     };
 
+    // XP-12 (#404): the prompt names the route the input will take, as the
+    // kernel checked it at the host handshake (on macOS, the hello's SkyLight
+    // SPI report against orceld's own opt-in).
+    let host = computer_host()?;
+    let route = host
+        .input_route()
+        .map_err(|error| ProviderError::new(error.code, error.message))?;
     let digest = desktop_request_digest(workspace, request);
     let prompt = ApprovalPrompt::new(
         workspace.id.clone(),
@@ -462,12 +469,13 @@ fn full_user_input_with_approval(
         "execute Full User desktop input",
         window_id.clone(),
         format!(
-            "process={} window={} window_generation={} action={} input={} arguments_digest={}",
+            "process={} window={} window_generation={} action={} input={} route={} arguments_digest={}",
             binding.process_id,
             binding.window_id,
             binding.window_generation,
             action_name,
             describe_input(&action),
+            route,
             digest,
         ),
         digest.clone(),
@@ -483,7 +491,6 @@ fn full_user_input_with_approval(
         )
         .map_err(|error| ProviderError::new(error.code, error.message))?;
 
-    let host = computer_host()?;
     let cursor = host
         .cursor_position()
         .map_err(|error| ProviderError::new(error.code, error.message))?;

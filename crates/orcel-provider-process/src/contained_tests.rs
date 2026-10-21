@@ -18,6 +18,7 @@ fn scratch(label: &str) -> PathBuf {
 fn spec_in(dir: &Path) -> ContainedSpec {
     ContainedSpec {
         executable: dir.join("parser"),
+        executable_sha256: "ab".repeat(32),
         argv: vec!["--input".into(), "a b".into()],
         workdir: dir.to_path_buf(),
         readable: Vec::new(),
@@ -58,7 +59,7 @@ fn xp13_the_spec_encodes_in_the_documented_format() {
     let dir = scratch("encode");
     let encoded = String::from_utf8(encode_spec(&spec_in(&dir), 42).unwrap()).unwrap();
     let mut lines = encoded.lines();
-    assert_eq!(lines.next(), Some("orcel-contain-spec 1"));
+    assert_eq!(lines.next(), Some("orcel-contain-spec 2"));
     assert_eq!(lines.next(), Some("parent 42"));
     assert_eq!(
         lines.next(),
@@ -69,6 +70,10 @@ fn xp13_the_spec_encodes_in_the_documented_format() {
             )
             .as_str()
         )
+    );
+    assert_eq!(
+        lines.next(),
+        Some(format!("sha256 {}", "ab".repeat(32)).as_str())
     );
     assert_eq!(
         lines.next(),
@@ -102,7 +107,7 @@ fn xp13_out_of_range_limits_and_relative_paths_are_refused() {
     let dir = scratch("limits");
     let base = spec_in(&dir);
     let mut broken = Vec::new();
-    for change in 0..7 {
+    for change in 0..9 {
         let mut spec = base.clone();
         match change {
             0 => spec.limits.timeout = Duration::ZERO,
@@ -111,6 +116,8 @@ fn xp13_out_of_range_limits_and_relative_paths_are_refused() {
             3 => spec.limits.cpu_seconds = 0,
             4 => spec.limits.open_files = 1,
             5 => spec.executable = PathBuf::from("parser"),
+            6 => spec.executable_sha256 = "AB".repeat(32),
+            7 => spec.executable_sha256 = "ab".repeat(31),
             _ => spec.readable = vec![PathBuf::from("relative/root")],
         }
         broken.push(spec);
@@ -261,6 +268,26 @@ fn xp13_a_well_formed_result_is_parsed_with_exact_output() {
     assert!(matches!(
         refused,
         Parsed::Refused { kind: RefusalKind::UnsupportedPlatform, ref message } if message == "no Landlock"
+    ));
+
+    // #384 item 2: the helper's digest refusal is typed.
+    let changed = parse_result(
+        &result(
+            &format!(
+                "orcel-contain-result 1 refused 0 0 0 {}\n",
+                encode_hex(b"executable_changed: digest mismatch")
+            ),
+            b"",
+        ),
+        &limits,
+    )
+    .unwrap();
+    assert!(matches!(
+        changed,
+        Parsed::Refused {
+            kind: RefusalKind::ExecutableChanged,
+            ..
+        }
     ));
 }
 

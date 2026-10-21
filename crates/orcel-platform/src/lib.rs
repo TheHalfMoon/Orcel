@@ -1,14 +1,20 @@
 //! Per-OS platform primitives shared by Orcel crates.
 //!
 //! `paths` resolves the per-user Orcel state root and verifies that it is
-//! private, so protected state never lands in a world-shared directory.
+//! private, so protected state never lands in a world-shared directory. On
+//! Windows the owner and DACL take the place of the Unix owner and mode bits
+//! (`acl`); on macOS extended ACL entries are checked too (`macos_acl`).
 //! `files` writes state files readable by their owner only.
 //! `process`, `session` and `peer` (XP-03) give every OS the identity facts
 //! the registry and local IPC bind to: a pid with its start generation, the
 //! current user and login session, and the kernel-reported credentials of a
 //! local socket peer.
 
+#[cfg(any(windows, test))]
+mod acl;
 pub mod files;
+#[cfg(target_os = "macos")]
+mod macos_acl;
 pub mod paths;
 pub mod peer;
 pub mod process;

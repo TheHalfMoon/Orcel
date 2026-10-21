@@ -120,6 +120,7 @@ impl Fixture {
     fn spec(&self, args: &[&str]) -> ContainedSpec {
         ContainedSpec {
             executable: self.probe.clone(),
+            executable_sha256: sha256_hex(&std::fs::read(&self.probe).unwrap()),
             argv: args.iter().map(|arg| (*arg).to_owned()).collect(),
             workdir: self.work.clone(),
             readable: vec![self.readable.clone()],
@@ -900,4 +901,36 @@ fn xp13_a_hard_link_already_in_a_granted_root() {
     std::fs::remove_file(&link).unwrap();
     let run = run_contained(&helper_pin(), &fixture.spec(&["noop"])).unwrap();
     assert_eq!(exited(&run), 0);
+}
+
+/// #384 item 2: the helper hashes the executable through the file it
+/// launches. A digest that does not match, or a file swapped in under the
+/// registered path after the digest was taken, runs nothing.
+#[test]
+fn xp13b_the_helper_runs_only_the_executable_whose_digest_matches() {
+    let fixture = Fixture::new();
+    let marker = fixture.work.join("ran");
+    let mut spec = fixture.spec(&["write", path_arg(&marker)]);
+    spec.executable_sha256 = sha256_hex(b"not the probe");
+    assert!(matches!(
+        run_contained(&helper_pin(), &spec),
+        Err(ContainedError::Refused {
+            kind: RefusalKind::ExecutableChanged,
+            ..
+        })
+    ));
+    assert!(!marker.exists());
+
+    // The spec pins the probe; then other bytes take its place.
+    let spec = fixture.spec(&["write", path_arg(&marker)]);
+    let replacement = fixture.probe.with_file_name("replacement");
+    std::fs::copy(env!("CARGO_BIN_EXE_orcel-contain"), &replacement).unwrap();
+    std::fs::rename(&replacement, &fixture.probe).unwrap();
+    let (bytes, status) = drive_helper(&encode_spec(&spec, std::process::id()).unwrap());
+    assert_eq!(
+        refusal(&bytes, &spec.limits),
+        RefusalKind::ExecutableChanged
+    );
+    assert_eq!(status, Some(3));
+    assert!(!marker.exists());
 }

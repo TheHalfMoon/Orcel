@@ -154,7 +154,7 @@ fn a_missing_sandbox_exec_is_a_refusal_not_an_unsandboxed_launch() {
     let refused = runtime.block_on(spawn_with_tools(
         Path::new(SHELL),
         Path::new("/usr/bin/orcel-no-such-sandbox-exec"),
-        Path::new("/bin/echo"),
+        &crate::pinned::PinnedExecutable::for_test(Path::new("/bin/echo")),
         &[],
         Path::new("/tmp"),
         &boundary,
