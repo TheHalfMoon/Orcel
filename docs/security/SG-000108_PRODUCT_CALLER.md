@@ -605,7 +605,7 @@ It also requires every live tool to be local-only.
     - Teredo `2001::/32`;
     - ORCHID `2001:10::/28` and `2001:20::/28`;
     - discard `100::/64`.
-  - **Tests:** 17 vectors in each crate, including embedded private, loopback and metadata addresses, CGNAT, and IPv4-mapped and IPv4-compatible forms. Controls for global addresses stay public.
+  - **Tests:** the same vectors in each crate, including embedded private, loopback and metadata addresses, CGNAT, and IPv4-mapped and IPv4-compatible forms. Controls for global addresses stay public.
 - **SHOULD-FIX:**
   - **The pin is checked first.** The pinned runtime is verified and held before the engine is probed or a profile exists, so "no profile is made" is now true.
   - **A development build refuses a runtime without a pin** (`UnsupportedRuntime`), whatever its caller passes.
@@ -620,3 +620,11 @@ It also requires every live tool to be local-only.
   - **`WorkerHostLaunch` and `WorkerRuntime` are not separate types.** They could represent half a runtime; the host refuses that at run time, and a development host now refuses any unpinned runtime.
   - **The dev and test features do not combine for the harness suites.** Combining them removes the runtime arguments those suites pass. That is intended, and both are test or development builds.
   - **Pre-existing, not in this slice:** the sweep's file walk skips every folder named `dist` or `node_modules`, wherever it is.
+
+**Slice 3b-ii, judge round 2: APPROVE.** The round's SHOULD-FIXes and NITs were taken:
+- **More non-global IPv6 space is refused, in both crates:** the rest of 2001::/23, SRv6 SIDs (`5f00::/16`), documentation (`3fff::/20`) and the dummy prefix (`100:0:0:1::/64`). The IETF assignments the registry marks as globally reachable stay public: AMT `2001:3::/32`, AS112-v6 `2001:4:112::/48` and `2001:30::/28`. Vectors for both cases are in both crates.
+- **The sweep checks every file that could run a build** for `--all-features`, `feature-powerset` and `each-feature`: everything but documentation and vendored third-party sources.
+- **A public lifetime runs only a pinned runtime, in every build.** A test build's unpinned harness runtime serves only the fixture. A unit test covers it.
+- **A panic cannot leak a resolver slot.** It is released by a drop guard.
+- **The launcher matches the dev-only test names exactly.**
+- **Accepted, recorded:** NAT64 is refused as a whole, so on an IPv6-only network that relies on DNS64 every public lifetime fails closed. This is intended, because the translated IPv4 address cannot be checked.

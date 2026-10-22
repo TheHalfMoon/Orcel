@@ -459,8 +459,29 @@ fn is_public_ipv6(value: &Ipv6Addr) -> bool {
     if segments[0] == 0x2001 && matches!(segments[1] & 0xfff0, 0x0010 | 0x0020) {
         return false;
     }
-    // Discard-only (100::/64).
-    if segments[0] == 0x0100 && segments[1] == 0 && segments[2] == 0 && segments[3] == 0 {
+    // Discard-only (100::/64) and the dummy prefix (100:0:0:1::/64).
+    if segments[0] == 0x0100
+        && segments[1] == 0
+        && segments[2] == 0
+        && (segments[3] == 0 || segments[3] == 1)
+    {
+        return false;
+    }
+    // IETF protocol assignments (2001::/23) are not globally reachable,
+    // but for the three assignments the registry marks so: AMT
+    // (2001:3::/32), AS112-v6 (2001:4:112::/48) and the drone remote ID
+    // tags (2001:30::/28) (judge, PR #428).
+    if segments[0] == 0x2001
+        && segments[1] < 0x0200
+        && !(segments[1] == 0x0003
+            || (segments[1] == 0x0004 && segments[2] == 0x0112)
+            || (segments[1] & 0xfff0) == 0x0030)
+    {
+        return false;
+    }
+    // SRv6 SIDs (5f00::/16, RFC 9602) and documentation (3fff::/20,
+    // RFC 9637).
+    if segments[0] == 0x5f00 || (segments[0] == 0x3fff && segments[1] < 0x1000) {
         return false;
     }
     if value.octets()[0] == 0 && value.octets()[1] == 0 {
@@ -604,6 +625,12 @@ mod tests {
             "::ffff:169.254.169.254",
             "100.64.0.1",
             "::127.0.0.1",
+            "100:0:0:1::1",
+            "2001:5::1",
+            "2001:100::1",
+            "5f00::1",
+            "3fff::1",
+            "3fff:fff::1",
         ] {
             let parsed: IpAddr = address.parse().unwrap();
             assert!(!is_public_address(&parsed), "{address}");
@@ -613,6 +640,12 @@ mod tests {
             "93.184.215.14",
             "2606:4700::6810:85e5",
             "2001:4860:4860::8888",
+            // The globally reachable IETF assignments, and the space just past 2001::/23.
+            "2001:3::1",
+            "2001:4:112::1",
+            "2001:30::1",
+            "2001:200::1",
+            "3fff:1000::1",
         ] {
             let parsed: IpAddr = address.parse().unwrap();
             assert!(is_public_address(&parsed), "{address}");

@@ -203,7 +203,7 @@ for (const name of [
   "a_development_build_has_no_fixture_open",
   "a_compiled_runtime_is_whole_and_well_formed_or_absent"
 ]) {
-  if (!(devLib.stdout ?? "").split("\n").some((line) => line.startsWith("test ") && line.includes(`${name} ... ok`))) {
+  if (!(devLib.stdout ?? "").split("\n").some((line) => line.startsWith("test ") && (line.includes(`::${name} ... ok`) || line.includes(` ${name} ... ok`)))) {
     process.stderr.write(`browser-launcher:native: the live-browser-dev unit test ${name} did not run\n`);
     process.exit(1);
   }

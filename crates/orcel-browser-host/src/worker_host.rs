@@ -704,7 +704,13 @@ fn open_public(
     resolver: &impl crate::navigation::DnsResolver,
 ) -> Result<(Lifetime, WorkerHostReply), HostError> {
     crate::observation::validate_identity_field(workspace)?;
-    if args.runtime.is_none() {
+    // A public lifetime runs only a pinned runtime, in every build (a test
+    // build's unpinned harness runtime serves only the fixture).
+    if !args
+        .runtime
+        .as_ref()
+        .is_some_and(|runtime| runtime.pin.is_some())
+    {
         return Err(HostError::Unavailable(
             UnavailableReason::UnsupportedRuntime,
         ));
@@ -858,10 +864,18 @@ impl crate::navigation::DnsResolver for HostResolver {
         let spawned = std::thread::Builder::new()
             .name("orcel-host-resolve".into())
             .spawn(move || {
+                // The slot is released however the resolution ends, a panic
+                // included.
+                struct Slot;
+                impl Drop for Slot {
+                    fn drop(&mut self) {
+                        RESOLUTIONS_IN_FLIGHT.fetch_sub(1, Ordering::SeqCst);
+                    }
+                }
+                let _slot = Slot;
                 let resolved = (name.as_str(), port)
                     .to_socket_addrs()
                     .map(|addresses| addresses.map(|address| address.ip()).collect::<Vec<_>>());
-                RESOLUTIONS_IN_FLIGHT.fetch_sub(1, Ordering::SeqCst);
                 let _ = sender.send(resolved);
             });
         if spawned.is_err() {
@@ -1176,16 +1190,44 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("orcel-open-public-{}-{nanos}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
-        let args = |runtime: bool| WorkerHostArgs {
+        let with_runtime = |pin: Option<crate::runtime_pin::RuntimePin>| WorkerHostArgs {
             host_id: "h".into(),
-            runtime: runtime.then(|| WorkerRuntime {
+            runtime: Some(WorkerRuntime {
                 node: PathBuf::from("C:\\none\\node.exe"),
                 worker_main: PathBuf::from("C:\\none\\dist\\main.js"),
-                pin: None,
+                pin,
             }),
             profile_root: root.clone(),
             temp_dir: root.clone(),
         };
+        let pinned = crate::runtime_pin::RuntimePin {
+            node_sha256: "0".repeat(64),
+            tree_sha256: "0".repeat(64),
+        };
+        let args = |runtime: bool| {
+            if runtime {
+                with_runtime(Some(pinned.clone()))
+            } else {
+                WorkerHostArgs {
+                    runtime: None,
+                    ..with_runtime(None)
+                }
+            }
+        };
+        // An unpinned runtime never serves a public lifetime, in any build.
+        assert_eq!(
+            match open_public(
+                &with_runtime(None),
+                "w",
+                1,
+                "https://example.org/",
+                &FixedResolver(Vec::new())
+            ) {
+                Ok(_) => "opened".to_string(),
+                Err(err) => error_code(&err),
+            },
+            "unavailable:unsupportedruntime"
+        );
         let public = FixedResolver(vec!["93.184.215.14".parse().unwrap()]);
         let code = |result: Result<(Lifetime, WorkerHostReply), HostError>| match result {
             Ok(_) => "opened".to_string(),

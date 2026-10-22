@@ -544,11 +544,12 @@ fn the_live_browser_dev_feature_never_reaches_a_release_build() {
     // #428): no workflow, action, script or manifest may build with every
     // feature or a feature powerset.
     for (relative, text) in text_files(&root) {
-        let build_surface = relative.starts_with(".github/")
-            || relative.starts_with("scripts/")
-            || relative.starts_with("distribution/")
-            || relative.ends_with("package.json")
-            || relative.ends_with(".toml");
+        // Every file that could run a build (workflows, actions, scripts in
+        // any folder, manifests), that is everything but documentation and
+        // vendored third-party sources.
+        let build_surface = !relative.starts_with("docs/")
+            && !relative.ends_with(".md")
+            && !relative.contains("/third_party/");
         if build_surface {
             for forbidden in ["--all-features", "feature-powerset", "each-feature"] {
                 assert!(
