@@ -16,6 +16,11 @@ path = "src/sg000039_main.rs"
 # worker mode under the approval broker. Test builds only; the release
 # build never enables it.
 live-browser-test = ["dep:orcel-browser-host", "orcel-browser-host/live-browser-test"]
+# SG-000108 slice 3c (decision 7): the live browser shapes reach a real
+# host only in development builds, which run the worker runtime the
+# host build pinned. Never default; the release-blocker sweep keeps it out
+# of every release build.
+live-browser-dev = ["dep:orcel-browser-host", "orcel-browser-host/live-browser-dev"]
 
 [dependencies]
 orcel-approval = { path = "../orcel-approval" }

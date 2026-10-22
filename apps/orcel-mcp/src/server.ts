@@ -10,6 +10,7 @@ import { KernelClient } from "./kernel.js";
 import { processSpawnInputSchema } from "./process.js";
 import { projectKernelResult } from "./result.js";
 import { registerWebSearchTools } from "./web_search.js";
+import { registerLiveBrowserTools } from "./browser_live.js";
 import {
   TOOL_CONTRACT,
   TOOL_SURFACE_PROFILE_ENV,
@@ -135,6 +136,12 @@ function contractGatedServer(server: McpServer, allowed: ReadonlySet<string>): M
  * register tools independently; they must reuse `registerOrcelTools`.
  */
 export const CANONICAL_TOOL_NAMES: readonly string[] = [
+  "browser_click",
+  "browser_download",
+  "browser_download_preview",
+  "browser_navigate",
+  "browser_observe",
+  "browser_page_open",
   "clipboard_read",
   "clipboard_write",
   "desktop_cursor_get",
@@ -515,6 +522,8 @@ export function registerOrcelTools(
   registerDesktopTools(server, kernel, defaultWorkspace);
   registerClipboardNetworkTools(server, kernel, defaultWorkspace);
   registerWebSearchTools(server, kernel, defaultWorkspace);
+  // SG-000108 slice 3c: registered only where the profile lists them.
+  registerLiveBrowserTools(server, kernel, defaultWorkspace);
   registerGitFetchTools(server, kernel, defaultWorkspace);
   registerGitPushTools(server, kernel, defaultWorkspace);
 }

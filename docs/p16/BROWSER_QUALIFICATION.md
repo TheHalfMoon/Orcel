@@ -33,20 +33,25 @@ implementation does not have.
 | --- | --- | --- |
 | `browser.profile/status` | model-only | not exposed |
 | `browser.destination/validate` | model-only (policy) | not exposed |
-| `browser.page/open` | model-only | not exposed |
+| `browser.page/open` | live (SG-000108) | `browser_page_open`, under `browser_structured` only |
 | `browser.navigation/preview` | model-only | not exposed |
-| `browser.navigation/navigate` | model-only | not exposed |
-| `browser.snapshot/observe` | model-only (template nodes) | not exposed |
-| `browser.dom/click` | model-only | not exposed |
+| `browser.navigation/navigate` | live (SG-000108) | `browser_navigate`, under `browser_structured` only |
+| `browser.snapshot/observe` | live (SG-000108) | `browser_observe`, under `browser_structured` only |
+| `browser.dom/click` | live (SG-000108) | `browser_click`, under `browser_structured` only |
 | `browser.dom/fill` | model-only | not exposed |
-| `browser.download/preview` | model-only | not exposed |
-| `browser.download/download` | model-only | not exposed |
+| `browser.download/preview` | live (SG-000108) | `browser_download_preview`, under `browser_structured` only |
+| `browser.download/download` | live (SG-000108) | `browser_download`, under `browser_structured` only |
 | `browser.upload/preview` | model-only | not exposed |
 | `browser.upload/submit` | model-only | not exposed |
 
-No shape qualifies against a live engine, so no browser tool is exposed.
+SG-000062 found that no shape qualified against a live engine, so no browser tool was exposed then; SG-000108 later qualified the six live shapes below.
 Exposing these shapes would let an AI client believe it browsed a page when
 it only exercised policy bookkeeping.
+
+SG-000108 slice 3c (docs/security/SG-000108_PRODUCT_CALLER.md) makes six shapes live MCP tools on the qualified
+isolated engine, under the `browser_structured` profile only, which local configuration alone selects. They reach a
+real browser only in `live-browser-dev` builds; every other build answers typed unavailable. `browser.dom/fill` and
+the uploads stay model-only, and the model-only forms of the live shapes are unreachable through the MCP edge.
 
 ## What remains true
 
