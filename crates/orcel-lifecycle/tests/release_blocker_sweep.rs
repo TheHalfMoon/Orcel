@@ -540,6 +540,24 @@ fn the_live_browser_test_feature_never_reaches_a_release_build() {
 #[test]
 fn the_live_browser_dev_feature_never_reaches_a_release_build() {
     let root = repo_root();
+    // A build command can enable a feature without naming it (judge, PR
+    // #428): no workflow, action, script or manifest may build with every
+    // feature or a feature powerset.
+    for (relative, text) in text_files(&root) {
+        let build_surface = relative.starts_with(".github/")
+            || relative.starts_with("scripts/")
+            || relative.starts_with("distribution/")
+            || relative.ends_with("package.json")
+            || relative.ends_with(".toml");
+        if build_surface {
+            for forbidden in ["--all-features", "feature-powerset", "each-feature"] {
+                assert!(
+                    !text.contains(forbidden),
+                    "{relative} builds with {forbidden}, which would enable live-browser-dev unnamed"
+                );
+            }
+        }
+    }
     let mut hits = Vec::new();
     for (relative, text) in text_files(&root) {
         if !text.contains("live-browser-dev") {
@@ -585,8 +603,23 @@ fn the_live_browser_dev_feature_never_reaches_a_release_build() {
             || relative == "apps/orcel-browser-worker/scripts/native-launcher.mjs"
             || relative == "apps/orcel-browser-worker/scripts/dev-pin.mjs"
             || relative == "apps/orcel-browser-worker/scripts/dev-pin.test.mjs"
+            // The dev-host test compares the build's pin with its own
+            // measurement of the tree (read from the test's environment).
+            || relative == "crates/orcel-browser-host/tests/sg000108_dev_host.rs"
             || relative.starts_with("docs/");
         assert!(allowed, "the worker runtime pin is named in {relative}");
+        // runtime_pin.rs documents the variables; only main.rs reads them.
+        if relative == "crates/orcel-browser-host/src/runtime_pin.rs" {
+            for line in text
+                .lines()
+                .filter(|line| line.contains("ORCEL_LIVE_BROWSER_"))
+            {
+                assert!(
+                    line.trim_start().starts_with("//"),
+                    "runtime_pin.rs may name the pin only in comments: {line}"
+                );
+            }
+        }
         if relative == "crates/orcel-browser-host/src/main.rs" {
             for line in text
                 .lines()

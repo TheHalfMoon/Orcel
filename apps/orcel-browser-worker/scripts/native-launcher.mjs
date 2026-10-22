@@ -18,7 +18,7 @@ import { runtimePin } from "./dev-pin.mjs";
 const EXPECTED_TESTS = 27;
 const EXPECTED_WORKER_HOST_TESTS = 8;
 const EXPECTED_ORCELD_LIVE_TESTS = 5;
-const EXPECTED_DEV_HOST_TESTS = 2;
+const EXPECTED_DEV_HOST_TESTS = 3;
 
 const app = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repo = resolve(app, "..", "..");
@@ -197,6 +197,17 @@ if (devLib.error || devLib.status !== 0 || !/test result: ok\. \d+ passed; 0 fai
   process.stderr.write("browser-launcher:native: the live-browser-dev unit tests failed\n");
   process.exit(1);
 }
+// The dev-only unit tests must have run, not merely compiled out (#428).
+for (const name of [
+  "a_public_open_admits_only_public_https_and_refuses_before_any_profile",
+  "a_development_build_has_no_fixture_open",
+  "a_compiled_runtime_is_whole_and_well_formed_or_absent"
+]) {
+  if (!(devLib.stdout ?? "").split("\n").some((line) => line.startsWith("test ") && line.includes(`${name} ... ok`))) {
+    process.stderr.write(`browser-launcher:native: the live-browser-dev unit test ${name} did not run\n`);
+    process.exit(1);
+  }
+}
 const pin = runtimePin(process.execPath, app);
 const otherTree = createHash("sha256").update(`another tree than ${pin.ORCEL_LIVE_BROWSER_TREE_SHA256}`).digest("hex");
 for (const [expect, tree] of [["mismatch", otherTree], ["match", pin.ORCEL_LIVE_BROWSER_TREE_SHA256]]) {
@@ -236,6 +247,10 @@ for (const [expect, tree] of [["mismatch", otherTree], ["match", pin.ORCEL_LIVE_
   }
   const lifetime = expect === "match" ? "SG108-EVIDENCE dev host public lifetime" : "SG108-EVIDENCE dev host refused: pin mismatch";
   const refused = ["SG108-EVIDENCE dev host: managed policy present", "SG108-EVIDENCE dev host refused: node folder writable"];
+  if (!devOut.includes("SG108-EVIDENCE dev host pin agreement:")) {
+    process.stderr.write(`browser-launcher:native: the dev-host pin agreement did not run (${expect})\n`);
+    process.exit(1);
+  }
   if (!devOut.includes("SG108-EVIDENCE dev host: --node and --worker-main refused")) {
     process.stderr.write(`browser-launcher:native: the dev host accepted runtime arguments (${expect})\n`);
     process.exit(1);

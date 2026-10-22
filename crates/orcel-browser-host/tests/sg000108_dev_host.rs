@@ -13,6 +13,7 @@ use orcel_browser_host::{
     assert_no_managed_policy, discover_engine, LiveWorkerHost, RegistryPolicySource, SearchConfig,
     Supervisor, WorkerHostLaunch,
 };
+use sha2::Digest;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 
@@ -107,26 +108,91 @@ fn pinned_worker_main() -> PathBuf {
 #[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
 fn a_development_host_takes_no_runtime_from_its_caller() {
     // Node and the worker are never arguments of a development host: it
-    // exits on them, so the supervised hello never completes.
-    let root = temp_root("arguments");
-    let launch = launch_args(
-        &root,
-        Some((
-            PathBuf::from("C:\\Windows\\System32\\cmd.exe"),
-            pinned_worker_main(),
-        )),
-    );
+    // exits on either one, so the supervised hello never completes. Each is
+    // tried alone (judge, PR #428), and the same launch without them starts.
+    let node = PathBuf::from(std::env::var_os("ORCEL_SG108_NODE").expect("ORCEL_SG108_NODE"));
+    for (label, node, main) in [
+        ("--node", Some(node), None),
+        ("--worker-main", None, Some(pinned_worker_main())),
+    ] {
+        let root = temp_root("arguments");
+        let mut launch = launch_args(&root, None);
+        launch.node = node;
+        launch.worker_main = main;
+        let mut supervisor = Supervisor::new();
+        assert!(
+            supervisor
+                .launch_worker_host(&host_binary(), &launch)
+                .is_err(),
+            "a development host accepted {label}"
+        );
+        assert!(entries(&launch.profile_root).is_empty());
+        let _ = supervisor.shutdown();
+        let _ = std::fs::remove_dir_all(&root);
+    }
+    let root = temp_root("no-arguments");
+    let launch = launch_args(&root, None);
     let mut supervisor = Supervisor::new();
-    assert!(
-        supervisor
-            .launch_worker_host(&host_binary(), &launch)
-            .is_err(),
-        "a development host accepted --node and --worker-main"
-    );
-    assert!(entries(&launch.profile_root).is_empty());
-    let _ = supervisor.shutdown();
+    supervisor
+        .launch_worker_host(&host_binary(), &launch)
+        .expect("the same launch without runtime arguments starts");
+    assert!(supervisor.shutdown().expect("shutdown"));
     let _ = std::fs::remove_dir_all(&root);
     println!("SG108-EVIDENCE dev host: --node and --worker-main refused");
+}
+
+/// Judge, PR #428: in the build with the real pin, the compiled pin is the
+/// host's own measurement of the runtime on disk (`runtime_files` and
+/// `tree_digest` over the files' SHA-256), so dev-pin.mjs and runtime_pin.rs
+/// agree on the real tree, not only on the framing's fixed vector. Runs in
+/// every environment (CI included), whatever refuses the lifetime there.
+#[test]
+#[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
+fn the_compiled_pin_is_the_runtime_on_disk() {
+    let pinned_tree =
+        std::env::var("ORCEL_LIVE_BROWSER_TREE_SHA256").expect("the build's tree pin");
+    let pinned_node =
+        std::env::var("ORCEL_LIVE_BROWSER_NODE_SHA256").expect("the build's node pin");
+    let main = pinned_worker_main();
+    let root = orcel_browser_host::worker_root(&main).expect("worker root");
+    let sha256 = |path: &Path| -> String {
+        let bytes = std::fs::read(path).expect("read a runtime file");
+        sha2::Sha256::digest(bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    };
+    let entries: Vec<(String, String)> = orcel_browser_host::runtime_files(&root)
+        .expect("the runtime tree")
+        .into_iter()
+        .map(|relative| {
+            let digest = sha256(&root.join(&relative));
+            (relative, digest)
+        })
+        .collect();
+    let measured = orcel_browser_host::tree_digest(&entries);
+    let node = PathBuf::from(std::env::var_os("ORCEL_SG108_NODE").expect("ORCEL_SG108_NODE"));
+    if expected_pin() == "match" {
+        assert_eq!(
+            measured, pinned_tree,
+            "dev-pin.mjs and runtime_pin.rs disagree on the tree"
+        );
+        assert_eq!(
+            sha256(&node),
+            pinned_node,
+            "dev-pin.mjs and runtime_pin.rs disagree on node.exe"
+        );
+        println!(
+            "SG108-EVIDENCE dev host pin agreement: {} files, tree {measured}",
+            entries.len()
+        );
+    } else {
+        assert_ne!(
+            measured, pinned_tree,
+            "the mismatch build carries the real pin"
+        );
+        println!("SG108-EVIDENCE dev host pin agreement: mismatch build carries another tree");
+    }
 }
 
 #[test]
@@ -151,18 +217,10 @@ fn a_development_host_runs_only_its_pinned_runtime_on_one_public_destination() {
     }
     assert!(entries(&launch.profile_root).is_empty());
     let reply = open_public(host, PUBLIC_URL);
-    if managed_policy_present() {
-        assert_eq!(error_code(&reply), "unavailable:managedpolicy");
-        assert!(entries(&launch.profile_root).is_empty());
-        println!(
-            "SG108-EVIDENCE dev host: managed policy present; open refused typed, no profile left"
-        );
-        assert!(supervisor.shutdown().expect("shutdown"));
-        let _ = std::fs::remove_dir_all(&root);
-        return;
-    }
-    // A node.exe in a folder the user can write (CI's toolcache) is never
-    // run by a pinned launch: refused, typed, before the profile exists.
+    // The runtime is checked first, before the engine is probed or a
+    // profile exists (judge, PR #428): a build pinned to another tree, or a
+    // node.exe in a folder the user can change (CI's toolcache), is refused
+    // typed whatever else holds.
     let node = PathBuf::from(std::env::var_os("ORCEL_SG108_NODE").expect("ORCEL_SG108_NODE"));
     let refusal = if expected_pin() == "mismatch" {
         Some("pin mismatch")
@@ -172,8 +230,6 @@ fn a_development_host_runs_only_its_pinned_runtime_on_one_public_destination() {
         None
     };
     if let Some(why) = refusal {
-        // A build pinned to another tree runs nothing: refused, typed,
-        // before the profile exists.
         assert_eq!(error_code(&reply), "unavailable:unsupportedruntime");
         assert!(
             entries(&launch.profile_root).is_empty(),
@@ -182,6 +238,16 @@ fn a_development_host_runs_only_its_pinned_runtime_on_one_public_destination() {
         assert!(supervisor.shutdown().expect("shutdown"));
         let _ = std::fs::remove_dir_all(&root);
         println!("SG108-EVIDENCE dev host refused: {why}; open refused typed, no profile");
+        return;
+    }
+    if managed_policy_present() {
+        assert_eq!(error_code(&reply), "unavailable:managedpolicy");
+        assert!(entries(&launch.profile_root).is_empty());
+        println!(
+            "SG108-EVIDENCE dev host: managed policy present; open refused typed, no profile left"
+        );
+        assert!(supervisor.shutdown().expect("shutdown"));
+        let _ = std::fs::remove_dir_all(&root);
         return;
     }
     let pinned = match reply {

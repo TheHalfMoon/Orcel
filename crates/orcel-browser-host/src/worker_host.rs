@@ -727,6 +727,22 @@ fn open(
     let runtime = args.runtime.as_ref().ok_or(HostError::Unavailable(
         UnavailableReason::UnsupportedRuntime,
     ))?;
+    // A development build runs only a pinned runtime (judge, PR #428): the
+    // type allows `None` for test builds' harness runtime, never here.
+    #[cfg(not(feature = "live-browser-test"))]
+    if runtime.pin.is_none() {
+        return Err(HostError::Unavailable(
+            UnavailableReason::UnsupportedRuntime,
+        ));
+    }
+    // A runtime that is not the pinned one is refused before the engine is
+    // probed or a profile exists (judge, PR #428). The files stay held
+    // until the worker holds them itself (`launch_worker` verifies again).
+    #[cfg(windows)]
+    let _held = match &runtime.pin {
+        Some(pin) => Some(pin.verify_and_hold(&runtime.node, &runtime.worker_main)?),
+        None => None,
+    };
     let pin = destination.pin();
     let engine = discover_engine(&SearchConfig::production())?;
     let profile_dir = crate::worker_launch::ephemeral_profile_dir(&args.profile_root)?;
@@ -820,17 +836,38 @@ struct HostResolver;
 const RESOLVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 #[cfg(feature = "live-browser-dev")]
+static RESOLUTIONS_IN_FLIGHT: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// At most this many resolutions may be outstanding: one that timed out
+/// keeps its thread until the system resolver returns.
+#[cfg(feature = "live-browser-dev")]
+const MAX_RESOLUTIONS_IN_FLIGHT: usize = 4;
+
+#[cfg(feature = "live-browser-dev")]
 impl crate::navigation::DnsResolver for HostResolver {
     fn resolve(&self, host: &str, port: u16) -> Result<Vec<IpAddr>, HostError> {
         use std::net::ToSocketAddrs;
+        use std::sync::atomic::Ordering;
+        if RESOLUTIONS_IN_FLIGHT.fetch_add(1, Ordering::SeqCst) >= MAX_RESOLUTIONS_IN_FLIGHT {
+            RESOLUTIONS_IN_FLIGHT.fetch_sub(1, Ordering::SeqCst);
+            return Err(HostError::Unavailable(UnavailableReason::TimedOut));
+        }
         let (sender, answer) = std::sync::mpsc::channel();
         let name = host.to_owned();
-        std::thread::spawn(move || {
-            let resolved = (name.as_str(), port)
-                .to_socket_addrs()
-                .map(|addresses| addresses.map(|address| address.ip()).collect::<Vec<_>>());
-            let _ = sender.send(resolved);
-        });
+        let spawned = std::thread::Builder::new()
+            .name("orcel-host-resolve".into())
+            .spawn(move || {
+                let resolved = (name.as_str(), port)
+                    .to_socket_addrs()
+                    .map(|addresses| addresses.map(|address| address.ip()).collect::<Vec<_>>());
+                RESOLUTIONS_IN_FLIGHT.fetch_sub(1, Ordering::SeqCst);
+                let _ = sender.send(resolved);
+            });
+        if spawned.is_err() {
+            RESOLUTIONS_IN_FLIGHT.fetch_sub(1, Ordering::SeqCst);
+            return Err(HostError::Unavailable(UnavailableReason::LaunchFailed));
+        }
         let mut addresses = match answer.recv_timeout(RESOLVE_TIMEOUT) {
             Ok(Ok(addresses)) => addresses,
             Ok(Err(_)) => {

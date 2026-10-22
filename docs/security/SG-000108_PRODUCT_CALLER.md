@@ -596,3 +596,27 @@ It also requires every live tool to be local-only.
   - **built with the runtime's real pin:** a lifetime on `https://example.com/` opens with the host's public pin, the worker's entry point cannot be opened for writing while it runs, a bound navigation returns 200, the observation carries no raw page text, another public origin is refused, and close leaves an empty job and no profile, after which the runtime is released;
   - **both builds:** `--node` and `--worker-main` make the dev host exit before its hello.
   - Under a managed policy (CI) the open is refused with `unavailable:managedpolicy` instead, and with a user-writable `node.exe` folder with `unavailable:unsupportedruntime`; each prints its own evidence line. With `ORCEL_SG108_REQUIRE_JOURNEY=1` the launcher requires both lifetimes themselves.
+
+**Slice 3b-ii, judge round 1 (PR #428): BLOCK.** The fixes:
+- **MUST-FIX: NAT64 counted as public.** SG-000075's IPv6 rule matched `64:ff00::/26`, not the NAT64 prefix. An AAAA answer of `64:ff9b::a9fe:a9fe` would have been admitted and pinned, and a NAT64 gateway translates it to the metadata service. The same gap was in `orcel-provider-browser`, `orceld`'s own check.
+  - **Fix (both crates):** these are now refused:
+    - `64:ff9b::/32` (RFC 6052 and the RFC 8215 local-use prefix);
+    - site-local `fec0::/10`;
+    - Teredo `2001::/32`;
+    - ORCHID `2001:10::/28` and `2001:20::/28`;
+    - discard `100::/64`.
+  - **Tests:** 17 vectors in each crate, including embedded private, loopback and metadata addresses, CGNAT, and IPv4-mapped and IPv4-compatible forms. Controls for global addresses stay public.
+- **SHOULD-FIX:**
+  - **The pin is checked first.** The pinned runtime is verified and held before the engine is probed or a profile exists, so "no profile is made" is now true.
+  - **A development build refuses a runtime without a pin** (`UnsupportedRuntime`), whatever its caller passes.
+  - **The pins must agree on the real tree.** `the_compiled_pin_is_the_runtime_on_disk` measures that tree with `runtime_files` and `tree_digest` and requires the compiled pin to equal it (142 files). The launcher requires its evidence line. A drifting `dev-pin.mjs` can no longer hide behind the writable-folder refusal.
+  - **The sweep catches build commands that enable features without naming them.** It now refuses `--all-features`, `feature-powerset` and `each-feature` in workflows, actions, scripts, distribution files and manifests. `runtime_pin.rs` may name the pin variables only in comments.
+  - **The launcher requires the three dev-only unit tests by name.** A cfg mistake can no longer compile them out unnoticed.
+- **NITs:**
+  - **Names are checked before they are resolved,** and local-only namespaces are never admitted or looked up: `.local`, `localhost`, `.internal`, `.home.arpa`, `.lan`, `.intranet` and `.corp`. The test `names_are_checked_before_they_reach_the_resolver` proves the resolver is never asked.
+  - **The resolver thread** is spawned with `Builder`, and a spawn failure is typed. At most 4 resolutions may be outstanding.
+  - **The argument test** now tries `--node` and `--worker-main` separately, then launches the same host without them.
+- **Accepted, recorded:**
+  - **`WorkerHostLaunch` and `WorkerRuntime` are not separate types.** They could represent half a runtime; the host refuses that at run time, and a development host now refuses any unpinned runtime.
+  - **The dev and test features do not combine for the harness suites.** Combining them removes the runtime arguments those suites pass. That is intended, and both are test or development builds.
+  - **Pre-existing, not in this slice:** the sweep's file walk skips every folder named `dist` or `node_modules`, wherever it is.
