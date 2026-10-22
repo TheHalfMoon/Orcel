@@ -569,10 +569,12 @@ fn drain(
     }
 }
 
-/// Processes still in the Job once the primary has exited. Helpers that
-/// exit on their own, such as the console host of a console child, are
-/// given `POST_EXIT_DRAIN_TIMEOUT_MS` to leave, so they are not counted as
-/// descendants. Whatever remains after that is ended with the Job.
+/// Processes still in the Job once the primary has exited. Any process that
+/// exits on its own within `POST_EXIT_DRAIN_TIMEOUT_MS` (such as the console
+/// host of a console child, or a short-lived real descendant) is not
+/// counted; whatever remains after that is ended with the Job. So
+/// `descendants_terminated: false` means nothing had to be terminated, not
+/// that no descendant ran.
 pub(super) fn settled_remainder(job: &JobObject) -> Result<u32, ExecutionPlanError> {
     let deadline = Instant::now() + Duration::from_millis(POST_EXIT_DRAIN_TIMEOUT_MS);
     loop {

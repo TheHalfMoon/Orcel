@@ -458,6 +458,12 @@ fn sg000096_t02_executable_and_cwd_drift_are_denied_before_creation() {
     let copy = root.0.join("tool.exe");
     std::fs::copy(system_tool("whoami.exe"), &copy).expect("copy tool");
     let approved = command_for(&copy, Vec::new(), &root.0);
+    // On an elevated host the owner check refuses first, so the drift
+    // checks below would not be the cause of a denial: assert the elevation
+    // refusal there instead, and qualify drift on a standard-user host.
+    if refuses_on_elevated_host(&approved, &owner) {
+        return;
+    }
 
     let mut wrong_hash = approved.clone();
     wrong_hash.executable.sha256[0] ^= 1;
@@ -509,10 +515,10 @@ fn sg000096_t02_timeout_is_typed_with_no_exit_status_and_an_empty_job() {
     let owner = protected_owner(&root.0);
     let mut command = fixture("sg96_fixture_sleep", &root.0);
     command.limits.timeout = Duration::from_secs(1);
-    let started = Instant::now();
     if refuses_on_elevated_host(&command, &owner) {
         return;
     }
+    let started = Instant::now();
     let outcome = run_one_shot(&command, &owner).expect("timeout is an outcome");
     assert_eq!(outcome.end, OneShotEnd::TimedOut);
     assert!(outcome.descendants_terminated);
