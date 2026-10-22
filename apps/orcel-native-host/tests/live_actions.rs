@@ -7,7 +7,7 @@
 //! the AT-SPI bus with the GTK3 probe of XP-06 (`fixtures/gtk3_probe.py`:
 //! a plain entry, a password entry named "Sign in", a button, and a second
 //! window titled as an Orcel approval surface). On macOS it is a manual check
-//! with the AppKit probe (`fixtures/appkit_probe.js`); the commands are in
+//! with the AppKit probe (`fixtures/appkit_probe_native.swift`); the commands are in
 //! SECURITY_INTEGRATION.md.
 //!
 //! It checks what the measured conformance cells (`conformance_native.rs`)
@@ -33,11 +33,12 @@ impl Drop for Probe {
 }
 
 fn spawn_probe(nonce: &str, secret: &str) -> Probe {
-    let fixtures = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
+    let fixtures = std::env::var("ORCEL_NATIVE_TEST_FIXTURES")
+        .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures").to_string());
     let mut command = if cfg!(target_os = "macos") {
-        let mut command = Command::new("osascript");
-        command.args(["-l", "JavaScript", &format!("{fixtures}/appkit_probe.js")]);
-        command
+        let bin = std::env::var_os("ORCEL_MACOS_AX_PROBE_BIN")
+            .expect("macOS real-hardware live tests require ORCEL_MACOS_AX_PROBE_BIN pointing to the compiled native Swift AppKit fixture");
+        Command::new(bin)
     } else {
         let mut command = Command::new("python3");
         command.arg(format!("{fixtures}/gtk3_probe.py"));
@@ -194,10 +195,24 @@ fn xp11_live_refusals_and_one_real_action() {
     );
     assert_eq!(pixel["ok"], false, "{pixel}");
     assert!(pixel.get("action").is_none(), "{pixel}");
-    assert!(
-        matches!(error_code(&pixel), "cancelled" | "provider_unavailable"),
-        "{pixel}"
-    );
+    // If the host advertises a missing permission, the refusal must match
+    // that exact typed reason. With raw input available, a stale human-input
+    // tick must still cancel or fail unavailable without delivering anything.
+    let click_reason = error_code(&pixel);
+    if hello["capabilities"]["input_click"]["support"] == "unavailable" {
+        assert_eq!(
+            click_reason,
+            hello["capabilities"]["input_click"]["reason"]
+                .as_str()
+                .expect("unavailable raw input has a typed reason"),
+            "{pixel}"
+        );
+    } else {
+        assert!(
+            matches!(click_reason, "cancelled" | "provider_unavailable"),
+            "{pixel}"
+        );
+    }
 
     // One real action each: the plain field takes a value, the button a press.
     let typed = format!("typed-by-host-{nonce}");

@@ -175,6 +175,11 @@ pub struct WorkerLaunch {
     pub temp_dir: PathBuf,
     /// Destinations admitted into this engine lifetime.
     pub destinations: Vec<AdmittedDestination>,
+    /// SG-000108 decision 7: the runtime the build pinned. When set, launch
+    /// verifies `node.exe` and the worker's runtime tree against it through
+    /// handles that refuse writes and deletes, and holds them for the
+    /// worker's lifetime; any difference refuses the launch.
+    pub runtime_pin: Option<crate::runtime_pin::RuntimePin>,
     /// Test builds only: a fixture certificate's SPKI hash the engine
     /// trusts. The worker accepts it only with loopback fixture pins.
     #[cfg(any(test, feature = "live-browser-test"))]
@@ -1184,6 +1189,8 @@ mod platform {
         name_key: [u8; 32],
         /// Tools of the last discovery, by host-issued tool id.
         host_tools: std::collections::HashMap<String, crate::webmcp::HostTool>,
+        /// The pinned runtime's files, held for the worker's lifetime.
+        runtime_hold: Option<crate::runtime_pin::HeldRuntime>,
     }
 
     /// Launch the worker and its engine, or fail closed with a typed error
@@ -1195,6 +1202,12 @@ mod platform {
         validate_launch(spec)?;
         assert_no_managed_policy(spec.engine.kind(), policy)
             .map_err(|_| HostError::Unavailable(UnavailableReason::ManagedPolicy))?;
+        // Decision 7: the pinned runtime, held from this check until the
+        // worker ends, before anything is swept or spawned.
+        let runtime_hold = match &spec.runtime_pin {
+            Some(pin) => Some(pin.verify_and_hold(&spec.node, &spec.worker_main)?),
+            None => None,
+        };
         // What a host that died left in the temp directory (#309).
         let swept_staging = crate::leftovers::sweep_stale_staging(&spec.temp_dir);
         // And its ephemeral profiles beside this one (#298): only when this
@@ -1278,6 +1291,7 @@ mod platform {
             host_tools: std::collections::HashMap::new(),
             next_nav: 0,
             last_request: 0,
+            runtime_hold,
         };
         worker.handshake(spec)?;
         Ok(worker)
@@ -1492,6 +1506,12 @@ mod platform {
 
         pub fn worker_pid(&self) -> u32 {
             self.process.pid()
+        }
+
+        /// How many files of a pinned runtime this worker holds (0 when the
+        /// launch carried no pin).
+        pub fn runtime_files_held(&self) -> usize {
+            self.runtime_hold.as_ref().map_or(0, |held| held.len())
         }
 
         pub fn browser_pid(&self) -> u32 {
@@ -3363,6 +3383,7 @@ mod tests {
         };
         let launch = |destinations| WorkerLaunch {
             test_trusted_spki: None,
+            runtime_pin: None,
             node: base.join("node.exe"),
             worker_main: base.join("main.js"),
             engine: engine.clone(),
@@ -3408,6 +3429,7 @@ mod tests {
         }
         let spec = |engine: Engine| WorkerLaunch {
             test_trusted_spki: None,
+            runtime_pin: None,
             node: base.join("node.exe"),
             worker_main: base.join("main.js"),
             engine,
@@ -3449,6 +3471,7 @@ mod tests {
         let engine = Engine::for_tests(base.join("msedge.exe"), crate::discovery::EngineKind::Edge);
         let spec = |node: PathBuf, main: PathBuf| WorkerLaunch {
             test_trusted_spki: None,
+            runtime_pin: None,
             node,
             worker_main: main,
             engine: engine.clone(),
