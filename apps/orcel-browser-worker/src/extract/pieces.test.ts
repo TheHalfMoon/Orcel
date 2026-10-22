@@ -89,14 +89,25 @@ test("the largest piece still fits a reply frame with the longest URL", () => {
 });
 
 test("splitting is linear", () => {
-  const time = (n: number): number => {
-    const text = "ab\n".repeat(n);
+  // #374: a single wall-clock sample flakes under load (a GC pause or a
+  // slow core inflates one side). Each size is timed by the fastest of
+  // several interleaved runs instead, so a pause inflates neither, and
+  // the sizes are 8x apart: linear work grows ~8x, quadratic ~64x, and the
+  // 24x bound leaves 3x for noise while still failing a quadratic splitter.
+  const smallText = "ab\n".repeat(20_000);
+  const largeText = "ab\n".repeat(160_000);
+  const once = (text: string): number => {
     const started = process.hrtime.bigint();
     toPieces([chunk(text)], 64, 1_000_000);
     return Number(process.hrtime.bigint() - started);
   };
-  time(10_000);
-  const small = time(100_000);
-  const large = time(400_000);
-  assert.ok(large < small * 10, `${small} vs ${large}`);
+  once(smallText);
+  once(largeText);
+  let small = Infinity;
+  let large = Infinity;
+  for (let run = 0; run < 7; run++) {
+    small = Math.min(small, once(smallText));
+    large = Math.min(large, once(largeText));
+  }
+  assert.ok(large < small * 24, `fastest of 7: ${small} ns vs ${large} ns (8x the input)`);
 });
