@@ -211,6 +211,15 @@ fn sg96_fixture_flood() {
 }
 
 #[test]
+fn sg96_fixture_endless_output() {
+    if fixture_mode() {
+        let mut out = std::io::stdout().lock();
+        let chunk = vec![b'z'; 64 * 1024];
+        while out.write_all(&chunk).is_ok() {}
+    }
+}
+
+#[test]
 fn sg96_fixture_unicode() {
     if fixture_mode() {
         let mut err = std::io::stderr().lock();
@@ -551,4 +560,23 @@ fn sg000096_t02_child_environment_is_exactly_the_allowlisted_set() {
         run_one_shot(&leaking, &owner),
         Err(ShellFailure::Invalid(_))
     ));
+}
+
+/// A child that writes without pause still times out: reading output can
+/// never starve the exit and deadline checks.
+#[test]
+fn sg000096_t02_endless_output_cannot_starve_the_timeout() {
+    let _serial = serial();
+    let root = disposable("endless");
+    let owner = protected_owner(&root.0);
+    let mut command = fixture("sg96_fixture_endless_output", &root.0);
+    command.limits.timeout = Duration::from_secs(2);
+    command.limits.stdout_bytes = 4096;
+    let started = Instant::now();
+    let outcome = run_one_shot(&command, &owner).expect("timeout is an outcome");
+    assert_eq!(outcome.end, OneShotEnd::TimedOut);
+    assert!(started.elapsed() < Duration::from_secs(20));
+    assert_eq!(outcome.stdout.bytes.len(), 4096);
+    assert!(outcome.stdout.dropped_bytes > 0);
+    assert!(process_gone(outcome.process.pid));
 }

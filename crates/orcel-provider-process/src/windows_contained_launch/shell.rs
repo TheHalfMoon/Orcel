@@ -28,6 +28,7 @@ const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
 const SYNCHRONIZE: u32 = 0x0010_0000;
 const STARTF_USESTDHANDLES: u32 = 0x0000_0100;
 const READ_CHUNK_BYTES: usize = 64 * 1024;
+const PUMP_BUDGET_BYTES: usize = 1024 * 1024;
 const MAX_IMAGE_PATH_UNITS: u32 = 32_768;
 
 #[link(name = "kernel32")]
@@ -465,14 +466,17 @@ pub(super) enum PumpState {
     Closed,
 }
 
-/// Reads what is available on `pipe` into `stream` without blocking.
+/// Reads what is available on `pipe` into `stream` without blocking. One
+/// call reads at most `PUMP_BUDGET_BYTES`, so a child that writes without
+/// pause cannot keep the caller from checking its exit and its deadline.
 pub(super) fn pump(
     pipe: &PrivatePipe,
     stream: &mut CapturedStream,
     limit: usize,
     scratch: &mut [u8],
 ) -> Result<PumpState, String> {
-    loop {
+    let mut budget = PUMP_BUDGET_BYTES;
+    while budget > 0 {
         let mut available = 0u32;
         // SAFETY: the read handle is owned; only `available` is written.
         if unsafe {
@@ -495,7 +499,7 @@ pub(super) fn pump(
         if available == 0 {
             return Ok(PumpState::Open);
         }
-        let want = (available as usize).min(scratch.len());
+        let want = (available as usize).min(scratch.len()).min(budget);
         let mut read = 0u32;
         // SAFETY: `scratch` has at least `want` writable bytes; the pipe has
         // `available` bytes, so this ReadFile does not block.
@@ -516,7 +520,9 @@ pub(super) fn pump(
             return Err(last_error("ReadFile").message);
         }
         stream.push(&scratch[..read as usize], limit);
+        budget = budget.saturating_sub((read as usize).max(1));
     }
+    Ok(PumpState::Open)
 }
 
 /// Pumps both streams until both close or `deadline` passes.
