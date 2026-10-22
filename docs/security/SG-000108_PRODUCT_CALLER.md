@@ -628,3 +628,72 @@ It also requires every live tool to be local-only.
 - **A panic cannot leak a resolver slot.** It is released by a drop guard.
 - **The launcher matches the dev-only test names exactly.**
 - **Accepted, recorded:** NAT64 is refused as a whole, so on an IPv6-only network that relies on DNS64 every public lifetime fails closed. This is intended, because the translated IPv4 address cannot be checked.
+
+**Slice 3c: exposure and `orceld`'s live dispatch (decisions 2, 4, 5 and 6).**
+
+**The live set.** Six of SG-000079's twelve qualified shapes become MCP tools under `browser_structured`. The three tables agree: the contract's `LIVE_BROWSER_TOOLS`, `orceld`'s `LIVE_BROWSER_SHAPES` and the host's `LIVE_BROWSER_MCP_TOOLS`. `browser-exposure.test.ts` checks this, as before.
+
+| Tool | Shape | Approval |
+| --- | --- | --- |
+| `browser_page_open` | `browser.page/open` | none (no network) |
+| `browser_navigate` | `browser.navigation/navigate` | SOFT, binds the host's pin |
+| `browser_observe` | `browser.snapshot/observe` | none |
+| `browser_click` | `browser.dom/click` | SOFT (links only) |
+| `browser_download_preview` | `browser.download/preview` | none (writes nothing) |
+| `browser_download` | `browser.download/download` | SOFT, create-only |
+
+`browser.dom/fill`, the uploads, `browser.profile/status`, `browser.destination/validate` and `browser.navigation/preview` stay model-only (decision 4). The parity inventory, `BROWSER_QUALIFICATION.md`, the generated `TOOL_CONTRACT.md` and `CAPABILITY_PARITY.md`, the canonical catalog and the OAuth tables change together. Every live tool is local-only, so remote mapping stays denied. The default local profile, `desktop_structured`, and the desktop extension manifest list no browser tool.
+
+**Routing.** `handle_envelope` runs the profile gate first, as in slice 3a. A live shape the gate admits (a local request naming `browser_structured`) then goes to `handle_live`, and never to the model-only browser dispatch:
+1. **`PolicyEngine::authorize_live_browser`** checks the configured workspace and the live argument forms (`orcel-policy/src/live_browser.rs`):
+   - `navigate`: `page_id`, `url` (HTTPS only) and `expected_generation`;
+   - `observe`: `page_id` and `expected_generation`;
+   - `click`: those plus `node_id`;
+   - `download/preview` and `download`: those plus `file_name`, which must pass the download path rules.
+   Any other field is refused. A field that would carry authority the caller never holds (a folder, a pin, a record id, a binding, a selector, a script, `content_base64`) is a capability denial.
+2. **`live_dispatch::dispatch`.** Without `live-browser-dev`, which covers every release build, it answers `ProviderUnavailable` (decision 7). With the feature, one `LiveBrowser` lives across requests on `orceld`'s request thread:
+   - The host binary is the one beside `orceld`'s own executable. Its state, pages and intent journal live under `orceld`'s protected browser root.
+   - It passes the host neither `--node` nor `--worker-main`.
+   - A host found unusable is shut down, and the next request starts a fresh one, which first reconciles any intents left open.
+3. Responses are audited as for every other request.
+
+**The live forms (decisions 2, 4 and 5):**
+- **`open`** allocates the live page in the page store, bound to the workspace and to this host. It starts no lifetime and makes no network request. A page already open ends, and stays stale for good.
+- **`navigate`** requires the live page and the generation the caller saw. If the page has no lifetime, or its lifetime is on another origin:
+  1. the old lifetime ends (`close`: the host removes its profile);
+  2. `orceld` validates the URL under SG-000075 (`validate_destination`, its own resolution);
+  3. the host opens a lifetime for it with `open_public`, resolving, admitting and pinning it itself.
+
+  Then the two-part approval of slice 1b runs, so the approval binds the new lifetime's host pin. The page keeps its id, and the navigation advances its generation, which makes every node id and approval of the old lifetime stale.
+  - **The generation moves only on a commit** (judge round 2): opening the new lifetime does not advance it, so a caller's generation stays valid across a denial, and an approved navigation advances it once. The old lifetime's node ids and approvals are stale by lifetime: the host never resolves them, and the digest binds the lifetime id and its pin.
+  - A denied or failed cross-origin navigation ends the fresh lifetime too, so the page is left without one, as decision 2 says. The page's old document is gone either way.
+- **`observe`** returns node identities, roles and keyed digests only, as slice 1a defined them. It adds `latest_dated_link`, the host's typed selection, or `null` when there is no dated link or the dates tie. No page text crosses.
+- **`click`** opens one observed link: a SOFT approval over the host's click binding, the `activate` frame, then the page store follows the opened document.
+- **`download/preview`** asks the host to `bind` the download and returns the link's origin (the page's own: other origins are refused), its last path segment (bounded, plain characters, else empty) and its SHA-256, never the raw page-controlled link; then the approved folder (the workspace's real path through `resolve_download_root`) and the file name. It writes and consumes nothing.
+- **Accepted residual (judge, slice 3c):** the link's last segment is still the page's text, bounded to 128 plain characters and marked `source_is_page_controlled`. It names the document to the caller; it carries no authority, and every consequential step still needs its own approval.
+- **`download`** runs slice 2b's journaled, broker-approved download into that folder. Its reply carries the link as the preview does (origin, last segment, digest), never raw, and the new generation: the worker follows the link to download, so the page no longer shows what was observed and the caller navigates again. A download the host refuses after dispatch ends the lifetime, since the page may already have moved; `lifetime_ended` says so on a committed download whose page the store could not follow. Its file name must end in a document or image type (pdf, csv, txt, xlsx, docx, pptx, png, jpg, jpeg), so a page cannot steer a download into code or tool configuration. It returns the relative name, the SHA-256, the size, the source URL and the record id.
+
+**The MCP edge.** `browser_live.ts` registers the six tools, and only where the profile lists them. Each forwards exactly one shape. Arguments are schema-checked (`pg-` page ids, node ids, HTTPS URLs, relative file names). The timeout budget is open question 3: 10 minutes for the approved actions (the prompt, plus the host's 150 s reply bound) and 4 minutes for observe and preview. The guards that forbade any browser tool now allow exactly this file and these names:
+- it registers exactly `LIVE_BROWSER_TOOLS`;
+- its code names no evaluation, CDP, DevTools, selector or coordinate;
+- `server.ts` only calls its register function.
+
+**Release builds.** `orceld`'s `live-browser-dev` feature only enables the host crate's. The release-blocker sweep allows that one line in `orceld`'s manifest, and the feature's name only in `orceld`'s live modules. The release build commands name no feature.
+
+**Slice 3c, judge round 1: APPROVE, with its SHOULD-FIXes taken.**
+- **Each tool forwards exactly its contract shape.** `browser_live.ts` takes the capability and operation from `TOOL_CONTRACT` and names no browser capability itself. `browser-live.test.ts`, using a fake kernel, requires every live tool to send exactly its contract shape and the arguments it was given. The guard's capability scan applies to `browser_live.ts` again.
+- **The journey proves create-only at the commit itself.** It observes again, finds the same document again and asks for a fresh approval. The second download to the same name must then be refused by the host's create-only commit (`InvalidRequest`), and the file is unchanged.
+- **The journey's notion of "latest" is checked independently.** The public list names its documents by date in their file names, not in the links' accessible names, so the host's typed selection has nothing to select there; that selection is proven on the fixture (A6). The caller picks the latest dated minutes from the previews, and the independent checker reads the list page itself and requires the same date.
+- **Previews hand out only same-origin links,** of at most 2048 bytes, marked `source_is_page_controlled`. A link that leaves the page's origin is refused (`CapabilityDenied`). Previews no longer return the host binding.
+- **Lost downloads from an earlier run are reported.** The first `browser.page/open` after a start reports what reconciliation found for each one: absent, present but unverified (with SHA-256 and size), or unreadable. Such a file is never adopted as a committed download.
+- **A lifetime switch advances the page.** When a navigation moves the page to a new lifetime, the page store advances the page's generation and records the new origin before the approval is asked. `orceld`'s half of the approval therefore binds them together with the host's new pin, and the old lifetime's node ids and approvals are stale by generation.
+- **NITs:**
+  - live download names may not name a hidden file or folder (`.mcp.json`, `.vscode/tasks.json`);
+  - the download carries its own record id;
+  - an unexpected reply to the host's selection is an internal error;
+  - `navigate` reuses `follow`;
+  - the page id bound is a named constant.
+- **Accepted, recorded:**
+  - **DNS before approval.** A navigation to a new origin resolves the name twice before any approval: once by `orceld`'s SG-000075 validation and once by the host's admission. Both only resolve; neither opens a connection.
+  - **Release builds.** The parity inventory marks the six shapes `implemented_exposed`, with the note that only `live-browser-dev` builds reach a real browser and release builds answer typed unavailable until SG-000106.
+  - **Where the feature is named.** The release-blocker sweep allows it in `orceld`'s manifest, in `sg000039_main.rs` (module gates only) and in the two live modules.

@@ -187,7 +187,8 @@ const REQUIRED_DESKTOP_COMMANDER_DENIALS = [
   "shell_command_string"
 ];
 
-const SUCCESSOR_OVERRIDDEN_WORKFLOWS = new Set(["desktop_act", "screenshots"]);
+// SG-000108 exposed browser_structured as its governed successor.
+const SUCCESSOR_OVERRIDDEN_WORKFLOWS = new Set(["desktop_act", "screenshots", "browser_structured"]);
 
 const REQUIRED_UI_TARS_CLASSIFICATIONS: Record<string, { status: string; disposition: string }> = {
   browser_structured: { status: "missing", disposition: "defer_to_governed_successor" },

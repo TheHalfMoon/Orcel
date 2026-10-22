@@ -17,7 +17,12 @@
 //! Slice 1b has no envelope dispatch into this module yet: the native tests
 //! drive it directly. Exposure through the `browser_structured` profile and
 //! the live-backed page store arrive together in slice 3.
-#![cfg_attr(not(test), allow(dead_code))]
+// The fixture paths serve only the test-feature native tests and the
+// product paths only live-browser-dev dispatch: each is unused without the other.
+#![cfg_attr(
+    not(all(test, feature = "live-browser-test", feature = "live-browser-dev")),
+    allow(dead_code)
+)]
 
 use orcel_approval::{now_ms, ApprovalBroker, ApprovalPrompt, ApprovedToken, ConsumeExpectation};
 use orcel_browser_host::worker_host::{BindAction, WireNode, WorkerHostReply, WorkerHostRequest};
@@ -56,6 +61,8 @@ pub struct LiveDownload {
     pub sha256: String,
     pub bytes: u64,
     pub source_url: String,
+    /// The broker record the approval was consumed under.
+    pub record_id: String,
 }
 
 /// What became of a consumed approval (slice 2: the "consumed, not
@@ -457,6 +464,10 @@ pub fn recover_intents(journal: &Path) -> Result<Vec<Recovered>, ProviderError> 
 pub struct LiveBrowser {
     supervisor: Supervisor,
     lifetime: Option<String>,
+    /// The origin the current lifetime admitted (slice 3c).
+    lifetime_origin: Option<String>,
+    /// The workspace the live page belongs to (slice 3c).
+    page_workspace: Option<String>,
     /// The page-store record of the lifetime's page (slice 2b).
     page: Option<PageRecord>,
     pages: PageStore,
@@ -520,7 +531,7 @@ fn refused(code: &str) -> ProviderError {
     ProviderError::new(failure_for(code), format!("browser host refused: {code}"))
 }
 
-fn sha256_hex(text: &str) -> String {
+pub(crate) fn sha256_hex(text: &str) -> String {
     Sha256::digest(text.as_bytes())
         .iter()
         .map(|byte| format!("{byte:02x}"))
@@ -573,6 +584,8 @@ impl LiveBrowser {
         Ok(Self {
             supervisor,
             lifetime: None,
+            lifetime_origin: None,
+            page_workspace: None,
             page: None,
             pages: PageStore::load_or_create(state.pages.clone()),
             intents: state.intents.clone(),
@@ -611,6 +624,7 @@ impl LiveBrowser {
     /// confirmed-gone family makes the destination safe to reconcile.
     fn end_host(&mut self) {
         self.lifetime = None;
+        self.lifetime_origin = None;
         self.close_page();
         if self.host_ended.is_none() {
             self.host_ended = Some(self.supervisor.shutdown_worker_host().unwrap_or(false));
@@ -683,6 +697,12 @@ impl LiveBrowser {
         &self.recovered
     }
 
+    /// What `start` reconciled from earlier runs, handed out once (slice
+    /// 3c: the first live response after a start reports it).
+    pub fn take_recovered(&mut self) -> Vec<Recovered> {
+        std::mem::take(&mut self.recovered)
+    }
+
     /// Every consumed approval of this browser and its outcome, in order.
     pub fn outcomes(&self) -> &[ApprovalOutcome] {
         &self.outcomes
@@ -727,6 +747,7 @@ impl LiveBrowser {
     }
 
     /// Open a lifetime for the fixture destination (test builds only).
+    #[cfg(feature = "live-browser-test")]
     pub fn open_fixture(
         &mut self,
         workspace: &Workspace,
@@ -760,6 +781,272 @@ impl LiveBrowser {
                 FailureCode::InternalError,
                 "unexpected browser host reply",
             )),
+        }
+    }
+
+    /// Slice 3c: allocate the live page in the page store, bound to the
+    /// workspace and to this host (no lifetime yet: the first navigation
+    /// opens one for its origin). One page at a time: a page already open
+    /// ends, with its lifetime, and is stale for good.
+    pub fn open_page(&mut self, workspace: &Workspace) -> Result<PageRecord, ProviderError> {
+        self.end_lifetime();
+        self.close_page();
+        let page = self
+            .pages
+            .open_page(
+                &workspace.id,
+                &format!("live-host:{}-{}", self.host_pid, self.host_started),
+                POLICY_REVISION,
+            )
+            .map_err(from_page)?;
+        self.page = Some(page.clone());
+        self.page_workspace = Some(workspace.id.clone());
+        Ok(page)
+    }
+
+    /// The live page, if `page_id` names it, it belongs to `workspace`, it
+    /// is not closed, and the caller saw its current generation.
+    pub fn live_page(
+        &self,
+        workspace: &Workspace,
+        page_id: &str,
+        expected_generation: u64,
+    ) -> Result<PageRecord, ProviderError> {
+        let page = self
+            .page
+            .clone()
+            .filter(|page| page.page_id == page_id && page.state != PageState::Closed)
+            .filter(|_| self.page_workspace.as_deref() == Some(workspace.id.as_str()))
+            .ok_or_else(|| {
+                ProviderError::new(
+                    FailureCode::TargetStale,
+                    "the live page is unknown, closed or another workspace's; open a page first",
+                )
+            })?;
+        if page.generation != expected_generation {
+            return Err(ProviderError::new(
+                FailureCode::TargetStale,
+                "the live page moved on since that generation; observe it again",
+            ));
+        }
+        Ok(page)
+    }
+
+    /// End the current lifetime on purpose (a navigation to another
+    /// origin): the host closes it and removes its profile; the page stays,
+    /// and its next navigation advances its generation, so every node id
+    /// and approval of the old lifetime is stale for good.
+    fn end_lifetime(&mut self) {
+        if self.lifetime.take().is_some() {
+            self.lifetime_origin = None;
+            let closed = self.request(&WorkerHostRequest::Close {});
+            if !matches!(closed, Ok(WorkerHostReply::Closed { .. })) {
+                // A host that cannot close cleanly is ended entirely.
+                self.end_host();
+            }
+        }
+    }
+
+    /// Open a lifetime for `url`'s origin (development builds): orceld
+    /// validates the destination under SG-000075 first, then the host
+    /// resolves, admits and pins it itself (decision 2).
+    #[cfg(feature = "live-browser-dev")]
+    fn open_public(&mut self, workspace: &Workspace, url: &str) -> Result<(), ProviderError> {
+        let resolver = orcel_provider_browser::SystemResolver;
+        let validated =
+            orcel_provider_browser::validate_destination(url, &resolver).map_err(from_page)?;
+        match self.request(&WorkerHostRequest::OpenPublic {
+            workspace: workspace.id.clone(),
+            policy_revision: LIFETIME_POLICY_REVISION,
+            url: url.into(),
+        })? {
+            WorkerHostReply::Opened { lifetime, .. } => {
+                self.lifetime = Some(lifetime);
+                self.lifetime_origin = Some(validated.origin.clone());
+                Ok(())
+            }
+            _ => Err(ProviderError::new(
+                FailureCode::InternalError,
+                "unexpected browser host reply",
+            )),
+        }
+    }
+
+    /// Slice 3c: an approved navigation of the live page. A page with no
+    /// lifetime, or one on another origin, first gets a lifetime for the
+    /// URL's origin (the old one ends); the approval then binds the new
+    /// lifetime's host pin (decision 2).
+    #[cfg(feature = "live-browser-dev")]
+    pub fn navigate_live(
+        &mut self,
+        workspace: &Workspace,
+        approval: &impl ApprovalBroker,
+        page_id: &str,
+        expected_generation: u64,
+        url: &str,
+    ) -> Result<(String, u16), ProviderError> {
+        self.live_page(workspace, page_id, expected_generation)?;
+        let origin = orcel_provider_browser::parse_destination_url(url)
+            .map_err(from_page)?
+            .origin;
+        let switched =
+            self.lifetime.is_none() || self.lifetime_origin.as_deref() != Some(origin.as_str());
+        if switched {
+            // The old lifetime ends before the prompt, so the approval binds
+            // the new lifetime and its host pin. The page's generation moves
+            // only when a navigation commits (navigate's follow), once: the
+            // caller's generation stays valid across a denial, and every
+            // node id and approval of the old lifetime is stale by lifetime
+            // (the host never resolves them; the digest binds the lifetime).
+            self.end_lifetime();
+            self.open_public(workspace, url)?;
+        }
+        let navigated = self.navigate(workspace, approval, url);
+        if navigated.is_err() && switched {
+            // A denied or failed switch leaves no lifetime, as decision 2
+            // says: the fresh one never held a document of this page.
+            self.end_lifetime();
+        }
+        navigated
+    }
+
+    /// Slice 3c: a bounded observation of the live page, with the host's
+    /// typed selection of its latest dated link, if it has one.
+    pub fn observe_live(
+        &mut self,
+        workspace: &Workspace,
+        page_id: &str,
+        expected_generation: u64,
+    ) -> Result<(PageRecord, Vec<WireNode>, Option<String>), ProviderError> {
+        let page = self.live_page(workspace, page_id, expected_generation)?;
+        if self.lifetime.is_none() {
+            return Err(ProviderError::new(
+                FailureCode::TargetStale,
+                "the live page has no document yet; navigate it first",
+            ));
+        }
+        let nodes = self.observe()?;
+        // No dated link, or a tie, is not an error: there is no selection.
+        let latest = match self.request(&WorkerHostRequest::SelectLatestDatedLink {}) {
+            Ok(WorkerHostReply::Selected { node_id }) => Some(node_id),
+            Ok(_) => {
+                return Err(ProviderError::new(
+                    FailureCode::InternalError,
+                    "unexpected browser host reply",
+                ))
+            }
+            // A refusal (no dated link, a tie) leaves the lifetime; a lost
+            // channel ends it, and that is an error.
+            Err(error) => {
+                if self.lifetime.is_none() {
+                    return Err(error);
+                }
+                None
+            }
+        };
+        Ok((page, nodes, latest))
+    }
+
+    /// Slice 3c: an approved activation of one observed link (the only
+    /// live click). The page store follows the opened document.
+    pub fn click(
+        &mut self,
+        workspace: &Workspace,
+        approval: &impl ApprovalBroker,
+        page_id: &str,
+        expected_generation: u64,
+        node_id: &str,
+    ) -> Result<(String, u16), ProviderError> {
+        self.live_page(workspace, page_id, expected_generation)?;
+        let action = BindAction::Click {
+            node_id: node_id.into(),
+            role: "link".into(),
+        };
+        let (token, digest, binding) = self.ask(
+            workspace,
+            approval,
+            &action,
+            "open a link on an isolated browser page",
+        )?;
+        Self::consume(workspace, approval, &token, digest)?;
+        let record_id = token.record_id;
+        match self.dispatch(
+            &record_id,
+            &WorkerHostRequest::Activate {
+                node_id: node_id.into(),
+                role: "link".into(),
+                record_id: record_id.clone(),
+                binding,
+            },
+        )? {
+            WorkerHostReply::Activated { url, status } => {
+                self.follow(&url)?;
+                Ok((url, status))
+            }
+            _ => Err(ProviderError::new(
+                FailureCode::InternalError,
+                "unexpected browser host reply",
+            )),
+        }
+    }
+
+    /// Slice 3c: what a download would do, for its prompt: the host's
+    /// binding and the link it reads. Writes nothing and consumes nothing.
+    pub fn preview_download(
+        &mut self,
+        workspace: &Workspace,
+        page_id: &str,
+        expected_generation: u64,
+        node_id: &str,
+        folder: &Path,
+        relative: &str,
+    ) -> Result<(String, String), ProviderError> {
+        self.live_page(workspace, page_id, expected_generation)?;
+        match self.request(&WorkerHostRequest::Bind {
+            action: BindAction::Download {
+                node_id: node_id.into(),
+                role: "link".into(),
+                folder: folder.to_string_lossy().into_owned(),
+                relative: relative.into(),
+            },
+        })? {
+            WorkerHostReply::Bound { binding, target } => Ok((binding, target)),
+            _ => Err(ProviderError::new(
+                FailureCode::InternalError,
+                "unexpected browser host reply",
+            )),
+        }
+    }
+
+    /// Record a committed document on the page (navigation or activation):
+    /// a new generation, so earlier approvals and observations go stale. If
+    /// the store cannot follow the host, the lifetime ends.
+    pub(crate) fn follow(&mut self, url: &str) -> Result<PageRecord, ProviderError> {
+        let moved = orcel_provider_browser::parse_destination_url(url)
+            .map_err(from_page)
+            .and_then(|origin| {
+                let page = self.page.clone().ok_or_else(|| {
+                    ProviderError::new(FailureCode::TargetStale, "no live browser page")
+                })?;
+                self.pages
+                    .apply_navigation(
+                        &page.page_id,
+                        &page.current_origin,
+                        page.generation,
+                        &origin.origin,
+                    )
+                    .map(|(next, _, _)| next)
+                    .map_err(from_page)
+            });
+        match moved {
+            Ok(next) => {
+                self.page = Some(next.clone());
+                Ok(next)
+            }
+            Err(error) => {
+                self.end_host();
+                Err(error)
+            }
         }
     }
 
@@ -860,32 +1147,9 @@ impl LiveBrowser {
             WorkerHostReply::Navigated { url, status } => {
                 // The page store follows the committed document: a new
                 // origin and generation, so every earlier approval and
-                // observation of this page goes stale.
-                let moved = orcel_provider_browser::parse_destination_url(&url)
-                    .map_err(from_page)
-                    .and_then(|origin| {
-                        let page = self.page.clone().ok_or_else(|| {
-                            ProviderError::new(FailureCode::TargetStale, "no live browser page")
-                        })?;
-                        self.pages
-                            .apply_navigation(
-                                &page.page_id,
-                                &page.current_origin,
-                                page.generation,
-                                &origin.origin,
-                            )
-                            .map(|(next, _, _)| next)
-                            .map_err(from_page)
-                    });
-                match moved {
-                    Ok(next) => self.page = Some(next),
-                    // orceld's record no longer matches the host's page:
-                    // end the lifetime rather than act on either.
-                    Err(error) => {
-                        self.end_host();
-                        return Err(error);
-                    }
-                }
+                // observation of this page goes stale. If the store cannot
+                // follow, the lifetime ends rather than act on either.
+                self.follow(&url)?;
                 Ok((url, status))
             }
             _ => Err(ProviderError::new(
@@ -983,6 +1247,18 @@ impl LiveBrowser {
             self.pending_download = None;
             let _ = journal_append(&self.intents, &JournalLine::event("settled", &record_id));
         }
+        // A download the host refused after dispatch may already have
+        // followed the link (the worker clicks before it checks the bytes),
+        // so the page may no longer be the one observed: the lifetime ends
+        // rather than let the store disagree with it (judge, slice 3c). A
+        // lost host was already ended; refusals before dispatch (a denial,
+        // a failed consume) never reach here.
+        if matches!(
+            self.outcomes.last(),
+            Some(o) if o.record_id == record_id && matches!(o.outcome, DispatchOutcome::Refused(_))
+        ) {
+            self.end_lifetime();
+        }
         match reply? {
             WorkerHostReply::Downloaded {
                 relative,
@@ -1004,6 +1280,7 @@ impl LiveBrowser {
                     sha256,
                     bytes,
                     source_url,
+                    record_id,
                 })
             }
             _ => Err(ProviderError::new(
@@ -1141,6 +1418,8 @@ mod tests {
         LiveBrowser {
             supervisor: Supervisor::new(),
             lifetime: None,
+            lifetime_origin: None,
+            page_workspace: None,
             page: None,
             pages: PageStore::load_or_create(folder.join("pages.jsonl")),
             intents: folder.join("intents.jsonl"),
@@ -1521,7 +1800,7 @@ mod tests {
         // documented framing, with the live policy revision sg-000040-v1.
         assert_eq!(
             base,
-            "1a665c0c67139a674c19c41f7ab4282dee34706533c68bb185b690ce39672d9a"
+            "5d64a78f39150b5fa8821082a0e3cb53dd8f9af9aaa0d6701605b3158e3127eb"
         );
     }
 }
@@ -1530,7 +1809,7 @@ mod tests {
 /// the feature; its path from the test harness), the loopback fixture, and
 /// the test approval broker, which mints and consumes like the ledger
 /// (exact digest, scope and expiry). Run by `npm run browser-launcher:native`.
-#[cfg(test)]
+#[cfg(all(test, feature = "live-browser-test"))]
 mod native {
     use super::*;
     use orcel_approval::test_support::FixedApprovalBroker;

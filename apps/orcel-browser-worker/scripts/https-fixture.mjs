@@ -97,7 +97,7 @@ const TOOLS = `<!doctype html><title>Tools</title>
     // A lone surrogate set by script (the parser cannot produce one).
     document.getElementById("surrogate").setAttribute("tooldescription", "x" + String.fromCharCode(0xd800) + "y");
     new MutationObserver(() => report("mutation")).observe(document, { subtree: true, attributes: true, childList: true, characterData: true });
-    setTimeout(() => { armed = true; }, 50);
+    setTimeout(() => { armed = true; fetch("/signal/tools-armed?t=" + Math.floor(performance.timeOrigin)); }, 50);
   });
 </script>
 <x-trap data-x="1"></x-trap>
@@ -134,7 +134,7 @@ const TOOLS_CONTROL = `<!doctype html><title>Control</title>
     setTimeout(() => { armed = true; }, 50);
     // The page itself, once armed, mutates and moves focus: the same traps
     // must then report.
-    setTimeout(() => { document.body.setAttribute("data-y", "1"); document.querySelector("input").focus(); }, 300);
+    setTimeout(() => { document.body.setAttribute("data-y", "1"); document.querySelector("input").focus(); fetch("/signal/control-acted?t=" + Math.floor(performance.timeOrigin)); }, 300);
   });
 </script><p>Control</p><input name="c">`;
 // Slice 5 execution fixtures: executable tools (GET and POST), and every
@@ -155,7 +155,7 @@ const EXEC = `<!doctype html><meta charset="utf-8"><title>Exec</title>
 <form toolname="script_handled" tooldescription="Handled by page script." action="/search" toolautosubmit onsubmit="event.preventDefault();"><input name="q"><button>Go</button></form>
 <form toolname="redirecting" tooldescription="Script moves elsewhere." action="/search" toolautosubmit onsubmit="event.preventDefault(); location.href='/elsewhere';"><input name="q"><button>Go</button></form>
 <form toolname="mutating" tooldescription="Changes after load." action="/search" toolautosubmit id="mutating"><input name="q"><button>Go</button></form>
-<script>setTimeout(() => document.getElementById("mutating").setAttribute("tooldescription", "Changed."), 1500);</script>
+<script>setTimeout(() => { document.getElementById("mutating").setAttribute("tooldescription", "Changed."); fetch("/signal/tool-mutated?t=" + Math.floor(performance.timeOrigin)); }, 1500);</script>
 <form toolname="decoy" tooldescription="A decoy field; the real one is owned from outside." action="/search" toolautosubmit id="fdecoy"><input name="q" form="nowhere"><button>Go</button></form>
 <input name="q" form="fdecoy" value="PAGEDEFAULT">
 <form toolname="foreign_button" tooldescription="Its button submits another form." action="/search" toolautosubmit><input name="q"><button form="fother">Go</button></form>
@@ -230,7 +230,7 @@ const ARCHIVE_TRICKY = `<!doctype html><title>Tricky archive</title><ul>
 <li><a id=js href="/archive/2026-09-30" onclick="event.preventDefault(); location.href='/js-dest';">Annual review 2026-09-30</a></li>
 <li><a id=swap href="/archive/2026-06-30">Annual review 2026-06-30</a></li>
 <li><a id=blank href="/archive/2025-12-31?popup" target="_blank">Annual review 2025-12-31</a></li></ul>
-<script>setTimeout(() => { document.getElementById("swap").href = "/evil"; }, 1500);</script>`;
+<script>setTimeout(() => { document.getElementById("swap").href = "/evil"; fetch("/signal/href-swapped?t=" + Math.floor(performance.timeOrigin)); }, 1500);</script>`;
 const SECRET_NAME = `<!doctype html><title>Secret name</title>
 <input type=password id=pw value="HUNTER2PW"><button aria-labelledby=pw>x</button>`;
 const SELF_MOVE = `<!doctype html><title>moving</title><script>setTimeout(() => { location.href = "/landing"; }, 300);</script>`;

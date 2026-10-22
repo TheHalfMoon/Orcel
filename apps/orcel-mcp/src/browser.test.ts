@@ -20,13 +20,16 @@ test("no MCP tool source forwards a browser capability to the kernel", () => {
     const text = readFileSync(join(srcDir, name), "utf8");
     const lines = text.split("\n");
     lines.forEach((line, index) => {
-      // SG-000108 slice 3a: the governed exposure tables in tool_contract.ts
-      // name the live browser tool list (`LIVE_BROWSER_TOOLS`, empty until
-      // slice 3b, which browser-exposure.test.ts ties to orceld and the
-      // host). No capability string or registration is allowed anywhere.
-      const table = name === "tool_contract.ts" && /LIVE_BROWSER_TOOLS/.test(line);
+      // SG-000108: the governed exposure tables in tool_contract.ts name
+      // the live browser tools and their shapes; browser_live.ts registers
+      // them and forwards each one's contract shape without naming any
+      // (browser-exposure.test.ts ties both to orceld and the host). No other
+      // file may name a browser capability or register one.
+      const table =
+        name === "tool_contract.ts" &&
+        (/LIVE_BROWSER_TOOLS|SG-000108 slice 3c/.test(line) || /^\s*(?:"browser_[a-z_]+",?|browser_[a-z_]+: \{)\s*$/.test(line) || /capability: "browser\./.test(line));
       if (
-        /(["'])browser\./.test(line) ||
+        (!table && /(["'])browser\./.test(line)) ||
         /registerBrowser/i.test(line) ||
         (!table && /browser[-_]tools?/i.test(line))
       ) {
@@ -35,16 +38,27 @@ test("no MCP tool source forwards a browser capability to the kernel", () => {
     });
   }
   assert.deepEqual(offenders, []);
-  // Until slice 3b no live browser tool exists to forward.
-  assert.deepEqual([...LIVE_BROWSER_TOOLS], []);
+  // browser_live.ts forwards exactly the live tools' shapes, and only them.
+  const live = readFileSync(join(srcDir, "browser_live.ts"), "utf8");
+  const registered = [...live.matchAll(/registerTool\(\s*"([^"]+)"/g)].map((match) => match[1]).sort();
+  assert.deepEqual(registered, [...LIVE_BROWSER_TOOLS].sort());
+  const code = live
+    .split("\n")
+    .filter((line) => !/^\s*(\*|\/\/|\/\*)/.test(line))
+    .join("\n");
+  assert.doesNotMatch(code, /evaluate|newCDPSession|devtools|selector|coordinate|execute_script/i);
 });
 
 test("no browser tool is registered on the MCP server surface", () => {
   const text = readFileSync(join(srcDir, "server.ts"), "utf8");
   assert.match(text, /registerGitFetchTools/);
-  // SG-000108 slice 3a: server.ts names the `browser_structured` profile
-  // (selected by local configuration); it registers and forwards no
-  // browser tool or capability.
-  const withoutProfile = text.replace(/`?browser_structured`?/g, "");
-  assert.doesNotMatch(withoutProfile, /browser/i);
+  // SG-000108: server.ts names the `browser_structured` profile (selected
+  // by local configuration) and hands registration to browser_live.ts; it
+  // registers and forwards no browser tool or capability itself.
+  const withoutGoverned = text
+    .replace(/`?browser_structured`?/g, "")
+    .replace(/import \{ registerLiveBrowserTools \} from "\.\/browser_live\.js";/g, "")
+    .replace(/registerLiveBrowserTools\(server, kernel, defaultWorkspace\);/g, "")
+    .replace(/"browser_(click|download|download_preview|navigate|observe|page_open)",/g, "");
+  assert.doesNotMatch(withoutGoverned, /browser/i);
 });
