@@ -685,7 +685,7 @@ nativeTest("the worker's service-worker denial refuses same-origin registration,
   const fixture = await httpsFixture(t, tls);
   const scripts = (): string[] => fixture.hits.filter((hit) => hit.endsWith(".js"));
 
-  // Exactly the production configuration (main.ts): serviceWorkers "allow"
+  // Exactly the production configuration (entry.ts): serviceWorkers "allow"
   // plus denyServiceWorkerScripts. The page tries direct and prototype
   // registration.
   const profile = profileFor(t, "native-sw");

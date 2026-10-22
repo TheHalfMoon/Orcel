@@ -694,6 +694,7 @@ fn launch_in(
         temp_dir: args.temp_dir.clone(),
         destinations: vec![destination],
         test_trusted_spki: Some(fixture_spki.to_owned()),
+        runtime_pin: None,
     };
     let worker = launch_worker(&spec, &crate::confinement::RegistryPolicySource)?;
     Ok((worker, profile.identity().to_owned()))

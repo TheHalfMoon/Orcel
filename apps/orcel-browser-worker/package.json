@@ -5,10 +5,10 @@
   "license": "Apache-2.0",
   "type": "module",
   "engines": {
-    "node": ">=22.14.0"
+    "node": ">=22.15.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/runtime-manifest.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test dist/*.test.js dist/webmcp/*.test.js dist/extract/*.test.js"
   },
