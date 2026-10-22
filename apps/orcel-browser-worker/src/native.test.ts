@@ -626,7 +626,7 @@ function webServiceWorkers(context: BrowserContext): string[] {
 async function tryWebTransport(context: BrowserContext, url: string): Promise<string> {
   const page = await context.newPage();
   try {
-    await page.goto("https://fixture.test/", { timeout: 15_000 });
+    await page.goto("https://fixture.test/", { timeout: EVENT_DEADLINE_MS });
     return await page.evaluate(async (target) => {
       try {
         const transport = new WebTransport(target);
@@ -658,7 +658,7 @@ nativeTest("over HTTPS the confined engine sends no Alt-Svc QUIC and no WebTrans
   // second would use HTTP/3 if --disable-quic did not hold.
   for (const path of ["/first", "/second"]) {
     const page = await context.newPage();
-    const response = await page.goto(`https://fixture.test${path}`, { timeout: 15_000 });
+    const response = await page.goto(`https://fixture.test${path}`, { timeout: EVENT_DEADLINE_MS });
     assert.equal(response?.status(), 200, path);
     await page.close();
   }
@@ -686,7 +686,7 @@ nativeTest("over HTTPS the confined engine sends no Alt-Svc QUIC and no WebTrans
   // the Alt-Svc advertisement, so a zero count above is not vacuous.
   for (const path of ["/first", "/second"]) {
     const page = await control.newPage();
-    await page.goto(`https://fixture.test${path}`, { timeout: 15_000 });
+    await page.goto(`https://fixture.test${path}`, { timeout: EVENT_DEADLINE_MS });
     await page.close();
   }
   assert.ok(await waitFor(() => fixture.admittedUdp() > 0, EVENT_DEADLINE_MS), "the control made no Alt-Svc QUIC attempt");
@@ -729,8 +729,8 @@ nativeTest("the worker's service-worker denial refuses same-origin registration,
   const context = await launchDirect(t, profile, confinedHttpsArgv(profile, tls.spki), { serviceWorkers: "allow" });
   await denyServiceWorkerScripts(context);
   const page = await context.newPage();
-  await page.goto("https://fixture.test/sw", { timeout: 15_000 });
-  await page.waitForFunction(() => document.title.includes("proto:"), undefined, { timeout: 15_000 });
+  await page.goto("https://fixture.test/sw", { timeout: EVENT_DEADLINE_MS });
+  await page.waitForFunction(() => document.title.includes("proto:"), undefined, { timeout: EVENT_DEADLINE_MS });
   const outcome = await page.title();
   await new Promise((resolve) => setTimeout(resolve, 1_000));
   const registered = await page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length);
@@ -746,8 +746,8 @@ nativeTest("the worker's service-worker denial refuses same-origin registration,
     serviceWorkers: "allow"
   });
   const controlPage = await control.newPage();
-  await controlPage.goto("https://fixture.test/sw", { timeout: 15_000 });
-  await controlPage.waitForFunction(() => document.title.includes("proto:"), undefined, { timeout: 15_000 });
+  await controlPage.goto("https://fixture.test/sw", { timeout: EVENT_DEADLINE_MS });
+  await controlPage.waitForFunction(() => document.title.includes("proto:"), undefined, { timeout: EVENT_DEADLINE_MS });
   assert.match(await controlPage.title(), /proto:ok/);
   assert.ok(await waitFor(() => scripts().length > 0, EVENT_DEADLINE_MS), "the control fetched no service-worker script");
   await controlPage.close();
@@ -762,8 +762,8 @@ nativeTest("the route stack refuses service workers even when the policy allows 
   const context = await launchDirect(t, profile, confinedHttpsArgv(profile, tls.spki), { serviceWorkers: "allow" });
   const primary = context.pages()[0] ?? (await context.newPage());
   await installRoutes(context, () => primary, { decide: async () => true });
-  await primary.goto("https://fixture.test/sw", { timeout: 15_000 });
-  await primary.waitForFunction(() => document.title.includes("proto:"), undefined, { timeout: 15_000 });
+  await primary.goto("https://fixture.test/sw", { timeout: EVENT_DEADLINE_MS });
+  await primary.waitForFunction(() => document.title.includes("proto:"), undefined, { timeout: EVENT_DEADLINE_MS });
   assert.match(await primary.title(), /^direct:TypeError proto:TypeError$/);
   assert.deepEqual(fixture.hits.filter((hit) => hit.endsWith(".js")), [], "a service-worker script was fetched");
   assert.deepEqual(webServiceWorkers(context), [], "a web service worker is running");
@@ -787,7 +787,7 @@ nativeTest("a cross-site iframe is refused by the policy route, so it cannot reg
       return allowed;
     }
   });
-  await primary.goto("https://fixture.test/sw-cross", { timeout: 15_000 });
+  await primary.goto("https://fixture.test/sw-cross", { timeout: EVENT_DEADLINE_MS });
   // #374: until the cross-site frame was asked about (checked below), then
   // what must not happen has time to fail to appear.
   await waitFor(() => asked.some((q) => q.kind === "frame" && q.url === "https://other.test/sw"), EVENT_DEADLINE_MS);
