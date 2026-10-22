@@ -441,6 +441,7 @@ fn only_the_documented_ignored_tests_exist() {
                         ))
                     || ((relative == "crates/orcel-browser-host/src/worker_launch_tests.rs"
                         || relative == "crates/orcel-browser-host/tests/sg000108_worker_host.rs"
+                        || relative == "crates/orcel-browser-host/tests/sg000108_dev_host.rs"
                         || relative == "crates/orceld/src/live_browser.rs")
                         && line.contains(
                             "requires the built browser worker and Edge; run by npm run browser-launcher:native",
@@ -527,6 +528,77 @@ fn the_live_browser_test_feature_never_reaches_a_release_build() {
         ["orcel-browser-host = { path = \"../orcel-browser-host\", optional = true }"],
         "orceld depends on the browser host exactly once, and only optionally"
     );
+}
+
+/// SG-000108 slice 3b-ii (decision 7): the development-only
+/// `live-browser-dev` feature (the host's public worker mode, running only
+/// the runtime its build pinned) never reaches a release build. Only the
+/// host crate's own definition and code, its dev-host test, the native-suite
+/// launcher, the pin script and documentation may name it; in the manifest
+/// it is its own empty definition, never a default and never enabled by
+/// another feature; and no other manifest names it yet.
+#[test]
+fn the_live_browser_dev_feature_never_reaches_a_release_build() {
+    let root = repo_root();
+    let mut hits = Vec::new();
+    for (relative, text) in text_files(&root) {
+        if !text.contains("live-browser-dev") {
+            continue;
+        }
+        let allowed = relative == "crates/orcel-browser-host/Cargo.toml"
+            || (relative.starts_with("crates/orcel-browser-host/src/")
+                && relative.ends_with(".rs"))
+            || relative == "crates/orcel-browser-host/tests/sg000108_dev_host.rs"
+            || relative == "apps/orcel-browser-worker/scripts/native-launcher.mjs"
+            || relative == "apps/orcel-browser-worker/scripts/dev-pin.mjs"
+            || relative.starts_with("docs/");
+        if !allowed {
+            hits.push(relative);
+        }
+    }
+    assert!(
+        hits.is_empty(),
+        "live-browser-dev is named outside its development-only places:\n{}",
+        hits.join("\n")
+    );
+    let manifest = fs::read_to_string(root.join("crates/orcel-browser-host/Cargo.toml")).unwrap();
+    let naming: Vec<&str> = manifest
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.contains("live-browser-dev") && !line.starts_with('#'))
+        .collect();
+    assert_eq!(
+        naming,
+        ["live-browser-dev = []"],
+        "live-browser-dev may only be defined, never enabled by another feature"
+    );
+    // The pin variables are read only at compile time, by the host binary.
+    for (relative, text) in text_files(&root) {
+        let names_pin = text.contains("ORCEL_LIVE_BROWSER_NODE")
+            || text.contains("ORCEL_LIVE_BROWSER_WORKER_MAIN")
+            || text.contains("ORCEL_LIVE_BROWSER_TREE_SHA256");
+        if !names_pin {
+            continue;
+        }
+        let allowed = relative == "crates/orcel-browser-host/src/main.rs"
+            || relative == "crates/orcel-browser-host/src/runtime_pin.rs"
+            || relative == "apps/orcel-browser-worker/scripts/native-launcher.mjs"
+            || relative == "apps/orcel-browser-worker/scripts/dev-pin.mjs"
+            || relative == "apps/orcel-browser-worker/scripts/dev-pin.test.mjs"
+            || relative.starts_with("docs/");
+        assert!(allowed, "the worker runtime pin is named in {relative}");
+        if relative == "crates/orcel-browser-host/src/main.rs" {
+            for line in text
+                .lines()
+                .filter(|line| line.contains("ORCEL_LIVE_BROWSER_"))
+            {
+                assert!(
+                    line.contains("option_env!("),
+                    "main.rs must read the pin only at compile time: {line}"
+                );
+            }
+        }
+    }
 }
 
 #[test]

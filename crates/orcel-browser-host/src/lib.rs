@@ -28,7 +28,10 @@ mod supervise;
 mod transfers;
 mod uia;
 mod webmcp;
-#[cfg(all(windows, feature = "live-browser-test"))]
+#[cfg(all(
+    windows,
+    any(feature = "live-browser-test", feature = "live-browser-dev")
+))]
 pub mod worker_host;
 mod worker_launch;
 mod worker_navigation;
@@ -73,7 +76,10 @@ pub use extraction::{
     ExtractOptions, PageExtraction, MAX_EXTRACT_CHARS, MAX_EXTRACT_PIECES, MAX_PIECE_CHARS,
 };
 pub use host::{HostIdentity, LiveHost, Supervisor, HANDSHAKE_TIMEOUT};
-#[cfg(all(windows, feature = "live-browser-test"))]
+#[cfg(all(
+    windows,
+    any(feature = "live-browser-test", feature = "live-browser-dev")
+))]
 pub use host::{LiveWorkerHost, WorkerHostLaunch, WORKER_HOST_REPLY_TIMEOUT};
 pub use navigation::{
     check_rebinding_consistent, download_trigger_allowed, external_handler_allowed, mediate_frame,
@@ -110,7 +116,12 @@ pub use robots::{
     sitemap_locations, Robots, MAX_ROBOTS_PATTERN_BYTES, MAX_ROBOTS_RULES, MAX_ROBOTS_SITEMAPS,
     MAX_SITEMAP_LOCS, ROBOTS_PRODUCT_TOKEN,
 };
-pub use runtime_pin::{runtime_files, tree_digest, worker_root, HeldRuntime, RuntimePin};
+#[cfg(windows)]
+pub use runtime_pin::node_folder_writable;
+pub use runtime_pin::{
+    compiled_runtime, runtime_files, tree_digest, worker_root, CompiledRuntime, HeldRuntime,
+    RuntimePin,
+};
 pub use supervise::{
     spawn_engine_null, spawn_host_piped, HostPipes, SupervisedChild, JOB_ACTIVE_PROCESS_LIMIT,
     LAUNCH_GRACE, SHUTDOWN_TIMEOUT,

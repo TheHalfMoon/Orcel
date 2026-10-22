@@ -1,12 +1,18 @@
-//! SG-000108 product caller, slices 1a–1b: the host binary's worker mode.
+//! SG-000108 product caller, slices 1a–3b: the host binary's worker mode.
 //!
 //! `orcel-browser-host --worker` never spawns the engine itself: it serves
 //! a closed capability vocabulary over one `launch_worker` lifetime at a
 //! time, for exactly one admitted destination. Orcel supervision is the
-//! only peer (the pipe's other end). Test builds only: the whole module
-//! exists under the `live-browser-test` feature, which admits only the
-//! loopback fixture origin; the release-blocker sweep keeps the feature out
-//! of release builds (docs/security/SG-000108_PRODUCT_CALLER.md).
+//! only peer (the pipe's other end). The module exists only in two
+//! non-default builds, which the release-blocker sweep keeps out of every
+//! release (docs/security/SG-000108_PRODUCT_CALLER.md):
+//! - `live-browser-test` (test builds): `open` admits only the loopback
+//!   fixture origin, trusting exactly its certificate, and Node and the
+//!   worker come from the test harness;
+//! - `live-browser-dev` (development builds, slice 3b-ii): `open_public`
+//!   admits one SG-000075 public HTTPS destination, pinned from the host's
+//!   own resolution, and the worker runtime is only the one the build
+//!   pinned (decision 7), verified and held at every launch.
 //!
 //! Every consequential frame (navigate, activate, download) carries a
 //! broker record id and the host binding the host itself computed for that
@@ -19,7 +25,7 @@
 use crate::actuation::{target_digest, ActuationTarget, ApprovalToken, SupportedAction};
 use crate::confinement::AdmittedDestination;
 use crate::discovery::{discover_engine, SearchConfig};
-use crate::error::HostError;
+use crate::error::{HostError, UnavailableReason};
 use crate::observation::{DocumentIdentity, ObservationScope, ObservedNode, PageIdentity};
 use crate::proto::{decode_frame, write_frame};
 use crate::worker_launch::{launch_worker, BrowserWorker, WorkerLaunch};
@@ -27,13 +33,15 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::io::{BufRead, Write};
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::IpAddr;
+#[cfg(feature = "live-browser-test")]
+use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 
 /// Worker-mode protocol generation. 1 is SG-000074's hello/ping/shutdown;
 /// 2 was slice 1a; 3 adds binding (`bind`), the typed selector, activation
-/// and download, and binds navigation.
-pub const WORKER_HOST_GENERATION: u32 = 3;
+/// and download, and binds navigation; 4 adds `open_public` (slice 3b-ii).
+pub const WORKER_HOST_GENERATION: u32 = 4;
 
 /// Domain separation for host bindings.
 const BINDING_DOMAIN: &str = "orcel-sg108-host-binding/1";
@@ -68,13 +76,23 @@ pub enum WorkerHostRequest {
     Hello {
         generation: u32,
     },
-    /// Start a lifetime for one destination. Test builds admit only the
-    /// loopback fixture, trusting exactly its certificate.
+    /// Start a lifetime for the loopback fixture, trusting exactly its
+    /// certificate. Test builds only.
+    #[cfg(feature = "live-browser-test")]
     Open {
         workspace: String,
         policy_revision: u64,
         host: String,
         fixture_spki: String,
+    },
+    /// Start a lifetime for one public HTTPS destination: the host resolves
+    /// it and admits it under SG-000075 (`AdmittedDestination::admit`), and
+    /// the pin is the host's own. Development builds only.
+    #[cfg(feature = "live-browser-dev")]
+    OpenPublic {
+        workspace: String,
+        policy_revision: u64,
+        url: String,
     },
     /// The host's half of an approval for `action`, computed from its own
     /// state. Nothing is done.
@@ -197,15 +215,26 @@ pub enum WorkerHostReply {
 }
 
 /// What Orcel supervision passes the host in worker mode. Never caller
-/// input: these come from Orcel's own state and, in this slice, from the
-/// test harness.
+/// input: these come from Orcel's own state.
 #[derive(Debug, Clone)]
 pub struct WorkerHostArgs {
     pub host_id: String,
-    pub node: PathBuf,
-    pub worker_main: PathBuf,
+    /// The worker runtime, or `None` when the build has none it may run
+    /// (every `open` is then refused, typed).
+    pub runtime: Option<WorkerRuntime>,
     pub profile_root: PathBuf,
     pub temp_dir: PathBuf,
+}
+
+/// Node and the worker entry point a lifetime launches. In a test build
+/// they come from the test harness, unpinned; in a `live-browser-dev`
+/// build only from the build's own pin, which every launch verifies and
+/// holds (decision 7).
+#[derive(Debug, Clone)]
+pub struct WorkerRuntime {
+    pub node: PathBuf,
+    pub worker_main: PathBuf,
+    pub pin: Option<crate::runtime_pin::RuntimePin>,
 }
 
 /// The closed error code for a host error. No message text crosses: a
@@ -262,6 +291,7 @@ pub fn serve_worker_mode(
                     host: args.host_id.clone(),
                 }
             }
+            #[cfg(feature = "live-browser-test")]
             WorkerHostRequest::Open {
                 workspace,
                 policy_revision,
@@ -271,7 +301,25 @@ pub fn serve_worker_mode(
                 if lifetime.is_some() {
                     error("lifetime_open")
                 } else {
-                    match open(args, &workspace, policy_revision, &host, &fixture_spki) {
+                    match open_fixture(args, &workspace, policy_revision, &host, &fixture_spki) {
+                        Ok((opened, reply)) => {
+                            lifetime = Some(opened);
+                            reply
+                        }
+                        Err(err) => refusal(&err),
+                    }
+                }
+            }
+            #[cfg(feature = "live-browser-dev")]
+            WorkerHostRequest::OpenPublic {
+                workspace,
+                policy_revision,
+                url,
+            } => {
+                if lifetime.is_some() {
+                    error("lifetime_open")
+                } else {
+                    match open_public(args, &workspace, policy_revision, &url, &HostResolver) {
                         Ok((opened, reply)) => {
                             lifetime = Some(opened);
                             reply
@@ -423,8 +471,11 @@ fn in_lifetime(live: &mut Lifetime, request: WorkerHostRequest) -> WorkerHostRep
             }
         }
         // Handled by the caller; unreachable here by construction.
+        #[cfg(feature = "live-browser-test")]
+        WorkerHostRequest::Open { .. } => error("invalid"),
+        #[cfg(feature = "live-browser-dev")]
+        WorkerHostRequest::OpenPublic { .. } => error("invalid"),
         WorkerHostRequest::Hello { .. }
-        | WorkerHostRequest::Open { .. }
         | WorkerHostRequest::Close {}
         | WorkerHostRequest::Shutdown {} => error("invalid"),
     }
@@ -610,10 +661,10 @@ fn approved_target(
     Ok((target, approval))
 }
 
-/// Start a lifetime: the host's own engine discovery (A10 re-verifies it at
-/// launch), its own pid-named ephemeral profile (#298) carrying the A9
-/// marker, and the fixture destination with its certificate.
-fn open(
+/// Start a fixture lifetime (test builds): the loopback fixture origin,
+/// trusting exactly its certificate.
+#[cfg(feature = "live-browser-test")]
+fn open_fixture(
     args: &WorkerHostArgs,
     workspace: &str,
     policy_revision: u64,
@@ -630,14 +681,65 @@ fn open(
             "fixture certificate hash is malformed".into(),
         ));
     }
-    // Everything that can be refused without a profile is refused first.
-    let pin = IpAddr::V4(Ipv4Addr::LOCALHOST);
-    let destination = AdmittedDestination::fixture(host, pin)?;
+    let destination = AdmittedDestination::fixture(host, IpAddr::V4(Ipv4Addr::LOCALHOST))?;
+    open(
+        args,
+        workspace,
+        policy_revision,
+        destination,
+        Some(fixture_spki),
+    )
+}
+
+/// Start a public lifetime (development builds): one HTTPS destination,
+/// admitted from the host's own resolution under SG-000075 (public
+/// addresses only, port 443, no IP literal), so the pin every later
+/// binding names is the host's.
+#[cfg(feature = "live-browser-dev")]
+fn open_public(
+    args: &WorkerHostArgs,
+    workspace: &str,
+    policy_revision: u64,
+    url: &str,
+    resolver: &impl crate::navigation::DnsResolver,
+) -> Result<(Lifetime, WorkerHostReply), HostError> {
+    crate::observation::validate_identity_field(workspace)?;
+    if args.runtime.is_none() {
+        return Err(HostError::Unavailable(
+            UnavailableReason::UnsupportedRuntime,
+        ));
+    }
+    let destination = AdmittedDestination::admit(url, resolver)?;
+    open(args, workspace, policy_revision, destination, None)
+}
+
+/// Start a lifetime: the host's own engine discovery (A10 re-verifies it at
+/// launch), its own pid-named ephemeral profile (#298) carrying the A9
+/// marker, and the admitted destination. Everything that can be refused
+/// without a profile is refused first.
+fn open(
+    args: &WorkerHostArgs,
+    workspace: &str,
+    policy_revision: u64,
+    destination: AdmittedDestination,
+    fixture_spki: Option<&str>,
+) -> Result<(Lifetime, WorkerHostReply), HostError> {
+    let runtime = args.runtime.as_ref().ok_or(HostError::Unavailable(
+        UnavailableReason::UnsupportedRuntime,
+    ))?;
+    let pin = destination.pin();
     let engine = discover_engine(&SearchConfig::production())?;
     let profile_dir = crate::worker_launch::ephemeral_profile_dir(&args.profile_root)?;
     // From here until the worker owns the profile, any failure removes it:
     // the #298 sweep never collects this host's own profiles while it runs.
-    let launched = launch_in(args, &profile_dir, engine, destination, fixture_spki);
+    let launched = launch_in(
+        args,
+        runtime,
+        &profile_dir,
+        engine,
+        destination,
+        fixture_spki,
+    );
     let (worker, profile_identity) = match launched {
         Ok(launched) => launched,
         Err(err) => {
@@ -675,29 +777,78 @@ fn open(
 }
 
 /// Mark the fresh profile (A9: adopt-back proves the marker round-trips),
-/// then launch the worker in it.
+/// then launch the worker in it. A pinned runtime is verified and held by
+/// `launch_worker` before anything is swept or spawned.
 fn launch_in(
     args: &WorkerHostArgs,
+    runtime: &WorkerRuntime,
     profile_dir: &Path,
     engine: crate::discovery::Engine,
     destination: AdmittedDestination,
-    fixture_spki: &str,
+    fixture_spki: Option<&str>,
 ) -> Result<(BrowserWorker, String), HostError> {
+    #[cfg(not(feature = "live-browser-test"))]
+    if fixture_spki.is_some() {
+        return Err(HostError::Invalid(
+            "fixture trust exists only in test builds".into(),
+        ));
+    }
     let profile = crate::profile::mark_profile(profile_dir, &engine.fingerprint())?;
     let profile = crate::profile::adopt_profile(profile.dir(), &engine.fingerprint())?;
     let spec = WorkerLaunch {
-        node: args.node.clone(),
-        worker_main: args.worker_main.clone(),
+        node: runtime.node.clone(),
+        worker_main: runtime.worker_main.clone(),
         engine,
         profile_dir: profile.dir().to_path_buf(),
         ephemeral_profile: true,
         temp_dir: args.temp_dir.clone(),
         destinations: vec![destination],
-        test_trusted_spki: Some(fixture_spki.to_owned()),
-        runtime_pin: None,
+        #[cfg(any(test, feature = "live-browser-test"))]
+        test_trusted_spki: fixture_spki.map(str::to_owned),
+        runtime_pin: runtime.pin.clone(),
     };
     let worker = launch_worker(&spec, &crate::confinement::RegistryPolicySource)?;
     Ok((worker, profile.identity().to_owned()))
+}
+
+/// The host's own name resolution for `open_public`: the system resolver,
+/// bounded in time (a resolver that never answers is a typed timeout).
+#[cfg(feature = "live-browser-dev")]
+struct HostResolver;
+
+#[cfg(feature = "live-browser-dev")]
+const RESOLVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+#[cfg(feature = "live-browser-dev")]
+impl crate::navigation::DnsResolver for HostResolver {
+    fn resolve(&self, host: &str, port: u16) -> Result<Vec<IpAddr>, HostError> {
+        use std::net::ToSocketAddrs;
+        let (sender, answer) = std::sync::mpsc::channel();
+        let name = host.to_owned();
+        std::thread::spawn(move || {
+            let resolved = (name.as_str(), port)
+                .to_socket_addrs()
+                .map(|addresses| addresses.map(|address| address.ip()).collect::<Vec<_>>());
+            let _ = sender.send(resolved);
+        });
+        let mut addresses = match answer.recv_timeout(RESOLVE_TIMEOUT) {
+            Ok(Ok(addresses)) => addresses,
+            Ok(Err(_)) => {
+                return Err(HostError::Invalid(
+                    "the destination name did not resolve".into(),
+                ))
+            }
+            Err(_) => return Err(HostError::Unavailable(UnavailableReason::TimedOut)),
+        };
+        addresses.sort();
+        addresses.dedup();
+        if addresses.is_empty() {
+            return Err(HostError::Invalid(
+                "the destination name resolved to no address".into(),
+            ));
+        }
+        Ok(addresses)
+    }
 }
 
 /// Observe the committed document; nodes are dropped from the end until the
@@ -769,7 +920,6 @@ fn collect_ids(nodes: &[WireNode], into: &mut HashSet<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::UnavailableReason;
 
     #[test]
     fn the_vocabulary_is_closed_and_round_trips() {
@@ -786,22 +936,29 @@ mod tests {
                 "{frame}"
             );
         }
-        for request in [
-            WorkerHostRequest::Open {
-                workspace: "w".into(),
-                policy_revision: 7,
-                host: "fixture.test".into(),
-                fixture_spki: "A".repeat(43) + "=",
+        #[allow(unused_mut)] // extended per build
+        let mut requests = vec![WorkerHostRequest::Bind {
+            action: BindAction::Download {
+                node_id: "d1-e2".into(),
+                role: "link".into(),
+                folder: "C:\\approved".into(),
+                relative: "r.pdf".into(),
             },
-            WorkerHostRequest::Bind {
-                action: BindAction::Download {
-                    node_id: "d1-e2".into(),
-                    role: "link".into(),
-                    folder: "C:\\approved".into(),
-                    relative: "r.pdf".into(),
-                },
-            },
-        ] {
+        }];
+        #[cfg(feature = "live-browser-test")]
+        requests.push(WorkerHostRequest::Open {
+            workspace: "w".into(),
+            policy_revision: 7,
+            host: "fixture.test".into(),
+            fixture_spki: "A".repeat(43) + "=",
+        });
+        #[cfg(feature = "live-browser-dev")]
+        requests.push(WorkerHostRequest::OpenPublic {
+            workspace: "w".into(),
+            policy_revision: 7,
+            url: "https://example.org/reports".into(),
+        });
+        for request in requests {
             let text = serde_json::to_string(&request).unwrap();
             assert_eq!(
                 serde_json::from_str::<WorkerHostRequest>(&text).unwrap(),
@@ -828,8 +985,11 @@ mod tests {
     fn frames_before_hello_or_of_another_generation_end_the_host() {
         let args = WorkerHostArgs {
             host_id: "h".into(),
-            node: PathBuf::from("node.exe"),
-            worker_main: PathBuf::from("main.js"),
+            runtime: Some(WorkerRuntime {
+                node: PathBuf::from("node.exe"),
+                worker_main: PathBuf::from("main.js"),
+                pin: None,
+            }),
             profile_root: std::env::temp_dir(),
             temp_dir: std::env::temp_dir(),
         };
@@ -943,5 +1103,121 @@ mod tests {
         collect_ids(&[parent, leaf("c")], &mut ids);
         assert_eq!(ids.len(), 3);
         assert!(ids.contains("b"));
+    }
+
+    /// A development build's vocabulary: the fixture `open` does not exist
+    /// unless the build is also a test build.
+    #[cfg(all(feature = "live-browser-dev", not(feature = "live-browser-test")))]
+    #[test]
+    fn a_development_build_has_no_fixture_open() {
+        let frame = format!(
+            r#"{{"frame":"open","workspace":"w","policy_revision":1,"host":"fixture.test","fixture_spki":"{}="}}"#,
+            "A".repeat(43)
+        );
+        assert!(serde_json::from_str::<WorkerHostRequest>(&frame).is_err());
+    }
+
+    #[cfg(feature = "live-browser-dev")]
+    struct FixedResolver(Vec<IpAddr>);
+
+    #[cfg(feature = "live-browser-dev")]
+    impl crate::navigation::DnsResolver for FixedResolver {
+        fn resolve(&self, _host: &str, _port: u16) -> Result<Vec<IpAddr>, HostError> {
+            Ok(self.0.clone())
+        }
+    }
+
+    /// Slice 3b-ii: a public open admits only an SG-000075 destination, and
+    /// every refusal comes before any profile exists.
+    #[cfg(feature = "live-browser-dev")]
+    #[test]
+    fn a_public_open_admits_only_public_https_and_refuses_before_any_profile() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let root =
+            std::env::temp_dir().join(format!("orcel-open-public-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let args = |runtime: bool| WorkerHostArgs {
+            host_id: "h".into(),
+            runtime: runtime.then(|| WorkerRuntime {
+                node: PathBuf::from("C:\\none\\node.exe"),
+                worker_main: PathBuf::from("C:\\none\\dist\\main.js"),
+                pin: None,
+            }),
+            profile_root: root.clone(),
+            temp_dir: root.clone(),
+        };
+        let public = FixedResolver(vec!["93.184.215.14".parse().unwrap()]);
+        let code = |result: Result<(Lifetime, WorkerHostReply), HostError>| match result {
+            Ok(_) => "opened".to_string(),
+            Err(err) => error_code(&err),
+        };
+        // No runtime the build may run: typed, before resolution.
+        assert_eq!(
+            code(open_public(
+                &args(false),
+                "w",
+                1,
+                "https://example.org/",
+                &public
+            )),
+            "unavailable:unsupportedruntime"
+        );
+        for url in [
+            "http://example.org/",
+            "https://example.org:8443/",
+            "https://93.184.215.14/",
+            "https://localhost/",
+            "https://user@example.org/",
+            "file:///C:/Windows/win.ini",
+            "javascript:alert(1)",
+            "https://metadata.google.internal/",
+        ] {
+            assert_eq!(
+                code(open_public(&args(true), "w", 1, url, &public)),
+                "invalid",
+                "{url}"
+            );
+        }
+        for private in [
+            "127.0.0.1",
+            "10.0.0.1",
+            "169.254.169.254",
+            "192.168.1.1",
+            "::1",
+            "fd00::1",
+        ] {
+            let resolver = FixedResolver(vec![private.parse().unwrap()]);
+            assert_eq!(
+                code(open_public(
+                    &args(true),
+                    "w",
+                    1,
+                    "https://example.org/",
+                    &resolver
+                )),
+                "invalid",
+                "{private}"
+            );
+        }
+        // A malformed workspace is refused before anything else.
+        assert_eq!(
+            code(open_public(
+                &args(true),
+                "",
+                1,
+                "https://example.org/",
+                &public
+            )),
+            "invalid"
+        );
+        assert_eq!(
+            std::fs::read_dir(&root).unwrap().count(),
+            0,
+            "a refused open left something behind"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

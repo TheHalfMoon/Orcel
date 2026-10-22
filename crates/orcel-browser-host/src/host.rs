@@ -92,7 +92,10 @@ impl LiveHost {
 /// scope.
 pub struct Supervisor {
     live: Option<LiveHost>,
-    #[cfg(all(windows, feature = "live-browser-test"))]
+    #[cfg(all(
+        windows,
+        any(feature = "live-browser-test", feature = "live-browser-dev")
+    ))]
     worker: Option<LiveWorkerHost>,
 }
 
@@ -100,7 +103,10 @@ impl Supervisor {
     pub fn new() -> Self {
         Self {
             live: None,
-            #[cfg(all(windows, feature = "live-browser-test"))]
+            #[cfg(all(
+                windows,
+                any(feature = "live-browser-test", feature = "live-browser-dev")
+            ))]
             worker: None,
         }
     }
@@ -110,7 +116,10 @@ impl Supervisor {
             Some(host) => host.is_alive(),
             None => false,
         };
-        #[cfg(all(windows, feature = "live-browser-test"))]
+        #[cfg(all(
+            windows,
+            any(feature = "live-browser-test", feature = "live-browser-dev")
+        ))]
         let classic = classic
             || match self.worker.as_mut() {
                 Some(host) => host.child.is_alive(),
@@ -176,7 +185,10 @@ impl Supervisor {
             Some(host) => host.shutdown(),
             None => Ok(true),
         };
-        #[cfg(all(windows, feature = "live-browser-test"))]
+        #[cfg(all(
+            windows,
+            any(feature = "live-browser-test", feature = "live-browser-dev")
+        ))]
         let classic = {
             let worker = self.shutdown_worker_host();
             match (classic, worker) {
@@ -205,7 +217,10 @@ impl Default for Supervisor {
 /// SG-000108 product caller, slice 1a: a host in worker mode. It owns its
 /// own profile (the host makes it, so the #298 sweep sees the right owner),
 /// and serves the closed worker-mode vocabulary. Test builds only.
-#[cfg(all(windows, feature = "live-browser-test"))]
+#[cfg(all(
+    windows,
+    any(feature = "live-browser-test", feature = "live-browser-dev")
+))]
 pub struct LiveWorkerHost {
     host_id: String,
     child: SupervisedChild,
@@ -220,13 +235,19 @@ pub struct LiveWorkerHost {
 /// the next request: after any timeout or channel failure the channel is
 /// poisoned, and every later request on that host is refused (the host is
 /// then only shut down).
-#[cfg(all(windows, feature = "live-browser-test"))]
+#[cfg(all(
+    windows,
+    any(feature = "live-browser-test", feature = "live-browser-dev")
+))]
 pub(crate) struct ReplyChannel<T> {
     replies: std::sync::mpsc::Receiver<Result<T, HostError>>,
     poisoned: bool,
 }
 
-#[cfg(all(windows, feature = "live-browser-test"))]
+#[cfg(all(
+    windows,
+    any(feature = "live-browser-test", feature = "live-browser-dev")
+))]
 impl<T> ReplyChannel<T> {
     pub(crate) fn new(replies: std::sync::mpsc::Receiver<Result<T, HostError>>) -> Self {
         Self {
@@ -277,14 +298,23 @@ impl<T> ReplyChannel<T> {
 
 /// The longest a worker-mode reply may take: above the worker's own longest
 /// operation bound (a download), so the host times out first and answers.
-#[cfg(all(windows, feature = "live-browser-test"))]
+#[cfg(all(
+    windows,
+    any(feature = "live-browser-test", feature = "live-browser-dev")
+))]
 pub const WORKER_HOST_REPLY_TIMEOUT: Duration = Duration::from_secs(150);
 
 /// The hello and shutdown deadlines.
-#[cfg(all(windows, feature = "live-browser-test"))]
+#[cfg(all(
+    windows,
+    any(feature = "live-browser-test", feature = "live-browser-dev")
+))]
 const WORKER_HOST_CONTROL_TIMEOUT: Duration = Duration::from_secs(30);
 
-#[cfg(all(windows, feature = "live-browser-test"))]
+#[cfg(all(
+    windows,
+    any(feature = "live-browser-test", feature = "live-browser-dev")
+))]
 impl LiveWorkerHost {
     pub fn host_id(&self) -> &str {
         &self.host_id
@@ -347,17 +377,26 @@ impl LiveWorkerHost {
 }
 
 /// What Orcel passes a worker-mode host (never caller input).
-#[cfg(all(windows, feature = "live-browser-test"))]
+#[cfg(all(
+    windows,
+    any(feature = "live-browser-test", feature = "live-browser-dev")
+))]
 #[derive(Debug, Clone)]
 pub struct WorkerHostLaunch {
-    pub node: std::path::PathBuf,
-    pub worker_main: std::path::PathBuf,
+    /// Node and the worker entry point, passed to a test-build host (a
+    /// test-only source). `None` for a `live-browser-dev` host, which runs
+    /// only the runtime its build pinned and refuses both arguments.
+    pub node: Option<std::path::PathBuf>,
+    pub worker_main: Option<std::path::PathBuf>,
     pub profile_root: std::path::PathBuf,
     pub temp_dir: std::path::PathBuf,
     pub state_root: std::path::PathBuf,
 }
 
-#[cfg(all(windows, feature = "live-browser-test"))]
+#[cfg(all(
+    windows,
+    any(feature = "live-browser-test", feature = "live-browser-dev")
+))]
 impl Supervisor {
     /// Launch `host_binary` in worker mode and complete the worker-mode
     /// hello, within a deadline. Refused while any host is live (one lifetime at a time).
@@ -376,19 +415,21 @@ impl Supervisor {
         }
         let host_id = format!("host-{:016x}", unique_nonce());
         let path = |value: &Path| value.to_string_lossy().into_owned();
-        let args = vec![
+        let mut args = vec![
             "--worker".to_string(),
             "--host-id".to_string(),
             host_id.clone(),
-            "--node".to_string(),
-            path(&launch.node),
-            "--worker-main".to_string(),
-            path(&launch.worker_main),
             "--profile-root".to_string(),
             path(&launch.profile_root),
             "--temp-dir".to_string(),
             path(&launch.temp_dir),
         ];
+        if let Some(node) = &launch.node {
+            args.extend(["--node".to_string(), path(node)]);
+        }
+        if let Some(main) = &launch.worker_main {
+            args.extend(["--worker-main".to_string(), path(main)]);
+        }
         let env = host_env(&launch.state_root);
         let (child, pipes) = spawn_host_piped(host_binary, &args, &env)?;
         let (sender, replies) = std::sync::mpsc::channel();

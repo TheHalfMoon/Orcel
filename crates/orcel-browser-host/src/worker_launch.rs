@@ -2017,7 +2017,7 @@ mod platform {
         /// Forget every observed node but `keep` (the product caller's
         /// worker mode: only nodes Orcel actually received can be acted
         /// on, when a reply had to drop some to fit one frame).
-        #[cfg(feature = "live-browser-test")]
+        #[cfg(any(feature = "live-browser-test", feature = "live-browser-dev"))]
         pub(crate) fn retain_host_nodes(&mut self, keep: &std::collections::HashSet<String>) {
             self.host_nodes.retain(|id, _| keep.contains(id));
         }

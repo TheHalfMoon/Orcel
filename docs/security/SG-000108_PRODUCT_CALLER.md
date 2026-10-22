@@ -563,3 +563,36 @@ It also requires every live tool to be local-only.
 - **Exact names.** Allowlist paths now compare exactly, except for the drive letter. Case-folding could admit a differently cased twin of a pinned file: NTFS can make a single directory case-sensitive, and JavaScript folds U+212A KELVIN SIGN to `k`. Manifest names must be printable ASCII.
 - **The ACL test now tests the owner's implicit right.** It denies the user WD, AD, DC, DE, WDAC and WO, so only the owner's implicit `WRITE_DAC` is left, and the folder must still count as changeable. A mutation that drops `WRITE_DAC` from the change rights fails it.
 - **Wording.** The earlier descriptions of the guard and of the folder check are updated.
+
+**Slice 3b-ii: the `live-browser-dev` host and the destinations it may open (decision 7).**
+
+- **The feature.** `orcel-browser-host` gains `live-browser-dev`, a development-only feature. It is never a default and no other feature enables it. No other manifest names it yet; `orceld`'s dispatch over it arrives with exposure (slice 3c). The release-blocker sweep (`the_live_browser_dev_feature_never_reaches_a_release_build`) allows it to be named only in:
+  - the host crate's own definition and code;
+  - its dev-host test;
+  - the native-suite launcher and the pin script;
+  - documentation.
+- **The worker runtime is the build's own.** The binary's worker mode in a dev build runs only the runtime compiled into it from four build variables: `ORCEL_LIVE_BROWSER_NODE`, `ORCEL_LIVE_BROWSER_WORKER_MAIN`, `ORCEL_LIVE_BROWSER_NODE_SHA256` and `ORCEL_LIVE_BROWSER_TREE_SHA256`.
+  - They are read with `option_env!` only, at compile time. rustc tracks them, so a new pin means a rebuild. The sweep requires that `main.rs` reads them in no other way and that nothing else names them.
+  - `compiled_runtime` accepts only a whole, well-formed pin: absolute paths, a `<root>/dist/main.js` entry point and two lowercase SHA-256 digests. Anything else is no runtime at all, and every lifetime is then refused with `unavailable:unsupportedruntime`.
+  - Every launch passes the pin to slice 3b-i's `verify_and_hold`, so a changed `node.exe` or runtime tree is refused, typed, until rebuilt.
+  - `--node` and `--worker-main` are unknown arguments of a dev host, which exits on them. Only a test-only build takes them, from the test harness.
+- **The pin script.** `apps/orcel-browser-worker/scripts/dev-pin.mjs` prints the four variables for the built worker. It is a second, independent implementation of `runtime_files` and `tree_digest`: the same fixed vector (computed with Python) and the same selection test as the Rust unit tests. A disagreement can only refuse a launch, because the host measures the files itself at every launch.
+- **Destinations.** A dev host serves `open_public { workspace, policy_revision, url }` (worker-mode generation 4).
+  - The host resolves the name itself and admits it only through `AdmittedDestination::admit`: SG-000075's rules, HTTPS on port 443, a public address, no IP literal, no single-label or metadata name. Its pin is the host's lowest public address, as before, and every host binding names it.
+  - The resolution is bounded (10 s); a resolver that never answers is a typed timeout.
+  - Everything that can be refused without a profile is refused first.
+  - One destination per lifetime: the navigation policy still refuses every other origin.
+  - The fixture `open` exists only in builds that also have `live-browser-test`.
+- **Supervision.** `WorkerHostLaunch.node` and `.worker_main` are now optional. `orceld` passes neither to a dev host.
+
+**Evidence:**
+- **Unit tests (dev feature):**
+  - `a_public_open_admits_only_public_https_and_refuses_before_any_profile`: no runtime → `unavailable:unsupportedruntime`; plain HTTP, another port, an IP literal, `localhost`, userinfo, `file:`, `javascript:` and the metadata name → `invalid`; loopback, private, link-local, ULA and metadata addresses → `invalid`; nothing is left in the profile root;
+  - `a_development_build_has_no_fixture_open`;
+  - `a_compiled_runtime_is_whole_and_well_formed_or_absent` (12 malformed or partial pins).
+- **Worker:** `scripts/dev-pin.test.mjs`, the fixed vector and the same tree selection as the Rust unit test.
+- **Native** (`tests/sg000108_dev_host.rs`, 2 tests). The launcher runs them twice, rebuilding the binary each time:
+  - **built with a pin of another tree:** the public open is refused with `unavailable:unsupportedruntime` and no profile is made;
+  - **built with the runtime's real pin:** a lifetime on `https://example.com/` opens with the host's public pin, the worker's entry point cannot be opened for writing while it runs, a bound navigation returns 200, the observation carries no raw page text, another public origin is refused, and close leaves an empty job and no profile, after which the runtime is released;
+  - **both builds:** `--node` and `--worker-main` make the dev host exit before its hello.
+  - Under a managed policy (CI) the open is refused with `unavailable:managedpolicy` instead, and with a user-writable `node.exe` folder with `unavailable:unsupportedruntime`; each prints its own evidence line. With `ORCEL_SG108_REQUIRE_JOURNEY=1` the launcher requires both lifetimes themselves.
