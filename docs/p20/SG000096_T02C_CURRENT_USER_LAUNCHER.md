@@ -39,6 +39,7 @@ Expected owners come from a disposable store: `grant_local` → `load_store` (MA
 | `sg000096_held_paths_deny_rewrite_rename_and_ancestor_rename` | a held file cannot be rewritten, renamed or deleted, and a held directory and its ancestor cannot be renamed |
 | `sg000096_junction_components_are_refused` | junction components are refused for files and directories |
 
+- **Elevated hosts.** GitHub's `windows-latest` runner runs tests elevated (an administrator with UAC off). There, each launching test instead asserts that the launcher refuses ("Full User never runs elevated") with zero `CreateProcessW` calls. That is native CI evidence that Full Admin is refused. The owner-mismatch and drift tests run unchanged on both kinds of host. The positive native paths in the table above (launch, faults after creation, timeout, output, descendants, process limit, environment) are qualified on a standard-user host: this PC.
 - `cargo test -p orcel-provider-process`: 70 lib + 2 + 4 + 2 integration tests pass. Every earlier SG-000096 T02-A/B/C test still passes.
 - `cargo clippy -p orcel-provider-process --all-targets -- -D warnings` passes for `x86_64-pc-windows-msvc`, `x86_64-unknown-linux-gnu` and `aarch64-apple-darwin`.
 - `cargo fmt --all --check` passes.
