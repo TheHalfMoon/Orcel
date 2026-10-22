@@ -2,10 +2,10 @@
   "id": "SG-000126",
   "title": "First local report task (create-only approval, independent checker)",
   "program": "ORCEL-F2",
-  "state": "GRAIN",
+  "state": "PROPOSED",
   "risk": "medium",
   "created": "2026-10-22",
-  "base": "58ceada751926d2dc239b34459797dbd4a72f80c",
+  "base": "to be set at activation",
   "dependencies": [
     "SG-000001",
     "SG-000002",
@@ -46,9 +46,9 @@
   },
   "decisions": [
     {
-      "question": "Parallel activation",
-      "status": "RECORDED, founder may correct",
-      "decision": "SG-000126 is activated while SG-000096 (shell, ORCEL-P20) and SG-000108 (browser, ORCEL-F3) stay open. Basis: the founder's authorization of autonomous continuation through the adopted roadmap (F0 to F4, then F5 to F8), as relayed to this session by the orchestrating engineering session on 2026-10-22; this reading is the record's own. Independence: SG-000126 adds only a create-only report write in an existing workspace folder and two read-only app API methods; it touches no process, shell, session, browser, network or desktop authority and changes no file those grains own, and neither grain may widen another."
+      "question": "Sequencing",
+      "status": "DECIDED (founder, 2026-10-22)",
+      "decision": "F2 follows the browser grain; it is not a third parallel grain. Founder mandate of 2026-10-22, as relayed by the orchestrating session: \"After the browser grain, progress automatically through the remaining legitimate dependencies, including: F0/F2/F4: authenticated application integration, local report task and Core MVP qualification\", and \"Respect actual prerequisites.\" SG-000126 is therefore activated only after SG-000108 closes canonically, and then runs with SG-000096 as the open pair. Its authority (one create-only report write in an existing workspace folder and two read-only app API methods) is disjoint from SG-000096's."
     },
     {
       "question": "Donor reuse",
@@ -77,7 +77,7 @@
   "acceptance": [
     {
       "id": "A1",
-      "claim": "Activation is authority-neutral on base 58ceada751926d2dc239b34459797dbd4a72f80c and imports no code."
+      "claim": "Activation, after SG-000108 closes, is authority-neutral, cites the founder sequencing record above, and imports no code."
     },
     {
       "id": "A2",
@@ -129,6 +129,6 @@
     "f4": "One external MCP client drives the same kernel operations through a reviewed tool exposure, with its own transcript and qualification.",
     "f5": "Spreadsheet sources (XLSX or Excel) reach the report task only through a qualified read-only parser path."
   },
-  "activation_note": "No capability, tool, dependency or authority change in this activation packet. Separate implementation and closeout PRs must qualify their exact heads; activation CI alone proves nothing about the task.",
+  "activation_note": "PROPOSED, not activated. This file lives outside .specgrain/specs so it opens no grain. It is activated (moved to .specgrain/specs with state GRAIN, recorded in docs/canonical/CURRENT.md, and admitted by the open-grain governance tests as the SG-000096/SG-000126 pair) only after SG-000108 closes canonically. No capability, tool, dependency or authority change in this proposal; separate implementation and closeout PRs must qualify their exact heads.",
   "done_when": "On Windows, macOS and Linux, a planner turns known figures into one approved, create-only report that the independent checker verifies, with every refusal path proven, task state visible in the app API, and no overwrite, out-of-scope write, remote path or MCP widening."
 }
