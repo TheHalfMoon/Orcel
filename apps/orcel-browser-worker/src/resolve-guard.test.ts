@@ -197,7 +197,7 @@ test("no worker thread, forked Node or shell starts outside the guard, and other
         "  execFile: outcome(() => childProcess.execFileSync(process.execPath, ['-e', '0'])),",
         "  shell: outcome(() => childProcess.spawnSync('cmd.exe', ['/c', 'exit 0'], { shell: true })),",
         "  exec: outcome(() => childProcess.execSync('exit 0')),",
-        "  other: outcome(() => { if (childProcess.spawnSync(process.env.ComSpec ?? 'cmd.exe', ['/c', 'exit 0']).status !== 0) throw new Error('other program'); })",
+        "  other: outcome(() => { const [file, args] = process.platform === 'win32' ? [process.env.ComSpec ?? 'cmd.exe', ['/c', 'exit 0']] : ['/bin/sh', ['-c', 'exit 0']]; if (childProcess.spawnSync(file, args).status !== 0) throw new Error('other program'); })",
         "};",
         "process.stdout.write(JSON.stringify(results) + '\\n');"
       ].join("\n")
