@@ -234,6 +234,17 @@ jobs:
         run: cargo build --locked --release -p orcel-native-host
       - name: The binary prints its protocol version
         run: test "$(./target/release/orcel-native-host --version)" = "orcel-computer-host/2"
+      # Temporary, opt-in diagnostic artifact on this PR only. Not a release.
+      # Built on the official hosted macOS runner to bypass the local CLT
+      # SwiftPM manifest-link failure and test on a real Mac.
+      - name: Stage macOS host for real-hardware qualification (PR only)
+        if: runner.os == macOS && github.head_ref == test/orcel-mac-hardware-artifact-20261022
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: orcel-macos-real-hardware-${{ github.event.pull_request.head.sha }}
+          path: apps/orcel-native-host/target/release/orcel-native-host
+          retention-days: 1
+          if-no-files-found: error
       - name: Reachability (no script engine, CDP client, server, daemon or browser code)
         # XP-06 links the platform crates through the adapter, so these checks
         # now cover real code. The words run_script and remote-debugging are
