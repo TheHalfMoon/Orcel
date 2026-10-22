@@ -728,12 +728,13 @@ A fresh-context judge's first round on this slice was BLOCK. The destination-nam
   - **Chrome 154:** CI's windows-latest runner (image 20260925.250.1), Chrome 154.0.8037.58, which the native suite now reports (`SG108-EVIDENCE engine: …`).
     - The full suite passed there on this PR's head, the #324 endpoint tests included. The page probe saw 36 ICE sockets, so the WebRTC probe ran, and the leak control saw mDNS sockets on 5353.
     - The leak control is not required there, because the runner has no account and no LAN devices for an outbound connection.
+  - **Chrome 155 and 156:** later windows-latest images. Each was added by its own PR whose CI native suite passed on that runner's engine (156: image 20261021, Chromium 156.0.8078.48).
 - **Why a list of qualified majors, not a range.** The engine-drift risk above means a new engine can change how it honours a confinement flag. The leaks #324 found came from services that only some engine builds start. So "supported" means that every probe re-ran on that version, not that playwright-core can attach. A range would admit versions no probe has run on.
 - **What it is checked with.**
   - **Discovery, unchanged:** the engine's kind, path and Authenticode publisher are verified as before (SG-000074).
   - **The window, at launch.** Unit tests:
     - `only_qualified_engine_versions_run_the_worker`;
-    - `an_unqualified_engine_version_is_refused_before_anything_runs`: with every other prerequisite present, Edge 154, Edge 156, Chrome 155 and Chrome 153 are refused with the typed error, and Edge 155 passes the rule.
+    - `an_unqualified_engine_version_is_refused_before_anything_runs`: with every other prerequisite present, Edge 154, Edge 156, Chrome 157 and Chrome 153 are refused with the typed error, and Edge 155 passes the rule.
   - **Native:** every native test runs under the window on the installed engine, which the suite reports once per run.
   - **`an_engine_replaced_after_discovery_is_refused_at_launch`:**
     - a held, qualified engine (a copy of the installed Edge) passes `validate_launch`;
