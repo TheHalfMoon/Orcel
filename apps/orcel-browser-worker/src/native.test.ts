@@ -174,10 +174,11 @@ function engineCommandLines(profile: string): string[] {
 /// fails the test.
 const EVENT_DEADLINE_MS = 90_000;
 
-/// Whether every engine process using `profile` has exited: one query for
-/// them, then a wait on the processes themselves (Wait-Process waits on their
-/// handles), then a final check. Not a polling loop of process queries, each
-/// of which costs seconds on a loaded runner.
+/// Whether every engine process using `profile` has exited: a query for
+/// them, a wait on those processes themselves (Wait-Process waits on their
+/// handles), and again for any that appeared meanwhile, until none remain or
+/// the deadline passes. Not a fixed-interval loop of process queries, each of
+/// which costs seconds on a loaded runner.
 function engineExited(profile: string, timeoutMs: number = EVENT_DEADLINE_MS): boolean {
   const leaf = profile.split("\\").pop() ?? profile;
   const seconds = Math.max(1, Math.ceil(timeoutMs / 1000));
@@ -187,11 +188,13 @@ function engineExited(profile: string, timeoutMs: number = EVENT_DEADLINE_MS): b
       "-NoProfile",
       "-NonInteractive",
       "-Command",
-      `$ErrorActionPreference='Stop'; $q = { @(Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" | Where-Object { $_.CommandLine -like '*${leaf}*' }) }; $p = & $q; if ($p.Count -gt 0) { Wait-Process -Id $p.ProcessId -Timeout ${seconds} -ErrorAction SilentlyContinue }; (& $q).Count`
+      `$ErrorActionPreference='Stop'; $q = { @(Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" | Where-Object { $_.CommandLine -like '*${leaf}*' }) }; $deadline = (Get-Date).AddSeconds(${seconds}); $p = & $q; while ($p.Count -gt 0 -and (Get-Date) -lt $deadline) { $left = [Math]::Max(1, [int]($deadline - (Get-Date)).TotalSeconds); Wait-Process -Id $p.ProcessId -Timeout $left -ErrorAction SilentlyContinue; $p = & $q }; $p.Count`
     ],
     { encoding: "utf8", timeout: timeoutMs + 60_000 }
   );
-  return Number(out.trim()) === 0;
+  const count = out.trim();
+  assert.match(count, /^\d+$/, `engine process query answered ${JSON.stringify(count)}`);
+  return Number(count) === 0;
 }
 
 async function waitFor(condition: () => boolean, timeoutMs: number): Promise<boolean> {
@@ -497,8 +500,15 @@ nativeTest("a same-user process cannot activate the worker's inspector when it r
   await new Promise((resolve) => setTimeout(resolve, 750));
   const controlBefore = await listening(9229);
   debugProcess?.(plain.pid ?? 0);
-  await new Promise((resolve) => setTimeout(resolve, 1500));
-  assert.deepEqual({ before: controlBefore, after: await listening(9229) }, { before: false, after: true }, "the probe detects an activated inspector");
+  // #374: until the activated inspector listens (the positive control), not
+  // a fixed time.
+  const controlDeadline = Date.now() + EVENT_DEADLINE_MS;
+  let controlAfter = await listening(9229);
+  while (!controlAfter && Date.now() < controlDeadline) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    controlAfter = await listening(9229);
+  }
+  assert.deepEqual({ before: controlBefore, after: controlAfter }, { before: false, after: true }, "the probe detects an activated inspector");
 });
 
 // ---------------------------------------------------------------------------
@@ -778,6 +788,9 @@ nativeTest("a cross-site iframe is refused by the policy route, so it cannot reg
     }
   });
   await primary.goto("https://fixture.test/sw-cross", { timeout: 15_000 });
+  // #374: until the cross-site frame was asked about (checked below), then
+  // what must not happen has time to fail to appear.
+  await waitFor(() => asked.some((q) => q.kind === "frame" && q.url === "https://other.test/sw"), EVENT_DEADLINE_MS);
   await new Promise((resolve) => setTimeout(resolve, 3_000));
   // The cross-site frame was asked about and refused, and never contacted.
   assert.ok(

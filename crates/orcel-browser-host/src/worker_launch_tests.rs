@@ -132,8 +132,8 @@ fn all_dead(pids: &[u32], timeout: Duration) -> bool {
         let waited = unsafe { WaitForSingleObject(handle, millis) };
         // SAFETY: opened above.
         unsafe { CloseHandle(handle) };
-        if waited != WAIT_OBJECT_0 {
-            return !alive(*pid);
+        if waited != WAIT_OBJECT_0 && alive(*pid) {
+            return false;
         }
     }
     true
@@ -813,6 +813,7 @@ fn assert_no_process_references(profile: &Path) {
             "processes still reference {}: {holders}",
             profile.display()
         );
+        std::thread::sleep(Duration::from_millis(50));
     }
 }
 
@@ -1369,8 +1370,6 @@ impl Drop for HttpsFixture {
     }
 }
 
-/// Keep the host answering route requests for `duration` (it decides only
-/// while it is in a call, as a real caller would be).
 /// #374: keep the host in calls until `done` holds, or fail after
 /// `EVENT_DEADLINE`. Waits for an event (a page's signal request, a moved
 /// page) instead of a fixed time a loaded runner can outlast.
@@ -1391,15 +1390,34 @@ fn pump_until(
     }
 }
 
-/// #374: wait for the fixture page's `/signal/<name>` request, which it
-/// sends right after it changed itself.
-fn pump_until_signal(worker: &mut BrowserWorker, fixture: &HttpsFixture, name: &str) {
-    let signal = format!("fixture.test /signal/{name}");
+/// Milliseconds since the Unix epoch: the moment a load began, for
+/// `pump_until_signal`.
+fn epoch_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// #374: wait for the fixture page's `/signal/<name>?t=<timeOrigin>`
+/// request, which it sends right after it changed itself. Only a signal
+/// from a document whose navigation began at or after `since` (epoch ms,
+/// taken before the navigation that loaded it) counts, so an earlier load
+/// of the same page never ends the wait (judge, PR #429). The 50 ms allows
+/// for the engine's and the test's clocks to round differently.
+fn pump_until_signal(worker: &mut BrowserWorker, fixture: &HttpsFixture, name: &str, since: u64) {
+    let prefix = format!("fixture.test /signal/{name}?t=");
     pump_until(worker, &format!("the page's {name} signal"), |_| {
-        fixture.hits().iter().any(|hit| hit == &signal)
+        fixture.hits().iter().any(|hit| {
+            hit.strip_prefix(&prefix)
+                .and_then(|t| t.parse::<u64>().ok())
+                .is_some_and(|t| t + 50 >= since)
+        })
     });
 }
 
+/// Keep the host answering route requests for `duration` (it decides only
+/// while it is in a call, as a real caller would be).
 fn pump(worker: &mut BrowserWorker, duration: Duration) {
     let until = Instant::now() + duration;
     let mut n = 0;
@@ -1464,9 +1482,20 @@ fn the_host_decides_every_request_of_a_live_navigation() {
     worker
         .navigate("https://fixture.test/mixed")
         .expect("mixed page");
-    // Popups, speculation rules, beacons, workers and the like settle; the
-    // host answers the page's own requests only while it is in a call, so
-    // keep it in calls.
+    // The page's same-origin resources arrive (checked below), then popups,
+    // speculation rules, beacons, workers and the like settle (what must not
+    // happen); the host answers the page's own requests only while it is in
+    // a call, so keep it in calls.
+    pump_until(
+        &mut worker,
+        "the mixed page's same-origin resources",
+        |_| {
+            let hits = fixture.hits();
+            ["/pixel.png", "/frame", "/api", "/style.css"]
+                .iter()
+                .all(|path| hits.contains(&format!("fixture.test {path}")))
+        },
+    );
     pump(&mut worker, Duration::from_secs(4));
     // The prerender-then-activate escape: the page prerenders a same-origin
     // URL that redirects to other.test and then navigates to it. With
@@ -1474,6 +1503,13 @@ fn the_host_decides_every_request_of_a_live_navigation() {
     worker
         .navigate("https://fixture.test/spec-escape")
         .expect("spec-escape page");
+    // The page's own activation attempt arrives (checked below), then what
+    // it must not reach has time to fail to appear.
+    pump_until(&mut worker, "the spec-escape activation attempt", |_| {
+        fixture
+            .hits()
+            .contains(&"fixture.test /redirect-evil".to_string())
+    });
     pump(&mut worker, Duration::from_secs(5));
     let hits = fixture.hits();
     let other: Vec<&String> = hits
@@ -1789,12 +1825,13 @@ fn an_approved_activation_follows_the_latest_dated_link_and_nothing_else() {
             .is_err(),
         "script redirect followed"
     );
+    let loaded = epoch_ms();
     worker
         .navigate("https://fixture.test/archive-tricky")
         .expect("tricky again");
     let live = worker.observe(&scope).expect("observe tricky again");
     let swapped = find(&worker, &live, "Annual review 2026-06-30");
-    pump_until_signal(&mut worker, &fixture, "href-swapped");
+    pump_until_signal(&mut worker, &fixture, "href-swapped", loaded);
     let (target, mut approval) = approved_click(&worker, &live, &swapped);
     assert!(
         worker
@@ -2200,11 +2237,12 @@ fn webmcp_declarative_tools_are_discovered_read_only_and_bound_to_the_document()
     launch.test_trusted_spki = Some(fixture.spki.clone());
     let mut worker = launch_worker(&launch, &Policy(PolicyKeyState::Absent)).expect("launch");
 
+    let loaded = epoch_ms();
     worker
         .navigate("https://fixture.test/tools")
         .expect("tools");
     // The page's traps are armed (its own signal) before discovery.
-    pump_until_signal(&mut worker, &fixture, "tools-armed");
+    pump_until_signal(&mut worker, &fixture, "tools-armed", loaded);
     let found = worker.discover_tools().expect("discover");
     assert_eq!(found.url, "https://fixture.test/tools");
     let names: Vec<&str> = found.tools.iter().map(|t| t.name.as_str()).collect();
@@ -2311,6 +2349,7 @@ fn webmcp_declarative_tools_are_discovered_read_only_and_bound_to_the_document()
     );
     assert!(hits.iter().any(|hit| hit.contains("/tools")));
     // Control: the same trap, called by the page itself, is seen.
+    let loaded = epoch_ms();
     worker
         .navigate("https://fixture.test/tools-control")
         .expect("control");
@@ -2320,7 +2359,7 @@ fn webmcp_declarative_tools_are_discovered_read_only_and_bound_to_the_document()
         "/trap-control-focus",
     ];
     // #374: until the page has acted and every control trap arrived.
-    pump_until_signal(&mut worker, &fixture, "control-acted");
+    pump_until_signal(&mut worker, &fixture, "control-acted", loaded);
     pump_until(&mut worker, "the control traps", |_| {
         let hits = fixture.hits();
         traps
@@ -2680,11 +2719,12 @@ fn webmcp_tools_execute_only_with_approval_and_return_the_verified_result() {
 
     // A tool whose declaration changed after discovery is refused (fresh
     // discovery before dispatch), and its approval is unspent.
+    let loaded = epoch_ms();
     let found = open(&mut worker);
     let mutating = id_of(&found, "mutating");
     let (target, mut approval) =
         approved_execution(&worker, &found, &mutating, &args(r#"{"q":"m"}"#));
-    pump_until_signal(&mut worker, &fixture, "tool-mutated");
+    pump_until_signal(&mut worker, &fixture, "tool-mutated", loaded);
     assert!(matches!(
         worker.execute_tool(&target, &mut approval, &args(r#"{"q":"m"}"#), 1, "workspace"),
         Err(HostError::Invalid(message)) if message.contains("changed")
