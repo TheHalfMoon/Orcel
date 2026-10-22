@@ -1641,7 +1641,9 @@ fn observation_is_bounded_redacted_and_bound_to_the_committed_document() {
     pump_until(
         &mut worker,
         "the refused observation of a moved page",
-        |worker| worker.observe(&scope).is_err(),
+        // Exactly the stale-page refusal: an engine error during the move
+        // itself does not end the wait (judge, PR #429).
+        |worker| matches!(worker.observe(&scope), Err(HostError::Invalid(_))),
     );
     assert!(
         matches!(worker.observe(&scope), Err(HostError::Invalid(_))),
@@ -2347,7 +2349,7 @@ fn webmcp_declarative_tools_are_discovered_read_only_and_bound_to_the_document()
         hits.iter().all(|hit| !hit.contains("/trap-")),
         "page code ran during discovery: {hits:?}"
     );
-    assert!(hits.iter().any(|hit| hit.contains("/tools")));
+    assert!(hits.iter().any(|hit| hit == "fixture.test /tools"));
     // Control: the same trap, called by the page itself, is seen.
     let loaded = epoch_ms();
     worker
