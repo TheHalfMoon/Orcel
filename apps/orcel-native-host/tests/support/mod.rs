@@ -72,14 +72,18 @@ impl Host {
 
     /// Spawns the host with exactly `environment`.
     pub fn spawn_with(environment: impl IntoIterator<Item = (String, std::ffi::OsString)>) -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_orcel-native-host"))
-            .env_clear()
-            .envs(environment)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("the host starts");
+        let mut child = Command::new(
+            std::env::var_os("ORCEL_NATIVE_TEST_HOST").unwrap_or_else(|| {
+                std::ffi::OsString::from(env!("CARGO_BIN_EXE_orcel-native-host"))
+            }),
+        )
+        .env_clear()
+        .envs(environment)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("the host starts");
         let stdin = child.stdin.take().expect("stdin");
         let lines = reader(child.stdout.take().expect("stdout"));
         Self {
@@ -203,7 +207,8 @@ fn probe_scratch(nonce: &str) -> PathBuf {
 }
 
 pub fn spawn_probe(nonce: &str) -> Probe {
-    let fixtures = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
+    let fixtures = std::env::var("ORCEL_NATIVE_TEST_FIXTURES")
+        .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures").to_string());
     let dir = probe_scratch(nonce);
     let state = dir.join("state.json");
     let flag = dir.join("cover.flag");
