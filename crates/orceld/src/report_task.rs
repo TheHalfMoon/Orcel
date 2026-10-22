@@ -25,12 +25,16 @@
 //! Report requests are local-only: a remote-context envelope is refused
 //! before policy or dispatch.
 //!
-//! Residual risk: the folder is re-checked after the approval, but a
-//! same-user process that swaps it for a link in the instant before the
-//! create still cannot move the write outside the workspace (the provider
-//! resolves and re-checks the parent against the workspace root). The
-//! checker then finds the file outside the task's folder and the task ends
-//! `verification_failed`; nothing is retried or deleted.
+//! The folder is pinned by its canonical path at start and must not be a
+//! link or reparse point. Before the approval, after it and in the checker
+//! the folder must still canonicalize to that path, and the destination's
+//! parent must canonicalize to it too. The write itself is the provider's
+//! create-new open, which refuses any existing entry at the name (a link
+//! included) without opening it. Residual risk: a same-user process that
+//! swaps the folder in the instant between the last check and the create
+//! still cannot move the write outside the workspace (the provider
+//! re-checks the parent against the workspace root), and the checker then
+//! ends the task `verification_failed`; nothing is retried or deleted.
 
 use crate::app_api::EventLog;
 use crate::report_check;
@@ -150,6 +154,9 @@ pub(crate) struct ReportTask {
     title: String,
     folder: String,
     folder_resolved: PathBuf,
+    /// `std::fs::canonicalize` of the folder at start, which every later
+    /// check compares against without resolving it again.
+    folder_canonical: PathBuf,
     sources: Vec<SourceRecord>,
     proposal: Option<Proposal>,
     report: Option<Proposal>,
@@ -370,8 +377,17 @@ pub(crate) fn handle_envelope(
     envelope: RemoteRequestEnvelope,
 ) -> ResponseEnvelope {
     let RemoteRequestEnvelope {
-        request, remote, ..
+        request,
+        remote,
+        profile,
     } = envelope;
+    // The same first gate every other request passes.
+    if let Err((code, message)) =
+        crate::profile_gate::gate(&request, profile.as_deref(), remote.as_ref())
+    {
+        let _ = audit.record(&request, POLICY_REVISION, "PROFILE_DENIED");
+        return ResponseEnvelope::failure(request.request_id, code, message);
+    }
     if remote.is_some() {
         let _ = audit.record(&request, POLICY_REVISION, "REMOTE_DENIED");
         return ResponseEnvelope::failure(
@@ -419,22 +435,35 @@ pub(crate) fn dispatch(
     tasks: &TaskRegistry,
     request: &RequestEnvelope,
 ) -> Result<Value, ProviderError> {
-    dispatch_with(workspace, approval, tasks, request, &|| {})
+    dispatch_with(workspace, approval, tasks, request, &Hooks::NONE)
 }
 
-/// [`dispatch`] with a hook that runs after the approval and before the
-/// post-approval checks; tests use it to change the workspace there.
+/// Points in a commit where tests change the workspace.
+struct Hooks<'a> {
+    /// After the approval, before the post-approval checks.
+    after_approval: &'a dyn Fn(),
+    /// After the post-approval checks, immediately before the create.
+    before_write: &'a dyn Fn(),
+}
+
+impl Hooks<'static> {
+    const NONE: Self = Self {
+        after_approval: &|| {},
+        before_write: &|| {},
+    };
+}
+
 fn dispatch_with(
     workspace: &Workspace,
     approval: &impl ApprovalBroker,
     tasks: &TaskRegistry,
     request: &RequestEnvelope,
-    after_approval: &dyn Fn(),
+    hooks: &Hooks<'_>,
 ) -> Result<Value, ProviderError> {
     match request.operation.as_str() {
         "start" => start(workspace, tasks, request),
         "preview" => preview(workspace, tasks, request),
-        "commit" => commit(workspace, approval, tasks, request, after_approval),
+        "commit" => commit(workspace, approval, tasks, request, hooks),
         other => Err(error(
             FailureCode::CapabilityDenied,
             format!("report/{other} is not dispatched"),
@@ -455,8 +484,15 @@ fn argument<'a>(request: &'a RequestEnvelope, name: &str) -> Result<&'a str, Pro
         })
 }
 
+/// The destination as a workspace-relative path. Only real separators are
+/// trimmed: on Unix a backslash is an ordinary file name character.
 fn destination_of(folder: &str, name: &str) -> String {
-    format!("{}/{name}", folder.trim_end_matches(['/', '\\']))
+    let folder = if cfg!(windows) {
+        folder.trim_end_matches(['/', '\\'])
+    } else {
+        folder.trim_end_matches('/')
+    };
+    format!("{folder}/{name}")
 }
 
 fn start(
@@ -480,6 +516,13 @@ fn start(
             "the report folder must be an existing directory",
         ));
     }
+    let folder_canonical =
+        std::fs::canonicalize(workspace.root.join(folder)).map_err(|failure| {
+            error(
+                FailureCode::ProviderUnavailable,
+                format!("resolve the report folder: {failure}"),
+            )
+        })?;
     let mut observed = Vec::with_capacity(sources.len());
     let mut texts = Vec::with_capacity(sources.len());
     for source in sources {
@@ -503,6 +546,7 @@ fn start(
         title: title.to_owned(),
         folder: folder.to_owned(),
         folder_resolved: folder_identity.resolved,
+        folder_canonical,
         sources: observed,
         proposal: None,
         report: None,
@@ -557,21 +601,27 @@ fn check_current(
     destination: &str,
 ) -> Result<(), Blocked> {
     let provider = FsProvider::new(&workspace.root).map_err(Blocked::Other)?;
-    match provider.entry_identity(&task.folder) {
-        Ok(identity)
-            if identity.kind == "directory" && identity.resolved == task.folder_resolved => {}
-        _ => {
-            return Err(Blocked::Stale(error(
-                FailureCode::TargetStale,
-                "the report folder was removed or replaced since the task started",
-            )))
-        }
+    let folder_kept = matches!(
+        provider.entry_identity(&task.folder),
+        Ok(identity) if identity.kind == "directory" && identity.resolved == task.folder_resolved
+    ) && std::fs::canonicalize(workspace.root.join(&task.folder))
+        .ok()
+        .as_ref()
+        == Some(&task.folder_canonical);
+    if !folder_kept {
+        return Err(Blocked::Stale(error(
+            FailureCode::TargetStale,
+            "the report folder was removed, replaced or linked since the task started",
+        )));
     }
     for source in &task.sources {
-        let current = provider
-            .entry_identity(&source.path)
-            .ok()
-            .and_then(|identity| identity.sha256);
+        // The same bounded read start used (the provider's read limit), so
+        // a source swapped for a huge file is refused, not hashed.
+        let current = provider.read_text(&source.path).ok().and_then(|read| {
+            read.get("text")
+                .and_then(Value::as_str)
+                .map(|text| sha256_hex(text.as_bytes()))
+        });
         if current.as_deref() != Some(source.sha256.as_str()) {
             return Err(Blocked::Stale(error(
                 FailureCode::TargetStale,
@@ -582,7 +632,19 @@ fn check_current(
             )));
         }
     }
-    match std::fs::symlink_metadata(workspace.root.join(destination)) {
+    let target = workspace.root.join(destination);
+    let parent_kept = target
+        .parent()
+        .and_then(|parent| std::fs::canonicalize(parent).ok())
+        .as_ref()
+        == Some(&task.folder_canonical);
+    if !parent_kept {
+        return Err(Blocked::Other(error(
+            FailureCode::PathEscape,
+            "the report destination is not in the task's folder",
+        )));
+    }
+    match std::fs::symlink_metadata(&target) {
         Ok(_) => Err(Blocked::Exists(error(
             FailureCode::TargetStale,
             format!("{destination} exists; a report task never overwrites, choose another name"),
@@ -673,7 +735,7 @@ fn commit(
     approval: &impl ApprovalBroker,
     tasks: &TaskRegistry,
     request: &RequestEnvelope,
-    after_approval: &dyn Fn(),
+    hooks: &Hooks<'_>,
 ) -> Result<Value, ProviderError> {
     let task = tasks.open_task(argument(request, "task_id")?, &workspace.id)?;
     let name = argument(request, "name")?;
@@ -708,7 +770,7 @@ fn commit(
         "create report (create-only, never overwrites)",
         proposal.destination.clone(),
         format!(
-            "{} bytes; SHA-256 {}; task {} \"{}\"; sources: {sources}",
+            "{} bytes; SHA-256 {}; task {}; sources: {sources}; planner title (not verified): {:?}",
             proposal.bytes, proposal.sha256, task.id, task.title
         ),
         digest.clone(),
@@ -737,7 +799,7 @@ fn commit(
         task.state = TaskState::Committing;
     });
 
-    after_approval();
+    (hooks.after_approval)();
     if let Err(reason) = check_current(workspace, &task, &proposal.destination) {
         // The approval is spent. A changed source or folder ends the task;
         // an existing destination leaves it open for a new name and a new
@@ -761,12 +823,14 @@ fn commit(
             return Err(failure);
         }
     };
-    // `create_if_missing` with no expected hash: the provider refuses any
-    // existing file and creates with create-new.
-    let written = provider.write_text(&proposal.destination, content, None, true);
+    (hooks.before_write)();
+    // Create-only: the provider's create-new open refuses any existing
+    // entry at the name without opening it.
+    let written = provider.create_text(&proposal.destination, content);
     let check = report_check::check(&report_check::Expectation {
         root: &workspace.root,
-        folder: &task.folder_resolved,
+        folder_path: &workspace.root.join(&task.folder),
+        folder: &task.folder_canonical,
         destination: &proposal.destination,
         sha256: &proposal.sha256,
         bytes: proposal.bytes,

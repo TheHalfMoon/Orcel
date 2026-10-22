@@ -366,7 +366,10 @@ fn sg126_an_existing_destination_is_never_overwritten() {
         &consent.broker,
         &tasks,
         &commit_request(&task, "q3.md", &report),
-        &|| std::fs::write(&race, b"created during the approval").unwrap(),
+        &Hooks {
+            after_approval: &|| std::fs::write(&race, b"created during the approval").unwrap(),
+            before_write: &|| {},
+        },
     )
     .unwrap_err();
     assert_eq!(refused.code, FailureCode::TargetStale);
@@ -485,7 +488,10 @@ fn sg126_a_changed_source_makes_the_task_stale_and_writes_nothing() {
                     &consent.broker,
                     &tasks,
                     &commit_request(&task, "q3.md", &report),
-                    &change,
+                    &Hooks {
+                        after_approval: &change,
+                        before_write: &|| {},
+                    },
                 )
             }
         };
@@ -560,6 +566,7 @@ fn sg126_the_checker_fails_on_tampered_bytes_size_folder_and_sources() {
     let scene = Scene::new("checker");
     let root = scene.root().to_path_buf();
     let folder = std::fs::canonicalize(root.join("reports")).unwrap();
+    let folder_path = root.join("reports");
     let report = "Total: 37300.75\n";
     std::fs::write(root.join("reports/r.md"), report).unwrap();
     let sources = vec![SourceRecord {
@@ -571,6 +578,7 @@ fn sg126_the_checker_fails_on_tampered_bytes_size_folder_and_sources() {
     let expect = |destination: &'static str, sha256: &str, bytes: u64, folder: &Path| {
         report_check::check(&report_check::Expectation {
             root: &root,
+            folder_path: &folder_path,
             folder,
             destination,
             sha256,
@@ -656,6 +664,10 @@ fn sg126_report_requests_are_local_only_and_policy_admitted() {
     );
     assert!(!remote.ok);
     assert_eq!(
+        remote.error.as_ref().unwrap().code,
+        FailureCode::CapabilityDenied
+    );
+    assert_eq!(
         tasks.list()["tasks"],
         json!([]),
         "a remote start opens no task"
@@ -694,7 +706,11 @@ fn sg126_report_requests_are_local_only_and_policy_admitted() {
             &tasks,
             envelope(request, false),
         );
-        assert!(!refused.ok, "{name}");
+        assert_eq!(
+            refused.error.as_ref().map(|error| error.code.clone()),
+            Some(FailureCode::PathEscape),
+            "{name}"
+        );
     }
     let remote_commit = handle_envelope(
         &policy,
@@ -703,7 +719,10 @@ fn sg126_report_requests_are_local_only_and_policy_admitted() {
         &tasks,
         envelope(commit_request(&task, "q3.md", "x"), true),
     );
-    assert!(!remote_commit.ok);
+    assert_eq!(
+        remote_commit.error.as_ref().map(|error| error.code.clone()),
+        Some(FailureCode::CapabilityDenied)
+    );
     assert_eq!(approval.shown(), 0);
     let audit_log = std::fs::read_to_string(scene.dir.join("audit.jsonl")).unwrap();
     assert!(audit_log.contains("REMOTE_DENIED"));
@@ -750,4 +769,223 @@ fn sg126_the_registry_is_bounded_and_evicts_only_finished_tasks() {
     assert!(tasks.get(&ids[2]).is_none());
     assert!(tasks.get(&ids[0]).is_some());
     assert_eq!(tasks.list()["tasks"].as_array().unwrap().len(), MAX_TASKS);
+}
+
+/// A directory link: a junction on Windows (no privilege needed), a
+/// symbolic link elsewhere.
+pub(crate) fn link_dir(link: &Path, target: &Path) {
+    #[cfg(windows)]
+    {
+        let output = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .output()
+            .expect("run mklink");
+        assert!(output.status.success(), "mklink /J failed: {output:?}");
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, link).expect("symlink");
+}
+
+#[test]
+fn sg126_the_write_itself_never_opens_an_existing_entry() {
+    let scene = Scene::new("write-race");
+    let tasks = TaskRegistry::new();
+    let started = start_q3(&scene, &tasks);
+    let task = started["task_id"].as_str().unwrap().to_owned();
+    let report = plan_report(&started);
+    preview(&scene, &tasks, &task, "q3.md", &report).unwrap();
+    let consent = consent(
+        &scene,
+        &[ApprovalDecision::Approved, ApprovalDecision::Approved],
+    );
+    // A regular file planted after every check, immediately before the
+    // create: refused by the create-new open, unchanged, task reopened.
+    let planted = scene.root().join("reports/q3.md");
+    let refused = dispatch_with(
+        &scene.workspace,
+        &consent.broker,
+        &tasks,
+        &commit_request(&task, "q3.md", &report),
+        &Hooks {
+            after_approval: &|| {},
+            before_write: &|| std::fs::write(&planted, b"planted").unwrap(),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(refused.code, FailureCode::TargetStale);
+    assert_eq!(std::fs::read(&planted).unwrap(), b"planted");
+    assert_eq!(state(&tasks, &task), "proposed");
+    assert!(tasks.get(&task).unwrap()["check"].is_null());
+    // The same bytes planted there still never verify: orceld did not
+    // write them.
+    preview(&scene, &tasks, &task, "q3-b.md", &report).unwrap();
+    let same = scene.root().join("reports/q3-b.md");
+    let refused = dispatch_with(
+        &scene.workspace,
+        &consent.broker,
+        &tasks,
+        &commit_request(&task, "q3-b.md", &report),
+        &Hooks {
+            after_approval: &|| {},
+            before_write: &|| std::fs::write(&same, report.as_bytes()).unwrap(),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(refused.code, FailureCode::TargetStale);
+    assert_ne!(state(&tasks, &task), "verified");
+    // A link planted at the name is refused and its target untouched.
+    #[cfg(unix)]
+    {
+        let theirs = scene.dir.join("theirs.md");
+        std::fs::write(&theirs, b"theirs").unwrap();
+        preview(&scene, &tasks, &task, "q3-c.md", &report).unwrap();
+        let link = scene.root().join("reports/q3-c.md");
+        let consent = consent_for_one_more(&scene);
+        let refused = dispatch_with(
+            &scene.workspace,
+            &consent.broker,
+            &tasks,
+            &commit_request(&task, "q3-c.md", &report),
+            &Hooks {
+                after_approval: &|| {},
+                before_write: &|| std::os::unix::fs::symlink(&theirs, &link).unwrap(),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(refused.code, FailureCode::TargetStale);
+        assert_eq!(std::fs::read(&theirs).unwrap(), b"theirs");
+    }
+}
+
+#[test]
+fn sg126_a_folder_linked_away_before_the_write_never_verifies() {
+    let scene = Scene::new("folder-swap");
+    let tasks = TaskRegistry::new();
+    let started = start_q3(&scene, &tasks);
+    let task = started["task_id"].as_str().unwrap().to_owned();
+    let report = plan_report(&started);
+    preview(&scene, &tasks, &task, "q3.md", &report).unwrap();
+    let consent = consent(&scene, &[ApprovalDecision::Approved]);
+    let other = scene.root().join("other");
+    std::fs::create_dir(&other).unwrap();
+    let reports = scene.root().join("reports");
+    let moved = scene.root().join("moved");
+    let outcome = dispatch_with(
+        &scene.workspace,
+        &consent.broker,
+        &tasks,
+        &commit_request(&task, "q3.md", &report),
+        &Hooks {
+            after_approval: &|| {},
+            before_write: &|| {
+                std::fs::rename(&reports, &moved).unwrap();
+                link_dir(&reports, &other);
+            },
+        },
+    );
+    let refused = outcome.unwrap_err();
+    assert_ne!(state(&tasks, &task), "verified");
+    // The provider followed the link to a folder inside the workspace (it
+    // refuses anything outside the root); the checker refused the result.
+    assert!(other.join("q3.md").exists());
+    assert_eq!(refused.code, FailureCode::PostconditionFailed);
+    assert_eq!(state(&tasks, &task), "verification_failed");
+    assert_eq!(tasks.get(&task).unwrap()["check"]["passed"], false);
+    assert!(!moved.join("q3.md").exists());
+}
+
+#[test]
+fn sg126_linked_folders_are_refused_on_every_os() {
+    let scene = Scene::new("linked-folder");
+    let tasks = TaskRegistry::new();
+    let approval = consent(&scene, &[]);
+    let inside = scene.root().join("inside");
+    std::fs::create_dir(&inside).unwrap();
+    link_dir(&scene.root().join("linked"), &inside);
+    let refused = dispatch(
+        &scene.workspace,
+        &approval.broker,
+        &tasks,
+        &request(
+            "start",
+            json!({"title": "t", "sources": ["data/q3.csv"], "folder": "linked"}),
+        ),
+    )
+    .unwrap_err();
+    assert_ne!(refused.code, FailureCode::InternalError);
+    assert_eq!(tasks.list()["tasks"], json!([]));
+    // A folder replaced by a link after start makes the task stale.
+    let started = start_q3(&scene, &tasks);
+    let task = started["task_id"].as_str().unwrap().to_owned();
+    std::fs::rename(scene.root().join("reports"), scene.root().join("moved")).unwrap();
+    link_dir(&scene.root().join("reports"), &inside);
+    let refused = preview(&scene, &tasks, &task, "q3.md", "x").unwrap_err();
+    assert_eq!(refused.code, FailureCode::TargetStale);
+    assert_eq!(state(&tasks, &task), "stale");
+    // The checker refuses a linked folder even when the bytes match.
+    let report = "x";
+    std::fs::write(inside.join("r.md"), report).unwrap();
+    let canonical = std::fs::canonicalize(scene.root().join("moved")).unwrap();
+    let checked = report_check::check(&report_check::Expectation {
+        root: scene.root(),
+        folder_path: &scene.root().join("reports"),
+        folder: &canonical,
+        destination: "reports/r.md",
+        sha256: &sha256_hex(report.as_bytes()),
+        bytes: 1,
+        sources: &[],
+    });
+    assert!(checked.is_err());
+    assert_eq!(std::fs::read_dir(&inside).unwrap().count(), 1);
+}
+
+#[test]
+fn sg126_a_source_grown_past_the_read_bound_is_stale() {
+    let scene = Scene::new("big-source");
+    let tasks = TaskRegistry::new();
+    let started = start_q3(&scene, &tasks);
+    let task = started["task_id"].as_str().unwrap().to_owned();
+    let big = std::fs::File::create(scene.root().join("data/q3.csv")).unwrap();
+    // Past the provider read bound (1 MiB); start read the source through
+    // that same bound.
+    big.set_len(4 << 20).unwrap();
+    drop(big);
+    let began = std::time::Instant::now();
+    let refused = preview(&scene, &tasks, &task, "q3.md", "x").unwrap_err();
+    assert_eq!(refused.code, FailureCode::TargetStale);
+    assert!(began.elapsed() < std::time::Duration::from_secs(10));
+    assert_eq!(state(&tasks, &task), "stale");
+}
+
+#[cfg(unix)]
+#[test]
+fn sg126_a_backslash_in_a_unix_folder_name_stays_in_that_folder() {
+    let scene = Scene::new("backslash");
+    let tasks = TaskRegistry::new();
+    std::fs::create_dir(scene.root().join("rep\\")).unwrap();
+    let approval = consent(&scene, &[ApprovalDecision::Approved]);
+    let started = dispatch(
+        &scene.workspace,
+        &approval.broker,
+        &tasks,
+        &request(
+            "start",
+            json!({"title": "t", "sources": ["data/q3.csv"], "folder": "rep\\"}),
+        ),
+    )
+    .unwrap();
+    let task = started["task_id"].as_str().unwrap().to_owned();
+    let previewed = preview(&scene, &tasks, &task, "q3.md", "x").unwrap();
+    assert_eq!(previewed["destination"], "rep\\/q3.md");
+    dispatch(
+        &scene.workspace,
+        &approval.broker,
+        &tasks,
+        &commit_request(&task, "q3.md", "x"),
+    )
+    .expect("commit");
+    assert!(scene.root().join("rep\\").join("q3.md").exists());
+    assert!(!scene.root().join("rep").exists());
 }

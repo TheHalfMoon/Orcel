@@ -5,7 +5,8 @@
 //! destination with plain `std::fs` reads and passes only when
 //!
 //! - the destination is a regular file, not a link or reparse point;
-//! - its parent is the task's recorded folder;
+//! - the folder is not a link or reparse point and the destination's
+//!   parent canonicalizes to the folder's path recorded at start;
 //! - its size and SHA-256 are exactly the approved ones;
 //! - every source still hashes to the value the task recorded.
 //!
@@ -25,7 +26,10 @@ const MAX_SOURCE_BYTES: u64 = 1024 * 1024;
 /// What the created report must be.
 pub(crate) struct Expectation<'a> {
     pub root: &'a Path,
-    /// The folder as the task resolved it at start.
+    /// The folder's path in the workspace (not resolved).
+    pub folder_path: &'a Path,
+    /// The folder's canonical path as the task recorded it at start. It is
+    /// compared as recorded, never resolved again.
     pub folder: &'a Path,
     /// Workspace-relative destination.
     pub destination: &'a str,
@@ -82,9 +86,12 @@ pub(crate) fn check(expected: &Expectation<'_>) -> Result<serde_json::Value, Str
         .parent()
         .and_then(|parent| fs::canonicalize(parent).ok())
         .ok_or("the destination's folder cannot be resolved")?;
-    let folder = fs::canonicalize(expected.folder)
-        .map_err(|error| format!("the task folder cannot be resolved: {error}"))?;
-    if parent != folder {
+    let folder = fs::symlink_metadata(expected.folder_path)
+        .map_err(|error| format!("the task folder cannot be inspected: {error}"))?;
+    if folder.file_type().is_symlink() || is_reparse_point(&folder) || !folder.is_dir() {
+        return Err("the task folder is no longer a plain directory".into());
+    }
+    if parent != expected.folder {
         return Err("the destination is not in the task's folder".into());
     }
     if bytes != expected.bytes {
