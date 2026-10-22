@@ -271,7 +271,7 @@ export const TOOL_CONTRACT: Readonly<Record<string, ToolContractEntry>> = {
   },
   browser_download_preview: {
     capability: "browser.download", operation: "preview", effect: "preview", approval: "none", remote: "local_only",
-    outputBound: "the source, folder, file name and host binding; writes nothing",
+    outputBound: "the link's origin, file name and digest, the folder and the file name; writes nothing",
     annotations: read("Preview isolated browser download")
   },
   browser_download: {

@@ -83,6 +83,12 @@ const AUTHORITY_FIELDS: &[&str] = &[
 ];
 
 const MAX_URL_BYTES: usize = 2048;
+/// The file types a live download may create: documents and images, never
+/// code, scripts, shortcuts or tool configuration (`conftest.py`,
+/// `Makefile`, `package.json`, `*.bat`, `*.lnk`, `desktop.ini`).
+const DOWNLOAD_EXTENSIONS: &[&str] = &[
+    "pdf", "csv", "txt", "xlsx", "docx", "pptx", "png", "jpg", "jpeg",
+];
 const MAX_PAGE_ID_BYTES: usize = 128;
 const MAX_NODE_ID_BYTES: usize = 64;
 
@@ -207,6 +213,15 @@ pub fn validate_live_browser(request: &RequestEnvelope) -> Result<(), PolicyErro
                 {
                     return Err(invalid("file_name must not name a hidden file or folder"));
                 }
+                let extension = name
+                    .rsplit_once('.')
+                    .map(|(_, extension)| extension.to_ascii_lowercase());
+                if !extension.is_some_and(|e| DOWNLOAD_EXTENSIONS.contains(&e.as_str())) {
+                    return Err(invalid(format!(
+                        "file_name must end in one of: {}",
+                        DOWNLOAD_EXTENSIONS.join(", ")
+                    )));
+                }
             }
             _ => return Err(invalid("unknown live browser field")),
         }
@@ -263,12 +278,14 @@ mod tests {
             ),
         ];
         for request in &ok {
-            validate_live_browser(request).unwrap_or_else(|error| {
-                panic!(
-                    "{}/{}: {}",
-                    request.capability, request.operation, error.message
-                )
-            });
+            let accepted = validate_live_browser(request);
+            assert!(
+                accepted.is_ok(),
+                "{}/{}: {:?}",
+                request.capability,
+                request.operation,
+                accepted.err().map(|error| error.message)
+            );
         }
         let code = |capability: &str, operation: &str, arguments: Value| {
             validate_live_browser(&request(capability, operation, arguments))
@@ -331,6 +348,31 @@ mod tests {
                 "browser.download",
                 "download",
                 json!({"page_id": "pg-a1", "node_id": "d1-e7", "file_name": ".vscode/tasks.json", "expected_generation": 1}),
+            ),
+            (
+                "browser.download",
+                "download",
+                json!({"page_id": "pg-a1", "node_id": "d1-e7", "file_name": "conftest.py", "expected_generation": 1}),
+            ),
+            (
+                "browser.download",
+                "download",
+                json!({"page_id": "pg-a1", "node_id": "d1-e7", "file_name": "tools/package.json", "expected_generation": 1}),
+            ),
+            (
+                "browser.download",
+                "download",
+                json!({"page_id": "pg-a1", "node_id": "d1-e7", "file_name": "run.bat", "expected_generation": 1}),
+            ),
+            (
+                "browser.download",
+                "download",
+                json!({"page_id": "pg-a1", "node_id": "d1-e7", "file_name": "Makefile", "expected_generation": 1}),
+            ),
+            (
+                "browser.download",
+                "preview",
+                json!({"page_id": "pg-a1", "node_id": "d1-e7", "file_name": "x.lnk", "expected_generation": 1}),
             ),
         ] {
             let refused = code(capability, operation, arguments.clone());

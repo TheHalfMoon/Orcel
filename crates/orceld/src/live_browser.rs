@@ -531,7 +531,7 @@ fn refused(code: &str) -> ProviderError {
     ProviderError::new(failure_for(code), format!("browser host refused: {code}"))
 }
 
-fn sha256_hex(text: &str) -> String {
+pub(crate) fn sha256_hex(text: &str) -> String {
     Sha256::digest(text.as_bytes())
         .iter()
         .map(|byte| format!("{byte:02x}"))
@@ -889,16 +889,25 @@ impl LiveBrowser {
         let origin = orcel_provider_browser::parse_destination_url(url)
             .map_err(from_page)?
             .origin;
-        if self.lifetime.is_none() || self.lifetime_origin.as_deref() != Some(origin.as_str()) {
+        let switched =
+            self.lifetime.is_none() || self.lifetime_origin.as_deref() != Some(origin.as_str());
+        if switched {
+            // The old lifetime ends before the prompt, so the approval binds
+            // the new lifetime and its host pin. The page's generation moves
+            // only when a navigation commits (navigate's follow), once: the
+            // caller's generation stays valid across a denial, and every
+            // node id and approval of the old lifetime is stale by lifetime
+            // (the host never resolves them; the digest binds the lifetime).
             self.end_lifetime();
             self.open_public(workspace, url)?;
-            // The page now belongs to the new lifetime: a new generation and
-            // the new origin, so orceld's half of the coming approval binds
-            // them (with the host's new pin), and every node id or approval
-            // of the old lifetime is stale by generation (judge, slice 3c).
-            self.follow(url)?;
         }
-        self.navigate(workspace, approval, url)
+        let navigated = self.navigate(workspace, approval, url);
+        if navigated.is_err() && switched {
+            // A denied or failed switch leaves no lifetime, as decision 2
+            // says: the fresh one never held a document of this page.
+            self.end_lifetime();
+        }
+        navigated
     }
 
     /// Slice 3c: a bounded observation of the live page, with the host's
@@ -1012,7 +1021,7 @@ impl LiveBrowser {
     /// Record a committed document on the page (navigation or activation):
     /// a new generation, so earlier approvals and observations go stale. If
     /// the store cannot follow the host, the lifetime ends.
-    fn follow(&mut self, url: &str) -> Result<PageRecord, ProviderError> {
+    pub(crate) fn follow(&mut self, url: &str) -> Result<PageRecord, ProviderError> {
         let moved = orcel_provider_browser::parse_destination_url(url)
             .map_err(from_page)
             .and_then(|origin| {

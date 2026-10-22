@@ -280,11 +280,31 @@ mod live {
                                 "the link leaves the live page's origin; only same-origin documents are downloaded",
                             ));
                         }
+                        // Not the raw link: its path and query are the
+                        // page's text. The origin is the page's own, the
+                        // name is its last segment (bounded, plain), and the
+                        // digest identifies the link (judge, slice 3c).
+                        let name = source
+                            .split(['?', '#'])
+                            .next()
+                            .and_then(|path| path.rsplit('/').next())
+                            .unwrap_or("");
+                        let name = if name.len() <= MAX_SOURCE_NAME_BYTES
+                            && name
+                                .bytes()
+                                .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+                        {
+                            name
+                        } else {
+                            ""
+                        };
                         return Ok(json!({
                             "page_id": page_id,
                             "generation": expected,
                             "node_id": node_id,
-                            "source": source,
+                            "source_origin": origin,
+                            "source_name": name,
+                            "source_sha256": crate::live_browser::sha256_hex(&source),
                             "source_is_page_controlled": true,
                             "destination_folder": folder.to_string_lossy(),
                             "file_name": file_name,
@@ -296,8 +316,20 @@ mod live {
                     let committed =
                         browser.download(workspace, approval, node_id, &folder, file_name)?;
                     let record_id = committed.record_id.clone();
+                    // The worker downloads by following the link and never
+                    // renders the document it captured, so the page no
+                    // longer shows what was observed: the page store moves
+                    // to a new generation, and the caller navigates again
+                    // before acting on it. If the store cannot follow, the
+                    // lifetime ends (follow), and the committed file is
+                    // still reported, with no generation.
+                    let generation = browser
+                        .follow(&committed.source_url)
+                        .ok()
+                        .map(|page| page.generation);
                     Ok(json!({
                         "page_id": page_id,
+                        "generation": generation,
                         "relative": committed.relative,
                         "sha256": committed.sha256,
                         "bytes": committed.bytes,
@@ -314,8 +346,10 @@ mod live {
         }
     }
 
-    /// The longest link a preview hands out.
+    /// The longest link a preview accepts.
     const MAX_SOURCE_BYTES: usize = 2048;
+    /// The longest file name of a link a preview hands out.
+    const MAX_SOURCE_NAME_BYTES: usize = 128;
 
     fn stale() -> ProviderError {
         ProviderError::new(FailureCode::TargetStale, "no live browser page")
@@ -510,7 +544,8 @@ mod native {
         let page_id = opened["page_id"].as_str().expect("page id").to_owned();
         assert_eq!(opened["generation"], 0);
 
-        // A denied navigation reaches no site and leaves the page where it was.
+        // A denied navigation reaches no site and leaves the page where it
+        // was: the same generation, no lifetime.
         let denied = kernel.call(
             &deny,
             "browser.navigation",
@@ -598,9 +633,9 @@ mod native {
         if let Some(latest) = observed["latest_dated_link"].as_str() {
             println!("SG108-EVIDENCE public journey note: the host also selected {latest}");
         }
-        let (date, node, source) = dated
+        let (date, node, identity) = dated
             .iter()
-            .filter(|(_, _, source)| source.contains("fomcminutes"))
+            .filter(|(_, _, identity)| identity.starts_with("fomcminutes"))
             .max()
             .cloned()
             .expect("dated minutes on the public list");
@@ -657,7 +692,12 @@ mod native {
         );
         assert_eq!(committed["sha256"], sha256_hex(&bytes));
         assert_eq!(committed["bytes"], bytes.len() as u64);
-        assert_eq!(committed["source_url"], source.as_str());
+        // The link the preview identified is the one committed.
+        let source = committed["source_url"].as_str().expect("source").to_owned();
+        assert!(
+            identity.ends_with(&format!(" {}", sha256_hex(source.as_bytes()))),
+            "the committed link is not the previewed one"
+        );
         // The independent checker: the same URL fetched outside Orcel.
         let independent = independent_fetch(&source, &kernel.root.join("independent.pdf"));
         assert_eq!(
@@ -665,6 +705,35 @@ mod native {
             sha256_hex(&bytes),
             "the bytes differ from the site's"
         );
+
+        // The download followed the link, so the page moved on: the old
+        // generation is stale, and the list is navigated again.
+        let after = committed["generation"]
+            .as_u64()
+            .expect("generation after the download");
+        assert_eq!(after, generation + 1);
+        assert_eq!(
+            code(&kernel.call(
+                &approve,
+                "browser.snapshot",
+                "observe",
+                json!({"page_id": page_id, "expected_generation": generation}),
+                live
+            )),
+            FailureCode::TargetStale
+        );
+        let renavigated = ok(
+            &kernel.call(
+                &approve,
+                "browser.navigation",
+                "navigate",
+                json!({"page_id": page_id, "url": list, "expected_generation": after}),
+                live,
+            ),
+            "navigate again",
+        );
+        let generation = renavigated["generation"].as_u64().expect("generation");
+        assert_eq!(generation, after + 1);
 
         // Create-only: the same document to the same name again, through a
         // fresh observation and a fresh approval, is refused at the commit
@@ -684,7 +753,7 @@ mod native {
         let node_again =
             regex_free_dated_pdfs(&kernel, &approve, &page_id, generation, &nodes_again)
                 .into_iter()
-                .find(|(_, _, again)| again == &source)
+                .find(|(_, _, again)| again == &identity)
                 .map(|(_, node, _)| node)
                 .expect("the same document observed again");
         let again = kernel.call(
@@ -717,7 +786,7 @@ mod native {
         let _ = std::fs::remove_dir_all(&kernel.root);
     }
 
-    /// (date, node, source) for every previewed link that is a same-origin
+    /// (date, node, "name digest") for every previewed link that is a same-origin
     /// PDF whose file name carries a YYYYMMDD or YYYY-MM-DD date.
     fn regex_free_dated_pdfs(
         kernel: &Kernel,
@@ -735,15 +804,19 @@ mod native {
                 json!({"page_id": page_id, "node_id": node, "file_name": "probe.pdf", "expected_generation": generation}),
                 Some(profile_gate::BROWSER_STRUCTURED_PROFILE),
             );
-            let Some(source) = preview
-                .result
-                .as_ref()
-                .and_then(|r| r["source"].as_str())
-                .map(str::to_owned)
-            else {
+            let Some(result) = preview.result.as_ref() else {
                 continue;
             };
-            let name = source.rsplit('/').next().unwrap_or("").to_ascii_lowercase();
+            assert!(
+                result.get("source").is_none(),
+                "a preview handed out the raw link"
+            );
+            let (Some(name), Some(source)) = (
+                result["source_name"].as_str().map(str::to_ascii_lowercase),
+                result["source_sha256"].as_str().map(str::to_owned),
+            ) else {
+                continue;
+            };
             if !name.ends_with(".pdf") {
                 continue;
             }
@@ -754,7 +827,7 @@ mod native {
                 .map(|w| String::from_utf8_lossy(w).into_owned())
                 .find(|d| d.starts_with("20") && (&d[4..6] >= "01" && &d[4..6] <= "12"))
             {
-                found.push((date, node.clone(), source));
+                found.push((date, node.clone(), format!("{name} {source}")));
             }
         }
         found

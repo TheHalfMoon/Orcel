@@ -331,3 +331,8 @@ if (process.env.ORCEL_SG108_REQUIRE_JOURNEY === "1" && !journeyRan) {
   process.stderr.write("browser-launcher:native: ORCEL_SG108_REQUIRE_JOURNEY=1, yet the public journey did not run\n");
   process.exit(1);
 }
+if (!journeyRan) {
+  // Passing on the refusal is right for CI (a managed policy), but it is
+  // not evidence of the journey: say so where nobody can miss it.
+  process.stdout.write("SG108-EVIDENCE public journey NOT exercised on this host (typed refusal only); evidence requires ORCEL_SG108_REQUIRE_JOURNEY=1\n");
+}
