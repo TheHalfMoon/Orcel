@@ -103,7 +103,8 @@ class Cleanup {
 }
 
 function nativeTest(name: string, body: (t: Cleanup) => Promise<void>, todo?: string): void {
-  test(name, { skip, todo, timeout: 120_000 }, async () => {
+  // A hang guard above every event wait a test makes (#374).
+  test(name, { skip, todo, timeout: 300_000 }, async () => {
     const cleanup = new Cleanup();
     let failure: unknown = null;
     try {
@@ -167,6 +168,35 @@ function engineCommandLines(profile: string): string[] {
   return out.split(/\r?\n/).filter((line) => line.trim().length > 0);
 }
 
+/// #374: how long a test waits for an event before it fails. A hang guard
+/// only: the waits return as soon as their event happens, so a loaded
+/// runner can be slow without failing, and an event that never comes still
+/// fails the test.
+const EVENT_DEADLINE_MS = 90_000;
+
+/// Whether every engine process using `profile` has exited: a query for
+/// them, a wait on those processes themselves (Wait-Process waits on their
+/// handles), and again for any that appeared meanwhile, until none remain or
+/// the deadline passes. Not a fixed-interval loop of process queries, each of
+/// which costs seconds on a loaded runner.
+function engineExited(profile: string, timeoutMs: number = EVENT_DEADLINE_MS): boolean {
+  const leaf = profile.split("\\").pop() ?? profile;
+  const seconds = Math.max(1, Math.ceil(timeoutMs / 1000));
+  const out = execFileSync(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      `$ErrorActionPreference='Stop'; $q = { @(Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" | Where-Object { $_.CommandLine -like '*${leaf}*' }) }; $deadline = (Get-Date).AddSeconds(${seconds}); $p = & $q; while ($p.Count -gt 0 -and (Get-Date) -lt $deadline) { $left = [Math]::Max(1, [int]($deadline - (Get-Date)).TotalSeconds); Wait-Process -Id $p.ProcessId -Timeout $left -ErrorAction SilentlyContinue; $p = & $q }; $p.Count`
+    ],
+    { encoding: "utf8", timeout: timeoutMs + 60_000 }
+  );
+  const count = out.trim();
+  assert.match(count, /^\d+$/, `engine process query answered ${JSON.stringify(count)}`);
+  return Number(count) === 0;
+}
+
 async function waitFor(condition: () => boolean, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -181,7 +211,7 @@ async function waitFor(condition: () => boolean, timeoutMs: number): Promise<boo
 function profileFor(t: Cleanup, label: string): string {
   const profile = mkdtempSync(join(tmpdir(), `sg108-${label}-`));
   t.after(async () => {
-    await waitFor(() => engineCommandLines(profile).length === 0, 15_000);
+    engineExited(profile);
     rmSync(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
   });
   return profile;
@@ -290,7 +320,7 @@ nativeTest("the worker drives the installed engine with exactly the host argv an
   worker.send({ frame: "shutdown" });
   assert.deepEqual(await worker.reply(4), { frame: "bye" });
   assert.equal(await worker.exited, 0);
-  assert.ok(await waitFor(() => engineCommandLines(profile).length === 0, 10_000), "engine processes remain after shutdown");
+  assert.ok(engineExited(profile), "engine processes remain after shutdown");
 });
 
 nativeTest("killing the worker takes the engine down with its pipe", async (t) => {
@@ -305,7 +335,7 @@ nativeTest("killing the worker takes the engine down with its pipe", async (t) =
   await worker.exited;
   // The host's kill-on-close Job Object (slice 2b-ii) is the guarantee;
   // this proves the engine also exits on its own when the pipe closes.
-  assert.ok(await waitFor(() => engineCommandLines(profile).length === 0, 15_000), "engine survived the worker");
+  assert.ok(engineExited(profile), "engine survived the worker");
 });
 
 nativeTest("resolver pinning and the no-route proxy confine traffic without any policy route", async (t) => {
@@ -470,8 +500,15 @@ nativeTest("a same-user process cannot activate the worker's inspector when it r
   await new Promise((resolve) => setTimeout(resolve, 750));
   const controlBefore = await listening(9229);
   debugProcess?.(plain.pid ?? 0);
-  await new Promise((resolve) => setTimeout(resolve, 1500));
-  assert.deepEqual({ before: controlBefore, after: await listening(9229) }, { before: false, after: true }, "the probe detects an activated inspector");
+  // #374: until the activated inspector listens (the positive control), not
+  // a fixed time.
+  const controlDeadline = Date.now() + EVENT_DEADLINE_MS;
+  let controlAfter = await listening(9229);
+  while (!controlAfter && Date.now() < controlDeadline) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    controlAfter = await listening(9229);
+  }
+  assert.deepEqual({ before: controlBefore, after: controlAfter }, { before: false, after: true }, "the probe detects an activated inspector");
 });
 
 // ---------------------------------------------------------------------------
@@ -589,7 +626,7 @@ function webServiceWorkers(context: BrowserContext): string[] {
 async function tryWebTransport(context: BrowserContext, url: string): Promise<string> {
   const page = await context.newPage();
   try {
-    await page.goto("https://fixture.test/", { timeout: 15_000 });
+    await page.goto("https://fixture.test/", { timeout: EVENT_DEADLINE_MS });
     return await page.evaluate(async (target) => {
       try {
         const transport = new WebTransport(target);
@@ -621,7 +658,7 @@ nativeTest("over HTTPS the confined engine sends no Alt-Svc QUIC and no WebTrans
   // second would use HTTP/3 if --disable-quic did not hold.
   for (const path of ["/first", "/second"]) {
     const page = await context.newPage();
-    const response = await page.goto(`https://fixture.test${path}`, { timeout: 15_000 });
+    const response = await page.goto(`https://fixture.test${path}`, { timeout: EVENT_DEADLINE_MS });
     assert.equal(response?.status(), 200, path);
     await page.close();
   }
@@ -649,12 +686,12 @@ nativeTest("over HTTPS the confined engine sends no Alt-Svc QUIC and no WebTrans
   // the Alt-Svc advertisement, so a zero count above is not vacuous.
   for (const path of ["/first", "/second"]) {
     const page = await control.newPage();
-    await page.goto(`https://fixture.test${path}`, { timeout: 15_000 });
+    await page.goto(`https://fixture.test${path}`, { timeout: EVENT_DEADLINE_MS });
     await page.close();
   }
-  assert.ok(await waitFor(() => fixture.admittedUdp() > 0, 10_000), "the control made no Alt-Svc QUIC attempt");
+  assert.ok(await waitFor(() => fixture.admittedUdp() > 0, EVENT_DEADLINE_MS), "the control made no Alt-Svc QUIC attempt");
   await tryWebTransport(control, "https://127.0.0.1:4433/x");
-  assert.ok(await waitFor(() => fixture.literalUdp() > 0, 10_000), "the control sent no UDP, so the probe proves nothing");
+  assert.ok(await waitFor(() => fixture.literalUdp() > 0, EVENT_DEADLINE_MS), "the control sent no UDP, so the probe proves nothing");
 });
 
 // Accepted residual risk #300 (founder decision 2026-10-11): WebTransport
@@ -692,8 +729,8 @@ nativeTest("the worker's service-worker denial refuses same-origin registration,
   const context = await launchDirect(t, profile, confinedHttpsArgv(profile, tls.spki), { serviceWorkers: "allow" });
   await denyServiceWorkerScripts(context);
   const page = await context.newPage();
-  await page.goto("https://fixture.test/sw", { timeout: 15_000 });
-  await page.waitForFunction(() => document.title.includes("proto:"), undefined, { timeout: 15_000 });
+  await page.goto("https://fixture.test/sw", { timeout: EVENT_DEADLINE_MS });
+  await page.waitForFunction(() => document.title.includes("proto:"), undefined, { timeout: EVENT_DEADLINE_MS });
   const outcome = await page.title();
   await new Promise((resolve) => setTimeout(resolve, 1_000));
   const registered = await page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length);
@@ -709,10 +746,10 @@ nativeTest("the worker's service-worker denial refuses same-origin registration,
     serviceWorkers: "allow"
   });
   const controlPage = await control.newPage();
-  await controlPage.goto("https://fixture.test/sw", { timeout: 15_000 });
-  await controlPage.waitForFunction(() => document.title.includes("proto:"), undefined, { timeout: 15_000 });
+  await controlPage.goto("https://fixture.test/sw", { timeout: EVENT_DEADLINE_MS });
+  await controlPage.waitForFunction(() => document.title.includes("proto:"), undefined, { timeout: EVENT_DEADLINE_MS });
   assert.match(await controlPage.title(), /proto:ok/);
-  assert.ok(await waitFor(() => scripts().length > 0, 10_000), "the control fetched no service-worker script");
+  assert.ok(await waitFor(() => scripts().length > 0, EVENT_DEADLINE_MS), "the control fetched no service-worker script");
   await controlPage.close();
 });
 
@@ -725,8 +762,8 @@ nativeTest("the route stack refuses service workers even when the policy allows 
   const context = await launchDirect(t, profile, confinedHttpsArgv(profile, tls.spki), { serviceWorkers: "allow" });
   const primary = context.pages()[0] ?? (await context.newPage());
   await installRoutes(context, () => primary, { decide: async () => true });
-  await primary.goto("https://fixture.test/sw", { timeout: 15_000 });
-  await primary.waitForFunction(() => document.title.includes("proto:"), undefined, { timeout: 15_000 });
+  await primary.goto("https://fixture.test/sw", { timeout: EVENT_DEADLINE_MS });
+  await primary.waitForFunction(() => document.title.includes("proto:"), undefined, { timeout: EVENT_DEADLINE_MS });
   assert.match(await primary.title(), /^direct:TypeError proto:TypeError$/);
   assert.deepEqual(fixture.hits.filter((hit) => hit.endsWith(".js")), [], "a service-worker script was fetched");
   assert.deepEqual(webServiceWorkers(context), [], "a web service worker is running");
@@ -750,7 +787,10 @@ nativeTest("a cross-site iframe is refused by the policy route, so it cannot reg
       return allowed;
     }
   });
-  await primary.goto("https://fixture.test/sw-cross", { timeout: 15_000 });
+  await primary.goto("https://fixture.test/sw-cross", { timeout: EVENT_DEADLINE_MS });
+  // #374: until the cross-site frame was asked about (checked below), then
+  // what must not happen has time to fail to appear.
+  await waitFor(() => asked.some((q) => q.kind === "frame" && q.url === "https://other.test/sw"), EVENT_DEADLINE_MS);
   await new Promise((resolve) => setTimeout(resolve, 3_000));
   // The cross-site frame was asked about and refused, and never contacted.
   assert.ok(
