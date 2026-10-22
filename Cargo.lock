@@ -1050,6 +1050,7 @@ name = "orcel-provider-git"
 version = "0.2.0"
 dependencies = [
  "orcel-contracts",
+ "orcel-platform",
  "serde_json",
 ]
 
