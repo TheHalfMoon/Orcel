@@ -187,6 +187,38 @@ fn launches() -> usize {
     LAUNCHES.load(Ordering::SeqCst)
 }
 
+/// Whether this test process runs with an elevated token. GitHub's
+/// `windows-latest` runner runs tests elevated (an administrator with UAC
+/// off), and a standard-user desktop does not.
+pub(crate) fn elevated_host() -> bool {
+    // SAFETY: GetCurrentProcess returns a pseudo-handle that needs no close.
+    ChildProcess::snapshot_native_owner(unsafe { GetCurrentProcess() })
+        .expect("own token")
+        .elevation
+        != 0
+}
+
+/// On an elevated host the launcher must refuse: Full User never runs
+/// elevated, and Full Admin is a separate, unarmed grain. This asserts that
+/// refusal with zero launches and returns true, so the caller stops there.
+/// The positive native paths are qualified on a standard-user host.
+pub(crate) fn refuses_on_elevated_host(
+    command: &ShellCommand,
+    owner: &ExpectedNativeOwner,
+) -> bool {
+    if !elevated_host() {
+        return false;
+    }
+    let before = launches();
+    let result = run_one_shot(command, owner);
+    assert!(
+        matches!(&result, Err(ShellFailure::Denied(message)) if message.contains("elevated")),
+        "an elevated host must refuse Full User: {result:?}"
+    );
+    assert_eq!(launches(), before, "an elevated host created a process");
+    true
+}
+
 // ---- fixtures: no-ops unless run as a child with --exact ----
 
 #[test]
@@ -290,6 +322,9 @@ fn sg000096_t02_current_user_one_shot_is_verified_bounded_and_quiescent() {
     let root = disposable("ok");
     let owner = protected_owner(&root.0);
     let command = command_for(&system_tool("whoami.exe"), Vec::new(), &root.0);
+    if refuses_on_elevated_host(&command, &owner) {
+        return;
+    }
     let outcome = run_one_shot(&command, &owner).expect("approved current-user launch");
     assert_eq!(outcome.end, OneShotEnd::Exited { exit_code: 0 });
     assert!(outcome.stdout.complete && outcome.stderr.complete);
@@ -367,6 +402,9 @@ fn sg000096_t02c_pre_resume_faults_terminate_a_child_that_never_ran() {
     let _serial = serial();
     let root = disposable("faults");
     let owner = protected_owner(&root.0);
+    if refuses_on_elevated_host(&fixture("sg96_fixture_marker", &root.0), &owner) {
+        return;
+    }
     for fault in [
         Fault::ForeignJob,
         Fault::InvalidTokenProcess,
@@ -467,6 +505,9 @@ fn sg000096_t02_timeout_is_typed_with_no_exit_status_and_an_empty_job() {
     let mut command = fixture("sg96_fixture_sleep", &root.0);
     command.limits.timeout = Duration::from_secs(1);
     let started = Instant::now();
+    if refuses_on_elevated_host(&command, &owner) {
+        return;
+    }
     let outcome = run_one_shot(&command, &owner).expect("timeout is an outcome");
     assert_eq!(outcome.end, OneShotEnd::TimedOut);
     assert!(outcome.descendants_terminated);
@@ -482,6 +523,9 @@ fn sg000096_t02_output_is_separated_bounded_and_counts_dropped_bytes() {
     let mut command = fixture("sg96_fixture_flood", &root.0);
     command.limits.stdout_bytes = 4096;
     command.limits.stderr_bytes = 4096;
+    if refuses_on_elevated_host(&command, &owner) {
+        return;
+    }
     let outcome = run_one_shot(&command, &owner).expect("flood runs");
     assert_eq!(outcome.end, OneShotEnd::Exited { exit_code: 0 });
     assert_eq!(outcome.stderr.bytes, vec![b'e'; 4096]);
@@ -502,6 +546,9 @@ fn sg000096_t02_unicode_and_binary_output_is_returned_exactly() {
     let _serial = serial();
     let root = disposable("unicode");
     let owner = protected_owner(&root.0);
+    if refuses_on_elevated_host(&fixture("sg96_fixture_unicode", &root.0), &owner) {
+        return;
+    }
     let outcome = run_one_shot(&fixture("sg96_fixture_unicode", &root.0), &owner).expect("runs");
     let mut expected = "h\u{e9}llo \u{2713} \u{65e5}\u{672c}\n".as_bytes().to_vec();
     expected.extend_from_slice(&[0, 0xff, 0xfe, b'\n']);
@@ -513,6 +560,9 @@ fn sg000096_t02_a_descendant_left_behind_is_terminated_not_detached() {
     let _serial = serial();
     let root = disposable("descendant");
     let owner = protected_owner(&root.0);
+    if refuses_on_elevated_host(&fixture("sg96_fixture_descendant", &root.0), &owner) {
+        return;
+    }
     let outcome = run_one_shot(&fixture("sg96_fixture_descendant", &root.0), &owner).expect("runs");
     assert_eq!(outcome.end, OneShotEnd::Exited { exit_code: 0 });
     assert!(outcome.descendants_terminated);
@@ -534,6 +584,9 @@ fn sg000096_t02_job_process_limit_bounds_the_tree() {
     let owner = protected_owner(&root.0);
     let mut command = fixture("sg96_fixture_spawn_probe", &root.0);
     command.limits.max_processes = 1;
+    if refuses_on_elevated_host(&command, &owner) {
+        return;
+    }
     let outcome = run_one_shot(&command, &owner).expect("runs");
     assert!(String::from_utf8_lossy(&outcome.stderr.bytes).contains("spawn-denied"));
     command.limits.max_processes = 4;
@@ -547,6 +600,9 @@ fn sg000096_t02_child_environment_is_exactly_the_allowlisted_set() {
     let root = disposable("env");
     let owner = protected_owner(&root.0);
     let command = fixture("sg96_fixture_env", &root.0);
+    if refuses_on_elevated_host(&command, &owner) {
+        return;
+    }
     let outcome = run_one_shot(&command, &owner).expect("runs");
     let text = String::from_utf8_lossy(&outcome.stderr.bytes);
     let names: Vec<&str> = text
@@ -579,6 +635,9 @@ fn sg000096_t02_endless_output_cannot_starve_the_timeout() {
     command.limits.timeout = Duration::from_secs(2);
     command.limits.stdout_bytes = 4096;
     let started = Instant::now();
+    if refuses_on_elevated_host(&command, &owner) {
+        return;
+    }
     let outcome = run_one_shot(&command, &owner).expect("timeout is an outcome");
     assert_eq!(outcome.end, OneShotEnd::TimedOut);
     assert!(started.elapsed() < Duration::from_secs(20));
