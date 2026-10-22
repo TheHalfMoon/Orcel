@@ -36,6 +36,29 @@ fn stdout_text(registry: &Registry, id: &str) -> String {
     String::from_utf8_lossy(&page.bytes).into_owned()
 }
 
+/// On an elevated host (GitHub's `windows-latest` runner) a session must
+/// be refused before anything launches, and nothing may be registered. This
+/// asserts that and returns true, so the caller stops there; the positive
+/// paths are qualified on a standard-user host.
+fn session_refused_on_elevated_host(command: &ShellCommand, owner: &ExpectedNativeOwner) -> bool {
+    if !super::super::shell::tests::elevated_host() {
+        return false;
+    }
+    let registry = Registry::default();
+    let before = super::super::shell::LAUNCHES.load(std::sync::atomic::Ordering::SeqCst);
+    let result = registry.start(command, &session_limits(), owner, far());
+    assert!(
+        matches!(&result, Err(SessionFailure::Shell(ShellFailure::Denied(message))) if message.contains("elevated")),
+        "an elevated host must refuse a Full User session: {result:?}"
+    );
+    assert_eq!(
+        super::super::shell::LAUNCHES.load(std::sync::atomic::Ordering::SeqCst),
+        before
+    );
+    assert!(registry.list().is_empty());
+    true
+}
+
 // ---- fixtures ----
 
 #[test]
@@ -81,6 +104,9 @@ fn sg000096_t03_session_round_trips_stdin_and_denies_stale_generations() {
     let owner = protected_owner(&root.0);
     let registry = Registry::default();
     let command = fixture_at(PREFIX, "sg96_session_fixture_echo", &root.0);
+    if session_refused_on_elevated_host(&command, &owner) {
+        return;
+    }
     let started = registry
         .start(&command, &session_limits(), &owner, far())
         .expect("session starts");
@@ -169,6 +195,9 @@ fn sg000096_t03_terminate_revoke_and_expiry_end_the_whole_job() {
     let owner = protected_owner(&root.0);
     let registry = Registry::default();
     let command = fixture_at(PREFIX, "sg96_session_fixture_sleep", &root.0);
+    if session_refused_on_elevated_host(&command, &owner) {
+        return;
+    }
 
     let one = registry
         .start(&command, &session_limits(), &owner, far())
@@ -229,6 +258,9 @@ fn sg000096_t03_rings_evict_oldest_output_and_report_the_gap() {
     let owner = protected_owner(&root.0);
     let registry = Registry::default();
     let mut command = fixture_at(PREFIX, "sg96_session_fixture_flood_then_wait", &root.0);
+    if session_refused_on_elevated_host(&command, &owner) {
+        return;
+    }
     command.limits.stderr_bytes = 4096;
     let started = registry
         .start(&command, &session_limits(), &owner, far())
@@ -260,6 +292,9 @@ fn sg000096_t03_stdin_is_bounded_and_never_reported_delivered_early() {
     let registry = Registry::default();
     // The sleeping child never reads stdin, so the pipe fills.
     let command = fixture_at(PREFIX, "sg96_session_fixture_sleep", &root.0);
+    if session_refused_on_elevated_host(&command, &owner) {
+        return;
+    }
     let limits = SessionLimits {
         stdin_frame_bytes: 4096,
         stdin_total_bytes: 64 * 1024,
@@ -309,6 +344,9 @@ fn sg000096_t03_registry_is_bounded_and_ids_are_not_guessable() {
     let owner = protected_owner(&root.0);
     let registry = Registry::default();
     let command = fixture_at(PREFIX, "sg96_session_fixture_sleep", &root.0);
+    if session_refused_on_elevated_host(&command, &owner) {
+        return;
+    }
     let mut ids = std::collections::BTreeSet::new();
     for _ in 0..MAX_LIVE_SESSIONS {
         let status = registry
@@ -342,6 +380,9 @@ fn sg000096_t03_dropping_the_registry_ends_every_session() {
     let root = disposable("session-drop");
     let owner = protected_owner(&root.0);
     let command = fixture_at(PREFIX, "sg96_session_fixture_sleep", &root.0);
+    if session_refused_on_elevated_host(&command, &owner) {
+        return;
+    }
     let pid = {
         let registry = Registry::default();
         registry
@@ -373,6 +414,12 @@ fn sg000096_t03_losing_the_runtime_owner_revokes_the_session() {
     let _serial = serial();
     let root = disposable("session-owner");
     let lease_owner = protected_owner(&root.0);
+    if session_refused_on_elevated_host(
+        &fixture_at(PREFIX, "sg96_session_fixture_sleep", &root.0),
+        &lease_owner,
+    ) {
+        return;
+    }
     // A disposable owner process of the same user and logon session.
     let mut helper = std::process::Command::new(std::env::current_exe().unwrap())
         .args([

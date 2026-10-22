@@ -41,6 +41,7 @@ Expected owners come from a MAC-verified disposable lease, as in T02.
 | `sg000096_t03_an_expired_authority_launches_nothing` | an `expires_at` already past is refused with zero launches |
 | `shell_session::tests::*` (4) | ring offsets, eviction and paging; split UTF-8 and binary; read bound; stdin limit bounds |
 
+- **Elevated hosts.** On GitHub's elevated `windows-latest` runner, each launching session test instead asserts that `start` is refused ("Full User never runs elevated") with zero launches and an empty registry. The positive paths above are qualified on this standard-user host.
 - `cargo test -p orcel-provider-process --lib -- shell`: 39 tests. After the judge fixes they passed 5 consecutive runs with no failure, and 8 before them.
 - `cargo test -p orcel-provider-process`: 86 lib + 8 integration tests pass.
 - `cargo clippy -p orcel-provider-process --all-targets -- -D warnings`: passes on the Windows, Linux and macOS targets. `cargo fmt --all --check` passes.
