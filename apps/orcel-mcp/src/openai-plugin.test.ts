@@ -199,13 +199,24 @@ test("authorization metadata advertises only what the relay implements", () => {
   assert.equal(metadata.authorization_response_iss_parameter_supported, true);
 });
 
-test("at most one grain is active (or the founder-approved SG-000096/SG-000108 pair) and no later grain is activated ahead of it", () => {
+test("at most one grain is active (or the recorded SG-000096/SG-000108/SG-000126 parallel set) and no later grain is activated ahead of it", () => {
   const dir = join(repo, ".specgrain", "specs");
   const specs = readdirSync(dir).filter((name) => /^SG-\d{6}\.json$/.test(name)).sort();
   const active = specs.filter((name) => (JSON.parse(readFileSync(join(dir, name), "utf8")) as { state: string }).state !== "CLOSED");
   // The only lawful parallel pair is SG-000096 with SG-000108, by the founder
   // decision recorded canonically under issue #290. Remove this pin when
   // either grain closes.
+  // SG-000126 (ORCEL-F2) joins that pair only under its recorded
+  // parallel-activation decision (issue #435). Remove this pin when the set
+  // shrinks.
+  if (active.length === 3) {
+    assert.deepEqual(active, ["SG-000096.json", "SG-000108.json", "SG-000126.json"], `parallel active grains: ${active.join(", ")}`);
+    const current = readFileSync(join(repo, "docs", "canonical", "CURRENT.md"), "utf8");
+    assert.ok(current.includes("parallel active grain by founder decision of 2026-10-10 (issue #290)"), "the parallel pair requires the recorded founder decision");
+    assert.ok(current.includes("SG-000126 runs in parallel under its recorded parallel-activation decision (issue #435)"), "SG-000126 requires its recorded parallel-activation decision");
+    assert.equal(specs[specs.length - 1], "SG-000126.json", "no grain beyond the newest active grain exists");
+    return;
+  }
   if (active.length === 2) {
     assert.deepEqual(active, ["SG-000096.json", "SG-000108.json"], `parallel active grains: ${active.join(", ")}`);
     const current = readFileSync(join(repo, "docs", "canonical", "CURRENT.md"), "utf8");

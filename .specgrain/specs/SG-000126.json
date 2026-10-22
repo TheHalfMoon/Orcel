@@ -1,0 +1,134 @@
+{
+  "id": "SG-000126",
+  "title": "First local report task (create-only approval, independent checker)",
+  "program": "ORCEL-F2",
+  "state": "GRAIN",
+  "risk": "medium",
+  "created": "2026-10-22",
+  "base": "58ceada751926d2dc239b34459797dbd4a72f80c",
+  "dependencies": [
+    "SG-000001",
+    "SG-000002",
+    "SG-000018",
+    "SG-000061"
+  ],
+  "planning_issue": 435,
+  "objective": "Run the first complete local task through orceld: a planner reads known figures from workspace files the kernel observed and hashed, proposes one report, the user approves exactly that create-only file in the task's folder, orceld creates it, and an independent checker re-reads the saved bytes and confirms the hash and the unchanged sources. Overwrite, out-of-scope and stale-source attempts are refused. Task status and steps are visible through the existing read-only app API. This implements roadmap increment F2 of the adopted plan (docs/orcel/IMPLEMENTATION_ROADMAP.md) on the F1 approval ledger (#286), the F0 app API (CR-01 #370, #393, #410, #414) and the existing workspace file provider.",
+  "scope": {
+    "include": [
+      "Activate the SG-000126 contract only; the task model, the report capability, the verifier and the app API methods require separately exact-head qualified implementation PRs.",
+      "One new kernel capability `report` with exactly three operations, admitted by orcel-policy and dispatched only by orceld: `report/start` (read-only: validate a title, one to eight workspace-relative UTF-8 source files and one existing workspace-relative output folder; read each source through the existing orcel-provider-fs read path within its limits; record each source's SHA-256 and size; open a task record), `report/preview` (no effect: check a single-component report name and its UTF-8 content against the task, the recorded sources and the folder, and return the exact destination, size and SHA-256 the approval will bind) and `report/commit` (one SOFT approval through the existing broker whose digest binds the workspace, the policy revision, the task id, the folder, the destination, the content SHA-256 and size and every source path and SHA-256; then one create-only write through the existing orcel-provider-fs create path).",
+      "Create-only: the destination must not exist at preview, at commit before approval, and at the write itself (the provider's create-new open). An existing destination is refused and is never truncated, replaced, renamed or written; a different name needs a new preview and a new approval.",
+      "Scope: the folder must be an existing plain directory inside the workspace (no link, junction or reparse point as its last component) and keep the identity recorded at start; the report name is one path component of letters, digits, '.', '_' or '-', at most 96 characters, not starting with '.', ending in .md, .txt or .csv. Anything else, including separators, '..', drive or UNC prefixes and absolute paths, is refused before any approval.",
+      "Staleness: at preview and again at commit (before approval and before the write) every source is re-hashed through the provider and must equal its recorded SHA-256; a changed, missing or replaced source makes the task stale, which is terminal, and a new task must observe the sources again.",
+      "Independent checker: after the write, a verifier that shares no code with the writer re-opens the destination with plain std::fs reads, requires a regular file (not a link or reparse point) whose parent is the recorded folder, and checks its size, its SHA-256 against the approved one and every source's SHA-256 against its recorded value. Only a passing check marks the task verified; a failing check is a typed postcondition failure and the file is left in place for the user to inspect. The end-to-end tests add a second checker, in the test harness, that parses the saved report and recomputes the expected figures from the fixture sources itself.",
+      "Minimal task records: an in-memory, bounded registry owned by orceld (at most 64 tasks per daemon run; the oldest finished task is evicted first, and start is refused when every slot holds an unfinished task). States: observed, proposed, approval_denied, committing, verified, verification_failed, stale, failed. A denied approval leaves the task open for a fresh commit with a fresh approval; verified, verification_failed, stale and failed are final. Records hold paths, sizes, hashes, states and step outcomes, never file content.",
+      "App API: `task.list` and `task.get`, which CR-01 reserved, are served read-only from the registry; `task.updated` events carry `run_id` = task id and `step_id`; `capabilities.get` gains a `report.task` row. No app API method can start, approve, commit, stop or change a task.",
+      "Local only: `report/*` from a remote-context envelope is refused before any lease, policy or dispatch step. No MCP tool, OAuth scope or tool profile changes; the shapes are recorded as implemented_hidden in the capability parity inventory. One external client's qualification belongs to F4.",
+      "Fixtures and tests on Windows, macOS and Linux: synthetic CSV figures with known totals; positive journey; deny once then approve a fresh commit; overwrite refused; out-of-scope names and folders refused; stale source refused; verifier failure on tampered bytes; app API task.get/task.list and events over the real endpoint. Approval paths run in-process on the real LocalApprovalBroker and ledger with the test-only scripted SOFT decider; a real orceld binary run over stdio proves start, preview and every refusal that fails before the broker, and never reaches a platform approval dialog."
+    ],
+    "exclude": [
+      "Overwriting, editing, appending to, moving or removing any file; writes outside the task's folder; directory creation.",
+      "Binary, Office, PDF or spreadsheet output; the report is UTF-8 text. Reading XLSX or Excel and the confined WI-05 parser path for workspace files belong to the spreadsheet journey (F5).",
+      "A durable task journal, crash reconciliation across daemon restarts and resume summaries (RJ-01..RJ-03, proposed grain SG-000120). Within one daemon run an uncertain write is settled only by the verifier, never by a retry.",
+      "MCP tools, remote or relay access, model or planner hosting, and any approval minted, reused or relayed outside the existing broker.",
+      "Changes to SG-000096 shell, SG-000108 browser, desktop or process authority."
+    ]
+  },
+  "authority_delta": {
+    "activation": "None. This packet authorizes implementing and proving SG-000126; it adds no capability, tool, dependency, listener or authority.",
+    "filesystem": "Proposed only: after qualification, create-only creation of one UTF-8 report file (at most 256 KiB) per task, inside the task's existing workspace folder, after one SOFT approval bound to its exact bytes; reads of at most eight workspace text files through the existing provider limits.",
+    "approval": "Unchanged rules: the existing local broker (repaired by #286) decides every commit with exact digest binding, single use and expiry; nothing in the task model mints, caches or reuses approvals.",
+    "app_api": "Proposed only: two read-only methods (task.get, task.list) and one event kind (task.updated) on the existing CR-01 endpoint and its peer identity; no new endpoint or listener.",
+    "network": "None.",
+    "process": "None.",
+    "privileged": "None. SG-000096 Full User shell remains unarmed and SG-000108 browser authority is unchanged."
+  },
+  "decisions": [
+    {
+      "question": "Parallel activation",
+      "status": "RECORDED, founder may correct",
+      "decision": "SG-000126 is activated while SG-000096 (shell, ORCEL-P20) and SG-000108 (browser, ORCEL-F3) stay open. Basis: the founder's authorization of autonomous continuation through the adopted roadmap (F0 to F4, then F5 to F8), as relayed to this session by the orchestrating engineering session on 2026-10-22; this reading is the record's own. Independence: SG-000126 adds only a create-only report write in an existing workspace folder and two read-only app API methods; it touches no process, shell, session, browser, network or desktop authority and changes no file those grains own, and neither grain may widen another."
+    },
+    {
+      "question": "Donor reuse",
+      "status": "DECIDED",
+      "decision": "BUILD_NEW on Orcel's own qualified primitives: orcel-provider-fs reads and its create-new write path, the LocalApprovalBroker, orcel-policy shape admission and the CR-01 app API. The registry and transplant matrix hold no donor for a minimal kernel task record; the agent-native tool-call journal (T-AN-04) is the RJ-03 resume port and is not needed for a single-run task."
+    },
+    {
+      "question": "Planner",
+      "status": "DECIDED",
+      "decision": "A deterministic test planner on orceld's local stdio protocol proves F2, as the roadmap allows. It is the caller only: it reads the observed sources from the start result, computes figures and proposes text. orceld decides scope, staleness, approval and the write."
+    },
+    {
+      "question": "Task identity",
+      "status": "DECIDED",
+      "decision": "orceld generates the task id; a caller-supplied id is refused. Ids name one daemon run and are not reused within it. They carry no authority: every commit still needs its own approval."
+    }
+  ],
+  "invariants": [
+    "orceld remains the only authority: the planner and the app API never decide scope, staleness, approval or writes.",
+    "No existing file is ever opened for writing by a report task.",
+    "The approval digest binds the exact destination, bytes and source hashes; any change after approval fails closed before the write.",
+    "A task is verified only by the independent checker's re-read; a write that returned success is not enough.",
+    "Task records and events carry no file content and no secret.",
+    "Remote-context report requests never reach policy or dispatch."
+  ],
+  "acceptance": [
+    {
+      "id": "A1",
+      "claim": "Activation is authority-neutral on base 58ceada751926d2dc239b34459797dbd4a72f80c and imports no code."
+    },
+    {
+      "id": "A2",
+      "claim": "Policy admits exactly report/start, report/preview and report/commit with the bounded argument shapes above; other report operations, targets and unknown arguments are refused; commit is SOFT-classed; the parity inventory lists the three shapes as implemented_hidden and no MCP catalog, OAuth or profile file changes."
+    },
+    {
+      "id": "A3",
+      "claim": "A deterministic planner observes synthetic CSV sources, previews and commits a report; after one approval the file exists with exactly the approved bytes and the verifier marks the task verified, on all three CI legs."
+    },
+    {
+      "id": "A4",
+      "claim": "Denied approval writes nothing and leaves the task open; a fresh commit asks a fresh approval and succeeds; an approval is never reused across commits."
+    },
+    {
+      "id": "A5",
+      "claim": "An existing destination (present at preview, created before commit, or created between approval and write) is refused and its bytes are unchanged."
+    },
+    {
+      "id": "A6",
+      "claim": "Out-of-scope names (separators, '..', absolute, drive and UNC forms, bad extension, leading dot, overlong) and folders (outside the workspace, a link or junction, missing, a file, replaced after start) are refused before approval."
+    },
+    {
+      "id": "A7",
+      "claim": "A source changed, removed or replaced after start makes preview or commit fail as stale with nothing written, and the task stays stale."
+    },
+    {
+      "id": "A8",
+      "claim": "The verifier detects tampered bytes, a wrong size and a changed source, and reports a typed postcondition failure."
+    },
+    {
+      "id": "A9",
+      "claim": "task.list, task.get and task.updated events over the real CR-01 endpoint report the journey's states and steps without content; no app API method mutates a task."
+    },
+    {
+      "id": "A10",
+      "claim": "A real orceld binary over stdio starts and previews a task and refuses overwrite, out-of-scope and stale proposals before any approval, writing nothing; remote-context report requests are refused before policy or dispatch."
+    }
+  ],
+  "review": {
+    "jev_semantic_review": true,
+    "alibaba_open_code_review": "delegation mode per standing founder decision (2026-10-10) with manual review of excluded files",
+    "security_review": "fresh-context security judge per PR; d1-local advisory only",
+    "exact_head_ci": true,
+    "native_windows": true,
+    "cross_platform_ci": "Windows, macOS and Linux legs"
+  },
+  "successor_requirements": {
+    "sg_000120": "A durable task journal and crash reconciliation (RJ-01, RJ-02) replace the per-run registry without changing the create-only and verifier rules.",
+    "f4": "One external MCP client drives the same kernel operations through a reviewed tool exposure, with its own transcript and qualification.",
+    "f5": "Spreadsheet sources (XLSX or Excel) reach the report task only through a qualified read-only parser path."
+  },
+  "activation_note": "No capability, tool, dependency or authority change in this activation packet. Separate implementation and closeout PRs must qualify their exact heads; activation CI alone proves nothing about the task.",
+  "done_when": "On Windows, macOS and Linux, a planner turns known figures into one approved, create-only report that the independent checker verifies, with every refusal path proven, task state visible in the app API, and no overwrite, out-of-scope write, remote path or MCP widening."
+}

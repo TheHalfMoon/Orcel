@@ -188,8 +188,9 @@ test("SG-000094 and SG-000095 are closed and SG-000096 is the only active P20 gr
     }
   }
   // SG-000108 (ORCEL-F3) runs in parallel by founder decision (issue #290)
-  // and is outside DESKAL-P20; no other grain may be open.
-  assert.deepEqual(open.sort(), ["SG-000096", "SG-000108"]);
+  // and SG-000126 (ORCEL-F2) under its recorded parallel-activation decision
+  // (issue #435); both are outside DESKAL-P20 and no other grain may be open.
+  assert.deepEqual(open.sort(), ["SG-000096", "SG-000108", "SG-000126"]);
   const sg108 = readJson<{
     program: string;
     state: string;
@@ -202,6 +203,18 @@ test("SG-000094 and SG-000095 are closed and SG-000096 is the only active P20 gr
   // The parallel activation grants nothing by itself.
   for (const key of ["activation", "privileged", "ui_input"] as const) {
     assert.ok(sg108.authority_delta[key].startsWith("None."), key);
+  }
+  const sg126 = readJson<{
+    program: string;
+    state: string;
+    planning_issue: number;
+    authority_delta: { activation: string; network: string; process: string; privileged: string };
+  }>(".specgrain/specs/SG-000126.json");
+  assert.equal(sg126.program, "ORCEL-F2");
+  assert.equal(sg126.state, "GRAIN");
+  assert.equal(sg126.planning_issue, 435);
+  for (const key of ["activation", "network", "process", "privileged"] as const) {
+    assert.ok(sg126.authority_delta[key].startsWith("None."), key);
   }
 
   const sg94 = readJson<{
