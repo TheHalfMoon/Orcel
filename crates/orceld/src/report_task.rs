@@ -220,16 +220,12 @@ impl TaskRegistry {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|elapsed| elapsed.as_nanos())
             .unwrap_or(0);
-        let probe = 0u8;
         Self {
             tasks: Mutex::new(Vec::new()),
             // Ids only need to be unique within and across runs; they carry
-            // no authority.
-            seed: format!(
-                "{}|{nanos}|{:p}",
-                std::process::id(),
-                std::ptr::addr_of!(probe)
-            ),
+            // no authority (every commit needs its own approval), so no
+            // secret randomness is needed.
+            seed: format!("{}|{nanos}", std::process::id()),
             counter: AtomicU64::new(0),
             events: OnceLock::new(),
         }
@@ -777,7 +773,17 @@ fn commit(
         sources: &task.sources,
     });
     match (written, check) {
-        (_, Ok(record)) => {
+        (Err(failure), _) if failure.code == FailureCode::TargetStale => {
+            // The provider found a file at the destination and wrote
+            // nothing: someone created it after the checks. Whatever it
+            // holds, orceld did not write it, so it never verifies. The
+            // approval is spent; a new name needs a new preview and approval.
+            tasks.update(&task.id, "write", "destination_exists", |task| {
+                task.state = TaskState::Proposed;
+            });
+            Err(failure)
+        }
+        (Ok(_), Ok(record)) => {
             let result = json!({
                 "task_id": task.id,
                 "state": TaskState::Verified.as_str(),
@@ -793,20 +799,19 @@ fn commit(
             });
             Ok(result)
         }
-        (Err(failure), Err(_)) if failure.code == FailureCode::TargetStale => {
-            // The provider found a file at the destination and wrote
-            // nothing: someone created it after the checks. The approval is
-            // spent; a new name needs a new preview and approval.
-            tasks.update(&task.id, "write", "destination_exists", |task| {
-                task.state = TaskState::Proposed;
-            });
-            Err(failure)
-        }
-        (Err(failure), Err(_)) => {
-            // Nothing verifiable was created. Whatever is at the
-            // destination now is left for the user to inspect; nothing is
-            // retried.
+        (Err(failure), check) => {
+            // A write that reported failure never verifies, even if the
+            // bytes at the destination look right: orceld cannot tell
+            // whether it wrote them. Whatever is there is left for the user
+            // to inspect; nothing is retried.
+            let found = match check {
+                Ok(record) => record,
+                Err(reason) => {
+                    json!({"checker": report_check::CHECKER, "passed": false, "reason": reason})
+                }
+            };
             tasks.update(&task.id, "write", "failed", |task| {
+                task.check = Some(found);
                 task.state = TaskState::Failed;
             });
             Err(failure)
