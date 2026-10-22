@@ -108,7 +108,7 @@ test("web dependency graph is isolated from runtime workspaces and lockfile", as
 
   const webLock = JSON.parse(await read(join(root, "package-lock.json")));
   assert.equal(webLock.packages?.[""]?.name, "@orcel/web");
-  assert.equal(webLock.packages?.[""]?.dependencies?.next, "16.3.8");
+  assert.equal(webLock.packages?.[""]?.dependencies?.next, "16.4.2");
   assert.equal(webLock.packages?.[""]?.dependencies?.react, "19.3.0");
   assert.equal(webLock.packages?.[""]?.dependencies?.["react-dom"], "19.3.0");
 });
