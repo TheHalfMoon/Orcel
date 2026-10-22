@@ -4142,7 +4142,7 @@
   "external_dependencies": [
     {
       "id": "SG-000108-CLOSE",
-      "meaning": "SG-000108 (Opus's active browser grain, PR #336 open and currently conflicting with main) closes canonically. Browser, journal and web tasks that touch the same files wait for it to avoid conflicts with active work."
+      "meaning": "SG-000108 (the browser grain) closes canonically. Browser, journal and web tasks that touch the same files waited for it to avoid conflicts with active work. Satisfied 2026-10-23: closeout #439 (eebbe11), tracking #290 closed."
     }
   ]
 }
