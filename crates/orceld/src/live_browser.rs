@@ -1247,6 +1247,18 @@ impl LiveBrowser {
             self.pending_download = None;
             let _ = journal_append(&self.intents, &JournalLine::event("settled", &record_id));
         }
+        // A download the host refused after dispatch may already have
+        // followed the link (the worker clicks before it checks the bytes),
+        // so the page may no longer be the one observed: the lifetime ends
+        // rather than let the store disagree with it (judge, slice 3c). A
+        // lost host was already ended; refusals before dispatch (a denial,
+        // a failed consume) never reach here.
+        if matches!(
+            self.outcomes.last(),
+            Some(o) if o.record_id == record_id && matches!(o.outcome, DispatchOutcome::Refused(_))
+        ) {
+            self.end_lifetime();
+        }
         match reply? {
             WorkerHostReply::Downloaded {
                 relative,

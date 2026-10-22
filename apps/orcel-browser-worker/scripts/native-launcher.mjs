@@ -334,5 +334,5 @@ if (process.env.ORCEL_SG108_REQUIRE_JOURNEY === "1" && !journeyRan) {
 if (!journeyRan) {
   // Passing on the refusal is right for CI (a managed policy), but it is
   // not evidence of the journey: say so where nobody can miss it.
-  process.stdout.write("SG108-EVIDENCE public journey NOT exercised on this host (typed refusal only); evidence requires ORCEL_SG108_REQUIRE_JOURNEY=1\n");
+  process.stdout.write("SG108-WARNING the public journey was NOT exercised on this host (typed refusal only); evidence requires ORCEL_SG108_REQUIRE_JOURNEY=1\n");
 }

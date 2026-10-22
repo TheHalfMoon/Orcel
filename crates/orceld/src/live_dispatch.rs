@@ -284,20 +284,7 @@ mod live {
                         // page's text. The origin is the page's own, the
                         // name is its last segment (bounded, plain), and the
                         // digest identifies the link (judge, slice 3c).
-                        let name = source
-                            .split(['?', '#'])
-                            .next()
-                            .and_then(|path| path.rsplit('/').next())
-                            .unwrap_or("");
-                        let name = if name.len() <= MAX_SOURCE_NAME_BYTES
-                            && name
-                                .bytes()
-                                .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
-                        {
-                            name
-                        } else {
-                            ""
-                        };
+                        let (_, name) = source_parts(&source);
                         return Ok(json!({
                             "page_id": page_id,
                             "generation": expected,
@@ -327,13 +314,21 @@ mod live {
                         .follow(&committed.source_url)
                         .ok()
                         .map(|page| page.generation);
+                    // As in the preview, the link crosses as its origin, its
+                    // plain last segment and its digest, never raw: the full
+                    // URL stays in the host's journal and orceld's record.
+                    let (source_origin, source_name) = source_parts(&committed.source_url);
                     Ok(json!({
                         "page_id": page_id,
                         "generation": generation,
+                        "lifetime_ended": generation.is_none(),
                         "relative": committed.relative,
                         "sha256": committed.sha256,
                         "bytes": committed.bytes,
-                        "source_url": committed.source_url,
+                        "source_origin": source_origin,
+                        "source_name": source_name,
+                        "source_sha256": crate::live_browser::sha256_hex(&committed.source_url),
+                        "source_is_page_controlled": true,
                         "record_id": record_id,
                         "create_only": true,
                     }))
@@ -348,8 +343,35 @@ mod live {
 
     /// The longest link a preview accepts.
     const MAX_SOURCE_BYTES: usize = 2048;
-    /// The longest file name of a link a preview hands out.
+    /// The longest file name of a link a reply hands out.
     const MAX_SOURCE_NAME_BYTES: usize = 128;
+
+    /// A link as it may cross to the caller: its origin and its last path
+    /// segment, bounded and of plain characters only (else empty). The name
+    /// is still the page's text, marked `source_is_page_controlled`; the
+    /// accepted residual is recorded in the design doc.
+    fn source_parts(source: &str) -> (String, String) {
+        let origin = orcel_provider_browser::parse_destination_url(source)
+            .map(|parsed| parsed.origin)
+            .unwrap_or_default();
+        let name = source
+            .split(['?', '#'])
+            .next()
+            .and_then(|path| path.rsplit('/').next())
+            .unwrap_or("");
+        let plain = name.len() <= MAX_SOURCE_NAME_BYTES
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b));
+        (
+            origin,
+            if plain {
+                name.to_owned()
+            } else {
+                String::new()
+            },
+        )
+    }
 
     fn stale() -> ProviderError {
         ProviderError::new(FailureCode::TargetStale, "no live browser page")
@@ -579,6 +601,18 @@ mod native {
             "{:?}",
             denied.error
         );
+        // The denial left the generation as it was and no lifetime: the
+        // page has no document to observe.
+        assert_eq!(
+            code(&kernel.call(
+                &approve,
+                "browser.snapshot",
+                "observe",
+                json!({"page_id": page_id, "expected_generation": 0}),
+                live
+            )),
+            FailureCode::TargetStale
+        );
 
         let navigated = ok(
             &kernel.call(
@@ -692,12 +726,43 @@ mod native {
         );
         assert_eq!(committed["sha256"], sha256_hex(&bytes));
         assert_eq!(committed["bytes"], bytes.len() as u64);
-        // The link the preview identified is the one committed.
-        let source = committed["source_url"].as_str().expect("source").to_owned();
+        // No raw link crosses; the committed one is the previewed one.
         assert!(
-            identity.ends_with(&format!(" {}", sha256_hex(source.as_bytes()))),
+            committed.get("source_url").is_none(),
+            "the raw link crossed"
+        );
+        assert_eq!(committed["lifetime_ended"], false);
+        let digest = committed["source_sha256"]
+            .as_str()
+            .expect("digest")
+            .to_owned();
+        assert!(
+            identity.ends_with(&format!(" {digest}")),
             "the committed link is not the previewed one"
         );
+        // The independent checker finds the link in the list page it read
+        // itself, and it is the one Orcel committed (by digest).
+        let origin = committed["source_origin"]
+            .as_str()
+            .expect("origin")
+            .to_owned();
+        let name = committed["source_name"].as_str().expect("name").to_owned();
+        let source = listed
+            .match_indices(&name)
+            .filter_map(|(at, _)| {
+                let start = listed[..at].rfind('"')? + 1;
+                let path = &listed[start..at + name.len()];
+                let url = if path.starts_with("https://") {
+                    path.to_owned()
+                } else if path.starts_with('/') {
+                    format!("{}{path}", origin.trim_end_matches(":443"))
+                } else {
+                    return None;
+                };
+                (sha256_hex(url.as_bytes()) == digest).then_some(url)
+            })
+            .next()
+            .expect("the list page links the committed document");
         // The independent checker: the same URL fetched outside Orcel.
         let independent = independent_fetch(&source, &kernel.root.join("independent.pdf"));
         assert_eq!(
@@ -736,8 +801,9 @@ mod native {
         assert_eq!(generation, after + 1);
 
         // Create-only: the same document to the same name again, through a
-        // fresh observation and a fresh approval, is refused at the commit
-        // itself, and the file is unchanged (judge, slice 3c).
+        // fresh observation and a fresh approval, is refused, and the file
+        // is unchanged. The host refuses an existing destination before it
+        // acts (and the worker writes with `wx`, create-new, as well).
         let observed_again = ok(
             &kernel.call(
                 &approve,
@@ -767,7 +833,7 @@ mod native {
         assert_eq!(
             code(&again),
             FailureCode::InvalidRequest,
-            "the second download was not refused by the create-only commit: {:?}",
+            "the second download was not refused as create-only: {:?}",
             again.error
         );
         assert_eq!(std::fs::read(&path).expect("file"), bytes);
