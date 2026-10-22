@@ -421,7 +421,7 @@ fn sg000096_t03_losing_the_runtime_owner_revokes_the_session() {
         return;
     }
     // A disposable owner process of the same user and logon session.
-    let mut helper = std::process::Command::new(std::env::current_exe().unwrap())
+    let helper = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
             &format!("{PREFIX}sg96_session_fixture_sleep"),
@@ -440,13 +440,22 @@ fn sg000096_t03_losing_the_runtime_owner_revokes_the_session() {
         owner_creation: super::super::shell::tests::creation_generation_of(helper.id()),
         ..lease_owner.clone()
     };
+    // Kill the uncontained helper however the test ends.
+    struct KillOnDrop(std::process::Child);
+    impl Drop for KillOnDrop {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let mut helper = KillOnDrop(helper);
     let registry = Registry::default();
     let command = fixture_at(PREFIX, "sg96_session_fixture_sleep", &root.0);
     let started = registry
         .start(&command, &session_limits(), &helper_owner, far())
         .expect("session under the helper owner");
-    let _ = helper.kill();
-    let _ = helper.wait();
+    let _ = helper.0.kill();
+    let _ = helper.0.wait();
     assert!(wait_for(|| !registry
         .status(&started.session_id)
         .unwrap()
@@ -470,10 +479,12 @@ fn sg000096_t03_an_expired_authority_launches_nothing() {
     let command = fixture_at(PREFIX, "sg96_session_fixture_sleep", &root.0);
     let before = super::super::shell::LAUNCHES.load(std::sync::atomic::Ordering::SeqCst);
     let result = registry.start(&command, &session_limits(), &owner, Instant::now());
-    assert!(matches!(
-        result,
-        Err(SessionFailure::Shell(ShellFailure::Denied(_)))
-    ));
+    // The message proves the expiry check refused it, not the elevation
+    // refusal an elevated CI host would also give.
+    assert!(
+        matches!(&result, Err(SessionFailure::Shell(ShellFailure::Denied(message))) if message.contains("expired")),
+        "{result:?}"
+    );
     assert_eq!(
         super::super::shell::LAUNCHES.load(std::sync::atomic::Ordering::SeqCst),
         before

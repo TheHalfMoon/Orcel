@@ -299,6 +299,13 @@ impl Registry {
         let pinned = PinnedLaunch::open(command)?;
         let job = JobObject::kill_on_close_with_process_limit(Some(command.limits.max_processes))
             .map_err(|error| ShellFailure::Unavailable(error.message))?;
+        // Eviction and the owner and pin checks take time: check the expiry
+        // again immediately before creating anything.
+        if expires_at <= Instant::now() {
+            return Err(SessionFailure::Shell(ShellFailure::Denied(
+                "the Full User authority for this session has already expired".into(),
+            )));
+        }
         let started = Instant::now();
         let (child, stdio, process) =
             launch_verified(command, expected, &owner, &pinned, &job, true, fault)?;

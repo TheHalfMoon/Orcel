@@ -19,8 +19,9 @@ Status: implementation of #265 (program #260). It builds on the T02/T02-C launch
   - the runtime owner exiting or changing generation.
 
   Each of these ends the whole Job and proves it empty. Otherwise the state is `TerminationUnverified`. A supervision error becomes `OutcomeUnknown`. After an exit, helpers get the same settling grace as in T02, and anything still running is terminated (`descendants_terminated`). No end state is inferred from output or a prompt.
-- **Supervisor failure.** A panic in the supervisor drops the Job (the tree ends) and sets `OutcomeUnknown`, so the session never stays `Running`. An `expires_at` that has already passed is refused before anything launches.
-- **Pipes.** The stdin pipe is created private; only the child's read end is then made inheritable, so the Orcel write end never is. When an ended session is removed, its writer is cancelled in a bounded loop (5 s) and then left detached rather than blocking the registry.
+- **Supervisor failure.** A panic in the supervisor drops the Job and sets `OutcomeUnknown`, so the session never stays `Running`. Closing a kill-on-close Job ends the tree asynchronously and is not verified on this path, which is why the state is `OutcomeUnknown`. `expires_at` is checked when `start` begins and again immediately before the child is created; once it has passed, nothing launches.
+- **`descendants_terminated: true`** means processes were ended with the Job, or that it could not be known whether any were left (a failed Job query); `false` means nothing had to be ended.
+- **Pipes.** The stdin pipe is created private; only the child's read end is then made inheritable, so the Orcel write end never is. When an ended session is removed or evicted, its writer is cancelled in a bounded loop. That loop takes at most 5 s, and it runs under the registry lock. If the writer is still blocked after that, it is left detached: one thread and one write handle, which can only happen when something outside the Job holds the pipe's read end.
 - **Daemon exit.** Dropping the registry revokes every session and joins its threads. If orceld itself dies, the kill-on-close Job ends every tree.
 - **Platforms.** macOS and Linux: `start` returns `Unavailable`, and the other calls see no sessions.
 
@@ -41,7 +42,7 @@ Expected owners come from a MAC-verified disposable lease, as in T02.
 | `sg000096_t03_an_expired_authority_launches_nothing` | an `expires_at` already past is refused with zero launches |
 | `shell_session::tests::*` (4) | ring offsets, eviction and paging; split UTF-8 and binary; read bound; stdin limit bounds |
 
-- **Elevated hosts.** On GitHub's elevated `windows-latest` runner, each launching session test instead asserts that `start` is refused ("Full User never runs elevated") with zero launches and an empty registry. The positive paths above are qualified on this standard-user host.
+- **Elevated hosts.** On GitHub's elevated `windows-latest` runner, each launching session test instead asserts that `start` is refused ("Full User never runs elevated") with zero launches and an empty registry. **Known gap:** CI therefore gives no native evidence for any positive session path (round trip, terminate, revoke, expiry, eviction, stdin bounds, owner loss). They are qualified on one standard-user host (this PC) and should be re-run on a second standard-user Windows machine. The expired-authority test checks its denial message, so it is meaningful on both kinds of host.
 - `cargo test -p orcel-provider-process --lib -- shell`: 39 tests. After the judge fixes they passed 5 consecutive runs with no failure, and 8 before them.
 - `cargo test -p orcel-provider-process`: 86 lib + 8 integration tests pass.
 - `cargo clippy -p orcel-provider-process --all-targets -- -D warnings`: passes on the Windows, Linux and macOS targets. `cargo fmt --all --check` passes.
