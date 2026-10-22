@@ -234,15 +234,23 @@ jobs:
         run: cargo build --locked --release -p orcel-native-host
       - name: The binary prints its protocol version
         run: test "$(./target/release/orcel-native-host --version)" = "orcel-computer-host/2"
-      # Temporary, opt-in diagnostic artifact on this PR only. Not a release.
-      # Built on the official hosted macOS runner to bypass the local CLT
-      # SwiftPM manifest-link failure and test on a real Mac.
-      - name: Stage macOS host for real-hardware qualification (PR only)
+      # Temporary PR-only hardware diagnostic, not a release or installer.
+      - name: Compile macOS GUI test executables (temporary PR)
+        if: runner.os == 'macOS' && github.head_ref == 'test/orcel-mac-hardware-artifact-20261022'
+        run: |
+          cargo test --locked --release -p orcel-native-host --test live_observation --test live_capture --test live_actions --test live_input --no-run
+      - name: Archive macOS native host and GUI test executables (temporary PR)
+        if: runner.os == 'macOS' && github.head_ref == 'test/orcel-mac-hardware-artifact-20261022'
+        run: |
+          set -euo pipefail
+          cd target/release
+          tar -czf "$RUNNER_TEMP/orcel-macos-hardware.tar.gz" orcel-native-host deps/live_observation-* deps/live_capture-* deps/live_actions-* deps/live_input-*
+      - name: Stage macOS hardware test archive (temporary PR)
         if: runner.os == 'macOS' && github.head_ref == 'test/orcel-mac-hardware-artifact-20261022'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: orcel-macos-real-hardware-${{ github.event.pull_request.head.sha }}
-          path: apps/orcel-native-host/target/release/orcel-native-host
+          path: ${{ runner.temp }}/orcel-macos-hardware.tar.gz
           retention-days: 1
           if-no-files-found: error
       - name: Reachability (no script engine, CDP client, server, daemon or browser code)
