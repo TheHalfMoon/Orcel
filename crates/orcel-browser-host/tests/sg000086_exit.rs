@@ -272,10 +272,13 @@ fn profile_parity_is_exact_with_no_implicit_widening() {
         actual, expected,
         "qualified shapes must match the parity inventory exactly"
     );
-    // Only the explicit browser profile resolves, to the empty live set.
-    // Every other profile name, including the wider planned profile
-    // model names, fails closed instead of inheriting tools.
-    assert!(profile_tools("browser_structured").unwrap().is_empty());
+    // Only the explicit browser profile resolves, to the live set (SG-000108
+    // slice 3c). Every other profile name, including the wider planned
+    // profile model names, fails closed instead of inheriting tools.
+    assert_eq!(
+        profile_tools("browser_structured").unwrap(),
+        orcel_browser_host::LIVE_BROWSER_MCP_TOOLS
+    );
     for unknown in [
         "core",
         "desktop_structured",
@@ -295,11 +298,34 @@ fn profile_parity_is_exact_with_no_implicit_widening() {
 }
 
 #[test]
-fn tool_parity_live_set_is_empty_for_every_shape() {
+fn tool_parity_live_set_is_six_qualified_shapes() {
     for (capability, operation) in QUALIFIED_BROWSER_SHAPES {
         let tool = format!("{capability}/{operation}");
-        assert!(!is_live_exposed(&tool), "{tool} must not be live");
+        assert!(
+            !is_live_exposed(&tool),
+            "{tool} is a shape, not a tool name"
+        );
         assert!(!is_denied_shape(&tool), "{tool} is qualified, not denied");
+    }
+    // SG-000108 slice 3c: each live tool forwards one qualified shape, and
+    // fill and the uploads are not among them.
+    let live: HashSet<(&str, &str)> = orcel_browser_host::LIVE_BROWSER_TOOL_SHAPES
+        .iter()
+        .map(|(_, capability, operation)| (*capability, *operation))
+        .collect();
+    assert_eq!(live.len(), 6);
+    for shape in &live {
+        assert!(QUALIFIED_BROWSER_SHAPES.contains(shape), "{shape:?}");
+    }
+    for model_only in [
+        ("browser.dom", "fill"),
+        ("browser.upload", "preview"),
+        ("browser.upload", "submit"),
+        ("browser.profile", "status"),
+        ("browser.destination", "validate"),
+        ("browser.navigation", "preview"),
+    ] {
+        assert!(!live.contains(&model_only), "{model_only:?}");
     }
 }
 

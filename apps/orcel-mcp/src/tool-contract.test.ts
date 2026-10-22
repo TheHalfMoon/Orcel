@@ -41,6 +41,16 @@ const LOCAL_ONLY = [
   "web_fetch",
   "web_search"
 ];
+// SG-000108 slice 3c: the live browser tools, local-only and served only
+// under browser_structured.
+const LIVE = [
+  "browser_click",
+  "browser_download",
+  "browser_download_preview",
+  "browser_navigate",
+  "browser_observe",
+  "browser_page_open"
+];
 
 function fakeKernel(): KernelClient {
   return {
@@ -106,7 +116,7 @@ async function listTools(context: TransportContext): Promise<ListedTool[]> {
 test("every canonical tool has exactly one contract entry", () => {
   assert.deepEqual(Object.keys(TOOL_CONTRACT).sort(), [...CANONICAL_TOOL_NAMES].sort());
   assert.deepEqual([...REMOTE_TOOL_NAMES].sort(), CORE);
-  assert.deepEqual([...LOCAL_ONLY_TOOL_NAMES].sort(), LOCAL_ONLY);
+  assert.deepEqual([...LOCAL_ONLY_TOOL_NAMES].sort(), [...LIVE, ...LOCAL_ONLY].sort());
   const titles = Object.values(TOOL_CONTRACT).map((entry) => entry.annotations.title);
   assert.equal(new Set(titles).size, titles.length, "titles are unique");
   for (const [name, entry] of Object.entries(TOOL_CONTRACT)) {
@@ -205,13 +215,12 @@ test("profile membership is exact and unmapped profiles fail closed", () => {
   assert.deepEqual(Object.keys(SURFACE_PROFILES).sort(), ["browser_structured", "core", "desktop_structured"]);
   assert.deepEqual([...profileTools("core")].sort(), CORE);
   assert.deepEqual([...profileTools("desktop_structured")].sort(), [...CORE, ...LOCAL_ONLY].sort());
-  // SG-000108 slice 3a: browser_structured adds the live browser tools,
-  // none until slice 3b.
-  assert.deepEqual([...profileTools("browser_structured")].sort(), [...CORE, ...LOCAL_ONLY].sort());
+  // SG-000108: browser_structured adds exactly the live browser tools.
+  assert.deepEqual([...profileTools("browser_structured")].sort(), [...CORE, ...LOCAL_ONLY, ...LIVE].sort());
   for (const profile of ["developer", "coordinate_fallback", "admin", "", "__proto__", "constructor"]) {
     assert.throws(() => profileTools(profile), /not mapped/, profile);
   }
-  for (const tool of LOCAL_ONLY) {
+  for (const tool of [...LOCAL_ONLY, ...LIVE]) {
     const all = ["orcel.read", "orcel.write", "orcel.execute"];
     assert.equal(authorizeToolByScopes(tool, "core", all, all).ok, false, tool);
   }

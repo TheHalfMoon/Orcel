@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { request as httpRequest } from "node:http";
 import test from "node:test";
+import { profileTools } from "./tool_contract.js";
 import {
   hostAllowed,
   originAllowed,
@@ -116,7 +117,8 @@ test("loopback serves the authoritative catalog over an authenticated session", 
       result: { tools: Array<{ name: string }> };
     };
     const names = payload.result.tools.map((tool) => tool.name).sort();
-    assert.deepEqual(names, [...CANONICAL_TOOL_NAMES].sort());
+    // The default local profile: no live browser tool.
+    assert.deepEqual(names, [...profileTools("desktop_structured")].sort());
   } finally {
     await handle.close();
   }

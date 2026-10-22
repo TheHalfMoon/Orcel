@@ -13,15 +13,31 @@
 //! (`LIVE_BROWSER_TOOLS` in `apps/orcel-mcp/src/tool_contract.ts`) and in
 //! `orcel-browser-host`'s `LIVE_BROWSER_MCP_TOOLS`; a cross-language test
 //! (`apps/orcel-mcp/src/browser-exposure.test.ts`) fails if they differ.
-//! All three are empty until slice 3b exposes the live shapes.
+//! Slice 3c exposes six shapes, in development builds only (decision 7).
 
 use orcel_contracts::{FailureCode, RemoteContext, RequestEnvelope};
 
 /// The profile that alone may reach a live browser shape.
 pub const BROWSER_STRUCTURED_PROFILE: &str = "browser_structured";
 
-/// The live browser shapes (capability, operation). Empty until slice 3b.
-pub const LIVE_BROWSER_SHAPES: &[(&str, &str)] = &[];
+/// The live browser shapes (capability, operation): slice 3c's six, each
+/// one of SG-000079's qualified browser shapes. `browser.dom/fill` and the
+/// uploads stay model-only (decision 4).
+pub const LIVE_BROWSER_SHAPES: &[(&str, &str)] = &[
+    ("browser.page", "open"),
+    ("browser.navigation", "navigate"),
+    ("browser.snapshot", "observe"),
+    ("browser.dom", "click"),
+    ("browser.download", "preview"),
+    ("browser.download", "download"),
+];
+
+/// Whether a request names one of the live browser shapes.
+pub fn is_live_shape(request: &RequestEnvelope) -> bool {
+    LIVE_BROWSER_SHAPES.iter().any(|(capability, operation)| {
+        *capability == request.capability && *operation == request.operation
+    })
+}
 
 /// Refuse a live browser shape unless the request is local and names the
 /// `browser_structured` profile. Every other shape passes unchanged: the
@@ -129,10 +145,25 @@ mod tests {
         }
     }
 
+    /// Slice 3c: exactly the six live shapes, and the real table gates them.
     #[test]
-    fn nothing_is_live_until_slice_3b() {
-        assert!(LIVE_BROWSER_SHAPES.is_empty());
-        let navigate = request("browser.navigation", "navigate");
-        assert_eq!(gate(&navigate, None, None), Ok(()));
+    fn the_six_live_shapes_are_gated() {
+        assert_eq!(LIVE_BROWSER_SHAPES.len(), 6);
+        for (capability, operation) in LIVE_BROWSER_SHAPES {
+            let live = request(capability, operation);
+            assert!(is_live_shape(&live));
+            assert!(gate(&live, None, None).is_err(), "{capability}/{operation}");
+            assert_eq!(gate(&live, Some(BROWSER_STRUCTURED_PROFILE), None), Ok(()));
+        }
+        // Fill and the uploads stay model-only (decision 4).
+        for (capability, operation) in [
+            ("browser.dom", "fill"),
+            ("browser.upload", "preview"),
+            ("browser.upload", "submit"),
+        ] {
+            let model = request(capability, operation);
+            assert!(!is_live_shape(&model));
+            assert_eq!(gate(&model, None, None), Ok(()));
+        }
     }
 }

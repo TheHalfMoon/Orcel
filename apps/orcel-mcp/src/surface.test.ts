@@ -9,6 +9,12 @@ const srcDir = join(here, "..", "src");
 
 /** The closed MCP tool set. Adding a tool requires a governed grain. */
 const CANONICAL_TOOLS = [
+  "browser_click",
+  "browser_download",
+  "browser_download_preview",
+  "browser_navigate",
+  "browser_observe",
+  "browser_page_open",
   "clipboard_read",
   "clipboard_write",
   "desktop_cursor_get",

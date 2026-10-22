@@ -247,6 +247,37 @@ export const TOOL_CONTRACT: Readonly<Record<string, ToolContractEntry>> = {
     capability: "search", operation: "query", effect: "network", approval: "SOFT", remote: "local_only",
     outputBound: "at most 10 untrusted results; titles 300 and snippets 1000 characters; provider response at most 512 KiB",
     annotations: { title: "Search the web", readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true }
+  },
+  // SG-000108 slice 3c: the live isolated browser, `browser_structured` only.
+  browser_page_open: {
+    capability: "browser.page", operation: "open", effect: "read", approval: "none", remote: "local_only",
+    outputBound: "one page id and its generation",
+    annotations: { ...read("Open isolated browser page"), idempotentHint: false }
+  },
+  browser_navigate: {
+    capability: "browser.navigation", operation: "navigate", effect: "network", approval: "SOFT", remote: "local_only",
+    outputBound: "the committed URL, status and generation",
+    annotations: change("Navigate isolated browser page", { destructive: false, idempotent: false, openWorld: true })
+  },
+  browser_observe: {
+    capability: "browser.snapshot", operation: "observe", effect: "read", approval: "none", remote: "local_only",
+    outputBound: "one frame of node identities and keyed digests; no page text",
+    annotations: read("Observe isolated browser page")
+  },
+  browser_click: {
+    capability: "browser.dom", operation: "click", effect: "network", approval: "SOFT", remote: "local_only",
+    outputBound: "the opened URL, status and generation",
+    annotations: change("Open a link on isolated browser page", { destructive: false, idempotent: false, openWorld: true })
+  },
+  browser_download_preview: {
+    capability: "browser.download", operation: "preview", effect: "preview", approval: "none", remote: "local_only",
+    outputBound: "the source, folder, file name and host binding; writes nothing",
+    annotations: read("Preview isolated browser download")
+  },
+  browser_download: {
+    capability: "browser.download", operation: "download", effect: "network", approval: "SOFT", remote: "local_only",
+    outputBound: "the committed file's name, SHA-256 and size; at most the transfer bound written, create-only",
+    annotations: change("Download from isolated browser page", { destructive: false, idempotent: false, openWorld: true })
   }
 };
 
@@ -281,9 +312,17 @@ export const LOCAL_ONLY_TOOL_NAMES: readonly string[] = Object.keys(TOOL_CONTRAC
  * `browser_structured`. They must equal `LIVE_BROWSER_SHAPES` in
  * `crates/orceld/src/profile_gate.rs` and `LIVE_BROWSER_MCP_TOOLS` in
  * `crates/orcel-browser-host/src/exposure.rs` (browser-exposure.test.ts).
- * Empty until slice 3b exposes the live shapes.
+ * Slice 3c: six of SG-000079's qualified shapes; fill and uploads stay
+ * model-only.
  */
-export const LIVE_BROWSER_TOOLS: readonly string[] = Object.freeze([]);
+export const LIVE_BROWSER_TOOLS: readonly string[] = Object.freeze([
+  "browser_page_open",
+  "browser_navigate",
+  "browser_observe",
+  "browser_click",
+  "browser_download_preview",
+  "browser_download"
+]);
 
 /**
  * `desktop_structured`, listed explicitly instead of every contract key, so

@@ -442,7 +442,8 @@ fn only_the_documented_ignored_tests_exist() {
                     || ((relative == "crates/orcel-browser-host/src/worker_launch_tests.rs"
                         || relative == "crates/orcel-browser-host/tests/sg000108_worker_host.rs"
                         || relative == "crates/orcel-browser-host/tests/sg000108_dev_host.rs"
-                        || relative == "crates/orceld/src/live_browser.rs")
+                        || relative == "crates/orceld/src/live_browser.rs"
+                        || relative == "crates/orceld/src/live_dispatch.rs")
                         && line.contains(
                             "requires the built browser worker and Edge; run by npm run browser-launcher:native",
                         ));
@@ -533,10 +534,11 @@ fn the_live_browser_test_feature_never_reaches_a_release_build() {
 /// SG-000108 slice 3b-ii (decision 7): the development-only
 /// `live-browser-dev` feature (the host's public worker mode, running only
 /// the runtime its build pinned) never reaches a release build. Only the
-/// host crate's own definition and code, its dev-host test, the native-suite
-/// launcher, the pin script and documentation may name it; in the manifest
-/// it is its own empty definition, never a default and never enabled by
-/// another feature; and no other manifest names it yet.
+/// host crate's own definition and code, its dev-host test, orceld's
+/// manifest and its live browser modules (slice 3c), the native-suite
+/// launcher, the pin script and documentation may name it; in the host
+/// manifest it is its own empty definition, and orceld's only enables the
+/// host crate's; neither is ever a default.
 #[test]
 fn the_live_browser_dev_feature_never_reaches_a_release_build() {
     let root = repo_root();
@@ -568,6 +570,10 @@ fn the_live_browser_dev_feature_never_reaches_a_release_build() {
             || (relative.starts_with("crates/orcel-browser-host/src/")
                 && relative.ends_with(".rs"))
             || relative == "crates/orcel-browser-host/tests/sg000108_dev_host.rs"
+            || relative == "crates/orceld/Cargo.toml"
+            || relative == "crates/orceld/src/sg000039_main.rs"
+            || relative == "crates/orceld/src/live_browser.rs"
+            || relative == "crates/orceld/src/live_dispatch.rs"
             || relative == "apps/orcel-browser-worker/scripts/native-launcher.mjs"
             || relative == "apps/orcel-browser-worker/scripts/dev-pin.mjs"
             || relative.starts_with("docs/");
@@ -590,6 +596,19 @@ fn the_live_browser_dev_feature_never_reaches_a_release_build() {
         naming,
         ["live-browser-dev = []"],
         "live-browser-dev may only be defined, never enabled by another feature"
+    );
+    // orceld defines its own feature of that name, which enables the host
+    // crate's (an optional dependency, so a default build has neither).
+    let orceld = fs::read_to_string(root.join("crates/orceld/Cargo.toml")).unwrap();
+    let naming: Vec<&str> = orceld
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.contains("live-browser-dev") && !line.starts_with('#'))
+        .collect();
+    assert_eq!(
+        naming,
+        ["live-browser-dev = [\"dep:orcel-browser-host\", \"orcel-browser-host/live-browser-dev\"]"],
+        "orceld may only define live-browser-dev, never enable it by default"
     );
     // The pin variables are read only at compile time, by the host binary.
     for (relative, text) in text_files(&root) {

@@ -11,7 +11,7 @@ owning grain exposes it under explicit profiles), `missing` (owning grain implem
 
 ## Workflows
 
-Totals: implemented_exposed: 23, implemented_hidden: 0, missing: 2, intentionally_denied: 11.
+Totals: implemented_exposed: 24, implemented_hidden: 0, missing: 1, intentionally_denied: 11.
 
 | Workflow | Status | Tools, owner, or reason |
 | --- | --- | --- |
@@ -32,7 +32,7 @@ Totals: implemented_exposed: 23, implemented_hidden: 0, missing: 2, intentionall
 | `git_read` | implemented_exposed | `git_status`, `git_diff`, `git_log` |
 | `git_local_mutation` | implemented_exposed | `git_branch_create`, `git_stage`, `git_unstage`, `git_commit` |
 | `git_remote` | implemented_exposed | `git_fetch_preview`, `git_fetch`, `git_push_preview`, `git_push` |
-| `browser_structured` | missing | outside_v0_2_target (needs a live isolated browser engine qualified shape by shape; the closed policy model is not exposed (docs/p16/BROWSER_QUALIFICATION.md)) |
+| `browser_structured` | implemented_exposed | `browser_click`, `browser_download`, `browser_download_preview`, `browser_navigate`, `browser_observe`, `browser_page_open` (six live isolated-browser tools under the browser_structured profile, selected by local configuration only; a real browser only in live-browser-dev builds, release builds answer typed unavailable until SG-000106 (docs/security/SG-000108_PRODUCT_CALLER.md)) |
 | `desktop_observe` | implemented_exposed | `desktop_window_list`, `desktop_window_tree` (read-only window listing and bounded UI Automation trees in the caller's interactive session (SG-000063)) |
 | `desktop_act` | implemented_exposed | `desktop_element_invoke`, `desktop_element_set_value`, `desktop_element_select`, `desktop_element_toggle`, `desktop_element_scroll`, `desktop_input_execute`, `desktop_window_action` (SG-000095 Full User desktop control: semantic UIA is preferred, raw input is bounded and approval/lease/freshness/human-interruption gated, and no remote/admin widening is introduced.) |
 | `screenshots` | implemented_exposed | `desktop_window_capture` (SG-000095 exact-window capture through the private Computer Host; no whole-desktop, monitor, region, recording, or ffmpeg widening.) |
@@ -54,7 +54,7 @@ Totals: implemented_exposed: 23, implemented_hidden: 0, missing: 2, intentionall
 
 ## Capability shapes
 
-Totals: implemented_exposed: 41, implemented_hidden: 4, missing: 0, intentionally_denied: 28.
+Totals: implemented_exposed: 47, implemented_hidden: 4, missing: 0, intentionally_denied: 22.
 
 | Shape | Status | MCP tool, owner, or reason |
 | --- | --- | --- |
@@ -84,18 +84,18 @@ Totals: implemented_exposed: 41, implemented_hidden: 4, missing: 0, intentionall
 | `git.fetch/fetch` | implemented_exposed | `git_fetch` |
 | `git.push.preview/preview` | implemented_exposed | `git_push_preview` |
 | `git.push/push` | implemented_exposed | `git_push` |
-| `browser.profile/status` | intentionally_denied | not exposed: the closed structured browser layer is a policy and page-registry model with no live browser engine (SG-000062 qualification) |
-| `browser.destination/validate` | intentionally_denied | not exposed: the closed structured browser layer is a policy and page-registry model with no live browser engine (SG-000062 qualification) |
-| `browser.page/open` | intentionally_denied | not exposed: the closed structured browser layer is a policy and page-registry model with no live browser engine (SG-000062 qualification) |
-| `browser.navigation/preview` | intentionally_denied | not exposed: the closed structured browser layer is a policy and page-registry model with no live browser engine (SG-000062 qualification) |
-| `browser.navigation/navigate` | intentionally_denied | not exposed: the closed structured browser layer is a policy and page-registry model with no live browser engine (SG-000062 qualification) |
-| `browser.snapshot/observe` | intentionally_denied | not exposed: the closed structured browser layer is a policy and page-registry model with no live browser engine (SG-000062 qualification) |
-| `browser.dom/click` | intentionally_denied | not exposed: the closed structured browser layer is a policy and page-registry model with no live browser engine (SG-000062 qualification) |
-| `browser.dom/fill` | intentionally_denied | not exposed: the closed structured browser layer is a policy and page-registry model with no live browser engine (SG-000062 qualification) |
-| `browser.download/preview` | intentionally_denied | not exposed: the closed structured browser layer is a policy and page-registry model with no live browser engine (SG-000062 qualification) |
-| `browser.download/download` | intentionally_denied | not exposed: the closed structured browser layer is a policy and page-registry model with no live browser engine (SG-000062 qualification) |
-| `browser.upload/preview` | intentionally_denied | not exposed: the closed structured browser layer is a policy and page-registry model with no live browser engine (SG-000062 qualification) |
-| `browser.upload/submit` | intentionally_denied | not exposed: the closed structured browser layer is a policy and page-registry model with no live browser engine (SG-000062 qualification) |
+| `browser.profile/status` | intentionally_denied | not exposed: model-only; SG-000108 exposes only the live navigate, observe, link activation and staged download shapes (decision 4) |
+| `browser.destination/validate` | intentionally_denied | not exposed: model-only; SG-000108 exposes only the live navigate, observe, link activation and staged download shapes (decision 4) |
+| `browser.page/open` | implemented_exposed | `browser_page_open` |
+| `browser.navigation/preview` | intentionally_denied | not exposed: model-only; SG-000108 exposes only the live navigate, observe, link activation and staged download shapes (decision 4) |
+| `browser.navigation/navigate` | implemented_exposed | `browser_navigate` |
+| `browser.snapshot/observe` | implemented_exposed | `browser_observe` |
+| `browser.dom/click` | implemented_exposed | `browser_click` |
+| `browser.dom/fill` | intentionally_denied | not exposed: model-only; SG-000108 exposes only the live navigate, observe, link activation and staged download shapes (decision 4) |
+| `browser.download/preview` | implemented_exposed | `browser_download_preview` |
+| `browser.download/download` | implemented_exposed | `browser_download` |
+| `browser.upload/preview` | intentionally_denied | not exposed: model-only; SG-000108 exposes only the live navigate, observe, link activation and staged download shapes (decision 4) |
+| `browser.upload/submit` | intentionally_denied | not exposed: model-only; SG-000108 exposes only the live navigate, observe, link activation and staged download shapes (decision 4) |
 | `uia.process/observe` | implemented_hidden | outside_v0_2_target |
 | `uia.window/list` | implemented_exposed | `desktop_window_list` |
 | `uia.window/observe` | implemented_hidden | outside_v0_2_target |

@@ -208,6 +208,35 @@ for (const name of [
     process.exit(1);
   }
 }
+// orceld's live unit tests compile only with a live feature, so the
+// default `cargo test` never runs them (slice 3c found a stale vector
+// there). Run them here, and require each to have run.
+const orceldUnits = spawnSync(
+  "cargo",
+  [
+    "test", "-p", "orceld", "--features", "live-browser-dev", "--bin", "orceld",
+    "--", "live_browser::tests", "profile_gate::tests", "live_browser_shapes_reach_the_live_route_only_through_the_gate"
+  ],
+  { cwd: repo, stdio: ["ignore", "pipe", "inherit"], encoding: "utf8", maxBuffer: 64 * 1024 * 1024, shell: false }
+);
+process.stdout.write(orceldUnits.stdout ?? "");
+if (orceldUnits.error || orceldUnits.status !== 0 || !/test result: ok\. \d+ passed; 0 failed/.test(orceldUnits.stdout ?? "")) {
+  process.stderr.write("browser-launcher:native: orceld's live unit tests failed\n");
+  process.exit(1);
+}
+for (const name of [
+  "the_approval_digest_covers_both_halves",
+  "host_refusals_map_onto_closed_failure_codes",
+  "wi05_only_a_committed_download_is_handed_to_the_document_parser",
+  "the_six_live_shapes_are_gated",
+  "a_live_shape_needs_a_local_browser_structured_request",
+  "live_browser_shapes_reach_the_live_route_only_through_the_gate"
+]) {
+  if (!(orceldUnits.stdout ?? "").split("\n").some((line) => line.startsWith("test ") && line.includes(`::${name} ... ok`))) {
+    process.stderr.write(`browser-launcher:native: orceld's live unit test ${name} did not run\n`);
+    process.exit(1);
+  }
+}
 const pin = runtimePin(process.execPath, app);
 const otherTree = createHash("sha256").update(`another tree than ${pin.ORCEL_LIVE_BROWSER_TREE_SHA256}`).digest("hex");
 for (const [expect, tree] of [["mismatch", otherTree], ["match", pin.ORCEL_LIVE_BROWSER_TREE_SHA256]]) {
@@ -263,4 +292,42 @@ for (const [expect, tree] of [["mismatch", otherTree], ["match", pin.ORCEL_LIVE_
     process.stderr.write(`browser-launcher:native: ORCEL_SG108_REQUIRE_JOURNEY=1, yet the dev-host lifetime did not run (${expect})\n`);
     process.exit(1);
   }
+}
+
+// SG-000108 slice 3c: the public journey through orceld's kernel caller
+// (handle_envelope: profile gate, live policy, live dispatch) under the real
+// approval broker, driving the dev host binary the pass above just built
+// with the runtime's real pin. It reaches a public HTTPS site.
+const journey = spawnSync(
+  "cargo",
+  [
+    "test", "-p", "orceld", "--features", "live-browser-dev", "--bin", "orceld", "live_dispatch::native",
+    "--", "--ignored", "--test-threads=1", "--nocapture"
+  ],
+  {
+    cwd: repo,
+    stdio: ["ignore", "pipe", "inherit"],
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+    shell: false,
+    env: { ...process.env, ORCEL_SG108_HOST_BINARY: hostBinary }
+  }
+);
+const journeyOut = journey.stdout ?? "";
+process.stdout.write(journeyOut);
+if (journey.error || journey.status !== 0) {
+  process.exit(journey.status ?? 1);
+}
+if (!/test result: ok\. 1 passed; 0 failed; 0 ignored/.test(journeyOut)) {
+  process.stderr.write("browser-launcher:native: expected the public journey test to pass\n");
+  process.exit(1);
+}
+const journeyRan = journeyOut.includes("SG108-EVIDENCE public journey:");
+if (!journeyRan && !journeyOut.includes("SG108-EVIDENCE public journey refused:")) {
+  process.stderr.write("browser-launcher:native: the public journey reported neither its download nor a managed-policy refusal\n");
+  process.exit(1);
+}
+if (process.env.ORCEL_SG108_REQUIRE_JOURNEY === "1" && !journeyRan) {
+  process.stderr.write("browser-launcher:native: ORCEL_SG108_REQUIRE_JOURNEY=1, yet the public journey did not run\n");
+  process.exit(1);
 }

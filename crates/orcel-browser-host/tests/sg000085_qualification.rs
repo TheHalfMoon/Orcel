@@ -760,7 +760,11 @@ fn hostile_corpus_never_panics_and_never_succeeds() {
     assert!(!remote_browser_mapping_enabled());
     assert!(profile_tools("no-such-profile").is_err());
     assert!(profile_tools("core").is_err());
-    assert!(profile_tools("browser_structured").unwrap().is_empty());
+    // SG-000108 slice 3c: browser_structured resolves to the live set only.
+    assert_eq!(
+        profile_tools("browser_structured").unwrap(),
+        orcel_browser_host::LIVE_BROWSER_MCP_TOOLS
+    );
 }
 
 #[test]
