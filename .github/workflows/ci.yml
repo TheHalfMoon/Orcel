@@ -325,6 +325,12 @@ jobs:
         # motion_equivalence, the session badge with the font, and the theme
         # artifact compiled from the lottie. Each named test must have run and
         # passed, so a motion regression cannot pass CI.
+        # #423: the restore once hung on the macOS runner (no file restored,
+        # node and a git child still running at cancel). Each fetch is now
+        # bounded (60 s, 3 attempts) and the blob id is hashed in process, and
+        # the step itself is bounded, so a hang fails this step quickly with a
+        # message instead of holding the job until it is cancelled.
+        timeout-minutes: 20
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
