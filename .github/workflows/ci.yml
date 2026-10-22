@@ -1267,6 +1267,8 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Diff check
         run: git diff --check
+      - name: macOS native capability preflight contract (hello only, no permission prompts)
+        run: python3 -m unittest discover -s tests -p test_macos_native_capability_preflight.py -v
       - name: Validate current Orcel identity
         run: node scripts/check-current-identity.mjs
       - name: Vendored Cua Driver crates match the upstream pin outside PATCHES.md

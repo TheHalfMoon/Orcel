@@ -1,0 +1,66 @@
+{
+  "scope": "Real macOS 26.6.2 arm64, synthetic native AppKit windows; CI-built release host plus actual Rust tests; no release",
+  "tested_source_sha": "0ce4a2d7604e885c16372883fd2b1087529a47af",
+  "github_ci_run": "https://github.com/TheHalfMoon/Orcel/actions/runs/39756322705",
+  "host_artifact_id": 12415604423,
+  "mac_permission_snapshot": {
+    "accessibility": true,
+    "screen_recording": true,
+    "direct_capture_consent": false,
+    "background_spi": false
+  },
+  "host_tests": [
+    {
+      "name": "live_capture",
+      "exit": 0,
+      "mode": "report",
+      "summary": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s"
+    },
+    {
+      "name": "live_input",
+      "exit": 0,
+      "mode": "report",
+      "summary": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.56s"
+    },
+    {
+      "name": "live_observation",
+      "exit": 0,
+      "mode": "1",
+      "summary": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.95s"
+    },
+    {
+      "name": "live_actions",
+      "exit": 0,
+      "mode": "1",
+      "summary": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.24s"
+    }
+  ],
+  "kernel_tests": {
+    "xp06_native_host_live": {
+      "passed": true,
+      "window_count": 4,
+      "protected_omitted": 1,
+      "nodes": 8
+    },
+    "xp11_native_actions_live": {
+      "passed": true,
+      "nodes": 8,
+      "assertions": "approval required, exact authorization consumed, stale generation refused, value digest bound, secure-field refused"
+    }
+  },
+  "synthetic_independent_probe": {
+    "passed": 15,
+    "total": 15
+  },
+  "not_release_qualified": [
+    "XP-07 macOS real screenshot delivery",
+    "XP-12 macOS real raw input delivery",
+    "XP-10 real GNOME/KDE approval sessions",
+    "XP-16 macOS commercial packaging/signing",
+    "XP-06/XP-11 missing-permission GUI manual negative flows were not independently re-exercised"
+  ],
+  "prior_failures": [
+    "JXA AXErrorCannotComplete -25204: replaced with compiled native AppKit fixture",
+    "XP-11 test expected cancelled/provider_unavailable despite host advertised permission_missing: repaired to assert exact advertised typed refusal"
+  ]
+}
