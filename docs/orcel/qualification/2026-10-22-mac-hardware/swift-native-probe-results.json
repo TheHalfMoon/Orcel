@@ -1,0 +1,83 @@
+{
+  "sha": "34cb67567c2f2eca8f66c4336a313f6bcf6fe06c",
+  "os": "macOS 26.6.2",
+  "mode": "real Mac; synthetic AppKit windows only; native-host from passing GitHub CI",
+  "checks": [
+    {
+      "test": "xp06_ax_available",
+      "pass": true,
+      "backend": "ax"
+    },
+    {
+      "test": "xp11_semantic_available",
+      "pass": true
+    },
+    {
+      "test": "xp07_direct_capture_unavailable",
+      "pass": true,
+      "reason": "permission_missing"
+    },
+    {
+      "test": "xp12_raw_input_unavailable",
+      "pass": true,
+      "reason": "permission_missing"
+    },
+    {
+      "test": "xp06_synthetic_owner",
+      "pass": true,
+      "generation_source": "macos-bsd-start-time"
+    },
+    {
+      "test": "xp06_real_accessibility_tree",
+      "pass": true,
+      "count": 8,
+      "response_keys": [
+        "id",
+        "ok",
+        "protocol",
+        "host",
+        "elements"
+      ],
+      "error": null,
+      "element_count": 2
+    },
+    {
+      "test": "xp06_password_value_redacted",
+      "pass": true
+    },
+    {
+      "test": "xp06_secret_not_in_frames",
+      "pass": true
+    },
+    {
+      "test": "xp11_synthetic_targets_present",
+      "pass": true
+    },
+    {
+      "test": "xp11_protect_secure_invoke",
+      "pass": true
+    },
+    {
+      "test": "xp11_protect_secure_set_value",
+      "pass": true
+    },
+    {
+      "test": "xp11_protect_approval_surface",
+      "pass": true
+    },
+    {
+      "test": "xp11_semantic_value_writes_synthetic_window",
+      "pass": true,
+      "state": "completed"
+    },
+    {
+      "test": "xp11_semantic_write_independently_observed",
+      "pass": true
+    },
+    {
+      "test": "xp11_secret_never_logged",
+      "pass": true
+    }
+  ],
+  "pass": true
+}

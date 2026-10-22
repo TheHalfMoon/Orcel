@@ -36,9 +36,9 @@ fn spawn_probe(nonce: &str, secret: &str) -> Probe {
     let fixtures = std::env::var("ORCEL_NATIVE_TEST_FIXTURES")
         .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures").to_string());
     let mut command = if cfg!(target_os = "macos") {
-        let mut command = Command::new("osascript");
-        command.args(["-l", "JavaScript", &format!("{fixtures}/appkit_probe.js")]);
-        command
+        let bin = std::env::var_os("ORCEL_MACOS_AX_PROBE_BIN")
+            .expect("macOS real-hardware live tests require ORCEL_MACOS_AX_PROBE_BIN pointing to the compiled native Swift AppKit fixture");
+        Command::new(bin)
     } else {
         let mut command = Command::new("python3");
         command.arg(format!("{fixtures}/gtk3_probe.py"));

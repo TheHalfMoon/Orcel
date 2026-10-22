@@ -72,14 +72,18 @@ impl Host {
 
     /// Spawns the host with exactly `environment`.
     pub fn spawn_with(environment: impl IntoIterator<Item = (String, std::ffi::OsString)>) -> Self {
-        let mut child = Command::new(std::env::var_os("ORCEL_NATIVE_TEST_HOST").unwrap_or_else(|| std::ffi::OsString::from(env!("CARGO_BIN_EXE_orcel-native-host"))))
-            .env_clear()
-            .envs(environment)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("the host starts");
+        let mut child = Command::new(
+            std::env::var_os("ORCEL_NATIVE_TEST_HOST").unwrap_or_else(|| {
+                std::ffi::OsString::from(env!("CARGO_BIN_EXE_orcel-native-host"))
+            }),
+        )
+        .env_clear()
+        .envs(environment)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("the host starts");
         let stdin = child.stdin.take().expect("stdin");
         let lines = reader(child.stdout.take().expect("stdout"));
         Self {
