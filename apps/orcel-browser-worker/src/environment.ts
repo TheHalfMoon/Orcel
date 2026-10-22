@@ -40,13 +40,14 @@ export function refusedWorkerVariables(env: Record<string, string | undefined>):
   return refused.sort();
 }
 
-/// Minimum Node version: --disable-sigusr1 exists from 22.14.
-export const MIN_NODE_VERSION: readonly [number, number] = [22, 14];
+/// Minimum Node version: --disable-sigusr1 exists from 22.14, and
+/// `module.registerHooks` (the resolve guard) from 22.15.
+export const MIN_NODE_VERSION: readonly [number, number] = [22, 15];
 
 /// Why the worker must not start under this Node, or null. The worker
 /// requires --disable-sigusr1 (otherwise a same-user process can activate
 /// the inspector, which opens a 127.0.0.1:9229 listener; verified natively)
-/// and therefore Node 22.14 or later.
+/// and the resolve guard needs `module.registerHooks`: Node 22.15 or later.
 export function startupRefusal(execArgv: readonly string[], nodeVersion: string): string | null {
   const match = /^v?(\d+)\.(\d+)\./.exec(nodeVersion);
   const [major, minor] = match ? [Number(match[1]), Number(match[2])] : [0, 0];

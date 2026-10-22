@@ -67,6 +67,7 @@ fn spec_with(main: PathBuf, profile: &Path, ephemeral: bool) -> WorkerLaunch {
     let (node, _) = prerequisites();
     WorkerLaunch {
         test_trusted_spki: None,
+        runtime_pin: None,
         node,
         worker_main: main,
         engine: engine(),
@@ -511,6 +512,145 @@ fn the_endpoint_scan_detects_an_unconfined_engine() {
             "the scan missed a leak this host is known to produce: {seen:?}"
         );
     }
+}
+
+/// Decision 7: a link or reparse point inside the runtime tree refuses it,
+/// as do entry points other than `<root>/dist/main.js`. Needs no Edge.
+#[test]
+fn runtime_pin_refuses_a_linked_tree() {
+    let root = crate::runtime_pin::tests::scratch("links");
+    assert!(crate::runtime_pin::worker_root(&root.join("dist/other.js")).is_err());
+    assert!(crate::runtime_pin::worker_root(&root.join("lib/main.js")).is_err());
+    let made = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(root.join("dist").join("linked"))
+        .arg(root.join("node_modules").join("typescript"))
+        .output()
+        .unwrap();
+    assert!(made.status.success(), "{made:?}");
+    assert!(crate::runtime_pin::runtime_files(&root).is_err());
+    std::fs::remove_dir(root.join("dist").join("linked")).unwrap();
+    assert!(crate::runtime_pin::runtime_files(&root).is_ok());
+    let junction = |link: PathBuf, target: PathBuf| {
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .output()
+            .unwrap();
+        assert!(made.status.success(), "{made:?}");
+    };
+    let node = root.join("node.exe");
+    let main = root.join("dist").join("main.js");
+    assert!(crate::runtime_pin::measure_and_hold(&node, &main).is_ok());
+    // The judge's case: node_modules itself a junction. The tree below it
+    // reads normally, so only the held path components can catch it.
+    let real = root.join("modules-real");
+    std::fs::rename(root.join("node_modules"), &real).unwrap();
+    junction(root.join("node_modules"), real.clone());
+    assert!(crate::runtime_pin::runtime_files(&root).is_ok());
+    assert!(crate::runtime_pin::measure_and_hold(&node, &main).is_err());
+    std::fs::remove_dir(root.join("node_modules")).unwrap();
+    std::fs::rename(&real, root.join("node_modules")).unwrap();
+    // The worker root reached through a junction above it.
+    let via = root.with_extension("via");
+    junction(via.clone(), root.clone());
+    assert!(crate::runtime_pin::measure_and_hold(
+        &via.join("node.exe"),
+        &via.join("dist").join("main.js")
+    )
+    .is_err());
+    std::fs::remove_dir(&via).unwrap();
+    assert!(crate::runtime_pin::measure_and_hold(&node, &main).is_ok());
+    std::fs::remove_file(root.join("package.json")).unwrap();
+    assert!(crate::runtime_pin::runtime_files(&root).is_err());
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+#[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
+fn a_pinned_runtime_runs_held_and_a_changed_one_never_starts() {
+    let (node, main) = prerequisites();
+    let (pin, held) =
+        crate::runtime_pin::measure_and_hold(&node, &main).expect("measure the real runtime");
+    let files = held.len();
+    drop(held);
+    assert!(
+        files > 100,
+        "node.exe, dist and playwright-core: {files} files"
+    );
+    // A pin the files do not match refuses before anything starts.
+    let profile = temp_profile("pin-wrong");
+    let mut wrong = spec(&profile, true);
+    wrong.runtime_pin = Some(crate::runtime_pin::RuntimePin {
+        tree_sha256: "0".repeat(64),
+        ..pin.clone()
+    });
+    let refused = launch_worker(&wrong, &Policy(PolicyKeyState::Absent))
+        .err()
+        .expect("a mismatched runtime is refused");
+    assert!(
+        matches!(
+            refused,
+            HostError::Unavailable(UnavailableReason::UnsupportedRuntime)
+        ),
+        "{refused:?}"
+    );
+    assert!(
+        std::fs::read_dir(&profile)
+            .expect("profile")
+            .next()
+            .is_none(),
+        "the refused launch touched the profile"
+    );
+    let _ = std::fs::remove_dir_all(&profile);
+    // A node.exe in a folder this user can write (CI's toolcache, for one)
+    // is refused even with the matching pin: a DLL planted beside it would
+    // load first. The full run is evidenced where Node is installed under
+    // Program Files.
+    if crate::runtime_pin::node_folder_writable(&node) {
+        let profile = temp_profile("pin-writable");
+        let mut writable = spec(&profile, true);
+        writable.runtime_pin = Some(pin);
+        let refused = launch_worker(&writable, &Policy(PolicyKeyState::Absent))
+            .err()
+            .expect("a node.exe in a writable folder is refused");
+        assert!(
+            matches!(
+                refused,
+                HostError::Unavailable(UnavailableReason::UnsupportedRuntime)
+            ),
+            "{refused:?}"
+        );
+        let _ = std::fs::remove_dir_all(&profile);
+        println!("SG108-EVIDENCE runtime pin: node.exe folder is user-writable here; the pinned launch was refused typed");
+        return;
+    }
+    // The matching pin runs, holding every runtime file for the lifetime.
+    let profile = temp_profile("pin-right");
+    let mut right = spec(&profile, true);
+    right.runtime_pin = Some(pin);
+    let mut worker =
+        launch_worker(&right, &Policy(PolicyKeyState::Absent)).expect("the pinned launch");
+    assert_eq!(worker.runtime_files_held(), files);
+    worker.ping("pinned-1").expect("ping");
+    // While the worker runs, its files cannot be changed or removed.
+    assert!(std::fs::OpenOptions::new()
+        .append(true)
+        .open(&main)
+        .is_err());
+    assert!(std::fs::OpenOptions::new()
+        .append(true)
+        .open(&node)
+        .is_err());
+    let report = worker.shutdown();
+    assert!(report.job_empty, "the job did not empty");
+    assert_profile_gone(report.profile_removed, &profile);
+    // Released with the worker.
+    assert!(std::fs::OpenOptions::new().append(true).open(&main).is_ok());
+    println!(
+        "SG108-EVIDENCE runtime pin: {files} runtime files and directories held for the lifetime; a mismatched pin refused before launch"
+    );
 }
 
 #[test]

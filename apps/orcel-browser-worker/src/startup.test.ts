@@ -33,10 +33,10 @@ function run(flags: string[], input: Buffer | null): Promise<{ code: number | nu
   });
 }
 
-test("startupRefusal requires Node 22.14+ and --disable-sigusr1", () => {
-  assert.equal(startupRefusal(["--disable-sigusr1"], "v22.14.0"), null);
+test("startupRefusal requires Node 22.15+ and --disable-sigusr1", () => {
+  assert.equal(startupRefusal(["--disable-sigusr1"], "v22.15.0"), null);
   assert.equal(startupRefusal(["--disable-sigusr1"], "v24.19.0"), null);
-  for (const version of ["v20.19.0", "v22.13.1", "v21.7.3", "garbage"]) {
+  for (const version of ["v20.19.0", "v22.13.1", "v22.14.0", "v21.7.3", "garbage"]) {
     assert.equal(typeof startupRefusal(["--disable-sigusr1"], version), "string", version);
   }
   assert.equal(typeof startupRefusal([], "v24.19.0"), "string");
