@@ -68,7 +68,13 @@ pub fn setup_ephemeral_profile(
 /// host's own `ephemeral_profile_dir`) with this engine's marker, so
 /// `adopt_profile` can re-check it before the launch (A9). A directory with
 /// anything in it is refused.
-#[cfg(any(test, all(windows, feature = "live-browser-test")))]
+#[cfg(any(
+    test,
+    all(
+        windows,
+        any(feature = "live-browser-test", feature = "live-browser-dev")
+    )
+))]
 pub fn mark_profile(dir: &Path, engine_fingerprint: &str) -> Result<AutomationProfile, HostError> {
     if !dir.is_absolute() || fs::read_dir(dir)?.next().is_some() {
         return Err(HostError::Invalid(
