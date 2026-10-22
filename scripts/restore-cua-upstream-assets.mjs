@@ -12,10 +12,15 @@
 // Nothing is committed: the files exist only in the CI checkout, and the
 // exact-diff review never sees them.
 //
+// #423: every network read is bounded (FETCH_TIMEOUT_MS per attempt,
+// FETCH_ATTEMPTS attempts) and the blob id is computed in this process, with
+// no git child, so the step fails fast with a message instead of hanging the
+// job until it is cancelled.
+//
 // Usage: node scripts/restore-cua-upstream-assets.mjs
-// Dependency-free; needs git on PATH. A token in GH_TOKEN or GITHUB_TOKEN
-// raises the GitHub API rate limit. Exits 1 on any mismatch.
-import { execFileSync } from "node:child_process";
+// Dependency-free. A token in GH_TOKEN or GITHUB_TOKEN raises the GitHub API
+// rate limit. Exits 1 on any mismatch or timeout.
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,21 +28,35 @@ import { fileURLToPath } from "node:url";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const provenancePath = join(repoRoot, "docs/orcel/cua_driver_provenance.json");
 const SHA = /^[0-9a-f]{40}$/;
+const FETCH_TIMEOUT_MS = 60_000;
+const FETCH_ATTEMPTS = 3;
 
-function blobId(bytes) {
-  return execFileSync("git", ["hash-object", "--stdin"], { cwd: repoRoot, input: bytes }).toString().trim();
+/** The git blob id of `bytes`: SHA-1 over `blob <size>` and a NUL, then the bytes. */
+export function blobId(bytes) {
+  return createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
 }
 
 async function fetchBlob(sha) {
   const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
-  const response = await fetch(`https://api.github.com/repos/trycua/cua/git/blobs/${sha}`, {
-    headers: {
-      accept: "application/vnd.github.raw+json",
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-    },
-  });
-  if (!response.ok) throw new Error(`GitHub API blob ${sha}: HTTP ${response.status}`);
-  return Buffer.from(await response.arrayBuffer());
+  let last;
+  for (let attempt = 1; attempt <= FETCH_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await fetch(`https://api.github.com/repos/trycua/cua/git/blobs/${sha}`, {
+        headers: {
+          accept: "application/vnd.github.raw+json",
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
+        // Bounds the whole exchange, body included.
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return Buffer.from(await response.arrayBuffer());
+    } catch (error) {
+      last = error;
+      process.stderr.write(`blob ${sha}: attempt ${attempt} of ${FETCH_ATTEMPTS} failed: ${error.message}\n`);
+    }
+  }
+  throw new Error(`GitHub API blob ${sha} could not be read in ${FETCH_ATTEMPTS} attempts of ${FETCH_TIMEOUT_MS / 1000}s: ${last?.message}`);
 }
 
 const provenance = JSON.parse(readFileSync(provenancePath, "utf8"));
@@ -51,7 +70,14 @@ for (const crate of provenance.crates ?? []) {
       errors.push(`${label}: no upstream blob id recorded`);
       continue;
     }
-    const bytes = await fetchBlob(file.upstream_blob_sha);
+    process.stdout.write(`fetching ${label} (blob ${file.upstream_blob_sha})\n`);
+    let bytes;
+    try {
+      bytes = await fetchBlob(file.upstream_blob_sha);
+    } catch (error) {
+      errors.push(`${label}: ${error.message}`);
+      continue;
+    }
     const id = blobId(bytes);
     if (id !== file.upstream_blob_sha) {
       errors.push(`${label}: fetched bytes hash to ${id}, not ${file.upstream_blob_sha}`);
