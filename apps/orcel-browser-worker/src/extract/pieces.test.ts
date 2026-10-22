@@ -93,21 +93,26 @@ test("splitting is linear", () => {
   // slow core inflates one side). Each size is timed by the fastest of
   // several interleaved runs instead, so a pause inflates neither, and
   // the sizes are 8x apart: linear work grows ~8x, quadratic ~64x, and the
-  // 24x bound leaves 3x for noise while still failing a quadratic splitter.
-  const smallText = "ab\n".repeat(20_000);
-  const largeText = "ab\n".repeat(160_000);
+  // 24x bound leaves 3x for noise while still failing a quadratic splitter
+  // (it flags growth of about n^1.53 and steeper; n log n stays below it).
+  // Two shapes: short lines (the line-break cut) and one line of astral
+  // code points (the hard cut, width 2).
   const once = (text: string): number => {
     const started = process.hrtime.bigint();
     toPieces([chunk(text)], 64, 1_000_000);
     return Number(process.hrtime.bigint() - started);
   };
-  once(smallText);
-  once(largeText);
-  let small = Infinity;
-  let large = Infinity;
-  for (let run = 0; run < 7; run++) {
-    small = Math.min(small, once(smallText));
-    large = Math.min(large, once(largeText));
+  for (const [unit, count] of [["ab\n", 20_000], ["\u{1F600}x", 20_000]] as const) {
+    const smallText = unit.repeat(count);
+    const largeText = unit.repeat(count * 8);
+    once(smallText);
+    once(largeText);
+    let small = Infinity;
+    let large = Infinity;
+    for (let run = 0; run < 7; run++) {
+      small = Math.min(small, once(smallText));
+      large = Math.min(large, once(largeText));
+    }
+    assert.ok(large < small * 24, `${JSON.stringify(unit)}: fastest of 7: ${small} ns vs ${large} ns (8x the input)`);
   }
-  assert.ok(large < small * 24, `fastest of 7: ${small} ns vs ${large} ns (8x the input)`);
 });
