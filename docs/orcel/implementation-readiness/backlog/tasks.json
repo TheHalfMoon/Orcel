@@ -1141,7 +1141,7 @@
           392,
           407
         ],
-        "qualification": "Semantic actions on macOS and Linux. Follow-ups #401 and #404 fixed in #407. Same live-check gap as XP-06/XP-07 for macOS and Linux desktops."
+        "qualification": "Semantic actions on macOS and Linux. NOT release-qualified: the macOS manual checks have not run, and there is no live orceld path to the native host until the Full User desktop lease exists off Windows (the same live-check gap as XP-06/XP-07). Follow-ups #401 and #404 fixed in #407."
       }
     },
     {
