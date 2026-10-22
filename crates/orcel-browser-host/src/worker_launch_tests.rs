@@ -107,17 +107,36 @@ fn alive(pid: u32) -> bool {
     ok && code == STILL_ACTIVE as u32
 }
 
+/// #374: how long a test waits for an event before it fails. A hang guard
+/// only: every wait below returns as soon as its event happens, so a
+/// loaded runner can be slow without failing, and a process, page or
+/// request that never comes still fails the test.
+const EVENT_DEADLINE: Duration = Duration::from_secs(90);
+
+/// Whether every process in `pids` has exited, waiting on each process's
+/// own handle (signalled at exit) until `timeout`. A process that cannot be
+/// opened is gone.
 fn all_dead(pids: &[u32], timeout: Duration) -> bool {
+    use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
+    use windows_sys::Win32::System::Threading::{WaitForSingleObject, PROCESS_SYNCHRONIZE};
     let deadline = Instant::now() + timeout;
-    loop {
-        if pids.iter().all(|pid| !alive(*pid)) {
-            return true;
+    for pid in pids {
+        // SAFETY: a synchronize-only open; closed below.
+        let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, *pid) };
+        if handle == 0 {
+            continue;
         }
-        if Instant::now() >= deadline {
-            return false;
+        let left = deadline.saturating_duration_since(Instant::now());
+        let millis = u32::try_from(left.as_millis()).unwrap_or(u32::MAX - 1);
+        // SAFETY: a valid handle; waits for the process to exit.
+        let waited = unsafe { WaitForSingleObject(handle, millis) };
+        // SAFETY: opened above.
+        unsafe { CloseHandle(handle) };
+        if waited != WAIT_OBJECT_0 {
+            return !alive(*pid);
         }
-        std::thread::sleep(Duration::from_millis(100));
     }
+    true
 }
 
 fn terminate(pid: u32) {
@@ -687,10 +706,7 @@ fn launch_verifies_the_job_and_shuts_down_without_residue() {
     );
     assert!(report.graceful, "the worker did not answer bye and exit 0");
     assert!(report.job_empty, "the job did not empty");
-    assert!(
-        all_dead(&pids, Duration::from_secs(5)),
-        "a job member survived"
-    );
+    assert!(all_dead(&pids, EVENT_DEADLINE), "a job member survived");
     assert_profile_gone(report.profile_removed, &profile);
 }
 
@@ -703,7 +719,7 @@ fn dropping_supervision_kills_the_job_and_removes_the_profile() {
     let pids = job_pids(&worker);
     drop(worker);
     assert!(
-        all_dead(&pids, Duration::from_secs(10)),
+        all_dead(&pids, EVENT_DEADLINE),
         "a job member survived the drop"
     );
     assert_profile_gone(!profile.exists(), &profile);
@@ -724,7 +740,7 @@ fn a_crashed_worker_is_detected_contained_and_restartable() {
     let report = worker.kill();
     assert!(report.job_empty && !report.graceful);
     assert!(
-        all_dead(&pids, Duration::from_secs(10)),
+        all_dead(&pids, EVENT_DEADLINE),
         "the engine outlived its worker"
     );
     // The same profile can be used again once the crashed lifetime is gone.
@@ -742,7 +758,7 @@ fn a_crashed_worker_is_detected_contained_and_restartable() {
     let report = again.shutdown();
     assert!(report.job_empty, "the restarted job did not empty");
     assert!(
-        all_dead(&second_lifetime, Duration::from_secs(5)),
+        all_dead(&second_lifetime, EVENT_DEADLINE),
         "a restarted member survived"
     );
     assert_profile_gone(report.profile_removed, &profile);
@@ -779,18 +795,24 @@ fn wait_for_profile_lock_release(profile: &Path, timeout: Duration) -> bool {
 /// members) may still name `profile` on its command line once supervision
 /// has ended: a helper started outside the job would otherwise go unseen.
 fn assert_no_process_references(profile: &Path) {
-    let started = Instant::now();
+    let deadline = Instant::now() + EVENT_DEADLINE;
     loop {
         let holders = processes_referencing(profile);
         if holders.is_empty() {
             return;
         }
+        // #374: wait for those processes to exit (their handles), then look
+        // again; a process that never exits still fails at the deadline.
+        let pids: Vec<u32> = holders
+            .lines()
+            .filter_map(|line| line.split(' ').next()?.parse().ok())
+            .collect();
+        let left = deadline.saturating_duration_since(Instant::now());
         assert!(
-            started.elapsed() < Duration::from_secs(10),
+            !left.is_zero() && all_dead(&pids, left),
             "processes still reference {}: {holders}",
             profile.display()
         );
-        std::thread::sleep(Duration::from_millis(500));
     }
 }
 
@@ -961,7 +983,7 @@ fn killing_the_host_process_takes_the_worker_and_engine_down() {
     child.kill().expect("kill child host");
     let _ = child.wait();
     assert!(
-        all_dead(&pids, Duration::from_secs(15)),
+        all_dead(&pids, EVENT_DEADLINE),
         "worker or engine outlived the host"
     );
     let _ = std::fs::remove_file(&out);
@@ -1152,7 +1174,7 @@ fn a_silent_worker_times_out_typed_and_is_terminated() {
         .parse()
         .expect("pid");
     assert!(
-        all_dead(&[pid], Duration::from_secs(5)),
+        all_dead(&[pid], EVENT_DEADLINE),
         "a timed-out worker survived"
     );
     assert!(remove_profile(&dir) && remove_profile(&profile));
@@ -1349,6 +1371,35 @@ impl Drop for HttpsFixture {
 
 /// Keep the host answering route requests for `duration` (it decides only
 /// while it is in a call, as a real caller would be).
+/// #374: keep the host in calls until `done` holds, or fail after
+/// `EVENT_DEADLINE`. Waits for an event (a page's signal request, a moved
+/// page) instead of a fixed time a loaded runner can outlast.
+fn pump_until(
+    worker: &mut BrowserWorker,
+    what: &str,
+    mut done: impl FnMut(&mut BrowserWorker) -> bool,
+) {
+    let deadline = Instant::now() + EVENT_DEADLINE;
+    let mut n = 0;
+    while !done(worker) {
+        assert!(Instant::now() < deadline, "{what} never happened");
+        std::thread::sleep(Duration::from_millis(50));
+        n += 1;
+        worker
+            .ping(&format!("until-{n}"))
+            .expect("ping while waiting");
+    }
+}
+
+/// #374: wait for the fixture page's `/signal/<name>` request, which it
+/// sends right after it changed itself.
+fn pump_until_signal(worker: &mut BrowserWorker, fixture: &HttpsFixture, name: &str) {
+    let signal = format!("fixture.test /signal/{name}");
+    pump_until(worker, &format!("the page's {name} signal"), |_| {
+        fixture.hits().iter().any(|hit| hit == &signal)
+    });
+}
+
 fn pump(worker: &mut BrowserWorker, duration: Duration) {
     let until = Instant::now() + duration;
     let mut n = 0;
@@ -1549,7 +1600,13 @@ fn observation_is_bounded_redacted_and_bound_to_the_committed_document() {
     worker
         .navigate("https://fixture.test/self-move")
         .expect("self-moving page");
-    pump(&mut worker, Duration::from_secs(2));
+    // #374: until the page has moved itself (the host then refuses to
+    // observe it), not for a fixed time.
+    pump_until(
+        &mut worker,
+        "the refused observation of a moved page",
+        |worker| worker.observe(&scope).is_err(),
+    );
     assert!(
         matches!(worker.observe(&scope), Err(HostError::Invalid(_))),
         "a moved page was observed"
@@ -1737,7 +1794,7 @@ fn an_approved_activation_follows_the_latest_dated_link_and_nothing_else() {
         .expect("tricky again");
     let live = worker.observe(&scope).expect("observe tricky again");
     let swapped = find(&worker, &live, "Annual review 2026-06-30");
-    pump(&mut worker, Duration::from_millis(2_500));
+    pump_until_signal(&mut worker, &fixture, "href-swapped");
     let (target, mut approval) = approved_click(&worker, &live, &swapped);
     assert!(
         worker
@@ -2015,8 +2072,23 @@ fn a_page_is_extracted_as_untrusted_markdown_in_pieces_without_hidden_text() {
     ));
 
     worker.navigate("https://fixture.test/read").expect("read");
-    pump(&mut worker, Duration::from_millis(500));
-    let before = fixture.hits().len();
+    // #374: the page's own image request has arrived (not a fixed wait). The
+    // browser's own favicon request is not the page's, and it may come at
+    // any time, so it is not counted.
+    pump_until(&mut worker, "the page's image request", |_| {
+        fixture
+            .hits()
+            .iter()
+            .any(|hit| hit == "fixture.test /img.png")
+    });
+    let page_requests = || {
+        fixture
+            .hits()
+            .into_iter()
+            .filter(|hit| hit != "fixture.test /favicon.ico")
+            .count()
+    };
+    let before = page_requests();
     let started = std::time::Instant::now();
     let page = worker
         .extract_page(crate::extraction::ExtractOptions::default())
@@ -2074,7 +2146,7 @@ fn a_page_is_extracted_as_untrusted_markdown_in_pieces_without_hidden_text() {
     // Links and images are opt-in.
     assert!(!text.contains("](https://"));
     // The engine read its own DOM: the page requested nothing.
-    assert_eq!(fixture.hits().len(), before, "the extraction made requests");
+    assert_eq!(page_requests(), before, "the extraction made requests");
 
     let linked = worker
         .extract_page(crate::extraction::ExtractOptions {
@@ -2131,8 +2203,8 @@ fn webmcp_declarative_tools_are_discovered_read_only_and_bound_to_the_document()
     worker
         .navigate("https://fixture.test/tools")
         .expect("tools");
-    // Let the page's own script settle before discovery.
-    pump(&mut worker, Duration::from_millis(500));
+    // The page's traps are armed (its own signal) before discovery.
+    pump_until_signal(&mut worker, &fixture, "tools-armed");
     let found = worker.discover_tools().expect("discover");
     assert_eq!(found.url, "https://fixture.test/tools");
     let names: Vec<&str> = found.tools.iter().map(|t| t.name.as_str()).collect();
@@ -2242,13 +2314,21 @@ fn webmcp_declarative_tools_are_discovered_read_only_and_bound_to_the_document()
     worker
         .navigate("https://fixture.test/tools-control")
         .expect("control");
-    pump(&mut worker, Duration::from_secs(2));
-    let control = fixture.hits();
-    for trap in [
+    let traps = [
         "/trap-control",
         "/trap-control-mutation",
         "/trap-control-focus",
-    ] {
+    ];
+    // #374: until the page has acted and every control trap arrived.
+    pump_until_signal(&mut worker, &fixture, "control-acted");
+    pump_until(&mut worker, "the control traps", |_| {
+        let hits = fixture.hits();
+        traps
+            .iter()
+            .all(|trap| hits.iter().any(|hit| hit.ends_with(trap)))
+    });
+    let control = fixture.hits();
+    for trap in traps {
         assert!(
             control.iter().any(|hit| hit.ends_with(trap)),
             "the {trap} control never reached the fixture: {control:?}"
@@ -2604,7 +2684,7 @@ fn webmcp_tools_execute_only_with_approval_and_return_the_verified_result() {
     let mutating = id_of(&found, "mutating");
     let (target, mut approval) =
         approved_execution(&worker, &found, &mutating, &args(r#"{"q":"m"}"#));
-    pump(&mut worker, Duration::from_secs(2));
+    pump_until_signal(&mut worker, &fixture, "tool-mutated");
     assert!(matches!(
         worker.execute_tool(&target, &mut approval, &args(r#"{"q":"m"}"#), 1, "workspace"),
         Err(HostError::Invalid(message)) if message.contains("changed")
@@ -2745,7 +2825,7 @@ fn a_staged_file_never_outlives_a_worker_that_dies_or_hangs() {
         );
         // The guarantee: the worker is gone, so nothing can write later.
         assert!(
-            all_dead(&[worker_pid], Duration::from_secs(5)),
+            all_dead(&[worker_pid], EVENT_DEADLINE),
             "{label}: the worker survived"
         );
         if label == "hangs" {
@@ -2918,7 +2998,7 @@ fn a_stalled_cancelled_or_killed_download_is_typed_and_commits_nothing() {
     );
     no_residue(&worker, "cancel.pdf");
     assert!(
-        all_dead(&pids, Duration::from_secs(10)),
+        all_dead(&pids, EVENT_DEADLINE),
         "a member outlived the cancellation"
     );
     assert!(matches!(
@@ -2987,7 +3067,7 @@ fn a_stalled_cancelled_or_killed_download_is_typed_and_commits_nothing() {
     );
     no_residue(&worker, "crash.pdf");
     assert!(
-        all_dead(&pids, Duration::from_secs(10)),
+        all_dead(&pids, EVENT_DEADLINE),
         "a member outlived the crash"
     );
     assert!(matches!(

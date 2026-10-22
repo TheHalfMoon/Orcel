@@ -103,7 +103,8 @@ class Cleanup {
 }
 
 function nativeTest(name: string, body: (t: Cleanup) => Promise<void>, todo?: string): void {
-  test(name, { skip, todo, timeout: 120_000 }, async () => {
+  // A hang guard above every event wait a test makes (#374).
+  test(name, { skip, todo, timeout: 300_000 }, async () => {
     const cleanup = new Cleanup();
     let failure: unknown = null;
     try {
@@ -167,6 +168,32 @@ function engineCommandLines(profile: string): string[] {
   return out.split(/\r?\n/).filter((line) => line.trim().length > 0);
 }
 
+/// #374: how long a test waits for an event before it fails. A hang guard
+/// only: the waits return as soon as their event happens, so a loaded
+/// runner can be slow without failing, and an event that never comes still
+/// fails the test.
+const EVENT_DEADLINE_MS = 90_000;
+
+/// Whether every engine process using `profile` has exited: one query for
+/// them, then a wait on the processes themselves (Wait-Process waits on their
+/// handles), then a final check. Not a polling loop of process queries, each
+/// of which costs seconds on a loaded runner.
+function engineExited(profile: string, timeoutMs: number = EVENT_DEADLINE_MS): boolean {
+  const leaf = profile.split("\\").pop() ?? profile;
+  const seconds = Math.max(1, Math.ceil(timeoutMs / 1000));
+  const out = execFileSync(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      `$ErrorActionPreference='Stop'; $q = { @(Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" | Where-Object { $_.CommandLine -like '*${leaf}*' }) }; $p = & $q; if ($p.Count -gt 0) { Wait-Process -Id $p.ProcessId -Timeout ${seconds} -ErrorAction SilentlyContinue }; (& $q).Count`
+    ],
+    { encoding: "utf8", timeout: timeoutMs + 60_000 }
+  );
+  return Number(out.trim()) === 0;
+}
+
 async function waitFor(condition: () => boolean, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -181,7 +208,7 @@ async function waitFor(condition: () => boolean, timeoutMs: number): Promise<boo
 function profileFor(t: Cleanup, label: string): string {
   const profile = mkdtempSync(join(tmpdir(), `sg108-${label}-`));
   t.after(async () => {
-    await waitFor(() => engineCommandLines(profile).length === 0, 15_000);
+    engineExited(profile);
     rmSync(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
   });
   return profile;
@@ -290,7 +317,7 @@ nativeTest("the worker drives the installed engine with exactly the host argv an
   worker.send({ frame: "shutdown" });
   assert.deepEqual(await worker.reply(4), { frame: "bye" });
   assert.equal(await worker.exited, 0);
-  assert.ok(await waitFor(() => engineCommandLines(profile).length === 0, 10_000), "engine processes remain after shutdown");
+  assert.ok(engineExited(profile), "engine processes remain after shutdown");
 });
 
 nativeTest("killing the worker takes the engine down with its pipe", async (t) => {
@@ -305,7 +332,7 @@ nativeTest("killing the worker takes the engine down with its pipe", async (t) =
   await worker.exited;
   // The host's kill-on-close Job Object (slice 2b-ii) is the guarantee;
   // this proves the engine also exits on its own when the pipe closes.
-  assert.ok(await waitFor(() => engineCommandLines(profile).length === 0, 15_000), "engine survived the worker");
+  assert.ok(engineExited(profile), "engine survived the worker");
 });
 
 nativeTest("resolver pinning and the no-route proxy confine traffic without any policy route", async (t) => {
@@ -652,9 +679,9 @@ nativeTest("over HTTPS the confined engine sends no Alt-Svc QUIC and no WebTrans
     await page.goto(`https://fixture.test${path}`, { timeout: 15_000 });
     await page.close();
   }
-  assert.ok(await waitFor(() => fixture.admittedUdp() > 0, 10_000), "the control made no Alt-Svc QUIC attempt");
+  assert.ok(await waitFor(() => fixture.admittedUdp() > 0, EVENT_DEADLINE_MS), "the control made no Alt-Svc QUIC attempt");
   await tryWebTransport(control, "https://127.0.0.1:4433/x");
-  assert.ok(await waitFor(() => fixture.literalUdp() > 0, 10_000), "the control sent no UDP, so the probe proves nothing");
+  assert.ok(await waitFor(() => fixture.literalUdp() > 0, EVENT_DEADLINE_MS), "the control sent no UDP, so the probe proves nothing");
 });
 
 // Accepted residual risk #300 (founder decision 2026-10-11): WebTransport
@@ -712,7 +739,7 @@ nativeTest("the worker's service-worker denial refuses same-origin registration,
   await controlPage.goto("https://fixture.test/sw", { timeout: 15_000 });
   await controlPage.waitForFunction(() => document.title.includes("proto:"), undefined, { timeout: 15_000 });
   assert.match(await controlPage.title(), /proto:ok/);
-  assert.ok(await waitFor(() => scripts().length > 0, 10_000), "the control fetched no service-worker script");
+  assert.ok(await waitFor(() => scripts().length > 0, EVENT_DEADLINE_MS), "the control fetched no service-worker script");
   await controlPage.close();
 });
 
