@@ -110,8 +110,6 @@ pub use robots::{
     sitemap_locations, Robots, MAX_ROBOTS_PATTERN_BYTES, MAX_ROBOTS_RULES, MAX_ROBOTS_SITEMAPS,
     MAX_SITEMAP_LOCS, ROBOTS_PRODUCT_TOKEN,
 };
-#[cfg(windows)]
-pub use runtime_pin::measure_and_hold;
 pub use runtime_pin::{runtime_files, tree_digest, worker_root, HeldRuntime, RuntimePin};
 pub use supervise::{
     spawn_engine_null, spawn_host_piped, HostPipes, SupervisedChild, JOB_ACTIVE_PROCESS_LIMIT,

@@ -3370,3 +3370,45 @@ mod host_crash {
         }
     }
 }
+
+/// Judge, PR #336: whether `node.exe`'s folder can be changed is decided by
+/// its security, not by a write probe. A folder the user owns stays
+/// changeable after it denies the user every write (the owner keeps an
+/// implicit WRITE_DAC and could undo the deny after planting a DLL), and a
+/// system folder the user cannot change is not. Needs no browser.
+#[test]
+fn a_folder_the_user_owns_stays_changeable_when_it_denies_writes() {
+    let folder = temp_profile("acl-deny");
+    let node = folder.join("node.exe");
+    std::fs::write(&node, b"MZ stand-in").expect("stand-in node");
+    assert!(crate::runtime_pin::node_folder_writable(&node));
+    let user = format!(
+        "{}\\{}",
+        std::env::var("USERDOMAIN").expect("USERDOMAIN"),
+        std::env::var("USERNAME").expect("USERNAME")
+    );
+    let icacls = |args: &[&str]| {
+        let output = std::process::Command::new("icacls")
+            .arg(&folder)
+            .args(args)
+            .output()
+            .expect("icacls");
+        assert!(output.status.success(), "icacls {args:?}: {output:?}");
+    };
+    // Deny this user adding files or folders: a write probe now fails.
+    icacls(&["/deny", &format!("{user}:(WD,AD)")]);
+    assert!(std::fs::write(folder.join("version.dll"), b"MZ").is_err());
+    assert!(
+        crate::runtime_pin::node_folder_writable(&node),
+        "a self-denied folder the user owns was taken as unchangeable"
+    );
+    icacls(&["/remove:d", &user]);
+    std::fs::remove_dir_all(&folder).expect("remove");
+    // A folder the user cannot change, when this process is not elevated
+    // (an elevated token may legitimately change system folders).
+    if !crate::runtime_pin::node_folder_writable(Path::new(r"C:\Windows\System32\cmd.exe")) {
+        println!("SG108-EVIDENCE node folder check: System32 unchangeable, self-denied own folder changeable");
+    } else {
+        println!("SG108-EVIDENCE node folder check: elevated token, System32 changeable; self-denied own folder changeable");
+    }
+}
