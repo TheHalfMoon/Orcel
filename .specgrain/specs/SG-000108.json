@@ -2,7 +2,7 @@
   "id": "SG-000108",
   "title": "Live isolated browser engine (Playwright-core worker)",
   "program": "ALADDIN-F3",
-  "state": "GRAIN",
+  "state": "CLOSED",
   "risk": "high",
   "created": "2026-10-10",
   "base": "37a1a0f9f3e530d6fdef998301f975752f8c991a",
@@ -67,13 +67,13 @@
   "decisions": [
     {
       "question": "Engine launch and attachment",
-      "status": "PROPOSED, pending security review",
+      "status": "ADOPTED at closeout (#293, #297, #325, #336, #433)",
       "record": "docs/security/SG-000108_ENGINE_ATTACHMENT_DECISION.md",
       "decision": "Option (a): the worker launches the host-verified engine with playwright-core launchPersistentContext over --remote-debugging-pipe and ignoreDefaultArgs: true, using exactly the argv, profile and scrubbed environment built by the host. After launch the host compares the OS-reported command line with that argv and refuses any second browser-process engine in its Job Object; this detects drift and does not contain a compromised worker (a recorded residual risk). SG-000074's ALLOWED_FLAGS gains exactly --remote-debugging-pipe, --host-resolver-rules (host-built), --proxy-server=http://0.0.0.0:9, --proxy-bypass-list (host-built), --webrtc-ip-handling-policy=disable_non_proxied_udp and --disable-quic, each accepted only with its host-built or fixed value; FORBIDDEN_FLAGS is unchanged."
     },
     {
       "question": "Actual-traffic enforcement of SG-000075",
-      "status": "PROPOSED, pending security review",
+      "status": "ADOPTED at closeout (#293, #304, #325, #428)",
       "record": "docs/security/SG-000108_ENGINE_ATTACHMENT_DECISION.md",
       "decision": "Three fail-closed layers: host-pinned, port-pinned resolution (MAP <name> <select_public_address pin>:443 for each admitted name, then MAP * ~NOTFOUND); no route for IP literals or unmapped names (--proxy-server=http://0.0.0.0:9 with an exact --proxy-bypass-list of admitted names plus <-loopback>; zero accepts by hostile listeners on port 9); and the SG-000075 policy route, with service workers blocked and WebSocket denied. WebRTC UDP, which otherwise bypasses the first two layers, is refused with --webrtc-ip-handling-policy=disable_non_proxied_udp, and QUIC with --disable-quic. The host refuses to launch when any mandatory Edge, Chrome or Chromium policy (HKLM or HKCU) is present, and release qualification re-runs the layer probes on the installed engine."
     },
@@ -85,13 +85,13 @@
     },
     {
       "question": "TesterArmy E2E (open question): exact version, engines and network behavior",
-      "status": "PROPOSED, pending review",
+      "status": "ADOPTED at closeout (#323)",
       "record": "docs/security/SG-000108_TESTERARMY_E2E.md",
       "decision": "e2e 0.20.0 with @e2e-dev/web 0.14.0 (playwright-core 1.63.0, already admitted), installed with --ignore-scripts from a pinned lockfile in a test-only folder. No model and no telemetry (E2E_TELEMETRY_DISABLED=1); no browser download. The suite's Edge is launched with the exact production argv and engine environment for the fixture.test destination, accepted by the worker's own launchRefusal, except that the pipe is replaced by loopback DevTools for TesterArmy's CDP attachment. Enforcement is checked outside the browser: LAN listeners (positive control; a negative-control Edge confined to the listener as its proxy) must receive nothing from an IP-literal bypass, and the OS connection tables of the browser's process tree must show no TCP connection or listener beyond loopback and no mDNS socket, with ICE sockets required as proof the WebRTC probe ran. The tables cannot show where a UDP socket sends: UDP egress is observed only at the listener's address. Mutations prove each check. It is an independent black-box check of the first journey and does not test the production worker, whose confinement and policies stay proven by the native suite. OS-enforced containment (WFP or AppContainer) would need system configuration and is not made."
     },
     {
       "question": "Engine compatibility (open question): the supported version window and refusal of unsupported engines",
-      "status": "PROPOSED, pending review",
+      "status": "ADOPTED at closeout (#327; Chromium 156 pending #431)",
       "record": "docs/security/SG-000108_ENGINE_ATTACHMENT_DECISION.md",
       "decision": "The live worker runs only on engine kinds and majors listed in QUALIFIED_WORKER_ENGINES (discovery.rs): Edge 155 (evidence host, native suite with the leak control required) and Chrome 154 (CI windows-latest, the same full native suite). validate_launch refuses any other major or an unparseable version with the typed Unavailable(UnsupportedEngine) before anything is spawned; discovery's kind, path and Authenticode checks are unchanged. A new major is added only by a PR whose own native-suite run on that engine passes; until then the worker is refused on it."
     }
@@ -175,5 +175,26 @@
     "sg_000106": "The worker enters the release payload only with unified packaging, license notices, SBOM and signed provenance."
   },
   "activation_note": "No dependency, worker, tool or authority change in this activation packet. Separate implementation and closeout PRs must qualify their exact heads; activation CI alone proves nothing about the engine.",
+  "closed_at": "2026-10-23",
+  "implementation_base": "ede461539cd3a53c017fbcd1d2d0aea0aeae8b32",
+  "implementation_pr": 433,
+  "qualified_head": "17ebbf846423485bda201fdf4fc45cfd34e7846c",
+  "qualified_tree": "e74318cad8e03036b9d9df2ed0984ef8302f1752",
+  "implementation_merge": "d94b88cd44ae0a6a0285c41f66c3f6e3dea4e203",
+  "pre_merge_ci": "39846013535",
+  "pre_merge_review_gates": "39846012926",
+  "post_merge_ci": "39862151758",
+  "canonical_evidence": {
+    "slices": "#289 activation; #291 attachment and enforcement decisions; #293 confinement contract; #294 worker package (playwright-core 1.63.0); #295/#302 native and HTTPS confinement probes; #297 launcher; #304 host-decided navigation; #305 observation and activation; #306 PDF download journey; #308 typed timeout and crash outcomes; #310/#311 WebMCP; #312/#316 extraction; #318/#319 crawl; #321/#322 held-handle commit and crash recovery; #323 TesterArmy E2E; #325 loopback-only confinement; #326 profile sweep; #327 engine window; #329 product-caller design; #330-#335 product caller slices 1a-3a; #336 runtime pin; #428 development-only live browser host and destinations; #432 crawl cancel-first; #429 event-based native test synchronization (#374); #433 orceld dispatch, six live tools and the public journey",
+    "public_journey": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm -> fomcminutes20260916.pdf, 436574 bytes, sha256 eb23afae2fd82612d9f2a8effd53b7091f330fb42512fc15a8f9572ce4970871, equal to an independent fetch",
+    "acceptance_matrix": "posted on #290 at closeout",
+    "post_merge": "main CI 39862151758 at 909acb3 (contains merge d94b88c) passed all jobs on Chromium 155; the merge commit's own run 39853744167 failed attempt 1 on one navigation timeout (cause undetermined, #438), attempts 2-3 landed on an unqualified Chromium 156 runner (#431), and attempt 4, on Chromium 155, failed a different native test at its first launch (typed LaunchFailed, #438)",
+    "open_follow_ups": [
+      "#431 Chromium 156 qualification"
+    ],
+    "known_residuals": [
+      "#438 transient native lifetime failures on the CI runner: a navigation TimedOut and a launch LaunchFailed, once each (typed, no partial commit); cause undetermined"
+    ]
+  },
   "done_when": "A real Windows user journey downloads and verifies a public PDF through the isolated browser under the existing policies and approval broker, with every denial path proven, the dependency admitted with provenance, and remote, personal-profile and script-evaluation surfaces still absent."
 }
