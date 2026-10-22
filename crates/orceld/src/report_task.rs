@@ -526,6 +526,12 @@ fn start(
     let mut observed = Vec::with_capacity(sources.len());
     let mut texts = Vec::with_capacity(sources.len());
     for source in sources {
+        if is_link(workspace, source) {
+            return Err(error(
+                FailureCode::CapabilityDenied,
+                format!("report source {source} is a link; name the file itself"),
+            ));
+        }
         let read = provider.read_text(source)?;
         let text = read
             .get("text")
@@ -577,6 +583,27 @@ fn start(
     }))
 }
 
+/// Whether the workspace entry at `relative` is itself a link or reparse
+/// point. Sources must be plain files, as the checker requires.
+fn is_link(workspace: &Workspace, relative: &str) -> bool {
+    match std::fs::symlink_metadata(workspace.root.join(relative)) {
+        Ok(metadata) => {
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::MetadataExt;
+                const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+                metadata.file_type().is_symlink()
+                    || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+            }
+            #[cfg(not(windows))]
+            {
+                metadata.file_type().is_symlink()
+            }
+        }
+        Err(_) => false,
+    }
+}
+
 /// Why a proposal cannot go ahead now.
 enum Blocked {
     /// A source or the folder changed: the task becomes stale.
@@ -622,7 +649,7 @@ fn check_current(
                 .and_then(Value::as_str)
                 .map(|text| sha256_hex(text.as_bytes()))
         });
-        if current.as_deref() != Some(source.sha256.as_str()) {
+        if is_link(workspace, &source.path) || current.as_deref() != Some(source.sha256.as_str()) {
             return Err(Blocked::Stale(error(
                 FailureCode::TargetStale,
                 format!(

@@ -989,3 +989,61 @@ fn sg126_a_backslash_in_a_unix_folder_name_stays_in_that_folder() {
     assert!(scene.root().join("rep\\").join("q3.md").exists());
     assert!(!scene.root().join("rep").exists());
 }
+
+#[test]
+fn sg126_linked_sources_are_refused_before_any_approval() {
+    let scene = Scene::new("linked-source");
+    let tasks = TaskRegistry::new();
+    let approval = consent(&scene, &[ApprovalDecision::Approved]);
+    // A source named through a link is refused at start.
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(
+            scene.root().join("data/q3.csv"),
+            scene.root().join("data/alias.csv"),
+        )
+        .unwrap();
+        let refused = dispatch(
+            &scene.workspace,
+            &approval.broker,
+            &tasks,
+            &request(
+                "start",
+                json!({"title": "t", "sources": ["data/alias.csv"], "folder": "reports"}),
+            ),
+        )
+        .unwrap_err();
+        assert_eq!(refused.code, FailureCode::CapabilityDenied);
+    }
+    // Replaced by a link after start: stale at preview, before approval.
+    let started = start_q3(&scene, &tasks);
+    let task = started["task_id"].as_str().unwrap().to_owned();
+    let original = scene.root().join("data/q3.csv");
+    let copy = scene.root().join("data/copy.csv");
+    std::fs::write(&copy, Q3_CSV).unwrap();
+    std::fs::remove_file(&original).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&copy, &original).unwrap();
+    #[cfg(windows)]
+    {
+        let outcome = std::process::Command::new("cmd")
+            .args(["/C", "mklink"])
+            .arg(&original)
+            .arg(&copy)
+            .output()
+            .expect("run mklink");
+        if !outcome.status.success() {
+            // File symbolic links need the privilege or Developer Mode on
+            // Windows; without them the replacement is a plain copy, which
+            // still leaves the task valid.
+            std::fs::write(&original, Q3_CSV).unwrap();
+            assert!(preview(&scene, &tasks, &task, "q3.md", "x").is_ok());
+            assert_eq!(approval.shown(), 0);
+            return;
+        }
+    }
+    let refused = preview(&scene, &tasks, &task, "q3.md", "x").unwrap_err();
+    assert_eq!(refused.code, FailureCode::TargetStale);
+    assert_eq!(state(&tasks, &task), "stale");
+    assert_eq!(approval.shown(), 0);
+}
