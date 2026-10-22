@@ -40,7 +40,8 @@
 //! unanswered.
 //!
 //! The API is read-only. Its methods (`status.get`, `capabilities.get`,
-//! `events.subscribe`) read daemon facts and the event log; nothing reaches
+//! `events.subscribe`, and SG-000126's `task.list` and `task.get`) read
+//! daemon facts, the event log and the report task registry; nothing reaches
 //! the request dispatcher, the policy engine or the approval broker, so no
 //! client can submit work or mint an approval through it. Frames are JSON
 //! lines of at most [`MAX_FRAME_BYTES`]; concurrent clients, the event ring
@@ -70,6 +71,7 @@
 //! Authenticode and code-signature requirements are not imported (see the
 //! protocol document, "Code identity").
 
+use crate::report_task::TaskRegistry;
 use orcel_platform::process::{self, ProcessGeneration};
 use orcel_platform::PlatformError;
 use serde_json::{json, Value};
@@ -96,10 +98,16 @@ const REBIND_INTERVAL: Duration = Duration::from_secs(5);
 const PEER_RECHECK: Duration = Duration::from_secs(1);
 
 /// The methods this revision serves. All of them only read.
-pub(crate) const METHODS: &[&str] = &["status.get", "capabilities.get", "events.subscribe"];
+pub(crate) const METHODS: &[&str] = &[
+    "status.get",
+    "capabilities.get",
+    "events.subscribe",
+    "task.list",
+    "task.get",
+];
 /// Read-only methods the protocol reserves; this revision answers
 /// `METHOD_UNAVAILABLE` for them.
-pub(crate) const RESERVED_METHODS: &[&str] = &["devices.list", "task.get", "task.list"];
+pub(crate) const RESERVED_METHODS: &[&str] = &["devices.list"];
 
 /// The bounds of one endpoint.
 #[derive(Debug, Clone)]
@@ -227,6 +235,18 @@ impl EventLog {
 
     /// Appends one event and returns its sequence number.
     pub(crate) fn publish(&self, kind: &str, data: Value) -> u64 {
+        self.publish_run(kind, None, None, data)
+    }
+
+    /// Appends one event of a task run (SG-000126): `run_id` is the task id
+    /// and `step_id` the step.
+    pub(crate) fn publish_run(
+        &self,
+        kind: &str,
+        run_id: Option<&str>,
+        step_id: Option<&str>,
+        data: Value,
+    ) -> u64 {
         let data = bounded_data(data);
         let mut ring = self.lock();
         ring.head += 1;
@@ -235,8 +255,8 @@ impl EventLog {
             seq,
             at_ms: now_ms(),
             kind: kind.to_owned(),
-            run_id: None,
-            step_id: None,
+            run_id: run_id.map(str::to_owned),
+            step_id: step_id.map(str::to_owned),
             data,
         });
         while ring.events.len() > self.capacity {
@@ -312,6 +332,8 @@ pub(crate) struct DaemonFacts {
 struct Shared {
     facts: DaemonFacts,
     log: Arc<EventLog>,
+    /// SG-000126 report tasks, read for `task.list` and `task.get`.
+    tasks: Arc<TaskRegistry>,
     limits: Limits,
     started: Instant,
     started_at_ms: u64,
@@ -331,10 +353,17 @@ struct EndpointWait {
 }
 
 impl Shared {
-    fn new(facts: DaemonFacts, log: Arc<EventLog>, limits: Limits, endpoint: String) -> Self {
+    fn new(
+        facts: DaemonFacts,
+        log: Arc<EventLog>,
+        tasks: Arc<TaskRegistry>,
+        limits: Limits,
+        endpoint: String,
+    ) -> Self {
         Self {
             facts,
             log,
+            tasks,
             limits,
             started: Instant::now(),
             started_at_ms: now_ms(),
@@ -689,6 +718,15 @@ fn handle_frame(shared: &Shared, peer: &PeerInfo, bytes: &[u8]) -> Reply {
         "status.get" => Reply::Frame(ok_frame(&id, status(shared, Some(peer)))),
         "capabilities.get" => Reply::Frame(ok_frame(&id, capabilities(shared))),
         "events.subscribe" => subscribe_request(id, &params),
+        "task.list" => match params.keys().next() {
+            Some(key) => Reply::Frame(error_frame(
+                &id,
+                "INVALID_REQUEST",
+                format!("task.list has no parameter {key}"),
+            )),
+            None => Reply::Frame(ok_frame(&id, shared.tasks.list())),
+        },
+        "task.get" => Reply::Frame(task_get(shared, &id, &params)),
         method if RESERVED_METHODS.contains(&method) => Reply::Frame(error_frame(
             &id,
             "METHOD_UNAVAILABLE",
@@ -699,6 +737,28 @@ fn handle_frame(shared: &Shared, peer: &PeerInfo, bytes: &[u8]) -> Reply {
             "UNKNOWN_METHOD",
             format!("{method} is not a method of {PROTOCOL}; the API is read-only"),
         )),
+    }
+}
+
+/// `task.get {task_id}`: one task of this daemon run.
+fn task_get(shared: &Shared, id: &Value, params: &serde_json::Map<String, Value>) -> Value {
+    if let Some(key) = params.keys().find(|key| key.as_str() != "task_id") {
+        return error_frame(
+            id,
+            "INVALID_REQUEST",
+            format!("task.get has no parameter {key}"),
+        );
+    }
+    let Some(task_id) = params.get("task_id").and_then(Value::as_str) else {
+        return error_frame(id, "INVALID_REQUEST", "task.get requires a string task_id");
+    };
+    match shared.tasks.get(task_id) {
+        Some(task) => ok_frame(id, task),
+        None => error_frame(
+            id,
+            "UNKNOWN_TASK",
+            "this orceld run has no such task; task ids name one daemon run",
+        ),
     }
 }
 
@@ -1120,7 +1180,7 @@ fn new_epoch() -> String {
 /// Starts the endpoint on a background thread. Never fails orceld: when the
 /// endpoint cannot be taken the reason goes to stderr and the request loop
 /// runs as before. `ORCEL_APP_API=off` disables it.
-pub(crate) fn start(facts: DaemonFacts) -> AppApi {
+pub(crate) fn start(facts: DaemonFacts, tasks: Arc<TaskRegistry>) -> AppApi {
     if std::env::var_os("ORCEL_APP_API").is_some_and(|value| value == "off") {
         eprintln!("orceld app api: disabled by ORCEL_APP_API=off");
         return AppApi::disabled();
@@ -1154,7 +1214,8 @@ pub(crate) fn start(facts: DaemonFacts) -> AppApi {
             return AppApi::disabled();
         }
     };
-    let shared = Arc::new(Shared::new(facts, log, limits, label));
+    tasks.attach_events(Arc::clone(&log));
+    let shared = Arc::new(Shared::new(facts, log, tasks, limits, label));
     #[cfg(unix)]
     let bound = Arc::clone(&api.bound);
     let spawned = std::thread::Builder::new()

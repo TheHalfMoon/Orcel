@@ -32,6 +32,8 @@ mod git_push;
 mod live_browser;
 mod profile_gate;
 mod remote_lease;
+mod report_check;
+mod report_task;
 mod search;
 mod secret_store;
 mod trust;
@@ -71,6 +73,8 @@ fn run() -> Result<(), String> {
     let approval = LocalApprovalBroker::new()
         .map_err(|error| format!("initialize approval broker: {}", error.message))?;
     let workspace_set = remote_lease::WorkspaceSet::from_environment();
+    // SG-000126: report tasks of this run, served read-only by the app API.
+    let tasks = std::sync::Arc::new(report_task::TaskRegistry::new());
 
     eprintln!(
         "orceld ready: protocol={} audit={} mode=SG-000039_CLIPBOARD_WRITE",
@@ -79,12 +83,15 @@ fn run() -> Result<(), String> {
     );
     // CR-01: the read-only app API. It reads daemon facts and the events
     // published below; it never reaches dispatch or the approval broker.
-    let app_api = app_api::start(app_api::DaemonFacts {
-        mode: "SG-000039_CLIPBOARD_WRITE",
-        policy_revision: POLICY_REVISION.to_owned(),
-        internal_protocol_version: INTERNAL_PROTOCOL_VERSION.to_string(),
-        capabilities: app_api_capabilities(approval.presence_available()),
-    });
+    let app_api = app_api::start(
+        app_api::DaemonFacts {
+            mode: "SG-000039_CLIPBOARD_WRITE",
+            policy_revision: POLICY_REVISION.to_owned(),
+            internal_protocol_version: INTERNAL_PROTOCOL_VERSION.to_string(),
+            capabilities: app_api_capabilities(approval.presence_available()),
+        },
+        std::sync::Arc::clone(&tasks),
+    );
 
     let stdin = io::stdin();
     let mut stdout = io::BufWriter::new(io::stdout().lock());
@@ -107,10 +114,13 @@ fn run() -> Result<(), String> {
                     envelope.request.capability.clone(),
                     envelope.request.operation.clone(),
                 );
-                (
-                    handle_envelope(&policy, &audit, &approval, &workspace_set, envelope),
-                    Some(shape),
-                )
+                // SG-000126: report tasks have their own local-only entry.
+                let response = if report_task::is_report_request(&envelope.request) {
+                    report_task::handle_envelope(&policy, &audit, &approval, &tasks, envelope)
+                } else {
+                    handle_envelope(&policy, &audit, &approval, &workspace_set, envelope)
+                };
+                (response, Some(shape))
             }
             Err(error) => (
                 ResponseEnvelope::failure(
@@ -174,6 +184,7 @@ fn app_api_capabilities(approval_available: bool) -> Vec<Value> {
         json!({ "id": "fs", "state": "available", "reason": null }),
         json!({ "id": "git", "state": "available", "reason": null }),
         json!({ "id": "clipboard", "state": "available", "reason": null }),
+        json!({ "id": "report.task", "state": "available", "reason": null }),
         windows_only("process.contained", "contained process execution"),
         windows_only("desktop.uia", "the UI Automation desktop provider"),
         if approval_available {

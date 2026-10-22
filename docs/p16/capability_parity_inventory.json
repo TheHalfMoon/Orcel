@@ -367,6 +367,27 @@
       "note": "provider readiness without secrets or network I/O, read by `orcel search status`; not an MCP tool (WI-06)"
     },
     {
+      "capability": "report",
+      "operation": "start",
+      "status": "implemented_hidden",
+      "owner_grain": "outside_v0_2_target",
+      "note": "local stdio only: observes and hashes 1..=8 workspace text sources and opens a per-run report task; read-only; not an MCP tool until F4 (SG-000126)"
+    },
+    {
+      "capability": "report",
+      "operation": "preview",
+      "status": "implemented_hidden",
+      "owner_grain": "outside_v0_2_target",
+      "note": "no effect: re-checks the sources, the folder and the absent destination and returns the exact bytes the approval binds (SG-000126)"
+    },
+    {
+      "capability": "report",
+      "operation": "commit",
+      "status": "implemented_hidden",
+      "owner_grain": "outside_v0_2_target",
+      "note": "one SOFT approval, then one create-only UTF-8 report in the task's folder; never overwrites; verified only by the independent checker (SG-000126)"
+    },
+    {
       "capability": "workspace.trust.get",
       "operation": "get",
       "status": "intentionally_denied",

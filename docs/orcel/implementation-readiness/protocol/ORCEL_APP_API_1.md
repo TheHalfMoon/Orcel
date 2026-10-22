@@ -100,12 +100,16 @@ A connection may carry any number of requests, one at a time, until it subscribe
 | `status.get` | none | `name`, `version`, `app_api`, `read_only: true`, `internal_protocol_version`, `os`, `arch`, `pid`, `mode`, `policy_revision`, `started_at_ms`, `uptime_ms`, `endpoint`, `endpoint_wait` (null, or `{since_ms, reason, attempts}` when this daemon found the endpoint held before taking it), `events {epoch, head_seq, oldest_seq, ring_capacity}`, `clients {active, max}`, and `peer {pid, source}` as the server identified the caller |
 | `capabilities.get` | none | `os`, `read_only: true`, `methods`, `reserved_methods`, `capabilities: [{id, state: "available" \| "unavailable", reason}]` |
 | `events.subscribe` | `after_seq` (integer ≥ 0, default 0), `epoch` (string; required when `after_seq` > 0, #375 item 4) | see section 5 |
+| `task.list` | none | `max_tasks` (64) and `tasks`, newest first: `[{task_id, kind: "report", title, state, workspace_id, created_at_ms, updated_at_ms}]` (SG-000126) |
+| `task.get` | `task_id` (string) | one task: the `task.list` fields plus `folder`, `sources [{path, sha256, bytes}]`, `proposal` and `report` (`{name, destination, sha256, bytes}` or null), `check` (the independent checker's record or null) and `steps [{step_id, kind, outcome, at_ms}]` (at most 32). `UNKNOWN_TASK` when this daemon run has no such task |
 
 The capability rows report what this build of `orceld` can serve on this OS. Rows for providers that are Windows-only in this build carry their reason. `approval.presence` reflects whether the broker found a platform presence surface at startup. Readiness beyond that is checked per request on the existing kernel path.
 
-Reserved read-only methods `devices.list`, `task.get` and `task.list` answer `METHOD_UNAVAILABLE` in this revision. Every other name answers `UNKNOWN_METHOD`, including anything that would submit, approve, mint, stop or write.
+The reserved read-only method `devices.list` answers `METHOD_UNAVAILABLE` in this revision. Every other name answers `UNKNOWN_METHOD`, including anything that would submit, approve, mint, stop or write.
 
-Error codes: `INVALID_REQUEST`, `UNSUPPORTED_VERSION`, `UNKNOWN_METHOD`, `METHOD_UNAVAILABLE`, `FRAME_TOO_LARGE`, `BUSY`, `INTERNAL`.
+Error codes: `INVALID_REQUEST`, `UNSUPPORTED_VERSION`, `UNKNOWN_METHOD`, `METHOD_UNAVAILABLE`, `UNKNOWN_TASK`, `FRAME_TOO_LARGE`, `BUSY`, `INTERNAL`.
+
+**Tasks (SG-000126).** `task.list` and `task.get` read the report tasks of the current daemon run (a bounded registry of 64; ids name one run and are not durable until the task journal, RJ-01/RJ-02, exists). States: `observed`, `proposed`, `approval_denied`, `committing`, `verified`, `verification_failed`, `stale`, `failed`. Records carry paths, sizes, hashes, states and step outcomes, never file content. Tasks are started, previewed and committed only on `orceld`'s local stdio channel (`report/start`, `report/preview`, `report/commit`), never through this API.
 
 ## 5. Events
 
@@ -122,7 +126,9 @@ Kinds in this revision:
 - `app_api.endpoint_in_use` carries `{reason}`. This daemon found the endpoint held before it took it (section 1).
 - `snapshot` is described below.
 
-`data` larger than 16 KiB is replaced by `{"truncated": true, "bytes": n}`. `run_id` and `step_id` are reserved for the task journal (RJ-01) and are null for now.
+- `task.updated` carries `{task_kind: "report", state, step, outcome}` with `run_id` set to the task id and `step_id` to the step (`s1`, `s2`, ...). One is published per task step (SG-000126).
+
+`data` larger than 16 KiB is replaced by `{"truncated": true, "bytes": n}`. `run_id` and `step_id` are null for every other event kind.
 
 **Subscribing.** A cursor names a position in one daemon run. So when `after_seq` > 0, the request must carry the `epoch` that cursor belongs to. Without it the request is refused with `INVALID_REQUEST`, and the connection stays open (#375 item 4). A subscription from the start (`after_seq: 0`) may omit it. After `events.subscribe`, the server first answers `{"ok":true,"result":{"epoch","head_seq","after_seq"}}`. It then streams, with the request's `id`:
 
