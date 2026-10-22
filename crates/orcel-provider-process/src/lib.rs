@@ -8,6 +8,9 @@ use std::time::Duration;
 pub mod contained;
 /// WI-05: the confined document parser's spec and output frame.
 pub mod document_parser;
+/// SG-000096: ordinary current-user (Full User) shell processes. Never
+/// reachable from Safe; orceld gates every launch on its own authority.
+pub mod shell;
 
 /// XP-13b: the Safe tier on Linux and macOS (process group, pidfd or
 /// kqueue, cgroup v2 when delegated, rlimits, owned cleanup).
@@ -855,7 +858,8 @@ pub fn qualify_private_execution(
     ))
 }
 
-#[cfg(all(test, windows))]
+/// SG-000096: handle-pinned executable and cwd identity.
+#[cfg(windows)]
 mod native_path_identity_windows;
 
 #[cfg(windows)]
@@ -876,6 +880,9 @@ mod windows_contained_launch {
     type Psid = *mut c_void;
     type Hresult = i32;
 
+    /// SG-000096: the ordinary current-user launch (no AppContainer).
+    pub(crate) mod shell;
+
     const CREATE_SUSPENDED: u32 = 0x0000_0004;
     const CREATE_UNICODE_ENVIRONMENT: u32 = 0x0000_0400;
     const EXTENDED_STARTUPINFO_PRESENT: u32 = 0x0008_0000;
@@ -888,6 +895,7 @@ mod windows_contained_launch {
     const OPEN_EXISTING: u32 = 3;
     const FILE_ATTRIBUTE_NORMAL: u32 = 0x80;
     const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x0000_2000;
+    const JOB_OBJECT_LIMIT_ACTIVE_PROCESS: u32 = 0x0000_0008;
     const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS: i32 = 9;
     const TOKEN_QUERY: u32 = 0x0008;
     const TOKEN_IS_APP_CONTAINER: i32 = 29;
@@ -953,7 +961,6 @@ mod windows_contained_launch {
         attribute_list: *mut c_void,
     }
 
-    #[cfg(test)]
     #[repr(C)]
     #[derive(Clone, Copy, Default)]
     struct NativeFileTime {
@@ -1046,11 +1053,8 @@ mod windows_contained_launch {
             token_information_length: u32,
             return_length: *mut u32,
         ) -> i32;
-        #[cfg(test)]
         fn EqualSid(left: Psid, right: Psid) -> i32;
-        #[cfg(test)]
         fn ConvertSidToStringSidW(sid: Psid, text: *mut *mut u16) -> i32;
-        #[cfg(test)]
         fn ConvertStringSidToSidW(text: *const u16, sid: *mut Psid) -> i32;
     }
 
@@ -1102,7 +1106,6 @@ mod windows_contained_launch {
         fn GetSystemDirectoryW(buffer: *mut u16, size: u32) -> u32;
         #[cfg(test)]
         fn GetCurrentProcess() -> Handle;
-        #[cfg(test)]
         fn GetProcessTimes(
             process: Handle,
             creation: *mut NativeFileTime,
@@ -1110,7 +1113,6 @@ mod windows_contained_launch {
             kernel: *mut NativeFileTime,
             user: *mut NativeFileTime,
         ) -> i32;
-        #[cfg(test)]
         fn LocalFree(memory: Handle) -> Handle;
         fn CreatePipe(
             read_pipe: *mut Handle,
@@ -1342,6 +1344,61 @@ mod windows_contained_launch {
             })
         }
 
+        /// SG-000096: an ordinary current-user child gets no security
+        /// capabilities, only the exact list of handles it may inherit.
+        fn with_handle_list(handles: &[Handle]) -> Result<Self, ExecutionPlanError> {
+            if handles.is_empty() {
+                return Err(ExecutionPlanError::new("a handle list must not be empty"));
+            }
+            let heap = unsafe { GetProcessHeap() };
+            if heap.is_null() {
+                return Err(last_error("GetProcessHeap"));
+            }
+            let mut bytes = 0usize;
+            unsafe {
+                InitializeProcThreadAttributeList(ptr::null_mut(), 1, 0, &mut bytes);
+            }
+            if bytes == 0 {
+                return Err(last_error("InitializeProcThreadAttributeList(size)"));
+            }
+            let list = unsafe { HeapAlloc(heap, 0, bytes) };
+            if list.is_null() {
+                return Err(last_error("HeapAlloc(attribute list)"));
+            }
+            if unsafe { InitializeProcThreadAttributeList(list, 1, 0, &mut bytes) } == 0 {
+                let error = last_error("InitializeProcThreadAttributeList");
+                unsafe {
+                    HeapFree(heap, 0, list);
+                }
+                return Err(error);
+            }
+            let mut handle_list = handles.to_vec();
+            let listed = unsafe {
+                UpdateProcThreadAttribute(
+                    list,
+                    0,
+                    PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                    handle_list.as_mut_ptr().cast(),
+                    mem::size_of::<Handle>() * handle_list.len(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                )
+            };
+            if listed == 0 {
+                let error = last_error("UpdateProcThreadAttribute(HANDLE_LIST)");
+                unsafe {
+                    DeleteProcThreadAttributeList(list);
+                    HeapFree(heap, 0, list);
+                }
+                return Err(error);
+            }
+            Ok(Self {
+                heap,
+                list,
+                _handle_list: handle_list,
+            })
+        }
+
         fn raw(&self) -> *mut c_void {
             self.list
         }
@@ -1364,6 +1421,14 @@ mod windows_contained_launch {
 
     impl JobObject {
         fn kill_on_close() -> Result<Self, ExecutionPlanError> {
+            Self::kill_on_close_with_process_limit(None)
+        }
+
+        /// SG-000096: a shell Job also bounds how many processes its tree may
+        /// hold at once. Breakaway is never permitted (the flag is not set).
+        fn kill_on_close_with_process_limit(
+            active_process_limit: Option<u32>,
+        ) -> Result<Self, ExecutionPlanError> {
             let handle = OwnedHandle::new(
                 unsafe { CreateJobObjectW(ptr::null(), ptr::null()) },
                 "CreateJobObjectW",
@@ -1371,6 +1436,13 @@ mod windows_contained_launch {
 
             let mut information = JobObjectExtendedLimitInformation::default();
             information.basic_limit_information.limit_flags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            if let Some(limit) = active_process_limit {
+                if limit == 0 {
+                    return Err(ExecutionPlanError::new("Job process limit must be nonzero"));
+                }
+                information.basic_limit_information.limit_flags |= JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
+                information.basic_limit_information.active_process_limit = limit;
+            }
             let configured = unsafe {
                 SetInformationJobObject(
                     handle.raw(),
@@ -1447,9 +1519,8 @@ mod windows_contained_launch {
             Ok(())
         }
 
-        // Test-only recheck against the *exact* owned Job immediately before
-        // native ResumeThread. A separate Job must never authorize a child.
-        #[cfg(test)]
+        // Recheck against the *exact* owned Job immediately before native
+        // ResumeThread. A separate Job must never authorize a child.
         fn verify_member_before_resume(
             &self,
             child: &ChildProcess,
@@ -1482,7 +1553,6 @@ mod windows_contained_launch {
         }
     }
 
-    #[cfg(test)]
     #[derive(Clone)]
     struct NativeOwnerSnapshot {
         sid: String,
@@ -1492,7 +1562,6 @@ mod windows_contained_launch {
         creation_generation: u64,
     }
 
-    #[cfg(test)]
     fn native_sid_equal(actual: &str, expected: &str) -> Result<bool, ExecutionPlanError> {
         fn parsed(text: &str) -> Result<Psid, ExecutionPlanError> {
             let wide = wide(OsStr::new(text));
@@ -1658,7 +1727,6 @@ mod windows_contained_launch {
             Self::from_created_process(information)
         }
 
-        #[cfg(test)]
         fn fixture_token_data(
             token: &OwnedHandle,
             information_class: i32,
@@ -1777,10 +1845,10 @@ mod windows_contained_launch {
             Ok(())
         }
 
-        // T02-C qualification-only representation. Production callers cannot
-        // construct or consume it; later code must populate it from protected
-        // server-owned Full User lease and process-handle records.
-        #[cfg(test)]
+        // The native token identity of a process: SID, logon LUID, session,
+        // elevation and creation generation. SG-000096 compares it with an
+        // expected owner that orceld derives from the protected Full User
+        // lease and runtime session record, never from caller input.
         fn snapshot_native_owner(
             process: Handle,
         ) -> Result<NativeOwnerSnapshot, ExecutionPlanError> {
@@ -2173,8 +2241,16 @@ mod windows_contained_launch {
     }
 
     fn environment_from_plan(plan: &ExecutionPlan) -> Result<Vec<u16>, ExecutionPlanError> {
+        environment_block(&plan.env)
+    }
+
+    /// The allowlisted, secret-free environment block of a plan; SG-000096
+    /// shell launches reuse it so they get no wider an environment than Safe.
+    fn environment_block(
+        env: &std::collections::BTreeMap<String, String>,
+    ) -> Result<Vec<u16>, ExecutionPlanError> {
         let mut entries = Vec::new();
-        for (key, value) in &plan.env {
+        for (key, value) in env {
             if key.is_empty() || key.contains('\0') || value.contains('\0') || key.contains('=') {
                 return Err(ExecutionPlanError::new("invalid environment entry"));
             }
@@ -3480,7 +3556,7 @@ mod contained_launch_tests {
     use std::sync::Mutex;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    static ENVIRONMENT_LOCK: Mutex<()> = Mutex::new(());
+    pub(crate) static ENVIRONMENT_LOCK: Mutex<()> = Mutex::new(());
 
     struct EnvironmentVarGuard {
         key: &'static str,
