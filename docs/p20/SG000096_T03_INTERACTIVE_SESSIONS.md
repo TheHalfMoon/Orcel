@@ -19,6 +19,8 @@ Status: implementation of #265 (program #260). It builds on the T02/T02-C launch
   - the runtime owner exiting or changing generation.
 
   Each of these ends the whole Job and proves it empty. Otherwise the state is `TerminationUnverified`. A supervision error becomes `OutcomeUnknown`. After an exit, helpers get the same settling grace as in T02, and anything still running is terminated (`descendants_terminated`). No end state is inferred from output or a prompt.
+- **Supervisor failure.** A panic in the supervisor drops the Job (the tree ends) and sets `OutcomeUnknown`, so the session never stays `Running`. An `expires_at` that has already passed is refused before anything launches.
+- **Pipes.** The stdin pipe is created private; only the child's read end is then made inheritable, so the Orcel write end never is. When an ended session is removed, its writer is cancelled in a bounded loop (5 s) and then left detached rather than blocking the registry.
 - **Daemon exit.** Dropping the registry revokes every session and joins its threads. If orceld itself dies, the kill-on-close Job ends every tree.
 - **Platforms.** macOS and Linux: `start` returns `Unavailable`, and the other calls see no sessions.
 
@@ -35,9 +37,11 @@ Expected owners come from a MAC-verified disposable lease, as in T02.
 | `sg000096_t03_registry_is_bounded_and_ids_are_not_guessable` | 8 live sessions with distinct random IDs; a 9th is `RegistryFull`; an unknown ID is refused; removing a running session is refused |
 | `sg000096_t03_dropping_the_registry_ends_every_session` | dropping the registry ends the child |
 | `sg000096_t03_a_session_denied_before_resume_is_never_registered` | a pre-resume denial leaves the registry empty |
+| `sg000096_t03_losing_the_runtime_owner_revokes_the_session` | a session bound to a disposable owner ends as `Revoked` when that owner exits; the child is gone |
+| `sg000096_t03_an_expired_authority_launches_nothing` | an `expires_at` already past is refused with zero launches |
 | `shell_session::tests::*` (4) | ring offsets, eviction and paging; split UTF-8 and binary; read bound; stdin limit bounds |
 
-- `cargo test -p orcel-provider-process --lib -- shell`: 37 tests, 8 consecutive passes with no failure.
+- `cargo test -p orcel-provider-process --lib -- shell`: 39 tests. After the judge fixes they passed 5 consecutive runs with no failure, and 8 before them.
 - `cargo test -p orcel-provider-process`: 86 lib + 8 integration tests pass.
 - `cargo clippy -p orcel-provider-process --all-targets -- -D warnings`: passes on the Windows, Linux and macOS targets. `cargo fmt --all --check` passes.
 

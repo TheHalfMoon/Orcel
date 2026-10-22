@@ -30,6 +30,8 @@ use std::time::{Duration, Instant};
 /// How long `terminate` and `revoke_all` wait for the final state. The
 /// supervisor needs at most the Job quiescence bound plus the drain.
 const END_WAIT: Duration = Duration::from_secs(20);
+/// How long an ended session's stdin writer is cancelled before it is left.
+const WRITER_CANCEL_BOUND: Duration = Duration::from_secs(5);
 const BCRYPT_USE_SYSTEM_PREFERRED_RNG: u32 = 0x0000_0002;
 
 #[link(name = "bcrypt")]
@@ -53,7 +55,10 @@ unsafe extern "system" {
 struct Owned<T>(T);
 // SAFETY: Windows kernel handles may be used from any thread. Each `Owned`
 // value is moved whole into a single thread, which alone uses and drops it.
-unsafe impl<T> Send for Owned<T> {}
+// The impls are limited to the two handle-owning types moved this way.
+unsafe impl Send for Owned<Supervision> {}
+// SAFETY: as above; the stdin write handle is moved whole to the writer.
+unsafe impl Send for Owned<OwnedHandle> {}
 
 impl<T> Owned<T> {
     /// Takes the value out. A method call moves the whole wrapper into a
@@ -209,12 +214,22 @@ impl Session {
         };
         let _ = threads.supervisor.join();
         lock(&self.stdin).take();
-        // SAFETY: the writer's JoinHandle is alive, so its thread handle is
-        // valid; cancelling a thread with no pending I/O has no effect.
-        unsafe {
-            CancelSynchronousIo(threads.writer.as_raw_handle() as Handle);
+        // Cancel until the writer finishes: a single cancel can land between
+        // its `recv` and its next `WriteFile` and have no effect. If it still
+        // has not finished after the bound, it is left detached (its pipe's
+        // child side is gone with the Job, so it holds no live process).
+        let deadline = Instant::now() + WRITER_CANCEL_BOUND;
+        while !threads.writer.is_finished() && Instant::now() < deadline {
+            // SAFETY: the writer's JoinHandle is alive, so its thread handle
+            // is valid; cancelling a thread with no pending I/O does nothing.
+            unsafe {
+                CancelSynchronousIo(threads.writer.as_raw_handle() as Handle);
+            }
+            std::thread::sleep(Duration::from_millis(QUIESCENCE_POLL_MS));
         }
-        let _ = threads.writer.join();
+        if threads.writer.is_finished() {
+            let _ = threads.writer.join();
+        }
     }
 }
 
@@ -259,6 +274,11 @@ impl Registry {
         expires_at: Instant,
         fault: Fault,
     ) -> Result<SessionStatus, SessionFailure> {
+        if expires_at <= Instant::now() {
+            return Err(SessionFailure::Shell(ShellFailure::Denied(
+                "the Full User authority for this session has already expired".into(),
+            )));
+        }
         let mut sessions = lock(&self.sessions);
         if sessions
             .iter()
@@ -334,7 +354,21 @@ impl Registry {
             std::thread::Builder::new()
                 .name("orcel-shell-supervisor".into())
                 .spawn(move || {
-                    supervision.into_inner().run(&shared);
+                    let supervision = supervision.into_inner();
+                    // A panic drops the supervision, and with it the
+                    // kill-on-close Job, so the tree ends; the state must not
+                    // stay `Running`.
+                    let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        supervision.run(&shared);
+                    }));
+                    if run.is_err() {
+                        let mut inner = lock(&shared);
+                        if inner.state.is_running() {
+                            inner.state = SessionState::OutcomeUnknown {
+                                reason: "the session supervisor failed; its Job was closed".into(),
+                            };
+                        }
+                    }
                 })
         };
         let (supervisor, writer) = match (supervisor, writer) {
@@ -635,7 +669,11 @@ impl Supervision {
                         descendants = count > 0;
                         end_job(&self.job)
                     }
-                    Err(_) => end_job(&self.job),
+                    Err(_) => {
+                        // Unknown whether anything was left; it is ended.
+                        descendants = true;
+                        end_job(&self.job)
+                    }
                 }
             }
             _ => {

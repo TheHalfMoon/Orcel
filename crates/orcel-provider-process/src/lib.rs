@@ -2174,22 +2174,36 @@ mod windows_contained_launch {
             Ok((Self { read }, write))
         }
 
-        /// SG-000096 T03: a stdin pipe. The child's read end is inheritable;
-        /// the Orcel write end is not, so no other child can hold it open.
+        /// SG-000096 T03: a stdin pipe. Both ends are created private; only
+        /// the child's read end is then made inheritable, so the Orcel write
+        /// end is never inheritable, even briefly.
         fn create_input() -> Result<(OwnedHandle, OwnedHandle), ExecutionPlanError> {
-            let (pipe, write) = Self::create()?;
-            // `create` made the read end private and the write end inheritable;
-            // swap that so the child reads and Orcel writes.
-            if unsafe { SetHandleInformation(write.raw(), HANDLE_FLAG_INHERIT, 0) } == 0 {
-                return Err(last_error("SetHandleInformation(stdin write)"));
-            }
+            let mut read = ptr::null_mut();
+            let mut write = ptr::null_mut();
+            let attributes = SecurityAttributes {
+                length: mem::size_of::<SecurityAttributes>() as u32,
+                security_descriptor: ptr::null_mut(),
+                inherit_handle: 0,
+            };
             if unsafe {
-                SetHandleInformation(pipe.read.raw(), HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT)
+                CreatePipe(
+                    &mut read,
+                    &mut write,
+                    (&attributes as *const SecurityAttributes).cast(),
+                    0,
+                )
             } == 0
+            {
+                return Err(last_error("CreatePipe(stdin)"));
+            }
+            let read = OwnedHandle::new(read, "CreatePipe(stdin) read")?;
+            let write = OwnedHandle::new(write, "CreatePipe(stdin) write")?;
+            if unsafe { SetHandleInformation(read.raw(), HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) }
+                == 0
             {
                 return Err(last_error("SetHandleInformation(stdin read)"));
             }
-            Ok((pipe.read, write))
+            Ok((read, write))
         }
     }
 

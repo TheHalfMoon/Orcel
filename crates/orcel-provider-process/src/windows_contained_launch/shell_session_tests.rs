@@ -367,3 +367,69 @@ fn sg000096_t03_a_session_denied_before_resume_is_never_registered() {
     ));
     assert!(registry.list().is_empty());
 }
+
+#[test]
+fn sg000096_t03_losing_the_runtime_owner_revokes_the_session() {
+    let _serial = serial();
+    let root = disposable("session-owner");
+    let lease_owner = protected_owner(&root.0);
+    // A disposable owner process of the same user and logon session.
+    let mut helper = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            &format!("{PREFIX}sg96_session_fixture_sleep"),
+            "--nocapture",
+            super::super::shell::tests::FIXTURE_CHILD_ARG,
+        ])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("owner helper");
+    // Bound exactly as the runtime record binds an owner: PID plus its
+    // native creation generation.
+    let helper_owner = ExpectedNativeOwner {
+        owner_pid: helper.id(),
+        owner_creation: super::super::shell::tests::creation_generation_of(helper.id()),
+        ..lease_owner.clone()
+    };
+    let registry = Registry::default();
+    let command = fixture_at(PREFIX, "sg96_session_fixture_sleep", &root.0);
+    let started = registry
+        .start(&command, &session_limits(), &helper_owner, far())
+        .expect("session under the helper owner");
+    let _ = helper.kill();
+    let _ = helper.wait();
+    assert!(wait_for(|| !registry
+        .status(&started.session_id)
+        .unwrap()
+        .state
+        .is_running()));
+    let status = registry.status(&started.session_id).unwrap();
+    assert!(
+        matches!(&status.state, SessionState::Revoked { reason } if reason.contains("owner")),
+        "{:?}",
+        status.state
+    );
+    assert!(process_gone(status.process.pid));
+}
+
+#[test]
+fn sg000096_t03_an_expired_authority_launches_nothing() {
+    let _serial = serial();
+    let root = disposable("session-expired");
+    let owner = protected_owner(&root.0);
+    let registry = Registry::default();
+    let command = fixture_at(PREFIX, "sg96_session_fixture_sleep", &root.0);
+    let before = super::super::shell::LAUNCHES.load(std::sync::atomic::Ordering::SeqCst);
+    let result = registry.start(&command, &session_limits(), &owner, Instant::now());
+    assert!(matches!(
+        result,
+        Err(SessionFailure::Shell(ShellFailure::Denied(_)))
+    ));
+    assert_eq!(
+        super::super::shell::LAUNCHES.load(std::sync::atomic::Ordering::SeqCst),
+        before
+    );
+    assert!(registry.list().is_empty());
+}

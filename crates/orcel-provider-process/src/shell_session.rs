@@ -210,6 +210,8 @@ pub struct SessionStatus {
     pub stderr: StreamStatus,
     pub stdin_accepted_bytes: u64,
     pub stdin_delivered_bytes: u64,
+    /// A close was accepted. The pipe closes (and the child sees end of
+    /// input) once the writer has delivered every frame queued before it.
     pub stdin_closed: bool,
     pub stdin_error: Option<String>,
     pub descendants_terminated: bool,

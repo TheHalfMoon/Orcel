@@ -591,3 +591,13 @@ fn sg000096_t02_endless_output_cannot_starve_the_timeout() {
     assert!(outcome.stdout.dropped_bytes > 0);
     assert!(process_gone(outcome.process.pid));
 }
+
+/// The native creation generation of `pid`, as the runtime record keeps it.
+pub(crate) fn creation_generation_of(pid: u32) -> u64 {
+    // SAFETY: OpenProcess takes no pointers; a null result is checked.
+    let raw = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, 0, pid) };
+    let handle = OwnedHandle::new(raw, "OpenProcess(test owner)").expect("owner handle");
+    ChildProcess::snapshot_native_owner(handle.raw())
+        .expect("owner snapshot")
+        .creation_generation
+}
