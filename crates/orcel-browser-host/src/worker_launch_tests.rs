@@ -1824,11 +1824,12 @@ fn a_crawl_reads_only_its_scope_through_the_governed_navigation() {
         deadline: Duration::from_secs(300),
     };
 
-    // Cancelled before it starts: nothing is opened.
+    // Cancelled before it starts: nothing is fetched or opened.
     let report = worker
         .crawl_site(&crawl_spec, &scope, &AtomicBool::new(true))
         .expect("cancelled crawl");
-    assert_eq!(report.stopped, Some(CrawlStop::Cancelled));
+    assert_eq!(report.stopped, Some(CrawlStop::Cancelled), "{report:?}");
+    assert_eq!(report.robots_status, None);
     assert!(report.pages.is_empty());
 
     let report = worker

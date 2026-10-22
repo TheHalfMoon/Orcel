@@ -7,15 +7,18 @@
 // (which builds dist/).
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runtimePin } from "./dev-pin.mjs";
 
 // Every native test must run: a filter that matches nothing (for example
 // after a module rename) exits 0 and would otherwise pass vacuously.
 const EXPECTED_TESTS = 27;
 const EXPECTED_WORKER_HOST_TESTS = 8;
 const EXPECTED_ORCELD_LIVE_TESTS = 5;
+const EXPECTED_DEV_HOST_TESTS = 3;
 
 const app = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repo = resolve(app, "..", "..");
@@ -177,4 +180,87 @@ if (!workerSummary || Number(workerSummary[1]) !== EXPECTED_WORKER_HOST_TESTS) {
     `browser-launcher:native: expected ${EXPECTED_WORKER_HOST_TESTS} worker-host tests to pass, saw ${workerSummary ? workerSummary[1] : "none"}\n`
   );
   process.exit(1);
+}
+
+// SG-000108 slice 3b-ii: the `live-browser-dev` host binary, which runs only
+// the worker runtime its build pinned. Its unit tests first, then its native
+// tests twice: built with a pin of another tree (every lifetime refused,
+// typed), then with the runtime's real pin (scripts/dev-pin.mjs). Rustc
+// tracks the pin variables, so each pass rebuilds the binary with its pin.
+const devLib = spawnSync(
+  "cargo",
+  ["test", "-p", "orcel-browser-host", "--features", "live-browser-dev", "--lib"],
+  { cwd: repo, stdio: ["ignore", "pipe", "inherit"], encoding: "utf8", maxBuffer: 64 * 1024 * 1024, shell: false }
+);
+process.stdout.write(devLib.stdout ?? "");
+if (devLib.error || devLib.status !== 0 || !/test result: ok\. \d+ passed; 0 failed/.test(devLib.stdout ?? "")) {
+  process.stderr.write("browser-launcher:native: the live-browser-dev unit tests failed\n");
+  process.exit(1);
+}
+// The dev-only unit tests must have run, not merely compiled out (#428).
+for (const name of [
+  "a_public_open_admits_only_public_https_and_refuses_before_any_profile",
+  "a_development_build_has_no_fixture_open",
+  "a_compiled_runtime_is_whole_and_well_formed_or_absent"
+]) {
+  if (!(devLib.stdout ?? "").split("\n").some((line) => line.startsWith("test ") && (line.includes(`::${name} ... ok`) || line.includes(` ${name} ... ok`)))) {
+    process.stderr.write(`browser-launcher:native: the live-browser-dev unit test ${name} did not run\n`);
+    process.exit(1);
+  }
+}
+const pin = runtimePin(process.execPath, app);
+const otherTree = createHash("sha256").update(`another tree than ${pin.ORCEL_LIVE_BROWSER_TREE_SHA256}`).digest("hex");
+for (const [expect, tree] of [["mismatch", otherTree], ["match", pin.ORCEL_LIVE_BROWSER_TREE_SHA256]]) {
+  const dev = spawnSync(
+    "cargo",
+    [
+      "test", "-p", "orcel-browser-host", "--features", "live-browser-dev", "--test", "sg000108_dev_host",
+      "--", "--ignored", "--test-threads=1", "--nocapture"
+    ],
+    {
+      cwd: repo,
+      stdio: ["ignore", "pipe", "inherit"],
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      shell: false,
+      env: {
+        ...process.env,
+        ...pin,
+        ORCEL_LIVE_BROWSER_TREE_SHA256: tree,
+        ORCEL_SG108_DEV_PIN: expect,
+        ORCEL_SG108_NODE: process.execPath,
+        ORCEL_SG108_WORKER_MAIN: main
+      }
+    }
+  );
+  const devOut = dev.stdout ?? "";
+  process.stdout.write(devOut);
+  if (dev.error || dev.status !== 0) {
+    process.exit(dev.status ?? 1);
+  }
+  const devSummary = /test result: ok\. (\d+) passed; 0 failed; 0 ignored/.exec(devOut);
+  if (!devSummary || Number(devSummary[1]) !== EXPECTED_DEV_HOST_TESTS) {
+    process.stderr.write(
+      `browser-launcher:native: expected ${EXPECTED_DEV_HOST_TESTS} dev-host tests to pass (${expect}), saw ${devSummary ? devSummary[1] : "none"}\n`
+    );
+    process.exit(1);
+  }
+  const lifetime = expect === "match" ? "SG108-EVIDENCE dev host public lifetime" : "SG108-EVIDENCE dev host refused: pin mismatch";
+  const refused = ["SG108-EVIDENCE dev host: managed policy present", "SG108-EVIDENCE dev host refused: node folder writable"];
+  if (!devOut.includes("SG108-EVIDENCE dev host pin agreement:")) {
+    process.stderr.write(`browser-launcher:native: the dev-host pin agreement did not run (${expect})\n`);
+    process.exit(1);
+  }
+  if (!devOut.includes("SG108-EVIDENCE dev host: --node and --worker-main refused")) {
+    process.stderr.write(`browser-launcher:native: the dev host accepted runtime arguments (${expect})\n`);
+    process.exit(1);
+  }
+  if (!devOut.includes(lifetime) && !refused.some((line) => devOut.includes(line))) {
+    process.stderr.write(`browser-launcher:native: the dev-host tests reported neither their lifetime nor a typed refusal (${expect})\n`);
+    process.exit(1);
+  }
+  if (process.env.ORCEL_SG108_REQUIRE_JOURNEY === "1" && !devOut.includes(lifetime)) {
+    process.stderr.write(`browser-launcher:native: ORCEL_SG108_REQUIRE_JOURNEY=1, yet the dev-host lifetime did not run (${expect})\n`);
+    process.exit(1);
+  }
 }

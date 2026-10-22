@@ -89,8 +89,8 @@ fn launch_with(
     let (node, main) = prerequisites();
     let root = temp_root(label);
     let launch = WorkerHostLaunch {
-        node,
-        worker_main: worker_main.unwrap_or(main),
+        node: Some(node),
+        worker_main: Some(worker_main.unwrap_or(main)),
         profile_root: root.join("profiles"),
         temp_dir: root.join("staging"),
         state_root: root.join("state"),
