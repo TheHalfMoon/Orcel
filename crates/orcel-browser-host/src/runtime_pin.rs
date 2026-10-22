@@ -45,15 +45,18 @@ const TREE_DOMAIN: &str = "orcel-worker-runtime-tree/2";
 
 /// The runtime manifest: inside the tree (so pinned and held), naming every
 /// other runtime file; the worker's resolve guard loads nothing else.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub const RUNTIME_MANIFEST: &str = "dist/runtime-manifest.json";
 
 /// Schema of the runtime manifest.
+#[cfg_attr(not(windows), allow(dead_code))]
 const MANIFEST_SCHEMA: &str = "orcel-worker-runtime-manifest/1";
 
 /// The manifest names exactly the tree's other files, in order. Anything
 /// else (a missing, extra or reordered name, another schema, unknown
 /// fields) refuses the tree: the guard's allowlist may never name a file
 /// the pin did not measure.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn check_manifest(bytes: &[u8], files: &[String]) -> Result<(), HostError> {
     #[derive(serde::Deserialize)]
     #[serde(deny_unknown_fields)]

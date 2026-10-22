@@ -3410,7 +3410,7 @@ fn a_folder_the_user_owns_stays_changeable_when_it_denies_writes() {
     std::fs::remove_dir_all(&folder).expect("remove");
     // A folder the user cannot change, when this process is not elevated
     // (an elevated token may legitimately change system folders).
-    if !crate::runtime_pin::node_folder_writable(Path::new(r"C:\Windows\System32\cmd.exe")) {
+    if !crate::runtime_pin::node_folder_writable(Path::new(r"C:\Windows\System32\kernel32.dll")) {
         println!("SG108-EVIDENCE node folder check: System32 unchangeable, self-denied own folder changeable");
     } else {
         println!("SG108-EVIDENCE node folder check: elevated token, System32 changeable; self-denied own folder changeable");
