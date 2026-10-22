@@ -30,3 +30,16 @@ Source at time of executable/test build: `0ce4a2d7604e885c16372883fd2b1087529a47
 Compile `apps/orcel-native-host/tests/fixtures/appkit_probe_native.swift` with `swiftc -O -parse-as-library` to a temporary executable, then set `ORCEL_MACOS_AX_PROBE_BIN` to that executable when running `ORCEL_XP06_LIVE=1` and `ORCEL_XP11_LIVE=1` for `live_observation`, `live_actions`, `xp06_native_host_live`, and `xp11_native_actions_live`. For a downloaded CI host, `ORCEL_NATIVE_TEST_HOST` may name the original release host and `ORCEL_COMPUTER_HOST_BIN` may name it for the kernel tests. Only controlled AppKit fixture windows may be used.
 
 The regular locked native-host build on this Mac initially failed due to a local Swift PackageManager/Command Line Tools manifest linker error. Hosted macOS CI produced the same source's working native binary without disabling or stubbing runtime facilities. Native-source builds on this Mac remain a separate toolchain requirement.
+
+## Repeatable non-prompting capability preflight
+
+From the repository root, run:
+
+```sh
+python3 scripts/macos_native_capability_preflight.py --host /absolute/path/to/orcel-native-host
+python3 scripts/macos_native_capability_preflight.py --host /absolute/path/to/orcel-native-host --require XP-07
+```
+
+The preflight sends exactly one read-only Orcel protocol `hello` request; it does not open Settings, read pixels, move the pointer, submit keyboard input, or trigger approval prompts. It reports which real-hardware test suites are *eligible to run*, not which capabilities have passed qualification. An unavailable or malformed host returns exit 2. If the named `--require` precondition is missing, it returns exit 3. Tests: `python3 -m unittest discover -s tests -p test_macos_native_capability_preflight.py -v`.
+
+On the October 22 Mac, Accessibility and Screen Recording were true, while `direct_capture_consent=false`, so XP-07/XP-12 delivery preflight correctly refused. Granting direct-capture consent requires legitimate user interaction with macOS; do not fake the grant, change system privacy databases, or claim delivery qualification based on the readiness report.
