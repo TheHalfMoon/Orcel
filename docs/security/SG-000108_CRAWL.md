@@ -59,7 +59,7 @@ Slice 7 of `docs/orcel/WEB_CAPABILITIES_DECISION.md` adds a host-side crawl queu
 ## Bounds and stops
 
 - At most 50 pages, depth 5, and 10 minutes; a spec past any of these is refused.
-- The page count, the deadline and the caller's `cancelled` flag are checked before each page. A page that has started keeps its own timeouts: navigation 45 s, observation 10 s, extraction 20 s plus 10 s per further piece. A crawl can therefore overrun its deadline by one page's timeouts.
+- The caller's `cancelled` flag is checked first, before anything is fetched: a crawl cancelled before it starts reads not even robots.txt. The page count, the deadline and the flag are then checked before each page. A page that has started keeps its own timeouts: navigation 45 s, observation 10 s, extraction 20 s plus 10 s per further piece. A crawl can therefore overrun its deadline by one page's timeouts.
 - **Worker failure:** the crawl stops as `WorkerFailed` only when the browser lifetime has failed closed: the host's own deadline passed, malformed worker output, the worker exited, or the caller cancelled. An out-of-order worker reply during a navigation is reported as a protocol violation without ending the lifetime (as before this slice); the crawl then records each remaining page's failure, within its page bound. A page that fails as the worker reports it does not stop the crawl. Examples: a download link, a load timeout, a network error, an observation too large to take. That failure is recorded and the crawl goes on, because the next navigation gets a fresh page.
 - The report keeps at most 200 skipped links and counts the rest. `discovered` (the map) lists every URL the crawl admitted and queued, in discovery order. Links skipped as `TooDeep` or `TooMany` appear only in `skipped`.
 - **A map** is a crawl with `extract: None`: pages are opened only to find their links.
@@ -79,7 +79,7 @@ Slice 7 of `docs/orcel/WEB_CAPABILITIES_DECISION.md` adds a host-side crawl queu
 ## Evidence
 
 **Native test** `a_crawl_reads_only_its_scope_through_the_governed_navigation` (Windows, Edge, HTTPS fixture):
-- A crawl cancelled before it starts opens nothing.
+- A crawl cancelled before it starts fetches nothing, robots.txt included (no robots status).
 - **What the crawl of `/site/` opened, in order:** home, A, B, `moved`, `away`, `missing`, C and `deep/1`, with:
   - `moved` redirecting onto C and read once under `moved`, after which C is "already read";
   - `away` redirecting out of scope and not read;

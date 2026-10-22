@@ -1619,7 +1619,11 @@ mod platform {
                 WorkerReply::FetchFailed {
                     fetch_id: done,
                     reason,
-                } if text && done == id => return Err(navigation_failure(&reason)),
+                } if text && done == id => {
+                    #[cfg(test)]
+                    eprintln!("SG108-DIAG fetch {url} failed: {reason}");
+                    return Err(navigation_failure(&reason));
+                }
                 other => {
                     #[cfg(test)]
                     eprintln!("SG108-DIAG navigation {url} unexpected reply: {other:?}");
