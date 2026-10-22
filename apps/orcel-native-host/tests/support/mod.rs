@@ -203,7 +203,8 @@ fn probe_scratch(nonce: &str) -> PathBuf {
 }
 
 pub fn spawn_probe(nonce: &str) -> Probe {
-    let fixtures = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
+    let fixtures = std::env::var("ORCEL_NATIVE_TEST_FIXTURES")
+        .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures").to_string());
     let dir = probe_scratch(nonce);
     let state = dir.join("state.json");
     let flag = dir.join("cover.flag");
