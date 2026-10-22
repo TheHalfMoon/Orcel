@@ -48,6 +48,29 @@ pub fn write_private_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
     linked
 }
 
+/// Creates one new directory that only its owner can enter (#417): mode 0700
+/// from the first instant on Unix, and a protected DACL naming only the user,
+/// `SYSTEM` and Administrators on Windows (not whatever `%TEMP%` grants). It
+/// fails with [`io::ErrorKind::AlreadyExists`] when `path` exists; the parent
+/// must already exist.
+pub fn create_private_dir_new(path: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt as _;
+        std::fs::DirBuilder::new().mode(0o700).create(path)
+    }
+    #[cfg(windows)]
+    {
+        let user = crate::acl::current_user_sid()
+            .map_err(|reason| io::Error::new(io::ErrorKind::PermissionDenied, reason))?;
+        crate::acl::create_private_dir(path, &user)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        std::fs::DirBuilder::new().create(path)
+    }
+}
+
 /// Opens `path` for appending, creating it owner-only when it is missing.
 ///
 /// An existing file is held to the same rule (#358 item 3). On Unix it must
@@ -155,6 +178,36 @@ fn owner_only(_options: &mut OpenOptions) {}
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// #417: a new private directory is exclusive and owner-only: mode 0700 on
+    /// Unix, a DACL the private-directory rule accepts on Windows.
+    #[test]
+    fn a_new_private_directory_is_exclusive_and_owner_only() {
+        let parent = sandbox("private-dir");
+        std::fs::create_dir_all(&parent).unwrap();
+        let dir = parent.join("d");
+        create_private_dir_new(&dir).unwrap();
+        assert_eq!(
+            create_private_dir_new(&dir).unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+        }
+        #[cfg(windows)]
+        {
+            let user = crate::acl::current_user_sid().unwrap();
+            let (owner, dacl) = crate::acl::security_of(&dir).unwrap();
+            crate::acl::judge(&owner, dacl.as_deref(), &user, crate::acl::Role::PrivateDir)
+                .expect("the DACL admits only the user, SYSTEM and Administrators");
+        }
+        let _ = std::fs::remove_dir_all(&parent);
+    }
 
     fn sandbox(label: &str) -> PathBuf {
         let nanos = SystemTime::now()

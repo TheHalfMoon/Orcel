@@ -2036,13 +2036,16 @@ fn watched_server(
     let (done, finished) = std::sync::mpsc::channel();
     let watching = Arc::clone(&slot);
     std::thread::spawn(move || {
-        let reason = unix::serve_watched(
+        let reason = match unix::serve_watched(
             listener,
             &shared,
             &watching,
             Duration::from_millis(50),
             Duration::from_secs(3600),
-        );
+        ) {
+            unix::Watched::Lost(reason) => reason,
+            unix::Watched::Released => "released".to_owned(),
+        };
         let _ = done.send(reason);
     });
     (slot, finished)
@@ -2088,6 +2091,25 @@ fn cr398_a_removed_socket_or_lock_file_is_noticed_and_bound_again() {
     assert!(reason.contains("socket"), "{reason}");
     drop(slot.lock().unwrap().take());
     assert_eq!(std::fs::read(&path).unwrap(), b"not ours");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// #419: when the binding is taken during shutdown (`AppApi::drop`), the
+/// watched serve loop reports a release, which the start loop treats as the
+/// end of the thread instead of binding the endpoint again.
+#[cfg(unix)]
+#[test]
+fn cr419_a_released_binding_ends_the_watched_serve_loop_as_released() {
+    let dir = private_dir();
+    let path = dir.join("s");
+    let (slot, finished) = watched_server(&path);
+    assert!(finished.recv_timeout(Duration::from_millis(300)).is_err());
+    drop(slot.lock().unwrap().take());
+    let outcome = finished
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the release was noticed");
+    assert_eq!(outcome, "released");
+    assert!(!path.exists());
     let _ = std::fs::remove_dir_all(&dir);
 }
 

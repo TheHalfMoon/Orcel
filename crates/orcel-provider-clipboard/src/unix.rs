@@ -77,9 +77,10 @@
 //!   server closes it, arboard keeps that dead connection and writes stay
 //!   unavailable (fail closed) until the process restarts. This was seen
 //!   only on WSLg's XWayland with `WAYLAND_DISPLAY` removed by hand.
-//! - The X11 socket `connect(2)` is not bounded by the read deadline. For a
-//!   local display it returns at once; only a TCP `DISPLAY` (for example
-//!   SSH X11 forwarding) can wait for the kernel's connect timeout.
+//! - A TCP `DISPLAY` (for example SSH X11 forwarding) connects with
+//!   `connect_timeout` bounded by what is left of the read deadline (#417);
+//!   resolving a hostname there is still a blocking `getaddrinfo`. A local
+//!   socket `connect(2)` returns at once.
 //! - A same-user Wayland paster that shrinks its pipe and never reads can
 //!   hold one serving thread for the life of the process; at
 //!   `MAX_WAYLAND_SERVERS` such threads, placements fail closed.
@@ -374,11 +375,52 @@ mod linux {
         }
     }
 
+    /// Connects to one `DISPLAY` address. A TCP address is tried with
+    /// `connect_timeout` limited to the time left before `deadline` (#417);
+    /// a local socket is left to x11rb, since it returns at once.
+    fn connect_address(
+        address: &x11rb::reexports::x11rb_protocol::parse_display::ConnectAddress<'_>,
+        deadline: Instant,
+    ) -> std::io::Result<(
+        x11rb::rust_connection::DefaultStream,
+        (x11rb::reexports::x11rb_protocol::xauth::Family, Vec<u8>),
+    )> {
+        use x11rb::reexports::x11rb_protocol::parse_display::ConnectAddress;
+        use x11rb::rust_connection::DefaultStream;
+        let ConnectAddress::Hostname(host, port) = address else {
+            return DefaultStream::connect(address);
+        };
+        let stream = connect_tcp_bounded(host, *port, deadline)?;
+        DefaultStream::from_tcp_stream(stream)
+    }
+
+    /// `TcpStream::connect` with each attempt bounded by the time left.
+    pub(crate) fn connect_tcp_bounded(
+        host: &str,
+        port: u16,
+        deadline: Instant,
+    ) -> std::io::Result<std::net::TcpStream> {
+        use std::net::ToSocketAddrs as _;
+        let mut last = std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "the X11 clipboard read deadline passed",
+        );
+        for candidate in (host, port).to_socket_addrs()? {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            match std::net::TcpStream::connect_timeout(&candidate, remaining) {
+                Ok(stream) => return Ok(stream),
+                Err(error) => last = error,
+            }
+        }
+        Err(last)
+    }
+
     /// Opens the `DISPLAY` connection with every wait bounded by
     /// `deadline`, authenticating as `x11rb::connect` does (Xauthority).
-    /// The socket `connect(2)` itself is not bounded; for a local display it
-    /// returns at once, and only a TCP `DISPLAY` (for example SSH X11
-    /// forwarding) can wait for the kernel's connect timeout there.
+    /// A TCP `DISPLAY` connect is bounded too ([`connect_tcp_bounded`]).
     pub(crate) fn connect_with_deadline(
         deadline: Instant,
         expired: &std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -400,7 +442,7 @@ mod linux {
             if Instant::now() >= deadline {
                 return Err(read_timeout());
             }
-            let Ok((inner, (family, peer))) = DefaultStream::connect(&address) else {
+            let Ok((inner, (family, peer))) = connect_address(&address, deadline) else {
                 continue;
             };
             let (auth_name, auth_data) = get_auth(family, &peer, parsed.display)
