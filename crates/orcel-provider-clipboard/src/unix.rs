@@ -432,7 +432,7 @@ mod linux {
         ClipboardError,
     > {
         use x11rb::reexports::x11rb_protocol::{parse_display::parse_display, xauth::get_auth};
-        use x11rb::rust_connection::{DefaultStream, RustConnection};
+        use x11rb::rust_connection::RustConnection;
 
         let unreachable =
             || unavailable("no X11 or Wayland clipboard is reachable in this session");
