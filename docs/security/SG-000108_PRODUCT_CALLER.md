@@ -138,6 +138,20 @@ For each consequential action, `orceld` and the host each contribute what only t
 
 - **Never from a caller, and never from a user-writable runtime setting.** `validate_launch` only checks a file name. A same-user config file could otherwise make `orceld` run any executable inside the worker job.
 - **Until SG-000106: a build-time pin.** A non-default cargo feature, `live-browser-dev`, compiles the Node and worker paths in at build time, together with the SHA-256 of `node.exe` and of the worker's `main.js`, and the host verifies both hashes before every launch.
+  - **Amended in slice 3b: the whole runtime tree, not `main.js`.** `main.js` imports the rest of `dist/` and `playwright-core`, so a hash of the entry point alone would pin nothing it loads. The pin is the SHA-256 of `node.exe` plus a digest of the runtime tree: `package.json`, every non-test file under `dist/`, and every file under `node_modules/playwright-core/`. Each file is hashed through a handle that shares reads only, refusing writes, renames and deletes, and the handles are held for the worker's whole lifetime, because Node loads modules lazily.
+  - **Every directory on a pinned path is held too** (judge, PR #336). Each directory from the drive root down to every held file, and to `node.exe`, is held without delete sharing, and each handle is checked: none may be a link or other reparse point. No component of a pinned path can then be renamed, removed or swapped for a junction while the worker runs. This includes a junctioned `node_modules`, which the tree walk alone did not catch.
+  - **The resolve guard covers what Node finds outside the tree.** Node also looks for modules outside the pinned tree. playwright-core's bundled `ws` runs an optional `require("bufferutil")` at import, which searches `<root>/node_modules` and every parent up to `C:\node_modules`, a folder any local account can create in. And a `node_modules` created inside `dist/` after the check would shadow playwright-core. Pinning cannot stop a new file appearing, so the worker's `main.js` is now a bootstrap that installs a resolve guard (`module.registerHooks`) before importing anything else. The guard refuses every module that is not a Node built-in or a file the runtime manifest names (round 2, below; it first allowed any file inside `dist/` or `node_modules/playwright-core/`). An optional require sees a refusal as "absent". The bootstrap also sets `WS_NO_BUFFER_UTIL` and `WS_NO_UTF_8_VALIDATE`, so `ws` does not probe for those modules at all. The worker now requires Node 22.15, the first version with `registerHooks`.
+  - **`node.exe`'s folder must not be writable by the user.** Windows loads a DLL planted beside an executable before the system's. A pinned launch therefore refuses a `node.exe` in a folder whose security grants the current user any right to change it (round 2, below; it first tried a write). A standard Program Files install passes. CI's setup-node toolcache is user-writable, so there the native test requires that typed refusal instead.
+  - **Digest framing.** Paths are length-prefixed, and file names with control characters are refused (judge LOW-1).
+  - **What the pin is not.**
+    - In a dev build the host and `orceld` binaries, and the worker's repository folder, are files the user can write. A same-user process able to rewrite them, or to inject into the running processes, is outside what the pin defends.
+    - It guarantees four things:
+      - local configuration cannot point the worker at other code;
+      - the exact pinned files run unmodified from the check until the worker ends;
+      - no path component above them can be swapped;
+      - no module outside them loads.
+    - Files a process could use without Node loading them as modules, such as Node's own built-in snapshot or ICU data inside `node.exe` (pinned with it), are covered only through `node.exe`'s hash.
+    - SG-000106's signed payload replaces this pin.
   - Without the feature there is no live browser path; this is how a development build is told apart from a release build.
   - The release build commands never enable it, and release qualification asserts it is absent.
   - A changed Node or worker file is refused, typed, until rebuilt.
@@ -490,3 +504,62 @@ It also requires every live tool to be local-only.
   - remote with `browser_structured`: refused as local-only;
   - each refusal was audited `PROFILE_DENIED`.
 - `desktop_structured` must hold no tool with a `browser.*` capability, so a browser tool left out of the live list cannot land there instead.
+
+**Slice 3b-i: the worker runtime pin (decision 7 as amended).**
+
+- **`runtime_pin.rs`** (host crate):
+  - `runtime_files` walks the runtime tree. A link or any other reparse point anywhere in it, or a missing `package.json`, refuses the whole tree.
+  - `tree_digest` frames each (relative path, file SHA-256) pair under the domain `orcel-worker-runtime-tree/2`. Its fixed vector is computed independently.
+  - `measure_and_hold` opens `node.exe` and every tree file with read-only sharing and without following a reparse point, rechecks each handle, and hashes through it.
+  - `RuntimePin::verify_and_hold` requires an exact match and keeps the handles.
+- **Judge round 1 blocked this slice** (PR #336). The findings and their fixes:
+  - **HIGH:** an optional module outside the tree, found up to `C:\node_modules`, ran inside a pinned worker. Fixed by the resolve guard and the `WS_*` switches.
+  - **HIGH:** links were checked only inside the tree, and a junctioned `node_modules` could be swapped after the check. Fixed by checking and holding every directory on the path.
+  - **MEDIUM:** a `node_modules` added later inside `dist/` could shadow a pinned file. Fixed by the resolve guard.
+  - **MEDIUM:** a DLL beside `node.exe` was not covered. Fixed by refusing a `node.exe` in a user-writable folder.
+  - **MEDIUM:** the honesty section was not accurate enough. Rewritten above.
+  - **LOW:** the digest framing could collide. Fixed by length-prefixed paths.
+- **`WorkerLaunch.runtime_pin`.** When it is set, `launch_worker` verifies and holds the runtime after the managed-policy check and before anything is swept or spawned. `BrowserWorker` keeps the held files for the worker's lifetime, and they are released when it ends. Launches without a pin (every caller so far) are unchanged.
+- **Not yet in this slice:** the `live-browser-dev` feature that compiles a pin in, and the destinations it may open. Those arrive with slice 3b-ii, which uses this mechanism.
+
+**Evidence:**
+- **Native** (`a_pinned_runtime_runs_held_and_a_changed_one_never_starts`, Edge 155, Node under Program Files):
+  - the real runtime measures as 140 files, and 180 handles counting every directory on their paths;
+  - a mismatched pin is refused with `UnsupportedRuntime` before the profile is touched;
+  - the matching pin launches, the worker answers, and all 140 files stay held;
+  - while the worker runs, `main.js` and `node.exe` cannot be opened for writing, and both are released after shutdown.
+- **Unit tests:**
+  - the tree is the loadable runtime only (tests and other packages are excluded);
+  - held files cannot be written, renamed or deleted;
+  - a changed file, an added runtime file or a changed `node.exe` is each refused;
+  - changes to tests or to other packages do not affect the pin;
+  - junctions inside the tree and unexpected entry points are refused;
+  - the digest's framing has a fixed vector.
+- **After the round-1 fixes:**
+  - the matching pin still launches with all 180 handles held;
+  - with a user-writable `node.exe` folder, the pinned launch is refused typed;
+  - a junctioned `node_modules`, and a worker root reached through a junction, are each refused even though the tree walk alone accepts them;
+  - a mutation that skips the directory holds fails two tests.
+- **Worker** (`resolve-guard.test.ts`): a real Node run, with the guard installed, refuses modules planted in a parent folder's `node_modules`, a sibling package and a shadowing `dist/node_modules`, through both `require` and `import`. Built-ins and `playwright-core` still load. Worker suite: 130 of 130.
+- The native launcher now expects 27 lib native tests.
+
+**Slice 3b-i, judge round 2 (after the port onto main).** The judge found the port faithful and blocked on two gaps in the pin's guarantees:
+- **MUST-FIX: the resolve guard admitted files the pin never measured.** It allowed any file under `dist/` or `node_modules/playwright-core/`, and holding a directory does not stop files appearing in it. playwright-core's CommonJS code requires names like `./lib/coreBundle` without an extension, and Node tries the extensionless name first, so a file planted beside a pinned one after the check would have loaded. `dist/*.test.js` files, excluded from the pin, were allowed too.
+  - **Fix: an exact allowlist.** The worker build writes `dist/runtime-manifest.json` (`scripts/runtime-manifest.mjs`), naming every runtime file but itself. It is part of the tree, so it is pinned and held, and `measure_and_hold` reads it through its held handle and refuses it unless it names exactly the tree's other files, in order. The guard loads only Node built-ins and the files the manifest names (compared case-insensitively). A missing or malformed manifest installs no guard, and the worker does not start.
+  - **Tests:** `the_manifest_names_exactly_the_measured_tree` (an extra name such as `lib/coreBundle`, a missing one, another order, another schema, an unknown field and no manifest each refuse the tree); in a real Node run, a file planted after the guard is installed under the extensionless name of a lazily loaded pinned module is refused, as is a test file; the built worker's manifest equals its runtime tree. A mutation that allows the manifest's directories instead of its files fails two tests.
+- **MUST-FIX: the folder check was a write probe.** A folder the user owns keeps an implicit `WRITE_DAC`, so a same-user process could plant a DLL beside `node.exe`, deny itself writes so the probe failed, and the folder would pass.
+  - **Fix:** `node_folder_writable` now asks `AccessCheck` with the process token, against the folder's security descriptor, whether it grants any of `FILE_ADD_FILE`, `FILE_ADD_SUBDIRECTORY`, `FILE_DELETE_CHILD`, `DELETE`, `WRITE_DAC` or `WRITE_OWNER`. Anything it cannot decide counts as changeable. `verify_and_hold` checks the folder after it is held, so it cannot be swapped after the check.
+  - **Test:** `a_folder_the_user_owns_stays_changeable_when_it_denies_writes` (an `icacls` deny of WD and AD makes a write fail and the folder still counts as changeable). A mutation that counts only the add rights fails it. An elevated process may change system folders, so the test prints which case it saw rather than asserting on `System32`.
+- **NITs fixed:**
+  - a Node without `module.registerHooks` again gets the typed startup refusal (the bootstrap checks the version first and imports `node:module` as a namespace);
+  - `measure_and_hold` is no longer exported;
+  - the write probe, and the probe file it could leave behind, are gone;
+  - the mangled `C:\node_modules` above is repaired.
+- **Accepted:** every pin failure is the one typed `UnsupportedRuntime`, with no finer reason, so nothing about the files crosses to a caller. A `package.json` planted inside playwright-core can change how pinned files are parsed, but not make an unlisted file load, so it can only stop the worker.
+- **Evidence:** the real runtime is 141 files and 181 held handles; the matching pin launches from `C:\Program Files\nodejs` (`AccessCheck`: unchangeable); worker suite 131 of 131.
+
+**Slice 3b-i, judge round 3: APPROVE, with three hardening fixes taken.**
+- **Nothing runs outside the guard.** The guard governs one thread's module loads. Before the worker loads, the bootstrap's `closeUnguardedRuntimes` therefore makes these throw: `worker_threads.Worker`, `child_process.fork`, `exec` and `execSync`, any spawn of Node's own executable (by path, or by the name `node` for a PATH lookup), and any spawn through a shell. playwright-core starts the engine, which is not Node, and that still works: the worker suite passes, real-Edge tests included. A real Node run checks that eight such attempts are refused and another program still starts.
+- **Exact names.** Allowlist paths now compare exactly, except for the drive letter. Case-folding could admit a differently cased twin of a pinned file: NTFS can make a single directory case-sensitive, and JavaScript folds U+212A KELVIN SIGN to `k`. Manifest names must be printable ASCII.
+- **The ACL test now tests the owner's implicit right.** It denies the user WD, AD, DC, DE, WDAC and WO, so only the owner's implicit `WRITE_DAC` is left, and the folder must still count as changeable. A mutation that drops `WRITE_DAC` from the change rights fails it.
+- **Wording.** The earlier descriptions of the guard and of the folder check are updated.
