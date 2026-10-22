@@ -553,6 +553,22 @@ fn drain(
     }
 }
 
+/// Processes still in the Job once the primary has exited. Helpers that
+/// exit on their own, such as the console host of a console child, are
+/// given `POST_EXIT_DRAIN_TIMEOUT_MS` to leave, so they are not counted as
+/// descendants. Whatever remains after that is ended with the Job.
+pub(super) fn settled_remainder(job: &JobObject) -> Result<u32, ExecutionPlanError> {
+    let deadline = Instant::now() + Duration::from_millis(POST_EXIT_DRAIN_TIMEOUT_MS);
+    loop {
+        let active = job.active_processes()?;
+        if active == 0 || Instant::now() >= deadline {
+            return Ok(active);
+        }
+        // SAFETY: Sleep takes no pointers.
+        unsafe { Sleep(QUIESCENCE_POLL_MS as u32) };
+    }
+}
+
 /// Terminates every process left in the Job and proves the Job empty.
 pub(super) fn end_job(job: &JobObject) -> Result<(), ShellFailure> {
     let terminated = job.terminate().is_ok();
@@ -620,7 +636,7 @@ pub(super) fn run_one_shot_with(
                 Instant::now() + Duration::from_millis(POST_EXIT_DRAIN_TIMEOUT_MS),
                 &mut scratch,
             );
-            let remaining = job.active_processes().map_err(|error| {
+            let remaining = settled_remainder(&job).map_err(|error| {
                 ShellFailure::OutcomeUnknown(format!("shell Job state unknown: {}", error.message))
             });
             match remaining {
