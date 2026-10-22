@@ -140,7 +140,9 @@ mod reader {
     use std::os::windows::ffi::OsStrExt;
     use std::path::Path;
     use windows::core::{PCWSTR, PWSTR};
-    use windows::Win32::Foundation::{CloseHandle, LocalFree, ERROR_SUCCESS, HANDLE, HLOCAL};
+    use windows::Win32::Foundation::{
+        CloseHandle, LocalFree, ERROR_ALREADY_EXISTS, ERROR_SUCCESS, HANDLE, HLOCAL,
+    };
     use windows::Win32::Security::Authorization::{
         ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
         GetNamedSecurityInfoW, SDDL_REVISION_1, SE_FILE_OBJECT,
@@ -346,8 +348,15 @@ mod reader {
         let name = wide(path);
         // SAFETY: `name` is NUL-terminated; `attributes` and the descriptor it
         // points at stay alive for the call.
-        unsafe { CreateDirectoryW(PCWSTR(name.as_ptr()), Some(&attributes)) }?;
-        Ok(())
+        unsafe { CreateDirectoryW(PCWSTR(name.as_ptr()), Some(&attributes)) }.map_err(|error| {
+            // The windows crate's conversion loses the kind of this error;
+            // callers tell "already there" from a failure by `ErrorKind`.
+            if error.code() == ERROR_ALREADY_EXISTS.to_hresult() {
+                std::io::Error::from_raw_os_error(ERROR_ALREADY_EXISTS.0 as i32)
+            } else {
+                error.into()
+            }
+        })
     }
 }
 

@@ -440,7 +440,11 @@ fn migrate_with(
     // A record zeroed in place by a run that crashed before the rename: the
     // plaintext is gone and the public record is still in a temp file next
     // to it. Put that record back when it matches the stored key.
-    if !raw.as_slice().is_empty() && raw.as_slice().iter().all(|byte| *byte == 0) {
+    // A zeroing that failed part way (ENOSPC, an I/O error) leaves a record
+    // that starts with zeros and still ends in plaintext; JSON never starts
+    // with a NUL byte, so that prefix marks it as ours too (#417). Zero it
+    // all again before restoring.
+    if raw.as_slice().first() == Some(&0) {
         let key = match store.get(SecretName::DeviceKey) {
             Ok(key) => key,
             Err(SecretError::NotFound) => {
@@ -450,6 +454,9 @@ fn migrate_with(
             }
             Err(error) => return Err(error),
         };
+        if raw.as_slice().iter().any(|byte| *byte != 0) {
+            zero_in_place(record).map_err(|_| SCRUB_FAILED)?;
+        }
         restore_public_record(record, &key)?;
         remove_orphan_temps(record);
         return Ok(Migration::AlreadyStored);
@@ -547,31 +554,57 @@ fn scrub_then_replace(
     public: &[u8],
     step: &mut dyn FnMut(MigrationStep) -> Result<(), SecretError>,
 ) -> Result<(), SecretError> {
-    use std::io::Write;
-    const FAILED: SecretError =
-        SecretError::Unavailable("the plaintext device key could not be scrubbed");
+    const FAILED: SecretError = SCRUB_FAILED;
     let mut old = std::fs::OpenOptions::new()
         .write(true)
         .open(path)
         .map_err(|_| FAILED)?;
     let temp = write_private_temp(path, public).map_err(|_| FAILED)?;
     step(MigrationStep::TempWritten)?;
-    let zeroed = old
-        .metadata()
-        .and_then(|metadata| {
-            let len = usize::try_from(metadata.len()).map_err(std::io::Error::other)?;
-            old.write_all(&vec![0u8; len])
-        })
-        .and_then(|()| old.sync_all());
+    let zeroed = zero_with_retries(&mut old);
     drop(old);
-    // On failure the record may be partly zeroed; the temp file stays as the
-    // public record a later run restores, and so it does if the rename fails.
+    // If every try fails the record may be partly zeroed; the temp file stays
+    // as the public record a later run restores (it zeroes the rest first),
+    // and so it does if the rename fails.
     zeroed.map_err(|_| FAILED)?;
     step(MigrationStep::Zeroed)?;
     std::fs::rename(&temp, path).map_err(|_| FAILED)?;
     sync_parent(path).map_err(|_| FAILED)?;
     step(MigrationStep::Renamed)?;
     Ok(())
+}
+
+const SCRUB_FAILED: SecretError =
+    SecretError::Unavailable("the plaintext device key could not be scrubbed");
+
+/// Attempts to overwrite a record before giving up (#417).
+const ZERO_ATTEMPTS: u32 = 3;
+
+/// Overwrites all of `file` with zeros and syncs, from the start each time,
+/// and tries again on an error such as a transient ENOSPC.
+fn zero_with_retries(file: &mut std::fs::File) -> std::io::Result<()> {
+    let mut last = Ok(());
+    for _ in 0..ZERO_ATTEMPTS {
+        last = zero_file(file);
+        if last.is_ok() {
+            break;
+        }
+    }
+    last
+}
+
+fn zero_file(file: &mut std::fs::File) -> std::io::Result<()> {
+    use std::io::{Seek as _, SeekFrom, Write as _};
+    let len = usize::try_from(file.metadata()?.len()).map_err(std::io::Error::other)?;
+    file.seek(SeekFrom::Start(0))?;
+    file.write_all(&vec![0u8; len])?;
+    file.sync_all()
+}
+
+/// Overwrites the record at `path` with zeros in place, with retries.
+fn zero_in_place(path: &Path) -> std::io::Result<()> {
+    let mut file = std::fs::OpenOptions::new().write(true).open(path)?;
+    zero_with_retries(&mut file)
 }
 
 /// The name prefix of the temp files [`write_private_temp`] creates for

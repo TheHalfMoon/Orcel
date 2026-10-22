@@ -558,3 +558,25 @@ mod wayland {
         );
     }
 }
+
+/// #417: a TCP `DISPLAY` connect is bounded by the read deadline. A listener
+/// is reached; an expired deadline fails at once with `TimedOut` and never
+/// opens a connection.
+#[cfg(target_os = "linux")]
+mod tcp_display {
+    use super::super::linux::connect_tcp_bounded;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn xp15_tcp_display_connect_honors_the_deadline() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        connect_tcp_bounded("127.0.0.1", port, Instant::now() + Duration::from_secs(5))
+            .expect("a live listener is reached");
+        let started = Instant::now();
+        let error = connect_tcp_bounded("127.0.0.1", port, Instant::now())
+            .expect_err("an expired deadline connects nothing");
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+}

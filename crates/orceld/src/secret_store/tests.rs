@@ -910,6 +910,67 @@ fn xp19_migration_recovers_from_a_crash_at_every_step() {
     }
 }
 
+/// #417: a zeroing that stopped part way leaves a record that starts with
+/// zeros and still ends in plaintext. With the key stored and its public
+/// record beside it, the next run zeroes the rest and restores the record;
+/// without a stored key it is refused.
+#[test]
+fn xp19_a_partly_zeroed_record_is_scrubbed_and_restored() {
+    let dir = private_dir("partzero");
+    let record = dir.join("device_key.json");
+    let (secret, public_key) = jwk_pair("partzero-x");
+    let full = legacy_pair(&secret, &public_key);
+    write_record(&record, &full);
+    let mut bytes = std::fs::read(&record).expect("read");
+    let half = bytes.len() / 2;
+    bytes[..half].fill(0);
+    std::fs::write(&record, &bytes).expect("part zero");
+
+    let (empty, _) = memory_store("uid:1000");
+    assert!(matches!(
+        migrate_device_key(&empty, &record),
+        Err(SecretError::Refused(_))
+    ));
+
+    let (store, _) = memory_store("uid:1000");
+    store
+        .put(SecretName::DeviceKey, secret.as_bytes())
+        .expect("put");
+    let mut public_only = full.clone();
+    public_only
+        .as_object_mut()
+        .expect("object")
+        .remove("privateKeyJwkBase64");
+    write_record(&dir.join(".device_key.json.tmp-1-0"), &public_only);
+    assert_eq!(
+        migrate_device_key(&store, &record),
+        Ok(Migration::AlreadyStored)
+    );
+    let restored: Value =
+        serde_json::from_slice(&std::fs::read(&record).expect("record")).expect("json");
+    assert_eq!(restored, public_only);
+    assert!(temp_files(&dir).is_empty());
+    let _ = std::fs::remove_dir_all(dir.parent().and_then(Path::parent).expect("root"));
+}
+
+/// #417: zeroing starts from the beginning on every try, so a retry after a
+/// short write still leaves the whole file zero.
+#[test]
+fn xp19_zeroing_overwrites_the_whole_file_from_the_start() {
+    let dir = private_dir("zeroretry");
+    let record = dir.join("f");
+    std::fs::write(&record, b"secret-bytes").expect("write");
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&record)
+        .expect("open");
+    std::io::Write::write_all(&mut file, b"xxxx").expect("advance the cursor");
+    zero_with_retries(&mut file).expect("zeroed");
+    drop(file);
+    assert_eq!(std::fs::read(&record).expect("read"), vec![0u8; 12]);
+    let _ = std::fs::remove_dir_all(dir.parent().and_then(Path::parent).expect("root"));
+}
+
 /// #382 item 2: a zero-filled record is restored from the public temp file
 /// the interrupted run left, and only when that file records the public half
 /// of the stored key. Without one the user is told to enroll again.
