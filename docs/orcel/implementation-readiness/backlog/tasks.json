@@ -191,9 +191,10 @@
       "progress": {
         "state": "MERGED",
         "prs": [
-          357
+          357,
+          412
         ],
-        "qualification": "Per PR evidence."
+        "qualification": "Per PR evidence. Follow-ups #358 items 1-4 fixed in #412; item 5 (a test flake) is tracked on #358."
       }
     },
     {
@@ -358,9 +359,10 @@
       "progress": {
         "state": "MERGED",
         "prs": [
-          360
+          360,
+          412
         ],
-        "qualification": "Per PR evidence. Follow-ups for CR-01 in #367."
+        "qualification": "Per PR evidence. Follow-ups #367 fixed in #412."
       }
     },
     {
@@ -551,9 +553,10 @@
       "progress": {
         "state": "MERGED",
         "prs": [
-          354
+          354,
+          409
         ],
-        "qualification": "Per PR evidence. Follow-ups in #355."
+        "qualification": "Per PR evidence. Follow-ups #355 fixed in #409."
       }
     },
     {
@@ -657,9 +660,10 @@
       "progress": {
         "state": "MERGED",
         "prs": [
-          372
+          372,
+          408
         ],
-        "qualification": "Read-only observation on macOS and Linux; capture unavailable until XP-07. macOS live check still open (#383)."
+        "qualification": "Read-only observation on macOS and Linux. NOT release-qualified: no live macOS or Linux desktop observation check has run. Follow-ups #383 fixed in #408 (exact netsrc count, all fds, typed conformance skips)."
       }
     },
     {
@@ -744,6 +748,13 @@
         "maintenance": "none beyond normal",
         "risks": [],
         "matrix_rows": []
+      },
+      "progress": {
+        "state": "MERGED",
+        "prs": [
+          387
+        ],
+        "qualification": "Exact-window capture on macOS and Linux in the native host. NOT release-qualified: no live macOS or Linux desktop capture check has run (needs Screen Recording and a real display)."
       }
     },
     {
@@ -828,6 +839,14 @@
         "maintenance": "none beyond normal",
         "risks": [],
         "matrix_rows": []
+      },
+      "progress": {
+        "state": "MERGED",
+        "prs": [
+          386,
+          408
+        ],
+        "qualification": "Cross-platform conformance fixtures and runners. Follow-ups #390 fixed in #408 (typed skips instead of silent passes)."
       }
     },
     {
@@ -1021,9 +1040,10 @@
       "progress": {
         "state": "MERGED",
         "prs": [
-          364
+          364,
+          415
         ],
-        "qualification": "Not release-qualified until a live Linux desktop check (#373)."
+        "qualification": "NOT release-qualified until a live Linux desktop check runs. Helper hardening and e2e substitution (#373) merged in #415; that is not a live check."
       }
     },
     {
@@ -1114,6 +1134,14 @@
         "maintenance": "none beyond normal",
         "risks": [],
         "matrix_rows": []
+      },
+      "progress": {
+        "state": "MERGED",
+        "prs": [
+          392,
+          407
+        ],
+        "qualification": "Semantic actions on macOS and Linux. Follow-ups #401 and #404 fixed in #407. Same live-check gap as XP-06/XP-07 for macOS and Linux desktops."
       }
     },
     {
@@ -1202,6 +1230,14 @@
         "maintenance": "none beyond normal",
         "risks": [],
         "matrix_rows": []
+      },
+      "progress": {
+        "state": "MERGED",
+        "prs": [
+          402,
+          407
+        ],
+        "qualification": "Bounded raw input on macOS and Linux. NOT release-qualified: macOS input delivery has no live check (needs Accessibility and a real session). Follow-ups #404 fixed in #407."
       }
     },
     {
@@ -1301,9 +1337,10 @@
         "prs": [
           371,
           378,
-          380
+          380,
+          412
         ],
-        "qualification": "Contained tier (#371), XP-13b part A (#378) and part B (#380, orceld wiring and orcel-contain packaging) merged. Follow-ups in #376 and #384."
+        "qualification": "Contained tier (#371), XP-13b part A (#378) and part B (#380) merged; follow-ups #376 (#380) and #384 (#412) fixed. Process confinement is not release-qualified on any OS until live checks run."
       }
     },
     {
@@ -1470,9 +1507,10 @@
       "progress": {
         "state": "MERGED",
         "prs": [
-          353
+          353,
+          416
         ],
-        "qualification": "Per PR evidence. Follow-ups in #356."
+        "qualification": "Per PR evidence. Follow-ups #356 fixed in #416; nits tracked in #417."
       }
     },
     {
@@ -1658,9 +1696,11 @@
       "progress": {
         "state": "MERGED",
         "prs": [
-          363
+          363,
+          413,
+          415
         ],
-        "qualification": "Packaging merged; no live install or release qualification. Follow-ups in #369.",
+        "qualification": "Packaging merged; no live install or release qualification. Follow-ups #369 fixed in #413 and #415.",
         "deviations": [
           "Unit: orceld.socket (Accept=yes) plus the per-connection template orceld@.service, not a plain orceld.service: orceld speaks JSON lines on stdin/stdout and exits at EOF.",
           "deb/rpm put orceld and its helpers under root-owned /usr/lib/orcel, not only the polkit action (see steps).",
@@ -1820,9 +1860,10 @@
       "progress": {
         "state": "MERGED",
         "prs": [
-          379
+          379,
+          413
         ],
-        "qualification": "Per PR evidence. Follow-ups in #382."
+        "qualification": "Per PR evidence. Follow-ups #382 fixed in #413."
       }
     },
     {
@@ -1982,9 +2023,12 @@
       "progress": {
         "state": "MERGED",
         "prs": [
-          370
+          370,
+          393,
+          410,
+          414
         ],
-        "qualification": "Read-only app API on Windows, macOS and Linux. Code-identity check of the client is not yet enforced; follow-ups in #375."
+        "qualification": "Read-only app API on Windows, macOS and Linux. Follow-ups #375 fixed in #393, #400 in #410, #398 in #414. The client code-identity check is not enforced yet."
       }
     },
     {
@@ -2061,9 +2105,10 @@
       "progress": {
         "state": "MERGED",
         "prs": [
-          377
+          377,
+          393
         ],
-        "qualification": "Headless client only. Follow-ups in #381."
+        "qualification": "Headless client only. Follow-ups #381 fixed in #393."
       }
     },
     {
@@ -3383,6 +3428,16 @@
           "T-CUA-21",
           "T-CUA-22"
         ]
+      },
+      "progress": {
+        "state": "MERGED",
+        "prs": [
+          388,
+          396,
+          406,
+          411
+        ],
+        "qualification": "Confined document parser for downloaded PDF and Office files. Follow-ups: #391 bounded stream decode (#396), #399 (#406), #389 manually dispatched fuzz job (#411). Wiring to the browser download path waits on SG-000108 closeout."
       }
     },
     {
@@ -3456,6 +3511,13 @@
           "T-AR-03",
           "T-AR-04"
         ]
+      },
+      "progress": {
+        "state": "MERGED",
+        "prs": [
+          394
+        ],
+        "qualification": "Optional search adapters behind the capability router. Per PR evidence."
       }
     },
     {
