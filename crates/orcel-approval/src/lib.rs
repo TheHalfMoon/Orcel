@@ -4384,7 +4384,12 @@ mod tests {
         let path = temp_path("ocr-inspect-busy");
         let mut ledger = ledger_in(&path);
         issue_strong(&mut ledger, "ocr-inspect-busy", 5_000);
-        let holder = acquire_ledger_lock(&path, Duration::ZERO).expect("hold the writer lock");
+        // The holder waits for the lock rather than failing on the first try:
+        // a try-lock can report contention for an instant after the
+        // ledger's own transaction closed its handle, which made this test
+        // flaky under load (#358 item 5). The assertion below is unchanged.
+        let holder =
+            acquire_ledger_lock(&path, Duration::from_secs(5)).expect("hold the writer lock");
         let inspection = inspect_approval_ledger(&path);
         assert_eq!(inspection.status, ApprovalLedgerStatus::Busy);
         assert!(inspection.detail.contains("busy"), "{}", inspection.detail);
