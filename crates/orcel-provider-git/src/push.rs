@@ -746,18 +746,11 @@ impl Drop for DisabledPushHooksDir {
 }
 
 /// Creates `path` exclusively, owner-only from the first instant (mode 0700 on
-/// Unix; on Windows it inherits the per-user temp ACL, as the XP-01B state
-/// files do). It fails if the path exists.
+/// Unix; on Windows a protected DACL naming only the user, SYSTEM and
+/// Administrators, not whatever the temp directory grants). It fails if the
+/// path exists.
 fn create_private_dir(path: &Path) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt as _;
-        std::fs::DirBuilder::new().mode(0o700).create(path)
-    }
-    #[cfg(not(unix))]
-    {
-        std::fs::DirBuilder::new().create(path)
-    }
+    orcel_platform::files::create_private_dir_new(path)
 }
 
 /// Writes a new file that is never readable by anyone else: created
@@ -821,22 +814,26 @@ impl ProtectedAskpass {
         }
         let dir = create_exclusive_askpass_dir()?;
         let dir = std::fs::canonicalize(&dir).map_err(|error| {
+            let _ = std::fs::remove_dir(&dir);
             provider_error(format!(
                 "canonicalize credential isolation directory: {error}"
             ))
         })?;
         let secret_path = dir.join("secret");
-        create_private_file(&secret_path, 0o600, secret.as_str().as_bytes()).map_err(|error| {
-            provider_error(format!("stage protected credential material: {error}"))
-        })?;
         #[cfg(windows)]
         let script = dir.join("askpass.bat");
         #[cfg(not(windows))]
         let script = dir.join("askpass.sh");
+        // Owning the directory from here on means a staging failure removes
+        // whatever was already written (#417), through `Drop`.
+        let staged = Self { dir, script };
+        create_private_file(&secret_path, 0o600, secret.as_str().as_bytes()).map_err(|error| {
+            provider_error(format!("stage protected credential material: {error}"))
+        })?;
         let content = askpass_script_content(&secret_path);
-        create_private_file(&script, 0o700, content.as_bytes())
+        create_private_file(&staged.script, 0o700, content.as_bytes())
             .map_err(|error| provider_error(format!("stage protected askpass helper: {error}")))?;
-        Ok(Self { dir, script })
+        Ok(staged)
     }
 
     pub fn path(&self) -> &Path {

@@ -202,4 +202,41 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
         let _ = std::fs::remove_dir_all(link_dir);
     }
+
+    /// #417: the success path, in a private directory beside the test binary
+    /// (under the build tree, not a sticky, world-writable temp directory), so
+    /// the ancestors are the checkout's own. On Linux CI that chain must be
+    /// trusted, so a pass means `trusted_orceld` returned the file.
+    #[cfg(unix)]
+    #[test]
+    fn a_private_orceld_in_a_trusted_tree_is_accepted() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let euid = orcel_platform::session::effective_uid().unwrap();
+        let base = std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        let dir = base.join(format!("orceld-path-trusted-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let orceld = dir.join(ORCELD_FILE_NAME);
+        std::fs::write(&orceld, b"#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&orceld, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let canonical = std::fs::canonicalize(&orceld).unwrap();
+        let chain_trusted = canonical.ancestors().all(|ancestor| {
+            std::fs::metadata(ancestor)
+                .is_ok_and(|meta| owner_and_mode_trusted(meta.uid(), meta.mode(), euid))
+        });
+        if cfg!(target_os = "linux") && std::env::var_os("CI").is_some() {
+            assert!(chain_trusted, "the CI build tree must be a trusted chain");
+        }
+        if chain_trusted {
+            assert_eq!(
+                trusted_orceld(std::slice::from_ref(&orceld), euid).unwrap(),
+                canonical
+            );
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

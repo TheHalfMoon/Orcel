@@ -1185,13 +1185,18 @@ pub(crate) fn start(facts: DaemonFacts) -> AppApi {
                     eprintln!("orceld app api: listening on {}", shared.endpoint);
                     #[cfg(unix)]
                     {
-                        let reason = unix::serve_watched(
+                        let reason = match unix::serve_watched(
                             listener,
                             &shared,
                             &bound,
                             unix::ENDPOINT_CHECK,
                             unix::ENDPOINT_TOUCH,
-                        );
+                        ) {
+                            unix::Watched::Lost(reason) => reason,
+                            // `AppApi::drop` took the binding: orceld is shutting
+                            // down, so do not bind again (#419).
+                            unix::Watched::Released => return,
+                        };
                         // Remove our socket if the path still names it and
                         // release the lock, then take both again (#398).
                         let released = bound
@@ -1656,6 +1661,15 @@ mod unix {
         dispatch_connection(stream, admitted, shared);
     }
 
+    /// Why [`serve_watched`] stopped.
+    #[derive(Debug, PartialEq, Eq)]
+    pub(super) enum Watched {
+        /// The socket or lock path no longer names our binding; bind again.
+        Lost(String),
+        /// `AppApi::drop` took the binding during shutdown; do not bind again.
+        Released,
+    }
+
     /// [`serve`] for the endpoint `bound` describes, which also keeps that
     /// endpoint alive (#398 item 1): at least every `check` it confirms that
     /// the socket and lock paths still name what this process bound and
@@ -1670,10 +1684,10 @@ mod unix {
         bound: &Mutex<Option<Bound>>,
         check: Duration,
         touch: Duration,
-    ) -> String {
+    ) -> Watched {
         let our_uid = orcel_platform::session::effective_uid();
         if let Err(error) = listener.set_nonblocking(true) {
-            return format!("the listener could not be polled: {error}");
+            return Watched::Lost(format!("the listener could not be polled: {error}"));
         }
         let mut touched = Instant::now();
         loop {
@@ -1705,10 +1719,10 @@ mod unix {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             let Some(current) = guard.as_ref() else {
-                return "the endpoint was released".into();
+                return Watched::Released;
             };
             if let Err(reason) = current.intact() {
-                return reason;
+                return Watched::Lost(reason);
             }
             if touched.elapsed() >= touch {
                 if let Err(error) = current.touch() {
