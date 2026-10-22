@@ -723,18 +723,19 @@ A fresh-context judge's first round on this slice was BLOCK. The destination-nam
   - **When it is checked:** at every launch, before anything is spawned. `validate_launch` first re-verifies the engine file (`Engine::reverify`), exactly as discovery did: name, presence, version resource and Authenticode. It requires the same kind and version. So an engine updated or replaced in place since discovery (Edge and Chrome update by replacing their executable) is refused.
   - **The gap that remains:** the engine starts a moment later, when the worker launches it after the handshake, so a short window between check and use remains. Replacing the file inside it requires writing into the engine's install folder, which is already past the boundary.
   - **Platforms:** on Windows nothing is spawned for the check. Elsewhere, the re-check runs the engine's `--version` (bounded), and the worker is Windows-only.
-  - **Recovery:** a caller refused after an update must discover the engine again (`discover_engine`), which reads the new version and applies the window to it. Anything else is refused with the typed `Unavailable(UnsupportedEngine)`: another major of either kind, or an unparseable version. Today two engines are qualified:
+  - **Recovery:** a caller refused after an update must discover the engine again (`discover_engine`), which reads the new version and applies the window to it. Anything else is refused with the typed `Unavailable(UnsupportedEngine)`: another major of either kind, or an unparseable version. Today four engines are qualified:
   - **Edge 155:** the evidence host, Edge 155.0.4283.45. The full native suite passed with the #324 leak control required (#325, #326).
   - **Chrome 154:** CI's windows-latest runner (image 20260925.250.1), Chrome 154.0.8037.58, which the native suite now reports (`SG108-EVIDENCE engine: …`).
     - The full suite passed there on this PR's head, the #324 endpoint tests included. The page probe saw 36 ICE sockets, so the WebRTC probe ran, and the leak control saw mDNS sockets on 5353.
     - The leak control is not required there, because the runner has no account and no LAN devices for an outbound connection.
-  - **Chrome 155 and 156:** later windows-latest images. Each was added by its own PR whose CI native suite passed on that runner's engine (156: image 20261021, Chromium 156.0.8078.48).
+  - **Chrome 155:** a later windows-latest image, added with its CI native-suite run in #337 (commit 48c10ae).
+  - **Chrome 156:** windows-latest image 20261021, Chromium 156.0.8078.48, added by #431. Its CI native-suite run on that engine is the qualification evidence and must pass before merge; the run is recorded on #431.
 - **Why a list of qualified majors, not a range.** The engine-drift risk above means a new engine can change how it honours a confinement flag. The leaks #324 found came from services that only some engine builds start. So "supported" means that every probe re-ran on that version, not that playwright-core can attach. A range would admit versions no probe has run on.
 - **What it is checked with.**
   - **Discovery, unchanged:** the engine's kind, path and Authenticode publisher are verified as before (SG-000074).
   - **The window, at launch.** Unit tests:
     - `only_qualified_engine_versions_run_the_worker`;
-    - `an_unqualified_engine_version_is_refused_before_anything_runs`: with every other prerequisite present, Edge 154, Edge 156, Chrome 157 and Chrome 153 are refused with the typed error, and Edge 155 passes the rule.
+    - `an_unqualified_engine_version_is_refused_before_anything_runs`: with every other prerequisite present, Edge 154, Edge 156, Chrome 157 and Chrome 153 are refused with the typed error, and Edge 155 passes the rule. The first test also asserts that Chromium 156.0.8078.48 is qualified while Edge 156 stays refused: each kind has its own majors.
   - **Native:** every native test runs under the window on the installed engine, which the suite reports once per run.
   - **`an_engine_replaced_after_discovery_is_refused_at_launch`:**
     - a held, qualified engine (a copy of the installed Edge) passes `validate_launch`;

@@ -527,12 +527,14 @@ mod tests {
         assert!(engine(EngineKind::Chromium, "156.0.8078.48").worker_qualified());
         for (kind, version) in [
             (EngineKind::Edge, "154.0.1.2"),
+            // Each kind has its own qualified majors: Chromium 156 is
+            // qualified, Edge 156 is not.
             (EngineKind::Edge, "156.0.1.2"),
             (EngineKind::Edge, "1550.0.1.2"),
             (EngineKind::Edge, "0.0.0.0"),
             (EngineKind::Edge, ""),
             (EngineKind::Edge, "x155.0"),
-            // Each kind has its own qualified majors.
+            // The next Chromium major is not qualified.
             (EngineKind::Chromium, "157.0.4283.45"),
             (EngineKind::Chromium, "153.0.1.2"),
             (EngineKind::Edge, "154.0.8037.58"),
