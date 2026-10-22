@@ -195,10 +195,24 @@ fn xp11_live_refusals_and_one_real_action() {
     );
     assert_eq!(pixel["ok"], false, "{pixel}");
     assert!(pixel.get("action").is_none(), "{pixel}");
-    assert!(
-        matches!(error_code(&pixel), "cancelled" | "provider_unavailable"),
-        "{pixel}"
-    );
+    // If the host advertises a missing permission, the refusal must match
+    // that exact typed reason. With raw input available, a stale human-input
+    // tick must still cancel or fail unavailable without delivering anything.
+    let click_reason = error_code(&pixel);
+    if hello["capabilities"]["input_click"]["support"] == "unavailable" {
+        assert_eq!(
+            click_reason,
+            hello["capabilities"]["input_click"]["reason"]
+                .as_str()
+                .expect("unavailable raw input has a typed reason"),
+            "{pixel}"
+        );
+    } else {
+        assert!(
+            matches!(click_reason, "cancelled" | "provider_unavailable"),
+            "{pixel}"
+        );
+    }
 
     // One real action each: the plain field takes a value, the button a press.
     let typed = format!("typed-by-host-{nonce}");
