@@ -496,6 +496,100 @@ impl RuntimePin {
     }
 }
 
+/// The runtime a `live-browser-dev` build compiled in: Node, the worker
+/// entry point and their pin, from the build environment
+/// (`ORCEL_LIVE_BROWSER_NODE`, `ORCEL_LIVE_BROWSER_WORKER_MAIN`,
+/// `ORCEL_LIVE_BROWSER_NODE_SHA256`, `ORCEL_LIVE_BROWSER_TREE_SHA256`,
+/// written by `apps/orcel-browser-worker/scripts/dev-pin.mjs`). Never read
+/// at run time: rustc tracks the variables, so a new pin means a rebuild.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompiledRuntime {
+    pub node: PathBuf,
+    pub worker_main: PathBuf,
+    pub pin: RuntimePin,
+}
+
+/// Parse a build-time runtime. Every part must be present and well formed:
+/// absolute paths, an entry point `<root>/dist/main.js`, and two lowercase
+/// SHA-256 digests. Anything else is no runtime at all (the host then
+/// refuses every lifetime, typed), never a partial one.
+pub fn compiled_runtime(
+    node: Option<&str>,
+    worker_main: Option<&str>,
+    node_sha256: Option<&str>,
+    tree_sha256: Option<&str>,
+) -> Option<CompiledRuntime> {
+    let digest = |value: &str| {
+        value.len() == 64
+            && value
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    };
+    let (node, worker_main) = (PathBuf::from(node?), PathBuf::from(worker_main?));
+    let (node_sha256, tree_sha256) = (node_sha256?, tree_sha256?);
+    if !node.is_absolute()
+        || !worker_main.is_absolute()
+        || worker_root(&worker_main).is_err()
+        || !digest(node_sha256)
+        || !digest(tree_sha256)
+    {
+        return None;
+    }
+    Some(CompiledRuntime {
+        node,
+        worker_main,
+        pin: RuntimePin {
+            node_sha256: node_sha256.to_owned(),
+            tree_sha256: tree_sha256.to_owned(),
+        },
+    })
+}
+
+#[cfg(all(test, windows))]
+mod compiled_tests {
+    use super::*;
+
+    #[test]
+    fn a_compiled_runtime_is_whole_and_well_formed_or_absent() {
+        let sha = "ab".repeat(32);
+        let node = "C:\\Program Files\\nodejs\\node.exe";
+        let main = "C:\\orcel\\apps\\orcel-browser-worker\\dist\\main.js";
+        let whole = compiled_runtime(Some(node), Some(main), Some(&sha), Some(&sha)).unwrap();
+        assert_eq!(whole.node, PathBuf::from(node));
+        assert_eq!(whole.pin.tree_sha256, sha);
+        for (n, m, a, b) in [
+            (None, Some(main), Some(sha.as_str()), Some(sha.as_str())),
+            (Some(node), None, Some(&sha), Some(&sha)),
+            (Some(node), Some(main), None, Some(&sha)),
+            (Some(node), Some(main), Some(&sha), None),
+            (Some("node.exe"), Some(main), Some(&sha), Some(&sha)),
+            (Some(node), Some("dist\\main.js"), Some(&sha), Some(&sha)),
+            (
+                Some(node),
+                Some("C:\\w\\dist\\entry.js"),
+                Some(&sha),
+                Some(&sha),
+            ),
+            (
+                Some(node),
+                Some("C:\\w\\lib\\main.js"),
+                Some(&sha),
+                Some(&sha),
+            ),
+            (Some(node), Some(main), Some("AB"), Some(&sha)),
+            (Some(node), Some(main), Some(&sha), Some(&"AB".repeat(32))),
+            (Some(node), Some(main), Some(&sha), Some(&"ab".repeat(33))),
+            (Some(node), Some(main), Some(""), Some(&sha)),
+        ] {
+            assert_eq!(
+                compiled_runtime(n, m, a, b),
+                None,
+                "{n:?} {m:?} {a:?} {b:?}"
+            );
+        }
+    }
+}
+
 #[cfg(all(test, windows))]
 pub(crate) mod tests {
     use super::*;

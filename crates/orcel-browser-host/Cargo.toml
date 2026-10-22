@@ -16,6 +16,12 @@ path = "src/main.rs"
 # only. The release-blocker sweep keeps it out of every other manifest and
 # feature list; no release build compiles this crate with it.
 live-browser-test = []
+# SG-000108 slice 3b-ii (decision 7): the host binary's worker mode for
+# public HTTPS destinations, running only the worker runtime the build
+# pinned (scripts/dev-pin.mjs). Development builds only: never default, never
+# enabled by another feature, and kept out of every release build by the
+# release-blocker sweep.
+live-browser-dev = []
 
 [dependencies]
 serde.workspace = true

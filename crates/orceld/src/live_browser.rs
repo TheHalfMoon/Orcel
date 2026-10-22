@@ -1626,8 +1626,8 @@ mod native {
             LiveBrowser::start(
                 &env_path("ORCEL_SG108_HOST_BINARY"),
                 &WorkerHostLaunch {
-                    node: env_path("ORCEL_SG108_NODE"),
-                    worker_main: env_path("ORCEL_SG108_WORKER_MAIN"),
+                    node: Some(env_path("ORCEL_SG108_NODE")),
+                    worker_main: Some(env_path("ORCEL_SG108_WORKER_MAIN")),
                     profile_root: self.root.join("profiles"),
                     temp_dir: self.root.join("staging"),
                     state_root: self.root.join("state"),

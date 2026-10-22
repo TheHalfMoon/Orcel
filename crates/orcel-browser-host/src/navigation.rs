@@ -440,6 +440,50 @@ fn is_public_ipv6(value: &Ipv6Addr) -> bool {
     if segments[0] == 0x0064 && (segments[1] & 0xffc0) == 0xff00 {
         return false;
     }
+    // NAT64 (64:ff9b::/96, RFC 6052) and its local-use prefix
+    // (64:ff9b:1::/48, RFC 8215): a gateway translates them to the embedded
+    // IPv4 address, which may be private or the metadata service (judge,
+    // PR #428). Never public.
+    if segments[0] == 0x0064 && segments[1] == 0xff9b {
+        return false;
+    }
+    // Site-local (fec0::/10, deprecated but still routed by some stacks).
+    if (segments[0] & 0xffc0) == 0xfec0 {
+        return false;
+    }
+    // Teredo (2001::/32) tunnels to an embedded IPv4 address.
+    if segments[0] == 0x2001 && segments[1] == 0x0000 {
+        return false;
+    }
+    // ORCHID and ORCHIDv2 (2001:10::/28, 2001:20::/28).
+    if segments[0] == 0x2001 && matches!(segments[1] & 0xfff0, 0x0010 | 0x0020) {
+        return false;
+    }
+    // Discard-only (100::/64) and the dummy prefix (100:0:0:1::/64).
+    if segments[0] == 0x0100
+        && segments[1] == 0
+        && segments[2] == 0
+        && (segments[3] == 0 || segments[3] == 1)
+    {
+        return false;
+    }
+    // IETF protocol assignments (2001::/23) are not globally reachable,
+    // but for the three assignments the registry marks so: AMT
+    // (2001:3::/32), AS112-v6 (2001:4:112::/48) and the drone remote ID
+    // tags (2001:30::/28) (judge, PR #428).
+    if segments[0] == 0x2001
+        && segments[1] < 0x0200
+        && !(segments[1] == 0x0003
+            || (segments[1] == 0x0004 && segments[2] == 0x0112)
+            || (segments[1] & 0xfff0) == 0x0030)
+    {
+        return false;
+    }
+    // SRv6 SIDs (5f00::/16, RFC 9602) and documentation (3fff::/20,
+    // RFC 9637).
+    if segments[0] == 0x5f00 || (segments[0] == 0x3fff && segments[1] < 0x1000) {
+        return false;
+    }
     if value.octets()[0] == 0 && value.octets()[1] == 0 {
         return false;
     }
@@ -562,9 +606,49 @@ mod tests {
             "192.168.1.1",
             "169.254.169.254",
             "::1",
+            // Judge, PR #428: translation and tunnel prefixes that embed or
+            // reach private or metadata addresses, and other non-global
+            // IPv6 space.
+            "64:ff9b::a00:1",
+            "64:ff9b::7f00:1",
+            "64:ff9b::a9fe:a9fe",
+            "64:ff9b::808:808",
+            "64:ff9b:1::a00:1",
+            "fec0::1",
+            "2001::1",
+            "2001:0:4136:e378:8000:63bf:3fff:fdd2",
+            "2001:10::1",
+            "2001:20::1",
+            "100::1",
+            "::ffff:127.0.0.1",
+            "::ffff:10.0.0.1",
+            "::ffff:169.254.169.254",
+            "100.64.0.1",
+            "::127.0.0.1",
+            "100:0:0:1::1",
+            "2001:5::1",
+            "2001:100::1",
+            "5f00::1",
+            "3fff::1",
+            "3fff:fff::1",
         ] {
             let parsed: IpAddr = address.parse().unwrap();
             assert!(!is_public_address(&parsed), "{address}");
+        }
+        // Global unicast stays public, IPv4 and IPv6 alike.
+        for address in [
+            "93.184.215.14",
+            "2606:4700::6810:85e5",
+            "2001:4860:4860::8888",
+            // The globally reachable IETF assignments, and the space just past 2001::/23.
+            "2001:3::1",
+            "2001:4:112::1",
+            "2001:30::1",
+            "2001:200::1",
+            "3fff:1000::1",
+        ] {
+            let parsed: IpAddr = address.parse().unwrap();
+            assert!(is_public_address(&parsed), "{address}");
         }
         let mut table = HashMap::new();
         table.insert("example.com".to_owned(), vec!["10.0.0.1".parse().unwrap()]);

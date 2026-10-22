@@ -70,6 +70,11 @@ impl AdmittedDestination {
     /// This is the only public constructor, so every pin comes from the
     /// host's own resolution of that name.
     pub fn admit(url: &str, resolver: &impl DnsResolver) -> Result<Self, HostError> {
+        // The name's hygiene first, so nothing malformed or local-only ever
+        // reaches the system resolver (judge, PR #428).
+        let parsed = crate::navigation::parse_navigation_url(url)?;
+        validate_admitted_host(&parsed.host)?;
+        refuse_local_namespace(&parsed.host)?;
         let (target, pin) = validate_navigation(url, resolver)?;
         Self::checked(&target, pin)
     }
@@ -111,6 +116,29 @@ impl AdmittedDestination {
             pin,
         })
     }
+}
+
+/// Names that only a local network answers (mDNS, home networks, private
+/// zones): a public destination is never one of them.
+fn refuse_local_namespace(host: &str) -> Result<(), HostError> {
+    const LOCAL: &[&str] = &[
+        "local",
+        "localhost",
+        "internal",
+        "home.arpa",
+        "lan",
+        "intranet",
+        "corp",
+    ];
+    if LOCAL
+        .iter()
+        .any(|suffix| host == *suffix || host.ends_with(&format!(".{suffix}")))
+    {
+        return Err(HostError::Invalid(
+            "admitted host is in a local-only namespace".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Hostname hygiene for rule and bypass strings: lowercase ASCII LDH, at
@@ -432,6 +460,38 @@ mod tests {
         fn resolve(&self, _host: &str, _port: u16) -> Result<Vec<IpAddr>, HostError> {
             Ok(self.0.clone())
         }
+    }
+
+    /// A resolver that records every name it was asked for.
+    struct RecordingDns(std::cell::RefCell<Vec<String>>);
+
+    impl DnsResolver for RecordingDns {
+        fn resolve(&self, host: &str, _port: u16) -> Result<Vec<IpAddr>, HostError> {
+            self.0.borrow_mut().push(host.to_owned());
+            Ok(vec!["93.184.215.14".parse().unwrap()])
+        }
+    }
+
+    /// Judge, PR #428: a name's hygiene is checked before it is resolved,
+    /// and local-only namespaces are never admitted or even looked up.
+    #[test]
+    fn names_are_checked_before_they_reach_the_resolver() {
+        let dns = RecordingDns(std::cell::RefCell::new(Vec::new()));
+        for url in [
+            "https://printer.local/",
+            "https://router.home.arpa/",
+            "https://metadata.internal/",
+            "https://nas.lan/",
+            "https://wiki.corp/",
+            "https://localhost/",
+            "https://a.localhost/",
+            "https://exa_mple.com/",
+        ] {
+            assert!(AdmittedDestination::admit(url, &dns).is_err(), "{url}");
+        }
+        assert!(dns.0.borrow().is_empty(), "resolved: {:?}", dns.0.borrow());
+        assert!(AdmittedDestination::admit("https://example.com/", &dns).is_ok());
+        assert_eq!(dns.0.borrow().as_slice(), ["example.com"]);
     }
 
     fn admitted(url: &str, pin: IpAddr) -> AdmittedDestination {

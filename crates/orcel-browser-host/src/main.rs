@@ -23,9 +23,13 @@ fn main() {
 
 fn run() -> Result<(), String> {
     // SG-000108 product caller: worker mode exists only in builds with the
-    // test-only `live-browser-test` feature. Elsewhere `--worker` is an
-    // unknown argument, and the host exits.
-    #[cfg(all(windows, feature = "live-browser-test"))]
+    // test-only `live-browser-test` feature or the development-only
+    // `live-browser-dev` feature. Elsewhere `--worker` is an unknown
+    // argument, and the host exits.
+    #[cfg(all(
+        windows,
+        any(feature = "live-browser-test", feature = "live-browser-dev")
+    ))]
     if std::env::args().nth(1).as_deref() == Some("--worker") {
         return run_worker_mode();
     }
@@ -67,24 +71,39 @@ fn run() -> Result<(), String> {
     serve(host_id, engine_child)
 }
 
-/// Worker mode: `--worker --host-id <id> --node <node.exe> --worker-main
-/// <main.js> --profile-root <dir> --temp-dir <dir>`, every value from Orcel
-/// supervision (in this slice, from the test harness), never from a caller.
-#[cfg(all(windows, feature = "live-browser-test"))]
+/// Worker mode: `--worker --host-id <id> --profile-root <dir> --temp-dir
+/// <dir>`, every value from Orcel supervision, never from a caller.
+///
+/// Where the worker runtime comes from (decision 7):
+/// - a `live-browser-dev` build runs only the runtime it compiled in, which
+///   every launch verifies against the build's pin and holds; `--node` and
+///   `--worker-main` are unknown arguments there, and a build without a
+///   whole, well-formed pin refuses every lifetime, typed;
+/// - a test-only build takes `--node <node.exe> --worker-main <main.js>`
+///   from the test harness (a source no other build has).
+#[cfg(all(
+    windows,
+    any(feature = "live-browser-test", feature = "live-browser-dev")
+))]
 fn run_worker_mode() -> Result<(), String> {
+    #[cfg(feature = "live-browser-dev")]
+    const RUNTIME_ARGUMENTS: &[&str] = &[];
+    #[cfg(not(feature = "live-browser-dev"))]
+    const RUNTIME_ARGUMENTS: &[&str] = &["--node", "--worker-main"];
     let mut values = std::collections::HashMap::new();
     let mut args = std::env::args().skip(2);
     while let Some(arg) = args.next() {
         let value = args
             .next()
             .ok_or_else(|| format!("missing value for {arg}"))?;
-        match arg.as_str() {
-            "--host-id" | "--node" | "--worker-main" | "--profile-root" | "--temp-dir" => {
-                if values.insert(arg.clone(), value).is_some() {
-                    return Err(format!("repeated argument: {arg}"));
-                }
+        if matches!(arg.as_str(), "--host-id" | "--profile-root" | "--temp-dir")
+            || RUNTIME_ARGUMENTS.contains(&arg.as_str())
+        {
+            if values.insert(arg.clone(), value).is_some() {
+                return Err(format!("repeated argument: {arg}"));
             }
-            _ => return Err(format!("unknown argument: {arg}")),
+        } else {
+            return Err(format!("unknown argument: {arg}"));
         }
     }
     let mut take = |name: &str| {
@@ -96,23 +115,39 @@ fn run_worker_mode() -> Result<(), String> {
     if host_id.is_empty() || host_id.len() > 64 {
         return Err("invalid --host-id".to_string());
     }
-    let worker_args = orcel_browser_host::worker_host::WorkerHostArgs {
-        host_id,
+    let profile_root = PathBuf::from(take("--profile-root")?);
+    let temp_dir = PathBuf::from(take("--temp-dir")?);
+    #[cfg(feature = "live-browser-dev")]
+    let runtime = orcel_browser_host::compiled_runtime(
+        option_env!("ORCEL_LIVE_BROWSER_NODE"),
+        option_env!("ORCEL_LIVE_BROWSER_WORKER_MAIN"),
+        option_env!("ORCEL_LIVE_BROWSER_NODE_SHA256"),
+        option_env!("ORCEL_LIVE_BROWSER_TREE_SHA256"),
+    )
+    .map(|compiled| orcel_browser_host::worker_host::WorkerRuntime {
+        node: compiled.node,
+        worker_main: compiled.worker_main,
+        pin: Some(compiled.pin),
+    });
+    #[cfg(not(feature = "live-browser-dev"))]
+    let runtime = Some(orcel_browser_host::worker_host::WorkerRuntime {
         node: PathBuf::from(take("--node")?),
         worker_main: PathBuf::from(take("--worker-main")?),
-        profile_root: PathBuf::from(take("--profile-root")?),
-        temp_dir: PathBuf::from(take("--temp-dir")?),
-    };
-    for path in [
-        &worker_args.node,
-        &worker_args.worker_main,
-        &worker_args.profile_root,
-        &worker_args.temp_dir,
-    ] {
-        if !path.is_absolute() {
-            return Err("worker-mode paths must be absolute".to_string());
-        }
+        pin: None,
+    });
+    let mut paths = vec![&profile_root, &temp_dir];
+    if let Some(runtime) = &runtime {
+        paths.extend([&runtime.node, &runtime.worker_main]);
     }
+    if paths.iter().any(|path| !path.is_absolute()) {
+        return Err("worker-mode paths must be absolute".to_string());
+    }
+    let worker_args = orcel_browser_host::worker_host::WorkerHostArgs {
+        host_id,
+        runtime,
+        profile_root,
+        temp_dir,
+    };
     let stdin = std::io::stdin();
     let mut input = BufReader::new(stdin.lock());
     let stdout = std::io::stdout();
