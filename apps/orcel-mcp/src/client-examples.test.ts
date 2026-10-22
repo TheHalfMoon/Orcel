@@ -4,6 +4,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CANONICAL_TOOL_NAMES } from "./server.js";
+import { profileTools } from "./tool_contract.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const examplesDir = join(here, "..", "..", "..", "examples", "mcp-clients");
@@ -86,10 +87,13 @@ test("desktop extension manifest matches the canonical catalog", () => {
   assert.equal(manifest.version, pkg.version);
   assert.ok(manifest.author.name.length > 0);
   assert.deepEqual(manifest.compatibility.platforms, ["win32"]);
+  // The extension serves the default local profile, desktop_structured;
+  // the live browser tools (browser_structured) are never advertised there.
   assert.deepEqual(
     manifest.tools.map((tool) => tool.name).sort(),
-    [...CANONICAL_TOOL_NAMES].sort()
+    [...profileTools("desktop_structured")].sort()
   );
+  assert.ok(manifest.tools.every((tool) => CANONICAL_TOOL_NAMES.includes(tool.name)));
 });
 
 test("SG-000068: Claude directory and account states are never promoted by software", () => {

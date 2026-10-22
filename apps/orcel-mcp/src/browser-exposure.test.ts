@@ -65,8 +65,11 @@ test("the live browser tools agree across the contract, orceld's gate and the ho
   for (const tool of LIVE_BROWSER_TOOLS) {
     assert.equal(TOOL_CONTRACT[tool]?.remote, "local_only", tool);
   }
-  // Until slice 3b nothing is live.
-  assert.deepEqual([...LIVE_BROWSER_TOOLS], []);
+  // Slice 3c: six of SG-000079's qualified shapes, never fill or uploads.
+  assert.equal(LIVE_BROWSER_TOOLS.length, 6);
+  for (const shape of contractShapes) {
+    assert.ok(!["browser.dom/fill", "browser.upload/preview", "browser.upload/submit"].includes(shape), shape);
+  }
 });
 
 test("desktop_structured is an explicit list that adding a contract tool cannot widen", () => {

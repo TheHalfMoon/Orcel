@@ -19,17 +19,27 @@ mod clipboard;
 mod contained_tier;
 // WI-05: reached through the live browser's committed downloads
 // (`LiveBrowser::parse_download`), which only the Windows `live-browser-test`
-// build compiles today; the module's unit and end-to-end tests run on every
-// OS.
-#[cfg_attr(not(all(windows, feature = "live-browser-test")), allow(dead_code))]
+// and `live-browser-dev` builds compile; the module's unit and end-to-end
+// tests run on every OS.
+#[cfg_attr(
+    not(all(
+        windows,
+        any(feature = "live-browser-test", feature = "live-browser-dev")
+    )),
+    allow(dead_code)
+)]
 mod document_parse;
 mod executable_admin;
 mod fs_mutation;
 mod git_fetch;
 mod git_mutation;
 mod git_push;
-#[cfg(all(windows, feature = "live-browser-test"))]
+#[cfg(all(
+    windows,
+    any(feature = "live-browser-test", feature = "live-browser-dev")
+))]
 mod live_browser;
+mod live_dispatch;
 mod profile_gate;
 mod remote_lease;
 mod report_check;
@@ -215,6 +225,12 @@ fn handle_envelope(
     {
         let _ = audit.record(&request, POLICY_REVISION, "PROFILE_DENIED");
         return ResponseEnvelope::failure(request.request_id, code, message);
+    }
+    // SG-000108 slice 3c: a live shape the gate admitted (local,
+    // `browser_structured`) is authorized in its live form and dispatched to
+    // the live browser, never to the model-only browser shapes.
+    if profile_gate::is_live_shape(&request) {
+        return handle_live(policy, audit, approval, request);
     }
     // XP-19: secrets are local-only and never reach workspace dispatch.
     if secret_store::is_secret_request(&request.capability) {
@@ -419,6 +435,24 @@ fn load_trust_store() -> Result<trust::TrustStore, ProviderError> {
         .map_err(|error| state_unavailable("trust store", &error))
 }
 
+/// SG-000108 slice 3c: a live browser shape, after the profile gate.
+fn handle_live(
+    policy: &PolicyEngine,
+    audit: &AuditLogger,
+    approval: &impl ApprovalBroker,
+    request: RequestEnvelope,
+) -> ResponseEnvelope {
+    let decision = match policy.authorize_live_browser(&request) {
+        Ok(decision) => decision,
+        Err(error) => {
+            let _ = audit.record(&request, POLICY_REVISION, "DENIED");
+            return ResponseEnvelope::failure(request.request_id, error.code, error.message);
+        }
+    };
+    let result = live_dispatch::dispatch(&decision.workspace, approval, &request);
+    finish(audit, request, decision.policy_revision, result)
+}
+
 fn handle_request(
     policy: &PolicyEngine,
     audit: &AuditLogger,
@@ -435,23 +469,34 @@ fn handle_request(
 
     let browser_resolver = browser::system_resolver();
     let mut stores = DefaultStores::default();
-    match dispatch_with(
+    let result = dispatch_with(
         policy,
         &decision.workspace,
         approval,
         &mut stores,
         &request,
         &browser_resolver,
-    ) {
+    );
+    finish(audit, request, decision.policy_revision, result)
+}
+
+/// Audit a dispatched request's outcome and build its response.
+fn finish(
+    audit: &AuditLogger,
+    request: RequestEnvelope,
+    policy_revision: &str,
+    result: Result<Value, ProviderError>,
+) -> ResponseEnvelope {
+    match result {
         Ok(value) => {
-            if let Err(error) = audit.record(&request, decision.policy_revision, "SUCCESS") {
+            if let Err(error) = audit.record(&request, policy_revision, "SUCCESS") {
                 return ResponseEnvelope::failure(
                     request.request_id,
                     FailureCode::InternalError,
                     format!("audit write failed: {error}"),
                 );
             }
-            ResponseEnvelope::success(&request, value, decision.policy_revision)
+            ResponseEnvelope::success(&request, value, policy_revision)
         }
         Err(error) => {
             let state = match error.code {
@@ -463,7 +508,7 @@ fn handle_request(
                 FailureCode::OutputLimit => "OUTPUT_LIMIT",
                 _ => "FAILED",
             };
-            let _ = audit.record(&request, decision.policy_revision, state);
+            let _ = audit.record(&request, policy_revision, state);
             ResponseEnvelope::failure(request.request_id, error.code, error.message)
         }
     }
@@ -2431,6 +2476,123 @@ mod sg000055_envelope_tests {
             );
             assert_eq!(code(&response), FailureCode::CapabilityDenied);
         }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// SG-000108 slice 3c: the gate's wiring for the six live shapes. Only a
+    /// local `browser_structured` request reaches the live route; there,
+    /// policy authorizes the live form (malformed arguments, authority
+    /// fields and unknown workspaces are refused) and, in every build without
+    /// the live browser, the dispatch answers typed unavailable. Each refusal
+    /// is audited.
+    #[test]
+    fn live_browser_shapes_reach_the_live_route_only_through_the_gate() {
+        let (policy, audit, root) = fixture();
+        let workspaces =
+            remote_lease::WorkspaceSet::from_pairs(&[("default".into(), root.join("workspace"))]);
+        let approval = FixedApprovalBroker(ApprovalDecision::Approved);
+        let live = |capability: &str, operation: &str, workspace: &str, arguments: Value| {
+            let mut request = request(capability, operation, workspace);
+            request.target = None;
+            request.arguments = arguments;
+            request
+        };
+        let send =
+            |request: RequestEnvelope, profile: Option<&str>, remote: Option<RemoteContext>| {
+                handle_envelope(
+                    &policy,
+                    &audit,
+                    &approval,
+                    &workspaces,
+                    RemoteRequestEnvelope {
+                        request,
+                        remote,
+                        profile: profile.map(str::to_owned),
+                    },
+                )
+            };
+        let shapes = [
+            ("browser.page", "open", json!({})),
+            (
+                "browser.navigation",
+                "navigate",
+                json!({"page_id": "pg-a1", "url": "https://example.org/", "expected_generation": 0}),
+            ),
+            (
+                "browser.snapshot",
+                "observe",
+                json!({"page_id": "pg-a1", "expected_generation": 0}),
+            ),
+            (
+                "browser.dom",
+                "click",
+                json!({"page_id": "pg-a1", "node_id": "d1-e2", "expected_generation": 1}),
+            ),
+            (
+                "browser.download",
+                "preview",
+                json!({"page_id": "pg-a1", "node_id": "d1-e2", "file_name": "r.pdf", "expected_generation": 1}),
+            ),
+            (
+                "browser.download",
+                "download",
+                json!({"page_id": "pg-a1", "node_id": "d1-e2", "file_name": "r.pdf", "expected_generation": 1}),
+            ),
+        ];
+        assert_eq!(shapes.len(), profile_gate::LIVE_BROWSER_SHAPES.len());
+        for (capability, operation, arguments) in shapes {
+            let shape = || live(capability, operation, "default", arguments.clone());
+            // No profile, another profile, or a remote request: refused at the gate.
+            for profile in [None, Some("desktop_structured"), Some("core")] {
+                assert_eq!(
+                    code(&send(shape(), profile, None)),
+                    FailureCode::CapabilityDenied,
+                    "{capability}/{operation} {profile:?}"
+                );
+            }
+            assert_eq!(
+                code(&send(shape(), Some("browser_structured"), Some(remote()))),
+                FailureCode::CapabilityDenied
+            );
+            // Through the gate: an unconfigured workspace and an authority
+            // field are refused by the live policy.
+            assert_eq!(
+                code(&send(
+                    live(capability, operation, "missing", arguments.clone()),
+                    Some("browser_structured"),
+                    None
+                )),
+                FailureCode::WorkspaceDenied
+            );
+            let mut widened = arguments.clone();
+            widened["folder"] = json!("C:\\");
+            assert_eq!(
+                code(&send(
+                    live(capability, operation, "default", widened),
+                    Some("browser_structured"),
+                    None
+                )),
+                FailureCode::CapabilityDenied
+            );
+            // A well-formed live request in a build without the live browser.
+            #[cfg(not(all(windows, feature = "live-browser-dev")))]
+            {
+                let response = send(shape(), Some("browser_structured"), None);
+                assert_eq!(code(&response), FailureCode::ProviderUnavailable);
+                assert!(response
+                    .error
+                    .as_ref()
+                    .is_some_and(|error| error.message.contains("live-browser-dev")));
+            }
+        }
+        // The model-only shapes are not live and keep their own route.
+        for (capability, operation) in [("browser.dom", "fill"), ("browser.upload", "submit")] {
+            assert!(!profile_gate::is_live_shape(&request(
+                capability, operation, "default"
+            )));
+        }
+        let audited = std::fs::read_to_string(audit.path()).unwrap_or_default();
+        assert!(audited.contains("PROFILE_DENIED"));
         let _ = std::fs::remove_dir_all(root);
     }
 

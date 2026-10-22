@@ -1,6 +1,7 @@
 pub mod executable_registry;
 pub mod full_control;
 pub mod full_control_store;
+pub mod live_browser;
 pub mod protected_state;
 pub mod remote_session;
 pub mod report;
@@ -66,6 +67,29 @@ impl PolicyEngine {
         policy_id: &str,
     ) -> Option<&PushDestination> {
         self.legacy.push_destination(workspace_id, policy_id)
+    }
+
+    /// SG-000108 slice 3c: authorize a live browser shape in its live form
+    /// (`live_browser::validate_live_browser`) for a configured workspace.
+    /// orceld calls this only for a request its profile gate admitted.
+    pub fn authorize_live_browser(
+        &self,
+        request: &RequestEnvelope,
+    ) -> Result<PolicyDecision, PolicyError> {
+        live_browser::validate_live_browser(request)?;
+        let workspace = self
+            .workspace(&request.workspace_id)
+            .cloned()
+            .ok_or_else(|| {
+                policy_error(
+                    FailureCode::WorkspaceDenied,
+                    "requested workspace is not configured",
+                )
+            })?;
+        Ok(PolicyDecision {
+            workspace,
+            policy_revision: POLICY_REVISION,
+        })
     }
 
     pub fn authorize(&self, request: &RequestEnvelope) -> Result<PolicyDecision, PolicyError> {

@@ -11,23 +11,23 @@ use std::sync::atomic::Ordering;
 use std::sync::MutexGuard;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const FIXTURE_PREFIX: &str = "windows_contained_launch::shell::tests::";
+pub(crate) const FIXTURE_PREFIX: &str = "windows_contained_launch::shell::tests::";
 
 /// Only a child launched by `fixture` passes this extra filter (it names no
 /// test), so `cargo test -- --exact <fixture>` never runs a fixture body.
-const FIXTURE_CHILD_ARG: &str = "sg96-fixture-child";
+pub(crate) const FIXTURE_CHILD_ARG: &str = "sg96-fixture-child";
 
-fn fixture_mode() -> bool {
+pub(crate) fn fixture_mode() -> bool {
     std::env::args().any(|argument| argument == FIXTURE_CHILD_ARG)
 }
 
-fn serial() -> MutexGuard<'static, ()> {
+pub(crate) fn serial() -> MutexGuard<'static, ()> {
     crate::contained_launch_tests::ENVIRONMENT_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-struct Disposable(PathBuf);
+pub(crate) struct Disposable(pub(crate) PathBuf);
 impl Drop for Disposable {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
@@ -41,7 +41,7 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-fn disposable(label: &str) -> Disposable {
+pub(crate) fn disposable(label: &str) -> Disposable {
     let root = std::env::temp_dir().join(format!(
         "orcel-sg96-shell-{label}-{}-{}",
         std::process::id(),
@@ -58,7 +58,7 @@ fn disposable(label: &str) -> Disposable {
 /// MAC-verified store returns and the runtime session it names. The test
 /// can only grant a disposable lease to itself, so the lease's SID and logon
 /// LUID are this process's; they reach the launcher through the store.
-fn protected_owner(root: &Path) -> ExpectedNativeOwner {
+pub(crate) fn protected_owner(root: &Path) -> ExpectedNativeOwner {
     use orcel_policy::full_control::{
         check_full_control, AuthorityContext, AuthorityMode, ElevationState,
     };
@@ -119,7 +119,7 @@ fn protected_owner(root: &Path) -> ExpectedNativeOwner {
     }
 }
 
-fn environment() -> BTreeMap<String, String> {
+pub(crate) fn environment() -> BTreeMap<String, String> {
     let source: BTreeMap<String, String> = std::env::vars().collect();
     let mut env = crate::sanitized_execution_env(&source);
     let temp = std::env::temp_dir().to_string_lossy().into_owned();
@@ -131,7 +131,7 @@ fn environment() -> BTreeMap<String, String> {
     env
 }
 
-fn limits() -> ShellLimits {
+pub(crate) fn limits() -> ShellLimits {
     ShellLimits {
         timeout: Duration::from_secs(30),
         stdout_bytes: 64 * 1024,
@@ -140,7 +140,7 @@ fn limits() -> ShellLimits {
     }
 }
 
-fn command_for(executable: &Path, argv: Vec<String>, cwd: &Path) -> ShellCommand {
+pub(crate) fn command_for(executable: &Path, argv: Vec<String>, cwd: &Path) -> ShellCommand {
     ShellCommand {
         executable: measure_executable(executable).expect("measure executable"),
         argv,
@@ -150,13 +150,18 @@ fn command_for(executable: &Path, argv: Vec<String>, cwd: &Path) -> ShellCommand
     }
 }
 
-fn fixture(name: &str, cwd: &Path) -> ShellCommand {
+pub(crate) fn fixture(name: &str, cwd: &Path) -> ShellCommand {
+    fixture_at(FIXTURE_PREFIX, name, cwd)
+}
+
+/// A fixture test function under `prefix` (its module path), run as a child.
+pub(crate) fn fixture_at(prefix: &str, name: &str, cwd: &Path) -> ShellCommand {
     let exe = std::env::current_exe().expect("test binary");
     command_for(
         &exe,
         vec![
             "--exact".into(),
-            format!("{FIXTURE_PREFIX}{name}"),
+            format!("{prefix}{name}"),
             "--nocapture".into(),
             "--test-threads=1".into(),
             FIXTURE_CHILD_ARG.into(),
@@ -165,14 +170,14 @@ fn fixture(name: &str, cwd: &Path) -> ShellCommand {
     )
 }
 
-fn system_tool(name: &str) -> PathBuf {
+pub(crate) fn system_tool(name: &str) -> PathBuf {
     fixed_system_executable()
         .expect("system directory")
         .with_file_name(name)
 }
 
 /// The process is gone: it cannot be opened, or its handle is signaled.
-fn process_gone(pid: u32) -> bool {
+pub(crate) fn process_gone(pid: u32) -> bool {
     // SAFETY: OpenProcess takes no pointers; a null result is checked.
     let raw = unsafe { OpenProcess(SYNCHRONIZE, 0, pid) };
     if raw.is_null() {
@@ -453,6 +458,12 @@ fn sg000096_t02_executable_and_cwd_drift_are_denied_before_creation() {
     let copy = root.0.join("tool.exe");
     std::fs::copy(system_tool("whoami.exe"), &copy).expect("copy tool");
     let approved = command_for(&copy, Vec::new(), &root.0);
+    // On an elevated host the owner check refuses first, so the drift
+    // checks below would not be the cause of a denial: assert the elevation
+    // refusal there instead, and qualify drift on a standard-user host.
+    if refuses_on_elevated_host(&approved, &owner) {
+        return;
+    }
 
     let mut wrong_hash = approved.clone();
     wrong_hash.executable.sha256[0] ^= 1;
@@ -504,10 +515,10 @@ fn sg000096_t02_timeout_is_typed_with_no_exit_status_and_an_empty_job() {
     let owner = protected_owner(&root.0);
     let mut command = fixture("sg96_fixture_sleep", &root.0);
     command.limits.timeout = Duration::from_secs(1);
-    let started = Instant::now();
     if refuses_on_elevated_host(&command, &owner) {
         return;
     }
+    let started = Instant::now();
     let outcome = run_one_shot(&command, &owner).expect("timeout is an outcome");
     assert_eq!(outcome.end, OneShotEnd::TimedOut);
     assert!(outcome.descendants_terminated);
@@ -644,4 +655,14 @@ fn sg000096_t02_endless_output_cannot_starve_the_timeout() {
     assert_eq!(outcome.stdout.bytes.len(), 4096);
     assert!(outcome.stdout.dropped_bytes > 0);
     assert!(process_gone(outcome.process.pid));
+}
+
+/// The native creation generation of `pid`, as the runtime record keeps it.
+pub(crate) fn creation_generation_of(pid: u32) -> u64 {
+    // SAFETY: OpenProcess takes no pointers; a null result is checked.
+    let raw = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, 0, pid) };
+    let handle = OwnedHandle::new(raw, "OpenProcess(test owner)").expect("owner handle");
+    ChildProcess::snapshot_native_owner(handle.raw())
+        .expect("owner snapshot")
+        .creation_generation
 }

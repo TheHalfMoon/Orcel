@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
 const SYNCHRONIZE: u32 = 0x0010_0000;
 const STARTF_USESTDHANDLES: u32 = 0x0000_0100;
-const READ_CHUNK_BYTES: usize = 64 * 1024;
+pub(super) const READ_CHUNK_BYTES: usize = 64 * 1024;
 const PUMP_BUDGET_BYTES: usize = 1024 * 1024;
 const MAX_IMAGE_PATH_UNITS: u32 = 32_768;
 
@@ -46,7 +46,7 @@ unsafe extern "system" {
 /// Test-only fault injection between creation and resume. Production builds
 /// only have `None`, so no production path can reach a fault.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Fault {
+pub(crate) enum Fault {
     None,
     #[cfg(test)]
     ForeignJob,
@@ -141,7 +141,7 @@ impl OwnerProcess {
     }
 
     /// Still running and still the instance the runtime record names.
-    fn check_live(&self, expected: &ExpectedNativeOwner) -> Result<(), ShellFailure> {
+    pub(super) fn check_live(&self, expected: &ExpectedNativeOwner) -> Result<(), ShellFailure> {
         // SAFETY: the handle is owned and has SYNCHRONIZE access.
         if unsafe { WaitForSingleObject(self.handle.raw(), 0) } != WAIT_TIMEOUT {
             return Err(denied("the Orcel runtime owner exited"));
@@ -177,11 +177,13 @@ impl PinnedLaunch {
     }
 }
 
-/// The child's stdio. Orcel keeps the read ends; the child's ends are
-/// closed here once it is created. A one-shot child reads `NUL`.
+/// The child's stdio. Orcel keeps the read ends, and the stdin write end of
+/// a session; the child's ends are closed once it is created. A one-shot
+/// child reads `NUL`.
 pub(super) struct ChildStdio {
     pub(super) stdout: PrivatePipe,
     pub(super) stderr: PrivatePipe,
+    pub(super) stdin: Option<OwnedHandle>,
 }
 
 /// Creates the child suspended, puts it in `job`, and verifies it before it
@@ -192,13 +194,19 @@ pub(super) fn launch_verified(
     owner: &OwnerProcess,
     pinned: &PinnedLaunch,
     job: &JobObject,
+    interactive_stdin: bool,
     fault: Fault,
 ) -> Result<(ChildProcess, ChildStdio, NativeProcessIdentity), ShellFailure> {
     let environment =
         environment_block(&command.env).map_err(|error| ShellFailure::Invalid(error.message))?;
     let (stdout, stdout_write) = PrivatePipe::create().map_err(unavailable)?;
     let (stderr, stderr_write) = PrivatePipe::create().map_err(unavailable)?;
-    let child_stdin = null_input().map_err(unavailable)?;
+    let (child_stdin, stdin) = if interactive_stdin {
+        let (read, write) = PrivatePipe::create_input().map_err(unavailable)?;
+        (read, Some(write))
+    } else {
+        (null_input().map_err(unavailable)?, None)
+    };
     let mut child = create_suspended(
         &pinned.executable.path,
         &command.argv,
@@ -221,7 +229,15 @@ pub(super) fn launch_verified(
     if let Err(error) = child.resume() {
         return Err(deny_before_resume(&mut child, job, error.message));
     }
-    Ok((child, ChildStdio { stdout, stderr }, identity))
+    Ok((
+        child,
+        ChildStdio {
+            stdout,
+            stderr,
+            stdin,
+        },
+        identity,
+    ))
 }
 
 fn create_suspended(
@@ -553,10 +569,12 @@ fn drain(
     }
 }
 
-/// Processes still in the Job once the primary has exited. Helpers that
-/// exit on their own, such as the console host of a console child, are
-/// given `POST_EXIT_DRAIN_TIMEOUT_MS` to leave, so they are not counted as
-/// descendants. Whatever remains after that is ended with the Job.
+/// Processes still in the Job once the primary has exited. Any process that
+/// exits on its own within `POST_EXIT_DRAIN_TIMEOUT_MS` (such as the console
+/// host of a console child, or a short-lived real descendant) is not
+/// counted; whatever remains after that is ended with the Job. So
+/// `descendants_terminated: false` means nothing had to be terminated, not
+/// that no descendant ran.
 pub(super) fn settled_remainder(job: &JobObject) -> Result<u32, ExecutionPlanError> {
     let deadline = Instant::now() + Duration::from_millis(POST_EXIT_DRAIN_TIMEOUT_MS);
     loop {
@@ -600,7 +618,7 @@ pub(super) fn run_one_shot_with(
         .map_err(unavailable)?;
     let started = Instant::now();
     let (mut child, stdio, process) =
-        launch_verified(command, expected, &owner, &pinned, &job, fault)?;
+        launch_verified(command, expected, &owner, &pinned, &job, false, fault)?;
     // The child runs from here. Nothing below retries or relaunches it.
     drop(pinned);
     let limits = (command.limits.stdout_bytes, command.limits.stderr_bytes);
@@ -718,4 +736,4 @@ fn supervise(
 
 #[cfg(test)]
 #[path = "shell_tests.rs"]
-mod tests;
+pub(crate) mod tests;

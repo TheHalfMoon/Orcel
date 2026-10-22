@@ -187,18 +187,43 @@ test("SG-000094 and SG-000095 are closed and SG-000096 is the only active P20 gr
       open.push(spec.id);
     }
   }
-  // SG-000108 (ORCEL-F3) runs in parallel by founder decision (issue #290)
-  // and is outside DESKAL-P20; no other grain may be open.
-  assert.deepEqual(open.sort(), ["SG-000096", "SG-000108"]);
+  // SG-000108 (ORCEL-F3) ran in parallel by founder decision (issue #290),
+  // outside DESKAL-P20, and is now closed. SG-000126 (ORCEL-F2) follows it
+  // by founder sequencing (issue #435); no other grain may be open.
+  assert.deepEqual(open.sort(), ["SG-000096", "SG-000126"]);
+  const sg126 = readJson<{
+    program: string;
+    state: string;
+    base: string;
+    planning_issue: number;
+    authority_delta: { activation: string; network: string; process: string; privileged: string };
+  }>(".specgrain/specs/SG-000126.json");
+  assert.equal(sg126.program, "ORCEL-F2");
+  assert.equal(sg126.state, "GRAIN");
+  assert.equal(sg126.planning_issue, 435);
+  assert.equal(sg126.base, "eebbe11dfe502d36dcc2b520772ef9ec9e7abce0");
+  for (const key of ["activation", "network", "process", "privileged"] as const) {
+    assert.ok(sg126.authority_delta[key].startsWith("None."), key);
+  }
   const sg108 = readJson<{
     program: string;
     state: string;
     planning_issue: number;
+    implementation_pr: number;
+    qualified_head: string;
+    qualified_tree: string;
+    implementation_merge: string;
+    post_merge_ci: string;
     authority_delta: { activation: string; privileged: string; ui_input: string };
   }>(".specgrain/specs/SG-000108.json");
   assert.equal(sg108.program, "ALADDIN-F3");
-  assert.equal(sg108.state, "GRAIN");
+  assert.equal(sg108.state, "CLOSED");
   assert.equal(sg108.planning_issue, 290);
+  assert.equal(sg108.implementation_pr, 433);
+  assert.equal(sg108.qualified_head, "17ebbf846423485bda201fdf4fc45cfd34e7846c");
+  assert.equal(sg108.qualified_tree, "e74318cad8e03036b9d9df2ed0984ef8302f1752");
+  assert.equal(sg108.implementation_merge, "d94b88cd44ae0a6a0285c41f66c3f6e3dea4e203");
+  assert.equal(sg108.post_merge_ci, "39862151758");
   // The parallel activation grants nothing by itself.
   for (const key of ["activation", "privileged", "ui_input"] as const) {
     assert.ok(sg108.authority_delta[key].startsWith("None."), key);

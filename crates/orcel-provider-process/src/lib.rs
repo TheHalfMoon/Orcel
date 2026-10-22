@@ -11,6 +11,8 @@ pub mod document_parser;
 /// SG-000096: ordinary current-user (Full User) shell processes. Never
 /// reachable from Safe; orceld gates every launch on its own authority.
 pub mod shell;
+/// SG-000096 T03: bounded interactive Full User sessions.
+pub mod shell_session;
 
 /// XP-13b: the Safe tier on Linux and macOS (process group, pidfd or
 /// kqueue, cgroup v2 when delegated, rlimits, owned cleanup).
@@ -882,6 +884,8 @@ mod windows_contained_launch {
 
     /// SG-000096: the ordinary current-user launch (no AppContainer).
     pub(crate) mod shell;
+    /// SG-000096 T03: supervised interactive sessions on that launch.
+    pub(crate) mod shell_session;
 
     const CREATE_SUSPENDED: u32 = 0x0000_0004;
     const CREATE_UNICODE_ENVIRONMENT: u32 = 0x0000_0400;
@@ -2168,6 +2172,38 @@ mod windows_contained_launch {
                 return Err(last_error("SetHandleInformation"));
             }
             Ok((Self { read }, write))
+        }
+
+        /// SG-000096 T03: a stdin pipe. Both ends are created private; only
+        /// the child's read end is then made inheritable, so the Orcel write
+        /// end is never inheritable, even briefly.
+        fn create_input() -> Result<(OwnedHandle, OwnedHandle), ExecutionPlanError> {
+            let mut read = ptr::null_mut();
+            let mut write = ptr::null_mut();
+            let attributes = SecurityAttributes {
+                length: mem::size_of::<SecurityAttributes>() as u32,
+                security_descriptor: ptr::null_mut(),
+                inherit_handle: 0,
+            };
+            if unsafe {
+                CreatePipe(
+                    &mut read,
+                    &mut write,
+                    (&attributes as *const SecurityAttributes).cast(),
+                    0,
+                )
+            } == 0
+            {
+                return Err(last_error("CreatePipe(stdin)"));
+            }
+            let read = OwnedHandle::new(read, "CreatePipe(stdin) read")?;
+            let write = OwnedHandle::new(write, "CreatePipe(stdin) write")?;
+            if unsafe { SetHandleInformation(read.raw(), HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) }
+                == 0
+            {
+                return Err(last_error("SetHandleInformation(stdin read)"));
+            }
+            Ok((read, write))
         }
     }
 

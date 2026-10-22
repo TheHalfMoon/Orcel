@@ -168,73 +168,73 @@
       "capability": "browser.profile",
       "operation": "status",
       "status": "intentionally_denied",
-      "reason": "not exposed: the closed structured browser layer is a policy and page-registry model with no live browser engine (SG-000062 qualification)"
+      "reason": "not exposed: model-only; SG-000108 exposes only the live navigate, observe, link activation and staged download shapes (decision 4)"
     },
     {
       "capability": "browser.destination",
       "operation": "validate",
       "status": "intentionally_denied",
-      "reason": "not exposed: the closed structured browser layer is a policy and page-registry model with no live browser engine (SG-000062 qualification)"
+      "reason": "not exposed: model-only; SG-000108 exposes only the live navigate, observe, link activation and staged download shapes (decision 4)"
     },
     {
       "capability": "browser.page",
       "operation": "open",
-      "status": "intentionally_denied",
-      "reason": "not exposed: the closed structured browser layer is a policy and page-registry model with no live browser engine (SG-000062 qualification)"
+      "status": "implemented_exposed",
+      "mcp_tool": "browser_page_open"
     },
     {
       "capability": "browser.navigation",
       "operation": "preview",
       "status": "intentionally_denied",
-      "reason": "not exposed: the closed structured browser layer is a policy and page-registry model with no live browser engine (SG-000062 qualification)"
+      "reason": "not exposed: model-only; SG-000108 exposes only the live navigate, observe, link activation and staged download shapes (decision 4)"
     },
     {
       "capability": "browser.navigation",
       "operation": "navigate",
-      "status": "intentionally_denied",
-      "reason": "not exposed: the closed structured browser layer is a policy and page-registry model with no live browser engine (SG-000062 qualification)"
+      "status": "implemented_exposed",
+      "mcp_tool": "browser_navigate"
     },
     {
       "capability": "browser.snapshot",
       "operation": "observe",
-      "status": "intentionally_denied",
-      "reason": "not exposed: the closed structured browser layer is a policy and page-registry model with no live browser engine (SG-000062 qualification)"
+      "status": "implemented_exposed",
+      "mcp_tool": "browser_observe"
     },
     {
       "capability": "browser.dom",
       "operation": "click",
-      "status": "intentionally_denied",
-      "reason": "not exposed: the closed structured browser layer is a policy and page-registry model with no live browser engine (SG-000062 qualification)"
+      "status": "implemented_exposed",
+      "mcp_tool": "browser_click"
     },
     {
       "capability": "browser.dom",
       "operation": "fill",
       "status": "intentionally_denied",
-      "reason": "not exposed: the closed structured browser layer is a policy and page-registry model with no live browser engine (SG-000062 qualification)"
+      "reason": "not exposed: model-only; SG-000108 exposes only the live navigate, observe, link activation and staged download shapes (decision 4)"
     },
     {
       "capability": "browser.download",
       "operation": "preview",
-      "status": "intentionally_denied",
-      "reason": "not exposed: the closed structured browser layer is a policy and page-registry model with no live browser engine (SG-000062 qualification)"
+      "status": "implemented_exposed",
+      "mcp_tool": "browser_download_preview"
     },
     {
       "capability": "browser.download",
       "operation": "download",
-      "status": "intentionally_denied",
-      "reason": "not exposed: the closed structured browser layer is a policy and page-registry model with no live browser engine (SG-000062 qualification)"
+      "status": "implemented_exposed",
+      "mcp_tool": "browser_download"
     },
     {
       "capability": "browser.upload",
       "operation": "preview",
       "status": "intentionally_denied",
-      "reason": "not exposed: the closed structured browser layer is a policy and page-registry model with no live browser engine (SG-000062 qualification)"
+      "reason": "not exposed: model-only; SG-000108 exposes only the live navigate, observe, link activation and staged download shapes (decision 4)"
     },
     {
       "capability": "browser.upload",
       "operation": "submit",
       "status": "intentionally_denied",
-      "reason": "not exposed: the closed structured browser layer is a policy and page-registry model with no live browser engine (SG-000062 qualification)"
+      "reason": "not exposed: model-only; SG-000108 exposes only the live navigate, observe, link activation and staged download shapes (decision 4)"
     },
     {
       "capability": "uia.process",
@@ -627,9 +627,17 @@
     },
     {
       "id": "browser_structured",
-      "status": "missing",
-      "owner_grain": "outside_v0_2_target",
-      "note": "needs a live isolated browser engine qualified shape by shape; the closed policy model is not exposed (docs/p16/BROWSER_QUALIFICATION.md)"
+      "status": "implemented_exposed",
+      "owner_grain": "SG-000108",
+      "note": "six live isolated-browser tools under the browser_structured profile, selected by local configuration only; a real browser only in live-browser-dev builds, release builds answer typed unavailable until SG-000106 (docs/security/SG-000108_PRODUCT_CALLER.md)",
+      "via": [
+        "browser_click",
+        "browser_download",
+        "browser_download_preview",
+        "browser_navigate",
+        "browser_observe",
+        "browser_page_open"
+      ]
     },
     {
       "id": "desktop_observe",
