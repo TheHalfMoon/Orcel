@@ -16,10 +16,25 @@
 // and holds. Anything else is refused, which an optional require sees as
 // "absent".
 //
+// Paths compare exactly, but for the drive letter: Node builds a module's
+// path from its parent's path and the specifier's text, so pinned code
+// loses nothing, while a case-folded match could admit a differently cased
+// twin (NTFS per-directory case sensitivity, or a character such as U+212A
+// that JavaScript folds to an ASCII letter; judge, PR #336). Manifest names
+// must be printable ASCII.
+//
+// The guard governs this thread's module loads only. A worker thread or a
+// second Node process would resolve without it, so `closeUnguardedRuntimes`
+// makes `worker_threads.Worker`, `child_process.fork` and any spawn of
+// Node's own executable throw before the worker loads (playwright-core
+// launches the engine, never Node).
+//
 // Installed by main.js before anything else is imported.
 
+import childProcess from "node:child_process";
 import { readFileSync } from "node:fs";
 import * as nodeModule from "node:module";
+import workerThreads from "node:worker_threads";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -30,10 +45,15 @@ export const MODULE_REFUSED = "ORCEL_MODULE_REFUSED";
 export const MANIFEST_NAME = "runtime-manifest.json";
 export const MANIFEST_SCHEMA = "orcel-worker-runtime-manifest/1";
 
+/** A path's drive letter in lower case; everything else as it is. */
+function comparable(path: string): string {
+  return /^[A-Za-z]:/.test(path) ? path[0]!.toLowerCase() + path.slice(1) : path;
+}
+
 /**
- * The files the manifest in `dist` names, as absolute paths in lower case
- * (Windows paths compare case-insensitively). A missing or malformed
- * manifest, or a name that is not a plain relative path, throws: the guard
+ * The files the manifest in `dist` names, as absolute paths (compared
+ * exactly, but for the drive letter). A missing or malformed manifest, or a
+ * name that is not a plain printable-ASCII relative path, throws: the guard
  * is then never installed and the worker does not start.
  */
 export function loadAllowlist(dist: string): Set<string> {
@@ -44,14 +64,14 @@ export function loadAllowlist(dist: string): Set<string> {
   const root = dirname(dist);
   const allowed = new Set<string>();
   for (const file of manifest.files as unknown[]) {
-    if (typeof file !== "string" || file.length === 0 || /[\\:\u0000-\u001f]/.test(file)) {
+    if (typeof file !== "string" || file.length === 0 || !/^[\x20-\x7e]+$/.test(file) || /[\\:]/.test(file)) {
       throw new Error(`${MODULE_REFUSED}: the runtime manifest names a malformed path`);
     }
     const segments = file.split("/");
     if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
       throw new Error(`${MODULE_REFUSED}: the runtime manifest names a malformed path`);
     }
-    allowed.add(join(root, ...segments).toLowerCase());
+    allowed.add(comparable(join(root, ...segments)));
   }
   return allowed;
 }
@@ -70,7 +90,7 @@ export function moduleRefusal(url: string, allowed: ReadonlySet<string>): string
   } catch {
     return "an unreadable module path";
   }
-  return allowed.has(path.toLowerCase()) ? null : "a module that is not a file of the pinned runtime";
+  return allowed.has(comparable(path)) ? null : "a module that is not a file of the pinned runtime";
 }
 
 /** Whether this Node has the synchronous module hooks the guard needs (22.15+). */
@@ -96,4 +116,39 @@ export function installResolveGuard(dist: string = dirname(fileURLToPath(import.
       return resolved;
     }
   });
+}
+
+function refusedRuntime(): never {
+  const error = new Error(`${MODULE_REFUSED}: no code may run outside the resolve guard`) as Error & { code: string };
+  error.code = MODULE_REFUSED;
+  throw error;
+}
+
+/**
+ * Close the ways code could run without the guard: worker threads, forked
+ * Node processes and any spawn of Node's own executable. Spawning another
+ * program (playwright-core starts the engine this way) is unchanged.
+ */
+export function closeUnguardedRuntimes(): void {
+  const node = comparable(process.execPath);
+  // Node's own executable, by path or by name (a PATH lookup), or any
+  // command run through a shell.
+  const isNode = (file: unknown): boolean =>
+    typeof file === "string" && (comparable(file) === node || /(^|[\\/])node(\.exe)?$/i.test(file.trim()));
+  const viaShell = (args: readonly unknown[]): boolean =>
+    args.some((arg) => typeof arg === "object" && arg !== null && !Array.isArray(arg) && Boolean((arg as { shell?: unknown }).shell));
+  const guarded = <T extends (...args: never[]) => unknown>(original: T): T =>
+    ((...args: Parameters<T>) => (isNode(args[0]) || viaShell(args) ? refusedRuntime() : original(...args))) as T;
+  const cp = childProcess as unknown as Record<string, unknown>;
+  // Shell commands could start anything, Node included.
+  for (const name of ["fork", "exec", "execSync"] as const) {
+    cp[name] = refusedRuntime;
+  }
+  for (const name of ["spawn", "spawnSync", "execFile", "execFileSync"] as const) {
+    cp[name] = guarded(cp[name] as (...args: never[]) => unknown);
+  }
+  (workerThreads as unknown as Record<string, unknown>).Worker = function Worker(): never {
+    return refusedRuntime();
+  };
+  nodeModule.syncBuiltinESMExports();
 }

@@ -29,9 +29,16 @@ test("only Node built-ins and the manifest's files resolve", () => {
     assert.equal(moduleRefusal(url("dist", "worker.js"), allowed), null);
     assert.equal(moduleRefusal(url("dist", "extract", "clean.js"), allowed), null);
     assert.equal(moduleRefusal(url("node_modules", "playwright-core", "lib", "coreBundle.js"), allowed), null);
-    // Windows paths compare case-insensitively.
-    assert.equal(moduleRefusal(url("DIST", "Worker.js"), allowed), null);
+    // Exact, but for the drive letter: a differently cased twin (NTFS
+    // per-directory case sensitivity) or a Kelvin sign that JavaScript
+    // folds to "k" is not the pinned file.
+    const lowerDrive = url("dist", "worker.js").replace(/^file:\/\/\/([A-Za-z]):/, (_, d: string) => `file:///${d.toLowerCase()}:`);
+    assert.equal(moduleRefusal(lowerDrive, allowed), null);
     for (const refused of [
+      url("DIST", "Worker.js"),
+      url("dist", "worker.JS"),
+      url("node_modules", "playwright-core", "lib", "coreBundle.js".replace("e", "E")),
+      url("dist", "wor\u212Aer.js"),
       // A file planted beside a pinned one: CommonJS tries it first.
       url("node_modules", "playwright-core", "lib", "coreBundle"),
       url("node_modules", "playwright-core", "lib", "other.js"),
@@ -54,6 +61,8 @@ test("only Node built-ins and the manifest's files resolve", () => {
       [["C:/x.js"], MANIFEST_SCHEMA],
       [["dist\\x.js"], MANIFEST_SCHEMA],
       [["dist/./x.js"], MANIFEST_SCHEMA],
+      [["dist/\u212Aelvin.js"], MANIFEST_SCHEMA],
+      [["dist/caf\u00e9.js"], MANIFEST_SCHEMA],
       [[""], MANIFEST_SCHEMA],
       [[1], MANIFEST_SCHEMA],
       ["dist/x.js", MANIFEST_SCHEMA],
@@ -155,9 +164,59 @@ test("the built worker's manifest names exactly its runtime", async () => {
   const listed = [...loadAllowlist(here)].sort();
   const expected = runtimeFiles(root)
     .filter((relative) => relative !== MANIFEST)
-    .map((relative) => join(root, ...relative.split("/")).toLowerCase())
+    .map((relative) => join(root, ...relative.split("/")).replace(/^[A-Za-z]:/, (drive) => drive.toLowerCase()))
     .sort();
   assert.deepEqual(listed, expected);
   assert.ok(listed.some((path) => path.endsWith(join("dist", "entry.js"))));
   assert.ok(!listed.some((path) => path.endsWith(".test.js")));
+});
+
+test("no worker thread, forked Node or shell starts outside the guard, and other programs still spawn", () => {
+  const outer = mkdtempSync(join(tmpdir(), "orcel-guard-runtimes-"));
+  try {
+    const dist = join(outer, "dist");
+    mkdirSync(dist, { recursive: true });
+    copyFileSync(join(here, "resolve-guard.js"), join(dist, "resolve-guard.js"));
+    writeFileSync(join(outer, "package.json"), JSON.stringify({ type: "module" }));
+    writeFileSync(
+      join(dist, "probe.js"),
+      [
+        'import { closeUnguardedRuntimes, installResolveGuard } from "./resolve-guard.js";',
+        'import childProcess from "node:child_process";',
+        'import { fork, spawnSync as namedSpawnSync } from "node:child_process";',
+        'import { Worker } from "node:worker_threads";',
+        "installResolveGuard();",
+        "closeUnguardedRuntimes();",
+        "const outcome = (run) => { try { run(); return 'ran'; } catch (error) { return error.code; } };",
+        "const results = {",
+        "  worker: outcome(() => new Worker('process.exit(0)', { eval: true })),",
+        "  fork: outcome(() => fork('x.js')),",
+        "  namedSpawn: outcome(() => namedSpawnSync(process.execPath, ['-e', '0'])),",
+        "  spawnExec: outcome(() => childProcess.spawnSync(process.execPath, ['-e', '0'])),",
+        "  spawnByName: outcome(() => childProcess.spawnSync('node', ['-e', '0'])),",
+        "  execFile: outcome(() => childProcess.execFileSync(process.execPath, ['-e', '0'])),",
+        "  shell: outcome(() => childProcess.spawnSync('cmd.exe', ['/c', 'exit 0'], { shell: true })),",
+        "  exec: outcome(() => childProcess.execSync('exit 0')),",
+        "  other: outcome(() => { if (childProcess.spawnSync(process.env.ComSpec ?? 'cmd.exe', ['/c', 'exit 0']).status !== 0) throw new Error('other program'); })",
+        "};",
+        "process.stdout.write(JSON.stringify(results) + '\\n');"
+      ].join("\n")
+    );
+    manifest(dist, ["dist/probe.js", "dist/resolve-guard.js", "package.json"]);
+    const run = spawnSync(process.execPath, [join(dist, "probe.js")], { encoding: "utf8" });
+    assert.equal(run.status, 0, run.stderr);
+    assert.deepEqual(JSON.parse(run.stdout.trim().split("\n").at(-1) ?? "{}"), {
+      worker: MODULE_REFUSED,
+      fork: MODULE_REFUSED,
+      namedSpawn: MODULE_REFUSED,
+      spawnExec: MODULE_REFUSED,
+      spawnByName: MODULE_REFUSED,
+      execFile: MODULE_REFUSED,
+      shell: MODULE_REFUSED,
+      exec: MODULE_REFUSED,
+      other: "ran"
+    });
+  } finally {
+    rmSync(outer, { recursive: true, force: true });
+  }
 });

@@ -604,7 +604,7 @@ fn a_pinned_runtime_runs_held_and_a_changed_one_never_starts() {
         "the refused launch touched the profile"
     );
     let _ = std::fs::remove_dir_all(&profile);
-    // A node.exe in a folder this user can write (CI's toolcache, for one)
+    // A node.exe in a folder this user can change (CI's toolcache, for one)
     // is refused even with the matching pin: a DLL planted beside it would
     // load first. The full run is evidenced where Node is installed under
     // Program Files.
@@ -3395,8 +3395,12 @@ fn a_folder_the_user_owns_stays_changeable_when_it_denies_writes() {
             .expect("icacls");
         assert!(output.status.success(), "icacls {args:?}: {output:?}");
     };
-    // Deny this user adding files or folders: a write probe now fails.
-    icacls(&["/deny", &format!("{user}:(WD,AD)")]);
+    // Deny this user every change right the folder grants explicitly (add
+    // file or folder, delete child, delete, change permissions, take
+    // ownership): a write probe now fails, and only the owner's implicit
+    // WRITE_DAC is left, which must still count as changeable (judge, PR
+    // #336). The same implicit right removes the deny again below.
+    icacls(&["/deny", &format!("{user}:(WD,AD,DC,DE,WDAC,WO)")]);
     assert!(std::fs::write(folder.join("version.dll"), b"MZ").is_err());
     assert!(
         crate::runtime_pin::node_folder_writable(&node),
