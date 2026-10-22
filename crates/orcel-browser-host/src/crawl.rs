@@ -500,7 +500,8 @@ fn read_robots(
 }
 
 /// Run a crawl. A refused spec is an error; everything after the start is
-/// in the report. `cancelled` and the deadline are checked between pages.
+/// in the report. `cancelled` is checked before anything is fetched (robots
+/// included) and, with the deadline, between pages.
 pub fn crawl(
     driver: &mut dyn CrawlDriver,
     spec: &CrawlSpec,
@@ -522,6 +523,13 @@ pub fn crawl(
         sitemaps_read: 0,
         sitemaps_empty: 0,
     };
+    // A crawl cancelled before it starts fetches nothing, robots.txt
+    // included: its outcome does not depend on whether a fetch it never
+    // needed would have succeeded.
+    if cancelled.load(Ordering::SeqCst) {
+        report.stopped = Some(CrawlStop::Cancelled);
+        return Ok(report);
+    }
     let robots = if spec.robots {
         match read_robots(driver, &scope, &mut report) {
             Ok(robots) => robots,
@@ -1168,6 +1176,21 @@ mod tests {
             let report = crawl(&mut driver, &wanted, &AtomicBool::new(false)).unwrap();
             assert_eq!(report.stopped, Some(CrawlStop::RobotsUnreachable));
             assert!(report.pages.is_empty());
+        }
+
+        // Cancelled before it starts: not even robots.txt is fetched, so an
+        // unreachable robots.txt cannot mask the cancellation.
+        for answer in [None, Some((503, String::new())), Some((0, String::new()))] {
+            let mut driver = site();
+            if let Some(answer) = answer {
+                driver
+                    .texts
+                    .insert("https://site.test/robots.txt".into(), answer);
+            }
+            let report = crawl(&mut driver, &wanted, &AtomicBool::new(true)).unwrap();
+            assert_eq!(report.stopped, Some(CrawlStop::Cancelled));
+            assert!(driver.opened.is_empty(), "{:?}", driver.opened);
+            assert_eq!(report.robots_status, None);
         }
     }
 
