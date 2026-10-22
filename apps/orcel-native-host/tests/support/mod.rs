@@ -72,7 +72,7 @@ impl Host {
 
     /// Spawns the host with exactly `environment`.
     pub fn spawn_with(environment: impl IntoIterator<Item = (String, std::ffi::OsString)>) -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_orcel-native-host"))
+        let mut child = Command::new(std::env::var_os("ORCEL_NATIVE_TEST_HOST").unwrap_or_else(|| std::ffi::OsString::from(env!("CARGO_BIN_EXE_orcel-native-host"))))
             .env_clear()
             .envs(environment)
             .stdin(Stdio::piped())
