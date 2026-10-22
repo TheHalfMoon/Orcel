@@ -188,12 +188,12 @@
     "slices": "#289 activation; #291 attachment and enforcement decisions; #293 confinement contract; #294 worker package (playwright-core 1.63.0); #295/#302 native and HTTPS confinement probes; #297 launcher; #304 host-decided navigation; #305 observation and activation; #306 PDF download journey; #308 typed timeout and crash outcomes; #310/#311 WebMCP; #312/#316 extraction; #318/#319 crawl; #321/#322 held-handle commit and crash recovery; #323 TesterArmy E2E; #325 loopback-only confinement; #326 profile sweep; #327 engine window; #329 product-caller design; #330-#335 product caller slices 1a-3a; #336 runtime pin; #428 development-only live browser host and destinations; #432 crawl cancel-first; #429 event-based native test synchronization (#374); #433 orceld dispatch, six live tools and the public journey",
     "public_journey": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm -> fomcminutes20260916.pdf, 436574 bytes, sha256 eb23afae2fd82612d9f2a8effd53b7091f330fb42512fc15a8f9572ce4970871, equal to an independent fetch",
     "acceptance_matrix": "posted on #290 at closeout",
-    "post_merge": "main CI 39862151758 at 909acb3 (contains merge d94b88c) passed all jobs on Chromium 155; the merge commit's own run 39853744167 failed attempt 1 on one navigation timeout (cause undetermined, #438) and attempts 2-3 landed on an unqualified Chromium 156 runner (#431)",
+    "post_merge": "main CI 39862151758 at 909acb3 (contains merge d94b88c) passed all jobs on Chromium 155; the merge commit's own run 39853744167 failed attempt 1 on one navigation timeout (cause undetermined, #438), attempts 2-3 landed on an unqualified Chromium 156 runner (#431), and attempt 4, on Chromium 155, failed a different native test at its first launch (typed LaunchFailed, #438)",
     "open_follow_ups": [
       "#431 Chromium 156 qualification"
     ],
     "known_residuals": [
-      "#438 one native navigation on the CI runner timed out once (typed TimedOut, no partial commit); cause undetermined"
+      "#438 transient native lifetime failures on the CI runner: a navigation TimedOut and a launch LaunchFailed, once each (typed, no partial commit); cause undetermined"
     ]
   },
   "done_when": "A real Windows user journey downloads and verifies a public PDF through the isolated browser under the existing policies and approval broker, with every denial path proven, the dependency admitted with provenance, and remote, personal-profile and script-evaluation surfaces still absent."
