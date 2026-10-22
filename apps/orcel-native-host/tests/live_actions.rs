@@ -7,7 +7,7 @@
 //! the AT-SPI bus with the GTK3 probe of XP-06 (`fixtures/gtk3_probe.py`:
 //! a plain entry, a password entry named "Sign in", a button, and a second
 //! window titled as an Orcel approval surface). On macOS it is a manual check
-//! with the AppKit probe (`fixtures/appkit_probe.js`); the commands are in
+//! with the AppKit probe (`fixtures/appkit_probe_native.swift`); the commands are in
 //! SECURITY_INTEGRATION.md.
 //!
 //! It checks what the measured conformance cells (`conformance_native.rs`)

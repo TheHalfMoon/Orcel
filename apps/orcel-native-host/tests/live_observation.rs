@@ -6,7 +6,7 @@
 //! the session cannot observe. CI runs it on Linux under Xvfb, Openbox and
 //! the AT-SPI bus with the GTK3 probe (`fixtures/gtk3_probe.py`). On macOS it
 //! needs Accessibility and Screen Recording granted to the host binary, so
-//! it is a manual check with the AppKit probe (`fixtures/appkit_probe.js`);
+//! it is a manual check with the AppKit probe (`fixtures/appkit_probe_native.swift`);
 //! the commands are in the XP-06 pull request.
 //!
 //! Every raw response line is kept, and none may contain the probe's secret.

@@ -18,6 +18,7 @@ final class ProbeDelegate: NSObject, NSApplicationDelegate {
         let w=newWindow(title:"Orcel XP06 Probe "+nonce, top:420)
         let plain=NSTextField(frame:NSRect(x:20,y:130,width:380,height:24))
         plain.stringValue="visible-"+nonce
+        plain.setAccessibilityLabel("Plain field")
         plain.setAccessibilityIdentifier("xp06-plain")
         w.contentView?.addSubview(plain)
         let hidden=NSSecureTextField(frame:NSRect(x:20,y:90,width:380,height:24))
