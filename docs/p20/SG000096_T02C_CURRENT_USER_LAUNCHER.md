@@ -50,6 +50,10 @@ Expected owners come from a disposable store: `grant_local` → `load_store` (MA
 - The cwd is pinned by handle up to resume. The child's own cwd handle then keeps the directory from being deleted. The child's cwd is not read back from its PEB.
 - Ancestor-rename protection relies on NTFS refusing to rename a directory that has an open descendant. The test above shows this on NTFS. Other file systems are not qualified.
 - The stdio pipes are created inheritable for the duration of `CreateProcessW`, as on the Safe path. A concurrent `std::process` spawn elsewhere in orceld could inherit one. If that happens, the stream reports `complete: false` instead of hanging, because the post-exit and post-termination drains are bounded.
+- The cwd's components are checked for reparse points, then the directory is opened in a separate step. A process running as the same user could swap an ancestor for a junction in between. The executable is not affected, because its file ID and digest must match the approved identity. T04 must bind the cwd too: record the cwd's file identity or final path at approval and compare it after opening.
+- The stdio write ends are inheritable while the child is being created. An unrelated `std::process` child spawned at that moment could inherit one and write bytes that would be attributed to the approved command. T04 must create these pipes under a spawn lock shared with orceld's other launches, or make them inheritable only inside that lock.
+- The file identity is the volume serial plus a 64-bit file index. NTFS is qualified. ReFS uses 128-bit file IDs and is not qualified.
+- The child inherits orceld's own token. The SID and LUID mismatch cases are therefore shown by fault injection (changing the expected values), not by a child that really holds a different token. The expected Windows session is the owner's session; when the owner is orceld itself, that check cannot fail.
 - No orceld wiring, approval prompt, session registry, stdin, or MCP tool yet. T03 adds sessions and T04 adds governed dispatch.
 
 No donor source is copied in this slice.

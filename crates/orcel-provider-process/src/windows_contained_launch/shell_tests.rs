@@ -13,8 +13,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const FIXTURE_PREFIX: &str = "windows_contained_launch::shell::tests::";
 
+/// Only a child launched by `fixture` passes this extra filter (it names no
+/// test), so `cargo test -- --exact <fixture>` never runs a fixture body.
+const FIXTURE_CHILD_ARG: &str = "sg96-fixture-child";
+
 fn fixture_mode() -> bool {
-    std::env::args().any(|argument| argument == "--exact")
+    std::env::args().any(|argument| argument == FIXTURE_CHILD_ARG)
 }
 
 fn serial() -> MutexGuard<'static, ()> {
@@ -155,6 +159,7 @@ fn fixture(name: &str, cwd: &Path) -> ShellCommand {
             format!("{FIXTURE_PREFIX}{name}"),
             "--nocapture".into(),
             "--test-threads=1".into(),
+            FIXTURE_CHILD_ARG.into(),
         ],
         cwd,
     )
@@ -238,6 +243,7 @@ fn sg96_fixture_descendant() {
                 "--exact",
                 &format!("{FIXTURE_PREFIX}sg96_fixture_sleep"),
                 "--nocapture",
+                FIXTURE_CHILD_ARG,
             ])
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
