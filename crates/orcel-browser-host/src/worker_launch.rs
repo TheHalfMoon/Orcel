@@ -3450,7 +3450,7 @@ mod tests {
         for (name, kind, version) in [
             ("msedge.exe", Edge, "154.0.1.2"),
             ("msedge.exe", Edge, "156.0.1.2"),
-            ("chrome.exe", Chromium, "156.0.4283.45"),
+            ("chrome.exe", Chromium, "157.0.4283.45"),
             ("chrome.exe", Chromium, "153.0.1.2"),
         ] {
             let engine = Engine::for_tests_at(base.join(name), kind, version);

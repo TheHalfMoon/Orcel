@@ -1347,7 +1347,7 @@
       "id": "XP-14",
       "phase": "X4",
       "title": "Browser host on macOS and Linux: discovery, verification, confinement, supervision",
-      "status": "BLOCKED_ON_DEPENDENCY",
+      "status": "READY",
       "objective": "Port SG-000074..79/108 host guarantees to macOS and Linux: find and verify an installed Chrome/Edge, launch it over the pipe with host-built argv, confine its network, supervise and sweep its process tree and profile.",
       "user_visible": "Browser tools work on macOS and Linux with the same policies.",
       "existing_orcel": [
@@ -2277,7 +2277,7 @@
       "id": "RJ-01",
       "phase": "X2",
       "title": "Extract the kernel journal crate from the SG-000108 intent journal (no behavior change)",
-      "status": "BLOCKED_ON_DEPENDENCY",
+      "status": "READY",
       "objective": "Move the download intent journal (pending/settled/abandoned/reconciled, one writer, durable append) out of crates/orceld/src/live_browser.rs into crates/orcel-journal so every provider can use it.",
       "user_visible": "None.",
       "existing_orcel": [
@@ -2506,7 +2506,7 @@
       "id": "BR-01",
       "phase": "B1",
       "title": "Stale-reference recovery through normalized locators under a host identity check",
-      "status": "BLOCKED_ON_DEPENDENCY",
+      "status": "READY",
       "objective": "When an approved aria ref goes stale after a benign re-render, re-resolve it through Playwright's normalized locator and act only if role, accessible name and frame match the approved target; otherwise return TargetStale.",
       "user_visible": "Fewer 'target stale' failures on dynamic sites without acting on the wrong element.",
       "existing_orcel": [
@@ -3080,7 +3080,7 @@
       "id": "WI-01",
       "phase": "B2",
       "title": "Crawl scope from Firecrawl: regex include/exclude, canonical URLs, sitemap depth guard",
-      "status": "BLOCKED_ON_DEPENDENCY",
+      "status": "READY",
       "objective": "Replace the prefix-only include/exclude of crawl.rs with Firecrawl's tested filter semantics under strict regex limits, keeping every existing crawl test green.",
       "user_visible": "Crawl and map honor patterns users already know from Firecrawl.",
       "existing_orcel": [
@@ -3224,7 +3224,7 @@
       "id": "WI-03",
       "phase": "B2",
       "title": "Relevance filters for extraction (BM25 and pruning)",
-      "status": "BLOCKED_ON_DEPENDENCY",
+      "status": "READY",
       "objective": "Optional query-focused extraction that keeps relevant blocks and drops boilerplate, reducing tokens sent to the client model.",
       "user_visible": "extract(page, query='refund policy') returns the relevant section.",
       "existing_orcel": [
@@ -3437,7 +3437,7 @@
           406,
           411
         ],
-        "qualification": "Confined document parser for downloaded PDF and Office files. Follow-ups: #391 bounded stream decode (#396), #399 (#406), #389 manually dispatched fuzz job (#411). Wiring to the browser download path waits on SG-000108 closeout."
+        "qualification": "Confined document parser for downloaded PDF and Office files. Follow-ups: #391 bounded stream decode (#396), #399 (#406), #389 manually dispatched fuzz job (#411). SG-000108 closed (#439); wiring to the browser download path is now unblocked."
       }
     },
     {
@@ -4142,7 +4142,7 @@
   "external_dependencies": [
     {
       "id": "SG-000108-CLOSE",
-      "meaning": "SG-000108 (Opus's active browser grain, PR #336 open and currently conflicting with main) closes canonically. Browser, journal and web tasks that touch the same files wait for it to avoid conflicts with active work."
+      "meaning": "SG-000108 (the browser grain) closes canonically. Browser, journal and web tasks that touch the same files waited for it to avoid conflicts with active work. Satisfied 2026-10-23: closeout #439 (eebbe11), tracking #290 closed."
     }
   ]
 }
