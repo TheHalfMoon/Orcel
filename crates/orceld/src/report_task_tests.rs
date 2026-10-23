@@ -1047,3 +1047,36 @@ fn sg126_linked_sources_are_refused_before_any_approval() {
     assert_eq!(state(&tasks, &task), "stale");
     assert_eq!(approval.shown(), 0);
 }
+
+#[test]
+fn sg126_the_normal_request_path_refuses_report_requests() {
+    let scene = Scene::new("normal-path");
+    let approval = consent(&scene, &[ApprovalDecision::Approved]);
+    let policy = PolicyEngine::new(vec![scene.workspace.clone()]).unwrap();
+    let audit = AuditLogger::new(scene.dir.join("audit.jsonl")).unwrap();
+    let workspace_set = crate::remote_lease::WorkspaceSet {
+        ids: vec!["default".into()],
+        roots: vec![scene.root().to_path_buf()],
+        digest: "test".into(),
+    };
+    let start = request(
+        "start",
+        json!({"title": "t", "sources": ["data/q3.csv"], "folder": "reports"}),
+    );
+    let refused = crate::handle_envelope(
+        &policy,
+        &audit,
+        &approval.broker,
+        &workspace_set,
+        RemoteRequestEnvelope {
+            request: start,
+            remote: None,
+            profile: None,
+        },
+    );
+    assert_eq!(
+        refused.error.as_ref().map(|error| error.code.clone()),
+        Some(FailureCode::CapabilityDenied)
+    );
+    assert_eq!(approval.shown(), 0);
+}

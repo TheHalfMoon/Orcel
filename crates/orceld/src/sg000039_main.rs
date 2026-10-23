@@ -601,6 +601,14 @@ fn dispatch_with(
     request: &RequestEnvelope,
     browser_resolver: &impl orcel_provider_browser::DnsResolver,
 ) -> Result<Value, ProviderError> {
+    // SG-000126: report tasks have their own entry in the request loop
+    // (`report_task::handle_envelope`); they never run on this path.
+    if report_task::is_report_request(request) {
+        return Err(ProviderError::new(
+            FailureCode::CapabilityDenied,
+            "report requests are handled only by the SG-000126 report task entry",
+        ));
+    }
     if let Some(result) = fs_mutation::dispatch_fs_mutation(workspace, approval, request)? {
         return Ok(result);
     }
