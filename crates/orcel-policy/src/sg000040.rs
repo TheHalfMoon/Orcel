@@ -4,6 +4,7 @@ pub mod full_control_store;
 pub mod live_browser;
 pub mod protected_state;
 pub mod remote_session;
+pub mod report;
 #[path = "sg000039.rs"]
 mod sg000039_legacy;
 pub mod shell_session;
@@ -162,6 +163,34 @@ impl PolicyEngine {
                 workspace: workspace.clone(),
                 policy_revision: POLICY_REVISION,
             });
+        }
+        if report::is_report_shape(&request.capability, &request.operation) {
+            if request.version != INTERNAL_PROTOCOL_VERSION {
+                return Err(policy_error(
+                    FailureCode::InvalidRequest,
+                    "unsupported internal protocol version",
+                ));
+            }
+            report::validate_report(request)?;
+            let workspace = self
+                .legacy
+                .workspace(&request.workspace_id)
+                .ok_or_else(|| {
+                    policy_error(
+                        FailureCode::WorkspaceDenied,
+                        "requested workspace is not configured",
+                    )
+                })?;
+            return Ok(PolicyDecision {
+                workspace: workspace.clone(),
+                policy_revision: POLICY_REVISION,
+            });
+        }
+        if request.capability == report::REPORT_CAPABILITY {
+            return Err(policy_error(
+                FailureCode::CapabilityDenied,
+                "SG-000126 report accepts only report/start, report/preview and report/commit",
+            ));
         }
         if request.capability == SEARCH_CAPABILITY {
             return Err(policy_error(
@@ -545,6 +574,57 @@ mod tests {
             operation: operation.into(),
             ..request(arguments)
         }
+    }
+
+    #[test]
+    fn sg126_report_shapes_are_admitted_bounded_and_soft() {
+        let policy = engine();
+        let report = |operation: &str, arguments: serde_json::Value| RequestEnvelope {
+            capability: report::REPORT_CAPABILITY.into(),
+            operation: operation.into(),
+            ..request(arguments)
+        };
+        let task = "rpt-0123456789abcdef0123456789abcdef";
+        policy
+            .authorize(&report(
+                "start",
+                json!({"title": "Q3", "sources": ["data/q3.csv"], "folder": "reports"}),
+            ))
+            .unwrap();
+        policy
+            .authorize(&report(
+                "preview",
+                json!({"task_id": task, "name": "q3.md", "content": "x"}),
+            ))
+            .unwrap();
+        let commit = report(
+            "commit",
+            json!({"task_id": task, "name": "q3.md", "content": "x", "expected_sha256": "0".repeat(64)}),
+        );
+        policy.authorize(&commit).unwrap();
+        assert_eq!(approval_class_for("report", "commit"), ApprovalClass::Soft);
+        for operation in ["write", "overwrite", "status", "approve"] {
+            assert_eq!(
+                policy
+                    .authorize(&report(operation, json!({})))
+                    .unwrap_err()
+                    .code,
+                FailureCode::CapabilityDenied,
+                "{operation}"
+            );
+        }
+        let mut other = commit.clone();
+        other.workspace_id = "other".into();
+        assert_eq!(
+            policy.authorize(&other).unwrap_err().code,
+            FailureCode::WorkspaceDenied
+        );
+        let mut old = commit;
+        old.version += 1;
+        assert_eq!(
+            policy.authorize(&old).unwrap_err().code,
+            FailureCode::InvalidRequest
+        );
     }
 
     #[test]

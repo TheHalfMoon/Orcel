@@ -317,6 +317,19 @@ impl FsProvider {
         }
     }
 
+    /// Create-only write (SG-000126): creates `relative` with `content` and
+    /// never opens an existing file. An existing entry at the name, a link
+    /// included, is refused as `TargetStale` without being opened.
+    pub fn create_text(&self, relative: &str, content: &str) -> Result<Value, ProviderError> {
+        if content.len() > MAX_WRITE_BYTES {
+            return Err(ProviderError::new(
+                FailureCode::OutputLimit,
+                "write content exceeds 2 MiB limit",
+            ));
+        }
+        self.create_text_verified(relative, content)
+    }
+
     fn create_text_verified(&self, relative: &str, content: &str) -> Result<Value, ProviderError> {
         let candidate = self.root.join(relative);
         let parent = candidate.parent().ok_or_else(|| {
@@ -331,7 +344,13 @@ impl FsProvider {
             .write(true)
             .create_new(true)
             .open(&candidate)
-            .map_err(|error| ProviderError::io("create target", error))?;
+            .map_err(|error| {
+                if error.kind() == io::ErrorKind::AlreadyExists {
+                    ProviderError::new(FailureCode::TargetStale, "target already exists")
+                } else {
+                    ProviderError::io("create target", error)
+                }
+            })?;
 
         let resolved = final_path_from_open_file(&file, &candidate)
             .map_err(|error| ProviderError::io("resolve created target", error))?;
@@ -716,6 +735,45 @@ mod tests {
         let root = std::env::temp_dir().join(format!("orcel-fs-{name}-{suffix}"));
         fs::create_dir_all(&root).expect("create temp root");
         root
+    }
+
+    #[test]
+    fn sg126_create_text_never_opens_an_existing_entry() {
+        let root = temp_root("create-only");
+        let outside = temp_root("create-only-outside");
+        fs::create_dir_all(root.join("reports")).unwrap();
+        let provider = FsProvider::new(&root).unwrap();
+        let created = provider.create_text("reports/new.md", "fresh").unwrap();
+        assert_eq!(created["created"], true);
+        assert_eq!(fs::read(root.join("reports/new.md")).unwrap(), b"fresh");
+        // An existing file is refused without being opened or changed.
+        let refused = provider.create_text("reports/new.md", "other").unwrap_err();
+        assert_eq!(refused.code, FailureCode::TargetStale);
+        assert_eq!(fs::read(root.join("reports/new.md")).unwrap(), b"fresh");
+        // A link at the name is refused too, even a dangling one, and its
+        // target is never created or written.
+        #[cfg(unix)]
+        {
+            fs::write(outside.join("theirs"), "theirs").unwrap();
+            std::os::unix::fs::symlink(outside.join("theirs"), root.join("reports/l.md")).unwrap();
+            std::os::unix::fs::symlink(outside.join("absent"), root.join("reports/d.md")).unwrap();
+            for name in ["reports/l.md", "reports/d.md"] {
+                let refused = provider.create_text(name, "x").unwrap_err();
+                assert_eq!(refused.code, FailureCode::TargetStale, "{name}");
+            }
+            assert_eq!(fs::read(outside.join("theirs")).unwrap(), b"theirs");
+            assert!(!outside.join("absent").exists());
+        }
+        let big = "x".repeat(MAX_WRITE_BYTES + 1);
+        assert_eq!(
+            provider
+                .create_text("reports/big.md", &big)
+                .unwrap_err()
+                .code,
+            FailureCode::OutputLimit
+        );
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&outside);
     }
 
     #[test]
