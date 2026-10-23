@@ -219,11 +219,11 @@ test("at most one grain is active (or the founder-sequenced SG-000096/SG-000126 
   assert.ok(active.length <= 1, `parallel active grains: ${active.join(", ")}`);
   if (active.length === 1) {
     const later = specs.filter((name) => name > (active[0] ?? ""));
-    const parallelClosed = active[0] === "SG-000096.json" ? ["SG-000108.json"] : [];
+    const parallelClosed = active[0] === "SG-000096.json" ? ["SG-000108.json", "SG-000126.json"] : [];
     assert.deepEqual(
       later.filter((name) => !parallelClosed.includes(name)),
       [],
-      `no grain beyond the active grain exists except the closed parallel SG-000108: ${later.join(", ")}`
+      `no grain beyond the active grain exists except the closed SG-000108 and SG-000126: ${later.join(", ")}`
     );
     assert.ok((active[0] ?? "") >= "SG-000067.json", "SG-000067 or its lawful successor is active");
     return;
