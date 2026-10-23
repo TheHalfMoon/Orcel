@@ -723,17 +723,24 @@ A fresh-context judge's first round on this slice was BLOCK. The destination-nam
   - **When it is checked:** at every launch, before anything is spawned. `validate_launch` first re-verifies the engine file (`Engine::reverify`), exactly as discovery did: name, presence, version resource and Authenticode. It requires the same kind and version. So an engine updated or replaced in place since discovery (Edge and Chrome update by replacing their executable) is refused.
   - **The gap that remains:** the engine starts a moment later, when the worker launches it after the handshake, so a short window between check and use remains. Replacing the file inside it requires writing into the engine's install folder, which is already past the boundary.
   - **Platforms:** on Windows nothing is spawned for the check. Elsewhere, the re-check runs the engine's `--version` (bounded), and the worker is Windows-only.
-  - **Recovery:** a caller refused after an update must discover the engine again (`discover_engine`), which reads the new version and applies the window to it. Anything else is refused with the typed `Unavailable(UnsupportedEngine)`: another major of either kind, or an unparseable version. Today two engines are qualified:
+  - **Recovery:** a caller refused after an update must discover the engine again (`discover_engine`), which reads the new version and applies the window to it. Anything else is refused with the typed `Unavailable(UnsupportedEngine)`: another major of either kind, or an unparseable version. Today four engines are qualified:
   - **Edge 155:** the evidence host, Edge 155.0.4283.45. The full native suite passed with the #324 leak control required (#325, #326).
   - **Chrome 154:** CI's windows-latest runner (image 20260925.250.1), Chrome 154.0.8037.58, which the native suite now reports (`SG108-EVIDENCE engine: …`).
     - The full suite passed there on this PR's head, the #324 endpoint tests included. The page probe saw 36 ICE sockets, so the WebRTC probe ran, and the leak control saw mDNS sockets on 5353.
     - The leak control is not required there, because the runner has no account and no LAN devices for an outbound connection.
+  - **Chrome 155:** a later windows-latest image, added with its CI native-suite run in #337 (commit 48c10ae).
+  - **Chrome 156:** windows-latest image 20261021.278.1, Chromium 156.0.8078.48, added by #431. The evidence is CI's native suite on that engine, on #431's head `02fefbf`.
+    - **Four full passes:** runs 39881429683, 39884782269, 39887877312 and 39887884749. The engine evidence is the 27/27 worker native tests, which drive real 156 lifetimes, including the #324 endpoint tests. The worker-host 8/8 and orceld live 5/5 also passed, but on CI they pass by refusing the lifetime typed (`managed policy present`), so they do not drive a 156 lifetime there. The endpoint tests showed:
+      - the confined lifetime's idle endpoints over 90 s were `[]`;
+      - the page probe saw 0 datagrams and 0 connections to the LAN, with 36 ephemeral ICE UDP endpoints, so the WebRTC probe ran;
+      - the unconfined control still showed mDNS sockets on 5353.
+    - **One failure, recorded:** in run 39881425295 two fixture navigations hit their typed `TimedOut` bound, and one worker did not answer `bye` and was ended non-gracefully, with its profile removed. No confinement probe failed. The non-graceful shutdown stopped that test before its process-death and residue checks ran, so those are unverified for that run; the shutdown report showed `job_empty` and `profile_removed` true. This is the transient class tracked in #438, also seen on Chromium 155, and the confined argv is unchanged. If 156 later fails clearly more often than 155, the qualification is revisited.
 - **Why a list of qualified majors, not a range.** The engine-drift risk above means a new engine can change how it honours a confinement flag. The leaks #324 found came from services that only some engine builds start. So "supported" means that every probe re-ran on that version, not that playwright-core can attach. A range would admit versions no probe has run on.
 - **What it is checked with.**
   - **Discovery, unchanged:** the engine's kind, path and Authenticode publisher are verified as before (SG-000074).
   - **The window, at launch.** Unit tests:
     - `only_qualified_engine_versions_run_the_worker`;
-    - `an_unqualified_engine_version_is_refused_before_anything_runs`: with every other prerequisite present, Edge 154, Edge 156, Chrome 155 and Chrome 153 are refused with the typed error, and Edge 155 passes the rule.
+    - `an_unqualified_engine_version_is_refused_before_anything_runs`: with every other prerequisite present, Edge 154, Edge 156, Chrome 157 and Chrome 153 are refused with the typed error, and Edge 155 passes the rule. The first test also asserts that Chromium 156.0.8078.48 is qualified while Edge 156 stays refused: each kind has its own majors.
   - **Native:** every native test runs under the window on the installed engine, which the suite reports once per run.
   - **`an_engine_replaced_after_discovery_is_refused_at_launch`:**
     - a held, qualified engine (a copy of the installed Edge) passes `validate_launch`;

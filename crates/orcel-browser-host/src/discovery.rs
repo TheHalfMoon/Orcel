@@ -35,8 +35,10 @@ impl EngineKind {
 /// version, because a new engine can change how it honours a flag.
 /// - Edge 155: the evidence host, with the #324 leak control required.
 /// - Chrome 154: qualified by earlier CI evidence.
-/// - Chrome 155: updated windows-latest runner; qualification requires this
-///   change's full native suite and endpoint probes to pass before merge.
+/// - Chrome 155: qualified by earlier CI evidence.
+/// - Chrome 156: windows-latest image 20261021 (Chromium 156.0.8078.48):
+///   four full native-suite passes with the endpoint probes on #431's head
+///   (runs recorded in the engine-attachment decision, A10).
 ///
 /// A new major is added only by a PR whose own native-suite run passes on
 /// it. Any other kind or major is refused at launch with a typed error.
@@ -44,6 +46,7 @@ pub const QUALIFIED_WORKER_ENGINES: &[(EngineKind, u32)] = &[
     (EngineKind::Edge, 155),
     (EngineKind::Chromium, 154),
     (EngineKind::Chromium, 155),
+    (EngineKind::Chromium, 156),
 ];
 
 /// A verified engine executable.
@@ -521,15 +524,18 @@ mod tests {
         assert_eq!(engine(EngineKind::Edge, "155.0.4283.45").major(), Some(155));
         assert!(engine(EngineKind::Chromium, "154.0.8037.58").worker_qualified());
         assert!(engine(EngineKind::Chromium, "155.0.8059.40").worker_qualified());
+        assert!(engine(EngineKind::Chromium, "156.0.8078.48").worker_qualified());
         for (kind, version) in [
             (EngineKind::Edge, "154.0.1.2"),
+            // Each kind has its own qualified majors: Chromium 156 is
+            // qualified, Edge 156 is not.
             (EngineKind::Edge, "156.0.1.2"),
             (EngineKind::Edge, "1550.0.1.2"),
             (EngineKind::Edge, "0.0.0.0"),
             (EngineKind::Edge, ""),
             (EngineKind::Edge, "x155.0"),
-            // Each kind has its own qualified majors.
-            (EngineKind::Chromium, "156.0.4283.45"),
+            // The next Chromium major is not qualified.
+            (EngineKind::Chromium, "157.0.4283.45"),
             (EngineKind::Chromium, "153.0.1.2"),
             (EngineKind::Edge, "154.0.8037.58"),
         ] {
