@@ -729,7 +729,12 @@ A fresh-context judge's first round on this slice was BLOCK. The destination-nam
     - The full suite passed there on this PR's head, the #324 endpoint tests included. The page probe saw 36 ICE sockets, so the WebRTC probe ran, and the leak control saw mDNS sockets on 5353.
     - The leak control is not required there, because the runner has no account and no LAN devices for an outbound connection.
   - **Chrome 155:** a later windows-latest image, added with its CI native-suite run in #337 (commit 48c10ae).
-  - **Chrome 156:** windows-latest image 20261021, Chromium 156.0.8078.48, added by #431. Its CI native-suite run on that engine is the qualification evidence and must pass before merge; the run is recorded on #431.
+  - **Chrome 156:** windows-latest image 20261021.278.1, Chromium 156.0.8078.48, added by #431. The evidence is CI's native suite on that engine, on #431's head `02fefbf`.
+    - **Four full passes:** runs 39881429683, 39884782269, 39887877312 and 39887884749. Each passed 27/27 worker native tests, the worker-host 8/8 and the orceld live 5/5, including the #324 endpoint tests:
+      - the confined lifetime's idle endpoints over 90 s were `[]`;
+      - the page probe saw 0 datagrams and 0 connections to the LAN, with 36 ephemeral ICE UDP endpoints, so the WebRTC probe ran;
+      - the unconfined control still showed mDNS sockets on 5353.
+    - **One failure, recorded:** in run 39881425295 two fixture navigations hit their typed `TimedOut` bound, and one worker did not answer `bye` and was ended non-gracefully, with its profile removed. No confinement probe failed. This is the transient class tracked in #438, also seen on Chromium 155, and the confined argv is unchanged.
 - **Why a list of qualified majors, not a range.** The engine-drift risk above means a new engine can change how it honours a confinement flag. The leaks #324 found came from services that only some engine builds start. So "supported" means that every probe re-ran on that version, not that playwright-core can attach. A range would admit versions no probe has run on.
 - **What it is checked with.**
   - **Discovery, unchanged:** the engine's kind, path and Authenticode publisher are verified as before (SG-000074).

@@ -36,9 +36,9 @@ impl EngineKind {
 /// - Edge 155: the evidence host, with the #324 leak control required.
 /// - Chrome 154: qualified by earlier CI evidence.
 /// - Chrome 155: qualified by earlier CI evidence.
-/// - Chrome 156: windows-latest image 20261021 (Chromium 156.0.8078.48);
-///   qualification requires this change's full native suite and endpoint
-///   probes to pass on it before merge.
+/// - Chrome 156: windows-latest image 20261021 (Chromium 156.0.8078.48):
+///   four full native-suite passes with the endpoint probes on #431's head
+///   (runs recorded in the engine-attachment decision, A10).
 ///
 /// A new major is added only by a PR whose own native-suite run passes on
 /// it. Any other kind or major is refused at launch with a typed error.
