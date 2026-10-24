@@ -2,7 +2,7 @@
   "id": "SG-000126",
   "title": "First local report task (create-only approval, independent checker)",
   "program": "ORCEL-F2",
-  "state": "GRAIN",
+  "state": "CLOSED",
   "risk": "medium",
   "created": "2026-10-23",
   "base": "eebbe11dfe502d36dcc2b520772ef9ec9e7abce0",
@@ -131,5 +131,27 @@
     "f5": "Spreadsheet sources (XLSX or Excel) reach the report task only through a qualified read-only parser path."
   },
   "activation_note": "No capability, tool, dependency or authority change in this activation packet. Separate implementation and closeout PRs must qualify their exact heads; activation CI alone proves nothing about the task.",
+  "closed_at": "2026-10-23",
+  "implementation_base": "9d3d5105ac6d39c91a007551c1cfe71747d363c0",
+  "implementation_pr": 437,
+  "qualified_head": "80ea357437d7d3bb1c61de85d1e509e2e17d8a46",
+  "qualified_tree": "db4f96a8d88d4ffbc3f4b0a1838cf9968e8be6de",
+  "implementation_merge": "41fcb6e8fc2d5edfc1ce1a4f65b32f4c0ef2d994",
+  "pre_merge_ci": "39901617377",
+  "pre_merge_review_gates": "39901616076",
+  "post_merge_ci": "39904639685",
+  "canonical_evidence": {
+    "slices": "#436 activation (merge 9d3d510); #437 kernel report task, independent checker, app API task methods and Control Room conformance (merge 41fcb6e)",
+    "acceptance_matrix": "posted on #435 at closeout",
+    "open_follow_ups": [
+      "F4: one external MCP client drives the report operations through a reviewed tool exposure",
+      "SG-000120: durable task journal, crash reconciliation and task expiry or cancel",
+      "Control Room: assert the client refuses to send task.* until it adopts them (judge nit)"
+    ],
+    "known_residuals": [
+      "A same-user process that swaps the task folder in the instant between the last check and the create can place the report elsewhere inside the workspace; the checker then ends the task verification_failed and nothing is retried or deleted.",
+      "Task records live for one daemon run; 64 unfinished tasks block report/start until restart."
+    ]
+  },
   "done_when": "On Windows, macOS and Linux, a planner turns known figures into one approved, create-only report that the independent checker verifies, with every refusal path proven, task state visible in the app API, and no overwrite, out-of-scope write, remote path or MCP widening."
 }
