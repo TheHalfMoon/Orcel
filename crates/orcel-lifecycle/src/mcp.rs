@@ -9,6 +9,14 @@
 //! matching `orceld`). Standard input and output are inherited untouched
 //! because stdout is the MCP channel. No tool, schema, capability,
 //! approval, or network authority is added here.
+//!
+//! On Windows a session binds a full-control runtime session, which only
+//! the active installed `versions/<version>/orcel.exe` may hold. Clients
+//! launch `orcel` from `bin` (on PATH), so that copy hands the session to
+//! the verified active version's executable, as `orcel start` hands the
+//! supervisor to it, with standard I/O and the environment inherited
+//! (SG-000127 slice 6: `orcel mcp stdio` from `bin` failed every session
+//! since SG-000095).
 
 use crate::config::Config;
 use crate::install::Installer;
@@ -109,6 +117,9 @@ pub fn run_action(action: &str, port: Option<u16>) -> Result<i32, LifecycleError
                 resolve_stdio_launch(&layout, platform.as_ref()).map_err(|error| {
                     LifecycleError::state(format!("orcel mcp stdio: {}", error.message))
                 })?;
+            if let Some(code) = delegate_to_active(&layout, &launch.orceld, &["mcp", "stdio"])? {
+                return Ok(code);
+            }
             Ok(run_stdio_session(&launch, &config))
         }
         "serve" => {
@@ -123,12 +134,63 @@ pub fn run_action(action: &str, port: Option<u16>) -> Result<i32, LifecycleError
                     LifecycleError::state(format!("orcel mcp serve: {}", error.message))
                 }
             })?;
+            let port_text = port.map(|port| port.to_string());
+            let mut forwarded = vec!["mcp", "serve"];
+            if let Some(port) = port_text.as_deref() {
+                forwarded.extend(["--port", port]);
+            }
+            if let Some(code) = delegate_to_active(&layout, &launch.orceld, &forwarded)? {
+                return Ok(code);
+            }
             Ok(run_serve_session(&launch, &config))
         }
         _ => Err(LifecycleError::usage(
             "unknown mcp action; run `orcel help`",
         )),
     }
+}
+
+/// Set on the handed-off child so a second hand-off fails instead of looping.
+const DELEGATED_ENV: &str = "ORCEL_MCP_DELEGATED";
+
+/// When this process is not the active installed `orcel.exe` (Windows
+/// only), runs that verified executable with `args`, inheriting standard
+/// I/O and the environment, and returns its exit code. `verified_orceld` is
+/// the verified launch's `orceld`, so its directory is the active version
+/// directory that `Installer::verify` just checked. `None` means this
+/// process is already that executable and runs the session itself.
+fn delegate_to_active(
+    layout: &Layout,
+    verified_orceld: &std::path::Path,
+    args: &[&str],
+) -> Result<Option<i32>, LifecycleError> {
+    if !cfg!(windows) {
+        return Ok(None);
+    }
+    let current = std::env::current_exe()
+        .map_err(|error| LifecycleError::io("resolve the running orcel executable", error))?;
+    if crate::lifecycle::is_installed_cli(layout, &current) {
+        return Ok(None);
+    }
+    if std::env::var_os(DELEGATED_ENV).is_some() {
+        return Err(LifecycleError::state(
+            "the handed-off MCP session is not the active installed orcel executable",
+        ));
+    }
+    let target = verified_orceld.with_file_name("orcel.exe");
+    if !crate::lifecycle::is_installed_cli(layout, &target) || !target.is_file() {
+        return Err(LifecycleError::state(
+            "the active installed orcel executable is missing",
+        ));
+    }
+    let status = Command::new(&target)
+        .args(args)
+        .env(DELEGATED_ENV, "1")
+        .status()
+        .map_err(|error| {
+            LifecycleError::io("start the active installed orcel executable", error)
+        })?;
+    Ok(Some(status.code().unwrap_or(1)))
 }
 
 /// The resolved launch for one loopback HTTP listener.
