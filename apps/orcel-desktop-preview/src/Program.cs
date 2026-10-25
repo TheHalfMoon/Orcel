@@ -5,8 +5,10 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Pipes;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Security.Principal;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -20,7 +22,7 @@ using System.Windows.Media;
 
 namespace Orcel.DesktopPreview
 {
-    internal enum SafeCommand { Help, Status, Version, Doctor, Devices, Files, Unsupported }
+    internal enum SafeCommand { Help, Status, Version, Doctor, Devices, Files, Tasks, Unsupported }
 
     internal static class CommandRouter
     {
@@ -33,6 +35,7 @@ namespace Orcel.DesktopPreview
             if (value == "doctor") return SafeCommand.Doctor;
             if (value == "devices") return SafeCommand.Devices;
             if (value == "files") return SafeCommand.Files;
+            if (value == "tasks") return SafeCommand.Tasks;
             return SafeCommand.Unsupported;
         }
 
@@ -294,6 +297,200 @@ namespace Orcel.DesktopPreview
             if (!IsInstalled()) return new RuntimeStatus { Availability = RuntimeAvailability.NotInstalled };
             CliResult result = Query(SafeCommand.Status, timeoutMs);
             return Interpret.Status(result);
+        }
+    }
+
+    /// SG-000127 slice 5 (timeline): a read-only client of orceld's local app
+    /// API (`orcel-app-api/1`, ORCEL_APP_API_1.md). It sends only `task.list`
+    /// and `task.get`, one request per connection, to this user's pipe
+    /// `\\.\pipe\orcel-<user SID>-app` as an identification-only client; it
+    /// never sends anything that submits, approves, stops or writes. Frames
+    /// are bounded to the protocol's 65,536 bytes and every call has a
+    /// timeout. Task titles and paths come from the planner and the
+    /// workspace: they are shown as data, never acted on.
+    internal static class AppApi
+    {
+        internal const string Protocol = "orcel-app-api/1";
+        internal const int MaxFrameBytes = 65536;
+        internal const int TimeoutMs = 4000;
+        /// The only methods this client sends; both are read-only in orceld.
+        internal static readonly string[] Methods = { "task.list", "task.get" };
+
+        internal static string PipeName()
+        {
+            string sid = WindowsIdentity.GetCurrent().User.Value;
+            string suffix = InstanceSuffix(Environment.GetEnvironmentVariable("ORCEL_APP_API_INSTANCE"));
+            return "orcel-" + sid + "-app" + (suffix == null ? "" : "-" + suffix);
+        }
+
+        /// The protocol's test suffix: 1-32 of a-z, 0-9 and '-'. Anything
+        /// else is ignored, never passed into a pipe name.
+        internal static string InstanceSuffix(string value)
+        {
+            if (string.IsNullOrEmpty(value) || value.Length > 32) return null;
+            foreach (char c in value)
+                if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')) return null;
+            return value;
+        }
+
+        internal static string RequestFrame(string method, string taskId)
+        {
+            if (Array.IndexOf(Methods, method) < 0) throw new ArgumentException("not a read-only app API method");
+            Dictionary<string, object> request = new Dictionary<string, object>();
+            request["v"] = Protocol;
+            request["id"] = "desktop";
+            request["method"] = method;
+            Dictionary<string, object> parameters = new Dictionary<string, object>();
+            if (method == "task.get") parameters["task_id"] = taskId ?? "";
+            request["params"] = parameters;
+            return new JavaScriptSerializer().Serialize(request) + "\n";
+        }
+
+        /// One request on its own connection; null when orceld does not answer.
+        internal static Dictionary<string, object> Call(string method, string taskId)
+        {
+            string frame = RequestFrame(method, taskId);
+            Task<string> exchange = Task.Factory.StartNew(delegate {
+                using (NamedPipeClientStream pipe = new NamedPipeClientStream(".", PipeName(), PipeDirection.InOut, PipeOptions.None, TokenImpersonationLevel.Identification))
+                {
+                    pipe.Connect(TimeoutMs);
+                    byte[] bytes = Encoding.UTF8.GetBytes(frame);
+                    pipe.Write(bytes, 0, bytes.Length);
+                    pipe.Flush();
+                    return ReadFrame(pipe);
+                }
+            }, TaskCreationOptions.LongRunning);
+            try
+            {
+                if (!exchange.Wait(TimeoutMs + 1000)) return null;
+                return ParseReply(exchange.Result);
+            }
+            catch (Exception) { return null; }
+        }
+
+        private static string ReadFrame(Stream stream)
+        {
+            MemoryStream buffer = new MemoryStream();
+            int b;
+            while ((b = stream.ReadByte()) >= 0)
+            {
+                if (b == '\n') return Encoding.UTF8.GetString(buffer.ToArray());
+                if (buffer.Length >= MaxFrameBytes) return null;
+                buffer.WriteByte((byte)b);
+            }
+            return null;
+        }
+
+        /// The `result` of an ok frame of this protocol, else null.
+        internal static Dictionary<string, object> ParseReply(string line)
+        {
+            if (line == null) return null;
+            try
+            {
+                Dictionary<string, object> reply = new JavaScriptSerializer { MaxJsonLength = MaxFrameBytes }.DeserializeObject(line) as Dictionary<string, object>;
+                object v, ok, result;
+                if (reply == null || !reply.TryGetValue("v", out v) || !Protocol.Equals(v)) return null;
+                if (!reply.TryGetValue("ok", out ok) || !true.Equals(ok)) return null;
+                if (!reply.TryGetValue("result", out result)) return null;
+                return result as Dictionary<string, object>;
+            }
+            catch (Exception) { return null; }
+        }
+    }
+
+    /// The task timeline as text: what orceld recorded, nothing inferred.
+    internal static class Timeline
+    {
+        internal const int MaxShownTasks = 5;
+        internal const int MaxShownSteps = 8;
+        private const int MaxTitleChars = 120;
+
+        private static string Field(Dictionary<string, object> map, string key)
+        {
+            object value;
+            return map != null && map.TryGetValue(key, out value) && value != null ? Convert.ToString(value) : null;
+        }
+
+        private static string Shown(string value)
+        {
+            if (value == null) return "(none)";
+            StringBuilder text = new StringBuilder();
+            foreach (char c in value)
+            {
+                if (text.Length >= MaxTitleChars) { text.Append("…"); break; }
+                text.Append(char.IsControl(c) ? ' ' : c);
+            }
+            return text.ToString();
+        }
+
+        internal static string Describe(string state)
+        {
+            switch (state)
+            {
+                case "observed": return "sources read";
+                case "proposed": return "report proposed, waiting for approval";
+                case "approval_denied": return "approval denied";
+                case "committing": return "writing the approved report";
+                case "verified": return "verified by the independent checker";
+                case "verification_failed": return "verification FAILED";
+                case "stale": return "stale (a source or the folder changed)";
+                case "failed": return "failed";
+                default: return "unknown state";
+            }
+        }
+
+        internal static List<string> NewestIds(Dictionary<string, object> list)
+        {
+            List<string> ids = new List<string>();
+            object tasks;
+            if (list == null || !list.TryGetValue("tasks", out tasks) || !(tasks is IEnumerable)) return ids;
+            foreach (object task in (IEnumerable)tasks)
+            {
+                string id = Field(task as Dictionary<string, object>, "task_id");
+                if (id != null && ids.Count < MaxShownTasks) ids.Add(id);
+            }
+            return ids;
+        }
+
+        internal static string Text(Dictionary<string, object> list, IList<Dictionary<string, object>> tasks)
+        {
+            if (list == null)
+                return "Task timeline unavailable: orceld's local app API did not answer (the runtime may not be running). Nothing was changed.";
+            List<string> ids = NewestIds(list);
+            if (ids.Count == 0) return "No report tasks in this orceld run. Tasks are started by a connected local MCP client; this app only shows them.";
+            StringBuilder text = new StringBuilder();
+            text.Append("Report tasks in this orceld run (newest first; titles come from the planner and are not verified):");
+            for (int i = 0; i < ids.Count; i++)
+            {
+                Dictionary<string, object> task = i < tasks.Count ? tasks[i] : null;
+                if (task == null) { text.Append("\n• " + ids[i] + ": details unavailable"); continue; }
+                text.Append("\n• \"" + Shown(Field(task, "title")) + "\": " + Describe(Field(task, "state")));
+                object report;
+                if (task.TryGetValue("report", out report) && report is Dictionary<string, object>)
+                    text.Append(" → " + Shown(Field((Dictionary<string, object>)report, "destination")));
+                object steps;
+                if (task.TryGetValue("steps", out steps) && steps is IEnumerable)
+                {
+                    List<string> outcomes = new List<string>();
+                    foreach (object step in (IEnumerable)steps)
+                    {
+                        Dictionary<string, object> map = step as Dictionary<string, object>;
+                        outcomes.Add(Shown(Field(map, "kind")) + " " + Shown(Field(map, "outcome")));
+                    }
+                    if (outcomes.Count > MaxShownSteps) outcomes = outcomes.Skip(outcomes.Count - MaxShownSteps).ToList();
+                    if (outcomes.Count > 0) text.Append("\n   steps: " + string.Join(" · ", outcomes));
+                }
+            }
+            text.Append("\nThis app reads tasks only; it cannot start, approve or stop them.");
+            return text.ToString();
+        }
+
+        internal static string Read()
+        {
+            Dictionary<string, object> list = AppApi.Call("task.list", null);
+            List<Dictionary<string, object>> details = new List<Dictionary<string, object>>();
+            foreach (string id in NewestIds(list)) details.Add(AppApi.Call("task.get", id));
+            return Text(list, details);
         }
     }
 
@@ -639,6 +836,11 @@ namespace Orcel.DesktopPreview
             TextBlock ai = Text("Hala One + Reliance: not connected in this preview.", 12, Colors.Muted, false);
             ai.Margin = new Thickness(0, 8, 0, 14);
             right.Children.Add(ai);
+            right.Children.Add(Text("SHELL AND PROCESSES", 10, Colors.Muted, true));
+            TextBlock shell = Text("Unavailable: shell and process sessions are not armed in this build.", 12, Colors.Muted, false);
+            shell.Margin = new Thickness(0, 8, 0, 14);
+            AutomationProperties.SetAutomationId(shell, "ShellState");
+            right.Children.Add(shell);
             right.Children.Add(Text("OTHER COMPUTERS", 10, Colors.Muted, true));
             TextBlock pair = Text("No paired devices are shown because pairing is not integrated in this preview.", 12, Colors.Muted, false);
             pair.Margin = new Thickness(0, 8, 0, 10);
@@ -677,11 +879,13 @@ namespace Orcel.DesktopPreview
             AddMessage(true, value);
             SafeCommand kind = CommandRouter.Classify(value);
             if (kind == SafeCommand.Help)
-                AddMessage(false, "Available: status, version, doctor, devices, files, help. These operations are read-only. AI chat, voice, pairing, and execution are not connected.");
+                AddMessage(false, "Available: status, version, doctor, devices, files, tasks, help. These operations are read-only. AI chat, voice, pairing, and execution are not connected.");
             else if (kind == SafeCommand.Devices)
                 AddMessage(false, "Local computer: " + Environment.MachineName + ". Orcel runtime: " + (LocalHost.IsInstalled() ? "present (type status for its state)" : "not installed") + ". Remote devices: none (pairing is not integrated in this preview).");
             else if (kind == SafeCommand.Files)
                 InspectFolder();
+            else if (kind == SafeCommand.Tasks)
+                ShowTasks();
             else if (CommandRouter.CanInvokeInstalledHost(kind))
                 QueryHost(kind);
             else
@@ -746,6 +950,13 @@ namespace Orcel.DesktopPreview
             }
         }
 
+        private async void ShowTasks()
+        {
+            AddMessage(false, "Reading report tasks from the local runtime...");
+            try { AddMessage(false, await Task.Run(delegate { return Timeline.Read(); })); }
+            catch (Exception) { AddMessage(false, "The read-only task query failed unexpectedly. No action was performed."); }
+        }
+
         private async void InspectFolder()
         {
             string folder;
@@ -771,6 +982,28 @@ namespace Orcel.DesktopPreview
             expect(CommandRouter.Classify("rm -rf /") == SafeCommand.Unsupported, "shell text rejected");
             expect(CommandRouter.Classify("status; calc.exe") == SafeCommand.Unsupported, "chained text rejected");
             expect(CommandRouter.CliArguments(SafeCommand.Files) == null, "files never reaches the runtime");
+            expect(CommandRouter.Classify(" Tasks ") == SafeCommand.Tasks, "tasks routes");
+            expect(CommandRouter.CliArguments(SafeCommand.Tasks) == null && !CommandRouter.CanInvokeInstalledHost(SafeCommand.Tasks), "tasks never runs the CLI");
+            expect(AppApi.PipeName().StartsWith("orcel-S-1-") && AppApi.PipeName().Contains("-app"), "app API pipe is this user's");
+            expect(AppApi.InstanceSuffix("ci-1") == "ci-1" && AppApi.InstanceSuffix("..\\x") == null && AppApi.InstanceSuffix("A") == null && AppApi.InstanceSuffix(new string('a', 33)) == null, "instance suffix is validated");
+            bool refused = false;
+            try { AppApi.RequestFrame("task.stop", "rpt-1"); } catch (ArgumentException) { refused = true; }
+            expect(refused, "only read-only app API methods are sent");
+            expect(AppApi.RequestFrame("task.list", null) == "{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"method\":\"task.list\",\"params\":{}}\n", "task.list frame");
+            expect(AppApi.RequestFrame("task.get", "rpt-a").Contains("\"params\":{\"task_id\":\"rpt-a\"}"), "task.get frame");
+            expect(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"id\":\"desktop\",\"ok\":false,\"error\":{\"code\":\"UNKNOWN_TASK\"}}") == null, "an error frame is not a result");
+            expect(AppApi.ParseReply("{\"v\":\"other/1\",\"ok\":true,\"result\":{}}") == null, "another protocol is refused");
+            expect(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"tasks\":[]}}") != null, "an ok frame parses");
+            expect(Timeline.Text(null, new List<Dictionary<string, object>>()).StartsWith("Task timeline unavailable"), "no answer is reported, not hidden");
+            Dictionary<string, object> list = AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"max_tasks\":64,\"tasks\":[{\"task_id\":\"rpt-2\"},{\"task_id\":\"rpt-1\"}]}}");
+            Dictionary<string, object> two = AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"task_id\":\"rpt-2\",\"title\":\"Q3\\nsummary\",\"state\":\"verified\",\"report\":{\"destination\":\"out/q3.md\"},\"steps\":[{\"kind\":\"observe\",\"outcome\":\"ok\"},{\"kind\":\"approval\",\"outcome\":\"approved\"},{\"kind\":\"check\",\"outcome\":\"pass\"}]}}");
+            string timeline = Timeline.Text(list, new List<Dictionary<string, object>> { two, null });
+            expect(timeline.Contains("\"Q3 summary\": verified by the independent checker → out/q3.md"), "a verified task is shown with its report");
+            expect(timeline.Contains("steps: observe ok · approval approved · check pass"), "steps are shown in order");
+            expect(timeline.Contains("rpt-1: details unavailable"), "a missing detail is reported");
+            expect(timeline.Contains("cannot start, approve or stop"), "the timeline states it is read-only");
+            expect(Timeline.Describe("proposed").Contains("waiting for approval") && Timeline.Describe("surprise") == "unknown state", "states are described truthfully");
+            expect(Timeline.Text(AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"tasks\":[]}}"), new List<Dictionary<string, object>>()).StartsWith("No report tasks"), "an empty run says so");
             expect(!CommandRouter.CanInvokeInstalledHost(SafeCommand.Unsupported), "unsupported never runs");
             expect(Path.IsPathRooted(LocalHost.PathToCompatCli()), "runtime path is rooted");
 
