@@ -573,8 +573,8 @@ fn installed_release_fits_the_400_mb_budget() {
                 "counted": false,
             },
         ],
-        // Release builds carry no live browser (SG-000108 is
-        // `live-browser-dev` only), so no browser is a prerequisite yet.
+        // Release builds carry no live browser (SG-000108 is a
+        // development-build feature only), so no browser is a prerequisite yet.
         "browser": { "required": false, "counted": false, "reason": "release builds carry no live browser" },
         // Not measured here: a fresh install has no cache yet. Never
         // reported as zero.
