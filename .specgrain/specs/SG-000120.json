@@ -107,7 +107,9 @@
     "open_follow_ups": [
       "Remote resume summary (decision outside this grain, recorded in the spec).",
       "Journal executable-registry upserts and browser download and upload effects if their scope widens (outside RJ-02's provider list).",
-      "BR-07's independent browser postcondition verifier builds on the RJ-01 journal."
+      "BR-07's independent browser postcondition verifier builds on the RJ-01 journal.",
+      "Compact intents.jsonl (SG-000108 download intents) before the 16 MiB bound.",
+      "Surface torn journal lines (Lines::torn) beyond a stderr warning."
     ],
     "known_residuals": [
       "Dependent-step keys are the workspace and the normalized target only: an fs.move destination, paths under a directory made with --parents, and a UIA window against its element ids are not keyed as dependents; Windows trailing dots, 8.3 names, stream suffixes and links are not folded.",
@@ -116,7 +118,14 @@
       "Reconciliation reads the target at start and can be raced by a writer between the check and the hash (a label only).",
       "The MCP-level crash transcript (installed release, Windows) reads an interrupted task with no unknown commit: an approved commit cannot be driven through the real binaries without a person at the prompt; the unknown-commit summary is proven with a really aborted child process at unit level.",
       "task_resume_summary serves the session that started the task; a restarted MCP client process or a new loopback session is a new session. The verification text names the destination path and the approved SHA-256.",
-      "Process, clipboard and desktop effects are journaled with the opaque postcondition and are never probed: an interrupted one is always unknown and needs re-observation."
+      "Process, clipboard and desktop effects are journaled with the opaque postcondition and are never probed: an interrupted one is always unknown and needs re-observation.",
+      "Git provider hardening (#461): files tracked through a filter (Git LFS) can show as modified in git.status and git.diff; submodule changes are no longer reported by git.status or git.diff; the configuration is read in a separate process just before each command, so a driver added in that window is not seen.",
+      "Git journaling (#460): git.stage and git.unstage are not probed and git.push and git.fetch always reconcile as unknown; a starting orceld probes for at most 60 s and records the rest unknown.",
+      "File journaling (#459): targets written with '.' components reconcile as unknown; an mkdir --parents crash after a parent was deleted during the prompt can be labelled nothing_done although a parent was created.",
+      "Report journal (#458): on Linux, orcelds in different PID namespaces sharing one state root can judge each other exited.",
+      "RJ-01 (#457): intents.jsonl is never compacted and new downloads are refused near 16 MiB.",
+      "Process, clipboard and desktop wrappers (#462, #463) are tested through the shared journaled path, not end to end on a desktop; no test goes through the product dispatch_with for the unknown-outcome notice.",
+      "Resume summary (#464): preview and commit fingerprints use the task's current proposal; report-tasks.key is read without its own link or DACL check, relying on the owner-only state root."
     ]
   },
   "done_when": "On Windows, macOS and Linux, every mutating dispatch of the RJ-02 providers is journaled and reconciled after a crash without re-dispatch, report tasks survive a restart, and a reconnecting local client can read a bounded resume summary, with the fault-injection suite and exact-head CI passing."
