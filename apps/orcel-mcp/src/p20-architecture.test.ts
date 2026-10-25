@@ -190,8 +190,41 @@ test("SG-000094 and SG-000095 are closed and SG-000096 is the only active P20 gr
   // SG-000108 (ORCEL-F3) ran in parallel by founder decision (issue #290)
   // and SG-000126 (ORCEL-F2) followed it by founder sequencing (issue #435);
   // both are outside DESKAL-P20 and closed. SG-000127 (ORCEL-F4) follows
-  // them by founder sequencing (issue #446); no other grain may be open.
-  assert.deepEqual(open.sort(), ["SG-000096", "SG-000127"]);
+  // them by founder sequencing (issue #446), and SG-000120 (ORCEL-RJ) runs
+  // beside both by founder sequencing (issue #455); no other grain may be
+  // open.
+  assert.deepEqual(open.sort(), ["SG-000096", "SG-000120", "SG-000127"]);
+  const sg120 = readJson<{
+    program: string;
+    state: string;
+    base: string;
+    planning_issue: number;
+    authority_delta: {
+      activation: string;
+      network: string;
+      process: string;
+      privileged: string;
+      mcp: string;
+      filesystem: string;
+      approval: string;
+    };
+  }>(".specgrain/specs/SG-000120.json");
+  assert.equal(sg120.program, "ORCEL-RJ");
+  assert.equal(sg120.state, "GRAIN");
+  assert.equal(sg120.planning_issue, 455);
+  assert.equal(sg120.base, "f9d21e3af84f27c97fa460e236122bcf2a05377f");
+  for (const key of ["activation", "network", "process", "privileged"] as const) {
+    assert.ok(sg120.authority_delta[key].startsWith("None."), key);
+  }
+  for (const key of ["mcp", "filesystem"] as const) {
+    assert.ok(sg120.authority_delta[key].startsWith("Proposed only"), key);
+  }
+  assert.ok(sg120.authority_delta.approval.startsWith("Unchanged rules"));
+  // An added key (a grant, say) must not go unnoticed.
+  assert.deepEqual(
+    Object.keys(sg120.authority_delta).sort(),
+    ["activation", "approval", "filesystem", "mcp", "network", "privileged", "process"]
+  );
   const sg127 = readJson<{
     program: string;
     state: string;

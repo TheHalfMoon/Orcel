@@ -1,0 +1,96 @@
+{
+  "id": "SG-000120",
+  "title": "Durable journal, reconciliation and resume (RJ-01 to RJ-03)",
+  "program": "ORCEL-RJ",
+  "state": "GRAIN",
+  "risk": "high",
+  "created": "2026-10-25",
+  "base": "f9d21e3af84f27c97fa460e236122bcf2a05377f",
+  "dependencies": [
+    "SG-000018",
+    "SG-000061",
+    "SG-000065",
+    "SG-000108",
+    "SG-000126"
+  ],
+  "planning_issue": 455,
+  "objective": "Make every state-changing step orceld dispatches recoverable without repeating a side effect. The download intent journal SG-000108 qualified becomes a shared kernel journal crate (RJ-01); every mutating dispatch of the RJ-02 providers (fs write, edit, move and remove; git mutations including git push; desktop actions; clipboard write; process spawn; and the SG-000126 report commit) records an intent before it runs and settles it after, and after a lost reply, crash or restart the provider's own reconciliation probe decides settled, abandoned or unknown, never re-dispatching (RJ-02); a reconnecting local client can read a bounded, factual summary of what finished, what is unknown and what each unknown step needs verified (RJ-03). Report task records (SG-000126) become durable across a restart through the same journal. This activation authorizes none of these by itself.",
+  "scope": {
+    "include": [
+      "Activate the SG-000120 contract only. RJ-01, RJ-02 and RJ-03 each need their own exact-head qualified implementation PR, and each needs a fresh-context security judge.",
+      "RJ-01, journal crate: move the generic parts of the SG-000108 intent journal (crates/orceld/src/live_browser.rs: the line append with torn-tail sealing and the line reader) into crates/orcel-journal: a one-writer journal with states pending -> dispatched -> settled | abandoned | unknown -> reconciled; bounded line and file size; fsync on every append and a parent directory sync on Unix. Reading keeps SG-000108's rule exactly: a torn line (a strict prefix whose JSON ends early, sealed by a later append or at the tail, with zero bytes dropped) is skipped and reported as a typed warning; every other unreadable line, unknown event or wrong schema fails closed. A second writer is refused (fs4 lock, already a workspace dependency). intents.jsonl stays byte-compatible, the SG-000108 download writer emits only its four existing events (pending, settled, abandoned, reconciled), and every SG-000108 suite passes unchanged. The crate names neither of SG-000108's test-only or development-only browser features (crates/orcel-lifecycle/tests/release_blocker_sweep.rs), joins neither of their sweep allowlists and carries no browser capability, so it may link into release builds; DownloadIntent, reconcile_destination and host liveness stay in live_browser.rs under their existing cfg.",
+      "RJ-02, journal and reconcile every mutating dispatch of these providers: fs write, edit, move and remove; git mutations including git push; desktop actions; clipboard write; process spawn; and the SG-000126 report commit. Each records an intent bound to the approval digest before dispatch and settles it after. Reconciliation is per provider and local: fs and report compare the destination's existence and content hash with the approved digest; git probes local ref and index state, and git push reconciles as unknown unless local evidence settles it (no network probe); desktop actions stay unknown: a re-observation may be shown to the user but never marks the step settled; process records pid and start generation and probes the exit record. A retry is any dispatch under the same intent id or approval digest, and none happens: re-running a step whose outcome is unknown needs a fresh approval and a fresh intent, and every later mutating step of the same task is refused until then.",
+      "RJ-02, durable report tasks: SG-000126 task records survive an orceld restart through the journal, without changing the create-only and verifier rules, so task.list and task.get keep reporting them, and a report commit interrupted after approval is reconciled against the destination instead of written again.",
+      "RJ-03, resume summary: classify journal entries into completed and interrupted-unknown with input fingerprints (a keyed hash under orceld's state root, never values; clipboard and secret-typed inputs carry no fingerprint), porting agent-native@9c277b79cb87eb27da538e572dd710986e2fa06d packages/core/src/agent/tool-call-journal.ts with its MIT notice and provenance recorded per AGENT_RUNTIME_INTEGRATION.md and the donor registry. Expose one read-only MCP tool task_resume_summary {task_id} -> {completed[], unknown[], next_verification[]} that forwards to a read-only orceld kernel operation (orcel-mcp never reads journal files itself), with remote: \"local_only\" in tool_contract.ts, listed only in the local profiles and proved by an exact profile-membership check; adding it to core, the remote ceiling, is outside this grain and needs its own decision. Another session's or workspace's task is refused."
+    ],
+    "exclude": [
+      "Workspace trust grant and revoke (checksum-chained trust.jsonl), remote lease create and revoke (atomic checksummed lease store) and policy.change (refused at dispatch), which keep their existing records; and live-browser actions other than the SG-000108 download, which keep their existing confinement.",
+      "Any automatic retry or re-dispatch of a mutation whose outcome is unknown.",
+      "Any new mutation, approval class, approval reuse or approval carried in a journal entry or tool result.",
+      "Remote exposure of task_resume_summary or of any journal content (core profile, tunnel, relay, public edge).",
+      "Secret values, file contents or clipboard contents in journal entries (paths, sizes, hashes, states and outcomes only).",
+      "SG-000096 shell and process authority (it stays unarmed; RJ-02 journals process_spawn only as it exists today).",
+      "SG-000127 decisions (stop, takeover, signing, live browser in release builds)."
+    ]
+  },
+  "authority_delta": {
+    "activation": "None. This packet authorizes implementing and proving SG-000120; it adds no capability, tool, dependency, listener or authority.",
+    "mcp": "Proposed only (RJ-03): one local-only read-only tool, task_resume_summary; existing tools, schemas and the core membership unchanged.",
+    "filesystem": "Proposed only: orceld writes its own journal files under its private state root; no user-visible file authority changes.",
+    "approval": "Unchanged rules. Proposed only: an unknown outcome requires a new explicit approval before a dependent step; nothing is retried on a spent approval.",
+    "network": "None.",
+    "process": "None.",
+    "privileged": "None. SG-000096 Full User shell remains unarmed."
+  },
+  "decisions": [
+    {
+      "question": "Sequencing",
+      "status": "DECIDED (founder, 2026-10-25)",
+      "decision": "The founder, in the implementing session's chat on 2026-10-25 and recorded on tracking issue #455: \"Founder sequencing: open SG-000120 (RJ-01 to RJ-03, durable journal and recovery) as an additional active grain alongside SG-000096 and SG-000127, with the canonical tests updated to record it.\" SG-000120 is activated on main f9d21e3af84f27c97fa460e236122bcf2a05377f and runs with SG-000096 and SG-000127 as the three open grains. Its proposed authority (journal files under orceld's state root, reconciliation that only reduces duplicate effects, one local read-only tool) is disjoint from both."
+    },
+    {
+      "question": "Donor reuse",
+      "status": "DECIDED",
+      "decision": "RJ-01 and RJ-02 are BUILD_NEW from Orcel's own qualified SG-000108 journal; SPACE (space@09e922efd23b3c0d109ab64de7e567a901bcc61e docs/architecture.md) is adopted only as rules (unknown process-start outcome, execution-generation fencing). RJ-03 PORTs agent-native's tool-call journal classification with provenance recorded per the donor registry."
+    },
+    {
+      "question": "Remote resume summary",
+      "status": "OPEN (outside this grain)",
+      "decision": "The backlog card proposed task_resume_summary in local and core profiles. This grain keeps it local_only; exposing it to remote clients needs its own decision and review."
+    }
+  ],
+  "invariants": [
+    "orceld remains the sole local authority; the journal records what orceld decided and did, it never authorizes.",
+    "No retry: no dispatch happens under the same intent id or approval digest as a step whose outcome is unknown; re-running it needs a fresh approval and a fresh intent.",
+    "Journal entries hold paths, sizes, hashes, states and outcomes, never secret values, file contents or clipboard contents.",
+    "One writer per journal; a second writer is refused; a torn line is skipped with a typed warning and every other unreadable line fails closed, exactly as in SG-000108.",
+    "Existing MCP tool names, schemas, the core membership and the orcel-relay/1 frames are unchanged; the one new tool is local-only.",
+    "intents.jsonl stays byte-compatible with SG-000108."
+  ],
+  "acceptance": [
+    "RJ-01: crates/orcel-journal holds the journal; intents.jsonl is byte-compatible and the download writer emits only its four existing events; every SG-000108 suite passes unchanged; a second writer is refused; a torn line is skipped with a typed warning and any other unreadable line fails closed; a crash between pending and dispatch is listed by recover; the release-blocker sweep passes.",
+    "RJ-02: a fault-injection suite kills orceld at each transition for each mutating provider; after restart every interrupted step is reconciled as settled, abandoned or unknown and none is re-dispatched.",
+    "RJ-02: an fs or report mutation whose destination matches the approved digest reconciles as settled; a desktop action interrupted after dispatch is unknown and requires re-observation.",
+    "RJ-02: a dependent step after an unknown outcome is refused until a new explicit approval.",
+    "RJ-02: SG-000126 report tasks survive an orceld restart in task.list and task.get, and an approved commit interrupted before its reply is reconciled, not written twice.",
+    "RJ-02: the F2 report journey runs end to end with an induced crash after approval and before the reply; after restart the commit is reconciled against the destination and nothing is written twice.",
+    "RJ-03: task_resume_summary returns completed, unknown and next-verification entries after an induced crash, with hashed fingerprints only, and refuses another session's or workspace's task.",
+    "RJ-03: task_resume_summary is local_only, listed in the local profiles only, and core, the tunnel and the public edge neither list nor serve it.",
+    "RJ-03: an MCP client transcript shows a reconnecting local client reading the resume summary of an interrupted task.",
+    "Windows, macOS and Linux CI legs pass on each exact head."
+  ],
+  "review": {
+    "jev_semantic_review": true,
+    "alibaba_open_code_review": "delegation mode per standing founder decision (2026-10-10) with manual review of excluded files",
+    "security_review": "fresh-context security judge on RJ-01, RJ-02, RJ-03 and closeout; d1-local advisory only",
+    "exact_head_ci": true,
+    "native_windows": true,
+    "cross_platform_ci": "Windows, macOS and Linux legs"
+  },
+  "successor_requirements": {
+    "br_07": "BR-07's independent browser postcondition verifier builds on the RJ-01 journal.",
+    "remote_resume": "A remote resume summary needs its own decision on the core profile and the remote threat model."
+  },
+  "activation_note": "No capability, tool, dependency or authority change in this activation packet. Separate implementation and closeout PRs must qualify their exact heads; activation CI alone proves nothing about the journal.",
+  "done_when": "On Windows, macOS and Linux, every mutating dispatch of the RJ-02 providers is journaled and reconciled after a crash without re-dispatch, report tasks survive a restart, and a reconnecting local client can read a bounded resume summary, with the fault-injection suite and exact-head CI passing."
+}
