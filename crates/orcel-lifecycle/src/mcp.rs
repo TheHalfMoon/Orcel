@@ -151,6 +151,7 @@ pub fn run_action(action: &str, port: Option<u16>) -> Result<i32, LifecycleError
 }
 
 /// Set on the handed-off child so a second hand-off fails instead of looping.
+#[cfg(windows)]
 const DELEGATED_ENV: &str = "ORCEL_MCP_DELEGATED";
 
 /// Elsewhere the session runs in this process (no runtime session exists).
