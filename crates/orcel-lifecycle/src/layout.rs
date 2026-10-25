@@ -115,6 +115,11 @@ impl Layout {
             self.root.join("approval-history.jsonl.lock"),
             self.root.join("trust.jsonl"),
             self.root.join("browser-profile"),
+            // SG-000120 RJ-02: the report task journal, its single-writer
+            // lock and a compaction rewrite left by a crash.
+            self.root.join("report-tasks.jsonl"),
+            self.root.join("report-tasks.jsonl.lock"),
+            self.root.join("report-tasks.jsonl.rewrite"),
         ];
         // Approval ledgers quarantined by `orcel approvals recover` (#278),
         // and a new chain staged by a recovery that was interrupted.

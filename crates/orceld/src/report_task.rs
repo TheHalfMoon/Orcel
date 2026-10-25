@@ -484,9 +484,10 @@ impl TaskRegistry {
 // Dispatch
 // ---------------------------------------------------------------------------
 
-/// `ORCEL_REPORT_JOURNAL_PATH`, else `journal/report-tasks.jsonl` under the
-/// private per-user state root (both directories private, as the audit log
-/// requires). Fails closed; it never falls back to a shared location.
+/// `ORCEL_REPORT_JOURNAL_PATH`, else `report-tasks.jsonl` directly in the
+/// private per-user state root, beside the audit log (no subdirectory, so
+/// the install's owner-only ACL check covers it as it covers the audit
+/// log). Fails closed; it never falls back to a shared location.
 pub(crate) fn default_journal_path() -> Result<PathBuf, orcel_platform::PlatformError> {
     use orcel_platform::paths;
     if let Some(path) = std::env::var_os("ORCEL_REPORT_JOURNAL_PATH") {
@@ -494,9 +495,7 @@ pub(crate) fn default_journal_path() -> Result<PathBuf, orcel_platform::Platform
     }
     let root = paths::state_root()?;
     paths::ensure_private_dir(&root)?;
-    let directory = root.join("journal");
-    paths::ensure_private_dir(&directory)?;
-    Ok(directory.join("report-tasks.jsonl"))
+    Ok(root.join("report-tasks.jsonl"))
 }
 
 pub(crate) fn is_report_request(request: &RequestEnvelope) -> bool {
