@@ -135,7 +135,7 @@ pub(crate) fn reconcile(
         } => match provider.branch_tip(repository, branch) {
             Ok(Some(tip)) if &tip.head == parent => Reconciled::NothingDone,
             Ok(Some(tip))
-                if tip.parents == [parent.clone()]
+                if tip.parents.as_slice() == std::slice::from_ref(parent)
                     && &hex_lower(&Sha256::digest(tip.message.as_bytes())) == expected =>
             {
                 Reconciled::Done
