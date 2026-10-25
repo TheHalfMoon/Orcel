@@ -970,6 +970,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "orcel-journal"
+version = "0.2.0"
+dependencies = [
+ "fs4",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "orcel-lifecycle"
 version = "0.2.0"
 dependencies = [
@@ -1107,6 +1116,7 @@ dependencies = [
  "orcel-audit",
  "orcel-browser-host",
  "orcel-contracts",
+ "orcel-journal",
  "orcel-platform",
  "orcel-policy",
  "orcel-provider-browser",

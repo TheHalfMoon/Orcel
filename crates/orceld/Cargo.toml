@@ -37,6 +37,7 @@ orcel-provider-network = { path = "../orcel-provider-network" }
 orcel-provider-process = { path = "../orcel-provider-process" }
 orcel-provider-uia = { path = "../orcel-provider-uia" }
 fs4.workspace = true
+orcel-journal = { path = "../orcel-journal" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

@@ -258,45 +258,10 @@ fn journal_unavailable() -> ProviderError {
     )
 }
 
-/// Append one line and sync it to disk before returning.
+/// Append one line and sync it to disk before returning (the shared
+/// kernel journal, SG-000120 RJ-01; the bytes are unchanged).
 fn journal_append(path: &Path, line: &JournalLine) -> Result<(), ProviderError> {
-    use std::io::Write as _;
-    let mut bytes = serde_json::to_vec(line).map_err(|_| journal_unavailable())?;
-    bytes.push(b'\n');
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|_| journal_unavailable())?;
-    }
-    // A torn tail (a crash mid-append) is sealed with a newline first, so
-    // this line never fuses with it.
-    if torn_tail(path)? {
-        bytes.insert(0, b'\n');
-    }
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .map_err(|_| journal_unavailable())?;
-    file.write_all(&bytes).map_err(|_| journal_unavailable())?;
-    file.sync_data().map_err(|_| journal_unavailable())
-}
-
-/// Whether the journal ends without a newline (a torn final line).
-fn torn_tail(path: &Path) -> Result<bool, ProviderError> {
-    use std::io::{Read as _, Seek as _, SeekFrom};
-    let mut file = match std::fs::File::open(path) {
-        Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(_) => return Err(journal_unavailable()),
-    };
-    let length = file.metadata().map_err(|_| journal_unavailable())?.len();
-    if length == 0 {
-        return Ok(false);
-    }
-    let mut last = [0u8; 1];
-    file.seek(SeekFrom::Start(length - 1))
-        .and_then(|_| file.read_exact(&mut last))
-        .map_err(|_| journal_unavailable())?;
-    Ok(last[0] != b'\n')
+    orcel_journal::append_line(path, line).map_err(|_| journal_unavailable())
 }
 
 /// The intents still open in the journal, in order. A torn line (a crash
@@ -304,40 +269,27 @@ fn torn_tail(path: &Path) -> Result<bool, ProviderError> {
 /// line, so its JSON ends early) is skipped wherever a later append sealed
 /// it; any other unreadable line fails closed.
 pub fn journal_open_intents(path: &Path) -> Result<Vec<JournaledIntent>, ProviderError> {
-    let text = match std::fs::read(path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(_) => {
+    let unreadable = || {
+        ProviderError::new(
+            FailureCode::ProviderUnavailable,
+            "the download intent journal is unreadable",
+        )
+    };
+    let lines = match orcel_journal::read_lines::<JournalLine>(path) {
+        Ok(lines) => lines.lines,
+        Err(orcel_journal::JournalError::Read) => {
             return Err(ProviderError::new(
                 FailureCode::ProviderUnavailable,
                 "the download intent journal could not be read",
             ))
         }
+        Err(_) => return Err(unreadable()),
     };
     let mut open: Vec<JournaledIntent> = Vec::new();
-    for raw in text.split(|byte| *byte == b'\n') {
-        // Zero bytes are never part of a written line (JSON escapes control
-        // characters): a power loss can leave allocated but unwritten bytes,
-        // alone or after a torn prefix. Drop them, so a torn prefix still
-        // reads as torn and a zero-filled run as nothing.
-        let end = raw
-            .iter()
-            .rposition(|byte| *byte != 0)
-            .map_or(0, |last| last + 1);
-        let raw = &raw[..end];
-        if raw.iter().all(u8::is_ascii_whitespace) {
-            continue;
+    for line in lines {
+        if line.schema != INTENT_SCHEMA {
+            return Err(unreadable());
         }
-        let line = match serde_json::from_slice::<JournalLine>(raw) {
-            Ok(line) if line.schema == INTENT_SCHEMA => line,
-            Err(error) if error.is_eof() => continue,
-            _ => {
-                return Err(ProviderError::new(
-                    FailureCode::ProviderUnavailable,
-                    "the download intent journal is unreadable",
-                ))
-            }
-        };
         match line.event.as_str() {
             "pending" => match (line.folder, line.relative, line.host_pid, line.host_started) {
                 (Some(folder), Some(relative), Some(host_pid), Some(host_started)) => {
@@ -351,22 +303,12 @@ pub fn journal_open_intents(path: &Path) -> Result<Vec<JournaledIntent>, Provide
                         host_started,
                     })
                 }
-                _ => {
-                    return Err(ProviderError::new(
-                        FailureCode::ProviderUnavailable,
-                        "the download intent journal is unreadable",
-                    ))
-                }
+                _ => return Err(unreadable()),
             },
             "settled" | "abandoned" | "reconciled" => {
                 open.retain(|entry| entry.intent.record_id != line.record_id)
             }
-            _ => {
-                return Err(ProviderError::new(
-                    FailureCode::ProviderUnavailable,
-                    "the download intent journal is unreadable",
-                ))
-            }
+            _ => return Err(unreadable()),
         }
     }
     Ok(open)
