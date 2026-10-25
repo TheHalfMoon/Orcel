@@ -698,23 +698,26 @@ impl McpStdio {
 impl McpStdio {
     /// Ends the session as a client does, by closing standard input, and
     /// waits for the handed-off session to exit; kills only as a fallback.
-    fn close(&mut self) {
+    /// The session's exit status, or `None` when it ignored the end of its
+    /// input for 30 s and had to be killed.
+    fn close(&mut self) -> Option<std::process::ExitStatus> {
         drop(self.stdin.take());
         let deadline = Instant::now() + Duration::from_secs(30);
         while Instant::now() < deadline {
-            if matches!(self.child.try_wait(), Ok(Some(_))) {
-                return;
+            if let Ok(Some(status)) = self.child.try_wait() {
+                return Some(status);
             }
             std::thread::sleep(Duration::from_millis(100));
         }
         let _ = self.child.kill();
         let _ = self.child.wait();
+        None
     }
 }
 
 impl Drop for McpStdio {
     fn drop(&mut self) {
-        self.close();
+        let _ = self.close();
     }
 }
 
@@ -847,7 +850,19 @@ fn installed_release_serves_the_report_task_to_a_local_client() {
         serde_json::json!({ "task_id": task, "name": "q3.md", "content": content }),
     );
     assert!(failed, "a stale task stays stale: {after}");
-    mcp.close();
+    let stderr = project.join("mcp-stderr.log");
+    let closed = mcp.close();
+    let status = closed.unwrap_or_else(|| {
+        panic!(
+            "the session ignored the end of its input; stderr: {}",
+            fs::read_to_string(&stderr).unwrap_or_default()
+        )
+    });
+    assert!(
+        status.success(),
+        "the session ended with {status}; stderr: {}",
+        fs::read_to_string(&stderr).unwrap_or_default()
+    );
     drop(mcp);
 
     let mut reports: Vec<String> = fs::read_dir(project.join("reports"))
