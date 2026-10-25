@@ -589,6 +589,8 @@ impl Intent {
         }
         self.closed = true;
         if let Some(journal) = self.journal {
+            // A close line that cannot be written leaves the intent open;
+            // the next orceld reconciles it by its postcondition.
             let _ = journal.line(&Line::Abandoned {
                 schema: SCHEMA.to_owned(),
                 intent: self.id.clone(),
@@ -605,6 +607,7 @@ impl Intent {
         }
         self.closed = true;
         if let Some(journal) = self.journal {
+            // As in `abandon`: unwritten, it is reconciled on restart.
             let _ = journal.line(&Line::Settled {
                 schema: SCHEMA.to_owned(),
                 intent: self.id.clone(),
