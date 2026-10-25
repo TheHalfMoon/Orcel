@@ -24,7 +24,7 @@
       "RJ-03, resume summary: classify journal entries into completed and interrupted-unknown with input fingerprints (a keyed hash under orceld's state root, never values; clipboard and secret-typed inputs carry no fingerprint), porting agent-native@9c277b79cb87eb27da538e572dd710986e2fa06d packages/core/src/agent/tool-call-journal.ts with its MIT notice and provenance recorded per AGENT_RUNTIME_INTEGRATION.md and the donor registry. Expose one read-only MCP tool task_resume_summary {task_id} -> {completed[], unknown[], next_verification[]} that forwards to a read-only orceld kernel operation (orcel-mcp never reads journal files itself), with remote: \"local_only\" in tool_contract.ts, listed only in the local profiles and proved by an exact profile-membership check; adding it to core, the remote ceiling, is outside this grain and needs its own decision. Another session's or workspace's task is refused."
     ],
     "exclude": [
-      "Workspace trust grant and revoke, remote lease create and revoke and policy changes, which keep their own checksum-chained ledgers; and live-browser actions other than the SG-000108 download, which keep their existing confinement.",
+      "Workspace trust grant and revoke (checksum-chained trust.jsonl), remote lease create and revoke (atomic checksummed lease store) and policy.change (refused at dispatch), which keep their existing records; and live-browser actions other than the SG-000108 download, which keep their existing confinement.",
       "Any automatic retry or re-dispatch of a mutation whose outcome is unknown.",
       "Any new mutation, approval class, approval reuse or approval carried in a journal entry or tool result.",
       "Remote exposure of task_resume_summary or of any journal content (core profile, tunnel, relay, public edge).",
@@ -82,7 +82,7 @@
   "review": {
     "jev_semantic_review": true,
     "alibaba_open_code_review": "delegation mode per standing founder decision (2026-10-10) with manual review of excluded files",
-    "security_review": "fresh-context security judge on RJ-02, RJ-03 and closeout; d1-local advisory only",
+    "security_review": "fresh-context security judge on RJ-01, RJ-02, RJ-03 and closeout; d1-local advisory only",
     "exact_head_ci": true,
     "native_windows": true,
     "cross_platform_ci": "Windows, macOS and Linux legs"
