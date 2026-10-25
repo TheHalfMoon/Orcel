@@ -5,6 +5,7 @@ members = [
   "crates/orcel-platform",
   "crates/orcel-policy",
   "crates/orcel-audit",
+  "crates/orcel-journal",
   "crates/orcel-approval",
   "crates/orcel-provider-fs",
   "crates/orcel-provider-git",
