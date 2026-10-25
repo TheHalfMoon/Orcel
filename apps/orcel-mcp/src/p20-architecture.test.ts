@@ -220,6 +220,11 @@ test("SG-000094 and SG-000095 are closed and SG-000096 is the only active P20 gr
     assert.ok(sg120.authority_delta[key].startsWith("Proposed only"), key);
   }
   assert.ok(sg120.authority_delta.approval.startsWith("Unchanged rules"));
+  // An added key (a grant, say) must not go unnoticed.
+  assert.deepEqual(
+    Object.keys(sg120.authority_delta).sort(),
+    ["activation", "approval", "filesystem", "mcp", "network", "privileged", "process"]
+  );
   const sg127 = readJson<{
     program: string;
     state: string;
