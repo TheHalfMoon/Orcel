@@ -306,6 +306,9 @@ fn lock_file(path: &Path) -> Result<File, JournalError> {
 
 /// Takes a journal's writer lock, waiting up to `wait`; released when the
 /// returned handle closes, including on process death.
+/// Threads of one process are served in arrival order per `path` as given,
+/// so callers pass one spelling of a journal's path; a zero `wait` returns
+/// `Busy` while another thread is ahead in line.
 fn lock_within(path: &Path, wait: std::time::Duration) -> Result<File, JournalError> {
     let deadline = std::time::Instant::now() + wait;
     // Threads of this process take the lock in arrival order: polling alone
@@ -393,6 +396,16 @@ impl Turn {
                 .0;
         }
     }
+}
+
+/// Test builds only: how many threads of this process are in `path`'s line.
+#[cfg(test)]
+fn queued_for(path: &Path) -> usize {
+    let (map, _) = lines();
+    map.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(path)
+        .map_or(0, |queue| queue.waiting.len())
 }
 
 /// Takes `ticket` out of `key`'s line, dropping an empty line.
@@ -698,32 +711,47 @@ mod tests {
     /// waiter of shared_appends_wait_for_the_lock_and_never_interleave).
     #[test]
     fn a_waiting_writer_is_not_starved_by_one_that_keeps_retaking_the_lock() {
-        let path = dir("fair").join("tasks.jsonl");
-        let rounds = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let hot = {
-            let path = path.clone();
-            let rounds = std::sync::Arc::clone(&rounds);
-            std::thread::spawn(move || {
-                for _ in 0..200 {
-                    let _held = lock_within(&path, std::time::Duration::from_secs(10)).unwrap();
-                    rounds.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    std::thread::sleep(std::time::Duration::from_millis(5));
-                }
-            })
+        let wait_until = |path: &Path, queued: usize| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while queued_for(path) < queued {
+                assert!(std::time::Instant::now() < deadline, "threads never queued");
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
         };
-        // The waiter arrives while the hot thread is cycling the lock.
-        while rounds.load(std::sync::atomic::Ordering::SeqCst) < 5 {
-            std::thread::sleep(std::time::Duration::from_millis(1));
+        // Repeated: under the old polling lock either thread won about half
+        // the time; in arrival order the earlier waiter wins every time.
+        for attempt in 0..20 {
+            let path = dir(&format!("fair-{attempt}")).join("tasks.jsonl");
+            let rounds = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let held = lock_within(&path, std::time::Duration::from_secs(1)).unwrap();
+            let waiter = {
+                let path = path.clone();
+                let rounds = std::sync::Arc::clone(&rounds);
+                std::thread::spawn(move || {
+                    let _held = lock_within(&path, std::time::Duration::from_secs(10)).unwrap();
+                    rounds.load(std::sync::atomic::Ordering::SeqCst)
+                })
+            };
+            wait_until(&path, 1);
+            let hot = {
+                let path = path.clone();
+                let rounds = std::sync::Arc::clone(&rounds);
+                std::thread::spawn(move || {
+                    for _ in 0..5 {
+                        let _held = lock_within(&path, std::time::Duration::from_secs(10)).unwrap();
+                        rounds.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    }
+                })
+            };
+            wait_until(&path, 2);
+            drop(held);
+            assert_eq!(
+                waiter.join().unwrap(),
+                0,
+                "attempt {attempt}: the earlier waiter took the lock before any later round"
+            );
+            hot.join().unwrap();
         }
-        let arrived = rounds.load(std::sync::atomic::Ordering::SeqCst);
-        let held = lock_within(&path, std::time::Duration::from_secs(10)).unwrap();
-        let waited = rounds.load(std::sync::atomic::Ordering::SeqCst) - arrived;
-        drop(held);
-        hot.join().unwrap();
-        assert!(
-            waited <= 2,
-            "the waiter got its turn after {waited} more hot rounds"
-        );
     }
 
     #[test]
