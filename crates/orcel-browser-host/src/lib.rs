@@ -9,6 +9,7 @@ mod capture;
 mod confinement;
 mod coordinates;
 mod crawl;
+mod crawl_scope;
 mod discovery;
 mod error;
 mod exposure;
@@ -65,6 +66,7 @@ pub use crawl::{
     TextDocument, Visit, MAX_CRAWL_DEPTH, MAX_CRAWL_DURATION, MAX_CRAWL_PAGES, MAX_CRAWL_URLS,
     MAX_PATH_PATTERNS, MAX_PATH_PATTERN_BYTES, MAX_SITEMAPS, MAX_SKIPPED_REPORTED,
 };
+pub use crawl_scope::PatternKind;
 pub use discovery::{discover_engine, Engine, EngineKind, SearchConfig};
 pub use error::{DownloadFailure, HostError, UnavailableReason};
 pub use exposure::{
