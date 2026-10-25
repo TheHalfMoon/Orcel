@@ -88,6 +88,16 @@ pub fn append_line<T: Serialize>(path: &Path, line: &T) -> Result<(), JournalErr
     if torn_tail(path)? {
         bytes.insert(0, b'\n');
     }
+    // A journal is never grown past what a reader accepts, so every journal
+    // on disk stays readable (and its open intents reconcilable).
+    let current = match std::fs::metadata(path) {
+        Ok(metadata) => metadata.len(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
+        Err(_) => return Err(JournalError::Write),
+    };
+    if current.saturating_add(bytes.len() as u64) > MAX_JOURNAL_BYTES {
+        return Err(JournalError::TooLarge);
+    }
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -136,13 +146,8 @@ fn torn_tail(path: &Path) -> Result<bool, JournalError> {
 
 /// Every line of the journal, in order. A missing journal has none.
 pub fn read_lines<T: DeserializeOwned>(path: &Path) -> Result<Lines<T>, JournalError> {
-    if let Ok(metadata) = std::fs::metadata(path) {
-        if metadata.len() > MAX_JOURNAL_BYTES {
-            return Err(JournalError::TooLarge);
-        }
-    }
-    let text = match std::fs::read(path) {
-        Ok(text) => text,
+    let file = match File::open(path) {
+        Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(Lines {
                 lines: Vec::new(),
@@ -151,6 +156,15 @@ pub fn read_lines<T: DeserializeOwned>(path: &Path) -> Result<Lines<T>, JournalE
         }
         Err(_) => return Err(JournalError::Read),
     };
+    // Read through the bound itself, so a journal that grows between a size
+    // check and the read is still never read past it.
+    let mut text = Vec::new();
+    file.take(MAX_JOURNAL_BYTES + 1)
+        .read_to_end(&mut text)
+        .map_err(|_| JournalError::Read)?;
+    if text.len() as u64 > MAX_JOURNAL_BYTES {
+        return Err(JournalError::TooLarge);
+    }
     let mut lines = Vec::new();
     let mut torn = 0;
     for raw in text.split(|byte| *byte == b'\n') {
@@ -194,6 +208,11 @@ pub enum IntentState {
 impl IntentState {
     /// Whether `next` may follow `self`. A recorded intent never returns to
     /// `Pending`, and a settled, abandoned or reconciled one never changes.
+    /// `Dispatched` is optional: a provider that has no separate dispatch
+    /// step (the SG-000108 download writer) settles, abandons or reconciles
+    /// straight from `Pending`. `Abandoned` means the effect never started,
+    /// so it cannot follow `Dispatched`; an interrupted dispatched intent is
+    /// `Unknown`.
     pub fn may_become(self, next: IntentState) -> bool {
         use IntentState::*;
         matches!(
@@ -217,16 +236,22 @@ impl IntentState {
 /// from `(intent id, state)` events in journal order. The first event of
 /// an intent must be `Pending`; any transition `may_become` refuses fails
 /// closed, so a journal that skips or reverses a state is never read as
-/// settled.
+/// settled. This is stricter than the SG-000108 download fold, which
+/// ignores an ending event for an id it never saw recorded (possible only
+/// after a torn `pending` line): here that fails closed.
 pub fn recover<'a>(
     events: impl IntoIterator<Item = (&'a str, IntentState)>,
 ) -> Result<Vec<(String, IntentState)>, JournalError> {
     let mut states: Vec<(String, IntentState)> = Vec::new();
+    let mut index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for (id, next) in events {
-        match states.iter_mut().find(|(known, _)| known == id) {
-            None if next == IntentState::Pending => states.push((id.to_owned(), next)),
+        match index.get(id) {
+            None if next == IntentState::Pending => {
+                index.insert(id.to_owned(), states.len());
+                states.push((id.to_owned(), next));
+            }
             None => return Err(JournalError::Unreadable),
-            Some((_, state)) if state.may_become(next) => *state = next,
+            Some(&at) if states[at].1.may_become(next) => states[at].1 = next,
             Some(_) => return Err(JournalError::Unreadable),
         }
     }
@@ -414,15 +439,62 @@ mod tests {
     }
 
     fn state(event: &str) -> IntentState {
-        match event {
-            "pending" => IntentState::Pending,
-            "dispatched" => IntentState::Dispatched,
-            "settled" => IntentState::Settled,
-            "abandoned" => IntentState::Abandoned,
-            "unknown" => IntentState::Unknown,
-            "reconciled" => IntentState::Reconciled,
-            other => panic!("{other}"),
-        }
+        [
+            ("pending", IntentState::Pending),
+            ("dispatched", IntentState::Dispatched),
+            ("settled", IntentState::Settled),
+            ("abandoned", IntentState::Abandoned),
+            ("unknown", IntentState::Unknown),
+            ("reconciled", IntentState::Reconciled),
+        ]
+        .into_iter()
+        .find(|(name, _)| *name == event)
+        .map(|(_, state)| state)
+        .expect("a known event")
+    }
+
+    #[test]
+    fn recover_reads_sg000108_download_journal_shapes() {
+        // The download writer's sequences: settled after a reply, abandoned
+        // when the approval was never consumed, reconciled after a lost
+        // reply, and one still pending.
+        let events = [
+            ("r1", "pending"),
+            ("r1", "settled"),
+            ("r2", "pending"),
+            ("r2", "abandoned"),
+            ("r3", "pending"),
+            ("r4", "pending"),
+            ("r3", "reconciled"),
+        ];
+        let open = recover(events.iter().map(|(id, event)| (*id, state(event)))).unwrap();
+        assert_eq!(open, [("r4".to_string(), IntentState::Pending)]);
+    }
+
+    #[test]
+    fn an_append_never_grows_a_journal_past_the_reader_bound() {
+        let path = dir("grow").join("intents.jsonl");
+        append_line(&path, &line("pending", "r1")).unwrap();
+        let file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        // Simulate a journal one short line below the bound, ending cleanly.
+        file.set_len(MAX_JOURNAL_BYTES - 8).unwrap();
+        drop(file);
+        let mut ending = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        ending.write_all(b"\n").unwrap();
+        drop(ending);
+        let before = std::fs::metadata(&path).unwrap().len();
+        assert_eq!(
+            append_line(&path, &line("pending", "r2")).unwrap_err(),
+            JournalError::TooLarge
+        );
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().len(),
+            before,
+            "nothing was appended"
+        );
     }
 
     #[test]
