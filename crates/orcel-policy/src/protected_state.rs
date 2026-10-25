@@ -16,7 +16,8 @@ use std::path::{Component, Path, PathBuf};
 /// `orcel_approval::default_approval_history_path`,
 /// `orcel_provider_browser::default_profile_root`, and
 /// `remote_session::default_lease_store_path`, and
-/// `executable_registry::default_registry_path`.
+/// `executable_registry::default_registry_path`, and
+/// `orceld` `report_task::default_journal_path` (SG-000120).
 pub const PROTECTED_STATE_OVERRIDES: &[&str] = &[
     "ORCEL_AUDIT_PATH",
     "ORCEL_TRUST_PATH",
@@ -24,6 +25,7 @@ pub const PROTECTED_STATE_OVERRIDES: &[&str] = &[
     "ORCEL_BROWSER_STATE_DIR",
     "ORCEL_REMOTE_LEASE_PATH",
     "ORCEL_EXECUTABLE_REGISTRY_PATH",
+    "ORCEL_REPORT_JOURNAL_PATH",
 ];
 
 /// Returns the unresolved protected state roots derived from the process
@@ -179,6 +181,10 @@ mod tests {
                 OsString::from("/h/history.jsonl"),
             ),
             ("ORCEL_BROWSER_STATE_DIR", OsString::from("/b")),
+            (
+                "ORCEL_REPORT_JOURNAL_PATH",
+                OsString::from("/j/report-tasks.jsonl"),
+            ),
         ]);
         let roots = protected_state_roots_from(&lookup(values));
         assert_eq!(
@@ -189,6 +195,7 @@ mod tests {
                 PathBuf::from("/t/trust.jsonl"),
                 PathBuf::from("/h/history.jsonl"),
                 PathBuf::from("/b"),
+                PathBuf::from("/j/report-tasks.jsonl"),
             ]
         );
     }

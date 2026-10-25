@@ -723,10 +723,15 @@ mod tests {
                 Some(base.join("history").join("h.jsonl").into_os_string())
             }
             "ORCEL_BROWSER_STATE_DIR" => Some(base.join("browser").into_os_string()),
+            "ORCEL_REPORT_JOURNAL_PATH" => Some(
+                base.join("journal")
+                    .join("report-tasks.jsonl")
+                    .into_os_string(),
+            ),
             _ => None,
         });
-        assert_eq!(roots.len(), 5);
-        for dir in ["lad", "audit", "trust", "history", "browser"] {
+        assert_eq!(roots.len(), 6);
+        for dir in ["lad", "audit", "trust", "history", "browser", "journal"] {
             let workspace_root = base.join(dir);
             std::fs::create_dir_all(&workspace_root).unwrap();
             let refused = PolicyEngine::with_protected_state_roots(

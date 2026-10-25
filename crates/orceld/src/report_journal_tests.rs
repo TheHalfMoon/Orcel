@@ -9,11 +9,7 @@ use orcel_approval::ApprovalDecision;
 use serde_json::json;
 
 fn journal_path(scene: &Scene) -> PathBuf {
-    scene
-        .dir
-        .join("state")
-        .join("journal")
-        .join("report-tasks.jsonl")
+    scene.dir.join("state").join("report-tasks.jsonl")
 }
 
 /// An owner whose process does not exist: its pending commits are
