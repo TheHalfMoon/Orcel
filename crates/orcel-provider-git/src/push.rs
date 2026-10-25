@@ -1018,6 +1018,7 @@ fn run_push_raw(
         Some(secret) => Some(ProtectedAskpass::create(secret)?),
         None => None,
     };
+    let neutral = crate::neutralizing_args(repo)?;
     let mut command = Command::new("git");
     command
         .args([
@@ -1029,6 +1030,7 @@ fn run_push_raw(
             "-c",
             "log.showSignature=false",
         ])
+        .args(&neutral)
         .args(args)
         .current_dir(repo)
         .stdin(Stdio::null())

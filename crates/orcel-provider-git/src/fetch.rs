@@ -821,6 +821,7 @@ impl GitProvider {
         use std::thread;
         use std::time::{Duration, Instant};
 
+        let neutral = crate::neutralizing_args(repo)?;
         let mut command = Command::new("git");
         command
             .args([
@@ -832,6 +833,7 @@ impl GitProvider {
                 "-c",
                 "log.showSignature=false",
             ])
+            .args(&neutral)
             .args(args)
             .current_dir(repo)
             .stdin(Stdio::null())

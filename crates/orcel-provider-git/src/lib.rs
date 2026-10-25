@@ -194,118 +194,186 @@ impl GitProvider {
     }
 
     fn run_git_raw(&self, cwd: &Path, args: &[&str]) -> Result<CommandOutput, GitProviderError> {
-        let mut command = Command::new("git");
-        command
-            .args([
-                "-c",
-                "core.fsmonitor=false",
-                "-c",
-                "core.pager=cat",
-                // Repository config must not make a read run a program.
-                "-c",
-                "log.showSignature=false",
-            ])
-            .args(args)
-            .current_dir(cwd)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .env_clear();
+        let neutral = neutralizing_args(cwd)?;
+        let mut all: Vec<&str> = neutral.iter().map(String::as_str).collect();
+        all.extend_from_slice(args);
+        run_plain(cwd, &all)
+    }
+}
 
-        copy_env_if_present(&mut command, "PATH");
-        copy_env_if_present(&mut command, "Path");
-        copy_env_if_present(&mut command, "PATHEXT");
-        copy_env_if_present(&mut command, "SystemRoot");
-        copy_env_if_present(&mut command, "WINDIR");
-        copy_env_if_present(&mut command, "TEMP");
-        copy_env_if_present(&mut command, "TMP");
-
-        command
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GIT_CONFIG_GLOBAL", NULL_GIT_CONFIG)
-            .env("GIT_TERMINAL_PROMPT", "0")
-            .env("GIT_PAGER", "cat")
-            .env("GIT_EDITOR", null_device())
-            .env("GIT_SEQUENCE_EDITOR", null_device())
-            .env("GIT_ALLOW_PROTOCOL", "")
-            .env("GCM_INTERACTIVE", "Never")
-            .env("GIT_OPTIONAL_LOCKS", "0");
-
-        let mut child = command.spawn().map_err(|error| {
-            GitProviderError::new(
-                FailureCode::ProviderUnavailable,
-                format!("start git: {error}"),
-            )
-        })?;
-
-        let stdout = child.stdout.take().ok_or_else(|| {
-            GitProviderError::new(FailureCode::ProviderUnavailable, "git stdout unavailable")
-        })?;
-        let stderr = child.stderr.take().ok_or_else(|| {
-            GitProviderError::new(FailureCode::ProviderUnavailable, "git stderr unavailable")
-        })?;
-
-        let stdout_thread = thread::spawn(move || read_bounded(stdout, MAX_STDOUT_BYTES));
-        let stderr_thread = thread::spawn(move || read_bounded(stderr, MAX_STDERR_BYTES));
-
-        let deadline = Instant::now() + COMMAND_TIMEOUT;
-        let status = loop {
-            match child.try_wait() {
-                Ok(Some(status)) => break status,
-                Ok(None) if Instant::now() < deadline => {
-                    thread::sleep(Duration::from_millis(25));
-                }
-                Ok(None) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    let _ = stdout_thread.join();
-                    let _ = stderr_thread.join();
-                    return Err(GitProviderError::new(
-                        FailureCode::ProviderUnavailable,
-                        "git command exceeded 30 second timeout",
-                    ));
-                }
-                Err(error) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    let _ = stdout_thread.join();
-                    let _ = stderr_thread.join();
-                    return Err(GitProviderError::new(
-                        FailureCode::ProviderUnavailable,
-                        format!("wait for git: {error}"),
-                    ));
-                }
-            }
+/// `-c` overrides that keep a repository's own configuration from making a
+/// Git command run a program: hooks, automatic maintenance, alternate-ref
+/// commands and every configured filter driver (clean, smudge and
+/// long-running process filters run while Git refreshes the index, even
+/// for `status`). Fails closed when the configuration cannot be read in
+/// full or a driver name cannot be overridden on a command line.
+pub(crate) fn neutralizing_args(cwd: &Path) -> Result<Vec<String>, GitProviderError> {
+    let listed = run_plain(cwd, &["config", "--list", "-z"])?;
+    if listed.stdout_truncated {
+        return Err(GitProviderError::new(
+            FailureCode::ProviderUnavailable,
+            "Git configuration exceeded the bounded output limit",
+        ));
+    }
+    let mut args = vec![
+        "-c".to_owned(),
+        format!("core.hooksPath={}", null_device().to_string_lossy()),
+        "-c".to_owned(),
+        "gc.auto=0".to_owned(),
+        "-c".to_owned(),
+        "maintenance.auto=false".to_owned(),
+        "-c".to_owned(),
+        "core.alternateRefsCommand=".to_owned(),
+    ];
+    let mut drivers: Vec<&str> = Vec::new();
+    for entry in listed.stdout.split('\0') {
+        let key = entry.split('\n').next().unwrap_or_default();
+        // Section and variable names are case-insensitive; the driver
+        // (subsection) name is kept as written.
+        if key.len() < 7 || !key[..7].eq_ignore_ascii_case("filter.") {
+            continue;
+        }
+        let Some((driver, _)) = key[7..].rsplit_once('.') else {
+            continue;
         };
-
-        let (stdout_bytes, stdout_truncated) = stdout_thread.join().map_err(|_| {
-            GitProviderError::new(FailureCode::InternalError, "git stdout reader panicked")
-        })??;
-        let (stderr_bytes, _stderr_truncated) = stderr_thread.join().map_err(|_| {
-            GitProviderError::new(FailureCode::InternalError, "git stderr reader panicked")
-        })??;
-
-        let stdout = String::from_utf8_lossy(&stdout_bytes).into_owned();
-        let stderr = String::from_utf8_lossy(&stderr_bytes).into_owned();
-
-        if !status.success() {
+        if driver.is_empty() || driver.contains('=') {
             return Err(GitProviderError::new(
-                FailureCode::InvalidRequest,
-                format!(
-                    "git exited with {}: {}",
-                    status
-                        .code()
-                        .map_or_else(|| "signal".into(), |code| code.to_string()),
-                    stderr.trim()
-                ),
+                FailureCode::CapabilityDenied,
+                "the repository configures a Git filter driver whose name cannot be neutralized",
             ));
         }
-
-        Ok(CommandOutput {
-            stdout,
-            stdout_truncated,
-        })
+        if !drivers.contains(&driver) {
+            drivers.push(driver);
+        }
     }
+    for driver in drivers {
+        for (variable, value) in [
+            ("clean", ""),
+            ("smudge", ""),
+            ("process", ""),
+            ("required", "false"),
+        ] {
+            args.push("-c".to_owned());
+            args.push(format!("filter.{driver}.{variable}={value}"));
+        }
+    }
+    Ok(args)
+}
+
+/// Runs Git with the hardened environment only; callers add
+/// [`neutralizing_args`] unless they are reading the configuration itself.
+fn run_plain(cwd: &Path, args: &[&str]) -> Result<CommandOutput, GitProviderError> {
+    let mut command = Command::new("git");
+    command
+        .args([
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.pager=cat",
+            // Repository config must not make a read run a program.
+            "-c",
+            "log.showSignature=false",
+        ])
+        .args(args)
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env_clear();
+
+    copy_env_if_present(&mut command, "PATH");
+    copy_env_if_present(&mut command, "Path");
+    copy_env_if_present(&mut command, "PATHEXT");
+    copy_env_if_present(&mut command, "SystemRoot");
+    copy_env_if_present(&mut command, "WINDIR");
+    copy_env_if_present(&mut command, "TEMP");
+    copy_env_if_present(&mut command, "TMP");
+
+    command
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", NULL_GIT_CONFIG)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_PAGER", "cat")
+        .env("GIT_EDITOR", null_device())
+        .env("GIT_SEQUENCE_EDITOR", null_device())
+        .env("GIT_ALLOW_PROTOCOL", "")
+        .env("GCM_INTERACTIVE", "Never")
+        .env("GIT_OPTIONAL_LOCKS", "0");
+
+    let mut child = command.spawn().map_err(|error| {
+        GitProviderError::new(
+            FailureCode::ProviderUnavailable,
+            format!("start git: {error}"),
+        )
+    })?;
+
+    let stdout = child.stdout.take().ok_or_else(|| {
+        GitProviderError::new(FailureCode::ProviderUnavailable, "git stdout unavailable")
+    })?;
+    let stderr = child.stderr.take().ok_or_else(|| {
+        GitProviderError::new(FailureCode::ProviderUnavailable, "git stderr unavailable")
+    })?;
+
+    let stdout_thread = thread::spawn(move || read_bounded(stdout, MAX_STDOUT_BYTES));
+    let stderr_thread = thread::spawn(move || read_bounded(stderr, MAX_STDERR_BYTES));
+
+    let deadline = Instant::now() + COMMAND_TIMEOUT;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(25));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stdout_thread.join();
+                let _ = stderr_thread.join();
+                return Err(GitProviderError::new(
+                    FailureCode::ProviderUnavailable,
+                    "git command exceeded 30 second timeout",
+                ));
+            }
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stdout_thread.join();
+                let _ = stderr_thread.join();
+                return Err(GitProviderError::new(
+                    FailureCode::ProviderUnavailable,
+                    format!("wait for git: {error}"),
+                ));
+            }
+        }
+    };
+
+    let (stdout_bytes, stdout_truncated) = stdout_thread.join().map_err(|_| {
+        GitProviderError::new(FailureCode::InternalError, "git stdout reader panicked")
+    })??;
+    let (stderr_bytes, _stderr_truncated) = stderr_thread.join().map_err(|_| {
+        GitProviderError::new(FailureCode::InternalError, "git stderr reader panicked")
+    })??;
+
+    let stdout = String::from_utf8_lossy(&stdout_bytes).into_owned();
+    let stderr = String::from_utf8_lossy(&stderr_bytes).into_owned();
+
+    if !status.success() {
+        return Err(GitProviderError::new(
+            FailureCode::InvalidRequest,
+            format!(
+                "git exited with {}: {}",
+                status
+                    .code()
+                    .map_or_else(|| "signal".into(), |code| code.to_string()),
+                stderr.trim()
+            ),
+        ));
+    }
+
+    Ok(CommandOutput {
+        stdout,
+        stdout_truncated,
+    })
 }
 
 fn read_bounded(reader: impl Read, max_bytes: usize) -> Result<(Vec<u8>, bool), GitProviderError> {
@@ -480,6 +548,101 @@ mod tests {
             "NULL_GIT_CONFIG ignores it"
         );
         let _ = fs::remove_dir_all(home);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// A hostile repository's filter drivers (defined directly and through
+    /// an included file), hooks and automatic maintenance never run for the
+    /// provider's reads, its ref updates or the configuration probe.
+    #[test]
+    fn reads_never_run_repository_filters_or_hooks() {
+        let root = repository();
+        let marker = root.join("marker");
+        let marker_text = marker.to_string_lossy().replace('\\', "/");
+        let program = root.join("evil.sh");
+        fs::write(
+            &program,
+            format!("#!/bin/sh\necho ran >> '{marker_text}'\ncat\n"),
+        )
+        .unwrap();
+        let hook = root
+            .join(".git")
+            .join("hooks")
+            .join("reference-transaction");
+        fs::create_dir_all(hook.parent().unwrap()).unwrap();
+        fs::write(&hook, format!("#!/bin/sh\necho hook >> '{marker_text}'\n")).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for path in [&program, &hook] {
+                fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+            }
+        }
+        let program_text = program.to_string_lossy().replace('\\', "/");
+        fs::create_dir_all(root.join(".git").join("info")).unwrap();
+        fs::write(
+            root.join(".git").join("info").join("attributes"),
+            "a.txt filter=evil\nb.txt filter=other.name\n",
+        )
+        .unwrap();
+        git(&root, &["config", "filter.evil.clean", &program_text]);
+        git(&root, &["config", "filter.evil.process", &program_text]);
+        fs::write(
+            root.join("extra.gitconfig"),
+            format!("[filter \"other.name\"]\n\tclean = {program_text}\n"),
+        )
+        .unwrap();
+        git(&root, &["config", "include.path", "../extra.gitconfig"]);
+        git(&root, &["config", "gc.auto", "1"]);
+        fs::write(root.join("b.txt"), "b\n").unwrap();
+        let touch = || {
+            // A changed timestamp makes Git re-read (and filter) the files.
+            let later = SystemTime::now() + std::time::Duration::from_secs(5);
+            for name in ["a.txt", "b.txt"] {
+                fs::File::options()
+                    .write(true)
+                    .open(root.join(name))
+                    .unwrap()
+                    .set_modified(later)
+                    .unwrap();
+            }
+        };
+        // Positive controls: unhardened Git runs both.
+        touch();
+        git(&root, &["status", "--porcelain"]);
+        git(&root, &["update-ref", "refs/heads/control", "HEAD"]);
+        let control = fs::read_to_string(&marker).unwrap_or_default();
+        assert!(control.contains("ran"), "the filter must fire unhardened");
+        assert!(control.contains("hook"), "the hook must fire unhardened");
+        fs::remove_file(&marker).unwrap();
+
+        touch();
+        let provider = GitProvider::new(&root).unwrap();
+        provider.status(".").unwrap();
+        provider.diff(".", false).unwrap();
+        provider.log(".", 5).unwrap();
+        provider.branch_tip(".", "control").unwrap();
+        let repo = provider.repository_root(".").unwrap();
+        provider
+            .run_git(&repo, &["update-ref", "refs/heads/evidence", "HEAD"])
+            .unwrap();
+        assert!(
+            !marker.exists(),
+            "a provider command ran a repository-configured program: {}",
+            fs::read_to_string(&marker).unwrap_or_default()
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_filter_driver_name_that_cannot_be_overridden_refuses() {
+        let root = repository();
+        let config = root.join(".git").join("config");
+        let text = fs::read_to_string(&config).unwrap();
+        fs::write(&config, text + "[filter \"a=b\"]\n\tclean = x\n").unwrap();
+        let provider = GitProvider::new(&root).unwrap();
+        let error = provider.status(".").unwrap_err();
+        assert_eq!(error.code, FailureCode::CapabilityDenied);
         let _ = fs::remove_dir_all(root);
     }
 
