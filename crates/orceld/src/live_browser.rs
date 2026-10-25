@@ -264,6 +264,12 @@ fn journal_append(path: &Path, line: &JournalLine) -> Result<(), ProviderError> 
     orcel_journal::append_line(path, line).map_err(|_| journal_unavailable())
 }
 
+/// The `pending` line that opens a download intent: refused while too
+/// little room would remain for its closing line.
+fn journal_append_opening(path: &Path, line: &JournalLine) -> Result<(), ProviderError> {
+    orcel_journal::append_opening_line(path, line).map_err(|_| journal_unavailable())
+}
+
 /// The intents still open in the journal, in order. A torn line (a crash
 /// mid-append, before the approval was consumed: a strict prefix of a
 /// line, so its JSON ends early) is skipped wherever a later append sealed
@@ -1150,7 +1156,8 @@ impl LiveBrowser {
         // The intent is durable before the approval is spent: if orceld
         // dies anywhere after this, a restart finds it and reconciles the
         // destination. If it cannot be written, nothing is spent or sent.
-        journal_append(
+        // Opening lines leave room for the line that closes them.
+        journal_append_opening(
             &self.intents,
             &JournalLine {
                 folder: Some(PathBuf::from(&folder)),

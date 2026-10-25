@@ -77,6 +77,18 @@ pub struct Lines<T> {
 /// writer is the one live browser of an orceld run. New journals write
 /// through [`Journal::append`], which holds the one-writer lock.
 pub fn append_line<T: Serialize>(path: &Path, line: &T) -> Result<(), JournalError> {
+    append_within(path, line, MAX_JOURNAL_BYTES)
+}
+
+/// Appends a line that opens an intent. It is refused once fewer than
+/// [`MAX_LINE_BYTES`] would remain, so the line that later closes the
+/// intent (settled, abandoned, unknown or reconciled) always fits and an
+/// open intent can never be stranded by the journal's own bound.
+pub fn append_opening_line<T: Serialize>(path: &Path, line: &T) -> Result<(), JournalError> {
+    append_within(path, line, MAX_JOURNAL_BYTES - MAX_LINE_BYTES as u64)
+}
+
+fn append_within<T: Serialize>(path: &Path, line: &T, limit: u64) -> Result<(), JournalError> {
     let mut bytes = serde_json::to_vec(line).map_err(|_| JournalError::Write)?;
     bytes.push(b'\n');
     if bytes.len() > MAX_LINE_BYTES {
@@ -95,7 +107,7 @@ pub fn append_line<T: Serialize>(path: &Path, line: &T) -> Result<(), JournalErr
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
         Err(_) => return Err(JournalError::Write),
     };
-    if current.saturating_add(bytes.len() as u64) > MAX_JOURNAL_BYTES {
+    if current.saturating_add(bytes.len() as u64) > limit {
         return Err(JournalError::TooLarge);
     }
     let mut file = std::fs::OpenOptions::new()
@@ -424,6 +436,29 @@ mod tests {
             JournalError::TooLarge,
             "an oversized journal fails closed, it is not read in part"
         );
+    }
+
+    #[test]
+    fn an_opening_line_always_leaves_room_for_its_closing_line() {
+        let path = dir("reserve").join("intents.jsonl");
+        append_line(&path, &line("pending", "r1")).unwrap();
+        let file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        // Just inside the opening reserve: an opening line no longer fits,
+        // a closing line still does.
+        file.set_len(MAX_JOURNAL_BYTES - MAX_LINE_BYTES as u64 - 8)
+            .unwrap();
+        drop(file);
+        let mut ending = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        ending.write_all(b"\n").unwrap();
+        drop(ending);
+        assert_eq!(
+            append_opening_line(&path, &line("pending", "r2")).unwrap_err(),
+            JournalError::TooLarge
+        );
+        append_line(&path, &line("settled", "r1")).unwrap();
     }
 
     #[test]
