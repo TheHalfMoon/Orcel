@@ -160,7 +160,7 @@ export function registerReportTools(server: McpServer, kernel: KernelClient, def
     "task_resume_summary",
     {
       description:
-        "After a reconnect, read what one of this session's report tasks did before Orcel stopped: completed steps (do NOT re-run them), steps whose outcome is unknown (do not assume they succeeded or failed) with the check that settles each, and a short note. Inputs appear only as keyed fingerprints. Reads only; another session's or workspace's task is refused.",
+        "After Orcel's daemon restarted within this MCP session, read what one of this session's report tasks did before it stopped: completed steps (do NOT re-run them), steps whose outcome is unknown (do not assume they succeeded or failed) with the check that settles each, and a short note. Inputs appear only as keyed fingerprints. Reads only; another session's or workspace's task is refused.",
       inputSchema: taskResumeSummarySchema(defaultWorkspace)
     },
     async ({ workspace_id, task_id }) =>

@@ -206,7 +206,7 @@
     },
     {
       "name": "task_resume_summary",
-      "description": "After a reconnect, read what this session's report task did and what is unknown; reads only."
+      "description": "After Orcel's daemon restarted within this session, read what this session's report task did and what is unknown; reads only."
     },
     {
       "name": "web_search",

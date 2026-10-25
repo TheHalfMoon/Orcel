@@ -54,7 +54,7 @@ Totals: implemented_exposed: 24, implemented_hidden: 0, missing: 1, intentionall
 
 ## Capability shapes
 
-Totals: implemented_exposed: 50, implemented_hidden: 4, missing: 0, intentionally_denied: 22.
+Totals: implemented_exposed: 51, implemented_hidden: 4, missing: 0, intentionally_denied: 22.
 
 | Shape | Status | MCP tool, owner, or reason |
 | --- | --- | --- |

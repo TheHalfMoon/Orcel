@@ -160,9 +160,10 @@ export function attachProfile(request: KernelRequest, profile: string | null): K
 export class KernelClient {
   readonly sessionId = randomUUID();
   /**
-   * The current orceld. SG-000120 RJ-03: when it exits (a crash), the next
-   * call starts a new one for the same session, so a client can read what
-   * its task did; requests that were in flight are rejected, never re-sent.
+   * The current orceld. SG-000120 RJ-03: when a local session's orceld
+   * exits (a crash), the next call starts a new one for the same session,
+   * so the client can read what its task did; requests that were in
+   * flight are rejected, never re-sent. Remote sessions do not restart.
    */
   child: ChildProcessWithoutNullStreams;
   readonly pending = new Map<string, Pending>();
@@ -204,12 +205,16 @@ export class KernelClient {
     const lines = createInterface({ input: child.stdout });
     lines.on("line", (line) => this.handleLine(line));
 
+    // Only the current orceld's end touches the session: a late event of a
+    // replaced one must not fail requests the new orceld is running.
     child.on("error", (error) => {
-      if (child === this.child) this.exited = true;
+      if (child !== this.child) return;
+      this.exited = true;
       this.rejectAll(new Error("orceld failed to start: " + error.message));
     });
     child.on("exit", (code, signal) => {
-      if (child === this.child) this.exited = true;
+      if (child !== this.child) return;
+      this.exited = true;
       this.rejectAll(
         new Error(
           "orceld exited while requests were pending (code=" +
@@ -241,7 +246,8 @@ export class KernelClient {
     });
     attachRemoteContext(request, this.remote);
     attachProfile(request, this.profile);
-    if (this.exited && !this.closed) {
+    // Local sessions only: a remote device session's kernel stays as before.
+    if (this.exited && !this.closed && this.remote === null) {
       // Only for a new request: nothing that was in flight is sent again.
       this.exited = false;
       this.child = this.spawnDaemon();
