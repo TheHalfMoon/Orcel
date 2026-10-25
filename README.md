@@ -59,7 +59,7 @@ Orcel is an **open-source computer-access authority layer** for MCP-compatible A
 
 ## What ChatGPT can do through Orcel
 
-These tools are exposed over local MCP (the complete, generated list is [`docs/p16/TOOL_CONTRACT.md`](docs/p16/TOOL_CONTRACT.md); this table is being brought up to date in #448):
+Local MCP clients get the default `desktop_structured` profile: exactly the 44 tools below (the generated contract with every tool's bounds is [`docs/p16/TOOL_CONTRACT.md`](docs/p16/TOOL_CONTRACT.md); a test keeps this table equal to the profile):
 
 | Area | Tools | Approval |
 |---|---|---|
@@ -67,7 +67,9 @@ These tools are exposed over local MCP (the complete, generated list is [`docs/p
 | Files in a trusted workspace | `fs_stat`, `fs_list`, `fs_read`, `fs_read_range`, `fs_search`, `fs_find` | none (read-only, bounded) |
 | File writes | `fs_write_preview`, `fs_write`, `fs_edit`, `fs_mkdir`, `fs_move` | local approval for each write, bound to the exact content and current file hash |
 | File removal | `fs_remove` | Windows Hello (STRONG), single files or empty directories only |
-| Desktop observation | `desktop_window_list`, `desktop_window_tree` | none (read-only, bounded, local-only) |
+| Desktop observation | `desktop_window_list`, `desktop_window_tree`, `desktop_cursor_get` | none (read-only, bounded, local-only) |
+| Desktop capture | `desktop_window_capture` | local approval for each capture of one exact window; local-only |
+| Desktop control | `desktop_element_invoke`, `desktop_element_scroll`, `desktop_element_select`, `desktop_element_set_value`, `desktop_element_toggle`, `desktop_window_action`, `desktop_input_execute` | local approval for each bounded action on one exact element or window; local-only |
 | Clipboard | `clipboard_read`, `clipboard_write` | local approval for each use; secrets refused; local-only |
 | Network | `web_fetch` | local approval per destination; public HTTPS only; local-only |
 | Web search (optional) | `web_search` | off until you enable a provider (`ORCEL_SEARCH_PROVIDERS_JSON`: self-hosted SearXNG, or your own Brave, Tavily, Exa or Serper key stored with `orcel search set-key`); local approval per query; results are untrusted data; local-only; a self-hosted SearXNG must be served on a public HTTPS name (private, loopback and LAN addresses are refused); not available through the ChatGPT tunnel |
@@ -77,7 +79,7 @@ These tools are exposed over local MCP (the complete, generated list is [`docs/p
 | Git (network) | `git_fetch_preview`, `git_fetch`, `git_push_preview`, `git_push` | local approval; see limitations |
 | Processes | `process_spawn` | local approval; see limitations |
 
-Everything else is denied. Remote clients (ChatGPT through the tunnel or relay, and other providers) see only the 26-tool `core` profile: desktop observation, clipboard, network fetch and report tasks are local-only and cannot be reached remotely. Browser automation, screenshots, coordinate input, and UI actuation remain unreachable over MCP entirely.
+Everything else is denied. Remote clients (ChatGPT through the tunnel or relay, and other providers) see only the 26-tool `core` profile: every desktop, clipboard, network, search and report task tool is local-only and cannot be reached remotely. The six live browser tools are served only under the separate `browser_structured` profile of a development build; release builds serve no browser automation.
 
 ### Current limitations
 
