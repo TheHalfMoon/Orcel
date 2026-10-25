@@ -307,17 +307,113 @@ fn lock_file(path: &Path) -> Result<File, JournalError> {
 /// Takes a journal's writer lock, waiting up to `wait`; released when the
 /// returned handle closes, including on process death.
 fn lock_within(path: &Path, wait: std::time::Duration) -> Result<File, JournalError> {
-    let lock = lock_file(path)?;
     let deadline = std::time::Instant::now() + wait;
-    loop {
+    // Threads of this process take the lock in arrival order: polling alone
+    // let a writer that just released it take it again before sleeping
+    // waiters woke, so one waiter could starve past its deadline while
+    // others appended. Other processes still contend through the OS lock.
+    let turn = Turn::wait(path, deadline)?;
+    let lock = lock_file(path)?;
+    let taken = loop {
         match fs4::FileExt::try_lock(&lock) {
-            Ok(()) => return Ok(lock),
+            Ok(()) => break Ok(lock),
             Err(fs4::TryLockError::WouldBlock) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(std::time::Duration::from_millis(10));
+                std::thread::sleep(std::time::Duration::from_millis(2));
             }
-            Err(fs4::TryLockError::WouldBlock) => return Err(JournalError::Busy),
-            Err(_) => return Err(JournalError::Write),
+            Err(fs4::TryLockError::WouldBlock) => break Err(JournalError::Busy),
+            Err(_) => break Err(JournalError::Write),
         }
+    };
+    // Held or not, the next thread in line may now try.
+    drop(turn);
+    taken
+}
+
+/// One thread's place in its process's line for a journal lock.
+struct Turn {
+    key: PathBuf,
+    ticket: u64,
+}
+
+struct Queue {
+    next: u64,
+    waiting: std::collections::VecDeque<u64>,
+}
+
+static LINES: std::sync::OnceLock<(
+    std::sync::Mutex<std::collections::HashMap<PathBuf, Queue>>,
+    std::sync::Condvar,
+)> = std::sync::OnceLock::new();
+
+fn lines() -> &'static (
+    std::sync::Mutex<std::collections::HashMap<PathBuf, Queue>>,
+    std::sync::Condvar,
+) {
+    LINES.get_or_init(|| {
+        (
+            std::sync::Mutex::new(std::collections::HashMap::new()),
+            std::sync::Condvar::new(),
+        )
+    })
+}
+
+impl Turn {
+    /// Waits until every earlier thread of this process has had its try at
+    /// `path`'s lock; `Busy` when `deadline` passes first.
+    fn wait(path: &Path, deadline: std::time::Instant) -> Result<Self, JournalError> {
+        let (map, ready) = lines();
+        // The queue holds no invariant a panicking holder could break.
+        let mut guard = map
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let key = path.to_path_buf();
+        let line = guard.entry(key.clone()).or_insert(Queue {
+            next: 0,
+            waiting: std::collections::VecDeque::new(),
+        });
+        let ticket = line.next;
+        line.next += 1;
+        line.waiting.push_back(ticket);
+        loop {
+            let first = guard
+                .get(&key)
+                .and_then(|line| line.waiting.front().copied());
+            if first == Some(ticket) {
+                return Ok(Self { key, ticket });
+            }
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                leave(&mut guard, &key, ticket);
+                ready.notify_all();
+                return Err(JournalError::Busy);
+            }
+            guard = ready
+                .wait_timeout(guard, deadline - now)
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .0;
+        }
+    }
+}
+
+/// Takes `ticket` out of `key`'s line, dropping an empty line.
+fn leave(map: &mut std::collections::HashMap<PathBuf, Queue>, key: &Path, ticket: u64) {
+    if let Some(queue) = map.get_mut(key) {
+        queue.waiting.retain(|waiting| *waiting != ticket);
+        if queue.waiting.is_empty() {
+            map.remove(key);
+        }
+    }
+}
+
+impl Drop for Turn {
+    fn drop(&mut self) {
+        let (map, ready) = lines();
+        let mut guard = map
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        leave(&mut guard, &self.key, self.ticket);
+        drop(guard);
+        ready.notify_all();
     }
 }
 
@@ -595,6 +691,39 @@ mod tests {
         let read: Lines<Line> = read_lines(&path).unwrap();
         assert_eq!(read.lines.len(), 200);
         assert_eq!(read.torn, 0, "no two appends interleaved");
+    }
+
+    /// A thread that keeps re-taking the lock cannot starve a waiting one:
+    /// threads of one process take it in arrival order (CI once timed out a
+    /// waiter of shared_appends_wait_for_the_lock_and_never_interleave).
+    #[test]
+    fn a_waiting_writer_is_not_starved_by_one_that_keeps_retaking_the_lock() {
+        let path = dir("fair").join("tasks.jsonl");
+        let rounds = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let hot = {
+            let path = path.clone();
+            let rounds = std::sync::Arc::clone(&rounds);
+            std::thread::spawn(move || {
+                for _ in 0..200 {
+                    let _held = lock_within(&path, std::time::Duration::from_secs(10)).unwrap();
+                    rounds.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+            })
+        };
+        // The waiter arrives while the hot thread is cycling the lock.
+        while rounds.load(std::sync::atomic::Ordering::SeqCst) < 5 {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        let arrived = rounds.load(std::sync::atomic::Ordering::SeqCst);
+        let held = lock_within(&path, std::time::Duration::from_secs(10)).unwrap();
+        let waited = rounds.load(std::sync::atomic::Ordering::SeqCst) - arrived;
+        drop(held);
+        hot.join().unwrap();
+        assert!(
+            waited <= 2,
+            "the waiter got its turn after {waited} more hot rounds"
+        );
     }
 
     #[test]
