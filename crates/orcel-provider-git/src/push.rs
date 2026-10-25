@@ -1030,7 +1030,7 @@ fn run_push_raw(
             "-c",
             "log.showSignature=false",
         ])
-        .args(&neutral)
+        .args(&neutral.args)
         .args(args)
         .current_dir(repo)
         .stdin(Stdio::null())
@@ -1463,6 +1463,9 @@ impl GitProvider {
                 "--porcelain=v2",
                 "--branch",
                 "--untracked-files=all",
+                // A submodule's own configuration (and its filters) is
+                // never read: Git would run status inside each one.
+                "--ignore-submodules=all",
             ],
         )?;
         if status.stdout_truncated {

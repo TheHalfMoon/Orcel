@@ -75,6 +75,9 @@ impl GitProvider {
                 "--porcelain=v2",
                 "--branch",
                 "--untracked-files=all",
+                // A submodule's own configuration (and its filters) is
+                // never read: Git would run status inside each one.
+                "--ignore-submodules=all",
             ],
         )?;
         Ok(json!({
@@ -92,6 +95,7 @@ impl GitProvider {
             "--no-textconv",
             "--no-color",
             "--unified=3",
+            "--ignore-submodules=all",
         ];
         if staged {
             args.push("--cached");
@@ -195,7 +199,7 @@ impl GitProvider {
 
     fn run_git_raw(&self, cwd: &Path, args: &[&str]) -> Result<CommandOutput, GitProviderError> {
         let neutral = neutralizing_args(cwd)?;
-        let mut all: Vec<&str> = neutral.iter().map(String::as_str).collect();
+        let mut all: Vec<&str> = neutral.args.iter().map(String::as_str).collect();
         all.extend_from_slice(args);
         run_plain(cwd, &all)
     }
@@ -207,7 +211,12 @@ impl GitProvider {
 /// long-running process filters run while Git refreshes the index, even
 /// for `status`). Fails closed when the configuration cannot be read in
 /// full or a driver name cannot be overridden on a command line.
-pub(crate) fn neutralizing_args(cwd: &Path) -> Result<Vec<String>, GitProviderError> {
+///
+/// Residual: the configuration is read in a separate process just
+/// before the command, so a driver added to the repository configuration
+/// in that window is not seen. Closing it needs one Git process for
+/// both, which Git does not offer.
+pub(crate) fn neutralizing_args(cwd: &Path) -> Result<Neutralized, GitProviderError> {
     let listed = run_plain(cwd, &["config", "--list", "-z"])?;
     if listed.stdout_truncated {
         return Err(GitProviderError::new(
@@ -215,9 +224,12 @@ pub(crate) fn neutralizing_args(cwd: &Path) -> Result<Vec<String>, GitProviderEr
             "Git configuration exceeded the bounded output limit",
         ));
     }
+    // An empty directory this process just created: no hook is found, and
+    // nothing in the workspace can name or fill it.
+    let hooks = mutation::DisabledHooksDir::create()?;
     let mut args = vec![
         "-c".to_owned(),
-        format!("core.hooksPath={}", null_device().to_string_lossy()),
+        format!("core.hooksPath={}", hooks.display()),
         "-c".to_owned(),
         "gc.auto=0".to_owned(),
         "-c".to_owned(),
@@ -230,13 +242,20 @@ pub(crate) fn neutralizing_args(cwd: &Path) -> Result<Vec<String>, GitProviderEr
         let key = entry.split('\n').next().unwrap_or_default();
         // Section and variable names are case-insensitive; the driver
         // (subsection) name is kept as written.
-        if key.len() < 7 || !key[..7].eq_ignore_ascii_case("filter.") {
+        if !key
+            .as_bytes()
+            .get(..7)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"filter."))
+        {
             continue;
         }
         let Some((driver, _)) = key[7..].rsplit_once('.') else {
             continue;
         };
-        if driver.is_empty() || driver.contains('=') {
+        // A name that is not UTF-8 arrives with U+FFFD in place of its
+        // bytes and cannot be named in an override; neither can one with
+        // '=' (the override's separator).
+        if driver.is_empty() || driver.contains(['=', '\u{FFFD}']) {
             return Err(GitProviderError::new(
                 FailureCode::CapabilityDenied,
                 "the repository configures a Git filter driver whose name cannot be neutralized",
@@ -257,7 +276,17 @@ pub(crate) fn neutralizing_args(cwd: &Path) -> Result<Vec<String>, GitProviderEr
             args.push(format!("filter.{driver}.{variable}={value}"));
         }
     }
-    Ok(args)
+    Ok(Neutralized {
+        args,
+        _hooks: hooks,
+    })
+}
+
+/// [`neutralizing_args`]' overrides; the empty hooks directory they name
+/// lives as long as this value.
+pub(crate) struct Neutralized {
+    pub(crate) args: Vec<String>,
+    _hooks: mutation::DisabledHooksDir,
 }
 
 /// Runs Git with the hardened environment only; callers add
@@ -631,6 +660,135 @@ mod tests {
             "a provider command ran a repository-configured program: {}",
             fs::read_to_string(&marker).unwrap_or_default()
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// Writes an `sh` program that appends `label` to `marker`; returns its
+    /// path as Git config expects it.
+    fn marker_program(dir: &Path, marker: &Path, label: &str) -> String {
+        let program = dir.join(format!("{label}.sh"));
+        let marker_text = marker.to_string_lossy().replace('\\', "/");
+        fs::write(
+            &program,
+            format!("#!/bin/sh\necho {label} >> '{marker_text}'\ncat\n"),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        program.to_string_lossy().replace('\\', "/")
+    }
+
+    fn touch_later(path: &Path) {
+        let later = SystemTime::now() + std::time::Duration::from_secs(5);
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+    }
+
+    /// A submodule's own configuration names a filter: status and diff of
+    /// the superproject must not run it (Git would recurse into it).
+    #[test]
+    fn a_submodules_filters_never_run() {
+        let inner = repository();
+        let root = repository();
+        git(
+            &root,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                "-q",
+                &inner.to_string_lossy().replace('\\', "/"),
+                "sub",
+            ],
+        );
+        git(&root, &["commit", "-q", "-m", "add submodule"]);
+        let marker = root.join("marker");
+        let program = marker_program(&root, &marker, "subevil");
+        let sub = root.join("sub");
+        git(&sub, &["config", "filter.subevil.clean", &program]);
+        let attributes = root.join(".git").join("modules").join("sub").join("info");
+        fs::create_dir_all(&attributes).unwrap();
+        fs::write(attributes.join("attributes"), "a.txt filter=subevil\n").unwrap();
+        touch_later(&sub.join("a.txt"));
+        git(&root, &["status", "--porcelain"]);
+        assert!(
+            marker.exists(),
+            "the filter must fire for unhardened status"
+        );
+        fs::remove_file(&marker).unwrap();
+
+        touch_later(&sub.join("a.txt"));
+        let provider = GitProvider::new(&root).unwrap();
+        provider.status(".").unwrap();
+        provider.diff(".", false).unwrap();
+        assert!(!marker.exists(), "a submodule filter ran");
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(inner);
+    }
+
+    /// A commit's index refresh runs no filter of another tracked file.
+    #[test]
+    fn a_commit_runs_no_filter() {
+        let root = repository();
+        let marker = root.join("marker");
+        let program = marker_program(&root, &marker, "evil");
+        fs::write(root.join("b.txt"), "b\n").unwrap();
+        git(&root, &["add", "b.txt"]);
+        git(&root, &["commit", "-q", "-m", "b"]);
+        fs::create_dir_all(root.join(".git").join("info")).unwrap();
+        fs::write(
+            root.join(".git").join("info").join("attributes"),
+            "b.txt filter=evil\n",
+        )
+        .unwrap();
+        git(&root, &["config", "filter.evil.clean", &program]);
+        fs::write(root.join("a.txt"), "two\n").unwrap();
+        git(&root, &["add", "a.txt"]);
+        // Positive control, then a fresh timestamp for the provider.
+        touch_later(&root.join("b.txt"));
+        git(&root, &["status", "--porcelain"]);
+        assert!(
+            marker.exists(),
+            "the filter must fire for unhardened status"
+        );
+        fs::remove_file(&marker).unwrap();
+        touch_later(&root.join("b.txt"));
+        let provider = GitProvider::new(&root).unwrap();
+        let state = provider.staged_state(".").unwrap();
+        provider.commit(".", "change a", &state).unwrap();
+        assert!(!marker.exists(), "the commit ran a filter");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_filter_driver_name_that_is_not_utf8_refuses() {
+        let root = repository();
+        let config = root.join(".git").join("config");
+        let mut bytes = fs::read(&config).unwrap();
+        bytes.extend_from_slice(b"[filter \"\xff\"]\n\tclean = x\n");
+        fs::write(&config, bytes).unwrap();
+        let provider = GitProvider::new(&root).unwrap();
+        let error = provider.status(".").unwrap_err();
+        assert_eq!(error.code, FailureCode::CapabilityDenied);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_multibyte_config_key_is_read_without_failing() {
+        let root = repository();
+        let config = root.join(".git").join("config");
+        let text = fs::read_to_string(&config).unwrap();
+        fs::write(&config, text + "[a \"\u{e9}\u{e9}\u{e9}\"]\n\tb = 1\n").unwrap();
+        let provider = GitProvider::new(&root).unwrap();
+        provider.status(".").unwrap();
         let _ = fs::remove_dir_all(root);
     }
 
