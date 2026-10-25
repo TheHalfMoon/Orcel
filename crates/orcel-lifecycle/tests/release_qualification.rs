@@ -588,8 +588,6 @@ fn installed_release_fits_the_400_mb_budget() {
     );
 }
 
-/// One MCP session over `orcel mcp stdio`, the entrypoint every supported
-/// local client configuration launches, driven one request at a time.
 /// Kills (as a crash) every orceld started from the install at `root`,
 /// and only those; returns how many.
 fn kill_installed_orceld(root: &Path) -> usize {
@@ -610,6 +608,8 @@ fn kill_installed_orceld(root: &Path) -> usize {
         .unwrap_or(0)
 }
 
+/// One MCP session over `orcel mcp stdio`, the entrypoint every supported
+/// local client configuration launches, driven one request at a time.
 struct McpStdio {
     child: std::process::Child,
     stdin: Option<std::process::ChildStdin>,
