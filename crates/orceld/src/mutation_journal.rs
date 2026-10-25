@@ -59,6 +59,22 @@ pub(crate) enum Postcondition {
         before_kind: String,
         before_sha256: Option<String>,
     },
+    /// Git (target: the repository): `refs/heads/<branch>` created at
+    /// `head` and checked out.
+    GitBranch { branch: String, head: String },
+    /// Git: one commit on `branch` with parent `parent` and a message
+    /// whose normalized SHA-256 is `message_sha256` (never the message).
+    GitCommit {
+        branch: String,
+        parent: String,
+        message_sha256: String,
+    },
+    /// Git index changes (stage, unstage): not probed; a dispatched one
+    /// is unknown.
+    GitIndex,
+    /// A network effect (push, fetch): never probed, so a dispatched one
+    /// is unknown, and so is an error after dispatch.
+    Remote,
 }
 
 /// One approved mutation, as journaled.
@@ -279,6 +295,10 @@ pub(crate) fn reconcile(mutation: &Mutation) -> Reconciled {
                 _ => Reconciled::Unknown,
             }
         }
+        Postcondition::GitBranch { .. } | Postcondition::GitCommit { .. } => {
+            crate::git_mutation::reconcile(root, &mutation.target, &mutation.postcondition)
+        }
+        Postcondition::GitIndex | Postcondition::Remote => Reconciled::Unknown,
         Postcondition::Absent {
             before_kind,
             before_sha256,
@@ -620,24 +640,32 @@ impl Intent {
 
 /// Runs one journaled mutation: `pending` before `approve`, `dispatched`
 /// before `act`, then the outcome. A failure of `approve` abandons the
-/// intent; `act`'s result settles it.
+/// intent; `act`'s result settles it (`unknown` for a failed network
+/// effect).
 pub(crate) fn journaled<T>(
     sink: Sink,
     mutation: Mutation,
     approve: impl FnOnce() -> Result<(), ProviderError>,
     act: impl FnOnce() -> Result<T, ProviderError>,
 ) -> Result<T, ProviderError> {
+    let remote = mutation.postcondition == Postcondition::Remote;
     let mut intent = pending(sink, mutation)?;
     if let Err(refusal) = approve() {
         intent.abandon(match refusal.code {
             FailureCode::ApprovalDenied => "approval_denied",
+            FailureCode::TargetStale => "target_stale",
             _ => "approval_unavailable",
         });
         return Err(refusal);
     }
     intent.dispatched()?;
     let result = act();
-    intent.settle(if result.is_ok() { "done" } else { "failed" });
+    intent.settle(match (&result, remote) {
+        (Ok(_), _) => "done",
+        // A network effect that errs may still have reached the remote.
+        (Err(_), true) => "unknown",
+        (Err(_), false) => "failed",
+    });
     result
 }
 
@@ -689,3 +717,7 @@ pub(crate) mod test_support {
 #[cfg(test)]
 #[path = "mutation_journal_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "mutation_journal_git_tests.rs"]
+mod git_tests;

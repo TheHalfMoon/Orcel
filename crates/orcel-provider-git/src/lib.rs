@@ -6,7 +6,7 @@ pub use fetch::{
     destination_ref, parse_destination, source_ref, ApprovedFetch, FetchPreview,
     GitFetchDestination, SystemResolver,
 };
-pub use mutation::GitMutationState;
+pub use mutation::{normalized_commit_message, BranchTip, GitMutationState};
 
 use orcel_contracts::FailureCode;
 use serde_json::{json, Value};

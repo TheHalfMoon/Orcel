@@ -29,6 +29,34 @@ impl GitMutationState {
     }
 }
 
+/// The tip of a local branch, read to reconcile an approved branch
+/// creation or commit after a crash (SG-000120 RJ-02).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchTip {
+    pub head: String,
+    pub parents: Vec<String>,
+    /// The tip's message, normalized by [`normalized_commit_message`].
+    /// Callers compare it and must not record it.
+    pub message: String,
+}
+
+/// A commit message as Git's default whitespace cleanup leaves it: lines
+/// without trailing whitespace, no leading or trailing blank lines, and
+/// runs of blank lines collapsed to one.
+pub fn normalized_commit_message(message: &str) -> String {
+    let mut lines: Vec<&str> = Vec::new();
+    for line in message.lines().map(str::trim_end) {
+        if line.is_empty() && lines.last().is_none_or(|last| last.is_empty()) {
+            continue;
+        }
+        lines.push(line);
+    }
+    while lines.last().is_some_and(|last| last.is_empty()) {
+        lines.pop();
+    }
+    lines.join("\n")
+}
+
 struct DisabledHooksDir(PathBuf);
 
 impl DisabledHooksDir {
@@ -257,6 +285,54 @@ impl GitProvider {
             "head": new_head,
             "branch": result_branch,
             "parent": parent,
+        }))
+    }
+
+    /// The tip of `refs/heads/<branch>` in the repository at `relative`;
+    /// `None` when the branch does not exist. Read-only.
+    pub fn branch_tip(
+        &self,
+        relative: &str,
+        branch: &str,
+    ) -> Result<Option<BranchTip>, GitProviderError> {
+        validate_branch_input(branch)?;
+        let repo = self.repository_root(relative)?;
+        let full = format!("refs/heads/{branch}");
+        // for-each-ref exits 0 when nothing matches, so a missing branch is
+        // told apart from a failure; the exact name is matched below.
+        let refs = self.run_git(
+            &repo,
+            &[
+                "for-each-ref",
+                "--format=%(refname)%00%(objectname)",
+                full.as_str(),
+            ],
+        )?;
+        if refs.stdout_truncated {
+            return Err(provider_error("Git ref evidence exceeded its bound"));
+        }
+        let Some(head) = refs.stdout.lines().find_map(|line| {
+            let (name, object) = line.split_once('\0')?;
+            (name == full).then(|| object.trim().to_ascii_lowercase())
+        }) else {
+            return Ok(None);
+        };
+        if head.len() != 40 || !head.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(provider_error("Git returned an invalid branch object id"));
+        }
+        let parents = self.run_git(&repo, &["show", "-s", "--format=%P", head.as_str()])?;
+        let message = self.run_git(&repo, &["show", "-s", "--format=%B", head.as_str()])?;
+        if parents.stdout_truncated || message.stdout_truncated {
+            return Err(provider_error("Git commit evidence exceeded its bound"));
+        }
+        Ok(Some(BranchTip {
+            parents: parents
+                .stdout
+                .split_whitespace()
+                .map(str::to_ascii_lowercase)
+                .collect(),
+            message: normalized_commit_message(&message.stdout),
+            head,
         }))
     }
 

@@ -1,12 +1,27 @@
+use crate::mutation_journal::{self, Postcondition, Reconciled, Sink};
 use orcel_approval::{now_ms, ApprovalBroker, ApprovalPrompt, ConsumeExpectation};
 use orcel_contracts::{FailureCode, RequestEnvelope};
 use orcel_policy::{Workspace, POLICY_REVISION};
 use orcel_provider_fs::ProviderError;
-use orcel_provider_git::{GitMutationState, GitProvider, GitProviderError};
+use orcel_provider_git::{
+    normalized_commit_message, GitMutationState, GitProvider, GitProviderError,
+};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use std::path::Path;
 
 pub fn dispatch(
+    workspace: &Workspace,
+    approval: &impl ApprovalBroker,
+    request: &RequestEnvelope,
+) -> Result<Option<Value>, ProviderError> {
+    dispatch_to(mutation_journal::global(), workspace, approval, request)
+}
+
+/// Local Git mutations, journaled to `sink` (SG-000120 RJ-02): `pending`
+/// before the approval, `dispatched` before Git runs.
+pub(crate) fn dispatch_to(
+    sink: Sink,
     workspace: &Workspace,
     approval: &impl ApprovalBroker,
     request: &RequestEnvelope,
@@ -47,26 +62,88 @@ pub fn dispatch(
         operation.summary(&approved_state),
         digest.clone(),
     );
-    let token = require_approval(approval, &prompt)?;
+    let journaled = mutation_journal::Mutation {
+        capability: request.capability.clone(),
+        operation: request.operation.clone(),
+        approval_digest: digest.clone(),
+        workspace_id: workspace.id.clone(),
+        policy_revision: POLICY_REVISION.to_owned(),
+        root: workspace.root.clone(),
+        target: repository.to_owned(),
+        postcondition: operation.postcondition(&approved_state),
+    };
+    mutation_journal::journaled(
+        sink,
+        journaled,
+        || {
+            let token = require_approval(approval, &prompt)?;
+            let current_state = operation.state(&provider, repository)?;
+            if current_state != approved_state {
+                return Err(ProviderError::new(
+                    FailureCode::TargetStale,
+                    "Git repository state changed after local approval",
+                ));
+            }
+            require_expected_head(&current_state, expected_head)?;
+            approval
+                .consume(
+                    &token,
+                    &ConsumeExpectation::new(digest, workspace.id.clone(), POLICY_REVISION),
+                    now_ms(),
+                )
+                .map_err(|error| ProviderError::new(error.code, error.message))
+        },
+        || operation.apply(&provider, repository, &approved_state),
+    )
+    .map(Some)
+}
 
-    let current_state = operation.state(&provider, repository)?;
-    if current_state != approved_state {
-        return Err(ProviderError::new(
-            FailureCode::TargetStale,
-            "Git repository state changed after local approval",
-        ));
+/// SHA-256 of a commit message as Git stores it.
+fn message_sha256(message: &str) -> String {
+    hex_lower(&Sha256::digest(
+        normalized_commit_message(message).as_bytes(),
+    ))
+}
+
+/// How an exited orceld's dispatched branch creation or commit turned
+/// out, read from the repository's refs only. Any read failure is unknown.
+pub(crate) fn reconcile(
+    root: &Path,
+    repository: &str,
+    postcondition: &Postcondition,
+) -> Reconciled {
+    let Ok(provider) = GitProvider::new(root) else {
+        return Reconciled::Unknown;
+    };
+    match postcondition {
+        Postcondition::GitBranch { branch, head } => {
+            match provider.branch_tip(repository, branch) {
+                Ok(None) => Reconciled::NothingDone,
+                Ok(Some(tip)) if &tip.head == head => match provider.branch_state(repository) {
+                    Ok(state) if state.branch.as_deref() == Some(branch.as_str()) => {
+                        Reconciled::Done
+                    }
+                    _ => Reconciled::Unknown,
+                },
+                _ => Reconciled::Unknown,
+            }
+        }
+        Postcondition::GitCommit {
+            branch,
+            parent,
+            message_sha256: expected,
+        } => match provider.branch_tip(repository, branch) {
+            Ok(Some(tip)) if &tip.head == parent => Reconciled::NothingDone,
+            Ok(Some(tip))
+                if tip.parents == [parent.clone()]
+                    && &hex_lower(&Sha256::digest(tip.message.as_bytes())) == expected =>
+            {
+                Reconciled::Done
+            }
+            _ => Reconciled::Unknown,
+        },
+        _ => Reconciled::Unknown,
     }
-    require_expected_head(&current_state, expected_head)?;
-    approval
-        .consume(
-            &token,
-            &ConsumeExpectation::new(digest, workspace.id.clone(), POLICY_REVISION),
-            now_ms(),
-        )
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
-
-    let result = operation.apply(&provider, repository, &approved_state)?;
-    Ok(Some(result))
 }
 
 #[derive(Debug)]
@@ -90,6 +167,22 @@ impl Mutation {
             Self::Commit { .. } => provider.staged_state(repository),
         }
         .map_err(map_git_error)
+    }
+
+    /// What the effect must leave, as journaled.
+    fn postcondition(&self, approved: &GitMutationState) -> Postcondition {
+        match self {
+            Self::BranchCreate { branch } => Postcondition::GitBranch {
+                branch: branch.clone(),
+                head: approved.head.clone(),
+            },
+            Self::Stage { .. } | Self::Unstage { .. } => Postcondition::GitIndex,
+            Self::Commit { message } => Postcondition::GitCommit {
+                branch: approved.branch.clone().unwrap_or_default(),
+                parent: approved.head.clone(),
+                message_sha256: message_sha256(message),
+            },
+        }
     }
 
     fn action(&self) -> &'static str {
