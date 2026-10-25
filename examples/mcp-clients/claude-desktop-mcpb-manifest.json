@@ -193,6 +193,18 @@
       "description": "Fetch one public HTTPS URL with GET after local approval of the destination."
     },
     {
+      "name": "report_commit",
+      "description": "Create the previewed report, create-only, after local approval of exactly that file; Orcel then verifies it independently."
+    },
+    {
+      "name": "report_preview",
+      "description": "Check a proposed report against its task without writing anything."
+    },
+    {
+      "name": "report_start",
+      "description": "Start a local report task over 1 to 8 workspace text files; reads only."
+    },
+    {
       "name": "web_search",
       "description": "Search the web through a provider the user enabled locally, after local approval of the query."
     },
