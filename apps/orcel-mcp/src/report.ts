@@ -32,7 +32,8 @@ const MAX_PATH_CHARS = 1024;
 export const REPORT_KERNEL_SHAPES = [
   ["report", "start"],
   ["report", "preview"],
-  ["report", "commit"]
+  ["report", "commit"],
+  ["report", "resume_summary"]
 ] as const;
 
 const noControl = (value: string) => !/\p{Cc}/u.test(value);
@@ -91,6 +92,13 @@ export function reportCommitSchema(defaultWorkspace: string) {
   });
 }
 
+export function taskResumeSummarySchema(defaultWorkspace: string) {
+  return z.object({
+    workspace_id: z.string().min(1).default(defaultWorkspace),
+    task_id: taskId
+  });
+}
+
 export function registerReportTools(server: McpServer, kernel: KernelClient, defaultWorkspace: string): void {
   server.registerTool(
     "report_start",
@@ -143,6 +151,25 @@ export function registerReportTools(server: McpServer, kernel: KernelClient, def
           operation: "commit",
           arguments: { task_id, name, content, expected_sha256 },
           timeoutMs: APPROVAL_TIMEOUT_MS
+        })
+      )
+  );
+
+  // SG-000120 RJ-03: read-only, local-only, the caller's own task.
+  server.registerTool(
+    "task_resume_summary",
+    {
+      description:
+        "After a reconnect, read what one of this session's report tasks did before Orcel stopped: completed steps (do NOT re-run them), steps whose outcome is unknown (do not assume they succeeded or failed) with the check that settles each, and a short note. Inputs appear only as keyed fingerprints. Reads only; another session's or workspace's task is refused.",
+      inputSchema: taskResumeSummarySchema(defaultWorkspace)
+    },
+    async ({ workspace_id, task_id }) =>
+      projectKernelResult(
+        await kernel.call({
+          workspaceId: workspace_id,
+          capability: "report",
+          operation: "resume_summary",
+          arguments: { task_id }
         })
       )
   );

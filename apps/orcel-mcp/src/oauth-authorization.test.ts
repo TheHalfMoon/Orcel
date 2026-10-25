@@ -940,6 +940,7 @@ test("scope to tool matrix covers exactly the canonical catalog with default den
     "report_commit",
     "report_preview",
     "report_start",
+    "task_resume_summary",
     "web_fetch",
     "web_search"
   ]);

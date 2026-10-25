@@ -10,6 +10,13 @@ file in its header and lists Orcel's changes there, and
 docs/orcel/control_room_agentkit_provenance.json records the donor blob of
 every file.
 
+SG-000120 RJ-03 also ports the tool-call journal classification from the
+same commit (packages/core/src/agent/tool-call-journal.ts, blob
+be77f428f557b2e777665bfacd0d6dd51a58ff1d; packages/core declares "license":
+"MIT" in its package.json) into crates/orcel-journal/src/resume.rs, whose
+header lists Orcel's changes; docs/orcel/journal_resume_provenance.json
+records the donor blob.
+
 packages/agentkit declares "license": "MIT" in its package.json and ships no
 license text of its own. The text below is the MIT license the same
 repository carries in packages/vscode-extension/LICENSE.md, with its

@@ -779,7 +779,12 @@ fn installed_release_serves_the_report_task_to_a_local_client() {
         .iter()
         .filter_map(|tool| tool["name"].as_str())
         .collect();
-    for tool in ["report_start", "report_preview", "report_commit"] {
+    for tool in [
+        "report_start",
+        "report_preview",
+        "report_commit",
+        "task_resume_summary",
+    ] {
         assert!(names.contains(&tool), "{tool} is listed locally: {names:?}");
     }
     assert!(
@@ -804,6 +809,22 @@ fn installed_release_serves_the_report_task_to_a_local_client() {
     assert!(!failed, "{preview}");
     let digest = preview["result"]["sha256"].as_str().unwrap().to_string();
     assert_eq!(digest, sha256_bytes(content.as_bytes()));
+
+    // SG-000120 RJ-03: the session reads its own task's resume summary:
+    // completed steps as kinds and keyed fingerprints, never file text.
+    let (failed, summary) = mcp.call(
+        "task_resume_summary",
+        serde_json::json!({ "task_id": task }),
+    );
+    assert!(!failed, "{summary}");
+    let kinds: Vec<&str> = summary["result"]["completed"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|entry| entry["kind"].as_str())
+        .collect();
+    assert_eq!(kinds, ["observe", "preview"], "{summary}");
+    assert!(!summary.to_string().contains("north,Q3"), "{summary}");
 
     // An existing destination is refused at preview, before any approval,
     // and the user's file is untouched. A commit of a report the last

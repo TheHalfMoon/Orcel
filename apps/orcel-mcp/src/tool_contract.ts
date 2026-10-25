@@ -264,6 +264,12 @@ export const TOOL_CONTRACT: Readonly<Record<string, ToolContractEntry>> = {
     outputBound: "evidence only; creates one UTF-8 report of at most 256 KiB, never overwriting",
     annotations: change("Create local report", { destructive: false, idempotent: false })
   },
+  // SG-000120 RJ-03: the resume summary of the caller's own report task.
+  task_resume_summary: {
+    capability: "report", operation: "resume_summary", effect: "read", approval: "none", remote: "local_only",
+    outputBound: "the task's bounded steps as kinds, outcomes and keyed fingerprints, the checks for unknown steps, and a note of at most 4 KiB; never source or report text",
+    annotations: read("Read local task resume summary")
+  },
   // SG-000108 slice 3c: the live isolated browser, `browser_structured` only.
   browser_page_open: {
     capability: "browser.page", operation: "open", effect: "read", approval: "none", remote: "local_only",
@@ -389,7 +395,8 @@ export const DESKTOP_STRUCTURED_TOOLS: readonly string[] = Object.freeze([
   "web_search",
   "report_start",
   "report_preview",
-  "report_commit"
+  "report_commit",
+  "task_resume_summary"
 ] as const);
 
 /**

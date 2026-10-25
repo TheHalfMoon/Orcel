@@ -12,7 +12,7 @@ cd "$(dirname "$0")/../.."
 : "${ORCEL_LOOPBACK_TOKEN:?export ORCEL_LOOPBACK_TOKEN first}"
 ORCELD="${ORCEL_DAEMON:-./target/debug/orceld.exe}"
 DIST="apps/orcel-mcp/dist"
-EXPECTED="clipboard_read clipboard_write desktop_cursor_get desktop_element_invoke desktop_element_scroll desktop_element_select desktop_element_set_value desktop_element_toggle desktop_input_execute desktop_window_action desktop_window_capture desktop_window_list desktop_window_tree fs_edit fs_find fs_list fs_mkdir fs_move fs_read fs_read_range fs_remove fs_search fs_stat fs_write fs_write_preview git_branch_create git_commit git_diff git_fetch git_fetch_preview git_log git_push git_push_preview git_stage git_status git_unstage process_spawn report_commit report_preview report_start system_status web_fetch web_search workspace_get"
+EXPECTED="clipboard_read clipboard_write desktop_cursor_get desktop_element_invoke desktop_element_scroll desktop_element_select desktop_element_set_value desktop_element_toggle desktop_input_execute desktop_window_action desktop_window_capture desktop_window_list desktop_window_tree fs_edit fs_find fs_list fs_mkdir fs_move fs_read fs_read_range fs_remove fs_search fs_stat fs_write fs_write_preview git_branch_create git_commit git_diff git_fetch git_fetch_preview git_log git_push git_push_preview git_stage git_status git_unstage process_spawn report_commit report_preview report_start system_status task_resume_summary web_fetch web_search workspace_get"
 
 check() {
   names="$1"
@@ -21,7 +21,7 @@ check() {
     echo "FAIL $label: got: $names"
     exit 1
   fi
-  echo "PASS $label (44 tools)"
+  echo "PASS $label (45 tools)"
 }
 
 # Path 1: Inspector CLI over stdio.

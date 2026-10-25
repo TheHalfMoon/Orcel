@@ -159,7 +159,12 @@ export function attachProfile(request: KernelRequest, profile: string | null): K
 
 export class KernelClient {
   readonly sessionId = randomUUID();
-  readonly child: ChildProcessWithoutNullStreams;
+  /**
+   * The current orceld. SG-000120 RJ-03: when it exits (a crash), the next
+   * call starts a new one for the same session, so a client can read what
+   * its task did; requests that were in flight are rejected, never re-sent.
+   */
+  child: ChildProcessWithoutNullStreams;
   readonly pending = new Map<string, Pending>();
 
   readonly remote: RemoteDispatchContext | null;
@@ -167,30 +172,44 @@ export class KernelClient {
   /** The local transport's tool surface profile, stamped on every request. */
   readonly profile: string | null;
 
+  private readonly command: string;
+  private readonly args: readonly string[];
+  private exited = false;
+  private closed = false;
+
   constructor(
     command = process.env.ORCEL_DAEMON ?? "orceld",
     remote: RemoteDispatchContext | null = null,
-    profile: string | null = null
+    profile: string | null = null,
+    args: readonly string[] = []
   ) {
     this.remote = remote === null ? null : Object.freeze({ ...remote, scopes: [...remote.scopes] });
     this.profile = profile;
-    this.child = spawn(command, [], {
+    this.command = command;
+    this.args = args;
+    this.child = this.spawnDaemon();
+  }
+
+  private spawnDaemon(): ChildProcessWithoutNullStreams {
+    const child = spawn(this.command, [...this.args], {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
       env: buildDaemonEnv()
     });
 
-    this.child.stderr.on("data", (chunk: Buffer) => {
+    child.stderr.on("data", (chunk: Buffer) => {
       process.stderr.write("[orceld] " + chunk.toString("utf8"));
     });
 
-    const lines = createInterface({ input: this.child.stdout });
+    const lines = createInterface({ input: child.stdout });
     lines.on("line", (line) => this.handleLine(line));
 
-    this.child.on("error", (error) => {
+    child.on("error", (error) => {
+      if (child === this.child) this.exited = true;
       this.rejectAll(new Error("orceld failed to start: " + error.message));
     });
-    this.child.on("exit", (code, signal) => {
+    child.on("exit", (code, signal) => {
+      if (child === this.child) this.exited = true;
       this.rejectAll(
         new Error(
           "orceld exited while requests were pending (code=" +
@@ -201,6 +220,7 @@ export class KernelClient {
         )
       );
     });
+    return child;
   }
 
   async call(input: {
@@ -221,6 +241,11 @@ export class KernelClient {
     });
     attachRemoteContext(request, this.remote);
     attachProfile(request, this.profile);
+    if (this.exited && !this.closed) {
+      // Only for a new request: nothing that was in flight is sent again.
+      this.exited = false;
+      this.child = this.spawnDaemon();
+    }
 
     const timeoutMs = input.timeoutMs ?? 30_000;
     const response = new Promise<KernelResponse>((resolve, reject) => {
@@ -245,6 +270,7 @@ export class KernelClient {
   }
 
   close(): void {
+    this.closed = true;
     this.rejectAll(new Error("kernel client closed"));
     this.child.stdin.end();
     if (!this.child.killed) {

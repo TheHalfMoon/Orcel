@@ -205,6 +205,10 @@
       "description": "Start a local report task over 1 to 8 workspace text files; reads only."
     },
     {
+      "name": "task_resume_summary",
+      "description": "After a reconnect, read what this session's report task did and what is unknown; reads only."
+    },
+    {
       "name": "web_search",
       "description": "Search the web through a provider the user enabled locally, after local approval of the query."
     },
