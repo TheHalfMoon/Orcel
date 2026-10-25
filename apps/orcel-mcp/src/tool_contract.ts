@@ -248,6 +248,22 @@ export const TOOL_CONTRACT: Readonly<Record<string, ToolContractEntry>> = {
     outputBound: "at most 10 untrusted results; titles 300 and snippets 1000 characters; provider response at most 512 KiB",
     annotations: { title: "Search the web", readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true }
   },
+  // SG-000127 slice 3: the SG-000126 report task, local transports only.
+  report_start: {
+    capability: "report", operation: "start", effect: "read", approval: "none", remote: "local_only",
+    outputBound: "one task id and 1..8 labelled untrusted source texts, each within the 1 MiB provider read limit",
+    annotations: { ...read("Start local report task"), idempotentHint: false }
+  },
+  report_preview: {
+    capability: "report", operation: "preview", effect: "preview", approval: "none", remote: "local_only",
+    outputBound: "the destination, size and SHA-256 of one proposed report",
+    annotations: { ...read("Preview local report"), idempotentHint: false }
+  },
+  report_commit: {
+    capability: "report", operation: "commit", effect: "write", approval: "SOFT", remote: "local_only",
+    outputBound: "evidence only; creates one UTF-8 report of at most 256 KiB, never overwriting",
+    annotations: change("Create local report", { destructive: false, idempotent: false })
+  },
   // SG-000108 slice 3c: the live isolated browser, `browser_structured` only.
   browser_page_open: {
     capability: "browser.page", operation: "open", effect: "read", approval: "none", remote: "local_only",
@@ -370,7 +386,10 @@ export const DESKTOP_STRUCTURED_TOOLS: readonly string[] = Object.freeze([
   "clipboard_read",
   "clipboard_write",
   "web_fetch",
-  "web_search"
+  "web_search",
+  "report_start",
+  "report_preview",
+  "report_commit"
 ] as const);
 
 /**
