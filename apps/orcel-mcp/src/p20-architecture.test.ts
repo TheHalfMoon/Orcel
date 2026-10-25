@@ -189,8 +189,24 @@ test("SG-000094 and SG-000095 are closed and SG-000096 is the only active P20 gr
   }
   // SG-000108 (ORCEL-F3) ran in parallel by founder decision (issue #290)
   // and SG-000126 (ORCEL-F2) followed it by founder sequencing (issue #435);
-  // both are outside DESKAL-P20 and closed, and no other grain may be open.
-  assert.deepEqual(open.sort(), ["SG-000096"]);
+  // both are outside DESKAL-P20 and closed. SG-000127 (ORCEL-F4) follows
+  // them by founder sequencing (issue #446); no other grain may be open.
+  assert.deepEqual(open.sort(), ["SG-000096", "SG-000127"]);
+  const sg127 = readJson<{
+    program: string;
+    state: string;
+    base: string;
+    planning_issue: number;
+    authority_delta: { activation: string; network: string; process: string; privileged: string; filesystem: string };
+  }>(".specgrain/specs/SG-000127.json");
+  assert.equal(sg127.program, "ORCEL-F4");
+  assert.equal(sg127.state, "GRAIN");
+  assert.equal(sg127.planning_issue, 446);
+  assert.equal(sg127.base, "b22b2593ffb6be6afd81b02c6f2cee9a566c7f83");
+  for (const key of ["activation", "network", "process", "privileged"] as const) {
+    assert.ok(sg127.authority_delta[key].startsWith("None."), key);
+  }
+  assert.equal(sg127.authority_delta.filesystem, "None beyond SG-000126.");
   const sg126 = readJson<{
     program: string;
     state: string;
