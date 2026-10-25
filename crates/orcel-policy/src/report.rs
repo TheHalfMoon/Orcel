@@ -27,12 +27,15 @@ pub const REPORT_TASK_ID_PREFIX: &str = "rpt-";
 
 /// The admitted shapes. `report/start` observes the sources and opens a
 /// task (read-only); `report/preview` checks a proposal (no effect);
-/// `report/commit` creates the report after one SOFT approval. None is
+/// `report/commit` creates the report after one SOFT approval;
+/// `report/resume_summary` (SG-000120 RJ-03) reads what a task did and
+/// what is unknown (read-only, the caller's own task only). None is
 /// remotely mappable.
 pub const REPORT_SHAPES: &[(&str, &str)] = &[
     ("report", "start"),
     ("report", "preview"),
     ("report", "commit"),
+    ("report", "resume_summary"),
 ];
 
 pub fn is_report_shape(capability: &str, operation: &str) -> bool {
@@ -226,9 +229,17 @@ pub fn validate_report(request: &RequestEnvelope) -> Result<(), PolicyError> {
             }
             Ok(())
         }
+        "resume_summary" => {
+            only_fields(arguments, operation, &["task_id"])?;
+            let task = string_field(arguments, operation, "task_id")?;
+            if !is_report_task_id(task) {
+                return Err(invalid("report/resume_summary requires an orceld task id"));
+            }
+            Ok(())
+        }
         other => Err(crate::policy_error(
             FailureCode::CapabilityDenied,
-            format!("report accepts only start, preview and commit, not {other}"),
+            format!("report accepts only start, preview, commit and resume_summary, not {other}"),
         )),
     }
 }

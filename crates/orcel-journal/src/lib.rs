@@ -24,6 +24,8 @@
 //! states, outcomes), never secret values or file contents; the journal
 //! records, it never authorizes.
 
+pub mod resume;
+
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::fs::File;

@@ -76,6 +76,9 @@ pub(super) struct TaskLine {
     next_step: u64,
     created_at_ms: u64,
     updated_at_ms: u64,
+    /// SG-000120 RJ-03: the starting session's keyed fingerprint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session: Option<String>,
 }
 
 /// What a pending commit needs to be reconciled without its orceld.
@@ -182,6 +185,7 @@ pub(super) fn task_line(task: &ReportTask) -> TaskLine {
         next_step: task.next_step,
         created_at_ms: task.created_at_ms,
         updated_at_ms: task.updated_at_ms,
+        session: task.session.clone(),
     }
 }
 
@@ -242,6 +246,7 @@ fn restored_task(line: TaskLine, run: &str) -> ReportTask {
         next_step,
         created_at_ms: line.created_at_ms,
         updated_at_ms: line.updated_at_ms,
+        session: line.session,
     }
 }
 
