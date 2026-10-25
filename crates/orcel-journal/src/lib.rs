@@ -12,6 +12,9 @@
 //!   but unwritten after a power loss) are dropped; a torn line, a strict
 //!   prefix whose JSON ends early, is skipped and counted in
 //!   [`Lines::torn`]; any other unreadable line fails closed.
+//! - Lines are at most [`MAX_LINE_BYTES`] and a journal at most
+//!   [`MAX_JOURNAL_BYTES`]: a longer line is refused at append, a larger
+//!   journal fails closed at read.
 //! - [`Journal`] is one exclusive writer: a second writer of the same
 //!   journal is refused while the first holds it (an OS file lock on
 //!   `<journal>.lock`, released when the handle closes, including on process
@@ -27,6 +30,11 @@ use std::fs::File;
 use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
 use std::path::{Path, PathBuf};
 
+/// Longest line, newline included.
+pub const MAX_LINE_BYTES: usize = 64 * 1024;
+/// Largest journal a reader accepts.
+pub const MAX_JOURNAL_BYTES: u64 = 16 * 1024 * 1024;
+
 /// Why a journal operation failed. Messages never quote journal content.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JournalError {
@@ -38,6 +46,8 @@ pub enum JournalError {
     Unreadable,
     /// Another writer holds the journal.
     Busy,
+    /// A line or the journal exceeds its bound.
+    TooLarge,
 }
 
 impl std::fmt::Display for JournalError {
@@ -47,6 +57,7 @@ impl std::fmt::Display for JournalError {
             Self::Read => "the journal could not be read",
             Self::Unreadable => "the journal is unreadable",
             Self::Busy => "another writer holds the journal",
+            Self::TooLarge => "a journal line or the journal exceeds its bound",
         })
     }
 }
@@ -65,6 +76,9 @@ pub struct Lines<T> {
 pub fn append_line<T: Serialize>(path: &Path, line: &T) -> Result<(), JournalError> {
     let mut bytes = serde_json::to_vec(line).map_err(|_| JournalError::Write)?;
     bytes.push(b'\n');
+    if bytes.len() > MAX_LINE_BYTES {
+        return Err(JournalError::TooLarge);
+    }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|_| JournalError::Write)?;
     }
@@ -119,6 +133,11 @@ fn torn_tail(path: &Path) -> Result<bool, JournalError> {
 
 /// Every line of the journal, in order. A missing journal has none.
 pub fn read_lines<T: DeserializeOwned>(path: &Path) -> Result<Lines<T>, JournalError> {
+    if let Ok(metadata) = std::fs::metadata(path) {
+        if metadata.len() > MAX_JOURNAL_BYTES {
+            return Err(JournalError::TooLarge);
+        }
+    }
     let text = match std::fs::read(path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -297,6 +316,26 @@ mod tests {
         assert_eq!(
             read_lines::<Line>(&path).unwrap_err(),
             JournalError::Unreadable
+        );
+    }
+
+    #[test]
+    fn lines_and_journals_are_bounded() {
+        let path = dir("bounds").join("intents.jsonl");
+        let long = line("pending", &"x".repeat(MAX_LINE_BYTES));
+        assert_eq!(
+            append_line(&path, &long).unwrap_err(),
+            JournalError::TooLarge
+        );
+        assert!(!path.exists(), "a refused line writes nothing");
+        let fits = line("pending", &"x".repeat(MAX_LINE_BYTES - 64));
+        append_line(&path, &fits).unwrap();
+        let file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        file.set_len(MAX_JOURNAL_BYTES + 1).unwrap();
+        assert_eq!(
+            read_lines::<Line>(&path).unwrap_err(),
+            JournalError::TooLarge,
+            "an oversized journal fails closed, it is not read in part"
         );
     }
 
