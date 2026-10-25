@@ -693,3 +693,94 @@ fn rj02_an_opaque_effect_hands_its_token_and_is_never_guessed() {
         Some("reconciled_unknown")
     );
 }
+
+// ---- a dependent step after an unknown outcome ----
+
+#[test]
+fn rj02_a_dependent_step_after_an_unknown_outcome_is_refused_then_explicitly_approved() {
+    struct Recording(std::cell::RefCell<Vec<String>>);
+    impl orcel_approval::ApprovalBroker for Recording {
+        fn request_token(
+            &self,
+            prompt: &orcel_approval::ApprovalPrompt,
+        ) -> Result<orcel_approval::ApprovedToken, orcel_approval::ApprovalError> {
+            self.0.borrow_mut().push(prompt.summary.clone());
+            FixedApprovalBroker(ApprovalDecision::Approved).request_token(prompt)
+        }
+        fn consume(
+            &self,
+            token: &orcel_approval::ApprovedToken,
+            expected: &orcel_approval::ConsumeExpectation,
+            now_ms: u64,
+        ) -> Result<(), orcel_approval::ApprovalError> {
+            FixedApprovalBroker(ApprovalDecision::Approved).consume(token, expected, now_ms)
+        }
+    }
+    let scene = Scene::new("dependent");
+    std::fs::write(scene.root().join("a.txt"), "half-written").unwrap();
+    // A crashed run dispatched an edit of a.txt; what is there now matches
+    // neither side, so it reconciles unknown.
+    let crashed = exited_journal(scene.journal_path(), "crashed");
+    leave_open(
+        &crashed,
+        "crashed.m0",
+        mutation(
+            &scene,
+            "a.txt",
+            Postcondition::File {
+                sha256: sha("new"),
+                before: Some(sha("old")),
+            },
+        ),
+        true,
+    );
+    let this = leaked(journal(scene.journal_path(), "this"));
+    restore(this);
+    let sink = Sink::Journal(this);
+    let recording = Recording(std::cell::RefCell::new(Vec::new()));
+    let broker = UnknownNotice {
+        approval: &recording,
+        sink,
+    };
+    let edit = || {
+        request(
+            "fs.edit",
+            "edit",
+            "a.txt",
+            json!({
+                "old": "half",
+                "new": "whole",
+                "expected_sha256": sha(&std::fs::read_to_string(scene.root().join("a.txt")).unwrap())
+            }),
+        )
+    };
+    // Refused once, with nothing asked or changed.
+    let refused = dispatch_fs_mutation_to(sink, &scene.workspace, &broker, &edit()).unwrap_err();
+    assert_eq!(refused.code, FailureCode::TargetStale);
+    assert!(
+        refused.message.contains("unknown outcome"),
+        "{}",
+        refused.message
+    );
+    assert!(recording.0.borrow().is_empty(), "nothing was asked");
+    assert_eq!(
+        std::fs::read_to_string(scene.root().join("a.txt")).unwrap(),
+        "half-written"
+    );
+    // The next request asks for a new approval that names the unknown.
+    dispatch_fs_mutation_to(sink, &scene.workspace, &broker, &edit()).unwrap();
+    assert!(
+        recording.0.borrow()[0].starts_with("UNKNOWN EARLIER OUTCOME"),
+        "{}",
+        recording.0.borrow()[0]
+    );
+    // Done: the target is known again, so the next step asks plainly.
+    dispatch_fs_mutation_to(sink, &scene.workspace, &broker, &edit()).unwrap_err();
+    std::fs::write(scene.root().join("a.txt"), "half again").unwrap();
+    dispatch_fs_mutation_to(sink, &scene.workspace, &broker, &edit()).unwrap();
+    let summaries = recording.0.borrow();
+    assert!(
+        !summaries.last().unwrap().starts_with("UNKNOWN"),
+        "a done step clears the unknown"
+    );
+}
