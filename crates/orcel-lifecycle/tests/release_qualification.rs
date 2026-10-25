@@ -458,18 +458,20 @@ const CLUSTER_BYTES: u64 = 4096;
 
 /// Apparent and allocated bytes of every regular file under `dir`, keyed by
 /// the first two path components below `root` (for example `bin/orcel.exe`
-/// or `versions/<version>`). Links are not followed.
+/// or `versions/<version>`). Links and other non-regular entries are not
+/// followed; they are collected in `skipped` so none can hide bytes.
 fn inventory(
     root: &Path,
     dir: &Path,
     components: &mut std::collections::BTreeMap<String, (u64, u64, u64)>,
+    skipped: &mut Vec<String>,
 ) {
     for entry in fs::read_dir(dir).unwrap() {
         let entry = entry.unwrap();
         let kind = entry.file_type().unwrap();
         let path = entry.path();
         if kind.is_dir() {
-            inventory(root, &path, components);
+            inventory(root, &path, components, skipped);
         } else if kind.is_file() {
             let bytes = entry.metadata().unwrap().len();
             let key = path
@@ -484,6 +486,8 @@ fn inventory(
             slot.0 += bytes;
             slot.1 += bytes.div_ceil(CLUSTER_BYTES) * CLUSTER_BYTES;
             slot.2 += 1;
+        } else {
+            skipped.push(path.display().to_string());
         }
     }
 }
@@ -521,7 +525,14 @@ fn installed_release_fits_the_400_mb_budget() {
     assert_eq!(installed["install"]["version"], manifest["version"]);
 
     let mut components = std::collections::BTreeMap::new();
-    inventory(&root, &root, &mut components);
+    let mut skipped = Vec::new();
+    inventory(&root, &root, &mut components, &mut skipped);
+    // The installer creates only regular files and directories; a link or
+    // reparse point would escape the inventory.
+    assert!(
+        skipped.is_empty(),
+        "non-regular entries in the install root: {skipped:?}"
+    );
     let (bytes, allocated, files) = components.values().fold((0, 0, 0), |sum, part| {
         (sum.0 + part.0, sum.1 + part.1, sum.2 + part.2)
     });
@@ -564,12 +575,13 @@ fn installed_release_fits_the_400_mb_budget() {
         ],
         // Release builds carry no live browser (SG-000108 is
         // `live-browser-dev` only), so no browser is a prerequisite yet.
+        "browser": { "required": false, "counted": false, "reason": "release builds carry no live browser" },
+        // Not measured here: a fresh install has no cache yet. Never
+        // reported as zero.
+        "cache": { "measured": false, "counted": false, "reason": "none exists at a fresh install" },
         "not_shipped": ["live browser worker and runtime (SG-000127 slice 7)", "Windows app (apps/orcel-desktop-preview)"],
     });
     println!("installed-size-report: {report}");
-    if let Some(out) = std::env::var_os("ORCEL_SIZE_REPORT") {
-        fs::write(out, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
-    }
     assert!(
         allocated < INSTALLED_BUDGET_BYTES,
         "installed app uses {allocated} allocated bytes ({bytes} apparent), over the {INSTALLED_BUDGET_BYTES} byte budget"
