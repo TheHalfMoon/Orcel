@@ -345,19 +345,16 @@ struct Unknown {
 }
 
 /// One spelling per target for the unknown-outcome rule: `.` parts and
-/// empty parts dropped, one separator, and (on Windows, whose file names
-/// ignore case) lower case. `a.txt`, `./a.txt` and `A.TXT` are one target.
+/// empty parts dropped, one separator, and lower case (Windows and macOS
+/// file names ignore case; on Linux a false match only adds a refusal).
+/// `a.txt`, `./a.txt` and `A.TXT` are one target.
 fn target_key(target: &str) -> String {
     let joined = target
         .split(['/', '\\'])
         .filter(|part| !part.is_empty() && *part != ".")
         .collect::<Vec<_>>()
         .join("/");
-    if cfg!(windows) {
-        joined.to_lowercase()
-    } else {
-        joined
-    }
+    joined.to_lowercase()
 }
 
 /// How an outcome changes what is known about its target: `Some(true)`
@@ -722,7 +719,7 @@ fn note_unknown_to(sink: Sink, workspace_id: &str, target: &str, intent: &str, o
     let Sink::Journal(journal) = sink else {
         return;
     };
-    let _ = journal.line(&Line::Outcome {
+    let recorded = journal.line(&Line::Outcome {
         schema: SCHEMA.to_owned(),
         intent: intent.to_owned(),
         capability: "report".to_owned(),
@@ -732,6 +729,11 @@ fn note_unknown_to(sink: Sink, workspace_id: &str, target: &str, intent: &str, o
         outcome: "reconciled_unknown".to_owned(),
         at_ms: orcel_approval::now_ms(),
     });
+    if recorded.is_err() {
+        eprintln!(
+            "orceld mutation journal: a report commit's unknown outcome could not be recorded; it holds for this run only"
+        );
+    }
     journal.note(
         workspace_id,
         target,

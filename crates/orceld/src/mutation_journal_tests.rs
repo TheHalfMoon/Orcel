@@ -795,7 +795,7 @@ fn rj02_another_spelling_of_an_unknown_target_is_the_same_target() {
     let aliases: &[&str] = if cfg!(windows) {
         &["./reports/q3.md", r"reports\q3.md", "REPORTS/Q3.MD"]
     } else {
-        &["./reports/q3.md", "reports//q3.md"]
+        &["./reports/q3.md", "reports//q3.md", "REPORTS/Q3.MD"]
     };
     for alias in aliases {
         let refused = pending(sink, mutation(&scene, alias, directory(alias)));
