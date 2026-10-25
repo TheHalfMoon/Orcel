@@ -513,7 +513,7 @@ fn rj02_compaction_keeps_a_live_runs_dispatched_commit() {
 }
 
 #[test]
-fn rj02_the_title_is_journaled_only_as_a_hash() {
+fn rj02_the_title_is_never_journaled() {
     let scene = Scene::new("rj02-title");
     let path = journal_path(&scene);
     let tasks = TaskRegistry::with_journal(path.clone());
@@ -523,6 +523,40 @@ fn rj02_the_title_is_journaled_only_as_a_hash() {
         !text.contains("Q3 revenue"),
         "the planner title is not kept"
     );
-    assert!(text.contains(&super::super::sha256_hex(b"Q3 revenue")));
     let _ = task;
+}
+
+#[test]
+fn rj02_the_newest_open_attempt_of_a_task_decides_it() {
+    // An earlier denied attempt lost its abandoned line; the later attempt
+    // was dispatched and wrote the approved report before the crash.
+    let scene = Scene::new("rj02-two-attempts");
+    let tasks = TaskRegistry::new();
+    let (task, report) = proposed(&scene, &tasks);
+    let record = tasks
+        .lock()
+        .iter()
+        .find(|known| known.id == task)
+        .cloned()
+        .unwrap();
+    let proposal = record.proposal.clone().unwrap();
+    let journal = ReportJournal::new(journal_path(&scene), exited_owner("crashed"));
+    journal.snapshot(&record);
+    for (intent, dispatched) in [(format!("{task}.c0"), false), (format!("{task}.c1"), true)] {
+        journal
+            .pending(
+                &intent,
+                commit_line(&record, &scene.workspace.root, &proposal, &"d".repeat(64)),
+            )
+            .unwrap();
+        if dispatched {
+            journal.dispatched(&intent).unwrap();
+        }
+    }
+    std::fs::write(scene.workspace.root.join("reports").join("q3.md"), &report).unwrap();
+    let restored = ReportJournal::new(journal_path(&scene), exited_owner("next"))
+        .restore()
+        .unwrap();
+    assert_eq!(restored.reconciled, 2);
+    assert_eq!(restored.tasks[0].state, TaskState::Verified);
 }

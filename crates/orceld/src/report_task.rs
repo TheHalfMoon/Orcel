@@ -1018,7 +1018,10 @@ fn commit(
     // never read a started create as one that never began.
     if let Some(journal) = &tasks.journal {
         if let Err(failure) = journal.dispatched(&intent) {
-            tasks.note(&intent, false, "journal_unavailable");
+            // Settled, not abandoned: the dispatched line may be on disk
+            // even though the write reported failure, and only settled may
+            // follow both pending and dispatched.
+            tasks.note(&intent, true, "not_dispatched");
             tasks.update(&task.id, "write", "failed", |task| {
                 task.state = TaskState::Failed;
             });

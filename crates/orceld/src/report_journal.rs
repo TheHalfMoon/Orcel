@@ -99,9 +99,6 @@ struct StepLine {
 pub(super) struct TaskLine {
     id: String,
     workspace_id: String,
-    /// The planner's free-text title is not kept, only its hash: the
-    /// journal holds paths, sizes, hashes, states and outcomes.
-    title_sha256: String,
     folder: String,
     folder_canonical: PathBuf,
     sources: Vec<SourceLine>,
@@ -199,7 +196,6 @@ pub(super) fn task_line(task: &ReportTask) -> TaskLine {
     TaskLine {
         id: task.id.clone(),
         workspace_id: task.workspace_id.clone(),
-        title_sha256: super::sha256_hex(task.title.as_bytes()),
         folder: task.folder.clone(),
         folder_canonical: task.folder_canonical.clone(),
         sources: task.sources.iter().map(source).collect(),
@@ -266,7 +262,7 @@ fn restored_task(line: TaskLine, run: &str) -> ReportTask {
         id: line.id,
         run: run.to_owned(),
         workspace_id: line.workspace_id,
-        // The journal kept only the title's hash.
+        // The planner's free-text title is never journaled.
         title: String::new(),
         folder: line.folder,
         folder_resolved: PathBuf::new(),
@@ -506,23 +502,26 @@ impl ReportJournal {
 
             // Reconcile the commits left pending by exited runs.
             let mut reconciled = 0;
-            let mut kept_pending: Vec<Line> = Vec::new();
-            for (owner, intent, commit, state) in pending {
+            // Newest first, so a task's latest open attempt decides it and a
+            // stale earlier one (whose abandoned line was lost) cannot.
+            let mut kept_groups: Vec<Vec<Line>> = Vec::new();
+            for (owner, intent, commit, state) in pending.into_iter().rev() {
                 if !is_exited(&owner) || owner.run == self.owner.run {
                     // A live run's open commit is kept exactly: pending,
                     // and dispatched when its create may have started.
-                    kept_pending.push(Line::Pending {
+                    let mut group = vec![Line::Pending {
                         schema: SCHEMA.to_owned(),
                         owner,
                         intent: intent.clone(),
                         commit,
-                    });
+                    }];
                     if state == IntentState::Dispatched {
-                        kept_pending.push(Line::Dispatched {
+                        group.push(Line::Dispatched {
                             schema: SCHEMA.to_owned(),
                             intent,
                         });
                     }
+                    kept_groups.push(group);
                     continue;
                 }
                 // Pending only: the create never started, so the
@@ -612,7 +611,8 @@ impl ReportJournal {
                 owner,
                 task,
             }));
-            kept.extend(kept_pending);
+            // Back in journal order, each pending line before its dispatched.
+            kept.extend(kept_groups.into_iter().rev().flatten());
             orcel_journal::rewrite(&self.path, &kept)?;
 
             Ok(Restored {
