@@ -40,6 +40,7 @@ mod git_push;
 ))]
 mod live_browser;
 mod live_dispatch;
+mod mutation_journal;
 mod profile_gate;
 mod remote_lease;
 mod report_check;
@@ -83,6 +84,19 @@ fn run() -> Result<(), String> {
     let approval = LocalApprovalBroker::new()
         .map_err(|error| format!("initialize approval broker: {}", error.message))?;
     let workspace_set = remote_lease::WorkspaceSet::from_environment();
+    // SG-000120 RJ-02: approved file mutations are journaled; what an
+    // exited orceld left open is reconciled now.
+    mutation_journal::start(
+        mutation_journal::default_path(),
+        &format!(
+            "{}|{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0)
+        ),
+    );
     // SG-000126: report tasks, served read-only by the app API; SG-000120
     // RJ-02: durable across runs through the report task journal.
     let tasks = std::sync::Arc::new(match report_task::default_journal_path() {

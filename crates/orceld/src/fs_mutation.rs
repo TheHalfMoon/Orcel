@@ -6,6 +6,7 @@
 //! `fs.edit` require SOFT approval; `fs.remove` requires the STRONG
 //! destructive class. Every mutation verifies its postcondition.
 
+use crate::mutation_journal::{self, Mutation, Postcondition, Sink};
 use orcel_approval::{ApprovalBroker, ApprovalPrompt, ConsumeExpectation};
 use orcel_contracts::{FailureCode, RequestEnvelope};
 use orcel_policy::{Workspace, POLICY_REVISION};
@@ -106,6 +107,41 @@ fn approve(
         .map_err(|error| ProviderError::new(error.code, error.message))
 }
 
+/// One approved, journaled mutation (SG-000120 RJ-02): `pending` before the
+/// approval, `dispatched` before `act`, then its outcome. Refused, with
+/// nothing asked, when the journal cannot record it.
+#[allow(clippy::too_many_arguments)]
+fn approved<T>(
+    sink: Sink,
+    approval: &impl ApprovalBroker,
+    workspace: &Workspace,
+    request: &RequestEnvelope,
+    strong: bool,
+    action: &str,
+    target: &str,
+    summary: String,
+    digest: String,
+    postcondition: Postcondition,
+    act: impl FnOnce() -> Result<T, ProviderError>,
+) -> Result<T, ProviderError> {
+    let mutation = Mutation {
+        capability: request.capability.clone(),
+        operation: request.operation.clone(),
+        approval_digest: digest.clone(),
+        workspace_id: workspace.id.clone(),
+        policy_revision: POLICY_REVISION.to_owned(),
+        root: workspace.root.clone(),
+        target: target.to_owned(),
+        postcondition,
+    };
+    mutation_journal::journaled(
+        sink,
+        mutation,
+        || approve(approval, workspace, strong, action, target, summary, digest),
+        act,
+    )
+}
+
 fn identity_summary(identity: &EntryIdentity) -> String {
     format!(
         "kind={} size={} sha256={}",
@@ -116,6 +152,16 @@ fn identity_summary(identity: &EntryIdentity) -> String {
 }
 
 pub fn dispatch_fs_mutation(
+    workspace: &Workspace,
+    approval: &impl ApprovalBroker,
+    request: &RequestEnvelope,
+) -> Result<Option<Value>, ProviderError> {
+    dispatch_fs_mutation_to(mutation_journal::global(), workspace, approval, request)
+}
+
+/// [`dispatch_fs_mutation`] journaling to `sink`.
+pub(crate) fn dispatch_fs_mutation_to(
+    sink: Sink,
     workspace: &Workspace,
     approval: &impl ApprovalBroker,
     request: &RequestEnvelope,
@@ -143,9 +189,11 @@ pub fn dispatch_fs_mutation(
                 .get("parents")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
-            approve(
+            approved(
+                sink,
                 approval,
                 workspace,
+                request,
                 false,
                 "create directory",
                 relative,
@@ -157,15 +205,18 @@ pub fn dispatch_fs_mutation(
                     relative,
                     if parents { "1" } else { "0" },
                 ]),
-            )?;
-            provider.mkdir(relative, parents)?
+                Postcondition::Directory,
+                || provider.mkdir(relative, parents),
+            )?
         }
         "fs.move" => {
             let to = string_arg(request, "to")?;
             let identity = provider.entry_identity(relative)?;
-            approve(
+            approved(
+                sink,
                 approval,
                 workspace,
+                request,
                 false,
                 "move or rename",
                 relative,
@@ -178,14 +229,20 @@ pub fn dispatch_fs_mutation(
                     to,
                     &identity.digest_fields(),
                 ]),
-            )?;
-            provider.move_entry(relative, to, &identity)?
+                Postcondition::Moved {
+                    to: to.to_owned(),
+                    sha256: identity.sha256.clone(),
+                },
+                || provider.move_entry(relative, to, &identity),
+            )?
         }
         "fs.remove" => {
             let identity = provider.entry_identity(relative)?;
-            approve(
+            approved(
+                sink,
                 approval,
                 workspace,
+                request,
                 true,
                 "remove one file or empty directory",
                 relative,
@@ -197,8 +254,12 @@ pub fn dispatch_fs_mutation(
                     relative,
                     &identity.digest_fields(),
                 ]),
-            )?;
-            provider.remove_entry(relative, &identity)?
+                Postcondition::Absent {
+                    before_kind: identity.kind.to_owned(),
+                    before_sha256: identity.sha256.clone(),
+                },
+                || provider.remove_entry(relative, &identity),
+            )?
         }
         "fs.edit" => {
             let preview = provider.edit_preview(
@@ -208,9 +269,11 @@ pub fn dispatch_fs_mutation(
                 string_arg(request, "expected_sha256")?,
                 usize_arg(request, "replacements", 1)?,
             )?;
-            approve(
+            approved(
+                sink,
                 approval,
                 workspace,
+                request,
                 false,
                 "edit file",
                 relative,
@@ -227,8 +290,12 @@ pub fn dispatch_fs_mutation(
                     &preview.new_sha256,
                     &preview.replacements.to_string(),
                 ]),
-            )?;
-            provider.edit_apply(&preview)?
+                Postcondition::File {
+                    sha256: preview.new_sha256.clone(),
+                    before: Some(preview.current_sha256.clone()),
+                },
+                || provider.edit_apply(&preview),
+            )?
         }
         _ => {
             return Err(ProviderError::new(

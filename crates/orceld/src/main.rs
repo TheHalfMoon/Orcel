@@ -301,15 +301,36 @@ fn write_file(
         digest.clone(),
     );
 
-    let token = require_approval(approval, &prompt, "file write")?;
-    approval
-        .consume(
-            &token,
-            &ConsumeExpectation::new(digest, workspace.id.clone(), POLICY_REVISION),
-            now_ms(),
-        )
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
-    provider.write_text(relative, content, expected, create_if_missing)
+    // SG-000120 RJ-02: journaled like every approved file mutation.
+    let mutation = crate::mutation_journal::Mutation {
+        capability: request.capability.clone(),
+        operation: request.operation.clone(),
+        approval_digest: digest.clone(),
+        workspace_id: workspace.id.clone(),
+        policy_revision: POLICY_REVISION.to_owned(),
+        root: workspace.root.clone(),
+        target: relative.to_owned(),
+        postcondition: crate::mutation_journal::Postcondition::File {
+            sha256: preview.new_sha256.clone(),
+            before: preview.current_sha256.clone(),
+        },
+    };
+    crate::mutation_journal::journaled(
+        crate::mutation_journal::global(),
+        mutation,
+        || {
+            let token = require_approval(approval, &prompt, "file write")?;
+            approval
+                .consume(
+                    &token,
+                    &ConsumeExpectation::new(digest, workspace.id.clone(), POLICY_REVISION),
+                    now_ms(),
+                )
+                .map(|_| ())
+                .map_err(|error| ProviderError::new(error.code, error.message))
+        },
+        || provider.write_text(relative, content, expected, create_if_missing),
+    )
 }
 
 fn process_spawn(
