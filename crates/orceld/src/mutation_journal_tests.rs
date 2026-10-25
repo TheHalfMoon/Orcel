@@ -650,7 +650,7 @@ fn rj02_an_opaque_effect_hands_its_token_and_is_never_guessed() {
         sink,
         opaque.clone(),
         || Ok("record-7"),
-        |token| Ok::<_, ProviderError>(token),
+        Ok::<_, ProviderError>,
     )
     .unwrap();
     assert_eq!(
