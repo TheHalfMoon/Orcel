@@ -233,11 +233,12 @@ const ARCHIVE_TRICKY = `<!doctype html><title>Tricky archive</title><ul>
 <script>setTimeout(() => { document.getElementById("swap").href = "/evil"; fetch("/signal/href-swapped?t=" + Math.floor(performance.timeOrigin)); }, 1500);</script>`;
 // BR-01: after observation the page re-renders its list. The same links
 // as new elements; the names swapped between the destinations; or two
-// links with the same name.
+// links with the same name. The delay leaves the host time to observe the
+// original list first, which the test checks.
 const rerender = (name, list) => `<!doctype html><title>${name}</title><ul id=list>
 <li><a href="/archive/2026-06-30">Annual review 2026-06-30</a></li>
 <li><a href="/archive/2026-09-30">Annual review 2026-09-30</a></li></ul>
-<script>setTimeout(() => { document.getElementById("list").innerHTML = ${JSON.stringify(list)}; fetch("/signal/${name}?t=" + Math.floor(performance.timeOrigin)); }, 1000);</script>`;
+<script>setTimeout(() => { document.getElementById("list").innerHTML = ${JSON.stringify(list)}; fetch("/signal/${name}?t=" + Math.floor(performance.timeOrigin)); }, 2500);</script>`;
 const ARCHIVE_RERENDER = rerender("rerendered", '<li><a href="/archive/2026-06-30">Annual review 2026-06-30</a></li><li><a href="/archive/2026-09-30">Annual review 2026-09-30</a></li>');
 const ARCHIVE_RERENDER_SWAP = rerender("rerendered-swap", '<li><a href="/archive/2026-09-30">Annual review 2026-06-30</a></li><li><a href="/archive/2026-06-30">Annual review 2026-09-30</a></li>');
 const ARCHIVE_RERENDER_TWINS = rerender("rerendered-twins", '<li><a href="/archive/2026-09-30">Annual review 2026-09-30</a></li><li><a href="/archive/2026-09-30">Annual review 2026-09-30</a></li>');

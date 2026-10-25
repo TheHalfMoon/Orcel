@@ -1751,12 +1751,26 @@ fn br01_a_rerendered_link_is_found_by_its_approved_role_and_name_or_nothing_is_c
         panic!("no node named {name}");
     };
 
+    // The observation must see the original list: if the page had already
+    // re-rendered, its refs would still be valid and nothing here would
+    // exercise the fallback.
+    let observed_first = |fixture: &HttpsFixture, signal: &str| {
+        assert!(
+            !fixture
+                .hits()
+                .iter()
+                .any(|hit| hit.contains(&format!("/signal/{signal}?"))),
+            "the page re-rendered before the observation"
+        );
+    };
+
     // The same link, re-rendered as a new element: the click follows it.
     let loaded = epoch_ms();
     worker
         .navigate("https://fixture.test/archive-rerender")
         .expect("rerender");
     let live = worker.observe(&scope).expect("observe rerender");
+    observed_first(&fixture, "rerendered");
     let node = named(&worker, &live, "Annual review 2026-09-30");
     pump_until_signal(&mut worker, &fixture, "rerendered", loaded);
     let (target, mut approval) = approved_click(&worker, &live, &node);
@@ -1772,14 +1786,23 @@ fn br01_a_rerendered_link_is_found_by_its_approved_role_and_name_or_nothing_is_c
         .navigate("https://fixture.test/archive-rerender-swap")
         .expect("swap");
     let live = worker.observe(&scope).expect("observe swap");
+    observed_first(&fixture, "rerendered-swap");
     let node = named(&worker, &live, "Annual review 2026-06-30");
     pump_until_signal(&mut worker, &fixture, "rerendered-swap", loaded);
+    let served = fixture.hits().len();
     let (target, mut approval) = approved_click(&worker, &live, &node);
+    let refused = worker
+        .activate(&target, &mut approval, 1, "workspace")
+        .expect_err("a swapped name left the approved destination");
+    // The fallback found the element now named as approved; the host's
+    // destination check refused the document it requested.
+    assert!(matches!(refused, HostError::Invalid(_)), "{refused:?}");
+    pump(&mut worker, Duration::from_millis(500));
     assert!(
-        worker
-            .activate(&target, &mut approval, 1, "workspace")
-            .is_err(),
-        "a swapped name left the approved destination"
+        !fixture.hits()[served..]
+            .iter()
+            .any(|hit| hit.contains("/archive/2026-09-30")),
+        "the other destination was never served"
     );
 
     // Two elements now carry the approved name: stale, nothing clicked.
@@ -1788,6 +1811,7 @@ fn br01_a_rerendered_link_is_found_by_its_approved_role_and_name_or_nothing_is_c
         .navigate("https://fixture.test/archive-rerender-twins")
         .expect("twins");
     let live = worker.observe(&scope).expect("observe twins");
+    observed_first(&fixture, "rerendered-twins");
     let node = named(&worker, &live, "Annual review 2026-09-30");
     pump_until_signal(&mut worker, &fixture, "rerendered-twins", loaded);
     let before = fixture.hits().len();

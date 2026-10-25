@@ -21,6 +21,7 @@ import { CAPTURE_TIMEOUT_MS, DISCOVERY_TOTAL_MS, fitTools } from "./webmcp/fit.j
 import { captureWithin } from "./webmcp/capture.js";
 import { fitBlocks, MAX_RESULT_BLOCKS, structuredData } from "./webmcp/structured.js";
 import { documentModel, type CapturedSnapshot } from "./webmcp/dom-snapshot.js";
+import { approvedElement } from "./actions/targets.js";
 import { NavigationError, Worker, type EngineSession, type Launcher, type LaunchSpec, type RoutePolicy } from "./worker.js";
 
 const startup = startupRefusal(process.execArgv, process.version);
@@ -310,25 +311,6 @@ const FILL_BUDGET_MS = 10_000;
 
 /// Click `target` and wait for the main frame's resulting document to load;
 /// returns its URL and status. The host decides every request on the way.
-/// BR-01: the approved element. Its snapshot ref when that still names an
-/// element; otherwise, after a re-render replaced it, the one element in
-/// the main frame whose role and accessible name equal the approved ones
-/// (Playwright's role locator with an exact name, which reads the
-/// accessibility tree and runs no page script). Anything else (a ref inside
-/// a frame, no approved target, no match or several) is stale and nothing
-/// is clicked. The host still confines the click's navigation or download
-/// to the approved destination.
-async function approvedElement(page: Page, ref: string, target?: ApprovedTarget): Promise<Locator> {
-  const byRef = page.locator(`aria-ref=${ref}`);
-  if ((await byRef.count().catch(() => 0)) === 1) return byRef;
-  if (!target || !/^e\d+$/.test(ref) || target.name.length === 0) throw new NavigationError("stale");
-  const byRole = page
-    .mainFrame()
-    .getByRole(target.role as Parameters<Page["getByRole"]>[0], { name: target.name, exact: true });
-  if ((await byRole.count().catch(() => 0)) !== 1) throw new NavigationError("stale");
-  return byRole;
-}
-
 async function clickAndLoad(page: Page, target: Locator): Promise<{ url: string; status: number }> {
   let status = 0;
   const onResponse = (response: import("playwright-core").Response) => {
