@@ -57,10 +57,10 @@ pub fn normalized_commit_message(message: &str) -> String {
     lines.join("\n")
 }
 
-struct DisabledHooksDir(PathBuf);
+pub(crate) struct DisabledHooksDir(PathBuf);
 
 impl DisabledHooksDir {
-    fn create() -> Result<Self, GitProviderError> {
+    pub(crate) fn create() -> Result<Self, GitProviderError> {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|error| provider_error(format!("read clock for hooks isolation: {error}")))?
@@ -90,7 +90,7 @@ impl DisabledHooksDir {
         ))
     }
 
-    fn display(&self) -> String {
+    pub(crate) fn display(&self) -> String {
         self.0.to_string_lossy().into_owned()
     }
 }
