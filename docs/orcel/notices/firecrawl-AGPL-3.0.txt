@@ -1,7 +1,7 @@
 Firecrawl (firecrawl/firecrawl) - adapted source notice
 
-Orcel adapts two files from firecrawl/firecrawl at commit
-f84845c864b6e2af22791c18fcf89ac2a21f1434:
+Orcel adapts files from firecrawl/firecrawl at commit
+f84845c864b6e2af22791c18fcf89ac2a21f1434. For WI-05:
 
 - apps/api/native/src/pdf.rs (blob a4f019f072b13729610a2241cd51db5e34eed0c6)
   -> apps/orcel-doc-parser/src/pdf.rs (transplant row T-FC-06)

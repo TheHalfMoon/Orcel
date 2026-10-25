@@ -17,9 +17,14 @@
 //! one check does both); patterns stay bounded by `MAX_PATH_PATTERNS` of
 //! `MAX_PATH_PATTERN_BYTES` without control characters; a regex is matched
 //! against the URL's path only, never the full URL, since a crawl never
-//! leaves its admitted origin; and the canonical form keeps the path and
-//! query on that one origin (scheme and `www.` stripping have nothing to
-//! do there).
+//! leaves its admitted origin; an exclude pattern is also tested against
+//! the canonical path, so `^/docs/private$` excludes `/docs/private/` too;
+//! the canonical form keeps the path and query on that one origin (scheme
+//! and `www.` stripping have nothing to do there) and folds the trailing
+//! slash before the query (`/a/?q` and `/a?q` are one URL), where the donor
+//! folds only a slash at the very end. As before WI-01, the start URL itself
+//! must pass the include patterns, or the crawl is refused (Firecrawl always
+//! reads its seed).
 
 use crate::error::HostError;
 
@@ -141,11 +146,12 @@ impl Patterns {
                 .include
                 .iter()
                 .any(|matcher| matcher.matches(path_and_query));
+        let canonical_path = canonical(path_and_query);
         included
             && !self
                 .exclude
                 .iter()
-                .any(|matcher| matcher.matches(path_and_query))
+                .any(|matcher| matcher.matches(path_and_query) || matcher.matches(&canonical_path))
     }
 }
 
@@ -181,10 +187,22 @@ mod tests {
         Patterns::compile(PatternKind::Regex, &owned(include), &owned(exclude)).unwrap()
     }
 
-    /// Ported from Firecrawl's crawler.rs filter cases: include and exclude
-    /// are regexes over the path, unanchored unless anchored.
+    /// The same-origin half of Firecrawl's
+    /// `test_filter_links_allow_subdomains_with_include_paths` (crawler.rs):
+    /// include `^/pricing$` admits /pricing and refuses /blog. (Subdomains
+    /// never reach the patterns here: a crawl stays on its one origin.)
+    #[test]
+    fn wi01_ported_firecrawl_include_case() {
+        let pricing = regex(&["^/pricing$"], &[]);
+        assert!(pricing.admits("/pricing"));
+        assert!(!pricing.admits("/blog"));
+    }
+
+    /// Include and exclude are regexes over the path, unanchored unless
+    /// anchored; an anchored exclude also holds for the trailing-slash form.
     #[test]
     fn wi01_regex_patterns_follow_firecrawls_path_semantics() {
+        assert!(!regex(&[], &["^/docs/private$"]).admits("/docs/private/"));
         let blog = regex(&["^/blog/"], &[]);
         assert!(blog.admits("/blog/post-1"));
         assert!(!blog.admits("/docs/blog/post-1"), "anchored at the start");

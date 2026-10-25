@@ -18,13 +18,17 @@
       "path": "crates/orcel-browser-host/src/crawl_scope.rs",
       "donor_path": "apps/api/native/src/crawler.rs",
       "donor_blob": "598f14d33703a424748fab15f5087e56b7469776",
-      "adapted": "compile_path_regex and its limits; validate_regexes semantics (refuse, never drop)"
+      "adapted": "compile_path_regex and its limits; validate_regexes semantics (refuse, never drop)",
+      "row": "WI-01",
+      "changes": "errors refuse the crawl; bounded patterns; path-only matching; exclude also against the canonical path"
     },
     {
       "path": "crates/orcel-browser-host/src/crawl_scope.rs",
       "donor_path": "apps/api/src/lib/canonical-url.ts",
       "donor_blob": "068999d47bcc9300916b80233f72519b9a4a155c",
-      "adapted": "normalizeUrl's trailing-slash folding, for recognising a URL already seen"
+      "adapted": "normalizeUrl's trailing-slash folding, for recognising a URL already seen",
+      "row": "WI-01",
+      "changes": "trailing slash folded before the query; one origin only"
     }
   ],
   "decisions": {
