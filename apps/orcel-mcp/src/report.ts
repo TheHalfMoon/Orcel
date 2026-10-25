@@ -18,8 +18,9 @@ import { projectKernelResult } from "./result.js";
  *   only by orceld's independent checker;
  * - source text returned by start is labelled untrusted workspace data.
  *
- * The bounds below mirror `crates/orcel-policy/src/report.rs`, which stays
- * the authority; the edge only fails early.
+ * The bounds below are a subset of `crates/orcel-policy/src/report.rs`,
+ * which stays the authority (it also refuses device names such as CON.md);
+ * the edge only fails early and is never stricter.
  */
 const APPROVAL_TIMEOUT_MS = 10 * 60_000;
 export const MAX_REPORT_TITLE_CHARS = 120;
@@ -41,7 +42,7 @@ const reportName = z
   .string()
   .min(1)
   .max(MAX_REPORT_NAME_CHARS)
-  .regex(/^[A-Za-z0-9_-][A-Za-z0-9._-]*\.(md|txt|csv)$/i, {
+  .regex(/^[a-z0-9_-][a-z0-9._-]*\.(md|txt|csv)$/i, {
     message: "name is one file name of letters, digits, '.', '_' or '-' ending in .md, .txt or .csv"
   });
 const reportContent = z
@@ -56,7 +57,10 @@ export function reportStartSchema(defaultWorkspace: string) {
     title: z
       .string()
       .min(1)
-      .max(MAX_REPORT_TITLE_CHARS)
+      // Characters, as the kernel counts them, not UTF-16 units.
+      .refine((value) => [...value].length <= MAX_REPORT_TITLE_CHARS, {
+        message: `title is at most ${MAX_REPORT_TITLE_CHARS} characters`
+      })
       .refine((value) => value.trim().length > 0, { message: "title must not be blank" })
       .refine(noControl, { message: "title must not contain control characters" }),
     sources: z

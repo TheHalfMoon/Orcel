@@ -59,7 +59,7 @@ Orcel is an **open-source computer-access authority layer** for MCP-compatible A
 
 ## What ChatGPT can do through Orcel
 
-Exactly these 31 tools are exposed over local MCP:
+These tools are exposed over local MCP (the complete, generated list is [`docs/p16/TOOL_CONTRACT.md`](docs/p16/TOOL_CONTRACT.md); this table is being brought up to date in #448):
 
 | Area | Tools | Approval |
 |---|---|---|
@@ -77,7 +77,7 @@ Exactly these 31 tools are exposed over local MCP:
 | Git (network) | `git_fetch_preview`, `git_fetch`, `git_push_preview`, `git_push` | local approval; see limitations |
 | Processes | `process_spawn` | local approval; see limitations |
 
-Everything else is denied. Remote clients (ChatGPT through the tunnel or relay, and other providers) see only the 26-tool `core` profile: desktop observation, clipboard, and network fetch are local-only and cannot be reached remotely. Browser automation, screenshots, coordinate input, and UI actuation remain unreachable over MCP entirely.
+Everything else is denied. Remote clients (ChatGPT through the tunnel or relay, and other providers) see only the 26-tool `core` profile: desktop observation, clipboard, network fetch and report tasks are local-only and cannot be reached remotely. Browser automation, screenshots, coordinate input, and UI actuation remain unreachable over MCP entirely.
 
 ### Current limitations
 

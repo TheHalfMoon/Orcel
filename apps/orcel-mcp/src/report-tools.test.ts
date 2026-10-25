@@ -14,7 +14,9 @@ import {
 } from "./report.js";
 import { SURFACE_PROFILES, TOOL_CONTRACT } from "./tool_contract.js";
 import type { KernelClient } from "./kernel.js";
+import { buildDaemonEnv } from "./kernel.js";
 import { allowedToolsFor, buildOrcelServer, localTransportContext, tunnelTransportContext } from "./server.js";
+import { TRANSPORT_ENV, TUNNEL_TRANSPORT } from "./tunnel_route.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const srcDir = join(here, "..", "src");
@@ -62,11 +64,14 @@ test("sg127 the kernel shapes match orcel-policy's admitted report shapes", () =
 test("sg127 report schemas are bounded and drop unknown fields", () => {
   const start = reportStartSchema("w");
   assert.equal(start.safeParse({ title: "Q3", sources: ["data/a.csv"], folder: "out" }).success, true);
+  // 120 emoji are 240 UTF-16 units; the kernel counts characters.
+  assert.equal(start.safeParse({ title: "\u{1F600}".repeat(MAX_REPORT_TITLE_CHARS), sources: ["a.txt"], folder: "out" }).success, true);
   for (const input of [
     {},
     { title: "", sources: ["a.txt"], folder: "out" },
     { title: "   ", sources: ["a.txt"], folder: "out" },
     { title: "a".repeat(MAX_REPORT_TITLE_CHARS + 1), sources: ["a.txt"], folder: "out" },
+    { title: "\u{1F600}".repeat(MAX_REPORT_TITLE_CHARS + 1), sources: ["a.txt"], folder: "out" },
     { title: "line\nbreak", sources: ["a.txt"], folder: "out" },
     { title: "t", sources: [], folder: "out" },
     { title: "t", sources: Array.from({ length: MAX_REPORT_SOURCES + 1 }, (_, i) => `s${i}.txt`), folder: "out" },
@@ -258,4 +263,8 @@ test("sg127 a tunnel-launched host neither lists nor serves the report tools", a
   }
   assert.equal(calls.length, 0);
   await server.close();
+
+  // The transport marker reaches orceld, which refuses report/* from a
+  // remote context on its own.
+  assert.equal(buildDaemonEnv({ [TRANSPORT_ENV]: TUNNEL_TRANSPORT })[TRANSPORT_ENV], "tunnel");
 });
