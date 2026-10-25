@@ -320,18 +320,28 @@ impl GitProvider {
         if head.len() != 40 || !head.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return Err(provider_error("Git returned an invalid branch object id"));
         }
-        let parents = self.run_git(&repo, &["show", "-s", "--format=%P", head.as_str()])?;
-        let message = self.run_git(&repo, &["show", "-s", "--format=%B", head.as_str()])?;
-        if parents.stdout_truncated || message.stdout_truncated {
+        // The raw object: `cat-file` never verifies a signature, so a
+        // repository's gpg.program or log.showSignature cannot run.
+        let object = self.run_git(&repo, &["cat-file", "commit", head.as_str()])?;
+        if object.stdout_truncated {
             return Err(provider_error("Git commit evidence exceeded its bound"));
         }
+        let (headers, message) = object
+            .stdout
+            .split_once(
+                "
+
+",
+            )
+            .unwrap_or((object.stdout.as_str(), ""));
+        let parents = headers
+            .lines()
+            .filter_map(|line| line.strip_prefix("parent "))
+            .map(|parent| parent.trim().to_ascii_lowercase())
+            .collect();
         Ok(Some(BranchTip {
-            parents: parents
-                .stdout
-                .split_whitespace()
-                .map(str::to_ascii_lowercase)
-                .collect(),
-            message: normalized_commit_message(&message.stdout),
+            parents,
+            message: normalized_commit_message(message),
             head,
         }))
     }

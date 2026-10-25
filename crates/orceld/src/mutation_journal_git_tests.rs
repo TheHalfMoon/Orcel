@@ -334,3 +334,77 @@ fn rj02_a_network_effect_that_errs_after_dispatch_is_unknown() {
         ]
     );
 }
+
+#[test]
+fn rj02_a_repository_changed_during_the_prompt_is_abandoned_stale_and_unchanged() {
+    struct ChangesTheRepo(PathBuf);
+    impl orcel_approval::ApprovalBroker for ChangesTheRepo {
+        fn request_token(
+            &self,
+            prompt: &orcel_approval::ApprovalPrompt,
+        ) -> Result<orcel_approval::ApprovedToken, orcel_approval::ApprovalError> {
+            std::fs::write(self.0.join("a.txt"), "changed while asking\n").unwrap();
+            FixedApprovalBroker(ApprovalDecision::Approved).request_token(prompt)
+        }
+        fn consume(
+            &self,
+            token: &orcel_approval::ApprovedToken,
+            expected: &orcel_approval::ConsumeExpectation,
+            now_ms: u64,
+        ) -> Result<(), orcel_approval::ApprovalError> {
+            FixedApprovalBroker(ApprovalDecision::Approved).consume(token, expected, now_ms)
+        }
+    }
+    let repo = Repo::new("stale");
+    std::fs::write(repo.root().join("a.txt"), "two\n").unwrap();
+    let sink = Sink::Journal(leaked(journal(repo.journal_path(), "this")));
+    let refused = dispatch_to(
+        sink,
+        &repo.workspace,
+        &ChangesTheRepo(repo.root().to_path_buf()),
+        &repo.request("git.stage", "stage", json!({ "paths": ["a.txt"] })),
+    )
+    .unwrap_err();
+    assert_eq!(refused.code, FailureCode::TargetStale);
+    assert_eq!(repo.git(&["diff", "--cached", "--name-only"]), "");
+    assert_eq!(
+        events(&repo.journal_path()),
+        [
+            (IntentState::Pending, String::new()),
+            (IntentState::Abandoned, "target_stale".to_owned()),
+        ]
+    );
+}
+
+#[test]
+fn rj02_a_git_refusal_before_the_prompt_journals_nothing() {
+    let repo = Repo::new("early-refusal");
+    std::fs::write(repo.root().join("a.txt"), "two\n").unwrap();
+    let sink = Sink::Journal(leaked(journal(repo.journal_path(), "this")));
+    let mut request = repo.request("git.stage", "stage", json!({ "paths": ["a.txt"] }));
+    request.arguments["expected_head"] = json!("0".repeat(40));
+    let refused = dispatch_to(
+        sink,
+        &repo.workspace,
+        &FixedApprovalBroker(ApprovalDecision::Approved),
+        &request,
+    )
+    .unwrap_err();
+    assert_eq!(refused.code, FailureCode::TargetStale);
+    assert!(!repo.journal_path().exists(), "nothing was journaled");
+}
+
+#[test]
+fn rj02_a_commit_without_a_branch_reconciles_unknown() {
+    let repo = Repo::new("detached");
+    let parent = repo.head();
+    repo.git(&["switch", "-q", "--detach"]);
+    assert_eq!(
+        reconcile(&repo.mutation(Postcondition::GitCommit {
+            branch: String::new(),
+            parent,
+            message_sha256: message_sha256("x"),
+        })),
+        Reconciled::Unknown
+    );
+}

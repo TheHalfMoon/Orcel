@@ -196,7 +196,15 @@ impl GitProvider {
     fn run_git_raw(&self, cwd: &Path, args: &[&str]) -> Result<CommandOutput, GitProviderError> {
         let mut command = Command::new("git");
         command
-            .args(["-c", "core.fsmonitor=false", "-c", "core.pager=cat"])
+            .args([
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "core.pager=cat",
+                // Repository config must not make a read run a program.
+                "-c",
+                "log.showSignature=false",
+            ])
             .args(args)
             .current_dir(cwd)
             .stdin(Stdio::null())
@@ -472,6 +480,92 @@ mod tests {
             "NULL_GIT_CONFIG ignores it"
         );
         let _ = fs::remove_dir_all(home);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn commit_messages_are_normalized_as_git_cleans_them() {
+        assert_eq!(normalized_commit_message("subject  \n"), "subject");
+        assert_eq!(
+            normalized_commit_message("\n\nsubject\r\n\r\n\r\n\nbody\t\n\n"),
+            "subject\n\nbody"
+        );
+        assert_eq!(
+            normalized_commit_message("# kept\nsubject"),
+            "# kept\nsubject",
+            "-m keeps comment-like lines"
+        );
+        assert_eq!(normalized_commit_message(" \n\t\n"), "");
+    }
+
+    /// SG-000120 RJ-02 judge: repository config naming a signature
+    /// program must not make a read (the startup reconcile's `branch_tip`,
+    /// or `log`) run it.
+    #[test]
+    fn reads_never_run_a_repository_configured_signature_program() {
+        let root = repository();
+        let output = |args: &[&str]| {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(&root)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_CONFIG_GLOBAL", NULL_GIT_CONFIG)
+                .output()
+                .expect("git");
+            String::from_utf8_lossy(&output.stdout).trim().to_owned()
+        };
+        let tree = output(&["rev-parse", "HEAD^{tree}"]);
+        let parent = output(&["rev-parse", "HEAD"]);
+        let object = root.join("signed-commit.txt");
+        fs::write(
+            &object,
+            format!(
+                "tree {tree}\nparent {parent}\nauthor a <a@b> 1 +0000\ncommitter a <a@b> 1 +0000\n\
+                 gpgsig -----BEGIN PGP SIGNATURE-----\n \n abc\n -----END PGP SIGNATURE-----\n\nsigned\n"
+            ),
+        )
+        .unwrap();
+        let signed = output(&["hash-object", "-t", "commit", "-w", "signed-commit.txt"]);
+        git(&root, &["update-ref", "refs/heads/signed", signed.as_str()]);
+        let marker = root.join("marker");
+        let program = root.join("evil.sh");
+        let marker_text = marker.to_string_lossy().replace('\\', "/");
+        fs::write(
+            &program,
+            format!("#!/bin/sh\necho ran > '{marker_text}'\nexit 1\n"),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        git(&root, &["config", "log.showSignature", "true"]);
+        git(
+            &root,
+            &[
+                "config",
+                "gpg.program",
+                &program.to_string_lossy().replace('\\', "/"),
+            ],
+        );
+        // Positive control: an unhardened read does run it here.
+        output(&["show", "-s", "--format=%P", signed.as_str()]);
+        let control = marker.exists();
+        let _ = fs::remove_file(&marker);
+
+        let provider = GitProvider::new(&root).unwrap();
+        let tip = provider.branch_tip(".", "signed").unwrap().unwrap();
+        assert_eq!(tip.head, signed);
+        assert_eq!(tip.parents, vec![parent]);
+        assert_eq!(tip.message, "signed");
+        git(&root, &["switch", "-q", "signed"]);
+        provider.log(".", 5).unwrap();
+        assert!(!marker.exists(), "a read ran the configured program");
+        assert!(
+            control || cfg!(windows),
+            "the hostile configuration must fire for an unhardened read"
+        );
         let _ = fs::remove_dir_all(root);
     }
 

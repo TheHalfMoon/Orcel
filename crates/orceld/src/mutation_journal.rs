@@ -34,6 +34,9 @@ const LOCK_WAIT: Duration = Duration::from_secs(5);
 const MAX_RECONCILE_BYTES: u64 = 64 * 1024 * 1024;
 /// Most closed outcomes the journal keeps for the resume summary.
 pub(crate) const MAX_OUTCOMES: usize = 256;
+/// Longest a starting orceld spends probing targets; intents left after it
+/// are recorded unknown rather than delaying the start.
+const RECONCILE_BUDGET: Duration = Duration::from_secs(60);
 
 /// What the approved effect must leave at the target.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -375,6 +378,7 @@ impl MutationJournal {
                     at_ms,
                 };
             let now = orcel_approval::now_ms();
+            let deadline = std::time::Instant::now() + RECONCILE_BUDGET;
             // Outcomes stay in journal order, so the bound drops the oldest.
             let mut outcomes: Vec<Line> = Vec::new();
             let mut live: Vec<Line> = Vec::new();
@@ -401,10 +405,12 @@ impl MutationJournal {
                             }
                             continue;
                         }
-                        let result = if state == IntentState::Dispatched {
+                        let result = if state != IntentState::Dispatched {
+                            Reconciled::NothingDone
+                        } else if std::time::Instant::now() < deadline {
                             reconcile(mutation)
                         } else {
-                            Reconciled::NothingDone
+                            Reconciled::Unknown
                         };
                         reconciled += 1;
                         outcomes.push(summary(intent, mutation, result.outcome(), now));
@@ -640,15 +646,23 @@ impl Intent {
 
 /// Runs one journaled mutation: `pending` before `approve`, `dispatched`
 /// before `act`, then the outcome. A failure of `approve` abandons the
-/// intent; `act`'s result settles it (`unknown` for a failed network
-/// effect).
+/// intent; `act`'s result settles it (`unknown` when a failed Git or
+/// network effect may still have acted).
 pub(crate) fn journaled<T>(
     sink: Sink,
     mutation: Mutation,
     approve: impl FnOnce() -> Result<(), ProviderError>,
     act: impl FnOnce() -> Result<T, ProviderError>,
 ) -> Result<T, ProviderError> {
-    let remote = mutation.postcondition == Postcondition::Remote;
+    // A Git command can fail (timeout, postcondition) after it changed the
+    // repository, and a network effect after it reached the remote.
+    let uncertain = matches!(
+        mutation.postcondition,
+        Postcondition::Remote
+            | Postcondition::GitBranch { .. }
+            | Postcondition::GitCommit { .. }
+            | Postcondition::GitIndex
+    );
     let mut intent = pending(sink, mutation)?;
     if let Err(refusal) = approve() {
         intent.abandon(match refusal.code {
@@ -660,9 +674,8 @@ pub(crate) fn journaled<T>(
     }
     intent.dispatched()?;
     let result = act();
-    intent.settle(match (&result, remote) {
+    intent.settle(match (&result, uncertain) {
         (Ok(_), _) => "done",
-        // A network effect that errs may still have reached the remote.
         (Err(_), true) => "unknown",
         (Err(_), false) => "failed",
     });
