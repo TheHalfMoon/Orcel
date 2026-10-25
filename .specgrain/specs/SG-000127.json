@@ -20,9 +20,9 @@
     "include": [
       "Activate the SG-000127 contract only. Every slice below needs its own exact-head qualified implementation PR, and the security-sensitive slices (3, 5, 7) each need a fresh-context security judge.",
       "Slice 2, installed-size inventory: release qualification installs the packaged release as the existing per-user lifecycle does (SG-000042), measures the full installed bytes and the allocated disk per component, and fails above 400 MB. Prerequisites that are not shipped (the Node.js runtime and the installed Edge or Chrome browser) are listed separately with their versions and never counted as zero. Cache growth is reported separately and cannot hide product growth (UI_UX_AND_APP_SIZE_BUDGET.md).",
-      "Slice 3, report task exposure: additive MCP tools in apps/orcel-mcp that forward to the kernel report/start, report/preview and report/commit operations unchanged. They are served only on the local stdio and loopback Streamable HTTP transports; the remote, tunnel and public edge profiles must neither list nor serve them, proved as the WI-06 tunnel test proves it for web_search. The existing tools, their names, schemas and profile metadata (SG-000065) are unchanged. The existing orceld broker decides every commit: a tool result never carries an approval, a token or a way to approve.",
+      "Slice 3, report task exposure: additive MCP tools in apps/orcel-mcp that forward to the kernel report/start, report/preview and report/commit operations unchanged. They are added only to local profiles with remote \"local_only\" in tool_contract.ts and served only on the local stdio and loopback Streamable HTTP transports; the core profile (the remote ceiling) and the remote, tunnel and public edge profiles neither list nor serve them, proved by an exact profile-membership check and as the WI-06 tunnel test proves it for web_search. Existing tools, their names and schemas, and the core membership are unchanged (SG-000065). The existing orceld broker decides every commit: a tool result never carries an approval, a token or a way to approve.",
       "Slice 4, one supported client transcript: one client from the closed distribution grains (SG-000068 Claude or SG-000070 Codex/generic MCP), with its exact version recorded, runs the report journey against an installed orceld over local stdio: start, preview, the user's approval in the local broker, commit and the checker's verification. It also runs a denied approval, a stale source and an existing destination, and each is refused with the kernel's typed result. The transcript passes the existing secret redaction and is attached as evidence; it proves that client version only, not every client.",
-      "Slice 5, app timeline and stop: the Windows app (apps/orcel-desktop-preview) shows task state and steps from task.list, task.get and task.updated events. Stop is a local-only kernel operation that can only reduce authority: it ends the task and invalidates any pending approval for it, and it can never approve, retry or resume. It is reachable only from the local user's app API peer (CR-01 identity), never from MCP, the relay or the cloud. Takeover means the user stops the agent's task and acts in their own session; no new input authority is added for it.",
+      "Slice 5, app timeline and stop: the Windows app (apps/orcel-desktop-preview) shows task state and steps from task.list, task.get and task.updated events. Stop is a local-only kernel operation that can only reduce authority: it moves the task to a terminal stopped state and invalidates any pending approval for it; later report/preview and report/commit on a stopped task are refused, so stop is never read as a denied approval (which, under SG-000126, leaves a task open), and it can never approve, retry or resume. It is reachable only from the local user's app API peer (CR-01 identity) and is refused on every other path, including the kernel stdio dispatch that orcel-mcp-host forwards through, MCP, the relay and the cloud. Takeover means that after stop the user acts in their own session with no agent input pending; no new input authority is added for it.",
       "Slice 6, installed-release journeys: a native Windows test against the packaged release covers install, orceld start, client connect, the report journey with its refusal paths, stop during a pending approval, restart with no leftover pending approval, and uninstall with no leftover files outside the documented state root. macOS and Linux run the same journeys in CI on their legs where a package exists (XP-17 Linux packages); without real hardware evidence they are reported as CI-only.",
       "Slice 7, live browser in release packaging: the SG-000108 worker and its pinned runtime ship in the release only through a separately governed change with its own security judge and an amendment to the canonical record that release builds carry no live browser. Until then the browser journey is qualified in development builds only, and the F4 closeout must say so."
     ],
@@ -50,7 +50,7 @@
     {
       "question": "Sequencing",
       "status": "DECIDED (founder, 2026-10-22; restated 2026-10-25)",
-      "decision": "F4 follows F2 and F3. Founder mandate of 2026-10-22 (issue #435): \"After the browser grain, progress automatically through the remaining legitimate dependencies, including: F0/F2/F4: authenticated application integration, local report task and Core MVP qualification.\" The founder directive of 2026-10-25 restates F4 Core MVP qualification as the first priority. SG-000108 closed (#439) and SG-000126 closed (#441), so SG-000127 is activated on main b22b2593ffb6be6afd81b02c6f2cee9a566c7f83 and runs with SG-000096 as the open pair."
+      "decision": "F4 follows F2 and F3. Founder mandate of 2026-10-22, as relayed by the orchestrating session and recorded under issue #435: \"After the browser grain, progress automatically through the remaining legitimate dependencies, including: F0/F2/F4: authenticated application integration, local report task and Core MVP qualification.\" The founder directive of 2026-10-25, as relayed by the implementing session and recorded on tracking issue #446, restates F4 as the first priority. SG-000108 closed (#439) and SG-000126 closed (#441), so SG-000127 is activated on main b22b2593ffb6be6afd81b02c6f2cee9a566c7f83 and runs with SG-000096 as the open pair."
     },
     {
       "question": "Supported client",
@@ -60,7 +60,7 @@
     {
       "question": "Signing",
       "status": "OPEN (founder release decision)",
-      "decision": "Not decided by this grain. Packages are attested (SBOM, provenance and reproducibility already run in release qualification) and stay unsigned until the founder decides."
+      "decision": "Not decided by this grain. Packages are attested (SBOM, provenance and the reproducibility check run in the CI release-qualification job and in the release workflow) and stay unsigned until the founder decides."
     },
     {
       "question": "Live browser in release builds",
@@ -72,7 +72,7 @@
     "orceld remains the sole local authority; the MCP edge, the app and any client only forward requests and display state.",
     "No UI, client, relay or cloud component mints, caches or carries an approval.",
     "Stop only reduces authority: it never approves, retries, resumes or widens.",
-    "Existing MCP tool names, schemas and profiles and the orcel-relay/1 frames are unchanged.",
+    "Existing MCP tools (names, schemas), the core profile membership and the orcel-relay/1 frames are unchanged; the only MCP change F4 may make is the slice 3 local-only addition.",
     "Denied or missing permissions stay denied, and every surface reports the real state (unarmed shell, development-only browser, unsigned package).",
     "Secrets never reach transcripts, logs, diagnostics or artifacts; transcripts pass the existing redaction."
   ],
@@ -84,6 +84,9 @@
     "The same client's denied approval, stale source and existing destination are refused with the kernel's typed results.",
     "The Windows app shows the task's state and steps from the read-only app API, and its native UI Automation test passes against a real install.",
     "Stop from the local app ends a task during a pending approval; that approval cannot then be used, and a restart leaves no pending approval.",
+    "Stop moves the task to a terminal stopped state; later report/preview and report/commit on it are refused, and stop is refused on the kernel stdio dispatch path as well as being absent from MCP.",
+    "Takeover: after stop, the app shows control returned to the user's own session with no agent input pending, and no input authority was added.",
+    "Every F4 surface (capabilities.get, the Windows app and the client transcript) labels SG-000096 shell and process capabilities as unarmed and unavailable.",
     "Stop is refused from any non-local or non-owner peer and is absent from MCP.",
     "The native installed-release journey (install, start, client, task, refusals, stop, uninstall) passes on Windows; uninstall leaves nothing outside the documented state root.",
     "Closeout lists signing and, unless slice 7 qualified, the live browser in release builds as open gates, not as satisfied."
@@ -102,5 +105,5 @@
     "release": "Signing, distribution and publication remain founder decisions outside F4."
   },
   "activation_note": "No capability, tool, dependency or authority change in this activation packet. Separate implementation and closeout PRs must qualify their exact heads; activation CI alone proves nothing about the Core MVP.",
-  "done_when": "On the packaged Windows release under 400 MB, one supported external client at a recorded version drives the report task through orceld to a verified report, its refusal paths are proven, the Windows app shows the timeline and stops a task during a pending approval, the installed-release journey passes from install to uninstall, and the closeout records signing (and, unless qualified, the live browser in release builds) as open external gates."
+  "done_when": "On the packaged Windows release under 400 MB, one supported external client at a recorded version drives the report task through orceld to a verified report, its refusal paths are proven, the Windows app shows the timeline and stops a task during a pending approval, the installed-release journey passes from install to uninstall, and the closeout records signing (and, unless qualified, the live browser in release builds) as open external gates. The roadmap requires clean signed packaging, so F4 is not recorded as exited while signing stays open; the closeout records engineering qualification only."
 }

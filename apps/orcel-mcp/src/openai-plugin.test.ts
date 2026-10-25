@@ -205,9 +205,9 @@ test("at most one grain is active (or the founder-sequenced SG-000096/SG-000127 
   const active = specs.filter((name) => (JSON.parse(readFileSync(join(dir, name), "utf8")) as { state: string }).state !== "CLOSED");
   // SG-000108 (issue #290) and SG-000126 (issue #435) ran beside SG-000096
   // and are closed. The only lawful open pair is SG-000096 with SG-000127
-  // (ORCEL-F4), by the founder sequencing recorded canonically under issue
-  // #446 after the SG-000126 closeout (#441). Remove this pin when either
-  // grain closes.
+  // (ORCEL-F4), by the founder sequencing (mandate #435, tracked under #446)
+  // after the SG-000126 closeout (#441). Remove this pin when either grain
+  // closes.
   if (active.length === 2) {
     assert.deepEqual(active, ["SG-000096.json", "SG-000127.json"], `parallel active grains: ${active.join(", ")}`);
     const current = readFileSync(join(repo, "docs", "canonical", "CURRENT.md"), "utf8");

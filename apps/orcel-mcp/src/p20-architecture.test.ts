@@ -197,7 +197,17 @@ test("SG-000094 and SG-000095 are closed and SG-000096 is the only active P20 gr
     state: string;
     base: string;
     planning_issue: number;
-    authority_delta: { activation: string; network: string; process: string; privileged: string; filesystem: string };
+    authority_delta: {
+      activation: string;
+      network: string;
+      process: string;
+      privileged: string;
+      filesystem: string;
+      mcp: string;
+      app_api: string;
+      packaging: string;
+      approval: string;
+    };
   }>(".specgrain/specs/SG-000127.json");
   assert.equal(sg127.program, "ORCEL-F4");
   assert.equal(sg127.state, "GRAIN");
@@ -207,6 +217,12 @@ test("SG-000094 and SG-000095 are closed and SG-000096 is the only active P20 gr
     assert.ok(sg127.authority_delta[key].startsWith("None."), key);
   }
   assert.equal(sg127.authority_delta.filesystem, "None beyond SG-000126.");
+  // The activation proposes, it does not grant: each widening stays a proposal
+  // until its slice is qualified.
+  for (const key of ["mcp", "app_api", "packaging"] as const) {
+    assert.ok(sg127.authority_delta[key].startsWith("Proposed only"), key);
+  }
+  assert.ok(sg127.authority_delta.approval.startsWith("Unchanged rules"));
   const sg126 = readJson<{
     program: string;
     state: string;
