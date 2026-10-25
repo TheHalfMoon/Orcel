@@ -38,6 +38,9 @@ const LOCAL_ONLY = [
   "desktop_window_capture",
   "desktop_window_list",
   "desktop_window_tree",
+  "report_commit",
+  "report_preview",
+  "report_start",
   "web_fetch",
   "web_search"
 ];

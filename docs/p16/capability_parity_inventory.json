@@ -369,23 +369,23 @@
     {
       "capability": "report",
       "operation": "start",
-      "status": "implemented_hidden",
-      "owner_grain": "outside_v0_2_target",
-      "note": "local stdio only: observes and hashes 1..=8 workspace text sources and opens a per-run report task; read-only; not an MCP tool until F4 (SG-000126)"
+      "status": "implemented_exposed",
+      "mcp_tool": "report_start",
+      "note": "local transports only (MCP report_start): observes and hashes 1..=8 workspace text sources and opens a per-run report task; read-only; source text labelled untrusted (SG-000126, exposed by SG-000127 slice 3)"
     },
     {
       "capability": "report",
       "operation": "preview",
-      "status": "implemented_hidden",
-      "owner_grain": "outside_v0_2_target",
-      "note": "no effect: re-checks the sources, the folder and the absent destination and returns the exact bytes the approval binds (SG-000126)"
+      "status": "implemented_exposed",
+      "mcp_tool": "report_preview",
+      "note": "local transports only (MCP report_preview): no effect; re-checks the sources, the folder and the absent destination and returns the exact bytes the approval binds (SG-000126, SG-000127 slice 3)"
     },
     {
       "capability": "report",
       "operation": "commit",
-      "status": "implemented_hidden",
-      "owner_grain": "outside_v0_2_target",
-      "note": "one SOFT approval, then one create-only UTF-8 report in the task's folder; never overwrites; verified only by the independent checker (SG-000126)"
+      "status": "implemented_exposed",
+      "mcp_tool": "report_commit",
+      "note": "local transports only (MCP report_commit): one SOFT approval in orceld's local broker, then one create-only UTF-8 report in the task's folder; never overwrites; verified only by the independent checker (SG-000126, SG-000127 slice 3)"
     },
     {
       "capability": "workspace.trust.get",
