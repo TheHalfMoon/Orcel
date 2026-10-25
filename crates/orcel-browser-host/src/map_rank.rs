@@ -14,8 +14,12 @@
 //! order. Orcel's changes: words are matched as literal substrings (the
 //! donor builds a regular expression from each word, which its split
 //! already restricts to word characters); empty words are dropped (the
-//! donor's empty word matched everywhere); the query is bounded; and no
-//! hosted index or network is involved.
+//! donor's empty word matched everywhere); the query is bounded; only the
+//! URL's path and query are scored, not its origin, which every mapped URL
+//! shares (the backlog's "URL path tokens"; page titles are not part of a
+//! map, so they are not scored); and no hosted index or network is
+//! involved. As in the donor, words are ASCII runs, so a non-ASCII word
+//! (`café`) is matched by its ASCII part only.
 
 /// Longest search term, in bytes.
 pub const MAX_SEARCH_BYTES: usize = 256;
@@ -41,6 +45,14 @@ fn vector(text: &str, words: &[String]) -> Vec<f64> {
         .collect()
 }
 
+/// The path and query of `url` (everything after its origin).
+fn path_of(url: &str) -> &str {
+    let after_scheme = url.find("://").map_or(0, |at| at + 3);
+    url[after_scheme..]
+        .find('/')
+        .map_or("/", |at| &url[after_scheme + at..])
+}
+
 fn cosine(a: &[f64], b: &[f64]) -> f64 {
     let dot: f64 = a.iter().zip(b).map(|(x, y)| x * y).sum();
     let norm = |v: &[f64]| v.iter().map(|x| x * x).sum::<f64>().sqrt();
@@ -60,18 +72,16 @@ pub(crate) fn rank(urls: &mut [String], search: &str) {
         return;
     }
     let query = vector(search, &words);
-    let mut scored: Vec<(f64, usize)> = urls
-        .iter()
-        .enumerate()
-        .map(|(index, url)| (cosine(&vector(url, &words), &query), index))
+    let mut scored: Vec<(f64, String)> = urls
+        .iter_mut()
+        .map(|url| {
+            let score = cosine(&vector(path_of(url), &words), &query);
+            (score, std::mem::take(url))
+        })
         .collect();
     // Stable: equal scores keep the crawl's order.
     scored.sort_by(|a, b| b.0.total_cmp(&a.0));
-    let ordered: Vec<String> = scored
-        .iter()
-        .map(|(_, index)| urls[*index].clone())
-        .collect();
-    for (slot, url) in urls.iter_mut().zip(ordered) {
+    for (slot, (_, url)) in urls.iter_mut().zip(scored) {
         *slot = url;
     }
 }
@@ -115,6 +125,32 @@ mod tests {
             "Pricing plans",
         );
         assert_eq!(two[0], "https://site.test/pricing/plans");
+    }
+
+    /// The ranking vectors themselves (the backlog's acceptance).
+    #[test]
+    fn wi02_ranking_vectors() {
+        let words = words("Docs C");
+        assert_eq!(words, ["docs", "c"]);
+        let query = vector("Docs C", &words);
+        // "c" also occurs inside "docs".
+        assert_eq!(query, [1.0 / 6.0, 2.0 / 6.0]);
+        let path = vector("/docs/c", &words);
+        assert_eq!(path, [1.0 / 7.0, 2.0 / 7.0]);
+        assert!((cosine(&path, &query) - 1.0).abs() < 1e-12);
+        let other = vector("/docs/a", &words);
+        assert!((cosine(&other, &query) - 3.0 / 10f64.sqrt()).abs() < 1e-12);
+        assert_eq!(cosine(&[0.0, 0.0], &query), 0.0, "no match, no NaN");
+        assert_eq!(path_of("https://site.test/docs/c?x=1"), "/docs/c?x=1");
+        assert_eq!(path_of("https://site.test"), "/");
+    }
+
+    #[test]
+    fn wi02_the_shared_origin_is_not_scored() {
+        // Every URL contains the host; a query for it does not reorder.
+        let urls = ["https://site.test/b", "https://site.test/site"];
+        assert_eq!(ranked(&urls, "site")[0], "https://site.test/site");
+        assert_eq!(ranked(&urls, "test"), urls);
     }
 
     #[test]
