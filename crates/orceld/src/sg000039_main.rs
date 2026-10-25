@@ -625,6 +625,12 @@ fn dispatch_with(
     request: &RequestEnvelope,
     browser_resolver: &impl orcel_provider_browser::DnsResolver,
 ) -> Result<Value, ProviderError> {
+    // SG-000120 RJ-02: an approval prompt for a target whose latest step has
+    // an unknown outcome says so.
+    let approval = &mutation_journal::UnknownNotice {
+        approval,
+        sink: mutation_journal::global(),
+    };
     // SG-000126: report tasks have their own entry in the request loop
     // (`report_task::handle_envelope`); they never run on this path.
     if report_task::is_report_request(request) {

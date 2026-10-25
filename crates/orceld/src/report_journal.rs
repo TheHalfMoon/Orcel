@@ -499,6 +499,14 @@ impl ReportJournal {
                     Reconciled::NothingWritten
                 };
                 reconciled += 1;
+                if matches!(result, Reconciled::Unknown(_)) {
+                    crate::mutation_journal::note_unknown(
+                        &commit.workspace_id,
+                        &commit.destination,
+                        &intent,
+                        "commit",
+                    );
+                }
                 if let Some((_, task)) = snapshots.iter_mut().find(|(_, task)| {
                     task.id == commit.task_id
                         && (task.state == TaskState::Proposed.as_str()

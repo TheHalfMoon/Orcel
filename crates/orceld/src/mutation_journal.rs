@@ -328,6 +328,44 @@ pub(crate) struct MutationJournal {
     path: PathBuf,
     owner: Owner,
     counter: std::sync::atomic::AtomicU64,
+    /// Targets whose latest outcome is unknown, by (workspace, target).
+    unknown: std::sync::Mutex<std::collections::HashMap<(String, String), Unknown>>,
+}
+
+/// A target whose latest approved step has an unknown outcome. A dependent
+/// step (the next mutation of the same target in the same workspace) is
+/// refused once with this named; the request after that asks for a new
+/// explicit approval whose prompt says so (see [`UnknownNotice`]).
+#[derive(Debug, Clone)]
+struct Unknown {
+    intent: String,
+    operation: String,
+    /// The refusal was returned: the next request may ask for approval.
+    surfaced: bool,
+}
+
+/// One spelling per target for the unknown-outcome rule: `.` parts and
+/// empty parts dropped, one separator, and lower case (Windows and macOS
+/// file names ignore case; on Linux a false match only adds a refusal).
+/// `a.txt`, `./a.txt` and `A.TXT` are one target.
+fn target_key(target: &str) -> String {
+    let joined = target
+        .split(['/', '\\'])
+        .filter(|part| !part.is_empty() && *part != ".")
+        .collect::<Vec<_>>()
+        .join("/");
+    joined.to_lowercase()
+}
+
+/// How an outcome changes what is known about its target: `Some(true)`
+/// unknown, `Some(false)` known again (it acted, or nothing happened after
+/// a dispatch), `None` no change (it never started).
+fn leaves_unknown(outcome: &str) -> Option<bool> {
+    match outcome {
+        "unknown" | "reconciled_unknown" => Some(true),
+        "done" | "failed" | "reconciled_done" | "reconciled_nothing_done" => Some(false),
+        _ => None,
+    }
 }
 
 /// What a starting orceld found.
@@ -350,7 +388,47 @@ impl MutationJournal {
             path,
             owner,
             counter: std::sync::atomic::AtomicU64::new(0),
+            unknown: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
+    }
+
+    fn unknown_targets(
+        &self,
+    ) -> std::sync::MutexGuard<'_, std::collections::HashMap<(String, String), Unknown>> {
+        // The map holds no invariant a panicking holder could break.
+        self.unknown
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Records `outcome` of `intent` for its target.
+    fn note(&self, workspace_id: &str, target: &str, intent: &str, operation: &str, outcome: &str) {
+        let key = (workspace_id.to_owned(), target_key(target));
+        match leaves_unknown(outcome) {
+            Some(true) => {
+                self.unknown_targets().insert(
+                    key,
+                    Unknown {
+                        intent: intent.to_owned(),
+                        operation: operation.to_owned(),
+                        surfaced: false,
+                    },
+                );
+            }
+            Some(false) => {
+                self.unknown_targets().remove(&key);
+            }
+            None => {}
+        }
+    }
+
+    /// The operation of the unknown step on this target once its refusal
+    /// was returned: the prompt of the next approval must name it.
+    fn surfaced_unknown(&self, workspace_id: &str, target: &str) -> Option<String> {
+        self.unknown_targets()
+            .get(&(workspace_id.to_owned(), target_key(target)))
+            .filter(|unknown| unknown.surfaced)
+            .map(|unknown| unknown.operation.clone())
     }
 
     fn line(&self, line: &Line) -> Result<(), JournalError> {
@@ -444,6 +522,20 @@ impl MutationJournal {
             if outcomes.len() > MAX_OUTCOMES {
                 outcomes.drain(..outcomes.len() - MAX_OUTCOMES);
             }
+            // What is known about each target, oldest outcome first.
+            for line in &outcomes {
+                if let Line::Outcome {
+                    intent,
+                    operation,
+                    workspace_id,
+                    target,
+                    outcome,
+                    ..
+                } = line
+                {
+                    self.note(workspace_id, target, intent, operation, outcome);
+                }
+            }
             let mut kept = outcomes;
             kept.extend(live);
             orcel_journal::rewrite(&self.path, &kept)?;
@@ -527,6 +619,8 @@ pub(crate) struct Intent {
     id: String,
     journal: Option<&'static MutationJournal>,
     closed: bool,
+    /// (workspace, target, operation) of the mutation.
+    key: (String, String, String),
 }
 
 /// Where a mutation is journaled.
@@ -559,6 +653,96 @@ pub(crate) fn opaque(
     }
 }
 
+/// The approval broker every dispatch uses: when the target's latest step
+/// has an unknown outcome (and its refusal was returned), the prompt of the
+/// new approval says so before anything else. Nothing else changes.
+pub(crate) struct UnknownNotice<'a, B> {
+    pub(crate) approval: &'a B,
+    pub(crate) sink: Sink,
+}
+
+impl<B: orcel_approval::ApprovalBroker> orcel_approval::ApprovalBroker for UnknownNotice<'_, B> {
+    fn request_token(
+        &self,
+        prompt: &orcel_approval::ApprovalPrompt,
+    ) -> Result<orcel_approval::ApprovedToken, orcel_approval::ApprovalError> {
+        let earlier = match self.sink {
+            Sink::Journal(journal) => {
+                journal.surfaced_unknown(&prompt.workspace_id, &prompt.target)
+            }
+            Sink::None | Sink::Faulted => None,
+        };
+        match earlier {
+            Some(operation) => {
+                let mut noticed = prompt.clone();
+                noticed.summary = format!(
+                    "UNKNOWN EARLIER OUTCOME: an earlier approved {operation} on this target \
+                     may or may not have happened and was not retried; check the current \
+                     state before approving. {}",
+                    prompt.summary
+                );
+                self.approval.request_token(&noticed)
+            }
+            None => self.approval.request_token(prompt),
+        }
+    }
+
+    fn consume(
+        &self,
+        token: &orcel_approval::ApprovedToken,
+        expected: &orcel_approval::ConsumeExpectation,
+        now_ms: u64,
+    ) -> Result<(), orcel_approval::ApprovalError> {
+        self.approval.consume(token, expected, now_ms)
+    }
+
+    fn emergency_revoke(
+        &self,
+        prompt: &orcel_approval::ApprovalPrompt,
+    ) -> Result<u64, orcel_approval::ApprovalError> {
+        self.approval.emergency_revoke(prompt)
+    }
+
+    fn history(&self, limit: usize) -> Vec<orcel_approval::ApprovalRecordSummary> {
+        self.approval.history(limit)
+    }
+}
+
+/// SG-000120 RJ-02: a report commit that reconciled unknown makes its
+/// destination unknown for the dependent-step rule too. Recorded as an
+/// outcome line, so it outlives the report journal's closed commit.
+pub(crate) fn note_unknown(workspace_id: &str, target: &str, intent: &str, operation: &str) {
+    note_unknown_to(global(), workspace_id, target, intent, operation);
+}
+
+fn note_unknown_to(sink: Sink, workspace_id: &str, target: &str, intent: &str, operation: &str) {
+    let Sink::Journal(journal) = sink else {
+        return;
+    };
+    let recorded = journal.line(&Line::Outcome {
+        schema: SCHEMA.to_owned(),
+        intent: intent.to_owned(),
+        capability: "report".to_owned(),
+        operation: operation.to_owned(),
+        workspace_id: workspace_id.to_owned(),
+        target: target.to_owned(),
+        outcome: "reconciled_unknown".to_owned(),
+        at_ms: orcel_approval::now_ms(),
+    });
+    if recorded.is_err() {
+        eprintln!(
+            "orceld mutation journal: a report commit's unknown outcome could not be recorded; it holds for this run only"
+        );
+    }
+    journal.note(
+        workspace_id,
+        target,
+        intent,
+        operation,
+        "reconciled_unknown",
+    );
+}
+
 /// This orceld's sink.
 pub(crate) fn global() -> Sink {
     match JOURNAL.get() {
@@ -580,6 +764,7 @@ pub(crate) fn pending(sink: Sink, mutation: Mutation) -> Result<Intent, Provider
                 id: String::new(),
                 journal: None,
                 closed: true,
+                key: Default::default(),
             })
         }
         Sink::Faulted => return Err(ProviderError::new(
@@ -588,6 +773,32 @@ pub(crate) fn pending(sink: Sink, mutation: Mutation) -> Result<Intent, Provider
         )),
         Sink::Journal(journal) => journal,
     };
+    // SG-000120 RJ-02: a dependent step after an unknown outcome is
+    // refused once; nothing is ever retried in its place.
+    {
+        let mut unknown = journal.unknown_targets();
+        let key = (mutation.workspace_id.clone(), target_key(&mutation.target));
+        if let Some(earlier) = unknown.get_mut(&key) {
+            if !earlier.surfaced {
+                earlier.surfaced = true;
+                return Err(ProviderError::new(
+                    FailureCode::TargetStale,
+                    format!(
+                        "an earlier approved {} on this target ({}) has an unknown outcome and \
+                         was not retried; verify the target's current state, then request \
+                         again: the next request asks for a new explicit approval that names \
+                         the unknown outcome",
+                        earlier.operation, earlier.intent
+                    ),
+                ));
+            }
+        }
+    }
+    let key = (
+        mutation.workspace_id.clone(),
+        mutation.target.clone(),
+        mutation.operation.clone(),
+    );
     let n = journal
         .counter
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -607,6 +818,7 @@ pub(crate) fn pending(sink: Sink, mutation: Mutation) -> Result<Intent, Provider
         id,
         journal: Some(journal),
         closed: false,
+        key,
     })
 }
 
@@ -666,6 +878,8 @@ impl Intent {
                 outcome: outcome.to_owned(),
                 at_ms: orcel_approval::now_ms(),
             });
+            let (workspace_id, target, operation) = &self.key;
+            journal.note(workspace_id, target, &self.id, operation, outcome);
         }
     }
 }
@@ -702,6 +916,7 @@ pub(crate) fn journaled_with<A, T>(
             | Postcondition::Opaque
     );
     let mut intent = pending(sink, mutation)?;
+    crash_point("pending");
     let approved = match approve() {
         Ok(approved) => approved,
         Err(refusal) => {
@@ -714,7 +929,9 @@ pub(crate) fn journaled_with<A, T>(
         }
     };
     intent.dispatched()?;
+    crash_point("dispatched");
     let result = act(approved);
+    crash_point("effect");
     intent.settle(match (&result, uncertain) {
         (Ok(_), _) => "done",
         (Err(_), true) => "unknown",
@@ -775,3 +992,20 @@ mod tests;
 #[cfg(test)]
 #[path = "mutation_journal_git_tests.rs"]
 mod git_tests;
+
+/// Test builds only: the fault-injection suite's child process dies here
+/// when `ORCEL_RJ02_CRASH_AT` names this transition. Product builds have
+/// no such point.
+#[cfg(test)]
+pub(crate) fn crash_point(at: &str) {
+    if std::env::var("ORCEL_RJ02_CRASH_AT").as_deref() == Ok(at) {
+        std::process::abort();
+    }
+}
+
+#[cfg(not(test))]
+pub(crate) fn crash_point(_at: &str) {}
+
+#[cfg(test)]
+#[path = "mutation_journal_crash_tests.rs"]
+mod crash_tests;

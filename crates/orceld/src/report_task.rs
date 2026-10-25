@@ -952,6 +952,7 @@ fn commit(
             journal::commit_line(&task, &workspace.root, &proposal, &digest),
         )?;
     }
+    crate::mutation_journal::crash_point("pending");
     let approved = approval
         .request_token(&prompt)
         .and_then(|token| {
@@ -1027,9 +1028,11 @@ fn commit(
             return Err(failure);
         }
     }
+    crate::mutation_journal::crash_point("dispatched");
     // Create-only: the provider's create-new open refuses any existing
     // entry at the name without opening it.
     let written = provider.create_text(&proposal.destination, content);
+    crate::mutation_journal::crash_point("effect");
     let check = report_check::check(&report_check::Expectation {
         root: &workspace.root,
         folder_path: &workspace.root.join(&task.folder),
