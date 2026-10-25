@@ -199,23 +199,22 @@ test("authorization metadata advertises only what the relay implements", () => {
   assert.equal(metadata.authorization_response_iss_parameter_supported, true);
 });
 
-test("at most one grain is active (or the founder-sequenced SG-000096/SG-000120/SG-000127 set) and no later grain is activated ahead of it", () => {
+test("at most one grain is active (or the founder-sequenced SG-000096/SG-000127 pair) and no later grain is activated ahead of it", () => {
   const dir = join(repo, ".specgrain", "specs");
   const specs = readdirSync(dir).filter((name) => /^SG-\d{6}\.json$/.test(name)).sort();
   const active = specs.filter((name) => (JSON.parse(readFileSync(join(dir, name), "utf8")) as { state: string }).state !== "CLOSED");
-  // SG-000108 (issue #290) and SG-000126 (issue #435) ran beside SG-000096
-  // and are closed. The only lawful open set is SG-000096 with SG-000127
-  // (ORCEL-F4, founder sequencing: mandate #435, tracked under #446) and
-  // SG-000120 (ORCEL-RJ, founder sequencing of 2026-10-25, issue #455).
-  // Update this pin when any of the three closes.
-  if (active.length === 3) {
-    assert.deepEqual(active, ["SG-000096.json", "SG-000120.json", "SG-000127.json"], `parallel active grains: ${active.join(", ")}`);
+  // SG-000108 (issue #290), SG-000126 (issue #435) and SG-000120 (ORCEL-RJ,
+  // founder sequencing of 2026-10-25, issue #455) ran beside SG-000096 and
+  // are closed. The only lawful open set is SG-000096 with SG-000127
+  // (ORCEL-F4, founder sequencing: mandate #435, tracked under #446).
+  // Update this pin when either closes.
+  if (active.length === 2) {
+    assert.deepEqual(active, ["SG-000096.json", "SG-000127.json"], `parallel active grains: ${active.join(", ")}`);
     const current = readFileSync(join(repo, "docs", "canonical", "CURRENT.md"), "utf8");
     assert.ok(current.includes("SG-000127 runs with SG-000096 as the open pair by founder sequencing of 2026-10-22 (issue #446)"), "SG-000127 requires its recorded founder sequencing");
-    assert.ok(current.includes("SG-000120 runs with SG-000096 and SG-000127 as the third open grain by founder sequencing of 2026-10-25 (issue #455)"), "SG-000120 requires its recorded founder sequencing");
-    for (const closed of ["SG-000108.json", "SG-000126.json"]) {
+    for (const closed of ["SG-000108.json", "SG-000120.json", "SG-000126.json"]) {
       const spec = JSON.parse(readFileSync(join(dir, closed), "utf8")) as { state: string };
-      assert.equal(spec.state, "CLOSED", `the open set follows the closed ${closed}`);
+      assert.equal(spec.state, "CLOSED", `the open pair follows the closed ${closed}`);
     }
     assert.deepEqual(
       specs.filter((name) => name > "SG-000096.json"),
@@ -227,11 +226,11 @@ test("at most one grain is active (or the founder-sequenced SG-000096/SG-000120/
   assert.ok(active.length <= 1, `parallel active grains: ${active.join(", ")}`);
   if (active.length === 1) {
     const later = specs.filter((name) => name > (active[0] ?? ""));
-    const parallelClosed = active[0] === "SG-000096.json" ? ["SG-000108.json", "SG-000126.json"] : [];
+    const parallelClosed = active[0] === "SG-000096.json" ? ["SG-000108.json", "SG-000120.json", "SG-000126.json"] : [];
     assert.deepEqual(
       later.filter((name) => !parallelClosed.includes(name)),
       [],
-      `no grain beyond the active grain exists except the closed SG-000108 and SG-000126: ${later.join(", ")}`
+      `no grain beyond the active grain exists except the closed SG-000108, SG-000120 and SG-000126: ${later.join(", ")}`
     );
     assert.ok((active[0] ?? "") >= "SG-000067.json", "SG-000067 or its lawful successor is active");
     return;

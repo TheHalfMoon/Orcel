@@ -2,7 +2,7 @@
   "id": "SG-000120",
   "title": "Durable journal, reconciliation and resume (RJ-01 to RJ-03)",
   "program": "ORCEL-RJ",
-  "state": "GRAIN",
+  "state": "CLOSED",
   "risk": "high",
   "created": "2026-10-25",
   "base": "f9d21e3af84f27c97fa460e236122bcf2a05377f",
@@ -92,5 +92,32 @@
     "remote_resume": "A remote resume summary needs its own decision on the core profile and the remote threat model."
   },
   "activation_note": "No capability, tool, dependency or authority change in this activation packet. Separate implementation and closeout PRs must qualify their exact heads; activation CI alone proves nothing about the journal.",
+  "closed_at": "2026-10-26",
+  "implementation_base": "bf4ef815011af062e20f801a0d424105380b2fa2",
+  "implementation_pr": 464,
+  "qualified_head": "5c93c68ab802f8d93a93cf583df3e4e3e9f83256",
+  "qualified_tree": "de38f906019aa727c8e6a19dfbc12fb1d117c20a",
+  "implementation_merge": "10ce2789d3b0f432d3a4829938f501cdf41ddbde",
+  "pre_merge_ci": "40239790146",
+  "pre_merge_review_gates": "40239788104",
+  "post_merge_ci": "40241898443",
+  "canonical_evidence": {
+    "slices": "#456 activation (merge 989fe4b4b5a857e434bb1866e20f496e2f39d323); #457 RJ-01 kernel journal crate orcel-journal (merge eb38f7fcc90198cf41d8d500695db5e75bb43377); #458 RJ-02 durable report tasks and journaled report commits (merge b4026b6d97882a490bb88e09cd0de62dc121efb8); #459 RJ-02 file provider (merge 5e1d3957250dfe3e40b7d01e72a19546cc39682b); #460 RJ-02 Git provider including push and fetch (merge 825b72181705392a199ce7c4946d624209f452d5); #461 Git provider read hardening found by the RJ-02 judges (merge e2e47b4aa6cbb353570455ee5f1d66fc4e2dd8f5); #462 RJ-02 process, clipboard and desktop effects (merge a3ca3b90ffc04e4390c9cfd732bd6bab7aadafbd); #463 RJ-02 unknown-outcome dependent steps and the fault-injection suite (merge bf4ef815011af062e20f801a0d424105380b2fa2); #464 RJ-03 task_resume_summary, with the journal lock fairness fix its Windows CI found (merge 10ce2789d3b0f432d3a4829938f501cdf41ddbde)",
+    "acceptance_matrix": "posted on #455 at closeout",
+    "open_follow_ups": [
+      "Remote resume summary (decision outside this grain, recorded in the spec).",
+      "Journal executable-registry upserts and browser download and upload effects if their scope widens (outside RJ-02's provider list).",
+      "BR-07's independent browser postcondition verifier builds on the RJ-01 journal."
+    ],
+    "known_residuals": [
+      "Dependent-step keys are the workspace and the normalized target only: an fs.move destination, paths under a directory made with --parents, and a UIA window against its element ids are not keyed as dependents; Windows trailing dots, 8.3 names, stream suffixes and links are not folded.",
+      "The unknown-target map is rebuilt from the newest 256 journal outcomes and is per orceld process.",
+      "A step that fails after its approval is consumed but before its effect starts is labelled unknown rather than abandoned (a label only; nothing is retried).",
+      "Reconciliation reads the target at start and can be raced by a writer between the check and the hash (a label only).",
+      "The MCP-level crash transcript (installed release, Windows) reads an interrupted task with no unknown commit: an approved commit cannot be driven through the real binaries without a person at the prompt; the unknown-commit summary is proven with a really aborted child process at unit level.",
+      "task_resume_summary serves the session that started the task; a restarted MCP client process or a new loopback session is a new session. The verification text names the destination path and the approved SHA-256.",
+      "Process, clipboard and desktop effects are journaled with the opaque postcondition and are never probed: an interrupted one is always unknown and needs re-observation."
+    ]
+  },
   "done_when": "On Windows, macOS and Linux, every mutating dispatch of the RJ-02 providers is journaled and reconciled after a crash without re-dispatch, report tasks survive a restart, and a reconnecting local client can read a bounded resume summary, with the fault-injection suite and exact-head CI passing."
 }
