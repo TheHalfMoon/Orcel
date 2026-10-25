@@ -26,4 +26,3 @@ export async function approvedElement(page: TargetPage, ref: string, target?: Ap
   if ((await byRole.count().catch(() => 0)) !== 1) throw new NavigationError("stale");
   return byRole;
 }
-
