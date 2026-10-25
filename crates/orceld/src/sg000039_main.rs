@@ -83,8 +83,17 @@ fn run() -> Result<(), String> {
     let approval = LocalApprovalBroker::new()
         .map_err(|error| format!("initialize approval broker: {}", error.message))?;
     let workspace_set = remote_lease::WorkspaceSet::from_environment();
-    // SG-000126: report tasks of this run, served read-only by the app API.
-    let tasks = std::sync::Arc::new(report_task::TaskRegistry::new());
+    // SG-000126: report tasks, served read-only by the app API; SG-000120
+    // RJ-02: durable across runs through the report task journal.
+    let tasks = std::sync::Arc::new(match report_task::default_journal_path() {
+        Ok(path) => report_task::TaskRegistry::with_journal(path),
+        Err(failure) => {
+            eprintln!(
+                "orceld report journal: no private location ({failure}); report commits are refused"
+            );
+            report_task::TaskRegistry::faulted()
+        }
+    });
 
     eprintln!(
         "orceld ready: protocol={} audit={} mode=SG-000039_CLIPBOARD_WRITE",

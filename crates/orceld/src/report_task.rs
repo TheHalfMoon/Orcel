@@ -116,6 +116,21 @@ impl TaskState {
         }
     }
 
+    pub(crate) fn from_str(state: &str) -> Option<Self> {
+        [
+            Self::Observed,
+            Self::Proposed,
+            Self::ApprovalDenied,
+            Self::Committing,
+            Self::Verified,
+            Self::VerificationFailed,
+            Self::Stale,
+            Self::Failed,
+        ]
+        .into_iter()
+        .find(|known| known.as_str() == state)
+    }
+
     pub(crate) fn is_final(self) -> bool {
         matches!(
             self,
@@ -142,7 +157,7 @@ struct Proposal {
 #[derive(Debug, Clone)]
 struct Step {
     step_id: String,
-    kind: &'static str,
+    kind: String,
     outcome: String,
     at_ms: u64,
 }
@@ -150,6 +165,9 @@ struct Step {
 #[derive(Debug, Clone)]
 pub(crate) struct ReportTask {
     id: String,
+    /// The orceld run that started the task (the registry's seed); a task
+    /// of an earlier run is shown, never continued.
+    run: String,
     workspace_id: String,
     title: String,
     folder: String,
@@ -219,6 +237,12 @@ pub(crate) struct TaskRegistry {
     seed: String,
     counter: AtomicU64,
     events: OnceLock<Arc<EventLog>>,
+    /// SG-000120 RJ-02: the durable journal (`None` when orceld has none,
+    /// as in most unit tests; commits are then not journaled).
+    journal: Option<journal::ReportJournal>,
+    /// Set when the journal could not be read at start: commits are
+    /// refused until it is repaired, never run unjournaled.
+    journal_faulted: bool,
 }
 
 impl TaskRegistry {
@@ -235,7 +259,57 @@ impl TaskRegistry {
             seed: format!("{}|{nanos}", std::process::id()),
             counter: AtomicU64::new(0),
             events: OnceLock::new(),
+            journal: None,
+            journal_faulted: false,
         }
+    }
+
+    /// A registry with no usable journal location: tasks can be started and
+    /// previewed, commits are refused.
+    pub(crate) fn faulted() -> Self {
+        let mut registry = Self::new();
+        registry.journal_faulted = true;
+        registry
+    }
+
+    /// A registry backed by the durable journal at `path`: the commits an
+    /// exited orceld left pending are reconciled, the tasks of exited runs
+    /// come back read-only, and every commit of this run is journaled. An
+    /// unreadable journal refuses commits (reported on stderr) instead of
+    /// running them unjournaled.
+    pub(crate) fn with_journal(path: PathBuf) -> Self {
+        let mut registry = Self::new();
+        let Some(owner) = journal::Owner::current(&registry.seed) else {
+            eprintln!("orceld report journal: this process's identity is unavailable; report commits are refused");
+            registry.journal_faulted = true;
+            return registry;
+        };
+        let report_journal = journal::ReportJournal::new(path, owner);
+        match report_journal.restore() {
+            Ok(restored) => {
+                if restored.torn > 0 {
+                    eprintln!(
+                        "orceld report journal: skipped {} torn line(s) left by a crash",
+                        restored.torn
+                    );
+                }
+                if restored.reconciled > 0 {
+                    eprintln!(
+                        "orceld report journal: reconciled {} commit(s) an exited orceld left pending",
+                        restored.reconciled
+                    );
+                }
+                *registry.lock() = restored.tasks;
+                registry.journal = Some(report_journal);
+            }
+            Err(failure) => {
+                // The unreadable journal is left exactly as found, for
+                // repair: no snapshot or intent is appended to it.
+                eprintln!("orceld report journal: {failure}; report commits are refused until it is repaired");
+                registry.journal_faulted = true;
+            }
+        }
+        registry
     }
 
     /// The app API's event log, which `task.updated` events go to.
@@ -247,6 +321,26 @@ impl TaskRegistry {
         self.tasks
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// A commit attempt's own intent id: unique even when a denied report
+    /// is approved on a second attempt.
+    fn next_intent(&self, task_id: &str) -> String {
+        format!(
+            "{task_id}.c{}",
+            self.counter.fetch_add(1, Ordering::Relaxed)
+        )
+    }
+
+    /// Notes how a journaled commit ended. A no-op without a journal.
+    fn note(&self, intent: &str, settled: bool, outcome: &str) {
+        if let Some(journal) = &self.journal {
+            if settled {
+                journal.settled(intent, outcome);
+            } else {
+                journal.abandoned(intent, outcome);
+            }
+        }
     }
 
     fn next_id(&self) -> String {
@@ -305,6 +399,12 @@ impl TaskRegistry {
                     "this orceld run has no such report task in this workspace; start a new task",
                 )
             })?;
+        if task.run != self.seed {
+            return Err(error(
+                FailureCode::TargetStale,
+                "this task belongs to an earlier orceld run; start a new task",
+            ));
+        }
         match task.state {
             TaskState::Stale => Err(error(
                 FailureCode::TargetStale,
@@ -341,7 +441,7 @@ impl TaskRegistry {
             let step_id = format!("s{}", task.next_step);
             task.steps.push(Step {
                 step_id: step_id.clone(),
-                kind,
+                kind: kind.to_owned(),
                 outcome: outcome.to_owned(),
                 at_ms: now,
             });
@@ -352,8 +452,12 @@ impl TaskRegistry {
             (
                 step_id,
                 json!({"task_kind": "report", "state": task.state.as_str(), "step": kind, "outcome": outcome}),
+                self.journal.is_some().then(|| task.clone()),
             )
         };
+        if let (Some(journal), Some(task)) = (&self.journal, &event.2) {
+            journal.snapshot(task);
+        }
         if let Some(log) = self.events.get() {
             log.publish_run("task.updated", Some(task_id), Some(&event.0), event.1);
         }
@@ -363,6 +467,21 @@ impl TaskRegistry {
 // ---------------------------------------------------------------------------
 // Dispatch
 // ---------------------------------------------------------------------------
+
+/// `ORCEL_REPORT_JOURNAL_PATH`, else `journal/report-tasks.jsonl` under the
+/// private per-user state root (both directories private, as the audit log
+/// requires). Fails closed; it never falls back to a shared location.
+pub(crate) fn default_journal_path() -> Result<PathBuf, orcel_platform::PlatformError> {
+    use orcel_platform::paths;
+    if let Some(path) = std::env::var_os("ORCEL_REPORT_JOURNAL_PATH") {
+        return paths::private_file_override(path);
+    }
+    let root = paths::state_root()?;
+    paths::ensure_private_dir(&root)?;
+    let directory = root.join("journal");
+    paths::ensure_private_dir(&directory)?;
+    Ok(directory.join("report-tasks.jsonl"))
+}
 
 pub(crate) fn is_report_request(request: &RequestEnvelope) -> bool {
     request.capability == REPORT_CAPABILITY
@@ -548,6 +667,7 @@ fn start(
     let now = orcel_approval::now_ms();
     let task = tasks.insert(ReportTask {
         id: String::new(),
+        run: tasks.seed.clone(),
         workspace_id: workspace.id.clone(),
         title: title.to_owned(),
         folder: folder.to_owned(),
@@ -802,6 +922,21 @@ fn commit(
         ),
         digest.clone(),
     );
+    // SG-000120 RJ-02: the commit is durable before anything is asked or
+    // spent; a journal that cannot record it refuses the commit.
+    if tasks.journal_faulted {
+        return Err(error(
+            FailureCode::ProviderUnavailable,
+            "the report task journal is unreadable; report commits are refused until it is repaired",
+        ));
+    }
+    let intent = tasks.next_intent(&task.id);
+    if let Some(journal) = &tasks.journal {
+        journal.pending(
+            &intent,
+            journal::commit_line(&task, &workspace.root, &proposal),
+        )?;
+    }
     let approved = approval
         .request_token(&prompt)
         .and_then(|token| {
@@ -813,6 +948,15 @@ fn commit(
         })
         .map_err(|refusal| ProviderError::new(refusal.code, refusal.message));
     if let Err(refusal) = approved {
+        tasks.note(
+            &intent,
+            false,
+            if refusal.code == FailureCode::ApprovalDenied {
+                "approval_denied"
+            } else {
+                "approval_unavailable"
+            },
+        );
         if refusal.code == FailureCode::ApprovalDenied {
             tasks.update(&task.id, "approval", "denied", |task| {
                 task.state = TaskState::ApprovalDenied;
@@ -832,6 +976,7 @@ fn commit(
         // an existing destination leaves it open for a new name and a new
         // approval.
         let reopen = matches!(reason, Blocked::Exists(_) | Blocked::Other(_));
+        tasks.note(&intent, false, "blocked_after_approval");
         let failure = blocked(tasks, &task.id, "commit", reason);
         if reopen {
             tasks.update(&task.id, "commit", "reopened", |task| {
@@ -844,6 +989,7 @@ fn commit(
     let provider = match FsProvider::new(&workspace.root) {
         Ok(provider) => provider,
         Err(failure) => {
+            tasks.note(&intent, false, "provider_unavailable");
             tasks.update(&task.id, "write", "failed", |task| {
                 task.state = TaskState::Failed;
             });
@@ -869,6 +1015,7 @@ fn commit(
             // nothing: someone created it after the checks. Whatever it
             // holds, orceld did not write it, so it never verifies. The
             // approval is spent; a new name needs a new preview and approval.
+            tasks.note(&intent, false, "destination_exists");
             tasks.update(&task.id, "write", "destination_exists", |task| {
                 task.state = TaskState::Proposed;
             });
@@ -883,6 +1030,7 @@ fn commit(
                 "sha256": proposal.sha256,
                 "check": record,
             });
+            tasks.note(&intent, true, "verified");
             tasks.update(&task.id, "verify", "passed", |task| {
                 task.report = Some(proposal);
                 task.check = Some(record);
@@ -901,6 +1049,7 @@ fn commit(
                     json!({"checker": report_check::CHECKER, "passed": false, "reason": reason})
                 }
             };
+            tasks.note(&intent, true, "write_failed");
             tasks.update(&task.id, "write", "failed", |task| {
                 task.check = Some(found);
                 task.state = TaskState::Failed;
@@ -908,6 +1057,7 @@ fn commit(
             Err(failure)
         }
         (Ok(_), Err(reason)) => {
+            tasks.note(&intent, true, "verification_failed");
             tasks.update(&task.id, "verify", "failed", |task| {
                 task.check = Some(
                     json!({"checker": report_check::CHECKER, "passed": false, "reason": reason}),
@@ -924,6 +1074,9 @@ fn commit(
         }
     }
 }
+
+#[path = "report_journal.rs"]
+mod journal;
 
 #[cfg(test)]
 #[path = "report_task_tests.rs"]
