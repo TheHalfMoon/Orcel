@@ -563,7 +563,7 @@ mod tests {
         provider.log(".", 5).unwrap();
         assert!(!marker.exists(), "a read ran the configured program");
         assert!(
-            control || cfg!(windows),
+            control,
             "the hostile configuration must fire for an unhardened read"
         );
         let _ = fs::remove_dir_all(root);
