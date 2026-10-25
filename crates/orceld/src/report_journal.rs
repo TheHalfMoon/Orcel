@@ -99,7 +99,9 @@ struct StepLine {
 pub(super) struct TaskLine {
     id: String,
     workspace_id: String,
-    title: String,
+    /// The planner's free-text title is not kept, only its hash: the
+    /// journal holds paths, sizes, hashes, states and outcomes.
+    title_sha256: String,
     folder: String,
     folder_canonical: PathBuf,
     sources: Vec<SourceLine>,
@@ -117,6 +119,11 @@ pub(super) struct TaskLine {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct CommitLine {
     pub task_id: String,
+    /// The approval this commit asks for: its digest, workspace and policy
+    /// revision (the intent is bound to exactly that approval).
+    pub approval_digest: String,
+    pub workspace_id: String,
+    pub policy_revision: String,
     pub root: PathBuf,
     pub folder: String,
     pub folder_canonical: PathBuf,
@@ -140,17 +147,15 @@ enum Line {
         intent: String,
         commit: CommitLine,
     },
+    /// Written immediately before the create: from here on the effect may
+    /// have started.
+    Dispatched { schema: String, intent: String },
     Settled {
         schema: String,
         intent: String,
         outcome: String,
     },
     Abandoned {
-        schema: String,
-        intent: String,
-        outcome: String,
-    },
-    Reconciled {
         schema: String,
         intent: String,
         outcome: String,
@@ -162,9 +167,9 @@ impl Line {
         match self {
             Line::Task { schema, .. }
             | Line::Pending { schema, .. }
+            | Line::Dispatched { schema, .. }
             | Line::Settled { schema, .. }
-            | Line::Abandoned { schema, .. }
-            | Line::Reconciled { schema, .. } => schema,
+            | Line::Abandoned { schema, .. } => schema,
         }
     }
 
@@ -172,9 +177,9 @@ impl Line {
         match self {
             Line::Task { .. } => None,
             Line::Pending { intent, .. } => Some((intent, IntentState::Pending)),
+            Line::Dispatched { intent, .. } => Some((intent, IntentState::Dispatched)),
             Line::Settled { intent, .. } => Some((intent, IntentState::Settled)),
             Line::Abandoned { intent, .. } => Some((intent, IntentState::Abandoned)),
-            Line::Reconciled { intent, .. } => Some((intent, IntentState::Reconciled)),
         }
     }
 }
@@ -194,7 +199,7 @@ pub(super) fn task_line(task: &ReportTask) -> TaskLine {
     TaskLine {
         id: task.id.clone(),
         workspace_id: task.workspace_id.clone(),
-        title: task.title.clone(),
+        title_sha256: super::sha256_hex(task.title.as_bytes()),
         folder: task.folder.clone(),
         folder_canonical: task.folder_canonical.clone(),
         sources: task.sources.iter().map(source).collect(),
@@ -261,7 +266,8 @@ fn restored_task(line: TaskLine, run: &str) -> ReportTask {
         id: line.id,
         run: run.to_owned(),
         workspace_id: line.workspace_id,
-        title: line.title,
+        // The journal kept only the title's hash.
+        title: String::new(),
         folder: line.folder,
         folder_resolved: PathBuf::new(),
         folder_canonical: line.folder_canonical,
@@ -277,9 +283,17 @@ fn restored_task(line: TaskLine, run: &str) -> ReportTask {
     }
 }
 
-pub(super) fn commit_line(task: &ReportTask, root: &Path, proposal: &Proposal) -> CommitLine {
+pub(super) fn commit_line(
+    task: &ReportTask,
+    root: &Path,
+    proposal: &Proposal,
+    approval_digest: &str,
+) -> CommitLine {
     CommitLine {
         task_id: task.id.clone(),
+        approval_digest: approval_digest.to_owned(),
+        workspace_id: task.workspace_id.clone(),
+        policy_revision: orcel_policy::POLICY_REVISION.to_owned(),
         root: root.to_path_buf(),
         folder: task.folder.clone(),
         folder_canonical: task.folder_canonical.clone(),
@@ -407,6 +421,17 @@ impl ReportJournal {
         .map_err(|_| unavailable())
     }
 
+    /// Immediately before the create. If this cannot be written the create
+    /// must not run: a later reconcile would otherwise read a pending-only
+    /// intent as never started.
+    pub(super) fn dispatched(&self, intent: &str) -> Result<(), ProviderError> {
+        self.line(&Line::Dispatched {
+            schema: SCHEMA.to_owned(),
+            intent: intent.to_owned(),
+        })
+        .map_err(|_| unavailable())
+    }
+
     /// The commit's effect never started (refused, denied or blocked
     /// before the create).
     pub(super) fn abandoned(&self, intent: &str, outcome: &str) {
@@ -438,7 +463,7 @@ impl ReportJournal {
             }
             let open = orcel_journal::recover(read.lines.iter().filter_map(Line::intent_event))?;
             let mut snapshots: Vec<(Owner, TaskLine)> = Vec::new();
-            let mut pending: Vec<(Owner, String, CommitLine)> = Vec::new();
+            let mut pending: Vec<(Owner, String, CommitLine, IntentState)> = Vec::new();
             for line in &read.lines {
                 match line {
                     Line::Task { owner, task, .. } => {
@@ -452,8 +477,10 @@ impl ReportJournal {
                         intent,
                         commit,
                         ..
-                    } if open.iter().any(|(id, _)| id == intent) => {
-                        pending.push((owner.clone(), intent.clone(), commit.clone()))
+                    } => {
+                        if let Some((_, state)) = open.iter().find(|(id, _)| id == intent) {
+                            pending.push((owner.clone(), intent.clone(), commit.clone(), *state));
+                        }
                     }
                     _ => {}
                 }
@@ -480,29 +507,52 @@ impl ReportJournal {
             // Reconcile the commits left pending by exited runs.
             let mut reconciled = 0;
             let mut kept_pending: Vec<Line> = Vec::new();
-            for (owner, intent, commit) in pending {
+            for (owner, intent, commit, state) in pending {
                 if !is_exited(&owner) || owner.run == self.owner.run {
+                    // A live run's open commit is kept exactly: pending,
+                    // and dispatched when its create may have started.
                     kept_pending.push(Line::Pending {
                         schema: SCHEMA.to_owned(),
                         owner,
-                        intent,
+                        intent: intent.clone(),
                         commit,
                     });
+                    if state == IntentState::Dispatched {
+                        kept_pending.push(Line::Dispatched {
+                            schema: SCHEMA.to_owned(),
+                            intent,
+                        });
+                    }
                     continue;
                 }
-                let result = reconcile(&commit);
+                // Pending only: the create never started, so the
+                // destination is not even read. Dispatched: the
+                // destination decides.
+                let result = if state == IntentState::Dispatched {
+                    reconcile(&commit)
+                } else {
+                    Reconciled::NothingWritten
+                };
                 reconciled += 1;
-                if let Some((_, task)) = snapshots
-                    .iter_mut()
-                    .find(|(_, task)| task.id == commit.task_id)
-                {
+                if let Some((_, task)) = snapshots.iter_mut().find(|(_, task)| {
+                    task.id == commit.task_id
+                        && (task.state == TaskState::Proposed.as_str()
+                            || task.state == TaskState::Committing.as_str())
+                }) {
+                    // Only a task still waiting on this commit takes its
+                    // result; a task that already finished keeps its state.
+                    let now = orcel_approval::now_ms();
                     task.next_step += 1;
                     task.steps.push(StepLine {
                         step_id: format!("s{}", task.next_step),
                         kind: "reconcile".to_owned(),
                         outcome: result.outcome().to_owned(),
-                        at_ms: orcel_approval::now_ms(),
+                        at_ms: now,
                     });
+                    if task.steps.len() > MAX_STEPS {
+                        task.steps.remove(0);
+                    }
+                    task.updated_at_ms = now;
                     match &result {
                         Reconciled::Verified(record) => {
                             task.state = TaskState::Verified.as_str().to_owned();
@@ -545,13 +595,23 @@ impl ReportJournal {
                     task: task.clone(),
                 })
                 .collect();
+            // A live run's tasks: its newest snapshot of each.
+            let mut live_tasks: Vec<(Owner, TaskLine)> = Vec::new();
             for line in read.lines {
-                if let Line::Task { owner, .. } = &line {
-                    if !is_exited(owner) {
-                        kept.push(line);
+                if let Line::Task { owner, task, .. } = line {
+                    if !is_exited(&owner) {
+                        match live_tasks.iter_mut().find(|(_, known)| known.id == task.id) {
+                            Some(slot) => *slot = (owner, task),
+                            None => live_tasks.push((owner, task)),
+                        }
                     }
                 }
             }
+            kept.extend(live_tasks.into_iter().map(|(owner, task)| Line::Task {
+                schema: SCHEMA.to_owned(),
+                owner,
+                task,
+            }));
             kept.extend(kept_pending);
             orcel_journal::rewrite(&self.path, &kept)?;
 

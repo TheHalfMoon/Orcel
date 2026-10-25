@@ -59,7 +59,7 @@ fn commit_request(task: &str, content: &str) -> orcel_contracts::RequestEnvelope
 
 /// Writes a pending commit for the report previewed in `tasks`, as the run
 /// `owner`, the way a commit records it before its approval.
-fn leave_pending(scene: &Scene, tasks: &TaskRegistry, task: &str, owner: Owner) {
+fn leave_pending(scene: &Scene, tasks: &TaskRegistry, task: &str, owner: Owner, dispatched: bool) {
     let record = tasks
         .lock()
         .iter()
@@ -72,9 +72,12 @@ fn leave_pending(scene: &Scene, tasks: &TaskRegistry, task: &str, owner: Owner) 
     journal
         .pending(
             &format!("{task}.c0"),
-            commit_line(&record, &scene.workspace.root, &proposal),
+            commit_line(&record, &scene.workspace.root, &proposal, &"d".repeat(64)),
         )
         .unwrap();
+    if dispatched {
+        journal.dispatched(&format!("{task}.c0")).unwrap();
+    }
 }
 
 #[test]
@@ -108,7 +111,7 @@ fn rj02_an_approved_journey_is_journaled_and_survives_a_restart() {
     // the approved one settled. Nothing is left open.
     let written = lines(&path);
     let events: Vec<(&str, IntentState)> = written.iter().filter_map(Line::intent_event).collect();
-    assert_eq!(events.len(), 4, "{events:?}");
+    assert_eq!(events.len(), 5, "{events:?}");
     assert_eq!(events[0].1, IntentState::Pending);
     assert_eq!(events[1], (events[0].0, IntentState::Abandoned));
     assert_eq!(events[2].1, IntentState::Pending);
@@ -116,7 +119,8 @@ fn rj02_an_approved_journey_is_journaled_and_survives_a_restart() {
         events[2].0, events[0].0,
         "a second attempt has its own intent"
     );
-    assert_eq!(events[3], (events[2].0, IntentState::Settled));
+    assert_eq!(events[3], (events[2].0, IntentState::Dispatched));
+    assert_eq!(events[4], (events[2].0, IntentState::Settled));
     assert!(orcel_journal::recover(events.iter().copied())
         .unwrap()
         .is_empty());
@@ -185,7 +189,7 @@ fn rj02_a_crash_before_the_write_reconciles_as_nothing_written() {
     let scene = Scene::new("rj02-nothing");
     let tasks = TaskRegistry::new();
     let (task, _) = proposed(&scene, &tasks);
-    leave_pending(&scene, &tasks, &task, exited_owner("crashed"));
+    leave_pending(&scene, &tasks, &task, exited_owner("crashed"), false);
     let before = scene.tree();
 
     let next = ReportJournal::new(journal_path(&scene), exited_owner("next"));
@@ -211,7 +215,7 @@ fn rj02_a_crash_after_the_write_reconciles_through_the_independent_checker() {
     let scene = Scene::new("rj02-written");
     let tasks = TaskRegistry::new();
     let (task, report) = proposed(&scene, &tasks);
-    leave_pending(&scene, &tasks, &task, exited_owner("crashed"));
+    leave_pending(&scene, &tasks, &task, exited_owner("crashed"), true);
     // The create happened, then orceld died before it could settle.
     std::fs::write(scene.workspace.root.join("reports").join("q3.md"), &report).unwrap();
     let before = scene.tree();
@@ -234,7 +238,7 @@ fn rj02_a_destination_that_does_not_check_is_unknown_and_left_alone() {
     let scene = Scene::new("rj02-unknown");
     let tasks = TaskRegistry::new();
     let (task, _) = proposed(&scene, &tasks);
-    leave_pending(&scene, &tasks, &task, exited_owner("crashed"));
+    leave_pending(&scene, &tasks, &task, exited_owner("crashed"), true);
     std::fs::write(
         scene.workspace.root.join("reports").join("q3.md"),
         "not the approved bytes",
@@ -265,7 +269,7 @@ fn rj02_a_running_orcelds_pending_commit_is_never_touched() {
     let (task, _) = proposed(&scene, &tasks);
     // This test process is the "other" orceld, still running.
     let live = Owner::current("other-live-run").unwrap();
-    leave_pending(&scene, &tasks, &task, live);
+    leave_pending(&scene, &tasks, &task, live, true);
 
     let next = ReportJournal::new(journal_path(&scene), exited_owner("next"));
     let restored = next.restore().unwrap();
@@ -383,4 +387,142 @@ fn rj02_the_journal_is_compacted_and_bounded_to_earlier_tasks() {
         MAX_EARLIER_TASKS,
         "one snapshot per kept task; the oldest tasks and duplicate snapshots are gone"
     );
+}
+
+#[test]
+fn rj02_a_pending_only_commit_never_reads_its_destination() {
+    // The orceld died while the user was still being asked: the create
+    // never started, so a file another process made there meanwhile, even
+    // with the approved bytes, is not taken as this commit's report.
+    let scene = Scene::new("rj02-pending-only");
+    let tasks = TaskRegistry::new();
+    let (task, report) = proposed(&scene, &tasks);
+    leave_pending(&scene, &tasks, &task, exited_owner("crashed"), false);
+    std::fs::write(scene.workspace.root.join("reports").join("q3.md"), &report).unwrap();
+    let before = scene.tree();
+    let restored = ReportJournal::new(journal_path(&scene), exited_owner("next"))
+        .restore()
+        .unwrap();
+    assert_eq!(scene.tree(), before);
+    let record = &restored.tasks[0];
+    assert_eq!(record.state, TaskState::Failed);
+    assert_eq!(
+        record.steps.last().map(|step| step.outcome.as_str()),
+        Some("nothing_written")
+    );
+    assert!(record.report.is_none());
+}
+
+#[test]
+fn rj02_a_reconcile_never_overwrites_a_finished_task() {
+    let scene = Scene::new("rj02-finished");
+    let tasks = TaskRegistry::new();
+    let (task, _) = proposed(&scene, &tasks);
+    leave_pending(&scene, &tasks, &task, exited_owner("crashed"), true);
+    // A later snapshot of the same run shows the task finished (its
+    // settle line was lost).
+    let mut finished = tasks
+        .lock()
+        .iter()
+        .find(|known| known.id == task)
+        .cloned()
+        .unwrap();
+    finished.state = TaskState::Verified;
+    ReportJournal::new(journal_path(&scene), exited_owner("crashed")).snapshot(&finished);
+    let restored = ReportJournal::new(journal_path(&scene), exited_owner("next"))
+        .restore()
+        .unwrap();
+    assert_eq!(restored.reconciled, 1);
+    assert_eq!(
+        restored.tasks[0].state,
+        TaskState::Verified,
+        "the finished state is kept"
+    );
+}
+
+#[test]
+fn rj02_an_existing_destination_at_the_create_closes_the_journaled_commit() {
+    // The real commit path: approved, then a file appears just before the
+    // create. The create refuses it; the journal records pending,
+    // dispatched and settled.
+    let scene = Scene::new("rj02-exists");
+    let path = journal_path(&scene);
+    let tasks = TaskRegistry::with_journal(path.clone());
+    let (task, report) = proposed(&scene, &tasks);
+    let approval = consent(&scene, &[ApprovalDecision::Approved]);
+    let destination = scene.workspace.root.join("reports").join("q3.md");
+    let refused = super::super::dispatch_with(
+        &scene.workspace,
+        &approval.broker,
+        &tasks,
+        &commit_request(&task, &report),
+        &super::super::Hooks {
+            after_approval: &|| {},
+            before_write: &|| std::fs::write(&destination, "someone else's").unwrap(),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(refused.code, FailureCode::TargetStale);
+    assert_eq!(
+        std::fs::read_to_string(&destination).unwrap(),
+        "someone else's"
+    );
+    let written = lines(&path);
+    let outcomes: Vec<(IntentState, String)> = written
+        .iter()
+        .filter_map(|line| match line {
+            Line::Pending { .. } => Some((IntentState::Pending, String::new())),
+            Line::Dispatched { .. } => Some((IntentState::Dispatched, String::new())),
+            Line::Settled { outcome, .. } => Some((IntentState::Settled, outcome.clone())),
+            Line::Abandoned { outcome, .. } => Some((IntentState::Abandoned, outcome.clone())),
+            Line::Task { .. } => None,
+        })
+        .collect();
+    assert_eq!(
+        outcomes,
+        [
+            (IntentState::Pending, String::new()),
+            (IntentState::Dispatched, String::new()),
+            (IntentState::Settled, "destination_exists".to_owned()),
+        ]
+    );
+}
+
+#[test]
+fn rj02_compaction_keeps_a_live_runs_dispatched_commit() {
+    let scene = Scene::new("rj02-live-dispatched");
+    let tasks = TaskRegistry::new();
+    let (task, _) = proposed(&scene, &tasks);
+    let live = Owner::current("other-live-run").unwrap();
+    leave_pending(&scene, &tasks, &task, live, true);
+    ReportJournal::new(journal_path(&scene), exited_owner("next"))
+        .restore()
+        .unwrap();
+    let open = orcel_journal::recover(
+        lines(&journal_path(&scene))
+            .iter()
+            .filter_map(Line::intent_event)
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    assert_eq!(
+        open.iter().map(|(_, state)| *state).collect::<Vec<_>>(),
+        [IntentState::Dispatched],
+        "the live commit keeps its dispatched state through compaction"
+    );
+}
+
+#[test]
+fn rj02_the_title_is_journaled_only_as_a_hash() {
+    let scene = Scene::new("rj02-title");
+    let path = journal_path(&scene);
+    let tasks = TaskRegistry::with_journal(path.clone());
+    let (task, _) = proposed(&scene, &tasks);
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        !text.contains("Q3 revenue"),
+        "the planner title is not kept"
+    );
+    assert!(text.contains(&super::super::sha256_hex(b"Q3 revenue")));
+    let _ = task;
 }

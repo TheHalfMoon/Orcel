@@ -246,7 +246,14 @@ pub(crate) struct TaskRegistry {
 }
 
 impl TaskRegistry {
+    /// A registry without a journal, for unit tests only: product orceld
+    /// always has a journal or a faulted registry that refuses commits.
+    #[cfg(test)]
     pub(crate) fn new() -> Self {
+        Self::empty()
+    }
+
+    fn empty() -> Self {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|elapsed| elapsed.as_nanos())
@@ -267,7 +274,7 @@ impl TaskRegistry {
     /// A registry with no usable journal location: tasks can be started and
     /// previewed, commits are refused.
     pub(crate) fn faulted() -> Self {
-        let mut registry = Self::new();
+        let mut registry = Self::empty();
         registry.journal_faulted = true;
         registry
     }
@@ -278,7 +285,7 @@ impl TaskRegistry {
     /// unreadable journal refuses commits (reported on stderr) instead of
     /// running them unjournaled.
     pub(crate) fn with_journal(path: PathBuf) -> Self {
-        let mut registry = Self::new();
+        let mut registry = Self::empty();
         let Some(owner) = journal::Owner::current(&registry.seed) else {
             eprintln!("orceld report journal: this process's identity is unavailable; report commits are refused");
             registry.journal_faulted = true;
@@ -305,7 +312,11 @@ impl TaskRegistry {
             Err(failure) => {
                 // The unreadable journal is left exactly as found, for
                 // repair: no snapshot or intent is appended to it.
-                eprintln!("orceld report journal: {failure}; report commits are refused until it is repaired");
+                if failure == orcel_journal::JournalError::Busy {
+                    eprintln!("orceld report journal: busy in another orceld at start; report commits are refused in this session, restart it to retry");
+                } else {
+                    eprintln!("orceld report journal: {failure}; report commits are refused until it is repaired");
+                }
                 registry.journal_faulted = true;
             }
         }
@@ -374,7 +385,12 @@ impl TaskRegistry {
     fn insert(&self, mut task: ReportTask) -> Result<ReportTask, ProviderError> {
         let mut tasks = self.lock();
         if tasks.len() >= MAX_TASKS {
-            let Some(oldest) = tasks.iter().position(|task| task.state.is_final()) else {
+            // A finished task, or any task of an earlier run (read-only), may
+            // make room.
+            let Some(oldest) = tasks
+                .iter()
+                .position(|task| task.state.is_final() || task.run != self.seed)
+            else {
                 return Err(error(
                     FailureCode::OutputLimit,
                     format!("{MAX_TASKS} report tasks are unfinished; finish one before starting another"),
@@ -934,7 +950,7 @@ fn commit(
     if let Some(journal) = &tasks.journal {
         journal.pending(
             &intent,
-            journal::commit_line(&task, &workspace.root, &proposal),
+            journal::commit_line(&task, &workspace.root, &proposal, &digest),
         )?;
     }
     let approved = approval
@@ -997,6 +1013,18 @@ fn commit(
         }
     };
     (hooks.before_write)();
+    // SG-000120 RJ-02: from here on the create may have started. If that
+    // cannot be recorded the create does not run, so a later reconcile can
+    // never read a started create as one that never began.
+    if let Some(journal) = &tasks.journal {
+        if let Err(failure) = journal.dispatched(&intent) {
+            tasks.note(&intent, false, "journal_unavailable");
+            tasks.update(&task.id, "write", "failed", |task| {
+                task.state = TaskState::Failed;
+            });
+            return Err(failure);
+        }
+    }
     // Create-only: the provider's create-new open refuses any existing
     // entry at the name without opening it.
     let written = provider.create_text(&proposal.destination, content);
@@ -1015,7 +1043,7 @@ fn commit(
             // nothing: someone created it after the checks. Whatever it
             // holds, orceld did not write it, so it never verifies. The
             // approval is spent; a new name needs a new preview and approval.
-            tasks.note(&intent, false, "destination_exists");
+            tasks.note(&intent, true, "destination_exists");
             tasks.update(&task.id, "write", "destination_exists", |task| {
                 task.state = TaskState::Proposed;
             });
