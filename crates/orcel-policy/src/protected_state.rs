@@ -187,6 +187,10 @@ mod tests {
                 "ORCEL_REPORT_JOURNAL_PATH",
                 OsString::from("/j/report-tasks.jsonl"),
             ),
+            (
+                "ORCEL_MUTATION_JOURNAL_PATH",
+                OsString::from("/m/mutations.jsonl"),
+            ),
         ]);
         let roots = protected_state_roots_from(&lookup(values));
         assert_eq!(
@@ -198,6 +202,7 @@ mod tests {
                 PathBuf::from("/h/history.jsonl"),
                 PathBuf::from("/b"),
                 PathBuf::from("/j/report-tasks.jsonl"),
+                PathBuf::from("/m/mutations.jsonl"),
             ]
         );
     }

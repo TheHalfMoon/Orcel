@@ -241,6 +241,21 @@ fn write_file(
     approval: &impl ApprovalBroker,
     request: &RequestEnvelope,
 ) -> Result<Value, ProviderError> {
+    write_file_to(
+        crate::mutation_journal::global(),
+        workspace,
+        approval,
+        request,
+    )
+}
+
+/// `fs.write`, journaled to `sink`.
+pub(crate) fn write_file_to(
+    sink: crate::mutation_journal::Sink,
+    workspace: &Workspace,
+    approval: &impl ApprovalBroker,
+    request: &RequestEnvelope,
+) -> Result<Value, ProviderError> {
     let content = content(request)?;
     let relative = target(request)?;
     let provider = fs_provider(workspace)?;
@@ -316,7 +331,7 @@ fn write_file(
         },
     };
     crate::mutation_journal::journaled(
-        crate::mutation_journal::global(),
+        sink,
         mutation,
         || {
             let token = require_approval(approval, &prompt, "file write")?;

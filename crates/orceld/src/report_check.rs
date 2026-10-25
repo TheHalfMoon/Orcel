@@ -43,20 +43,20 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 #[cfg(windows)]
-fn is_reparse_point(metadata: &fs::Metadata) -> bool {
+pub(crate) fn is_reparse_point(metadata: &fs::Metadata) -> bool {
     use std::os::windows::fs::MetadataExt;
     const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
     metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
 }
 
 #[cfg(not(windows))]
-fn is_reparse_point(_metadata: &fs::Metadata) -> bool {
+pub(crate) fn is_reparse_point(_metadata: &fs::Metadata) -> bool {
     false
 }
 
 /// Reads at most `limit` bytes of a regular file that is not a link and
 /// returns its SHA-256 and size.
-fn hash_regular_file(path: &Path, limit: u64) -> Result<(String, u64), String> {
+pub(crate) fn hash_regular_file(path: &Path, limit: u64) -> Result<(String, u64), String> {
     let metadata = fs::symlink_metadata(path).map_err(|error| format!("inspect: {error}"))?;
     if metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
         return Err("is a link or reparse point".into());

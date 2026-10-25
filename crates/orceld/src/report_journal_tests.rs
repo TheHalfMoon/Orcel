@@ -15,12 +15,7 @@ fn journal_path(scene: &Scene) -> PathBuf {
 /// An owner whose process does not exist: its pending commits are
 /// reconciled by the next orceld.
 fn exited_owner(run: &str) -> Owner {
-    Owner {
-        run: run.to_owned(),
-        pid: 0x7FFF_FFF0,
-        generation: 1,
-        boot_id: None,
-    }
+    Owner::exited(run)
 }
 
 fn lines(path: &Path) -> Vec<Line> {

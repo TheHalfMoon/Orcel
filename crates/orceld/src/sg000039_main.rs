@@ -34,6 +34,7 @@ mod fs_mutation;
 mod git_fetch;
 mod git_mutation;
 mod git_push;
+mod journal_owner;
 #[cfg(all(
     windows,
     any(feature = "live-browser-test", feature = "live-browser-dev")

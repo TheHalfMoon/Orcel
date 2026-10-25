@@ -205,7 +205,9 @@ pub(crate) fn dispatch_fs_mutation_to(
                     relative,
                     if parents { "1" } else { "0" },
                 ]),
-                Postcondition::Directory,
+                Postcondition::Directory {
+                    created: mutation_journal::first_missing(&workspace.root, relative),
+                },
                 || provider.mkdir(relative, parents),
             )?
         }

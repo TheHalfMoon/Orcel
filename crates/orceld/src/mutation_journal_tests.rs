@@ -4,7 +4,9 @@
 use super::test_support::{exited_journal, journal, leave_open, restore};
 use super::*;
 use crate::fs_mutation::dispatch_fs_mutation_to;
-use orcel_approval::test_support::FixedApprovalBroker;
+use orcel_approval::test_support::{
+    broker_with_presence, FixedApprovalBroker, TestPresenceVerifier,
+};
 use orcel_approval::ApprovalDecision;
 use orcel_contracts::RequestEnvelope;
 use orcel_policy::Workspace;
@@ -110,6 +112,12 @@ fn outcomes(path: &Path) -> Vec<String> {
         .collect()
 }
 
+fn directory(created: &str) -> Postcondition {
+    Postcondition::Directory {
+        created: created.into(),
+    }
+}
+
 fn leaked(journal: MutationJournal) -> &'static MutationJournal {
     Box::leak(Box::new(journal))
 }
@@ -140,15 +148,15 @@ fn rj02_reconcile_reads_each_postcondition() {
     assert_eq!(file("other.txt", Some("old")), Reconciled::Unknown);
     assert_eq!(file("missing.txt", Some("old")), Reconciled::Unknown);
     assert_eq!(
-        reconcile(&mutation(&scene, "dir", Postcondition::Directory)),
+        reconcile(&mutation(&scene, "dir", directory("dir"))),
         Reconciled::Done
     );
     assert_eq!(
-        reconcile(&mutation(&scene, "nodir", Postcondition::Directory)),
+        reconcile(&mutation(&scene, "nodir", directory("nodir"))),
         Reconciled::NothingDone
     );
     assert_eq!(
-        reconcile(&mutation(&scene, "new.txt", Postcondition::Directory)),
+        reconcile(&mutation(&scene, "new.txt", directory("new.txt"))),
         Reconciled::Unknown
     );
     let moved = |from: &str, to: &str, content: &str| {
@@ -187,6 +195,78 @@ fn rj02_reconcile_reads_each_postcondition() {
         Reconciled::Unknown
     );
     assert_eq!(absent("dir", "directory", None), Reconciled::NothingDone);
+    assert_eq!(absent("nodir", "directory", None), Reconciled::Done);
+    assert_eq!(absent("new.txt", "directory", None), Reconciled::Unknown);
+    let moved_dir = |from: &str, to: &str| {
+        reconcile(&mutation(
+            &scene,
+            from,
+            Postcondition::Moved {
+                to: to.into(),
+                sha256: None,
+            },
+        ))
+    };
+    assert_eq!(moved_dir("gone", "dir"), Reconciled::Done);
+    assert_eq!(moved_dir("dir", "elsewhere"), Reconciled::NothingDone);
+    assert_eq!(moved_dir("gone", "new.txt"), Reconciled::Unknown);
+}
+
+#[test]
+fn rj02_reconcile_reads_nothing_outside_the_workspace() {
+    let scene = Scene::new("confined");
+    std::fs::write(scene.dir.join("outside.txt"), "new").unwrap();
+    let outside = scene.dir.join("outside.txt");
+    for target in [
+        "../outside.txt",
+        "a/../../outside.txt",
+        outside.to_str().unwrap(),
+        "",
+    ] {
+        assert_eq!(
+            reconcile(&mutation(
+                &scene,
+                target,
+                Postcondition::File {
+                    sha256: sha("new"),
+                    before: None,
+                },
+            )),
+            Reconciled::Unknown,
+            "{target}"
+        );
+    }
+    assert_eq!(
+        reconcile(&mutation(
+            &scene,
+            "a.txt",
+            Postcondition::Moved {
+                to: "../outside.txt".into(),
+                sha256: Some(sha("new")),
+            },
+        )),
+        Reconciled::Unknown
+    );
+}
+
+#[test]
+fn rj02_mkdir_with_parents_is_nothing_done_only_while_the_first_missing_path_is() {
+    let scene = Scene::new("parents");
+    let root = scene.root();
+    assert_eq!(first_missing(root, "p/q/r"), "p");
+    let made = || reconcile(&mutation(&scene, "p/q/r", directory("p")));
+    assert_eq!(made(), Reconciled::NothingDone);
+    std::fs::create_dir(root.join("p")).unwrap();
+    assert_eq!(made(), Reconciled::Unknown, "a parent was created");
+    assert_eq!(first_missing(root, "p/q/r"), "p/q");
+    std::fs::create_dir_all(root.join("p/q/r")).unwrap();
+    assert_eq!(made(), Reconciled::Done);
+    assert_eq!(first_missing(root, "p/q/r"), "", "nothing was missing");
+    assert_eq!(
+        reconcile(&mutation(&scene, "p/q/r", directory(""))),
+        Reconciled::Unknown,
+        "an mkdir of an existing directory was refused, not done"
+    );
 }
 
 // ---- restore: only exited runs, nothing written, nothing retried ----
@@ -277,7 +357,7 @@ fn rj02_a_running_orcelds_open_mutation_is_never_touched() {
     leave_open(
         &live,
         "live-run.m0",
-        mutation(&scene, "a.txt", Postcondition::Directory),
+        mutation(&scene, "a.txt", directory("a.txt")),
         true,
     );
     let restored = restore(&exited_journal(scene.journal_path(), "next"));
@@ -300,11 +380,22 @@ fn rj02_outcomes_are_kept_bounded_for_the_resume_summary() {
         leave_open(
             &crashed,
             &format!("crashed.m{n}"),
-            mutation(&scene, "x", Postcondition::Directory),
+            mutation(&scene, "x", directory("x")),
             false,
         );
     }
     restore(&exited_journal(scene.journal_path(), "next"));
+    let kept: Vec<String> = lines(&scene.journal_path())
+        .into_iter()
+        .filter_map(|line| match line {
+            Line::Outcome { intent, .. } => Some(intent),
+            _ => None,
+        })
+        .collect();
+    let newest: Vec<String> = (20..MAX_OUTCOMES + 20)
+        .map(|n| format!("crashed.m{n}"))
+        .collect();
+    assert_eq!(kept, newest, "the oldest outcomes are dropped, in order");
     assert_eq!(lines(&scene.journal_path()).len(), MAX_OUTCOMES);
     assert!(
         events(&scene.journal_path()).is_empty(),
@@ -423,4 +514,126 @@ fn rj02_a_faulted_or_unwritable_journal_refuses_with_nothing_asked_or_changed() 
     assert_eq!(refused.code, FailureCode::ProviderUnavailable);
     assert!(!asked.load(Ordering::SeqCst), "nothing was asked");
     assert!(!scene.root().join("made").exists(), "nothing was changed");
+}
+
+#[test]
+fn rj02_fs_write_is_journaled_without_its_content() {
+    let scene = Scene::new("write");
+    let sink = Sink::Journal(leaked(journal(scene.journal_path(), "this")));
+    crate::legacy::write_file_to(
+        sink,
+        &scene.workspace,
+        &FixedApprovalBroker(ApprovalDecision::Approved),
+        &request(
+            "fs.write",
+            "write",
+            "w.txt",
+            json!({ "content": "secret-bytes", "create_if_missing": true }),
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(scene.root().join("w.txt")).unwrap(),
+        "secret-bytes"
+    );
+    assert_eq!(
+        events(&scene.journal_path()),
+        [
+            (IntentState::Pending, String::new()),
+            (IntentState::Dispatched, String::new()),
+            (IntentState::Settled, "done".to_owned()),
+        ]
+    );
+    let text = std::fs::read_to_string(scene.journal_path()).unwrap();
+    assert!(!text.contains("secret-bytes"), "no file content");
+    assert!(
+        text.contains(&sha("secret-bytes")),
+        "the postcondition hash"
+    );
+}
+
+#[test]
+fn rj02_move_and_strong_remove_are_journaled_through_dispatch() {
+    let scene = Scene::new("move-remove");
+    std::fs::write(scene.root().join("a.txt"), "alpha").unwrap();
+    let sink = Sink::Journal(leaked(journal(scene.journal_path(), "this")));
+    dispatch_fs_mutation_to(
+        sink,
+        &scene.workspace,
+        &FixedApprovalBroker(ApprovalDecision::Approved),
+        &request("fs.move", "move", "a.txt", json!({ "to": "b.txt" })),
+    )
+    .unwrap();
+    let broker = broker_with_presence(
+        scene.dir.join("approval.jsonl"),
+        TestPresenceVerifier::verified(),
+    );
+    dispatch_fs_mutation_to(
+        sink,
+        &scene.workspace,
+        &broker,
+        &request("fs.remove", "remove", "b.txt", json!({})),
+    )
+    .unwrap();
+    assert!(!scene.root().join("b.txt").exists());
+    let done = (IntentState::Settled, "done".to_owned());
+    let pending = (IntentState::Pending, String::new());
+    let dispatched = (IntentState::Dispatched, String::new());
+    assert_eq!(
+        events(&scene.journal_path()),
+        [
+            pending.clone(),
+            dispatched.clone(),
+            done.clone(),
+            pending,
+            dispatched,
+            done
+        ]
+    );
+    let kinds: Vec<Postcondition> = lines(&scene.journal_path())
+        .into_iter()
+        .filter_map(|line| match line {
+            Line::Pending { mutation, .. } => Some(mutation.postcondition),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            Postcondition::Moved {
+                to: "b.txt".into(),
+                sha256: Some(sha("alpha")),
+            },
+            Postcondition::Absent {
+                before_kind: "file".into(),
+                before_sha256: Some(sha("alpha")),
+            },
+        ]
+    );
+}
+
+#[test]
+fn rj02_an_unwritable_dispatched_line_stops_the_effect_after_approval() {
+    let scene = Scene::new("dispatch-fails");
+    let path = scene.journal_path();
+    let sink = Sink::Journal(leaked(journal(path.clone(), "this")));
+    let acted = std::sync::atomic::AtomicBool::new(false);
+    let refused = journaled(
+        sink,
+        mutation(&scene, "made", directory("made")),
+        || {
+            // The journal becomes unwritable between pending and dispatch.
+            std::fs::remove_file(&path).unwrap();
+            std::fs::create_dir(&path).unwrap();
+            Ok(())
+        },
+        || {
+            acted.store(true, Ordering::SeqCst);
+            Ok(())
+        },
+    )
+    .unwrap_err();
+    assert_eq!(refused.code, FailureCode::ProviderUnavailable);
+    assert!(refused.message.contains("approval is spent"));
+    assert!(!acted.load(Ordering::SeqCst), "the effect never ran");
 }

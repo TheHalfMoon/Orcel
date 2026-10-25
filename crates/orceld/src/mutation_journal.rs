@@ -19,6 +19,7 @@
 //! intent and a fresh single-use approval. The outcomes are kept, bounded,
 //! for RJ-03's resume summary.
 
+use crate::journal_owner::Owner;
 use orcel_contracts::FailureCode;
 use orcel_journal::{IntentState, JournalError};
 use orcel_provider_fs::ProviderError;
@@ -44,8 +45,12 @@ pub(crate) enum Postcondition {
         sha256: String,
         before: Option<String>,
     },
-    /// A directory at the target.
-    Directory,
+    /// A directory at the target. `created` is the first missing path
+    /// on the way to it (the target itself when its parent existed): if
+    /// that is still missing, nothing was created. Empty when the target
+    /// already existed: the provider refuses, so a dispatched one is
+    /// unknown.
+    Directory { created: String },
     /// The target moved to `to` (workspace-relative); `sha256` is the
     /// moved file's hash when it was a file.
     Moved { to: String, sha256: Option<String> },
@@ -70,38 +75,6 @@ pub(crate) struct Mutation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct Owner {
-    run: String,
-    pid: u32,
-    generation: u64,
-    boot_id: Option<String>,
-}
-
-impl Owner {
-    fn current(run: &str) -> Option<Self> {
-        let instance = orcel_platform::process::current_instance().ok()?;
-        Some(Self {
-            run: run.to_owned(),
-            pid: instance.pid,
-            generation: instance.generation,
-            boot_id: instance.boot_id.map(|id| id.to_string()),
-        })
-    }
-
-    /// An identity the OS will not report counts as running.
-    fn has_exited(&self) -> bool {
-        match orcel_platform::process::start_generation(self.pid) {
-            Ok(now) => {
-                now.generation != self.generation
-                    || now.boot_id.map(|id| id.to_string()) != self.boot_id
-            }
-            Err(orcel_platform::PlatformError::ProcessGone(_)) => true,
-            Err(_) => false,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 enum Line {
     Pending {
@@ -118,11 +91,13 @@ enum Line {
         schema: String,
         intent: String,
         outcome: String,
+        at_ms: u64,
     },
     Abandoned {
         schema: String,
         intent: String,
         outcome: String,
+        at_ms: u64,
     },
     /// A closed intent's summary, kept (bounded) for RJ-03 after the
     /// intent's own lines are compacted away.
@@ -188,24 +163,80 @@ enum Found {
     Other,
 }
 
+/// `relative` as a path under `root`, or `None` when it is not a plain
+/// workspace-relative path whose nearest existing ancestor resolves
+/// inside `root`.
+fn confined(root: &Path, relative: &str) -> Option<PathBuf> {
+    use std::path::Component;
+    let path = Path::new(relative);
+    if relative.is_empty()
+        || !path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+    {
+        return None;
+    }
+    let root = std::fs::canonicalize(root).ok()?;
+    let joined = root.join(path);
+    // A link swapped in since the effect cannot point the check elsewhere.
+    let mut ancestor = joined.parent()?;
+    loop {
+        match std::fs::canonicalize(ancestor) {
+            Ok(resolved) if resolved.starts_with(&root) => return Some(joined),
+            Ok(_) => return None,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                ancestor = ancestor.parent()?;
+            }
+            Err(_) => return None,
+        }
+    }
+}
+
+/// The first path on the way to `relative` that does not exist yet: what
+/// `mkdir` creates first. `relative` itself when its parent exists, or
+/// when it is not a plain relative path (the provider then refuses it);
+/// empty when the whole path already exists.
+pub(crate) fn first_missing(root: &Path, relative: &str) -> String {
+    use std::path::Component;
+    let mut prefix = PathBuf::new();
+    let mut shown: Vec<&str> = Vec::new();
+    for component in Path::new(relative).components() {
+        let Component::Normal(part) = component else {
+            return relative.to_owned();
+        };
+        let Some(part) = part.to_str() else {
+            return relative.to_owned();
+        };
+        prefix.push(part);
+        shown.push(part);
+        if let Err(error) = std::fs::symlink_metadata(root.join(&prefix)) {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                return shown.join("/");
+            }
+        }
+    }
+    String::new()
+}
+
 /// What is at `relative` under `root`, without following a final link.
 fn found(root: &Path, relative: &str) -> Found {
-    let path = root.join(relative);
+    let Some(path) = confined(root, relative) else {
+        return Found::Other;
+    };
     match std::fs::symlink_metadata(&path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Found::Missing,
         Err(_) => Found::Other,
         Ok(metadata) if metadata.file_type().is_symlink() => Found::Other,
-        Ok(metadata) if metadata.is_dir() => Found::Directory,
+        Ok(metadata) if metadata.is_dir() && !crate::report_check::is_reparse_point(&metadata) => {
+            Found::Directory
+        }
         // A file too large to hash at start is not guessed at.
-        Ok(metadata) if metadata.is_file() && metadata.len() > MAX_RECONCILE_BYTES => Found::Other,
-        Ok(metadata) if metadata.is_file() => match std::fs::read(&path) {
-            Ok(bytes) => {
-                use sha2::{Digest, Sha256};
-                let hash = Sha256::digest(&bytes);
-                Found::File(hash.iter().map(|byte| format!("{byte:02x}")).collect())
+        Ok(metadata) if metadata.is_file() => {
+            match crate::report_check::hash_regular_file(&path, MAX_RECONCILE_BYTES) {
+                Ok((sha256, _)) => Found::File(sha256),
+                Err(_) => Found::Other,
             }
-            Err(_) => Found::Other,
-        },
+        }
         Ok(_) => Found::Other,
     }
 }
@@ -220,9 +251,13 @@ pub(crate) fn reconcile(mutation: &Mutation) -> Reconciled {
             Found::Missing if before.is_none() => Reconciled::NothingDone,
             _ => Reconciled::Unknown,
         },
-        Postcondition::Directory => match found(root, &mutation.target) {
+        Postcondition::Directory { created } if created.is_empty() => Reconciled::Unknown,
+        Postcondition::Directory { created } => match found(root, &mutation.target) {
             Found::Directory => Reconciled::Done,
-            Found::Missing => Reconciled::NothingDone,
+            Found::Missing if matches!(found(root, created), Found::Missing) => {
+                Reconciled::NothingDone
+            }
+            // Some missing parents now exist but not the target: partly done.
             _ => Reconciled::Unknown,
         },
         Postcondition::Moved { to, sha256 } => {
@@ -293,8 +328,8 @@ impl MutationJournal {
         orcel_journal::append_shared(&self.path, line, LOCK_WAIT)
     }
 
-    /// Reconciles the open intents of exited runs (newest first), records
-    /// their outcomes, and compacts the journal to live runs' open intents
+    /// Reconciles the open intents of exited runs, records their outcomes
+    /// in journal order, and compacts the journal to live runs' open intents
     /// plus the newest [`MAX_OUTCOMES`] outcomes.
     fn restore(&self) -> Result<Restored, JournalError> {
         orcel_journal::with_lock(&self.path, LOCK_WAIT, || {
@@ -302,11 +337,28 @@ impl MutationJournal {
             if read.lines.iter().any(|line| line.schema() != SCHEMA) {
                 return Err(JournalError::Unreadable);
             }
-            let open = orcel_journal::recover(read.lines.iter().filter_map(Line::intent_event))?;
-            let mut pending: Vec<(Owner, String, Mutation, IntentState)> = Vec::new();
+            let open: std::collections::HashMap<String, IntentState> =
+                orcel_journal::recover(read.lines.iter().filter_map(Line::intent_event))?
+                    .into_iter()
+                    .collect();
+            let mut mutations: std::collections::HashMap<&str, &Mutation> =
+                std::collections::HashMap::new();
+            let summary =
+                |intent: &str, mutation: &Mutation, outcome: &str, at_ms: u64| Line::Outcome {
+                    schema: SCHEMA.to_owned(),
+                    intent: intent.to_owned(),
+                    capability: mutation.capability.clone(),
+                    operation: mutation.operation.clone(),
+                    workspace_id: mutation.workspace_id.clone(),
+                    target: mutation.target.clone(),
+                    outcome: outcome.to_owned(),
+                    at_ms,
+                };
+            let now = orcel_approval::now_ms();
+            // Outcomes stay in journal order, so the bound drops the oldest.
             let mut outcomes: Vec<Line> = Vec::new();
-            let mut closed: Vec<(String, String)> = Vec::new();
-            let mut mutations: Vec<(String, Mutation)> = Vec::new();
+            let mut live: Vec<Line> = Vec::new();
+            let mut reconciled = 0;
             for line in &read.lines {
                 match line {
                     Line::Pending {
@@ -315,70 +367,53 @@ impl MutationJournal {
                         mutation,
                         ..
                     } => {
-                        mutations.push((intent.clone(), mutation.clone()));
-                        if let Some((_, state)) = open.iter().find(|(id, _)| id == intent) {
-                            pending.push((owner.clone(), intent.clone(), mutation.clone(), *state));
+                        mutations.insert(intent, mutation);
+                        let Some(state) = open.get(intent).copied() else {
+                            continue;
+                        };
+                        if owner.run == self.owner.run || !owner.has_exited() {
+                            live.push(line.clone());
+                            if state == IntentState::Dispatched {
+                                live.push(Line::Dispatched {
+                                    schema: SCHEMA.to_owned(),
+                                    intent: intent.clone(),
+                                });
+                            }
+                            continue;
                         }
+                        let result = if state == IntentState::Dispatched {
+                            reconcile(mutation)
+                        } else {
+                            Reconciled::NothingDone
+                        };
+                        reconciled += 1;
+                        outcomes.push(summary(intent, mutation, result.outcome(), now));
                     }
                     Line::Settled {
-                        intent, outcome, ..
+                        intent,
+                        outcome,
+                        at_ms,
+                        ..
                     }
                     | Line::Abandoned {
-                        intent, outcome, ..
-                    } => closed.push((intent.clone(), outcome.clone())),
+                        intent,
+                        outcome,
+                        at_ms,
+                        ..
+                    } => {
+                        if let Some(mutation) = mutations.get(intent.as_str()) {
+                            outcomes.push(summary(intent, mutation, outcome, *at_ms));
+                        }
+                    }
                     Line::Outcome { .. } => outcomes.push(line.clone()),
                     Line::Dispatched { .. } => {}
                 }
-            }
-            let now = orcel_approval::now_ms();
-            let summary = |intent: &str, mutation: &Mutation, outcome: &str| Line::Outcome {
-                schema: SCHEMA.to_owned(),
-                intent: intent.to_owned(),
-                capability: mutation.capability.clone(),
-                operation: mutation.operation.clone(),
-                workspace_id: mutation.workspace_id.clone(),
-                target: mutation.target.clone(),
-                outcome: outcome.to_owned(),
-                at_ms: now,
-            };
-            // Intents closed by their own run become outcome summaries.
-            for (intent, outcome) in &closed {
-                if let Some((_, mutation)) = mutations.iter().find(|(id, _)| id == intent) {
-                    outcomes.push(summary(intent, mutation, outcome));
-                }
-            }
-            let mut reconciled = 0;
-            let mut kept_groups: Vec<Vec<Line>> = Vec::new();
-            for (owner, intent, mutation, state) in pending.into_iter().rev() {
-                if owner.run == self.owner.run || !owner.has_exited() {
-                    let mut group = vec![Line::Pending {
-                        schema: SCHEMA.to_owned(),
-                        owner,
-                        intent: intent.clone(),
-                        mutation,
-                    }];
-                    if state == IntentState::Dispatched {
-                        group.push(Line::Dispatched {
-                            schema: SCHEMA.to_owned(),
-                            intent,
-                        });
-                    }
-                    kept_groups.push(group);
-                    continue;
-                }
-                let result = if state == IntentState::Dispatched {
-                    reconcile(&mutation)
-                } else {
-                    Reconciled::NothingDone
-                };
-                reconciled += 1;
-                outcomes.push(summary(&intent, &mutation, result.outcome()));
             }
             if outcomes.len() > MAX_OUTCOMES {
                 outcomes.drain(..outcomes.len() - MAX_OUTCOMES);
             }
             let mut kept = outcomes;
-            kept.extend(kept_groups.into_iter().rev().flatten());
+            kept.extend(live);
             orcel_journal::rewrite(&self.path, &kept)?;
             Ok(Restored {
                 torn: read.torn,
@@ -475,7 +510,10 @@ pub(crate) enum Sink {
 /// This orceld's sink.
 pub(crate) fn global() -> Sink {
     match JOURNAL.get() {
-        None => Sink::None,
+        // Unit tests that never start orceld; product orceld always
+        // starts the journal, so an unset one there refuses.
+        None if cfg!(test) => Sink::None,
+        None => Sink::Faulted,
         Some(State::Faulted) => Sink::Faulted,
         Some(State::Ready(journal)) => Sink::Journal(journal),
     }
@@ -535,7 +573,11 @@ impl Intent {
             // Settled is lawful after pending and after dispatched (the
             // line may be on disk although the write reported failure).
             self.settle("not_dispatched");
-            return Err(unavailable());
+            return Err(ProviderError::new(
+                FailureCode::ProviderUnavailable,
+                "the mutation journal could not be written after approval; the approval is \
+                 spent and nothing was changed; request the change again",
+            ));
         }
         Ok(())
     }
@@ -551,6 +593,7 @@ impl Intent {
                 schema: SCHEMA.to_owned(),
                 intent: self.id.clone(),
                 outcome: outcome.to_owned(),
+                at_ms: orcel_approval::now_ms(),
             });
         }
     }
@@ -566,6 +609,7 @@ impl Intent {
                 schema: SCHEMA.to_owned(),
                 intent: self.id.clone(),
                 outcome: outcome.to_owned(),
+                at_ms: orcel_approval::now_ms(),
             });
         }
     }
@@ -605,15 +649,7 @@ pub(crate) mod test_support {
 
     /// A journal at `path` whose owner process does not exist.
     pub(crate) fn exited_journal(path: PathBuf, run: &str) -> MutationJournal {
-        MutationJournal::new(
-            path,
-            Owner {
-                run: run.to_owned(),
-                pid: 0x7FFF_FFF0,
-                generation: 1,
-                boot_id: None,
-            },
-        )
+        MutationJournal::new(path, Owner::exited(run))
     }
 
     pub(crate) fn restore(journal: &MutationJournal) -> Restored {
