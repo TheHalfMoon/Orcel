@@ -12,7 +12,7 @@ Discovery filtering is never authorization: orceld, the remote-session lease, an
 | Profile | Served by | Tools |
 | --- | --- | --- |
 | `core` | relay (remote) | 26 |
-| `desktop_structured` | stdio and loopback HTTP (local) | 41 |
+| `desktop_structured` | stdio and loopback HTTP (local) | 44 |
 
 The `developer` and `coordinate_fallback` profiles named in the plan are not mapped and deny. Unknown profiles deny.
 
@@ -80,6 +80,9 @@ O = openWorldHint (reaches network peers or runs a registered executable).
 | `git_status` | `git.status/status` | read | none | orcel.read | yes | no | yes | no | at most 2 MiB of git output |
 | `git_unstage` | `git.unstage/unstage` | write | SOFT | orcel.write | no | no | yes | no | evidence only; at most 128 paths |
 | `process_spawn` | `process.spawn/spawn` | execute | SOFT | orcel.execute | no | yes | no | yes | requested stdout of at most 16 MiB and stderr of at most 4 MiB |
+| `report_commit` | `report/commit` | write | SOFT | local-only | no | no | no | no | evidence only; creates one UTF-8 report of at most 256 KiB, never overwriting |
+| `report_preview` | `report/preview` | preview | none | local-only | yes | no | no | no | the destination, size and SHA-256 of one proposed report |
+| `report_start` | `report/start` | read | none | local-only | yes | no | no | no | one task id and 1..8 labelled untrusted source texts, each within the 1 MiB provider read limit |
 | `system_status` | `system.status/get` | read | none | orcel.read | yes | no | yes | no | fixed-size daemon status object |
 | `web_fetch` | `network/fetch` | network | SOFT | local-only | yes | no | yes | yes | one response body of at most 1 MiB |
 | `web_search` | `search/query` | network | SOFT | local-only | yes | no | no | yes | at most 10 untrusted results; titles 300 and snippets 1000 characters; provider response at most 512 KiB |
