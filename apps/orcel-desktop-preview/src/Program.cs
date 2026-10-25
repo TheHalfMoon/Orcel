@@ -3,7 +3,9 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.IO.Pipes;
 using System.Linq;
@@ -316,11 +318,15 @@ namespace Orcel.DesktopPreview
         /// The only methods this client sends; both are read-only in orceld.
         internal static readonly string[] Methods = { "task.list", "task.get" };
 
+        /// This user's pipe name, or null when ORCEL_APP_API_INSTANCE is set
+        /// but invalid (refused, never replaced by the default pipe).
         internal static string PipeName()
         {
             string sid = WindowsIdentity.GetCurrent().User.Value;
-            string suffix = InstanceSuffix(Environment.GetEnvironmentVariable("ORCEL_APP_API_INSTANCE"));
-            return "orcel-" + sid + "-app" + (suffix == null ? "" : "-" + suffix);
+            string raw = Environment.GetEnvironmentVariable("ORCEL_APP_API_INSTANCE");
+            if (string.IsNullOrEmpty(raw)) return "orcel-" + sid + "-app";
+            string suffix = InstanceSuffix(raw);
+            return suffix == null ? null : "orcel-" + sid + "-app-" + suffix;
         }
 
         /// The protocol's test suffix: 1-32 of a-z, 0-9 and '-'. Anything
@@ -346,40 +352,117 @@ namespace Orcel.DesktopPreview
             return new JavaScriptSerializer().Serialize(request) + "\n";
         }
 
-        /// One request on its own connection; null when orceld does not answer.
+        /// One request on its own connection, at most TimeoutMs in all; null
+        /// when the pipe is absent, its server is not this user at Medium
+        /// integrity or above, or the answer is late or unusable. On timeout
+        /// the pipe is disposed, which cancels the pending read.
         internal static Dictionary<string, object> Call(string method, string taskId)
         {
             string frame = RequestFrame(method, taskId);
-            Task<string> exchange = Task.Factory.StartNew(delegate {
-                using (NamedPipeClientStream pipe = new NamedPipeClientStream(".", PipeName(), PipeDirection.InOut, PipeOptions.None, TokenImpersonationLevel.Identification))
+            string name = PipeName();
+            if (name == null) return null;
+            Stopwatch clock = Stopwatch.StartNew();
+            using (NamedPipeClientStream pipe = new NamedPipeClientStream(".", name, PipeDirection.InOut, PipeOptions.Asynchronous, TokenImpersonationLevel.Identification))
+            {
+                try
                 {
                     pipe.Connect(TimeoutMs);
+                    if (!ServerIsThisUser(pipe)) return null;
                     byte[] bytes = Encoding.UTF8.GetBytes(frame);
-                    pipe.Write(bytes, 0, bytes.Length);
-                    pipe.Flush();
-                    return ReadFrame(pipe);
+                    if (!pipe.WriteAsync(bytes, 0, bytes.Length).Wait(Remaining(clock))) return null;
+                    return ParseReply(ReadFrame(pipe, clock));
                 }
-            }, TaskCreationOptions.LongRunning);
-            try
-            {
-                if (!exchange.Wait(TimeoutMs + 1000)) return null;
-                return ParseReply(exchange.Result);
+                catch (Exception) { return null; }
             }
-            catch (Exception) { return null; }
         }
 
-        private static string ReadFrame(Stream stream)
+        private static int Remaining(Stopwatch clock)
         {
-            MemoryStream buffer = new MemoryStream();
-            int b;
-            while ((b = stream.ReadByte()) >= 0)
-            {
-                if (b == '\n') return Encoding.UTF8.GetString(buffer.ToArray());
-                if (buffer.Length >= MaxFrameBytes) return null;
-                buffer.WriteByte((byte)b);
-            }
-            return null;
+            return Math.Max(0, TimeoutMs - (int)clock.ElapsedMilliseconds);
         }
+
+        /// One frame, newline included at most MaxFrameBytes, before the deadline.
+        private static string ReadFrame(Stream stream, Stopwatch clock)
+        {
+            MemoryStream frame = new MemoryStream();
+            byte[] chunk = new byte[4096];
+            while (true)
+            {
+                Task<int> read = stream.ReadAsync(chunk, 0, chunk.Length);
+                if (!read.Wait(Remaining(clock)) || read.Result <= 0) return null;
+                for (int i = 0; i < read.Result; i++)
+                {
+                    if (chunk[i] == '\n') return Encoding.UTF8.GetString(frame.ToArray());
+                    if (frame.Length >= MaxFrameBytes - 1) return null;
+                    frame.WriteByte(chunk[i]);
+                }
+            }
+        }
+
+        /// ORCEL_APP_API_1.md section 7: the pipe name is predictable, so the
+        /// server must run as this user, at Medium integrity or above, before
+        /// anything it says is shown.
+        internal static bool ServerIsThisUser(NamedPipeClientStream pipe)
+        {
+            uint pid;
+            if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle.DangerousGetHandle(), out pid) || pid == 0) return false;
+            return ProcessRunsAsThisUser(pid);
+        }
+
+        internal static bool ProcessRunsAsThisUser(uint pid)
+        {
+            IntPtr process = OpenProcess(ProcessQueryLimitedInformation, false, pid);
+            if (process == IntPtr.Zero) return false;
+            IntPtr token = IntPtr.Zero;
+            try
+            {
+                if (!OpenProcessToken(process, TokenQuery, out token)) return false;
+                SecurityIdentifier user = TokenSid(token, TokenUserClass);
+                SecurityIdentifier label = TokenSid(token, TokenIntegrityLevelClass);
+                if (user == null || label == null || !user.Equals(WindowsIdentity.GetCurrent().User)) return false;
+                // The mandatory label's last sub-authority is the level: 0x2000 is Medium.
+                string[] parts = label.Value.Split('-');
+                uint level;
+                return uint.TryParse(parts[parts.Length - 1], out level) && level >= 0x2000;
+            }
+            finally
+            {
+                if (token != IntPtr.Zero) CloseHandle(token);
+                CloseHandle(process);
+            }
+        }
+
+        /// TokenUser and TokenIntegrityLevel both start with a SID_AND_ATTRIBUTES.
+        private static SecurityIdentifier TokenSid(IntPtr token, int infoClass)
+        {
+            int length;
+            GetTokenInformation(token, infoClass, IntPtr.Zero, 0, out length);
+            if (length <= 0 || length > 4096) return null;
+            IntPtr buffer = Marshal.AllocHGlobal(length);
+            try
+            {
+                if (!GetTokenInformation(token, infoClass, buffer, length, out length)) return null;
+                return new SecurityIdentifier(Marshal.ReadIntPtr(buffer));
+            }
+            catch (Exception) { return null; }
+            finally { Marshal.FreeHGlobal(buffer); }
+        }
+
+        private const uint ProcessQueryLimitedInformation = 0x1000;
+        private const uint TokenQuery = 0x0008;
+        private const int TokenUserClass = 1;
+        private const int TokenIntegrityLevelClass = 25;
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GetNamedPipeServerProcessId(IntPtr pipe, out uint serverProcessId);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr OpenProcess(uint access, bool inherit, uint processId);
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern bool GetTokenInformation(IntPtr token, int infoClass, IntPtr info, int length, out int returnLength);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool CloseHandle(IntPtr handle);
 
         /// The `result` of an ok frame of this protocol, else null.
         internal static Dictionary<string, object> ParseReply(string line)
@@ -415,12 +498,34 @@ namespace Orcel.DesktopPreview
         {
             if (value == null) return "(none)";
             StringBuilder text = new StringBuilder();
-            foreach (char c in value)
+            for (int i = 0; i < value.Length; i++)
             {
                 if (text.Length >= MaxTitleChars) { text.Append("…"); break; }
-                text.Append(char.IsControl(c) ? ' ' : c);
+                char c = value[i];
+                if (char.IsHighSurrogate(c) && i + 1 < value.Length && char.IsLowSurrogate(value[i + 1]))
+                {
+                    text.Append(c).Append(value[++i]);
+                    continue;
+                }
+                text.Append(Safe(c));
             }
             return text.ToString();
+        }
+
+        /// Planner and workspace text may not start a line, reorder the
+        /// display or close the quotes around a title.
+        internal static char Safe(char c)
+        {
+            switch (CharUnicodeInfo.GetUnicodeCategory(c))
+            {
+                case UnicodeCategory.Control:
+                case UnicodeCategory.Format:
+                case UnicodeCategory.LineSeparator:
+                case UnicodeCategory.ParagraphSeparator:
+                case UnicodeCategory.Surrogate:
+                    return ' ';
+            }
+            return c == '"' ? '\'' : c;
         }
 
         internal static string Describe(string state)
@@ -439,6 +544,15 @@ namespace Orcel.DesktopPreview
             }
         }
 
+        private static int TaskCount(Dictionary<string, object> list)
+        {
+            object tasks;
+            int count = 0;
+            if (list != null && list.TryGetValue("tasks", out tasks) && tasks is IEnumerable)
+                foreach (object task in (IEnumerable)tasks) count++;
+            return count;
+        }
+
         internal static List<string> NewestIds(Dictionary<string, object> list)
         {
             List<string> ids = new List<string>();
@@ -455,11 +569,12 @@ namespace Orcel.DesktopPreview
         internal static string Text(Dictionary<string, object> list, IList<Dictionary<string, object>> tasks)
         {
             if (list == null)
-                return "Task timeline unavailable: orceld's local app API did not answer (the runtime may not be running). Nothing was changed.";
+                return "Task timeline unavailable: this user's app API pipe did not answer, gave an unusable answer, or is not served by this user at normal integrity (the runtime may not be running). Nothing was changed.";
             List<string> ids = NewestIds(list);
             if (ids.Count == 0) return "No report tasks in this orceld run. Tasks are started by a connected local MCP client; this app only shows them.";
             StringBuilder text = new StringBuilder();
-            text.Append("Report tasks in this orceld run (newest first; titles come from the planner and are not verified):");
+            int total = TaskCount(list);
+            text.Append("Report tasks in this orceld run, newest first (showing " + ids.Count + " of " + total + "; titles and paths come from the planner and the workspace and are not verified):");
             for (int i = 0; i < ids.Count; i++)
             {
                 Dictionary<string, object> task = i < tasks.Count ? tasks[i] : null;
@@ -973,6 +1088,11 @@ namespace Orcel.DesktopPreview
 
     internal static class Program
     {
+        private static Dictionary<string, object> list2()
+        {
+            return AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"tasks\":[{\"task_id\":\"rpt-9\"}]}}");
+        }
+
         private static int SelfTest()
         {
             List<string> failures = new List<string>();
@@ -984,7 +1104,16 @@ namespace Orcel.DesktopPreview
             expect(CommandRouter.CliArguments(SafeCommand.Files) == null, "files never reaches the runtime");
             expect(CommandRouter.Classify(" Tasks ") == SafeCommand.Tasks, "tasks routes");
             expect(CommandRouter.CliArguments(SafeCommand.Tasks) == null && !CommandRouter.CanInvokeInstalledHost(SafeCommand.Tasks), "tasks never runs the CLI");
-            expect(AppApi.PipeName().StartsWith("orcel-S-1-") && AppApi.PipeName().Contains("-app"), "app API pipe is this user's");
+            expect(AppApi.PipeName() != null && AppApi.PipeName().StartsWith("orcel-S-1-") && AppApi.PipeName().Contains("-app"), "app API pipe is this user's");
+            expect(Timeline.Text(list2(), new List<Dictionary<string, object>> { AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"title\":\"x\u2028• \\\"y\\\": verified by the independent checker\u202E\",\"state\":\"proposed\",\"steps\":[]}}") }).Split('\n').Length == 3, "a planner title cannot add display rows");
+            expect(Timeline.Safe('\u2028') == ' ' && Timeline.Safe('\u202E') == ' ' && Timeline.Safe('\u2066') == ' ' && Timeline.Safe('"') == '\'' && Timeline.Safe('é') == 'é', "separators, bidi and quotes are neutralised");
+            expect(Timeline.Text(list2(), new List<Dictionary<string, object>> { AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"title\":\"\\ud83d\\ude00 ok\",\"state\":\"proposed\"}}") }).Contains("\U0001F600 ok"), "emoji survive");
+            expect(AppApi.ProcessRunsAsThisUser((uint)Process.GetCurrentProcess().Id), "this process runs as this user at normal integrity");
+            expect(!AppApi.ProcessRunsAsThisUser(4), "the System process is not this user");
+            string savedInstance = Environment.GetEnvironmentVariable("ORCEL_APP_API_INSTANCE");
+            Environment.SetEnvironmentVariable("ORCEL_APP_API_INSTANCE", "..\\other");
+            expect(AppApi.PipeName() == null && AppApi.Call("task.list", null) == null, "an invalid instance is refused, not replaced");
+            Environment.SetEnvironmentVariable("ORCEL_APP_API_INSTANCE", savedInstance);
             expect(AppApi.InstanceSuffix("ci-1") == "ci-1" && AppApi.InstanceSuffix("..\\x") == null && AppApi.InstanceSuffix("A") == null && AppApi.InstanceSuffix(new string('a', 33)) == null, "instance suffix is validated");
             bool refused = false;
             try { AppApi.RequestFrame("task.stop", "rpt-1"); } catch (ArgumentException) { refused = true; }

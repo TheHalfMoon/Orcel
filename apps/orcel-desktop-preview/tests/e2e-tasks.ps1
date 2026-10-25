@@ -34,7 +34,10 @@ $start.EnvironmentVariables["ORCEL_WORKSPACE_ID"] = "default"
 $start.EnvironmentVariables["ORCEL_APP_API_INSTANCE"] = $instance
 $start.EnvironmentVariables["ORCEL_AUDIT_PATH"] = (Join-Path $state "audit\audit.jsonl")
 $start.EnvironmentVariables["LOCALAPPDATA"] = $state
-foreach ($name in @("ORCEL_WORKSPACES_JSON", "ORCEL_MCP_TRANSPORT", "ORCEL_APP_API")) { $start.EnvironmentVariables.Remove($name) }
+# Only the variables set above reach orceld: every other ORCEL_* setting of
+# the caller is dropped.
+$keep = @("ORCEL_WORKSPACE_ROOT", "ORCEL_WORKSPACE_ID", "ORCEL_APP_API_INSTANCE", "ORCEL_AUDIT_PATH")
+foreach ($name in @($start.EnvironmentVariables.Keys)) { if ($name -like "ORCEL_*" -and $keep -notcontains $name) { $start.EnvironmentVariables.Remove($name) } }
 # .NET Framework builds the child's stdin writer from Console.InputEncoding,
 # whose UTF-8 preamble would precede the first JSON line; use one without.
 $savedEncoding = [Console]::InputEncoding
@@ -50,7 +53,9 @@ function Report([string]$operation, [hashtable]$arguments, [int]$n) {
         capability = "report"; operation = $operation; target = $null; arguments = $arguments } | ConvertTo-Json -Compress -Depth 5
     $requests.WriteLine($request)
     $requests.Flush()
-    $line = $daemon.StandardOutput.ReadLine()
+    $pending = $daemon.StandardOutput.ReadLineAsync()
+    if (-not $pending.Wait(15000)) { throw "orceld did not answer report/$operation within 15 s" }
+    $line = $pending.Result
     if ($null -eq $line) { throw "orceld exited: $($stderr.Result)" }
     return $line | ConvertFrom-Json
 }
