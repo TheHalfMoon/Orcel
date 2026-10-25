@@ -71,7 +71,7 @@ try {
     Write-Output "PASS orceld previewed the report (no approval requested)"
 
     $env:ORCEL_E2E_APP_API_INSTANCE = $instance
-    $env:ORCEL_E2E_EXPECT_TASK_TITLE = "$title"": report proposed, waiting for approval"
+    $env:ORCEL_E2E_EXPECT_TASK_TITLE = "report proposed, waiting for approval: ""$title"""
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "e2e.ps1") -BuildDirectory $BuildDirectory
     if ($LASTEXITCODE -ne 0) { $failed = $true }
 } finally {

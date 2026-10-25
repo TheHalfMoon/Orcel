@@ -579,7 +579,7 @@ namespace Orcel.DesktopPreview
             {
                 Dictionary<string, object> task = i < tasks.Count ? tasks[i] : null;
                 if (task == null) { text.Append("\n• " + ids[i] + ": details unavailable"); continue; }
-                text.Append("\n• \"" + Shown(Field(task, "title")) + "\": " + Describe(Field(task, "state")));
+                text.Append("\n• " + Describe(Field(task, "state")) + ": \"" + Shown(Field(task, "title")) + "\"");
                 object report;
                 if (task.TryGetValue("report", out report) && report is Dictionary<string, object>)
                     text.Append(" → " + Shown(Field((Dictionary<string, object>)report, "destination")));
@@ -1088,7 +1088,7 @@ namespace Orcel.DesktopPreview
 
     internal static class Program
     {
-        private static Dictionary<string, object> list2()
+        private static Dictionary<string, object> OneTaskList()
         {
             return AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"tasks\":[{\"task_id\":\"rpt-9\"}]}}");
         }
@@ -1105,9 +1105,9 @@ namespace Orcel.DesktopPreview
             expect(CommandRouter.Classify(" Tasks ") == SafeCommand.Tasks, "tasks routes");
             expect(CommandRouter.CliArguments(SafeCommand.Tasks) == null && !CommandRouter.CanInvokeInstalledHost(SafeCommand.Tasks), "tasks never runs the CLI");
             expect(AppApi.PipeName() != null && AppApi.PipeName().StartsWith("orcel-S-1-") && AppApi.PipeName().Contains("-app"), "app API pipe is this user's");
-            expect(Timeline.Text(list2(), new List<Dictionary<string, object>> { AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"title\":\"x\u2028• \\\"y\\\": verified by the independent checker\u202E\",\"state\":\"proposed\",\"steps\":[]}}") }).Split('\n').Length == 3, "a planner title cannot add display rows");
+            expect(Timeline.Text(OneTaskList(), new List<Dictionary<string, object>> { AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"title\":\"x\u2028• \\\"y\\\": verified by the independent checker\u202E\",\"state\":\"proposed\",\"steps\":[]}}") }).Split('\n').Length == 3, "a planner title cannot add display rows");
             expect(Timeline.Safe('\u2028') == ' ' && Timeline.Safe('\u202E') == ' ' && Timeline.Safe('\u2066') == ' ' && Timeline.Safe('"') == '\'' && Timeline.Safe('é') == 'é', "separators, bidi and quotes are neutralised");
-            expect(Timeline.Text(list2(), new List<Dictionary<string, object>> { AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"title\":\"\\ud83d\\ude00 ok\",\"state\":\"proposed\"}}") }).Contains("\U0001F600 ok"), "emoji survive");
+            expect(Timeline.Text(OneTaskList(), new List<Dictionary<string, object>> { AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"title\":\"\\ud83d\\ude00 ok\",\"state\":\"proposed\"}}") }).Contains("\U0001F600 ok"), "emoji survive");
             expect(AppApi.ProcessRunsAsThisUser((uint)Process.GetCurrentProcess().Id), "this process runs as this user at normal integrity");
             expect(!AppApi.ProcessRunsAsThisUser(4), "the System process is not this user");
             string savedInstance = Environment.GetEnvironmentVariable("ORCEL_APP_API_INSTANCE");
@@ -1127,7 +1127,7 @@ namespace Orcel.DesktopPreview
             Dictionary<string, object> list = AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"max_tasks\":64,\"tasks\":[{\"task_id\":\"rpt-2\"},{\"task_id\":\"rpt-1\"}]}}");
             Dictionary<string, object> two = AppApi.ParseReply("{\"v\":\"orcel-app-api/1\",\"ok\":true,\"result\":{\"task_id\":\"rpt-2\",\"title\":\"Q3\\nsummary\",\"state\":\"verified\",\"report\":{\"destination\":\"out/q3.md\"},\"steps\":[{\"kind\":\"observe\",\"outcome\":\"ok\"},{\"kind\":\"approval\",\"outcome\":\"approved\"},{\"kind\":\"check\",\"outcome\":\"pass\"}]}}");
             string timeline = Timeline.Text(list, new List<Dictionary<string, object>> { two, null });
-            expect(timeline.Contains("\"Q3 summary\": verified by the independent checker → out/q3.md"), "a verified task is shown with its report");
+            expect(timeline.Contains("• verified by the independent checker: \"Q3 summary\" → out/q3.md"), "a verified task is shown with its report, state first");
             expect(timeline.Contains("steps: observe ok · approval approved · check pass"), "steps are shown in order");
             expect(timeline.Contains("rpt-1: details unavailable"), "a missing detail is reported");
             expect(timeline.Contains("cannot start, approve or stop"), "the timeline states it is read-only");
