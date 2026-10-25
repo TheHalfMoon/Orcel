@@ -675,6 +675,9 @@ impl GitProvider {
                 "--porcelain=v2",
                 "--branch",
                 "--untracked-files=all",
+                // A submodule's own configuration (and its filters) is
+                // never read: Git would run status inside each one.
+                "--ignore-submodules=all",
             ],
         )?;
         if status.stdout_truncated {
@@ -821,6 +824,7 @@ impl GitProvider {
         use std::thread;
         use std::time::{Duration, Instant};
 
+        let neutral = crate::neutralizing_args(repo)?;
         let mut command = Command::new("git");
         command
             .args([
@@ -832,6 +836,7 @@ impl GitProvider {
                 "-c",
                 "log.showSignature=false",
             ])
+            .args(&neutral.args)
             .args(args)
             .current_dir(repo)
             .stdin(Stdio::null())
