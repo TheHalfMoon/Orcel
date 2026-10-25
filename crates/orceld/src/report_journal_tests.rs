@@ -551,3 +551,78 @@ fn rj02_the_newest_open_attempt_of_a_task_decides_it() {
     assert_eq!(restored.reconciled, 2);
     assert_eq!(restored.tasks[0].state, TaskState::Verified);
 }
+
+// ---- fault injection: a real child process killed at each transition ----
+
+/// The child: the whole F2 journey with an approved commit, killed at
+/// `ORCEL_RJ02_CRASH_AT`. A no-op unless the suite started this process.
+#[test]
+fn rj02_report_crash_child() {
+    let Ok(dir) = std::env::var("ORCEL_RJ02_REPORT_DIR") else {
+        return;
+    };
+    let dir = PathBuf::from(dir);
+    let scene = Scene {
+        workspace: orcel_policy::Workspace {
+            id: "default".into(),
+            root: dir.join("ws"),
+        },
+        dir,
+    };
+    let tasks = TaskRegistry::with_journal(journal_path(&scene));
+    let (task, report) = proposed(&scene, &tasks);
+    let approval = consent(&scene, &[ApprovalDecision::Approved]);
+    let result = dispatch(
+        &scene.workspace,
+        &approval.broker,
+        &tasks,
+        &commit_request(&task, &report),
+    );
+    // Only reached when no crash point fired; the parent then fails.
+    std::mem::forget(scene);
+    result.unwrap();
+}
+
+#[test]
+fn rj02_report_fault_injection_kills_the_commit_at_each_transition() {
+    let exe = std::env::current_exe().unwrap();
+    for transition in ["pending", "dispatched", "effect"] {
+        let scene = Scene::new(&format!("rj02-kill-{transition}"));
+        let status = std::process::Command::new(&exe)
+            .args([
+                "--exact",
+                "report_task::journal::tests::rj02_report_crash_child",
+                "--test-threads=1",
+            ])
+            .env("ORCEL_RJ02_REPORT_DIR", &scene.dir)
+            .env("ORCEL_RJ02_CRASH_AT", transition)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(!status.success(), "{transition}: the child must die");
+        let destination = scene.workspace.root.join("reports").join("q3.md");
+        let written = transition == "effect";
+        assert_eq!(destination.exists(), written, "{transition}");
+        let before = scene.tree();
+
+        let next = ReportJournal::new(journal_path(&scene), Owner::current("next").unwrap());
+        let restored = next.restore().unwrap();
+        assert_eq!(restored.reconciled, 1, "{transition}");
+        assert_eq!(scene.tree(), before, "{transition}: nothing written twice");
+        let record = &restored.tasks[0];
+        if written {
+            assert_eq!(record.state, TaskState::Verified, "{transition}");
+        } else {
+            assert_eq!(record.state, TaskState::Failed, "{transition}");
+            assert_eq!(
+                record.steps.last().map(|step| step.outcome.as_str()),
+                Some("nothing_written"),
+                "{transition}"
+            );
+        }
+        let again = ReportJournal::new(journal_path(&scene), Owner::current("third").unwrap());
+        assert_eq!(again.restore().unwrap().reconciled, 0, "{transition}");
+        assert_eq!(scene.tree(), before, "{transition}");
+    }
+}

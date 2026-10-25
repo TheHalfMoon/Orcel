@@ -868,6 +868,7 @@ pub(crate) fn journaled_with<A, T>(
             | Postcondition::Opaque
     );
     let mut intent = pending(sink, mutation)?;
+    crash_point("pending");
     let approved = match approve() {
         Ok(approved) => approved,
         Err(refusal) => {
@@ -880,7 +881,9 @@ pub(crate) fn journaled_with<A, T>(
         }
     };
     intent.dispatched()?;
+    crash_point("dispatched");
     let result = act(approved);
+    crash_point("effect");
     intent.settle(match (&result, uncertain) {
         (Ok(_), _) => "done",
         (Err(_), true) => "unknown",
@@ -941,3 +944,20 @@ mod tests;
 #[cfg(test)]
 #[path = "mutation_journal_git_tests.rs"]
 mod git_tests;
+
+/// Test builds only: the fault-injection suite's child process dies here
+/// when `ORCEL_RJ02_CRASH_AT` names this transition. Product builds have
+/// no such point.
+#[cfg(test)]
+pub(crate) fn crash_point(at: &str) {
+    if std::env::var("ORCEL_RJ02_CRASH_AT").as_deref() == Ok(at) {
+        std::process::abort();
+    }
+}
+
+#[cfg(not(test))]
+pub(crate) fn crash_point(_at: &str) {}
+
+#[cfg(test)]
+#[path = "mutation_journal_crash_tests.rs"]
+mod crash_tests;
