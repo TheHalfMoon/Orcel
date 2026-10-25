@@ -60,6 +60,11 @@ function WaitForMessage($window, [string]$needle, [int]$timeoutMs) {
 $start = New-Object System.Diagnostics.ProcessStartInfo $app
 $start.UseShellExecute = $false
 $start.EnvironmentVariables["LOCALAPPDATA"] = $(if ($expectInstalled) { $RuntimeRoot } else { $emptyRoot })
+# SG-000127: the app API pipe is per user, not per LOCALAPPDATA. Unless the
+# caller names an instance served by a test orceld, point the app at an
+# instance nothing serves, so the user's real runtime is never read.
+$appApiInstance = $(if ($env:ORCEL_E2E_APP_API_INSTANCE) { $env:ORCEL_E2E_APP_API_INSTANCE } else { "e2e-" + [guid]::NewGuid().ToString("N").Substring(0, 12) })
+$start.EnvironmentVariables["ORCEL_APP_API_INSTANCE"] = $appApiInstance
 $clock = [Diagnostics.Stopwatch]::StartNew()
 $process = [System.Diagnostics.Process]::Start($start)
 try {
@@ -82,6 +87,18 @@ try {
         Check "runtime panel reports the real install" ($runtime -like "Orcel runtime 0.*" -and $runtime -like "*not running*") "$runtime (after ${readyMs} ms)"
     } else {
         Check "runtime panel reports not installed" ($runtime -eq "Not installed") "$runtime"
+    }
+
+    $shell = (ById $window "ShellState").Current.Name
+    Check "shell and process sessions are labelled unavailable" ($shell -like "Unavailable:*not armed*") "$shell"
+
+    SendCommand $window "tasks"
+    if ($env:ORCEL_E2E_APP_API_INSTANCE) {
+        $tasks = WaitForMessage $window "Report tasks in this orceld run" 15000
+        Check "tasks shows the live orceld's report tasks" ($null -ne $tasks -and $tasks -like "*$($env:ORCEL_E2E_EXPECT_TASK_TITLE)*") "$(($tasks -split "`n") -join ' | ')"
+    } else {
+        $tasks = WaitForMessage $window "Task timeline unavailable" 15000
+        Check "tasks reports an absent app API instead of inventing tasks" ($null -ne $tasks) "$tasks"
     }
 
     SendCommand $window "status"
