@@ -446,3 +446,144 @@ fn packaged_release_installs_runs_updates_recovers_and_uninstalls() {
     ));
     assert!(!root.exists());
 }
+
+// SG-000127 slice 2: the full installed app stays inside the founder's
+// 400 MB budget (UI_UX_AND_APP_SIZE_BUDGET.md). Decimal megabytes, the
+// stricter reading. Prerequisites that are not shipped are listed beside the
+// total with their own size, never counted as zero and never folded in.
+const INSTALLED_BUDGET_BYTES: u64 = 400_000_000;
+// Allocated disk is estimated per file at this cluster size (the NTFS
+// default); the apparent bytes are exact.
+const CLUSTER_BYTES: u64 = 4096;
+
+/// Apparent and allocated bytes of every regular file under `dir`, keyed by
+/// the first two path components below `root` (for example `bin/orcel.exe`
+/// or `versions/<version>`). Links and other non-regular entries are not
+/// followed; they are collected in `skipped` so none can hide bytes.
+fn inventory(
+    root: &Path,
+    dir: &Path,
+    components: &mut std::collections::BTreeMap<String, (u64, u64, u64)>,
+    skipped: &mut Vec<String>,
+) {
+    for entry in fs::read_dir(dir).unwrap() {
+        let entry = entry.unwrap();
+        let kind = entry.file_type().unwrap();
+        let path = entry.path();
+        if kind.is_dir() {
+            inventory(root, &path, components, skipped);
+        } else if kind.is_file() {
+            let bytes = entry.metadata().unwrap().len();
+            let key = path
+                .strip_prefix(root)
+                .unwrap()
+                .components()
+                .take(2)
+                .map(|part| part.as_os_str().to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join("/");
+            let slot = components.entry(key).or_default();
+            slot.0 += bytes;
+            slot.1 += bytes.div_ceil(CLUSTER_BYTES) * CLUSTER_BYTES;
+            slot.2 += 1;
+        } else {
+            skipped.push(path.display().to_string());
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires ORCEL_RELEASE_DIR; run by the release-qualification CI job"]
+fn installed_release_fits_the_400_mb_budget() {
+    let release = PathBuf::from(
+        std::env::var_os("ORCEL_RELEASE_DIR")
+            .expect("ORCEL_RELEASE_DIR must name a packaged release"),
+    );
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(release.join(MANIFEST_FILE)).unwrap()).unwrap();
+    let node = find_node_on_path().expect("Node.js is required on PATH");
+    let local = temp_dir("size");
+    let root = local.join("Orcel");
+    let _cleanup = Cleanup {
+        local: local.clone(),
+        dirs: std::cell::RefCell::new(Vec::new()),
+    };
+
+    // A fresh per-user install of exactly this candidate: no previous
+    // version, no rollback copy, no runtime state yet.
+    let installed = json_ok(&orcel(
+        &release.join("orcel.exe"),
+        &local,
+        &[
+            "install",
+            "--no-path",
+            "--node",
+            node.to_str().unwrap(),
+            "--json",
+        ],
+    ));
+    assert_eq!(installed["install"]["version"], manifest["version"]);
+
+    let mut components = std::collections::BTreeMap::new();
+    let mut skipped = Vec::new();
+    inventory(&root, &root, &mut components, &mut skipped);
+    // The installer creates only regular files and directories; a link or
+    // reparse point would escape the inventory.
+    assert!(
+        skipped.is_empty(),
+        "non-regular entries in the install root: {skipped:?}"
+    );
+    let (bytes, allocated, files) = components.values().fold((0, 0, 0), |sum, part| {
+        (sum.0 + part.0, sum.1 + part.1, sum.2 + part.2)
+    });
+    assert!(
+        files > 0,
+        "the install root {} holds no files",
+        root.display()
+    );
+
+    let node_version = Command::new(&node).arg("--version").output().unwrap();
+    assert!(node_version.status.success());
+    let report = serde_json::json!({
+        "schema": "orcel-installed-size/1",
+        "version": manifest["version"],
+        "budget_bytes": INSTALLED_BUDGET_BYTES,
+        "installed": {
+            "bytes": bytes,
+            "allocated_estimate_bytes": allocated,
+            "cluster_bytes": CLUSTER_BYTES,
+            "files": files,
+        },
+        "components": components
+            .iter()
+            .map(|(name, part)| serde_json::json!({
+                "path": name,
+                "bytes": part.0,
+                "allocated_estimate_bytes": part.1,
+                "files": part.2,
+            }))
+            .collect::<Vec<_>>(),
+        // Not shipped and not counted in `installed`; listed so the budget
+        // never hides what a user must also have.
+        "prerequisites": [
+            {
+                "name": "Node.js",
+                "version": String::from_utf8_lossy(&node_version.stdout).trim(),
+                "executable_bytes": fs::metadata(&node).unwrap().len(),
+                "counted": false,
+            },
+        ],
+        // Release builds carry no live browser (SG-000108 is a
+        // development-build feature only), so no browser is a prerequisite yet.
+        "browser": { "required": false, "counted": false, "reason": "release builds carry no live browser" },
+        // Not measured here: a fresh install has no cache yet. Never
+        // reported as zero.
+        "cache": { "measured": false, "counted": false, "reason": "none exists at a fresh install" },
+        "not_shipped": ["live browser worker and runtime (SG-000127 slice 7)", "Windows app (apps/orcel-desktop-preview)"],
+    });
+    println!("installed-size-report: {report}");
+    assert!(
+        allocated < INSTALLED_BUDGET_BYTES,
+        "installed app uses {allocated} allocated bytes ({bytes} apparent), over the {INSTALLED_BUDGET_BYTES} byte budget"
+    );
+}
