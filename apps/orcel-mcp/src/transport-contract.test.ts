@@ -66,6 +66,7 @@ const EXPECTED_TOOLS = [
   "report_preview",
   "report_start",
   "system_status",
+  "task_resume_summary",
   "web_fetch",
   "web_search",
   "workspace_get"

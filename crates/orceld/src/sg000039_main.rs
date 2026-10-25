@@ -46,6 +46,7 @@ mod profile_gate;
 mod remote_lease;
 mod report_check;
 mod report_task;
+mod resume_key;
 mod search;
 mod secret_store;
 mod trust;

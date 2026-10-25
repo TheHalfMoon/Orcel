@@ -59,7 +59,7 @@ Orcel is an **open-source computer-access authority layer** for MCP-compatible A
 
 ## What ChatGPT can do through Orcel
 
-Local MCP clients get the default `desktop_structured` profile: exactly the 44 tools below (the generated contract with every tool's bounds is [`docs/p16/TOOL_CONTRACT.md`](docs/p16/TOOL_CONTRACT.md); a test keeps this table equal to the profile):
+Local MCP clients get the default `desktop_structured` profile: exactly the 45 tools below (the generated contract with every tool's bounds is [`docs/p16/TOOL_CONTRACT.md`](docs/p16/TOOL_CONTRACT.md); a test keeps this table equal to the profile):
 
 | Area | Tools | Approval |
 |---|---|---|
@@ -73,7 +73,7 @@ Local MCP clients get the default `desktop_structured` profile: exactly the 44 t
 | Clipboard | `clipboard_read`, `clipboard_write` | local approval for each use; secrets refused; local-only |
 | Network | `web_fetch` | local approval per destination; public HTTPS only; local-only |
 | Web search (optional) | `web_search` | off until you enable a provider (`ORCEL_SEARCH_PROVIDERS_JSON`: self-hosted SearXNG, or your own Brave, Tavily, Exa or Serper key stored with `orcel search set-key`); local approval per query; results are untrusted data; local-only; a self-hosted SearXNG must be served on a public HTTPS name (private, loopback and LAN addresses are refused); not available through the ChatGPT tunnel |
-| Report task | `report_start`, `report_preview`, `report_commit` | start and preview read only; commit needs local approval of the exact file, creates it only (never overwrites) and is verified independently; local-only; not available through the ChatGPT tunnel |
+| Report task | `report_start`, `report_preview`, `report_commit`, `task_resume_summary` | start and preview read only; commit needs local approval of the exact file, creates it only (never overwrites) and is verified independently; after a reconnect, `task_resume_summary` reads what the session's own task did and what is unknown (read only, keyed fingerprints, never file text); local-only; not available through the ChatGPT tunnel |
 | Git (local) | `git_status`, `git_diff`, `git_log` | none (read-only) |
 | Git (local changes) | `git_branch_create`, `git_stage`, `git_unstage`, `git_commit` | local approval, bound to the exact repository state |
 | Git (network) | `git_fetch_preview`, `git_fetch`, `git_push_preview`, `git_push` | local approval; see limitations |

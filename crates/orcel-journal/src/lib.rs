@@ -24,6 +24,8 @@
 //! states, outcomes), never secret values or file contents; the journal
 //! records, it never authorizes.
 
+pub mod resume;
+
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::fs::File;
@@ -304,18 +306,127 @@ fn lock_file(path: &Path) -> Result<File, JournalError> {
 
 /// Takes a journal's writer lock, waiting up to `wait`; released when the
 /// returned handle closes, including on process death.
+/// Threads of one process are served in arrival order per `path` as given,
+/// so callers pass one spelling of a journal's path; a zero `wait` returns
+/// `Busy` while another thread is ahead in line.
 fn lock_within(path: &Path, wait: std::time::Duration) -> Result<File, JournalError> {
-    let lock = lock_file(path)?;
     let deadline = std::time::Instant::now() + wait;
-    loop {
+    // Threads of this process take the lock in arrival order: polling alone
+    // let a writer that just released it take it again before sleeping
+    // waiters woke, so one waiter could starve past its deadline while
+    // others appended. Other processes still contend through the OS lock.
+    let turn = Turn::wait(path, deadline)?;
+    let lock = lock_file(path)?;
+    let taken = loop {
         match fs4::FileExt::try_lock(&lock) {
-            Ok(()) => return Ok(lock),
+            Ok(()) => break Ok(lock),
             Err(fs4::TryLockError::WouldBlock) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(std::time::Duration::from_millis(10));
+                std::thread::sleep(std::time::Duration::from_millis(2));
             }
-            Err(fs4::TryLockError::WouldBlock) => return Err(JournalError::Busy),
-            Err(_) => return Err(JournalError::Write),
+            Err(fs4::TryLockError::WouldBlock) => break Err(JournalError::Busy),
+            Err(_) => break Err(JournalError::Write),
         }
+    };
+    // Held or not, the next thread in line may now try.
+    drop(turn);
+    taken
+}
+
+/// One thread's place in its process's line for a journal lock.
+struct Turn {
+    key: PathBuf,
+    ticket: u64,
+}
+
+struct Queue {
+    next: u64,
+    waiting: std::collections::VecDeque<u64>,
+}
+
+static LINES: std::sync::OnceLock<(
+    std::sync::Mutex<std::collections::HashMap<PathBuf, Queue>>,
+    std::sync::Condvar,
+)> = std::sync::OnceLock::new();
+
+fn lines() -> &'static (
+    std::sync::Mutex<std::collections::HashMap<PathBuf, Queue>>,
+    std::sync::Condvar,
+) {
+    LINES.get_or_init(|| {
+        (
+            std::sync::Mutex::new(std::collections::HashMap::new()),
+            std::sync::Condvar::new(),
+        )
+    })
+}
+
+impl Turn {
+    /// Waits until every earlier thread of this process has had its try at
+    /// `path`'s lock; `Busy` when `deadline` passes first.
+    fn wait(path: &Path, deadline: std::time::Instant) -> Result<Self, JournalError> {
+        let (map, ready) = lines();
+        // The queue holds no invariant a panicking holder could break.
+        let mut guard = map
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let key = path.to_path_buf();
+        let line = guard.entry(key.clone()).or_insert(Queue {
+            next: 0,
+            waiting: std::collections::VecDeque::new(),
+        });
+        let ticket = line.next;
+        line.next += 1;
+        line.waiting.push_back(ticket);
+        loop {
+            let first = guard
+                .get(&key)
+                .and_then(|line| line.waiting.front().copied());
+            if first == Some(ticket) {
+                return Ok(Self { key, ticket });
+            }
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                leave(&mut guard, &key, ticket);
+                ready.notify_all();
+                return Err(JournalError::Busy);
+            }
+            guard = ready
+                .wait_timeout(guard, deadline - now)
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .0;
+        }
+    }
+}
+
+/// Test builds only: how many threads of this process are in `path`'s line.
+#[cfg(test)]
+fn queued_for(path: &Path) -> usize {
+    let (map, _) = lines();
+    map.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(path)
+        .map_or(0, |queue| queue.waiting.len())
+}
+
+/// Takes `ticket` out of `key`'s line, dropping an empty line.
+fn leave(map: &mut std::collections::HashMap<PathBuf, Queue>, key: &Path, ticket: u64) {
+    if let Some(queue) = map.get_mut(key) {
+        queue.waiting.retain(|waiting| *waiting != ticket);
+        if queue.waiting.is_empty() {
+            map.remove(key);
+        }
+    }
+}
+
+impl Drop for Turn {
+    fn drop(&mut self) {
+        let (map, ready) = lines();
+        let mut guard = map
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        leave(&mut guard, &self.key, self.ticket);
+        drop(guard);
+        ready.notify_all();
     }
 }
 
@@ -593,6 +704,54 @@ mod tests {
         let read: Lines<Line> = read_lines(&path).unwrap();
         assert_eq!(read.lines.len(), 200);
         assert_eq!(read.torn, 0, "no two appends interleaved");
+    }
+
+    /// A thread that keeps re-taking the lock cannot starve a waiting one:
+    /// threads of one process take it in arrival order (CI once timed out a
+    /// waiter of shared_appends_wait_for_the_lock_and_never_interleave).
+    #[test]
+    fn a_waiting_writer_is_not_starved_by_one_that_keeps_retaking_the_lock() {
+        let wait_until = |path: &Path, queued: usize| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while queued_for(path) < queued {
+                assert!(std::time::Instant::now() < deadline, "threads never queued");
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        };
+        // Repeated: under the old polling lock either thread won about half
+        // the time; in arrival order the earlier waiter wins every time.
+        for attempt in 0..20 {
+            let path = dir(&format!("fair-{attempt}")).join("tasks.jsonl");
+            let rounds = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let held = lock_within(&path, std::time::Duration::from_secs(1)).unwrap();
+            let waiter = {
+                let path = path.clone();
+                let rounds = std::sync::Arc::clone(&rounds);
+                std::thread::spawn(move || {
+                    let _held = lock_within(&path, std::time::Duration::from_secs(10)).unwrap();
+                    rounds.load(std::sync::atomic::Ordering::SeqCst)
+                })
+            };
+            wait_until(&path, 1);
+            let hot = {
+                let path = path.clone();
+                let rounds = std::sync::Arc::clone(&rounds);
+                std::thread::spawn(move || {
+                    for _ in 0..5 {
+                        let _held = lock_within(&path, std::time::Duration::from_secs(10)).unwrap();
+                        rounds.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    }
+                })
+            };
+            wait_until(&path, 2);
+            drop(held);
+            assert_eq!(
+                waiter.join().unwrap(),
+                0,
+                "attempt {attempt}: the earlier waiter took the lock before any later round"
+            );
+            hot.join().unwrap();
+        }
     }
 
     #[test]
