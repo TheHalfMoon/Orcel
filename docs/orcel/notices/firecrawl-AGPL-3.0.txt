@@ -18,7 +18,11 @@ resource limits from apps/api/native/src/crawler.rs (blob
 apps/api/src/lib/canonical-url.ts (blob
 068999d47bcc9300916b80233f72519b9a4a155c) into
 crates/orcel-browser-host/src/crawl_scope.rs;
-docs/orcel/firecrawl_crawl_scope_provenance.json records the provenance.
+WI-02 ports the URL ranking of apps/api/src/lib/map-cosine.ts (blob
+0449827ca57efc5d8d6bc69eb49de22c54110729) into
+crates/orcel-browser-host/src/map_rank.rs.
+docs/orcel/firecrawl_crawl_scope_provenance.json records the provenance of
+both.
 
 Upstream license: GNU Affero General Public License v3.0 (the repository's
 LICENSE; apps/api/native/package.json declares "AGPL").
