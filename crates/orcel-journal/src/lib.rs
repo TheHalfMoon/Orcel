@@ -72,7 +72,10 @@ pub struct Lines<T> {
     pub torn: usize,
 }
 
-/// Appends one line and syncs it to disk before returning.
+/// Appends one line and syncs it to disk before returning. This takes no
+/// writer lock: it is the SG-000108 download journal's path, whose single
+/// writer is the one live browser of an orceld run. New journals write
+/// through [`Journal::append`], which holds the one-writer lock.
 pub fn append_line<T: Serialize>(path: &Path, line: &T) -> Result<(), JournalError> {
     let mut bytes = serde_json::to_vec(line).map_err(|_| JournalError::Write)?;
     bytes.push(b'\n');
@@ -170,6 +173,65 @@ pub fn read_lines<T: DeserializeOwned>(path: &Path) -> Result<Lines<T>, JournalE
         }
     }
     Ok(Lines { lines, torn })
+}
+
+/// Where one intent stands. An intent is `Pending` once recorded and
+/// `Dispatched` once its effect may have started; it ends `Settled` (the
+/// reply came back), `Abandoned` (it never started) or `Unknown` (it may
+/// have started and no reply came back), and an unknown or still-open one
+/// becomes `Reconciled` once a provider's probe has decided it. Nothing
+/// here re-dispatches anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntentState {
+    Pending,
+    Dispatched,
+    Settled,
+    Abandoned,
+    Unknown,
+    Reconciled,
+}
+
+impl IntentState {
+    /// Whether `next` may follow `self`. A recorded intent never returns to
+    /// `Pending`, and a settled, abandoned or reconciled one never changes.
+    pub fn may_become(self, next: IntentState) -> bool {
+        use IntentState::*;
+        matches!(
+            (self, next),
+            (Pending, Dispatched | Settled | Abandoned | Reconciled)
+                | (Dispatched, Settled | Unknown | Reconciled)
+                | (Unknown, Reconciled)
+        )
+    }
+
+    /// Whether a provider still has to decide what happened.
+    pub fn is_open(self) -> bool {
+        matches!(
+            self,
+            IntentState::Pending | IntentState::Dispatched | IntentState::Unknown
+        )
+    }
+}
+
+/// The intents a journal leaves open, in the order they were recorded,
+/// from `(intent id, state)` events in journal order. The first event of
+/// an intent must be `Pending`; any transition `may_become` refuses fails
+/// closed, so a journal that skips or reverses a state is never read as
+/// settled.
+pub fn recover<'a>(
+    events: impl IntoIterator<Item = (&'a str, IntentState)>,
+) -> Result<Vec<(String, IntentState)>, JournalError> {
+    let mut states: Vec<(String, IntentState)> = Vec::new();
+    for (id, next) in events {
+        match states.iter_mut().find(|(known, _)| known == id) {
+            None if next == IntentState::Pending => states.push((id.to_owned(), next)),
+            None => return Err(JournalError::Unreadable),
+            Some((_, state)) if state.may_become(next) => *state = next,
+            Some(_) => return Err(JournalError::Unreadable),
+        }
+    }
+    states.retain(|(_, state)| state.is_open());
+    Ok(states)
 }
 
 /// One exclusive writer of a journal.
@@ -351,16 +413,90 @@ mod tests {
         assert_eq!(read.lines, [line("pending", "r1")]);
     }
 
+    fn state(event: &str) -> IntentState {
+        match event {
+            "pending" => IntentState::Pending,
+            "dispatched" => IntentState::Dispatched,
+            "settled" => IntentState::Settled,
+            "abandoned" => IntentState::Abandoned,
+            "unknown" => IntentState::Unknown,
+            "reconciled" => IntentState::Reconciled,
+            other => panic!("{other}"),
+        }
+    }
+
     #[test]
-    fn a_crash_between_pending_and_dispatch_is_still_listed() {
-        // The writer dies after `pending` and before anything else: the
-        // reader still sees the open intent.
+    fn recover_lists_an_intent_whose_writer_crashed_between_pending_and_dispatch() {
         let path = dir("crash").join("intents.jsonl");
         {
             let writer = Journal::open(&path).unwrap();
+            writer.append(&line("pending", "r1")).unwrap();
+            writer.append(&line("dispatched", "r1")).unwrap();
+            writer.append(&line("settled", "r1")).unwrap();
+            // The writer dies after recording r9 and before dispatching it.
             writer.append(&line("pending", "r9")).unwrap();
         }
         let read: Lines<Line> = read_lines(&path).unwrap();
-        assert_eq!(read.lines, [line("pending", "r9")]);
+        let open = recover(
+            read.lines
+                .iter()
+                .map(|line| (line.id.as_str(), state(&line.event))),
+        )
+        .unwrap();
+        assert_eq!(open, [("r9".to_string(), IntentState::Pending)]);
+    }
+
+    #[test]
+    fn recover_keeps_dispatched_and_unknown_intents_open_until_reconciled() {
+        let open = recover([
+            ("a", IntentState::Pending),
+            ("a", IntentState::Dispatched),
+            ("b", IntentState::Pending),
+            ("b", IntentState::Dispatched),
+            ("b", IntentState::Unknown),
+            ("c", IntentState::Pending),
+            ("c", IntentState::Dispatched),
+            ("c", IntentState::Unknown),
+            ("c", IntentState::Reconciled),
+        ])
+        .unwrap();
+        assert_eq!(
+            open,
+            [
+                ("a".to_string(), IntentState::Dispatched),
+                ("b".to_string(), IntentState::Unknown)
+            ]
+        );
+    }
+
+    #[test]
+    fn recover_fails_closed_on_a_transition_the_model_refuses() {
+        use IntentState::*;
+        for events in [
+            vec![("a", Settled)],
+            vec![("a", Pending), ("a", Pending)],
+            vec![("a", Pending), ("a", Settled), ("a", Dispatched)],
+            vec![("a", Pending), ("a", Abandoned), ("a", Reconciled)],
+            vec![("a", Pending), ("a", Unknown)],
+            vec![("a", Pending), ("a", Dispatched), ("a", Abandoned)],
+        ] {
+            assert_eq!(
+                recover(events.clone()).unwrap_err(),
+                JournalError::Unreadable,
+                "{events:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_sg000108_download_events_are_lawful_transitions() {
+        // The download writer emits only pending, settled, abandoned and
+        // reconciled; each of its sequences is a lawful path here.
+        use IntentState::*;
+        for (next, open) in [(Settled, false), (Abandoned, false), (Reconciled, false)] {
+            assert!(Pending.may_become(next));
+            assert_eq!(next.is_open(), open);
+        }
+        assert!(Pending.is_open());
     }
 }
