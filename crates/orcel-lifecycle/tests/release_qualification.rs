@@ -865,6 +865,28 @@ fn installed_release_serves_the_report_task_to_a_local_client() {
     );
     drop(mcp);
 
+    // SG-000120 RJ-02: the report task journal lives in the install root
+    // beside the audit log, holds no task title, and passes the install's
+    // owner-only ACL check: a second session verifies the whole tree first.
+    let journal = root.join("report-tasks.jsonl");
+    assert!(journal.is_file(), "the report task journal was written");
+    assert!(
+        !fs::read_to_string(&journal)
+            .unwrap()
+            .contains("Q3 revenue\""),
+        "the planner title is never journaled"
+    );
+    let mut again = McpStdio::start(&cli, &local, project.join("mcp-stderr-2.log"));
+    let listed = again.request("tools/list", serde_json::json!({}));
+    assert!(listed["tools"]
+        .as_array()
+        .is_some_and(|tools| !tools.is_empty()));
+    assert!(
+        again.close().is_some_and(|status| status.success()),
+        "a second session verifies the install tree, journal included"
+    );
+    drop(again);
+
     let mut reports: Vec<String> = fs::read_dir(project.join("reports"))
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())

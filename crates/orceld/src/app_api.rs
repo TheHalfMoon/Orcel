@@ -740,7 +740,8 @@ fn handle_frame(shared: &Shared, peer: &PeerInfo, bytes: &[u8]) -> Reply {
     }
 }
 
-/// `task.get {task_id}`: one task of this daemon run.
+/// `task.get {task_id}`: one task of this daemon run or, read-only, of an
+/// exited run the report task journal kept (SG-000120 RJ-02).
 fn task_get(shared: &Shared, id: &Value, params: &serde_json::Map<String, Value>) -> Value {
     if let Some(key) = params.keys().find(|key| key.as_str() != "task_id") {
         return error_frame(
@@ -757,7 +758,7 @@ fn task_get(shared: &Shared, id: &Value, params: &serde_json::Map<String, Value>
         None => error_frame(
             id,
             "UNKNOWN_TASK",
-            "this orceld run has no such task; task ids name one daemon run",
+            "orceld has no such task (this run, or the earlier runs its journal kept)",
         ),
     }
 }

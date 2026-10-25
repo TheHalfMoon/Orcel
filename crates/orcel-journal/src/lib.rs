@@ -279,22 +279,117 @@ pub struct Journal {
     _lock: File,
 }
 
+/// The lock file of a journal, opened so that it cannot be deleted (and a
+/// second, unrelated lock file created) while any process holds it, as the
+/// approval ledger's lock is.
+fn lock_file(path: &Path) -> Result<File, JournalError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|_| JournalError::Write)?;
+    }
+    let mut lock_name = path.as_os_str().to_owned();
+    lock_name.push(".lock");
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).truncate(false).read(true).write(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        const FILE_SHARE_READ: u32 = 0x1;
+        const FILE_SHARE_WRITE: u32 = 0x2;
+        options.share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE);
+    }
+    options
+        .open(PathBuf::from(lock_name))
+        .map_err(|_| JournalError::Write)
+}
+
+/// Takes a journal's writer lock, waiting up to `wait`; released when the
+/// returned handle closes, including on process death.
+fn lock_within(path: &Path, wait: std::time::Duration) -> Result<File, JournalError> {
+    let lock = lock_file(path)?;
+    let deadline = std::time::Instant::now() + wait;
+    loop {
+        match fs4::FileExt::try_lock(&lock) {
+            Ok(()) => return Ok(lock),
+            Err(fs4::TryLockError::WouldBlock) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(fs4::TryLockError::WouldBlock) => return Err(JournalError::Busy),
+            Err(_) => return Err(JournalError::Write),
+        }
+    }
+}
+
+/// Appends under the journal's writer lock, taken for this one line, so
+/// several processes (one orceld per MCP session) can share a journal.
+pub fn append_shared<T: Serialize>(
+    path: &Path,
+    line: &T,
+    wait: std::time::Duration,
+) -> Result<(), JournalError> {
+    let _lock = lock_within(path, wait)?;
+    append_line(path, line)
+}
+
+/// [`append_opening_line`] under the journal's writer lock.
+pub fn append_opening_shared<T: Serialize>(
+    path: &Path,
+    line: &T,
+    wait: std::time::Duration,
+) -> Result<(), JournalError> {
+    let _lock = lock_within(path, wait)?;
+    append_opening_line(path, line)
+}
+
+/// Runs `change` with the journal's writer lock held, so a read, a decision
+/// and the rewrite or appends that follow it see no other writer.
+pub fn with_lock<R>(
+    path: &Path,
+    wait: std::time::Duration,
+    change: impl FnOnce() -> Result<R, JournalError>,
+) -> Result<R, JournalError> {
+    let _lock = lock_within(path, wait)?;
+    change()
+}
+
+/// Replaces the journal with `lines`, atomically: a sibling temporary file
+/// is written and synced, then renamed over the journal. Call it with the
+/// writer lock held ([`with_lock`]). Used to compact a journal; the bounds
+/// apply as for appends.
+pub fn rewrite<T: Serialize>(path: &Path, lines: &[T]) -> Result<(), JournalError> {
+    let mut bytes = Vec::new();
+    for line in lines {
+        let mut encoded = serde_json::to_vec(line).map_err(|_| JournalError::Write)?;
+        encoded.push(b'\n');
+        if encoded.len() > MAX_LINE_BYTES {
+            return Err(JournalError::TooLarge);
+        }
+        bytes.extend_from_slice(&encoded);
+    }
+    if bytes.len() as u64 > MAX_JOURNAL_BYTES - MAX_LINE_BYTES as u64 {
+        return Err(JournalError::TooLarge);
+    }
+    let mut temporary = path.as_os_str().to_owned();
+    temporary.push(".rewrite");
+    let temporary = PathBuf::from(temporary);
+    {
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&temporary)
+            .map_err(|_| JournalError::Write)?;
+        file.write_all(&bytes).map_err(|_| JournalError::Write)?;
+        file.sync_all().map_err(|_| JournalError::Write)?;
+    }
+    std::fs::rename(&temporary, path).map_err(|_| JournalError::Write)?;
+    sync_parent(path)
+}
+
 impl Journal {
     /// Opens the journal for writing, refusing while another writer holds it.
     pub fn open(path: impl Into<PathBuf>) -> Result<Self, JournalError> {
         let path = path.into();
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|_| JournalError::Write)?;
-        }
-        let mut lock_name = path.clone().into_os_string();
-        lock_name.push(".lock");
-        let lock = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(PathBuf::from(lock_name))
-            .map_err(|_| JournalError::Write)?;
+        let lock = lock_file(&path)?;
         match fs4::FileExt::try_lock(&lock) {
             Ok(()) => Ok(Self { path, _lock: lock }),
             Err(fs4::TryLockError::WouldBlock) => Err(JournalError::Busy),
@@ -459,6 +554,65 @@ mod tests {
             JournalError::TooLarge
         );
         append_line(&path, &line("settled", "r1")).unwrap();
+    }
+
+    #[test]
+    fn shared_appends_wait_for_the_lock_and_never_interleave() {
+        let path = dir("shared").join("tasks.jsonl");
+        let held = lock_within(&path, std::time::Duration::from_millis(0)).unwrap();
+        assert_eq!(
+            append_shared(
+                &path,
+                &line("pending", "r1"),
+                std::time::Duration::from_millis(50)
+            )
+            .unwrap_err(),
+            JournalError::Busy,
+            "a writer that cannot get the lock in time writes nothing"
+        );
+        assert!(!path.exists());
+        drop(held);
+        let writers: Vec<_> = (0..8)
+            .map(|n| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    for k in 0..25 {
+                        append_shared(
+                            &path,
+                            &line("pending", &format!("w{n}-{k}")),
+                            std::time::Duration::from_secs(10),
+                        )
+                        .unwrap();
+                    }
+                })
+            })
+            .collect();
+        for writer in writers {
+            writer.join().unwrap();
+        }
+        let read: Lines<Line> = read_lines(&path).unwrap();
+        assert_eq!(read.lines.len(), 200);
+        assert_eq!(read.torn, 0, "no two appends interleaved");
+    }
+
+    #[test]
+    fn a_rewrite_replaces_the_journal_atomically_under_the_lock() {
+        let path = dir("rewrite").join("tasks.jsonl");
+        for id in ["r1", "r2", "r3"] {
+            append_line(&path, &line("pending", id)).unwrap();
+        }
+        with_lock(&path, std::time::Duration::from_secs(1), || {
+            rewrite(&path, &[line("pending", "r3")])
+        })
+        .unwrap();
+        let read: Lines<Line> = read_lines(&path).unwrap();
+        assert_eq!(read.lines, [line("pending", "r3")]);
+        let mut temporary = path.as_os_str().to_owned();
+        temporary.push(".rewrite");
+        assert!(
+            !PathBuf::from(temporary).exists(),
+            "no temporary file is left"
+        );
     }
 
     #[test]
