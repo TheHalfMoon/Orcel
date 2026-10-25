@@ -57,6 +57,28 @@ function assertOnlyReadMethods(connector: ScriptedConnector) {
   }
 }
 
+test("SG-000126 task reads stay daemon-only, even when advertised", async () => {
+  const connector = new ScriptedConnector(server(() => "e1", () => []));
+  const { instance } = client(connector);
+
+  // orceld now advertises task reads, but the Control Room cannot expand
+  // its authority based on the server's capability advertisement.
+  const capabilities = await instance.getCapabilities();
+  assert.ok(capabilities.methods.includes("task.list"));
+  assert.ok(capabilities.methods.includes("task.get"));
+  const before = connector.sent.length;
+
+  for (const method of ["task.list", "task.get", "task.submit", "approval.respond"]) {
+    await assert.rejects(
+      () => instance.request(method as never),
+      (error: unknown) => error instanceof Error && "code" in error && error.code === "UNKNOWN_METHOD",
+      method,
+    );
+  }
+  assert.equal(connector.sent.length, before, "refused methods never reach the transport");
+  assert.deepEqual(connector.sent.map((request) => request.method), ["capabilities.get"]);
+});
+
 test("a sequence gap is reported, the cursor holds, and the client resubscribes from it", async () => {
   const connector = new ScriptedConnector(
     server(
