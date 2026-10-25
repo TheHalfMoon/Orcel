@@ -49,6 +49,19 @@ runs:
     - name: Extract the archive for qualification
       shell: pwsh
       run: Expand-Archive -Path "${{ inputs.release-dir }}.zip" -DestinationPath "${{ inputs.release-dir }}-from-archive"
+    # F4 preliminary gate only: measures the bytes of this exact extracted
+    # archive, NOT Node.js, the installed browser, filesystem allocation or
+    # the absent desktop UI. Full installed-size evidence remains open.
+    - name: Measure release payload against 400 MB budget
+      shell: pwsh
+      run: |
+        node --test scripts/release-size.test.mjs
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        $report = Join-Path $env:RUNNER_TEMP "orcel-release-size.json"
+        node scripts/release-size.mjs --release "${{ inputs.release-dir }}-from-archive" --out $report
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        $size = Get-Content $report -Raw | ConvertFrom-Json
+        Add-Content $env:GITHUB_STEP_SUMMARY ("Orcel extracted payload: {0:N0} / {1:N0} bytes (scope: {2}; excludes external Node/browser prerequisites)." -f $size.payload_bytes, $size.byte_budget, $size.scope)
     - name: Qualify the release extracted from the archive
       shell: pwsh
       env:
