@@ -637,3 +637,59 @@ fn rj02_an_unwritable_dispatched_line_stops_the_effect_after_approval() {
     assert!(refused.message.contains("approval is spent"));
     assert!(!acted.load(Ordering::SeqCst), "the effect never ran");
 }
+
+// ---- effects orceld cannot read back (process, clipboard, desktop) ----
+
+#[test]
+fn rj02_an_opaque_effect_hands_its_token_and_is_never_guessed() {
+    let scene = Scene::new("opaque");
+    let sink = Sink::Journal(leaked(journal(scene.journal_path(), "this")));
+    let mut opaque = mutation(&scene, "element-1", Postcondition::Opaque);
+    opaque.capability = "uia.invoke".into();
+    let handed = journaled_with(
+        sink,
+        opaque.clone(),
+        || Ok("record-7"),
+        Ok::<_, ProviderError>,
+    )
+    .unwrap();
+    assert_eq!(
+        handed, "record-7",
+        "the approval step's result reaches the effect"
+    );
+    let failed: Result<(), ProviderError> = journaled_with(
+        sink,
+        opaque.clone(),
+        || Ok(()),
+        |()| {
+            Err(ProviderError::new(
+                FailureCode::ProviderUnavailable,
+                "input injection timed out",
+            ))
+        },
+    );
+    assert!(failed.is_err());
+    assert_eq!(
+        events(&scene.journal_path()),
+        [
+            (IntentState::Pending, String::new()),
+            (IntentState::Dispatched, String::new()),
+            (IntentState::Settled, "done".to_owned()),
+            (IntentState::Pending, String::new()),
+            (IntentState::Dispatched, String::new()),
+            (IntentState::Settled, "unknown".to_owned()),
+        ],
+        "an effect that errs after dispatch may have acted"
+    );
+    // A crashed run's dispatched opaque effect is unknown, never retried.
+    let crashed = exited_journal(scene.journal_path(), "crashed");
+    leave_open(&crashed, "crashed.m0", opaque, true);
+    assert_eq!(
+        restore(&exited_journal(scene.journal_path(), "next")).reconciled,
+        1
+    );
+    assert_eq!(
+        outcomes(&scene.journal_path()).last().map(String::as_str),
+        Some("reconciled_unknown")
+    );
+}

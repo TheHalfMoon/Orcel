@@ -444,38 +444,54 @@ fn process_spawn(
         ),
         digest.clone(),
     );
-    let token = require_approval(approval, &prompt, "process execution")?;
-    approval
-        .consume(
-            &token,
-            &ConsumeExpectation::new(digest, workspace.id.clone(), POLICY_REVISION),
-            now_ms(),
-        )
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
-
-    plan.registered_sha256 = verify_registered_identity(&plan)?;
-    if crate::contained_tier::registered_tier(&plan)? != tier {
-        return Err(ProviderError::new(
-            FailureCode::TargetStale,
-            "the executable's registered tier changed during approval",
-        ));
-    }
-    if let Some(helper) = helper {
-        return crate::contained_tier::execute(&plan, &helper, &run_name);
-    }
-    let profile = process_profile_name(&request.request_id);
-    let result = execute_contained(plan, &profile).map_err(map_process_failure)?;
-    Ok(json!({
-        "exit_code": result.exit_code,
-        "stdout": String::from_utf8_lossy(&result.stdout),
-        "stderr": String::from_utf8_lossy(&result.stderr),
-        "appcontainer_verified": result.appcontainer_verified,
-        "assigned_to_job_before_resume": result.assigned_to_job_before_resume,
-        "job_quiescent": result.job_quiescent,
-        "execution_tier": ExecutionTier::Safe.as_str(),
-        "stdin_policy": "null",
-        "network_class": "NONE"
-    }))
+    // SG-000120 RJ-02: journaled before the prompt; what a process did
+    // cannot be read back, so a crash after dispatch is recorded unknown.
+    // The executable is recorded, never its arguments.
+    let journaled = crate::mutation_journal::opaque(
+        workspace,
+        request,
+        &digest,
+        &plan.executable.display().to_string(),
+    );
+    crate::mutation_journal::journaled_with(
+        crate::mutation_journal::global(),
+        journaled,
+        || {
+            let token = require_approval(approval, &prompt, "process execution")?;
+            approval
+                .consume(
+                    &token,
+                    &ConsumeExpectation::new(digest, workspace.id.clone(), POLICY_REVISION),
+                    now_ms(),
+                )
+                .map_err(|error| ProviderError::new(error.code, error.message))
+        },
+        |()| {
+            plan.registered_sha256 = verify_registered_identity(&plan)?;
+            if crate::contained_tier::registered_tier(&plan)? != tier {
+                return Err(ProviderError::new(
+                    FailureCode::TargetStale,
+                    "the executable's registered tier changed during approval",
+                ));
+            }
+            if let Some(helper) = helper {
+                return crate::contained_tier::execute(&plan, &helper, &run_name);
+            }
+            let profile = process_profile_name(&request.request_id);
+            let result = execute_contained(plan, &profile).map_err(map_process_failure)?;
+            Ok(json!({
+                "exit_code": result.exit_code,
+                "stdout": String::from_utf8_lossy(&result.stdout),
+                "stderr": String::from_utf8_lossy(&result.stderr),
+                "appcontainer_verified": result.appcontainer_verified,
+                "assigned_to_job_before_resume": result.assigned_to_job_before_resume,
+                "job_quiescent": result.job_quiescent,
+                "execution_tier": ExecutionTier::Safe.as_str(),
+                "stdin_policy": "null",
+                "network_class": "NONE"
+            }))
+        },
+    )
 }
 
 /// SG-000060: immediately before launch, a non-baseline executable must
