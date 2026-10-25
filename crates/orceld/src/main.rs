@@ -467,30 +467,29 @@ fn process_spawn(
                 .map_err(|error| ProviderError::new(error.code, error.message))
         },
         |()| {
-
-    plan.registered_sha256 = verify_registered_identity(&plan)?;
-    if crate::contained_tier::registered_tier(&plan)? != tier {
-        return Err(ProviderError::new(
-            FailureCode::TargetStale,
-            "the executable's registered tier changed during approval",
-        ));
-    }
-    if let Some(helper) = helper {
-        return crate::contained_tier::execute(&plan, &helper, &run_name);
-    }
-    let profile = process_profile_name(&request.request_id);
-    let result = execute_contained(plan, &profile).map_err(map_process_failure)?;
-    Ok(json!({
-        "exit_code": result.exit_code,
-        "stdout": String::from_utf8_lossy(&result.stdout),
-        "stderr": String::from_utf8_lossy(&result.stderr),
-        "appcontainer_verified": result.appcontainer_verified,
-        "assigned_to_job_before_resume": result.assigned_to_job_before_resume,
-        "job_quiescent": result.job_quiescent,
-        "execution_tier": ExecutionTier::Safe.as_str(),
-        "stdin_policy": "null",
-        "network_class": "NONE"
-    }))
+            plan.registered_sha256 = verify_registered_identity(&plan)?;
+            if crate::contained_tier::registered_tier(&plan)? != tier {
+                return Err(ProviderError::new(
+                    FailureCode::TargetStale,
+                    "the executable's registered tier changed during approval",
+                ));
+            }
+            if let Some(helper) = helper {
+                return crate::contained_tier::execute(&plan, &helper, &run_name);
+            }
+            let profile = process_profile_name(&request.request_id);
+            let result = execute_contained(plan, &profile).map_err(map_process_failure)?;
+            Ok(json!({
+                "exit_code": result.exit_code,
+                "stdout": String::from_utf8_lossy(&result.stdout),
+                "stderr": String::from_utf8_lossy(&result.stderr),
+                "appcontainer_verified": result.appcontainer_verified,
+                "assigned_to_job_before_resume": result.assigned_to_job_before_resume,
+                "job_quiescent": result.job_quiescent,
+                "execution_tier": ExecutionTier::Safe.as_str(),
+                "stdin_policy": "null",
+                "network_class": "NONE"
+            }))
         },
     )
 }

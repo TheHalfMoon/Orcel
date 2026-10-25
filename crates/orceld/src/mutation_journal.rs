@@ -501,21 +501,21 @@ pub(crate) fn start(path: Result<PathBuf, orcel_platform::PlatformError>, run: &
                     State::Ready(journal)
                 }
                 Err(JournalError::Busy) => {
-                    eprintln!("orceld mutation journal: busy in another orceld at start; file mutations are refused in this session, restart it to retry");
+                    eprintln!("orceld mutation journal: busy in another orceld at start; approved effects (files, Git, processes, clipboard, desktop) are refused in this session, restart it to retry");
                     State::Faulted
                 }
                 Err(failure) => {
-                    eprintln!("orceld mutation journal: {failure}; file mutations are refused until it is repaired");
+                    eprintln!("orceld mutation journal: {failure}; approved effects (files, Git, processes, clipboard, desktop) are refused until it is repaired");
                     State::Faulted
                 }
             }
         }
         (Err(failure), _) => {
-            eprintln!("orceld mutation journal: no private location ({failure}); file mutations are refused");
+            eprintln!("orceld mutation journal: no private location ({failure}); approved effects (files, Git, processes, clipboard, desktop) are refused");
             State::Faulted
         }
         (_, None) => {
-            eprintln!("orceld mutation journal: this process's identity is unavailable; file mutations are refused");
+            eprintln!("orceld mutation journal: this process's identity is unavailable; approved effects (files, Git, processes, clipboard, desktop) are refused");
             State::Faulted
         }
     };
@@ -584,7 +584,7 @@ pub(crate) fn pending(sink: Sink, mutation: Mutation) -> Result<Intent, Provider
         }
         Sink::Faulted => return Err(ProviderError::new(
             FailureCode::ProviderUnavailable,
-            "the mutation journal is unavailable; file mutations are refused until it is repaired",
+            "the mutation journal is unavailable; approved effects (files, Git, processes, clipboard, desktop) are refused until it is repaired",
         )),
         Sink::Journal(journal) => journal,
     };
