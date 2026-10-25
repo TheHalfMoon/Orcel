@@ -784,3 +784,46 @@ fn rj02_a_dependent_step_after_an_unknown_outcome_is_refused_then_explicitly_app
         "a done step clears the unknown"
     );
 }
+
+#[test]
+fn rj02_another_spelling_of_an_unknown_target_is_the_same_target() {
+    let scene = Scene::new("alias");
+    let this = leaked(journal(scene.journal_path(), "this"));
+    let sink = Sink::Journal(this);
+    // A report commit that reconciled unknown on reports/q3.md.
+    note_unknown_to(sink, "default", "reports/q3.md", "task.c0", "commit");
+    let aliases: &[&str] = if cfg!(windows) {
+        &["./reports/q3.md", r"reports\q3.md", "REPORTS/Q3.MD"]
+    } else {
+        &["./reports/q3.md", "reports//q3.md"]
+    };
+    for alias in aliases {
+        let refused = pending(sink, mutation(&scene, alias, directory(alias)));
+        // The first spelling gets the refusal; every later one is surfaced
+        // and must carry the notice.
+        if *alias == aliases[0] {
+            assert_eq!(
+                refused.err().map(|error| error.code),
+                Some(FailureCode::TargetStale)
+            );
+        } else {
+            assert!(refused.is_ok(), "{alias}");
+        }
+        assert!(
+            this.surfaced_unknown("default", alias).is_some(),
+            "{alias} names the unknown target"
+        );
+    }
+    // The outcome line keeps it across a restart.
+    let next = leaked(journal(scene.journal_path(), "next"));
+    restore(next);
+    assert_eq!(
+        pending(
+            Sink::Journal(next),
+            mutation(&scene, "reports/q3.md", directory("x"))
+        )
+        .err()
+        .map(|error| error.code),
+        Some(FailureCode::TargetStale)
+    );
+}

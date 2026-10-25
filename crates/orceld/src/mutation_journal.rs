@@ -344,6 +344,22 @@ struct Unknown {
     surfaced: bool,
 }
 
+/// One spelling per target for the unknown-outcome rule: `.` parts and
+/// empty parts dropped, one separator, and (on Windows, whose file names
+/// ignore case) lower case. `a.txt`, `./a.txt` and `A.TXT` are one target.
+fn target_key(target: &str) -> String {
+    let joined = target
+        .split(['/', '\\'])
+        .filter(|part| !part.is_empty() && *part != ".")
+        .collect::<Vec<_>>()
+        .join("/");
+    if cfg!(windows) {
+        joined.to_lowercase()
+    } else {
+        joined
+    }
+}
+
 /// How an outcome changes what is known about its target: `Some(true)`
 /// unknown, `Some(false)` known again (it acted, or nothing happened after
 /// a dispatch), `None` no change (it never started).
@@ -390,7 +406,7 @@ impl MutationJournal {
 
     /// Records `outcome` of `intent` for its target.
     fn note(&self, workspace_id: &str, target: &str, intent: &str, operation: &str, outcome: &str) {
-        let key = (workspace_id.to_owned(), target.to_owned());
+        let key = (workspace_id.to_owned(), target_key(target));
         match leaves_unknown(outcome) {
             Some(true) => {
                 self.unknown_targets().insert(
@@ -413,7 +429,7 @@ impl MutationJournal {
     /// was returned: the prompt of the next approval must name it.
     fn surfaced_unknown(&self, workspace_id: &str, target: &str) -> Option<String> {
         self.unknown_targets()
-            .get(&(workspace_id.to_owned(), target.to_owned()))
+            .get(&(workspace_id.to_owned(), target_key(target)))
             .filter(|unknown| unknown.surfaced)
             .map(|unknown| unknown.operation.clone())
     }
@@ -695,6 +711,36 @@ impl<B: orcel_approval::ApprovalBroker> orcel_approval::ApprovalBroker for Unkno
     }
 }
 
+/// SG-000120 RJ-02: a report commit that reconciled unknown makes its
+/// destination unknown for the dependent-step rule too. Recorded as an
+/// outcome line, so it outlives the report journal's closed commit.
+pub(crate) fn note_unknown(workspace_id: &str, target: &str, intent: &str, operation: &str) {
+    note_unknown_to(global(), workspace_id, target, intent, operation);
+}
+
+fn note_unknown_to(sink: Sink, workspace_id: &str, target: &str, intent: &str, operation: &str) {
+    let Sink::Journal(journal) = sink else {
+        return;
+    };
+    let _ = journal.line(&Line::Outcome {
+        schema: SCHEMA.to_owned(),
+        intent: intent.to_owned(),
+        capability: "report".to_owned(),
+        operation: operation.to_owned(),
+        workspace_id: workspace_id.to_owned(),
+        target: target.to_owned(),
+        outcome: "reconciled_unknown".to_owned(),
+        at_ms: orcel_approval::now_ms(),
+    });
+    journal.note(
+        workspace_id,
+        target,
+        intent,
+        operation,
+        "reconciled_unknown",
+    );
+}
+
 /// This orceld's sink.
 pub(crate) fn global() -> Sink {
     match JOURNAL.get() {
@@ -729,7 +775,7 @@ pub(crate) fn pending(sink: Sink, mutation: Mutation) -> Result<Intent, Provider
     // refused once; nothing is ever retried in its place.
     {
         let mut unknown = journal.unknown_targets();
-        let key = (mutation.workspace_id.clone(), mutation.target.clone());
+        let key = (mutation.workspace_id.clone(), target_key(&mutation.target));
         if let Some(earlier) = unknown.get_mut(&key) {
             if !earlier.surfaced {
                 earlier.surfaced = true;
