@@ -231,6 +231,16 @@ const ARCHIVE_TRICKY = `<!doctype html><title>Tricky archive</title><ul>
 <li><a id=swap href="/archive/2026-06-30">Annual review 2026-06-30</a></li>
 <li><a id=blank href="/archive/2025-12-31?popup" target="_blank">Annual review 2025-12-31</a></li></ul>
 <script>setTimeout(() => { document.getElementById("swap").href = "/evil"; fetch("/signal/href-swapped?t=" + Math.floor(performance.timeOrigin)); }, 1500);</script>`;
+// BR-01: after observation the page re-renders its list. The same links
+// as new elements; the names swapped between the destinations; or two
+// links with the same name.
+const rerender = (name, list) => `<!doctype html><title>${name}</title><ul id=list>
+<li><a href="/archive/2026-06-30">Annual review 2026-06-30</a></li>
+<li><a href="/archive/2026-09-30">Annual review 2026-09-30</a></li></ul>
+<script>setTimeout(() => { document.getElementById("list").innerHTML = ${JSON.stringify(list)}; fetch("/signal/${name}?t=" + Math.floor(performance.timeOrigin)); }, 1000);</script>`;
+const ARCHIVE_RERENDER = rerender("rerendered", '<li><a href="/archive/2026-06-30">Annual review 2026-06-30</a></li><li><a href="/archive/2026-09-30">Annual review 2026-09-30</a></li>');
+const ARCHIVE_RERENDER_SWAP = rerender("rerendered-swap", '<li><a href="/archive/2026-09-30">Annual review 2026-06-30</a></li><li><a href="/archive/2026-06-30">Annual review 2026-09-30</a></li>');
+const ARCHIVE_RERENDER_TWINS = rerender("rerendered-twins", '<li><a href="/archive/2026-09-30">Annual review 2026-09-30</a></li><li><a href="/archive/2026-09-30">Annual review 2026-09-30</a></li>');
 const SECRET_NAME = `<!doctype html><title>Secret name</title>
 <input type=password id=pw value="HUNTER2PW"><button aria-labelledby=pw>x</button>`;
 const SELF_MOVE = `<!doctype html><title>moving</title><script>setTimeout(() => { location.href = "/landing"; }, 300);</script>`;
@@ -408,7 +418,7 @@ trailer << /Root 1 0 R >>
     response.setHeader("reporting-endpoints", 'csp="https://other.test/reports"');
     response.setHeader("content-security-policy", "img-src 'self'; report-to csp");
   }
-  const pages = { "/mixed": MIXED, "/spec-escape": SPEC_ESCAPE, "/reports": REPORTS, "/self-move": SELF_MOVE, "/archive": ARCHIVE, "/archive-hostile": ARCHIVE_HOSTILE, "/files": FILES, "/archive-tricky": ARCHIVE_TRICKY, "/secret-name": SECRET_NAME, "/tools": TOOLS, "/tools-none": NO_TOOLS, "/tools-control": TOOLS_CONTROL, "/exec": EXEC, "/read": READ };
+  const pages = { "/mixed": MIXED, "/spec-escape": SPEC_ESCAPE, "/reports": REPORTS, "/self-move": SELF_MOVE, "/archive": ARCHIVE, "/archive-hostile": ARCHIVE_HOSTILE, "/files": FILES, "/archive-tricky": ARCHIVE_TRICKY, "/archive-rerender": ARCHIVE_RERENDER, "/archive-rerender-swap": ARCHIVE_RERENDER_SWAP, "/archive-rerender-twins": ARCHIVE_RERENDER_TWINS, "/secret-name": SECRET_NAME, "/tools": TOOLS, "/tools-none": NO_TOOLS, "/tools-control": TOOLS_CONTROL, "/exec": EXEC, "/read": READ };
   if (SITE[path]) return response.end(SITE[path]);
   response.end(pages[path] ?? `<!doctype html><title>${host}${path}</title><p>fixture</p>`);
 });

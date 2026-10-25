@@ -24,6 +24,7 @@ import {
   ProtocolViolation,
   WORKER_IDENTITY,
   WORKER_PROTOCOL_GENERATION,
+  type ApprovedTarget,
   type ErrorCode,
   type ExecField,
   type HostFrame,
@@ -69,12 +70,14 @@ export interface EngineSession {
   /// default submit button and wait for the resulting document; returns it
   /// with its structured data. Rejects with NavigationError.
   execute(tool: string, fields: ExecField[]): Promise<{ url: string; status: number; structured: string[]; structuredComplete: boolean }>;
-  /// Click the element with this snapshot ref and wait for the resulting
-  /// navigation to load; rejects with NavigationError.
-  activate(ref: string): Promise<{ url: string; status: number }>;
-  /// Click the element with this snapshot ref, expect a download, and save
-  /// it to `path` (which must not exist); rejects with NavigationError.
-  download(ref: string, path: string): Promise<{ url: string; name: string; media: string; bytes: number }>;
+  /// Click the element with this snapshot ref (or, when the ref went
+  /// stale, the one element matching the approved target) and wait for the
+  /// resulting navigation to load; rejects with NavigationError.
+  activate(ref: string, target?: ApprovedTarget): Promise<{ url: string; status: number }>;
+  /// Click the element with this snapshot ref (or the one matching the
+  /// approved target), expect a download, and save it to `path` (which must
+  /// not exist); rejects with NavigationError.
+  download(ref: string, path: string, target?: ApprovedTarget): Promise<{ url: string; name: string; media: string; bytes: number }>;
   /// Called once if the engine goes away without `close`.
   onUnexpectedExit(listener: () => void): void;
 }
@@ -198,7 +201,7 @@ export class Worker {
           return;
         }
         this.navigating = true;
-        void this.runDownload(this.session, frame.dl_id, frame.ref, frame.path);
+        void this.runDownload(this.session, frame.dl_id, frame.ref, frame.path, frame.target);
         return;
       }
       case "activate": {
@@ -208,7 +211,7 @@ export class Worker {
           return;
         }
         this.navigating = true;
-        void this.runActivation(this.session, frame.act_id, frame.ref);
+        void this.runActivation(this.session, frame.act_id, frame.ref, frame.target);
         return;
       }
       case "execute": {
@@ -357,10 +360,10 @@ export class Worker {
     if (this.state === "launched" && this.session === session) this.settle(outcome, { frame: "fetch_failed", fetch_id: fetchId, reason: "failed" });
   }
 
-  private async runDownload(session: EngineSession, dlId: number, ref: string, path: string): Promise<void> {
+  private async runDownload(session: EngineSession, dlId: number, ref: string, path: string, target?: ApprovedTarget): Promise<void> {
     let outcome: WorkerFrame;
     try {
-      const result = await session.download(ref, path);
+      const result = await session.download(ref, path, target);
       outcome = { frame: "downloaded", dl_id: dlId, ...result };
     } catch (error) {
       const reason: NavigationFailure = error instanceof NavigationError ? error.reason : "failed";
@@ -370,10 +373,10 @@ export class Worker {
     if (this.state === "launched" && this.session === session) this.settle(outcome, { frame: "download_failed", dl_id: dlId, reason: "failed" });
   }
 
-  private async runActivation(session: EngineSession, actId: number, ref: string): Promise<void> {
+  private async runActivation(session: EngineSession, actId: number, ref: string, target?: ApprovedTarget): Promise<void> {
     let outcome: WorkerFrame;
     try {
-      const result = await session.activate(ref);
+      const result = await session.activate(ref, target);
       outcome = { frame: "activated", act_id: actId, url: result.url, status: result.status };
     } catch (error) {
       const reason: NavigationFailure = error instanceof NavigationError ? error.reason : "failed";

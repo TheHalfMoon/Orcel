@@ -296,3 +296,32 @@ test("execute frames carry a valid tool name and bounded typed fields", () => {
     assert.throws(() => parseHostFrame(bad), ProtocolViolation, JSON.stringify(bad).slice(0, 80));
   }
 });
+
+test("BR-01 activate and download frames may carry the approved role and name, both or neither", () => {
+  const path = "C:\\stage\\dl-2.part";
+  assert.deepEqual(parseHostFrame({ frame: "activate", act_id: 1, ref: "e5" }), { frame: "activate", act_id: 1, ref: "e5" });
+  assert.deepEqual(parseHostFrame({ frame: "activate", act_id: 1, ref: "e5", role: "link", name: "Annual review" }), {
+    frame: "activate",
+    act_id: 1,
+    ref: "e5",
+    target: { role: "link", name: "Annual review" }
+  });
+  assert.deepEqual(parseHostFrame({ frame: "download", dl_id: 2, ref: "e7", path, role: "link", name: "Q3.pdf" }), {
+    frame: "download",
+    dl_id: 2,
+    ref: "e7",
+    path,
+    target: { role: "link", name: "Q3.pdf" }
+  });
+  for (const bad of [
+    { frame: "activate", act_id: 1, ref: "e5", role: "link" },
+    { frame: "activate", act_id: 1, ref: "e5", name: "x" },
+    { frame: "activate", act_id: 1, ref: "e5", role: "Link", name: "x" },
+    { frame: "activate", act_id: 1, ref: "e5", role: "link", name: "" },
+    { frame: "activate", act_id: 1, ref: "e5", role: "link", name: "a\u0000b" },
+    { frame: "activate", act_id: 1, ref: "e5", role: "link", name: "x".repeat(1025) },
+    { frame: "download", dl_id: 2, ref: "e7", path, role: "link" }
+  ]) {
+    assert.throws(() => parseHostFrame(bad), ProtocolViolation, JSON.stringify(bad).slice(0, 80));
+  }
+});

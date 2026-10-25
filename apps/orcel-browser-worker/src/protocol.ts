@@ -95,13 +95,33 @@ export type HostFrame =
   | { frame: "extract"; ext_id: number; links: boolean; images: boolean }
   | { frame: "extract_more"; ext_id: number; piece: number }
   | { frame: "execute"; exec_id: number; tool: string; fields: ExecField[] }
-  | { frame: "activate"; act_id: number; ref: string }
-  | { frame: "download"; dl_id: number; ref: string; path: string }
+  | { frame: "activate"; act_id: number; ref: string; target?: ApprovedTarget }
+  | { frame: "download"; dl_id: number; ref: string; path: string; target?: ApprovedTarget }
   | { frame: "shutdown" };
 
 export type RouteKind = "document" | "redirect" | "frame" | "popup" | "fetch" | "subresource" | "service_worker";
 
-export type NavigationFailure = "denied" | "timeout" | "failed" | "busy" | "http_status" | "oversized";
+export type NavigationFailure = "denied" | "timeout" | "failed" | "busy" | "http_status" | "oversized" | "stale";
+
+/// BR-01: the approved element's role and accessible name, as the host
+/// observed them. Used only when the element's snapshot ref went stale:
+/// the worker then acts on the one element with exactly this role and
+/// name in the main frame, or on none.
+export interface ApprovedTarget {
+  role: string;
+  name: string;
+}
+
+/// The longest accessible name the host sends back (the snapshot bound).
+export const MAX_TARGET_NAME_BYTES = 1024;
+
+function approvedTarget(raw: Record<string, unknown>): ApprovedTarget | undefined {
+  if (!("role" in raw) && !("name" in raw)) return undefined;
+  if (typeof raw.role !== "string" || !/^[a-z][a-z-]{0,39}$/.test(raw.role)) {
+    throw new ProtocolViolation("approved role is malformed");
+  }
+  return { role: raw.role, name: boundedString(raw.name, MAX_TARGET_NAME_BYTES, "approved name") };
+}
 
 export type ErrorCode = "protocol_violation" | "launch_refused" | "launch_failed" | "engine_exited" | "not_ready";
 
@@ -255,7 +275,7 @@ export function parseHostFrame(raw: unknown): HostFrame {
       return { frame: "fetch_text", fetch_id: fetchId, url };
     }
     case "download": {
-      exactKeys(raw, ["frame", "dl_id", "ref", "path"]);
+      exactKeys(raw, "role" in raw || "name" in raw ? ["frame", "dl_id", "ref", "path", "role", "name"] : ["frame", "dl_id", "ref", "path"]);
       const dlId = positiveId(raw.dl_id, "dl_id");
       if (typeof raw.ref !== "string" || !/^(?:f\d{1,4})?e\d{1,6}$/.test(raw.ref)) {
         throw new ProtocolViolation("download ref is malformed");
@@ -264,15 +284,17 @@ export function parseHostFrame(raw: unknown): HostFrame {
       if (!isAbsoluteWindowsPath(path) || !path.toLowerCase().endsWith(".part")) {
         throw new ProtocolViolation("download path is not an absolute .part path");
       }
-      return { frame: "download", dl_id: dlId, ref: raw.ref, path };
+      const target = approvedTarget(raw);
+      return target ? { frame: "download", dl_id: dlId, ref: raw.ref, path, target } : { frame: "download", dl_id: dlId, ref: raw.ref, path };
     }
     case "activate": {
-      exactKeys(raw, ["frame", "act_id", "ref"]);
+      exactKeys(raw, "role" in raw || "name" in raw ? ["frame", "act_id", "ref", "role", "name"] : ["frame", "act_id", "ref"]);
       const actId = positiveId(raw.act_id, "act_id");
       if (typeof raw.ref !== "string" || !/^(?:f\d{1,4})?e\d{1,6}$/.test(raw.ref)) {
         throw new ProtocolViolation("activation ref is malformed");
       }
-      return { frame: "activate", act_id: actId, ref: raw.ref };
+      const target = approvedTarget(raw);
+      return target ? { frame: "activate", act_id: actId, ref: raw.ref, target } : { frame: "activate", act_id: actId, ref: raw.ref };
     }
     case "observe": {
       exactKeys(raw, ["frame", "obs_id"]);

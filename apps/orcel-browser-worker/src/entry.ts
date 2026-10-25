@@ -10,7 +10,7 @@ import { existsSync, writeFileSync } from "node:fs";
 import { chromium, type Locator, type Page } from "playwright-core";
 import { refusedWorkerVariables, startupRefusal } from "./environment.js";
 import { safeText } from "./extract/clean.js";
-import { encodeFrame, FETCH_TEXT_MEDIA, FrameDecoder, MAX_EXTRACT_PIECES, MAX_FETCH_TEXT_BYTES, MAX_FRAME_BYTES, MAX_PIECE_BYTES, ProtocolViolation, type ExecField, type WorkerFrame } from "./protocol.js";
+import { encodeFrame, FETCH_TEXT_MEDIA, FrameDecoder, MAX_EXTRACT_PIECES, MAX_FETCH_TEXT_BYTES, MAX_FRAME_BYTES, MAX_PIECE_BYTES, ProtocolViolation, type ApprovedTarget, type ExecField, type WorkerFrame } from "./protocol.js";
 import { CONTENT_STYLES, EXTRACT_DEFAULTS, extractMarkdown } from "./extract/index.js";
 import type { LayoutSnapshot } from "./extract/model.js";
 import { toPieces } from "./extract/pieces.js";
@@ -105,8 +105,8 @@ const playwrightLauncher: Launcher = {
         const kept = pieces[0]?.content ?? "";
         return { url: page.url(), status, media, text: kept, truncated: kept.length < text.length || body.length > 4 * MAX_FETCH_TEXT_BYTES };
       },
-      async activate(ref: string) {
-        return clickAndLoad(primary, primary.locator(`aria-ref=${ref}`));
+      async activate(ref: string, target?: ApprovedTarget) {
+        return clickAndLoad(primary, await approvedElement(primary, ref, target));
       },
       async execute(tool: string, fields: ExecField[]) {
         const page = primary;
@@ -195,9 +195,11 @@ const playwrightLauncher: Launcher = {
         }
         return { url, status, structured, structuredComplete };
       },
-      async download(ref: string, path: string) {
+      async download(ref: string, path: string, target?: ApprovedTarget) {
         if (existsSync(path)) throw new NavigationError("failed");
         const page = primary;
+        // Resolved before the capture is armed: a stale target clicks nothing.
+        const element = await approvedElement(page, ref, target);
         const guard = await routes.guardReady(page);
         // Arm before clicking: the click's navigation (each request and
         // redirect hop still decided by the host) ends in a document whose
@@ -215,7 +217,7 @@ const playwrightLauncher: Launcher = {
           throw new NavigationError(reason);
         };
         try {
-          await page.locator(`aria-ref=${ref}`).click({ timeout: 5_000, noWaitAfter: true });
+          await element.click({ timeout: 5_000, noWaitAfter: true });
         } catch {
           return fail("failed");
         }
@@ -308,6 +310,25 @@ const FILL_BUDGET_MS = 10_000;
 
 /// Click `target` and wait for the main frame's resulting document to load;
 /// returns its URL and status. The host decides every request on the way.
+/// BR-01: the approved element. Its snapshot ref when that still names an
+/// element; otherwise, after a re-render replaced it, the one element in
+/// the main frame whose role and accessible name equal the approved ones
+/// (Playwright's role locator with an exact name, which reads the
+/// accessibility tree and runs no page script). Anything else (a ref inside
+/// a frame, no approved target, no match or several) is stale and nothing
+/// is clicked. The host still confines the click's navigation or download
+/// to the approved destination.
+async function approvedElement(page: Page, ref: string, target?: ApprovedTarget): Promise<Locator> {
+  const byRef = page.locator(`aria-ref=${ref}`);
+  if ((await byRef.count().catch(() => 0)) === 1) return byRef;
+  if (!target || !/^e\d+$/.test(ref) || target.name.length === 0) throw new NavigationError("stale");
+  const byRole = page
+    .mainFrame()
+    .getByRole(target.role as Parameters<Page["getByRole"]>[0], { name: target.name, exact: true });
+  if ((await byRole.count().catch(() => 0)) !== 1) throw new NavigationError("stale");
+  return byRole;
+}
+
 async function clickAndLoad(page: Page, target: Locator): Promise<{ url: string; status: number }> {
   let status = 0;
   const onResponse = (response: import("playwright-core").Response) => {

@@ -1716,6 +1716,101 @@ fn approved_download(
     (target, approval)
 }
 
+/// BR-01: a link replaced by a re-render after observation is clicked
+/// through its approved role and name, but only when exactly one element
+/// matches; a swapped name still cannot leave the approved destination.
+#[test]
+#[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
+fn br01_a_rerendered_link_is_found_by_its_approved_role_and_name_or_nothing_is_clicked() {
+    let fixture = HttpsFixture::start();
+    let profile = temp_profile("rerender");
+    let mut launch = spec(&profile, true);
+    launch.destinations =
+        vec![
+            AdmittedDestination::fixture("fixture.test", IpAddr::V4(Ipv4Addr::LOCALHOST))
+                .expect("fixture.test"),
+        ];
+    launch.test_trusted_spki = Some(fixture.spki.clone());
+    let mut worker = launch_worker(&launch, &Policy(PolicyKeyState::Absent)).expect("launch");
+    let scope = crate::observation::ObservationScope {
+        workspace: "workspace".into(),
+        profile_identity: "profile".into(),
+    };
+    let named = |worker: &BrowserWorker, live: &LiveObservation, name: &str| {
+        let mut stack: Vec<&crate::observation::ObservedNode> =
+            live.observation.nodes.iter().collect();
+        while let Some(node) = stack.pop() {
+            if worker
+                .host_node(&node.node_id)
+                .is_some_and(|h| h.name == name)
+            {
+                return node.node_id.clone();
+            }
+            stack.extend(node.children.iter());
+        }
+        panic!("no node named {name}");
+    };
+
+    // The same link, re-rendered as a new element: the click follows it.
+    let loaded = epoch_ms();
+    worker
+        .navigate("https://fixture.test/archive-rerender")
+        .expect("rerender");
+    let live = worker.observe(&scope).expect("observe rerender");
+    let node = named(&worker, &live, "Annual review 2026-09-30");
+    pump_until_signal(&mut worker, &fixture, "rerendered", loaded);
+    let (target, mut approval) = approved_click(&worker, &live, &node);
+    let opened = worker
+        .activate(&target, &mut approval, 1, "workspace")
+        .expect("a re-rendered link is still the approved link");
+    assert_eq!(opened.url, "https://fixture.test/archive/2026-09-30");
+
+    // The names swapped: the element with the approved name now points
+    // elsewhere, and the host refuses that destination.
+    let loaded = epoch_ms();
+    worker
+        .navigate("https://fixture.test/archive-rerender-swap")
+        .expect("swap");
+    let live = worker.observe(&scope).expect("observe swap");
+    let node = named(&worker, &live, "Annual review 2026-06-30");
+    pump_until_signal(&mut worker, &fixture, "rerendered-swap", loaded);
+    let (target, mut approval) = approved_click(&worker, &live, &node);
+    assert!(
+        worker
+            .activate(&target, &mut approval, 1, "workspace")
+            .is_err(),
+        "a swapped name left the approved destination"
+    );
+
+    // Two elements now carry the approved name: stale, nothing clicked.
+    let loaded = epoch_ms();
+    worker
+        .navigate("https://fixture.test/archive-rerender-twins")
+        .expect("twins");
+    let live = worker.observe(&scope).expect("observe twins");
+    let node = named(&worker, &live, "Annual review 2026-09-30");
+    pump_until_signal(&mut worker, &fixture, "rerendered-twins", loaded);
+    let before = fixture.hits().len();
+    let (target, mut approval) = approved_click(&worker, &live, &node);
+    let refused = worker
+        .activate(&target, &mut approval, 1, "workspace")
+        .expect_err("two matches are stale");
+    assert!(
+        matches!(
+            refused,
+            HostError::Unavailable(UnavailableReason::TargetStale)
+        ),
+        "{refused:?}"
+    );
+    pump(&mut worker, Duration::from_millis(500));
+    assert!(
+        !fixture.hits()[before..]
+            .iter()
+            .any(|hit| hit.contains("/archive/2026-09-30")),
+        "nothing was clicked"
+    );
+}
+
 #[test]
 #[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
 fn an_approved_activation_follows_the_latest_dated_link_and_nothing_else() {
