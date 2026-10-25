@@ -823,7 +823,15 @@ impl GitProvider {
 
         let mut command = Command::new("git");
         command
-            .args(["-c", "core.fsmonitor=false", "-c", "core.pager=cat"])
+            .args([
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "core.pager=cat",
+                // Repository config must not make a read run a program.
+                "-c",
+                "log.showSignature=false",
+            ])
             .args(args)
             .current_dir(repo)
             .stdin(Stdio::null())

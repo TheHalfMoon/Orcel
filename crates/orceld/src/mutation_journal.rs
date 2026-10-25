@@ -34,6 +34,9 @@ const LOCK_WAIT: Duration = Duration::from_secs(5);
 const MAX_RECONCILE_BYTES: u64 = 64 * 1024 * 1024;
 /// Most closed outcomes the journal keeps for the resume summary.
 pub(crate) const MAX_OUTCOMES: usize = 256;
+/// Longest a starting orceld spends probing targets; intents left after it
+/// are recorded unknown rather than delaying the start.
+const RECONCILE_BUDGET: Duration = Duration::from_secs(60);
 
 /// What the approved effect must leave at the target.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,6 +62,22 @@ pub(crate) enum Postcondition {
         before_kind: String,
         before_sha256: Option<String>,
     },
+    /// Git (target: the repository): `refs/heads/<branch>` created at
+    /// `head` and checked out.
+    GitBranch { branch: String, head: String },
+    /// Git: one commit on `branch` with parent `parent` and a message
+    /// whose normalized SHA-256 is `message_sha256` (never the message).
+    GitCommit {
+        branch: String,
+        parent: String,
+        message_sha256: String,
+    },
+    /// Git index changes (stage, unstage): not probed; a dispatched one
+    /// is unknown.
+    GitIndex,
+    /// A network effect (push, fetch): never probed, so a dispatched one
+    /// is unknown, and so is an error after dispatch.
+    Remote,
 }
 
 /// One approved mutation, as journaled.
@@ -279,6 +298,10 @@ pub(crate) fn reconcile(mutation: &Mutation) -> Reconciled {
                 _ => Reconciled::Unknown,
             }
         }
+        Postcondition::GitBranch { .. } | Postcondition::GitCommit { .. } => {
+            crate::git_mutation::reconcile(root, &mutation.target, &mutation.postcondition)
+        }
+        Postcondition::GitIndex | Postcondition::Remote => Reconciled::Unknown,
         Postcondition::Absent {
             before_kind,
             before_sha256,
@@ -355,6 +378,7 @@ impl MutationJournal {
                     at_ms,
                 };
             let now = orcel_approval::now_ms();
+            let deadline = std::time::Instant::now() + RECONCILE_BUDGET;
             // Outcomes stay in journal order, so the bound drops the oldest.
             let mut outcomes: Vec<Line> = Vec::new();
             let mut live: Vec<Line> = Vec::new();
@@ -381,10 +405,12 @@ impl MutationJournal {
                             }
                             continue;
                         }
-                        let result = if state == IntentState::Dispatched {
+                        let result = if state != IntentState::Dispatched {
+                            Reconciled::NothingDone
+                        } else if std::time::Instant::now() < deadline {
                             reconcile(mutation)
                         } else {
-                            Reconciled::NothingDone
+                            Reconciled::Unknown
                         };
                         reconciled += 1;
                         outcomes.push(summary(intent, mutation, result.outcome(), now));
@@ -620,24 +646,39 @@ impl Intent {
 
 /// Runs one journaled mutation: `pending` before `approve`, `dispatched`
 /// before `act`, then the outcome. A failure of `approve` abandons the
-/// intent; `act`'s result settles it.
+/// intent; `act`'s result settles it (`unknown` when a failed Git or
+/// network effect may still have acted).
 pub(crate) fn journaled<T>(
     sink: Sink,
     mutation: Mutation,
     approve: impl FnOnce() -> Result<(), ProviderError>,
     act: impl FnOnce() -> Result<T, ProviderError>,
 ) -> Result<T, ProviderError> {
+    // A Git command can fail (timeout, postcondition) after it changed the
+    // repository, and a network effect after it reached the remote.
+    let uncertain = matches!(
+        mutation.postcondition,
+        Postcondition::Remote
+            | Postcondition::GitBranch { .. }
+            | Postcondition::GitCommit { .. }
+            | Postcondition::GitIndex
+    );
     let mut intent = pending(sink, mutation)?;
     if let Err(refusal) = approve() {
         intent.abandon(match refusal.code {
             FailureCode::ApprovalDenied => "approval_denied",
+            FailureCode::TargetStale => "target_stale",
             _ => "approval_unavailable",
         });
         return Err(refusal);
     }
     intent.dispatched()?;
     let result = act();
-    intent.settle(if result.is_ok() { "done" } else { "failed" });
+    intent.settle(match (&result, uncertain) {
+        (Ok(_), _) => "done",
+        (Err(_), true) => "unknown",
+        (Err(_), false) => "failed",
+    });
     result
 }
 
@@ -689,3 +730,7 @@ pub(crate) mod test_support {
 #[cfg(test)]
 #[path = "mutation_journal_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "mutation_journal_git_tests.rs"]
+mod git_tests;

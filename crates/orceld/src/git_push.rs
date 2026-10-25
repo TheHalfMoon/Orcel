@@ -22,6 +22,26 @@ pub fn dispatch(
     lookup: &impl PushDestinationLookup,
     resolver: &impl DnsResolver,
 ) -> Result<Option<Value>, ProviderError> {
+    dispatch_to(
+        crate::mutation_journal::global(),
+        workspace,
+        approval,
+        request,
+        lookup,
+        resolver,
+    )
+}
+
+/// `git.push`, journaled to `sink` (SG-000120 RJ-02). The remote is never
+/// probed: a push that dispatched and did not report is unknown.
+pub(crate) fn dispatch_to(
+    sink: crate::mutation_journal::Sink,
+    workspace: &Workspace,
+    approval: &impl ApprovalBroker,
+    request: &RequestEnvelope,
+    lookup: &impl PushDestinationLookup,
+    resolver: &impl DnsResolver,
+) -> Result<Option<Value>, ProviderError> {
     match (request.capability.as_str(), request.operation.as_str()) {
         ("git.push.preview", "preview") => {
             let policy_id = required_string(request, "policy_id")?.to_owned();
@@ -134,14 +154,26 @@ pub fn dispatch(
                 ),
                 digest.clone(),
             );
-            let token = require_approval(approval, &prompt)?;
-            approval
-                .consume(
-                    &token,
-                    &ConsumeExpectation::new(digest, workspace.id.clone(), POLICY_REVISION),
-                    now_ms(),
-                )
-                .map_err(|error| ProviderError::new(error.code, error.message))?;
+            let journaled = crate::mutation_journal::Mutation {
+                capability: request.capability.clone(),
+                operation: request.operation.clone(),
+                approval_digest: digest.clone(),
+                workspace_id: workspace.id.clone(),
+                policy_revision: POLICY_REVISION.to_owned(),
+                root: workspace.root.clone(),
+                target: repository.clone(),
+                postcondition: crate::mutation_journal::Postcondition::Remote,
+            };
+            let approve = || {
+                let token = require_approval(approval, &prompt)?;
+                approval
+                    .consume(
+                        &token,
+                        &ConsumeExpectation::new(digest, workspace.id.clone(), POLICY_REVISION),
+                        now_ms(),
+                    )
+                    .map_err(|error| ProviderError::new(error.code, error.message))
+            };
             let approved = orcel_provider_git::push::ApprovedPush {
                 relative: &repository,
                 destination: &provider_destination,
@@ -152,15 +184,17 @@ pub fn dispatch(
                 credential_reference: &credential_reference,
                 pinned: &pinned,
             };
-            let result = provider
-                .push_approved(
-                    &approved,
-                    resolver,
-                    &EnvCredentialResolver,
-                    &HardenedPushTransport,
-                )
-                .map_err(map_git_error)?;
-            Ok(Some(result))
+            crate::mutation_journal::journaled(sink, journaled, approve, || {
+                provider
+                    .push_approved(
+                        &approved,
+                        resolver,
+                        &EnvCredentialResolver,
+                        &HardenedPushTransport,
+                    )
+                    .map_err(map_git_error)
+            })
+            .map(Some)
         }
         _ => Ok(None),
     }
