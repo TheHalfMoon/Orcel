@@ -444,14 +444,29 @@ fn process_spawn(
         ),
         digest.clone(),
     );
-    let token = require_approval(approval, &prompt, "process execution")?;
-    approval
-        .consume(
-            &token,
-            &ConsumeExpectation::new(digest, workspace.id.clone(), POLICY_REVISION),
-            now_ms(),
-        )
-        .map_err(|error| ProviderError::new(error.code, error.message))?;
+    // SG-000120 RJ-02: journaled before the prompt; what a process did
+    // cannot be read back, so a crash after dispatch is recorded unknown.
+    // The executable is recorded, never its arguments.
+    let journaled = crate::mutation_journal::opaque(
+        workspace,
+        request,
+        &digest,
+        &plan.executable.display().to_string(),
+    );
+    crate::mutation_journal::journaled_with(
+        crate::mutation_journal::global(),
+        journaled,
+        || {
+            let token = require_approval(approval, &prompt, "process execution")?;
+            approval
+                .consume(
+                    &token,
+                    &ConsumeExpectation::new(digest, workspace.id.clone(), POLICY_REVISION),
+                    now_ms(),
+                )
+                .map_err(|error| ProviderError::new(error.code, error.message))
+        },
+        |()| {
 
     plan.registered_sha256 = verify_registered_identity(&plan)?;
     if crate::contained_tier::registered_tier(&plan)? != tier {
@@ -476,6 +491,8 @@ fn process_spawn(
         "stdin_policy": "null",
         "network_class": "NONE"
     }))
+        },
+    )
 }
 
 /// SG-000060: immediately before launch, a non-baseline executable must

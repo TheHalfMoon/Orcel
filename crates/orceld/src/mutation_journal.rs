@@ -78,6 +78,10 @@ pub(crate) enum Postcondition {
     /// A network effect (push, fetch): never probed, so a dispatched one
     /// is unknown, and so is an error after dispatch.
     Remote,
+    /// An effect orceld cannot read back (a process run, a clipboard
+    /// placement, desktop input or a UI action): a dispatched one is
+    /// unknown, and so is an error after dispatch.
+    Opaque,
 }
 
 /// One approved mutation, as journaled.
@@ -301,7 +305,9 @@ pub(crate) fn reconcile(mutation: &Mutation) -> Reconciled {
         Postcondition::GitBranch { .. } | Postcondition::GitCommit { .. } => {
             crate::git_mutation::reconcile(root, &mutation.target, &mutation.postcondition)
         }
-        Postcondition::GitIndex | Postcondition::Remote => Reconciled::Unknown,
+        Postcondition::GitIndex | Postcondition::Remote | Postcondition::Opaque => {
+            Reconciled::Unknown
+        }
         Postcondition::Absent {
             before_kind,
             before_sha256,
@@ -533,6 +539,26 @@ pub(crate) enum Sink {
     Journal(&'static MutationJournal),
 }
 
+/// An [`Postcondition::Opaque`] mutation of `request` on `target` (an
+/// identifier such as an element id or executable path; never content).
+pub(crate) fn opaque(
+    workspace: &orcel_policy::Workspace,
+    request: &orcel_contracts::RequestEnvelope,
+    approval_digest: &str,
+    target: &str,
+) -> Mutation {
+    Mutation {
+        capability: request.capability.clone(),
+        operation: request.operation.clone(),
+        approval_digest: approval_digest.to_owned(),
+        workspace_id: workspace.id.clone(),
+        policy_revision: orcel_policy::POLICY_REVISION.to_owned(),
+        root: workspace.root.clone(),
+        target: target.to_owned(),
+        postcondition: Postcondition::Opaque,
+    }
+}
+
 /// This orceld's sink.
 pub(crate) fn global() -> Sink {
     match JOURNAL.get() {
@@ -654,6 +680,17 @@ pub(crate) fn journaled<T>(
     approve: impl FnOnce() -> Result<(), ProviderError>,
     act: impl FnOnce() -> Result<T, ProviderError>,
 ) -> Result<T, ProviderError> {
+    journaled_with(sink, mutation, approve, |()| act())
+}
+
+/// [`journaled`], where the approval step hands its result (the spent
+/// token) to the effect.
+pub(crate) fn journaled_with<A, T>(
+    sink: Sink,
+    mutation: Mutation,
+    approve: impl FnOnce() -> Result<A, ProviderError>,
+    act: impl FnOnce(A) -> Result<T, ProviderError>,
+) -> Result<T, ProviderError> {
     // A Git command can fail (timeout, postcondition) after it changed the
     // repository, and a network effect after it reached the remote.
     let uncertain = matches!(
@@ -662,18 +699,22 @@ pub(crate) fn journaled<T>(
             | Postcondition::GitBranch { .. }
             | Postcondition::GitCommit { .. }
             | Postcondition::GitIndex
+            | Postcondition::Opaque
     );
     let mut intent = pending(sink, mutation)?;
-    if let Err(refusal) = approve() {
-        intent.abandon(match refusal.code {
-            FailureCode::ApprovalDenied => "approval_denied",
-            FailureCode::TargetStale => "target_stale",
-            _ => "approval_unavailable",
-        });
-        return Err(refusal);
-    }
+    let approved = match approve() {
+        Ok(approved) => approved,
+        Err(refusal) => {
+            intent.abandon(match refusal.code {
+                FailureCode::ApprovalDenied => "approval_denied",
+                FailureCode::TargetStale => "target_stale",
+                _ => "approval_unavailable",
+            });
+            return Err(refusal);
+        }
+    };
     intent.dispatched()?;
-    let result = act();
+    let result = act(approved);
     intent.settle(match (&result, uncertain) {
         (Ok(_), _) => "done",
         (Err(_), true) => "unknown",
