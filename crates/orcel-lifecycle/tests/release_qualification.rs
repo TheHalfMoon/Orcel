@@ -588,6 +588,26 @@ fn installed_release_fits_the_400_mb_budget() {
     );
 }
 
+/// Kills (as a crash) every orceld started from the install at `root`,
+/// and only those; returns how many.
+fn kill_installed_orceld(root: &Path) -> usize {
+    let prefix = root.display().to_string().replace('\'', "''");
+    let script = format!(
+        "$n = 0; Get-CimInstance Win32_Process -Filter \"Name='orceld.exe'\" | \
+         Where-Object {{ $_.ExecutablePath -and $_.ExecutablePath.StartsWith('{prefix}', \
+         [System.StringComparison]::OrdinalIgnoreCase) }} | ForEach-Object {{ \
+         Stop-Process -Id $_.ProcessId -Force; $n++ }}; $n"
+    );
+    let output = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .output()
+        .expect("run powershell");
+    String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .unwrap_or(0)
+}
+
 /// One MCP session over `orcel mcp stdio`, the entrypoint every supported
 /// local client configuration launches, driven one request at a time.
 struct McpStdio {
@@ -779,7 +799,12 @@ fn installed_release_serves_the_report_task_to_a_local_client() {
         .iter()
         .filter_map(|tool| tool["name"].as_str())
         .collect();
-    for tool in ["report_start", "report_preview", "report_commit"] {
+    for tool in [
+        "report_start",
+        "report_preview",
+        "report_commit",
+        "task_resume_summary",
+    ] {
         assert!(names.contains(&tool), "{tool} is listed locally: {names:?}");
     }
     assert!(
@@ -804,6 +829,22 @@ fn installed_release_serves_the_report_task_to_a_local_client() {
     assert!(!failed, "{preview}");
     let digest = preview["result"]["sha256"].as_str().unwrap().to_string();
     assert_eq!(digest, sha256_bytes(content.as_bytes()));
+
+    // SG-000120 RJ-03: the session reads its own task's resume summary:
+    // completed steps as kinds and keyed fingerprints, never file text.
+    let (failed, summary) = mcp.call(
+        "task_resume_summary",
+        serde_json::json!({ "task_id": task }),
+    );
+    assert!(!failed, "{summary}");
+    let kinds: Vec<&str> = summary["result"]["completed"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|entry| entry["kind"].as_str())
+        .collect();
+    assert_eq!(kinds, ["observe", "preview"], "{summary}");
+    assert!(!summary.to_string().contains("north,Q3"), "{summary}");
 
     // An existing destination is refused at preview, before any approval,
     // and the user's file is untouched. A commit of a report the last
@@ -850,6 +891,34 @@ fn installed_release_serves_the_report_task_to_a_local_client() {
         serde_json::json!({ "task_id": task, "name": "q3.md", "content": content }),
     );
     assert!(failed, "a stale task stays stale: {after}");
+
+    // SG-000120 RJ-03 transcript: the session's orceld dies (killed, as a
+    // crash) and the same MCP session's next call reaches a new orceld,
+    // which reads the interrupted task's resume summary from the journal.
+    let killed = kill_installed_orceld(&root);
+    assert!(killed >= 1, "this session's orceld was running");
+    let (failed, resumed) = mcp.call(
+        "task_resume_summary",
+        serde_json::json!({ "task_id": task }),
+    );
+    assert!(
+        !failed,
+        "the same session reads its task after the crash: {resumed}"
+    );
+    assert_eq!(resumed["result"]["task_id"], task.as_str(), "{resumed}");
+    let completed: Vec<&str> = resumed["result"]["completed"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|entry| entry["kind"].as_str())
+        .collect();
+    assert!(completed.contains(&"observe"), "{resumed}");
+    assert_eq!(
+        resumed["result"]["unknown"],
+        serde_json::json!([]),
+        "nothing was committed: {resumed}"
+    );
+    assert!(!resumed.to_string().contains("north,Q3"), "{resumed}");
     let stderr = project.join("mcp-stderr.log");
     let closed = mcp.close();
     let status = closed.unwrap_or_else(|| {

@@ -184,6 +184,9 @@ pub(crate) struct ReportTask {
     next_step: u64,
     created_at_ms: u64,
     updated_at_ms: u64,
+    /// SG-000120 RJ-03: the keyed fingerprint of the client session that
+    /// started the task; only that session reads its resume summary.
+    session: Option<String>,
 }
 
 impl ReportTask {
@@ -243,6 +246,9 @@ pub(crate) struct TaskRegistry {
     /// Set when the journal could not be read at start: commits are
     /// refused until it is repaired, never run unjournaled.
     journal_faulted: bool,
+    /// SG-000120 RJ-03: the key of session and input fingerprints; `None`
+    /// refuses resume summaries.
+    fingerprints: Option<crate::resume_key::FingerprintKey>,
 }
 
 impl TaskRegistry {
@@ -268,6 +274,7 @@ impl TaskRegistry {
             events: OnceLock::new(),
             journal: None,
             journal_faulted: false,
+            fingerprints: crate::resume_key::FingerprintKey::ephemeral().ok(),
         }
     }
 
@@ -290,6 +297,17 @@ impl TaskRegistry {
             eprintln!("orceld report journal: this process's identity is unavailable; report commits are refused");
             registry.journal_faulted = true;
             return registry;
+        };
+        // The fingerprint key lives beside the journal, so a task's session
+        // fingerprint means the same after a restart.
+        registry.fingerprints = match crate::resume_key::FingerprintKey::load_or_create(
+            &path.with_extension("key"),
+        ) {
+            Ok(key) => Some(key),
+            Err(failure) => {
+                eprintln!("orceld report journal: the resume fingerprint key is unavailable ({failure}); resume summaries are refused");
+                None
+            }
         };
         let report_journal = journal::ReportJournal::new(path, owner);
         match report_journal.restore() {
@@ -598,11 +616,157 @@ fn dispatch_with(
         "start" => start(workspace, tasks, request),
         "preview" => preview(workspace, tasks, request),
         "commit" => commit(workspace, approval, tasks, request, hooks),
+        "resume_summary" => resume_summary(workspace, tasks, request),
         other => Err(error(
             FailureCode::CapabilityDenied,
             format!("report/{other} is not dispatched"),
         )),
     }
+}
+
+/// SG-000120 RJ-03: what the caller's own task did and what is unknown,
+/// for a client that reconnects after orceld stopped. Read-only. The task
+/// must belong to this workspace and to the session that started it; any
+/// other task id, unknown or not, gets the same refusal.
+fn resume_summary(
+    workspace: &Workspace,
+    tasks: &TaskRegistry,
+    request: &RequestEnvelope,
+) -> Result<Value, ProviderError> {
+    use orcel_journal::resume::{self, Finish, ResumeEvent};
+    let task_id = argument(request, "task_id")?;
+    let Some(key) = tasks.fingerprints.as_ref() else {
+        return Err(error(
+            FailureCode::ProviderUnavailable,
+            "the resume fingerprint key is unavailable; resume summaries are refused",
+        ));
+    };
+    let session = key.fingerprint("session", &[&request.client_session_id]);
+    let task = tasks
+        .lock()
+        .iter()
+        .find(|task| {
+            task.id == task_id
+                && task.workspace_id == workspace.id
+                && task.session.as_deref() == Some(session.as_str())
+        })
+        .cloned()
+        .ok_or_else(|| {
+            error(
+                FailureCode::CapabilityDenied,
+                "no task with this id was started by this session in this workspace",
+            )
+        })?;
+
+    let sources: Vec<String> = task
+        .sources
+        .iter()
+        .flat_map(|source| {
+            [
+                source.path.clone(),
+                source.sha256.clone(),
+                source.bytes.to_string(),
+            ]
+        })
+        .collect();
+    let observed = key.fingerprint(
+        "observe",
+        &sources.iter().map(String::as_str).collect::<Vec<_>>(),
+    );
+    let proposal = task.proposal.as_ref().or(task.report.as_ref());
+    let proposed = proposal.map(|proposal| {
+        key.fingerprint(
+            "proposal",
+            &[
+                &proposal.destination,
+                &proposal.sha256,
+                &proposal.bytes.to_string(),
+            ],
+        )
+    });
+    let verification = proposal.map_or_else(
+        || "read the task's destination before committing again".to_owned(),
+        |proposal| {
+            format!(
+                "check whether {} exists and its SHA-256 is {}; commit again only if it is absent",
+                proposal.destination, proposal.sha256
+            )
+        },
+    );
+
+    let mut events: Vec<ResumeEvent> = Vec::new();
+    let mut open_commit: Option<String> = None;
+    for step in &task.steps {
+        let start = |key: &str, kind: &str, fingerprint: Option<String>| ResumeEvent::Started {
+            key: key.to_owned(),
+            kind: kind.to_owned(),
+            fingerprint,
+            verification: verification.clone(),
+        };
+        let finish = |key: &str, finish: Finish| ResumeEvent::Finished {
+            key: key.to_owned(),
+            finish,
+            outcome: format!("{}:{}", step.kind, step.outcome),
+        };
+        let read = match (step.kind.as_str(), step.outcome.as_str()) {
+            ("observe", "ok") => Some(("observe", Some(observed.clone()))),
+            ("preview", "ok") => Some(("preview", proposed.clone())),
+            _ => None,
+        };
+        if let Some((kind, fingerprint)) = read {
+            events.push(start(&step.step_id, kind, fingerprint));
+            events.push(finish(&step.step_id, Finish::Completed));
+            continue;
+        }
+        if (step.kind.as_str(), step.outcome.as_str()) == ("approval", "approved") {
+            events.push(start(&step.step_id, "commit", proposed.clone()));
+            open_commit = Some(step.step_id.clone());
+            continue;
+        }
+        let result = match (step.kind.as_str(), step.outcome.as_str()) {
+            ("verify", "passed") | ("reconcile", "verified") => Some(Finish::Completed),
+            ("verify", "failed") | ("write", "failed") | ("reconcile", "unknown") => {
+                Some(Finish::Unknown)
+            }
+            ("write", _) | ("commit", _) | ("reconcile", _) => Some(Finish::NotRun),
+            // A run that ended under an approved commit leaves it open.
+            _ => None,
+        };
+        if let Some(result) = result {
+            let key = match open_commit.take() {
+                Some(key) => key,
+                None => {
+                    // An outcome whose approval step was not kept (bounded
+                    // steps) still counts.
+                    events.push(start(&step.step_id, "commit", proposed.clone()));
+                    step.step_id.clone()
+                }
+            };
+            events.push(finish(&key, result));
+        }
+    }
+    let summary = resume::classify(&events);
+    let entry = |entry: &resume::ResumeEntry, unknown: bool| {
+        let mut value = json!({
+            "step_id": entry.key,
+            "kind": entry.kind,
+            "outcome": entry.outcome,
+            "input_fingerprint": entry.fingerprint,
+        });
+        if unknown {
+            value["verification"] = json!(entry.verification);
+        }
+        value
+    };
+    Ok(json!({
+        "schema": "orcel-resume-summary/1",
+        "task_id": task.id,
+        "state": task.state.as_str(),
+        "completed": summary.completed.iter().map(|item| entry(item, false)).collect::<Vec<_>>(),
+        "unknown": summary.unknown.iter().map(|item| entry(item, true)).collect::<Vec<_>>(),
+        "next_verification": resume::next_verification(&summary),
+        "note": resume::note(&summary),
+    }))
 }
 
 fn argument<'a>(request: &'a RequestEnvelope, name: &str) -> Result<&'a str, ProviderError> {
@@ -697,6 +861,10 @@ fn start(
         next_step: 0,
         created_at_ms: now,
         updated_at_ms: now,
+        session: tasks
+            .fingerprints
+            .as_ref()
+            .map(|key| key.fingerprint("session", &[&request.client_session_id])),
     })?;
     tasks.update(&task.id, "observe", "ok", |_| {});
     Ok(json!({

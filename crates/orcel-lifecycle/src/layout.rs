@@ -120,6 +120,8 @@ impl Layout {
             self.root.join("report-tasks.jsonl"),
             self.root.join("report-tasks.jsonl.lock"),
             self.root.join("report-tasks.jsonl.rewrite"),
+            // SG-000120 RJ-03: the resume fingerprint key.
+            self.root.join("report-tasks.key"),
             self.root.join("mutations.jsonl"),
             self.root.join("mutations.jsonl.lock"),
             self.root.join("mutations.jsonl.rewrite"),

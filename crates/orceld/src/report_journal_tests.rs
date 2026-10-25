@@ -626,3 +626,105 @@ fn rj02_report_fault_injection_kills_the_commit_at_each_transition() {
         assert_eq!(scene.tree(), before, "{transition}");
     }
 }
+
+// ---- SG-000120 RJ-03: the resume summary after a real crash ----
+
+fn crashed_journey(label: &str, transition: &str) -> Scene {
+    let scene = Scene::new(label);
+    // orceld's private state root exists before it starts.
+    std::fs::create_dir_all(journal_path(&scene).parent().unwrap()).unwrap();
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "report_task::journal::tests::rj02_report_crash_child",
+            "--test-threads=1",
+        ])
+        .env("ORCEL_RJ02_REPORT_DIR", &scene.dir)
+        .env("ORCEL_RJ02_CRASH_AT", transition)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap();
+    assert!(!status.success(), "the child must die at {transition}");
+    scene
+}
+
+fn resume(scene: &Scene, tasks: &TaskRegistry, session: &str) -> Result<Value, ProviderError> {
+    let task = tasks.lock()[0].id.clone();
+    let mut summary = request("resume_summary", json!({ "task_id": task }));
+    summary.client_session_id = session.to_owned();
+    dispatch(
+        &scene.workspace,
+        &consent(scene, &[]).broker,
+        tasks,
+        &summary,
+    )
+}
+
+#[test]
+fn rj03_a_reconnecting_session_reads_what_its_crashed_task_did() {
+    // The child's requests carry client session "sg126".
+    let session = request("start", json!({})).client_session_id;
+
+    // Killed after the create: reconciled verified, so the commit is done.
+    let scene = crashed_journey("rj03-done", "effect");
+    let tasks = TaskRegistry::with_journal(journal_path(&scene));
+    let summary = resume(&scene, &tasks, &session).unwrap();
+    let kinds = |list: &str| -> Vec<String> {
+        summary[list]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["kind"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    assert_eq!(kinds("completed"), ["observe", "preview", "commit"]);
+    assert!(kinds("unknown").is_empty());
+    assert!(summary["note"].as_str().unwrap().contains("do NOT re-run"));
+
+    // Killed after the create, then the file changed before the restart:
+    // unknown, with the check that settles it.
+    let scene = crashed_journey("rj03-unknown", "effect");
+    std::fs::write(
+        scene.workspace.root.join("reports").join("q3.md"),
+        "someone else's bytes",
+    )
+    .unwrap();
+    let tasks = TaskRegistry::with_journal(journal_path(&scene));
+    let summary = resume(&scene, &tasks, &session).unwrap();
+    assert_eq!(summary["unknown"][0]["kind"], "commit");
+    assert_eq!(summary["unknown"][0]["outcome"], "reconcile:unknown");
+    let check = summary["next_verification"][0].as_str().unwrap();
+    assert!(
+        check.contains("reports/q3.md") || check.contains(r"reports\q3.md"),
+        "{check}"
+    );
+    assert!(summary["note"]
+        .as_str()
+        .unwrap()
+        .contains("do not assume they succeeded OR failed"));
+
+    // Fingerprints only: no source text, report text or title.
+    let text = summary.to_string();
+    for secret in ["north,Q3", "37300.75", "Q3 revenue"] {
+        assert!(!text.contains(secret), "{secret}");
+    }
+    let fingerprint = summary["completed"][0]["input_fingerprint"]
+        .as_str()
+        .unwrap();
+    assert_eq!(fingerprint.len(), 64);
+
+    // Another session or another workspace gets the same refusal as an
+    // unknown task id.
+    for refused in [resume(&scene, &tasks, "another-session").unwrap_err(), {
+        let mut elsewhere = scene.workspace.clone();
+        elsewhere.id = "elsewhere".into();
+        let task = tasks.lock()[0].id.clone();
+        let mut summary = request("resume_summary", json!({ "task_id": task }));
+        summary.client_session_id = session.clone();
+        dispatch(&elsewhere, &consent(&scene, &[]).broker, &tasks, &summary).unwrap_err()
+    }] {
+        assert_eq!(refused.code, FailureCode::CapabilityDenied);
+        assert!(refused.message.contains("no task with this id"));
+    }
+}

@@ -41,6 +41,7 @@ const LOCAL_ONLY = [
   "report_commit",
   "report_preview",
   "report_start",
+  "task_resume_summary",
   "web_fetch",
   "web_search"
 ];

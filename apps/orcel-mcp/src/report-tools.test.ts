@@ -22,7 +22,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const srcDir = join(here, "..", "src");
 const repo = join(here, "..", "..", "..");
 
-const REPORT_TOOLS = ["report_commit", "report_preview", "report_start"];
+const REPORT_TOOLS = ["report_commit", "report_preview", "report_start", "task_resume_summary"];
 const TASK = "rpt-0123456789abcdef0123456789abcdef";
 const SHA = "a".repeat(64);
 
@@ -38,7 +38,12 @@ test("sg127 only report.ts forwards report/*, and it carries no approval", () =>
       forwarded.push(`${name}:${match[1] ?? ""}/${match[2] ?? ""}`);
     }
   }
-  assert.deepEqual(forwarded, ["report.ts:report/start", "report.ts:report/preview", "report.ts:report/commit"]);
+  assert.deepEqual(forwarded, [
+    "report.ts:report/start",
+    "report.ts:report/preview",
+    "report.ts:report/commit",
+    "report.ts:report/resume_summary"
+  ]);
   const source = readFileSync(join(srcDir, "report.ts"), "utf8");
   assert.doesNotMatch(source, /node:net|node:http|node:https|node:fs|fetch\(|child_process/);
   // No argument or forwarded field can approve, overwrite or carry a token.
@@ -47,7 +52,7 @@ test("sg127 only report.ts forwards report/*, and it carries no approval", () =>
 
 test("sg127 the kernel shapes match orcel-policy's admitted report shapes", () => {
   const policy = readFileSync(join(repo, "crates", "orcel-policy", "src", "report.rs"), "utf8");
-  for (const operation of ["start", "preview", "commit"]) {
+  for (const operation of ["start", "preview", "commit", "resume_summary"]) {
     assert.ok(policy.includes(`("report", "${operation}")`), operation);
   }
   for (const [name, value] of [
@@ -116,7 +121,9 @@ test("sg127 report tools are local-only and only commit needs SOFT approval", ()
   const expected = {
     report_start: { operation: "start", effect: "read", approval: "none" },
     report_preview: { operation: "preview", effect: "preview", approval: "none" },
-    report_commit: { operation: "commit", effect: "write", approval: "SOFT" }
+    report_commit: { operation: "commit", effect: "write", approval: "SOFT" },
+    // SG-000120 RJ-03: read-only, local-only.
+    task_resume_summary: { operation: "resume_summary", effect: "read", approval: "none" }
   } as const;
   for (const [name, want] of Object.entries(expected)) {
     const entry = TOOL_CONTRACT[name];

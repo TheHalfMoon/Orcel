@@ -189,7 +189,7 @@ impl PolicyEngine {
         if request.capability == report::REPORT_CAPABILITY {
             return Err(policy_error(
                 FailureCode::CapabilityDenied,
-                "SG-000126 report accepts only report/start, report/preview and report/commit",
+                "SG-000126 report accepts only report/start, report/preview, report/commit and report/resume_summary",
             ));
         }
         if request.capability == SEARCH_CAPABILITY {

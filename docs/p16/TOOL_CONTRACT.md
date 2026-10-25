@@ -12,7 +12,7 @@ Discovery filtering is never authorization: orceld, the remote-session lease, an
 | Profile | Served by | Tools |
 | --- | --- | --- |
 | `core` | relay (remote) | 26 |
-| `desktop_structured` | stdio and loopback HTTP (local) | 44 |
+| `desktop_structured` | stdio and loopback HTTP (local) | 45 |
 
 The `developer` and `coordinate_fallback` profiles named in the plan are not mapped and deny. Unknown profiles deny.
 
@@ -84,6 +84,7 @@ O = openWorldHint (reaches network peers or runs a registered executable).
 | `report_preview` | `report/preview` | preview | none | local-only | yes | no | no | no | the destination, size and SHA-256 of one proposed report |
 | `report_start` | `report/start` | read | none | local-only | yes | no | no | no | one task id and 1..8 labelled untrusted source texts, each within the 1 MiB provider read limit |
 | `system_status` | `system.status/get` | read | none | orcel.read | yes | no | yes | no | fixed-size daemon status object |
+| `task_resume_summary` | `report/resume_summary` | read | none | local-only | yes | no | yes | no | the task's bounded steps as kinds, outcomes and keyed fingerprints, the checks for unknown steps, and a note of at most 4 KiB; never source or report text |
 | `web_fetch` | `network/fetch` | network | SOFT | local-only | yes | no | yes | yes | one response body of at most 1 MiB |
 | `web_search` | `search/query` | network | SOFT | local-only | yes | no | no | yes | at most 10 untrusted results; titles 300 and snippets 1000 characters; provider response at most 512 KiB |
 | `workspace_get` | `workspace.get/get` | read | none | orcel.read | yes | no | yes | no | fixed-size workspace metadata |

@@ -388,6 +388,13 @@
       "note": "local transports only (MCP report_commit): one SOFT approval in orceld's local broker, then one create-only UTF-8 report in the task's folder; never overwrites; verified only by the independent checker (SG-000126, SG-000127 slice 3)"
     },
     {
+      "capability": "report",
+      "operation": "resume_summary",
+      "status": "implemented_exposed",
+      "mcp_tool": "task_resume_summary",
+      "note": "local transports only (MCP task_resume_summary): read-only; the calling session's own report task in its own workspace: completed steps, unknown steps with the check that settles each, and a bounded note; inputs only as keyed fingerprints (SG-000120 RJ-03)"
+    },
+    {
       "capability": "workspace.trust.get",
       "operation": "get",
       "status": "intentionally_denied",
