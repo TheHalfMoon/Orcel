@@ -21,6 +21,7 @@
 //! an earlier run cannot be previewed or committed again.
 
 use super::{error, Proposal, ReportTask, SourceRecord, Step, TaskState, MAX_STEPS, MAX_TASKS};
+use crate::journal_owner::Owner;
 use crate::report_check;
 use orcel_contracts::FailureCode;
 use orcel_journal::{IntentState, JournalError};
@@ -35,41 +36,6 @@ const SCHEMA: &str = "orcel-report-task/1";
 const LOCK_WAIT: Duration = Duration::from_secs(5);
 /// Most tasks of earlier runs a starting orceld shows and keeps.
 pub(super) const MAX_EARLIER_TASKS: usize = MAX_TASKS / 2;
-
-/// The orceld run that wrote a line: its process instance and run id.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct Owner {
-    run: String,
-    pid: u32,
-    generation: u64,
-    /// Linux boot id, as decimal text (a u128 does not survive JSON).
-    boot_id: Option<String>,
-}
-
-impl Owner {
-    pub(super) fn current(run: &str) -> Option<Self> {
-        let instance = orcel_platform::process::current_instance().ok()?;
-        Some(Self {
-            run: run.to_owned(),
-            pid: instance.pid,
-            generation: instance.generation,
-            boot_id: instance.boot_id.map(|id| id.to_string()),
-        })
-    }
-
-    /// Whether this run's process has exited. An identity the OS will not
-    /// report counts as running, so a live orceld's commit is never touched.
-    fn has_exited(&self) -> bool {
-        match orcel_platform::process::start_generation(self.pid) {
-            Ok(now) => {
-                now.generation != self.generation
-                    || now.boot_id.map(|id| id.to_string()) != self.boot_id
-            }
-            Err(orcel_platform::PlatformError::ProcessGone(_)) => true,
-            Err(_) => false,
-        }
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct SourceLine {

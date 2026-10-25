@@ -286,7 +286,7 @@ impl TaskRegistry {
     /// running them unjournaled.
     pub(crate) fn with_journal(path: PathBuf) -> Self {
         let mut registry = Self::empty();
-        let Some(owner) = journal::Owner::current(&registry.seed) else {
+        let Some(owner) = crate::journal_owner::Owner::current(&registry.seed) else {
             eprintln!("orceld report journal: this process's identity is unavailable; report commits are refused");
             registry.journal_faulted = true;
             return registry;

@@ -120,6 +120,9 @@ impl Layout {
             self.root.join("report-tasks.jsonl"),
             self.root.join("report-tasks.jsonl.lock"),
             self.root.join("report-tasks.jsonl.rewrite"),
+            self.root.join("mutations.jsonl"),
+            self.root.join("mutations.jsonl.lock"),
+            self.root.join("mutations.jsonl.rewrite"),
         ];
         // Approval ledgers quarantined by `orcel approvals recover` (#278),
         // and a new chain staged by a recovery that was interrupted.
