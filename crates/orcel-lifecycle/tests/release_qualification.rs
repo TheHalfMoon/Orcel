@@ -592,27 +592,45 @@ fn installed_release_fits_the_400_mb_budget() {
 /// local client configuration launches, driven one request at a time.
 struct McpStdio {
     child: std::process::Child,
-    stdin: std::process::ChildStdin,
-    stdout: std::io::BufReader<std::process::ChildStdout>,
+    stdin: Option<std::process::ChildStdin>,
+    lines: std::sync::mpsc::Receiver<String>,
+    stderr: PathBuf,
     next_id: u64,
 }
 
+/// How long one MCP answer may take before the test fails with the
+/// session's standard error.
+const MCP_ANSWER_TIMEOUT: Duration = Duration::from_secs(60);
+
 impl McpStdio {
-    fn start(cli: &Path, local: &Path) -> Self {
+    fn start(cli: &Path, local: &Path, stderr: PathBuf) -> Self {
         let mut child = Command::new(cli)
             .args(["mcp", "stdio"])
             .env("LOCALAPPDATA", local)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
+            .stderr(fs::File::create(&stderr).unwrap())
             .spawn()
             .expect("start orcel mcp stdio");
-        let stdin = child.stdin.take().unwrap();
+        let stdin = child.stdin.take();
         let stdout = std::io::BufReader::new(child.stdout.take().unwrap());
+        // Read on a thread so a stalled server fails the test at a deadline
+        // instead of hanging the job.
+        let (sender, lines) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            for line in stdout.lines() {
+                let Ok(line) = line else { break };
+                if sender.send(line).is_err() {
+                    break;
+                }
+            }
+        });
         let mut session = Self {
             child,
             stdin,
-            stdout,
+            lines,
+            stderr,
             next_id: 0,
         };
         session.request(
@@ -630,22 +648,28 @@ impl McpStdio {
 
     fn send(&mut self, message: &Value) {
         use std::io::Write;
-        writeln!(self.stdin, "{message}").unwrap();
-        self.stdin.flush().unwrap();
+        let stdin = self.stdin.as_mut().expect("the session is open");
+        writeln!(stdin, "{message}").unwrap();
+        stdin.flush().unwrap();
     }
 
     /// The result of one request; server notifications are skipped.
     fn request(&mut self, method: &str, params: Value) -> Value {
-        use std::io::BufRead;
         self.next_id += 1;
         let id = self.next_id;
         self.send(
             &serde_json::json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }),
         );
         loop {
-            let mut line = String::new();
-            let read = self.stdout.read_line(&mut line).unwrap();
-            assert!(read > 0, "orcel mcp stdio closed before answering {method}");
+            let line = self
+                .lines
+                .recv_timeout(MCP_ANSWER_TIMEOUT)
+                .unwrap_or_else(|_| {
+                    panic!(
+                        "orcel mcp stdio gave no answer to {method}; stderr: {}",
+                        fs::read_to_string(&self.stderr).unwrap_or_default()
+                    )
+                });
             let message: Value = serde_json::from_str(&line).unwrap();
             if message["id"] == id {
                 assert!(message.get("error").is_none(), "{method}: {message}");
@@ -671,10 +695,26 @@ impl McpStdio {
     }
 }
 
-impl Drop for McpStdio {
-    fn drop(&mut self) {
+impl McpStdio {
+    /// Ends the session as a client does, by closing standard input, and
+    /// waits for the handed-off session to exit; kills only as a fallback.
+    fn close(&mut self) {
+        drop(self.stdin.take());
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while Instant::now() < deadline {
+            if matches!(self.child.try_wait(), Ok(Some(_))) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
+    }
+}
+
+impl Drop for McpStdio {
+    fn drop(&mut self) {
+        self.close();
     }
 }
 
@@ -728,7 +768,7 @@ fn installed_release_serves_the_report_task_to_a_local_client() {
         ],
     ));
 
-    let mut mcp = McpStdio::start(&cli, &local);
+    let mut mcp = McpStdio::start(&cli, &local, project.join("mcp-stderr.log"));
     let listed = mcp.request("tools/list", serde_json::json!({}));
     let names: Vec<&str> = listed["tools"]
         .as_array()
@@ -762,8 +802,9 @@ fn installed_release_serves_the_report_task_to_a_local_client() {
     let digest = preview["result"]["sha256"].as_str().unwrap().to_string();
     assert_eq!(digest, sha256_bytes(content.as_bytes()));
 
-    // An existing destination is refused at preview and at commit, before
-    // any approval, and the user's file is untouched.
+    // An existing destination is refused at preview, before any approval,
+    // and the user's file is untouched. A commit of a report the last
+    // preview did not return is refused before any approval too.
     let (failed, taken) = mcp.call(
         "report_preview",
         serde_json::json!({ "task_id": task, "name": "taken.md", "content": content }),
@@ -774,6 +815,13 @@ fn installed_release_serves_the_report_task_to_a_local_client() {
         serde_json::json!({ "task_id": task, "name": "taken.md", "content": content, "expected_sha256": digest }),
     );
     assert!(failed, "{taken}");
+    assert!(
+        taken["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("the last preview of this task returned"),
+        "{taken}"
+    );
 
     // A changed source makes the task stale before any approval.
     fs::write(
@@ -787,11 +835,19 @@ fn installed_release_serves_the_report_task_to_a_local_client() {
     );
     assert!(failed, "{stale}");
     assert_eq!(stale["error"]["code"], "TARGET_STALE", "{stale}");
+    assert!(
+        stale["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("changed since the task observed it"),
+        "the source change, not a missing preview, ends the task: {stale}"
+    );
     let (failed, after) = mcp.call(
         "report_preview",
         serde_json::json!({ "task_id": task, "name": "q3.md", "content": content }),
     );
     assert!(failed, "a stale task stays stale: {after}");
+    mcp.close();
     drop(mcp);
 
     let mut reports: Vec<String> = fs::read_dir(project.join("reports"))

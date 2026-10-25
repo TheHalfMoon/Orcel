@@ -153,20 +153,33 @@ pub fn run_action(action: &str, port: Option<u16>) -> Result<i32, LifecycleError
 /// Set on the handed-off child so a second hand-off fails instead of looping.
 const DELEGATED_ENV: &str = "ORCEL_MCP_DELEGATED";
 
-/// When this process is not the active installed `orcel.exe` (Windows
-/// only), runs that verified executable with `args`, inheriting standard
-/// I/O and the environment, and returns its exit code. `verified_orceld` is
-/// the verified launch's `orceld`, so its directory is the active version
+/// Elsewhere the session runs in this process (no runtime session exists).
+#[cfg(not(windows))]
+fn delegate_to_active(
+    _layout: &Layout,
+    _verified_orceld: &std::path::Path,
+    _args: &[&str],
+) -> Result<Option<i32>, LifecycleError> {
+    Ok(None)
+}
+
+/// When this process is not the active installed `orcel.exe`, runs that
+/// verified executable with `args`, inheriting standard I/O and the
+/// environment, and returns its exit code. `verified_orceld` is the
+/// verified launch's `orceld`, so its directory is the active version
 /// directory that `Installer::verify` just checked. `None` means this
-/// process is already that executable and runs the session itself.
+/// process is already that executable and runs the session itself. The
+/// child starts suspended inside a kill-on-close job, so the session holder
+/// and its Node.js and orceld children end when this process ends, even if
+/// it is killed without its standard input closing.
+#[cfg(windows)]
 fn delegate_to_active(
     layout: &Layout,
     verified_orceld: &std::path::Path,
     args: &[&str],
 ) -> Result<Option<i32>, LifecycleError> {
-    if !cfg!(windows) {
-        return Ok(None);
-    }
+    use std::os::windows::process::CommandExt;
+    use windows_sys::Win32::System::Threading::CREATE_SUSPENDED;
     let current = std::env::current_exe()
         .map_err(|error| LifecycleError::io("resolve the running orcel executable", error))?;
     if crate::lifecycle::is_installed_cli(layout, &current) {
@@ -183,13 +196,27 @@ fn delegate_to_active(
             "the active installed orcel executable is missing",
         ));
     }
-    let status = Command::new(&target)
+    let job = crate::runtime::Job::kill_on_close()?;
+    let mut child = Command::new(&target)
         .args(args)
         .env(DELEGATED_ENV, "1")
-        .status()
+        .creation_flags(CREATE_SUSPENDED)
+        .spawn()
         .map_err(|error| {
             LifecycleError::io("start the active installed orcel executable", error)
         })?;
+    if let Err(error) = job
+        .assign(crate::runtime::child_handle(&child))
+        .and_then(|()| crate::runtime::resume_process(child.id()))
+    {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(error);
+    }
+    let status = child.wait().map_err(|error| {
+        LifecycleError::io("wait for the active installed orcel executable", error)
+    })?;
+    drop(job);
     Ok(Some(status.code().unwrap_or(1)))
 }
 
