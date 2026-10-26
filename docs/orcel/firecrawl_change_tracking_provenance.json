@@ -1,0 +1,30 @@
+{
+  "schema": "orcel-adapted-source-provenance/1",
+  "task": "WI-04",
+  "donor": {
+    "id": "firecrawl",
+    "repo": "firecrawl/firecrawl",
+    "commit": "f84845c864b6e2af22791c18fcf89ac2a21f1434",
+    "license": "AGPL-3.0 (LICENSE)",
+    "notice": "docs/orcel/notices/firecrawl-AGPL-3.0.txt",
+    "authorization": "docs/orcel/grants/2026-10-13-founder-source-authorization.md"
+  },
+  "method": "PORT",
+  "dependencies": {
+    "similar": "2.7.0 (Apache-2.0, no transitive dependencies), default features off; crates.io checksum bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa; replaces the donor's diff and parse-diff packages"
+  },
+  "files": [
+    {
+      "path": "crates/orcel-browser-host/src/change_tracking.rs",
+      "donor_path": "apps/api/src/lib/change-tracking-diff.ts",
+      "donor_blob": "f447df3c106342aa6e82e155fb0e39553b330dd6",
+      "adapted": "createMarkdownChangeDiff: a unified diff of previous.md against current.md with three lines of context, its structured form (hunks of add, del and normal lines with line numbers), and no result when no line changed",
+      "row": "WI-04",
+      "changes": "similar (Myers with a 2-second deadline, so a heavily changed page may get a coarser diff) instead of diff and parse-diff; lines end only at \n (a \r stays in its line), with the no-newline marker as in jsdiff; no ==== separator or tab-suffixed file headers, and a one-line range is written without ,1; a diff over MAX_DIFF_BYTES is cut at a line, its hunk headers count the lines emitted, and it is marked truncated (still a change when no hunk fits); a workspace-scoped store of the last extraction per page key (canonical URL without fragment, scheme and host lower-cased, default port dropped, empty path as /), bounded to 256 pages and 64 MiB with least-recently-tracked eviction; read with a size bound; refused (not replaced) when corrupt, duplicated or out of bounds; a change takes effect only once written through a fresh, synced temporary file renamed over the store; forget and clear (which also removes stray temporary files); I/O failures reported as I/O errors"
+    }
+  ],
+  "authority_delta": "None: stored and returned text is still untrusted page text in the caller's workspace.",
+  "residuals": [
+    "The store and diff are host-crate API; the extract surface does not yet take track_changes (same core-first pattern as WI-01 to WI-03)."
+  ]
+}

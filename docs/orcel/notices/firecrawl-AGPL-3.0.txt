@@ -24,6 +24,12 @@ crates/orcel-browser-host/src/map_rank.rs.
 docs/orcel/firecrawl_crawl_scope_provenance.json records the provenance of
 both.
 
+WI-04 ports, from the same commit, createMarkdownChangeDiff from
+apps/api/src/lib/change-tracking-diff.ts (blob
+f447df3c106342aa6e82e155fb0e39553b330dd6) into
+crates/orcel-browser-host/src/change_tracking.rs;
+docs/orcel/firecrawl_change_tracking_provenance.json records the provenance.
+
 Upstream license: GNU Affero General Public License v3.0 (the repository's
 LICENSE; apps/api/native/package.json declares "AGPL").
 https://github.com/firecrawl/firecrawl/blob/f84845c864b6e2af22791c18fcf89ac2a21f1434/LICENSE
