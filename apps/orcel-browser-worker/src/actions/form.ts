@@ -32,9 +32,22 @@ export type FormAction =
 /// The page surface form actions use (a Playwright `Page`, or a test stub).
 export type FormPage = TargetPage & Pick<Page, "locator">;
 
+/// What no fill ever resolves to, part of the locator the fill itself
+/// resolves (so a page that turns a field secret after the check is still
+/// refused when Playwright acts): password inputs, secret `autocomplete`
+/// tokens, and names or ids that suggest a secret.
+const NOT_SECRET = [
+  ':not([type="password" i])',
+  ':not([autocomplete~="current-password" i]):not([autocomplete~="new-password" i]):not([autocomplete~="one-time-code" i])',
+  ':not([autocomplete~="cc-number" i]):not([autocomplete~="cc-csc" i]):not([autocomplete~="cc-exp" i])',
+  ...["pass", "pwd", "otp", "cvc", "cvv", "csc", "secret", "token"].map((part) => `:not([name*="${part}" i]):not([id*="${part}" i])`)
+].join("");
 /// Controls a value can be typed into.
-const FILLABLE =
-  'input:not([type="hidden" i]):not([type="checkbox" i]):not([type="radio" i]):not([type="submit" i]):not([type="button" i]):not([type="reset" i]):not([type="file" i]):not([type="image" i]):not([type="range" i]):not([type="color" i]), textarea, [contenteditable]:not([contenteditable="false" i])';
+const FILLABLE = [
+  `input:not([type="hidden" i]):not([type="checkbox" i]):not([type="radio" i]):not([type="submit" i]):not([type="button" i]):not([type="reset" i]):not([type="file" i]):not([type="image" i]):not([type="range" i]):not([type="color" i])${NOT_SECRET}`,
+  `textarea${NOT_SECRET}`,
+  `[contenteditable]:not([contenteditable="false" i])${NOT_SECRET}`
+].join(", ");
 const SELECTABLE = "select";
 const CHECKABLE = 'input[type="checkbox" i], input[type="radio" i]';
 /// One action's own budget, under the host's reply deadline.
@@ -64,6 +77,7 @@ export async function formAction(page: FormPage, ref: string, action: FormAction
         await own.fill(action.value, options);
         return;
       case "select": {
+        if (new Set(action.values).size !== action.values.length) throw new NavigationError("denied");
         const chosen = await own.selectOption(
           action.values.map((label) => ({ label })),
           options

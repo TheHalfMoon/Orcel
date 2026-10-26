@@ -1808,6 +1808,11 @@ mod platform {
                 .get(node_id)
                 .ok_or_else(|| HostError::Invalid("stale or unknown node".into()))?;
             crate::actuation::role_supports_action(&node.role, input.action())?;
+            if matches!(input, crate::actuation::FormInput::Fill { .. })
+                && crate::actuation::name_looks_secret(&node.name)
+            {
+                return Err(HostError::Invalid("password-field filling denied".into()));
+            }
             Ok(input.state())
         }
 
@@ -1853,6 +1858,13 @@ mod platform {
                     "form actions inside frames are not supported".into(),
                 ));
             }
+            // A field named like a secret is never filled, whatever its
+            // attributes (checked before the approval is spent).
+            if matches!(input, crate::actuation::FormInput::Fill { .. })
+                && crate::actuation::name_looks_secret(&approved_name)
+            {
+                return Err(HostError::Invalid("password-field filling denied".into()));
+            }
             self.policy.expect_no_document();
             if let Err(error) = crate::actuation::dispatch(
                 target,
@@ -1897,13 +1909,12 @@ mod platform {
                     url: after,
                 } if done == form_id => {
                     if after != url {
-                        // The page moved itself (no document was allowed,
-                        // so a history change): nothing observed holds.
+                        // Applied, but the page moved itself (no document
+                        // was allowed, so a history change): the outcome is
+                        // unverified and nothing observed holds.
                         self.host_nodes.clear();
                         self.host_tools.clear();
-                        return Err(HostError::Invalid(
-                            "postcondition unverified: the page changed its URL".into(),
-                        ));
+                        return Err(HostError::Unavailable(UnavailableReason::OutcomeUnknown));
                     }
                     Ok(FormOutcome { url: after })
                 }
@@ -1911,13 +1922,26 @@ mod platform {
                     form_id: done,
                     reason,
                 } if done == form_id => Err(match reason.as_str() {
+                    // Refused before anything changed.
                     "denied" => HostError::Invalid(
                         "form action refused: not the right kind of control, or a secret field"
                             .into(),
                     ),
-                    other => navigation_failure(other),
+                    "stale" => HostError::Unavailable(UnavailableReason::TargetStale),
+                    "busy" => HostError::Unavailable(UnavailableReason::ActionFailed),
+                    "failed" | "timeout" => {
+                        // The control may already have changed: nothing
+                        // observed is trusted until the page is observed
+                        // again, and the outcome is unknown.
+                        self.host_nodes.clear();
+                        self.host_tools.clear();
+                        HostError::Unavailable(UnavailableReason::OutcomeUnknown)
+                    }
+                    _ => self.fail_closed(UnavailableReason::ProtocolViolation),
                 }),
-                _ => Err(HostError::Unavailable(UnavailableReason::ProtocolViolation)),
+                // A reply for another request, or of another kind: the
+                // worker may still be acting, so the lifetime ends.
+                _ => Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
             }
         }
 

@@ -56,6 +56,8 @@ impl SupportedAction {
 /// permitted for any action in this grain.
 pub fn role_supports_action(role: &str, action: SupportedAction) -> Result<(), HostError> {
     let lower = role.to_ascii_lowercase();
+    // Substring matching on purpose: it fails closed (for example "pin"
+    // also denies "spinbutton", which no action allows anyway).
     for denied in ["password", "secret", "credential", "token", "pin"] {
         if lower.contains(denied) {
             return Err(HostError::Invalid("password-field filling denied".into()));
@@ -105,15 +107,19 @@ impl FormInput {
     }
 
     /// Refuses input the worker would refuse: oversized, control
-    /// characters (one line only), no or too many options.
+    /// characters (one line only), no, too many or repeated options.
     pub fn check(&self) -> Result<(), HostError> {
         let bounded =
             |text: &str| text.len() <= MAX_FORM_VALUE_BYTES && !text.chars().any(char::is_control);
         let fits = match self {
             Self::Fill { value } => bounded(value),
             Self::Select { labels } => {
+                let mut unique = labels.clone();
+                unique.sort();
+                unique.dedup();
                 !labels.is_empty()
                     && labels.len() <= MAX_FORM_OPTIONS
+                    && unique.len() == labels.len()
                     && labels
                         .iter()
                         .all(|label| !label.is_empty() && bounded(label))
@@ -138,6 +144,39 @@ impl FormInput {
             Self::Check { checked } => format!("check\n{checked}"),
         }
     }
+}
+
+/// BR-02: whether a field's accessible name suggests a secret (a password,
+/// PIN, one-time code, card or security code). Such a field is never
+/// filled, whatever its attributes say.
+pub fn name_looks_secret(name: &str) -> bool {
+    let words: Vec<String> = name
+        .split(|ch: char| !ch.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_lowercase)
+        .collect();
+    let has = |word: &str| words.iter().any(|w| w == word);
+    let pair = |a: &str, b: &str| words.windows(2).any(|w| w[0] == a && w[1] == b);
+    [
+        "password",
+        "passcode",
+        "passphrase",
+        "pin",
+        "otp",
+        "cvc",
+        "cvv",
+        "csc",
+        "secret",
+        "token",
+        "passwort",
+        "contrase\u{f1}a",
+    ]
+    .iter()
+    .any(|word| has(word))
+        || pair("card", "number")
+        || pair("security", "code")
+        || pair("one", "time")
+        || pair("verification", "code")
 }
 
 /// Exact pre-dispatch target binding.
@@ -367,6 +406,33 @@ mod tests {
             SupportedAction::Select
         );
         assert_eq!(SupportedAction::parse("check").unwrap().name(), "check");
+        assert!(
+            FormInput::Select {
+                labels: vec!["a".into(), "a".into()]
+            }
+            .check()
+            .is_err(),
+            "repeated options"
+        );
+        for secret in [
+            "Password",
+            "PIN",
+            "Card number",
+            "Security code",
+            "One-time code",
+            "CVV",
+        ] {
+            assert!(name_looks_secret(secret), "{secret}");
+        }
+        for plain in [
+            "Full name",
+            "City",
+            "Shipping address",
+            "Spinning class",
+            "Email",
+        ] {
+            assert!(!name_looks_secret(plain), "{plain}");
+        }
     }
 
     fn target() -> ActuationTarget {

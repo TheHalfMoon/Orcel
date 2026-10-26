@@ -41,6 +41,10 @@ pub enum UnavailableReason {
     /// single element with its approved role and accessible name took its
     /// place; nothing was clicked.
     TargetStale,
+    /// BR-02: an approved action was dispatched and its outcome is unknown
+    /// (it failed or timed out after the page may have changed). Observe
+    /// again before anything else; it is never repeated automatically.
+    OutcomeUnknown,
 }
 
 impl fmt::Display for UnavailableReason {
@@ -59,6 +63,10 @@ impl fmt::Display for UnavailableReason {
             Self::WorkerExited => write!(f, "the browser worker exited"),
             Self::Cancelled => write!(f, "the browser operation was cancelled"),
             Self::TargetStale => write!(f, "the approved element is no longer on the page"),
+            Self::OutcomeUnknown => write!(
+                f,
+                "the approved action was dispatched and its outcome is unknown"
+            ),
         }
     }
 }

@@ -17,7 +17,7 @@
       "donor_blob": "193e2b3d084e713c4bb0e3d37d77e5201748dbd5",
       "adapted": "browser_fill_form's locator.fill, locator.selectOption({label}) and locator.setChecked",
       "row": "BR-02",
-      "changes": "one action per frame on the approved element (BR-01 ref or exact role and name); the element must itself be the right control (Playwright's form calls otherwise follow a label to its control); fill never touches a field that looks secret (password type, secret autocomplete, secret-looking name or id); fill clears first; select chooses native <select> options by visible label only; zod schemas, the MCP response builder, code generation and multi-field forms are not ported"
+      "changes": "one action per frame on the approved element (BR-01 ref or exact role and name); the element must itself be the right control (Playwright's form calls otherwise follow a label to its control); fill never touches a field that looks secret: the exclusions (password type, secret autocomplete tokens, secret-looking name or id) are part of the locator the fill resolves, so a field turned secret after the check is still refused, and an unreadable attribute counts as secret; fill clears first; select chooses native <select> options by visible label only, never repeated; zod schemas, the MCP response builder, code generation and multi-field forms are not ported"
     },
     {
       "path": "crates/orcel-browser-host/src/actuation.rs",
@@ -25,7 +25,7 @@
       "donor_blob": null,
       "adapted": "Orcel's SG-000077 actuation: Select and Check actions; FormInput with its approval state",
       "row": "BR-02",
-      "changes": "new code: the one-shot approval binds the exact value (fill), labels (select) or state (check)"
+      "changes": "new code: the one-shot approval binds the exact value (fill), labels (select, never repeated) or state (check); name_looks_secret"
     },
     {
       "path": "crates/orcel-browser-host/src/worker_launch.rs",
@@ -33,14 +33,16 @@
       "donor_blob": null,
       "adapted": "form_binding and form_action on BrowserWorker; the form_action frame",
       "row": "BR-02",
-      "changes": "new code: verify and consume the approval, refuse every page-initiated document and popup during the action, keep the same document generation, refuse a URL change"
+      "changes": "new code: refuse a fill of a field whose accessible name looks secret, verify and consume the approval, refuse every page-initiated top-level document and popup during the action, keep the same document generation; a URL change, or a failure or timeout after dispatch, is reported as OutcomeUnknown (applied or possibly applied; observe again; never repeated automatically) and clears the observed nodes; a mismatched worker reply ends the lifetime"
     }
   ],
   "authority_delta": "New approval-gated browser actions (fill, select, check) on the committed document; each needs a one-shot approval bound to the node and the exact input. No secret field is filled; no document may open during the action.",
   "residuals": [
     "press, hover, drag and bounded wait (the rest of BR-02) are not in this slice.",
     "Non-native comboboxes (open, then choose by accessible name), multi-line textarea values and controls inside frames are refused.",
-    "orceld and the MCP tool contract do not expose these actions; changing the tool contract goes through governance.",
-    "A page may still navigate itself on its own origin after an action ends, as before (the existing page-initiated rule)."
+    "orceld and the MCP tool contract do not expose these actions; changing the tool contract goes through governance. When orceld exposes them, the approval state (which contains the user's value) must be redacted from evidence and logs, and OutcomeUnknown must map to a do-not-repeat failure.",
+    "During an action, frame documents and same-origin fetches still follow the usual rules; a page may still navigate itself on its own origin after an action ends (the existing page-initiated rule).",
+    "target_digest joins fields with '|' and a fill value may contain '|'; no collision is reachable because the other fields are checked independently, but length-prefixed fields would be stronger.",
+    "activate (BR-01) still answers a mismatched worker reply with ProtocolViolation without ending the lifetime; form_action ends it."
   ]
 }

@@ -363,7 +363,9 @@ export function parseHostFrame(raw: unknown): HostFrame {
         if (!Array.isArray(raw.values) || raw.values.length === 0 || raw.values.length > MAX_FORM_OPTIONS) {
           throw new ProtocolViolation("select options are malformed");
         }
-        act = { action: "select", values: raw.values.map((label: unknown) => boundedString(label, MAX_FORM_VALUE_BYTES, "select option")) };
+        const values = raw.values.map((label: unknown) => boundedString(label, MAX_FORM_VALUE_BYTES, "select option"));
+        if (new Set(values).size !== values.length) throw new ProtocolViolation("select options repeat");
+        act = { action: "select", values };
       } else {
         if (typeof raw.checked !== "boolean") throw new ProtocolViolation("check state is not a boolean");
         act = { action: "check", checked: raw.checked };

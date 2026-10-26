@@ -103,12 +103,22 @@ async function field(page: VerifyPage, ref: string, kind: string): Promise<Locat
 /// Whether a form control looks secret (its type, `autocomplete`, name or
 /// id): its value is never read, and it is never filled (BR-02).
 export async function isSecretField(control: Locator): Promise<boolean> {
-  const read = async (name: string) =>
-    ((await control.getAttribute(name, { timeout: READ_TIMEOUT_MS }).catch(() => null)) ?? "").trim();
-  if ((await read("type")).toLowerCase() === "password") return true;
-  if (SECRET_AUTOCOMPLETE.test(await read("autocomplete"))) return true;
-  const named = [await read("name"), await read("id")];
-  return named.some((text) => SECRET_NAME.test(text) || SECRET_CAMEL.test(text));
+  // A read that fails counts as secret (fail closed); an absent attribute
+  // reads as empty.
+  const UNREADABLE = Symbol("unreadable");
+  const read = async (name: string): Promise<string | typeof UNREADABLE> => {
+    try {
+      return ((await control.getAttribute(name, { timeout: READ_TIMEOUT_MS })) ?? "").trim();
+    } catch {
+      return UNREADABLE;
+    }
+  };
+  const values = [await read("type"), await read("autocomplete"), await read("name"), await read("id")];
+  if (values.some((value) => value === UNREADABLE)) return true;
+  const [type, autocomplete, name, id] = values as string[];
+  if (type!.toLowerCase() === "password") return true;
+  if (SECRET_AUTOCOMPLETE.test(autocomplete!)) return true;
+  return [name!, id!].some((text) => SECRET_NAME.test(text) || SECRET_CAMEL.test(text));
 }
 
 async function probeOne(page: VerifyPage, probe: VerifyProbe): Promise<VerifyResult> {
