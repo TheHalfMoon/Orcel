@@ -1269,6 +1269,8 @@ jobs:
         run: git diff --check
       - name: macOS native capability preflight contract (hello only, no permission prompts)
         run: python3 -m unittest discover -s tests -p test_macos_native_capability_preflight.py -v
+      - name: BM-02 benchmark runner (oracle-only dry run, report checked against orcel-benchmark-report/1)
+        run: python3 -m unittest discover -s tests/benchmarks/tests -t tests/benchmarks -v
       - name: Validate current Orcel identity
         run: node scripts/check-current-identity.mjs
       - name: Vendored Cua Driver crates match the upstream pin outside PATCHES.md
