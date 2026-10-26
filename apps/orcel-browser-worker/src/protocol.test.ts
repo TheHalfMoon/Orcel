@@ -35,8 +35,34 @@ test("length bounds and non-JSON bodies are violations before buffering", () => 
   assert.throws(() => encodeFrame({ frame: "ping", nonce: "x".repeat(MAX_FRAME_BYTES) }), ProtocolViolation);
 });
 
+test("BR-07: verify probes are closed, bounded and exact", () => {
+  const probes = [
+    { probe: "visible_role", role: "button", name: "Pay now" },
+    { probe: "visible_text", text: "Order confirmed" },
+    { probe: "value", ref: "e12" },
+    { probe: "checked", ref: "f1e3" }
+  ];
+  assert.deepEqual(parseHostFrame({ frame: "verify", ver_id: 7, probes }), { frame: "verify", ver_id: 7, probes });
+  for (const bad of [
+    { frame: "verify", ver_id: 7, probes: [] },
+    { frame: "verify", ver_id: 7, probes: Array.from({ length: 17 }, () => probes[1]) },
+    { frame: "verify", ver_id: 0, probes },
+    { frame: "verify", ver_id: 7, probes, extra: 1 },
+    { frame: "verify", ver_id: 7, probes: [{ probe: "evaluate", script: "1" }] },
+    { frame: "verify", ver_id: 7, probes: [{ probe: "visible_text", text: "" }] },
+    { frame: "verify", ver_id: 7, probes: [{ probe: "visible_text", text: "x".repeat(1025) }] },
+    { frame: "verify", ver_id: 7, probes: [{ probe: "visible_text", text: "a\nb" }] },
+    { frame: "verify", ver_id: 7, probes: [{ probe: "visible_role", role: "Button", name: "x" }] },
+    { frame: "verify", ver_id: 7, probes: [{ probe: "visible_role", role: "button" }] },
+    { frame: "verify", ver_id: 7, probes: [{ probe: "value", ref: "css=#a" }] },
+    { frame: "verify", ver_id: 7, probes: [{ probe: "checked", ref: "e1", value: "x" }] }
+  ]) {
+    assert.throws(() => parseHostFrame(bad), ProtocolViolation, JSON.stringify(bad).slice(0, 80));
+  }
+});
+
 test("the host vocabulary is closed and exact", () => {
-  assert.deepEqual(parseHostFrame({ frame: "hello", generation: 9 }), { frame: "hello", generation: 9 });
+  assert.deepEqual(parseHostFrame({ frame: "hello", generation: 10 }), { frame: "hello", generation: 10 });
   const parsed = parseHostFrame(validLaunch());
   assert.deepEqual(JSON.parse(JSON.stringify(parsed)), validLaunch());
   assert.equal(parsed.frame === "launch" && Object.getPrototypeOf(parsed.env), null);
@@ -44,11 +70,11 @@ test("the host vocabulary is closed and exact", () => {
     null,
     [],
     "hello",
-    { generation: 9 },
+    { generation: 10 },
     { frame: "navigate", url: "https://example.com" },
     { frame: "evaluate", script: "1+1" },
     { frame: "cdp", method: "Runtime.evaluate" },
-    { frame: "hello", generation: 9, extra: true },
+    { frame: "hello", generation: 10, extra: true },
     { frame: "hello", generation: "1" },
     { frame: "hello" },
     { frame: "shutdown", now: true },
