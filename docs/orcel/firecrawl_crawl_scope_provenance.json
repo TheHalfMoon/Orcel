@@ -29,6 +29,14 @@
       "adapted": "normalizeUrl's trailing-slash folding, for recognising a URL already seen",
       "row": "WI-01",
       "changes": "trailing slash folded before the query; one origin only"
+    },
+    {
+      "path": "crates/orcel-browser-host/src/map_rank.rs",
+      "donor_path": "apps/api/src/lib/map-cosine.ts",
+      "donor_blob": "0449827ca57efc5d8d6bc69eb49de22c54110729",
+      "row": "WI-02",
+      "method": "PORT",
+      "changes": "literal word matching (no regex built from input); empty words dropped; query bounded to 256 bytes and 32 words; stable ties"
     }
   ],
   "decisions": {
