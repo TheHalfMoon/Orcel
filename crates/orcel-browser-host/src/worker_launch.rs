@@ -1928,6 +1928,8 @@ mod platform {
                             .into(),
                     ),
                     "stale" => HostError::Unavailable(UnavailableReason::TargetStale),
+                    // The worker never acted, but the approval is spent: a
+                    // new action needs a fresh approval, never a retry.
                     "busy" => HostError::Unavailable(UnavailableReason::ActionFailed),
                     "failed" | "timeout" => {
                         // The control may already have changed: nothing

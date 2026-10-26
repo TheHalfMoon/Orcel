@@ -156,6 +156,8 @@ pub fn name_looks_secret(name: &str) -> bool {
         .map(str::to_lowercase)
         .collect();
     let has = |word: &str| words.iter().any(|w| w == word);
+    // Prefixes catch run-together forms ("Pincode", "Passcode", "CVV2").
+    let starts = |prefix: &str| words.iter().any(|w| w.starts_with(prefix));
     let pair = |a: &str, b: &str| words.windows(2).any(|w| w[0] == a && w[1] == b);
     [
         "password",
@@ -173,7 +175,11 @@ pub fn name_looks_secret(name: &str) -> bool {
     ]
     .iter()
     .any(|word| has(word))
+        || ["pin", "cvv", "cvc", "passw", "passc"]
+            .iter()
+            .any(|prefix| starts(prefix))
         || pair("card", "number")
+        || pair("card", "no")
         || pair("security", "code")
         || pair("one", "time")
         || pair("verification", "code")
@@ -421,6 +427,10 @@ mod tests {
             "Security code",
             "One-time code",
             "CVV",
+            "Pincode",
+            "Passcode:",
+            "Card no.",
+            "CVV2",
         ] {
             assert!(name_looks_secret(secret), "{secret}");
         }
