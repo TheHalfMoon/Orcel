@@ -174,7 +174,11 @@ const playwrightLauncher: Launcher = {
         // The form's default button: the first submit button in tree order.
         const submit = form.locator('button:not([type="button" i]):not([type="reset" i]), input[type="submit" i], input[type="image" i]').first();
         if ((await submit.count().catch(() => 0)) === 0) throw new NavigationError("failed");
-        const { url, status } = await clickAndLoad(page, submit);
+        // The fields are already filled: a covered submit button is a plain
+        // failure here, not "occluded" (which promises nothing was done).
+        const { url, status } = await clickAndLoad(page, submit).catch((error: unknown) => {
+          throw error instanceof NavigationError && error.reason === "occluded" ? new NavigationError("failed") : error;
+        });
         // The submission's result: the opened document's structured data.
         let structured: string[] = [];
         let structuredComplete = false;

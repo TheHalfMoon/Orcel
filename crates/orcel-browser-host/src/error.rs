@@ -46,7 +46,8 @@ pub enum UnavailableReason {
     /// again before anything else; it is never repeated automatically.
     OutcomeUnknown,
     /// BR-04: another element covers the approved one (an overlay, a
-    /// banner), so the engine did not act on it; observe again.
+    /// banner), so the engine never performed the pointer action; observe
+    /// again (after a download attempt, navigate again: its page is closed).
     TargetOccluded,
 }
 

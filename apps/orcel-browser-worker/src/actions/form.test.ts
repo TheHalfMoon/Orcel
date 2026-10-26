@@ -85,7 +85,19 @@ function page(refs: Record<string, Element[]>, byRole: Element[] = []) {
         return options.filter((o) => element.options?.includes(o.label)).map((o) => o.label);
       },
       setChecked: async (checked: boolean) => {
-        if (one().covered) throw new Error('<div class="overlay"></div> intercepts pointer events');
+        if (one().covered) {
+          throw Object.assign(
+            new Error(
+              [
+                "locator.setChecked: Timeout 5000ms exceeded.",
+                "Call log:",
+                "  - attempting click action",
+                '      - <div class="overlay"></div> intercepts pointer events'
+              ].join("\n")
+            ),
+            { name: "TimeoutError" }
+          );
+        }
         calls.push(`check ${checked}`);
       },
       focus: async () => {

@@ -4,11 +4,26 @@ import type { Locator, Page } from "playwright-core";
 import type { ApprovedTarget } from "../protocol.js";
 import { NavigationError } from "../worker.js";
 
-/// BR-04: whether a Playwright action failed because another element covers
-/// the target (its hit-target check: "... intercepts pointer events").
-/// Nothing was clicked; the page must be observed again.
+/// BR-04: whether a Playwright pointer action timed out because another
+/// element covered the target, without the action ever being performed.
+/// Read from the action's call log (playwright-core 1.63, pinned): every
+/// attempt logs "attempting|retrying <action> action", a blocked attempt
+/// logs "<element> intercepts pointer events", and a delivered one logs
+/// "performing <action> action". So: a TimeoutError, no attempt ever
+/// performed, and the last attempt blocked by interception. Lines before
+/// the first attempt (which quote the page's own markup) are never read as
+/// interceptions. Anything else is not an occlusion: the caller reports a
+/// plain failure (after dispatch, an unknown outcome).
 export function isOcclusion(error: unknown): boolean {
-  return error instanceof Error && /intercepts pointer events/.test(error.message);
+  if (!(error instanceof Error) || error.name !== "TimeoutError") return false;
+  const lines = error.message.split("\n").map((line) => line.trim().replace(/^- /, ""));
+  if (lines.some((line) => /^performing \w+ action( \(trial run\))?$/.test(line))) return false;
+  let last = -1;
+  lines.forEach((line, at) => {
+    if (/^(attempting|retrying) \w+ action( \(trial run\))?$/.test(line)) last = at;
+  });
+  if (last < 0) return false;
+  return lines.slice(last + 1).some((line) => / intercepts pointer events$/.test(line));
 }
 
 /// The page surface `approvedElement` uses (a Playwright `Page`, or a test
