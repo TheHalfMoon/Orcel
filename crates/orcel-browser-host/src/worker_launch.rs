@@ -39,7 +39,7 @@ pub struct JobProcess {
 /// Generation 2 adds the slice-3a navigation frames, generation 3 slice-3b
 /// observation, generation 4 slice-3c activation, generation 5 slice-3d
 /// downloads.
-pub const WORKER_PROTOCOL_GENERATION: u32 = 14;
+pub const WORKER_PROTOCOL_GENERATION: u32 = 15;
 /// Worker identity reported in its hello.
 pub const WORKER_IDENTITY: &str = "orcel-browser-worker";
 /// The only Node option the worker accepts (inspector activation refused).
@@ -108,11 +108,38 @@ pub enum DialogKind {
     BeforeUnload,
 }
 
-/// BR-05: one dialog the engine dismissed (its message is page text).
+/// BR-05: one dialog the engine answered (its message is page text):
+/// dismissed, or `accepted` when it was the confirm an approved action named.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DismissedDialog {
     pub kind: DialogKind,
     pub message: crate::webmcp::PageText,
+    pub accepted: bool,
+}
+
+/// BR-05: an approved confirm message is bounded, one line, not empty.
+fn check_confirm(message: Option<&str>) -> Result<(), HostError> {
+    match message {
+        Some(text)
+            if text.is_empty()
+                || text.len() > MAX_DIALOG_MESSAGE_BYTES
+                || text.chars().any(char::is_control) =>
+        {
+            Err(HostError::Invalid(
+                "an approved confirm message must be bounded and on one line".into(),
+            ))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// The approval state of a form action, with the confirm it may accept.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn form_state(input: &crate::actuation::FormInput, accept_confirm: Option<&str>) -> String {
+    match accept_confirm {
+        Some(message) => format!("{}\naccept-confirm\n{message}", input.state()),
+        None => input.state(),
+    }
 }
 
 /// BR-05: the dialogs dismissed since the last read; `truncated` when more
@@ -130,6 +157,7 @@ pub struct DismissedDialogs {
 pub(crate) struct WireDialog {
     kind: String,
     message: String,
+    accepted: bool,
 }
 
 /// BR-03: one file staged for upload: a host-held copy in this lifetime's
@@ -353,6 +381,10 @@ pub(crate) enum WorkerRequest<'a> {
         checked: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         key: Option<&'a str>,
+        /// BR-05: during this action only, accept (once) a confirm whose
+        /// message is exactly this one.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        accept_confirm: Option<&'a str>,
         #[serde(skip_serializing_if = "Option::is_none")]
         role: Option<&'a str>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -1919,12 +1951,17 @@ mod platform {
 
         /// BR-02: the state a form-action approval must name: the action and
         /// its exact input, for an observed node whose role supports it.
+        /// BR-05: with `accept_confirm`, the approval also names the exact
+        /// confirm message the action may answer "yes" to (learned from
+        /// `take_dismissed_dialogs` after a first, dismissed attempt).
         pub fn form_binding(
             &self,
             node_id: &str,
             input: &crate::actuation::FormInput,
+            accept_confirm: Option<&str>,
         ) -> Result<String, HostError> {
             input.check()?;
+            check_confirm(accept_confirm)?;
             let node = self
                 .host_nodes
                 .get(node_id)
@@ -1939,7 +1976,7 @@ mod platform {
             {
                 return Err(HostError::Invalid("password-field filling denied".into()));
             }
-            Ok(input.state())
+            Ok(form_state(input, accept_confirm))
         }
 
         /// BR-02: perform one approved form action (fill a text field,
@@ -1958,11 +1995,13 @@ mod platform {
             target: &crate::actuation::ActuationTarget,
             approval: &mut crate::actuation::ApprovalToken,
             input: &crate::actuation::FormInput,
+            accept_confirm: Option<&str>,
             policy_revision: u64,
             workspace: &str,
         ) -> Result<FormOutcome, HostError> {
             // An ended lifetime refuses before any approval is spent.
             self.ensure_alive()?;
+            check_confirm(accept_confirm)?;
             if target.action != input.action() {
                 return Err(HostError::Invalid(
                     "the approval is for another action".into(),
@@ -2000,7 +2039,7 @@ mod platform {
                 target,
                 approval,
                 generation,
-                &input.state(),
+                &form_state(input, accept_confirm),
                 policy_revision,
                 workspace,
             ) {
@@ -2033,6 +2072,7 @@ mod platform {
                 values,
                 checked,
                 key,
+                accept_confirm,
                 role: named.then_some(target.role.as_str()),
                 name: named.then_some(approved_name.as_str()),
             });
@@ -2124,6 +2164,7 @@ mod platform {
                         out.push(DismissedDialog {
                             kind,
                             message: crate::webmcp::PageText::from_page(dialog.message),
+                            accepted: dialog.accepted,
                         });
                     }
                     Ok(DismissedDialogs {
@@ -3345,6 +3386,7 @@ mod fallback {
             &self,
             _node_id: &str,
             _input: &crate::actuation::FormInput,
+            _accept_confirm: Option<&str>,
         ) -> Result<String, HostError> {
             Err(HostError::Unavailable(
                 UnavailableReason::UnsupportedRuntime,
@@ -3357,6 +3399,7 @@ mod fallback {
             _target: &crate::actuation::ActuationTarget,
             _approval: &mut crate::actuation::ApprovalToken,
             _input: &crate::actuation::FormInput,
+            _accept_confirm: Option<&str>,
             _policy_revision: u64,
             _workspace: &str,
         ) -> Result<FormOutcome, HostError> {
@@ -4109,17 +4152,29 @@ mod tests {
         );
         let reply = |text: &str| serde_json::from_str::<WorkerReply>(text);
         assert_eq!(
-            reply(r#"{"frame":"dialogs_seen","dlg_id":2,"dialogs":[{"kind":"confirm","message":"Delete?"}],"truncated":false}"#).unwrap(),
+            reply(r#"{"frame":"dialogs_seen","dlg_id":2,"dialogs":[{"kind":"confirm","message":"Delete?","accepted":true}],"truncated":false}"#).unwrap(),
             WorkerReply::DialogsSeen {
                 dlg_id: 2,
                 dialogs: vec![WireDialog {
                     kind: "confirm".into(),
-                    message: "Delete?".into()
+                    message: "Delete?".into(),
+                    accepted: true
                 }],
                 truncated: false
             }
         );
-        assert!(reply(r#"{"frame":"dialogs_seen","dlg_id":2,"dialogs":[{"kind":"confirm","message":"x","accepted":true}],"truncated":false}"#).is_err());
+        assert!(reply(r#"{"frame":"dialogs_seen","dlg_id":2,"dialogs":[{"kind":"confirm","message":"x","accepted":true,"text":"y"}],"truncated":false}"#).is_err());
+        assert_eq!(
+            form_state(
+                &crate::actuation::FormInput::Hover,
+                Some("Delete this item?")
+            ),
+            "hover\naccept-confirm\nDelete this item?"
+        );
+        assert!(check_confirm(Some("")).is_err());
+        assert!(check_confirm(Some("a\nb")).is_err());
+        assert!(check_confirm(Some(&"x".repeat(MAX_DIALOG_MESSAGE_BYTES + 1))).is_err());
+        assert!(check_confirm(Some("Delete this item?")).is_ok());
     }
 
     /// BR-03: the upload frames, as both sides write them.
@@ -4161,6 +4216,7 @@ mod tests {
                 values: None,
                 checked: None,
                 key: None,
+                accept_confirm: None,
                 role: Some("textbox"),
                 name: Some("Name"),
             }),
@@ -4176,6 +4232,7 @@ mod tests {
                 values: Some(&labels),
                 checked: None,
                 key: None,
+                accept_confirm: None,
                 role: None,
                 name: None,
             }),
@@ -4190,6 +4247,7 @@ mod tests {
                 values: None,
                 checked: Some(true),
                 key: None,
+                accept_confirm: None,
                 role: None,
                 name: None,
             }),
@@ -4214,6 +4272,7 @@ mod tests {
                 values: None,
                 checked: None,
                 key: Some("Enter"),
+                accept_confirm: None,
                 role: None,
                 name: None,
             }),

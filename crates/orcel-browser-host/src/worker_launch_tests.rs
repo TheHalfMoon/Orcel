@@ -1880,7 +1880,7 @@ fn br05_a_dialog_is_dismissed_and_reported() {
     };
     let (target, mut approval) = approved_form(&worker, &live, &button, "button", &input);
     worker
-        .form_action(&target, &mut approval, &input, 1, "workspace")
+        .form_action(&target, &mut approval, &input, None, 1, "workspace")
         .expect("press");
     assert!(worker
         .wait_for_text("kept", true, Duration::from_secs(3))
@@ -2071,7 +2071,9 @@ fn approved_form(
         document_generation: live.document.document_generation,
         node_id: node_id.to_owned(),
         role: role.into(),
-        state: worker.form_binding(node_id, input).unwrap_or_default(),
+        state: worker
+            .form_binding(node_id, input, None)
+            .unwrap_or_default(),
         action: input.action(),
         workspace: "workspace".into(),
         policy_revision: 1,
@@ -2141,7 +2143,7 @@ fn br02_approved_form_actions_change_only_what_was_approved() {
         input: FormInput,
     ) -> Result<crate::worker_launch::FormOutcome, HostError> {
         let (target, mut approval) = approved_form(worker, live, node, role, &input);
-        worker.form_action(&target, &mut approval, &input, 1, "workspace")
+        worker.form_action(&target, &mut approval, &input, None, 1, "workspace")
     }
     let filled = act(
         &mut worker,
@@ -2192,7 +2194,7 @@ fn br02_approved_form_actions_change_only_what_was_approved() {
     let other = FormInput::Fill {
         value: "Eve".into(),
     };
-    let mismatch = worker.form_action(&target, &mut approval, &other, 1, "workspace");
+    let mismatch = worker.form_action(&target, &mut approval, &other, None, 1, "workspace");
     assert!(
         matches!(mismatch, Err(HostError::Invalid(_))),
         "{mismatch:?}"

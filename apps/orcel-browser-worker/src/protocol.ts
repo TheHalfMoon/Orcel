@@ -35,8 +35,9 @@ export const MAX_EXEC_VALUE_CHARS = 1024;
 /// text documents for robots.txt and sitemaps (#317), generation 10 BR-07
 /// postcondition probes, generation 11 BR-02 form actions, generation 12
 /// BR-02 press, hover and bounded waits, generation 13 BR-03 uploads,
-/// generation 14 BR-05 dismissed-dialog reports.
-export const WORKER_PROTOCOL_GENERATION = 14;
+/// generation 14 BR-05 dismissed-dialog reports, generation 15 BR-05 approved
+/// confirm answers.
+export const WORKER_PROTOCOL_GENERATION = 15;
 /// BR-02: the longest value filled, and the most options selected at once
 /// (mirrors the host).
 export const MAX_FORM_VALUE_BYTES = 1024;
@@ -109,7 +110,7 @@ export type HostFrame =
   | { frame: "activate"; act_id: number; ref: string; target?: ApprovedTarget }
   | { frame: "download"; dl_id: number; ref: string; path: string; target?: ApprovedTarget }
   | { frame: "verify"; ver_id: number; probes: VerifyProbe[] }
-  | { frame: "form_action"; form_id: number; ref: string; act: FormAction; target?: ApprovedTarget }
+  | { frame: "form_action"; form_id: number; ref: string; act: FormAction; target?: ApprovedTarget; accept_confirm?: string }
   | { frame: "wait_for"; wait_id: number; text: string; appear: boolean; timeout_ms: number }
   | { frame: "upload"; up_id: number; ref: string; path: string; target?: ApprovedTarget }
   | { frame: "dialogs"; dlg_id: number }
@@ -363,7 +364,8 @@ export function parseHostFrame(raw: unknown): HostFrame {
       const own: Record<string, string[]> = { fill: ["value"], select: ["values"], check: ["checked"], press: ["key"], hover: [] };
       const fields = typeof raw.action === "string" && Object.hasOwn(own, raw.action) ? own[raw.action] : undefined;
       if (!fields) throw new ProtocolViolation("form action is unknown");
-      exactKeys(raw, ["frame", "form_id", "action", "ref", ...fields, ...targeted]);
+      const confirming = "accept_confirm" in raw ? ["accept_confirm"] : [];
+      exactKeys(raw, ["frame", "form_id", "action", "ref", ...fields, ...targeted, ...confirming]);
       const formId = positiveId(raw.form_id, "form_id");
       if (typeof raw.ref !== "string" || !/^e\d{1,6}$/.test(raw.ref)) {
         throw new ProtocolViolation("form action ref is malformed");
@@ -390,7 +392,11 @@ export function parseHostFrame(raw: unknown): HostFrame {
         act = { action: "hover" };
       }
       const target = approvedTarget(raw);
-      return target ? { frame: "form_action", form_id: formId, ref: raw.ref, act, target } : { frame: "form_action", form_id: formId, ref: raw.ref, act };
+      const frame: Extract<HostFrame, { frame: "form_action" }> = target
+        ? { frame: "form_action", form_id: formId, ref: raw.ref, act, target }
+        : { frame: "form_action", form_id: formId, ref: raw.ref, act };
+      if ("accept_confirm" in raw) frame.accept_confirm = boundedString(raw.accept_confirm, MAX_FORM_VALUE_BYTES, "confirm message");
+      return frame;
     }
     case "dialogs": {
       exactKeys(raw, ["frame", "dlg_id"]);

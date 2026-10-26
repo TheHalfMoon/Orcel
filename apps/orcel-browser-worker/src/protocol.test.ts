@@ -79,6 +79,16 @@ test("BR-02: press keys come from a closed list; hover has no input; waits are b
     ref: "e2",
     act: { action: "press", key: "Enter" }
   });
+  assert.deepEqual(parseHostFrame({ frame: "form_action", form_id: 7, action: "press", ref: "e2", key: "Enter", accept_confirm: "Delete this item?" }), {
+    frame: "form_action",
+    form_id: 7,
+    ref: "e2",
+    act: { action: "press", key: "Enter" },
+    accept_confirm: "Delete this item?"
+  });
+  for (const bad of ["", "a\nb", "x".repeat(1025), 5]) {
+    assert.throws(() => parseHostFrame({ frame: "form_action", form_id: 7, action: "press", ref: "e2", key: "Enter", accept_confirm: bad }), ProtocolViolation);
+  }
   assert.deepEqual(parseHostFrame({ frame: "form_action", form_id: 6, action: "hover", ref: "e3" }), {
     frame: "form_action",
     form_id: 6,
@@ -154,7 +164,7 @@ test("BR-07: verify probes are closed, bounded and exact", () => {
 });
 
 test("the host vocabulary is closed and exact", () => {
-  assert.deepEqual(parseHostFrame({ frame: "hello", generation: 14 }), { frame: "hello", generation: 14 });
+  assert.deepEqual(parseHostFrame({ frame: "hello", generation: 15 }), { frame: "hello", generation: 15 });
   const parsed = parseHostFrame(validLaunch());
   assert.deepEqual(JSON.parse(JSON.stringify(parsed)), validLaunch());
   assert.equal(parsed.frame === "launch" && Object.getPrototypeOf(parsed.env), null);
@@ -162,11 +172,11 @@ test("the host vocabulary is closed and exact", () => {
     null,
     [],
     "hello",
-    { generation: 14 },
+    { generation: 15 },
     { frame: "navigate", url: "https://example.com" },
     { frame: "evaluate", script: "1+1" },
     { frame: "cdp", method: "Runtime.evaluate" },
-    { frame: "hello", generation: 14, extra: true },
+    { frame: "hello", generation: 15, extra: true },
     { frame: "hello", generation: "1" },
     { frame: "hello" },
     { frame: "shutdown", now: true },

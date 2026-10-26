@@ -266,8 +266,13 @@ const playwrightLauncher: Launcher = {
         const met = await waitForText(primary, text, appear, timeoutMs);
         return { url: primary.url(), met };
       },
-      async formAction(ref, act, target) {
-        await formAction(primary, ref, act, target);
+      async formAction(ref, act, target, acceptConfirm) {
+        if (acceptConfirm !== undefined) dialogs.arm(acceptConfirm);
+        try {
+          await formAction(primary, ref, act, target);
+        } finally {
+          dialogs.disarm();
+        }
         return { url: primary.url() };
       },
       async verify(probes) {
