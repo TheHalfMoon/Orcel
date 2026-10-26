@@ -2216,6 +2216,11 @@ mod platform {
                             accepted: dialog.accepted,
                         });
                     }
+                    // Every approved action has finished before this read,
+                    // so any confirm it was approved for has been reported
+                    // by now: an approval not used is dropped, never kept
+                    // for a later report.
+                    self.approved_confirms.clear();
                     Ok(DismissedDialogs {
                         dialogs: out,
                         truncated,
