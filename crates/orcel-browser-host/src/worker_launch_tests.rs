@@ -1989,12 +1989,11 @@ fn br05_beforeunload_does_not_cancel_an_approved_activation() {
         .expect("the approved activation leaves the page");
     assert_eq!(opened.url, "https://fixture.test/archive/2026-09-30");
     let seen = worker.take_dismissed_dialogs().expect("dialogs");
-    assert!(
-        seen.dialogs
-            .iter()
-            .all(|d| d.kind == DialogKind::BeforeUnload && d.accepted),
-        "{seen:?}"
-    );
+    // Exactly the one question the page asked, answered yes: the test fails
+    // if no beforeunload fired (it would then prove nothing).
+    assert_eq!(seen.dialogs.len(), 1, "{seen:?}");
+    assert_eq!(seen.dialogs[0].kind, DialogKind::BeforeUnload);
+    assert!(seen.dialogs[0].accepted);
 }
 
 /// BR-03: a file staged from an approved folder is set on the approved file

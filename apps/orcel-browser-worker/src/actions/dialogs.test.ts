@@ -61,7 +61,25 @@ test("BR-05 unknown kinds are answered no and only counted; the log is bounded",
 
 test("BR-05 an armed action accepts exactly its approved confirm, once; everything else is dismissed", () => {
   const log = new DialogLog();
-  log.arm("Delete this item?");
+  const target = { url: () => "https://fixture.test/items" };
+  const dialog = (type: string, message: string, page: { url(): string } = target) => {
+    const calls: string[] = [];
+    return {
+      calls,
+      dialog: {
+        type: () => type,
+        message: () => message,
+        page: () => page,
+        dismiss: async () => {
+          calls.push("dismiss");
+        },
+        accept: async () => {
+          calls.push("accept");
+        }
+      }
+    };
+  };
+  log.arm("Delete this item?", target);
   const other = dialog("confirm", "Delete everything?");
   log.answer(other.dialog);
   const alert = dialog("alert", "Delete this item?");
@@ -75,7 +93,7 @@ test("BR-05 an armed action accepts exactly its approved confirm, once; everythi
     log.take().dialogs.map((d) => d.accepted),
     [false, false, true, false]
   );
-  log.arm("Delete this item?");
+  log.arm("Delete this item?", target);
   log.disarm();
   const later = dialog("confirm", "Delete this item?");
   log.answer(later.dialog);
@@ -87,4 +105,21 @@ test("BR-05 one listener on the whole context", () => {
   const events: string[] = [];
   log.listen({ on: (event: string) => events.push(event) } as never);
   assert.deepEqual(events, ["dialog"]);
+});
+
+test("BR-05 an approved confirm counts only from the target page, matched as the host saw it", () => {
+  const log = new DialogLog();
+  const target = { url: () => "https://fixture.test/items" };
+  const other = { url: () => "https://fixture.test/popup" };
+  const make = (message: string, page: { url(): string }) => {
+    const calls: string[] = [];
+    return { calls, dialog: { type: () => "confirm", message: () => message, page: () => page, dismiss: async () => void calls.push("dismiss"), accept: async () => void calls.push("accept") } };
+  };
+  // A multi-line confirm is approved as the host reported it (one line).
+  log.arm("Are you sure? This cannot be undone.", target);
+  const popup = make("Are you sure?\nThis cannot be undone.", other);
+  log.answer(popup.dialog);
+  const own = make("Are you sure?\nThis cannot be undone.", target);
+  log.answer(own.dialog);
+  assert.deepEqual([popup.calls, own.calls], [["dismiss"], ["accept"]]);
 });

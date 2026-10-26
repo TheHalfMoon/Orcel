@@ -266,7 +266,7 @@ const playwrightLauncher: Launcher = {
         return { url: primary.url(), met };
       },
       async formAction(ref, act, target, acceptConfirm) {
-        if (acceptConfirm !== undefined) dialogs.arm(acceptConfirm);
+        if (acceptConfirm !== undefined) dialogs.arm(acceptConfirm, primary);
         try {
           await formAction(primary, ref, act, target);
         } finally {

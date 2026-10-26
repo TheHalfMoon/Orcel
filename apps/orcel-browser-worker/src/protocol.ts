@@ -395,7 +395,11 @@ export function parseHostFrame(raw: unknown): HostFrame {
       const frame: Extract<HostFrame, { frame: "form_action" }> = target
         ? { frame: "form_action", form_id: formId, ref: raw.ref, act, target }
         : { frame: "form_action", form_id: formId, ref: raw.ref, act };
-      if ("accept_confirm" in raw) frame.accept_confirm = boundedString(raw.accept_confirm, MAX_FORM_VALUE_BYTES, "confirm message");
+      if ("accept_confirm" in raw) {
+        const message = boundedString(raw.accept_confirm, MAX_FORM_VALUE_BYTES, "confirm message");
+        if (/[\u0080-\u009f]/.test(message)) throw new ProtocolViolation("confirm message carries control characters");
+        frame.accept_confirm = message;
+      }
       return frame;
     }
     case "dialogs": {

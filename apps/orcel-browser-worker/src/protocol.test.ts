@@ -86,7 +86,7 @@ test("BR-02: press keys come from a closed list; hover has no input; waits are b
     act: { action: "press", key: "Enter" },
     accept_confirm: "Delete this item?"
   });
-  for (const bad of ["", "a\nb", "x".repeat(1025), 5]) {
+  for (const bad of ["", "a\nb", "a\u0085b", "x".repeat(1025), 5]) {
     assert.throws(() => parseHostFrame({ frame: "form_action", form_id: 7, action: "press", ref: "e2", key: "Enter", accept_confirm: bad }), ProtocolViolation);
   }
   assert.deepEqual(parseHostFrame({ frame: "form_action", form_id: 6, action: "hover", ref: "e3" }), {

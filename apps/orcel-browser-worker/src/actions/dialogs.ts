@@ -5,7 +5,8 @@
 // the page is what the host-approved step that caused it already allows (a
 // dismissed beforeunload would cancel an approved navigation). The one
 // other exception is armed by an approved action: during that action only,
-// a confirm whose message is exactly the approved one is accepted, once.
+// a confirm the target page itself opens, whose message (as the host saw it:
+// cleaned, whole) is exactly the approved one, is accepted, once.
 //
 // Adapted from microsoft/playwright at commit
 // 1b025d7e20a026371cd5f98ba0cdce48892737c8,
@@ -44,9 +45,14 @@ export interface DismissedDialog {
 const KINDS: readonly string[] = ["alert", "confirm", "prompt", "beforeunload"];
 
 /// Cleaned (no lone surrogates, controls or invisible characters), on one
-/// line, at most `maxBytes`.
+/// line.
+function cleaned(text: string): string {
+  return safeText(text).replace(/[\u0000-\u001f\u007f-\u009f]/g, " ");
+}
+
+/// `cleaned`, at most `maxBytes`.
 function bounded(text: string, maxBytes: number): string {
-  const clean = safeText(text).replace(/[\u0000-\u001f\u007f-\u009f]/g, " ");
+  const clean = cleaned(text);
   if (Buffer.byteLength(clean, "utf8") <= maxBytes) return clean;
   let out = "";
   for (const ch of clean) {
@@ -56,24 +62,26 @@ function bounded(text: string, maxBytes: number): string {
   return out;
 }
 
-type AnsweredDialog = Pick<Dialog, "type" | "message" | "dismiss" | "accept"> & { page?: () => { url(): string } | null };
+type DialogPage = { url(): string };
+type AnsweredDialog = Pick<Dialog, "type" | "message" | "dismiss" | "accept"> & { page?: () => DialogPage | null };
 
 /// The dialogs answered since the last `take`.
 export class DialogLog {
   private entries: DismissedDialog[] = [];
   private dropped = false;
-  /// The confirm message an approved action may accept, while it runs.
-  private armed: string | null = null;
+  /// The confirm message an approved action may accept while it runs, and
+  /// the page that action targets (only its own dialogs qualify).
+  private armed: { message: string; page: DialogPage } | null = null;
 
   /// Answer every dialog any page of `context` opens, and record it.
   listen(context: Pick<BrowserContext, "on">): void {
     context.on("dialog", (dialog: Dialog) => this.answer(dialog));
   }
 
-  /// Accept, once and during the current action only, a confirm whose
-  /// message is exactly `message`.
-  arm(message: string): void {
-    this.armed = message;
+  /// Accept, once and during the current action only, a confirm that
+  /// `page` opens whose cleaned, whole message is exactly `message`.
+  arm(message: string, page: DialogPage): void {
+    this.armed = { message, page };
   }
 
   disarm(): void {
@@ -83,7 +91,20 @@ export class DialogLog {
   answer(dialog: AnsweredDialog): void {
     const kind = dialog.type();
     const message = dialog.message();
-    const accepted = kind === "beforeunload" || (this.armed !== null && kind === "confirm" && message === this.armed);
+    let source: DialogPage | null = null;
+    try {
+      source = dialog.page?.() ?? null;
+    } catch {
+      source = null;
+    }
+    const whole = cleaned(message);
+    const approved =
+      this.armed !== null &&
+      kind === "confirm" &&
+      source === this.armed.page &&
+      Buffer.byteLength(whole, "utf8") <= MAX_DIALOG_MESSAGE_BYTES &&
+      whole === this.armed.message;
+    const accepted = kind === "beforeunload" || approved;
     if (kind === "confirm" && accepted) this.armed = null;
     void (accepted ? dialog.accept() : dialog.dismiss()).catch(() => {});
     // A kind Orcel does not know is answered "no" and only counted.
@@ -93,7 +114,7 @@ export class DialogLog {
     }
     let url = "";
     try {
-      url = dialog.page?.()?.url() ?? "";
+      url = source?.url() ?? "";
     } catch {
       url = "";
     }

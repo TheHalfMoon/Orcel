@@ -128,7 +128,9 @@ fn check_confirm(message: Option<&str>) -> Result<(), HostError> {
         Some(text)
             if text.is_empty()
                 || text.len() > MAX_DIALOG_MESSAGE_BYTES
-                || text.chars().any(char::is_control) =>
+                || text
+                    .chars()
+                    .any(|ch| ch.is_control() || crate::webmcp::is_bidi_or_format(ch)) =>
         {
             Err(HostError::Invalid(
                 "an approved confirm message must be bounded and on one line".into(),
@@ -1379,6 +1381,9 @@ mod platform {
         next_wait: u64,
         next_staged: u64,
         next_dialogs: u64,
+        /// BR-05: confirm messages approved actions armed and the worker has
+        /// not yet reported accepting (each may be accepted once).
+        approved_confirms: Vec<String>,
         next_upload_request: u64,
         /// BR-03: files staged for upload in this lifetime, by staged id,
         /// each held open so it cannot be changed or replaced.
@@ -1497,6 +1502,7 @@ mod platform {
             next_wait: 0,
             next_staged: 0,
             next_dialogs: 0,
+            approved_confirms: Vec::new(),
             next_upload_request: 0,
             uploads: std::collections::HashMap::new(),
             value_budget: crate::verify::GuessBudget::default(),
@@ -2086,6 +2092,10 @@ mod platform {
                 self.policy.finish_activation();
                 return Err(error);
             }
+            // The worker may now accept this confirm, once.
+            if let Some(message) = accept_confirm {
+                self.approved_confirms.push(message.to_owned());
+            }
             let reply = self.reply(WORKER_ACTIVATION_TIMEOUT);
             self.policy.finish_activation();
             match reply? {
@@ -2175,6 +2185,29 @@ mod platform {
                             || unsafe_text(&dialog.url, MAX_DIALOG_URL_BYTES)
                         {
                             return Err(self.fail_closed(UnavailableReason::ProtocolViolation));
+                        }
+                        // An accepted dialog must be one the host allowed: a
+                        // beforeunload, or a confirm an approved action
+                        // armed with exactly this message (once).
+                        if dialog.accepted {
+                            let allowed = match kind {
+                                DialogKind::BeforeUnload => true,
+                                DialogKind::Confirm => match self
+                                    .approved_confirms
+                                    .iter()
+                                    .position(|message| *message == dialog.message)
+                                {
+                                    Some(at) => {
+                                        self.approved_confirms.remove(at);
+                                        true
+                                    }
+                                    None => false,
+                                },
+                                DialogKind::Alert | DialogKind::Prompt => false,
+                            };
+                            if !allowed {
+                                return Err(self.fail_closed(UnavailableReason::ProtocolViolation));
+                            }
                         }
                         out.push(DismissedDialog {
                             kind,
