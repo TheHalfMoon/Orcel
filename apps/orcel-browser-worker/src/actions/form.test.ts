@@ -15,6 +15,8 @@ interface Element {
   /// Focusing the element moves focus elsewhere (a page script, or an
   /// element that cannot take focus).
   refusesFocus?: boolean;
+  /// Another element covers this one (Playwright's hit-target check).
+  covered?: boolean;
 }
 
 /// Whether `element` matches one of the CSS lists the actions use, enough
@@ -83,7 +85,19 @@ function page(refs: Record<string, Element[]>, byRole: Element[] = []) {
         return options.filter((o) => element.options?.includes(o.label)).map((o) => o.label);
       },
       setChecked: async (checked: boolean) => {
-        one();
+        if (one().covered) {
+          throw Object.assign(
+            new Error(
+              [
+                "locator.setChecked: Timeout 5000ms exceeded.",
+                "Call log:",
+                "  - attempting click action",
+                '      - <div class="overlay"></div> intercepts pointer events'
+              ].join("\n")
+            ),
+            { name: "TimeoutError" }
+          );
+        }
         calls.push(`check ${checked}`);
       },
       focus: async () => {
@@ -227,4 +241,10 @@ test("BR-02 hover acts on the approved element only", async () => {
   await formAction(stub, "e1", { action: "hover" });
   await assert.rejects(formAction(stub, "e2", { action: "hover" }), reason("stale"));
   assert.deepEqual(calls, ["hover"]);
+});
+
+test("BR-04 an element covered by another is not acted on and the reason is typed", async () => {
+  const { stub, calls } = page({ e1: [{ tag: "input", attrs: { type: "checkbox" }, covered: true }] });
+  await assert.rejects(formAction(stub, "e1", { action: "check", checked: true }), reason("occluded"));
+  assert.deepEqual(calls, []);
 });
