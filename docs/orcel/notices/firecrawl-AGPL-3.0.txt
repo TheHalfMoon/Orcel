@@ -1,7 +1,7 @@
 Firecrawl (firecrawl/firecrawl) - adapted source notice
 
-Orcel adapts two files from firecrawl/firecrawl at commit
-f84845c864b6e2af22791c18fcf89ac2a21f1434:
+Orcel adapts files from firecrawl/firecrawl at commit
+f84845c864b6e2af22791c18fcf89ac2a21f1434. For WI-05:
 
 - apps/api/native/src/pdf.rs (blob a4f019f072b13729610a2241cd51db5e34eed0c6)
   -> apps/orcel-doc-parser/src/pdf.rs (transplant row T-FC-06)
@@ -11,6 +11,14 @@ f84845c864b6e2af22791c18fcf89ac2a21f1434:
 Each adapted file names its donor blob and lists Orcel's changes in its
 header; docs/orcel/firecrawl_doc_parser_provenance.json records the
 provenance (WI-05).
+
+WI-01 adapts, from the same commit, the path-pattern compilation and its
+resource limits from apps/api/native/src/crawler.rs (blob
+598f14d33703a424748fab15f5087e56b7469776) and the URL normalization of
+apps/api/src/lib/canonical-url.ts (blob
+068999d47bcc9300916b80233f72519b9a4a155c) into
+crates/orcel-browser-host/src/crawl_scope.rs;
+docs/orcel/firecrawl_crawl_scope_provenance.json records the provenance.
 
 Upstream license: GNU Affero General Public License v3.0 (the repository's
 LICENSE; apps/api/native/package.json declares "AGPL").

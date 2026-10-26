@@ -24,6 +24,9 @@ live-browser-test = []
 live-browser-dev = []
 
 [dependencies]
+# WI-01: crawl include/exclude regular expressions (no backtracking; Unicode
+# tables off, as the patterns compile with Unicode disabled). MIT OR Apache-2.0.
+regex = { version = "1", default-features = false, features = ["std", "perf"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
