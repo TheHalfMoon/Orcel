@@ -2094,6 +2094,60 @@ fn br03_an_approved_upload_sets_exactly_the_staged_file() {
     let _ = std::fs::remove_dir_all(&folder);
 }
 
+/// BR-06: content inside same-origin frames, nested too, is observed with
+/// frame-scoped refs; a frame on an origin the lifetime does not admit is
+/// never loaded, so nothing from it is observed.
+#[test]
+#[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
+fn br06_admitted_frames_are_observed_and_foreign_frames_are_not() {
+    let fixture = HttpsFixture::start();
+    let profile = temp_profile("frames");
+    let mut launch = spec(&profile, true);
+    launch.destinations =
+        vec![
+            AdmittedDestination::fixture("fixture.test", IpAddr::V4(Ipv4Addr::LOCALHOST))
+                .expect("fixture.test"),
+        ];
+    launch.test_trusted_spki = Some(fixture.spki.clone());
+    let mut worker = launch_worker(&launch, &Policy(PolicyKeyState::Absent)).expect("launch");
+    let scope = crate::observation::ObservationScope {
+        workspace: "workspace".into(),
+        profile_identity: "profile".into(),
+    };
+    worker
+        .navigate("https://fixture.test/frames")
+        .expect("navigate");
+    let live = worker.observe(&scope).expect("observe");
+    let mut named = Vec::new();
+    let mut stack: Vec<&crate::observation::ObservedNode> = live.observation.nodes.iter().collect();
+    while let Some(node) = stack.pop() {
+        if let Some(host) = worker.host_node(&node.node_id) {
+            named.push((host.role.clone(), host.name.clone(), host.reference.clone()));
+        }
+        stack.extend(node.children.iter());
+    }
+    let inner = named
+        .iter()
+        .find(|(role, name, _)| role == "link" && name == "Inner report")
+        .unwrap_or_else(|| panic!("the nested frame's link is observed: {named:?}"));
+    assert!(
+        inner.2.starts_with('f'),
+        "a frame element has a frame-scoped ref: {}",
+        inner.2
+    );
+    assert!(
+        !named.iter().any(|(_, name, _)| name == "Foreign link"),
+        "nothing from the foreign frame is observed"
+    );
+    assert!(
+        !fixture
+            .hits()
+            .iter()
+            .any(|hit| hit.contains("frame-foreign")),
+        "the foreign frame was never requested"
+    );
+}
+
 /// BR-04: a link covered by an overlay is not clicked; the refusal is typed
 /// (observe again) and the link's document is never requested.
 #[test]
