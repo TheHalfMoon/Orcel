@@ -170,7 +170,7 @@ pub use worker_launch::ephemeral_profile_dir;
 pub use worker_launch::{
     classify_job, launch_worker, worker_environment, worker_node_args, BrowserWorker, CancelHandle,
     CommittedDownload, ExecutionOutcome, FetchedText, FormOutcome, HostNode, JobProcess,
-    LiveObservation, NavigationOutcome, ShutdownReport, SnapshotNode, WorkerLaunch,
+    LiveObservation, NavigationOutcome, ShutdownReport, SnapshotNode, StagedUpload, WorkerLaunch,
     FETCH_TEXT_MEDIA, MAX_FETCH_TEXT_CHARS, MAX_WAIT_MS, WORKER_ACTIVATION_TIMEOUT,
     WORKER_EXECUTION_TIMEOUT, WORKER_EXTRACTION_TIMEOUT, WORKER_HANDSHAKE_TIMEOUT, WORKER_IDENTITY,
     WORKER_LAUNCH_TIMEOUT, WORKER_NAVIGATION_TIMEOUT, WORKER_NODE_OPTION,

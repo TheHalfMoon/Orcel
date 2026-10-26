@@ -84,6 +84,9 @@ export interface EngineSession {
   /// (or the one matching the approved target); resolves with the page's
   /// URL afterwards; rejects with NavigationError.
   formAction(ref: string, act: FormAction, target?: ApprovedTarget): Promise<{ url: string }>;
+  /// BR-03: set the approved file input to the host-staged file at `path`;
+  /// resolves with the page's URL; rejects with NavigationError.
+  upload(ref: string, path: string, target?: ApprovedTarget): Promise<{ url: string }>;
   /// BR-02: whether text became visible (or stopped being visible) on the
   /// primary page within the bound; read-only.
   waitForText(text: string, appear: boolean, timeoutMs: number): Promise<{ url: string; met: boolean }>;
@@ -297,6 +300,16 @@ export class Worker {
         void this.runFormAction(this.session, frame.form_id, frame.ref, frame.act, frame.target);
         return;
       }
+      case "upload": {
+        if (this.state !== "launched" || !this.session) return this.fail("not_ready");
+        if (this.navigating) {
+          this.send({ frame: "upload_failed", up_id: frame.up_id, reason: "busy" });
+          return;
+        }
+        this.navigating = true;
+        void this.runUpload(this.session, frame.up_id, frame.ref, frame.path, frame.target);
+        return;
+      }
       case "wait_for": {
         if (this.state !== "launched" || !this.session) return this.fail("not_ready");
         // One at a time, and never while the document is being replaced.
@@ -436,6 +449,19 @@ export class Worker {
     }
     this.navigating = false;
     if (this.state === "launched" && this.session === session) this.settle(outcome, { frame: "activation_failed", act_id: actId, reason: "failed" });
+  }
+
+  private async runUpload(session: EngineSession, upId: number, ref: string, path: string, target?: ApprovedTarget): Promise<void> {
+    let outcome: WorkerFrame;
+    try {
+      const { url } = await session.upload(ref, path, target);
+      outcome = { frame: "uploaded", up_id: upId, url };
+    } catch (error) {
+      const reason: NavigationFailure = error instanceof NavigationError ? error.reason : "failed";
+      outcome = { frame: "upload_failed", up_id: upId, reason };
+    }
+    this.navigating = false;
+    if (this.state === "launched" && this.session === session) this.settle(outcome, { frame: "upload_failed", up_id: upId, reason: "failed" });
   }
 
   private async runWait(session: EngineSession, waitId: number, text: string, appear: boolean, timeoutMs: number): Promise<void> {
