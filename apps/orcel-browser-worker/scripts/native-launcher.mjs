@@ -15,7 +15,7 @@ import { runtimePin } from "./dev-pin.mjs";
 
 // Every native test must run: a filter that matches nothing (for example
 // after a module rename) exits 0 and would otherwise pass vacuously.
-const EXPECTED_TESTS = 31;
+const EXPECTED_TESTS = 32;
 const EXPECTED_WORKER_HOST_TESTS = 8;
 const EXPECTED_ORCELD_LIVE_TESTS = 5;
 const EXPECTED_DEV_HOST_TESTS = 3;
