@@ -13,10 +13,19 @@ import { NavigationError } from "../worker.js";
 /// performed, and the last attempt blocked by interception. Lines before
 /// the first attempt (which quote the page's own markup) are never read as
 /// interceptions. Anything else is not an occlusion: the caller reports a
-/// plain failure (after dispatch, an unknown outcome).
+/// plain failure (after dispatch, an unknown outcome). This reads Playwright's
+/// call-log format (including its "N × " compression of repeated lines);
+/// a Playwright upgrade must re-check occlusion.test.ts against a real log.
 export function isOcclusion(error: unknown): boolean {
   if (!(error instanceof Error) || error.name !== "TimeoutError") return false;
-  const lines = error.message.split("\n").map((line) => line.trim().replace(/^- /, ""));
+  // Playwright compresses repeated runs of lines as "N × <line>".
+  const lines = error.message.split("\n").map((line) =>
+    line
+      .trim()
+      .replace(/^- /, "")
+      .replace(/^\d+ × /, "")
+      .replace(/^- /, "")
+  );
   if (lines.some((line) => /^performing \w+ action( \(trial run\))?$/.test(line))) return false;
   let last = -1;
   lines.forEach((line, at) => {

@@ -48,6 +48,18 @@ test("BR-04 an action performed at some point is never an occlusion", () => {
   );
 });
 
+test("BR-04 compressed (N ×) call-log lines are read like any other", () => {
+  assert.equal(
+    isOcclusion(failure("TimeoutError", [RESOLVED, "  - attempting click action", "    3 × retrying click action", BLOCKED])),
+    true
+  );
+  assert.equal(
+    isOcclusion(failure("TimeoutError", [RESOLVED, "  - attempting click action", "    2 × performing click action", BLOCKED])),
+    false,
+    "a compressed performed line still counts as performed"
+  );
+});
+
 test("BR-04 only the last attempt counts, and page text before the attempts is never read", () => {
   // Intercepted once, then the last attempt timed out for another reason.
   assert.equal(
