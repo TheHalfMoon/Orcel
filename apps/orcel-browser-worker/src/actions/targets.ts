@@ -6,33 +6,44 @@ import { NavigationError } from "../worker.js";
 
 /// BR-04: whether a Playwright pointer action timed out because another
 /// element covered the target, without the action ever being performed.
-/// Read from the action's call log (playwright-core 1.63, pinned): every
-/// attempt logs "attempting|retrying <action> action", a blocked attempt
-/// logs "<element> intercepts pointer events", and a delivered one logs
-/// "performing <action> action". So: a TimeoutError, no attempt ever
-/// performed, and the last attempt blocked by interception. Lines before
-/// the first attempt (which quote the page's own markup) are never read as
-/// interceptions. Anything else is not an occlusion: the caller reports a
-/// plain failure (after dispatch, an unknown outcome). This reads Playwright's
-/// call-log format (including its "N × " compression of repeated lines);
-/// a Playwright upgrade must re-check occlusion.test.ts against a real log.
+/// Read from the action's call log (playwright-core 1.63, pinned; captured
+/// from a real click on a covered link in occlusion.test.ts): lines are
+/// wrapped in terminal colour codes; repeated runs are compressed as
+/// "N × <line>"; each attempt logs "attempting|retrying <action> action",
+/// then the reason it could not act ("element is not visible", "<element>
+/// intercepts pointer events", ...); a delivered one logs "performing
+/// <action> action"; the log usually ends in a "waiting Nms" pause before
+/// the next retry. So: a TimeoutError, no attempt ever performed, and the
+/// most recent reason (after the first attempt; the lines before it quote
+/// the page's own markup) an interception. Anything else is not an
+/// occlusion: the caller reports a plain failure (after dispatch, an
+/// unknown outcome). A Playwright upgrade must re-check the captured log.
 export function isOcclusion(error: unknown): boolean {
   if (!(error instanceof Error) || error.name !== "TimeoutError") return false;
-  // Playwright compresses repeated runs of lines as "N × <line>".
-  const lines = error.message.split("\n").map((line) =>
-    line
-      .trim()
-      .replace(/^- /, "")
-      .replace(/^\d+ × /, "")
-      .replace(/^- /, "")
-  );
+  const lines = error.message
+    .replace(/\u001b\[[0-9;]*m/g, "")
+    .split("\n")
+    .map((line) =>
+      line
+        .trim()
+        .replace(/^- /, "")
+        .replace(/^\d+ × /, "")
+        .replace(/^- /, "")
+    );
   if (lines.some((line) => /^performing \w+ action( \(trial run\))?$/.test(line))) return false;
-  let last = -1;
-  lines.forEach((line, at) => {
-    if (/^(attempting|retrying) \w+ action( \(trial run\))?$/.test(line)) last = at;
-  });
-  if (last < 0) return false;
-  return lines.slice(last + 1).some((line) => / intercepts pointer events$/.test(line));
+  const first = lines.findIndex((line) => /^(attempting|retrying) \w+ action( \(trial run\))?$/.test(line));
+  if (first < 0) return false;
+  const reasons = lines
+    .slice(first + 1)
+    .filter(
+      (line) =>
+        / intercepts pointer events$/.test(line) ||
+        /^element is not /.test(line) ||
+        /^element is outside of the viewport/.test(line) ||
+        /^element was detached/.test(line)
+    );
+  const latest = reasons.at(-1);
+  return latest !== undefined && / intercepts pointer events$/.test(latest);
 }
 
 /// The page surface `approvedElement` uses (a Playwright `Page`, or a test
