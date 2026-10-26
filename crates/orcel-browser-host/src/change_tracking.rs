@@ -712,10 +712,11 @@ mod tests {
             Change::Same
         );
         let mut reopened = dir.store();
-        match reopened.track("https://site.test/docs", "a\nc\n").unwrap() {
-            Change::Changed(diff) => assert!(diff.text.contains("-b\n+c\n")),
-            other => panic!("{other:?}"),
-        }
+        let change = reopened.track("https://site.test/docs", "a\nc\n").unwrap();
+        assert!(
+            matches!(&change, Change::Changed(diff) if diff.text.contains("-b\n+c\n")),
+            "{change:?}"
+        );
         assert_eq!(
             reopened.track("https://site.test/other", "a\n").unwrap(),
             Change::New
