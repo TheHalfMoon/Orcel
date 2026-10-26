@@ -63,6 +63,9 @@ pub struct CrawlSpec {
     /// WI-01: whether the patterns are path prefixes (the default) or
     /// regular expressions over the path.
     pub pattern_kind: crate::crawl_scope::PatternKind,
+    /// WI-02: order the map (`discovered`) by relevance to this term, at
+    /// most `map_rank::MAX_SEARCH_BYTES` (none or no word: discovery order).
+    pub search: Option<String>,
     /// Extract every opened page (slice 6); `None` maps links only.
     pub extract: Option<ExtractOptions>,
     /// Read `/robots.txt` first and honour it for Orcel's product token
@@ -322,6 +325,13 @@ fn check_spec(spec: &CrawlSpec) -> Result<(), HostError> {
             "the crawl deadline must be within MAX_CRAWL_DURATION",
         ));
     }
+    if spec.search.as_deref().is_some_and(|search| {
+        search.len() > crate::map_rank::MAX_SEARCH_BYTES || search.chars().any(char::is_control)
+    }) {
+        return Err(invalid(
+            "the map search term must be bounded and without control characters",
+        ));
+    }
     Ok(())
 }
 
@@ -490,8 +500,21 @@ fn read_robots(
 
 /// Run a crawl. A refused spec is an error; everything after the start is
 /// in the report. `cancelled` is checked before anything is fetched (robots
-/// included) and, with the deadline, between pages.
+/// included) and, with the deadline, between pages. With a search term the
+/// map is ordered by relevance to it (WI-02); the pages are not.
 pub fn crawl(
+    driver: &mut dyn CrawlDriver,
+    spec: &CrawlSpec,
+    cancelled: &AtomicBool,
+) -> Result<CrawlReport, HostError> {
+    let mut report = crawl_in_order(driver, spec, cancelled)?;
+    if let Some(search) = spec.search.as_deref() {
+        crate::map_rank::rank(&mut report.discovered, search);
+    }
+    Ok(report)
+}
+
+fn crawl_in_order(
     driver: &mut dyn CrawlDriver,
     spec: &CrawlSpec,
     cancelled: &AtomicBool,
@@ -774,6 +797,7 @@ mod tests {
             include_paths: Vec::new(),
             exclude_paths: Vec::new(),
             pattern_kind: Default::default(),
+            search: None,
             extract: Some(ExtractOptions::default()),
             robots: false,
             sitemaps: false,
@@ -916,6 +940,47 @@ mod tests {
         let mut untouched = site();
         assert!(crawl(&mut untouched, &refused, &AtomicBool::new(false)).is_err());
         assert!(untouched.opened.is_empty());
+    }
+
+    /// WI-02: a search term orders the map by relevance; the pages keep
+    /// their crawl order; a bad term refuses the crawl before anything opens.
+    #[test]
+    fn wi02_a_search_term_orders_the_map_only() {
+        let mut plain = site();
+        let unranked = crawl(
+            &mut plain,
+            &spec("https://site.test/docs/"),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let mut driver = site();
+        let mut wanted = spec("https://site.test/docs/");
+        wanted.search = Some("docs c".into());
+        let report = crawl(&mut driver, &wanted, &AtomicBool::new(false)).unwrap();
+        assert_eq!(driver.opened, plain.opened, "the crawl itself is unchanged");
+        let mut sorted = report.discovered.clone();
+        sorted.sort();
+        let mut expected = unranked.discovered.clone();
+        expected.sort();
+        assert_eq!(sorted, expected, "the same URLs, reordered");
+        assert_ne!(
+            report.discovered, unranked.discovered,
+            "the map was reordered"
+        );
+        assert_eq!(
+            report.discovered[0], "https://site.test/docs/c",
+            "both words lead"
+        );
+        for bad in [
+            "x".repeat(crate::map_rank::MAX_SEARCH_BYTES + 1),
+            "a\u{0007}b".to_owned(),
+        ] {
+            let mut refused = spec("https://site.test/docs/");
+            refused.search = Some(bad);
+            let mut untouched = site();
+            assert!(crawl(&mut untouched, &refused, &AtomicBool::new(false)).is_err());
+            assert!(untouched.opened.is_empty());
+        }
     }
 
     #[test]

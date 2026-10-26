@@ -18,6 +18,7 @@ mod extraction;
 mod host;
 #[cfg(windows)]
 mod leftovers;
+mod map_rank;
 mod navigation;
 mod observation;
 mod profile;
@@ -92,6 +93,7 @@ pub use host::{HostIdentity, LiveHost, Supervisor, HANDSHAKE_TIMEOUT};
     any(feature = "live-browser-test", feature = "live-browser-dev")
 ))]
 pub use host::{LiveWorkerHost, WorkerHostLaunch, WORKER_HOST_REPLY_TIMEOUT};
+pub use map_rank::MAX_SEARCH_BYTES;
 pub use navigation::{
     check_rebinding_consistent, download_trigger_allowed, external_handler_allowed, mediate_frame,
     mediate_popup, mediate_service_worker, mediate_subresource, mediate_worker,
