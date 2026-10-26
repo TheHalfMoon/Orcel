@@ -133,8 +133,12 @@ export async function formAction(page: FormPage, ref: string, action: FormAction
         return;
       case "press": {
         if (await isSecretField(own)) throw new NavigationError("denied");
-        // Enter in a textarea would add a line (multi-line values are refused).
-        if (action.key === "Enter" && (await own.and(page.locator("textarea")).count()) > 0) throw new NavigationError("denied");
+        // Enter in a multi-line field would add a line (multi-line values are refused).
+        if (action.key === "Enter" && (await own.and(page.locator('textarea, [contenteditable]:not([contenteditable="false" i])')).count()) > 0) {
+          throw new NavigationError("denied");
+        }
+        // Space never types into a field, whatever role the page declares.
+        if (action.key === "Space" && (await own.and(page.locator(FILLABLE)).count()) > 0) throw new NavigationError("denied");
         await own.focus(options);
         // The key goes to whatever holds focus: only the approved element.
         if ((await own.and(page.locator(":focus")).count()) !== 1) throw new NavigationError("denied");

@@ -60,6 +60,7 @@
     "During an action, frame documents and same-origin fetches still follow the usual rules; a page may still navigate itself on its own origin after an action ends (the existing page-initiated rule).",
     "target_digest joins fields with '|' and a fill value may contain '|'; no collision is reachable because the other fields are checked independently, but length-prefixed fields would be stronger.",
     "A page script can still move focus between the focus check and the key's delivery (the press is not atomic with the check).",
-    "A wait compares the URL, not the document generation: a same-URL reload by the page itself during a wait is not detected."
+    "A wait compares the URL, not the document generation: a same-URL reload by the page itself during a wait is not detected.",
+    "Arrow, Home and End keys change a slider's or combobox's value without an exact-value approval; the approval binds the key, which the approver sees."
   ]
 }

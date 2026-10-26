@@ -203,7 +203,10 @@ test("BR-02 press sends an allowed key to the approved element, never into a sec
     // Cannot take focus: the key would go wherever focus was.
     e5: [{ tag: "div", attrs: { role: "dialog" }, refusesFocus: true }],
     e6: [{ tag: "textarea", attrs: { name: "note" } }],
-    e7: [{ tag: "button" }]
+    e7: [{ tag: "button" }],
+    // A text field that declares itself a button: Space would still type.
+    e8: [{ tag: "input", attrs: { type: "text", role: "button" } }],
+    e9: [{ tag: "div", attrs: { contenteditable: "true" } }]
   });
   await formAction(stub, "e1", { action: "press", key: "Enter" });
   await formAction(stub, "e2", { action: "press", key: "Escape" });
@@ -213,6 +216,8 @@ test("BR-02 press sends an allowed key to the approved element, never into a sec
   }
   await assert.rejects(formAction(stub, "e5", { action: "press", key: "Escape" }), reason("denied"), "focus must take");
   await assert.rejects(formAction(stub, "e6", { action: "press", key: "Enter" }), reason("denied"), "no line breaks");
+  await assert.rejects(formAction(stub, "e8", { action: "press", key: "Space" }), reason("denied"), "Space types into fields");
+  await assert.rejects(formAction(stub, "e9", { action: "press", key: "Enter" }), reason("denied"), "no line breaks in contenteditable");
   await formAction(stub, "e6", { action: "press", key: "Tab" });
   assert.deepEqual(calls, ['press "Enter"', 'press "Escape"', 'press " "', 'press "Tab"']);
 });
