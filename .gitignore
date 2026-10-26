@@ -20,3 +20,7 @@ Thumbs.db
 /apps/web/public/brand/orcel-social-dark.png
 /apps/web/public/brand/orcel-asset-manifest.json
 /apps/web/public/brand/Orcel-Identity-Kit-v1.zip
+
+# Python (test-only tooling, BM-02)
+__pycache__/
+*.pyc

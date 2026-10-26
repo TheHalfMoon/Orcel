@@ -245,6 +245,16 @@ class SessionConfinement(unittest.TestCase):
             session.close()
             shutil.rmtree(outside, ignore_errors=True)
 
+    def test_a_write_past_its_check_does_not_recreate_an_ended_workspace(self) -> None:
+        session = FileSession()
+        root = session.root
+        target = root / "sub" / "late.txt"
+        # The path check passed before the session ended.
+        session.close()
+        with self.assertRaises(SessionError):
+            session._make_parents(target)
+        self.assertFalse(root.exists())
+
     def test_the_workspace_is_removed_and_the_session_ends(self) -> None:
         session = FileSession()
         root = session.root

@@ -64,7 +64,8 @@ class FileSession:
         if len(data) > MAX_FILE_BYTES:
             raise SessionError(f"too large: {relative!r}")
         path = self._path(relative)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        self._make_parents(path)
+        self._check_open()
         path.write_bytes(data)
 
     async def read_file(self, relative: str) -> str:
@@ -80,8 +81,10 @@ class FileSession:
         destination = self._path(target)
         if destination.exists():
             raise SessionError(f"already exists: {target!r}")
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        self._path(source).rename(destination)
+        source_path = self._path(source)
+        self._make_parents(destination)
+        self._check_open()
+        source_path.rename(destination)
 
     async def remove(self, relative: str) -> None:
         self._path(relative).unlink(missing_ok=True)
@@ -90,6 +93,29 @@ class FileSession:
         return sorted(
             path.relative_to(self._root).as_posix() for path in self._root.rglob("*") if path.is_file()
         )
+
+    def _check_open(self) -> None:
+        if self._closed:
+            raise SessionError("the session has ended")
+
+    def _make_parents(self, path: Path) -> None:
+        """Create ``path``'s folders one level at a time below the workspace,
+        never the workspace itself: once the session has ended (its
+        workspace removed), a call already past its path check makes nothing
+        and fails instead of recreating the workspace."""
+        missing = []
+        parent = path.parent
+        while parent != self._root:
+            missing.append(parent)
+            parent = parent.parent
+        for folder in reversed(missing):
+            self._check_open()
+            try:
+                folder.mkdir()
+            except FileExistsError:
+                pass
+            except FileNotFoundError as error:
+                raise SessionError("the session has ended") from error
 
     def close(self) -> None:
         if not self._closed:
