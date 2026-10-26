@@ -39,7 +39,7 @@ pub struct JobProcess {
 /// Generation 2 adds the slice-3a navigation frames, generation 3 slice-3b
 /// observation, generation 4 slice-3c activation, generation 5 slice-3d
 /// downloads.
-pub const WORKER_PROTOCOL_GENERATION: u32 = 13;
+pub const WORKER_PROTOCOL_GENERATION: u32 = 14;
 /// Worker identity reported in its hello.
 pub const WORKER_IDENTITY: &str = "orcel-browser-worker";
 /// The only Node option the worker accepts (inspector activation refused).
@@ -92,6 +92,44 @@ pub struct HostNode {
     pub role: String,
     pub name: String,
     pub url: Option<String>,
+}
+
+/// BR-05: dialogs remembered between two reads, and the longest message
+/// (mirror the worker).
+pub const MAX_DIALOGS: usize = 8;
+pub const MAX_DIALOG_MESSAGE_BYTES: usize = 1024;
+
+/// BR-05: a JavaScript dialog's kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DialogKind {
+    Alert,
+    Confirm,
+    Prompt,
+    BeforeUnload,
+}
+
+/// BR-05: one dialog the engine dismissed (its message is page text).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DismissedDialog {
+    pub kind: DialogKind,
+    pub message: crate::webmcp::PageText,
+}
+
+/// BR-05: the dialogs dismissed since the last read; `truncated` when more
+/// than `MAX_DIALOGS` were.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DismissedDialogs {
+    pub dialogs: Vec<DismissedDialog>,
+    pub truncated: bool,
+}
+
+/// BR-05: a dismissed dialog on the wire.
+#[cfg(any(windows, test))]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct WireDialog {
+    kind: String,
+    message: String,
 }
 
 /// BR-03: one file staged for upload: a host-held copy in this lifetime's
@@ -309,6 +347,10 @@ pub(crate) enum WorkerRequest<'a> {
         #[serde(skip_serializing_if = "Option::is_none")]
         name: Option<&'a str>,
     },
+    /// BR-05: report (and clear) the dialogs dismissed since the last read.
+    Dialogs {
+        dlg_id: u64,
+    },
     /// BR-03: set the approved file input to one host-staged file.
     Upload {
         up_id: u64,
@@ -459,6 +501,11 @@ pub(crate) enum WorkerReply {
     Uploaded {
         up_id: u64,
         url: String,
+    },
+    DialogsSeen {
+        dlg_id: u64,
+        dialogs: Vec<WireDialog>,
+        truncated: bool,
     },
     UploadFailed {
         up_id: u64,
@@ -1282,6 +1329,7 @@ mod platform {
         next_form: u64,
         next_wait: u64,
         next_upload: u64,
+        next_dialogs: u64,
         /// BR-03: files staged for upload in this lifetime, by staged id.
         uploads: std::collections::HashMap<String, StagedUpload>,
         /// BR-07: distinct values each field (page, role, name) was checked
@@ -1397,6 +1445,7 @@ mod platform {
             next_form: 0,
             next_wait: 0,
             next_upload: 0,
+            next_dialogs: 0,
             uploads: std::collections::HashMap::new(),
             value_budget: crate::verify::GuessBudget::default(),
             last_download_sha256: None,
@@ -2021,6 +2070,53 @@ mod platform {
                 }),
                 // A reply for another request, or of another kind: the
                 // worker may still be acting, so the lifetime ends.
+                _ => Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
+            }
+        }
+
+        /// BR-05: the JavaScript dialogs (alert, confirm, prompt,
+        /// beforeunload) the engine dismissed since the last call. Every
+        /// dialog is dismissed as it opens, without approval; this only
+        /// reports them, so the caller can tell the user a page asked and
+        /// was answered "no". Messages are untrusted page text.
+        pub fn take_dismissed_dialogs(&mut self) -> Result<DismissedDialogs, HostError> {
+            self.ensure_alive()?;
+            self.next_dialogs += 1;
+            let dlg_id = self.next_dialogs;
+            self.send(&WorkerRequest::Dialogs { dlg_id })?;
+            match self.reply(WORKER_REPLY_TIMEOUT)? {
+                WorkerReply::DialogsSeen {
+                    dlg_id: done,
+                    dialogs,
+                    truncated,
+                } if done == dlg_id => {
+                    if dialogs.len() > MAX_DIALOGS {
+                        return Err(self.fail_closed(UnavailableReason::ProtocolViolation));
+                    }
+                    let mut out = Vec::with_capacity(dialogs.len());
+                    for dialog in dialogs {
+                        let kind = match dialog.kind.as_str() {
+                            "alert" => DialogKind::Alert,
+                            "confirm" => DialogKind::Confirm,
+                            "prompt" => DialogKind::Prompt,
+                            "beforeunload" => DialogKind::BeforeUnload,
+                            _ => return Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
+                        };
+                        if dialog.message.len() > MAX_DIALOG_MESSAGE_BYTES
+                            || dialog.message.chars().any(char::is_control)
+                        {
+                            return Err(self.fail_closed(UnavailableReason::ProtocolViolation));
+                        }
+                        out.push(DismissedDialog {
+                            kind,
+                            message: crate::webmcp::PageText::from_page(dialog.message),
+                        });
+                    }
+                    Ok(DismissedDialogs {
+                        dialogs: out,
+                        truncated,
+                    })
+                }
                 _ => Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
             }
         }
@@ -3121,6 +3217,13 @@ mod fallback {
         }
 
         /// API parity: no worker ever exists off Windows.
+        pub fn take_dismissed_dialogs(&mut self) -> Result<DismissedDialogs, HostError> {
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity: no worker ever exists off Windows.
         pub fn stage_upload(
             &mut self,
             _approved_root: &Path,
@@ -3926,6 +4029,28 @@ mod tests {
             r#"{"frame":"discovered","disc_id":2,"url":"u","truncated":false,"tools":[{"name":"t","title":"","description":"d","autosubmit":false,"node":3,"has_password":false,"action":null,"method":"get","self_contained":false,"fixed_names":[],"utf8":true,"params":[],"run":"x"}]}"#
         )
         .is_err());
+    }
+
+    /// BR-05: the dialog-report frames, as both sides write them.
+    #[test]
+    fn br05_dialog_frames_are_exact() {
+        assert_eq!(
+            serde_json::to_string(&WorkerRequest::Dialogs { dlg_id: 2 }).unwrap(),
+            r#"{"frame":"dialogs","dlg_id":2}"#
+        );
+        let reply = |text: &str| serde_json::from_str::<WorkerReply>(text);
+        assert_eq!(
+            reply(r#"{"frame":"dialogs_seen","dlg_id":2,"dialogs":[{"kind":"confirm","message":"Delete?"}],"truncated":false}"#).unwrap(),
+            WorkerReply::DialogsSeen {
+                dlg_id: 2,
+                dialogs: vec![WireDialog {
+                    kind: "confirm".into(),
+                    message: "Delete?".into()
+                }],
+                truncated: false
+            }
+        );
+        assert!(reply(r#"{"frame":"dialogs_seen","dlg_id":2,"dialogs":[{"kind":"confirm","message":"x","accepted":true}],"truncated":false}"#).is_err());
     }
 
     /// BR-03: the upload frames, as both sides write them.

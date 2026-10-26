@@ -26,6 +26,7 @@ import { approvedElement, isOcclusion } from "./actions/targets.js";
 import { formAction } from "./actions/form.js";
 import { waitForText } from "./actions/wait.js";
 import { uploadFile } from "./actions/upload.js";
+import { DialogLog } from "./actions/dialogs.js";
 import { NavigationError, Worker, type EngineSession, type Launcher, type LaunchSpec, type RoutePolicy } from "./worker.js";
 
 const startup = startupRefusal(process.execArgv, process.version);
@@ -68,6 +69,10 @@ const playwrightLauncher: Launcher = {
     // which would interrupt a navigation in the same page. The previous
     // page is closed once the new one has its redirect guard.
     let primary: Page = context.pages()[0] ?? (await context.newPage());
+    // BR-05: every dialog, on every page, is dismissed as it opens and logged.
+    const dialogs = new DialogLog();
+    context.on("page", (page) => dialogs.attach(page));
+    for (const page of context.pages()) dialogs.attach(page);
     const routes = await installRoutes(context, () => primary, policy);
     let closing = false;
     // Each host navigation runs in a fresh page (see above).
@@ -249,6 +254,9 @@ const playwrightLauncher: Launcher = {
           media: document.media,
           bytes: document.body.length
         };
+      },
+      takeDialogs() {
+        return dialogs.take();
       },
       async upload(ref, path, target) {
         await uploadFile(primary, ref, path, target);

@@ -1835,6 +1835,71 @@ fn br01_a_rerendered_link_is_found_by_its_approved_role_and_name_or_nothing_is_c
     );
 }
 
+/// BR-05: a confirmation a page asks for is dismissed without approval (the
+/// action it guards does not happen), and the host reports it once.
+#[test]
+#[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
+fn br05_a_dialog_is_dismissed_and_reported() {
+    let fixture = HttpsFixture::start();
+    let profile = temp_profile("dialog");
+    let mut launch = spec(&profile, true);
+    launch.destinations =
+        vec![
+            AdmittedDestination::fixture("fixture.test", IpAddr::V4(Ipv4Addr::LOCALHOST))
+                .expect("fixture.test"),
+        ];
+    launch.test_trusted_spki = Some(fixture.spki.clone());
+    let mut worker = launch_worker(&launch, &Policy(PolicyKeyState::Absent)).expect("launch");
+    let scope = crate::observation::ObservationScope {
+        workspace: "workspace".into(),
+        profile_identity: "profile".into(),
+    };
+    worker
+        .navigate("https://fixture.test/dialog-page")
+        .expect("navigate");
+    let live = worker.observe(&scope).expect("observe");
+    let mut stack: Vec<&crate::observation::ObservedNode> = live.observation.nodes.iter().collect();
+    let mut button = None;
+    while let Some(node) = stack.pop() {
+        if worker
+            .host_node(&node.node_id)
+            .is_some_and(|h| h.role == "button" && h.name == "Delete")
+        {
+            button = Some(node.node_id.clone());
+        }
+        stack.extend(node.children.iter());
+    }
+    let button = button.expect("the Delete button is observed");
+    assert!(worker
+        .take_dismissed_dialogs()
+        .expect("dialogs")
+        .dialogs
+        .is_empty());
+    let input = crate::actuation::FormInput::Press {
+        key: "Enter".into(),
+    };
+    let (target, mut approval) = approved_form(&worker, &live, &button, "button", &input);
+    worker
+        .form_action(&target, &mut approval, &input, 1, "workspace")
+        .expect("press");
+    assert!(worker
+        .wait_for_text("kept", true, Duration::from_secs(3))
+        .expect("wait"));
+    let seen = worker.take_dismissed_dialogs().expect("dialogs");
+    assert_eq!(seen.dialogs.len(), 1, "{seen:?}");
+    assert_eq!(seen.dialogs[0].kind, DialogKind::Confirm);
+    assert_eq!(seen.dialogs[0].message.untrusted(), "Delete this item?");
+    assert!(!seen.truncated);
+    assert!(
+        worker
+            .take_dismissed_dialogs()
+            .expect("dialogs")
+            .dialogs
+            .is_empty(),
+        "reported once"
+    );
+}
+
 /// BR-03: a file staged from an approved folder is set on the approved file
 /// input, byte for byte; an approval names the origin and the file, so it
 /// covers no other file, and a text field is not a file input.

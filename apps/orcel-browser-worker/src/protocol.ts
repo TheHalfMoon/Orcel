@@ -13,6 +13,7 @@ import type { ControlKind, DeclaredTool } from "./webmcp/declarative.js";
 import { MAX_VERIFY_PROBES, MAX_VERIFY_TEXT_BYTES, type VerifyProbe, type VerifyResult } from "./verify.js";
 import { PRESS_KEYS, type FormAction, type PressKey } from "./actions/form.js";
 import { MAX_WAIT_MS } from "./actions/wait.js";
+import type { DismissedDialog } from "./actions/dialogs.js";
 
 /// One form field to enter when executing a tool (host-validated).
 export interface ExecField {
@@ -33,8 +34,9 @@ export const MAX_EXEC_VALUE_CHARS = 1024;
 /// WebMCP execution, generation 8 slice-6 page extraction, generation 9
 /// text documents for robots.txt and sitemaps (#317), generation 10 BR-07
 /// postcondition probes, generation 11 BR-02 form actions, generation 12
-/// BR-02 press, hover and bounded waits, generation 13 BR-03 uploads.
-export const WORKER_PROTOCOL_GENERATION = 13;
+/// BR-02 press, hover and bounded waits, generation 13 BR-03 uploads,
+/// generation 14 BR-05 dismissed-dialog reports.
+export const WORKER_PROTOCOL_GENERATION = 14;
 /// BR-02: the longest value filled, and the most options selected at once
 /// (mirrors the host).
 export const MAX_FORM_VALUE_BYTES = 1024;
@@ -110,6 +112,7 @@ export type HostFrame =
   | { frame: "form_action"; form_id: number; ref: string; act: FormAction; target?: ApprovedTarget }
   | { frame: "wait_for"; wait_id: number; text: string; appear: boolean; timeout_ms: number }
   | { frame: "upload"; up_id: number; ref: string; path: string; target?: ApprovedTarget }
+  | { frame: "dialogs"; dlg_id: number }
   | { frame: "shutdown" };
 
 export type RouteKind = "document" | "redirect" | "frame" | "popup" | "fetch" | "subresource" | "service_worker";
@@ -211,6 +214,7 @@ export type WorkerFrame =
   | { frame: "form_done"; form_id: number; url: string }
   | { frame: "waited"; wait_id: number; url: string; met: boolean }
   | { frame: "uploaded"; up_id: number; url: string }
+  | { frame: "dialogs_seen"; dlg_id: number; dialogs: DismissedDialog[]; truncated: boolean }
   | { frame: "upload_failed"; up_id: number; reason: NavigationFailure }
   | { frame: "wait_failed"; wait_id: number }
   | { frame: "form_failed"; form_id: number; reason: NavigationFailure }
@@ -387,6 +391,10 @@ export function parseHostFrame(raw: unknown): HostFrame {
       }
       const target = approvedTarget(raw);
       return target ? { frame: "form_action", form_id: formId, ref: raw.ref, act, target } : { frame: "form_action", form_id: formId, ref: raw.ref, act };
+    }
+    case "dialogs": {
+      exactKeys(raw, ["frame", "dlg_id"]);
+      return { frame: "dialogs", dlg_id: positiveId(raw.dlg_id, "dlg_id") };
     }
     case "upload": {
       exactKeys(raw, "role" in raw || "name" in raw ? ["frame", "up_id", "ref", "path", "role", "name"] : ["frame", "up_id", "ref", "path"]);

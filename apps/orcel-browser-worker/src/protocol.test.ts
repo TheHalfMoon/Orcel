@@ -154,7 +154,7 @@ test("BR-07: verify probes are closed, bounded and exact", () => {
 });
 
 test("the host vocabulary is closed and exact", () => {
-  assert.deepEqual(parseHostFrame({ frame: "hello", generation: 13 }), { frame: "hello", generation: 13 });
+  assert.deepEqual(parseHostFrame({ frame: "hello", generation: 14 }), { frame: "hello", generation: 14 });
   const parsed = parseHostFrame(validLaunch());
   assert.deepEqual(JSON.parse(JSON.stringify(parsed)), validLaunch());
   assert.equal(parsed.frame === "launch" && Object.getPrototypeOf(parsed.env), null);
@@ -162,11 +162,11 @@ test("the host vocabulary is closed and exact", () => {
     null,
     [],
     "hello",
-    { generation: 13 },
+    { generation: 14 },
     { frame: "navigate", url: "https://example.com" },
     { frame: "evaluate", script: "1+1" },
     { frame: "cdp", method: "Runtime.evaluate" },
-    { frame: "hello", generation: 13, extra: true },
+    { frame: "hello", generation: 14, extra: true },
     { frame: "hello", generation: "1" },
     { frame: "hello" },
     { frame: "shutdown", now: true },

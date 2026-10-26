@@ -1,0 +1,36 @@
+{
+  "schema": "orcel-adapted-source-provenance/1",
+  "task": "BR-05 (first slice: dialogs dismissed and reported)",
+  "donor": {
+    "id": "playwright",
+    "repo": "microsoft/playwright",
+    "commit": "1b025d7e20a026371cd5f98ba0cdce48892737c8",
+    "license": "Apache-2.0 (LICENSE blob df112373eb2e23e459bf93ec412be1764dc5a38b; NOTICE blob 814ec1696f7ad36c1b524fb6adeef14b4b367fec)",
+    "notice": "docs/orcel/notices/playwright-Apache-2.0.txt"
+  },
+  "method": "COPY_ADAPT",
+  "dependencies": {},
+  "files": [
+    {
+      "path": "apps/orcel-browser-worker/src/actions/dialogs.ts",
+      "donor_path": "packages/playwright-core/src/tools/backend/dialogs.ts",
+      "donor_blob": "6d3d0f251d1e4f24af1a66e899006d0e2c0f52d8",
+      "adapted": "browser_handle_dialog (dialog.dismiss)",
+      "row": "BR-05",
+      "changes": "every dialog on every page is dismissed as it opens, never held or accepted; kind and a bounded single-line message are logged (at most 8 between reads) for the host"
+    },
+    {
+      "path": "crates/orcel-browser-host/src/worker_launch.rs",
+      "donor_path": null,
+      "donor_blob": null,
+      "adapted": "take_dismissed_dialogs; the dialogs frame",
+      "row": "BR-05",
+      "changes": "new code: the host reads and clears the log, checks kinds and bounds, and returns messages as untrusted PageText"
+    }
+  ],
+  "authority_delta": "None: dialogs were already auto-dismissed by Playwright; they are now dismissed explicitly and reported.",
+  "residuals": [
+    "Accepting a dialog (its own approval bound to the dialog's text) needs the worker to pause the action that opened it and resume after approval; not in this slice.",
+    "Tabs (list, select, close) and popup admission beyond the existing policy are not in this slice."
+  ]
+}
