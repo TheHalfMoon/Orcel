@@ -29,6 +29,8 @@ mod runtime_pin;
 mod supervise;
 mod transfers;
 mod uia;
+// The worker session that uses the probe machinery exists only on Windows.
+#[cfg_attr(not(windows), allow(dead_code))]
 mod verify;
 mod webmcp;
 #[cfg(all(
