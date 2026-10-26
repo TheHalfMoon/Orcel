@@ -1195,7 +1195,8 @@ mod platform {
         last_request: u64,
         next_obs: u64,
         next_ver: u64,
-        /// BR-07: distinct values each field was checked against.
+        /// BR-07: distinct values each field (page, role, name) was checked
+        /// against in this lifetime.
         value_budget: crate::verify::GuessBudget,
         /// BR-07: the digest of the last download committed in this
         /// lifetime, for download postconditions.
@@ -1792,7 +1793,12 @@ mod platform {
                     })
                 })
                 .collect();
-            crate::verify::apply_budget(checks, &mut needs, &mut self.value_budget, generation);
+            let host_nodes = &self.host_nodes;
+            crate::verify::apply_budget(checks, &mut needs, &mut self.value_budget, |id| {
+                host_nodes
+                    .get(id)
+                    .map(|node| crate::verify::field_key(&url, &node.role, &node.name))
+            });
             let probes: Vec<crate::verify::Probe> = needs
                 .iter()
                 .filter_map(|need| match need {

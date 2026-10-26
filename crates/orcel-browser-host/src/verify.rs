@@ -18,9 +18,9 @@
 //! returned, recorded or logged, and secret fields (passwords, one-time
 //! codes, payment cards) are never read, so such a check fails; a value or
 //! checked state is checked only for a field role in the main frame, and
-//! one field can be checked against at most `MAX_VALUE_GUESSES` distinct
-//! values per document, so verification is never a way to guess a value
-//! the observation hides; URL and download-digest checks use the host's
+//! one field (the same page, role and name, across reloads) can be checked
+//! against at most `MAX_VALUE_GUESSES` distinct values per worker lifetime,
+//! so verification cannot be used to guess a value the observation hides; URL and download-digest checks use the host's
 //! own record (the committed URL, the last committed download) and need no
 //! worker; the list check is not ported.
 //! Evidence is a fixed vocabulary plus counts, and the report carries a
@@ -39,8 +39,11 @@ pub const MAX_VERIFY_TEXT_BYTES: usize = 1024;
 pub const MAX_VERIFY_COUNT: u32 = 1000;
 /// Longest URL a check may name (the navigation bound).
 const MAX_VERIFY_URL_BYTES: usize = 2048;
-/// Distinct expected values one field can be checked against per document.
+/// Distinct expected values one field can be checked against per lifetime.
 pub const MAX_VALUE_GUESSES: usize = 3;
+/// Fields the value budget tracks per lifetime; beyond it, new fields are
+/// not checked.
+const MAX_BUDGET_FIELDS: usize = 4096;
 /// Roles whose value is checked (the worker also requires the element to
 /// be an input, textarea or select).
 const VALUE_ROLES: [&str; 6] = [
@@ -51,14 +54,9 @@ const VALUE_ROLES: [&str; 6] = [
     "slider",
     "listbox",
 ];
-/// Roles whose checked state is checked.
-const CHECKED_ROLES: [&str; 5] = [
-    "checkbox",
-    "radio",
-    "switch",
-    "menuitemcheckbox",
-    "menuitemradio",
-];
+/// Roles whose checked state is checked. (A switch or menu item inside a
+/// label would be read through the label's control, so they are not.)
+const CHECKED_ROLES: [&str; 2] = ["checkbox", "radio"];
 
 /// What must hold after a step.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -262,7 +260,7 @@ pub(crate) fn need<'a>(
         Postcondition::Checked { node_id, .. } => match node(node_id) {
             None => Need::Unavailable("node is not in the latest observation"),
             Some((_, role, _)) if !CHECKED_ROLES.contains(&role) => {
-                Need::Unavailable("node is not a checkbox, radio or switch")
+                Need::Unavailable("node is not a checkbox or radio")
             }
             Some((reference, _, _)) if !main_frame_ref(reference) => {
                 Need::Unavailable("fields inside frames are not checked")
@@ -282,24 +280,23 @@ fn main_frame_ref(reference: &str) -> bool {
         .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
 }
 
-/// How many distinct values each field has been checked against in the
-/// current document; a new document starts again.
+/// How many distinct values each field has been checked against in this
+/// worker lifetime. A field is its page (origin and path), role and name,
+/// so reloading the page does not start again.
 #[derive(Debug, Default)]
 pub(crate) struct GuessBudget {
-    generation: u64,
     tried: std::collections::HashMap<String, Vec<[u8; 32]>>,
 }
 
 impl GuessBudget {
-    /// Whether `node_id` may be checked against `value` in `generation`
-    /// (a value it was already checked against is always allowed again).
-    pub(crate) fn allow(&mut self, generation: u64, node_id: &str, value: &str) -> bool {
-        if generation != self.generation {
-            self.generation = generation;
-            self.tried.clear();
+    /// Whether the field `field` may be checked against `value` (a value
+    /// it was already checked against is always allowed again).
+    pub(crate) fn allow(&mut self, field: &str, value: &str) -> bool {
+        if !self.tried.contains_key(field) && self.tried.len() >= MAX_BUDGET_FIELDS {
+            return false;
         }
         let digest: [u8; 32] = Sha256::digest(value.as_bytes()).into();
-        let tried = self.tried.entry(node_id.to_owned()).or_default();
+        let tried = self.tried.entry(field.to_owned()).or_default();
         if tried.contains(&digest) {
             return true;
         }
@@ -311,16 +308,25 @@ impl GuessBudget {
     }
 }
 
-/// Spends the value budget: a value check over it is not probed.
+/// The budget's key for a field: its page (origin and path, without the
+/// query or fragment), role and name.
+pub(crate) fn field_key(url: &str, role: &str, name: &str) -> String {
+    let page = url.split(['?', '#']).next().unwrap_or(url);
+    format!("{page}\u{1f}{role}\u{1f}{name}")
+}
+
+/// Spends the value budget: a value check over it is not probed. `field`
+/// gives a node's budget key.
 pub(crate) fn apply_budget(
     checks: &[Postcondition],
     needs: &mut [Need],
     budget: &mut GuessBudget,
-    generation: u64,
+    field: impl Fn(&str) -> Option<String>,
 ) {
     for (check, need) in checks.iter().zip(needs.iter_mut()) {
         if let (Postcondition::ValueEquals { node_id, value }, Need::Probe(_)) = (check, &*need) {
-            if !budget.allow(generation, node_id, value) {
+            let allowed = field(node_id).is_some_and(|key| budget.allow(&key, value));
+            if !allowed {
                 *need = Need::Unavailable("value check limit reached for this field");
             }
         }
@@ -713,7 +719,7 @@ mod tests {
                 node_id: "n2".into(),
                 checked: true
             }),
-            "node is not a checkbox, radio or switch"
+            "node is not a checkbox or radio"
         );
         assert_eq!(
             unavailable(Postcondition::ElementVisible {
@@ -734,39 +740,51 @@ mod tests {
         );
     }
 
-    /// A field can be checked against a few values per document, so the
-    /// verifier is not a way to guess a hidden value.
+    /// A field can be checked against a few values per lifetime, reloads
+    /// included, so the verifier is not a way to guess a hidden value.
     #[test]
-    fn br07_value_checks_are_budgeted_per_field_and_document() {
+    fn br07_value_checks_are_budgeted_per_field_across_reloads() {
         let mut budget = GuessBudget::default();
         let guess = |value: &str| Postcondition::ValueEquals {
             node_id: "n2".into(),
             value: value.into(),
         };
+        // The same field on the page, whatever the document generation.
+        let key = |_: &str| Some(field_key("https://shop.test/login?x=1", "textbox", "Email"));
         let checks: Vec<Postcondition> = ["1111", "2222", "3333", "1111", "4444"]
             .iter()
             .map(|v| guess(v))
             .collect();
         let mut needs: Vec<Need> = checks.iter().map(|c| need(c, node)).collect();
-        apply_budget(&checks, &mut needs, &mut budget, 7);
+        apply_budget(&checks, &mut needs, &mut budget, key);
         let probed: Vec<bool> = needs.iter().map(|n| matches!(n, Need::Probe(_))).collect();
         assert_eq!(
             probed,
             [true, true, true, true, false],
             "a repeated value is free; a fourth is refused"
         );
-        // Another call in the same document: still refused.
+        // A reload (another query, another document): still refused.
+        let reloaded = |_: &str| {
+            Some(field_key(
+                "https://shop.test/login#again",
+                "textbox",
+                "Email",
+            ))
+        };
         let mut again = vec![need(&guess("5555"), node)];
-        apply_budget(&[guess("5555")], &mut again, &mut budget, 7);
+        apply_budget(&[guess("5555")], &mut again, &mut budget, reloaded);
         assert_eq!(
             again[0],
             Need::Unavailable("value check limit reached for this field")
         );
-        // Another field has its own budget; a new document starts again.
-        assert!(budget.allow(7, "n9", "x"));
-        let mut fresh = vec![need(&guess("5555"), node)];
-        apply_budget(&[guess("5555")], &mut fresh, &mut budget, 8);
-        assert!(matches!(fresh[0], Need::Probe(_)));
+        // Another field has its own budget; an unknown field is refused.
+        assert!(budget.allow(
+            &field_key("https://shop.test/login", "textbox", "Name"),
+            "x"
+        ));
+        let mut unknown = vec![need(&guess("1111"), node)];
+        apply_budget(&[guess("1111")], &mut unknown, &mut budget, |_| None);
+        assert!(matches!(unknown[0], Need::Unavailable(_)));
         // The refused check fails with that evidence.
         let report = verify_with(
             &[guess("9999")],

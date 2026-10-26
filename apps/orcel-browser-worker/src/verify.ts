@@ -58,12 +58,15 @@ export type VerifyPage = Pick<Page, "locator" | "frames">;
 /// Elements whose own value can be read (no label is followed).
 const VALUE_FIELD = "input, textarea, select";
 /// Elements whose own checked state can be read.
-const CHECKED_FIELD =
-  'input[type="checkbox" i], input[type="radio" i], [role="checkbox"], [role="radio"], [role="switch"], [role="menuitemcheckbox"], [role="menuitemradio"]';
+/// (Playwright reads these without following a label; a switch or menu item
+/// inside a label would be read through the label's control.)
+const CHECKED_FIELD = 'input[type="checkbox" i], input[type="radio" i], [role="checkbox"], [role="radio"]';
 /// `autocomplete` tokens that mark a field whose value is a secret.
 const SECRET_AUTOCOMPLETE = /(?:^|\s)(?:current-password|new-password|one-time-code|cc-number|cc-csc|cc-exp(?:-month|-year)?)(?:\s|$)/i;
 /// Names and ids that suggest a secret.
-const SECRET_NAME = /pass(?:word|code|phrase)?|pwd|\bpin\b|pin[_-]?code|otp|one[_-]?time|cvc|cvv|csc|security[_-]?code|card[_-]?number|secret|token/i;
+const SECRET_NAME = /pass(?:word|code|phrase)?|pwd|(?:^|[^a-z])pin(?:$|[^a-z])|pin[_-]?code|otp|one[_-]?time|cvc|cvv|csc|security[_-]?code|card[_-]?number|secret|token/i;
+/// Camel-case `Pin` (`userPin`, `cardPinCode`).
+const SECRET_CAMEL = /[a-z]Pin(?:$|[A-Z_-])/;
 
 const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -102,7 +105,8 @@ async function isSecret(control: Locator): Promise<boolean> {
     ((await control.getAttribute(name, { timeout: READ_TIMEOUT_MS }).catch(() => null)) ?? "").trim();
   if ((await read("type")).toLowerCase() === "password") return true;
   if (SECRET_AUTOCOMPLETE.test(await read("autocomplete"))) return true;
-  return SECRET_NAME.test(await read("name")) || SECRET_NAME.test(await read("id"));
+  const named = [await read("name"), await read("id")];
+  return named.some((text) => SECRET_NAME.test(text) || SECRET_CAMEL.test(text));
 }
 
 async function probeOne(page: VerifyPage, probe: VerifyProbe): Promise<VerifyResult> {
@@ -149,14 +153,22 @@ export async function runProbes(page: VerifyPage, probes: readonly VerifyProbe[]
   const late = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error("verification budget exceeded")), budgetMs);
   });
+  let cancelled = false;
   const work = (async () => {
     const results: VerifyResult[] = [];
-    for (const probe of probes) results.push(await probeOne(page, probe));
+    for (const probe of probes) {
+      // Past the budget, the remaining probes are not run.
+      if (cancelled) throw new Error("verification budget exceeded");
+      results.push(await probeOne(page, probe));
+    }
     return results;
   })();
+  // A rejection after the budget won must not go unhandled.
+  work.catch(() => {});
   try {
     return await Promise.race([work, late]);
   } finally {
+    cancelled = true;
     clearTimeout(timer);
   }
 }

@@ -114,6 +114,9 @@ test("BR-07 values: only from the ref'd element when it is itself a field, never
     e4: [input({ autocomplete: "billing cc-number" }, "4111111111111111")],
     e5: [input({ type: "text", name: "card_cvc" }, "123")],
     e6: [input({ type: "text", id: "login-pin" }, "1234")],
+    e10: [input({ type: "text", name: "card_pin" }, "1234")],
+    e11: [input({ type: "text", id: "userPin" }, "1234")],
+    e12: [input({ type: "text", name: "shipping" }, "standard")],
     // A non-field inside a label: Playwright's inputValue would follow the
     // label to its (password) control, so nothing is read.
     e7: [{ tag: "span", visible: true, attrs: { role: "textbox" }, value: "hunter2" }],
@@ -121,7 +124,10 @@ test("BR-07 values: only from the ref'd element when it is itself a field, never
     e9: [input({}, "a"), input({}, "b")]
   });
   assert.deepEqual(
-    await runProbes(stub, ["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8", "e9", "e10", "f1e1"].map((ref) => ({ probe: "value" as const, ref }))),
+    await runProbes(
+      stub,
+      ["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8", "e9", "e13", "f1e1", "e10", "e11", "e12"].map((ref) => ({ probe: "value" as const, ref }))
+    ),
     [
       { result: "value", value: "Ada Lovelace" },
       { result: "unavailable", reason: "secret" },
@@ -133,15 +139,18 @@ test("BR-07 values: only from the ref'd element when it is itself a field, never
       { result: "unavailable", reason: "too_long" },
       { result: "unavailable", reason: "stale" },
       { result: "unavailable", reason: "stale" },
-      { result: "unavailable", reason: "not_a_field" }
+      { result: "unavailable", reason: "not_a_field" },
+      { result: "unavailable", reason: "secret" },
+      { result: "unavailable", reason: "secret" },
+      { result: "value", value: "standard" }
     ]
   );
 });
 
-test("BR-07 checked state only from a checkbox, radio or switch the ref names", async () => {
+test("BR-07 checked state only from a checkbox or radio the ref names", async () => {
   const { stub } = page([], {
     e1: [{ tag: "input", visible: true, attrs: { type: "checkbox" }, checked: true }],
-    e2: [{ tag: "div", visible: true, attrs: { role: "switch" }, checked: false }],
+    e2: [{ tag: "div", visible: true, attrs: { role: "checkbox" }, checked: false }],
     e3: [{ tag: "label", visible: true, attrs: {}, checked: true }],
     e4: [{ tag: "input", visible: true, attrs: { type: "checkbox" } }]
   });
