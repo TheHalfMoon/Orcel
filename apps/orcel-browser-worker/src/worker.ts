@@ -35,6 +35,7 @@ import type { RouteQuery } from "./routing.js";
 import type { BoundedSnapshot } from "./snapshot.js";
 import type { VerifyProbe, VerifyResult } from "./verify.js";
 import type { FormAction } from "./actions/form.js";
+import type { DismissedDialog } from "./actions/dialogs.js";
 
 export type LaunchSpec = Extract<HostFrame, { frame: "launch" }>;
 
@@ -83,7 +84,11 @@ export interface EngineSession {
   /// BR-02: one approved form action on the element with this snapshot ref
   /// (or the one matching the approved target); resolves with the page's
   /// URL afterwards; rejects with NavigationError.
-  formAction(ref: string, act: FormAction, target?: ApprovedTarget): Promise<{ url: string }>;
+  /// With `acceptConfirm`, a confirm with exactly that message is accepted
+  /// (once) while the action runs; every other dialog is dismissed.
+  formAction(ref: string, act: FormAction, target?: ApprovedTarget, acceptConfirm?: string): Promise<{ url: string }>;
+  /// BR-05: the dialogs dismissed since the last call (clears the log).
+  takeDialogs(): { dialogs: DismissedDialog[]; truncated: boolean };
   /// BR-03: set the approved file input to the host-staged file at `path`;
   /// resolves with the page's URL; rejects with NavigationError.
   upload(ref: string, path: string, target?: ApprovedTarget): Promise<{ url: string }>;
@@ -297,7 +302,13 @@ export class Worker {
         }
         // Outside the queue: the action's requests need host decisions.
         this.navigating = true;
-        void this.runFormAction(this.session, frame.form_id, frame.ref, frame.act, frame.target);
+        void this.runFormAction(this.session, frame.form_id, frame.ref, frame.act, frame.target, frame.accept_confirm);
+        return;
+      }
+      case "dialogs": {
+        if (this.state !== "launched" || !this.session) return this.fail("not_ready");
+        const { dialogs, truncated } = this.session.takeDialogs();
+        this.send({ frame: "dialogs_seen", dlg_id: frame.dlg_id, dialogs, truncated });
         return;
       }
       case "upload": {
@@ -476,10 +487,17 @@ export class Worker {
     if (this.state === "launched" && this.session === session) this.settle(outcome, { frame: "wait_failed", wait_id: waitId });
   }
 
-  private async runFormAction(session: EngineSession, formId: number, ref: string, act: FormAction, target?: ApprovedTarget): Promise<void> {
+  private async runFormAction(
+    session: EngineSession,
+    formId: number,
+    ref: string,
+    act: FormAction,
+    target?: ApprovedTarget,
+    acceptConfirm?: string
+  ): Promise<void> {
     let outcome: WorkerFrame;
     try {
-      const { url } = await session.formAction(ref, act, target);
+      const { url } = await session.formAction(ref, act, target, acceptConfirm);
       outcome = { frame: "form_done", form_id: formId, url };
     } catch (error) {
       const reason: NavigationFailure = error instanceof NavigationError ? error.reason : "failed";

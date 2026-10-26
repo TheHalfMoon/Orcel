@@ -1835,6 +1835,167 @@ fn br01_a_rerendered_link_is_found_by_its_approved_role_and_name_or_nothing_is_c
     );
 }
 
+/// BR-05: a confirmation a page asks for is dismissed without approval (the
+/// action it guards does not happen), and the host reports it once.
+#[test]
+#[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
+fn br05_a_dialog_is_dismissed_and_reported() {
+    let fixture = HttpsFixture::start();
+    let profile = temp_profile("dialog");
+    let mut launch = spec(&profile, true);
+    launch.destinations =
+        vec![
+            AdmittedDestination::fixture("fixture.test", IpAddr::V4(Ipv4Addr::LOCALHOST))
+                .expect("fixture.test"),
+        ];
+    launch.test_trusted_spki = Some(fixture.spki.clone());
+    let mut worker = launch_worker(&launch, &Policy(PolicyKeyState::Absent)).expect("launch");
+    let scope = crate::observation::ObservationScope {
+        workspace: "workspace".into(),
+        profile_identity: "profile".into(),
+    };
+    worker
+        .navigate("https://fixture.test/dialog-page")
+        .expect("navigate");
+    let live = worker.observe(&scope).expect("observe");
+    let mut stack: Vec<&crate::observation::ObservedNode> = live.observation.nodes.iter().collect();
+    let mut button = None;
+    while let Some(node) = stack.pop() {
+        if worker
+            .host_node(&node.node_id)
+            .is_some_and(|h| h.role == "button" && h.name == "Delete")
+        {
+            button = Some(node.node_id.clone());
+        }
+        stack.extend(node.children.iter());
+    }
+    let button = button.expect("the Delete button is observed");
+    assert!(worker
+        .take_dismissed_dialogs()
+        .expect("dialogs")
+        .dialogs
+        .is_empty());
+    let input = crate::actuation::FormInput::Press {
+        key: "Enter".into(),
+    };
+    let (target, mut approval) = approved_form(&worker, &live, &button, "button", &input);
+    worker
+        .form_action(&target, &mut approval, &input, None, 1, "workspace")
+        .expect("press");
+    assert!(worker
+        .wait_for_text("kept", true, Duration::from_secs(3))
+        .expect("wait"));
+    let seen = worker.take_dismissed_dialogs().expect("dialogs");
+    assert_eq!(seen.dialogs.len(), 1, "{seen:?}");
+    assert_eq!(seen.dialogs[0].kind, DialogKind::Confirm);
+    assert_eq!(seen.dialogs[0].message.untrusted(), "Delete this item?");
+    assert_eq!(
+        seen.dialogs[0].url.untrusted(),
+        "https://fixture.test/dialog-page"
+    );
+    assert!(!seen.dialogs[0].accepted);
+    assert!(!seen.truncated);
+    assert!(
+        worker
+            .take_dismissed_dialogs()
+            .expect("dialogs")
+            .dialogs
+            .is_empty(),
+        "reported once"
+    );
+
+    // The confirm learned above, approved: the same press now answers yes.
+    let confirm = "Delete this item?";
+    let target = crate::actuation::ActuationTarget {
+        state: worker
+            .form_binding(&button, &input, Some(confirm))
+            .unwrap_or_default(),
+        ..target
+    };
+    let mut approval = crate::actuation::ApprovalToken {
+        approval_id: "approval-confirm".into(),
+        target_digest: crate::actuation::target_digest(&target),
+        workspace: "workspace".into(),
+        policy_revision: 1,
+        consumed: false,
+    };
+    // An approval for one confirm text does not cover another.
+    let refused = worker.form_action(
+        &target,
+        &mut approval,
+        &input,
+        Some("Delete everything?"),
+        1,
+        "workspace",
+    );
+    assert!(matches!(refused, Err(HostError::Invalid(_))), "{refused:?}");
+    assert!(!approval.consumed);
+    worker
+        .form_action(
+            &target,
+            &mut approval,
+            &input,
+            Some(confirm),
+            1,
+            "workspace",
+        )
+        .expect("press with the approved confirm");
+    assert!(worker
+        .wait_for_text("deleted", true, Duration::from_secs(3))
+        .expect("wait"));
+    let seen = worker.take_dismissed_dialogs().expect("dialogs");
+    assert_eq!(seen.dialogs.len(), 1, "{seen:?}");
+    assert!(seen.dialogs[0].accepted);
+}
+
+/// BR-05: a page that asks before it is left (beforeunload) does not stop
+/// an approved link activation; the question is reported as accepted.
+#[test]
+#[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
+fn br05_beforeunload_does_not_cancel_an_approved_activation() {
+    let fixture = HttpsFixture::start();
+    let profile = temp_profile("leave");
+    let mut launch = spec(&profile, true);
+    launch.destinations =
+        vec![
+            AdmittedDestination::fixture("fixture.test", IpAddr::V4(Ipv4Addr::LOCALHOST))
+                .expect("fixture.test"),
+        ];
+    launch.test_trusted_spki = Some(fixture.spki.clone());
+    let mut worker = launch_worker(&launch, &Policy(PolicyKeyState::Absent)).expect("launch");
+    let scope = crate::observation::ObservationScope {
+        workspace: "workspace".into(),
+        profile_identity: "profile".into(),
+    };
+    worker
+        .navigate("https://fixture.test/leave-page")
+        .expect("navigate");
+    let live = worker.observe(&scope).expect("observe");
+    let mut stack: Vec<&crate::observation::ObservedNode> = live.observation.nodes.iter().collect();
+    let mut link = None;
+    while let Some(node) = stack.pop() {
+        if worker
+            .host_node(&node.node_id)
+            .is_some_and(|h| h.role == "link" && h.name == "Annual review 2026-09-30")
+        {
+            link = Some(node.node_id.clone());
+        }
+        stack.extend(node.children.iter());
+    }
+    let link = link.expect("the link is observed");
+    let (target, mut approval) = approved_click(&worker, &live, &link);
+    let opened = worker
+        .activate(&target, &mut approval, 1, "workspace")
+        .expect("the approved activation leaves the page");
+    assert_eq!(opened.url, "https://fixture.test/archive/2026-09-30");
+    let seen = worker.take_dismissed_dialogs().expect("dialogs");
+    // Exactly the one question the page asked, answered yes: the test fails
+    // if no beforeunload fired (it would then prove nothing).
+    assert_eq!(seen.dialogs.len(), 1, "{seen:?}");
+    assert_eq!(seen.dialogs[0].kind, DialogKind::BeforeUnload);
+    assert!(seen.dialogs[0].accepted);
+}
+
 /// BR-03: a file staged from an approved folder is set on the approved file
 /// input, byte for byte; an approval names the origin and the file, so it
 /// covers no other file, and a text field is not a file input.
@@ -2060,7 +2221,9 @@ fn approved_form(
         document_generation: live.document.document_generation,
         node_id: node_id.to_owned(),
         role: role.into(),
-        state: worker.form_binding(node_id, input).unwrap_or_default(),
+        state: worker
+            .form_binding(node_id, input, None)
+            .unwrap_or_default(),
         action: input.action(),
         workspace: "workspace".into(),
         policy_revision: 1,
@@ -2130,7 +2293,7 @@ fn br02_approved_form_actions_change_only_what_was_approved() {
         input: FormInput,
     ) -> Result<crate::worker_launch::FormOutcome, HostError> {
         let (target, mut approval) = approved_form(worker, live, node, role, &input);
-        worker.form_action(&target, &mut approval, &input, 1, "workspace")
+        worker.form_action(&target, &mut approval, &input, None, 1, "workspace")
     }
     let filled = act(
         &mut worker,
@@ -2181,7 +2344,7 @@ fn br02_approved_form_actions_change_only_what_was_approved() {
     let other = FormInput::Fill {
         value: "Eve".into(),
     };
-    let mismatch = worker.form_action(&target, &mut approval, &other, 1, "workspace");
+    let mismatch = worker.form_action(&target, &mut approval, &other, None, 1, "workspace");
     assert!(
         matches!(mismatch, Err(HostError::Invalid(_))),
         "{mismatch:?}"
