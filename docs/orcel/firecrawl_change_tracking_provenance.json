@@ -11,7 +11,7 @@
   },
   "method": "PORT",
   "dependencies": {
-    "similar": "2 (Apache-2.0), default features off, text only; replaces the donor's diff and parse-diff packages"
+    "similar": "2.7.0 (Apache-2.0, no transitive dependencies), default features off; crates.io checksum bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa; replaces the donor's diff and parse-diff packages"
   },
   "files": [
     {
@@ -20,7 +20,7 @@
       "donor_blob": "f447df3c106342aa6e82e155fb0e39553b330dd6",
       "adapted": "createMarkdownChangeDiff: a unified diff of previous.md against current.md with three lines of context, its structured form (hunks of add, del and normal lines with line numbers), and no result when no line changed",
       "row": "WI-04",
-      "changes": "similar (Myers, with a deadline) instead of diff and parse-diff; the diff is cut at the extraction bound and marked truncated; a workspace-scoped store of the last extraction per canonical URL (no fragment), bounded to 256 pages and 64 MiB, least recently tracked evicted first, written atomically, refused (not replaced) when corrupt, with forget and clear"
+      "changes": "similar (Myers with a 2-second deadline, so a heavily changed page may get a coarser diff) instead of diff and parse-diff; lines end only at \n (a \r stays in its line), with the no-newline marker as in jsdiff; no ==== separator or tab-suffixed file headers, and a one-line range is written without ,1; a diff over MAX_DIFF_BYTES is cut at a line, its hunk headers count the lines emitted, and it is marked truncated (still a change when no hunk fits); a workspace-scoped store of the last extraction per page key (canonical URL without fragment, scheme and host lower-cased, default port dropped, empty path as /), bounded to 256 pages and 64 MiB with least-recently-tracked eviction; read with a size bound; refused (not replaced) when corrupt, duplicated or out of bounds; a change takes effect only once written through a fresh, synced temporary file renamed over the store; forget and clear (which also removes stray temporary files); I/O failures reported as I/O errors"
     }
   ],
   "authority_delta": "None: stored and returned text is still untrusted page text in the caller's workspace.",
