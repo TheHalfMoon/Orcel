@@ -95,6 +95,7 @@ test("BR-02: press keys come from a closed list; hover has no input; waits are b
   for (const bad of [
     { frame: "form_action", form_id: 5, action: "press", ref: "e2", key: "a" },
     { frame: "form_action", form_id: 5, action: "press", ref: "e2", key: "Control+A" },
+    { frame: "form_action", form_id: 5, action: "press", ref: "e2", key: "Backspace" },
     { frame: "form_action", form_id: 5, action: "press", ref: "e2" },
     { frame: "form_action", form_id: 5, action: "hover", ref: "e2", key: "Enter" },
     { frame: "form_action", form_id: 5, action: "toString", ref: "e2" },

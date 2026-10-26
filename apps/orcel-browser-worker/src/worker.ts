@@ -299,7 +299,8 @@ export class Worker {
       }
       case "wait_for": {
         if (this.state !== "launched" || !this.session) return this.fail("not_ready");
-        if (this.waiting) {
+        // One at a time, and never while the document is being replaced.
+        if (this.waiting || this.navigating) {
           this.send({ frame: "wait_failed", wait_id: frame.wait_id });
           return;
         }

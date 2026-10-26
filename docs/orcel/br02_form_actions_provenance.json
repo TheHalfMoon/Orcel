@@ -41,7 +41,7 @@
       "donor_blob": "f8f3abd271a0524d3258ae9c0c5f3c96171b0d5c (keyboard.ts), cda3d0fa6cfb8ff7a28a104e32ce34f4b5573588 (snapshot.ts)",
       "adapted": "browser_press_key (locator.press) and browser_hover (locator.hover)",
       "row": "BR-02",
-      "changes": "press sends one key from a closed list (navigation and editing keys, Space; no characters, no modifiers) to the approved element, never to a field that looks secret (worker exclusions and host name check); hover moves the pointer over the approved element; both are one-shot approvals and open no document while they run"
+      "changes": "press sends one key from a closed list (Enter, Tab, Escape, arrows, Home, End, PageUp, PageDown, Space; no characters but Space, no deletion, no modifiers) only after the approved element itself holds focus, never to a field that looks secret (worker exclusions and host name check), Space only on buttons, checkboxes, radios, options, menu items and tabs (never typed into a text field), never Enter into a textarea; roles are matched exactly and only focusable controls qualify; hover moves the pointer over the approved element; both are one-shot approvals and open no top-level document or popup while they run"
     },
     {
       "path": "apps/orcel-browser-worker/src/actions/wait.ts",
@@ -49,15 +49,17 @@
       "donor_blob": "11aa2a8d5e29a5591b808b495e6fb0a202a08aea",
       "adapted": "browser_wait_for (text, textGone)",
       "row": "BR-02",
-      "changes": "read-only and unapproved; one text per wait, matched as BR-07 matches visible text; main frame; at most 8 s; reports met or not; the plain time wait is not ported"
+      "changes": "read-only and unapproved; one text per wait, matched as BR-07 matches visible text; visible copies only (the donor waits on the first match, visible or not); main frame; at most 8 s; refused while a navigation runs; reports met or not; the plain time wait is not ported"
     }
   ],
   "authority_delta": "New approval-gated browser actions (fill, select, check, press, hover) on the committed document; each needs a one-shot approval bound to the node and the exact input. No secret field is filled or typed into; no document may open during the action. The bounded text wait is read-only.",
   "residuals": [
-    "drag (two bound elements) is not in this BR-02 work; pressing Enter cannot submit a form (no document may open during a press), submissions go through the approved execute and click actions.",
+    "drag (two bound elements) is not in this BR-02 work. No top-level document or popup opens during a press, but Enter can still trigger a same-origin fetch from a page handler, a form targeting a frame submits as a frame document, and a page may submit after the action ends; submissions Orcel makes go through the approved execute and click actions.",
     "Non-native comboboxes (open, then choose by accessible name), multi-line textarea values and controls inside frames are refused.",
     "orceld and the MCP tool contract do not expose these actions; changing the tool contract goes through governance. When orceld exposes them, the approval state (which contains the user's value) must be redacted from evidence and logs, and OutcomeUnknown must map to a do-not-repeat failure.",
     "During an action, frame documents and same-origin fetches still follow the usual rules; a page may still navigate itself on its own origin after an action ends (the existing page-initiated rule).",
-    "target_digest joins fields with '|' and a fill value may contain '|'; no collision is reachable because the other fields are checked independently, but length-prefixed fields would be stronger."
+    "target_digest joins fields with '|' and a fill value may contain '|'; no collision is reachable because the other fields are checked independently, but length-prefixed fields would be stronger.",
+    "A page script can still move focus between the focus check and the key's delivery (the press is not atomic with the check).",
+    "A wait compares the URL, not the document generation: a same-URL reload by the page itself during a wait is not detected."
   ]
 }

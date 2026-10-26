@@ -20,8 +20,10 @@
 // commit's `keyboard.ts` (blob f8f3abd271a0524d3258ae9c0c5f3c96171b0d5c,
 // `locator.press`) and `snapshot.ts` (blob
 // cda3d0fa6cfb8ff7a28a104e32ce34f4b5573588, browser_hover: `locator.hover`):
-// a key from a closed list, pressed on the approved element (not the page's
-// keyboard), never on a field that looks secret; no modifiers.
+// a key from a closed list (no characters but Space, no deletion, no
+// modifiers), sent only after the approved element itself holds focus, never
+// to a field that looks secret, never Enter into a textarea; a page script
+// can still move focus while the key is delivered.
 
 import type { Locator, Page } from "playwright-core";
 import type { ApprovedTarget } from "../protocol.js";
@@ -50,14 +52,12 @@ export const PRESS_KEYS = [
   "End",
   "PageUp",
   "PageDown",
-  "Backspace",
-  "Delete",
   "Space"
 ] as const;
 export type PressKey = (typeof PRESS_KEYS)[number];
 
 /// The page surface form actions use (a Playwright `Page`, or a test stub).
-export type FormPage = TargetPage & Pick<Page, "locator">;
+export type FormPage = TargetPage & Pick<Page, "locator" | "keyboard">;
 
 /// What no fill ever resolves to, part of the locator the fill itself
 /// resolves (so a page that turns a field secret after the check is still
@@ -131,10 +131,16 @@ export async function formAction(page: FormPage, ref: string, action: FormAction
       case "check":
         await own.setChecked(action.checked, options);
         return;
-      case "press":
+      case "press": {
         if (await isSecretField(own)) throw new NavigationError("denied");
-        await own.press(action.key === "Space" ? " " : action.key, options);
+        // Enter in a textarea would add a line (multi-line values are refused).
+        if (action.key === "Enter" && (await own.and(page.locator("textarea")).count()) > 0) throw new NavigationError("denied");
+        await own.focus(options);
+        // The key goes to whatever holds focus: only the approved element.
+        if ((await own.and(page.locator(":focus")).count()) !== 1) throw new NavigationError("denied");
+        await page.keyboard.press(action.key === "Space" ? " " : action.key);
         return;
+      }
       case "hover":
         await own.hover(options);
         return;

@@ -1830,6 +1830,7 @@ mod platform {
                 .get(node_id)
                 .ok_or_else(|| HostError::Invalid("stale or unknown node".into()))?;
             crate::actuation::role_supports_action(&node.role, input.action())?;
+            input.check_for_role(&node.role)?;
             if matches!(
                 input,
                 crate::actuation::FormInput::Fill { .. }
@@ -1883,6 +1884,7 @@ mod platform {
                     "form actions inside frames are not supported".into(),
                 ));
             }
+            input.check_for_role(&target.role)?;
             // A field named like a secret is never filled or typed into,
             // whatever its attributes (checked before the approval is spent).
             if matches!(
@@ -2032,7 +2034,8 @@ mod platform {
                 WorkerReply::WaitFailed { wait_id: done } if done == wait_id => {
                     Err(HostError::Unavailable(UnavailableReason::ActionFailed))
                 }
-                _ => Err(HostError::Unavailable(UnavailableReason::ProtocolViolation)),
+                // Out of step with the worker: the lifetime ends.
+                _ => Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
             }
         }
 
@@ -2113,7 +2116,8 @@ mod platform {
                     WorkerReply::VerificationFailed { ver_id: done } if done == ver_id => {
                         return Err(HostError::Unavailable(UnavailableReason::LaunchFailed))
                     }
-                    _ => return Err(HostError::Unavailable(UnavailableReason::ProtocolViolation)),
+                    // Out of step with the worker: the lifetime ends.
+                    _ => return Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
                 }
             }
             let facts = crate::verify::HostFacts {

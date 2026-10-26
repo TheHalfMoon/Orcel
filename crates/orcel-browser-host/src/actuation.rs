@@ -79,6 +79,8 @@ pub fn role_supports_action(role: &str, action: SupportedAction) -> Result<(), H
         SupportedAction::Execute => &["webmcp-tool"],
         SupportedAction::Select => &["combobox", "listbox"],
         SupportedAction::Check => &["checkbox", "radio"],
+        // Focusable controls only: a key pressed on an element that cannot
+        // take focus would go to whatever had it.
         SupportedAction::Press => &[
             "textbox",
             "searchbox",
@@ -92,13 +94,25 @@ pub fn role_supports_action(role: &str, action: SupportedAction) -> Result<(), H
             "menuitem",
             "tab",
             "slider",
-            "dialog",
-            "grid",
-            "tree",
         ],
         SupportedAction::Hover => &["button", "link", "menuitem", "tab", "img", "image"],
     };
-    if allowed.iter().any(|entry| lower.contains(entry)) {
+    // BR-02's actions match roles exactly (`tab` is not `table`); the
+    // earlier actions keep their substring rule.
+    let exact = matches!(
+        action,
+        SupportedAction::Select
+            | SupportedAction::Check
+            | SupportedAction::Press
+            | SupportedAction::Hover
+    );
+    if allowed.iter().any(|entry| {
+        if exact {
+            lower == *entry
+        } else {
+            lower.contains(entry)
+        }
+    }) {
         return Ok(());
     }
     Err(HostError::Invalid(
@@ -113,7 +127,7 @@ pub const MAX_FORM_OPTIONS: usize = 16;
 /// BR-02: the keys an approved press may send (mirrors the worker):
 /// navigation and editing keys only, no characters (Space aside) and no
 /// modifiers.
-pub const PRESS_KEYS: [&str; 14] = [
+pub const PRESS_KEYS: [&str; 12] = [
     "Enter",
     "Tab",
     "Escape",
@@ -125,10 +139,13 @@ pub const PRESS_KEYS: [&str; 14] = [
     "End",
     "PageUp",
     "PageDown",
-    "Backspace",
-    "Delete",
     "Space",
 ];
+
+/// Roles a Space may be pressed on: controls Space activates or toggles,
+/// never a text field (where it would type, which only an approved fill
+/// may do).
+const SPACE_ROLES: [&str; 6] = ["button", "checkbox", "radio", "option", "menuitem", "tab"];
 
 /// BR-02: one form action and its exact input. Its `state` is what the
 /// one-shot approval binds (through the target digest), so the approver
@@ -238,6 +255,22 @@ pub fn name_looks_secret(name: &str) -> bool {
         || pair("security", "code")
         || pair("one", "time")
         || pair("verification", "code")
+}
+
+impl FormInput {
+    /// Refuses an input the target's role cannot take (a Space on a text
+    /// field), beyond `role_supports_action`.
+    pub fn check_for_role(&self, role: &str) -> Result<(), HostError> {
+        if let Self::Press { key } = self {
+            if key == "Space" && !SPACE_ROLES.contains(&role.to_ascii_lowercase().as_str()) {
+                return Err(HostError::Invalid(
+                    "Space is pressed only on buttons, checkboxes, radios, options, menu items and tabs"
+                        .into(),
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Exact pre-dispatch target binding.
@@ -480,7 +513,18 @@ Enter"
             )
         );
         assert!(press.check().is_ok());
-        for key in ["a", "Control+A", "enter", ""] {
+        assert!(press.check_for_role("textbox").is_ok());
+        let space = FormInput::Press {
+            key: "Space".into(),
+        };
+        assert!(space.check_for_role("checkbox").is_ok());
+        assert!(space.check_for_role("textbox").is_err(), "Space would type");
+        assert!(
+            role_supports_action("table", SupportedAction::Hover).is_err(),
+            "exact roles"
+        );
+        assert!(role_supports_action("dialog", SupportedAction::Press).is_err());
+        for key in ["a", "Control+A", "enter", "", "Backspace", "Delete"] {
             assert!(
                 FormInput::Press { key: key.into() }.check().is_err(),
                 "{key}"
