@@ -1,0 +1,60 @@
+{
+  "schema": "orcel-wi03-relevance-provenance/1",
+  "task": "WI-03",
+  "donor": {
+    "repository": "unclecode/crawl4ai",
+    "commit": "94b67888ca8b335ff2121423a50e06dd27661922",
+    "license": "Apache-2.0 with an attribution requirement (LICENSE, section after END OF TERMS AND CONDITIONS)",
+    "license_path": "LICENSE",
+    "license_blob_sha": "ade44a7824869fe57a3dfa98ad4b7ffb764c3cb0",
+    "notice_path": "docs/orcel/notices/crawl4ai-Apache-2.0-attribution.txt",
+    "required_attribution": "This product includes software developed by UncleCode (https://x.com/unclecode) as part of the Crawl4AI project (https://github.com/unclecode/crawl4ai).",
+    "attribution_carried_by": "scripts/third-party-notices.mjs (VENDORED_NOTICES; the release fails if the notice lacks the sentence) into each release package's THIRD_PARTY_NOTICES.txt"
+  },
+  "imports": [
+    {
+      "source": "crawl4ai/content_filter_strategy.py (BM25ContentFilter, RelevantContentFilter.extract_text_chunks)",
+      "source_blob_sha": "24634ac328669dd5c0ed6cf0b5afb73e798178bc",
+      "destination": "apps/orcel-browser-worker/src/extract/relevance.ts",
+      "reuse": "PORT",
+      "modified": true,
+      "modification_summary": "Runs over Orcel's content model (rendered, visible text only) and returns a pruned tree. An empty query, or one with no word after stop words, filters nothing; the donor's page-derived query (title, meta tags, first long paragraph) is not ported, so a page cannot choose its own relevance. No stemming (the donor's use_stemming=False path). Words lose edge punctuation; a chunk's text pieces are joined with a space. A kept chunk keeps its own text plus the childless elements of its element, so text is never repeated. Query bounded to 1024 bytes and 32 words.",
+      "authority_delta": "None: still untrusted page text, produced inside the worker from the same snapshot."
+    },
+    {
+      "source": "crawl4ai/content_filter_strategy.py (PruningContentFilter)",
+      "source_blob_sha": "24634ac328669dd5c0ed6cf0b5afb73e798178bc",
+      "destination": "apps/orcel-browser-worker/src/extract/relevance.ts",
+      "reuse": "PORT",
+      "modified": true,
+      "modification_summary": "The dynamic threshold with the donor's weights and tag importance; min_word_threshold and preserve lists not ported. tag_len is the length of the content model serialised as HTML. The class/id term is kept but, as in the donor, never adds score. Iterative, not recursive.",
+      "authority_delta": "None."
+    },
+    {
+      "source": "crawl4ai/utils.py (clean_tokens)",
+      "source_blob_sha": "b2e2cba7cfcac7327192143ad0308f9c1922d552",
+      "destination": "apps/orcel-browser-worker/src/extract/relevance.ts",
+      "reuse": "PORT",
+      "modified": false,
+      "modification_summary": "Noise set, stop words and the length rule as upstream.",
+      "authority_delta": "None."
+    },
+    {
+      "source": "rank_bm25 BM25Okapi (called by the donor; k1 1.5, b 0.75, epsilon 0.25)",
+      "source_blob_sha": null,
+      "destination": "apps/orcel-browser-worker/src/extract/relevance.ts (bm25Scores)",
+      "reuse": "REIMPLEMENTED",
+      "modified": true,
+      "modification_summary": "The published Okapi formula with rank_bm25's negative-idf floor, reimplemented; no rank_bm25 code is copied. An all-empty corpus scores zero instead of NaN.",
+      "authority_delta": "None."
+    }
+  ],
+  "not_imported": [
+    { "source": "LLMContentFilter", "reason": "REJECT in DONOR_REGISTRY: a model call per page, outside the extraction budget." },
+    { "source": "PruningContentFilterLXML and the Python runtime", "reason": "The TypeScript port covers the same behaviour; no Python is shipped." }
+  ],
+  "residuals": [
+    "Extraction relevance is an ExtractOptions field; the worker frame and host/MCP extract surface do not carry it yet (same pattern as WI-01/WI-02 core-first).",
+    "Orcel has no About surface yet; when one exists it must show the attribution sentence (the license names an About or Credits section for applications)."
+  ]
+}
