@@ -1292,7 +1292,7 @@ mod platform {
         next_ver: u64,
         next_form: u64,
         next_wait: u64,
-        next_upload: u64,
+        next_staged: u64,
         next_upload_request: u64,
         /// BR-03: files staged for upload in this lifetime, by staged id,
         /// each held open so it cannot be changed or replaced.
@@ -1409,7 +1409,7 @@ mod platform {
             next_ver: 0,
             next_form: 0,
             next_wait: 0,
-            next_upload: 0,
+            next_staged: 0,
             next_upload_request: 0,
             uploads: std::collections::HashMap::new(),
             value_budget: crate::verify::GuessBudget::default(),
@@ -2069,8 +2069,8 @@ mod platform {
                 .filter(|name| !name.is_empty())
                 .ok_or_else(|| HostError::Invalid("the source has no file name".into()))?
                 .to_owned();
-            self.next_upload += 1;
-            let staged_id = format!("up-{}", self.next_upload);
+            self.next_staged += 1;
+            let staged_id = format!("up-{}", self.next_staged);
             let folder = self.staging.join(&staged_id);
             std::fs::create_dir_all(&folder)
                 .map_err(|err| HostError::Platform(format!("upload staging: {err}")))?;
@@ -2097,7 +2097,12 @@ mod platform {
             };
             let staged = StagedUpload {
                 staged_id: staged_id.clone(),
-                source: format!("{bound_root}\\{normalized}"),
+                // What the approver reads: no verbatim prefix, one separator.
+                source: format!(
+                    "{}\\{}",
+                    bound_root.strip_prefix(r"\\?\").unwrap_or(bound_root),
+                    normalized.replace('/', "\\")
+                ),
                 name,
                 bytes: content.len() as u64,
                 sha256: sha256_hex(&content),

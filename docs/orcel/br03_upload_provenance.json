@@ -40,6 +40,7 @@
   "residuals": [
     "File choosers opened by custom buttons (no <input type=file> to set directly) are not answered.",
     "The backlog's approval class (SOFT, or STRONG when the workspace is marked sensitive) is orceld's decision and is not wired; orceld and the MCP tool contract do not expose uploads yet.",
-    "Uploads inside frames are refused (main-frame refs only)."
+    "Uploads inside frames are refused (main-frame refs only).",
+    "The host trusts its caller (orceld, once wired) to compute approved_folder_identity when the user approves the folder and to pass it back unchanged; nothing in the host checks that the folder was ever approved (as for downloads)."
   ]
 }
