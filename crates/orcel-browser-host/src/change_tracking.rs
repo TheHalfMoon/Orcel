@@ -173,7 +173,7 @@ pub fn markdown_change_diff(previous: &str, current: &str) -> Option<ChangeDiff>
                 });
             }
         }
-        if !changes.is_empty() {
+        if changes.iter().any(|c| c.kind != LineKind::Normal) {
             let old_count = changes.iter().filter(|c| c.kind != LineKind::Add).count();
             let new_count = changes.iter().filter(|c| c.kind != LineKind::Del).count();
             hunks.push(Hunk {
@@ -310,7 +310,12 @@ fn page_key(url: &str) -> String {
     let rest = &url[at + 3..];
     let end = rest.find(['/', '?']).unwrap_or(rest.len());
     let (authority, tail) = rest.split_at(end);
-    let mut host = authority.to_ascii_lowercase();
+    // User information is case-sensitive; only the host is lower-cased.
+    let (userinfo, host) = match authority.rfind('@') {
+        Some(at) => authority.split_at(at + 1),
+        None => ("", authority),
+    };
+    let mut host = host.to_ascii_lowercase();
     let default_port = match scheme.as_str() {
         "https" => Some(":443"),
         "http" => Some(":80"),
@@ -326,7 +331,7 @@ fn page_key(url: &str) -> String {
     } else {
         tail.to_owned()
     };
-    canonical(&format!("{scheme}://{host}{path}"))
+    canonical(&format!("{scheme}://{userinfo}{host}{path}"))
 }
 
 /// Reads at most `limit` bytes of `path`; `None` when it is missing.
@@ -445,7 +450,7 @@ impl ChangeStore {
         for entry in entries {
             let entry = entry?;
             let file = entry.file_name().to_string_lossy().into_owned();
-            if file.starts_with(&prefix) && file.ends_with(".tmp") {
+            if is_temp_name(&file, &prefix) {
                 match std::fs::remove_file(entry.path()) {
                     Ok(()) => {}
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -481,9 +486,18 @@ impl ChangeStore {
             file.sync_all()?;
             drop(file);
             std::fs::rename(&temp, &self.path)?;
+            // The rename is done: the new store is what a reopen reads, so a
+            // failure to sync the directory entry must not report the write
+            // as failed (memory would then disagree with disk).
             #[cfg(unix)]
-            if let Some(dir) = self.path.parent() {
-                std::fs::File::open(dir)?.sync_all()?;
+            {
+                let dir = match self.path.parent() {
+                    Some(dir) if !dir.as_os_str().is_empty() => dir,
+                    _ => Path::new("."),
+                };
+                if let Ok(dir) = std::fs::File::open(dir) {
+                    let _ = dir.sync_all();
+                }
             }
             Ok(())
         })();
@@ -493,6 +507,19 @@ impl ChangeStore {
         }
         Ok(())
     }
+}
+
+/// Whether `file` is `<prefix><digits>.<digits>.tmp`, the shape of
+/// `temp_path`.
+fn is_temp_name(file: &str, prefix: &str) -> bool {
+    let Some(middle) = file
+        .strip_prefix(prefix)
+        .and_then(|rest| rest.strip_suffix(".tmp"))
+    else {
+        return false;
+    };
+    let digits = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+    matches!(middle.split_once('.'), Some((pid, n)) if digits(pid) && digits(n))
 }
 
 /// `<store>.<pid>.<n>.tmp`, unique to this process and write.
@@ -582,6 +609,11 @@ mod tests {
         assert_eq!(at_top.hunks[0].header, "@@ -1,2 +1,3 @@");
         let at_end = markdown_change_diff("a\nb\n", "a\n").unwrap();
         assert_eq!(at_end.hunks[0].header, "@@ -1,2 +1 @@");
+        // A pure insertion in the middle: literal header.
+        let middle: String = (1..=20).map(|n| format!("{n}\n")).collect();
+        let inserted = middle.replace("10\n", "10\nnew\n");
+        let diff = markdown_change_diff(&middle, &inserted).unwrap();
+        assert_eq!(diff.hunks[0].header, "@@ -8,6 +8,7 @@");
     }
 
     #[test]
@@ -703,6 +735,15 @@ mod tests {
             Change::New,
             "the query is part of the page"
         );
+        assert_eq!(
+            page_key("https://User@Site.Test:443"),
+            "https://User@site.test/",
+            "user information keeps its case"
+        );
+        assert_eq!(
+            page_key("https://site.test:8443/a"),
+            "https://site.test:8443/a"
+        );
         assert_eq!(reopened.len(), 4);
         assert!(reopened.forget("https://site.test/docs/").unwrap());
         assert!(!reopened.forget("https://site.test/never").unwrap());
@@ -821,9 +862,12 @@ mod tests {
         std::fs::write(&stray, "secret page text").unwrap();
         let unrelated = dir.0.join("other.tmp");
         std::fs::write(&unrelated, "x").unwrap();
+        let lookalike = dir.0.join("changes.json.backup.tmp");
+        std::fs::write(&lookalike, "x").unwrap();
         store.clear().unwrap();
         assert!(!stray.exists());
         assert!(unrelated.exists(), "only the store's own temporary files");
+        assert!(lookalike.exists(), "only the exact temporary-file shape");
     }
 
     #[test]
