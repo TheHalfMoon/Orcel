@@ -77,6 +77,69 @@ RAISES = """
 """
 
 
+SLEEPS = """
+    import time
+    import orcel_bench as ob
+
+    @ob.tasks_config
+    def load():
+        return [ob.Task(description="x")]
+
+    @ob.setup_task
+    async def setup(task, session):
+        pass
+
+    @ob.solve_task
+    async def solve(task, session):
+        time.sleep(3)
+
+    @ob.evaluate_task
+    async def evaluate(task, session):
+        return 1.0
+"""
+
+RAISES_TIMEOUT = """
+    import orcel_bench as ob
+
+    @ob.tasks_config
+    def load():
+        return [ob.Task(description="x")]
+
+    @ob.setup_task
+    async def setup(task, session):
+        pass
+
+    @ob.solve_task
+    async def solve(task, session):
+        raise TimeoutError("the task's own")
+
+    @ob.evaluate_task
+    async def evaluate(task, session):
+        return 1.0
+"""
+
+# Variants with the given task ids (None: the index is used).
+OK_TASK = """
+    import orcel_bench as ob
+
+    @ob.tasks_config
+    def load():
+        return [ob.Task(description="x", task_id=i) for i in ({ids},)]
+
+    @ob.setup_task
+    async def setup(task, session):
+        pass
+
+    @ob.solve_task
+    async def solve(task, session):
+        pass
+
+    @ob.evaluate_task
+    async def evaluate(task, session):
+        return 1.0
+"""
+
+
 class OracleDryRun(unittest.TestCase):
     def test_every_orcel_task_is_solved_by_its_oracle_and_the_report_validates(self) -> None:
         tasks = all_tasks()
@@ -93,6 +156,9 @@ class OracleDryRun(unittest.TestCase):
             self.assertTrue(all(row["status"] == "pass" and row["observed"] == "solved" for row in produced["rows"]))
             node = shutil.which("node")
             if node is None:
+                # Under CI the report must be checked, never skipped.
+                if os.environ.get("CI"):
+                    self.fail("node is required under CI to check the report")
                 self.skipTest("node is not installed; the report shape is checked by CI")
             checked = subprocess.run(
                 [node, str(REPO / "scripts" / "check-benchmark-report.mjs"), str(out)],
@@ -124,8 +190,30 @@ class OracleDryRun(unittest.TestCase):
     def test_rewards(self) -> None:
         self.assertEqual(reward_of([1.0, 0.0]), 0.5)
         self.assertEqual(reward_of(True), 1.0)
-        self.assertIsNone(reward_of(float("nan")))
-        self.assertIsNone(reward_of("1.0"))
+        self.assertEqual(reward_of(1), 1.0)
+        for bad in [float("nan"), "1.0", None, [], [1.0, None], [1.0, "x"], [1.5, 0.5], -0.1, 2]:
+            self.assertIsNone(reward_of(bad), repr(bad))
+
+    def test_a_blocking_phase_times_out_and_a_task_timeout_error_is_a_phase_error(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch:
+            sleeps = write_task(Path(scratch), "probe", "sleeps", SLEEPS)
+            (row,) = run_oracle([sleeps], timeout=0.5)
+            self.assertEqual((row["status"], row["observed"]), ("error", "timeout"))
+            raises = write_task(Path(scratch), "probe", "raises-timeout", RAISES_TIMEOUT)
+            (row,) = run_oracle([raises], timeout=5)
+            self.assertEqual((row["status"], row["observed"]), ("error", "solve-error"))
+
+    def test_case_ids_are_checked_unique_and_bounded(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch:
+            bad_group = write_task(Path(scratch), "My Group", "ok", OK_TASK.format(ids='"v"'))
+            with self.assertRaises(TaskLoadError):
+                run_oracle([bad_group])
+            duplicate = write_task(Path(scratch), "probe", "dup", OK_TASK.format(ids='None, "0"'))
+            with self.assertRaises(TaskLoadError):
+                run_oracle([duplicate])
+            long = write_task(Path(scratch), "probe", "long", OK_TASK.format(ids='"a" * 300'))
+            with self.assertRaises(TaskLoadError):
+                run_oracle([long])
 
     def test_report_needs_a_full_commit(self) -> None:
         with self.assertRaises(ValueError):

@@ -20,6 +20,9 @@ only, never in the product, and only its standard library.
   - A row's `status` is `pass`, `fail` or `error`.
   - Its `observed` value is a fixed code, never task text or an error message: `solved`, `unsolved`, `<phase>-error` or `timeout`.
   - With `--repeat N`, latency is reported as P50/P95.
+  - Each phase runs on its own thread with a 30 s deadline, so it times out even when it blocks without awaiting. A `TimeoutError` the task raises itself is reported as a phase error, not a timeout.
+  - Rewards are strict: a reward must be a number in [0, 1] or a non-empty list of them. Any missing or bad value means the variant is unsolved.
+  - Case ids are `<group>/<task>/<variant>`. Every part is checked, ids are unique, and an id is at most 200 characters.
   - The report never records the CPU model or memory, and never runs in a cloud.
 - **Tasks:** `tasks/orcel/` holds Orcel-owned tasks:
   - `hello-file` writes a word into a file;

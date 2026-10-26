@@ -11,7 +11,10 @@ Modifications for Orcel: oracle only (no agents, no models, no cloud, no
 screenshots or traces); each episode gets its own disposable FileSession;
 results are rows of orcel-benchmark-report/1
 (docs/orcel/implementation-readiness/protocol/BENCHMARK_REPORT_1.schema.json),
-whose observed codes are fixed words, never task text or error messages.
+whose observed codes are fixed words, never task text or error messages;
+``reward_of`` is strict (a missing, non-numeric or out-of-range value is no
+reward, so the variant is unsolved); each phase runs on its own thread with
+a deadline, so a phase that blocks without awaiting still times out.
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ import importlib.util
 import math
 import platform
 import re
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,6 +40,8 @@ PLANNER = {"kind": "deterministic", "name": "oracle", "version": "1"}
 _CASE_PART = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 #: How long one phase of one episode may take.
 PHASE_TIMEOUT_S = 30.0
+#: The schema's longest case id.
+MAX_CASE_CHARS = 200
 
 
 class TaskLoadError(Exception):
@@ -75,17 +81,19 @@ def load_task(directory: Path, split: str = "train") -> TaskModule:
 
 
 def reward_of(evaluation: Any) -> Optional[float]:
-    """Scalar reward from an evaluate() result (a number or a list of numbers)."""
-    if evaluation is None:
-        return None
+    """Scalar reward from an evaluate() result (a number in [0, 1], or a
+    non-empty list of them, averaged). Anything else, including one bad
+    entry in a list, is no reward."""
     if isinstance(evaluation, bool):
         return 1.0 if evaluation else 0.0
     if isinstance(evaluation, (int, float)):
-        return float(evaluation) if math.isfinite(evaluation) else None
+        value = float(evaluation)
+        return value if math.isfinite(value) and 0.0 <= value <= 1.0 else None
     if isinstance(evaluation, (list, tuple)) and evaluation:
         values = [reward_of(v) for v in evaluation]
-        values = [v for v in values if v is not None]
-        return sum(values) / len(values) if values else None
+        if any(v is None for v in values):
+            return None
+        return sum(values) / len(values)  # type: ignore[arg-type]
     return None
 
 
@@ -96,21 +104,44 @@ class Episode:
     seconds: float
 
 
-async def _phase(func: Callable[..., Any], task: Task, session: FileSession) -> Any:
-    return await asyncio.wait_for(func(task, session), PHASE_TIMEOUT_S)
+class _PhaseTimeout(Exception):
+    """The runner's own deadline (never a TimeoutError a task raises)."""
 
 
-async def run_episode(module: TaskModule, task: Task) -> Episode:
+def _phase(func: Callable[..., Any], task: Task, session: FileSession, timeout: float) -> Any:
+    """Run one async phase on its own thread and event loop, with a
+    deadline that holds even when the phase blocks without awaiting. A
+    phase past its deadline is abandoned (a daemon thread), its session is
+    closed so it can do nothing more there, and the episode is a timeout."""
+    outcome: dict[str, Any] = {}
+
+    def target() -> None:
+        try:
+            outcome["value"] = asyncio.run(func(task, session))
+        except BaseException as error:  # noqa: BLE001 - re-raised below
+            outcome["error"] = error
+
+    thread = threading.Thread(target=target, daemon=True)
+    thread.start()
+    thread.join(timeout)
+    if thread.is_alive():
+        raise _PhaseTimeout()
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome.get("value")
+
+
+def run_episode(module: TaskModule, task: Task, timeout: float = PHASE_TIMEOUT_S) -> Episode:
     session = FileSession()
     started = time.perf_counter()
     phase = "setup"
     try:
-        await _phase(module.functions["setup_task"], task, session)
+        _phase(module.functions["setup_task"], task, session, timeout)
         phase = "solve"
-        await _phase(module.functions["solve_task"], task, session)
+        _phase(module.functions["solve_task"], task, session, timeout)
         phase = "evaluate"
-        reward = reward_of(await _phase(module.functions["evaluate_task"], task, session))
-    except asyncio.TimeoutError:
+        reward = reward_of(_phase(module.functions["evaluate_task"], task, session, timeout))
+    except _PhaseTimeout:
         return Episode("error", "timeout", time.perf_counter() - started)
     except Exception:  # noqa: BLE001 - a failing task is a result, its message is not reported
         return Episode("error", f"{phase}-error", time.perf_counter() - started)
@@ -135,19 +166,30 @@ def _variant_id(task: Task, index: int) -> str:
     return variant
 
 
-def run_oracle(task_dirs: list[Path], repeat: int = 1, split: str = "train") -> list[dict[str, Any]]:
+def run_oracle(
+    task_dirs: list[Path], repeat: int = 1, split: str = "train", timeout: float = PHASE_TIMEOUT_S
+) -> list[dict[str, Any]]:
     """One report row per task variant; ``repeat`` episodes give its latency."""
     if repeat < 1:
         raise ValueError("repeat must be at least 1")
     rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for directory in task_dirs:
+        group = directory.parent.name
+        if not _CASE_PART.match(group):
+            raise TaskLoadError(f"{directory}: the group directory name is not a case id part")
         module = load_task(directory, split)
         tasks = module.functions["tasks_config"]()
         if not isinstance(tasks, list) or not all(isinstance(task, Task) for task in tasks):
             raise TaskLoadError(f"{directory}: tasks_config must return a list of Task")
         for index, task in enumerate(tasks):
-            case = f"{directory.parent.name}/{module.name}/{_variant_id(task, index)}"
-            episodes = [asyncio.run(run_episode(module, task)) for _ in range(repeat)]
+            case = f"{group}/{module.name}/{_variant_id(task, index)}"
+            if len(case) > MAX_CASE_CHARS:
+                raise TaskLoadError(f"case id longer than {MAX_CASE_CHARS} characters: {case[:40]}...")
+            if case in seen:
+                raise TaskLoadError(f"duplicate case id {case}")
+            seen.add(case)
+            episodes = [run_episode(module, task, timeout) for _ in range(repeat)]
             # The row is as good as its worst episode.
             worst = next((e for e in episodes if e.status == "error"), None) or next(
                 (e for e in episodes if e.status == "fail"), episodes[0]
@@ -179,7 +221,10 @@ def machine() -> dict[str, Any]:
     )
     if arch is None:
         raise RuntimeError(f"unsupported architecture {platform.machine()!r}")
-    release = re.sub(r"[^A-Za-z0-9._+-]", "-", platform.release() or "unknown")
+    # On macOS platform.release() is the Darwin kernel's version; the
+    # product version is what a reader expects.
+    raw = platform.mac_ver()[0] if os_name == "macos" else platform.release()
+    release = re.sub(r"[^A-Za-z0-9._+-]", "-", raw or "unknown")
     if not release[:1].isalnum():
         release = "v" + release
     return {"os": os_name, "os_version": release[:64], "arch": arch}
