@@ -10,6 +10,7 @@
 import { isIPv4, isIPv6 } from "node:net";
 import type { SnapshotNode } from "./snapshot.js";
 import type { ControlKind, DeclaredTool } from "./webmcp/declarative.js";
+import { MAX_VERIFY_PROBES, MAX_VERIFY_TEXT_BYTES, type VerifyProbe, type VerifyResult } from "./verify.js";
 
 /// One form field to enter when executing a tool (host-validated).
 export interface ExecField {
@@ -28,8 +29,9 @@ export const MAX_EXEC_VALUE_CHARS = 1024;
 /// observation, generation 4 slice-3c activation, generation 5 slice-3d
 /// downloads, generation 6 slice-4 WebMCP discovery, generation 7 slice-5
 /// WebMCP execution, generation 8 slice-6 page extraction, generation 9
-/// text documents for robots.txt and sitemaps (#317).
-export const WORKER_PROTOCOL_GENERATION = 9;
+/// text documents for robots.txt and sitemaps (#317), generation 10 BR-07
+/// postcondition probes.
+export const WORKER_PROTOCOL_GENERATION = 10;
 export const WORKER_IDENTITY = "orcel-browser-worker";
 export const MAX_FRAME_BYTES = 64 * 1024;
 /// One extraction piece's content on the wire (JSON-escaped UTF-8 bytes),
@@ -97,6 +99,7 @@ export type HostFrame =
   | { frame: "execute"; exec_id: number; tool: string; fields: ExecField[] }
   | { frame: "activate"; act_id: number; ref: string; target?: ApprovedTarget }
   | { frame: "download"; dl_id: number; ref: string; path: string; target?: ApprovedTarget }
+  | { frame: "verify"; ver_id: number; probes: VerifyProbe[] }
   | { frame: "shutdown" };
 
 export type RouteKind = "document" | "redirect" | "frame" | "popup" | "fetch" | "subresource" | "service_worker";
@@ -121,6 +124,34 @@ function approvedTarget(raw: Record<string, unknown>): ApprovedTarget | undefine
     throw new ProtocolViolation("approved role is malformed");
   }
   return { role: raw.role, name: boundedString(raw.name, MAX_TARGET_NAME_BYTES, "approved name") };
+}
+
+/// BR-07: one read-only probe, as the host sends it.
+function verifyProbe(raw: unknown): VerifyProbe {
+  if (!isPlainObject(raw) || typeof raw.probe !== "string") throw new ProtocolViolation("verify probe is not a tagged object");
+  switch (raw.probe) {
+    case "visible_role": {
+      exactKeys(raw, ["probe", "role", "name"]);
+      if (typeof raw.role !== "string" || !/^[a-z][a-z-]{0,39}$/.test(raw.role)) {
+        throw new ProtocolViolation("verify role is malformed");
+      }
+      return { probe: "visible_role", role: raw.role, name: boundedString(raw.name, MAX_VERIFY_TEXT_BYTES, "verify name") };
+    }
+    case "visible_text": {
+      exactKeys(raw, ["probe", "text"]);
+      return { probe: "visible_text", text: boundedString(raw.text, MAX_VERIFY_TEXT_BYTES, "verify text") };
+    }
+    case "value":
+    case "checked": {
+      exactKeys(raw, ["probe", "ref"]);
+      if (typeof raw.ref !== "string" || !/^(?:f\d{1,4})?e\d{1,6}$/.test(raw.ref)) {
+        throw new ProtocolViolation("verify ref is malformed");
+      }
+      return { probe: raw.probe, ref: raw.ref };
+    }
+    default:
+      throw new ProtocolViolation("verify probe is unknown");
+  }
 }
 
 export type ErrorCode = "protocol_violation" | "launch_refused" | "launch_failed" | "engine_exited" | "not_ready";
@@ -157,6 +188,8 @@ export type WorkerFrame =
   | { frame: "activation_failed"; act_id: number; reason: NavigationFailure }
   | { frame: "downloaded"; dl_id: number; url: string; name: string; media: string; bytes: number }
   | { frame: "download_failed"; dl_id: number; reason: NavigationFailure }
+  | { frame: "verified"; ver_id: number; url: string; results: VerifyResult[] }
+  | { frame: "verification_failed"; ver_id: number }
   | { frame: "error"; code: ErrorCode };
 
 export class ProtocolViolation extends Error {}
@@ -295,6 +328,14 @@ export function parseHostFrame(raw: unknown): HostFrame {
       }
       const target = approvedTarget(raw);
       return target ? { frame: "activate", act_id: actId, ref: raw.ref, target } : { frame: "activate", act_id: actId, ref: raw.ref };
+    }
+    case "verify": {
+      exactKeys(raw, ["frame", "ver_id", "probes"]);
+      const verId = positiveId(raw.ver_id, "ver_id");
+      if (!Array.isArray(raw.probes) || raw.probes.length === 0 || raw.probes.length > MAX_VERIFY_PROBES) {
+        throw new ProtocolViolation("verify probes are malformed");
+      }
+      return { frame: "verify", ver_id: verId, probes: raw.probes.map(verifyProbe) };
     }
     case "observe": {
       exactKeys(raw, ["frame", "obs_id"]);

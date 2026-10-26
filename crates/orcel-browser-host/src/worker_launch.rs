@@ -39,7 +39,7 @@ pub struct JobProcess {
 /// Generation 2 adds the slice-3a navigation frames, generation 3 slice-3b
 /// observation, generation 4 slice-3c activation, generation 5 slice-3d
 /// downloads.
-pub const WORKER_PROTOCOL_GENERATION: u32 = 9;
+pub const WORKER_PROTOCOL_GENERATION: u32 = 10;
 /// Worker identity reported in its hello.
 pub const WORKER_IDENTITY: &str = "orcel-browser-worker";
 /// The only Node option the worker accepts (inspector activation refused).
@@ -269,6 +269,11 @@ pub(crate) enum WorkerRequest<'a> {
         tool: &'a str,
         fields: &'a [crate::webmcp::ExecField],
     },
+    /// BR-07: read-only probes for the postcondition verifier.
+    Verify {
+        ver_id: u64,
+        probes: &'a [crate::verify::Probe],
+    },
     Shutdown,
 }
 
@@ -378,6 +383,14 @@ pub(crate) enum WorkerReply {
     ExecutionFailed {
         exec_id: u64,
         reason: String,
+    },
+    Verified {
+        ver_id: u64,
+        url: String,
+        results: Vec<crate::verify::ProbeResult>,
+    },
+    VerificationFailed {
+        ver_id: u64,
     },
     Error {
         code: String,
@@ -1181,6 +1194,13 @@ mod platform {
         next_nav: u64,
         last_request: u64,
         next_obs: u64,
+        next_ver: u64,
+        /// BR-07: distinct values each field (page, role, name) was checked
+        /// against in this lifetime.
+        value_budget: crate::verify::GuessBudget,
+        /// BR-07: the digest of the last download committed in this
+        /// lifetime, for download postconditions.
+        last_download_sha256: Option<String>,
         next_disc: u64,
         next_ext: u64,
         next_act: u64,
@@ -1284,6 +1304,9 @@ mod platform {
             finished: false,
             policy: NavigationPolicy::new(&spec.destinations),
             next_obs: 0,
+            next_ver: 0,
+            value_budget: crate::verify::GuessBudget::default(),
+            last_download_sha256: None,
             next_disc: 0,
             next_ext: 0,
             next_act: 0,
@@ -1736,6 +1759,95 @@ mod platform {
                 document,
                 observation,
             })
+        }
+
+        /// BR-07: check postconditions after a step. Element, text, value
+        /// and checked-state checks are observed by read-only worker probes
+        /// of exactly the committed document; URL and download checks use
+        /// the host's own record (the committed URL; the last download
+        /// committed in this lifetime). The host decides each check; values
+        /// never leave it, and each field's value can be checked against
+        /// only a few values per document. A stale page, or a worker reply
+        /// outside the bounds, fails the whole verification.
+        pub fn verify_postconditions(
+            &mut self,
+            checks: &[crate::verify::Postcondition],
+        ) -> Result<crate::verify::Verification, HostError> {
+            self.ensure_alive()?;
+            crate::verify::check_postconditions(checks)?;
+            let (url, generation) = self
+                .committed
+                .clone()
+                .ok_or_else(|| HostError::Invalid("no committed document to verify".into()))?;
+            let mut needs: Vec<crate::verify::Need> = checks
+                .iter()
+                .map(|check| {
+                    crate::verify::need(check, |id| {
+                        self.host_nodes.get(id).map(|node| {
+                            (
+                                node.reference.as_str(),
+                                node.role.as_str(),
+                                node.name.as_str(),
+                            )
+                        })
+                    })
+                })
+                .collect();
+            let host_nodes = &self.host_nodes;
+            crate::verify::apply_budget(checks, &mut needs, &mut self.value_budget, |id| {
+                host_nodes
+                    .get(id)
+                    .map(|node| crate::verify::field_key(&url, &node.role, &node.name))
+            });
+            let probes: Vec<crate::verify::Probe> = needs
+                .iter()
+                .filter_map(|need| match need {
+                    crate::verify::Need::Probe(probe) => Some(probe.clone()),
+                    _ => None,
+                })
+                .collect();
+            let mut observed = Vec::new();
+            if !probes.is_empty() {
+                self.next_ver += 1;
+                let ver_id = self.next_ver;
+                self.send(&WorkerRequest::Verify {
+                    ver_id,
+                    probes: &probes,
+                })?;
+                match self.reply(WORKER_OBSERVATION_TIMEOUT)? {
+                    WorkerReply::Verified {
+                        ver_id: done,
+                        url: seen,
+                        results,
+                    } if done == ver_id => {
+                        if seen != url {
+                            return Err(HostError::Invalid(
+                                "stale page: the document changed".into(),
+                            ));
+                        }
+                        if results.len() != probes.len() {
+                            return Err(HostError::Unavailable(
+                                UnavailableReason::ProtocolViolation,
+                            ));
+                        }
+                        for (probe, result) in probes.iter().zip(&results) {
+                            crate::verify::check_probe_result(probe, result)?;
+                        }
+                        observed = results;
+                    }
+                    WorkerReply::VerificationFailed { ver_id: done } if done == ver_id => {
+                        return Err(HostError::Unavailable(UnavailableReason::LaunchFailed))
+                    }
+                    _ => return Err(HostError::Unavailable(UnavailableReason::ProtocolViolation)),
+                }
+            }
+            let facts = crate::verify::HostFacts {
+                committed_url: &url,
+                download_sha256: self.last_download_sha256.as_deref(),
+            };
+            Ok(crate::verify::verify_with(
+                checks, &needs, &observed, &facts, generation,
+            ))
         }
 
         /// Discover the committed document's WebMCP declarative tools
@@ -2371,6 +2483,7 @@ mod platform {
             }
             let path =
                 crate::approved_folder::commit(destination_root, bound_root, relative, &content)?;
+            self.last_download_sha256 = Some(sha256.clone());
             Ok(CommittedDownload {
                 path,
                 sha256,
@@ -2492,6 +2605,16 @@ mod fallback {
             &mut self,
             _scope: &crate::observation::ObservationScope,
         ) -> Result<LiveObservation, HostError> {
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity: no worker ever exists off Windows.
+        pub fn verify_postconditions(
+            &mut self,
+            _checks: &[crate::verify::Postcondition],
+        ) -> Result<crate::verify::Verification, HostError> {
             Err(HostError::Unavailable(
                 UnavailableReason::UnsupportedRuntime,
             ))
@@ -3207,6 +3330,52 @@ mod tests {
             r#"{"frame":"discovered","disc_id":2,"url":"u","truncated":false,"tools":[{"name":"t","title":"","description":"d","autosubmit":false,"node":3,"has_password":false,"action":null,"method":"get","self_contained":false,"fixed_names":[],"utf8":true,"params":[],"run":"x"}]}"#
         )
         .is_err());
+    }
+
+    /// BR-07: the verify frames, as both sides write them.
+    #[test]
+    fn br07_verify_frames_are_exact() {
+        let probes = [
+            crate::verify::Probe::VisibleRole {
+                role: "heading".into(),
+                name: "Order confirmed".into(),
+            },
+            crate::verify::Probe::VisibleText {
+                text: "Thank you".into(),
+            },
+            crate::verify::Probe::Value {
+                reference: "e2".into(),
+            },
+            crate::verify::Probe::Checked {
+                reference: "f1e3".into(),
+            },
+        ];
+        assert_eq!(
+            serde_json::to_string(&WorkerRequest::Verify {
+                ver_id: 5,
+                probes: &probes
+            })
+            .unwrap(),
+            r#"{"frame":"verify","ver_id":5,"probes":[{"probe":"visible_role","role":"heading","name":"Order confirmed"},{"probe":"visible_text","text":"Thank you"},{"probe":"value","ref":"e2"},{"probe":"checked","ref":"f1e3"}]}"#
+        );
+        let reply = |text: &str| serde_json::from_str::<WorkerReply>(text);
+        assert_eq!(
+            reply(r#"{"frame":"verified","ver_id":5,"url":"https://fixture.test/","results":[{"result":"visible","count":1},{"result":"visible","count":0},{"result":"unavailable","reason":"secret"},{"result":"checked","checked":true}]}"#).unwrap(),
+            WorkerReply::Verified {
+                ver_id: 5,
+                url: "https://fixture.test/".into(),
+                results: vec![
+                    crate::verify::ProbeResult::Visible { count: 1 },
+                    crate::verify::ProbeResult::Visible { count: 0 },
+                    crate::verify::ProbeResult::Unavailable { reason: "secret".into() },
+                    crate::verify::ProbeResult::Checked { checked: true },
+                ],
+            }
+        );
+        assert!(reply(r#"{"frame":"verification_failed","ver_id":5}"#).is_ok());
+        assert!(reply(r#"{"frame":"verification_failed","ver_id":5,"x":1}"#).is_err());
+        assert!(reply(r#"{"frame":"verified","ver_id":5,"url":"u","results":[{"result":"visible","count":1,"text":"leak"}]}"#).is_err());
+        assert!(reply(r#"{"frame":"verified","ver_id":5,"url":"u","results":[{"result":"verdict","passed":true}]}"#).is_err());
     }
 
     #[test]

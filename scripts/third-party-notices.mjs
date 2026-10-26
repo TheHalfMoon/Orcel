@@ -45,6 +45,12 @@ const VENDORED_NOTICES = [
     file: "docs/orcel/notices/crawl4ai-Apache-2.0-attribution.txt",
     copyright:
       "This product includes software developed by UncleCode (https://x.com/unclecode) as part of the Crawl4AI project (https://github.com/unclecode/crawl4ai)."
+  },
+  {
+    name: "Playwright (microsoft/playwright@1b025d7e20a026371cd5f98ba0cdce48892737c8, adapted verifier source)",
+    license: "Apache-2.0",
+    file: "docs/orcel/notices/playwright-Apache-2.0.txt",
+    copyright: "Copyright (c) Microsoft Corporation"
   }
 ];
 
