@@ -39,7 +39,7 @@ export type FormPage = TargetPage & Pick<Page, "locator">;
 const NOT_SECRET = [
   ':not([type="password" i])',
   ':not([autocomplete~="current-password" i]):not([autocomplete~="new-password" i]):not([autocomplete~="one-time-code" i])',
-  ':not([autocomplete~="cc-number" i]):not([autocomplete~="cc-csc" i]):not([autocomplete~="cc-exp" i])',
+  ':not([autocomplete~="cc-number" i]):not([autocomplete~="cc-csc" i]):not([autocomplete~="cc-exp" i]):not([autocomplete~="cc-exp-month" i]):not([autocomplete~="cc-exp-year" i])',
   ...["pass", "pwd", "otp", "cvc", "cvv", "csc", "secret", "token"].map((part) => `:not([name*="${part}" i]):not([id*="${part}" i])`)
 ].join("");
 /// Controls a value can be typed into.
