@@ -18,7 +18,7 @@
       "destination": "apps/orcel-browser-worker/src/extract/relevance.ts",
       "reuse": "PORT",
       "modified": true,
-      "modification_summary": "Runs over Orcel's content model (rendered, visible text only) and returns a pruned tree. An empty query, or one with no word after stop words, filters nothing; the donor's page-derived query (title, meta tags, first long paragraph) is not ported, so a page cannot choose its own relevance. No stemming (the donor's use_stemming=False path). Words lose edge punctuation; a chunk's text pieces are joined with a space. A kept chunk keeps its own text plus the childless elements of its element, so text is never repeated. Query bounded to 1024 bytes and 32 words.",
+      "modification_summary": "Runs over Orcel's content model (rendered, visible text only) and returns a pruned tree; stops at the extraction deadline (reported as truncated). An empty query, or one with no word after stop words, filters nothing; the donor's page-derived query (title, meta tags, first long paragraph) is not ported, so a page cannot choose its own relevance. No stemming (the donor's use_stemming=False path). A chunk's text pieces are joined with a space. A kept chunk keeps its own text plus the childless elements (images, breaks) met while it was read, so text is never repeated and a dropped chunk's images go with it. When the filter keeps none of a page's text, the extraction says so (nothingRelevant). Query bounded to 1024 bytes and 32 words.",
       "authority_delta": "None: still untrusted page text, produced inside the worker from the same snapshot."
     },
     {
@@ -27,7 +27,7 @@
       "destination": "apps/orcel-browser-worker/src/extract/relevance.ts",
       "reuse": "PORT",
       "modified": true,
-      "modification_summary": "The dynamic threshold with the donor's weights and tag importance; min_word_threshold and preserve lists not ported. tag_len is the length of the content model serialised as HTML. The class/id term is kept but, as in the donor, never adds score. Iterative, not recursive.",
+      "modification_summary": "Needs no query. The dynamic threshold with the donor's weights and tag importance; min_word_threshold and preserve lists not ported. tag_len is the code-point length of the content model serialised with bs4's escaping and quoting rules. The class/id term is kept but, as in the donor, never adds score. As in the donor, the result is the body's element children that still hold text. Iterative, not recursive; stops at the extraction deadline.",
       "authority_delta": "None."
     },
     {
@@ -35,8 +35,8 @@
       "source_blob_sha": "b2e2cba7cfcac7327192143ad0308f9c1922d552",
       "destination": "apps/orcel-browser-worker/src/extract/relevance.ts",
       "reuse": "PORT",
-      "modified": false,
-      "modification_summary": "Noise set, stop words and the length rule as upstream.",
+      "modified": true,
+      "modification_summary": "Noise set, stop words and the length rule as upstream (length in code points). Added: leading and trailing characters that are not letters or digits are stripped from each word with a linear scan, so 'policy.' matches 'policy'.",
       "authority_delta": "None."
     },
     {
@@ -45,16 +45,23 @@
       "destination": "apps/orcel-browser-worker/src/extract/relevance.ts (bm25Scores)",
       "reuse": "REIMPLEMENTED",
       "modified": true,
-      "modification_summary": "The published Okapi formula with rank_bm25's negative-idf floor, reimplemented; no rank_bm25 code is copied. An all-empty corpus scores zero instead of NaN.",
+      "modification_summary": "The published Okapi formula with rank_bm25's negative-idf floor, reimplemented; no rank_bm25 code is copied. An all-empty corpus scores zero (rank_bm25 raises ZeroDivisionError).",
       "authority_delta": "None."
     }
   ],
   "not_imported": [
-    { "source": "LLMContentFilter", "reason": "REJECT in DONOR_REGISTRY: a model call per page, outside the extraction budget." },
-    { "source": "PruningContentFilterLXML and the Python runtime", "reason": "The TypeScript port covers the same behaviour; no Python is shipped." }
+    {
+      "source": "LLMContentFilter",
+      "reason": "REJECT in DONOR_REGISTRY: a model call per page, outside the extraction budget."
+    },
+    {
+      "source": "PruningContentFilterLXML and the Python runtime",
+      "reason": "The TypeScript port covers the same behaviour; no Python is shipped."
+    }
   ],
   "residuals": [
     "Extraction relevance is an ExtractOptions field; the worker frame and host/MCP extract surface do not carry it yet (same pattern as WI-01/WI-02 core-first).",
-    "Orcel has no About surface yet; when one exists it must show the attribution sentence (the license names an About or Credits section for applications)."
+    "Orcel has no About surface yet; when one exists it must show the attribution sentence (the license names an About or Credits section for applications).",
+    "If an Orcel command-line tool ships a help or usage output, the license asks for the attribution there too."
   ]
 }

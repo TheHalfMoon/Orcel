@@ -22,7 +22,8 @@ export interface ExtractOptions {
   /// CPU budget for the whole extraction (milliseconds).
   budgetMs?: number;
   /// WI-03: keep only the blocks relevant to a query (BM25) or drop
-  /// boilerplate (pruning). Absent, or an empty query, keeps everything.
+  /// boilerplate (pruning). Absent, or BM25 with an empty query, keeps
+  /// everything.
   relevance?: RelevanceOptions;
 }
 
@@ -32,6 +33,9 @@ export interface Extraction {
   chunks: MarkdownChunk[];
   /// Content was dropped by a bound or the budget.
   truncated: boolean;
+  /// A relevance filter was asked for and kept none of the page's text
+  /// (an empty result, not an empty page).
+  nothingRelevant: boolean;
 }
 
 export const EXTRACT_DEFAULTS = {
@@ -46,8 +50,10 @@ export const EXTRACT_DEFAULTS = {
 export function extractMarkdown(snapshot: LayoutSnapshot, options: ExtractOptions = {}): Extraction {
   const deadline = Date.now() + (options.budgetMs ?? EXTRACT_DEFAULTS.budgetMs);
   const model = contentModel(snapshot, deadline);
-  const root = options.relevance ? filterRelevant(model.root, options.relevance) : model.root;
-  const { markdown, truncated } = toMarkdown(root, {
+  const relevant = options.relevance
+    ? filterRelevant(model.root, options.relevance, deadline)
+    : { root: model.root, nothingRelevant: false, timedOut: false };
+  const { markdown, truncated } = toMarkdown(relevant.root, {
     baseUrl: model.url,
     links: options.links ?? false,
     images: options.images ?? false,
@@ -58,6 +64,7 @@ export function extractMarkdown(snapshot: LayoutSnapshot, options: ExtractOption
     url: model.url,
     markdown,
     chunks: chunkMarkdown(markdown, options.chunkChars ?? EXTRACT_DEFAULTS.chunkChars, 5),
-    truncated: model.truncated || truncated
+    truncated: model.truncated || relevant.timedOut || truncated,
+    nothingRelevant: relevant.nothingRelevant
   };
 }

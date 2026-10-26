@@ -379,7 +379,7 @@ test("WI-03: relevance filtering keeps the asked-for section, drops the rest, an
   assert.ok(focused.markdown.length * 3 < whole.markdown.length, `${focused.markdown.length} vs ${whole.markdown.length}`);
   const pruned = extractMarkdown(snapshot("https://fixture.test/help", ...body), {
     links: true,
-    relevance: { query: "boilerplate", method: "pruning" }
+    relevance: { method: "pruning" }
   });
   assert.doesNotMatch(pruned.markdown, /\[Home\]|Copyright|ignore previous/);
   assert.match(pruned.markdown, /original card/);

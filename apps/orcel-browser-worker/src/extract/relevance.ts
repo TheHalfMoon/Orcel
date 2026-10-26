@@ -1,48 +1,65 @@
-// WI-03: query-focused relevance filters over the content model, applied
-// before Markdown is produced, so only relevant blocks reach the caller.
+// WI-03: relevance filters over the content model, applied before Markdown
+// is produced, so only relevant blocks reach the caller.
 //
 // Ported from unclecode/crawl4ai at commit
 // 94b67888ca8b335ff2121423a50e06dd27661922, `crawl4ai/content_filter_strategy.py`
-// (blob 24634ac328669dd5c0ed6cf0b5afb73e798178bc): `BM25ContentFilter` (with the base class's
-// `extract_text_chunks`) and `PruningContentFilter`; and `clean_tokens` from
-// `crawl4ai/utils.py` (blob b2e2cba7cfcac7327192143ad0308f9c1922d552); BM25 Okapi as in `rank_bm25`
-// (k1 1.5, b 0.75, epsilon 0.25), which the donor calls. Apache License 2.0;
-// the attribution notice is in
+// (blob 24634ac328669dd5c0ed6cf0b5afb73e798178bc): `BM25ContentFilter` (with
+// the base class's `extract_text_chunks`) and `PruningContentFilter`; and
+// `clean_tokens` from `crawl4ai/utils.py` (blob
+// b2e2cba7cfcac7327192143ad0308f9c1922d552). BM25 Okapi is reimplemented
+// from the formula `rank_bm25` uses (k1 1.5, b 0.75, epsilon 0.25), which
+// the donor calls. Apache License 2.0; the attribution notice is in
 // docs/orcel/notices/crawl4ai-Apache-2.0-attribution.txt.
 //
 // Modifications for Orcel. Both filters work on the content model (rendered,
 // visible text only) instead of raw HTML, so hidden text can never become
-// relevant, and they return a pruned tree instead of HTML strings. An empty
-// query (or one with no word left after stop words) means no filtering; the
-// donor instead derives a query from the page's title, meta tags or first
-// long paragraph, which here would let the page choose its own relevance.
-// BM25: no stemming (the donor's `use_stemming=False` path); query and
-// chunk words are split on white space as in the donor, then stripped of
-// leading and trailing punctuation so "policy." matches "policy"; the text
-// pieces of a chunk are joined with a space (the donor joins them with
-// nothing, so `Hello <b>world</b>` became one word); a kept chunk keeps its
-// own text and the images and breaks of its element, instead of the
-// element's whole subtree, so text is never repeated; the query is bounded.
-// Pruning: the donor's dynamic threshold (its fixed one keeps every block
-// that has any text, so boilerplate links survive; the donor's own link and
-// tag tests use the dynamic one), without `min_word_threshold`; `tag_len` is the length of the content
-// model serialised as HTML, which no longer contains hidden markup; the
-// class and id term is kept as in the donor, where it is never above zero
-// (it is only ever negative, then clamped at zero), so it adds weight but no
-// score.
+// relevant, and they return a pruned tree instead of HTML strings. Both stop
+// at the extraction deadline (the page's text is untrusted input).
+//
+// BM25: an empty query (or one with no word left after stop words) means no
+// filtering; the donor instead derives a query from the page's title, meta
+// tags or first long paragraph, which here would let the page choose its own
+// relevance. No stemming (the donor's `use_stemming=False` path). Words are
+// split on white space as in the donor, then stripped of leading and
+// trailing characters that are not letters or digits, so "policy." matches
+// "policy". The text pieces of a chunk are joined with a space (the donor
+// joins them with nothing, so `Hello <b>world</b>` became one word). A kept
+// chunk keeps its own text and the childless elements (images, breaks) met
+// while it was read, instead of its closing element's whole subtree, so text
+// is never repeated and a dropped chunk's images go with it. The query is
+// bounded. An all-empty corpus scores zero (the donor raises
+// ZeroDivisionError).
+//
+// Pruning: needs no query. The donor's dynamic threshold (its fixed one
+// keeps every block that has any text, so boilerplate links survive; the
+// donor's own link and tag tests use the dynamic one), without
+// `min_word_threshold` or preserve lists. `tag_len` is the length, in code
+// points, of the content model serialised as bs4 would serialise it, which
+// no longer contains hidden markup. The class and id term is kept as in the
+// donor, where it is never above zero (it is only ever negative, then clamped
+// at zero), so it adds weight but no score. As in the donor, the result is
+// the body's element children that still hold text.
 
 import type { ContentElement, ContentNode, ContentText } from "./model.js";
 
 export type RelevanceMethod = "bm25" | "pruning";
 
 export interface RelevanceOptions {
-  /// The words to look for. Empty means no filtering. Pruning does not use
-  /// the words, only whether the filter is asked for.
-  query: string;
   method: RelevanceMethod;
+  /// BM25: the words to look for; empty or absent means no filtering.
+  /// Pruning does not use it.
+  query?: string;
   /// Minimum score of a kept block (BM25 score times the tag's weight, or
   /// the pruning composite score). Defaults to the donor's.
   threshold?: number;
+}
+
+export interface Relevant {
+  root: ContentElement;
+  /// The page had text and the filter kept none of it.
+  nothingRelevant: boolean;
+  /// The deadline passed; nothing was kept.
+  timedOut: boolean;
 }
 
 /// Longest relevance query, in UTF-8 bytes.
@@ -55,30 +72,59 @@ export const RELEVANCE_DEFAULT_THRESHOLD: Readonly<Record<RelevanceMethod, numbe
   pruning: 0.48
 };
 
-/// Refuses options the filter cannot honour; returns nothing when they are
-/// usable.
+/// Refuses options the filter cannot honour.
 export function checkRelevance(options: RelevanceOptions): void {
   if (options.method !== "bm25" && options.method !== "pruning") throw new Error("unknown relevance method");
-  if (typeof options.query !== "string" || Buffer.byteLength(options.query, "utf8") > MAX_RELEVANCE_QUERY_BYTES) {
-    throw new Error("relevance query is too long");
+  const query = options.query;
+  if (query !== undefined) {
+    if (typeof query !== "string" || Buffer.byteLength(query, "utf8") > MAX_RELEVANCE_QUERY_BYTES) {
+      throw new Error("relevance query is too long");
+    }
+    if (/\p{Cc}/u.test(query)) throw new Error("relevance query has control characters");
   }
-  if (/\p{Cc}/u.test(options.query)) throw new Error("relevance query has control characters");
   const threshold = options.threshold;
-  if (threshold !== undefined && !(Number.isFinite(threshold) && threshold >= 0)) {
+  if (threshold !== undefined && !(typeof threshold === "number" && Number.isFinite(threshold) && threshold >= 0)) {
     throw new Error("relevance threshold must be a finite non-negative number");
   }
 }
 
-/// The relevant part of `root`, or `root` itself when there is nothing to
+class Late extends Error {}
+
+/// Throws `Late` once the deadline has passed, checking the clock every
+/// 1024 calls.
+function clock(deadline: number): () => void {
+  let calls = 0;
+  return () => {
+    if ((++calls & 1023) === 0 && Date.now() > deadline) throw new Late();
+  };
+}
+
+/// The relevant part of `root`; `root` itself when there is nothing to
 /// filter by.
-export function filterRelevant(root: ContentElement, options: RelevanceOptions): ContentElement {
+export function filterRelevant(
+  root: ContentElement,
+  options: RelevanceOptions,
+  deadline = Number.POSITIVE_INFINITY
+): Relevant {
   checkRelevance(options);
-  if (options.query.trim() === "") return root;
   const threshold = options.threshold ?? RELEVANCE_DEFAULT_THRESHOLD[options.method];
-  if (options.method === "pruning") return prune(root, threshold);
-  const query = words(options.query).slice(0, MAX_RELEVANCE_QUERY_WORDS);
-  if (query.length === 0) return root;
-  return bm25Filter(root, query, threshold);
+  const tick = clock(deadline);
+  const body = bodyOf(root);
+  try {
+    let kept: ContentElement;
+    if (options.method === "pruning") {
+      kept = prune(body, threshold, tick);
+    } else {
+      const query = words(options.query ?? "").slice(0, MAX_RELEVANCE_QUERY_WORDS);
+      if (query.length === 0) return { root, nothingRelevant: false, timedOut: false };
+      kept = bm25Filter(body, query, threshold, tick);
+    }
+    const nothingRelevant = !hasText(kept, tick) && hasText(body, tick);
+    return { root: replaceBody(root, body, kept), nothingRelevant, timedOut: false };
+  } catch (error) {
+    if (!(error instanceof Late)) throw error;
+    return { root: replaceBody(root, body, { ...body, children: [] }), nothingRelevant: false, timedOut: true };
+  }
 }
 
 // --- shared --------------------------------------------------------------
@@ -120,6 +166,20 @@ function replaceBody(root: ContentElement, body: ContentElement, replacement: Co
   return rebuilt;
 }
 
+function hasText(node: ContentNode, tick: () => void): boolean {
+  const pending: ContentNode[] = [node];
+  while (pending.length > 0) {
+    tick();
+    const at = pending.pop()!;
+    if (at.kind === "text") {
+      if (at.text.trim() !== "") return true;
+    } else {
+      for (const child of at.children) pending.push(child);
+    }
+  }
+  return false;
+}
+
 // --- BM25 ----------------------------------------------------------------
 
 /// `clean_tokens` (crawl4ai/utils.py): noise and stop words.
@@ -137,15 +197,22 @@ const STOP_WORDS = new Set(
     "yet you your yours yourself"
   ).split(" ")
 );
+const WORD_CHAR = /^[\p{L}\p{N}]$/u;
 
 /// Lower-cased white-space words without edge punctuation, minus noise and
-/// stop words and words of two characters or fewer.
+/// stop words and words of two code points or fewer. Linear in `text`.
 function words(text: string): string[] {
   const out: string[] = [];
   for (const raw of text.toLowerCase().split(/\s+/)) {
-    if (NOISE_PREFIXES.some((prefix) => raw.startsWith(prefix))) continue;
-    const word = raw.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
-    if ([...word].length > 2 && !NOISE.has(word) && !STOP_WORDS.has(word)) out.push(word);
+    if (raw === "" || NOISE_PREFIXES.some((prefix) => raw.startsWith(prefix))) continue;
+    const chars = Array.from(raw);
+    let start = 0;
+    let end = chars.length;
+    while (start < end && !WORD_CHAR.test(chars[start]!)) start++;
+    while (end > start && !WORD_CHAR.test(chars[end - 1]!)) end--;
+    if (end - start <= 2) continue;
+    const word = chars.slice(start, end).join("");
+    if (!NOISE.has(word) && !STOP_WORDS.has(word)) out.push(word);
   }
   return out;
 }
@@ -157,7 +224,9 @@ const INLINE = new Set([
   "textarea", "time", "tt", "var"
 ]);
 
-/// The donor's tag weights for a chunk's closing element.
+/// The donor's weights for a chunk's closing element. As in the donor,
+/// `strong`, `b`, `em` and `code` are inline and never close a chunk, so
+/// their weights never apply.
 const PRIORITY: Readonly<Record<string, number>> = {
   h1: 5.0,
   h2: 4.0,
@@ -176,21 +245,26 @@ interface Chunk {
   text: string;
   element: ContentElement;
   pieces: ContentText[];
+  /// Childless elements (images, breaks) met while the chunk was read.
+  extras: ContentElement[];
 }
 
 /// Text in document order, cut into chunks where a block element ends.
-function textChunks(body: ContentElement): Chunk[] {
+function textChunks(body: ContentElement, tick: () => void): Chunk[] {
   const chunks: Chunk[] = [];
   let text: string[] = [];
   let pieces: ContentText[] = [];
+  let extras: ContentElement[] = [];
   const flush = (element: ContentElement): void => {
     const joined = text.join(" ").split(/\s+/).filter(Boolean).join(" ");
-    if (joined) chunks.push({ text: joined, element, pieces });
+    if (joined) chunks.push({ text: joined, element, pieces, extras });
     text = [];
     pieces = [];
+    extras = [];
   };
   const pending: Array<{ node: ContentNode; visited: boolean }> = [{ node: body, visited: false }];
   while (pending.length > 0) {
+    tick();
     const { node, visited } = pending.pop()!;
     if (node.kind === "text") {
       const trimmed = node.text.trim();
@@ -204,7 +278,10 @@ function textChunks(body: ContentElement): Chunk[] {
       if (text.length > 0 && !INLINE.has(node.tag)) flush(node);
       continue;
     }
-    if (node.children.length === 0) continue;
+    if (node.children.length === 0) {
+      extras.push(node);
+      continue;
+    }
     pending.push({ node, visited: true });
     for (let i = node.children.length - 1; i >= 0; i--) pending.push({ node: node.children[i]!, visited: false });
   }
@@ -213,7 +290,7 @@ function textChunks(body: ContentElement): Chunk[] {
 }
 
 /// BM25 Okapi scores of `corpus` for `query` (rank_bm25's BM25Okapi).
-export function bm25Scores(corpus: readonly string[][], query: readonly string[]): number[] {
+export function bm25Scores(corpus: readonly string[][], query: readonly string[], tick: () => void = () => {}): number[] {
   const k1 = 1.5;
   const b = 0.75;
   const epsilon = 0.25;
@@ -221,6 +298,7 @@ export function bm25Scores(corpus: readonly string[][], query: readonly string[]
   const lengths = corpus.map((doc) => doc.length);
   const average = size > 0 ? lengths.reduce((sum, n) => sum + n, 0) / size : 0;
   const frequencies = corpus.map((doc) => {
+    tick();
     const counts = new Map<string, number>();
     for (const word of doc) counts.set(word, (counts.get(word) ?? 0) + 1);
     return counts;
@@ -245,6 +323,7 @@ export function bm25Scores(corpus: readonly string[][], query: readonly string[]
     const weight = idf.get(word) ?? 0;
     if (weight === 0) continue;
     for (let i = 0; i < size; i++) {
+      tick();
       const f = frequencies[i]!.get(word) ?? 0;
       scores[i]! += (weight * (f * (k1 + 1))) / (f + k1 * (1 - b + (b * lengths[i]!) / average));
     }
@@ -252,48 +331,47 @@ export function bm25Scores(corpus: readonly string[][], query: readonly string[]
   return scores;
 }
 
-function bm25Filter(root: ContentElement, query: readonly string[], threshold: number): ContentElement {
-  const body = bodyOf(root);
-  const chunks = textChunks(body);
+function bm25Filter(body: ContentElement, query: readonly string[], threshold: number, tick: () => void): ContentElement {
+  const chunks = textChunks(body, tick);
   const scores = bm25Scores(
-    chunks.map((chunk) => words(chunk.text)),
-    query
+    chunks.map((chunk) => {
+      tick();
+      return words(chunk.text);
+    }),
+    query,
+    tick
   );
   const keptText = new Set<ContentText>();
-  const owners = new Set<ContentElement>();
+  const keptExtras = new Set<ContentElement>();
   const seen = new Set<string>();
   chunks.forEach((chunk, i) => {
     const score = scores[i]! * (PRIORITY[chunk.element.tag] ?? 1.0);
     if (score < threshold || seen.has(chunk.text)) return;
     seen.add(chunk.text);
-    owners.add(chunk.element);
     for (const piece of chunk.pieces) keptText.add(piece);
+    for (const extra of chunk.extras) keptExtras.add(extra);
   });
-  return replaceBody(root, body, keepOnly(body, keptText, owners) ?? { ...body, children: [] });
+  return keepOnly(body, keptText, keptExtras, tick) ?? { ...body, children: [] };
 }
 
-/// `node` reduced to the kept text, the elements that hold it, and the
-/// childless elements (images, breaks) inside a kept chunk's element.
+/// `node` reduced to the kept text and childless elements and the elements
+/// that hold them.
 function keepOnly(
   node: ContentElement,
   keptText: ReadonlySet<ContentText>,
-  owners: ReadonlySet<ContentElement>
+  keptExtras: ReadonlySet<ContentElement>,
+  tick: () => void
 ): ContentElement | null {
   // Post-order without recursion: deep pages must not overflow the stack.
   const built = new Map<ContentElement, ContentElement | null>();
-  const pending: Array<{ node: ContentElement; inOwner: boolean; visited: boolean }> = [
-    { node, inOwner: owners.has(node), visited: false }
-  ];
-  const inOwnerOf = new Map<ContentElement, boolean>();
+  const pending: Array<{ node: ContentElement; visited: boolean }> = [{ node, visited: false }];
   while (pending.length > 0) {
+    tick();
     const entry = pending.pop()!;
     if (!entry.visited) {
-      inOwnerOf.set(entry.node, entry.inOwner);
-      pending.push({ ...entry, visited: true });
+      pending.push({ node: entry.node, visited: true });
       for (const child of entry.node.children) {
-        if (child.kind === "element") {
-          pending.push({ node: child, inOwner: entry.inOwner || owners.has(child), visited: false });
-        }
+        if (child.kind === "element") pending.push({ node: child, visited: false });
       }
       continue;
     }
@@ -304,7 +382,7 @@ function keepOnly(
       } else {
         const kept = built.get(child);
         if (kept) children.push(kept);
-        else if (child.children.length === 0 && inOwnerOf.get(child)) children.push(child);
+        else if (keptExtras.has(child)) children.push(child);
       }
     }
     built.set(entry.node, children.length > 0 ? { ...entry.node, children } : null);
@@ -347,17 +425,28 @@ const TAG_IMPORTANCE: Readonly<Record<string, number>> = {
 };
 const VOID = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"]);
 
-const escapedLength = (text: string, attribute: boolean): number => {
-  let extra = 0;
+/// Code points of `text` as bs4 serialises it: `&`, `<` and `>` become
+/// entities; in an attribute, a value with both quote kinds has its `"`
+/// written as `&quot;` (a value with only `"` is single-quoted instead).
+function serialisedLength(text: string, attribute: boolean): number {
+  let length = 0;
+  let doubles = 0;
+  let singles = false;
   for (const ch of text) {
-    if (ch === "&") extra += 4;
-    else if (ch === "<" || ch === ">") extra += 3;
-    else if (attribute && ch === '"') extra += 5;
+    length += ch === "&" ? 5 : ch === "<" || ch === ">" ? 4 : 1;
+    if (ch === '"') doubles++;
+    else if (ch === "'") singles = true;
   }
-  return text.length + extra;
-};
+  return attribute && singles ? length + 5 * doubles : length;
+}
 
-/// `NavigableString` of a single-child chain, as bs4's `.string`.
+function codePoints(text: string): number {
+  let n = 0;
+  for (const _ of text) n++;
+  return n;
+}
+
+/// bs4's `.string` of a single-child chain.
 function stringOf(node: ContentNode): string | null {
   let at: ContentNode = node;
   for (;;) {
@@ -372,14 +461,14 @@ interface Metrics {
   tagLen: number;
 }
 
-function prune(root: ContentElement, threshold: number): ContentElement {
-  const body = bodyOf(root);
+function prune(body: ContentElement, threshold: number, tick: () => void): ContentElement {
   // Excluded tags go first, as in the donor; then each element's text
   // length and serialised inner length, bottom-up, once.
   const metrics = new Map<ContentElement, Metrics>();
   const cleaned = new Map<ContentElement, ContentElement>();
   const pending: Array<{ node: ContentElement; visited: boolean }> = [{ node: body, visited: false }];
   while (pending.length > 0) {
+    tick();
     const { node, visited } = pending.pop()!;
     if (!visited) {
       pending.push({ node, visited: true });
@@ -394,8 +483,8 @@ function prune(root: ContentElement, threshold: number): ContentElement {
     for (const child of node.children) {
       if (child.kind === "text") {
         children.push(child);
-        textLen += child.text.trim().length;
-        tagLen += escapedLength(child.text, false);
+        textLen += codePoints(child.text.trim());
+        tagLen += serialisedLength(child.text, false);
         continue;
       }
       const kept = cleaned.get(child);
@@ -403,9 +492,10 @@ function prune(root: ContentElement, threshold: number): ContentElement {
       children.push(kept);
       const inner = metrics.get(kept)!;
       textLen += inner.textLen;
-      let open = 1 + kept.tag.length;
-      for (const [name, value] of kept.attrs) open += 4 + name.length + escapedLength(value, true);
-      tagLen += VOID.has(kept.tag) && kept.children.length === 0 ? open + 2 : open + 1 + inner.tagLen + 3 + kept.tag.length;
+      const tag = codePoints(kept.tag);
+      let open = 1 + tag;
+      for (const [name, value] of kept.attrs) open += 4 + codePoints(name) + serialisedLength(value, true);
+      tagLen += VOID.has(kept.tag) && kept.children.length === 0 ? open + 2 : open + 1 + inner.tagLen + 3 + tag;
     }
     const element: ContentElement = { ...node, children };
     cleaned.set(node, element);
@@ -417,7 +507,7 @@ function prune(root: ContentElement, threshold: number): ContentElement {
     const { textLen, tagLen } = metrics.get(node)!;
     let linkTextLen = 0;
     for (const child of node.children) {
-      if (child.kind === "element" && child.tag === "a") linkTextLen += stringOf(child)?.trim().length ?? 0;
+      if (child.kind === "element" && child.tag === "a") linkTextLen += codePoints(stringOf(child)?.trim() ?? "");
     }
     let bar = threshold;
     if ((TAG_IMPORTANCE[node.tag] ?? 0.7) > 1) bar *= 0.8;
@@ -441,20 +531,22 @@ function prune(root: ContentElement, threshold: number): ContentElement {
 
   // Top-down: a removed element takes its subtree; a kept one has its
   // element children scored in turn (text stays with its parent).
-  const kept = new Map<ContentElement, ContentElement>();
   const cleanBody = cleaned.get(body)!;
-  if (!keeps(cleanBody)) return replaceBody(root, body, { ...cleanBody, children: [] });
+  if (!keeps(cleanBody)) return { ...cleanBody, children: [] };
   const order: ContentElement[] = [cleanBody];
   const survivors = new Set<ContentElement>([cleanBody]);
   for (let i = 0; i < order.length; i++) {
     for (const child of order[i]!.children) {
+      tick();
       if (child.kind === "element" && keeps(child)) {
         survivors.add(child);
         order.push(child);
       }
     }
   }
+  const kept = new Map<ContentElement, ContentElement>();
   for (let i = order.length - 1; i >= 0; i--) {
+    tick();
     const node = order[i]!;
     const children: ContentNode[] = [];
     for (const child of node.children) {
@@ -463,5 +555,10 @@ function prune(root: ContentElement, threshold: number): ContentElement {
     }
     kept.set(node, { ...node, children });
   }
-  return replaceBody(root, body, kept.get(cleanBody)!);
+  // The donor returns the body's element children that still hold text.
+  const top = kept.get(cleanBody)!;
+  return {
+    ...top,
+    children: top.children.filter((child) => child.kind === "element" && hasText(child, tick))
+  };
 }
