@@ -39,7 +39,7 @@ pub struct JobProcess {
 /// Generation 2 adds the slice-3a navigation frames, generation 3 slice-3b
 /// observation, generation 4 slice-3c activation, generation 5 slice-3d
 /// downloads.
-pub const WORKER_PROTOCOL_GENERATION: u32 = 12;
+pub const WORKER_PROTOCOL_GENERATION: u32 = 13;
 /// Worker identity reported in its hello.
 pub const WORKER_IDENTITY: &str = "orcel-browser-worker";
 /// The only Node option the worker accepts (inspector activation refused).
@@ -92,6 +92,17 @@ pub struct HostNode {
     pub role: String,
     pub name: String,
     pub url: Option<String>,
+}
+
+/// BR-03: one file staged for upload: a host-held copy in this lifetime's
+/// staging directory, removed with the lifetime.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StagedUpload {
+    pub staged_id: String,
+    pub name: String,
+    pub bytes: u64,
+    pub sha256: String,
+    pub path: PathBuf,
 }
 
 /// BR-02: the longest bounded wait for text (mirrors the worker).
@@ -298,6 +309,17 @@ pub(crate) enum WorkerRequest<'a> {
         #[serde(skip_serializing_if = "Option::is_none")]
         name: Option<&'a str>,
     },
+    /// BR-03: set the approved file input to one host-staged file.
+    Upload {
+        up_id: u64,
+        #[serde(rename = "ref")]
+        reference: &'a str,
+        path: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        role: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<&'a str>,
+    },
     /// BR-02: a bounded, read-only wait for text.
     WaitFor {
         wait_id: u64,
@@ -433,6 +455,14 @@ pub(crate) enum WorkerReply {
         wait_id: u64,
         url: String,
         met: bool,
+    },
+    Uploaded {
+        up_id: u64,
+        url: String,
+    },
+    UploadFailed {
+        up_id: u64,
+        reason: String,
     },
     WaitFailed {
         wait_id: u64,
@@ -1251,6 +1281,9 @@ mod platform {
         next_ver: u64,
         next_form: u64,
         next_wait: u64,
+        next_upload: u64,
+        /// BR-03: files staged for upload in this lifetime, by staged id.
+        uploads: std::collections::HashMap<String, StagedUpload>,
         /// BR-07: distinct values each field (page, role, name) was checked
         /// against in this lifetime.
         value_budget: crate::verify::GuessBudget,
@@ -1363,6 +1396,8 @@ mod platform {
             next_ver: 0,
             next_form: 0,
             next_wait: 0,
+            next_upload: 0,
+            uploads: std::collections::HashMap::new(),
             value_budget: crate::verify::GuessBudget::default(),
             last_download_sha256: None,
             next_disc: 0,
@@ -1986,6 +2021,192 @@ mod platform {
                 }),
                 // A reply for another request, or of another kind: the
                 // worker may still be acting, so the lifetime ends.
+                _ => Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
+            }
+        }
+
+        /// BR-03: copy one file from an approved folder into this lifetime's
+        /// staging directory (reparse-safe, bounded to `MAX_TRANSFER_BYTES`),
+        /// so the engine only ever sees a host-held copy. Staging grants
+        /// nothing: setting it on a page needs an upload approval that names
+        /// the page's origin and this file's digest.
+        pub fn stage_upload(
+            &mut self,
+            approved_root: &Path,
+            relative: &str,
+        ) -> Result<StagedUpload, HostError> {
+            self.ensure_alive()?;
+            let normalized = crate::transfers::validate_relative_destination(relative)?;
+            let root = std::fs::canonicalize(approved_root)
+                .ok()
+                .filter(|root| root.is_dir())
+                .ok_or_else(|| HostError::Invalid("the approved folder does not exist".into()))?;
+            let bound_root = path_text(&root, "approved folder")?;
+            let content = crate::approved_folder::read(
+                &root,
+                &bound_root,
+                &normalized,
+                crate::transfers::MAX_TRANSFER_BYTES,
+            )?;
+            let name = normalized
+                .rsplit(['/', '\\'])
+                .next()
+                .filter(|name| !name.is_empty())
+                .ok_or_else(|| HostError::Invalid("the source has no file name".into()))?
+                .to_owned();
+            self.next_upload += 1;
+            let staged_id = format!("up-{}", self.next_upload);
+            let folder = self.staging.join(&staged_id);
+            std::fs::create_dir_all(&folder)
+                .map_err(|err| HostError::Platform(format!("upload staging: {err}")))?;
+            let path = folder.join(&name);
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+                .and_then(|mut file| {
+                    use std::io::Write;
+                    file.write_all(&content)?;
+                    file.sync_all()
+                })
+                .map_err(|err| HostError::Platform(format!("upload staging: {err}")))?;
+            let staged = StagedUpload {
+                staged_id: staged_id.clone(),
+                name,
+                bytes: content.len() as u64,
+                sha256: sha256_hex(&content),
+                path,
+            };
+            self.uploads.insert(staged_id, staged.clone());
+            Ok(staged)
+        }
+
+        /// BR-03: the state an upload approval must name: the committed
+        /// page's origin, the staged file's digest and name, for an observed
+        /// node whose role supports an upload.
+        pub fn upload_binding(&self, node_id: &str, staged_id: &str) -> Result<String, HostError> {
+            let node = self
+                .host_nodes
+                .get(node_id)
+                .ok_or_else(|| HostError::Invalid("stale or unknown node".into()))?;
+            crate::actuation::role_supports_action(
+                &node.role,
+                crate::actuation::SupportedAction::Upload,
+            )?;
+            let staged = self
+                .uploads
+                .get(staged_id)
+                .ok_or_else(|| HostError::Invalid("no such staged upload".into()))?;
+            let origin = self
+                .policy
+                .committed_origin()
+                .ok_or_else(|| HostError::Invalid("no committed origin".into()))?;
+            Ok(format!(
+                "upload\n{origin}\n{}\n{}",
+                staged.sha256, staged.name
+            ))
+        }
+
+        /// BR-03: set the approved file input to one staged file. `dispatch`
+        /// verifies the target, whose state must be `upload_binding` (so the
+        /// approval names this origin and this file), and consumes the
+        /// one-shot approval. The worker acts only on the approved element
+        /// itself when it is an <input type=file>, with only the staged
+        /// copy; no document opens while it runs. Setting the file sends
+        /// nothing by itself; a later submission is its own approval.
+        pub fn upload(
+            &mut self,
+            target: &crate::actuation::ActuationTarget,
+            approval: &mut crate::actuation::ApprovalToken,
+            staged_id: &str,
+            policy_revision: u64,
+            workspace: &str,
+        ) -> Result<FormOutcome, HostError> {
+            self.ensure_alive()?;
+            if target.action != crate::actuation::SupportedAction::Upload {
+                return Err(HostError::Invalid(
+                    "the approval is for another action".into(),
+                ));
+            }
+            let (url, generation) = self
+                .committed
+                .clone()
+                .ok_or_else(|| HostError::Invalid("no committed document".into()))?;
+            let (reference, approved_name) = self
+                .host_nodes
+                .get(&target.node_id)
+                .filter(|node| node.role == target.role)
+                .map(|node| (node.reference.clone(), node.name.clone()))
+                .ok_or_else(|| HostError::Invalid("stale or unknown node".into()))?;
+            if !reference.starts_with('e') {
+                return Err(HostError::Invalid(
+                    "uploads inside frames are not supported".into(),
+                ));
+            }
+            let binding = self.upload_binding(&target.node_id, staged_id)?;
+            let path = self
+                .uploads
+                .get(staged_id)
+                .map(|staged| staged.path.clone())
+                .ok_or_else(|| HostError::Invalid("no such staged upload".into()))?;
+            let path = path_text(&path, "staged upload")?;
+            self.policy.expect_no_document();
+            if let Err(error) = crate::actuation::dispatch(
+                target,
+                approval,
+                generation,
+                &binding,
+                policy_revision,
+                workspace,
+            ) {
+                self.policy.finish_activation();
+                return Err(error);
+            }
+            self.next_form += 1;
+            let up_id = self.next_form;
+            let named = !approved_name.is_empty();
+            let sent = self.send(&WorkerRequest::Upload {
+                up_id,
+                reference: &reference,
+                path: &path,
+                role: named.then_some(target.role.as_str()),
+                name: named.then_some(approved_name.as_str()),
+            });
+            if let Err(error) = sent {
+                self.policy.finish_activation();
+                return Err(error);
+            }
+            let reply = self.reply(WORKER_ACTIVATION_TIMEOUT);
+            self.policy.finish_activation();
+            match reply? {
+                WorkerReply::Uploaded {
+                    up_id: done,
+                    url: after,
+                } if done == up_id => {
+                    if after != url {
+                        self.host_nodes.clear();
+                        self.host_tools.clear();
+                        return Err(HostError::Unavailable(UnavailableReason::OutcomeUnknown));
+                    }
+                    Ok(FormOutcome { url: after })
+                }
+                WorkerReply::UploadFailed {
+                    up_id: done,
+                    reason,
+                } if done == up_id => Err(match reason.as_str() {
+                    // Refused before anything was set.
+                    "denied" => HostError::Invalid(
+                        "upload refused: the approved element is not a file input".into(),
+                    ),
+                    "stale" => HostError::Unavailable(UnavailableReason::TargetStale),
+                    "busy" => HostError::Unavailable(UnavailableReason::ActionFailed),
+                    "failed" | "timeout" => {
+                        self.host_nodes.clear();
+                        self.host_tools.clear();
+                        HostError::Unavailable(UnavailableReason::OutcomeUnknown)
+                    }
+                    _ => self.fail_closed(UnavailableReason::ProtocolViolation),
+                }),
                 _ => Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
             }
         }
@@ -2900,6 +3121,42 @@ mod fallback {
         }
 
         /// API parity: no worker ever exists off Windows.
+        pub fn stage_upload(
+            &mut self,
+            _approved_root: &Path,
+            _relative: &str,
+        ) -> Result<StagedUpload, HostError> {
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity: no worker ever exists off Windows.
+        pub fn upload_binding(
+            &self,
+            _node_id: &str,
+            _staged_id: &str,
+        ) -> Result<String, HostError> {
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity: no worker ever exists off Windows.
+        pub fn upload(
+            &mut self,
+            _target: &crate::actuation::ActuationTarget,
+            _approval: &mut crate::actuation::ApprovalToken,
+            _staged_id: &str,
+            _policy_revision: u64,
+            _workspace: &str,
+        ) -> Result<FormOutcome, HostError> {
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity: no worker ever exists off Windows.
         pub fn wait_for_text(
             &mut self,
             _text: &str,
@@ -3669,6 +3926,32 @@ mod tests {
             r#"{"frame":"discovered","disc_id":2,"url":"u","truncated":false,"tools":[{"name":"t","title":"","description":"d","autosubmit":false,"node":3,"has_password":false,"action":null,"method":"get","self_contained":false,"fixed_names":[],"utf8":true,"params":[],"run":"x"}]}"#
         )
         .is_err());
+    }
+
+    /// BR-03: the upload frames, as both sides write them.
+    #[test]
+    fn br03_upload_frames_are_exact() {
+        assert_eq!(
+            serde_json::to_string(&WorkerRequest::Upload {
+                up_id: 3,
+                reference: "e4",
+                path: "C:\\s\\up-1\\report.txt",
+                role: Some("button"),
+                name: Some("Attachment"),
+            })
+            .unwrap(),
+            r#"{"frame":"upload","up_id":3,"ref":"e4","path":"C:\\s\\up-1\\report.txt","role":"button","name":"Attachment"}"#
+        );
+        let reply = |text: &str| serde_json::from_str::<WorkerReply>(text);
+        assert_eq!(
+            reply(r#"{"frame":"uploaded","up_id":3,"url":"https://fixture.test/upload"}"#).unwrap(),
+            WorkerReply::Uploaded {
+                up_id: 3,
+                url: "https://fixture.test/upload".into()
+            }
+        );
+        assert!(reply(r#"{"frame":"upload_failed","up_id":3,"reason":"denied"}"#).is_ok());
+        assert!(reply(r#"{"frame":"uploaded","up_id":3,"url":"u","path":"x"}"#).is_err());
     }
 
     /// BR-02: the form-action frames, as both sides write them.

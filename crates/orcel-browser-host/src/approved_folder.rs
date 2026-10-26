@@ -26,8 +26,8 @@ use windows_sys::Win32::Storage::FileSystem::{
     FileBasicInfo, FileDispositionInfo, GetFinalPathNameByHandleW, SetFileInformationByHandle,
     DELETE, FILE_ADD_FILE, FILE_ADD_SUBDIRECTORY, FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NORMAL,
     FILE_ATTRIBUTE_TEMPORARY, FILE_BASIC_INFO, FILE_DISPOSITION_INFO, FILE_FLAG_BACKUP_SEMANTICS,
-    FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE,
-    FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA, SYNCHRONIZE, VOLUME_NAME_DOS,
+    FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    FILE_TRAVERSE, FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA, SYNCHRONIZE, VOLUME_NAME_DOS,
 };
 use windows_sys::Win32::System::Kernel::OBJ_DONT_REPARSE;
 use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
@@ -40,6 +40,8 @@ const STATUS_NOT_A_DIRECTORY: i32 = 0xC000_0103_u32 as i32;
 /// nowhere the relative open may follow).
 const STATUS_REPARSE_POINT_NOT_RESOLVED: i32 = 0xC000_0280_u32 as i32;
 const STATUS_FILE_IS_A_DIRECTORY: i32 = 0xC000_00BA_u32 as i32;
+const STATUS_OBJECT_NAME_NOT_FOUND: i32 = 0xC000_0034_u32 as i32;
+const STATUS_OBJECT_PATH_NOT_FOUND: i32 = 0xC000_003A_u32 as i32;
 
 /// Directory rights the commit needs on a folder it holds.
 const FOLDER_ACCESS: u32 = FILE_LIST_DIRECTORY
@@ -146,6 +148,9 @@ fn open_relative(
                 "destination escapes the approved folder (a reparse point below it)".into(),
             ))
         }
+        STATUS_OBJECT_NAME_NOT_FOUND | STATUS_OBJECT_PATH_NOT_FOUND => Err(HostError::Invalid(
+            "the file does not exist in the approved folder".into(),
+        )),
         STATUS_NOT_A_DIRECTORY | STATUS_FILE_IS_A_DIRECTORY => Err(HostError::Invalid(
             "destination escapes the approved folder (not a folder)".into(),
         )),
@@ -345,6 +350,77 @@ pub(crate) fn commit(
 /// The temporary name for `file_name`: hidden, in Orcel's own namespace,
 /// and the same for every attempt at that destination (case-insensitive,
 /// as the file system is).
+/// BR-03: read `relative` (already validated by
+/// `validate_relative_destination`) from inside `root`, whose real path must
+/// still be `bound_root`, at most `max_bytes`. Every folder and the file are
+/// opened relative to their parent's handle without following a reparse
+/// point, and nothing is created: a junction or symlink anywhere below the
+/// folder refuses the read instead of redirecting it.
+pub(crate) fn read(
+    root: &Path,
+    bound_root: &str,
+    relative: &str,
+    max_bytes: u64,
+) -> Result<Vec<u8>, HostError> {
+    use std::io::Read;
+    use std::os::windows::fs::OpenOptionsExt;
+    let parts: Vec<&str> = relative.split(['/', '\\']).collect();
+    let Some((file_name, folders)) = parts.split_last() else {
+        return Err(HostError::Invalid("the source has no file name".into()));
+    };
+    let root_handle: OwnedHandle = std::fs::OpenOptions::new()
+        .access_mode(FILE_LIST_DIRECTORY | FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(root)
+        .map_err(|err| HostError::Invalid(format!("the approved folder cannot be held: {err}")))?
+        .into();
+    let real_root = final_path(root_handle.as_raw_handle())?;
+    if real_root.as_os_str() != std::ffi::OsStr::new(bound_root) {
+        return Err(HostError::Invalid(
+            "the approved folder changed since it was approved".into(),
+        ));
+    }
+    let mut held: Vec<OwnedHandle> = Vec::with_capacity(folders.len());
+    for folder in folders {
+        let parent = held
+            .last()
+            .map_or(root_handle.as_raw_handle(), AsRawHandle::as_raw_handle);
+        held.push(open_relative(
+            parent,
+            folder,
+            FILE_LIST_DIRECTORY | FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            FILE_ATTRIBUTE_NORMAL,
+            FILE_OPEN,
+            FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT,
+        )?);
+    }
+    let folder = held
+        .last()
+        .map_or(root_handle.as_raw_handle(), AsRawHandle::as_raw_handle);
+    let file = open_relative(
+        folder,
+        file_name,
+        FILE_READ_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+        FILE_SHARE_READ,
+        FILE_ATTRIBUTE_NORMAL,
+        FILE_OPEN,
+        FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT,
+    )?;
+    let mut content = Vec::new();
+    File::from(file)
+        .take(max_bytes + 1)
+        .read_to_end(&mut content)
+        .map_err(|err| HostError::Platform(format!("upload source: {err}")))?;
+    if content.len() as u64 > max_bytes {
+        return Err(HostError::Invalid(
+            "the file is larger than the transfer bound".into(),
+        ));
+    }
+    Ok(content)
+}
+
 pub(crate) fn staged_name_for(file_name: &str) -> String {
     use sha2::{Digest, Sha256};
     let digest = Sha256::digest(file_name.to_lowercase().as_bytes());
@@ -591,6 +667,37 @@ pub(crate) mod tests {
         assert!(std::fs::read_dir(&outside).unwrap().next().is_none());
         std::fs::remove_dir(root.join("link")).unwrap();
         std::fs::remove_dir(root.join("a\\b\\c")).unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+        std::fs::remove_dir_all(&outside).unwrap();
+    }
+
+    /// BR-03: an upload source is read from inside the approved folder only:
+    /// never through a junction below it, never past the bound.
+    #[test]
+    fn br03_an_upload_source_is_read_without_following_a_junction() {
+        let root = scratch("read-root");
+        let outside = scratch("read-outside");
+        std::fs::create_dir_all(root.join("docs")).unwrap();
+        std::fs::write(root.join("docs\\report.txt"), b"orcel-upload-bytes").unwrap();
+        assert_eq!(
+            read(&root, &bound(&root), "docs\\report.txt", 1024).unwrap(),
+            b"orcel-upload-bytes"
+        );
+        std::fs::write(outside.join("secret.txt"), b"outside").unwrap();
+        junction(&root.join("link"), &outside);
+        assert!(matches!(
+            read(&root, &bound(&root), "link\\secret.txt", 1024),
+            Err(HostError::Invalid(message)) if message.contains("reparse point")
+        ));
+        assert!(matches!(
+            read(&root, &bound(&root), "docs\\missing.txt", 1024),
+            Err(HostError::Invalid(message)) if message.contains("does not exist")
+        ));
+        assert!(matches!(
+            read(&root, &bound(&root), "docs\\report.txt", 4),
+            Err(HostError::Invalid(message)) if message.contains("larger than")
+        ));
+        std::fs::remove_dir(root.join("link")).unwrap();
         std::fs::remove_dir_all(&root).unwrap();
         std::fs::remove_dir_all(&outside).unwrap();
     }

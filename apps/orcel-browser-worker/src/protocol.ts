@@ -33,8 +33,8 @@ export const MAX_EXEC_VALUE_CHARS = 1024;
 /// WebMCP execution, generation 8 slice-6 page extraction, generation 9
 /// text documents for robots.txt and sitemaps (#317), generation 10 BR-07
 /// postcondition probes, generation 11 BR-02 form actions, generation 12
-/// BR-02 press, hover and bounded waits.
-export const WORKER_PROTOCOL_GENERATION = 12;
+/// BR-02 press, hover and bounded waits, generation 13 BR-03 uploads.
+export const WORKER_PROTOCOL_GENERATION = 13;
 /// BR-02: the longest value filled, and the most options selected at once
 /// (mirrors the host).
 export const MAX_FORM_VALUE_BYTES = 1024;
@@ -109,6 +109,7 @@ export type HostFrame =
   | { frame: "verify"; ver_id: number; probes: VerifyProbe[] }
   | { frame: "form_action"; form_id: number; ref: string; act: FormAction; target?: ApprovedTarget }
   | { frame: "wait_for"; wait_id: number; text: string; appear: boolean; timeout_ms: number }
+  | { frame: "upload"; up_id: number; ref: string; path: string; target?: ApprovedTarget }
   | { frame: "shutdown" };
 
 export type RouteKind = "document" | "redirect" | "frame" | "popup" | "fetch" | "subresource" | "service_worker";
@@ -209,6 +210,8 @@ export type WorkerFrame =
   | { frame: "verified"; ver_id: number; url: string; results: VerifyResult[] }
   | { frame: "form_done"; form_id: number; url: string }
   | { frame: "waited"; wait_id: number; url: string; met: boolean }
+  | { frame: "uploaded"; up_id: number; url: string }
+  | { frame: "upload_failed"; up_id: number; reason: NavigationFailure }
   | { frame: "wait_failed"; wait_id: number }
   | { frame: "form_failed"; form_id: number; reason: NavigationFailure }
   | { frame: "verification_failed"; ver_id: number }
@@ -384,6 +387,15 @@ export function parseHostFrame(raw: unknown): HostFrame {
       }
       const target = approvedTarget(raw);
       return target ? { frame: "form_action", form_id: formId, ref: raw.ref, act, target } : { frame: "form_action", form_id: formId, ref: raw.ref, act };
+    }
+    case "upload": {
+      exactKeys(raw, "role" in raw || "name" in raw ? ["frame", "up_id", "ref", "path", "role", "name"] : ["frame", "up_id", "ref", "path"]);
+      const upId = positiveId(raw.up_id, "up_id");
+      if (typeof raw.ref !== "string" || !/^e\d{1,6}$/.test(raw.ref)) throw new ProtocolViolation("upload ref is malformed");
+      const path = boundedString(raw.path, MAX_PATH_BYTES, "upload path");
+      if (!isAbsoluteWindowsPath(path)) throw new ProtocolViolation("upload path is not absolute");
+      const target = approvedTarget(raw);
+      return target ? { frame: "upload", up_id: upId, ref: raw.ref, path, target } : { frame: "upload", up_id: upId, ref: raw.ref, path };
     }
     case "wait_for": {
       exactKeys(raw, ["frame", "wait_id", "text", "appear", "timeout_ms"]);
