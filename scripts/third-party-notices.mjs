@@ -28,15 +28,23 @@ const WORKSPACES = [
   { dir: "apps/orcel-approval-helper-linux", roots: ["orcel-approval-helper-linux"], linuxOnly: true }
 ].filter((workspace) => !workspace.linuxOnly || TARGET.includes("-linux-"));
 const NOTICE_FILE = /^(licen[cs]e|copying|notice|unlicense)([-_.].*)?$/i;
-// Source vendored into this repository rather than resolved from a registry.
-// Its notice is maintained in-repo, and the upstream copyright line must
-// appear in it verbatim.
+// Source vendored or ported into this repository rather than resolved from
+// a registry. Its notice is maintained in-repo, and the upstream copyright
+// line (or, for crawl4ai, the attribution its license requires) must appear
+// in it verbatim.
 const VENDORED_NOTICES = [
   {
     name: "Cua Driver (trycua/cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f, vendored source)",
     license: "MIT",
     file: "docs/orcel/notices/cua-MIT.txt",
     copyright: "Copyright (c) 2025 Cua AI, Inc."
+  },
+  {
+    name: "crawl4ai (unclecode/crawl4ai@94b67888ca8b335ff2121423a50e06dd27661922, ported relevance filters)",
+    license: "Apache-2.0 with an attribution requirement",
+    file: "docs/orcel/notices/crawl4ai-Apache-2.0-attribution.txt",
+    copyright:
+      "This product includes software developed by UncleCode (https://x.com/unclecode) as part of the Crawl4AI project (https://github.com/unclecode/crawl4ai)."
   }
 ];
 
