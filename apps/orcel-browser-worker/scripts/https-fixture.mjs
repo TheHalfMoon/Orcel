@@ -172,6 +172,12 @@ const EXEC = `<!doctype html><meta charset="utf-8"><title>Exec</title>
 <form toolname="odd_button" tooldescription="An invalid button type submits." action="/search" toolautosubmit><input name="q"><button type="bogus" name="go" value="1">Go</button></form>`;
 // Slice 6: a long readable page with hidden text, page-injected syntax, a
 // link and an image. The paragraphs make the Markdown span several pieces.
+// BR-02: a form to fill, select and check (no submission).
+const FORM = `<!doctype html><meta charset="utf-8"><title>Profile</title>
+<label>Full name <input type="text" name="full_name" value="Old Name"></label>
+<label>City <select name="city"><option>Lisbon</option><option>Porto</option></select></label>
+<label><input type="checkbox" name="terms"> Accept terms</label>
+<label>Password <input type="password" name="pw"></label>`;
 // BR-07: a page to verify postconditions against.
 const VERIFY = `<!doctype html><meta charset="utf-8"><title>Order 42</title>
 <h1>Order confirmed</h1>
@@ -430,7 +436,7 @@ trailer << /Root 1 0 R >>
     response.setHeader("reporting-endpoints", 'csp="https://other.test/reports"');
     response.setHeader("content-security-policy", "img-src 'self'; report-to csp");
   }
-  const pages = { "/mixed": MIXED, "/spec-escape": SPEC_ESCAPE, "/reports": REPORTS, "/self-move": SELF_MOVE, "/archive": ARCHIVE, "/archive-hostile": ARCHIVE_HOSTILE, "/files": FILES, "/archive-tricky": ARCHIVE_TRICKY, "/archive-rerender": ARCHIVE_RERENDER, "/archive-rerender-swap": ARCHIVE_RERENDER_SWAP, "/archive-rerender-twins": ARCHIVE_RERENDER_TWINS, "/secret-name": SECRET_NAME, "/tools": TOOLS, "/tools-none": NO_TOOLS, "/tools-control": TOOLS_CONTROL, "/exec": EXEC, "/read": READ, "/verify-page": VERIFY };
+  const pages = { "/mixed": MIXED, "/spec-escape": SPEC_ESCAPE, "/reports": REPORTS, "/self-move": SELF_MOVE, "/archive": ARCHIVE, "/archive-hostile": ARCHIVE_HOSTILE, "/files": FILES, "/archive-tricky": ARCHIVE_TRICKY, "/archive-rerender": ARCHIVE_RERENDER, "/archive-rerender-swap": ARCHIVE_RERENDER_SWAP, "/archive-rerender-twins": ARCHIVE_RERENDER_TWINS, "/secret-name": SECRET_NAME, "/tools": TOOLS, "/tools-none": NO_TOOLS, "/tools-control": TOOLS_CONTROL, "/exec": EXEC, "/read": READ, "/verify-page": VERIFY, "/form-page": FORM };
   if (SITE[path]) return response.end(SITE[path]);
   response.end(pages[path] ?? `<!doctype html><title>${host}${path}</title><p>fixture</p>`);
 });

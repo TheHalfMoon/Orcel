@@ -39,7 +39,7 @@ pub struct JobProcess {
 /// Generation 2 adds the slice-3a navigation frames, generation 3 slice-3b
 /// observation, generation 4 slice-3c activation, generation 5 slice-3d
 /// downloads.
-pub const WORKER_PROTOCOL_GENERATION: u32 = 10;
+pub const WORKER_PROTOCOL_GENERATION: u32 = 11;
 /// Worker identity reported in its hello.
 pub const WORKER_IDENTITY: &str = "orcel-browser-worker";
 /// The only Node option the worker accepts (inspector activation refused).
@@ -92,6 +92,12 @@ pub struct HostNode {
     pub role: String,
     pub name: String,
     pub url: Option<String>,
+}
+
+/// BR-02: the document after an approved form action (the same document).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormOutcome {
+    pub url: String,
 }
 
 /// A live observation: SG-000076 identities and the redacted, digested
@@ -269,6 +275,24 @@ pub(crate) enum WorkerRequest<'a> {
         tool: &'a str,
         fields: &'a [crate::webmcp::ExecField],
     },
+    /// BR-02: one approved form action (exactly one of `value`, `values`
+    /// and `checked`, by `action`).
+    FormAction {
+        form_id: u64,
+        action: &'a str,
+        #[serde(rename = "ref")]
+        reference: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        value: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        values: Option<&'a [String]>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        checked: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        role: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<&'a str>,
+    },
     /// BR-07: read-only probes for the postcondition verifier.
     Verify {
         ver_id: u64,
@@ -388,6 +412,14 @@ pub(crate) enum WorkerReply {
         ver_id: u64,
         url: String,
         results: Vec<crate::verify::ProbeResult>,
+    },
+    FormDone {
+        form_id: u64,
+        url: String,
+    },
+    FormFailed {
+        form_id: u64,
+        reason: String,
     },
     VerificationFailed {
         ver_id: u64,
@@ -1195,6 +1227,7 @@ mod platform {
         last_request: u64,
         next_obs: u64,
         next_ver: u64,
+        next_form: u64,
         /// BR-07: distinct values each field (page, role, name) was checked
         /// against in this lifetime.
         value_budget: crate::verify::GuessBudget,
@@ -1305,6 +1338,7 @@ mod platform {
             policy: NavigationPolicy::new(&spec.destinations),
             next_obs: 0,
             next_ver: 0,
+            next_form: 0,
             value_budget: crate::verify::GuessBudget::default(),
             last_download_sha256: None,
             next_disc: 0,
@@ -1761,6 +1795,158 @@ mod platform {
             })
         }
 
+        /// BR-02: the state a form-action approval must name: the action and
+        /// its exact input, for an observed node whose role supports it.
+        pub fn form_binding(
+            &self,
+            node_id: &str,
+            input: &crate::actuation::FormInput,
+        ) -> Result<String, HostError> {
+            input.check()?;
+            let node = self
+                .host_nodes
+                .get(node_id)
+                .ok_or_else(|| HostError::Invalid("stale or unknown node".into()))?;
+            crate::actuation::role_supports_action(&node.role, input.action())?;
+            if matches!(input, crate::actuation::FormInput::Fill { .. })
+                && crate::actuation::name_looks_secret(&node.name)
+            {
+                return Err(HostError::Invalid("password-field filling denied".into()));
+            }
+            Ok(input.state())
+        }
+
+        /// BR-02: perform one approved form action (fill a text field,
+        /// select options of a native select, set a checkbox or radio) on
+        /// the committed document. `dispatch` verifies the target, whose
+        /// state must be `form_binding` for this exact input, and consumes
+        /// the one-shot approval. While the action runs the page may open
+        /// no document at all; the worker acts only on the approved element
+        /// itself (BR-01 role and name fallback), only when it is the right
+        /// kind of control, and never fills a field that looks secret. The
+        /// document stays the same generation, so its node identities stay
+        /// valid for verification (BR-07); a page whose URL changed is
+        /// unverified.
+        pub fn form_action(
+            &mut self,
+            target: &crate::actuation::ActuationTarget,
+            approval: &mut crate::actuation::ApprovalToken,
+            input: &crate::actuation::FormInput,
+            policy_revision: u64,
+            workspace: &str,
+        ) -> Result<FormOutcome, HostError> {
+            // An ended lifetime refuses before any approval is spent.
+            self.ensure_alive()?;
+            if target.action != input.action() {
+                return Err(HostError::Invalid(
+                    "the approval is for another action".into(),
+                ));
+            }
+            input.check()?;
+            let (url, generation) = self
+                .committed
+                .clone()
+                .ok_or_else(|| HostError::Invalid("no committed document".into()))?;
+            let (reference, approved_name) = self
+                .host_nodes
+                .get(&target.node_id)
+                .filter(|node| node.role == target.role)
+                .map(|node| (node.reference.clone(), node.name.clone()))
+                .ok_or_else(|| HostError::Invalid("stale or unknown node".into()))?;
+            if !reference.starts_with('e') {
+                return Err(HostError::Invalid(
+                    "form actions inside frames are not supported".into(),
+                ));
+            }
+            // A field named like a secret is never filled, whatever its
+            // attributes (checked before the approval is spent).
+            if matches!(input, crate::actuation::FormInput::Fill { .. })
+                && crate::actuation::name_looks_secret(&approved_name)
+            {
+                return Err(HostError::Invalid("password-field filling denied".into()));
+            }
+            self.policy.expect_no_document();
+            if let Err(error) = crate::actuation::dispatch(
+                target,
+                approval,
+                generation,
+                &input.state(),
+                policy_revision,
+                workspace,
+            ) {
+                self.policy.finish_activation();
+                return Err(error);
+            }
+            self.next_form += 1;
+            let form_id = self.next_form;
+            let (value, values, checked) = match input {
+                crate::actuation::FormInput::Fill { value } => (Some(value.as_str()), None, None),
+                crate::actuation::FormInput::Select { labels } => {
+                    (None, Some(labels.as_slice()), None)
+                }
+                crate::actuation::FormInput::Check { checked } => (None, None, Some(*checked)),
+            };
+            let named = !approved_name.is_empty();
+            let sent = self.send(&WorkerRequest::FormAction {
+                form_id,
+                action: input.action().name(),
+                reference: &reference,
+                value,
+                values,
+                checked,
+                role: named.then_some(target.role.as_str()),
+                name: named.then_some(approved_name.as_str()),
+            });
+            if let Err(error) = sent {
+                self.policy.finish_activation();
+                return Err(error);
+            }
+            let reply = self.reply(WORKER_ACTIVATION_TIMEOUT);
+            self.policy.finish_activation();
+            match reply? {
+                WorkerReply::FormDone {
+                    form_id: done,
+                    url: after,
+                } if done == form_id => {
+                    if after != url {
+                        // Applied, but the page moved itself (no document
+                        // was allowed, so a history change): the outcome is
+                        // unverified and nothing observed holds.
+                        self.host_nodes.clear();
+                        self.host_tools.clear();
+                        return Err(HostError::Unavailable(UnavailableReason::OutcomeUnknown));
+                    }
+                    Ok(FormOutcome { url: after })
+                }
+                WorkerReply::FormFailed {
+                    form_id: done,
+                    reason,
+                } if done == form_id => Err(match reason.as_str() {
+                    // Refused before anything changed.
+                    "denied" => HostError::Invalid(
+                        "form action refused: not the right kind of control, or a secret field"
+                            .into(),
+                    ),
+                    "stale" => HostError::Unavailable(UnavailableReason::TargetStale),
+                    // The worker never acted, but the approval is spent: a
+                    // new action needs a fresh approval, never a retry.
+                    "busy" => HostError::Unavailable(UnavailableReason::ActionFailed),
+                    "failed" | "timeout" => {
+                        // The control may already have changed: nothing
+                        // observed is trusted until the page is observed
+                        // again, and the outcome is unknown.
+                        self.host_nodes.clear();
+                        self.host_tools.clear();
+                        HostError::Unavailable(UnavailableReason::OutcomeUnknown)
+                    }
+                    _ => self.fail_closed(UnavailableReason::ProtocolViolation),
+                }),
+                // A reply for another request, or of another kind: the
+                // worker may still be acting, so the lifetime ends.
+                _ => Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
+            }
+        }
+
         /// BR-07: check postconditions after a step. Element, text, value
         /// and checked-state checks are observed by read-only worker probes
         /// of exactly the committed document; URL and download checks use
@@ -2105,7 +2291,9 @@ mod platform {
                     exec_id: done,
                     reason,
                 } if done == exec_id => return Err(navigation_failure(&reason)),
-                _ => return Err(HostError::Unavailable(UnavailableReason::ProtocolViolation)),
+                // A reply for another request or of another kind after an
+                // approved mutation: the worker may still be acting.
+                _ => return Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
             };
             if !opened_expected {
                 return Err(HostError::Invalid(
@@ -2260,7 +2448,9 @@ mod platform {
                     self.host_tools.clear();
                     return Err(navigation_failure(&reason));
                 }
-                _ => return Err(HostError::Unavailable(UnavailableReason::ProtocolViolation)),
+                // A reply for another request or of another kind after an
+                // approved mutation: the worker may still be acting.
+                _ => return Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
             };
             self.host_nodes.clear();
             self.host_tools.clear();
@@ -2423,7 +2613,9 @@ mod platform {
                     dl_id: done,
                     reason,
                 } if done == dl_id => return Err(download_failure(&reason)),
-                _ => return Err(HostError::Unavailable(UnavailableReason::ProtocolViolation)),
+                // A reply for another request or of another kind after an
+                // approved mutation: the worker may still be acting.
+                _ => return Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
             };
             // Exactly the approved document: redirects are not followed.
             if url != link {
@@ -2605,6 +2797,31 @@ mod fallback {
             &mut self,
             _scope: &crate::observation::ObservationScope,
         ) -> Result<LiveObservation, HostError> {
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity: no worker ever exists off Windows.
+        pub fn form_binding(
+            &self,
+            _node_id: &str,
+            _input: &crate::actuation::FormInput,
+        ) -> Result<String, HostError> {
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity: no worker ever exists off Windows.
+        pub fn form_action(
+            &mut self,
+            _target: &crate::actuation::ActuationTarget,
+            _approval: &mut crate::actuation::ApprovalToken,
+            _input: &crate::actuation::FormInput,
+            _policy_revision: u64,
+            _workspace: &str,
+        ) -> Result<FormOutcome, HostError> {
             Err(HostError::Unavailable(
                 UnavailableReason::UnsupportedRuntime,
             ))
@@ -3330,6 +3547,63 @@ mod tests {
             r#"{"frame":"discovered","disc_id":2,"url":"u","truncated":false,"tools":[{"name":"t","title":"","description":"d","autosubmit":false,"node":3,"has_password":false,"action":null,"method":"get","self_contained":false,"fixed_names":[],"utf8":true,"params":[],"run":"x"}]}"#
         )
         .is_err());
+    }
+
+    /// BR-02: the form-action frames, as both sides write them.
+    #[test]
+    fn br02_form_action_frames_are_exact() {
+        let json = |request: &WorkerRequest<'_>| serde_json::to_string(request).unwrap();
+        assert_eq!(
+            json(&WorkerRequest::FormAction {
+                form_id: 2,
+                action: "fill",
+                reference: "e4",
+                value: Some("Ada"),
+                values: None,
+                checked: None,
+                role: Some("textbox"),
+                name: Some("Name"),
+            }),
+            r#"{"frame":"form_action","form_id":2,"action":"fill","ref":"e4","value":"Ada","role":"textbox","name":"Name"}"#
+        );
+        let labels = vec!["Lisbon".to_owned()];
+        assert_eq!(
+            json(&WorkerRequest::FormAction {
+                form_id: 3,
+                action: "select",
+                reference: "e5",
+                value: None,
+                values: Some(&labels),
+                checked: None,
+                role: None,
+                name: None,
+            }),
+            r#"{"frame":"form_action","form_id":3,"action":"select","ref":"e5","values":["Lisbon"]}"#
+        );
+        assert_eq!(
+            json(&WorkerRequest::FormAction {
+                form_id: 4,
+                action: "check",
+                reference: "e6",
+                value: None,
+                values: None,
+                checked: Some(true),
+                role: None,
+                name: None,
+            }),
+            r#"{"frame":"form_action","form_id":4,"action":"check","ref":"e6","checked":true}"#
+        );
+        let reply = |text: &str| serde_json::from_str::<WorkerReply>(text);
+        assert_eq!(
+            reply(r#"{"frame":"form_done","form_id":2,"url":"https://fixture.test/form"}"#)
+                .unwrap(),
+            WorkerReply::FormDone {
+                form_id: 2,
+                url: "https://fixture.test/form".into()
+            }
+        );
+        assert!(reply(r#"{"frame":"form_failed","form_id":2,"reason":"denied"}"#).is_ok());
+        assert!(reply(r#"{"frame":"form_done","form_id":2,"url":"u","value":"Ada"}"#).is_err());
     }
 
     /// BR-07: the verify frames, as both sides write them.

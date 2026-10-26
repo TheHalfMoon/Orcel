@@ -69,9 +69,9 @@ test("a negated or extra Node flag makes the worker refuse to start", async () =
 });
 
 test("with --disable-sigusr1 the worker answers hello and ends cleanly at end of input", async () => {
-  const result = await run(["--disable-sigusr1"], encodeFrame({ frame: "hello", generation: 10 }));
+  const result = await run(["--disable-sigusr1"], encodeFrame({ frame: "hello", generation: 11 }));
   assert.equal(result.code, 0, result.stderr);
-  assert.deepEqual(new FrameDecoder().push(result.stdout), [{ frame: "hello", generation: 10, worker: "orcel-browser-worker" }]);
+  assert.deepEqual(new FrameDecoder().push(result.stdout), [{ frame: "hello", generation: 11, worker: "orcel-browser-worker" }]);
 });
 
 test("Windows command lines split with CommandLineToArgvW rules", () => {

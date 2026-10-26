@@ -5,6 +5,10 @@ a27eb72ef5ad80ae654c8dac975db1542ee97071) into
 apps/orcel-browser-worker/src/verify.ts and crates/orcel-browser-host/src/verify.rs,
 modified for Orcel as described in those files;
 docs/orcel/br07_verify_provenance.json records the provenance.
+BR-02 adapts, from the same commit, packages/playwright-core/src/tools/backend/form.ts (blob
+193e2b3d084e713c4bb0e3d37d77e5201748dbd5) into
+apps/orcel-browser-worker/src/actions/form.ts;
+docs/orcel/br02_form_actions_provenance.json records the provenance.
 
 Upstream NOTICE (blob 814ec169), reproduced in full:
 

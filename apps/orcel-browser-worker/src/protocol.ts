@@ -11,6 +11,7 @@ import { isIPv4, isIPv6 } from "node:net";
 import type { SnapshotNode } from "./snapshot.js";
 import type { ControlKind, DeclaredTool } from "./webmcp/declarative.js";
 import { MAX_VERIFY_PROBES, MAX_VERIFY_TEXT_BYTES, type VerifyProbe, type VerifyResult } from "./verify.js";
+import type { FormAction } from "./actions/form.js";
 
 /// One form field to enter when executing a tool (host-validated).
 export interface ExecField {
@@ -30,8 +31,12 @@ export const MAX_EXEC_VALUE_CHARS = 1024;
 /// downloads, generation 6 slice-4 WebMCP discovery, generation 7 slice-5
 /// WebMCP execution, generation 8 slice-6 page extraction, generation 9
 /// text documents for robots.txt and sitemaps (#317), generation 10 BR-07
-/// postcondition probes.
-export const WORKER_PROTOCOL_GENERATION = 10;
+/// postcondition probes, generation 11 BR-02 form actions.
+export const WORKER_PROTOCOL_GENERATION = 11;
+/// BR-02: the longest value filled, and the most options selected at once
+/// (mirrors the host).
+export const MAX_FORM_VALUE_BYTES = 1024;
+export const MAX_FORM_OPTIONS = 16;
 export const WORKER_IDENTITY = "orcel-browser-worker";
 export const MAX_FRAME_BYTES = 64 * 1024;
 /// One extraction piece's content on the wire (JSON-escaped UTF-8 bytes),
@@ -100,6 +105,7 @@ export type HostFrame =
   | { frame: "activate"; act_id: number; ref: string; target?: ApprovedTarget }
   | { frame: "download"; dl_id: number; ref: string; path: string; target?: ApprovedTarget }
   | { frame: "verify"; ver_id: number; probes: VerifyProbe[] }
+  | { frame: "form_action"; form_id: number; ref: string; act: FormAction; target?: ApprovedTarget }
   | { frame: "shutdown" };
 
 export type RouteKind = "document" | "redirect" | "frame" | "popup" | "fetch" | "subresource" | "service_worker";
@@ -124,6 +130,15 @@ function approvedTarget(raw: Record<string, unknown>): ApprovedTarget | undefine
     throw new ProtocolViolation("approved role is malformed");
   }
   return { role: raw.role, name: boundedString(raw.name, MAX_TARGET_NAME_BYTES, "approved name") };
+}
+
+/// BR-02: a value to fill; empty clears the field.
+function formValue(value: unknown): string {
+  if (typeof value !== "string" || Buffer.byteLength(value, "utf8") > MAX_FORM_VALUE_BYTES) {
+    throw new ProtocolViolation("fill value is not a bounded string");
+  }
+  if (/[\u0000-\u001f\u007f]/.test(value)) throw new ProtocolViolation("fill value carries control characters");
+  return value;
 }
 
 /// BR-07: one read-only probe, as the host sends it.
@@ -189,6 +204,8 @@ export type WorkerFrame =
   | { frame: "downloaded"; dl_id: number; url: string; name: string; media: string; bytes: number }
   | { frame: "download_failed"; dl_id: number; reason: NavigationFailure }
   | { frame: "verified"; ver_id: number; url: string; results: VerifyResult[] }
+  | { frame: "form_done"; form_id: number; url: string }
+  | { frame: "form_failed"; form_id: number; reason: NavigationFailure }
   | { frame: "verification_failed"; ver_id: number }
   | { frame: "error"; code: ErrorCode };
 
@@ -328,6 +345,33 @@ export function parseHostFrame(raw: unknown): HostFrame {
       }
       const target = approvedTarget(raw);
       return target ? { frame: "activate", act_id: actId, ref: raw.ref, target } : { frame: "activate", act_id: actId, ref: raw.ref };
+    }
+    case "form_action": {
+      const targeted = "role" in raw || "name" in raw ? ["role", "name"] : [];
+      const own: Record<string, string> = { fill: "value", select: "values", check: "checked" };
+      const field = typeof raw.action === "string" ? own[raw.action] : undefined;
+      if (!field) throw new ProtocolViolation("form action is unknown");
+      exactKeys(raw, ["frame", "form_id", "action", "ref", field, ...targeted]);
+      const formId = positiveId(raw.form_id, "form_id");
+      if (typeof raw.ref !== "string" || !/^e\d{1,6}$/.test(raw.ref)) {
+        throw new ProtocolViolation("form action ref is malformed");
+      }
+      let act: FormAction;
+      if (raw.action === "fill") {
+        act = { action: "fill", value: formValue(raw.value) };
+      } else if (raw.action === "select") {
+        if (!Array.isArray(raw.values) || raw.values.length === 0 || raw.values.length > MAX_FORM_OPTIONS) {
+          throw new ProtocolViolation("select options are malformed");
+        }
+        const values = raw.values.map((label: unknown) => boundedString(label, MAX_FORM_VALUE_BYTES, "select option"));
+        if (new Set(values).size !== values.length) throw new ProtocolViolation("select options repeat");
+        act = { action: "select", values };
+      } else {
+        if (typeof raw.checked !== "boolean") throw new ProtocolViolation("check state is not a boolean");
+        act = { action: "check", checked: raw.checked };
+      }
+      const target = approvedTarget(raw);
+      return target ? { frame: "form_action", form_id: formId, ref: raw.ref, act, target } : { frame: "form_action", form_id: formId, ref: raw.ref, act };
     }
     case "verify": {
       exactKeys(raw, ["frame", "ver_id", "probes"]);

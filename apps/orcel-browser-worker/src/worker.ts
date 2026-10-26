@@ -34,6 +34,7 @@ import {
 import type { RouteQuery } from "./routing.js";
 import type { BoundedSnapshot } from "./snapshot.js";
 import type { VerifyProbe, VerifyResult } from "./verify.js";
+import type { FormAction } from "./actions/form.js";
 
 export type LaunchSpec = Extract<HostFrame, { frame: "launch" }>;
 
@@ -79,6 +80,10 @@ export interface EngineSession {
   /// approved target), expect a download, and save it to `path` (which must
   /// not exist); rejects with NavigationError.
   download(ref: string, path: string, target?: ApprovedTarget): Promise<{ url: string; name: string; media: string; bytes: number }>;
+  /// BR-02: one approved form action on the element with this snapshot ref
+  /// (or the one matching the approved target); resolves with the page's
+  /// URL afterwards; rejects with NavigationError.
+  formAction(ref: string, act: FormAction, target?: ApprovedTarget): Promise<{ url: string }>;
   /// BR-07: read-only probes of the primary page, one result per probe.
   verify(probes: VerifyProbe[]): Promise<{ url: string; results: VerifyResult[] }>;
   /// Called once if the engine goes away without `close`.
@@ -276,6 +281,17 @@ export class Worker {
         });
         return;
       }
+      case "form_action": {
+        if (this.state !== "launched" || !this.session) return this.fail("not_ready");
+        if (this.navigating) {
+          this.send({ frame: "form_failed", form_id: frame.form_id, reason: "busy" });
+          return;
+        }
+        // Outside the queue: the action's requests need host decisions.
+        this.navigating = true;
+        void this.runFormAction(this.session, frame.form_id, frame.ref, frame.act, frame.target);
+        return;
+      }
       case "verify": {
         if (this.state !== "launched" || !this.session) return this.fail("not_ready");
         // A document being replaced cannot be verified.
@@ -403,6 +419,19 @@ export class Worker {
     }
     this.navigating = false;
     if (this.state === "launched" && this.session === session) this.settle(outcome, { frame: "activation_failed", act_id: actId, reason: "failed" });
+  }
+
+  private async runFormAction(session: EngineSession, formId: number, ref: string, act: FormAction, target?: ApprovedTarget): Promise<void> {
+    let outcome: WorkerFrame;
+    try {
+      const { url } = await session.formAction(ref, act, target);
+      outcome = { frame: "form_done", form_id: formId, url };
+    } catch (error) {
+      const reason: NavigationFailure = error instanceof NavigationError ? error.reason : "failed";
+      outcome = { frame: "form_failed", form_id: formId, reason };
+    }
+    this.navigating = false;
+    if (this.state === "launched" && this.session === session) this.settle(outcome, { frame: "form_failed", form_id: formId, reason: "failed" });
   }
 
   private async runExecution(session: EngineSession, execId: number, tool: string, fields: ExecField[]): Promise<void> {

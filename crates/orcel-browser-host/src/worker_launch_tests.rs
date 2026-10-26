@@ -1835,6 +1835,169 @@ fn br01_a_rerendered_link_is_found_by_its_approved_role_and_name_or_nothing_is_c
     );
 }
 
+/// A form-action approval (BR-02): it names the node and the exact input.
+fn approved_form(
+    worker: &BrowserWorker,
+    live: &LiveObservation,
+    node_id: &str,
+    role: &str,
+    input: &crate::actuation::FormInput,
+) -> (
+    crate::actuation::ActuationTarget,
+    crate::actuation::ApprovalToken,
+) {
+    let target = crate::actuation::ActuationTarget {
+        page_id: live.page.page_id.clone(),
+        origin: live.page.origin.clone(),
+        document_generation: live.document.document_generation,
+        node_id: node_id.to_owned(),
+        role: role.into(),
+        state: worker.form_binding(node_id, input).unwrap_or_default(),
+        action: input.action(),
+        workspace: "workspace".into(),
+        policy_revision: 1,
+    };
+    let approval = crate::actuation::ApprovalToken {
+        approval_id: "approval-form".into(),
+        target_digest: crate::actuation::target_digest(&target),
+        workspace: "workspace".into(),
+        policy_revision: 1,
+        consumed: false,
+    };
+    (target, approval)
+}
+
+/// BR-02: approved fill, select and check change exactly the approved
+/// controls to exactly the approved input, and BR-07 verifies it; a
+/// password is never filled, and an approval for another value is refused.
+#[test]
+#[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
+fn br02_approved_form_actions_change_only_what_was_approved() {
+    use crate::actuation::FormInput;
+    use crate::verify::Postcondition;
+    let fixture = HttpsFixture::start();
+    let profile = temp_profile("form");
+    let mut launch = spec(&profile, true);
+    launch.destinations =
+        vec![
+            AdmittedDestination::fixture("fixture.test", IpAddr::V4(Ipv4Addr::LOCALHOST))
+                .expect("fixture.test"),
+        ];
+    launch.test_trusted_spki = Some(fixture.spki.clone());
+    let mut worker = launch_worker(&launch, &Policy(PolicyKeyState::Absent)).expect("launch");
+    let scope = crate::observation::ObservationScope {
+        workspace: "workspace".into(),
+        profile_identity: "profile".into(),
+    };
+    worker
+        .navigate("https://fixture.test/form-page")
+        .expect("navigate");
+    let live = worker.observe(&scope).expect("observe");
+    let named = |role: &str, name: &str| {
+        let mut stack: Vec<&crate::observation::ObservedNode> =
+            live.observation.nodes.iter().collect();
+        while let Some(node) = stack.pop() {
+            if worker
+                .host_node(&node.node_id)
+                .is_some_and(|h| h.role == role && h.name == name)
+            {
+                return node.node_id.clone();
+            }
+            stack.extend(node.children.iter());
+        }
+        panic!("no {role} named {name}");
+    };
+    let full_name = named("textbox", "Full name");
+    let city = named("combobox", "City");
+    let terms = named("checkbox", "Accept terms");
+    let password = named("textbox", "Password");
+
+    fn act(
+        worker: &mut BrowserWorker,
+        live: &LiveObservation,
+        node: &str,
+        role: &str,
+        input: FormInput,
+    ) -> Result<crate::worker_launch::FormOutcome, HostError> {
+        let (target, mut approval) = approved_form(worker, live, node, role, &input);
+        worker.form_action(&target, &mut approval, &input, 1, "workspace")
+    }
+    let filled = act(
+        &mut worker,
+        &live,
+        &full_name,
+        "textbox",
+        FormInput::Fill {
+            value: "Ada Lovelace".into(),
+        },
+    );
+    assert_eq!(filled.expect("fill").url, "https://fixture.test/form-page");
+    act(
+        &mut worker,
+        &live,
+        &city,
+        "combobox",
+        FormInput::Select {
+            labels: vec!["Porto".into()],
+        },
+    )
+    .expect("select");
+    act(
+        &mut worker,
+        &live,
+        &terms,
+        "checkbox",
+        FormInput::Check { checked: true },
+    )
+    .expect("check");
+
+    // A password is never filled, even when approved.
+    let refused = act(
+        &mut worker,
+        &live,
+        &password,
+        "textbox",
+        FormInput::Fill {
+            value: "hunter2".into(),
+        },
+    );
+    assert!(matches!(refused, Err(HostError::Invalid(_))), "{refused:?}");
+
+    // An approval for one value does not cover another.
+    let approved = FormInput::Fill {
+        value: "Ada".into(),
+    };
+    let (target, mut approval) = approved_form(&worker, &live, &full_name, "textbox", &approved);
+    let other = FormInput::Fill {
+        value: "Eve".into(),
+    };
+    let mismatch = worker.form_action(&target, &mut approval, &other, 1, "workspace");
+    assert!(
+        matches!(mismatch, Err(HostError::Invalid(_))),
+        "{mismatch:?}"
+    );
+    assert!(!approval.consumed, "a refused approval is not spent");
+
+    // The approved values are what the page now holds (BR-07).
+    let report = worker
+        .verify_postconditions(&[
+            Postcondition::ValueEquals {
+                node_id: full_name.clone(),
+                value: "Ada Lovelace".into(),
+            },
+            Postcondition::ValueEquals {
+                node_id: city,
+                value: "Porto".into(),
+            },
+            Postcondition::Checked {
+                node_id: terms,
+                checked: true,
+            },
+        ])
+        .expect("verify");
+    assert!(report.verified, "{report:?}");
+}
+
 /// BR-07: postconditions are checked by the host from read-only probes of
 /// the committed page: visible elements and text pass, hidden text fails,
 /// a field's value is compared in the host, a password is never read, and

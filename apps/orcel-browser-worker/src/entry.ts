@@ -23,6 +23,7 @@ import { captureWithin } from "./webmcp/capture.js";
 import { fitBlocks, MAX_RESULT_BLOCKS, structuredData } from "./webmcp/structured.js";
 import { documentModel, type CapturedSnapshot } from "./webmcp/dom-snapshot.js";
 import { approvedElement } from "./actions/targets.js";
+import { formAction } from "./actions/form.js";
 import { NavigationError, Worker, type EngineSession, type Launcher, type LaunchSpec, type RoutePolicy } from "./worker.js";
 
 const startup = startupRefusal(process.execArgv, process.version);
@@ -242,6 +243,10 @@ const playwrightLauncher: Launcher = {
           media: document.media,
           bytes: document.body.length
         };
+      },
+      async formAction(ref, act, target) {
+        await formAction(primary, ref, act, target);
+        return { url: primary.url() };
       },
       async verify(probes) {
         const results = await runProbes(primary, probes);

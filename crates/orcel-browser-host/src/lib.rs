@@ -45,9 +45,9 @@ mod worker_navigation;
 mod worker_process;
 
 pub use actuation::{
-    coordinate_fallback, dispatch, retry_after_dispatch, role_supports_action, target_digest,
-    verify_postcondition, verify_target, ActuationTarget, ApprovalToken, DispatchOutcome,
-    SupportedAction,
+    coordinate_fallback, dispatch, name_looks_secret, retry_after_dispatch, role_supports_action,
+    target_digest, verify_postcondition, verify_target, ActuationTarget, ApprovalToken,
+    DispatchOutcome, FormInput, SupportedAction, MAX_FORM_OPTIONS, MAX_FORM_VALUE_BYTES,
 };
 pub use argv::{assert_argv_clean, build_argv};
 pub use capture::{
@@ -168,9 +168,9 @@ pub use webmcp::{
 pub use worker_launch::ephemeral_profile_dir;
 pub use worker_launch::{
     classify_job, launch_worker, worker_environment, worker_node_args, BrowserWorker, CancelHandle,
-    CommittedDownload, ExecutionOutcome, FetchedText, HostNode, JobProcess, LiveObservation,
-    NavigationOutcome, ShutdownReport, SnapshotNode, WorkerLaunch, FETCH_TEXT_MEDIA,
-    MAX_FETCH_TEXT_CHARS, WORKER_ACTIVATION_TIMEOUT, WORKER_EXECUTION_TIMEOUT,
+    CommittedDownload, ExecutionOutcome, FetchedText, FormOutcome, HostNode, JobProcess,
+    LiveObservation, NavigationOutcome, ShutdownReport, SnapshotNode, WorkerLaunch,
+    FETCH_TEXT_MEDIA, MAX_FETCH_TEXT_CHARS, WORKER_ACTIVATION_TIMEOUT, WORKER_EXECUTION_TIMEOUT,
     WORKER_EXTRACTION_TIMEOUT, WORKER_HANDSHAKE_TIMEOUT, WORKER_IDENTITY, WORKER_LAUNCH_TIMEOUT,
     WORKER_NAVIGATION_TIMEOUT, WORKER_NODE_OPTION, WORKER_OBSERVATION_TIMEOUT,
     WORKER_PROTOCOL_GENERATION, WORKER_REPLY_TIMEOUT, WORKER_SHUTDOWN_TIMEOUT,

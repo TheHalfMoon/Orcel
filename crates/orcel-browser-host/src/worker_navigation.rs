@@ -180,6 +180,16 @@ impl NavigationPolicy {
         Ok(())
     }
 
+    /// BR-02: while a form action runs, the page opens no document at all:
+    /// every page-initiated top-level document and popup is refused until
+    /// `finish_activation`.
+    pub fn expect_no_document(&mut self) {
+        // An expectation already spent matches nothing.
+        self.activation = Some((String::new(), true));
+        self.activation_any_query = false;
+        self.submission = None;
+    }
+
     /// End the activation expectation; true if the expected document was
     /// requested (a click that requested no document, such as a pushState
     /// or a script action, is not a verified activation).
@@ -489,6 +499,31 @@ mod tests {
     }
 
     const HOME: &str = "https://fixture.test";
+
+    /// BR-02: during a form action the page opens no document, not even on
+    /// its own origin, and no popup; afterwards ordinary rules apply again.
+    #[test]
+    fn br02_a_form_action_opens_no_document() {
+        let mut p = policy();
+        p.begin("https://fixture.test/form").unwrap();
+        p.commit("https://fixture.test/form").unwrap();
+        p.expect_no_document();
+        assert!(p
+            .decide(RouteKind::Document, "https://fixture.test/next", "")
+            .is_err());
+        assert!(p
+            .decide(RouteKind::Popup, "https://fixture.test/x", HOME)
+            .is_err());
+        // Subresources (for example a field's lookup request) still follow
+        // the usual origin rules.
+        assert!(p
+            .decide(RouteKind::Fetch, "https://fixture.test/api/lookup", HOME)
+            .is_ok());
+        p.finish_activation();
+        assert!(p
+            .decide(RouteKind::Document, "https://fixture.test/next", "")
+            .is_ok());
+    }
 
     #[test]
     fn only_admitted_https_destinations_can_begin() {
