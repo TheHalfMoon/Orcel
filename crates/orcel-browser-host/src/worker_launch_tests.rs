@@ -2370,6 +2370,7 @@ fn a_crawl_reads_only_its_scope_through_the_governed_navigation() {
         include_paths: Vec::new(),
         exclude_paths: vec!["/site/private".into()],
         pattern_kind: Default::default(),
+        search: None,
         extract: Some(crate::extraction::ExtractOptions::default()),
         robots: true,
         sitemaps: true,
