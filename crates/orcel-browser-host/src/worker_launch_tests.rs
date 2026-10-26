@@ -1879,6 +1879,9 @@ fn br07_postconditions_are_verified_with_evidence_and_hidden_text_fails() {
     let email = named("textbox", "Email");
     let password = named("textbox", "Password");
     let subscribe = named("checkbox", "Subscribe");
+    // A non-field inside a label whose control is a password: Playwright's
+    // value read would follow the label, so the worker reads nothing.
+    let pin_entry = named("textbox", "PIN entry");
     let served = fixture.hits().len();
     let checks = [
         Postcondition::ElementVisible { node_id: heading },
@@ -1907,8 +1910,18 @@ fn br07_postconditions_are_verified_with_evidence_and_hidden_text_fails() {
         Postcondition::UrlIs {
             url: "https://fixture.test/verify-page".into(),
         },
+        Postcondition::TextVisible {
+            text: "Shipped to Lisbon".into(),
+        },
+        Postcondition::ValueEquals {
+            node_id: pin_entry,
+            value: "1234".into(),
+        },
+        Postcondition::DownloadSha256 {
+            sha256: "0".repeat(64),
+        },
     ];
-    let report = worker.verify_postconditions(&checks, None).expect("verify");
+    let report = worker.verify_postconditions(&checks).expect("verify");
     let outcome: Vec<(bool, &str)> = report
         .results
         .iter()
@@ -1925,16 +1938,28 @@ fn br07_postconditions_are_verified_with_evidence_and_hidden_text_fails() {
             (false, "unavailable: secret"),
             (true, "checked: true"),
             (true, "committed URL matches"),
+            (true, "visible matches: 1"),
+            (false, "unavailable: not_a_field"),
+            (false, "no download to check"),
         ]
     );
     assert!(!report.verified, "one failed check fails the verification");
     assert_eq!(report.url, "https://fixture.test/verify-page");
+    // No value reaches the report (the digest is hex, so only the evidence
+    // and the URL are text).
     let json = serde_json::to_string(&report).unwrap();
     assert!(!json.contains("ada@example.test") && !json.contains("hunter2"));
+    assert!(report
+        .results
+        .iter()
+        .all(|r| !r.evidence.contains("1234") && !r.evidence.contains("example.test")));
     // Only the passing checks: verified, with a digest to reference.
-    let passing: Vec<Postcondition> = [0, 1, 3, 6, 7].iter().map(|&i| checks[i].clone()).collect();
+    let passing: Vec<Postcondition> = [0, 1, 3, 6, 7, 8]
+        .iter()
+        .map(|&i| checks[i].clone())
+        .collect();
     let report = worker
-        .verify_postconditions(&passing, None)
+        .verify_postconditions(&passing)
         .expect("verify passing");
     assert!(report.verified, "{report:?}");
     assert_eq!(report.evidence_sha256.len(), 64);

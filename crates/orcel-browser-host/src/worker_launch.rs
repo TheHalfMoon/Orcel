@@ -1195,6 +1195,11 @@ mod platform {
         last_request: u64,
         next_obs: u64,
         next_ver: u64,
+        /// BR-07: distinct values each field was checked against.
+        value_budget: crate::verify::GuessBudget,
+        /// BR-07: the digest of the last download committed in this
+        /// lifetime, for download postconditions.
+        last_download_sha256: Option<String>,
         next_disc: u64,
         next_ext: u64,
         next_act: u64,
@@ -1299,6 +1304,8 @@ mod platform {
             policy: NavigationPolicy::new(&spec.destinations),
             next_obs: 0,
             next_ver: 0,
+            value_budget: crate::verify::GuessBudget::default(),
+            last_download_sha256: None,
             next_disc: 0,
             next_ext: 0,
             next_act: 0,
@@ -1756,14 +1763,14 @@ mod platform {
         /// BR-07: check postconditions after a step. Element, text, value
         /// and checked-state checks are observed by read-only worker probes
         /// of exactly the committed document; URL and download checks use
-        /// the host's own facts (`download_sha256` is the caller's record
-        /// of the last committed download). The host decides each check;
-        /// values never leave it. A stale page, or a worker reply outside
-        /// the bounds, fails the whole verification.
+        /// the host's own record (the committed URL; the last download
+        /// committed in this lifetime). The host decides each check; values
+        /// never leave it, and each field's value can be checked against
+        /// only a few values per document. A stale page, or a worker reply
+        /// outside the bounds, fails the whole verification.
         pub fn verify_postconditions(
             &mut self,
             checks: &[crate::verify::Postcondition],
-            download_sha256: Option<&str>,
         ) -> Result<crate::verify::Verification, HostError> {
             self.ensure_alive()?;
             crate::verify::check_postconditions(checks)?;
@@ -1771,7 +1778,7 @@ mod platform {
                 .committed
                 .clone()
                 .ok_or_else(|| HostError::Invalid("no committed document to verify".into()))?;
-            let needs: Vec<crate::verify::Need> = checks
+            let mut needs: Vec<crate::verify::Need> = checks
                 .iter()
                 .map(|check| {
                     crate::verify::need(check, |id| {
@@ -1785,6 +1792,7 @@ mod platform {
                     })
                 })
                 .collect();
+            crate::verify::apply_budget(checks, &mut needs, &mut self.value_budget, generation);
             let probes: Vec<crate::verify::Probe> = needs
                 .iter()
                 .filter_map(|need| match need {
@@ -1829,7 +1837,7 @@ mod platform {
             }
             let facts = crate::verify::HostFacts {
                 committed_url: &url,
-                download_sha256,
+                download_sha256: self.last_download_sha256.as_deref(),
             };
             Ok(crate::verify::verify_with(
                 checks, &needs, &observed, &facts, generation,
@@ -2469,6 +2477,7 @@ mod platform {
             }
             let path =
                 crate::approved_folder::commit(destination_root, bound_root, relative, &content)?;
+            self.last_download_sha256 = Some(sha256.clone());
             Ok(CommittedDownload {
                 path,
                 sha256,
@@ -2599,7 +2608,6 @@ mod fallback {
         pub fn verify_postconditions(
             &mut self,
             _checks: &[crate::verify::Postcondition],
-            _download_sha256: Option<&str>,
         ) -> Result<crate::verify::Verification, HostError> {
             Err(HostError::Unavailable(
                 UnavailableReason::UnsupportedRuntime,

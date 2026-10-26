@@ -16,8 +16,13 @@
 //! raw accessible name, visible only; text is a case-sensitive literal
 //! substring, visible only; a value is compared inside the host and never
 //! returned, recorded or logged, and secret fields (passwords, one-time
-//! codes, payment cards) are never read, so such a check fails; URL and
-//! download-digest checks need no worker; the list check is not ported.
+//! codes, payment cards) are never read, so such a check fails; a value or
+//! checked state is checked only for a field role in the main frame, and
+//! one field can be checked against at most `MAX_VALUE_GUESSES` distinct
+//! values per document, so verification is never a way to guess a value
+//! the observation hides; URL and download-digest checks use the host's
+//! own record (the committed URL, the last committed download) and need no
+//! worker; the list check is not ported.
 //! Evidence is a fixed vocabulary plus counts, and the report carries a
 //! SHA-256 digest of itself that a journey result can reference.
 
@@ -34,6 +39,26 @@ pub const MAX_VERIFY_TEXT_BYTES: usize = 1024;
 pub const MAX_VERIFY_COUNT: u32 = 1000;
 /// Longest URL a check may name (the navigation bound).
 const MAX_VERIFY_URL_BYTES: usize = 2048;
+/// Distinct expected values one field can be checked against per document.
+pub const MAX_VALUE_GUESSES: usize = 3;
+/// Roles whose value is checked (the worker also requires the element to
+/// be an input, textarea or select).
+const VALUE_ROLES: [&str; 6] = [
+    "textbox",
+    "searchbox",
+    "combobox",
+    "spinbutton",
+    "slider",
+    "listbox",
+];
+/// Roles whose checked state is checked.
+const CHECKED_ROLES: [&str; 5] = [
+    "checkbox",
+    "radio",
+    "switch",
+    "menuitemcheckbox",
+    "menuitemradio",
+];
 
 /// What must hold after a step.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -206,8 +231,13 @@ pub(crate) fn need<'a>(
             None => Need::Unavailable("node is not in the latest observation"),
             // Without a name, a role alone does not identify the element.
             Some((_, _, "")) => Need::Unavailable("element has no accessible name to match"),
-            Some((_, _, name)) if name.len() > MAX_VERIFY_TEXT_BYTES => {
-                Need::Unavailable("element name is too long to match")
+            // The observation cuts names at the bound: a name at (or near)
+            // it may be cut and would never match the real one.
+            Some((_, _, name)) if name.len() + 4 > MAX_VERIFY_TEXT_BYTES => {
+                Need::Unavailable("element name may be cut and cannot be matched")
+            }
+            Some((_, _, name)) if name.chars().any(char::is_control) => {
+                Need::Unavailable("element name cannot be matched")
             }
             Some((_, role, name)) => Need::Probe(Probe::VisibleRole {
                 role: role.to_owned(),
@@ -219,17 +249,81 @@ pub(crate) fn need<'a>(
         }
         Postcondition::ValueEquals { node_id, .. } => match node(node_id) {
             None => Need::Unavailable("node is not in the latest observation"),
+            Some((_, role, _)) if !VALUE_ROLES.contains(&role) => {
+                Need::Unavailable("node is not a field with a value")
+            }
+            Some((reference, _, _)) if !main_frame_ref(reference) => {
+                Need::Unavailable("fields inside frames are not checked")
+            }
             Some((reference, _, _)) => Need::Probe(Probe::Value {
                 reference: reference.to_owned(),
             }),
         },
         Postcondition::Checked { node_id, .. } => match node(node_id) {
             None => Need::Unavailable("node is not in the latest observation"),
+            Some((_, role, _)) if !CHECKED_ROLES.contains(&role) => {
+                Need::Unavailable("node is not a checkbox, radio or switch")
+            }
+            Some((reference, _, _)) if !main_frame_ref(reference) => {
+                Need::Unavailable("fields inside frames are not checked")
+            }
             Some((reference, _, _)) => Need::Probe(Probe::Checked {
                 reference: reference.to_owned(),
             }),
         },
         Postcondition::UrlIs { .. } | Postcondition::DownloadSha256 { .. } => Need::Host,
+    }
+}
+
+/// A snapshot ref in the main frame (`e12`, not `f1e12`).
+fn main_frame_ref(reference: &str) -> bool {
+    reference
+        .strip_prefix('e')
+        .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// How many distinct values each field has been checked against in the
+/// current document; a new document starts again.
+#[derive(Debug, Default)]
+pub(crate) struct GuessBudget {
+    generation: u64,
+    tried: std::collections::HashMap<String, Vec<[u8; 32]>>,
+}
+
+impl GuessBudget {
+    /// Whether `node_id` may be checked against `value` in `generation`
+    /// (a value it was already checked against is always allowed again).
+    pub(crate) fn allow(&mut self, generation: u64, node_id: &str, value: &str) -> bool {
+        if generation != self.generation {
+            self.generation = generation;
+            self.tried.clear();
+        }
+        let digest: [u8; 32] = Sha256::digest(value.as_bytes()).into();
+        let tried = self.tried.entry(node_id.to_owned()).or_default();
+        if tried.contains(&digest) {
+            return true;
+        }
+        if tried.len() >= MAX_VALUE_GUESSES {
+            return false;
+        }
+        tried.push(digest);
+        true
+    }
+}
+
+/// Spends the value budget: a value check over it is not probed.
+pub(crate) fn apply_budget(
+    checks: &[Postcondition],
+    needs: &mut [Need],
+    budget: &mut GuessBudget,
+    generation: u64,
+) {
+    for (check, need) in checks.iter().zip(needs.iter_mut()) {
+        if let (Postcondition::ValueEquals { node_id, value }, Need::Probe(_)) = (check, &*need) {
+            if !budget.allow(generation, node_id, value) {
+                *need = Need::Unavailable("value check limit reached for this field");
+            }
+        }
     }
 }
 
@@ -401,6 +495,9 @@ mod tests {
             "n2" => Some(("e2", "textbox", "Email")),
             "n3" => Some(("e3", "checkbox", "Subscribe")),
             "n4" => Some(("e4", "generic", "")),
+            "n5" => Some(("e5", "generic", "Pin display")),
+            "n6" => Some(("f1e6", "textbox", "Framed")),
+            "n7" => Some(("e7", "button", "x\u{7}y")),
             _ => None,
         }
     }
@@ -583,6 +680,106 @@ mod tests {
         assert!(
             !finish(URL, 7, Vec::new()).verified,
             "nothing checked is not verified"
+        );
+    }
+
+    /// Values and checked states only for field roles in the main frame;
+    /// names that may be cut or carry control characters never probe.
+    #[test]
+    fn br07_only_fields_in_the_main_frame_and_matchable_names_are_probed() {
+        let unavailable = |check: Postcondition| match need(&check, node) {
+            Need::Unavailable(why) => why,
+            other => {
+                assert!(matches!(other, Need::Unavailable(_)), "{other:?}");
+                ""
+            }
+        };
+        assert_eq!(
+            unavailable(Postcondition::ValueEquals {
+                node_id: "n5".into(),
+                value: "1234".into()
+            }),
+            "node is not a field with a value"
+        );
+        assert_eq!(
+            unavailable(Postcondition::ValueEquals {
+                node_id: "n6".into(),
+                value: "x".into()
+            }),
+            "fields inside frames are not checked"
+        );
+        assert_eq!(
+            unavailable(Postcondition::Checked {
+                node_id: "n2".into(),
+                checked: true
+            }),
+            "node is not a checkbox, radio or switch"
+        );
+        assert_eq!(
+            unavailable(Postcondition::ElementVisible {
+                node_id: "n7".into()
+            }),
+            "element name cannot be matched"
+        );
+        let long = "n".repeat(MAX_VERIFY_TEXT_BYTES - 2);
+        let cut = need(
+            &Postcondition::ElementVisible {
+                node_id: "n1".into(),
+            },
+            |_| Some(("e1", "heading", long.as_str())),
+        );
+        assert_eq!(
+            cut,
+            Need::Unavailable("element name may be cut and cannot be matched")
+        );
+    }
+
+    /// A field can be checked against a few values per document, so the
+    /// verifier is not a way to guess a hidden value.
+    #[test]
+    fn br07_value_checks_are_budgeted_per_field_and_document() {
+        let mut budget = GuessBudget::default();
+        let guess = |value: &str| Postcondition::ValueEquals {
+            node_id: "n2".into(),
+            value: value.into(),
+        };
+        let checks: Vec<Postcondition> = ["1111", "2222", "3333", "1111", "4444"]
+            .iter()
+            .map(|v| guess(v))
+            .collect();
+        let mut needs: Vec<Need> = checks.iter().map(|c| need(c, node)).collect();
+        apply_budget(&checks, &mut needs, &mut budget, 7);
+        let probed: Vec<bool> = needs.iter().map(|n| matches!(n, Need::Probe(_))).collect();
+        assert_eq!(
+            probed,
+            [true, true, true, true, false],
+            "a repeated value is free; a fourth is refused"
+        );
+        // Another call in the same document: still refused.
+        let mut again = vec![need(&guess("5555"), node)];
+        apply_budget(&[guess("5555")], &mut again, &mut budget, 7);
+        assert_eq!(
+            again[0],
+            Need::Unavailable("value check limit reached for this field")
+        );
+        // Another field has its own budget; a new document starts again.
+        assert!(budget.allow(7, "n9", "x"));
+        let mut fresh = vec![need(&guess("5555"), node)];
+        apply_budget(&[guess("5555")], &mut fresh, &mut budget, 8);
+        assert!(matches!(fresh[0], Need::Probe(_)));
+        // The refused check fails with that evidence.
+        let report = verify_with(
+            &[guess("9999")],
+            &[Need::Unavailable(
+                "value check limit reached for this field",
+            )],
+            &[],
+            &facts(),
+            7,
+        );
+        assert_eq!(
+            report.results[0].evidence,
+            "value check limit reached for this field"
         );
     }
 

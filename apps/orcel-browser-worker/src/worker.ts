@@ -278,6 +278,11 @@ export class Worker {
       }
       case "verify": {
         if (this.state !== "launched" || !this.session) return this.fail("not_ready");
+        // A document being replaced cannot be verified.
+        if (this.navigating) {
+          this.send({ frame: "verification_failed", ver_id: frame.ver_id });
+          return;
+        }
         try {
           const { url, results } = await this.session.verify(frame.probes);
           if (results.length !== frame.probes.length) throw new Error("one result per probe");

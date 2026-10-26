@@ -12,11 +12,19 @@
 // checked state) and never a verdict; an element is matched by its exact
 // role and accessible name and counted only when visible (the donor counts
 // any match, then asserts visibility separately); text is a case-sensitive
-// substring of an element's text, counted only when visible (the donor
-// matches case-insensitively); a value is read only from an element named
-// by the latest observation's ref, never from a password, one-time-code or
-// payment-card field, and only up to `MAX_VERIFY_TEXT_BYTES`; the list check
-// is not ported.
+// substring of an element's text with runs of white space matching any
+// white space, counted only when visible (the donor matches
+// case-insensitively); a value or checked state is read only from the
+// element a main-frame ref names, and only when that element is itself a
+// form control (Playwright's value and checked reads otherwise follow a
+// label to its control, which could be a password field); never from a
+// field that looks secret (a password type, a secret `autocomplete` token,
+// or a name or id such as password, pin, otp, cvc); values are bounded; all
+// probes together must finish within `VERIFY_BUDGET_MS`, under the host's
+// reply deadline; the list check is not ported. Known limit: a field masked
+// only by CSS (`-webkit-text-security`) with an innocuous name is not
+// recognised as secret; the host bounds how many values a field can be
+// checked against, so such a field cannot be guessed.
 
 import type { Locator, Page } from "playwright-core";
 
@@ -26,6 +34,8 @@ export const MAX_VERIFY_PROBES = 16;
 export const MAX_VERIFY_TEXT_BYTES = 1024;
 /// Visible matches counted at most.
 export const MAX_VERIFY_COUNT = 1000;
+/// All probes of one verification, under the host's 10-second reply bound.
+export const VERIFY_BUDGET_MS = 6_000;
 const READ_TIMEOUT_MS = 1_000;
 
 export type VerifyProbe =
@@ -45,10 +55,24 @@ export type VerifyResult =
 /// The page surface the probes use (a Playwright `Page`, or a test stub).
 export type VerifyPage = Pick<Page, "locator" | "frames">;
 
+/// Elements whose own value can be read (no label is followed).
+const VALUE_FIELD = "input, textarea, select";
+/// Elements whose own checked state can be read.
+const CHECKED_FIELD =
+  'input[type="checkbox" i], input[type="radio" i], [role="checkbox"], [role="radio"], [role="switch"], [role="menuitemcheckbox"], [role="menuitemradio"]';
 /// `autocomplete` tokens that mark a field whose value is a secret.
 const SECRET_AUTOCOMPLETE = /(?:^|\s)(?:current-password|new-password|one-time-code|cc-number|cc-csc|cc-exp(?:-month|-year)?)(?:\s|$)/i;
+/// Names and ids that suggest a secret.
+const SECRET_NAME = /pass(?:word|code|phrase)?|pwd|\bpin\b|pin[_-]?code|otp|one[_-]?time|cvc|cvv|csc|security[_-]?code|card[_-]?number|secret|token/i;
 
 const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/// `text` as a case-sensitive pattern in which any run of white space
+/// matches any run of white space (as the page's text may wrap).
+export function textPattern(text: string): RegExp {
+  const words = text.trim().split(/\s+/).filter(Boolean).map(escapeRegExp);
+  return new RegExp(words.join("\\s+"));
+}
 
 async function countVisible(locators: Locator[]): Promise<number> {
   let total = 0;
@@ -62,16 +86,23 @@ async function countVisible(locators: Locator[]): Promise<number> {
   return total;
 }
 
-/// The one element a ref names, or null when it names none or several.
-async function byRef(page: VerifyPage, ref: string): Promise<Locator | null> {
-  const locator = page.locator(`aria-ref=${ref}`);
-  return (await locator.count().catch(() => 0)) === 1 ? locator : null;
+/// The form control a main-frame ref names: "stale" when the ref names no
+/// element or several, "not_a_field" when the element is not itself a
+/// control of `kind`.
+async function field(page: VerifyPage, ref: string, kind: string): Promise<Locator | VerifyUnavailable> {
+  if (!/^e\d+$/.test(ref)) return "not_a_field";
+  const named = page.locator(`aria-ref=${ref}`);
+  if ((await named.count().catch(() => 0)) !== 1) return "stale";
+  const control = named.and(page.locator(kind));
+  return (await control.count().catch(() => 0)) === 1 ? control : "not_a_field";
 }
 
-async function isSecret(locator: Locator): Promise<boolean> {
-  const type = (await locator.getAttribute("type", { timeout: READ_TIMEOUT_MS }).catch(() => null)) ?? "";
-  const autocomplete = (await locator.getAttribute("autocomplete", { timeout: READ_TIMEOUT_MS }).catch(() => null)) ?? "";
-  return type.trim().toLowerCase() === "password" || SECRET_AUTOCOMPLETE.test(autocomplete);
+async function isSecret(control: Locator): Promise<boolean> {
+  const read = async (name: string) =>
+    ((await control.getAttribute(name, { timeout: READ_TIMEOUT_MS }).catch(() => null)) ?? "").trim();
+  if ((await read("type")).toLowerCase() === "password") return true;
+  if (SECRET_AUTOCOMPLETE.test(await read("autocomplete"))) return true;
+  return SECRET_NAME.test(await read("name")) || SECRET_NAME.test(await read("id"));
 }
 
 async function probeOne(page: VerifyPage, probe: VerifyProbe): Promise<VerifyResult> {
@@ -82,17 +113,17 @@ async function probeOne(page: VerifyPage, probe: VerifyProbe): Promise<VerifyRes
       return { result: "visible", count };
     }
     case "visible_text": {
-      const pattern = new RegExp(escapeRegExp(probe.text));
+      const pattern = textPattern(probe.text);
       const count = await countVisible(page.frames().map((frame) => frame.getByText(pattern)));
       return { result: "visible", count };
     }
     case "value": {
-      const locator = await byRef(page, probe.ref);
-      if (!locator) return { result: "unavailable", reason: "stale" };
-      if (await isSecret(locator)) return { result: "unavailable", reason: "secret" };
+      const control = await field(page, probe.ref, VALUE_FIELD);
+      if (typeof control === "string") return { result: "unavailable", reason: control };
+      if (await isSecret(control)) return { result: "unavailable", reason: "secret" };
       let value: string;
       try {
-        value = await locator.inputValue({ timeout: READ_TIMEOUT_MS });
+        value = await control.inputValue({ timeout: READ_TIMEOUT_MS });
       } catch {
         return { result: "unavailable", reason: "not_a_field" };
       }
@@ -100,10 +131,10 @@ async function probeOne(page: VerifyPage, probe: VerifyProbe): Promise<VerifyRes
       return { result: "value", value };
     }
     case "checked": {
-      const locator = await byRef(page, probe.ref);
-      if (!locator) return { result: "unavailable", reason: "stale" };
+      const control = await field(page, probe.ref, CHECKED_FIELD);
+      if (typeof control === "string") return { result: "unavailable", reason: control };
       try {
-        return { result: "checked", checked: await locator.isChecked({ timeout: READ_TIMEOUT_MS }) };
+        return { result: "checked", checked: await control.isChecked({ timeout: READ_TIMEOUT_MS }) };
       } catch {
         return { result: "unavailable", reason: "not_a_field" };
       }
@@ -111,9 +142,21 @@ async function probeOne(page: VerifyPage, probe: VerifyProbe): Promise<VerifyRes
   }
 }
 
-/// Runs the probes in order; one result per probe.
-export async function runProbes(page: VerifyPage, probes: readonly VerifyProbe[]): Promise<VerifyResult[]> {
-  const results: VerifyResult[] = [];
-  for (const probe of probes) results.push(await probeOne(page, probe));
-  return results;
+/// Runs the probes in order; one result per probe. Rejects when they do not
+/// all finish within `budgetMs`.
+export async function runProbes(page: VerifyPage, probes: readonly VerifyProbe[], budgetMs = VERIFY_BUDGET_MS): Promise<VerifyResult[]> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("verification budget exceeded")), budgetMs);
+  });
+  const work = (async () => {
+    const results: VerifyResult[] = [];
+    for (const probe of probes) results.push(await probeOne(page, probe));
+    return results;
+  })();
+  try {
+    return await Promise.race([work, late]);
+  } finally {
+    clearTimeout(timer);
+  }
 }

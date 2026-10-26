@@ -17,7 +17,7 @@
       "donor_blob": "a27eb72ef5ad80ae654c8dac975db1542ee97071",
       "adapted": "browser_verify_element_visible, browser_verify_text_visible and browser_verify_value as read-only probes",
       "row": "BR-07",
-      "changes": "probes return observations (visible-match counts, a value, a checked state), never a verdict; exact role and name, visible only; case-sensitive literal text, visible only; values read only from a ref in the latest observation, never from password, one-time-code or payment-card fields, and bounded; the list check is not ported"
+      "changes": "probes return observations (visible-match counts, a value, a checked state), never a verdict; exact role and name, visible only; case-sensitive literal text with white space normalised, visible only; a value or checked state is read only when the main-frame ref names a form control itself (Playwright's value and checked reads otherwise follow a label to its control), never from fields that look secret (password type, secret autocomplete tokens, secret-looking name or id), and bounded; all probes share a 6-second budget under the host's 10-second reply deadline; refused during a navigation; the list check is not ported"
     },
     {
       "path": "crates/orcel-browser-host/src/verify.rs",
@@ -25,11 +25,12 @@
       "donor_blob": "a27eb72ef5ad80ae654c8dac975db1542ee97071",
       "adapted": "the element, text and value checks' semantics, decided by the host",
       "row": "BR-07",
-      "changes": "host-side pass/fail with fixed-vocabulary evidence and a SHA-256 report digest; values compared inside the host and never returned or recorded; node identities from the latest observation; URL and download-digest checks from host facts; worker observations outside the bounds fail the verification"
+      "changes": "host-side pass/fail with fixed-vocabulary evidence and a SHA-256 report digest; values compared inside the host and never returned or recorded; node identities from the latest observation; value and checked checks only for field roles in the main frame; at most 3 distinct expected values per field per document (no guessing oracle); names that may be cut or carry control characters are not probed; URL and download-digest checks from the host's own record (committed URL; last download committed in the lifetime); worker observations outside the bounds fail the verification"
     }
   ],
   "authority_delta": "None: read-only probes of the committed document; no navigation, click, input, script evaluation or request.",
   "residuals": [
-    "The verifier is host-crate API (BrowserWorker::verify_postconditions); orceld's live browser and journey results do not call it yet, so journey evidence references are a follow-up."
+    "The verifier is host-crate API (BrowserWorker::verify_postconditions); orceld's live browser and journey results do not call it yet, so journey evidence references are a follow-up.",
+    "A field masked only by CSS (-webkit-text-security) with an innocuous name and type is not recognised as secret; the per-field value budget prevents guessing it."
   ]
 }

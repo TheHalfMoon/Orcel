@@ -179,7 +179,10 @@ const VERIFY = `<!doctype html><meta charset="utf-8"><title>Order 42</title>
 <p style="display:none">Refund issued</p>
 <label>Email <input type="text" name="email" value="ada@example.test"></label>
 <label>Password <input type="password" name="pw" value="hunter2"></label>
-<label><input type="checkbox" name="news" checked> Subscribe</label>`;
+<label><input type="checkbox" name="news" checked> Subscribe</label>
+<p>Shipped to
+   Lisbon</p>
+<label>PIN <span role="textbox" aria-label="PIN entry">****</span> <input type="password" name="pin" value="1234"></label>`;
 const READ = `<!doctype html><meta charset="utf-8"><title>Reading</title>
 <h1>Reading room</h1>
 <p>Visible opening paragraph with <a href="/archive">the archive</a> and <img src="/img.png" alt="a chart">.</p>
