@@ -1835,6 +1835,158 @@ fn br01_a_rerendered_link_is_found_by_its_approved_role_and_name_or_nothing_is_c
     );
 }
 
+/// BR-03: a file staged from an approved folder is set on the approved file
+/// input, byte for byte; an approval names the origin and the file, so it
+/// covers no other file, and a text field is not a file input.
+#[test]
+#[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
+fn br03_an_approved_upload_sets_exactly_the_staged_file() {
+    let fixture = HttpsFixture::start();
+    let profile = temp_profile("upload");
+    let mut launch = spec(&profile, true);
+    launch.destinations =
+        vec![
+            AdmittedDestination::fixture("fixture.test", IpAddr::V4(Ipv4Addr::LOCALHOST))
+                .expect("fixture.test"),
+        ];
+    launch.test_trusted_spki = Some(fixture.spki.clone());
+    let mut worker = launch_worker(&launch, &Policy(PolicyKeyState::Absent)).expect("launch");
+    let scope = crate::observation::ObservationScope {
+        workspace: "workspace".into(),
+        profile_identity: "profile".into(),
+    };
+    let folder = temp_profile("upload-source");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("report.txt"), b"orcel-upload-bytes").unwrap();
+    std::fs::write(folder.join("other.txt"), b"other-bytes").unwrap();
+    worker
+        .navigate("https://fixture.test/upload-page")
+        .expect("navigate");
+    let live = worker.observe(&scope).expect("observe");
+    let named = |role: &str, name: &str| {
+        let mut stack: Vec<&crate::observation::ObservedNode> =
+            live.observation.nodes.iter().collect();
+        while let Some(node) = stack.pop() {
+            if worker
+                .host_node(&node.node_id)
+                .is_some_and(|h| h.role == role && h.name == name)
+            {
+                return node.node_id.clone();
+            }
+            stack.extend(node.children.iter());
+        }
+        panic!("no {role} named {name}");
+    };
+    let input = named("button", "Attachment");
+    let notes = named("textbox", "Notes");
+    let bound = BrowserWorker::approved_folder_identity(&folder).expect("folder identity");
+    let staged = worker
+        .stage_upload(&folder, &bound, "report.txt")
+        .expect("stage");
+    let other = worker
+        .stage_upload(&folder, &bound, "other.txt")
+        .expect("stage");
+    // The held copy cannot be replaced while the lifetime lasts.
+    assert!(std::fs::write(&staged.path, b"swapped").is_err());
+    assert_eq!(staged.sha256, sha256_hex(b"orcel-upload-bytes"));
+    let approve = |worker: &BrowserWorker, node: &str, role: &str, staged_id: &str| {
+        let target = crate::actuation::ActuationTarget {
+            page_id: live.page.page_id.clone(),
+            origin: live.page.origin.clone(),
+            document_generation: live.document.document_generation,
+            node_id: node.to_owned(),
+            role: role.into(),
+            state: worker.upload_binding(node, staged_id).unwrap_or_default(),
+            action: crate::actuation::SupportedAction::Upload,
+            workspace: "workspace".into(),
+            policy_revision: 1,
+        };
+        let approval = crate::actuation::ApprovalToken {
+            approval_id: "approval-upload".into(),
+            target_digest: crate::actuation::target_digest(&target),
+            workspace: "workspace".into(),
+            policy_revision: 1,
+            consumed: false,
+        };
+        (target, approval)
+    };
+    // An approval for report.txt does not cover other.txt.
+    let (target, mut approval) = approve(&worker, &input, "button", &staged.staged_id);
+    let refused = worker.upload(&target, &mut approval, &other.staged_id, 1, "workspace");
+    assert!(matches!(refused, Err(HostError::Invalid(_))), "{refused:?}");
+    assert!(!approval.consumed);
+    // A text field is not a file input.
+    assert!(worker.upload_binding(&notes, &staged.staged_id).is_err());
+    // The approved file reaches the page byte for byte.
+    worker
+        .upload(&target, &mut approval, &staged.staged_id, 1, "workspace")
+        .expect("upload");
+    assert!(approval.consumed);
+    assert!(worker
+        .wait_for_text(
+            "got report.txt orcel-upload-bytes",
+            true,
+            Duration::from_secs(3)
+        )
+        .expect("wait"));
+    drop(worker);
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+/// BR-06: content inside same-origin frames, nested too, is observed with
+/// frame-scoped refs; a frame on an origin the lifetime does not admit is
+/// never loaded, so nothing from it is observed.
+#[test]
+#[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
+fn br06_admitted_frames_are_observed_and_foreign_frames_are_not() {
+    let fixture = HttpsFixture::start();
+    let profile = temp_profile("frames");
+    let mut launch = spec(&profile, true);
+    launch.destinations =
+        vec![
+            AdmittedDestination::fixture("fixture.test", IpAddr::V4(Ipv4Addr::LOCALHOST))
+                .expect("fixture.test"),
+        ];
+    launch.test_trusted_spki = Some(fixture.spki.clone());
+    let mut worker = launch_worker(&launch, &Policy(PolicyKeyState::Absent)).expect("launch");
+    let scope = crate::observation::ObservationScope {
+        workspace: "workspace".into(),
+        profile_identity: "profile".into(),
+    };
+    worker
+        .navigate("https://fixture.test/frames")
+        .expect("navigate");
+    let live = worker.observe(&scope).expect("observe");
+    let mut named = Vec::new();
+    let mut stack: Vec<&crate::observation::ObservedNode> = live.observation.nodes.iter().collect();
+    while let Some(node) = stack.pop() {
+        if let Some(host) = worker.host_node(&node.node_id) {
+            named.push((host.role.clone(), host.name.clone(), host.reference.clone()));
+        }
+        stack.extend(node.children.iter());
+    }
+    let inner = named
+        .iter()
+        .find(|(role, name, _)| role == "link" && name == "Inner report")
+        .unwrap_or_else(|| panic!("the nested frame's link is observed: {named:?}"));
+    assert!(
+        inner.2.starts_with('f'),
+        "a frame element has a frame-scoped ref: {}",
+        inner.2
+    );
+    assert!(
+        !named.iter().any(|(_, name, _)| name == "Foreign link"),
+        "nothing from the foreign frame is observed"
+    );
+    assert!(
+        !fixture
+            .hits()
+            .iter()
+            .any(|hit| hit.contains("frame-foreign")),
+        "the foreign frame was never requested"
+    );
+}
+
 /// BR-04: a link covered by an overlay is not clicked; the refusal is typed
 /// (observe again) and the link's document is never requested.
 #[test]

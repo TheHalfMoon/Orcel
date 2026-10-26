@@ -25,6 +25,7 @@ import { documentModel, type CapturedSnapshot } from "./webmcp/dom-snapshot.js";
 import { approvedElement, isOcclusion } from "./actions/targets.js";
 import { formAction } from "./actions/form.js";
 import { waitForText } from "./actions/wait.js";
+import { uploadFile } from "./actions/upload.js";
 import { NavigationError, Worker, type EngineSession, type Launcher, type LaunchSpec, type RoutePolicy } from "./worker.js";
 
 const startup = startupRefusal(process.execArgv, process.version);
@@ -248,6 +249,10 @@ const playwrightLauncher: Launcher = {
           media: document.media,
           bytes: document.body.length
         };
+      },
+      async upload(ref, path, target) {
+        await uploadFile(primary, ref, path, target);
+        return { url: primary.url() };
       },
       async waitForText(text, appear, timeoutMs) {
         const met = await waitForText(primary, text, appear, timeoutMs);

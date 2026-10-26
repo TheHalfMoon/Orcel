@@ -30,6 +30,9 @@ pub enum SupportedAction {
     Press,
     /// BR-02: move the pointer over the element.
     Hover,
+    /// BR-03: set a file input to one host-staged file; the target state
+    /// binds the page's origin, the file's digest and its name.
+    Upload,
 }
 
 impl SupportedAction {
@@ -43,6 +46,7 @@ impl SupportedAction {
             Self::Check => "check",
             Self::Press => "press",
             Self::Hover => "hover",
+            Self::Upload => "upload",
         }
     }
 
@@ -56,6 +60,7 @@ impl SupportedAction {
             "check" => Ok(Self::Check),
             "press" => Ok(Self::Press),
             "hover" => Ok(Self::Hover),
+            "upload" => Ok(Self::Upload),
             _ => Err(HostError::Invalid("unsupported actuation action".into())),
         }
     }
@@ -96,6 +101,9 @@ pub fn role_supports_action(role: &str, action: SupportedAction) -> Result<(), H
             "slider",
         ],
         SupportedAction::Hover => &["button", "link", "menuitem", "tab", "img", "image"],
+        // A file input is a button in the accessibility tree; the worker
+        // also requires the element itself to be <input type=file>.
+        SupportedAction::Upload => &["button"],
     };
     // BR-02's actions match roles exactly (`tab` is not `table`); the
     // earlier actions keep their substring rule.
@@ -105,6 +113,7 @@ pub fn role_supports_action(role: &str, action: SupportedAction) -> Result<(), H
             | SupportedAction::Check
             | SupportedAction::Press
             | SupportedAction::Hover
+            | SupportedAction::Upload
     );
     if allowed.iter().any(|entry| {
         if exact {
@@ -500,6 +509,12 @@ mod tests {
             SupportedAction::Select
         );
         assert_eq!(SupportedAction::parse("check").unwrap().name(), "check");
+        assert_eq!(
+            SupportedAction::parse("upload").unwrap(),
+            SupportedAction::Upload
+        );
+        assert!(role_supports_action("button", SupportedAction::Upload).is_ok());
+        assert!(role_supports_action("textbox", SupportedAction::Upload).is_err());
         let press = FormInput::Press {
             key: "Enter".into(),
         };

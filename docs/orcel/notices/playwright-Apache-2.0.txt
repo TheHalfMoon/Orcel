@@ -9,6 +9,10 @@ BR-02 adapts, from the same commit, packages/playwright-core/src/tools/backend/f
 193e2b3d084e713c4bb0e3d37d77e5201748dbd5) into
 apps/orcel-browser-worker/src/actions/form.ts;
 docs/orcel/br02_form_actions_provenance.json records the provenance.
+BR-03 adapts, from the same commit, packages/playwright-core/src/tools/backend/files.ts
+(blob 44e1f5ee6badd8794dee76c5ac3af21d32b92df4) into
+apps/orcel-browser-worker/src/actions/upload.ts; docs/orcel/br03_upload_provenance.json
+records the provenance.
 BR-02 (press, hover, wait) adapts, from the same commit,
 packages/playwright-core/src/tools/backend/keyboard.ts (blob
 f8f3abd271a0524d3258ae9c0c5f3c96171b0d5c), snapshot.ts (blob

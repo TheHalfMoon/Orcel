@@ -109,6 +109,24 @@ test("BR-02: press keys come from a closed list; hover has no input; waits are b
   }
 });
 
+test("BR-03: uploads carry an absolute host path and a main-frame ref only", () => {
+  assert.deepEqual(parseHostFrame({ frame: "upload", up_id: 1, ref: "e3", path: "C:\\s\\up-1\\a.txt" }), {
+    frame: "upload",
+    up_id: 1,
+    ref: "e3",
+    path: "C:\\s\\up-1\\a.txt"
+  });
+  for (const bad of [
+    { frame: "upload", up_id: 1, ref: "e3", path: "a.txt" },
+    { frame: "upload", up_id: 1, ref: "f1e3", path: "C:\\s\\a.txt" },
+    { frame: "upload", up_id: 1, ref: "e3" },
+    { frame: "upload", up_id: 1, ref: "e3", path: "C:\\s\\a.txt", url: "https://x" },
+    { frame: "upload", up_id: 0, ref: "e3", path: "C:\\s\\a.txt" }
+  ]) {
+    assert.throws(() => parseHostFrame(bad), ProtocolViolation, JSON.stringify(bad).slice(0, 80));
+  }
+});
+
 test("BR-07: verify probes are closed, bounded and exact", () => {
   const probes = [
     { probe: "visible_role", role: "button", name: "Pay now" },
@@ -136,7 +154,7 @@ test("BR-07: verify probes are closed, bounded and exact", () => {
 });
 
 test("the host vocabulary is closed and exact", () => {
-  assert.deepEqual(parseHostFrame({ frame: "hello", generation: 12 }), { frame: "hello", generation: 12 });
+  assert.deepEqual(parseHostFrame({ frame: "hello", generation: 13 }), { frame: "hello", generation: 13 });
   const parsed = parseHostFrame(validLaunch());
   assert.deepEqual(JSON.parse(JSON.stringify(parsed)), validLaunch());
   assert.equal(parsed.frame === "launch" && Object.getPrototypeOf(parsed.env), null);
@@ -144,11 +162,11 @@ test("the host vocabulary is closed and exact", () => {
     null,
     [],
     "hello",
-    { generation: 12 },
+    { generation: 13 },
     { frame: "navigate", url: "https://example.com" },
     { frame: "evaluate", script: "1+1" },
     { frame: "cdp", method: "Runtime.evaluate" },
-    { frame: "hello", generation: 12, extra: true },
+    { frame: "hello", generation: 13, extra: true },
     { frame: "hello", generation: "1" },
     { frame: "hello" },
     { frame: "shutdown", now: true },
