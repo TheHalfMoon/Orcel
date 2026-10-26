@@ -2291,7 +2291,9 @@ mod platform {
                     exec_id: done,
                     reason,
                 } if done == exec_id => return Err(navigation_failure(&reason)),
-                _ => return Err(HostError::Unavailable(UnavailableReason::ProtocolViolation)),
+                // A reply for another request or of another kind after an
+                // approved mutation: the worker may still be acting.
+                _ => return Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
             };
             if !opened_expected {
                 return Err(HostError::Invalid(
@@ -2446,7 +2448,9 @@ mod platform {
                     self.host_tools.clear();
                     return Err(navigation_failure(&reason));
                 }
-                _ => return Err(HostError::Unavailable(UnavailableReason::ProtocolViolation)),
+                // A reply for another request or of another kind after an
+                // approved mutation: the worker may still be acting.
+                _ => return Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
             };
             self.host_nodes.clear();
             self.host_tools.clear();
@@ -2609,7 +2613,9 @@ mod platform {
                     dl_id: done,
                     reason,
                 } if done == dl_id => return Err(download_failure(&reason)),
-                _ => return Err(HostError::Unavailable(UnavailableReason::ProtocolViolation)),
+                // A reply for another request or of another kind after an
+                // approved mutation: the worker may still be acting.
+                _ => return Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
             };
             // Exactly the approved document: redirects are not followed.
             if url != link {
