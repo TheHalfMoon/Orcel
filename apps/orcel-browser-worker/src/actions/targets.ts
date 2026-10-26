@@ -33,17 +33,24 @@ export function isOcclusion(error: unknown): boolean {
   if (lines.some((line) => /^performing \w+ action( \(trial run\))?$/.test(line))) return false;
   const first = lines.findIndex((line) => /^(attempting|retrying) \w+ action( \(trial run\))?$/.test(line));
   if (first < 0) return false;
+  // Reasons only: a re-resolved target ("locator resolved to <its own
+  // markup>") is page text, and an interception line names the covering
+  // element's markup first. An attempt that times out still waiting to
+  // settle logs no reason of its own, so an earlier interception decides:
+  // nothing was performed either way.
+  const intercepted = (line: string) => line.startsWith("<") && / intercepts pointer events$/.test(line);
   const reasons = lines
     .slice(first + 1)
+    .filter((line) => !line.startsWith("locator resolved to"))
     .filter(
       (line) =>
-        / intercepts pointer events$/.test(line) ||
+        intercepted(line) ||
         /^element is not /.test(line) ||
         /^element is outside of the viewport/.test(line) ||
         /^element was detached/.test(line)
     );
   const latest = reasons.at(-1);
-  return latest !== undefined && / intercepts pointer events$/.test(latest);
+  return latest !== undefined && intercepted(latest);
 }
 
 /// The page surface `approvedElement` uses (a Playwright `Page`, or a test

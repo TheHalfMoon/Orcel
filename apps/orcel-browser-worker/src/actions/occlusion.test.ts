@@ -98,6 +98,19 @@ test("BR-04 the most recent reason decides, and page text before the attempts is
   assert.equal(isOcclusion(failure("TimeoutError", [spoof, "  - attempting click action", "    - element is not visible"])), false);
   assert.equal(isOcclusion(failure("TimeoutError", [spoof])), false, "no attempt at all");
   assert.equal(isOcclusion(failure("TimeoutError", [spoof, "  - attempting click action"])), false, "no reason yet");
+  // The page detaches and re-attaches its target, whose text ends in the phrase.
+  assert.equal(
+    isOcclusion(
+      failure("TimeoutError", [
+        RESOLVED,
+        "  - attempting click action",
+        "    - element was detached from the DOM, retrying",
+        "    - locator resolved to <a>Pay intercepts pointer events</a>",
+        "    - pay intercepts pointer events"
+      ])
+    ),
+    false
+  );
 });
 
 test("BR-04 compressed (N ×) call-log lines are read like any other", () => {
