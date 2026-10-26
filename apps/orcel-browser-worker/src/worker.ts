@@ -84,6 +84,9 @@ export interface EngineSession {
   /// (or the one matching the approved target); resolves with the page's
   /// URL afterwards; rejects with NavigationError.
   formAction(ref: string, act: FormAction, target?: ApprovedTarget): Promise<{ url: string }>;
+  /// BR-02: whether text became visible (or stopped being visible) on the
+  /// primary page within the bound; read-only.
+  waitForText(text: string, appear: boolean, timeoutMs: number): Promise<{ url: string; met: boolean }>;
   /// BR-07: read-only probes of the primary page, one result per probe.
   verify(probes: VerifyProbe[]): Promise<{ url: string; results: VerifyResult[] }>;
   /// Called once if the engine goes away without `close`.
@@ -104,6 +107,8 @@ export class Worker {
   private launchedOnce = false;
   private queue: Promise<void> = Promise.resolve();
   private navigating = false;
+  /// BR-02: a bounded wait is running (one at a time).
+  private waiting = false;
   private nextRequestId = 0;
   private readonly pending = new Map<number, { resolve: (allow: boolean) => void; timer: NodeJS.Timeout }>();
   private readonly policy: RoutePolicy = { decide: (query) => this.ask(query) };
@@ -292,6 +297,18 @@ export class Worker {
         void this.runFormAction(this.session, frame.form_id, frame.ref, frame.act, frame.target);
         return;
       }
+      case "wait_for": {
+        if (this.state !== "launched" || !this.session) return this.fail("not_ready");
+        // One at a time, and never while the document is being replaced.
+        if (this.waiting || this.navigating) {
+          this.send({ frame: "wait_failed", wait_id: frame.wait_id });
+          return;
+        }
+        // Outside the queue: ping and shutdown stay responsive.
+        this.waiting = true;
+        void this.runWait(this.session, frame.wait_id, frame.text, frame.appear, frame.timeout_ms);
+        return;
+      }
       case "verify": {
         if (this.state !== "launched" || !this.session) return this.fail("not_ready");
         // A document being replaced cannot be verified.
@@ -419,6 +436,18 @@ export class Worker {
     }
     this.navigating = false;
     if (this.state === "launched" && this.session === session) this.settle(outcome, { frame: "activation_failed", act_id: actId, reason: "failed" });
+  }
+
+  private async runWait(session: EngineSession, waitId: number, text: string, appear: boolean, timeoutMs: number): Promise<void> {
+    let outcome: WorkerFrame;
+    try {
+      const { url, met } = await session.waitForText(text, appear, timeoutMs);
+      outcome = { frame: "waited", wait_id: waitId, url, met };
+    } catch {
+      outcome = { frame: "wait_failed", wait_id: waitId };
+    }
+    this.waiting = false;
+    if (this.state === "launched" && this.session === session) this.settle(outcome, { frame: "wait_failed", wait_id: waitId });
   }
 
   private async runFormAction(session: EngineSession, formId: number, ref: string, act: FormAction, target?: ApprovedTarget): Promise<void> {

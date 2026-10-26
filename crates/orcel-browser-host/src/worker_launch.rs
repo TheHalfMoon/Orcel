@@ -39,7 +39,7 @@ pub struct JobProcess {
 /// Generation 2 adds the slice-3a navigation frames, generation 3 slice-3b
 /// observation, generation 4 slice-3c activation, generation 5 slice-3d
 /// downloads.
-pub const WORKER_PROTOCOL_GENERATION: u32 = 11;
+pub const WORKER_PROTOCOL_GENERATION: u32 = 12;
 /// Worker identity reported in its hello.
 pub const WORKER_IDENTITY: &str = "orcel-browser-worker";
 /// The only Node option the worker accepts (inspector activation refused).
@@ -93,6 +93,9 @@ pub struct HostNode {
     pub name: String,
     pub url: Option<String>,
 }
+
+/// BR-02: the longest bounded wait for text (mirrors the worker).
+pub const MAX_WAIT_MS: u64 = 8_000;
 
 /// BR-02: the document after an approved form action (the same document).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -289,9 +292,18 @@ pub(crate) enum WorkerRequest<'a> {
         #[serde(skip_serializing_if = "Option::is_none")]
         checked: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        key: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         role: Option<&'a str>,
         #[serde(skip_serializing_if = "Option::is_none")]
         name: Option<&'a str>,
+    },
+    /// BR-02: a bounded, read-only wait for text.
+    WaitFor {
+        wait_id: u64,
+        text: &'a str,
+        appear: bool,
+        timeout_ms: u64,
     },
     /// BR-07: read-only probes for the postcondition verifier.
     Verify {
@@ -416,6 +428,14 @@ pub(crate) enum WorkerReply {
     FormDone {
         form_id: u64,
         url: String,
+    },
+    Waited {
+        wait_id: u64,
+        url: String,
+        met: bool,
+    },
+    WaitFailed {
+        wait_id: u64,
     },
     FormFailed {
         form_id: u64,
@@ -1228,6 +1248,7 @@ mod platform {
         next_obs: u64,
         next_ver: u64,
         next_form: u64,
+        next_wait: u64,
         /// BR-07: distinct values each field (page, role, name) was checked
         /// against in this lifetime.
         value_budget: crate::verify::GuessBudget,
@@ -1339,6 +1360,7 @@ mod platform {
             next_obs: 0,
             next_ver: 0,
             next_form: 0,
+            next_wait: 0,
             value_budget: crate::verify::GuessBudget::default(),
             last_download_sha256: None,
             next_disc: 0,
@@ -1808,8 +1830,12 @@ mod platform {
                 .get(node_id)
                 .ok_or_else(|| HostError::Invalid("stale or unknown node".into()))?;
             crate::actuation::role_supports_action(&node.role, input.action())?;
-            if matches!(input, crate::actuation::FormInput::Fill { .. })
-                && crate::actuation::name_looks_secret(&node.name)
+            input.check_for_role(&node.role)?;
+            if matches!(
+                input,
+                crate::actuation::FormInput::Fill { .. }
+                    | crate::actuation::FormInput::Press { .. }
+            ) && crate::actuation::name_looks_secret(&node.name)
             {
                 return Err(HostError::Invalid("password-field filling denied".into()));
             }
@@ -1858,10 +1884,14 @@ mod platform {
                     "form actions inside frames are not supported".into(),
                 ));
             }
-            // A field named like a secret is never filled, whatever its
-            // attributes (checked before the approval is spent).
-            if matches!(input, crate::actuation::FormInput::Fill { .. })
-                && crate::actuation::name_looks_secret(&approved_name)
+            input.check_for_role(&target.role)?;
+            // A field named like a secret is never filled or typed into,
+            // whatever its attributes (checked before the approval is spent).
+            if matches!(
+                input,
+                crate::actuation::FormInput::Fill { .. }
+                    | crate::actuation::FormInput::Press { .. }
+            ) && crate::actuation::name_looks_secret(&approved_name)
             {
                 return Err(HostError::Invalid("password-field filling denied".into()));
             }
@@ -1879,12 +1909,20 @@ mod platform {
             }
             self.next_form += 1;
             let form_id = self.next_form;
-            let (value, values, checked) = match input {
-                crate::actuation::FormInput::Fill { value } => (Some(value.as_str()), None, None),
-                crate::actuation::FormInput::Select { labels } => {
-                    (None, Some(labels.as_slice()), None)
+            let (value, values, checked, key) = match input {
+                crate::actuation::FormInput::Fill { value } => {
+                    (Some(value.as_str()), None, None, None)
                 }
-                crate::actuation::FormInput::Check { checked } => (None, None, Some(*checked)),
+                crate::actuation::FormInput::Select { labels } => {
+                    (None, Some(labels.as_slice()), None, None)
+                }
+                crate::actuation::FormInput::Check { checked } => {
+                    (None, None, Some(*checked), None)
+                }
+                crate::actuation::FormInput::Press { key } => {
+                    (None, None, None, Some(key.as_str()))
+                }
+                crate::actuation::FormInput::Hover => (None, None, None, None),
             };
             let named = !approved_name.is_empty();
             let sent = self.send(&WorkerRequest::FormAction {
@@ -1894,6 +1932,7 @@ mod platform {
                 value,
                 values,
                 checked,
+                key,
                 role: named.then_some(target.role.as_str()),
                 name: named.then_some(approved_name.as_str()),
             });
@@ -1943,6 +1982,59 @@ mod platform {
                 }),
                 // A reply for another request, or of another kind: the
                 // worker may still be acting, so the lifetime ends.
+                _ => Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
+            }
+        }
+
+        /// BR-02: wait (read-only, no approval) until `text` is visible on
+        /// the committed document (`appear`) or no longer is, for at most
+        /// `MAX_WAIT_MS`; true when it happened. The page must still be the
+        /// committed document.
+        pub fn wait_for_text(
+            &mut self,
+            text: &str,
+            appear: bool,
+            timeout: Duration,
+        ) -> Result<bool, HostError> {
+            self.ensure_alive()?;
+            if text.is_empty()
+                || text.len() > crate::verify::MAX_VERIFY_TEXT_BYTES
+                || text.chars().any(char::is_control)
+            {
+                return Err(HostError::Invalid(
+                    "the awaited text must be bounded and on one line".into(),
+                ));
+            }
+            let timeout_ms = timeout.as_millis().clamp(1, MAX_WAIT_MS as u128) as u64;
+            let (url, _) = self
+                .committed
+                .clone()
+                .ok_or_else(|| HostError::Invalid("no committed document".into()))?;
+            self.next_wait += 1;
+            let wait_id = self.next_wait;
+            self.send(&WorkerRequest::WaitFor {
+                wait_id,
+                text,
+                appear,
+                timeout_ms,
+            })?;
+            match self.reply(Duration::from_millis(timeout_ms) + WORKER_REPLY_TIMEOUT)? {
+                WorkerReply::Waited {
+                    wait_id: done,
+                    url: seen,
+                    met,
+                } if done == wait_id => {
+                    if seen != url {
+                        return Err(HostError::Invalid(
+                            "stale page: the document changed".into(),
+                        ));
+                    }
+                    Ok(met)
+                }
+                WorkerReply::WaitFailed { wait_id: done } if done == wait_id => {
+                    Err(HostError::Unavailable(UnavailableReason::ActionFailed))
+                }
+                // Out of step with the worker: the lifetime ends.
                 _ => Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
             }
         }
@@ -2024,7 +2116,8 @@ mod platform {
                     WorkerReply::VerificationFailed { ver_id: done } if done == ver_id => {
                         return Err(HostError::Unavailable(UnavailableReason::LaunchFailed))
                     }
-                    _ => return Err(HostError::Unavailable(UnavailableReason::ProtocolViolation)),
+                    // Out of step with the worker: the lifetime ends.
+                    _ => return Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
                 }
             }
             let facts = crate::verify::HostFacts {
@@ -2803,6 +2896,18 @@ mod fallback {
         }
 
         /// API parity: no worker ever exists off Windows.
+        pub fn wait_for_text(
+            &mut self,
+            _text: &str,
+            _appear: bool,
+            _timeout: Duration,
+        ) -> Result<bool, HostError> {
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity: no worker ever exists off Windows.
         pub fn form_binding(
             &self,
             _node_id: &str,
@@ -3561,6 +3666,7 @@ mod tests {
                 value: Some("Ada"),
                 values: None,
                 checked: None,
+                key: None,
                 role: Some("textbox"),
                 name: Some("Name"),
             }),
@@ -3575,6 +3681,7 @@ mod tests {
                 value: None,
                 values: Some(&labels),
                 checked: None,
+                key: None,
                 role: None,
                 name: None,
             }),
@@ -3588,6 +3695,7 @@ mod tests {
                 value: None,
                 values: None,
                 checked: Some(true),
+                key: None,
                 role: None,
                 name: None,
             }),
@@ -3603,6 +3711,38 @@ mod tests {
             }
         );
         assert!(reply(r#"{"frame":"form_failed","form_id":2,"reason":"denied"}"#).is_ok());
+        assert_eq!(
+            json(&WorkerRequest::FormAction {
+                form_id: 5,
+                action: "press",
+                reference: "e2",
+                value: None,
+                values: None,
+                checked: None,
+                key: Some("Enter"),
+                role: None,
+                name: None,
+            }),
+            r#"{"frame":"form_action","form_id":5,"action":"press","ref":"e2","key":"Enter"}"#
+        );
+        assert_eq!(
+            json(&WorkerRequest::WaitFor {
+                wait_id: 1,
+                text: "Saved",
+                appear: true,
+                timeout_ms: 2000,
+            }),
+            r#"{"frame":"wait_for","wait_id":1,"text":"Saved","appear":true,"timeout_ms":2000}"#
+        );
+        assert_eq!(
+            reply(r#"{"frame":"waited","wait_id":1,"url":"u","met":false}"#).unwrap(),
+            WorkerReply::Waited {
+                wait_id: 1,
+                url: "u".into(),
+                met: false
+            }
+        );
+        assert!(reply(r#"{"frame":"wait_failed","wait_id":1,"text":"x"}"#).is_err());
         assert!(reply(r#"{"frame":"form_done","form_id":2,"url":"u","value":"Ada"}"#).is_err());
     }
 

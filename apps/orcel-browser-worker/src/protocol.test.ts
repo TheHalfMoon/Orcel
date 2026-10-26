@@ -72,6 +72,43 @@ test("BR-02: form actions are closed, bounded and exact", () => {
   }
 });
 
+test("BR-02: press keys come from a closed list; hover has no input; waits are bounded", () => {
+  assert.deepEqual(parseHostFrame({ frame: "form_action", form_id: 5, action: "press", ref: "e2", key: "Enter" }), {
+    frame: "form_action",
+    form_id: 5,
+    ref: "e2",
+    act: { action: "press", key: "Enter" }
+  });
+  assert.deepEqual(parseHostFrame({ frame: "form_action", form_id: 6, action: "hover", ref: "e3" }), {
+    frame: "form_action",
+    form_id: 6,
+    ref: "e3",
+    act: { action: "hover" }
+  });
+  assert.deepEqual(parseHostFrame({ frame: "wait_for", wait_id: 1, text: "Saved", appear: false, timeout_ms: 8000 }), {
+    frame: "wait_for",
+    wait_id: 1,
+    text: "Saved",
+    appear: false,
+    timeout_ms: 8000
+  });
+  for (const bad of [
+    { frame: "form_action", form_id: 5, action: "press", ref: "e2", key: "a" },
+    { frame: "form_action", form_id: 5, action: "press", ref: "e2", key: "Control+A" },
+    { frame: "form_action", form_id: 5, action: "press", ref: "e2", key: "Backspace" },
+    { frame: "form_action", form_id: 5, action: "press", ref: "e2" },
+    { frame: "form_action", form_id: 5, action: "hover", ref: "e2", key: "Enter" },
+    { frame: "form_action", form_id: 5, action: "toString", ref: "e2" },
+    { frame: "wait_for", wait_id: 1, text: "Saved", appear: true, timeout_ms: 8001 },
+    { frame: "wait_for", wait_id: 1, text: "Saved", appear: true, timeout_ms: 0 },
+    { frame: "wait_for", wait_id: 1, text: "", appear: true, timeout_ms: 100 },
+    { frame: "wait_for", wait_id: 1, text: "Saved", appear: "yes", timeout_ms: 100 },
+    { frame: "wait_for", wait_id: 1, text: "Saved", appear: true, timeout_ms: 100, ms: 1 }
+  ]) {
+    assert.throws(() => parseHostFrame(bad), ProtocolViolation, JSON.stringify(bad).slice(0, 80));
+  }
+});
+
 test("BR-07: verify probes are closed, bounded and exact", () => {
   const probes = [
     { probe: "visible_role", role: "button", name: "Pay now" },
@@ -99,7 +136,7 @@ test("BR-07: verify probes are closed, bounded and exact", () => {
 });
 
 test("the host vocabulary is closed and exact", () => {
-  assert.deepEqual(parseHostFrame({ frame: "hello", generation: 11 }), { frame: "hello", generation: 11 });
+  assert.deepEqual(parseHostFrame({ frame: "hello", generation: 12 }), { frame: "hello", generation: 12 });
   const parsed = parseHostFrame(validLaunch());
   assert.deepEqual(JSON.parse(JSON.stringify(parsed)), validLaunch());
   assert.equal(parsed.frame === "launch" && Object.getPrototypeOf(parsed.env), null);
@@ -107,11 +144,11 @@ test("the host vocabulary is closed and exact", () => {
     null,
     [],
     "hello",
-    { generation: 11 },
+    { generation: 12 },
     { frame: "navigate", url: "https://example.com" },
     { frame: "evaluate", script: "1+1" },
     { frame: "cdp", method: "Runtime.evaluate" },
-    { frame: "hello", generation: 11, extra: true },
+    { frame: "hello", generation: 12, extra: true },
     { frame: "hello", generation: "1" },
     { frame: "hello" },
     { frame: "shutdown", now: true },

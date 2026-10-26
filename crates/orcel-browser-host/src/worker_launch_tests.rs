@@ -1911,6 +1911,8 @@ fn br02_approved_form_actions_change_only_what_was_approved() {
     let city = named("combobox", "City");
     let terms = named("checkbox", "Accept terms");
     let password = named("textbox", "Password");
+    let search = named("searchbox", "Search");
+    let menu = named("link", "Menu");
 
     fn act(
         worker: &mut BrowserWorker,
@@ -1996,6 +1998,40 @@ fn br02_approved_form_actions_change_only_what_was_approved() {
         ])
         .expect("verify");
     assert!(report.verified, "{report:?}");
+
+    // Press and hover act on the approved element; a bounded wait sees the
+    // page's response. Enter in the search box navigates nowhere.
+    assert!(!worker
+        .wait_for_text("Searched", true, Duration::from_millis(200))
+        .expect("wait"));
+    act(
+        &mut worker,
+        &live,
+        &search,
+        "searchbox",
+        FormInput::Press {
+            key: "Enter".into(),
+        },
+    )
+    .expect("press");
+    assert!(worker
+        .wait_for_text("Searched", true, Duration::from_secs(3))
+        .expect("wait"));
+    act(&mut worker, &live, &menu, "link", FormInput::Hover).expect("hover");
+    assert!(worker
+        .wait_for_text("Menu open", true, Duration::from_secs(3))
+        .expect("wait"));
+    // No key is typed into a secret field.
+    let typed = act(
+        &mut worker,
+        &live,
+        &password,
+        "textbox",
+        FormInput::Press {
+            key: "Space".into(),
+        },
+    );
+    assert!(matches!(typed, Err(HostError::Invalid(_))), "{typed:?}");
 }
 
 /// BR-07: postconditions are checked by the host from read-only probes of

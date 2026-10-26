@@ -12,13 +12,19 @@ interface Element {
   /// The page turns the field into a password after this many attribute
   /// reads (between the secret check and the fill).
   flipAfterReads?: number;
+  /// Focusing the element moves focus elsewhere (a page script, or an
+  /// element that cannot take focus).
+  refusesFocus?: boolean;
 }
 
 /// Whether `element` matches one of the CSS lists the actions use, enough
 /// for these tests: tag names, typed inputs, `:not([type=...])`,
 /// `:not([autocomplete~=...])`, `:not([name*=...])`/`:not([id*=...])` and
 /// contenteditable.
+let focused: Element | null = null;
+
 function matchesCss(element: Element, css: string): boolean {
+  if (css === ":focus") return element === focused;
   const attrs = element.attrs ?? {};
   const type = (attrs.type ?? "text").toLowerCase();
   return css.split(/,\s*(?![^()]*\))/).some((raw) => {
@@ -34,6 +40,7 @@ function matchesCss(element: Element, css: string): boolean {
     });
     if (excluded) return false;
     if (head === "input") return element.tag === "input";
+    if (head === "*") return true;
     const typed = /^input\[type="(\w+)" i\]$/.exec(head);
     if (typed) return element.tag === "input" && type === typed[1];
     if (head.startsWith("[contenteditable]")) {
@@ -78,6 +85,14 @@ function page(refs: Record<string, Element[]>, byRole: Element[] = []) {
       setChecked: async (checked: boolean) => {
         one();
         calls.push(`check ${checked}`);
+      },
+      focus: async () => {
+        const element = one();
+        focused = element.refusesFocus ? null : element;
+      },
+      hover: async () => {
+        one();
+        calls.push("hover");
       }
     };
   };
@@ -86,8 +101,14 @@ function page(refs: Record<string, Element[]>, byRole: Element[] = []) {
       if (selector.startsWith("aria-ref=")) return located(() => refs[selector.slice("aria-ref=".length)] ?? []);
       return { css: selector };
     },
-    mainFrame: () => ({ getByRole: () => located(() => byRole) })
+    mainFrame: () => ({ getByRole: () => located(() => byRole) }),
+    keyboard: {
+      press: async (key: string) => {
+        calls.push(`press ${JSON.stringify(key)}`);
+      }
+    }
   };
+  focused = null;
   return { stub: stub as unknown as FormPage, calls };
 }
 
@@ -171,4 +192,39 @@ test("BR-02 check sets only a checkbox or radio", async () => {
   await formAction(stub, "e2", { action: "check", checked: false });
   await assert.rejects(formAction(stub, "e3", { action: "check", checked: true }), reason("denied"));
   assert.deepEqual(calls, ["check true", "check false"]);
+});
+
+test("BR-02 press sends an allowed key to the approved element, never into a secret field", async () => {
+  const { stub, calls } = page({
+    e1: [{ tag: "input", attrs: { type: "search", name: "q" } }],
+    e2: [{ tag: "div", attrs: { role: "dialog" } }],
+    e3: [{ tag: "input", attrs: { type: "password" } }],
+    e4: [{ tag: "input", attrs: { type: "text", name: "user_pin" } }],
+    // Cannot take focus: the key would go wherever focus was.
+    e5: [{ tag: "div", attrs: { role: "dialog" }, refusesFocus: true }],
+    e6: [{ tag: "textarea", attrs: { name: "note" } }],
+    e7: [{ tag: "button" }],
+    // A text field that declares itself a button: Space would still type.
+    e8: [{ tag: "input", attrs: { type: "text", role: "button" } }],
+    e9: [{ tag: "div", attrs: { contenteditable: "true" } }]
+  });
+  await formAction(stub, "e1", { action: "press", key: "Enter" });
+  await formAction(stub, "e2", { action: "press", key: "Escape" });
+  await formAction(stub, "e7", { action: "press", key: "Space" });
+  for (const ref of ["e3", "e4"]) {
+    await assert.rejects(formAction(stub, ref, { action: "press", key: "Space" }), reason("denied"), ref);
+  }
+  await assert.rejects(formAction(stub, "e5", { action: "press", key: "Escape" }), reason("denied"), "focus must take");
+  await assert.rejects(formAction(stub, "e6", { action: "press", key: "Enter" }), reason("denied"), "no line breaks");
+  await assert.rejects(formAction(stub, "e8", { action: "press", key: "Space" }), reason("denied"), "Space types into fields");
+  await assert.rejects(formAction(stub, "e9", { action: "press", key: "Enter" }), reason("denied"), "no line breaks in contenteditable");
+  await formAction(stub, "e6", { action: "press", key: "Tab" });
+  assert.deepEqual(calls, ['press "Enter"', 'press "Escape"', 'press " "', 'press "Tab"']);
+});
+
+test("BR-02 hover acts on the approved element only", async () => {
+  const { stub, calls } = page({ e1: [{ tag: "a", attrs: { href: "/menu" } }] });
+  await formAction(stub, "e1", { action: "hover" });
+  await assert.rejects(formAction(stub, "e2", { action: "hover" }), reason("stale"));
+  assert.deepEqual(calls, ["hover"]);
 });

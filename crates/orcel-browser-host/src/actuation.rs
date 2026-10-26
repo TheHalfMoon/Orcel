@@ -25,6 +25,11 @@ pub enum SupportedAction {
     Select,
     /// BR-02: set a checkbox or radio; the target state binds the state.
     Check,
+    /// BR-02: press one key from `PRESS_KEYS` on the element; the target
+    /// state binds the key.
+    Press,
+    /// BR-02: move the pointer over the element.
+    Hover,
 }
 
 impl SupportedAction {
@@ -36,6 +41,8 @@ impl SupportedAction {
             Self::Execute => "execute",
             Self::Select => "select",
             Self::Check => "check",
+            Self::Press => "press",
+            Self::Hover => "hover",
         }
     }
 
@@ -47,6 +54,8 @@ impl SupportedAction {
             "execute" => Ok(Self::Execute),
             "select" => Ok(Self::Select),
             "check" => Ok(Self::Check),
+            "press" => Ok(Self::Press),
+            "hover" => Ok(Self::Hover),
             _ => Err(HostError::Invalid("unsupported actuation action".into())),
         }
     }
@@ -70,8 +79,40 @@ pub fn role_supports_action(role: &str, action: SupportedAction) -> Result<(), H
         SupportedAction::Execute => &["webmcp-tool"],
         SupportedAction::Select => &["combobox", "listbox"],
         SupportedAction::Check => &["checkbox", "radio"],
+        // Focusable controls only: a key pressed on an element that cannot
+        // take focus would go to whatever had it.
+        SupportedAction::Press => &[
+            "textbox",
+            "searchbox",
+            "combobox",
+            "listbox",
+            "option",
+            "button",
+            "link",
+            "checkbox",
+            "radio",
+            "menuitem",
+            "tab",
+            "slider",
+        ],
+        SupportedAction::Hover => &["button", "link", "menuitem", "tab", "img", "image"],
     };
-    if allowed.iter().any(|entry| lower.contains(entry)) {
+    // BR-02's actions match roles exactly (`tab` is not `table`); the
+    // earlier actions keep their substring rule.
+    let exact = matches!(
+        action,
+        SupportedAction::Select
+            | SupportedAction::Check
+            | SupportedAction::Press
+            | SupportedAction::Hover
+    );
+    if allowed.iter().any(|entry| {
+        if exact {
+            lower == *entry
+        } else {
+            lower.contains(entry)
+        }
+    }) {
         return Ok(());
     }
     Err(HostError::Invalid(
@@ -83,6 +124,28 @@ pub fn role_supports_action(role: &str, action: SupportedAction) -> Result<(), H
 /// (mirrors the worker).
 pub const MAX_FORM_VALUE_BYTES: usize = 1024;
 pub const MAX_FORM_OPTIONS: usize = 16;
+/// BR-02: the keys an approved press may send (mirrors the worker):
+/// navigation and editing keys only, no characters (Space aside) and no
+/// modifiers.
+pub const PRESS_KEYS: [&str; 12] = [
+    "Enter",
+    "Tab",
+    "Escape",
+    "ArrowUp",
+    "ArrowDown",
+    "ArrowLeft",
+    "ArrowRight",
+    "Home",
+    "End",
+    "PageUp",
+    "PageDown",
+    "Space",
+];
+
+/// Roles a Space may be pressed on: controls Space activates or toggles,
+/// never a text field (where it would type, which only an approved fill
+/// may do).
+const SPACE_ROLES: [&str; 6] = ["button", "checkbox", "radio", "option", "menuitem", "tab"];
 
 /// BR-02: one form action and its exact input. Its `state` is what the
 /// one-shot approval binds (through the target digest), so the approver
@@ -95,6 +158,10 @@ pub enum FormInput {
     Select { labels: Vec<String> },
     /// Set a checkbox or radio.
     Check { checked: bool },
+    /// Press one key from `PRESS_KEYS` on the element.
+    Press { key: String },
+    /// Move the pointer over the element.
+    Hover,
 }
 
 impl FormInput {
@@ -103,6 +170,8 @@ impl FormInput {
             Self::Fill { .. } => SupportedAction::Fill,
             Self::Select { .. } => SupportedAction::Select,
             Self::Check { .. } => SupportedAction::Check,
+            Self::Press { .. } => SupportedAction::Press,
+            Self::Hover => SupportedAction::Hover,
         }
     }
 
@@ -124,7 +193,8 @@ impl FormInput {
                         .iter()
                         .all(|label| !label.is_empty() && bounded(label))
             }
-            Self::Check { .. } => true,
+            Self::Check { .. } | Self::Hover => true,
+            Self::Press { key } => PRESS_KEYS.contains(&key.as_str()),
         };
         if fits {
             Ok(())
@@ -142,6 +212,8 @@ impl FormInput {
             Self::Fill { value } => format!("fill\n{value}"),
             Self::Select { labels } => format!("select\n{}", labels.join("\n")),
             Self::Check { checked } => format!("check\n{checked}"),
+            Self::Press { key } => format!("press\n{key}"),
+            Self::Hover => "hover".to_owned(),
         }
     }
 }
@@ -183,6 +255,22 @@ pub fn name_looks_secret(name: &str) -> bool {
         || pair("security", "code")
         || pair("one", "time")
         || pair("verification", "code")
+}
+
+impl FormInput {
+    /// Refuses an input the target's role cannot take (a Space on a text
+    /// field), beyond `role_supports_action`.
+    pub fn check_for_role(&self, role: &str) -> Result<(), HostError> {
+        if let Self::Press { key } = self {
+            if key == "Space" && !SPACE_ROLES.contains(&role.to_ascii_lowercase().as_str()) {
+                return Err(HostError::Invalid(
+                    "Space is pressed only on buttons, checkboxes, radios, options, menu items and tabs"
+                        .into(),
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Exact pre-dispatch target binding.
@@ -412,6 +500,41 @@ mod tests {
             SupportedAction::Select
         );
         assert_eq!(SupportedAction::parse("check").unwrap().name(), "check");
+        let press = FormInput::Press {
+            key: "Enter".into(),
+        };
+        assert_eq!(
+            (press.state(), press.action()),
+            (
+                "press
+Enter"
+                    .to_owned(),
+                SupportedAction::Press
+            )
+        );
+        assert!(press.check().is_ok());
+        assert!(press.check_for_role("textbox").is_ok());
+        let space = FormInput::Press {
+            key: "Space".into(),
+        };
+        assert!(space.check_for_role("checkbox").is_ok());
+        assert!(space.check_for_role("textbox").is_err(), "Space would type");
+        assert!(
+            role_supports_action("table", SupportedAction::Hover).is_err(),
+            "exact roles"
+        );
+        assert!(role_supports_action("dialog", SupportedAction::Press).is_err());
+        for key in ["a", "Control+A", "enter", "", "Backspace", "Delete"] {
+            assert!(
+                FormInput::Press { key: key.into() }.check().is_err(),
+                "{key}"
+            );
+        }
+        assert_eq!(FormInput::Hover.state(), "hover");
+        assert!(role_supports_action("link", SupportedAction::Hover).is_ok());
+        assert!(role_supports_action("textbox", SupportedAction::Hover).is_err());
+        assert!(role_supports_action("searchbox", SupportedAction::Press).is_ok());
+        assert!(role_supports_action("heading", SupportedAction::Press).is_err());
         assert!(
             FormInput::Select {
                 labels: vec!["a".into(), "a".into()]
