@@ -11,7 +11,8 @@ import { isIPv4, isIPv6 } from "node:net";
 import type { SnapshotNode } from "./snapshot.js";
 import type { ControlKind, DeclaredTool } from "./webmcp/declarative.js";
 import { MAX_VERIFY_PROBES, MAX_VERIFY_TEXT_BYTES, type VerifyProbe, type VerifyResult } from "./verify.js";
-import type { FormAction } from "./actions/form.js";
+import { PRESS_KEYS, type FormAction, type PressKey } from "./actions/form.js";
+import { MAX_WAIT_MS } from "./actions/wait.js";
 
 /// One form field to enter when executing a tool (host-validated).
 export interface ExecField {
@@ -31,8 +32,9 @@ export const MAX_EXEC_VALUE_CHARS = 1024;
 /// downloads, generation 6 slice-4 WebMCP discovery, generation 7 slice-5
 /// WebMCP execution, generation 8 slice-6 page extraction, generation 9
 /// text documents for robots.txt and sitemaps (#317), generation 10 BR-07
-/// postcondition probes, generation 11 BR-02 form actions.
-export const WORKER_PROTOCOL_GENERATION = 11;
+/// postcondition probes, generation 11 BR-02 form actions, generation 12
+/// BR-02 press, hover and bounded waits.
+export const WORKER_PROTOCOL_GENERATION = 12;
 /// BR-02: the longest value filled, and the most options selected at once
 /// (mirrors the host).
 export const MAX_FORM_VALUE_BYTES = 1024;
@@ -106,6 +108,7 @@ export type HostFrame =
   | { frame: "download"; dl_id: number; ref: string; path: string; target?: ApprovedTarget }
   | { frame: "verify"; ver_id: number; probes: VerifyProbe[] }
   | { frame: "form_action"; form_id: number; ref: string; act: FormAction; target?: ApprovedTarget }
+  | { frame: "wait_for"; wait_id: number; text: string; appear: boolean; timeout_ms: number }
   | { frame: "shutdown" };
 
 export type RouteKind = "document" | "redirect" | "frame" | "popup" | "fetch" | "subresource" | "service_worker";
@@ -205,6 +208,8 @@ export type WorkerFrame =
   | { frame: "download_failed"; dl_id: number; reason: NavigationFailure }
   | { frame: "verified"; ver_id: number; url: string; results: VerifyResult[] }
   | { frame: "form_done"; form_id: number; url: string }
+  | { frame: "waited"; wait_id: number; url: string; met: boolean }
+  | { frame: "wait_failed"; wait_id: number }
   | { frame: "form_failed"; form_id: number; reason: NavigationFailure }
   | { frame: "verification_failed"; ver_id: number }
   | { frame: "error"; code: ErrorCode };
@@ -348,10 +353,10 @@ export function parseHostFrame(raw: unknown): HostFrame {
     }
     case "form_action": {
       const targeted = "role" in raw || "name" in raw ? ["role", "name"] : [];
-      const own: Record<string, string> = { fill: "value", select: "values", check: "checked" };
-      const field = typeof raw.action === "string" ? own[raw.action] : undefined;
-      if (!field) throw new ProtocolViolation("form action is unknown");
-      exactKeys(raw, ["frame", "form_id", "action", "ref", field, ...targeted]);
+      const own: Record<string, string[]> = { fill: ["value"], select: ["values"], check: ["checked"], press: ["key"], hover: [] };
+      const fields = typeof raw.action === "string" && Object.hasOwn(own, raw.action) ? own[raw.action] : undefined;
+      if (!fields) throw new ProtocolViolation("form action is unknown");
+      exactKeys(raw, ["frame", "form_id", "action", "ref", ...fields, ...targeted]);
       const formId = positiveId(raw.form_id, "form_id");
       if (typeof raw.ref !== "string" || !/^e\d{1,6}$/.test(raw.ref)) {
         throw new ProtocolViolation("form action ref is malformed");
@@ -366,12 +371,29 @@ export function parseHostFrame(raw: unknown): HostFrame {
         const values = raw.values.map((label: unknown) => boundedString(label, MAX_FORM_VALUE_BYTES, "select option"));
         if (new Set(values).size !== values.length) throw new ProtocolViolation("select options repeat");
         act = { action: "select", values };
-      } else {
+      } else if (raw.action === "check") {
         if (typeof raw.checked !== "boolean") throw new ProtocolViolation("check state is not a boolean");
         act = { action: "check", checked: raw.checked };
+      } else if (raw.action === "press") {
+        if (typeof raw.key !== "string" || !(PRESS_KEYS as readonly string[]).includes(raw.key)) {
+          throw new ProtocolViolation("press key is not allowed");
+        }
+        act = { action: "press", key: raw.key as PressKey };
+      } else {
+        act = { action: "hover" };
       }
       const target = approvedTarget(raw);
       return target ? { frame: "form_action", form_id: formId, ref: raw.ref, act, target } : { frame: "form_action", form_id: formId, ref: raw.ref, act };
+    }
+    case "wait_for": {
+      exactKeys(raw, ["frame", "wait_id", "text", "appear", "timeout_ms"]);
+      const waitId = positiveId(raw.wait_id, "wait_id");
+      if (typeof raw.appear !== "boolean") throw new ProtocolViolation("wait appear is not a boolean");
+      if (!Number.isSafeInteger(raw.timeout_ms) || (raw.timeout_ms as number) < 1 || (raw.timeout_ms as number) > MAX_WAIT_MS) {
+        throw new ProtocolViolation("wait timeout is out of range");
+      }
+      const text = boundedString(raw.text, MAX_VERIFY_TEXT_BYTES, "wait text");
+      return { frame: "wait_for", wait_id: waitId, text, appear: raw.appear, timeout_ms: raw.timeout_ms as number };
     }
     case "verify": {
       exactKeys(raw, ["frame", "ver_id", "probes"]);

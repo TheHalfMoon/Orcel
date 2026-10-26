@@ -1,7 +1,7 @@
-// BR-02 (first slice): approved form actions — fill a field, select
-// options, set a checkbox or radio. Each acts on exactly one element the
-// host approved, only when that element is itself the right kind of form
-// control, and never on a field that looks secret.
+// BR-02: approved element actions — fill a field, select options, set a
+// checkbox or radio, press a key, hover. Each acts on exactly one element
+// the host approved, only when that element is itself the right kind of
+// control, and never types into a field that looks secret.
 //
 // Adapted from microsoft/playwright at commit
 // 1b025d7e20a026371cd5f98ba0cdce48892737c8,
@@ -16,7 +16,14 @@
 // secret (SG-000077), fill clears first (Browser Use semantics, and
 // Playwright's `fill`); select chooses native `<select>` options by their
 // visible label only; frames, zod schemas, the MCP response builder and code
-// generation are not ported.
+// generation are not ported. Press and hover are adapted from the same
+// commit's `keyboard.ts` (blob f8f3abd271a0524d3258ae9c0c5f3c96171b0d5c,
+// `locator.press`) and `snapshot.ts` (blob
+// cda3d0fa6cfb8ff7a28a104e32ce34f4b5573588, browser_hover: `locator.hover`):
+// a key from a closed list (no characters but Space, no deletion, no
+// modifiers), sent only after the approved element itself holds focus, never
+// to a field that looks secret, never Enter into a textarea; a page script
+// can still move focus while the key is delivered.
 
 import type { Locator, Page } from "playwright-core";
 import type { ApprovedTarget } from "../protocol.js";
@@ -27,10 +34,30 @@ import { approvedElement, type TargetPage } from "./targets.js";
 export type FormAction =
   | { action: "fill"; value: string }
   | { action: "select"; values: string[] }
-  | { action: "check"; checked: boolean };
+  | { action: "check"; checked: boolean }
+  | { action: "press"; key: PressKey }
+  | { action: "hover" };
+
+/// The keys an approved press may send (mirrors the host): navigation and
+/// editing keys only, no characters (Space aside) and no modifiers.
+export const PRESS_KEYS = [
+  "Enter",
+  "Tab",
+  "Escape",
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "Home",
+  "End",
+  "PageUp",
+  "PageDown",
+  "Space"
+] as const;
+export type PressKey = (typeof PRESS_KEYS)[number];
 
 /// The page surface form actions use (a Playwright `Page`, or a test stub).
-export type FormPage = TargetPage & Pick<Page, "locator">;
+export type FormPage = TargetPage & Pick<Page, "locator" | "keyboard">;
 
 /// What no fill ever resolves to, part of the locator the fill itself
 /// resolves (so a page that turns a field secret after the check is still
@@ -53,8 +80,24 @@ const CHECKABLE = 'input[type="checkbox" i], input[type="radio" i]';
 /// One action's own budget, under the host's reply deadline.
 export const FORM_ACTION_TIMEOUT_MS = 5_000;
 
-const kindOf = (action: FormAction): string =>
-  action.action === "fill" ? FILLABLE : action.action === "select" ? SELECTABLE : CHECKABLE;
+/// Any element that is not a secret field (a key could type into it).
+const PRESSABLE = `*${NOT_SECRET}`;
+const HOVERABLE = "*";
+
+const kindOf = (action: FormAction): string => {
+  switch (action.action) {
+    case "fill":
+      return FILLABLE;
+    case "select":
+      return SELECTABLE;
+    case "check":
+      return CHECKABLE;
+    case "press":
+      return PRESSABLE;
+    case "hover":
+      return HOVERABLE;
+  }
+};
 
 /// The approved element, when it is itself a control of the action's kind.
 async function control(page: FormPage, ref: string, action: FormAction, target?: ApprovedTarget): Promise<Locator> {
@@ -87,6 +130,23 @@ export async function formAction(page: FormPage, ref: string, action: FormAction
       }
       case "check":
         await own.setChecked(action.checked, options);
+        return;
+      case "press": {
+        if (await isSecretField(own)) throw new NavigationError("denied");
+        // Enter in a multi-line field would add a line (multi-line values are refused).
+        if (action.key === "Enter" && (await own.and(page.locator('textarea, [contenteditable]:not([contenteditable="false" i])')).count()) > 0) {
+          throw new NavigationError("denied");
+        }
+        // Space never types into a field, whatever role the page declares.
+        if (action.key === "Space" && (await own.and(page.locator(FILLABLE)).count()) > 0) throw new NavigationError("denied");
+        await own.focus(options);
+        // The key goes to whatever holds focus: only the approved element.
+        if ((await own.and(page.locator(":focus")).count()) !== 1) throw new NavigationError("denied");
+        await page.keyboard.press(action.key === "Space" ? " " : action.key);
+        return;
+      }
+      case "hover":
+        await own.hover(options);
         return;
     }
   } catch (error) {

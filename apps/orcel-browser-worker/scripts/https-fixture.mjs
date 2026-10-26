@@ -177,7 +177,11 @@ const FORM = `<!doctype html><meta charset="utf-8"><title>Profile</title>
 <label>Full name <input type="text" name="full_name" value="Old Name"></label>
 <label>City <select name="city"><option>Lisbon</option><option>Porto</option></select></label>
 <label><input type="checkbox" name="terms"> Accept terms</label>
-<label>Password <input type="password" name="pw"></label>`;
+<label>Password <input type="password" name="pw"></label>
+<label>Search <input type="search" name="q" onkeydown="if (event.key === 'Enter') document.getElementById('out').textContent = 'Searched'"></label>
+<p id="out"></p>
+<a href="/menu" onmouseover="document.getElementById('tip').textContent = 'Menu open'">Menu</a>
+<p id="tip"></p>`;
 // BR-07: a page to verify postconditions against.
 const VERIFY = `<!doctype html><meta charset="utf-8"><title>Order 42</title>
 <h1>Order confirmed</h1>
