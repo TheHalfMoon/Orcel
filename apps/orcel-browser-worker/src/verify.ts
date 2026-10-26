@@ -100,7 +100,9 @@ async function field(page: VerifyPage, ref: string, kind: string): Promise<Locat
   return (await control.count().catch(() => 0)) === 1 ? control : "not_a_field";
 }
 
-async function isSecret(control: Locator): Promise<boolean> {
+/// Whether a form control looks secret (its type, `autocomplete`, name or
+/// id): its value is never read, and it is never filled (BR-02).
+export async function isSecretField(control: Locator): Promise<boolean> {
   const read = async (name: string) =>
     ((await control.getAttribute(name, { timeout: READ_TIMEOUT_MS }).catch(() => null)) ?? "").trim();
   if ((await read("type")).toLowerCase() === "password") return true;
@@ -124,7 +126,7 @@ async function probeOne(page: VerifyPage, probe: VerifyProbe): Promise<VerifyRes
     case "value": {
       const control = await field(page, probe.ref, VALUE_FIELD);
       if (typeof control === "string") return { result: "unavailable", reason: control };
-      if (await isSecret(control)) return { result: "unavailable", reason: "secret" };
+      if (await isSecretField(control)) return { result: "unavailable", reason: "secret" };
       let value: string;
       try {
         value = await control.inputValue({ timeout: READ_TIMEOUT_MS });
