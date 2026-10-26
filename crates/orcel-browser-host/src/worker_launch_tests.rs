@@ -1835,6 +1835,118 @@ fn br01_a_rerendered_link_is_found_by_its_approved_role_and_name_or_nothing_is_c
     );
 }
 
+/// BR-07: postconditions are checked by the host from read-only probes of
+/// the committed page: visible elements and text pass, hidden text fails,
+/// a field's value is compared in the host, a password is never read, and
+/// URL and download checks use the host's own facts.
+#[test]
+#[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
+fn br07_postconditions_are_verified_with_evidence_and_hidden_text_fails() {
+    use crate::verify::Postcondition;
+    let fixture = HttpsFixture::start();
+    let profile = temp_profile("verify");
+    let mut launch = spec(&profile, true);
+    launch.destinations =
+        vec![
+            AdmittedDestination::fixture("fixture.test", IpAddr::V4(Ipv4Addr::LOCALHOST))
+                .expect("fixture.test"),
+        ];
+    launch.test_trusted_spki = Some(fixture.spki.clone());
+    let mut worker = launch_worker(&launch, &Policy(PolicyKeyState::Absent)).expect("launch");
+    let scope = crate::observation::ObservationScope {
+        workspace: "workspace".into(),
+        profile_identity: "profile".into(),
+    };
+    worker
+        .navigate("https://fixture.test/verify-page")
+        .expect("navigate");
+    let live = worker.observe(&scope).expect("observe");
+    let named = |role: &str, name: &str| {
+        let mut stack: Vec<&crate::observation::ObservedNode> =
+            live.observation.nodes.iter().collect();
+        while let Some(node) = stack.pop() {
+            if worker
+                .host_node(&node.node_id)
+                .is_some_and(|h| h.role == role && h.name == name)
+            {
+                return node.node_id.clone();
+            }
+            stack.extend(node.children.iter());
+        }
+        panic!("no {role} named {name}");
+    };
+    let heading = named("heading", "Order confirmed");
+    let email = named("textbox", "Email");
+    let password = named("textbox", "Password");
+    let subscribe = named("checkbox", "Subscribe");
+    let served = fixture.hits().len();
+    let checks = [
+        Postcondition::ElementVisible { node_id: heading },
+        Postcondition::TextVisible {
+            text: "Thank you for your order".into(),
+        },
+        Postcondition::TextVisible {
+            text: "Refund issued".into(),
+        },
+        Postcondition::ValueEquals {
+            node_id: email.clone(),
+            value: "ada@example.test".into(),
+        },
+        Postcondition::ValueEquals {
+            node_id: email,
+            value: "someone-else@example.test".into(),
+        },
+        Postcondition::ValueEquals {
+            node_id: password,
+            value: "hunter2".into(),
+        },
+        Postcondition::Checked {
+            node_id: subscribe,
+            checked: true,
+        },
+        Postcondition::UrlIs {
+            url: "https://fixture.test/verify-page".into(),
+        },
+    ];
+    let report = worker.verify_postconditions(&checks, None).expect("verify");
+    let outcome: Vec<(bool, &str)> = report
+        .results
+        .iter()
+        .map(|r| (r.passed, r.evidence.as_str()))
+        .collect();
+    assert_eq!(
+        outcome,
+        [
+            (true, "visible matches: 1"),
+            (true, "visible matches: 1"),
+            (false, "visible matches: 0"),
+            (true, "value matches"),
+            (false, "value differs"),
+            (false, "unavailable: secret"),
+            (true, "checked: true"),
+            (true, "committed URL matches"),
+        ]
+    );
+    assert!(!report.verified, "one failed check fails the verification");
+    assert_eq!(report.url, "https://fixture.test/verify-page");
+    let json = serde_json::to_string(&report).unwrap();
+    assert!(!json.contains("ada@example.test") && !json.contains("hunter2"));
+    // Only the passing checks: verified, with a digest to reference.
+    let passing: Vec<Postcondition> = [0, 1, 3, 6, 7].iter().map(|&i| checks[i].clone()).collect();
+    let report = worker
+        .verify_postconditions(&passing, None)
+        .expect("verify passing");
+    assert!(report.verified, "{report:?}");
+    assert_eq!(report.evidence_sha256.len(), 64);
+    // Probes are read-only: nothing was requested from the site.
+    pump(&mut worker, Duration::from_millis(300));
+    assert_eq!(
+        fixture.hits().len(),
+        served,
+        "verification requested nothing"
+    );
+}
+
 #[test]
 #[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
 fn an_approved_activation_follows_the_latest_dated_link_and_nothing_else() {

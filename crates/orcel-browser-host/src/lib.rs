@@ -28,6 +28,7 @@ mod runtime_pin;
 mod supervise;
 mod transfers;
 mod uia;
+mod verify;
 mod webmcp;
 #[cfg(all(
     windows,
@@ -141,6 +142,10 @@ pub use uia::{
     set_value, toggle, uia_coordinate_fallback, uia_target_digest, verify_pattern_support,
     verify_uia_target, ScrollDirection, SupportedPattern, UiaApproval, UiaElement, UiaLive,
     UiaProcess, UiaTarget, UiaWindow, MAX_SCROLL_AMOUNT, MAX_UIA_VALUE_CHARS, MIN_SCROLL_AMOUNT,
+};
+pub use verify::{
+    check_postconditions, CheckResult, Postcondition, Verification, MAX_POSTCONDITIONS,
+    MAX_VERIFY_COUNT, MAX_VERIFY_TEXT_BYTES,
 };
 pub use webmcp::{
     canonical_arguments, ensure_executable, resolve_action, validate_arguments,

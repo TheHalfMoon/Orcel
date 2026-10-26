@@ -37,6 +37,12 @@ const VENDORED_NOTICES = [
     license: "MIT",
     file: "docs/orcel/notices/cua-MIT.txt",
     copyright: "Copyright (c) 2025 Cua AI, Inc."
+  },
+  {
+    name: "Playwright (microsoft/playwright@1b025d7e20a026371cd5f98ba0cdce48892737c8, adapted verifier source)",
+    license: "Apache-2.0",
+    file: "docs/orcel/notices/playwright-Apache-2.0.txt",
+    copyright: "Copyright (c) Microsoft Corporation"
   }
 ];
 

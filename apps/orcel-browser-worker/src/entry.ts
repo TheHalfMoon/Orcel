@@ -16,6 +16,7 @@ import type { LayoutSnapshot } from "./extract/model.js";
 import { toPieces } from "./extract/pieces.js";
 import { installRoutes } from "./routes.js";
 import { boundSnapshot } from "./snapshot.js";
+import { runProbes } from "./verify.js";
 import { discoverDeclarativeTools, DISCOVERY_BUDGET_MS } from "./webmcp/declarative.js";
 import { CAPTURE_TIMEOUT_MS, DISCOVERY_TOTAL_MS, fitTools } from "./webmcp/fit.js";
 import { captureWithin } from "./webmcp/capture.js";
@@ -241,6 +242,10 @@ const playwrightLauncher: Launcher = {
           media: document.media,
           bytes: document.body.length
         };
+      },
+      async verify(probes) {
+        const results = await runProbes(primary, probes);
+        return { url: primary.url(), results };
       },
       async observe() {
         const raw: unknown = await primary.ariaSnapshotJSON({ mode: "ai", depth: 16, timeout: 2_000 });

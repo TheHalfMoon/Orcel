@@ -33,6 +33,7 @@ import {
 } from "./protocol.js";
 import type { RouteQuery } from "./routing.js";
 import type { BoundedSnapshot } from "./snapshot.js";
+import type { VerifyProbe, VerifyResult } from "./verify.js";
 
 export type LaunchSpec = Extract<HostFrame, { frame: "launch" }>;
 
@@ -78,6 +79,8 @@ export interface EngineSession {
   /// approved target), expect a download, and save it to `path` (which must
   /// not exist); rejects with NavigationError.
   download(ref: string, path: string, target?: ApprovedTarget): Promise<{ url: string; name: string; media: string; bytes: number }>;
+  /// BR-07: read-only probes of the primary page, one result per probe.
+  verify(probes: VerifyProbe[]): Promise<{ url: string; results: VerifyResult[] }>;
   /// Called once if the engine goes away without `close`.
   onUnexpectedExit(listener: () => void): void;
 }
@@ -271,6 +274,17 @@ export class Worker {
           chunk: piece.chunk,
           content: piece.content
         });
+        return;
+      }
+      case "verify": {
+        if (this.state !== "launched" || !this.session) return this.fail("not_ready");
+        try {
+          const { url, results } = await this.session.verify(frame.probes);
+          if (results.length !== frame.probes.length) throw new Error("one result per probe");
+          this.send({ frame: "verified", ver_id: frame.ver_id, url, results });
+        } catch {
+          this.send({ frame: "verification_failed", ver_id: frame.ver_id });
+        }
         return;
       }
       case "observe": {
