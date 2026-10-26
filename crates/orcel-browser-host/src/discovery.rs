@@ -34,9 +34,9 @@ impl EngineKind {
 /// every confinement, policy and network-endpoint probe re-runs per
 /// version, because a new engine can change how it honours a flag.
 /// - Edge 155: the evidence host, with the #324 leak control required.
-/// - Edge 156: the evidence host after its update to 156.0.4314.42, with
-///   the #324 leak control required (runs recorded in the engine-attachment
-///   decision, A10).
+/// - Edge 156: the evidence host after its update to 156.0.4314.42: a full
+///   native-suite pass with the #324 leak control required (runs recorded
+///   in the engine-attachment decision, A10).
 /// - Chrome 154: qualified by earlier CI evidence.
 /// - Chrome 155: qualified by earlier CI evidence.
 /// - Chrome 156: windows-latest image 20261021 (Chromium 156.0.8078.48):
