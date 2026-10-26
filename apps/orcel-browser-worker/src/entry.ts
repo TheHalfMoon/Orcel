@@ -69,10 +69,9 @@ const playwrightLauncher: Launcher = {
     // which would interrupt a navigation in the same page. The previous
     // page is closed once the new one has its redirect guard.
     let primary: Page = context.pages()[0] ?? (await context.newPage());
-    // BR-05: every dialog, on every page, is dismissed as it opens and logged.
+    // BR-05: every dialog, on every page, is answered as it opens and logged.
     const dialogs = new DialogLog();
-    context.on("page", (page) => dialogs.attach(page));
-    for (const page of context.pages()) dialogs.attach(page);
+    dialogs.listen(context);
     const routes = await installRoutes(context, () => primary, policy);
     let closing = false;
     // Each host navigation runs in a fresh page (see above).

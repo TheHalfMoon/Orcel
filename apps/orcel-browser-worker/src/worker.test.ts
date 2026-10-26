@@ -85,7 +85,7 @@ class FakeEngine implements EngineSession {
   verify(probes: VerifyProbe[]): Promise<{ url: string; results: VerifyResult[] }> {
     return this.verifyBehavior(probes);
   }
-  dialogLog: { dialogs: Array<{ kind: "alert" | "confirm" | "prompt" | "beforeunload"; message: string; accepted: boolean }>; truncated: boolean } = {
+  dialogLog: { dialogs: Array<{ kind: "alert" | "confirm" | "prompt" | "beforeunload"; url: string; message: string; accepted: boolean }>; truncated: boolean } = {
     dialogs: [],
     truncated: false
   };
@@ -493,12 +493,12 @@ test("BR-05: dismissed dialogs are reported once", async () => {
   const { worker, sent } = harness(async () => engine);
   await worker.receive({ frame: "hello", generation: 15 });
   await worker.receive(validLaunch());
-  engine.dialogLog = { dialogs: [{ kind: "confirm", message: "Delete this item?", accepted: false }], truncated: false };
+  engine.dialogLog = { dialogs: [{ kind: "confirm", url: "https://fixture.test/", message: "Delete this item?", accepted: false }], truncated: false };
   await worker.receive({ frame: "dialogs", dlg_id: 1 });
   assert.deepEqual(sent.at(-1), {
     frame: "dialogs_seen",
     dlg_id: 1,
-    dialogs: [{ kind: "confirm", message: "Delete this item?", accepted: false }],
+    dialogs: [{ kind: "confirm", url: "https://fixture.test/", message: "Delete this item?", accepted: false }],
     truncated: false
   });
   await worker.receive({ frame: "dialogs", dlg_id: 2 });

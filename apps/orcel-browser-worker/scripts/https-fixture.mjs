@@ -176,6 +176,10 @@ const EXEC = `<!doctype html><meta charset="utf-8"><title>Exec</title>
 const DIALOG = `<!doctype html><meta charset="utf-8"><title>Items</title>
 <button onclick="document.getElementById('out').textContent = confirm('Delete this item?') ? 'deleted' : 'kept'">Delete</button>
 <p id="out"></p>`;
+// BR-05: a page that asks before it is left (beforeunload).
+const LEAVE = `<!doctype html><meta charset="utf-8"><title>Draft</title>
+<p><a href="/archive/2026-09-30">Annual review 2026-09-30</a></p>
+<script>addEventListener("beforeunload", (event) => { event.preventDefault(); event.returnValue = ""; });</script>`;
 // BR-03: a file input whose page reports the chosen file's name and bytes.
 const UPLOAD = `<!doctype html><meta charset="utf-8"><title>Upload</title>
 <label>Attachment <input type="file" name="doc" id="doc"></label>
@@ -459,7 +463,7 @@ trailer << /Root 1 0 R >>
     response.setHeader("reporting-endpoints", 'csp="https://other.test/reports"');
     response.setHeader("content-security-policy", "img-src 'self'; report-to csp");
   }
-  const pages = { "/mixed": MIXED, "/spec-escape": SPEC_ESCAPE, "/reports": REPORTS, "/self-move": SELF_MOVE, "/archive": ARCHIVE, "/archive-hostile": ARCHIVE_HOSTILE, "/files": FILES, "/archive-tricky": ARCHIVE_TRICKY, "/archive-rerender": ARCHIVE_RERENDER, "/archive-rerender-swap": ARCHIVE_RERENDER_SWAP, "/archive-rerender-twins": ARCHIVE_RERENDER_TWINS, "/secret-name": SECRET_NAME, "/tools": TOOLS, "/tools-none": NO_TOOLS, "/tools-control": TOOLS_CONTROL, "/exec": EXEC, "/read": READ, "/verify-page": VERIFY, "/form-page": FORM, "/occluded": OCCLUDED, "/upload-page": UPLOAD, "/dialog-page": DIALOG };
+  const pages = { "/mixed": MIXED, "/spec-escape": SPEC_ESCAPE, "/reports": REPORTS, "/self-move": SELF_MOVE, "/archive": ARCHIVE, "/archive-hostile": ARCHIVE_HOSTILE, "/files": FILES, "/archive-tricky": ARCHIVE_TRICKY, "/archive-rerender": ARCHIVE_RERENDER, "/archive-rerender-swap": ARCHIVE_RERENDER_SWAP, "/archive-rerender-twins": ARCHIVE_RERENDER_TWINS, "/secret-name": SECRET_NAME, "/tools": TOOLS, "/tools-none": NO_TOOLS, "/tools-control": TOOLS_CONTROL, "/exec": EXEC, "/read": READ, "/verify-page": VERIFY, "/form-page": FORM, "/occluded": OCCLUDED, "/upload-page": UPLOAD, "/dialog-page": DIALOG, "/leave-page": LEAVE };
   if (SITE[path]) return response.end(SITE[path]);
   response.end(pages[path] ?? `<!doctype html><title>${host}${path}</title><p>fixture</p>`);
 });

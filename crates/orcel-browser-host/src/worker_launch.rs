@@ -98,6 +98,7 @@ pub struct HostNode {
 /// (mirror the worker).
 pub const MAX_DIALOGS: usize = 8;
 pub const MAX_DIALOG_MESSAGE_BYTES: usize = 1024;
+pub const MAX_DIALOG_URL_BYTES: usize = 2048;
 
 /// BR-05: a JavaScript dialog's kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,16 +109,20 @@ pub enum DialogKind {
     BeforeUnload,
 }
 
-/// BR-05: one dialog the engine answered (its message is page text):
-/// dismissed, or `accepted` when it was the confirm an approved action named.
+/// BR-05: one dialog the engine answered (its URL and message are page
+/// text): dismissed, or `accepted` when it was a beforeunload (leaving was
+/// what the approved step did) or the confirm an approved action named.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DismissedDialog {
     pub kind: DialogKind,
+    /// The URL of the page that opened it (empty when unknown).
+    pub url: crate::webmcp::PageText,
     pub message: crate::webmcp::PageText,
     pub accepted: bool,
 }
 
 /// BR-05: an approved confirm message is bounded, one line, not empty.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn check_confirm(message: Option<&str>) -> Result<(), HostError> {
     match message {
         Some(text)
@@ -156,6 +161,7 @@ pub struct DismissedDialogs {
 #[serde(deny_unknown_fields)]
 pub(crate) struct WireDialog {
     kind: String,
+    url: String,
     message: String,
     accepted: bool,
 }
@@ -2156,13 +2162,23 @@ mod platform {
                             "beforeunload" => DialogKind::BeforeUnload,
                             _ => return Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
                         };
-                        if dialog.message.len() > MAX_DIALOG_MESSAGE_BYTES
-                            || dialog.message.chars().any(char::is_control)
+                        // Page text, held to the bar every other page text
+                        // meets: bounded, no control, bidi or format
+                        // characters (the worker already removed them).
+                        let unsafe_text = |text: &str, max: usize| {
+                            text.len() > max
+                                || text.chars().any(|ch| {
+                                    ch.is_control() || crate::webmcp::is_bidi_or_format(ch)
+                                })
+                        };
+                        if unsafe_text(&dialog.message, MAX_DIALOG_MESSAGE_BYTES)
+                            || unsafe_text(&dialog.url, MAX_DIALOG_URL_BYTES)
                         {
                             return Err(self.fail_closed(UnavailableReason::ProtocolViolation));
                         }
                         out.push(DismissedDialog {
                             kind,
+                            url: crate::webmcp::PageText::from_page(dialog.url),
                             message: crate::webmcp::PageText::from_page(dialog.message),
                             accepted: dialog.accepted,
                         });
@@ -4152,18 +4168,19 @@ mod tests {
         );
         let reply = |text: &str| serde_json::from_str::<WorkerReply>(text);
         assert_eq!(
-            reply(r#"{"frame":"dialogs_seen","dlg_id":2,"dialogs":[{"kind":"confirm","message":"Delete?","accepted":true}],"truncated":false}"#).unwrap(),
+            reply(r#"{"frame":"dialogs_seen","dlg_id":2,"dialogs":[{"kind":"confirm","url":"https://fixture.test/","message":"Delete?","accepted":true}],"truncated":false}"#).unwrap(),
             WorkerReply::DialogsSeen {
                 dlg_id: 2,
                 dialogs: vec![WireDialog {
                     kind: "confirm".into(),
+                    url: "https://fixture.test/".into(),
                     message: "Delete?".into(),
                     accepted: true
                 }],
                 truncated: false
             }
         );
-        assert!(reply(r#"{"frame":"dialogs_seen","dlg_id":2,"dialogs":[{"kind":"confirm","message":"x","accepted":true,"text":"y"}],"truncated":false}"#).is_err());
+        assert!(reply(r#"{"frame":"dialogs_seen","dlg_id":2,"dialogs":[{"kind":"confirm","url":"","message":"x","accepted":true,"text":"y"}],"truncated":false}"#).is_err());
         assert_eq!(
             form_state(
                 &crate::actuation::FormInput::Hover,

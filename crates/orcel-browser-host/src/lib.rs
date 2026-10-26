@@ -179,6 +179,7 @@ pub use worker_launch::{
 };
 pub use worker_launch::{
     DialogKind, DismissedDialog, DismissedDialogs, MAX_DIALOGS, MAX_DIALOG_MESSAGE_BYTES,
+    MAX_DIALOG_URL_BYTES,
 };
 pub use worker_navigation::{
     decode_form, NavigationPolicy, RequestDetail, RouteKind, Submission, Submitted,

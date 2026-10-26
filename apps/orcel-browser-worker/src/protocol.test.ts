@@ -119,6 +119,13 @@ test("BR-02: press keys come from a closed list; hover has no input; waits are b
   }
 });
 
+test("BR-05: the dialog-report frame is exact", () => {
+  assert.deepEqual(parseHostFrame({ frame: "dialogs", dlg_id: 1 }), { frame: "dialogs", dlg_id: 1 });
+  for (const bad of [{ frame: "dialogs" }, { frame: "dialogs", dlg_id: 0 }, { frame: "dialogs", dlg_id: 1, accept: true }]) {
+    assert.throws(() => parseHostFrame(bad), ProtocolViolation, JSON.stringify(bad));
+  }
+});
+
 test("BR-03: uploads carry an absolute host path and a main-frame ref only", () => {
   assert.deepEqual(parseHostFrame({ frame: "upload", up_id: 1, ref: "e3", path: "C:\\s\\up-1\\a.txt" }), {
     frame: "upload",

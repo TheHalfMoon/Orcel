@@ -1,6 +1,6 @@
 {
   "schema": "orcel-adapted-source-provenance/1",
-  "task": "BR-05 (first slice: dialogs dismissed and reported)",
+  "task": "BR-05 (dialogs answered and reported; approved confirm answers)",
   "donor": {
     "id": "playwright",
     "repo": "microsoft/playwright",
@@ -15,22 +15,23 @@
       "path": "apps/orcel-browser-worker/src/actions/dialogs.ts",
       "donor_path": "packages/playwright-core/src/tools/backend/dialogs.ts",
       "donor_blob": "6d3d0f251d1e4f24af1a66e899006d0e2c0f52d8",
-      "adapted": "browser_handle_dialog (dialog.dismiss)",
+      "adapted": "browser_handle_dialog (dialog.accept, dialog.dismiss)",
       "row": "BR-05",
-      "changes": "every dialog on every page is dismissed as it opens, never held or accepted; kind and a bounded single-line message are logged (at most 8 between reads) for the host"
+      "changes": "one listener on the whole context answers every dialog as it opens, never holding one: alert, confirm and prompt are dismissed; beforeunload is accepted (as Playwright does by default; dismissing it would cancel an approved navigation); during an approved action only, a confirm whose message is exactly the approved one is accepted once; the kind, the opening page's URL and a cleaned (no lone surrogates, controls or invisible characters), bounded, single-line message are logged (at most 8 between reads); unknown kinds are dismissed and only counted"
     },
     {
       "path": "crates/orcel-browser-host/src/worker_launch.rs",
       "donor_path": null,
       "donor_blob": null,
-      "adapted": "take_dismissed_dialogs; the dialogs frame",
+      "adapted": "take_dismissed_dialogs; the dialogs frame; form_binding/form_action accept_confirm",
       "row": "BR-05",
-      "changes": "new code: the host reads and clears the log, checks kinds and bounds, and returns messages as untrusted PageText"
+      "changes": "new code: the host reads and clears the log, checks kinds and bounds, refuses control, bidi and format characters, and returns URLs and messages as untrusted PageText; an approved confirm is part of the form action's approval state (accept-confirm and the exact message), learned from a first, dismissed attempt"
     }
   ],
-  "authority_delta": "None: dialogs were already auto-dismissed by Playwright; they are now dismissed explicitly and reported.",
+  "authority_delta": "Dialogs are answered explicitly: alert, confirm and prompt 'no' (Playwright's default), beforeunload 'yes' (Playwright's default, so an approved navigation still leaves the page). New: during an approved form action, a confirm with exactly the approved message is answered 'yes', once; the approval binds that message.",
   "residuals": [
-    "Accepting a dialog (its own approval bound to the dialog's text) needs the worker to pause the action that opened it and resume after approval; not in this slice.",
-    "Tabs (list, select, close) and popup admission beyond the existing policy are not in this slice."
+    "The report names the page that opened the dialog, not the frame; a dialog from a cross-origin frame is attributed to its page.",
+    "Answering a prompt with text, and accepting confirms during link activations, downloads or WebMCP execution, are not offered (form actions only).",
+    "The backlog's interface (a dialog_respond frame, tabs list/select/close) is not followed: dialogs are answered as they open and approved confirms are armed per action; tabs remain a follow-up."
   ]
 }
