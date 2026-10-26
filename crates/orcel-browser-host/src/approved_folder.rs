@@ -29,6 +29,9 @@ use windows_sys::Win32::Storage::FileSystem::{
     FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_SHARE_READ, FILE_SHARE_WRITE,
     FILE_TRAVERSE, FILE_WRITE_ATTRIBUTES, FILE_WRITE_DATA, SYNCHRONIZE, VOLUME_NAME_DOS,
 };
+use windows_sys::Win32::Storage::FileSystem::{
+    GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+};
 use windows_sys::Win32::System::Kernel::OBJ_DONT_REPARSE;
 use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
 
@@ -355,7 +358,9 @@ pub(crate) fn commit(
 /// still be `bound_root`, at most `max_bytes`. Every folder and the file are
 /// opened relative to their parent's handle without following a reparse
 /// point, and nothing is created: a junction or symlink anywhere below the
-/// folder refuses the read instead of redirecting it.
+/// folder refuses the read instead of redirecting it, and so does a file
+/// with more than one hard link (another name, possibly outside the folder,
+/// for the same content).
 pub(crate) fn read(
     root: &Path,
     bound_root: &str,
@@ -408,6 +413,22 @@ pub(crate) fn read(
         FILE_OPEN,
         FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT,
     )?;
+    // SAFETY: an all-zero BY_HANDLE_FILE_INFORMATION is a valid initial
+    // value; `file` is an open file handle this function holds.
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: `file` is a valid handle and `info` a writable output.
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle() as HANDLE, &mut info) } == 0 {
+        return Err(HostError::Platform(format!(
+            "upload source: {}",
+            std::io::Error::last_os_error()
+        )));
+    }
+    if info.nNumberOfLinks != 1 {
+        return Err(HostError::Invalid(
+            "the file has more than one hard link (another name may lie outside the approved folder)"
+                .into(),
+        ));
+    }
     let mut content = Vec::new();
     File::from(file)
         .take(max_bytes + 1)
@@ -698,6 +719,25 @@ pub(crate) mod tests {
             Err(HostError::Invalid(message)) if message.contains("larger than")
         ));
         std::fs::remove_dir(root.join("link")).unwrap();
+        // A hard link to a file outside the folder is refused too.
+        std::fs::hard_link(outside.join("secret.txt"), root.join("docs\\linked.txt")).unwrap();
+        assert!(matches!(
+            read(&root, &bound(&root), "docs\\linked.txt", 1024),
+            Err(HostError::Invalid(message)) if message.contains("hard link")
+        ));
+        // A root retargeted after it was approved is refused.
+        let parent = scratch("read-parent");
+        let chosen = parent.join("chosen");
+        junction(&chosen, &root);
+        let approved = bound(&chosen);
+        std::fs::remove_dir(&chosen).unwrap();
+        junction(&chosen, &outside);
+        assert!(matches!(
+            read(&chosen, &approved, "secret.txt", 1024),
+            Err(HostError::Invalid(message)) if message.contains("changed")
+        ));
+        std::fs::remove_dir(&chosen).unwrap();
+        std::fs::remove_dir_all(&parent).unwrap();
         std::fs::remove_dir_all(&root).unwrap();
         std::fs::remove_dir_all(&outside).unwrap();
     }

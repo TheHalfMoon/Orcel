@@ -99,10 +99,21 @@ pub struct HostNode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StagedUpload {
     pub staged_id: String,
+    /// Where it came from: the approved folder's bound path and the
+    /// relative path inside it.
+    pub source: String,
     pub name: String,
     pub bytes: u64,
     pub sha256: String,
     pub path: PathBuf,
+}
+
+/// BR-03: a staged copy and the handle that keeps it unchanged.
+#[cfg(windows)]
+#[derive(Debug)]
+struct HeldUpload {
+    staged: StagedUpload,
+    _hold: std::fs::File,
 }
 
 /// BR-02: the longest bounded wait for text (mirrors the worker).
@@ -1282,8 +1293,10 @@ mod platform {
         next_form: u64,
         next_wait: u64,
         next_upload: u64,
-        /// BR-03: files staged for upload in this lifetime, by staged id.
-        uploads: std::collections::HashMap<String, StagedUpload>,
+        next_upload_request: u64,
+        /// BR-03: files staged for upload in this lifetime, by staged id,
+        /// each held open so it cannot be changed or replaced.
+        uploads: std::collections::HashMap<String, HeldUpload>,
         /// BR-07: distinct values each field (page, role, name) was checked
         /// against in this lifetime.
         value_budget: crate::verify::GuessBudget,
@@ -1397,6 +1410,7 @@ mod platform {
             next_form: 0,
             next_wait: 0,
             next_upload: 0,
+            next_upload_request: 0,
             uploads: std::collections::HashMap::new(),
             value_budget: crate::verify::GuessBudget::default(),
             last_download_sha256: None,
@@ -2026,25 +2040,26 @@ mod platform {
         }
 
         /// BR-03: copy one file from an approved folder into this lifetime's
-        /// staging directory (reparse-safe, bounded to `MAX_TRANSFER_BYTES`),
-        /// so the engine only ever sees a host-held copy. Staging grants
-        /// nothing: setting it on a page needs an upload approval that names
-        /// the page's origin and this file's digest.
+        /// staging directory, so the engine only ever sees a host-held copy.
+        /// `bound_root` is the folder's real path as its approval named it
+        /// (`approved_folder_identity` at approval time): a folder that no
+        /// longer resolves to it is refused. The read never follows a
+        /// reparse point, refuses a file with more than one hard link, and is
+        /// bounded to `MAX_TRANSFER_BYTES`. The copy is held open (no writer,
+        /// no deleter) for the rest of the lifetime. Staging grants nothing:
+        /// setting it on a page needs an upload approval that names the
+        /// page's origin, the source and this file's digest.
         pub fn stage_upload(
             &mut self,
             approved_root: &Path,
+            bound_root: &str,
             relative: &str,
         ) -> Result<StagedUpload, HostError> {
             self.ensure_alive()?;
             let normalized = crate::transfers::validate_relative_destination(relative)?;
-            let root = std::fs::canonicalize(approved_root)
-                .ok()
-                .filter(|root| root.is_dir())
-                .ok_or_else(|| HostError::Invalid("the approved folder does not exist".into()))?;
-            let bound_root = path_text(&root, "approved folder")?;
             let content = crate::approved_folder::read(
-                &root,
-                &bound_root,
+                approved_root,
+                bound_root,
                 &normalized,
                 crate::transfers::MAX_TRANSFER_BYTES,
             )?;
@@ -2070,20 +2085,49 @@ mod platform {
                     file.sync_all()
                 })
                 .map_err(|err| HostError::Platform(format!("upload staging: {err}")))?;
+            // Held for the lifetime: readers (the engine) may share it, no
+            // writer or deleter may.
+            let hold = {
+                use std::os::windows::fs::OpenOptionsExt;
+                std::fs::OpenOptions::new()
+                    .read(true)
+                    .share_mode(windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ)
+                    .open(&path)
+                    .map_err(|err| HostError::Platform(format!("upload staging: {err}")))?
+            };
             let staged = StagedUpload {
                 staged_id: staged_id.clone(),
+                source: format!("{bound_root}\\{normalized}"),
                 name,
                 bytes: content.len() as u64,
                 sha256: sha256_hex(&content),
                 path,
             };
-            self.uploads.insert(staged_id, staged.clone());
+            self.uploads.insert(
+                staged_id,
+                HeldUpload {
+                    staged: staged.clone(),
+                    _hold: hold,
+                },
+            );
             Ok(staged)
         }
 
+        /// BR-03: the identity an approved folder's approval names: its real
+        /// path now. `stage_upload` refuses a folder that no longer resolves
+        /// to it.
+        pub fn approved_folder_identity(root: &Path) -> Result<String, HostError> {
+            let root = std::fs::canonicalize(root)
+                .ok()
+                .filter(|root| root.is_dir())
+                .ok_or_else(|| HostError::Invalid("the approved folder does not exist".into()))?;
+            path_text(&root, "approved folder")
+        }
+
         /// BR-03: the state an upload approval must name: the committed
-        /// page's origin, the staged file's digest and name, for an observed
-        /// node whose role supports an upload.
+        /// page's origin, where the file came from, its size, digest and the
+        /// name the page will see, for an observed node whose role supports
+        /// an upload.
         pub fn upload_binding(&self, node_id: &str, staged_id: &str) -> Result<String, HostError> {
             let node = self
                 .host_nodes
@@ -2096,14 +2140,15 @@ mod platform {
             let staged = self
                 .uploads
                 .get(staged_id)
+                .map(|held| &held.staged)
                 .ok_or_else(|| HostError::Invalid("no such staged upload".into()))?;
             let origin = self
                 .policy
                 .committed_origin()
                 .ok_or_else(|| HostError::Invalid("no committed origin".into()))?;
             Ok(format!(
-                "upload\n{origin}\n{}\n{}",
-                staged.sha256, staged.name
+                "upload\n{origin}\n{}\n{}\n{}\n{}",
+                staged.source, staged.bytes, staged.sha256, staged.name
             ))
         }
 
@@ -2144,11 +2189,18 @@ mod platform {
                 ));
             }
             let binding = self.upload_binding(&target.node_id, staged_id)?;
-            let path = self
+            let (path, sha256) = self
                 .uploads
                 .get(staged_id)
-                .map(|staged| staged.path.clone())
+                .map(|held| (held.staged.path.clone(), held.staged.sha256.clone()))
                 .ok_or_else(|| HostError::Invalid("no such staged upload".into()))?;
+            // The held copy is still the approved bytes (checked before the
+            // approval is spent).
+            let current = std::fs::read(&path)
+                .map_err(|err| HostError::Platform(format!("staged upload: {err}")))?;
+            if sha256_hex(&current) != sha256 {
+                return Err(HostError::Invalid("the staged file changed".into()));
+            }
             let path = path_text(&path, "staged upload")?;
             self.policy.expect_no_document();
             if let Err(error) = crate::actuation::dispatch(
@@ -2162,8 +2214,8 @@ mod platform {
                 self.policy.finish_activation();
                 return Err(error);
             }
-            self.next_form += 1;
-            let up_id = self.next_form;
+            self.next_upload_request += 1;
+            let up_id = self.next_upload_request;
             let named = !approved_name.is_empty();
             let sent = self.send(&WorkerRequest::Upload {
                 up_id,
@@ -2199,6 +2251,8 @@ mod platform {
                         "upload refused: the approved element is not a file input".into(),
                     ),
                     "stale" => HostError::Unavailable(UnavailableReason::TargetStale),
+                    // Covered by another element: nothing was set.
+                    "occluded" => HostError::Unavailable(UnavailableReason::TargetOccluded),
                     "busy" => HostError::Unavailable(UnavailableReason::ActionFailed),
                     "failed" | "timeout" => {
                         self.host_nodes.clear();
@@ -3044,6 +3098,8 @@ mod platform {
 
         fn finish(&mut self, graceful: bool) -> ShutdownReport {
             self.finished = true;
+            // Release the held upload copies, then remove them with the rest.
+            self.uploads.clear();
             let _ = std::fs::remove_dir_all(&self.staging);
             let job_empty = self.process.terminate_and_confirm(WORKER_SHUTDOWN_TIMEOUT);
             let profile_removed = match self.profile.take() {
@@ -3121,9 +3177,17 @@ mod fallback {
         }
 
         /// API parity: no worker ever exists off Windows.
+        pub fn approved_folder_identity(_root: &Path) -> Result<String, HostError> {
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity: no worker ever exists off Windows.
         pub fn stage_upload(
             &mut self,
             _approved_root: &Path,
+            _bound_root: &str,
             _relative: &str,
         ) -> Result<StagedUpload, HostError> {
             Err(HostError::Unavailable(

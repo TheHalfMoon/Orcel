@@ -1879,8 +1879,15 @@ fn br03_an_approved_upload_sets_exactly_the_staged_file() {
     };
     let input = named("button", "Attachment");
     let notes = named("textbox", "Notes");
-    let staged = worker.stage_upload(&folder, "report.txt").expect("stage");
-    let other = worker.stage_upload(&folder, "other.txt").expect("stage");
+    let bound = BrowserWorker::approved_folder_identity(&folder).expect("folder identity");
+    let staged = worker
+        .stage_upload(&folder, &bound, "report.txt")
+        .expect("stage");
+    let other = worker
+        .stage_upload(&folder, &bound, "other.txt")
+        .expect("stage");
+    // The held copy cannot be replaced while the lifetime lasts.
+    assert!(std::fs::write(&staged.path, b"swapped").is_err());
     assert_eq!(staged.sha256, sha256_hex(b"orcel-upload-bytes"));
     let approve = |worker: &BrowserWorker, node: &str, role: &str, staged_id: &str| {
         let target = crate::actuation::ActuationTarget {

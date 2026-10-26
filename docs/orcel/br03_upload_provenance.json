@@ -25,7 +25,7 @@
       "donor_blob": null,
       "adapted": "stage_upload, upload_binding and upload on BrowserWorker; the upload frame",
       "row": "BR-03",
-      "changes": "new code: the host copies the user's file from an approved folder (reparse-safe read, bounded to MAX_TRANSFER_BYTES) into this lifetime's staging directory; the one-shot approval binds the committed origin, the file's SHA-256 and its name; no document may open while the file is set"
+      "changes": "new code: the host copies the user's file from an approved folder, whose real path the caller binds from the folder approval (approved_folder_identity), into this lifetime's staging directory; the copy is held open (no writer, no deleter) for the lifetime and re-hashed before dispatch; the one-shot approval binds the committed origin, the source path, the size, the SHA-256 and the name; no document may open while the file is set"
     },
     {
       "path": "crates/orcel-browser-host/src/approved_folder.rs",
@@ -33,7 +33,7 @@
       "donor_blob": null,
       "adapted": "read: the create-free counterpart of commit",
       "row": "BR-03",
-      "changes": "new code: every folder and the file opened relative to their parent's handle with OBJ_DONT_REPARSE; nothing is created; bounded"
+      "changes": "new code: every folder and the file opened relative to their parent's handle with OBJ_DONT_REPARSE; nothing is created; a file with more than one hard link is refused; bounded; a root that no longer resolves to its approved path is refused"
     }
   ],
   "authority_delta": "New approval-gated action: set a file input to a host-staged file. Setting it sends nothing by itself; the egress happens at a later, separately approved submission. The approval names the origin and the file's digest.",
