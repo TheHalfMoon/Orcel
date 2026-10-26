@@ -247,12 +247,22 @@ pub(crate) enum WorkerRequest<'a> {
         act_id: u64,
         #[serde(rename = "ref")]
         reference: &'a str,
+        /// BR-01: the approved node's role and raw accessible name, which
+        /// the worker uses only if the ref went stale (both or neither).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        role: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<&'a str>,
     },
     Download {
         dl_id: u64,
         #[serde(rename = "ref")]
         reference: &'a str,
         path: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        role: Option<&'a str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        name: Option<&'a str>,
     },
     Execute {
         exec_id: u64,
@@ -776,6 +786,7 @@ pub(crate) fn download_failure(reason: &str) -> HostError {
         "timeout" => HostError::Download(DownloadFailure::TimedOut),
         "failed" => HostError::Download(DownloadFailure::EngineFailed),
         "busy" => HostError::Unavailable(UnavailableReason::ActionFailed),
+        "stale" => HostError::Unavailable(UnavailableReason::TargetStale),
         _ => HostError::Unavailable(UnavailableReason::ProtocolViolation),
     }
 }
@@ -787,6 +798,7 @@ pub(crate) fn navigation_failure(reason: &str) -> HostError {
         "denied" => HostError::Invalid("navigation denied by the browser policy".into()),
         "timeout" => HostError::Unavailable(UnavailableReason::TimedOut),
         "failed" | "busy" => HostError::Unavailable(UnavailableReason::ActionFailed),
+        "stale" => HostError::Unavailable(UnavailableReason::TargetStale),
         _ => HostError::Unavailable(UnavailableReason::ProtocolViolation),
     }
 }
@@ -2090,11 +2102,11 @@ mod platform {
                 .committed
                 .clone()
                 .ok_or_else(|| HostError::Invalid("no committed document".into()))?;
-            let reference = self
+            let (reference, approved_name) = self
                 .host_nodes
                 .get(&target.node_id)
                 .filter(|node| node.role == target.role)
-                .map(|node| node.reference.clone())
+                .map(|node| (node.reference.clone(), node.name.clone()))
                 .ok_or_else(|| HostError::Invalid("stale or unknown node".into()))?;
             let destination = self.link_destination(&target.node_id)?;
             // Checked before the approval is consumed: a destination off the
@@ -2116,6 +2128,8 @@ mod platform {
             self.send(&WorkerRequest::Activate {
                 act_id,
                 reference: &reference,
+                role: (!approved_name.is_empty()).then_some(target.role.as_str()),
+                name: (!approved_name.is_empty()).then_some(approved_name.as_str()),
             })?;
             let reply = self.reply(WORKER_ACTIVATION_TIMEOUT);
             let opened_expected = self.policy.finish_activation();
@@ -2192,11 +2206,11 @@ mod platform {
                 .committed
                 .clone()
                 .ok_or_else(|| HostError::Invalid("no committed document".into()))?;
-            let reference = self
+            let (reference, approved_name) = self
                 .host_nodes
                 .get(&target.node_id)
                 .filter(|node| node.role == target.role)
-                .map(|node| node.reference.clone())
+                .map(|node| (node.reference.clone(), node.name.clone()))
                 .ok_or_else(|| HostError::Invalid("stale or unknown node".into()))?;
             // As for activation: the approval names the link's destination,
             // checked against the page's origin before it is consumed, and
@@ -2229,6 +2243,8 @@ mod platform {
             let result = self.download_staged(
                 dl_id,
                 &reference,
+                (!approved_name.is_empty())
+                    .then_some((target.role.as_str(), approved_name.as_str())),
                 &staged,
                 &link,
                 (destination_root, &bound_root, &normalized),
@@ -2267,6 +2283,7 @@ mod platform {
             &mut self,
             dl_id: u64,
             reference: &str,
+            approved: Option<(&str, &str)>,
             staged: &Path,
             link: &str,
             (destination_root, bound_root, relative): (&Path, &str, &str),
@@ -2277,6 +2294,8 @@ mod platform {
                 dl_id,
                 reference,
                 path: &staged_text,
+                role: approved.map(|(role, _)| role),
+                name: approved.map(|(_, name)| name),
             })?;
             // The worker's suggested name is advisory and never decides the
             // type check; the approved destination's own name does.
@@ -2879,7 +2898,9 @@ mod tests {
             json(&WorkerRequest::Download {
                 dl_id: 1,
                 reference: "e5",
-                path: "C:\\s\\dl-1.part"
+                path: "C:\\s\\dl-1.part",
+                role: None,
+                name: None,
             }),
             r#"{"frame":"download","dl_id":1,"ref":"e5","path":"C:\\s\\dl-1.part"}"#
         );
@@ -2968,10 +2989,31 @@ mod tests {
         assert_eq!(
             json(&WorkerRequest::Activate {
                 act_id: 2,
-                reference: "e5"
+                reference: "e5",
+                role: None,
+                name: None,
             }),
             r#"{"frame":"activate","act_id":2,"ref":"e5"}"#
         );
+        // BR-01: the approved role and name travel together, for the stale
+        // fallback only.
+        assert_eq!(
+            json(&WorkerRequest::Activate {
+                act_id: 3,
+                reference: "e6",
+                role: Some("link"),
+                name: Some("Annual review"),
+            }),
+            r#"{"frame":"activate","act_id":3,"ref":"e6","role":"link","name":"Annual review"}"#
+        );
+        assert!(matches!(
+            navigation_failure("stale"),
+            HostError::Unavailable(UnavailableReason::TargetStale)
+        ));
+        assert!(matches!(
+            download_failure("stale"),
+            HostError::Unavailable(UnavailableReason::TargetStale)
+        ));
         let reply = |text: &str| serde_json::from_str::<WorkerReply>(text);
         assert!(reply(
             r#"{"frame":"activated","act_id":2,"url":"https://fixture.test/x","status":200}"#
