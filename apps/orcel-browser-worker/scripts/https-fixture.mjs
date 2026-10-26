@@ -183,6 +183,15 @@ document.getElementById("doc").addEventListener("change", async (event) => {
   document.getElementById("out").textContent = "got " + file.name + " " + (await file.text());
 });
 </script>`;
+// BR-06: a page with a nested same-origin frame and a frame on an origin
+// the lifetime does not admit.
+const FRAMES = `<!doctype html><meta charset="utf-8"><title>Embedded</title>
+<h1>Embedded report</h1>
+<iframe src="/frame-outer"></iframe>
+<iframe src="https://other.test/frame-foreign"></iframe>`;
+const FRAME_OUTER = `<!doctype html><meta charset="utf-8"><p>Outer frame</p><iframe src="/frame-inner"></iframe>`;
+const FRAME_INNER = `<!doctype html><meta charset="utf-8"><a href="/archive/2026-09-30">Inner report</a>`;
+const FRAME_FOREIGN = `<!doctype html><meta charset="utf-8"><a href="/x">Foreign link</a>`;
 // BR-04: a link covered by a full-page overlay (a consent wall).
 const OCCLUDED = `<!doctype html><meta charset="utf-8"><title>Covered</title>
 <p><a href="/archive/2026-09-30">Annual review 2026-09-30</a></p>
@@ -455,7 +464,7 @@ trailer << /Root 1 0 R >>
     response.setHeader("reporting-endpoints", 'csp="https://other.test/reports"');
     response.setHeader("content-security-policy", "img-src 'self'; report-to csp");
   }
-  const pages = { "/mixed": MIXED, "/spec-escape": SPEC_ESCAPE, "/reports": REPORTS, "/self-move": SELF_MOVE, "/archive": ARCHIVE, "/archive-hostile": ARCHIVE_HOSTILE, "/files": FILES, "/archive-tricky": ARCHIVE_TRICKY, "/archive-rerender": ARCHIVE_RERENDER, "/archive-rerender-swap": ARCHIVE_RERENDER_SWAP, "/archive-rerender-twins": ARCHIVE_RERENDER_TWINS, "/secret-name": SECRET_NAME, "/tools": TOOLS, "/tools-none": NO_TOOLS, "/tools-control": TOOLS_CONTROL, "/exec": EXEC, "/read": READ, "/verify-page": VERIFY, "/form-page": FORM, "/occluded": OCCLUDED, "/upload-page": UPLOAD };
+  const pages = { "/mixed": MIXED, "/spec-escape": SPEC_ESCAPE, "/reports": REPORTS, "/self-move": SELF_MOVE, "/archive": ARCHIVE, "/archive-hostile": ARCHIVE_HOSTILE, "/files": FILES, "/archive-tricky": ARCHIVE_TRICKY, "/archive-rerender": ARCHIVE_RERENDER, "/archive-rerender-swap": ARCHIVE_RERENDER_SWAP, "/archive-rerender-twins": ARCHIVE_RERENDER_TWINS, "/secret-name": SECRET_NAME, "/tools": TOOLS, "/tools-none": NO_TOOLS, "/tools-control": TOOLS_CONTROL, "/exec": EXEC, "/read": READ, "/verify-page": VERIFY, "/form-page": FORM, "/occluded": OCCLUDED, "/upload-page": UPLOAD, "/frames": FRAMES, "/frame-outer": FRAME_OUTER, "/frame-inner": FRAME_INNER, "/frame-foreign": FRAME_FOREIGN };
   if (SITE[path]) return response.end(SITE[path]);
   response.end(pages[path] ?? `<!doctype html><title>${host}${path}</title><p>fixture</p>`);
 });
