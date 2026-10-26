@@ -24,6 +24,7 @@ import { fitBlocks, MAX_RESULT_BLOCKS, structuredData } from "./webmcp/structure
 import { documentModel, type CapturedSnapshot } from "./webmcp/dom-snapshot.js";
 import { approvedElement } from "./actions/targets.js";
 import { formAction } from "./actions/form.js";
+import { waitForText } from "./actions/wait.js";
 import { NavigationError, Worker, type EngineSession, type Launcher, type LaunchSpec, type RoutePolicy } from "./worker.js";
 
 const startup = startupRefusal(process.execArgv, process.version);
@@ -243,6 +244,10 @@ const playwrightLauncher: Launcher = {
           media: document.media,
           bytes: document.body.length
         };
+      },
+      async waitForText(text, appear, timeoutMs) {
+        const met = await waitForText(primary, text, appear, timeoutMs);
+        return { url: primary.url(), met };
       },
       async formAction(ref, act, target) {
         await formAction(primary, ref, act, target);

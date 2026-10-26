@@ -34,6 +34,7 @@ function matchesCss(element: Element, css: string): boolean {
     });
     if (excluded) return false;
     if (head === "input") return element.tag === "input";
+    if (head === "*") return true;
     const typed = /^input\[type="(\w+)" i\]$/.exec(head);
     if (typed) return element.tag === "input" && type === typed[1];
     if (head.startsWith("[contenteditable]")) {
@@ -78,6 +79,14 @@ function page(refs: Record<string, Element[]>, byRole: Element[] = []) {
       setChecked: async (checked: boolean) => {
         one();
         calls.push(`check ${checked}`);
+      },
+      press: async (key: string) => {
+        one();
+        calls.push(`press ${JSON.stringify(key)}`);
+      },
+      hover: async () => {
+        one();
+        calls.push("hover");
       }
     };
   };
@@ -171,4 +180,27 @@ test("BR-02 check sets only a checkbox or radio", async () => {
   await formAction(stub, "e2", { action: "check", checked: false });
   await assert.rejects(formAction(stub, "e3", { action: "check", checked: true }), reason("denied"));
   assert.deepEqual(calls, ["check true", "check false"]);
+});
+
+test("BR-02 press sends an allowed key to the approved element, never into a secret field", async () => {
+  const { stub, calls } = page({
+    e1: [{ tag: "input", attrs: { type: "search", name: "q" } }],
+    e2: [{ tag: "div", attrs: { role: "dialog" } }],
+    e3: [{ tag: "input", attrs: { type: "password" } }],
+    e4: [{ tag: "input", attrs: { type: "text", name: "user_pin" } }]
+  });
+  await formAction(stub, "e1", { action: "press", key: "Enter" });
+  await formAction(stub, "e2", { action: "press", key: "Escape" });
+  await formAction(stub, "e1", { action: "press", key: "Space" });
+  for (const ref of ["e3", "e4"]) {
+    await assert.rejects(formAction(stub, ref, { action: "press", key: "Space" }), reason("denied"), ref);
+  }
+  assert.deepEqual(calls, ['press "Enter"', 'press "Escape"', 'press " "']);
+});
+
+test("BR-02 hover acts on the approved element only", async () => {
+  const { stub, calls } = page({ e1: [{ tag: "a", attrs: { href: "/menu" } }] });
+  await formAction(stub, "e1", { action: "hover" });
+  await assert.rejects(formAction(stub, "e2", { action: "hover" }), reason("stale"));
+  assert.deepEqual(calls, ["hover"]);
 });
