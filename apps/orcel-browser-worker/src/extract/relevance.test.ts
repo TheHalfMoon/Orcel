@@ -235,6 +235,9 @@ test("a kept chunk keeps only its own images, even when a container closes it", 
     img("refund")
   );
   assert.deepEqual(alts(filterRelevant(loose, bm25("refund policy", 0.5))), ["refund"]);
+  // An image in a block without text stays with that block.
+  const figure = page(el("figure", {}, img("unrelated")), el("p", {}, "Refund policy here."), el("p", {}, "Other words about parcels."));
+  assert.deepEqual(alts(filterRelevant(figure, bm25("refund policy", 0.5))), []);
 });
 
 // --- Orcel's negatives -------------------------------------------------------

@@ -77,9 +77,8 @@ export function checkRelevance(options: RelevanceOptions): void {
   if (options.method !== "bm25" && options.method !== "pruning") throw new Error("unknown relevance method");
   const query = options.query;
   if (query !== undefined) {
-    if (typeof query !== "string" || Buffer.byteLength(query, "utf8") > MAX_RELEVANCE_QUERY_BYTES) {
-      throw new Error("relevance query is too long");
-    }
+    if (typeof query !== "string") throw new Error("relevance query must be a string");
+    if (Buffer.byteLength(query, "utf8") > MAX_RELEVANCE_QUERY_BYTES) throw new Error("relevance query is too long");
     if (/\p{Cc}/u.test(query)) throw new Error("relevance query has control characters");
   }
   const threshold = options.threshold;
@@ -201,9 +200,10 @@ const WORD_CHAR = /^[\p{L}\p{N}]$/u;
 
 /// Lower-cased white-space words without edge punctuation, minus noise and
 /// stop words and words of two code points or fewer. Linear in `text`.
-function words(text: string): string[] {
+function words(text: string, tick: () => void = () => {}): string[] {
   const out: string[] = [];
   for (const raw of text.toLowerCase().split(/\s+/)) {
+    tick();
     if (raw === "" || NOISE_PREFIXES.some((prefix) => raw.startsWith(prefix))) continue;
     const chars = Array.from(raw);
     let start = 0;
@@ -275,7 +275,12 @@ function textChunks(body: ContentElement, tick: () => void): Chunk[] {
       continue;
     }
     if (visited) {
-      if (text.length > 0 && !INLINE.has(node.tag)) flush(node);
+      if (!INLINE.has(node.tag)) {
+        // A block that closes with no text keeps its childless elements to
+        // itself: a figure's image does not join the next paragraph.
+        if (text.length > 0) flush(node);
+        else extras = [];
+      }
       continue;
     }
     if (node.children.length === 0) {
@@ -336,7 +341,7 @@ function bm25Filter(body: ContentElement, query: readonly string[], threshold: n
   const scores = bm25Scores(
     chunks.map((chunk) => {
       tick();
-      return words(chunk.text);
+      return words(chunk.text, tick);
     }),
     query,
     tick
