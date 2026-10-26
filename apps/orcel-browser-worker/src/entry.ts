@@ -10,7 +10,7 @@ import { existsSync, writeFileSync } from "node:fs";
 import { chromium, type Locator, type Page } from "playwright-core";
 import { refusedWorkerVariables, startupRefusal } from "./environment.js";
 import { safeText } from "./extract/clean.js";
-import { encodeFrame, FETCH_TEXT_MEDIA, FrameDecoder, MAX_EXTRACT_PIECES, MAX_FETCH_TEXT_BYTES, MAX_FRAME_BYTES, MAX_PIECE_BYTES, ProtocolViolation, type ExecField, type WorkerFrame } from "./protocol.js";
+import { encodeFrame, FETCH_TEXT_MEDIA, FrameDecoder, MAX_EXTRACT_PIECES, MAX_FETCH_TEXT_BYTES, MAX_FRAME_BYTES, MAX_PIECE_BYTES, ProtocolViolation, type ApprovedTarget, type ExecField, type WorkerFrame } from "./protocol.js";
 import { CONTENT_STYLES, EXTRACT_DEFAULTS, extractMarkdown } from "./extract/index.js";
 import type { LayoutSnapshot } from "./extract/model.js";
 import { toPieces } from "./extract/pieces.js";
@@ -21,6 +21,7 @@ import { CAPTURE_TIMEOUT_MS, DISCOVERY_TOTAL_MS, fitTools } from "./webmcp/fit.j
 import { captureWithin } from "./webmcp/capture.js";
 import { fitBlocks, MAX_RESULT_BLOCKS, structuredData } from "./webmcp/structured.js";
 import { documentModel, type CapturedSnapshot } from "./webmcp/dom-snapshot.js";
+import { approvedElement } from "./actions/targets.js";
 import { NavigationError, Worker, type EngineSession, type Launcher, type LaunchSpec, type RoutePolicy } from "./worker.js";
 
 const startup = startupRefusal(process.execArgv, process.version);
@@ -105,8 +106,8 @@ const playwrightLauncher: Launcher = {
         const kept = pieces[0]?.content ?? "";
         return { url: page.url(), status, media, text: kept, truncated: kept.length < text.length || body.length > 4 * MAX_FETCH_TEXT_BYTES };
       },
-      async activate(ref: string) {
-        return clickAndLoad(primary, primary.locator(`aria-ref=${ref}`));
+      async activate(ref: string, target?: ApprovedTarget) {
+        return clickAndLoad(primary, await approvedElement(primary, ref, target));
       },
       async execute(tool: string, fields: ExecField[]) {
         const page = primary;
@@ -195,9 +196,11 @@ const playwrightLauncher: Launcher = {
         }
         return { url, status, structured, structuredComplete };
       },
-      async download(ref: string, path: string) {
+      async download(ref: string, path: string, target?: ApprovedTarget) {
         if (existsSync(path)) throw new NavigationError("failed");
         const page = primary;
+        // Resolved before the capture is armed: a stale target clicks nothing.
+        const element = await approvedElement(page, ref, target);
         const guard = await routes.guardReady(page);
         // Arm before clicking: the click's navigation (each request and
         // redirect hop still decided by the host) ends in a document whose
@@ -215,7 +218,7 @@ const playwrightLauncher: Launcher = {
           throw new NavigationError(reason);
         };
         try {
-          await page.locator(`aria-ref=${ref}`).click({ timeout: 5_000, noWaitAfter: true });
+          await element.click({ timeout: 5_000, noWaitAfter: true });
         } catch {
           return fail("failed");
         }
