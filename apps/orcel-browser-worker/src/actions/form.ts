@@ -29,7 +29,7 @@ import type { Locator, Page } from "playwright-core";
 import type { ApprovedTarget } from "../protocol.js";
 import { isSecretField } from "../verify.js";
 import { NavigationError } from "../worker.js";
-import { approvedElement, type TargetPage } from "./targets.js";
+import { approvedElement, isOcclusion, type TargetPage } from "./targets.js";
 
 export type FormAction =
   | { action: "fill"; value: string }
@@ -109,7 +109,9 @@ async function control(page: FormPage, ref: string, action: FormAction, target?:
 
 /// Performs one approved form action on the primary page. Rejects with
 /// NavigationError: "stale" (the element is gone), "denied" (not the right
-/// control, or a secret field), "timeout" or "failed".
+/// control, or a secret field), "occluded" (BR-04: another element covered
+/// it and the pointer action was never performed; only check and hover are
+/// hit-tested, fill, select and press are not), "timeout" or "failed".
 export async function formAction(page: FormPage, ref: string, action: FormAction, target?: ApprovedTarget): Promise<void> {
   const own = await control(page, ref, action, target);
   const options = { timeout: FORM_ACTION_TIMEOUT_MS };
@@ -151,6 +153,8 @@ export async function formAction(page: FormPage, ref: string, action: FormAction
     }
   } catch (error) {
     if (error instanceof NavigationError) throw error;
+    // BR-04: covered by another element: nothing was done.
+    if (isOcclusion(error)) throw new NavigationError("occluded");
     const message = error instanceof Error ? error.message : "";
     throw new NavigationError(/timeout/i.test(message) ? "timeout" : "failed");
   }

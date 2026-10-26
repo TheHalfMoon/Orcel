@@ -1835,6 +1835,62 @@ fn br01_a_rerendered_link_is_found_by_its_approved_role_and_name_or_nothing_is_c
     );
 }
 
+/// BR-04: a link covered by an overlay is not clicked; the refusal is typed
+/// (observe again) and the link's document is never requested.
+#[test]
+#[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
+fn br04_a_covered_link_is_not_clicked_and_the_refusal_is_typed() {
+    let fixture = HttpsFixture::start();
+    let profile = temp_profile("occluded");
+    let mut launch = spec(&profile, true);
+    launch.destinations =
+        vec![
+            AdmittedDestination::fixture("fixture.test", IpAddr::V4(Ipv4Addr::LOCALHOST))
+                .expect("fixture.test"),
+        ];
+    launch.test_trusted_spki = Some(fixture.spki.clone());
+    let mut worker = launch_worker(&launch, &Policy(PolicyKeyState::Absent)).expect("launch");
+    let scope = crate::observation::ObservationScope {
+        workspace: "workspace".into(),
+        profile_identity: "profile".into(),
+    };
+    worker
+        .navigate("https://fixture.test/occluded")
+        .expect("navigate");
+    let live = worker.observe(&scope).expect("observe");
+    let mut stack: Vec<&crate::observation::ObservedNode> = live.observation.nodes.iter().collect();
+    let mut link = None;
+    while let Some(node) = stack.pop() {
+        if worker
+            .host_node(&node.node_id)
+            .is_some_and(|h| h.role == "link" && h.name == "Annual review 2026-09-30")
+        {
+            link = Some(node.node_id.clone());
+        }
+        stack.extend(node.children.iter());
+    }
+    let link = link.expect("the covered link is observed");
+    let served = fixture.hits().len();
+    let (target, mut approval) = approved_click(&worker, &live, &link);
+    let refused = worker
+        .activate(&target, &mut approval, 1, "workspace")
+        .expect_err("a covered link is not clicked");
+    assert!(
+        matches!(
+            refused,
+            HostError::Unavailable(UnavailableReason::TargetOccluded)
+        ),
+        "{refused:?}"
+    );
+    pump(&mut worker, Duration::from_millis(500));
+    assert!(
+        !fixture.hits()[served..]
+            .iter()
+            .any(|hit| hit.contains("/archive/2026-09-30")),
+        "the covered link's document was never requested"
+    );
+}
+
 /// A form-action approval (BR-02): it names the node and the exact input.
 fn approved_form(
     worker: &BrowserWorker,

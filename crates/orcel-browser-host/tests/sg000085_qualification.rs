@@ -604,6 +604,9 @@ fn error_vocabulary_is_typed_and_secret_free() {
         orcel_browser_host::UnavailableReason::ActionFailed,
         orcel_browser_host::UnavailableReason::WorkerExited,
         orcel_browser_host::UnavailableReason::Cancelled,
+        orcel_browser_host::UnavailableReason::TargetStale,
+        orcel_browser_host::UnavailableReason::OutcomeUnknown,
+        orcel_browser_host::UnavailableReason::TargetOccluded,
     ] {
         let text = format!(
             "{:?} {}",

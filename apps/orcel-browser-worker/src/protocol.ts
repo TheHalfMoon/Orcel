@@ -113,7 +113,7 @@ export type HostFrame =
 
 export type RouteKind = "document" | "redirect" | "frame" | "popup" | "fetch" | "subresource" | "service_worker";
 
-export type NavigationFailure = "denied" | "timeout" | "failed" | "busy" | "http_status" | "oversized" | "stale";
+export type NavigationFailure = "denied" | "timeout" | "failed" | "busy" | "http_status" | "oversized" | "stale" | "occluded";
 
 /// BR-01: the approved element's role and accessible name, as the host
 /// observed them. Used only when the element's snapshot ref went stale:

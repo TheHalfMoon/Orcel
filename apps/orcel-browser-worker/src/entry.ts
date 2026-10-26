@@ -22,7 +22,7 @@ import { CAPTURE_TIMEOUT_MS, DISCOVERY_TOTAL_MS, fitTools } from "./webmcp/fit.j
 import { captureWithin } from "./webmcp/capture.js";
 import { fitBlocks, MAX_RESULT_BLOCKS, structuredData } from "./webmcp/structured.js";
 import { documentModel, type CapturedSnapshot } from "./webmcp/dom-snapshot.js";
-import { approvedElement } from "./actions/targets.js";
+import { approvedElement, isOcclusion } from "./actions/targets.js";
 import { formAction } from "./actions/form.js";
 import { waitForText } from "./actions/wait.js";
 import { NavigationError, Worker, type EngineSession, type Launcher, type LaunchSpec, type RoutePolicy } from "./worker.js";
@@ -174,7 +174,11 @@ const playwrightLauncher: Launcher = {
         // The form's default button: the first submit button in tree order.
         const submit = form.locator('button:not([type="button" i]):not([type="reset" i]), input[type="submit" i], input[type="image" i]').first();
         if ((await submit.count().catch(() => 0)) === 0) throw new NavigationError("failed");
-        const { url, status } = await clickAndLoad(page, submit);
+        // The fields are already filled: a covered submit button is a plain
+        // failure here, not "occluded" (which promises nothing was done).
+        const { url, status } = await clickAndLoad(page, submit).catch((error: unknown) => {
+          throw error instanceof NavigationError && error.reason === "occluded" ? new NavigationError("failed") : error;
+        });
         // The submission's result: the opened document's structured data.
         let structured: string[] = [];
         let structuredComplete = false;
@@ -216,14 +220,14 @@ const playwrightLauncher: Launcher = {
         // On any failure the page is closed: a document arriving after the
         // capture gave up would otherwise be rendered. The host requires a
         // fresh navigation (which opens a new page) before acting again.
-        const fail = async (reason: "failed" | "timeout" | "http_status" | "oversized"): Promise<never> => {
+        const fail = async (reason: "failed" | "timeout" | "http_status" | "oversized" | "occluded"): Promise<never> => {
           await page.close().catch(() => {});
           throw new NavigationError(reason);
         };
         try {
           await element.click({ timeout: 5_000, noWaitAfter: true });
-        } catch {
-          return fail("failed");
+        } catch (error) {
+          return fail(isOcclusion(error) ? "occluded" : "failed");
         }
         let document;
         try {
@@ -352,9 +356,10 @@ async function clickAndLoad(page: Page, target: Locator): Promise<{ url: string;
     });
     try {
       await target.click({ timeout: 5_000 });
-    } catch {
+    } catch (error) {
       navigated.catch(() => {});
-      throw new NavigationError("failed");
+      // BR-04: covered by another element: nothing was clicked.
+      throw new NavigationError(isOcclusion(error) ? "occluded" : "failed");
     }
     await Promise.race([navigated, popped]);
     navigated.catch(() => {});
