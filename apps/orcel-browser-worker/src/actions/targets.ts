@@ -4,6 +4,13 @@ import type { Locator, Page } from "playwright-core";
 import type { ApprovedTarget } from "../protocol.js";
 import { NavigationError } from "../worker.js";
 
+/// BR-04: whether a Playwright action failed because another element covers
+/// the target (its hit-target check: "... intercepts pointer events").
+/// Nothing was clicked; the page must be observed again.
+export function isOcclusion(error: unknown): boolean {
+  return error instanceof Error && /intercepts pointer events/.test(error.message);
+}
+
 /// The page surface `approvedElement` uses (a Playwright `Page`, or a test
 /// stub).
 export type TargetPage = Pick<Page, "locator" | "mainFrame">;

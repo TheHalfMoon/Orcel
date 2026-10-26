@@ -852,6 +852,7 @@ pub(crate) fn download_failure(reason: &str) -> HostError {
         "failed" => HostError::Download(DownloadFailure::EngineFailed),
         "busy" => HostError::Unavailable(UnavailableReason::ActionFailed),
         "stale" => HostError::Unavailable(UnavailableReason::TargetStale),
+        "occluded" => HostError::Unavailable(UnavailableReason::TargetOccluded),
         _ => HostError::Unavailable(UnavailableReason::ProtocolViolation),
     }
 }
@@ -864,6 +865,7 @@ pub(crate) fn navigation_failure(reason: &str) -> HostError {
         "timeout" => HostError::Unavailable(UnavailableReason::TimedOut),
         "failed" | "busy" => HostError::Unavailable(UnavailableReason::ActionFailed),
         "stale" => HostError::Unavailable(UnavailableReason::TargetStale),
+        "occluded" => HostError::Unavailable(UnavailableReason::TargetOccluded),
         _ => HostError::Unavailable(UnavailableReason::ProtocolViolation),
     }
 }
@@ -1967,6 +1969,8 @@ mod platform {
                             .into(),
                     ),
                     "stale" => HostError::Unavailable(UnavailableReason::TargetStale),
+                    // Covered by another element: nothing was done.
+                    "occluded" => HostError::Unavailable(UnavailableReason::TargetOccluded),
                     // The worker never acted, but the approval is spent: a
                     // new action needs a fresh approval, never a retry.
                     "busy" => HostError::Unavailable(UnavailableReason::ActionFailed),
@@ -3539,6 +3543,19 @@ mod tests {
             r#"{"frame":"executed","exec_id":3,"url":"u","status":200,"structured":[],"structured_complete":true,"extra":1}"#
         )
         .is_err());
+    }
+
+    #[test]
+    fn br04_occlusion_is_typed_everywhere() {
+        for error in [navigation_failure("occluded"), download_failure("occluded")] {
+            assert!(
+                matches!(
+                    error,
+                    HostError::Unavailable(UnavailableReason::TargetOccluded)
+                ),
+                "{error:?}"
+            );
+        }
     }
 
     #[test]
