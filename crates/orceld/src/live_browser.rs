@@ -452,6 +452,8 @@ pub fn failure_for(code: &str) -> FailureCode {
         "invalid" => FailureCode::InvalidRequest,
         "download" => FailureCode::PostconditionFailed,
         "unavailable:timedout" => FailureCode::ProcessTimeout,
+        // BR-01: the approved element is gone and nothing replaced it.
+        "unavailable:targetstale" => FailureCode::TargetStale,
         code if code.starts_with("unavailable:") => FailureCode::ProviderUnavailable,
         _ => FailureCode::InternalError,
     }
@@ -1689,6 +1691,7 @@ mod tests {
             ("invalid", FailureCode::InvalidRequest),
             ("download", FailureCode::PostconditionFailed),
             ("unavailable:timedout", FailureCode::ProcessTimeout),
+            ("unavailable:targetstale", FailureCode::TargetStale),
             (
                 "unavailable:managedpolicy",
                 FailureCode::ProviderUnavailable,

@@ -37,6 +37,10 @@ pub enum UnavailableReason {
     /// The caller cancelled the lifetime (`CancelHandle::cancel`); nothing
     /// in flight was committed.
     Cancelled,
+    /// BR-01: the approved element is gone (a re-render replaced it) and no
+    /// single element with its approved role and accessible name took its
+    /// place; nothing was clicked.
+    TargetStale,
 }
 
 impl fmt::Display for UnavailableReason {
@@ -54,6 +58,7 @@ impl fmt::Display for UnavailableReason {
             Self::ActionFailed => write!(f, "the browser action failed"),
             Self::WorkerExited => write!(f, "the browser worker exited"),
             Self::Cancelled => write!(f, "the browser operation was cancelled"),
+            Self::TargetStale => write!(f, "the approved element is no longer on the page"),
         }
     }
 }
