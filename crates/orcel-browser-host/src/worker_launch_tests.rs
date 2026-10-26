@@ -897,6 +897,25 @@ fn diagnose_locked(profile: &Path) {
     let started = Instant::now();
     let locked = first_locked(profile);
     eprintln!("SG108-DIAG locked file: {locked:?}");
+    // #483: a handle opened without delete sharing blocks the removal yet
+    // allows the write test above, so look for that, folders included, and
+    // ask Restart Manager who holds the profile's files.
+    let entries = profile_entries(profile, 512);
+    let undeletable: Vec<&PathBuf> = entries
+        .iter()
+        .filter(|path| !openable_for_delete(path))
+        .take(8)
+        .collect();
+    eprintln!("SG108-DIAG not openable for delete: {undeletable:?}");
+    let files: Vec<PathBuf> = entries
+        .iter()
+        .filter(|path| path.is_file())
+        .cloned()
+        .collect();
+    eprintln!(
+        "SG108-DIAG holders (Restart Manager): {:?}",
+        file_holders(&files)
+    );
     while profile.exists() && started.elapsed() < Duration::from_secs(90) {
         let _ = std::fs::remove_dir_all(profile);
         std::thread::sleep(Duration::from_millis(250));
@@ -906,6 +925,164 @@ fn diagnose_locked(profile: &Path) {
         started.elapsed(),
         profile.exists()
     );
+}
+
+/// #483: the cleanup diagnostics see a handle without delete sharing, and
+/// Restart Manager names its holder (this process).
+#[test]
+fn cleanup_diagnostics_name_a_handle_that_blocks_deletion() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let dir = std::env::temp_dir().join(format!("orcel-483-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    let held = dir.join("sub").join("held.txt");
+    std::fs::write(&held, b"x").unwrap();
+    let free = dir.join("free.txt");
+    std::fs::write(&free, b"y").unwrap();
+    assert!(openable_for_delete(&held) && openable_for_delete(&dir));
+    // Read and write sharing, no delete sharing: writes still open.
+    let handle = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0x1 | 0x2)
+        .open(&held)
+        .unwrap();
+    assert!(std::fs::OpenOptions::new().write(true).open(&held).is_ok());
+    assert!(!openable_for_delete(&held));
+    assert!(openable_for_delete(&free));
+    let entries = profile_entries(&dir, 512);
+    assert!(
+        entries.contains(&held) && entries.contains(&free) && entries.contains(&dir.join("sub"))
+    );
+    let holders = file_holders(&[held.clone(), free.clone()]).expect("Restart Manager");
+    assert!(
+        holders.iter().any(|(pid, _)| *pid == std::process::id()),
+        "{holders:?}"
+    );
+    drop(handle);
+    assert!(openable_for_delete(&held));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// #483: every file and folder under `root` (the folders first), at most
+/// `limit`.
+fn profile_entries(root: &Path, limit: usize) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let Ok(read) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in read.flatten() {
+            if out.len() >= limit {
+                return out;
+            }
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path.clone());
+            }
+            out.push(path);
+        }
+    }
+    out
+}
+
+/// #483: whether `path` (a file or a folder) can be opened for deletion
+/// while sharing everything; another handle without delete sharing makes
+/// this fail. Nothing is deleted.
+fn openable_for_delete(path: &Path) -> bool {
+    use std::os::windows::fs::OpenOptionsExt;
+    const DELETE: u32 = 0x0001_0000;
+    const SHARE_ALL: u32 = 0x1 | 0x2 | 0x4;
+    const BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    std::fs::OpenOptions::new()
+        .access_mode(DELETE)
+        .share_mode(SHARE_ALL)
+        .custom_flags(BACKUP_SEMANTICS)
+        .open(path)
+        .is_ok()
+}
+
+/// #483: the processes Restart Manager reports as holding any of `files`
+/// open, as (pid, application name).
+fn file_holders(files: &[PathBuf]) -> Result<Vec<(u32, String)>, u32> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::System::RestartManager::{
+        RmEndSession, RmGetList, RmRegisterResources, RmStartSession, CCH_RM_SESSION_KEY,
+        RM_PROCESS_INFO,
+    };
+    const ERROR_MORE_DATA: u32 = 234;
+    if files.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut session = 0u32;
+    let mut key = [0u16; CCH_RM_SESSION_KEY as usize + 1];
+    // SAFETY: valid out-pointers; the key buffer has room for the key and NUL.
+    let status = unsafe { RmStartSession(&mut session, 0, key.as_mut_ptr()) };
+    if status != 0 {
+        return Err(status);
+    }
+    let wide: Vec<Vec<u16>> = files
+        .iter()
+        .map(|path| path.as_os_str().encode_wide().chain(Some(0)).collect())
+        .collect();
+    let pointers: Vec<*const u16> = wide.iter().map(|name| name.as_ptr()).collect();
+    let result = (|| {
+        // SAFETY: `pointers` holds NUL-terminated names that outlive the call.
+        let status = unsafe {
+            RmRegisterResources(
+                session,
+                pointers.len() as u32,
+                pointers.as_ptr(),
+                0,
+                std::ptr::null(),
+                0,
+                std::ptr::null(),
+            )
+        };
+        if status != 0 {
+            return Err(status);
+        }
+        let mut infos: Vec<RM_PROCESS_INFO> = Vec::new();
+        loop {
+            let mut needed = 0u32;
+            let mut count = infos.len() as u32;
+            let mut reasons = 0u32;
+            // SAFETY: `infos` has room for `count` entries.
+            let status = unsafe {
+                RmGetList(
+                    session,
+                    &mut needed,
+                    &mut count,
+                    infos.as_mut_ptr(),
+                    &mut reasons,
+                )
+            };
+            if status == ERROR_MORE_DATA && needed as usize > infos.len() && needed <= 256 {
+                // SAFETY: RM_PROCESS_INFO is plain data; zeroed is a valid value.
+                infos = vec![unsafe { std::mem::zeroed() }; needed as usize];
+                continue;
+            }
+            if status != 0 {
+                return Err(status);
+            }
+            return Ok(infos[..count as usize]
+                .iter()
+                .map(|info| {
+                    let len = info
+                        .strAppName
+                        .iter()
+                        .position(|&c| c == 0)
+                        .unwrap_or(info.strAppName.len());
+                    (
+                        info.Process.dwProcessId,
+                        String::from_utf16_lossy(&info.strAppName[..len]),
+                    )
+                })
+                .collect());
+        }
+    })();
+    // SAFETY: the session was started above.
+    unsafe { RmEndSession(session) };
+    result
 }
 
 /// Child half of the host-death test: launch, publish the job pids, wait to
