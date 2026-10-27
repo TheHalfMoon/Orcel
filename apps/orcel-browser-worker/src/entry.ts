@@ -6,6 +6,7 @@
 // every method writes to stderr, so no library output can corrupt the channel.
 
 import { Console } from "node:console";
+import { ENGINE_LAUNCH_TIMEOUT_MS } from "./timeouts.js";
 import { existsSync, writeFileSync } from "node:fs";
 import { chromium, type Locator, type Page } from "playwright-core";
 import { refusedWorkerVariables, startupRefusal } from "./environment.js";
@@ -62,7 +63,7 @@ const playwrightLauncher: Launcher = {
       handleSIGINT: false,
       handleSIGTERM: false,
       handleSIGHUP: false,
-      timeout: 30_000
+      timeout: ENGINE_LAUNCH_TIMEOUT_MS
     });
     // Each host navigation runs in a fresh page: Chromium can commit an
     // earlier refused navigation's error page late (even more than once),
