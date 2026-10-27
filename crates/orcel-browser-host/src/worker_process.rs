@@ -272,7 +272,12 @@ pub(crate) fn spawn(
     let (child_stdin, host_stdin) = pipe(true)?;
     let (child_stdout, host_stdout) = pipe(false)?;
     let child_stderr = match stderr_log {
-        Some(path) => file_output(path)?,
+        // Best effort: a log that cannot be created (held by a scanner, say)
+        // falls back to NUL rather than failing the launch.
+        Some(path) => match file_output(path) {
+            Ok(handle) => handle,
+            Err(_) => null_output()?,
+        },
         None => null_output()?,
     };
     let inherited = [child_stdin.raw(), child_stdout.raw(), child_stderr.raw()];

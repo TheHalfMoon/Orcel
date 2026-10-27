@@ -1467,7 +1467,13 @@ mod platform {
         // #438: test builds keep the worker's stderr; product builds send it
         // to NUL.
         #[cfg(test)]
-        let stderr_log = Some(spec.temp_dir.join("orcel-worker-stderr.log"));
+        let stderr_log = Some(spec.temp_dir.join(format!(
+            "orcel-worker-stderr-{}-{}.log",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |since| since.as_nanos())
+        )));
         #[cfg(not(test))]
         let stderr_log: Option<PathBuf> = None;
         let (process, pipes) = spawn(&spec.node, &worker_args, &env, stderr_log.as_deref())?;
@@ -1719,6 +1725,8 @@ mod platform {
         /// control characters other than newlines removed.
         #[cfg(test)]
         fn print_stderr_tail(&self) {
+            // One file per lifetime (process id and a nanosecond stamp), so
+            // concurrent tests never read each other's output.
             let Some(path) = &self.stderr_log else {
                 return;
             };
@@ -3376,6 +3384,10 @@ mod platform {
             self.uploads.clear();
             let _ = std::fs::remove_dir_all(&self.staging);
             let job_empty = self.process.terminate_and_confirm(WORKER_SHUTDOWN_TIMEOUT);
+            #[cfg(test)]
+            if let Some(path) = self.stderr_log.take() {
+                let _ = std::fs::remove_file(path);
+            }
             let profile_removed = match self.profile.take() {
                 Some(profile) => job_empty && remove_profile(&profile),
                 None => true,

@@ -579,11 +579,18 @@ export class Worker {
 }
 
 /// #438: the launch exception's name and the first line of its message, on
-/// one line, without control characters, at most 1024 characters.
+/// one line, without control, line-separator or bidi characters, at most
+/// 1024 code points. Never throws, whatever was thrown.
 export function describeLaunchError(error: unknown): string {
-  const name = error instanceof Error ? error.name : typeof error;
-  const message = error instanceof Error ? error.message : String(error);
-  const first = message.split(/\r?\n/, 1)[0] ?? "";
-  const clean = `${name}: ${first}`.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ");
-  return clean.length > 1024 ? `${clean.slice(0, 1024)}…` : clean;
+  let text: string;
+  try {
+    const name = error instanceof Error ? error.name : typeof error;
+    const message = error instanceof Error ? error.message : String(error);
+    text = `${name}: ${message.split(/\r?\n/, 1)[0] ?? ""}`;
+  } catch {
+    text = "unprintable";
+  }
+  const clean = text.replace(/[\u0000-\u001f\u007f-\u009f\u200e\u200f\u2028-\u202e\u2066-\u2069]/g, " ");
+  const points = Array.from(clean);
+  return points.length > 1024 ? `${points.slice(0, 1024).join("")}…` : clean;
 }

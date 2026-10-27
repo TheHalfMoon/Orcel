@@ -220,8 +220,17 @@ test("launch failure, engine exit, violations and end of input all close the eng
     await worker.receive({ frame: "hello", generation: 15 });
     await worker.receive(validLaunch());
     assert.deepEqual(lines, ["orcel-browser-worker: launch failed: TimeoutError: browserType.launch: Timeout 30000ms exceeded."]);
-    assert.equal(describeLaunchError("x".repeat(2000)).length, 1025);
+    assert.equal(Array.from(describeLaunchError("x".repeat(2000))).length, 1025);
     assert.equal(describeLaunchError(new Error("a\u0007b")), "Error: a b");
+    // C1, DEL, line separators and bidi controls are removed too.
+    assert.equal(describeLaunchError(new Error("a\u0085b\u007fc\u2028d\u202ee")), "Error: a b c d e");
+    // A thrown value that cannot be printed never breaks the typed failure.
+    assert.equal(describeLaunchError(Object.create(null)), "unprintable");
+    assert.equal(describeLaunchError(42), "number: 42");
+    // The bound counts code points, never splitting a surrogate pair.
+    const long = describeLaunchError("\u{1F600}".repeat(2000));
+    assert.equal(Array.from(long).length, 1025);
+    assert.ok(!/[\ud800-\udfff](?![\udc00-\udfff])/.test(long.replace(/[\ud800-\udbff][\udc00-\udfff]/g, "")));
   }
   {
     const engine = new FakeEngine();
