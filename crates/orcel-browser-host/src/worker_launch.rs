@@ -1363,6 +1363,9 @@ mod platform {
         cancelled: Arc<AtomicBool>,
         /// The handshake completed; failures after it end the lifetime.
         handshaken: bool,
+        /// #438 (test builds only): where the worker's stderr is kept.
+        #[cfg(test)]
+        stderr_log: Option<PathBuf>,
         /// The reason the lifetime ended early; every later call returns it.
         failed: Option<UnavailableReason>,
         node: PathBuf,
@@ -1461,7 +1464,19 @@ mod platform {
         seed_profile_preferences(&spec.profile_dir)?;
         let env = worker_environment(&spec.temp_dir);
         let worker_args = worker_node_args(&spec.worker_main);
-        let (process, pipes) = spawn(&spec.node, &worker_args, &env)?;
+        // #438: test builds keep the worker's stderr; product builds send it
+        // to NUL.
+        #[cfg(test)]
+        let stderr_log = Some(spec.temp_dir.join(format!(
+            "orcel-worker-stderr-{}-{}.log",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |since| since.as_nanos())
+        )));
+        #[cfg(not(test))]
+        let stderr_log: Option<PathBuf> = None;
+        let (process, pipes) = spawn(&spec.node, &worker_args, &env, stderr_log.as_deref())?;
         let (sender, replies) = mpsc::channel();
         let stdout = pipes.stdout;
         std::thread::spawn(move || {
@@ -1487,6 +1502,8 @@ mod platform {
             replies,
             cancelled: Arc::new(AtomicBool::new(false)),
             handshaken: false,
+            #[cfg(test)]
+            stderr_log: stderr_log.clone(),
             failed: None,
             node: spec.node.clone(),
             worker_args,
@@ -1704,6 +1721,33 @@ mod platform {
             }
         }
 
+        /// #438 (test builds only): the last 2 KiB of the worker's stderr,
+        /// control characters other than newlines removed.
+        #[cfg(test)]
+        fn print_stderr_tail(&self) {
+            // One file per lifetime (process id and a nanosecond stamp), so
+            // concurrent tests never read each other's output.
+            let Some(path) = &self.stderr_log else {
+                return;
+            };
+            let bytes = std::fs::read(path).unwrap_or_default();
+            let tail = &bytes[bytes.len().saturating_sub(2048)..];
+            let text: String = String::from_utf8_lossy(tail)
+                .chars()
+                .map(|ch| {
+                    if ch.is_control() && ch != '\n' {
+                        ' '
+                    } else {
+                        ch
+                    }
+                })
+                .collect();
+            eprintln!(
+                "SG108-DIAG worker stderr (last {} bytes):\n{text}",
+                tail.len()
+            );
+        }
+
         fn handshake(&mut self, spec: &WorkerLaunch) -> Result<(), HostError> {
             #[cfg(test)]
             let started = Instant::now();
@@ -1717,6 +1761,7 @@ mod platform {
                     "SG108-DIAG hello failed after {:?}: {error:?}",
                     started.elapsed()
                 );
+                self.print_stderr_tail();
             }
             match hello? {
                 WorkerReply::Hello { generation, worker }
@@ -1751,6 +1796,7 @@ mod platform {
                     launching.elapsed(),
                     started.elapsed()
                 );
+                self.print_stderr_tail();
             }
             match launched? {
                 WorkerReply::Launched {} => {}
@@ -3338,6 +3384,10 @@ mod platform {
             self.uploads.clear();
             let _ = std::fs::remove_dir_all(&self.staging);
             let job_empty = self.process.terminate_and_confirm(WORKER_SHUTDOWN_TIMEOUT);
+            #[cfg(test)]
+            if let Some(path) = self.stderr_log.take() {
+                let _ = std::fs::remove_file(path);
+            }
             let profile_removed = match self.profile.take() {
                 Some(profile) => job_empty && remove_profile(&profile),
                 None => true,

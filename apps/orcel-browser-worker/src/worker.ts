@@ -124,7 +124,11 @@ export class Worker {
   constructor(
     private readonly launcher: Launcher,
     private readonly send: (frame: WorkerFrame) => void,
-    private readonly finish: (exitCode: number) => void
+    private readonly finish: (exitCode: number) => void,
+    /// #438: one bounded diagnostic line when the engine launch fails (the
+    /// worker's stderr: a host test build keeps it, a product host discards
+    /// it). Never a frame and never page content.
+    private readonly diagnose: (line: string) => void = () => {}
   ) {}
 
   /// Frames are handled strictly in arrival order. An unexpected error in
@@ -391,7 +395,8 @@ export class Worker {
         let session: EngineSession;
         try {
           session = await this.launcher.launch(frame, this.policy);
-        } catch {
+        } catch (error) {
+          this.diagnose(`orcel-browser-worker: launch failed: ${describeLaunchError(error)}`);
           return this.fail("launch_failed");
         }
         // A shutdown or violation may not interleave (frames are queued),
@@ -571,4 +576,21 @@ export class Worker {
       this.finish(exitCode);
     }
   }
+}
+
+/// #438: the launch exception's name and the first line of its message, on
+/// one line, without control, line-separator or bidi characters, at most
+/// 1024 code points. Never throws, whatever was thrown.
+export function describeLaunchError(error: unknown): string {
+  let text: string;
+  try {
+    const name = error instanceof Error ? error.name : typeof error;
+    const message = error instanceof Error ? error.message : String(error);
+    text = `${name}: ${message.split(/\r?\n/, 1)[0] ?? ""}`;
+  } catch {
+    text = "unprintable";
+  }
+  const clean = text.replace(/[\u0000-\u001f\u007f-\u009f\u200e\u200f\u2028-\u202e\u2066-\u2069]/g, " ");
+  const points = Array.from(clean);
+  return points.length > 1024 ? `${points.slice(0, 1024).join("")}…` : clean;
 }
