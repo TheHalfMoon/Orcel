@@ -744,7 +744,7 @@ A fresh-context judge's first round on this slice was BLOCK. The destination-nam
   - **Discovery, unchanged:** the engine's kind, path and Authenticode publisher are verified as before (SG-000074).
   - **The window, at launch.** Unit tests:
     - `only_qualified_engine_versions_run_the_worker`;
-    - `an_unqualified_engine_version_is_refused_before_anything_runs`: with every other prerequisite present, Edge 154, Edge 156, Chrome 157 and Chrome 153 are refused with the typed error, and Edge 155 passes the rule. The first test also asserts that Chromium 156.0.8078.48 is qualified while Edge 156 stays refused: each kind has its own majors.
+    - `an_unqualified_engine_version_is_refused_before_anything_runs`: with every other prerequisite present, Edge 154, Edge 157, Chrome 157 and Chrome 153 are refused with the typed error, and Edge 155 passes the rule. The first test also asserts that Chromium 154 is qualified while Edge 154 stays refused: each kind has its own majors (Edge 156 is qualified since #480).
   - **Native:** every native test runs under the window on the installed engine, which the suite reports once per run.
   - **`an_engine_replaced_after_discovery_is_refused_at_launch`:**
     - a held, qualified engine (a copy of the installed Edge) passes `validate_launch`;
