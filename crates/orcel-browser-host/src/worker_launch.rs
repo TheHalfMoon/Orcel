@@ -3715,6 +3715,13 @@ mod tests {
             .and_then(|value| value.trim_end_matches(';').replace('_', "").parse().ok())
             .expect("ENGINE_LAUNCH_TIMEOUT_MS");
         assert!(worker_ms >= 30_000, "{worker_ms}");
+        // ...and the worker's launch really uses it (no literal creeps back).
+        let entry = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../apps/orcel-browser-worker/src/entry.ts"),
+        )
+        .expect("entry.ts");
+        assert!(entry.contains("timeout: ENGINE_LAUNCH_TIMEOUT_MS"));
         assert!(
             WORKER_LAUNCH_TIMEOUT >= Duration::from_millis(worker_ms) + Duration::from_secs(5),
             "host {WORKER_LAUNCH_TIMEOUT:?} vs worker {worker_ms} ms"

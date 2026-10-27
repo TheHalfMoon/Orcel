@@ -6,11 +6,11 @@
 // every method writes to stderr, so no library output can corrupt the channel.
 
 import { Console } from "node:console";
-import { ENGINE_LAUNCH_TIMEOUT_MS } from "./timeouts.js";
 import { existsSync, writeFileSync } from "node:fs";
 import { chromium, type Locator, type Page } from "playwright-core";
 import { refusedWorkerVariables, startupRefusal } from "./environment.js";
 import { safeText } from "./extract/clean.js";
+import { ENGINE_LAUNCH_TIMEOUT_MS } from "./timeouts.js";
 import { encodeFrame, FETCH_TEXT_MEDIA, FrameDecoder, MAX_EXTRACT_PIECES, MAX_FETCH_TEXT_BYTES, MAX_FRAME_BYTES, MAX_PIECE_BYTES, ProtocolViolation, type ApprovedTarget, type ExecField, type WorkerFrame } from "./protocol.js";
 import { CONTENT_STYLES, EXTRACT_DEFAULTS, extractMarkdown } from "./extract/index.js";
 import type { LayoutSnapshot } from "./extract/model.js";
