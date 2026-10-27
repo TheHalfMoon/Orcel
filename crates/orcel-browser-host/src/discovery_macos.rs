@@ -374,7 +374,8 @@ mod tests {
         // The untouched clone still verifies: the check is about content.
         let pristine = clone("pristine");
         assert!(check_bundle(&pristine, &BUNDLES[0]).unwrap());
-        // One byte appended to the nested framework's binary.
+        // One byte flipped inside the nested framework's binary, so a code
+        // page's hash no longer matches its signature.
         let tampered = clone("tampered");
         let framework = tampered
             .join("Contents/Frameworks/Google Chrome Framework.framework/Versions/Current/Google Chrome Framework");
@@ -383,12 +384,13 @@ mod tests {
             "framework binary at {}",
             framework.display()
         );
-        let mut file = std::fs::OpenOptions::new()
-            .append(true)
-            .open(&framework)
-            .unwrap();
-        std::io::Write::write_all(&mut file, b"\0").unwrap();
-        drop(file);
+        let mut bytes = std::fs::read(&framework).unwrap();
+        let middle = bytes.len() / 2;
+        bytes[middle] ^= 0xff;
+        // Replace the file (the clone shares blocks with the original until
+        // written; writing a new file never touches the original).
+        std::fs::remove_file(&framework).unwrap();
+        std::fs::write(&framework, &bytes).unwrap();
         assert!(!check_bundle(&tampered, &BUNDLES[0]).unwrap());
         // Re-signed ad hoc (not by Google's Developer ID).
         let resigned = clone("resigned");
@@ -400,6 +402,6 @@ mod tests {
         assert!(status.success(), "codesign failed");
         assert!(!check_bundle(&resigned, &BUNDLES[0]).unwrap());
         eprintln!("XP14-EVIDENCE tampered and re-signed Chrome clones refused");
-        std::fs::remove_dir_all(&root).unwrap();
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
