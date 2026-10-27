@@ -58,12 +58,16 @@ before resume, kill-on-close chains, ActiveProcessLimit, and signature
 verification. Off Windows the supervisor launches with handle supervision
 and drop-kill, discovery covers well-known locations, and publisher
 verification on Linux (XP-14) reports verified only when the engine's
-real path belongs to the vendor's own package (google-chrome-stable or
-microsoft-edge-stable) and that package's installed files are unmodified
-against the package database (dpkg --verify or rpm -V, conffiles
-excepted); a vendor package that fails the check is refused, and any
-other engine stays unverified. This is weaker than a code signature: the
-database is only as trustworthy as the root account that wrote it. On
+path is its own real path (a link stays unverified), belongs to the
+vendor's own package (google-chrome-stable or microsoft-edge-stable),
+and that package's installed files are unmodified against the package
+database (dpkg --verify, or rpm -V judged by its output; changed
+conffiles are allowed); a vendor package that fails the check is
+refused, and any other engine stays unverified. Linux discovery does not
+search Edge's install path, so in practice this covers Chrome. This is
+weaker than a code signature: the database records only file digests
+(md5 for dpkg) and is only as trustworthy as the root account that wrote
+it. On
 macOS (XP-14 slice 1),
 discovery finds the stable Chrome and Edge app bundles, reads the version
 from the bundle's Info.plist without running it, and refuses a bundle

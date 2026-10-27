@@ -563,20 +563,27 @@ fn verify_publisher(path: &Path) -> Result<bool, HostError> {
     Ok(true)
 }
 
-/// XP-14 (Linux): the engine is verified when its real path belongs to the
-/// vendor's own package (`google-chrome-stable` or `microsoft-edge-stable`,
-/// from `dpkg -S`, else `rpm -qf`) and that package's installed files are
-/// unmodified against the package database (`dpkg --verify`, else
-/// `rpm -V`; conffiles excepted). A vendor package whose files fail that
+/// XP-14 (Linux): the engine is verified when its path is its own real path
+/// (not a link to it), belongs to the vendor's own package
+/// (`google-chrome-stable` or `microsoft-edge-stable`, from `dpkg -S`, else
+/// `rpm -qf`), and that package's installed files are unmodified against
+/// the package database (`dpkg --verify`, else `rpm -V`; changed conffiles
+/// are configuration and allowed). A vendor package whose files fail that
 /// check is refused. Anything else (another package, no package manager,
-/// an unowned file) stays unverified, as before: weaker than Authenticode
-/// or a macOS code signature, because the database is only as trustworthy
-/// as the root account that wrote it (recorded in the SG-000074 note).
+/// an unowned file, a link) stays unverified, as before: weaker than
+/// Authenticode or a macOS code signature, because the database records
+/// only file digests (md5 for dpkg) and is only as trustworthy as the root
+/// account that wrote it (recorded in the SG-000074 note).
 #[cfg(all(not(windows), not(target_os = "macos")))]
 fn verify_publisher(path: &Path) -> Result<bool, HostError> {
     let Ok(real) = path.canonicalize() else {
         return Ok(false);
     };
+    // A link (say a `chrome` in a writable PATH directory) can be swapped
+    // after the check, so only the real file itself can be verified.
+    if real != path {
+        return Ok(false);
+    }
     let real_text = real.to_string_lossy().into_owned();
     if let Some((true, out)) = run_package_tool("dpkg-query", &["-S", &real_text]) {
         let Some(package) = dpkg_owner(&out, &real_text) else {
@@ -585,6 +592,8 @@ fn verify_publisher(path: &Path) -> Result<bool, HostError> {
         if vendor_package(&package).is_none() {
             return Ok(false);
         }
+        // `dpkg --verify` exits 0 even when it reports changes; nonzero is
+        // a real error (refused).
         return match run_package_tool("dpkg", &["--verify", &package]) {
             Some((true, out)) if dpkg_verify_clean(&out) => Ok(true),
             _ => Err(HostError::Unavailable(UnavailableReason::UnsupportedEngine)),
@@ -597,8 +606,12 @@ fn verify_publisher(path: &Path) -> Result<bool, HostError> {
         if out.lines().count() != 1 || vendor_package(package).is_none() {
             return Ok(false);
         }
+        // `rpm -V` exits nonzero whenever it reports any change, conffiles
+        // included, so its output decides; a nonzero exit with nothing
+        // reported is a real error (refused).
         return match run_package_tool("rpm", &["-V", package]) {
-            Some((true, out)) if rpm_verify_clean(&out) => Ok(true),
+            Some((true, out)) if out.trim().is_empty() => Ok(true),
+            Some((false, out)) if !out.trim().is_empty() && rpm_verify_clean(&out) => Ok(true),
             _ => Err(HostError::Unavailable(UnavailableReason::UnsupportedEngine)),
         };
     }
@@ -654,8 +667,12 @@ fn rpm_verify_clean(output: &str) -> bool {
 
 /// Run a package-database query with the scrubbed probe environment and a
 /// bounded wait; `None` when the tool is absent, hangs or prints too much.
+/// Stdout is drained on its own thread (so a large answer never blocks the
+/// tool), at most 1 MiB is kept, and the child is always reaped.
 #[cfg(all(not(windows), not(target_os = "macos")))]
 fn run_package_tool(program: &str, args: &[&str]) -> Option<(bool, String)> {
+    use std::io::Read;
+    const MAX_OUTPUT: u64 = 1 << 20;
     let mut child = std::process::Command::new(program)
         .args(args)
         .env_clear()
@@ -665,26 +682,36 @@ fn run_package_tool(program: &str, args: &[&str]) -> Option<(bool, String)> {
         .stderr(std::process::Stdio::null())
         .spawn()
         .ok()?;
-    let deadline = Instant::now() + Duration::from_secs(60);
-    loop {
+    let stdout = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut kept = Vec::new();
+        let mut limited = stdout.take(MAX_OUTPUT + 1);
+        let _ = limited.read_to_end(&mut kept);
+        // Keep draining past the cap so the tool can finish.
+        let _ = std::io::copy(&mut limited.into_inner(), &mut std::io::sink());
+        kept
+    });
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let status = loop {
         match child.try_wait() {
-            Ok(Some(status)) => {
-                let output = child.wait_with_output().ok()?;
-                if output.stdout.len() > 1 << 20 {
-                    return None;
-                }
-                return Some((
-                    status.success(),
-                    String::from_utf8_lossy(&output.stdout).into_owned(),
-                ));
-            }
+            Ok(Some(status)) => break Some(status),
             Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
             _ => {
                 let _ = child.kill();
-                return None;
+                let _ = child.wait();
+                break None;
             }
         }
+    };
+    let kept = reader.join().ok()?;
+    let status = status?;
+    if kept.len() as u64 > MAX_OUTPUT {
+        return None;
     }
+    Some((
+        status.success(),
+        String::from_utf8_lossy(&kept).into_owned(),
+    ))
 }
 
 #[cfg(windows)]
@@ -777,6 +804,10 @@ mod tests {
         let copy = copy_dir.join("chrome");
         std::fs::copy(installed, &copy).unwrap();
         assert!(!verify_publisher(&copy).unwrap());
+        // A link to the real binary is not the binary: it stays unverified.
+        let link = copy_dir.join("chrome-link");
+        std::os::unix::fs::symlink(installed, &link).unwrap();
+        assert!(!verify_publisher(&link).unwrap());
         let _ = std::fs::remove_dir_all(&copy_dir);
     }
 
