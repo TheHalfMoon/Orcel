@@ -1543,10 +1543,15 @@ impl HttpsFixture {
 impl Drop for HttpsFixture {
     fn drop(&mut self) {
         // #438: when a test fails, the requests the fixture actually received
-        // (host and path only) tell a navigation that never reached it from
-        // one whose response never came back.
+        // (host, path and query: fixture values only) tell a navigation that
+        // never reached it from one whose response never came back. Read
+        // without panicking, even from a poisoned lock, while unwinding.
         if std::thread::panicking() {
-            let hits = self.hits();
+            let hits = self
+                .hits
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
             let shown = &hits[hits.len().saturating_sub(50)..];
             eprintln!(
                 "SG108-DIAG fixture requests at failure ({} in all, last {}):\n{}",
