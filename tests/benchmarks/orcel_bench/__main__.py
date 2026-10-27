@@ -3,6 +3,7 @@
 Usage (from tests/benchmarks):
 
     python3 -m orcel_bench oracle --commit <40-hex> --out <file.report.json> [--repeat N] [TASK_DIR ...]
+    python3 -m orcel_bench fetch-taskpack <name> --into <new dir> [--from <git URL or local clone>]
 
 With no task directories, every directory under tasks/<group>/ that has a
 main.py runs. The report is checked by scripts/check-benchmark-report.mjs.
@@ -16,6 +17,7 @@ import sys
 from pathlib import Path
 
 from .runner import report, run_oracle
+from .taskpack import TaskpackError, fetch
 
 HERE = Path(__file__).resolve().parent.parent
 
@@ -32,7 +34,19 @@ def main(argv: list[str]) -> int:
     oracle.add_argument("--out", required=True, type=Path, help="where to write the report")
     oracle.add_argument("--repeat", type=int, default=1, help="episodes per variant (latency)")
     oracle.add_argument("tasks", nargs="*", type=Path)
+    pack = sub.add_parser("fetch-taskpack", help="check out a pinned taskpack and verify every file")
+    pack.add_argument("name")
+    pack.add_argument("--into", required=True, type=Path, help="a directory that does not exist yet")
+    pack.add_argument("--from", dest="source", help="the donor repository (default: the lock's URL)")
     args = parser.parse_args(argv)
+    if args.command == "fetch-taskpack":
+        try:
+            root = fetch(args.name, args.into.resolve(), args.source)
+        except TaskpackError as error:
+            print(f"orcel_bench: {error}", file=sys.stderr)
+            return 1
+        print(f"orcel_bench: {args.name} verified at {root}")
+        return 0
     tasks = [path.resolve() for path in args.tasks] or all_tasks()
     if not tasks:
         parser.error("no tasks found")

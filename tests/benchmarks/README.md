@@ -29,10 +29,17 @@ only, never in the product, and only its standard library.
   - `hello-file` writes a word into a file;
   - `report-rename` moves the latest dated report to its canonical name and leaves the others unchanged.
 - **Tests:** `tests/test_runner.py` is the oracle-only dry run, the backlog's positive test. The CI Governance job runs it.
+- **Pinned taskpack:** `taskpacks/cua-driver-bench.lock.json` pins the cua-driver-bench taskpack (trycua/cua `a802eaf`, FSL-1.1-MIT, authorized by FD-04). It records all 123 files, each with its donor path, git blob id, sha256 and size. The taskpack is not copied into Orcel: its binary workbooks and an empty fixture could not pass the exact-diff review gate, and a lock keeps the repository small.
+  - `python3 -m orcel_bench fetch-taskpack cua-driver-bench --into DIR [--from URL_OR_CLONE]` checks out exactly that subtree, with no line-ending conversion.
+  - It refuses the result unless the files are exactly the locked ones, byte for byte. A Windows checkout's CRLF conversion once looked like 'stale digests'; the lock now catches that as a mismatch instead.
+  - `tests/test_taskpack.py` fetches it, then runs each task's own digest check, its Python suite and its Electron store tests. The CI Governance job runs these on Linux.
+  - Known residuals:
+    - `cdb-s02`'s repository-schema test needs `cb.schemas` from Cua's private harness, so it always skips.
+    - The symlink tests skip on Windows without the symlink privilege and run on Linux.
+    - LibreOffice and GnuCash are needed only to *perform* the tasks, not by their evaluators' tests.
 
 Not yet done:
 - driving tasks through Orcel with a deterministic planner or a pinned MCP client;
-- the cua-driver-bench taskpack (FSL-1.1-MIT, authorized by FD-04), which needs per-file provenance;
 - a first report of 20 tasks per OS.
 
 ## Run

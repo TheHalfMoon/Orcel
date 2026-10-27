@@ -1765,7 +1765,7 @@ Gates every task inherits:
 - **Security and authority.** Disposable sessions. Authority delta: none.
 - **Steps.**
   1. COPY_ADAPT the cua-bench Python runner as test-only tooling (no PORT to another language; Python never ships in the product).
-  2. COPY the cua-driver-bench taskpack with a provenance manifest per task file, then add Orcel-owned tasks per OS.
+  2. COPY the cua-driver-bench taskpack with a provenance manifest per task file (done as a pinned lock fetched and verified at test time, PR #486), then add Orcel-owned tasks per OS.
   3. Runner records BENCHMARK_REPORT_1 rows; never --on cloud.
   4. Follow-up from the #347 judge: extend the credential-prefix guard to machine.cpu and to every path segment of evidence (today only the first segment is checked), with tests, before the first real report is accepted.
 - **Tests.**
