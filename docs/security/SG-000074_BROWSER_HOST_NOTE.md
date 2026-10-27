@@ -60,10 +60,13 @@ and drop-kill, discovery covers well-known locations, and publisher
 verification on Linux (XP-14) reports verified only when the engine's
 path is its own real path (a link stays unverified), belongs to the
 vendor's own package (google-chrome-stable or microsoft-edge-stable),
-and that package's installed files are unmodified against the package
-database (dpkg --verify, or rpm -V judged by its output; changed
-conffiles are allowed); a vendor package that fails the check is
-refused, and any other engine stays unverified. Linux discovery does not
+and the package's files in the engine's own install directory (for
+Chrome /opt/google/chrome) are unmodified against the package database
+(dpkg --verify, or rpm -V judged by its output). Changed conffiles and
+files outside that directory are not what the engine runs and are
+ignored: GitHub's Ubuntu image, for one, deletes Chrome's
+/etc/cron.daily repository job. A vendor package whose engine files fail
+the check is refused, and any other engine stays unverified. Linux discovery does not
 search Edge's install path, so in practice this covers Chrome. This is
 weaker than a code signature: the database records only file digests
 (md5 for dpkg) and is only as trustworthy as the root account that wrote

@@ -585,6 +585,10 @@ fn verify_publisher(path: &Path) -> Result<bool, HostError> {
         return Ok(false);
     }
     let real_text = real.to_string_lossy().into_owned();
+    // The engine's own install directory: what it runs is there.
+    let Some(code_dir) = real.parent().map(|dir| dir.to_string_lossy().into_owned()) else {
+        return Ok(false);
+    };
     if let Some((true, out)) = run_package_tool("dpkg-query", &["-S", &real_text]) {
         let Some(package) = dpkg_owner(&out, &real_text) else {
             return Ok(false);
@@ -595,7 +599,7 @@ fn verify_publisher(path: &Path) -> Result<bool, HostError> {
         // `dpkg --verify` exits 0 even when it reports changes; nonzero is
         // a real error (refused).
         return match run_package_tool("dpkg", &["--verify", &package]) {
-            Some((true, out)) if dpkg_verify_clean(&out) => Ok(true),
+            Some((true, out)) if verify_report_clean(&out, &code_dir) => Ok(true),
             _ => Err(HostError::Unavailable(UnavailableReason::UnsupportedEngine)),
         };
     }
@@ -611,7 +615,11 @@ fn verify_publisher(path: &Path) -> Result<bool, HostError> {
         // reported is a real error (refused).
         return match run_package_tool("rpm", &["-V", package]) {
             Some((true, out)) if out.trim().is_empty() => Ok(true),
-            Some((false, out)) if !out.trim().is_empty() && rpm_verify_clean(&out) => Ok(true),
+            Some((false, out))
+                if !out.trim().is_empty() && verify_report_clean(&out, &code_dir) =>
+            {
+                Ok(true)
+            }
             _ => Err(HostError::Unavailable(UnavailableReason::UnsupportedEngine)),
         };
     }
@@ -643,26 +651,29 @@ fn dpkg_owner(output: &str, path: &str) -> Option<String> {
     (!name.is_empty()).then(|| name.to_owned())
 }
 
-/// `dpkg --verify` reports one line per changed file (`??5?????? c /etc/x`
-/// for a conffile). Changed conffiles are configuration, not code; any
-/// other changed file is not clean.
+/// Whether a `dpkg --verify` or `rpm -V` report leaves the engine's code
+/// intact. Each line names one changed or missing file (`??5?????? c
+/// /etc/x`, `missing     /etc/y`, `S.5....T.  c /etc/z`). A changed
+/// conffile (`c`) is configuration; a file outside the engine's install
+/// directory `code_dir` is not what the engine runs (CI images, for one,
+/// delete Chrome's `/etc/cron.daily` repository job). Any change inside
+/// `code_dir`, or a line that names no absolute path, is not clean.
 #[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
-fn dpkg_verify_clean(output: &str) -> bool {
+fn verify_report_clean(output: &str, code_dir: &str) -> bool {
+    let inside = format!("{}/", code_dir.trim_end_matches('/'));
     output
         .lines()
         .filter(|line| !line.trim().is_empty())
         .all(|line| {
-            let mut fields = line.split_whitespace();
-            let _flags = fields.next();
-            fields.next() == Some("c") && fields.next().is_some()
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            let Some(path) = fields.last().filter(|path| path.starts_with('/')) else {
+                return false;
+            };
+            if fields.len() == 3 && fields[1] == "c" {
+                return true;
+            }
+            !(path.starts_with(&inside) || *path == code_dir)
         })
-}
-
-/// `rpm -V` reports one line per changed file, with a `c` attribute for
-/// configuration files; any other line is not clean.
-#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
-fn rpm_verify_clean(output: &str) -> bool {
-    dpkg_verify_clean(output)
 }
 
 /// Run a package-database query with the scrubbed probe environment and a
@@ -763,20 +774,42 @@ mod tests {
             Some(EngineKind::Edge)
         );
         assert_eq!(vendor_package("chromium-browser"), None);
-        assert!(dpkg_verify_clean(""));
-        assert!(dpkg_verify_clean(
-            "??5?????? c /etc/cron.daily/google-chrome\n"
+        let dir = "/opt/google/chrome";
+        assert!(verify_report_clean("", dir));
+        // Configuration and files outside the install directory are not code.
+        assert!(verify_report_clean(
+            "??5?????? c /etc/default/google-chrome\n",
+            dir
         ));
-        assert!(!dpkg_verify_clean(
-            "??5??????   /opt/google/chrome/chrome\n"
+        assert!(verify_report_clean(
+            "missing     /etc/cron.daily/google-chrome\n",
+            dir
         ));
-        assert!(!dpkg_verify_clean(
-            "missing     /opt/google/chrome/chrome\n"
+        assert!(verify_report_clean("S.5....T.  c /etc/x.conf\n", dir));
+        // Any change to the engine's own files is not clean.
+        assert!(!verify_report_clean(
+            "??5??????   /opt/google/chrome/chrome\n",
+            dir
         ));
-        assert!(rpm_verify_clean("S.5....T.  c /etc/x.conf\n"));
-        assert!(!rpm_verify_clean(
-            "S.5....T.    /opt/google/chrome/chrome\n"
+        assert!(!verify_report_clean(
+            "missing     /opt/google/chrome/libEGL.so\n",
+            dir
         ));
+        assert!(!verify_report_clean(
+            "S.5....T.    /opt/google/chrome/chrome\n",
+            dir
+        ));
+        assert!(!verify_report_clean(
+            "missing     /opt/google/chrome\n",
+            dir
+        ));
+        // A prefix that is not the directory is outside it.
+        assert!(verify_report_clean(
+            "missing     /opt/google/chrome-beta/chrome\n",
+            dir
+        ));
+        // A line naming no absolute path is not understood.
+        assert!(!verify_report_clean("error: something\n", dir));
     }
 
     /// On a Linux machine with Chrome installed from Google's package (the
