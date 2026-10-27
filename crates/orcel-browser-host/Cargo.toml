@@ -58,4 +58,4 @@ windows-sys = { version = "0.52", features = [
 # #483: the native tests' cleanup diagnostics ask Restart Manager who holds
 # a profile's files (test builds only).
 [target.'cfg(windows)'.dev-dependencies]
-windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_System_RestartManager"] }
+windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_System_RestartManager", "Win32_System_SystemInformation"] }

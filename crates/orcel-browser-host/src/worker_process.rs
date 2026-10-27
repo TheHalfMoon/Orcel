@@ -530,7 +530,7 @@ pub(crate) fn processes_with_command_line_containing(marker: &str) -> Vec<JobPro
     found
 }
 
-fn inspect(pid: u32) -> Result<Option<JobProcess>, HostError> {
+pub(crate) fn inspect(pid: u32) -> Result<Option<JobProcess>, HostError> {
     // SAFETY: plain open with query-only rights.
     let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
     let Some(handle) = OwnedHandle::new(handle) else {

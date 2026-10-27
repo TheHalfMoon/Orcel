@@ -912,10 +912,14 @@ fn diagnose_locked(profile: &Path) {
         .filter(|path| path.is_file())
         .cloned()
         .collect();
-    eprintln!(
-        "SG108-DIAG holders (Restart Manager): {:?}",
-        file_holders(&files)
-    );
+    let holders = file_holders(&files);
+    eprintln!("SG108-DIAG holders (Restart Manager): {holders:?}");
+    // #483: who each holder is: inside a job or not, its parent, its role
+    // and age (never its whole command line, which may be a user's own
+    // browser).
+    for (pid, _) in holders.iter().flatten() {
+        eprintln!("SG108-DIAG holder {pid}: {}", describe_holder(*pid));
+    }
     while profile.exists() && started.elapsed() < Duration::from_secs(90) {
         let _ = std::fs::remove_dir_all(profile);
         std::thread::sleep(Duration::from_millis(250));
@@ -957,9 +961,121 @@ fn cleanup_diagnostics_name_a_handle_that_blocks_deletion() {
         holders.iter().any(|(pid, _)| *pid == std::process::id()),
         "{holders:?}"
     );
+    // #483: the holder description is filled in (this process: a parent,
+    // a job answer and an age).
+    let described = describe_holder(std::process::id());
+    assert!(
+        described.contains("parent Some(")
+            && described.contains("in a job: Some(")
+            && described.contains("started Some("),
+        "{described}"
+    );
     drop(handle);
     assert!(openable_for_delete(&held));
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// #483: a holder process's parent (pid and image name), whether it runs
+/// inside any job object, its Chromium `--type=` role if any, and how long
+/// ago it started. Nothing else from its command line is shown.
+fn describe_holder(pid: u32) -> String {
+    use windows_sys::Win32::Foundation::{BOOL, FILETIME};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+    use windows_sys::Win32::System::JobObjects::IsProcessInJob;
+    use windows_sys::Win32::System::SystemInformation::GetSystemTimeAsFileTime;
+    use windows_sys::Win32::System::Threading::GetProcessTimes;
+    let name_of = |entry: &PROCESSENTRY32W| {
+        let len = entry
+            .szExeFile
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(entry.szExeFile.len());
+        String::from_utf16_lossy(&entry.szExeFile[..len])
+    };
+    let mut entries: Vec<(u32, u32, String)> = Vec::new();
+    // SAFETY: a process snapshot with documented flags, closed by the guard.
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if let Some(snapshot) = crate::supervise::platform::OwnedHandle::new(snapshot) {
+        // SAFETY: zeroed PROCESSENTRY32W with dwSize set is the documented input.
+        let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        // SAFETY: valid snapshot handle and entry out-pointer.
+        let mut more = unsafe { Process32FirstW(snapshot.raw(), &mut entry) } != 0;
+        while more {
+            entries.push((
+                entry.th32ProcessID,
+                entry.th32ParentProcessID,
+                name_of(&entry),
+            ));
+            // SAFETY: as above.
+            more = unsafe { Process32NextW(snapshot.raw(), &mut entry) } != 0;
+        }
+    }
+    let parent = entries
+        .iter()
+        .find(|(id, _, _)| *id == pid)
+        .map(|(_, parent, _)| *parent);
+    let parent_name = parent.and_then(|parent| {
+        entries
+            .iter()
+            .find(|(id, _, _)| *id == parent)
+            .map(|(_, _, name)| name.clone())
+    });
+    let role = crate::worker_process::inspect(pid)
+        .ok()
+        .flatten()
+        .and_then(|process| {
+            process
+                .argv
+                .iter()
+                .find_map(|arg| arg.strip_prefix("--type=").map(str::to_owned))
+        });
+    // SAFETY: plain open with query-only rights, closed by the guard.
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    let (in_job, age) = match crate::supervise::platform::OwnedHandle::new(handle) {
+        Some(handle) => {
+            let mut in_job: BOOL = 0;
+            // SAFETY: valid handle; a null job asks about any job.
+            let in_job = (unsafe { IsProcessInJob(handle.raw(), 0, &mut in_job) } != 0)
+                .then_some(in_job != 0);
+            let zero = FILETIME {
+                dwLowDateTime: 0,
+                dwHighDateTime: 0,
+            };
+            let (mut created, mut exited, mut kernel, mut user) = (zero, zero, zero, zero);
+            let mut now = zero;
+            // SAFETY: valid handle and out-pointers.
+            let timed = unsafe {
+                GetProcessTimes(
+                    handle.raw(),
+                    &mut created,
+                    &mut exited,
+                    &mut kernel,
+                    &mut user,
+                )
+            } != 0;
+            // SAFETY: out-pointer.
+            unsafe { GetSystemTimeAsFileTime(&mut now) };
+            let ticks = |time: FILETIME| {
+                (u64::from(time.dwHighDateTime) << 32) | u64::from(time.dwLowDateTime)
+            };
+            let age = timed.then(|| {
+                Duration::from_nanos(
+                    ticks(now)
+                        .saturating_sub(ticks(created))
+                        .saturating_mul(100),
+                )
+            });
+            (in_job, age)
+        }
+        None => (None, None),
+    };
+    format!(
+        "parent {parent:?} ({parent_name:?}), in a job: {in_job:?}, role: {role:?}, started {age:?} ago"
+    )
 }
 
 /// #483: every file and folder under `root` (the folders first), at most
