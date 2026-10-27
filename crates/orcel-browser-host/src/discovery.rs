@@ -2,15 +2,21 @@
 //!
 //! Orcel never bundles a browser and never downloads one. Discovery finds
 //! an installed Chromium-family engine, verifies its kind, version, and
-//! (on Windows) Authenticode signature, and refuses everything else with
-//! typed unavailable. There is no personal-browser fallback.
+//! publisher signature (Authenticode on Windows; on macOS, XP-14, the app
+//! bundle's code signature against the vendor's designated requirement),
+//! and refuses everything else with typed unavailable. There is no
+//! personal-browser fallback.
 
 use crate::error::{HostError, UnavailableReason};
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "macos")))]
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "macos")))]
 use std::time::{Duration, Instant};
+
+#[cfg(target_os = "macos")]
+#[path = "discovery_macos.rs"]
+mod macos;
 
 /// Supported engine kinds. Anything else is unsupported.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,8 +28,14 @@ pub enum EngineKind {
 impl EngineKind {
     fn executable_names(&self) -> &'static [&'static str] {
         match self {
-            Self::Edge => &["msedge.exe", "msedge"],
-            Self::Chromium => &["chrome.exe", "chrome", "chromium", "chromium-browser"],
+            Self::Edge => &["msedge.exe", "msedge", "Microsoft Edge"],
+            Self::Chromium => &[
+                "chrome.exe",
+                "chrome",
+                "chromium",
+                "chromium-browser",
+                "Google Chrome",
+            ],
         }
     }
 }
@@ -80,7 +92,8 @@ impl Engine {
     }
 
     /// A10: verify the engine file again, now, exactly as discovery did
-    /// (name, presence, version resource and, on Windows, Authenticode), and
+    /// (name, presence, version and the publisher signature: Authenticode on
+    /// Windows, the bundle's code signature on macOS), and
     /// require the same kind and version. An engine updated or replaced in
     /// place since discovery is refused, so the window and the signature
     /// are checked against the file that is about to run.
@@ -107,8 +120,9 @@ impl Engine {
     }
 
     /// Whether the OS publisher check passed. Always true on Windows
-    /// (WinVerifyTrust is mandatory there); elsewhere the path and
-    /// version checks apply and this reports false.
+    /// (WinVerifyTrust is mandatory there) and on macOS (the bundle's code
+    /// signature must satisfy the vendor's designated requirement); on
+    /// Linux the path and version checks apply and this reports false.
     pub fn publisher_verified(&self) -> bool {
         self.publisher_verified
     }
@@ -214,9 +228,16 @@ fn verify_candidate(path: &Path) -> Result<Engine, HostError> {
         .and_then(|name| name.to_str())
         .unwrap_or_default()
         .to_ascii_lowercase();
-    let kind = if file_name == "msedge.exe" || file_name == "msedge" {
+    let kind = if ["msedge.exe", "msedge", "microsoft edge"].contains(&file_name.as_str()) {
         EngineKind::Edge
-    } else if ["chrome.exe", "chrome", "chromium", "chromium-browser"].contains(&file_name.as_str())
+    } else if [
+        "chrome.exe",
+        "chrome",
+        "chromium",
+        "chromium-browser",
+        "google chrome",
+    ]
+    .contains(&file_name.as_str())
     {
         EngineKind::Chromium
     } else {
@@ -286,9 +307,16 @@ pub fn probe_version(engine: &Path) -> Result<String, HostError> {
     parse_version(&version).ok_or(HostError::Unavailable(UnavailableReason::UnsupportedEngine))
 }
 
+/// XP-14: on macOS the version comes from the app bundle's Info.plist,
+/// which must name the expected bundle; nothing is run.
+#[cfg(target_os = "macos")]
+pub fn probe_version(engine: &Path) -> Result<String, HostError> {
+    macos::bundle_version(engine)
+}
+
 /// Run `<engine> --version` with a bounded wait and parse the version.
 /// The probe inherits only a scrubbed environment.
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "macos")))]
 pub fn probe_version(engine: &Path) -> Result<String, HostError> {
     let mut child = std::process::Command::new(engine)
         .arg("--version")
@@ -324,6 +352,25 @@ pub fn probe_version(engine: &Path) -> Result<String, HostError> {
     }
 }
 
+/// XP-14: the string value of `key` in an XML property list (the first
+/// `<key>` with that exact text, followed by a `<string>`). Binary or
+/// malformed lists give `None`.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn plist_string(xml: &str, key: &str) -> Option<String> {
+    if !xml.trim_start().starts_with("<?xml") {
+        return None;
+    }
+    let marker = format!("<key>{key}</key>");
+    let after = &xml[xml.find(&marker)? + marker.len()..];
+    let after = after.trim_start();
+    let value = after.strip_prefix("<string>")?;
+    let end = value.find("</string>")?;
+    let value = &value[..end];
+    // Entities and nested markup are not expected in these values.
+    (!value.contains(['<', '&']) && !value.is_empty() && value.len() <= 256)
+        .then(|| value.to_owned())
+}
+
 fn parse_version(text: &str) -> Option<String> {
     let mut run = String::new();
     let mut runs = Vec::new();
@@ -339,12 +386,12 @@ fn parse_version(text: &str) -> Option<String> {
 
 /// Minimal scrubbed environment for the non-Windows version probe. No
 /// caller, user, or Orcel secret variable is inherited.
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "macos")))]
 fn probe_env() -> Vec<(OsString, OsString)> {
     platform_probe_env()
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "macos")))]
 fn platform_probe_env() -> Vec<(OsString, OsString)> {
     vec![
         (OsString::from("PATH"), OsString::from("/usr/bin:/bin")),
@@ -373,7 +420,13 @@ fn platform_candidates() -> Vec<PathBuf> {
     out
 }
 
-#[cfg(not(windows))]
+/// XP-14: stable-channel app bundles in /Applications and ~/Applications.
+#[cfg(target_os = "macos")]
+fn platform_candidates() -> Vec<PathBuf> {
+    macos::candidates()
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
 fn platform_candidates() -> Vec<PathBuf> {
     let mut out = Vec::new();
     for dir in [
@@ -499,11 +552,23 @@ fn verify_publisher(path: &Path) -> Result<bool, HostError> {
     Ok(true)
 }
 
-#[cfg(not(windows))]
+/// XP-14: the app bundle's code signature must satisfy the vendor's
+/// designated requirement (Apple-anchored, the vendor's team, the bundle's
+/// identifier); otherwise the engine is refused.
+#[cfg(target_os = "macos")]
+fn verify_publisher(path: &Path) -> Result<bool, HostError> {
+    if !macos::verify_signature(path)? {
+        return Err(HostError::Unavailable(UnavailableReason::UnsupportedEngine));
+    }
+    Ok(true)
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
 fn verify_publisher(_path: &Path) -> Result<bool, HostError> {
-    // No OS publisher check is implemented off Windows: path, kind, and
+    // No OS publisher check is implemented on Linux: path, kind, and
     // version checks apply and the engine reports unverified. Recorded as
-    // a platform boundary in the SG-000074 note.
+    // a platform boundary in the SG-000074 note (XP-14 step 1 adds the
+    // package-signature check).
     Ok(false)
 }
 
@@ -515,6 +580,30 @@ fn app_paths_executable(name: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn xp14_plist_strings_are_read_exactly_and_nothing_else() {
+        let xml = "<?xml version=\"1.0\"?>
+<plist><dict>
+<key>CFBundleIdentifier</key>
+  <string>com.google.Chrome</string>
+<key>CFBundleShortVersionString</key><string>156.0.7000.1</string>
+<key>Odd</key><string>a&amp;b</string>
+<key>Num</key><integer>3</integer>
+</dict></plist>";
+        assert_eq!(
+            plist_string(xml, "CFBundleIdentifier").as_deref(),
+            Some("com.google.Chrome")
+        );
+        assert_eq!(
+            plist_string(xml, "CFBundleShortVersionString").as_deref(),
+            Some("156.0.7000.1")
+        );
+        assert_eq!(plist_string(xml, "Odd"), None);
+        assert_eq!(plist_string(xml, "Num"), None);
+        assert_eq!(plist_string(xml, "Missing"), None);
+        assert_eq!(plist_string("bplist00binary", "CFBundleIdentifier"), None);
+    }
     use std::fs;
 
     #[test]

@@ -143,6 +143,7 @@ impl Supervisor {
             return Err(HostError::Invalid("a browser host is already live".into()));
         }
         self.live = None;
+        engine_launch_admitted()?;
         let engine: Engine = discover_engine(search)?;
         if !host_binary.is_file() {
             return Err(HostError::Unavailable(UnavailableReason::LaunchFailed));
@@ -492,6 +493,18 @@ impl Drop for Supervisor {
     fn drop(&mut self) {
         let _ = self.shutdown();
     }
+}
+
+/// XP-14: macOS discovery and verification exist, but launching an engine
+/// on macOS is new authority (proposed grain SG-000115, not activated), so
+/// nothing launches there: typed unavailable, before discovery runs.
+pub fn engine_launch_admitted() -> Result<(), HostError> {
+    if cfg!(target_os = "macos") {
+        return Err(HostError::Unavailable(
+            UnavailableReason::UnsupportedRuntime,
+        ));
+    }
+    Ok(())
 }
 
 fn handshake(live: &mut LiveHost, host_id: &str) -> Result<(), HostError> {

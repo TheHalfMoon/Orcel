@@ -88,7 +88,7 @@ pub use exposure::{
 pub use extraction::{
     ExtractOptions, PageExtraction, MAX_EXTRACT_CHARS, MAX_EXTRACT_PIECES, MAX_PIECE_CHARS,
 };
-pub use host::{HostIdentity, LiveHost, Supervisor, HANDSHAKE_TIMEOUT};
+pub use host::{engine_launch_admitted, HostIdentity, LiveHost, Supervisor, HANDSHAKE_TIMEOUT};
 #[cfg(all(
     windows,
     any(feature = "live-browser-test", feature = "live-browser-dev")

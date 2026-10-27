@@ -57,7 +57,12 @@ Windows carries the full guarantee: suspended launch, job assignment
 before resume, kill-on-close chains, ActiveProcessLimit, and signature
 verification. Off Windows the supervisor launches with handle supervision
 and drop-kill, discovery covers well-known locations, and publisher
-verification reports unverified. The hard parent-death guarantee off
+verification reports unverified on Linux. On macOS (XP-14 slice 1),
+discovery finds the stable Chrome and Edge app bundles, reads the version
+from the bundle's Info.plist without running it, and refuses a bundle
+whose code signature does not satisfy the vendor's designated requirement
+(Apple anchor, the vendor's team, the bundle's identifier). The worker
+still launches only on Windows. The hard parent-death guarantee off
 Windows is a documented gap: supervised shutdown is deterministic, but a
 violently killed supervisor may orphan the engine there. Windows
 qualification is the normative path for this grain.
