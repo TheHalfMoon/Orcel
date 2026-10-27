@@ -30,11 +30,11 @@ use windows_sys::Win32::Foundation::{
 };
 use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
 use windows_sys::Win32::Storage::FileSystem::{
-    CreateFileW, CREATE_ALWAYS, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    CreateFileW, CREATE_ALWAYS, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING, SYNCHRONIZE,
 };
 use windows_sys::Win32::System::JobObjects::{
-    JobObjectBasicAccountingInformation, JobObjectBasicProcessIdList, QueryInformationJobObject,
-    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+    IsProcessInJob, JobObjectBasicAccountingInformation, JobObjectBasicProcessIdList,
+    QueryInformationJobObject, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
 };
 use windows_sys::Win32::System::Pipes::CreatePipe;
 use windows_sys::Win32::System::Threading::{
@@ -464,19 +464,57 @@ impl WorkerProcess {
         std::sync::Arc::downgrade(&self.job)
     }
 
-    /// Terminate the whole job and wait until no process remains.
+    /// Terminate the whole job and wait until no process remains; true when
+    /// the job's active count reached zero in time (containment). #483:
+    /// Edge's main process can leave that count seconds before it releases
+    /// its profile databases, so the profile removal that follows raced it.
+    /// Within the same deadline, this also waits (best effort) for every
+    /// process that was a member when termination began to have fully
+    /// exited (its process object signaled, its handles closed). A member
+    /// still releasing its files at the deadline does not change the
+    /// containment answer; it shows up, accurately, as a profile that could
+    /// not be removed.
     pub(crate) fn terminate_and_confirm(&self, timeout: Duration) -> bool {
+        // Pinned before termination: a synchronize handle keeps each member's
+        // pid from being reused, and only processes confirmed to be in this
+        // job are kept.
+        let members: Vec<OwnedHandle> = self
+            .member_ids()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|pid| {
+                // SAFETY: plain open with synchronize and query rights.
+                let handle =
+                    unsafe { OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+                let handle = OwnedHandle::new(handle)?;
+                let mut in_job: BOOL = 0;
+                // SAFETY: valid process and job handles and an out-pointer.
+                let checked =
+                    unsafe { IsProcessInJob(handle.raw(), self.job.handle(), &mut in_job) } != 0;
+                (checked && in_job != 0).then_some(handle)
+            })
+            .collect();
         self.job.terminate();
         let deadline = Instant::now() + timeout;
         loop {
             if matches!(self.active_processes(), Ok(0)) {
-                return true;
+                break;
             }
             if Instant::now() >= deadline {
                 return false;
             }
             std::thread::sleep(Duration::from_millis(50));
         }
+        for member in &members {
+            let left = deadline.saturating_duration_since(Instant::now());
+            // Never INFINITE (u32::MAX): clamped one below it.
+            let millis = u32::try_from(left.as_millis())
+                .unwrap_or(u32::MAX)
+                .min(u32::MAX - 1);
+            // SAFETY: a valid process handle; bounded wait.
+            unsafe { WaitForSingleObject(member.raw(), millis) };
+        }
+        true
     }
 
     /// Test-only: put another process into the worker's job.
