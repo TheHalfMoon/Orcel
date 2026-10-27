@@ -1348,3 +1348,17 @@ jobs:
           assert "chore/sg-000009a-closeout" not in current, "stale closeout branch remains in CURRENT"
 
           print(f"validated {len(specs)} SpecGrain files and {len(evidence)} CLOSED evidence records")
+      # BM-02 runs last: the pinned taskpack's own tests are third-party code
+      # (fixed by commit and verified blob by blob before they run), so the
+      # checkout's token is removed first and every governance check above
+      # has already run.
+      - name: Drop the checkout token before third-party test code runs
+        run: |
+          git config --local --unset-all http.https://github.com/.extraheader || true
+          # Fail loudly if the checkout ever stores its token another way.
+          if git config --local --get-regexp 'extraheader|credential' >/dev/null; then
+            echo "a checkout credential is still configured" >&2
+            exit 1
+          fi
+      - name: BM-02 benchmark runner (oracle dry run, report checked) and the pinned taskpack's own checks
+        run: python3 -m unittest discover -s tests/benchmarks/tests -t tests/benchmarks -v

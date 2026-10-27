@@ -88,7 +88,7 @@ pub use exposure::{
 pub use extraction::{
     ExtractOptions, PageExtraction, MAX_EXTRACT_CHARS, MAX_EXTRACT_PIECES, MAX_PIECE_CHARS,
 };
-pub use host::{HostIdentity, LiveHost, Supervisor, HANDSHAKE_TIMEOUT};
+pub use host::{engine_launch_admitted, HostIdentity, LiveHost, Supervisor, HANDSHAKE_TIMEOUT};
 #[cfg(all(
     windows,
     any(feature = "live-browser-test", feature = "live-browser-dev")
@@ -176,6 +176,10 @@ pub use worker_launch::{
     WORKER_LAUNCH_TIMEOUT, WORKER_NAVIGATION_TIMEOUT, WORKER_NODE_OPTION,
     WORKER_OBSERVATION_TIMEOUT, WORKER_PROTOCOL_GENERATION, WORKER_REPLY_TIMEOUT,
     WORKER_SHUTDOWN_TIMEOUT,
+};
+pub use worker_launch::{
+    DialogKind, DismissedDialog, DismissedDialogs, MAX_DIALOGS, MAX_DIALOG_MESSAGE_BYTES,
+    MAX_DIALOG_URL_BYTES,
 };
 pub use worker_navigation::{
     decode_form, NavigationPolicy, RequestDetail, RouteKind, Submission, Submitted,

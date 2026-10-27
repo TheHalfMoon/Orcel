@@ -897,6 +897,38 @@ fn diagnose_locked(profile: &Path) {
     let started = Instant::now();
     let locked = first_locked(profile);
     eprintln!("SG108-DIAG locked file: {locked:?}");
+    // #483: a handle opened without delete sharing blocks the removal yet
+    // allows the write test above, so look for that, folders included, and
+    // ask Restart Manager who holds the profile's files.
+    let entries = profile_entries(profile, 512);
+    let undeletable: Vec<&PathBuf> = entries
+        .iter()
+        .filter(|path| !openable_for_delete(path))
+        .take(8)
+        .collect();
+    eprintln!("SG108-DIAG not openable for delete: {undeletable:?}");
+    let files: Vec<PathBuf> = entries
+        .iter()
+        .filter(|path| path.is_file())
+        .cloned()
+        .collect();
+    let holders = file_holders(&files);
+    eprintln!("SG108-DIAG holders (Restart Manager): {holders:?}");
+    // #483: who each holder is: inside a job or not, its parent, its role
+    // and age (never its whole command line, which may be a user's own
+    // browser).
+    // The profile folder is created just before the launch: its creation
+    // time is the lifetime's start.
+    let lifetime_start = std::fs::metadata(profile)
+        .and_then(|metadata| metadata.created())
+        .ok()
+        .and_then(filetime_ticks);
+    for (pid, _) in holders.iter().flatten() {
+        eprintln!(
+            "SG108-DIAG holder {pid}: {}",
+            describe_holder(*pid, lifetime_start)
+        );
+    }
     while profile.exists() && started.elapsed() < Duration::from_secs(90) {
         let _ = std::fs::remove_dir_all(profile);
         std::thread::sleep(Duration::from_millis(250));
@@ -906,6 +938,303 @@ fn diagnose_locked(profile: &Path) {
         started.elapsed(),
         profile.exists()
     );
+}
+
+/// #483: the cleanup diagnostics see a handle without delete sharing, and
+/// Restart Manager names its holder (this process).
+#[test]
+fn cleanup_diagnostics_name_a_handle_that_blocks_deletion() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let dir = std::env::temp_dir().join(format!("orcel-483-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    let held = dir.join("sub").join("held.txt");
+    std::fs::write(&held, b"x").unwrap();
+    let free = dir.join("free.txt");
+    std::fs::write(&free, b"y").unwrap();
+    assert!(openable_for_delete(&held) && openable_for_delete(&dir));
+    // Read and write sharing, no delete sharing: writes still open.
+    let handle = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0x1 | 0x2)
+        .open(&held)
+        .unwrap();
+    assert!(std::fs::OpenOptions::new().write(true).open(&held).is_ok());
+    assert!(!openable_for_delete(&held));
+    assert!(openable_for_delete(&free));
+    let entries = profile_entries(&dir, 512);
+    assert!(
+        entries.contains(&held) && entries.contains(&free) && entries.contains(&dir.join("sub"))
+    );
+    let holders = file_holders(&[held.clone(), free.clone()]).expect("Restart Manager");
+    assert!(
+        holders.iter().any(|(pid, _)| *pid == std::process::id()),
+        "{holders:?}"
+    );
+    // #483: the holder description is filled in. This process was created
+    // before the test folder, so its offset is negative; it has ancestors
+    // (cargo at least) and a job answer.
+    let start = std::fs::metadata(&dir)
+        .and_then(|metadata| metadata.created())
+        .ok()
+        .and_then(filetime_ticks);
+    assert!(start.is_some());
+    let described = describe_holder(std::process::id(), start);
+    assert!(
+        described.contains("created Some(\"-")
+            && described.contains("ancestors [\"")
+            && described.contains("in a job: Some("),
+        "{described}"
+    );
+    drop(handle);
+    assert!(openable_for_delete(&held));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// #483: a process's creation time in FILETIME ticks (100 ns since 1601).
+fn process_created(pid: u32) -> Option<u64> {
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::System::Threading::GetProcessTimes;
+    // SAFETY: plain open with query-only rights, closed by the guard.
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    let handle = crate::supervise::platform::OwnedHandle::new(handle)?;
+    let zero = FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0,
+    };
+    let (mut created, mut exited, mut kernel, mut user) = (zero, zero, zero, zero);
+    // SAFETY: valid handle and out-pointers.
+    let timed = unsafe {
+        GetProcessTimes(
+            handle.raw(),
+            &mut created,
+            &mut exited,
+            &mut kernel,
+            &mut user,
+        )
+    } != 0;
+    timed.then(|| (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime))
+}
+
+/// #483: a `SystemTime` in FILETIME ticks.
+fn filetime_ticks(time: std::time::SystemTime) -> Option<u64> {
+    // Seconds from 1601-01-01 to 1970-01-01.
+    const EPOCH_GAP_SECS: u64 = 11_644_473_600;
+    let since = time.duration_since(std::time::UNIX_EPOCH).ok()?;
+    Some((since.as_secs() + EPOCH_GAP_SECS) * 10_000_000 + u64::from(since.subsec_nanos()) / 100)
+}
+
+/// #483: who a holder process is, against the lifetime that owned the
+/// profile (`lifetime_start`, the profile folder's creation, in FILETIME
+/// ticks): when it was created relative to that start (before means it
+/// cannot be this lifetime's engine; after means this lifetime started it
+/// somewhere outside the job), its ancestors (image names; a parent counts
+/// only if it is older than its child, since pids are reused), whether it
+/// runs inside any job object, and its Chromium `--type=` role. Nothing else
+/// from its command line is shown.
+fn describe_holder(pid: u32, lifetime_start: Option<u64>) -> String {
+    use windows_sys::Win32::Foundation::BOOL;
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+    use windows_sys::Win32::System::JobObjects::IsProcessInJob;
+    let name_of = |entry: &PROCESSENTRY32W| {
+        let len = entry
+            .szExeFile
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(entry.szExeFile.len());
+        String::from_utf16_lossy(&entry.szExeFile[..len])
+    };
+    let mut entries: Vec<(u32, u32, String)> = Vec::new();
+    // SAFETY: a process snapshot with documented flags, closed by the guard.
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if let Some(snapshot) = crate::supervise::platform::OwnedHandle::new(snapshot) {
+        // SAFETY: zeroed PROCESSENTRY32W with dwSize set is the documented input.
+        let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        // SAFETY: valid snapshot handle and entry out-pointer.
+        let mut more = unsafe { Process32FirstW(snapshot.raw(), &mut entry) } != 0;
+        while more {
+            entries.push((
+                entry.th32ProcessID,
+                entry.th32ParentProcessID,
+                name_of(&entry),
+            ));
+            // SAFETY: as above.
+            more = unsafe { Process32NextW(snapshot.raw(), &mut entry) } != 0;
+        }
+    }
+    let created = process_created(pid);
+    let offset = created.zip(lifetime_start).map(|(created, start)| {
+        let millis = (created as i128 - start as i128) / 10_000;
+        format!("{millis:+} ms")
+    });
+    // Ancestors, nearest first, up to six; a parent must predate its child.
+    let mut ancestors = Vec::new();
+    let (mut child, mut child_created) = (pid, created);
+    for _ in 0..6 {
+        let Some(&(_, parent, _)) = entries.iter().find(|(id, _, _)| *id == child) else {
+            break;
+        };
+        let Some((_, _, name)) = entries.iter().find(|(id, _, _)| *id == parent) else {
+            // An orphan (likely after a killed browser): the parent has
+            // exited, but its pid still says who started the holder.
+            ancestors.push(format!("<exited>({parent})"));
+            break;
+        };
+        let parent_created = process_created(parent);
+        if let (Some(parent_at), Some(child_at)) = (parent_created, child_created) {
+            if parent_at > child_at {
+                break;
+            }
+        }
+        ancestors.push(format!("{name}({parent})"));
+        child = parent;
+        child_created = parent_created;
+    }
+    let role = crate::worker_process::inspect(pid)
+        .ok()
+        .flatten()
+        .and_then(|process| {
+            process
+                .argv
+                .iter()
+                .find_map(|arg| arg.strip_prefix("--type=").map(str::to_owned))
+        });
+    // SAFETY: plain open with query-only rights, closed by the guard.
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    let in_job = crate::supervise::platform::OwnedHandle::new(handle).and_then(|handle| {
+        let mut in_job: BOOL = 0;
+        // SAFETY: valid handle; a null job asks about any job.
+        (unsafe { IsProcessInJob(handle.raw(), 0, &mut in_job) } != 0).then_some(in_job != 0)
+    });
+    format!(
+        "created {offset:?} relative to the lifetime's start, ancestors {ancestors:?}, in a job: {in_job:?}, role: {role:?}"
+    )
+}
+
+/// #483: every file and folder under `root` (the folders first), at most
+/// `limit`.
+fn profile_entries(root: &Path, limit: usize) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let Ok(read) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in read.flatten() {
+            if out.len() >= limit {
+                return out;
+            }
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path.clone());
+            }
+            out.push(path);
+        }
+    }
+    out
+}
+
+/// #483: whether `path` (a file or a folder) can be opened for deletion
+/// while sharing everything; another handle without delete sharing makes
+/// this fail. Nothing is deleted.
+fn openable_for_delete(path: &Path) -> bool {
+    use std::os::windows::fs::OpenOptionsExt;
+    const DELETE: u32 = 0x0001_0000;
+    const SHARE_ALL: u32 = 0x1 | 0x2 | 0x4;
+    const BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    std::fs::OpenOptions::new()
+        .access_mode(DELETE)
+        .share_mode(SHARE_ALL)
+        .custom_flags(BACKUP_SEMANTICS)
+        .open(path)
+        .is_ok()
+}
+
+/// #483: the processes Restart Manager reports as holding any of `files`
+/// open, as (pid, application name).
+fn file_holders(files: &[PathBuf]) -> Result<Vec<(u32, String)>, u32> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::System::RestartManager::{
+        RmEndSession, RmGetList, RmRegisterResources, RmStartSession, CCH_RM_SESSION_KEY,
+        RM_PROCESS_INFO,
+    };
+    const ERROR_MORE_DATA: u32 = 234;
+    if files.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut session = 0u32;
+    let mut key = [0u16; CCH_RM_SESSION_KEY as usize + 1];
+    // SAFETY: valid out-pointers; the key buffer has room for the key and NUL.
+    let status = unsafe { RmStartSession(&mut session, 0, key.as_mut_ptr()) };
+    if status != 0 {
+        return Err(status);
+    }
+    let wide: Vec<Vec<u16>> = files
+        .iter()
+        .map(|path| path.as_os_str().encode_wide().chain(Some(0)).collect())
+        .collect();
+    let pointers: Vec<*const u16> = wide.iter().map(|name| name.as_ptr()).collect();
+    let result = (|| {
+        // SAFETY: `pointers` holds NUL-terminated names that outlive the call.
+        let status = unsafe {
+            RmRegisterResources(
+                session,
+                pointers.len() as u32,
+                pointers.as_ptr(),
+                0,
+                std::ptr::null(),
+                0,
+                std::ptr::null(),
+            )
+        };
+        if status != 0 {
+            return Err(status);
+        }
+        let mut infos: Vec<RM_PROCESS_INFO> = Vec::new();
+        loop {
+            let mut needed = 0u32;
+            let mut count = infos.len() as u32;
+            let mut reasons = 0u32;
+            // SAFETY: `infos` has room for `count` entries.
+            let status = unsafe {
+                RmGetList(
+                    session,
+                    &mut needed,
+                    &mut count,
+                    infos.as_mut_ptr(),
+                    &mut reasons,
+                )
+            };
+            if status == ERROR_MORE_DATA && needed as usize > infos.len() && needed <= 256 {
+                // SAFETY: RM_PROCESS_INFO is plain data; zeroed is a valid value.
+                infos = vec![unsafe { std::mem::zeroed() }; needed as usize];
+                continue;
+            }
+            if status != 0 {
+                return Err(status);
+            }
+            return Ok(infos[..count as usize]
+                .iter()
+                .map(|info| {
+                    let len = info
+                        .strAppName
+                        .iter()
+                        .position(|&c| c == 0)
+                        .unwrap_or(info.strAppName.len());
+                    (
+                        info.Process.dwProcessId,
+                        String::from_utf16_lossy(&info.strAppName[..len]),
+                    )
+                })
+                .collect());
+        }
+    })();
+    // SAFETY: the session was started above.
+    unsafe { RmEndSession(session) };
+    result
 }
 
 /// Child half of the host-death test: launch, publish the job pids, wait to
@@ -1365,6 +1694,24 @@ impl HttpsFixture {
 
 impl Drop for HttpsFixture {
     fn drop(&mut self) {
+        // #438: when a test fails, the requests the fixture actually received
+        // (host, path and query: fixture values only) tell a navigation that
+        // never reached it from one whose response never came back. Read
+        // without panicking, even from a poisoned lock, while unwinding.
+        if std::thread::panicking() {
+            let hits = self
+                .hits
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
+            let shown = &hits[hits.len().saturating_sub(50)..];
+            eprintln!(
+                "SG108-DIAG fixture requests at failure ({} in all, last {}):\n{}",
+                hits.len(),
+                shown.len(),
+                shown.join("\n")
+            );
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -1835,6 +2182,167 @@ fn br01_a_rerendered_link_is_found_by_its_approved_role_and_name_or_nothing_is_c
     );
 }
 
+/// BR-05: a confirmation a page asks for is dismissed without approval (the
+/// action it guards does not happen), and the host reports it once.
+#[test]
+#[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
+fn br05_a_dialog_is_dismissed_and_reported() {
+    let fixture = HttpsFixture::start();
+    let profile = temp_profile("dialog");
+    let mut launch = spec(&profile, true);
+    launch.destinations =
+        vec![
+            AdmittedDestination::fixture("fixture.test", IpAddr::V4(Ipv4Addr::LOCALHOST))
+                .expect("fixture.test"),
+        ];
+    launch.test_trusted_spki = Some(fixture.spki.clone());
+    let mut worker = launch_worker(&launch, &Policy(PolicyKeyState::Absent)).expect("launch");
+    let scope = crate::observation::ObservationScope {
+        workspace: "workspace".into(),
+        profile_identity: "profile".into(),
+    };
+    worker
+        .navigate("https://fixture.test/dialog-page")
+        .expect("navigate");
+    let live = worker.observe(&scope).expect("observe");
+    let mut stack: Vec<&crate::observation::ObservedNode> = live.observation.nodes.iter().collect();
+    let mut button = None;
+    while let Some(node) = stack.pop() {
+        if worker
+            .host_node(&node.node_id)
+            .is_some_and(|h| h.role == "button" && h.name == "Delete")
+        {
+            button = Some(node.node_id.clone());
+        }
+        stack.extend(node.children.iter());
+    }
+    let button = button.expect("the Delete button is observed");
+    assert!(worker
+        .take_dismissed_dialogs()
+        .expect("dialogs")
+        .dialogs
+        .is_empty());
+    let input = crate::actuation::FormInput::Press {
+        key: "Enter".into(),
+    };
+    let (target, mut approval) = approved_form(&worker, &live, &button, "button", &input);
+    worker
+        .form_action(&target, &mut approval, &input, None, 1, "workspace")
+        .expect("press");
+    assert!(worker
+        .wait_for_text("kept", true, Duration::from_secs(3))
+        .expect("wait"));
+    let seen = worker.take_dismissed_dialogs().expect("dialogs");
+    assert_eq!(seen.dialogs.len(), 1, "{seen:?}");
+    assert_eq!(seen.dialogs[0].kind, DialogKind::Confirm);
+    assert_eq!(seen.dialogs[0].message.untrusted(), "Delete this item?");
+    assert_eq!(
+        seen.dialogs[0].url.untrusted(),
+        "https://fixture.test/dialog-page"
+    );
+    assert!(!seen.dialogs[0].accepted);
+    assert!(!seen.truncated);
+    assert!(
+        worker
+            .take_dismissed_dialogs()
+            .expect("dialogs")
+            .dialogs
+            .is_empty(),
+        "reported once"
+    );
+
+    // The confirm learned above, approved: the same press now answers yes.
+    let confirm = "Delete this item?";
+    let target = crate::actuation::ActuationTarget {
+        state: worker
+            .form_binding(&button, &input, Some(confirm))
+            .unwrap_or_default(),
+        ..target
+    };
+    let mut approval = crate::actuation::ApprovalToken {
+        approval_id: "approval-confirm".into(),
+        target_digest: crate::actuation::target_digest(&target),
+        workspace: "workspace".into(),
+        policy_revision: 1,
+        consumed: false,
+    };
+    // An approval for one confirm text does not cover another.
+    let refused = worker.form_action(
+        &target,
+        &mut approval,
+        &input,
+        Some("Delete everything?"),
+        1,
+        "workspace",
+    );
+    assert!(matches!(refused, Err(HostError::Invalid(_))), "{refused:?}");
+    assert!(!approval.consumed);
+    worker
+        .form_action(
+            &target,
+            &mut approval,
+            &input,
+            Some(confirm),
+            1,
+            "workspace",
+        )
+        .expect("press with the approved confirm");
+    assert!(worker
+        .wait_for_text("deleted", true, Duration::from_secs(3))
+        .expect("wait"));
+    let seen = worker.take_dismissed_dialogs().expect("dialogs");
+    assert_eq!(seen.dialogs.len(), 1, "{seen:?}");
+    assert!(seen.dialogs[0].accepted);
+}
+
+/// BR-05: a page that asks before it is left (beforeunload) does not stop
+/// an approved link activation; the question is reported as accepted.
+#[test]
+#[ignore = "requires the built browser worker and Edge; run by npm run browser-launcher:native"]
+fn br05_beforeunload_does_not_cancel_an_approved_activation() {
+    let fixture = HttpsFixture::start();
+    let profile = temp_profile("leave");
+    let mut launch = spec(&profile, true);
+    launch.destinations =
+        vec![
+            AdmittedDestination::fixture("fixture.test", IpAddr::V4(Ipv4Addr::LOCALHOST))
+                .expect("fixture.test"),
+        ];
+    launch.test_trusted_spki = Some(fixture.spki.clone());
+    let mut worker = launch_worker(&launch, &Policy(PolicyKeyState::Absent)).expect("launch");
+    let scope = crate::observation::ObservationScope {
+        workspace: "workspace".into(),
+        profile_identity: "profile".into(),
+    };
+    worker
+        .navigate("https://fixture.test/leave-page")
+        .expect("navigate");
+    let live = worker.observe(&scope).expect("observe");
+    let mut stack: Vec<&crate::observation::ObservedNode> = live.observation.nodes.iter().collect();
+    let mut link = None;
+    while let Some(node) = stack.pop() {
+        if worker
+            .host_node(&node.node_id)
+            .is_some_and(|h| h.role == "link" && h.name == "Annual review 2026-09-30")
+        {
+            link = Some(node.node_id.clone());
+        }
+        stack.extend(node.children.iter());
+    }
+    let link = link.expect("the link is observed");
+    let (target, mut approval) = approved_click(&worker, &live, &link);
+    let opened = worker
+        .activate(&target, &mut approval, 1, "workspace")
+        .expect("the approved activation leaves the page");
+    assert_eq!(opened.url, "https://fixture.test/archive/2026-09-30");
+    let seen = worker.take_dismissed_dialogs().expect("dialogs");
+    // Exactly the one question the page asked, answered yes: the test fails
+    // if no beforeunload fired (it would then prove nothing).
+    assert_eq!(seen.dialogs.len(), 1, "{seen:?}");
+    assert_eq!(seen.dialogs[0].kind, DialogKind::BeforeUnload);
+    assert!(seen.dialogs[0].accepted);
+}
+
 /// BR-03: a file staged from an approved folder is set on the approved file
 /// input, byte for byte; an approval names the origin and the file, so it
 /// covers no other file, and a text field is not a file input.
@@ -2060,7 +2568,9 @@ fn approved_form(
         document_generation: live.document.document_generation,
         node_id: node_id.to_owned(),
         role: role.into(),
-        state: worker.form_binding(node_id, input).unwrap_or_default(),
+        state: worker
+            .form_binding(node_id, input, None)
+            .unwrap_or_default(),
         action: input.action(),
         workspace: "workspace".into(),
         policy_revision: 1,
@@ -2130,7 +2640,7 @@ fn br02_approved_form_actions_change_only_what_was_approved() {
         input: FormInput,
     ) -> Result<crate::worker_launch::FormOutcome, HostError> {
         let (target, mut approval) = approved_form(worker, live, node, role, &input);
-        worker.form_action(&target, &mut approval, &input, 1, "workspace")
+        worker.form_action(&target, &mut approval, &input, None, 1, "workspace")
     }
     let filled = act(
         &mut worker,
@@ -2181,7 +2691,7 @@ fn br02_approved_form_actions_change_only_what_was_approved() {
     let other = FormInput::Fill {
         value: "Eve".into(),
     };
-    let mismatch = worker.form_action(&target, &mut approval, &other, 1, "workspace");
+    let mismatch = worker.form_action(&target, &mut approval, &other, None, 1, "workspace");
     assert!(
         matches!(mismatch, Err(HostError::Invalid(_))),
         "{mismatch:?}"

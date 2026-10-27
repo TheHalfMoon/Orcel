@@ -43,11 +43,11 @@
         "os_version": { "$ref": "#/$defs/token" },
         "arch": { "type": "string", "enum": ["x86_64", "arm64"] },
         "cpu": {
-          "description": "Short CPU model name, at most 4 words (e.g. Apple M2, AMD Ryzen 9 7950X, Intel i7-1185G7).",
+          "description": "Short CPU model name, at most 4 words (e.g. Apple M2, AMD Ryzen 9 7950X, Intel i7-1185G7); no word may begin with a credential prefix.",
           "type": "string",
           "minLength": 1,
           "maxLength": 64,
-          "pattern": "^(?!(?:[^ ]* ){4})[A-Za-z0-9][A-Za-z0-9 ()@.,_+-]*$"
+          "pattern": "^(?!(?:[^ ]* ){4})(?!(?:.*[^A-Za-z0-9])?(?:sk-|sk_|ghp_|gho_|ghs_|ghu_|github_pat_|xox[a-z]-|AKIA|ASIA))[A-Za-z0-9][A-Za-z0-9 ()@.,_+-]*$"
         },
         "ram_gb": { "type": "number", "minimum": 0 }
       }
@@ -98,11 +98,11 @@
         "tokens_out": { "$ref": "#/$defs/count" },
         "rss_mb_peak": { "type": "number", "minimum": 0 },
         "evidence": {
-          "description": "Repo-relative artifact path (no URL, no leading slash, no dot segments) or numeric CI run id.",
+          "description": "Repo-relative artifact path (no URL, no leading slash, no dot segments, no word in it beginning with a credential prefix) or numeric CI run id.",
           "type": "string",
           "minLength": 1,
           "maxLength": 256,
-          "pattern": "^(?:[0-9]{1,20}|(?!(?:sk-|sk_|ghp_|gho_|ghs_|ghu_|github_pat_|xox[a-z]-|AKIA|ASIA))[A-Za-z0-9_-][A-Za-z0-9._-]*(?:/[A-Za-z0-9_-][A-Za-z0-9._-]*)*)$"
+          "pattern": "^(?:[0-9]{1,20}|(?!(?:.*[^A-Za-z0-9])?(?:sk-|sk_|ghp_|gho_|ghs_|ghu_|github_pat_|xox[a-z]-|AKIA|ASIA))[A-Za-z0-9_-][A-Za-z0-9._-]*(?:/[A-Za-z0-9_-][A-Za-z0-9._-]*)*)$"
         }
       }
     }

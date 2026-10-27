@@ -10,6 +10,7 @@ import { existsSync, writeFileSync } from "node:fs";
 import { chromium, type Locator, type Page } from "playwright-core";
 import { refusedWorkerVariables, startupRefusal } from "./environment.js";
 import { safeText } from "./extract/clean.js";
+import { ENGINE_LAUNCH_TIMEOUT_MS } from "./timeouts.js";
 import { encodeFrame, FETCH_TEXT_MEDIA, FrameDecoder, MAX_EXTRACT_PIECES, MAX_FETCH_TEXT_BYTES, MAX_FRAME_BYTES, MAX_PIECE_BYTES, ProtocolViolation, type ApprovedTarget, type ExecField, type WorkerFrame } from "./protocol.js";
 import { CONTENT_STYLES, EXTRACT_DEFAULTS, extractMarkdown } from "./extract/index.js";
 import type { LayoutSnapshot } from "./extract/model.js";
@@ -26,6 +27,7 @@ import { approvedElement, isOcclusion } from "./actions/targets.js";
 import { formAction } from "./actions/form.js";
 import { waitForText } from "./actions/wait.js";
 import { uploadFile } from "./actions/upload.js";
+import { DialogLog } from "./actions/dialogs.js";
 import { NavigationError, Worker, type EngineSession, type Launcher, type LaunchSpec, type RoutePolicy } from "./worker.js";
 
 const startup = startupRefusal(process.execArgv, process.version);
@@ -61,13 +63,16 @@ const playwrightLauncher: Launcher = {
       handleSIGINT: false,
       handleSIGTERM: false,
       handleSIGHUP: false,
-      timeout: 30_000
+      timeout: ENGINE_LAUNCH_TIMEOUT_MS
     });
     // Each host navigation runs in a fresh page: Chromium can commit an
     // earlier refused navigation's error page late (even more than once),
     // which would interrupt a navigation in the same page. The previous
     // page is closed once the new one has its redirect guard.
     let primary: Page = context.pages()[0] ?? (await context.newPage());
+    // BR-05: every dialog, on every page, is answered as it opens and logged.
+    const dialogs = new DialogLog();
+    dialogs.listen(context);
     const routes = await installRoutes(context, () => primary, policy);
     let closing = false;
     // Each host navigation runs in a fresh page (see above).
@@ -250,6 +255,9 @@ const playwrightLauncher: Launcher = {
           bytes: document.body.length
         };
       },
+      takeDialogs() {
+        return dialogs.take();
+      },
       async upload(ref, path, target) {
         await uploadFile(primary, ref, path, target);
         return { url: primary.url() };
@@ -258,8 +266,13 @@ const playwrightLauncher: Launcher = {
         const met = await waitForText(primary, text, appear, timeoutMs);
         return { url: primary.url(), met };
       },
-      async formAction(ref, act, target) {
-        await formAction(primary, ref, act, target);
+      async formAction(ref, act, target, acceptConfirm) {
+        if (acceptConfirm !== undefined) dialogs.arm(acceptConfirm, primary);
+        try {
+          await formAction(primary, ref, act, target);
+        } finally {
+          dialogs.disarm();
+        }
         return { url: primary.url() };
       },
       async verify(probes) {
@@ -408,7 +421,9 @@ function finish(exitCode: number): void {
   process.stdout.write(Buffer.alloc(0), () => process.exit(exitCode));
 }
 
-const worker = new Worker(playwrightLauncher, send, finish);
+const worker = new Worker(playwrightLauncher, send, finish, (line) => {
+  process.stderr.write(`${line}\n`);
+});
 const decoder = new FrameDecoder();
 
 // A broken pipe in either direction ends the worker; the engine is closed.

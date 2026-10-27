@@ -83,12 +83,29 @@ const credentialShapes = [
 ];
 
 for (const [value, kind] of credentialShapes) {
-  test(`invalid: ${kind} credential shape in planner.model, observed and evidence`, () => {
+  test(`invalid: ${kind} credential shape in planner, observed, every evidence segment and machine.cpu`, () => {
     for (const [field, set] of [
       [/planner\/model: does not match/, (r) => (r.planner.model = value)],
       [/planner\/name: does not match/, (r) => (r.planner.name = value)],
       [/rows\/0\/observed: does not match/, (r) => (r.rows[0].observed = value)],
-      [/rows\/0\/evidence: does not match/, (r) => (r.rows[0].evidence = `${value}/run.json`)]
+      [/rows\/0\/evidence: does not match/, (r) => (r.rows[0].evidence = `${value}/run.json`)],
+      // BM-02 (from the #347 judge): every path segment, not only the first.
+      [/rows\/0\/evidence: does not match/, (r) => (r.rows[0].evidence = `runs/${value}/run.json`)],
+      [/rows\/0\/evidence: does not match/, (r) => (r.rows[0].evidence = `runs/7/${value}`)],
+      // ...and inside a segment, after ".", "_" or "-".
+      [/rows\/0\/evidence: does not match/, (r) => (r.rows[0].evidence = `runs/x.${value}`)],
+      [/rows\/0\/evidence: does not match/, (r) => (r.rows[0].evidence = `runs/_${value}`)],
+      [/rows\/0\/evidence: does not match/, (r) => (r.rows[0].evidence = `runs/x-${value}`)],
+      // ...and machine.cpu, at the start of any word.
+      [/machine\/cpu: does not match/, (r) => (r.machine.cpu = value)],
+      [/machine\/cpu: does not match/, (r) => (r.machine.cpu = `Intel ${value}`)],
+      [/machine\/cpu: does not match/, (r) => (r.machine.cpu = `Intel (${value})`)],
+      [/machine\/cpu: does not match/, (r) => (r.machine.cpu = `Intel@${value}`)],
+      [/machine\/cpu: does not match/, (r) => (r.machine.cpu = `Intel,${value}`)],
+      [/machine\/cpu: does not match/, (r) => (r.machine.cpu = `Intel.${value}`)],
+      [/machine\/cpu: does not match/, (r) => (r.machine.cpu = `Intel+${value}`)],
+      [/machine\/cpu: does not match/, (r) => (r.machine.cpu = `Intel_${value}`)],
+      [/machine\/cpu: does not match/, (r) => (r.machine.cpu = `Intel-${value}`)]
     ]) {
       const report = copy();
       set(report);
@@ -102,7 +119,19 @@ for (const [value, kind] of credentialShapes) {
 }
 
 test("valid: realistic short cpu names, numeric run id and plain model ids", () => {
-  for (const cpu of ["Apple M2", "AMD Ryzen 9 7950X", "Intel i7-1185G7", "Snapdragon X Elite"]) {
+  for (const cpu of [
+    "Apple M2",
+    "Apple M2 Pro",
+    "AMD Ryzen 9 7950X",
+    "AMD EPYC 9654",
+    "Intel i7-1185G7",
+    "Intel Core i9-13900K",
+    "Intel Xeon (R) Gold",
+    "Intel(R) Xeon(R) 8375C",
+    "Qualcomm X1E-80-100",
+    "Snapdragon X Elite",
+    "AWS Graviton3"
+  ]) {
     const report = copy();
     report.machine.cpu = cpu;
     assert.deepEqual(validateReport(report, schema), [], cpu);

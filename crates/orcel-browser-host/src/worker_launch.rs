@@ -39,7 +39,7 @@ pub struct JobProcess {
 /// Generation 2 adds the slice-3a navigation frames, generation 3 slice-3b
 /// observation, generation 4 slice-3c activation, generation 5 slice-3d
 /// downloads.
-pub const WORKER_PROTOCOL_GENERATION: u32 = 13;
+pub const WORKER_PROTOCOL_GENERATION: u32 = 15;
 /// Worker identity reported in its hello.
 pub const WORKER_IDENTITY: &str = "orcel-browser-worker";
 /// The only Node option the worker accepts (inspector activation refused).
@@ -92,6 +92,80 @@ pub struct HostNode {
     pub role: String,
     pub name: String,
     pub url: Option<String>,
+}
+
+/// BR-05: dialogs remembered between two reads, and the longest message
+/// (mirror the worker).
+pub const MAX_DIALOGS: usize = 8;
+pub const MAX_DIALOG_MESSAGE_BYTES: usize = 1024;
+pub const MAX_DIALOG_URL_BYTES: usize = 2048;
+
+/// BR-05: a JavaScript dialog's kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DialogKind {
+    Alert,
+    Confirm,
+    Prompt,
+    BeforeUnload,
+}
+
+/// BR-05: one dialog the engine answered (its URL and message are page
+/// text): dismissed, or `accepted` when it was a beforeunload (leaving was
+/// what the approved step did) or the confirm an approved action named.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DismissedDialog {
+    pub kind: DialogKind,
+    /// The URL of the page that opened it (empty when unknown).
+    pub url: crate::webmcp::PageText,
+    pub message: crate::webmcp::PageText,
+    pub accepted: bool,
+}
+
+/// BR-05: an approved confirm message is bounded, one line, not empty.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn check_confirm(message: Option<&str>) -> Result<(), HostError> {
+    match message {
+        Some(text)
+            if text.is_empty()
+                || text.len() > MAX_DIALOG_MESSAGE_BYTES
+                || text
+                    .chars()
+                    .any(|ch| ch.is_control() || crate::webmcp::is_bidi_or_format(ch)) =>
+        {
+            Err(HostError::Invalid(
+                "an approved confirm message must be bounded and on one line".into(),
+            ))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// The approval state of a form action, with the confirm it may accept.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn form_state(input: &crate::actuation::FormInput, accept_confirm: Option<&str>) -> String {
+    match accept_confirm {
+        Some(message) => format!("{}\naccept-confirm\n{message}", input.state()),
+        None => input.state(),
+    }
+}
+
+/// BR-05: the dialogs dismissed since the last read; `truncated` when more
+/// than `MAX_DIALOGS` were.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DismissedDialogs {
+    pub dialogs: Vec<DismissedDialog>,
+    pub truncated: bool,
+}
+
+/// BR-05: a dismissed dialog on the wire.
+#[cfg(any(windows, test))]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct WireDialog {
+    kind: String,
+    url: String,
+    message: String,
+    accepted: bool,
 }
 
 /// BR-03: one file staged for upload: a host-held copy in this lifetime's
@@ -315,10 +389,18 @@ pub(crate) enum WorkerRequest<'a> {
         checked: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         key: Option<&'a str>,
+        /// BR-05: during this action only, accept (once) a confirm whose
+        /// message is exactly this one.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        accept_confirm: Option<&'a str>,
         #[serde(skip_serializing_if = "Option::is_none")]
         role: Option<&'a str>,
         #[serde(skip_serializing_if = "Option::is_none")]
         name: Option<&'a str>,
+    },
+    /// BR-05: report (and clear) the dialogs dismissed since the last read.
+    Dialogs {
+        dlg_id: u64,
     },
     /// BR-03: set the approved file input to one host-staged file.
     Upload {
@@ -470,6 +552,11 @@ pub(crate) enum WorkerReply {
     Uploaded {
         up_id: u64,
         url: String,
+    },
+    DialogsSeen {
+        dlg_id: u64,
+        dialogs: Vec<WireDialog>,
+        truncated: bool,
     },
     UploadFailed {
         up_id: u64,
@@ -1276,6 +1363,9 @@ mod platform {
         cancelled: Arc<AtomicBool>,
         /// The handshake completed; failures after it end the lifetime.
         handshaken: bool,
+        /// #438 (test builds only): where the worker's stderr is kept.
+        #[cfg(test)]
+        stderr_log: Option<PathBuf>,
         /// The reason the lifetime ended early; every later call returns it.
         failed: Option<UnavailableReason>,
         node: PathBuf,
@@ -1293,6 +1383,10 @@ mod platform {
         next_form: u64,
         next_wait: u64,
         next_staged: u64,
+        next_dialogs: u64,
+        /// BR-05: confirm messages approved actions armed and the worker has
+        /// not yet reported accepting (each may be accepted once).
+        approved_confirms: Vec<String>,
         next_upload_request: u64,
         /// BR-03: files staged for upload in this lifetime, by staged id,
         /// each held open so it cannot be changed or replaced.
@@ -1370,7 +1464,19 @@ mod platform {
         seed_profile_preferences(&spec.profile_dir)?;
         let env = worker_environment(&spec.temp_dir);
         let worker_args = worker_node_args(&spec.worker_main);
-        let (process, pipes) = spawn(&spec.node, &worker_args, &env)?;
+        // #438: test builds keep the worker's stderr; product builds send it
+        // to NUL.
+        #[cfg(test)]
+        let stderr_log = Some(spec.temp_dir.join(format!(
+            "orcel-worker-stderr-{}-{}.log",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |since| since.as_nanos())
+        )));
+        #[cfg(not(test))]
+        let stderr_log: Option<PathBuf> = None;
+        let (process, pipes) = spawn(&spec.node, &worker_args, &env, stderr_log.as_deref())?;
         let (sender, replies) = mpsc::channel();
         let stdout = pipes.stdout;
         std::thread::spawn(move || {
@@ -1396,6 +1502,8 @@ mod platform {
             replies,
             cancelled: Arc::new(AtomicBool::new(false)),
             handshaken: false,
+            #[cfg(test)]
+            stderr_log: stderr_log.clone(),
             failed: None,
             node: spec.node.clone(),
             worker_args,
@@ -1410,6 +1518,8 @@ mod platform {
             next_form: 0,
             next_wait: 0,
             next_staged: 0,
+            next_dialogs: 0,
+            approved_confirms: Vec::new(),
             next_upload_request: 0,
             uploads: std::collections::HashMap::new(),
             value_budget: crate::verify::GuessBudget::default(),
@@ -1562,6 +1672,12 @@ mod platform {
             }
             match self.replies.recv_timeout(timeout) {
                 Ok(ReaderEvent::Frame(WorkerReply::Error { code })) => {
+                    // #438: which failure a typed LaunchFailed came from.
+                    #[cfg(test)]
+                    eprintln!(
+                        "SG108-DIAG worker error frame {code:?} (handshaken: {})",
+                        self.handshaken
+                    );
                     let error = reply_error(&code);
                     Err(match error {
                         HostError::Unavailable(reason) if self.handshaken => {
@@ -1577,7 +1693,13 @@ mod platform {
                     Err(self.fail_closed(UnavailableReason::ProtocolViolation))
                 }
                 Ok(ReaderEvent::Eof) | Err(RecvTimeoutError::Disconnected) => {
-                    let reason = match self.process.wait_exit(Duration::from_secs(2)) {
+                    let exit = self.process.wait_exit(Duration::from_secs(2));
+                    #[cfg(test)]
+                    eprintln!(
+                        "SG108-DIAG worker output ended (exit {exit:?}, handshaken: {})",
+                        self.handshaken
+                    );
+                    let reason = match exit {
                         // Exit code 2 is the runtime refusal, before the
                         // handshake completes.
                         Some(2) if !self.handshaken => UnavailableReason::UnsupportedRuntime,
@@ -1588,15 +1710,60 @@ mod platform {
                     };
                     Err(self.fail_closed(reason))
                 }
-                Err(RecvTimeoutError::Timeout) => Err(self.deadline_passed()),
+                Err(RecvTimeoutError::Timeout) => {
+                    #[cfg(test)]
+                    eprintln!(
+                        "SG108-DIAG host deadline of {timeout:?} passed (handshaken: {})",
+                        self.handshaken
+                    );
+                    Err(self.deadline_passed())
+                }
             }
         }
 
+        /// #438 (test builds only): the last 2 KiB of the worker's stderr,
+        /// control characters other than newlines removed.
+        #[cfg(test)]
+        fn print_stderr_tail(&self) {
+            // One file per lifetime (process id and a nanosecond stamp), so
+            // concurrent tests never read each other's output.
+            let Some(path) = &self.stderr_log else {
+                return;
+            };
+            let bytes = std::fs::read(path).unwrap_or_default();
+            let tail = &bytes[bytes.len().saturating_sub(2048)..];
+            let text: String = String::from_utf8_lossy(tail)
+                .chars()
+                .map(|ch| {
+                    if ch.is_control() && ch != '\n' {
+                        ' '
+                    } else {
+                        ch
+                    }
+                })
+                .collect();
+            eprintln!(
+                "SG108-DIAG worker stderr (last {} bytes):\n{text}",
+                tail.len()
+            );
+        }
+
         fn handshake(&mut self, spec: &WorkerLaunch) -> Result<(), HostError> {
+            #[cfg(test)]
+            let started = Instant::now();
             self.send(&WorkerRequest::Hello {
                 generation: WORKER_PROTOCOL_GENERATION,
             })?;
-            match self.reply(WORKER_HANDSHAKE_TIMEOUT)? {
+            let hello = self.reply(WORKER_HANDSHAKE_TIMEOUT);
+            #[cfg(test)]
+            if let Err(error) = &hello {
+                eprintln!(
+                    "SG108-DIAG hello failed after {:?}: {error:?}",
+                    started.elapsed()
+                );
+                self.print_stderr_tail();
+            }
+            match hello? {
                 WorkerReply::Hello { generation, worker }
                     if generation == WORKER_PROTOCOL_GENERATION && worker == WORKER_IDENTITY => {}
                 _ => return Err(HostError::Unavailable(UnavailableReason::ProtocolViolation)),
@@ -1619,7 +1786,19 @@ mod platform {
                 argv: &argv,
                 env,
             })?;
-            match self.reply(WORKER_LAUNCH_TIMEOUT)? {
+            #[cfg(test)]
+            let launching = Instant::now();
+            let launched = self.reply(WORKER_LAUNCH_TIMEOUT);
+            #[cfg(test)]
+            if let Err(error) = &launched {
+                eprintln!(
+                    "SG108-DIAG engine launch failed after {:?} ({:?} since hello): {error:?}",
+                    launching.elapsed(),
+                    started.elapsed()
+                );
+                self.print_stderr_tail();
+            }
+            match launched? {
                 WorkerReply::Launched {} => {}
                 _ => return Err(HostError::Unavailable(UnavailableReason::ProtocolViolation)),
             }
@@ -1870,12 +2049,17 @@ mod platform {
 
         /// BR-02: the state a form-action approval must name: the action and
         /// its exact input, for an observed node whose role supports it.
+        /// BR-05: with `accept_confirm`, the approval also names the exact
+        /// confirm message the action may answer "yes" to (learned from
+        /// `take_dismissed_dialogs` after a first, dismissed attempt).
         pub fn form_binding(
             &self,
             node_id: &str,
             input: &crate::actuation::FormInput,
+            accept_confirm: Option<&str>,
         ) -> Result<String, HostError> {
             input.check()?;
+            check_confirm(accept_confirm)?;
             let node = self
                 .host_nodes
                 .get(node_id)
@@ -1890,7 +2074,7 @@ mod platform {
             {
                 return Err(HostError::Invalid("password-field filling denied".into()));
             }
-            Ok(input.state())
+            Ok(form_state(input, accept_confirm))
         }
 
         /// BR-02: perform one approved form action (fill a text field,
@@ -1909,11 +2093,13 @@ mod platform {
             target: &crate::actuation::ActuationTarget,
             approval: &mut crate::actuation::ApprovalToken,
             input: &crate::actuation::FormInput,
+            accept_confirm: Option<&str>,
             policy_revision: u64,
             workspace: &str,
         ) -> Result<FormOutcome, HostError> {
             // An ended lifetime refuses before any approval is spent.
             self.ensure_alive()?;
+            check_confirm(accept_confirm)?;
             if target.action != input.action() {
                 return Err(HostError::Invalid(
                     "the approval is for another action".into(),
@@ -1951,7 +2137,7 @@ mod platform {
                 target,
                 approval,
                 generation,
-                &input.state(),
+                &form_state(input, accept_confirm),
                 policy_revision,
                 workspace,
             ) {
@@ -1984,12 +2170,17 @@ mod platform {
                 values,
                 checked,
                 key,
+                accept_confirm,
                 role: named.then_some(target.role.as_str()),
                 name: named.then_some(approved_name.as_str()),
             });
             if let Err(error) = sent {
                 self.policy.finish_activation();
                 return Err(error);
+            }
+            // The worker may now accept this confirm, once.
+            if let Some(message) = accept_confirm {
+                self.approved_confirms.push(message.to_owned());
             }
             let reply = self.reply(WORKER_ACTIVATION_TIMEOUT);
             self.policy.finish_activation();
@@ -2035,6 +2226,92 @@ mod platform {
                 }),
                 // A reply for another request, or of another kind: the
                 // worker may still be acting, so the lifetime ends.
+                _ => Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
+            }
+        }
+
+        /// BR-05: the JavaScript dialogs (alert, confirm, prompt,
+        /// beforeunload) the engine dismissed since the last call. Every
+        /// dialog is dismissed as it opens, without approval; this only
+        /// reports them, so the caller can tell the user a page asked and
+        /// was answered "no". Messages are untrusted page text.
+        pub fn take_dismissed_dialogs(&mut self) -> Result<DismissedDialogs, HostError> {
+            self.ensure_alive()?;
+            self.next_dialogs += 1;
+            let dlg_id = self.next_dialogs;
+            self.send(&WorkerRequest::Dialogs { dlg_id })?;
+            match self.reply(WORKER_REPLY_TIMEOUT)? {
+                WorkerReply::DialogsSeen {
+                    dlg_id: done,
+                    dialogs,
+                    truncated,
+                } if done == dlg_id => {
+                    if dialogs.len() > MAX_DIALOGS {
+                        return Err(self.fail_closed(UnavailableReason::ProtocolViolation));
+                    }
+                    let mut out = Vec::with_capacity(dialogs.len());
+                    for dialog in dialogs {
+                        let kind = match dialog.kind.as_str() {
+                            "alert" => DialogKind::Alert,
+                            "confirm" => DialogKind::Confirm,
+                            "prompt" => DialogKind::Prompt,
+                            "beforeunload" => DialogKind::BeforeUnload,
+                            _ => return Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
+                        };
+                        // Page text, held to the bar every other page text
+                        // meets: bounded, no control, bidi or format
+                        // characters (the worker already removed them).
+                        let unsafe_text = |text: &str, max: usize| {
+                            text.len() > max
+                                || text.chars().any(|ch| {
+                                    ch.is_control() || crate::webmcp::is_bidi_or_format(ch)
+                                })
+                        };
+                        if unsafe_text(&dialog.message, MAX_DIALOG_MESSAGE_BYTES)
+                            || unsafe_text(&dialog.url, MAX_DIALOG_URL_BYTES)
+                        {
+                            return Err(self.fail_closed(UnavailableReason::ProtocolViolation));
+                        }
+                        // An accepted dialog must be one the host allowed: a
+                        // beforeunload, or a confirm an approved action
+                        // armed with exactly this message (once).
+                        if dialog.accepted {
+                            let allowed = match kind {
+                                DialogKind::BeforeUnload => true,
+                                DialogKind::Confirm => match self
+                                    .approved_confirms
+                                    .iter()
+                                    .position(|message| *message == dialog.message)
+                                {
+                                    Some(at) => {
+                                        self.approved_confirms.remove(at);
+                                        true
+                                    }
+                                    None => false,
+                                },
+                                DialogKind::Alert | DialogKind::Prompt => false,
+                            };
+                            if !allowed {
+                                return Err(self.fail_closed(UnavailableReason::ProtocolViolation));
+                            }
+                        }
+                        out.push(DismissedDialog {
+                            kind,
+                            url: crate::webmcp::PageText::from_page(dialog.url),
+                            message: crate::webmcp::PageText::from_page(dialog.message),
+                            accepted: dialog.accepted,
+                        });
+                    }
+                    // Every approved action has finished before this read,
+                    // so any confirm it was approved for has been reported
+                    // by now: an approval not used is dropped, never kept
+                    // for a later report.
+                    self.approved_confirms.clear();
+                    Ok(DismissedDialogs {
+                        dialogs: out,
+                        truncated,
+                    })
+                }
                 _ => Err(self.fail_closed(UnavailableReason::ProtocolViolation)),
             }
         }
@@ -3107,6 +3384,10 @@ mod platform {
             self.uploads.clear();
             let _ = std::fs::remove_dir_all(&self.staging);
             let job_empty = self.process.terminate_and_confirm(WORKER_SHUTDOWN_TIMEOUT);
+            #[cfg(test)]
+            if let Some(path) = self.stderr_log.take() {
+                let _ = std::fs::remove_file(path);
+            }
             let profile_removed = match self.profile.take() {
                 Some(profile) => job_empty && remove_profile(&profile),
                 None => true,
@@ -3182,6 +3463,13 @@ mod fallback {
         }
 
         /// API parity: no worker ever exists off Windows.
+        pub fn take_dismissed_dialogs(&mut self) -> Result<DismissedDialogs, HostError> {
+            Err(HostError::Unavailable(
+                UnavailableReason::UnsupportedRuntime,
+            ))
+        }
+
+        /// API parity: no worker ever exists off Windows.
         pub fn approved_folder_identity(_root: &Path) -> Result<String, HostError> {
             Err(HostError::Unavailable(
                 UnavailableReason::UnsupportedRuntime,
@@ -3242,6 +3530,7 @@ mod fallback {
             &self,
             _node_id: &str,
             _input: &crate::actuation::FormInput,
+            _accept_confirm: Option<&str>,
         ) -> Result<String, HostError> {
             Err(HostError::Unavailable(
                 UnavailableReason::UnsupportedRuntime,
@@ -3254,6 +3543,7 @@ mod fallback {
             _target: &crate::actuation::ActuationTarget,
             _approval: &mut crate::actuation::ApprovalToken,
             _input: &crate::actuation::FormInput,
+            _accept_confirm: Option<&str>,
             _policy_revision: u64,
             _workspace: &str,
         ) -> Result<FormOutcome, HostError> {
@@ -3405,6 +3695,38 @@ mod fallback {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #438: the host waits for the engine launch longer than the worker's
+    /// own Playwright launch timeout (with margin), so a slow cold start is
+    /// reported by the worker, typed, rather than cut off by the host.
+    #[test]
+    fn the_host_launch_deadline_outlasts_the_worker_launch_timeout() {
+        let source = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../apps/orcel-browser-worker/src/timeouts.ts"),
+        )
+        .expect("timeouts.ts");
+        let worker_ms: u64 = source
+            .lines()
+            .find_map(|line| {
+                line.trim()
+                    .strip_prefix("export const ENGINE_LAUNCH_TIMEOUT_MS = ")
+            })
+            .and_then(|value| value.trim_end_matches(';').replace('_', "").parse().ok())
+            .expect("ENGINE_LAUNCH_TIMEOUT_MS");
+        assert!(worker_ms >= 30_000, "{worker_ms}");
+        // ...and the worker's launch really uses it (no literal creeps back).
+        let entry = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../apps/orcel-browser-worker/src/entry.ts"),
+        )
+        .expect("entry.ts");
+        assert!(entry.contains("timeout: ENGINE_LAUNCH_TIMEOUT_MS"));
+        assert!(
+            WORKER_LAUNCH_TIMEOUT >= Duration::from_millis(worker_ms) + Duration::from_secs(5),
+            "host {WORKER_LAUNCH_TIMEOUT:?} vs worker {worker_ms} ms"
+        );
+    }
 
     fn process(pid: u32, image: &str, argv: &[&str]) -> JobProcess {
         JobProcess {
@@ -3997,6 +4319,41 @@ mod tests {
         .is_err());
     }
 
+    /// BR-05: the dialog-report frames, as both sides write them.
+    #[test]
+    fn br05_dialog_frames_are_exact() {
+        assert_eq!(
+            serde_json::to_string(&WorkerRequest::Dialogs { dlg_id: 2 }).unwrap(),
+            r#"{"frame":"dialogs","dlg_id":2}"#
+        );
+        let reply = |text: &str| serde_json::from_str::<WorkerReply>(text);
+        assert_eq!(
+            reply(r#"{"frame":"dialogs_seen","dlg_id":2,"dialogs":[{"kind":"confirm","url":"https://fixture.test/","message":"Delete?","accepted":true}],"truncated":false}"#).unwrap(),
+            WorkerReply::DialogsSeen {
+                dlg_id: 2,
+                dialogs: vec![WireDialog {
+                    kind: "confirm".into(),
+                    url: "https://fixture.test/".into(),
+                    message: "Delete?".into(),
+                    accepted: true
+                }],
+                truncated: false
+            }
+        );
+        assert!(reply(r#"{"frame":"dialogs_seen","dlg_id":2,"dialogs":[{"kind":"confirm","url":"","message":"x","accepted":true,"text":"y"}],"truncated":false}"#).is_err());
+        assert_eq!(
+            form_state(
+                &crate::actuation::FormInput::Hover,
+                Some("Delete this item?")
+            ),
+            "hover\naccept-confirm\nDelete this item?"
+        );
+        assert!(check_confirm(Some("")).is_err());
+        assert!(check_confirm(Some("a\nb")).is_err());
+        assert!(check_confirm(Some(&"x".repeat(MAX_DIALOG_MESSAGE_BYTES + 1))).is_err());
+        assert!(check_confirm(Some("Delete this item?")).is_ok());
+    }
+
     /// BR-03: the upload frames, as both sides write them.
     #[test]
     fn br03_upload_frames_are_exact() {
@@ -4036,6 +4393,7 @@ mod tests {
                 values: None,
                 checked: None,
                 key: None,
+                accept_confirm: None,
                 role: Some("textbox"),
                 name: Some("Name"),
             }),
@@ -4051,6 +4409,7 @@ mod tests {
                 values: Some(&labels),
                 checked: None,
                 key: None,
+                accept_confirm: None,
                 role: None,
                 name: None,
             }),
@@ -4065,6 +4424,7 @@ mod tests {
                 values: None,
                 checked: Some(true),
                 key: None,
+                accept_confirm: None,
                 role: None,
                 name: None,
             }),
@@ -4089,6 +4449,7 @@ mod tests {
                 values: None,
                 checked: None,
                 key: Some("Enter"),
+                accept_confirm: None,
                 role: None,
                 name: None,
             }),
