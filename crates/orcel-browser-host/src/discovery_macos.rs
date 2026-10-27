@@ -46,10 +46,14 @@ pub(super) fn bundle_for_executable(name: &str) -> Option<&'static Bundle> {
     BUNDLES.iter().find(|bundle| bundle.executable == name)
 }
 
-/// The designated requirement a genuine stable-channel bundle satisfies.
+/// The designated requirement a genuine stable-channel bundle satisfies:
+/// Apple's anchor, a Developer ID intermediate and a Developer ID
+/// Application leaf (so the team's development and distribution
+/// certificates do not qualify), the vendor's team and the bundle's
+/// identifier.
 pub(super) fn requirement(bundle: &Bundle) -> String {
     format!(
-        "anchor apple generic and identifier \"{}\" and certificate leaf[subject.OU] = \"{}\"",
+        "anchor apple generic and identifier \"{}\" and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = \"{}\"",
         bundle.identifier, bundle.team
     )
 }
@@ -125,9 +129,11 @@ type SecRequirementRef = *const c_void;
 const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
 /// kSecCSDefaultFlags.
 const K_SEC_CS_DEFAULT_FLAGS: u32 = 0;
-/// kSecCSCheckAllArchitectures | kSecCSStrictValidate: every architecture
-/// slice, and the strict format checks Gatekeeper applies.
-const K_SEC_CS_VALIDITY_FLAGS: u32 = (1 << 0) | (1 << 4);
+/// kSecCSCheckAllArchitectures | kSecCSCheckNestedCode |
+/// kSecCSStrictValidate: every architecture slice, every nested framework
+/// and helper app fully (as `codesign --verify --deep --strict`), and the
+/// strict format checks Gatekeeper applies.
+const K_SEC_CS_VALIDITY_FLAGS: u32 = (1 << 0) | (1 << 3) | (1 << 4);
 
 #[link(name = "CoreFoundation", kind = "framework")]
 extern "C" {
@@ -266,7 +272,7 @@ mod tests {
     fn requirements_pin_anchor_team_and_identifier() {
         assert_eq!(
             requirement(&BUNDLES[0]),
-            "anchor apple generic and identifier \"com.google.Chrome\" and certificate leaf[subject.OU] = \"EQHXZ8M8AV\""
+            "anchor apple generic and identifier \"com.google.Chrome\" and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = \"EQHXZ8M8AV\""
         );
         assert_eq!(
             bundle_for_executable("Microsoft Edge").map(|b| b.team),
@@ -335,5 +341,65 @@ mod tests {
                 "no Chrome or Edge in /Applications on this CI runner"
             );
         }
+    }
+
+    /// A clone of the installed Chrome (an APFS copy-on-write clone, so
+    /// nothing large is written) is refused once a nested framework binary
+    /// changes, or once the bundle is re-signed by anyone else.
+    #[test]
+    fn a_tampered_or_re_signed_chrome_is_refused() {
+        let installed = Path::new("/Applications/Google Chrome.app");
+        if !installed.is_dir() {
+            assert!(
+                std::env::var_os("CI").is_none(),
+                "Chrome is expected on the CI runner"
+            );
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("orcel-xp14-tamper-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let clone = |name: &str| {
+            let app = root.join(name).join("Google Chrome.app");
+            std::fs::create_dir_all(app.parent().unwrap()).unwrap();
+            let status = std::process::Command::new("cp")
+                .args(["-cR"])
+                .arg(installed)
+                .arg(&app)
+                .status()
+                .unwrap();
+            assert!(status.success(), "cp -c failed");
+            app
+        };
+        // The untouched clone still verifies: the check is about content.
+        let pristine = clone("pristine");
+        assert!(check_bundle(&pristine, &BUNDLES[0]).unwrap());
+        // One byte appended to the nested framework's binary.
+        let tampered = clone("tampered");
+        let framework = tampered
+            .join("Contents/Frameworks/Google Chrome Framework.framework/Versions/Current/Google Chrome Framework");
+        assert!(
+            framework.is_file(),
+            "framework binary at {}",
+            framework.display()
+        );
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&framework)
+            .unwrap();
+        std::io::Write::write_all(&mut file, b"\0").unwrap();
+        drop(file);
+        assert!(!check_bundle(&tampered, &BUNDLES[0]).unwrap());
+        // Re-signed ad hoc (not by Google's Developer ID).
+        let resigned = clone("resigned");
+        let status = std::process::Command::new("codesign")
+            .args(["--force", "--deep", "--sign", "-"])
+            .arg(&resigned)
+            .status()
+            .unwrap();
+        assert!(status.success(), "codesign failed");
+        assert!(!check_bundle(&resigned, &BUNDLES[0]).unwrap());
+        eprintln!("XP14-EVIDENCE tampered and re-signed Chrome clones refused");
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

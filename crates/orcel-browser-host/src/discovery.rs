@@ -92,7 +92,8 @@ impl Engine {
     }
 
     /// A10: verify the engine file again, now, exactly as discovery did
-    /// (name, presence, version resource and, on Windows, Authenticode), and
+    /// (name, presence, version and the publisher signature: Authenticode on
+    /// Windows, the bundle's code signature on macOS), and
     /// require the same kind and version. An engine updated or replaced in
     /// place since discovery is refused, so the window and the signature
     /// are checked against the file that is about to run.
@@ -119,8 +120,9 @@ impl Engine {
     }
 
     /// Whether the OS publisher check passed. Always true on Windows
-    /// (WinVerifyTrust is mandatory there); elsewhere the path and
-    /// version checks apply and this reports false.
+    /// (WinVerifyTrust is mandatory there) and on macOS (the bundle's code
+    /// signature must satisfy the vendor's designated requirement); on
+    /// Linux the path and version checks apply and this reports false.
     pub fn publisher_verified(&self) -> bool {
         self.publisher_verified
     }
