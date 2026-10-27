@@ -797,7 +797,12 @@ mod tests {
             );
             return;
         }
-        assert!(verify_publisher(installed).unwrap());
+        let verify = run_package_tool("dpkg", &["--verify", "google-chrome-stable"]);
+        let verdict = verify_publisher(installed);
+        assert!(
+            matches!(verdict, Ok(true)),
+            "{verdict:?}; dpkg --verify google-chrome-stable: {verify:?}"
+        );
         let copy_dir =
             std::env::temp_dir().join(format!("orcel-xp14-linux-{}", std::process::id()));
         std::fs::create_dir_all(&copy_dir).unwrap();
