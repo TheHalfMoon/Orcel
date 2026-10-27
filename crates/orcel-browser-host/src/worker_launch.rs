@@ -1655,6 +1655,12 @@ mod platform {
             }
             match self.replies.recv_timeout(timeout) {
                 Ok(ReaderEvent::Frame(WorkerReply::Error { code })) => {
+                    // #438: which failure a typed LaunchFailed came from.
+                    #[cfg(test)]
+                    eprintln!(
+                        "SG108-DIAG worker error frame {code:?} (handshaken: {})",
+                        self.handshaken
+                    );
                     let error = reply_error(&code);
                     Err(match error {
                         HostError::Unavailable(reason) if self.handshaken => {
@@ -1670,7 +1676,13 @@ mod platform {
                     Err(self.fail_closed(UnavailableReason::ProtocolViolation))
                 }
                 Ok(ReaderEvent::Eof) | Err(RecvTimeoutError::Disconnected) => {
-                    let reason = match self.process.wait_exit(Duration::from_secs(2)) {
+                    let exit = self.process.wait_exit(Duration::from_secs(2));
+                    #[cfg(test)]
+                    eprintln!(
+                        "SG108-DIAG worker output ended (exit {exit:?}, handshaken: {})",
+                        self.handshaken
+                    );
+                    let reason = match exit {
                         // Exit code 2 is the runtime refusal, before the
                         // handshake completes.
                         Some(2) if !self.handshaken => UnavailableReason::UnsupportedRuntime,
@@ -1681,15 +1693,32 @@ mod platform {
                     };
                     Err(self.fail_closed(reason))
                 }
-                Err(RecvTimeoutError::Timeout) => Err(self.deadline_passed()),
+                Err(RecvTimeoutError::Timeout) => {
+                    #[cfg(test)]
+                    eprintln!(
+                        "SG108-DIAG host deadline of {timeout:?} passed (handshaken: {})",
+                        self.handshaken
+                    );
+                    Err(self.deadline_passed())
+                }
             }
         }
 
         fn handshake(&mut self, spec: &WorkerLaunch) -> Result<(), HostError> {
+            #[cfg(test)]
+            let started = Instant::now();
             self.send(&WorkerRequest::Hello {
                 generation: WORKER_PROTOCOL_GENERATION,
             })?;
-            match self.reply(WORKER_HANDSHAKE_TIMEOUT)? {
+            let hello = self.reply(WORKER_HANDSHAKE_TIMEOUT);
+            #[cfg(test)]
+            if let Err(error) = &hello {
+                eprintln!(
+                    "SG108-DIAG hello failed after {:?}: {error:?}",
+                    started.elapsed()
+                );
+            }
+            match hello? {
                 WorkerReply::Hello { generation, worker }
                     if generation == WORKER_PROTOCOL_GENERATION && worker == WORKER_IDENTITY => {}
                 _ => return Err(HostError::Unavailable(UnavailableReason::ProtocolViolation)),
@@ -1712,7 +1741,18 @@ mod platform {
                 argv: &argv,
                 env,
             })?;
-            match self.reply(WORKER_LAUNCH_TIMEOUT)? {
+            #[cfg(test)]
+            let launching = Instant::now();
+            let launched = self.reply(WORKER_LAUNCH_TIMEOUT);
+            #[cfg(test)]
+            if let Err(error) = &launched {
+                eprintln!(
+                    "SG108-DIAG engine launch failed after {:?} ({:?} since hello): {error:?}",
+                    launching.elapsed(),
+                    started.elapsed()
+                );
+            }
+            match launched? {
                 WorkerReply::Launched {} => {}
                 _ => return Err(HostError::Unavailable(UnavailableReason::ProtocolViolation)),
             }
