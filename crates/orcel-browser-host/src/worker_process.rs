@@ -464,12 +464,16 @@ impl WorkerProcess {
         std::sync::Arc::downgrade(&self.job)
     }
 
-    /// Terminate the whole job and wait until no process remains: the job's
-    /// active count is zero *and* every process that was a member when
-    /// termination began has fully exited (its process object signaled, so
-    /// its handles, profile files included, are closed). #483: Edge's main
-    /// process can leave the active count seconds before it releases its
-    /// profile databases, so the count alone let the profile removal race it.
+    /// Terminate the whole job and wait until no process remains; true when
+    /// the job's active count reached zero in time (containment). #483:
+    /// Edge's main process can leave that count seconds before it releases
+    /// its profile databases, so the profile removal that follows raced it.
+    /// Within the same deadline, this also waits (best effort) for every
+    /// process that was a member when termination began to have fully
+    /// exited (its process object signaled, its handles closed). A member
+    /// still releasing its files at the deadline does not change the
+    /// containment answer; it shows up, accurately, as a profile that could
+    /// not be removed.
     pub(crate) fn terminate_and_confirm(&self, timeout: Duration) -> bool {
         // Pinned before termination: a synchronize handle keeps each member's
         // pid from being reused, and only processes confirmed to be in this
@@ -501,13 +505,16 @@ impl WorkerProcess {
             }
             std::thread::sleep(Duration::from_millis(50));
         }
-        members.iter().all(|member| {
+        for member in &members {
             let left = deadline.saturating_duration_since(Instant::now());
-            let millis = u32::try_from(left.as_millis()).unwrap_or(u32::MAX);
+            // Never INFINITE (u32::MAX): clamped one below it.
+            let millis = u32::try_from(left.as_millis())
+                .unwrap_or(u32::MAX)
+                .min(u32::MAX - 1);
             // SAFETY: a valid process handle; bounded wait.
-            let waited = unsafe { WaitForSingleObject(member.raw(), millis) };
-            waited == WAIT_OBJECT_0
-        })
+            unsafe { WaitForSingleObject(member.raw(), millis) };
+        }
+        true
     }
 
     /// Test-only: put another process into the worker's job.
