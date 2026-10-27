@@ -5,7 +5,7 @@ import { validLaunch } from "./fixtures.js";
 import { encodeFrame, type WorkerFrame } from "./protocol.js";
 import type { VerifyProbe, VerifyResult } from "./verify.js";
 import type { FormAction } from "./actions/form.js";
-import { NavigationError, Worker, type EngineSession, type Launcher, type LaunchSpec, type RoutePolicy } from "./worker.js";
+import { NavigationError, Worker, type EngineSession, type Launcher, type LaunchSpec, type RoutePolicy, describeLaunchError } from "./worker.js";
 
 class FakeEngine implements EngineSession {
   closed = 0;
@@ -207,6 +207,30 @@ test("launch failure, engine exit, violations and end of input all close the eng
     await worker.receive(validLaunch());
     assert.deepEqual(sent.at(-1), { frame: "error", code: "launch_failed" });
     assert.deepEqual(exits, [1]);
+  }
+  {
+    // #438: the reason reaches the diagnostic sink, bounded, one line.
+    const lines: string[] = [];
+    const worker = new Worker(
+      { launch: async () => { throw Object.assign(new Error("browserType.launch: Timeout 30000ms exceeded.\n=== logs ===\nsecret-ish detail"), { name: "TimeoutError" }); } },
+      () => {},
+      () => {},
+      (line) => lines.push(line)
+    );
+    await worker.receive({ frame: "hello", generation: 15 });
+    await worker.receive(validLaunch());
+    assert.deepEqual(lines, ["orcel-browser-worker: launch failed: TimeoutError: browserType.launch: Timeout 30000ms exceeded."]);
+    assert.equal(Array.from(describeLaunchError("x".repeat(2000))).length, 1025);
+    assert.equal(describeLaunchError(new Error("a\u0007b")), "Error: a b");
+    // C1, DEL, line separators and bidi controls are removed too.
+    assert.equal(describeLaunchError(new Error("a\u0085b\u007fc\u2028d\u202ee")), "Error: a b c d e");
+    // A thrown value that cannot be printed never breaks the typed failure.
+    assert.equal(describeLaunchError(Object.create(null)), "unprintable");
+    assert.equal(describeLaunchError(42), "number: 42");
+    // The bound counts code points, never splitting a surrogate pair.
+    const long = describeLaunchError("\u{1F600}".repeat(2000));
+    assert.equal(Array.from(long).length, 1025);
+    assert.ok(!/[\ud800-\udfff](?![\udc00-\udfff])/.test(long.replace(/[\ud800-\udbff][\udc00-\udfff]/g, "")));
   }
   {
     const engine = new FakeEngine();

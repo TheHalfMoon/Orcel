@@ -30,7 +30,7 @@ use windows_sys::Win32::Foundation::{
 };
 use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
 use windows_sys::Win32::Storage::FileSystem::{
-    CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    CreateFileW, CREATE_ALWAYS, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
 };
 use windows_sys::Win32::System::JobObjects::{
     JobObjectBasicAccountingInformation, JobObjectBasicProcessIdList, QueryInformationJobObject,
@@ -239,17 +239,47 @@ fn null_output() -> Result<OwnedHandle, HostError> {
     OwnedHandle::new(handle).ok_or_else(|| platform_error("CreateFileW(NUL)"))
 }
 
+/// #438 (test builds only): the worker's stderr into a new file, so a
+/// failed launch's reason can be read back.
+fn file_output(path: &Path) -> Result<OwnedHandle, HostError> {
+    let attributes = inheritable();
+    let name = wide(path.as_os_str());
+    // SAFETY: NUL-terminated name and valid attributes for the call.
+    let handle = unsafe {
+        CreateFileW(
+            name.as_ptr(),
+            GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            &attributes,
+            CREATE_ALWAYS,
+            0,
+            0,
+        )
+    };
+    OwnedHandle::new(handle).ok_or_else(|| platform_error("CreateFileW(stderr log)"))
+}
+
 /// Start `program args…` suspended in a fresh job with exactly the stdio
-/// handles inherited and the given environment, then resume it.
+/// handles inherited and the given environment, then resume it. Stderr goes
+/// to `NUL`, or (test builds only, #438) to `stderr_log`.
 pub(crate) fn spawn(
     program: &Path,
     args: &[String],
     env: &CleanEnv,
+    stderr_log: Option<&Path>,
 ) -> Result<(WorkerProcess, WorkerPipes), HostError> {
     let job = Job::create()?;
     let (child_stdin, host_stdin) = pipe(true)?;
     let (child_stdout, host_stdout) = pipe(false)?;
-    let child_stderr = null_output()?;
+    let child_stderr = match stderr_log {
+        // Best effort: a log that cannot be created (held by a scanner, say)
+        // falls back to NUL rather than failing the launch.
+        Some(path) => match file_output(path) {
+            Ok(handle) => handle,
+            Err(_) => null_output()?,
+        },
+        None => null_output()?,
+    };
     let inherited = [child_stdin.raw(), child_stdout.raw(), child_stderr.raw()];
     let mut attributes = AttributeList::handle_list(&inherited)?;
 

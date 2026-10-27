@@ -420,7 +420,9 @@ function finish(exitCode: number): void {
   process.stdout.write(Buffer.alloc(0), () => process.exit(exitCode));
 }
 
-const worker = new Worker(playwrightLauncher, send, finish);
+const worker = new Worker(playwrightLauncher, send, finish, (line) => {
+  process.stderr.write(`${line}\n`);
+});
 const decoder = new FrameDecoder();
 
 // A broken pipe in either direction ends the worker; the engine is closed.
