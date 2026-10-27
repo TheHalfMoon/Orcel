@@ -917,8 +917,17 @@ fn diagnose_locked(profile: &Path) {
     // #483: who each holder is: inside a job or not, its parent, its role
     // and age (never its whole command line, which may be a user's own
     // browser).
+    // The profile folder is created just before the launch: its creation
+    // time is the lifetime's start.
+    let lifetime_start = std::fs::metadata(profile)
+        .and_then(|metadata| metadata.created())
+        .ok()
+        .and_then(filetime_ticks);
     for (pid, _) in holders.iter().flatten() {
-        eprintln!("SG108-DIAG holder {pid}: {}", describe_holder(*pid));
+        eprintln!(
+            "SG108-DIAG holder {pid}: {}",
+            describe_holder(*pid, lifetime_start)
+        );
     }
     while profile.exists() && started.elapsed() < Duration::from_secs(90) {
         let _ = std::fs::remove_dir_all(profile);
@@ -961,13 +970,19 @@ fn cleanup_diagnostics_name_a_handle_that_blocks_deletion() {
         holders.iter().any(|(pid, _)| *pid == std::process::id()),
         "{holders:?}"
     );
-    // #483: the holder description is filled in (this process: a parent,
-    // a job answer and an age).
-    let described = describe_holder(std::process::id());
+    // #483: the holder description is filled in. This process was created
+    // before the test folder, so its offset is negative; it has ancestors
+    // (cargo at least) and a job answer.
+    let start = std::fs::metadata(&dir)
+        .and_then(|metadata| metadata.created())
+        .ok()
+        .and_then(filetime_ticks);
+    assert!(start.is_some());
+    let described = describe_holder(std::process::id(), start);
     assert!(
-        described.contains("parent Some(")
-            && described.contains("in a job: Some(")
-            && described.contains("started Some("),
+        described.contains("created Some(\"-")
+            && described.contains("ancestors [\"")
+            && described.contains("in a job: Some("),
         "{described}"
     );
     drop(handle);
@@ -975,18 +990,54 @@ fn cleanup_diagnostics_name_a_handle_that_blocks_deletion() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// #483: a holder process's parent (pid and image name), whether it runs
-/// inside any job object, its Chromium `--type=` role if any, and how long
-/// ago it started. Nothing else from its command line is shown.
-fn describe_holder(pid: u32) -> String {
-    use windows_sys::Win32::Foundation::{BOOL, FILETIME};
+/// #483: a process's creation time in FILETIME ticks (100 ns since 1601).
+fn process_created(pid: u32) -> Option<u64> {
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::System::Threading::GetProcessTimes;
+    // SAFETY: plain open with query-only rights, closed by the guard.
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    let handle = crate::supervise::platform::OwnedHandle::new(handle)?;
+    let zero = FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0,
+    };
+    let (mut created, mut exited, mut kernel, mut user) = (zero, zero, zero, zero);
+    // SAFETY: valid handle and out-pointers.
+    let timed = unsafe {
+        GetProcessTimes(
+            handle.raw(),
+            &mut created,
+            &mut exited,
+            &mut kernel,
+            &mut user,
+        )
+    } != 0;
+    timed.then(|| (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime))
+}
+
+/// #483: a `SystemTime` in FILETIME ticks.
+fn filetime_ticks(time: std::time::SystemTime) -> Option<u64> {
+    // Seconds from 1601-01-01 to 1970-01-01.
+    const EPOCH_GAP_SECS: u64 = 11_644_473_600;
+    let since = time.duration_since(std::time::UNIX_EPOCH).ok()?;
+    Some((since.as_secs() + EPOCH_GAP_SECS) * 10_000_000 + u64::from(since.subsec_nanos()) / 100)
+}
+
+/// #483: who a holder process is, against the lifetime that owned the
+/// profile (`lifetime_start`, the profile folder's creation, in FILETIME
+/// ticks): when it was created relative to that start (before means it
+/// cannot be this lifetime's engine; after means this lifetime started it
+/// somewhere outside the job), its ancestors (image names; a parent counts
+/// only if it is older than its child, since pids are reused), whether it
+/// runs inside any job object, and its Chromium `--type=` role. Nothing else
+/// from its command line is shown.
+fn describe_holder(pid: u32, lifetime_start: Option<u64>) -> String {
+    use windows_sys::Win32::Foundation::BOOL;
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
         TH32CS_SNAPPROCESS,
     };
     use windows_sys::Win32::System::JobObjects::IsProcessInJob;
-    use windows_sys::Win32::System::SystemInformation::GetSystemTimeAsFileTime;
-    use windows_sys::Win32::System::Threading::GetProcessTimes;
     let name_of = |entry: &PROCESSENTRY32W| {
         let len = entry
             .szExeFile
@@ -1014,16 +1065,31 @@ fn describe_holder(pid: u32) -> String {
             more = unsafe { Process32NextW(snapshot.raw(), &mut entry) } != 0;
         }
     }
-    let parent = entries
-        .iter()
-        .find(|(id, _, _)| *id == pid)
-        .map(|(_, parent, _)| *parent);
-    let parent_name = parent.and_then(|parent| {
-        entries
-            .iter()
-            .find(|(id, _, _)| *id == parent)
-            .map(|(_, _, name)| name.clone())
+    let created = process_created(pid);
+    let offset = created.zip(lifetime_start).map(|(created, start)| {
+        let millis = (created as i128 - start as i128) / 10_000;
+        format!("{millis:+} ms")
     });
+    // Ancestors, nearest first, up to six; a parent must predate its child.
+    let mut ancestors = Vec::new();
+    let (mut child, mut child_created) = (pid, created);
+    for _ in 0..6 {
+        let Some(&(_, parent, _)) = entries.iter().find(|(id, _, _)| *id == child) else {
+            break;
+        };
+        let Some((_, _, name)) = entries.iter().find(|(id, _, _)| *id == parent) else {
+            break;
+        };
+        let parent_created = process_created(parent);
+        if let (Some(parent_at), Some(child_at)) = (parent_created, child_created) {
+            if parent_at > child_at {
+                break;
+            }
+        }
+        ancestors.push(format!("{name}({parent})"));
+        child = parent;
+        child_created = parent_created;
+    }
     let role = crate::worker_process::inspect(pid)
         .ok()
         .flatten()
@@ -1035,46 +1101,13 @@ fn describe_holder(pid: u32) -> String {
         });
     // SAFETY: plain open with query-only rights, closed by the guard.
     let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
-    let (in_job, age) = match crate::supervise::platform::OwnedHandle::new(handle) {
-        Some(handle) => {
-            let mut in_job: BOOL = 0;
-            // SAFETY: valid handle; a null job asks about any job.
-            let in_job = (unsafe { IsProcessInJob(handle.raw(), 0, &mut in_job) } != 0)
-                .then_some(in_job != 0);
-            let zero = FILETIME {
-                dwLowDateTime: 0,
-                dwHighDateTime: 0,
-            };
-            let (mut created, mut exited, mut kernel, mut user) = (zero, zero, zero, zero);
-            let mut now = zero;
-            // SAFETY: valid handle and out-pointers.
-            let timed = unsafe {
-                GetProcessTimes(
-                    handle.raw(),
-                    &mut created,
-                    &mut exited,
-                    &mut kernel,
-                    &mut user,
-                )
-            } != 0;
-            // SAFETY: out-pointer.
-            unsafe { GetSystemTimeAsFileTime(&mut now) };
-            let ticks = |time: FILETIME| {
-                (u64::from(time.dwHighDateTime) << 32) | u64::from(time.dwLowDateTime)
-            };
-            let age = timed.then(|| {
-                Duration::from_nanos(
-                    ticks(now)
-                        .saturating_sub(ticks(created))
-                        .saturating_mul(100),
-                )
-            });
-            (in_job, age)
-        }
-        None => (None, None),
-    };
+    let in_job = crate::supervise::platform::OwnedHandle::new(handle).and_then(|handle| {
+        let mut in_job: BOOL = 0;
+        // SAFETY: valid handle; a null job asks about any job.
+        (unsafe { IsProcessInJob(handle.raw(), 0, &mut in_job) } != 0).then_some(in_job != 0)
+    });
     format!(
-        "parent {parent:?} ({parent_name:?}), in a job: {in_job:?}, role: {role:?}, started {age:?} ago"
+        "created {offset:?} relative to the lifetime's start, ancestors {ancestors:?}, in a job: {in_job:?}, role: {role:?}"
     )
 }
 
