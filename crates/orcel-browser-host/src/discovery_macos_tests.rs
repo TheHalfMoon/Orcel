@@ -153,6 +153,15 @@ fn a_tampered_or_re_signed_chrome_is_refused() {
     assert!(!check_bundle(&tampered, &BUNDLES[0]).unwrap());
     // Re-signed ad hoc (not by Google's Developer ID).
     let resigned = clone("resigned");
+    // codesign refuses a bundle carrying extended attributes ("resource
+    // fork, Finder information, or similar detritus"); the clone's are
+    // cleared first (the clone only, never the installed app).
+    let cleared = std::process::Command::new("xattr")
+        .arg("-cr")
+        .arg(&resigned)
+        .status()
+        .unwrap();
+    assert!(cleared.success(), "xattr -cr failed");
     // Only the outer signature is replaced: the bundle is then signed by
     // no Developer ID at all, whatever its nested code carries.
     let output = std::process::Command::new("codesign")
