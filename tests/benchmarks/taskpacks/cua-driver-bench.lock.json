@@ -8,7 +8,8 @@
     "license_file": "LICENSE",
     "authorization": "FD-04 (docs/orcel/grants/2026-10-18-founder-attestation.md)",
     "url": "https://github.com/trycua/cua.git",
-    "license_path": "benchmarks/cua-driver-bench/LICENSE"
+    "license_path": "benchmarks/cua-driver-bench/LICENSE",
+    "tree": "72a1d950e96081faa877003265d018224553ff44"
   },
   "method": "PINNED (fetched at test time from the donor commit and verified file by file; nothing is copied into Orcel)",
   "files": [

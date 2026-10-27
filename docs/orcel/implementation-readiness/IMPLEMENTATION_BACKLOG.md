@@ -34,7 +34,7 @@ Gates every task inherits:
 | [XP-11](#xp-11) | X3 | BLOCKED_ON_DEPENDENCY | WRAP | Semantic actions on macOS and Linux (invoke, set_value, select, toggle, scroll) | XP-06, XP-08, XP-09, XP-10 | 5-7 | SG-000113 |
 | [XP-12](#xp-12) | X3 | BLOCKED_ON_DEPENDENCY | WRAP | Bounded raw input on macOS and Linux, background delivery, GNOME/KDE Wayland enablement | XP-11 | 6-9 | SG-000113 |
 | [XP-13](#xp-13) | X4 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Process confinement on Linux and macOS: contained tier from Cua, Safe registered-exec parity | XP-03 | 4-7 | SG-000114 |
-| [XP-14](#xp-14) | X4 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Browser host on macOS and Linux: discovery, verification, confinement, supervision | XP-03, SG-000108-CLOSE | 6-9 | SG-000115 |
+| [XP-14](#xp-14) | X4 | READY | COPY_ADAPT | Browser host on macOS and Linux: discovery, verification, confinement, supervision | XP-03, SG-000108-CLOSE | 6-9 | SG-000115 |
 | [XP-15](#xp-15) | X0 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Clipboard provider on macOS and Linux | XP-02 | 1-2 | SG-000114 |
 | [XP-16](#xp-16) | X5 | FOUNDER_DECISION_REQUIRED | COPY_ADAPT | macOS packaging: signed app bundles, LaunchAgent, TCC identity | XP-05, FD-05 | 4-6 | SG-000116 |
 | [XP-17](#xp-17) | X5 | BLOCKED_ON_DEPENDENCY | BUILD_NEW | Linux packaging: XDG layout, systemd user unit, deb/rpm/tarball, polkit action | XP-01 | 4-6 | SG-000116 |
@@ -45,10 +45,10 @@ Gates every task inherits:
 | [CR-02](#cr-02) | X1 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Adopt the AgentKit protocol and headless client for the Control Room event stream | CR-01 | 3-4 | SG-000118 |
 | [CR-03](#cr-03) | X1 | FOUNDER_DECISION_REQUIRED | COPY_ADAPT | Tauri 2 Control Room skeleton (read-only) on three OSes | CR-02, FD-03 | 5-8 | SG-000119 |
 | [CR-04](#cr-04) | X6 | BLOCKED_ON_DEPENDENCY | BUILD_NEW | Control Room parity gate and WPF retirement decision | CR-03 | 2-3 | - |
-| [RJ-01](#rj-01) | X2 | BLOCKED_ON_DEPENDENCY | BUILD_NEW | Extract the kernel journal crate from the SG-000108 intent journal (no behavior change) | SG-000108-CLOSE | 2-3 | SG-000120 |
+| [RJ-01](#rj-01) | X2 | READY | BUILD_NEW | Extract the kernel journal crate from the SG-000108 intent journal (no behavior change) | SG-000108-CLOSE | 2-3 | SG-000120 |
 | [RJ-02](#rj-02) | X3 | BLOCKED_ON_DEPENDENCY | BUILD_NEW | Journal every mutating dispatch and add per-provider reconciliation | RJ-01 | 6-9 | SG-000120 |
 | [RJ-03](#rj-03) | X3 | BLOCKED_ON_DEPENDENCY | PORT | Resume summary for external clients after reconnect | RJ-02 | 2-3 | SG-000120 |
-| [BR-01](#br-01) | B1 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Stale-reference recovery through normalized locators under a host identity check | SG-000108-CLOSE | 2-3 | SG-000121 |
+| [BR-01](#br-01) | B1 | READY | COPY_ADAPT | Stale-reference recovery through normalized locators under a host identity check | SG-000108-CLOSE | 2-3 | SG-000121 |
 | [BR-02](#br-02) | B1 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Typed browser actuation vocabulary from the Playwright tools backend | BR-01 | 5-7 | SG-000121 |
 | [BR-03](#br-03) | B2 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Uploads through a host-staged, separately approved grant | BR-02 | 3-4 | SG-000122 |
 | [BR-04](#br-04) | B2 | BLOCKED_ON_DEPENDENCY | PORT | Interactivity and occlusion heuristics in observation | BR-01 | 3-4 | SG-000121 |
@@ -56,9 +56,9 @@ Gates every task inherits:
 | [BR-06](#br-06) | B3 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Cross-frame observation (iframes and out-of-process iframes) | BR-01 | 4-5 | SG-000122 |
 | [BR-07](#br-07) | B1 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Independent postcondition verifier for browser steps | BR-01, RJ-01 | 3-4 | SG-000121 |
 | [BR-08](#br-08) | B3 | FOUNDER_DECISION_REQUIRED | COPY_ADAPT | Native WebMCP over the CDP WebMCP domain | BR-02, FD-08 | 4-6 | SG-000123 |
-| [WI-01](#wi-01) | B2 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Crawl scope from Firecrawl: regex include/exclude, canonical URLs, sitemap depth guard | SG-000108-CLOSE | 3-4 | SG-000102 |
+| [WI-01](#wi-01) | B2 | READY | COPY_ADAPT | Crawl scope from Firecrawl: regex include/exclude, canonical URLs, sitemap depth guard | SG-000108-CLOSE | 3-4 | SG-000102 |
 | [WI-02](#wi-02) | B2 | BLOCKED_ON_DEPENDENCY | PORT | Map with a search term: local ranking | WI-01 | 1-2 | SG-000102 |
-| [WI-03](#wi-03) | B2 | BLOCKED_ON_DEPENDENCY | PORT | Relevance filters for extraction (BM25 and pruning) | SG-000108-CLOSE | 2-3 | SG-000101 |
+| [WI-03](#wi-03) | B2 | READY | PORT | Relevance filters for extraction (BM25 and pruning) | SG-000108-CLOSE | 2-3 | SG-000101 |
 | [WI-04](#wi-04) | B3 | BLOCKED_ON_DEPENDENCY | PORT | Change tracking between extractions | WI-01 | 2 | SG-000102 |
 | [WI-05](#wi-05) | B3 | BLOCKED_ON_DEPENDENCY | COPY_ADAPT | Confined document parser for downloaded PDF and Office files | XP-13 | 2-3 | SG-000102 |
 | [WI-06](#wi-06) | B3 | BLOCKED_ON_DEPENDENCY | PORT | Optional search adapters behind the capability router | XP-19 | 3-4 | SG-000103 |
@@ -86,7 +86,7 @@ Gates every task inherits:
 
 ## External dependencies
 
-- **SG-000108-CLOSE**: SG-000108 (Opus's active browser grain, PR #336 open and currently conflicting with main) closes canonically. Browser, journal and web tasks that touch the same files wait for it to avoid conflicts with active work.
+- **SG-000108-CLOSE**: SG-000108 (the browser grain) closes canonically. Browser, journal and web tasks that touch the same files waited for it to avoid conflicts with active work. Satisfied 2026-10-23: closeout #439 (eebbe11), tracking #290 closed.
 
 ## Task cards
 
@@ -598,7 +598,7 @@ Gates every task inherits:
 
 ### XP-14
 
-**Browser host on macOS and Linux: discovery, verification, confinement, supervision** · phase X4 · BLOCKED_ON_DEPENDENCY · estimate 6-9 days (ESTIMATE) · proposed grain SG-000115
+**Browser host on macOS and Linux: discovery, verification, confinement, supervision** · phase X4 · READY · estimate 6-9 days (ESTIMATE) · proposed grain SG-000115
 
 - **Objective.** Port SG-000074..79/108 host guarantees to macOS and Linux: find and verify an installed Chrome/Edge, launch it over the pipe with host-built argv, confine its network, supervise and sweep its process tree and profile.
 - **User-visible capability.** Browser tools work on macOS and Linux with the same policies.
@@ -709,15 +709,15 @@ Gates every task inherits:
 - **Existing Orcel implementation.** `crates/orcel-lifecycle (Windows-only layout)`
 - **Donor.** cua@a802eaf26ca97616a6bf0de6a29729a9346fbb1f · method BUILD_NEW
 - **Donor files.** `apps/cua-spaces-desktop/packaging/ai.cua.spaces.policy (polkit action template)`; `libs/images/omarchy/files/systemd-user/cua-driver.service (systemd user unit, REFERENCE)`
-- **Create.** `crates/orcel-lifecycle/src/linux.rs`; `distribution/linux/orceld.service`; `distribution/linux/ai.orcel.approve.policy`; `distribution/linux/nfpm.yaml`
+- **Create.** `crates/orcel-lifecycle/src/linux.rs`; `distribution/linux/orceld.socket`; `distribution/linux/orceld@.service`; `distribution/linux/ai.orcel.approve.policy`; `distribution/linux/nfpm.yaml`
 - **Change.** `crates/orcel-lifecycle/src/layout.rs`; `.github/workflows/release.yml`
 - **Dependencies to admit.** nfpm (MIT) as a build tool only.
-- **Interface.** orcel install/update/rollback/doctor on Linux
+- **Interface.** systemctl --user enable --now orceld.socket (deb, rpm or tarball); orcel install/update/rollback/doctor stay Windows-only, and off Windows the CLI refuses them before touching the state root (#369, #382)
 - **Platforms.** linux: new
-- **Security and authority.** Only the polkit action requires root install; documented. Authority delta: none.
+- **Security and authority.** The deb/rpm need root to install, like any system package; they carry no maintainer script, setuid bit, system unit or listener. The tarball needs no root, but its STRONG approvals need the polkit action copied to /usr/share/polkit-1/actions by an administrator and fail closed until then. Authority delta: none.
 - **Steps.**
   1. Tarball install under ~/.local/share/orcel with systemd --user unit.
-  2. deb/rpm only for the polkit action file (system path) and optional desktop entry; core stays per-user.
+  2. deb/rpm install root-owned, read-only binaries under /usr/lib/orcel (orceld, orcel-contain and its pin, the XP-10 approval helper), the polkit action and the user units; every location the user writes stays per-user (reconciled in #369: a per-user-only core would leave the binaries user-writable, which the pinned-helper rules of XP-06, XP-10 and XP-13b refuse).
   3. Signed checksums like the Windows release.
   4. Ship the GNOME Shell identity extension (from XP-12) as an optional component that the user enables explicitly; doctor reports whether it is active.
   5. Include the apps/orcel-contain helper (XP-13) in the payload at a pinned path.
@@ -973,7 +973,7 @@ Gates every task inherits:
 
 ### RJ-01
 
-**Extract the kernel journal crate from the SG-000108 intent journal (no behavior change)** · phase X2 · BLOCKED_ON_DEPENDENCY · estimate 2-3 days (ESTIMATE) · proposed grain SG-000120
+**Extract the kernel journal crate from the SG-000108 intent journal (no behavior change)** · phase X2 · READY · estimate 2-3 days (ESTIMATE) · proposed grain SG-000120
 
 - **Objective.** Move the download intent journal (pending/settled/abandoned/reconciled, one writer, durable append) out of crates/orceld/src/live_browser.rs into crates/orcel-journal so every provider can use it.
 - **User-visible capability.** None.
@@ -1075,7 +1075,7 @@ Gates every task inherits:
 
 ### BR-01
 
-**Stale-reference recovery through normalized locators under a host identity check** · phase B1 · BLOCKED_ON_DEPENDENCY · estimate 2-3 days (ESTIMATE) · proposed grain SG-000121
+**Stale-reference recovery through normalized locators under a host identity check** · phase B1 · READY · estimate 2-3 days (ESTIMATE) · proposed grain SG-000121
 
 - **Objective.** When an approved aria ref goes stale after a benign re-render, re-resolve it through Playwright's normalized locator and act only if role, accessible name and frame match the approved target; otherwise return TargetStale.
 - **User-visible capability.** Fewer 'target stale' failures on dynamic sites without acting on the wrong element.
@@ -1335,7 +1335,7 @@ Gates every task inherits:
 
 ### WI-01
 
-**Crawl scope from Firecrawl: regex include/exclude, canonical URLs, sitemap depth guard** · phase B2 · BLOCKED_ON_DEPENDENCY · estimate 3-4 days (ESTIMATE) · proposed grain SG-000102
+**Crawl scope from Firecrawl: regex include/exclude, canonical URLs, sitemap depth guard** · phase B2 · READY · estimate 3-4 days (ESTIMATE) · proposed grain SG-000102
 
 - **Objective.** Replace the prefix-only include/exclude of crawl.rs with Firecrawl's tested filter semantics under strict regex limits, keeping every existing crawl test green.
 - **User-visible capability.** Crawl and map honor patterns users already know from Firecrawl.
@@ -1401,7 +1401,7 @@ Gates every task inherits:
 
 ### WI-03
 
-**Relevance filters for extraction (BM25 and pruning)** · phase B2 · BLOCKED_ON_DEPENDENCY · estimate 2-3 days (ESTIMATE) · proposed grain SG-000101
+**Relevance filters for extraction (BM25 and pruning)** · phase B2 · READY · estimate 2-3 days (ESTIMATE) · proposed grain SG-000101
 
 - **Objective.** Optional query-focused extraction that keeps relevant blocks and drops boilerplate, reducing tokens sent to the client model.
 - **User-visible capability.** extract(page, query='refund policy') returns the relevant section.
@@ -1523,7 +1523,7 @@ Gates every task inherits:
   - doctor reports provider health without secrets
 - **Definition of done.** Merged.
 - **Rollback.** Tool unavailable.
-- **Reuse review (2026-10-18).** PORT → PORT; ESTIMATE 3-4 days if built new, 3-4 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal.
+- **Reuse review (2026-10-18).** PORT → PORT; ESTIMATE 3-4 days if built new, 3-4 with reuse. Runtime overhead: negligible. Maintenance: none beyond normal. Matrix rows: T-AR-02, T-AR-03, T-AR-04.
 
 ### SX-01
 
@@ -1765,7 +1765,7 @@ Gates every task inherits:
 - **Security and authority.** Disposable sessions. Authority delta: none.
 - **Steps.**
   1. COPY_ADAPT the cua-bench Python runner as test-only tooling (no PORT to another language; Python never ships in the product).
-  2. COPY the cua-driver-bench taskpack with a provenance manifest per task file, then add Orcel-owned tasks per OS.
+  2. COPY the cua-driver-bench taskpack with a provenance manifest per task file (done as a pinned lock fetched and verified at test time, PR #486), then add Orcel-owned tasks per OS.
   3. Runner records BENCHMARK_REPORT_1 rows; never --on cloud.
   4. Follow-up from the #347 judge: extend the credential-prefix guard to machine.cpu and to every path segment of evidence (today only the first segment is checked), with tests, before the first real report is accepted.
 - **Tests.**

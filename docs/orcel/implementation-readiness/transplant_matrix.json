@@ -176,11 +176,11 @@
       "donor": "cua",
       "path": "benchmarks/cua-driver-bench",
       "kind": "tree",
-      "dest": "-",
-      "dest_state": "NONE",
+      "dest": "tests/benchmarks/taskpacks/cua-driver-bench.lock.json",
+      "dest_state": "EXISTS",
       "method": "COPY",
       "task": "BM-02",
-      "notes": "FSL-1.1-MIT, reuse authorized (FD-04, 2026-10-18). Copy the taskpack as BM-02's starting task set with per-file provenance (upstream: the digest-pinned task files carry no per-file headers, so Orcel adds a provenance manifest). Keep FSL notice.",
+      "notes": "FSL-1.1-MIT, reuse authorized (FD-04, 2026-10-18). BM-02's starting task set with per-file provenance; the FSL LICENSE travels with the files. Pinned, not stored: tests/benchmarks/taskpacks/cua-driver-bench.lock.json records the taskpack tree (72a1d950) and every file's donor path, git blob id, sha256, size and mode; orcel_bench fetches that exact subtree at test time and refuses anything else (binary workbooks and an empty fixture could not pass the exact-diff review gate as a copy).",
       "object": "faab03bc7f0a9a2ad40a4edde2531116e7511725"
     },
     {

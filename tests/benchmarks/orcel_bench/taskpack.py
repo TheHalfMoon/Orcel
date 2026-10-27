@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
+import stat
 import subprocess
 from pathlib import Path
 
@@ -43,21 +45,42 @@ def _git(cwd: Path, *args: str) -> str:
 
 
 def verify(lock: dict, root: Path) -> None:
-    """Refuse ``root`` unless it holds exactly the locked files, byte for byte."""
+    """Refuse ``root`` unless it holds exactly the locked files, byte for
+    byte, and nothing else at all: no other file or directory, no link, no
+    special file (`.git` is not special); on POSIX each file's executable
+    bit must match the locked mode."""
     expected = {entry["path"]: entry for entry in lock["files"]}
-    present = sorted(
-        path.relative_to(root).as_posix() for path in root.rglob("*") if path.is_file() and ".git" not in path.parts
-    )
-    extra = sorted(set(present) - set(expected))
-    missing = sorted(set(expected) - set(present))
+    allowed_dirs = {parent.as_posix() for name in expected for parent in Path(name).parents if parent != Path(".")}
+    files: list[str] = []
+    for current, dirs, names in os.walk(root, followlinks=False):
+        for name in dirs + names:
+            path = Path(current) / name
+            relative = path.relative_to(root).as_posix()
+            mode = os.lstat(path).st_mode
+            if stat.S_ISLNK(mode):
+                raise TaskpackError(f"{relative} is a link")
+            if stat.S_ISDIR(mode):
+                if relative not in allowed_dirs:
+                    raise TaskpackError(f"{relative} is a directory the lock does not list")
+            elif stat.S_ISREG(mode):
+                files.append(relative)
+            else:
+                raise TaskpackError(f"{relative} is not a regular file")
+    extra = sorted(set(files) - set(expected))
+    missing = sorted(set(expected) - set(files))
     if extra or missing:
         raise TaskpackError(f"file set differs from the lock: extra {extra[:5]}, missing {missing[:5]}")
-    for name in present:
-        data = (root / name).read_bytes()
+    for name in sorted(files):
+        path = root / name
+        data = path.read_bytes()
         entry = expected[name]
         blob = hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
         if len(data) != entry["bytes"] or blob != entry["git_blob"] or hashlib.sha256(data).hexdigest() != entry["sha256"]:
             raise TaskpackError(f"{name} differs from the donor's blob {entry['git_blob']}")
+        if entry["mode"] not in ("100644", "100755"):
+            raise TaskpackError(f"{name}: the locked mode {entry['mode']} is not a regular file")
+        if os.name == "posix" and bool(os.stat(path).st_mode & stat.S_IXUSR) != (entry["mode"] == "100755"):
+            raise TaskpackError(f"{name}: the executable bit differs from the locked mode {entry['mode']}")
 
 
 def fetch(name: str, into: Path, source: str | None = None) -> Path:
@@ -69,7 +92,7 @@ def fetch(name: str, into: Path, source: str | None = None) -> Path:
         raise TaskpackError(f"{into} already exists")
     checkout = into.with_name(into.name + ".checkout")
     if checkout.exists():
-        shutil.rmtree(checkout)
+        raise TaskpackError(f"{checkout} already exists")
     checkout.mkdir(parents=True)
     try:
         _git(checkout, "init", "-q")
@@ -82,12 +105,16 @@ def fetch(name: str, into: Path, source: str | None = None) -> Path:
             raise TaskpackError(f"checked out {head}, not {donor['commit']}")
         into.mkdir(parents=True)
         shutil.copytree(checkout / donor["path"], into, dirs_exist_ok=True)
-        shutil.copyfile(checkout / donor["license_path"], into / "LICENSE")
-    finally:
-        shutil.rmtree(checkout, ignore_errors=True)
-    try:
+        shutil.copy2(checkout / donor["license_path"], into / "LICENSE")
         verify(lock, into)
+    except (OSError, shutil.Error) as error:
+        # A missing git, a path too long for the platform, a full disk:
+        # typed, and nothing half-filled is left behind.
+        shutil.rmtree(into, ignore_errors=True)
+        raise TaskpackError(f"fetching {name} failed: {error}") from error
     except TaskpackError:
         shutil.rmtree(into, ignore_errors=True)
         raise
+    finally:
+        shutil.rmtree(checkout, ignore_errors=True)
     return into

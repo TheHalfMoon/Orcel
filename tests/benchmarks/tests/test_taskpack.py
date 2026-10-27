@@ -72,6 +72,45 @@ class PinnedTaskpack(unittest.TestCase):
             with self.assertRaises(TaskpackError):
                 verify(LOCK, copy)
 
+    def test_nothing_beyond_the_locked_files_is_accepted(self) -> None:
+        cases = {
+            "a .git file": lambda root: (root / "tasks" / "shared" / "cdb-s02" / ".git").write_text("x"),
+            "a .git directory": lambda root: (root / "tasks" / ".git").mkdir(),
+            "an unlisted empty directory": lambda root: (root / "tasks" / "shared" / "extra").mkdir(),
+        }
+        for label, change in cases.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as scratch:
+                copy = Path(scratch) / "copy"
+                shutil.copytree(self.pack, copy)
+                change(copy)
+                with self.assertRaises(TaskpackError):
+                    verify(LOCK, copy)
+
+    @unittest.skipIf(os.name == "nt", "creating a symlink needs a privilege on Windows")
+    def test_a_link_with_the_locked_bytes_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch:
+            copy = Path(scratch) / "copy"
+            shutil.copytree(self.pack, copy)
+            brief = copy / "tasks" / "shared" / "cdb-s02" / "brief.md"
+            outside = Path(scratch) / "brief.md"
+            shutil.copyfile(brief, outside)
+            brief.unlink()
+            brief.symlink_to(outside)
+            with self.assertRaises(TaskpackError):
+                verify(LOCK, copy)
+
+    @unittest.skipIf(os.name == "nt", "Windows has no executable bit")
+    def test_an_executable_bit_the_lock_does_not_record_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch:
+            copy = Path(scratch) / "copy"
+            shutil.copytree(self.pack, copy)
+            (copy / "LICENSE").chmod(0o755)
+            with self.assertRaises(TaskpackError):
+                verify(LOCK, copy)
+
+    def test_the_lock_records_the_donor_tree(self) -> None:
+        self.assertEqual(LOCK["donor"]["tree"], "72a1d950e96081faa877003265d018224553ff44")
+
     def test_three_tasks(self) -> None:
         self.assertEqual([task.name for task in self.tasks()], ["cdb-s02", "cdb-s03", "cdb-s04"])
 
