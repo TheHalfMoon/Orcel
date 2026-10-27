@@ -57,7 +57,14 @@ Windows carries the full guarantee: suspended launch, job assignment
 before resume, kill-on-close chains, ActiveProcessLimit, and signature
 verification. Off Windows the supervisor launches with handle supervision
 and drop-kill, discovery covers well-known locations, and publisher
-verification reports unverified on Linux. On macOS (XP-14 slice 1),
+verification on Linux (XP-14) reports verified only when the engine's
+real path belongs to the vendor's own package (google-chrome-stable or
+microsoft-edge-stable) and that package's installed files are unmodified
+against the package database (dpkg --verify or rpm -V, conffiles
+excepted); a vendor package that fails the check is refused, and any
+other engine stays unverified. This is weaker than a code signature: the
+database is only as trustworthy as the root account that wrote it. On
+macOS (XP-14 slice 1),
 discovery finds the stable Chrome and Edge app bundles, reads the version
 from the bundle's Info.plist without running it, and refuses a bundle
 whose code signature does not satisfy the vendor's designated requirement

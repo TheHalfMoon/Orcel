@@ -563,13 +563,128 @@ fn verify_publisher(path: &Path) -> Result<bool, HostError> {
     Ok(true)
 }
 
+/// XP-14 (Linux): the engine is verified when its real path belongs to the
+/// vendor's own package (`google-chrome-stable` or `microsoft-edge-stable`,
+/// from `dpkg -S`, else `rpm -qf`) and that package's installed files are
+/// unmodified against the package database (`dpkg --verify`, else
+/// `rpm -V`; conffiles excepted). A vendor package whose files fail that
+/// check is refused. Anything else (another package, no package manager,
+/// an unowned file) stays unverified, as before: weaker than Authenticode
+/// or a macOS code signature, because the database is only as trustworthy
+/// as the root account that wrote it (recorded in the SG-000074 note).
 #[cfg(all(not(windows), not(target_os = "macos")))]
-fn verify_publisher(_path: &Path) -> Result<bool, HostError> {
-    // No OS publisher check is implemented on Linux: path, kind, and
-    // version checks apply and the engine reports unverified. Recorded as
-    // a platform boundary in the SG-000074 note (XP-14 step 1 adds the
-    // package-signature check).
+fn verify_publisher(path: &Path) -> Result<bool, HostError> {
+    let Ok(real) = path.canonicalize() else {
+        return Ok(false);
+    };
+    let real_text = real.to_string_lossy().into_owned();
+    if let Some((true, out)) = run_package_tool("dpkg-query", &["-S", &real_text]) {
+        let Some(package) = dpkg_owner(&out, &real_text) else {
+            return Ok(false);
+        };
+        if vendor_package(&package).is_none() {
+            return Ok(false);
+        }
+        return match run_package_tool("dpkg", &["--verify", &package]) {
+            Some((true, out)) if dpkg_verify_clean(&out) => Ok(true),
+            _ => Err(HostError::Unavailable(UnavailableReason::UnsupportedEngine)),
+        };
+    }
+    if let Some((true, out)) =
+        run_package_tool("rpm", &["-qf", "--queryformat", "%{NAME}\\n", &real_text])
+    {
+        let package = out.trim();
+        if out.lines().count() != 1 || vendor_package(package).is_none() {
+            return Ok(false);
+        }
+        return match run_package_tool("rpm", &["-V", package]) {
+            Some((true, out)) if rpm_verify_clean(&out) => Ok(true),
+            _ => Err(HostError::Unavailable(UnavailableReason::UnsupportedEngine)),
+        };
+    }
     Ok(false)
+}
+
+/// XP-14 (Linux): the vendor packages whose files may be a verified engine.
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+fn vendor_package(name: &str) -> Option<EngineKind> {
+    match name {
+        "google-chrome-stable" => Some(EngineKind::Chromium),
+        "microsoft-edge-stable" => Some(EngineKind::Edge),
+        _ => None,
+    }
+}
+
+/// The single package `dpkg -S` names for exactly `path` (`pkg: path`, or
+/// `pkg:arch: path`); diversions and several owners give `None`.
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+fn dpkg_owner(output: &str, path: &str) -> Option<String> {
+    let mut owners = output
+        .lines()
+        .filter_map(|line| line.strip_suffix(path)?.strip_suffix(": "));
+    let owner = owners.next()?;
+    if owners.next().is_some() || owner.contains(',') || owner.starts_with("diversion") {
+        return None;
+    }
+    let name = owner.split(':').next()?.trim();
+    (!name.is_empty()).then(|| name.to_owned())
+}
+
+/// `dpkg --verify` reports one line per changed file (`??5?????? c /etc/x`
+/// for a conffile). Changed conffiles are configuration, not code; any
+/// other changed file is not clean.
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+fn dpkg_verify_clean(output: &str) -> bool {
+    output
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .all(|line| {
+            let mut fields = line.split_whitespace();
+            let _flags = fields.next();
+            fields.next() == Some("c") && fields.next().is_some()
+        })
+}
+
+/// `rpm -V` reports one line per changed file, with a `c` attribute for
+/// configuration files; any other line is not clean.
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+fn rpm_verify_clean(output: &str) -> bool {
+    dpkg_verify_clean(output)
+}
+
+/// Run a package-database query with the scrubbed probe environment and a
+/// bounded wait; `None` when the tool is absent, hangs or prints too much.
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn run_package_tool(program: &str, args: &[&str]) -> Option<(bool, String)> {
+    let mut child = std::process::Command::new(program)
+        .args(args)
+        .env_clear()
+        .envs(probe_env())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let output = child.wait_with_output().ok()?;
+                if output.stdout.len() > 1 << 20 {
+                    return None;
+                }
+                return Some((
+                    status.success(),
+                    String::from_utf8_lossy(&output.stdout).into_owned(),
+                ));
+            }
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
+            _ => {
+                let _ = child.kill();
+                return None;
+            }
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -580,6 +695,90 @@ fn app_paths_executable(name: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn xp14_linux_package_answers_are_read_strictly() {
+        let chrome = "/opt/google/chrome/chrome";
+        assert_eq!(
+            dpkg_owner("google-chrome-stable: /opt/google/chrome/chrome\n", chrome).as_deref(),
+            Some("google-chrome-stable")
+        );
+        assert_eq!(
+            dpkg_owner(
+                "google-chrome-stable:amd64: /opt/google/chrome/chrome\n",
+                chrome
+            )
+            .as_deref(),
+            Some("google-chrome-stable")
+        );
+        // Another path, several owners, a diversion: no owner.
+        assert_eq!(
+            dpkg_owner(
+                "google-chrome-stable: /opt/google/chrome/chrome-sandbox\n",
+                chrome
+            ),
+            None
+        );
+        assert_eq!(
+            dpkg_owner("a, b: /opt/google/chrome/chrome\n", chrome),
+            None
+        );
+        assert_eq!(
+            dpkg_owner("diversion by x from: /opt/google/chrome/chrome\n", chrome),
+            None
+        );
+        assert_eq!(
+            vendor_package("google-chrome-stable"),
+            Some(EngineKind::Chromium)
+        );
+        assert_eq!(
+            vendor_package("microsoft-edge-stable"),
+            Some(EngineKind::Edge)
+        );
+        assert_eq!(vendor_package("chromium-browser"), None);
+        assert!(dpkg_verify_clean(""));
+        assert!(dpkg_verify_clean(
+            "??5?????? c /etc/cron.daily/google-chrome\n"
+        ));
+        assert!(!dpkg_verify_clean(
+            "??5??????   /opt/google/chrome/chrome\n"
+        ));
+        assert!(!dpkg_verify_clean(
+            "missing     /opt/google/chrome/chrome\n"
+        ));
+        assert!(rpm_verify_clean("S.5....T.  c /etc/x.conf\n"));
+        assert!(!rpm_verify_clean(
+            "S.5....T.    /opt/google/chrome/chrome\n"
+        ));
+    }
+
+    /// On a Linux machine with Chrome installed from Google's package (the
+    /// ubuntu CI image), the engine verifies; a byte-identical copy outside
+    /// the package does not.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn xp14_linux_the_vendor_package_verifies_and_a_copy_does_not() {
+        let installed = Path::new("/opt/google/chrome/chrome");
+        let owned = matches!(
+            run_package_tool("dpkg-query", &["-S", "/opt/google/chrome/chrome"]),
+            Some((true, out)) if dpkg_owner(&out, "/opt/google/chrome/chrome").as_deref() == Some("google-chrome-stable")
+        );
+        if !installed.is_file() || !owned {
+            assert!(
+                std::env::var_os("CI").is_none(),
+                "google-chrome-stable is expected on the CI runner"
+            );
+            return;
+        }
+        assert!(verify_publisher(installed).unwrap());
+        let copy_dir =
+            std::env::temp_dir().join(format!("orcel-xp14-linux-{}", std::process::id()));
+        std::fs::create_dir_all(&copy_dir).unwrap();
+        let copy = copy_dir.join("chrome");
+        std::fs::copy(installed, &copy).unwrap();
+        assert!(!verify_publisher(&copy).unwrap());
+        let _ = std::fs::remove_dir_all(&copy_dir);
+    }
 
     #[test]
     fn xp14_plist_strings_are_read_exactly_and_nothing_else() {
