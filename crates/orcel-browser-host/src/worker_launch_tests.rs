@@ -1078,6 +1078,9 @@ fn describe_holder(pid: u32, lifetime_start: Option<u64>) -> String {
             break;
         };
         let Some((_, _, name)) = entries.iter().find(|(id, _, _)| *id == parent) else {
+            // An orphan (likely after a killed browser): the parent has
+            // exited, but its pid still says who started the holder.
+            ancestors.push(format!("<exited>({parent})"));
             break;
         };
         let parent_created = process_created(parent);
