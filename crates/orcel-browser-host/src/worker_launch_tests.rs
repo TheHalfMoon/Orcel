@@ -912,10 +912,23 @@ fn diagnose_locked(profile: &Path) {
         .filter(|path| path.is_file())
         .cloned()
         .collect();
-    eprintln!(
-        "SG108-DIAG holders (Restart Manager): {:?}",
-        file_holders(&files)
-    );
+    let holders = file_holders(&files);
+    eprintln!("SG108-DIAG holders (Restart Manager): {holders:?}");
+    // #483: who each holder is: inside a job or not, its parent, its role
+    // and age (never its whole command line, which may be a user's own
+    // browser).
+    // The profile folder is created just before the launch: its creation
+    // time is the lifetime's start.
+    let lifetime_start = std::fs::metadata(profile)
+        .and_then(|metadata| metadata.created())
+        .ok()
+        .and_then(filetime_ticks);
+    for (pid, _) in holders.iter().flatten() {
+        eprintln!(
+            "SG108-DIAG holder {pid}: {}",
+            describe_holder(*pid, lifetime_start)
+        );
+    }
     while profile.exists() && started.elapsed() < Duration::from_secs(90) {
         let _ = std::fs::remove_dir_all(profile);
         std::thread::sleep(Duration::from_millis(250));
@@ -957,9 +970,148 @@ fn cleanup_diagnostics_name_a_handle_that_blocks_deletion() {
         holders.iter().any(|(pid, _)| *pid == std::process::id()),
         "{holders:?}"
     );
+    // #483: the holder description is filled in. This process was created
+    // before the test folder, so its offset is negative; it has ancestors
+    // (cargo at least) and a job answer.
+    let start = std::fs::metadata(&dir)
+        .and_then(|metadata| metadata.created())
+        .ok()
+        .and_then(filetime_ticks);
+    assert!(start.is_some());
+    let described = describe_holder(std::process::id(), start);
+    assert!(
+        described.contains("created Some(\"-")
+            && described.contains("ancestors [\"")
+            && described.contains("in a job: Some("),
+        "{described}"
+    );
     drop(handle);
     assert!(openable_for_delete(&held));
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// #483: a process's creation time in FILETIME ticks (100 ns since 1601).
+fn process_created(pid: u32) -> Option<u64> {
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::System::Threading::GetProcessTimes;
+    // SAFETY: plain open with query-only rights, closed by the guard.
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    let handle = crate::supervise::platform::OwnedHandle::new(handle)?;
+    let zero = FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0,
+    };
+    let (mut created, mut exited, mut kernel, mut user) = (zero, zero, zero, zero);
+    // SAFETY: valid handle and out-pointers.
+    let timed = unsafe {
+        GetProcessTimes(
+            handle.raw(),
+            &mut created,
+            &mut exited,
+            &mut kernel,
+            &mut user,
+        )
+    } != 0;
+    timed.then(|| (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime))
+}
+
+/// #483: a `SystemTime` in FILETIME ticks.
+fn filetime_ticks(time: std::time::SystemTime) -> Option<u64> {
+    // Seconds from 1601-01-01 to 1970-01-01.
+    const EPOCH_GAP_SECS: u64 = 11_644_473_600;
+    let since = time.duration_since(std::time::UNIX_EPOCH).ok()?;
+    Some((since.as_secs() + EPOCH_GAP_SECS) * 10_000_000 + u64::from(since.subsec_nanos()) / 100)
+}
+
+/// #483: who a holder process is, against the lifetime that owned the
+/// profile (`lifetime_start`, the profile folder's creation, in FILETIME
+/// ticks): when it was created relative to that start (before means it
+/// cannot be this lifetime's engine; after means this lifetime started it
+/// somewhere outside the job), its ancestors (image names; a parent counts
+/// only if it is older than its child, since pids are reused), whether it
+/// runs inside any job object, and its Chromium `--type=` role. Nothing else
+/// from its command line is shown.
+fn describe_holder(pid: u32, lifetime_start: Option<u64>) -> String {
+    use windows_sys::Win32::Foundation::BOOL;
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+    use windows_sys::Win32::System::JobObjects::IsProcessInJob;
+    let name_of = |entry: &PROCESSENTRY32W| {
+        let len = entry
+            .szExeFile
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(entry.szExeFile.len());
+        String::from_utf16_lossy(&entry.szExeFile[..len])
+    };
+    let mut entries: Vec<(u32, u32, String)> = Vec::new();
+    // SAFETY: a process snapshot with documented flags, closed by the guard.
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if let Some(snapshot) = crate::supervise::platform::OwnedHandle::new(snapshot) {
+        // SAFETY: zeroed PROCESSENTRY32W with dwSize set is the documented input.
+        let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        // SAFETY: valid snapshot handle and entry out-pointer.
+        let mut more = unsafe { Process32FirstW(snapshot.raw(), &mut entry) } != 0;
+        while more {
+            entries.push((
+                entry.th32ProcessID,
+                entry.th32ParentProcessID,
+                name_of(&entry),
+            ));
+            // SAFETY: as above.
+            more = unsafe { Process32NextW(snapshot.raw(), &mut entry) } != 0;
+        }
+    }
+    let created = process_created(pid);
+    let offset = created.zip(lifetime_start).map(|(created, start)| {
+        let millis = (created as i128 - start as i128) / 10_000;
+        format!("{millis:+} ms")
+    });
+    // Ancestors, nearest first, up to six; a parent must predate its child.
+    let mut ancestors = Vec::new();
+    let (mut child, mut child_created) = (pid, created);
+    for _ in 0..6 {
+        let Some(&(_, parent, _)) = entries.iter().find(|(id, _, _)| *id == child) else {
+            break;
+        };
+        let Some((_, _, name)) = entries.iter().find(|(id, _, _)| *id == parent) else {
+            // An orphan (likely after a killed browser): the parent has
+            // exited, but its pid still says who started the holder.
+            ancestors.push(format!("<exited>({parent})"));
+            break;
+        };
+        let parent_created = process_created(parent);
+        if let (Some(parent_at), Some(child_at)) = (parent_created, child_created) {
+            if parent_at > child_at {
+                break;
+            }
+        }
+        ancestors.push(format!("{name}({parent})"));
+        child = parent;
+        child_created = parent_created;
+    }
+    let role = crate::worker_process::inspect(pid)
+        .ok()
+        .flatten()
+        .and_then(|process| {
+            process
+                .argv
+                .iter()
+                .find_map(|arg| arg.strip_prefix("--type=").map(str::to_owned))
+        });
+    // SAFETY: plain open with query-only rights, closed by the guard.
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    let in_job = crate::supervise::platform::OwnedHandle::new(handle).and_then(|handle| {
+        let mut in_job: BOOL = 0;
+        // SAFETY: valid handle; a null job asks about any job.
+        (unsafe { IsProcessInJob(handle.raw(), 0, &mut in_job) } != 0).then_some(in_job != 0)
+    });
+    format!(
+        "created {offset:?} relative to the lifetime's start, ancestors {ancestors:?}, in a job: {in_job:?}, role: {role:?}"
+    )
 }
 
 /// #483: every file and folder under `root` (the folders first), at most
