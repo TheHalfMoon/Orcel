@@ -3696,6 +3696,38 @@ mod fallback {
 mod tests {
     use super::*;
 
+    /// #438: the host waits for the engine launch longer than the worker's
+    /// own Playwright launch timeout (with margin), so a slow cold start is
+    /// reported by the worker, typed, rather than cut off by the host.
+    #[test]
+    fn the_host_launch_deadline_outlasts_the_worker_launch_timeout() {
+        let source = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../apps/orcel-browser-worker/src/timeouts.ts"),
+        )
+        .expect("timeouts.ts");
+        let worker_ms: u64 = source
+            .lines()
+            .find_map(|line| {
+                line.trim()
+                    .strip_prefix("export const ENGINE_LAUNCH_TIMEOUT_MS = ")
+            })
+            .and_then(|value| value.trim_end_matches(';').replace('_', "").parse().ok())
+            .expect("ENGINE_LAUNCH_TIMEOUT_MS");
+        assert!(worker_ms >= 30_000, "{worker_ms}");
+        // ...and the worker's launch really uses it (no literal creeps back).
+        let entry = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../apps/orcel-browser-worker/src/entry.ts"),
+        )
+        .expect("entry.ts");
+        assert!(entry.contains("timeout: ENGINE_LAUNCH_TIMEOUT_MS"));
+        assert!(
+            WORKER_LAUNCH_TIMEOUT >= Duration::from_millis(worker_ms) + Duration::from_secs(5),
+            "host {WORKER_LAUNCH_TIMEOUT:?} vs worker {worker_ms} ms"
+        );
+    }
+
     fn process(pid: u32, image: &str, argv: &[&str]) -> JobProcess {
         JobProcess {
             pid,
