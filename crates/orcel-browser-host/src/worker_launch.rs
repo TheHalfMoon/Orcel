@@ -4804,7 +4804,7 @@ mod tests {
         use crate::discovery::EngineKind::{Chromium, Edge};
         for (name, kind, version) in [
             ("msedge.exe", Edge, "154.0.1.2"),
-            ("msedge.exe", Edge, "156.0.1.2"),
+            ("msedge.exe", Edge, "157.0.1.2"),
             ("chrome.exe", Chromium, "157.0.4283.45"),
             ("chrome.exe", Chromium, "153.0.1.2"),
         ] {
