@@ -653,11 +653,12 @@ fn dpkg_owner(output: &str, path: &str) -> Option<String> {
 
 /// Whether a `dpkg --verify` or `rpm -V` report leaves the engine's code
 /// intact. Each line names one changed or missing file (`??5?????? c
-/// /etc/x`, `missing     /etc/y`, `S.5....T.  c /etc/z`). A changed
-/// conffile (`c`) is configuration; a file outside the engine's install
-/// directory `code_dir` is not what the engine runs (CI images, for one,
-/// delete Chrome's `/etc/cron.daily` repository job). Any change inside
-/// `code_dir`, or a line that names no absolute path, is not clean.
+/// /etc/x`, `missing     /etc/y`, `S.5....T.  c /etc/z`). A file outside
+/// the engine's install directory `code_dir` (a conffile, a cron job, a
+/// menu entry) is not what the engine runs (CI images, for one, delete
+/// Chrome's `/etc/cron.daily` repository job). Any change inside
+/// `code_dir`, conffile or not, or a line that names no absolute path, is
+/// not clean.
 #[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
 fn verify_report_clean(output: &str, code_dir: &str) -> bool {
     let inside = format!("{}/", code_dir.trim_end_matches('/'));
@@ -669,9 +670,11 @@ fn verify_report_clean(output: &str, code_dir: &str) -> bool {
             let Some(path) = fields.last().filter(|path| path.starts_with('/')) else {
                 return false;
             };
-            if fields.len() == 3 && fields[1] == "c" {
-                return true;
-            }
+            // Inside the install directory nothing may change, conffile or
+            // not. This relies on the vendor packages keeping everything the
+            // engine runs in that one directory (true for Chrome and Edge);
+            // an engine in a shared directory such as /usr/bin would make
+            // the rule weaker.
             !(path.starts_with(&inside) || *path == code_dir)
         })
 }
@@ -801,6 +804,11 @@ mod tests {
         ));
         assert!(!verify_report_clean(
             "missing     /opt/google/chrome\n",
+            dir
+        ));
+        // Even a conffile inside the install directory is a change to the engine.
+        assert!(!verify_report_clean(
+            "??5?????? c /opt/google/chrome/default.conf\n",
             dir
         ));
         // A prefix that is not the directory is outside it.
