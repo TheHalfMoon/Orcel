@@ -56,8 +56,12 @@ def verify(lock: dict, root: Path) -> None:
         for name in dirs + names:
             path = Path(current) / name
             relative = path.relative_to(root).as_posix()
-            mode = os.lstat(path).st_mode
-            if stat.S_ISLNK(mode):
+            info = os.lstat(path)
+            mode = info.st_mode
+            # A Windows junction (or any reparse point) reads as a plain
+            # directory to lstat: refused like a link.
+            reparse = getattr(info, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+            if stat.S_ISLNK(mode) or reparse:
                 raise TaskpackError(f"{relative} is a link")
             if stat.S_ISDIR(mode):
                 if relative not in allowed_dirs:
@@ -93,8 +97,8 @@ def fetch(name: str, into: Path, source: str | None = None) -> Path:
     checkout = into.with_name(into.name + ".checkout")
     if checkout.exists():
         raise TaskpackError(f"{checkout} already exists")
-    checkout.mkdir(parents=True)
     try:
+        checkout.mkdir(parents=True)
         _git(checkout, "init", "-q")
         _git(checkout, "remote", "add", "origin", source or donor["url"])
         _git(checkout, "sparse-checkout", "set", "--no-cone", f"/{donor['path']}/", f"/{donor['license_path']}")
@@ -103,6 +107,9 @@ def fetch(name: str, into: Path, source: str | None = None) -> Path:
         head = _git(checkout, "rev-parse", "HEAD").strip()
         if head != donor["commit"]:
             raise TaskpackError(f"checked out {head}, not {donor['commit']}")
+        tree = _git(checkout, "rev-parse", f"HEAD:{donor['path']}").strip()
+        if tree != donor["tree"]:
+            raise TaskpackError(f"the taskpack tree is {tree}, not the locked {donor['tree']}")
         into.mkdir(parents=True)
         shutil.copytree(checkout / donor["path"], into, dirs_exist_ok=True)
         shutil.copy2(checkout / donor["license_path"], into / "LICENSE")

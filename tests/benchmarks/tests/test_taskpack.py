@@ -99,6 +99,21 @@ class PinnedTaskpack(unittest.TestCase):
             with self.assertRaises(TaskpackError):
                 verify(LOCK, copy)
 
+    @unittest.skipUnless(os.name == "nt", "a junction is a Windows reparse point")
+    def test_a_junction_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch:
+            copy = Path(scratch) / "copy"
+            shutil.copytree(self.pack, copy)
+            target = Path(scratch) / "elsewhere"
+            shutil.move(str(copy / "tasks" / "shared" / "cdb-s04"), target)
+            made = subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(copy / "tasks" / "shared" / "cdb-s04"), str(target)],
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(made.returncode, 0, made.stderr)
+            with self.assertRaises(TaskpackError):
+                verify(LOCK, copy)
+
     @unittest.skipIf(os.name == "nt", "Windows has no executable bit")
     def test_an_executable_bit_the_lock_does_not_record_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as scratch:
