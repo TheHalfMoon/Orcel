@@ -1648,6 +1648,9 @@ struct HttpsFixture {
     child: std::process::Child,
     spki: String,
     hits: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    /// #438: every request's outcome line (`HIT`, then `DONE` or `ABORT`
+    /// with milliseconds), printed only when a test fails.
+    events: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 impl HttpsFixture {
@@ -1669,6 +1672,8 @@ impl HttpsFixture {
         let hits = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let (ready, spki) = mpsc::channel();
         let log = hits.clone();
+        let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let outcomes = events.clone();
         std::thread::spawn(move || {
             for line in std::io::BufReader::new(stdout)
                 .lines()
@@ -1678,13 +1683,21 @@ impl HttpsFixture {
                     let _ = ready.send(value.to_owned());
                 } else if let Some(hit) = line.strip_prefix("HIT ") {
                     log.lock().expect("hits").push(hit.to_owned());
+                    outcomes.lock().expect("events").push(line);
+                } else if line.starts_with("DONE ") || line.starts_with("ABORT ") {
+                    outcomes.lock().expect("events").push(line);
                 }
             }
         });
         let spki = spki
             .recv_timeout(Duration::from_secs(30))
             .expect("the HTTPS fixture did not start");
-        Self { child, spki, hits }
+        Self {
+            child,
+            spki,
+            hits,
+            events,
+        }
     }
 
     fn hits(&self) -> Vec<String> {
@@ -1708,6 +1721,19 @@ impl Drop for HttpsFixture {
             eprintln!(
                 "SG108-DIAG fixture requests at failure ({} in all, last {}):\n{}",
                 hits.len(),
+                shown.len(),
+                shown.join("\n")
+            );
+            // A HIT with no DONE means the fixture never finished its
+            // response; a DONE means the stall was in the engine's load.
+            let events = self
+                .events
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
+            let shown = &events[events.len().saturating_sub(50)..];
+            eprintln!(
+                "SG108-DIAG fixture response outcomes at failure (last {}):\n{}",
                 shown.len(),
                 shown.join("\n")
             );

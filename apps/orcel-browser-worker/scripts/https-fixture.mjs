@@ -6,6 +6,9 @@
 // certificate (Git for Windows' OpenSSL). Protocol on stdout, one line each:
 //   READY <base64 SPKI SHA-256>
 //   HIT <host> <path>
+//   DONE <host> <path> <ms>   (the response was fully handed to the socket)
+//   ABORT <host> <path> <ms>  (the connection closed before it finished)
+// (#438: the last two tell a stalled response from a stalled page load.)
 // It exits when its stdin closes, so the test owns its lifetime.
 
 import { execFileSync } from "node:child_process";
@@ -309,6 +312,12 @@ const server = createServer({ key, cert }, (request, response) => {
   const host = (request.headers.host ?? "").split(":")[0];
   const path = request.url ?? "/";
   process.stdout.write(`HIT ${host} ${path}\n`);
+  const started = process.hrtime.bigint();
+  const elapsed = () => Number((process.hrtime.bigint() - started) / 1000000n);
+  response.on("finish", () => process.stdout.write(`DONE ${host} ${path} ${elapsed()}\n`));
+  response.on("close", () => {
+    if (!response.writableFinished) process.stdout.write(`ABORT ${host} ${path} ${elapsed()}\n`);
+  });
   const redirect = (location) => {
     response.statusCode = 302;
     response.setHeader("location", location);
