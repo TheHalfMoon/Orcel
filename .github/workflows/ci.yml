@@ -66,26 +66,6 @@ jobs:
           export ORCEL_BM02_OS_VERSION
           ORCEL_BM02B_REPORT="$out/tier-b.report.json" cargo test -p orceld --bin orceld bm02_tier_b -- --nocapture 2>&1 | grep -E "BM02B-|test result"
           node scripts/check-benchmark-report.mjs "$out"
-      # BM-02 Tier C C2a: the pinned GUI task's own Electron apps launched on
-      # this disposable runner and observed only through this job's orceld
-      # (read-only UIA shapes: nothing is clicked or typed, no approval is
-      # asked). The task app needs Node 22+.
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        if: runner.os == 'Windows'
-        with:
-          node-version: "24.19.0"
-      - name: BM-02 Tier C C2a (launch and observe through orceld)
-        if: runner.os == 'Windows'
-        shell: bash
-        env:
-          ORCEL_BM02_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          set -euo pipefail
-          pack="$RUNNER_TEMP/tierc-pack"
-          (cd tests/benchmarks && python -m orcel_bench fetch-taskpack cua-driver-bench --into "$pack")
-          (cd tests/benchmarks && python -m orcel_bench tierc-observe --pack "$pack" --orceld "$GITHUB_WORKSPACE/target/debug/orceld.exe" \
-            --task cdb-s02 --commit "$ORCEL_BM02_COMMIT" --out "$RUNNER_TEMP/tierc-observe.report.json")
-          node scripts/check-benchmark-report.mjs "$RUNNER_TEMP/tierc-observe.report.json"
       # XP-08 (follow-up from the #348 judge): the Rust adapter's /2
       # negotiation test against the freshly built Go host, not a script. The
       # native-host job does the same with orcel-native-host on macOS and
@@ -899,6 +879,42 @@ jobs:
         run: cargo audit
       - name: License check of the helper graph
         run: cargo deny check licenses
+
+  # BM-02 Tier C C2a: the pinned GUI task's own Electron apps launched on
+  # this disposable runner and observed only through this job's orceld
+  # (read-only UIA shapes: nothing is clicked or typed, no approval is
+  # asked). Its own job, not a required check: it runs third-party install
+  # scripts and apps (npm ci, Electron), so it shares no VM with any
+  # qualification step and keeps no checkout credential.
+  tierc-gui:
+    name: BM-02 Tier C GUI / windows-latest
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24.19.0"
+      - name: Build orceld
+        run: cargo build --locked -p orceld
+      - name: BM-02 Tier C C2a (launch and observe through orceld)
+        shell: bash
+        env:
+          ORCEL_BM02_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          pack="$RUNNER_TEMP/tierc-pack"
+          (cd tests/benchmarks && python -m orcel_bench fetch-taskpack cua-driver-bench --into "$pack")
+          (cd tests/benchmarks && python -m orcel_bench tierc-observe --pack "$pack" --orceld "$GITHUB_WORKSPACE/target/debug/orceld.exe" \
+            --task cdb-s02 --commit "$ORCEL_BM02_COMMIT" --out "$RUNNER_TEMP/tierc-observe.report.json")
+          node scripts/check-benchmark-report.mjs "$RUNNER_TEMP/tierc-observe.report.json"
 
   node:
     name: Node / ${{ matrix.os }}

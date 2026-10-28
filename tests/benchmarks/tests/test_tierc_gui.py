@@ -24,7 +24,7 @@ class TierCGuiHarness(unittest.TestCase):
         self.assertEqual(_fill("${workspace}", VALUES), "/w")
         self.assertEqual(_fill("--workspace=${workspace}", VALUES), "--workspace=/w")
         self.assertEqual(_fill("${bundle}/apps/x", VALUES), "/b/apps/x")
-        for refused in ("x${workspace}", "--a=${workspace}${bundle}", "${nope}", "-w=${workspace}"):
+        for refused in ("x${workspace}", "--a=${workspace}${bundle}", "${nope}", "-w=${workspace}", "${bundle}/../outside", "${bundle}/apps/../../x"):
             with self.subTest(refused), self.assertRaises(TierCError):
                 _fill(refused, VALUES)
 

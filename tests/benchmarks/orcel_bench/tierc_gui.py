@@ -62,7 +62,10 @@ def _fill(part: str, values: dict[str, str]) -> str:
         if part.startswith("--") and part.endswith("=" + token) and part.count("${") == 1:
             return part[: -len(token)] + value
         if part.startswith(token + "/") and part.count("${") == 1:
-            return value + part[len(token):]
+            rest = part[len(token):]
+            if ".." in rest.replace("\\", "/").split("/"):
+                raise TierCError(f"a launch path may not climb out of its folder: {part!r}")
+            return value + rest
     raise TierCError(f"unsupported placeholder use in {part!r}")
 
 
@@ -90,6 +93,39 @@ def _kill_tree(process: subprocess.Popen[bytes]) -> None:
         process.wait(timeout=30)
     except subprocess.TimeoutExpired:
         pass
+
+
+def _app_env(scratch: Path, unset: list[str]) -> dict[str, str]:
+    """The environment for npm and the task's apps: the scrubbed task
+    environment plus what Node, npm and Electron need, every per-user folder
+    inside the episode's scratch."""
+    env = _env(scratch)
+    for key in ("COMSPEC", "ComSpec", "PATHEXT", "ProgramFiles", "ProgramFiles(x86)", "ProgramData", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE"):
+        if key in os.environ:
+            env[key] = os.environ[key]
+    for key, folder in (("APPDATA", "appdata"), ("LOCALAPPDATA", "localappdata"), ("npm_config_cache", "npm-cache"),
+                        ("ELECTRON_CACHE", "electron-cache"), ("XDG_CACHE_HOME", "cache")):
+        path = scratch / folder
+        path.mkdir(exist_ok=True)
+        env[key] = str(path)
+    for key in unset:
+        env.pop(key, None)
+    return env
+
+
+def _left_running(root: Path) -> list[int]:
+    """Process ids whose executable or command line is under `root`."""
+    if os.name != "nt":
+        return []
+    script = (
+        "Get-CimInstance Win32_Process | Where-Object { "
+        f"($_.ExecutablePath -and $_.ExecutablePath.StartsWith('{root}', 'OrdinalIgnoreCase')) -or "
+        f"($_.CommandLine -and $_.CommandLine.IndexOf('{root}', [StringComparison]::OrdinalIgnoreCase) -ge 0) }} "
+        "| Where-Object { $_.ProcessId -ne $PID } | ForEach-Object { $_.ProcessId }"
+    )
+    done = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                          capture_output=True, text=True, timeout=60, check=False)
+    return [int(line) for line in done.stdout.split() if line.strip().isdigit()]
 
 
 def _titles(orcel: Orceld) -> list[str]:
@@ -155,19 +191,18 @@ def run_observe_episode(pack: Path, lock: Optional[dict[str, Any]], task: str, o
             if cwd in installed:
                 continue
             npm = "npm.cmd" if os.name == "nt" else "npm"
-            done = subprocess.run([npm, "ci", "--no-audit", "--no-fund"], cwd=cwd, stdout=subprocess.DEVNULL,
+            done = subprocess.run([npm, "ci", "--no-audit", "--no-fund"], cwd=cwd, env=_app_env(scratch, []), stdout=subprocess.DEVNULL,
                                   stderr=subprocess.DEVNULL, timeout=INSTALL_TIMEOUT_S, check=False)
             if done.returncode != 0:
                 raise TierCError(f"{task}: npm ci failed in {Path(cwd).name}")
             installed.add(cwd)
-        app_env = dict(os.environ)
         with Orceld(orceld, workspace) as orcel:
             for app in apps:
                 started = time.perf_counter()
                 calls_before = len(orcel.calls)
                 observed = "observed"
                 status = "pass"
-                launch_env = {k: v for k, v in app_env.items() if k not in set(app.get("unset_env", []))}
+                launch_env = _app_env(scratch, list(app.get("unset_env", [])))
                 process = subprocess.Popen(
                     [_fill(part, values) for part in app["command"]],
                     cwd=_fill(app["cwd"], values),
@@ -212,7 +247,8 @@ def run_observe_episode(pack: Path, lock: Optional[dict[str, Any]], task: str, o
             # The untouched workspace must still be rejected.
             done = subprocess.run(expand(semantics["evaluate"], values), cwd=bundle, env=env,
                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120, check=False)
-            outcome = json.loads((root / "result.json").read_text(encoding="utf-8")) if done.returncode == 0 else {}
+            evaluator_ran = done.returncode == 0 and (root / "result.json").is_file()
+            outcome = json.loads((root / "result.json").read_text(encoding="utf-8")) if evaluator_ran else {}
             rejected = outcome.get("passed") is False
             # Teardown: every process tree stopped, and no window left.
             for process in launched:
@@ -224,13 +260,27 @@ def run_observe_episode(pack: Path, lock: Optional[dict[str, Any]], task: str, o
                 remaining = [title for title in remaining if title in titles]
                 if remaining:
                     time.sleep(1.0)
+            # No process may outlive teardown from the episode's folders.
+            leftover = _left_running(root)
+            for pid in leftover:
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, check=False)
             for row in rows:
-                if row["status"] == "pass" and not rejected:
+                if row["status"] != "pass":
+                    continue
+                if not evaluator_ran:
+                    row["status"], row["observed"] = "error", "evaluator-failed"
+                elif not rejected:
                     row["status"], row["observed"] = "fail", "evaluator-did-not-reject"
-                elif row["status"] == "pass" and remaining:
+                elif remaining:
                     row["status"], row["observed"] = "fail", "window-left-after-teardown"
+                elif leftover:
+                    row["status"], row["observed"] = "fail", "process-left-after-teardown"
         return rows
     finally:
         for process in launched:
             _kill_tree(process)
         shutil.rmtree(root, ignore_errors=True)
+        if root.exists():
+            # Something still holds the episode's files: report it loudly.
+            print(f"tierc-observe: the episode folder could not be removed: {root}", file=sys.stderr)
