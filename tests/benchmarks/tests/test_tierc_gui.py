@@ -13,7 +13,7 @@ BENCH = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BENCH))
 
 from orcel_bench.tierc import TierCError  # noqa: E402
-from orcel_bench.tierc_gui import _fill, electron_apps, run_observe_episode  # noqa: E402
+from orcel_bench.tierc_gui import _fill, electron_apps, load_plan, run_observe_episode  # noqa: E402
 
 VALUES = {"bundle": "/b", "workspace": "/w"}
 
@@ -36,6 +36,20 @@ class TierCGuiHarness(unittest.TestCase):
         self.assertEqual([app["id"] for app in electron_apps(descriptor)], ["mail"])
         with self.assertRaises(TierCError):
             electron_apps({"apps": [{"id": "bad", "kind": "electron", "command": ["x"], "window": {}}]})
+
+    def test_a_plan_must_be_labelled_scripted_and_complete(self) -> None:
+        import json
+        import tempfile
+
+        shipped = BENCH / "orcel-tasks" / "tierc" / "cdb-s02-blocker.plan.json"
+        self.assertTrue(load_plan(shipped)["label"].startswith("scripted-plan"))
+        with tempfile.TemporaryDirectory() as scratch:
+            path = Path(scratch) / "plan.json"
+            plan = json.loads(shipped.read_text(encoding="utf-8"))
+            for broken in ({**plan, "label": "agent"}, {k: v for k, v in plan.items() if k != "targets"}):
+                path.write_text(json.dumps(broken), encoding="utf-8")
+                with self.assertRaises(TierCError):
+                    load_plan(path)
 
     def test_it_refuses_to_run_outside_ci(self) -> None:
         saved = {key: os.environ.pop(key, None) for key in ("GITHUB_ACTIONS", "ORCEL_TIERC_ALLOW_LOCAL")}

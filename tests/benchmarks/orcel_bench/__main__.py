@@ -72,7 +72,29 @@ def main(argv: list[str]) -> int:
     observe.add_argument("--task", required=True)
     observe.add_argument("--commit", required=True)
     observe.add_argument("--out", required=True, type=Path)
+    act = sub.add_parser("tierc-act", help="Tier C C2b: a scripted plan acting through orceld's test build (CI only)")
+    act.add_argument("--pack", required=True, type=Path)
+    act.add_argument("--orceld", required=True, type=Path)
+    act.add_argument("--act-test", required=True, type=Path, help="orceld's test binary (cargo test --no-run)")
+    act.add_argument("--plan", required=True, type=Path)
+    act.add_argument("--commit", required=True)
+    act.add_argument("--out", required=True, type=Path)
     args = parser.parse_args(argv)
+    if args.command == "tierc-act":
+        from .tierc import TierCError
+        from .tierc_gui import run_act_episode
+
+        try:
+            rows = run_act_episode(args.pack.resolve(), load_lock("cua-driver-bench"), args.plan.resolve(),
+                                   args.orceld.resolve(), args.act_test.resolve())
+        except TierCError as error:
+            print(f"orcel_bench: {error}", file=sys.stderr)
+            return 1
+        planner = {"kind": "deterministic", "name": "tierc-scripted-plan", "version": "1-scripted-consent"}
+        args.out.write_text(json.dumps(report(args.commit, rows, planner), indent=2) + "\n", encoding="utf-8")
+        for row in rows:
+            print(f"TIERC-ACT-EVIDENCE {row['case']} {row['status']} {row['observed']} steps={row['steps']} {row['latency_ms']['p50']}ms")
+        return 0 if all(row["status"] == "pass" for row in rows) else 1
     if args.command == "tierc-observe":
         from .tierc import TierCError
         from .tierc_gui import PLANNER as OBSERVE_PLANNER

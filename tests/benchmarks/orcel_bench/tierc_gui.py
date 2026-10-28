@@ -147,77 +147,135 @@ def _find_window(orcel: Orceld, title: str) -> Optional[dict[str, Any]]:
     return None
 
 
-def run_observe_episode(pack: Path, lock: Optional[dict[str, Any]], task: str, orceld: Path) -> list[dict[str, Any]]:
-    """One report row per Electron app of `task`."""
-    if os.environ.get("GITHUB_ACTIONS") != "true" and os.environ.get("ORCEL_TIERC_ALLOW_LOCAL") != "1":
-        raise TierCError("tierc-observe opens windows and lists the session's windows: CI runners only")
-    if lock is not None:
-        from .taskpack import TaskpackError, verify
+class Episode:
+    """One prepared episode: a verified task copy, a reset workspace and the
+    descriptor's pinned prerequisite installs, all under a private root."""
 
-        try:
-            verify(lock, pack)
-        except TaskpackError as error:
-            raise TierCError(f"the taskpack does not verify: {error}") from error
-    os_name = platform_name()
-    verified_task = pack / "tasks" / "shared" / task
-    descriptor = load_descriptor(verified_task, os_name)
-    apps = electron_apps(descriptor)
-    if not apps:
-        raise TierCError(f"{task}: no Electron app in the {os_name} descriptor")
-    semantics = descriptor["semantics"]
-    root = Path(tempfile.mkdtemp(prefix="orcel-tierc-gui-"))
-    rows: list[dict[str, Any]] = []
-    launched: list[subprocess.Popen[bytes]] = []
-    try:
-        bundle = root / "task"
-        shutil.copytree(verified_task, bundle, symlinks=False)
-        workspace, artifacts, scratch = root / "workspace", root / "artifacts", root / "scratch"
-        for folder in (workspace, artifacts, scratch):
+    def __init__(self, pack: Path, lock: Optional[dict[str, Any]], task: str, purpose: str) -> None:
+        if os.environ.get("GITHUB_ACTIONS") != "true" and os.environ.get("ORCEL_TIERC_ALLOW_LOCAL") != "1":
+            raise TierCError(f"{purpose} opens windows and lists the session's windows: CI runners only")
+        if lock is not None:
+            from .taskpack import TaskpackError, verify
+
+            try:
+                verify(lock, pack)
+            except TaskpackError as error:
+                raise TierCError(f"the taskpack does not verify: {error}") from error
+        self.task = task
+        self.os_name = platform_name()
+        verified_task = pack / "tasks" / "shared" / task
+        descriptor = load_descriptor(verified_task, self.os_name)
+        self.apps = electron_apps(descriptor)
+        if not self.apps:
+            raise TierCError(f"{task}: no Electron app in the {self.os_name} descriptor")
+        self.semantics = descriptor["semantics"]
+        self.root = Path(tempfile.mkdtemp(prefix="orcel-tierc-gui-"))
+        self.launched: list[subprocess.Popen[bytes]] = []
+        self.bundle = self.root / "task"
+        shutil.copytree(verified_task, self.bundle, symlinks=False)
+        self.workspace, self.artifacts, self.scratch = self.root / "workspace", self.root / "artifacts", self.root / "scratch"
+        for folder in (self.workspace, self.artifacts, self.scratch):
             folder.mkdir()
-        values = {
-            "bundle": str(bundle),
-            "workspace": str(workspace),
-            "artifacts": str(artifacts),
-            "result": str(root / "result.json"),
+        self.values = {
+            "bundle": str(self.bundle),
+            "workspace": str(self.workspace),
+            "artifacts": str(self.artifacts),
+            "result": str(self.root / "result.json"),
             "agent_exit_code": "0",
         }
-        env = _env(scratch)
+        self.env = _env(self.scratch)
         for phase in ("setup", "verify"):
-            done = subprocess.run(expand(semantics["reset"][phase], values), cwd=bundle, env=env,
+            done = subprocess.run(expand(self.semantics["reset"][phase], self.values), cwd=self.bundle, env=self.env,
                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120, check=False)
             if done.returncode != 0:
                 raise TierCError(f"{task}: reset {phase} failed")
         # The descriptor's own prerequisite installs (pinned lockfiles).
         installed: set[str] = set()
-        for app in apps:
-            cwd = _fill(app["cwd"], values)
+        for app in self.apps:
+            cwd = _fill(app["cwd"], self.values)
             if cwd in installed:
                 continue
             npm = "npm.cmd" if os.name == "nt" else "npm"
-            done = subprocess.run([npm, "ci", "--no-audit", "--no-fund"], cwd=cwd, env=_app_env(scratch, []), stdout=subprocess.DEVNULL,
-                                  stderr=subprocess.DEVNULL, timeout=INSTALL_TIMEOUT_S, check=False)
+            done = subprocess.run([npm, "ci", "--no-audit", "--no-fund"], cwd=cwd, env=_app_env(self.scratch, []),
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=INSTALL_TIMEOUT_S, check=False)
             if done.returncode != 0:
                 raise TierCError(f"{task}: npm ci failed in {Path(cwd).name}")
             installed.add(cwd)
-        with Orceld(orceld, workspace) as orcel:
-            for app in apps:
+
+    def launch(self, app: dict[str, Any]) -> subprocess.Popen[bytes]:
+        process = subprocess.Popen(
+            [_fill(part, self.values) for part in app["command"]],
+            cwd=_fill(app["cwd"], self.values),
+            env=_app_env(self.scratch, list(app.get("unset_env", []))),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        self.launched.append(process)
+        return process
+
+    def evaluate(self) -> Optional[dict[str, Any]]:
+        """The task's evaluator; its result, or None when it failed."""
+        done = subprocess.run(expand(self.semantics["evaluate"], self.values), cwd=self.bundle, env=self.env,
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120, check=False)
+        result = self.root / "result.json"
+        if done.returncode != 0 or not result.is_file():
+            return None
+        return json.loads(result.read_text(encoding="utf-8"))
+
+    def teardown(self, orcel: Orceld, titles: list[str]) -> tuple[list[str], list[int]]:
+        """Stop every launched tree; the titles orceld still lists and the
+        processes left running from the episode folder (killed)."""
+        for process in self.launched:
+            _kill_tree(process)
+        deadline = time.monotonic() + 30
+        remaining = list(titles)
+        while remaining and time.monotonic() < deadline:
+            listed = _titles(orcel)
+            remaining = [title for title in remaining if title in listed]
+            if remaining:
+                time.sleep(1.0)
+        leftover = _left_running(self.root)
+        for pid in leftover:
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, check=False)
+        return remaining, leftover
+
+    def close(self) -> None:
+        for process in self.launched:
+            _kill_tree(process)
+        shutil.rmtree(self.root, ignore_errors=True)
+        if self.root.exists():
+            print(f"tierc: the episode folder could not be removed: {self.root}", file=sys.stderr)
+
+
+def _row(case: str, status: str, observed: str, started: float, steps: int) -> dict[str, Any]:
+    millis = round((time.perf_counter() - started) * 1000, 3)
+    return {
+        "case": case,
+        "status": status,
+        "observed": observed,
+        "latency_ms": {"p50": millis, "p95": millis},
+        "steps": steps,
+        "model_calls": 0,
+        "tokens_in": 0,
+        "tokens_out": 0,
+    }
+
+
+def run_observe_episode(pack: Path, lock: Optional[dict[str, Any]], task: str, orceld: Path) -> list[dict[str, Any]]:
+    """C2a: one report row per Electron app of `task`, observed only."""
+    episode = Episode(pack, lock, task, "tierc-observe")
+    rows: list[dict[str, Any]] = []
+    try:
+        with Orceld(orceld, episode.workspace) as orcel:
+            for app in episode.apps:
                 started = time.perf_counter()
                 calls_before = len(orcel.calls)
-                observed = "observed"
-                status = "pass"
-                launch_env = _app_env(scratch, list(app.get("unset_env", [])))
-                process = subprocess.Popen(
-                    [_fill(part, values) for part in app["command"]],
-                    cwd=_fill(app["cwd"], values),
-                    env=launch_env,
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-                launched.append(process)
-                title = app["window"]["title"]
+                status, observed = "pass", "observed"
+                episode.launch(app)
                 try:
-                    entry = _find_window(orcel, title)
+                    entry = _find_window(orcel, app["window"]["title"])
                     if entry is None:
                         status, observed = "fail", "window-not-found"
                     else:
@@ -235,55 +293,95 @@ def run_observe_episode(pack: Path, lock: Optional[dict[str, Any]], task: str, o
                     status, observed = "fail", f"orcel-refused-{refusal.code.lower()}"
                 except OrcelError as error:
                     status, observed = "error", error.observed
-                millis = round((time.perf_counter() - started) * 1000, 3)
-                rows.append({
-                    "case": f"tierc-observe/{task}/{app['id']}/{os_name}",
-                    "status": status,
-                    "observed": observed,
-                    "latency_ms": {"p50": millis, "p95": millis},
-                    # This app's own Orcel calls.
-                    "steps": len(orcel.calls) - calls_before,
-                    "model_calls": 0,
-                    "tokens_in": 0,
-                    "tokens_out": 0,
-                })
-            # The untouched workspace must still be rejected.
-            done = subprocess.run(expand(semantics["evaluate"], values), cwd=bundle, env=env,
-                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120, check=False)
-            evaluator_ran = done.returncode == 0 and (root / "result.json").is_file()
-            outcome = json.loads((root / "result.json").read_text(encoding="utf-8")) if evaluator_ran else {}
-            rejected = outcome.get("passed") is False
-            # Teardown: every process tree stopped, and no window left.
-            for process in launched:
-                _kill_tree(process)
-            deadline = time.monotonic() + 30
-            remaining = [app["window"]["title"] for app in apps]
-            while remaining and time.monotonic() < deadline:
-                titles = _titles(orcel)
-                remaining = [title for title in remaining if title in titles]
-                if remaining:
-                    time.sleep(1.0)
-            # No process may outlive teardown from the episode's folders.
-            leftover = _left_running(root)
-            for pid in leftover:
-                subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], stdout=subprocess.DEVNULL,
-                               stderr=subprocess.DEVNULL, check=False)
-            for row in rows:
-                if row["status"] != "pass":
-                    continue
-                if not evaluator_ran:
-                    row["status"], row["observed"] = "error", "evaluator-failed"
-                elif not rejected:
-                    row["status"], row["observed"] = "fail", "evaluator-did-not-reject"
-                elif remaining:
-                    row["status"], row["observed"] = "fail", "window-left-after-teardown"
-                elif leftover:
-                    row["status"], row["observed"] = "fail", "process-left-after-teardown"
+                rows.append(_row(f"tierc-observe/{task}/{app['id']}/{episode.os_name}", status, observed,
+                                 started, len(orcel.calls) - calls_before))
+            outcome = episode.evaluate()
+            remaining, leftover = episode.teardown(orcel, [app["window"]["title"] for app in episode.apps])
+        for row in rows:
+            if row["status"] != "pass":
+                continue
+            if outcome is None:
+                row["status"], row["observed"] = "error", "evaluator-failed"
+            elif outcome.get("passed") is not False:
+                row["status"], row["observed"] = "fail", "evaluator-did-not-reject"
+            elif remaining:
+                row["status"], row["observed"] = "fail", "window-left-after-teardown"
+            elif leftover:
+                row["status"], row["observed"] = "fail", "process-left-after-teardown"
         return rows
     finally:
-        for process in launched:
-            _kill_tree(process)
-        shutil.rmtree(root, ignore_errors=True)
-        if root.exists():
-            # Something still holds the episode's files: report it loudly.
-            print(f"tierc-observe: the episode folder could not be removed: {root}", file=sys.stderr)
+        episode.close()
+
+
+def load_plan(path: Path) -> dict[str, Any]:
+    plan = json.loads(path.read_text(encoding="utf-8"))
+    if not str(plan.get("label", "")).startswith("scripted-plan"):
+        raise TierCError("a Tier C plan must be labelled scripted-plan")
+    for key in ("task", "app", "window_title", "targets", "must_stay_passed", "steps"):
+        if key not in plan:
+            raise TierCError(f"the plan has no {key}")
+    return plan
+
+
+def run_act_episode(pack: Path, lock: Optional[dict[str, Any]], plan_path: Path, orceld: Path, act_test: Path) -> list[dict[str, Any]]:
+    """C2b: one report row for a scripted plan acting through orceld's
+    approval-gated UIA shapes in its test build (scripted SOFT consent).
+
+    The row passes when every targeted evaluator check passes, every
+    must-stay-passed check still passes, each call orceld answered was
+    audited, and teardown leaves no window or process behind. The observed
+    code records how many of the evaluator's checks pass (counts only)."""
+    plan = load_plan(plan_path)
+    episode = Episode(pack, lock, plan["task"], "tierc-act")
+    started = time.perf_counter()
+    try:
+        app = next((a for a in episode.apps if a["id"] == plan["app"]), None)
+        if app is None or app["window"]["title"] != plan["window_title"]:
+            raise TierCError("the plan's app or window title is not in the task's descriptor")
+        with Orceld(orceld, episode.workspace) as orcel:
+            episode.launch(app)
+            if _find_window(orcel, plan["window_title"]) is None:
+                episode.teardown(orcel, [plan["window_title"]])
+                return [_row(f"tierc-act/{plan['task']}/{plan['app']}/{episode.os_name}", "fail", "window-not-found", started, 0)]
+            state = episode.root / "act-state"
+            state.mkdir()
+            result_path = episode.root / "act-result.json"
+            act_env = dict(os.environ)
+            act_env.update({
+                "ORCEL_TIERC_ACT_PLAN": str(plan_path),
+                "ORCEL_TIERC_ACT_WORKSPACE": str(episode.workspace),
+                "ORCEL_TIERC_ACT_RESULT": str(result_path),
+                "ORCEL_TIERC_ACT_STATE": str(state),
+            })
+            done = subprocess.run(
+                [str(act_test), "--ignored", "--exact", "bm02_tier_c_act_tests::bm02_tier_c_scripted_plan_acts_through_orceld", "--nocapture"],
+                env=act_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=600, check=False,
+            )
+            acted = json.loads(result_path.read_text(encoding="utf-8")) if done.returncode == 0 and result_path.is_file() else None
+            time.sleep(2.0)
+            outcome = episode.evaluate()
+            remaining, leftover = episode.teardown(orcel, [plan["window_title"]])
+        case = f"tierc-act/{plan['task']}/{plan['app']}/{episode.os_name}"
+        if acted is None:
+            return [_row(case, "error", "act-run-failed", started, 0)]
+        calls = acted.get("calls", [])
+        if acted.get("outcome") != "completed":
+            return [_row(case, "fail", str(acted.get("outcome"))[:64], started, len(calls))]
+        if outcome is None:
+            return [_row(case, "error", "evaluator-failed", started, len(calls))]
+        checks = outcome.get("detail", {}).get("checks", {})
+        passed = sorted(name for name, check in checks.items() if isinstance(check, dict) and check.get("passed") is True)
+        observed = f"scripted-checks-{len(passed)}-of-{len(checks)}"
+        if any(name not in passed for name in plan["targets"]):
+            return [_row(case, "fail", "target-check-not-passed", started, len(calls))]
+        if any(name not in passed for name in plan["must_stay_passed"]):
+            return [_row(case, "fail", "preserved-check-broken", started, len(calls))]
+        if acted.get("audit_records", 0) < len(calls):
+            return [_row(case, "fail", "unaudited", started, len(calls))]
+        if remaining:
+            return [_row(case, "fail", "window-left-after-teardown", started, len(calls))]
+        if leftover:
+            return [_row(case, "fail", "process-left-after-teardown", started, len(calls))]
+        return [_row(case, "pass", observed, started, len(calls))]
+    finally:
+        episode.close()
