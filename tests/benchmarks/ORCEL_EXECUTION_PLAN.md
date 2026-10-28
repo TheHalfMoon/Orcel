@@ -75,5 +75,52 @@ logs print fixed codes only).
    behave; a solved removal is a founder acceptance test. The Rust CI job's
    `BM-02 evidence` step prints both tiers' per-case lines on every OS and
    schema-checks both reports.
-3. **Tier C:** the cua-driver-bench GUI tasks in an isolated VM per OS, when
-   one is available; until then recorded as blocked.
+3. **Tier C:** the pinned cua-driver-bench GUI tasks (`cdb-s02`,
+   `cdb-s03`, `cdb-s04`: long multi-app tasks over mail, chat, calendar
+   and a spreadsheet, each with reset `setup`/`verify` scripts, per-OS
+   launch descriptors and an evaluator) through Orcel's real GUI
+   interfaces. Never on a person's desktop.
+
+   **Isolated environments (free).** Each episode runs on a hosted CI
+   runner VM, which is disposable and has its own session:
+   - `windows-latest`: orceld's UIA shapes (`uia.*`, `desktop.*`).
+   - `macos-latest`: the native host; the hosted runner grants
+     Accessibility and Screen Recording to the host only, as XP-08 records.
+   - `ubuntu-latest`: the native host over AT-SPI under Xvfb with Openbox,
+     as XP-08 already runs.
+
+   A local disposable VM qualifies the same way; the founder's machines
+   never do.
+
+   **Slices:**
+   - **C1, the harness.**
+     - Fetch and verify the taskpack (`fetch-taskpack`, file by file).
+     - Run the task's reset `setup` and `verify` into a fresh workspace.
+     - Launch the app from the task's own `launch.<os>.json`.
+     - Drive it only through Orcel (orceld request entry or the native
+       host), with the real approval broker.
+     - Score with the task's evaluator, then run the reset `verify`.
+     - Capture the audit and a trace of call shapes, outcomes and latency
+       (no screenshots or text in reports).
+     - Tear down: the app's process tree is gone and the workspace is
+       removed.
+     - Report rows use `orcel-benchmark-report/1`.
+   - **C2, scripted-plan qualification.** A deterministic per-task plan
+     written for these three tasks drives C1 end to end, to prove the
+     harness, interfaces, approvals, reset and evaluation. Its report is
+     labelled `scripted-plan` with `scripted-consent` and is **not** an
+     agent result: it shows Orcel can carry the task, not that an agent
+     can solve it.
+   - **C3, agent runs (blocked).** Solving these tasks needs a capable
+     planner model. Paid inference is excluded (zero cost), and the local
+     d1 model is a 600M advisory classifier, not a planner. Agent results
+     wait for a founder decision on a model and budget, or a free local
+     model that can be qualified.
+
+   **Consent.** Approvals in C1 and C2 come from the real broker with
+   scripted SOFT consent, labelled in the report as in Tier B. Real human
+   consent is never scripted. On hosted macOS the runner image's own
+   pre-configured Accessibility and Screen Recording grants are used, as
+   XP-08 records. Orcel never scripts, forges or pre-grants an OS
+   permission, and never runs on a person's machine. A runner where a
+   prompt would still appear refuses the step.
