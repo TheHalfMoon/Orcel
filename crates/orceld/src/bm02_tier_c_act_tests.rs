@@ -120,8 +120,36 @@ fn find(
         .into_iter()
         .flatten()
         .find(|n| n["name"] == name && types.iter().any(|t| n["control_type"] == *t))
-        .cloned()
-        .ok_or("ELEMENT_NOT_FOUND")?;
+        .cloned();
+    let Some(node) = node else {
+        // Diagnostics for the CI log only (never the report): what the
+        // bounded tree did contain.
+        let nodes = tree["nodes"].as_array().cloned().unwrap_or_default();
+        let deepest = nodes.iter().filter_map(|n| n["depth"].as_u64()).max();
+        let actionable: Vec<String> = nodes
+            .iter()
+            .filter(|n| {
+                ["Edit", "Document", "Button"]
+                    .iter()
+                    .any(|t| n["control_type"] == *t)
+            })
+            .map(|n| {
+                format!(
+                    "{}:{}@{}",
+                    n["control_type"].as_str().unwrap_or("?"),
+                    n["name"].as_str().unwrap_or(""),
+                    n["depth"]
+                )
+            })
+            .take(40)
+            .collect();
+        eprintln!(
+            "TIERC-ACT-DIAG element {name:?} not found: {} nodes, deepest {deepest:?}, truncated {}, actionable {actionable:?}",
+            nodes.len(),
+            tree["truncated"]
+        );
+        return Err("ELEMENT_NOT_FOUND".into());
+    };
     Ok((node, generation))
 }
 

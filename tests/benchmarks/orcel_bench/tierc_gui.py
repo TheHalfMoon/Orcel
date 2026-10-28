@@ -355,8 +355,12 @@ def run_act_episode(pack: Path, lock: Optional[dict[str, Any]], plan_path: Path,
             })
             done = subprocess.run(
                 [str(act_test), "--ignored", "--exact", "bm02_tier_c_act_tests::bm02_tier_c_scripted_plan_acts_through_orceld", "--nocapture"],
-                env=act_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=600, check=False,
+                env=act_env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=600, check=False,
             )
+            # The act test's own diagnostics go to the log, never the report.
+            for line in done.stderr.decode("utf-8", "replace").splitlines():
+                if line.startswith("TIERC-ACT-DIAG"):
+                    print(line[:2000], file=sys.stderr)
             acted = json.loads(result_path.read_text(encoding="utf-8")) if done.returncode == 0 and result_path.is_file() else None
             time.sleep(2.0)
             outcome = episode.evaluate()
