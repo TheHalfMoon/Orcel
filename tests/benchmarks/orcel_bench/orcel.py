@@ -4,8 +4,8 @@ through Orcel.
 Orcel-owned. One `Orceld` is one orceld process over its stdio protocol (the
 JSON-lines protocol the MCP edge uses), started on an episode's disposable
 workspace with its own state directory and stopped at the end. Every call is
-traced: capability, operation, target, outcome, error code and latency, never
-file contents. Nothing is mocked: a call that orceld refuses comes back as
+traced: capability, operation, outcome, error code and latency, never targets
+or file contents. Nothing is mocked: a call that orceld refuses comes back as
 `OrcelRefused` with orceld's own error code.
 """
 
@@ -23,12 +23,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
-#: How long one orceld call may take.
-CALL_TIMEOUT_S = 30.0
+#: How long one orceld call may take (shorter than the runner's plan phase,
+#: so a hung orceld is reported as `orcel-timeout`, not as a plan timeout).
+CALL_TIMEOUT_S = 15.0
 #: How long orceld may take to stop.
 STOP_TIMEOUT_S = 10.0
 #: The largest response line accepted.
 MAX_RESPONSE_BYTES = 8 << 20
+
+#: The reader's marker for a response line over the limit.
+_TOO_LARGE = b"\x00too-large"
 
 
 class OrcelError(Exception):
@@ -70,6 +74,7 @@ class Orceld:
     calls: list[Call] = field(default_factory=list)
     _process: Optional[subprocess.Popen[bytes]] = None
     _lines: "queue.Queue[Optional[bytes]]" = field(default_factory=queue.Queue)
+    _reader: Optional[threading.Thread] = None
     _state: Optional[Path] = None
     _count: int = 0
     #: orceld's own audit records for the episode, counted at the end.
@@ -77,21 +82,23 @@ class Orceld:
 
     def __enter__(self) -> "Orceld":
         self._state = Path(tempfile.mkdtemp(prefix="orcel-bench-state-"))
-        env = {
-            key: value
-            for key, value in os.environ.items()
-            if key in ("PATH", "SYSTEMROOT", "SystemRoot", "WINDIR", "TEMP", "TMP", "HOME", "USERPROFILE")
-        }
+        scratch = self._state / "tmp"
+        scratch.mkdir()
+        env = {key: value for key, value in os.environ.items() if key in ("PATH", "SYSTEMROOT", "SystemRoot", "WINDIR")}
         env.update(
             {
                 "ORCEL_WORKSPACE_ROOT": str(self.workspace),
                 "ORCEL_WORKSPACE_ID": "default",
                 "ORCEL_APP_API": "off",
                 "ORCEL_AUDIT_PATH": str(self._state / "audit" / "audit.jsonl"),
-                # Per-OS private state, never the user's own.
+                # Per-OS private state and scratch, never the user's own.
                 "LOCALAPPDATA": str(self._state),
                 "XDG_STATE_HOME": str(self._state),
                 "HOME": str(self._state),
+                "USERPROFILE": str(self._state),
+                "TEMP": str(scratch),
+                "TMP": str(scratch),
+                "TMPDIR": str(scratch),
             }
         )
         # orceld's stderr is kept so a crash can say why (first line only,
@@ -109,14 +116,25 @@ class Orceld:
             self._stderr.close()
             self._cleanup_state()
             raise OrcelError("orcel-crash", f"orceld did not start: {error}") from error
-        reader = threading.Thread(target=self._read, daemon=True)
-        reader.start()
+        self._reader = threading.Thread(target=self._read, daemon=True)
+        self._reader.start()
         return self
 
     def _read(self) -> None:
         assert self._process is not None and self._process.stdout is not None
-        for line in self._process.stdout:
-            self._lines.put(line)
+        stdout = self._process.stdout
+        try:
+            while True:
+                line = stdout.readline(MAX_RESPONSE_BYTES + 1)
+                if not line:
+                    break
+                if len(line) > MAX_RESPONSE_BYTES:
+                    # Never buffer the rest of an oversized line.
+                    self._lines.put(_TOO_LARGE)
+                    break
+                self._lines.put(line)
+        except (OSError, ValueError):
+            pass
         self._lines.put(None)
 
     def stderr_head(self) -> str:
@@ -161,15 +179,18 @@ class Orceld:
             raise OrcelError("orcel-timeout", f"no answer to {capability} within {self.timeout} s") from None
         millis = (time.perf_counter() - started) * 1000
         if line is None:
-            process.wait(timeout=STOP_TIMEOUT_S)
+            try:
+                process.wait(timeout=STOP_TIMEOUT_S)
+            except subprocess.TimeoutExpired:
+                raise OrcelError("orcel-crash", "orceld closed its output but did not exit") from None
             raise OrcelError("orcel-crash", f"orceld exited (code {process.poll()}): {self.stderr_head()}")
-        if len(line) > MAX_RESPONSE_BYTES:
+        if line is _TOO_LARGE:
             raise OrcelError("orcel-protocol", "response too large")
         try:
             response = json.loads(line)
         except json.JSONDecodeError as error:
             raise OrcelError("orcel-protocol", "response is not JSON") from error
-        if response.get("request_id") != request["request_id"]:
+        if not isinstance(response, dict) or response.get("request_id") != request["request_id"]:
             raise OrcelError("orcel-protocol", "response for another request")
         if response.get("ok") is True:
             self.calls.append(Call(capability, operation, target, True, None, millis))
@@ -181,23 +202,30 @@ class Orceld:
 
     def __exit__(self, *exc: object) -> None:
         process = self._process
-        if process is not None:
-            try:
-                if process.stdin is not None:
-                    process.stdin.close()
-                process.wait(timeout=STOP_TIMEOUT_S)
-            except (OSError, subprocess.TimeoutExpired):
-                process.kill()
-                process.wait(timeout=STOP_TIMEOUT_S)
-            if process.stdout is not None:
-                process.stdout.close()
-        if getattr(self, "_stderr", None) is not None:
-            self._stderr.close()
-        audit = self.audit_path
-        if audit is not None and audit.is_file():
-            with audit.open("rb") as handle:
-                self.audit_records = sum(1 for _ in handle)
-        self._cleanup_state()
+        try:
+            if process is not None:
+                try:
+                    if process.stdin is not None:
+                        process.stdin.close()
+                    process.wait(timeout=STOP_TIMEOUT_S)
+                except (OSError, subprocess.TimeoutExpired):
+                    process.kill()
+                    try:
+                        process.wait(timeout=STOP_TIMEOUT_S)
+                    except subprocess.TimeoutExpired:
+                        pass
+                if self._reader is not None:
+                    self._reader.join(STOP_TIMEOUT_S)
+                if process.stdout is not None:
+                    process.stdout.close()
+        finally:
+            if getattr(self, "_stderr", None) is not None:
+                self._stderr.close()
+            audit = self.audit_path
+            if audit is not None and audit.is_file():
+                with audit.open("rb") as handle:
+                    self.audit_records = sum(1 for _ in handle)
+            self._cleanup_state()
 
     def _cleanup_state(self) -> None:
         if self._state is not None:

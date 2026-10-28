@@ -40,7 +40,7 @@ only, never in the product, and only its standard library.
 
 - **Orcel-driven runs, Tier A** (`ORCEL_EXECUTION_PLAN.md`): `python3 -m orcel_bench orcel --orceld <orceld binary> ...` solves the read-only Orcel task set (`orcel-tasks/orcel-read/`: 7 tasks, 20 variants) **through the real orceld**.
   - `orcel_bench/orcel.py` starts orceld on each episode's workspace with private state, speaks its stdio protocol, and traces every call (capability, operation, outcome, error code, latency). A crash, hang or protocol break is typed.
-  - `orcel_bench/orcel_runner.py` runs setup, then the task's deterministic `orcel_plan`, then a byte-for-byte workspace check (read-only tasks must change nothing), then `evaluate_task`. It writes report rows (planner `orcel-fs-planner`) and a JSON-lines trace.
+  - `orcel_bench/orcel_runner.py` runs setup, then the task's deterministic `orcel_plan`, then a byte-for-byte workspace check (read-only tasks must change nothing) and a check that the answer came through audited Orcel calls, then `evaluate_task`. A plan sees only the task's declared `inputs` and a client with `call`. It writes report rows (planner `orcel-fs-planner`) and a JSON-lines trace.
   - The tasks cover listing, reading, finding, stat, ranged reads, and Orcel's own `PATH_ESCAPE` refusal of reads outside the workspace.
   - `crates/orceld/tests/bm02_orcel_benchmark.rs` runs the set through this build's orceld in every OS's Rust CI job and prints `BM02-EVIDENCE` lines. `tests/test_orcel_runner.py` checks the runner's own failure classification with stand-in programs.
   - orceld refuses state that another account can reach, so `--temp-root` must be a private folder.

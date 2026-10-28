@@ -12,7 +12,7 @@ VARIANTS = {"port": "8417", "mode": "offline", "owner": "ops-team"}
 
 @ob.tasks_config
 def load():
-    return [ob.Task(description=f"What is {key} in config/app.ini?", task_id=key, metadata={"key": key}) for key in VARIANTS]
+    return [ob.Task(description=f"What is {key} in config/app.ini?", task_id=key, metadata={"key": key, "inputs": {"key": key}}) for key in VARIANTS]
 
 
 @ob.setup_task

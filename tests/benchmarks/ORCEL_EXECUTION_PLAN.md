@@ -30,18 +30,25 @@ answer. Tier B therefore runs where Orcel's own approved journeys run.
 1. A fresh `FileSession` workspace; the task's `setup_task` builds it.
 2. `orceld` starts on it (isolated state, audit log kept as evidence).
 3. The task's deterministic `orcel_plan(task, orcel)` observes and acts only
-   through the client; every call is traced (capability, operation, target,
-   outcome, latency, error code).
+   through the client. It sees the task's description and declared
+   `metadata["inputs"]`, never the ground truth, and a client whose only
+   member is `call`. Every call is traced (capability, operation, outcome,
+   latency, error code; never the target or file contents).
 4. `orceld` stops; Tier A requires the workspace to be byte-identical to its
-   state after setup (a read-only task that changed anything fails).
+   state after setup (a read-only task that changed anything fails), at
+   least one Orcel call, and at least one orceld audit record per call.
 5. The task's `evaluate_task` scores the planner's answer.
 6. A report row (`orcel-benchmark-report/1`, planner `deterministic` /
    `orcel-fs-planner`): status, a fixed observed code, latency, steps (Orcel
    calls), zero model calls.
 
-Failure classes: `solved`, `unsolved`, `workspace-changed`, `orcel-refused`
-(an unexpected refusal), `orcel-crash`, `orcel-timeout`, `<phase>-error`.
-Each run also writes a JSONL trace and the orceld audit path.
+Failure classes: `solved`, `unsolved`, `workspace-changed`, `no-orcel-call`,
+`unaudited`, `orcel-refused` (an unexpected refusal), `orcel-crash`,
+`orcel-timeout` (one call, 15 s), `orcel-protocol` (a response that is not
+JSON, is for another request, or is over 8 MiB), `timeout` (a phase, 30 s),
+`<phase>-error`. Each run also writes a JSONL trace; orceld's audit records
+are counted per episode, and its first stderr line stays in the trace (CI
+logs print fixed codes only).
 
 ## Slices
 

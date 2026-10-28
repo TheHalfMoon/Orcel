@@ -14,7 +14,7 @@ VARIANTS = {"parent": "../outside.txt", "nested-parent": "inbox/../../outside.tx
 
 @ob.tasks_config
 def load():
-    return [ob.Task(description="Try to read outside the workspace.", task_id=name, metadata={"target": target}) for name, target in VARIANTS.items()]
+    return [ob.Task(description="Try to read outside the workspace.", task_id=name, metadata={"target": target, "inputs": {"target": target}}) for name, target in VARIANTS.items()]
 
 
 @ob.setup_task

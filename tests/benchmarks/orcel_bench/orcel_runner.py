@@ -3,8 +3,10 @@ ORCEL_EXECUTION_PLAN.md) and write benchmark report rows.
 
 Orcel-owned. Each episode: a fresh workspace built by the task's
 `setup_task`; the real orceld started on it (orcel.py); the task's
-deterministic `orcel_plan(task, orcel)` observing only through Orcel; orceld
-stopped; the workspace checked byte for byte against its state after setup
+deterministic `orcel_plan(task, orcel)` observing only through Orcel (it sees
+the task's description and declared `inputs`, never the expected answer, and
+a client with nothing but `call`); orceld stopped; at least one Orcel call
+made and audited by orceld; the workspace checked byte for byte against its state after setup
 (Tier A tasks are read-only, so any change fails the episode); the answer
 scored by `evaluate_task`. Observed codes are fixed words; the trace records
 Orcel calls (capability, operation, outcome, latency, error code), never file
@@ -87,6 +89,26 @@ class OrcelEpisode:
     detail: str = ""
 
 
+class PlanClient:
+    """What a plan holds: Orcel's request interface and nothing else (no
+    workspace path, no process)."""
+
+    __slots__ = ("_call",)
+
+    def __init__(self, orcel: Orceld) -> None:
+        self._call = orcel.call
+
+    def call(self, capability: str, operation: str, target: Optional[str], arguments: Optional[dict[str, Any]] = None) -> Any:
+        return self._call(capability, operation, target, arguments)
+
+
+def plan_view(task: Task) -> Task:
+    """The task as a plan sees it: its description and declared
+    `metadata["inputs"]`; the rest of the metadata (the ground truth the
+    setup and evaluation use) is withheld."""
+    return Task(description=task.description, task_id=task.task_id, metadata=dict(task.metadata.get("inputs", {})))
+
+
 def _plan(func: Callable[..., Any], task: Task, orcel: Orceld, timeout: float) -> Any:
     """The planner on its own thread with a deadline (it only blocks on
     orceld, whose calls have their own deadline)."""
@@ -94,7 +116,7 @@ def _plan(func: Callable[..., Any], task: Task, orcel: Orceld, timeout: float) -
 
     def target() -> None:
         try:
-            outcome["value"] = func(task, orcel)
+            outcome["value"] = func(plan_view(task), PlanClient(orcel))
         except BaseException as error:  # noqa: BLE001 - re-raised below
             outcome["error"] = error
 
@@ -163,6 +185,12 @@ def run_orcel_episode(
             audit_records = orcel.audit_records
         if _tree(session.root) != before:
             return done("fail", "workspace-changed")
+        # The answer must come through Orcel: no call, or calls orceld did
+        # not audit, fail the episode whatever the answer.
+        if not calls:
+            return done("fail", "no-orcel-call")
+        if audit_records < len(calls):
+            return done("fail", "unaudited")
         session.answer = answer  # type: ignore[attr-defined]
         try:
             reward = reward_of(_phase(module.functions["evaluate_task"], task, session, timeout))

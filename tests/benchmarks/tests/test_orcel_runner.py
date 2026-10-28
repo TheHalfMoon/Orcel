@@ -49,11 +49,28 @@ async def evaluate(task, session):
 # one way (or answers like orceld would, for the control).
 STANDINS = {
     "answers": """
+import json, os, sys, pathlib
+audit = pathlib.Path(os.environ["ORCEL_AUDIT_PATH"])
+audit.parent.mkdir(parents=True, exist_ok=True)
+for line in sys.stdin:
+    request = json.loads(line)
+    with audit.open("a") as handle:
+        handle.write("{}" + chr(10))
+    print(json.dumps({"version": 1, "request_id": request["request_id"], "ok": True,
+                      "result": {"entries": [{"name": "a.txt", "is_file": True, "is_dir": False}]}}), flush=True)
+""",
+    "unaudited": """
 import json, sys
 for line in sys.stdin:
     request = json.loads(line)
     print(json.dumps({"version": 1, "request_id": request["request_id"], "ok": True,
                       "result": {"entries": [{"name": "a.txt", "is_file": True, "is_dir": False}]}}), flush=True)
+""",
+    "oversized": """
+import sys
+for line in sys.stdin:
+    sys.stdout.write("x" * (9 << 20) + chr(10))
+    sys.stdout.flush()
 """,
     "exits": "import sys; sys.exit(3)\n",
     "hangs": "import sys, time\nfor line in sys.stdin:\n    time.sleep(60)\n",
@@ -121,6 +138,8 @@ class OrcelRunnerFailures(unittest.TestCase):
             "not-json": ("error", "orcel-protocol"),
             "refuses": ("fail", "orcel-refused"),
             "writes": ("fail", "workspace-changed"),
+            "unaudited": ("fail", "unaudited"),
+            "oversized": ("error", "orcel-protocol"),
         }
         for standin, expected in cases.items():
             with self.subTest(standin):
@@ -136,6 +155,39 @@ class OrcelRunnerFailures(unittest.TestCase):
         produced = report(COMMIT, rows, {"kind": "deterministic", "name": "orcel-fs-planner", "version": "1"})
         self.assertEqual(produced["planner"]["name"], "orcel-fs-planner")
         self.assertEqual(rows[0]["model_calls"], 0)
+
+    def test_an_answer_that_bypasses_orcel_fails(self) -> None:
+        # A plan that answers from what it was handed, with no Orcel call.
+        (self.task / "main.py").write_text(
+            textwrap.dedent(TASK).replace(
+                'return [entry["name"] for entry in orcel.call("fs.list", "list", ".")["entries"]]',
+                'return ["a.txt"]',
+            ),
+            encoding="utf-8",
+        )
+        (row,), _ = self.run_with("answers")
+        self.assertEqual((row["status"], row["observed"]), ("fail", "no-orcel-call"))
+
+    def test_a_plan_sees_only_declared_inputs_and_call(self) -> None:
+        seen = Path(self.scratch.name) / "seen.json"
+        body = (
+            textwrap.dedent(TASK)
+            .replace(
+                'ob.Task(description="list the root", task_id="only")',
+                'ob.Task(description="list the root", task_id="only", metadata={"truth": ["a.txt"], "inputs": {"where": "."}})',
+            )
+            .replace(
+                "def plan(task, orcel):\n",
+                "def plan(task, orcel):\n"
+                "    import json, pathlib\n"
+                f"    pathlib.Path({str(seen)!r}).write_text(json.dumps("
+                "{'metadata': task.metadata, 'attrs': sorted(a for a in dir(orcel) if not a.startswith('_'))}))\n",
+            )
+        )
+        (self.task / "main.py").write_text(body, encoding="utf-8")
+        (row,), _ = self.run_with("answers")
+        self.assertEqual(row["status"], "pass")
+        self.assertEqual(json.loads(seen.read_text(encoding="utf-8")), {"metadata": {"where": "."}, "attrs": ["call"]})
 
     def test_a_task_without_a_plan_is_refused(self) -> None:
         (self.task / "main.py").write_text("import orcel_bench as ob\n", encoding="utf-8")

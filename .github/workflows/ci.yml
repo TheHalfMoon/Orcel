@@ -36,11 +36,19 @@ jobs:
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
         with:
           components: rustfmt, clippy
+      # BM-02: the orceld benchmark test runs the Python task runner.
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
       - name: Format
         run: cargo fmt --all -- --check
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
+        env:
+          # The commit this job built (on a pull request, GITHUB_SHA is the
+          # merge commit, not the checked-out head).
+          ORCEL_BM02_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: cargo test --workspace
       # XP-08 (follow-up from the #348 judge): the Rust adapter's /2
       # negotiation test against the freshly built Go host, not a script. The

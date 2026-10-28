@@ -12,7 +12,7 @@ VARIANTS = {"early": 7, "late": 1433}
 
 @ob.tasks_config
 def load():
-    return [ob.Task(description="What is on the given line of logs/app.log?", task_id=name, metadata={"line": line}) for name, line in VARIANTS.items()]
+    return [ob.Task(description="What is on the given line of logs/app.log?", task_id=name, metadata={"line": line, "inputs": {"line": line}}) for name, line in VARIANTS.items()]
 
 
 @ob.setup_task
