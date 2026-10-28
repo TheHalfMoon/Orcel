@@ -102,12 +102,76 @@ fn profile(label: &str) -> String {
     format!("Orcel.SG000013.{label}.{suffix}")
 }
 
+/// #292: the success test's own limit. This test qualifies containment
+/// (AppContainer, job assignment before resume, quiescence), not start-up
+/// latency: Windows PowerShell 5.1 has twice taken more than 30 s to start
+/// inside the AppContainer on a loaded hosted runner (median about 0.4 s
+/// locally). Production keeps `ExecutionLimits::default()` (30 s); the
+/// timeout path itself is qualified by the 3 s timeout test below.
+const COLD_START_ALLOWANCE: Duration = Duration::from_secs(120);
+
+/// How long an uncontained `powershell -Command exit` takes right now: on a
+/// failure this separates a slow runner from a containment-specific stall.
+fn uncontained_start_millis() -> Option<u128> {
+    let started = std::time::Instant::now();
+    let status = std::process::Command::new(powershell_executable())
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "exit 0",
+        ])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .ok()?;
+    status.success().then(|| started.elapsed().as_millis())
+}
+
 #[test]
 fn windows_private_powershell_success_is_bounded_and_quiescent() {
     let root = workspace("Success");
     let script = "$inputText=[Console]::In.ReadToEnd(); if($inputText.Length -ne 0){exit 23}; [Console]::Out.Write('ORCEL_POWERSHELL_OK')";
-    let plan = powershell_plan(&root, script, ExecutionLimits::default());
-    let result = execute_contained(plan, &profile("Success")).expect("contained PowerShell");
+    let limits = ExecutionLimits {
+        timeout: COLD_START_ALLOWANCE,
+        ..ExecutionLimits::default()
+    };
+    assert_eq!(
+        ExecutionLimits::default().timeout,
+        Duration::from_secs(30),
+        "the production default is not changed by this test"
+    );
+    let plan = powershell_plan(&root, script, limits);
+    let started = std::time::Instant::now();
+    let result = execute_contained(plan, &profile("Success"));
+    let elapsed = started.elapsed();
+    // Always in the log, with an uncontained start measured right after,
+    // so a slow start is visible (and comparable) even when it passes.
+    let uncontained = uncontained_start_millis();
+    eprintln!(
+        "SG013-EVIDENCE contained PowerShell success took {} ms; uncontained start {:?} ms",
+        elapsed.as_millis(),
+        uncontained
+    );
+    // Past the production limit: a real user would have hit the timeout
+    // (#292's open product question), so it is marked distinctly.
+    if elapsed > ExecutionLimits::default().timeout {
+        eprintln!(
+            "SG013-SLOW contained PowerShell took {} ms, over the production {} s limit",
+            elapsed.as_millis(),
+            ExecutionLimits::default().timeout.as_secs()
+        );
+    }
+    let result = result.unwrap_or_else(|failure| {
+        panic!(
+            "contained PowerShell: {failure:?} after {} ms; uncontained start: {:?} ms; {} CPUs",
+            elapsed.as_millis(),
+            uncontained,
+            std::thread::available_parallelism().map_or(0, usize::from)
+        )
+    });
 
     assert_eq!(result.exit_code, 0);
     assert_eq!(result.stdout, b"ORCEL_POWERSHELL_OK");
