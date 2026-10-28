@@ -19,6 +19,10 @@ from typing import Any, Callable, Optional
 
 #: The four functions a task module defines, in the order an episode uses them.
 KINDS = ("tasks_config", "setup_task", "solve_task", "evaluate_task")
+#: An Orcel task (BM-02, ORCEL_EXECUTION_PLAN.md) has no oracle `solve_task`:
+#: its `orcel_plan(task, orcel)` observes and acts only through Orcel and
+#: returns its answer, which `evaluate_task` scores as `session.answer`.
+ORCEL_KINDS = ("tasks_config", "setup_task", "orcel_plan", "evaluate_task")
 
 
 @dataclass
@@ -51,3 +55,4 @@ tasks_config = _marker("tasks_config")
 setup_task = _marker("setup_task")
 solve_task = _marker("solve_task")
 evaluate_task = _marker("evaluate_task")
+orcel_plan = _marker("orcel_plan")

@@ -230,7 +230,7 @@ def machine() -> dict[str, Any]:
     return {"os": os_name, "os_version": release[:64], "arch": arch}
 
 
-def report(orcel_commit: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+def report(orcel_commit: str, rows: list[dict[str, Any]], planner: Optional[dict[str, str]] = None) -> dict[str, Any]:
     if not re.fullmatch(r"[0-9a-f]{40}", orcel_commit):
         raise ValueError("orcel_commit must be a full lowercase commit id")
     return {
@@ -238,6 +238,6 @@ def report(orcel_commit: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
         "orcel_commit": orcel_commit,
         "suite": "journeys",
         "machine": machine(),
-        "planner": dict(PLANNER),
+        "planner": dict(planner or PLANNER),
         "rows": rows,
     }
