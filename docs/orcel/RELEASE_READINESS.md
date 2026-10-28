@@ -18,17 +18,23 @@ checkpoint at the end says where engineering stands.
 | XP-14 no-authority half: macOS discovery and code-signature checks, Linux package verification | #487, #488 |
 | BM-02 runner, report guard, pinned taskpack | #482, #484, #486 |
 | BM-02 Tier A: 20 read-only tasks through the real `orceld` binary on Windows, macOS and Linux CI | #499 → `a4ee1f8` |
+| BM-02 Tier B: 21 mutating tasks (12 solved, 9 expected refusals) through orceld's request entry and real broker; scripted SOFT consent and no mutation journal, both labelled; per-OS evidence on Windows Server 2025, macOS 26.6.2 arm64 and Linux 6.17 | #500 → `f6a4dbe` |
+| XP-14 host-owned network sink (no authority) | #501 → `daba78f` |
+| SG-000115 preparation packet (no activation) | #502 → `89066a6` |
+| Lifecycle on main `89066a6`: Windows release qualification (install, run, update, recover, uninstall, local report client, 400 MB budget) and Linux deb/rpm/tarball install, systemd units, tamper detection and uninstall | main CI 40672122647 |
 
 ## 2. Engineering that can still be completed without the founder
 
 | Item | Note |
 |---|---|
-| BM-02 Tier B: 21 mutating tasks (12 solved, 9 expected refusals) through orceld's request entry and real broker; scripted SOFT consent and no mutation journal, both labelled | #500, in review; moves to class 1 once merged on exact-head CI |
 | #438 residual: navigation `read: TimedOut` on CI | Waiting for a recurrence; #494's diagnostics capture it |
 | #292 flaky SG-000013 contained PowerShell test on windows-latest | Root cause not yet found |
 | #288 WPF idle memory | Needs a measurement baseline, then a budget |
 | Install / start / uninstall lifecycle re-qualification on current main | Release qualification job covers the package; a fresh lifecycle run is due |
-| BM-02 Tier C (GUI taskpack tasks) | Engineering is possible, but runs need an isolated VM (class 5); never on the live desktop |
+| #503 Linux package verification: separate 120 s verify deadline, typed `VerificationTimedOut`, process-group kill | #504, in review |
+| #292 contained PowerShell cold start: explicit test-only allowance and diagnostics; production limits unchanged | #505, in review |
+| F4 slice 5 stop: implementation-ready proposal (no surface) | #506, in review |
+| BM-02 Tier C slices C1 (harness) and C2 (scripted-plan qualification) on hosted CI runner VMs | Planned in `tests/benchmarks/ORCEL_EXECUTION_PLAN.md`; C3 agent runs are blocked (class 4) |
 | Governance preparation for SG-000115, SG-000122, SG-000124, SG-000127 closeout | Specs, tests, dependency and security analysis only; activation is a founder decision |
 | Documentation consistency (frontier, roadmap, benchmark plan) | Ongoing with each merge |
 
@@ -52,6 +58,7 @@ checkpoint at the end says where engineering stands.
 | FD-03 (gates CR-03), FD-05, FD-08 | As recorded in the frontier |
 | Activation of SG-000115 (XP-14 launch, network sink, supervision on macOS/Linux) and the other prepared grains | Activation grants authority; only the founder activates |
 | Release and publication | Not authorized; no release is created |
+| A planner model for BM-02 Tier C agent runs | Paid inference is excluded by the zero-cost rule; the local d1 model is an advisory classifier, not a planner |
 
 ## 5. External hardware or credentials
 
@@ -66,14 +73,22 @@ checkpoint at the end says where engineering stands.
 
 If a session ends, resume from here:
 
-1. #499 (Tier A) is merged; #500 (Tier B) follows it. Both run in
-   `cargo test --workspace` on all three OSes, and the Rust job's `BM-02
-   evidence` step prints `BM02-EVIDENCE` / `BM02B-EVIDENCE` lines.
-2. Local runs on Windows need a private temp folder:
-   `ORCEL_BM02_STATE_PARENT` (Tier A) or `TEMP`/`TMP` pointing at one;
-   orceld refuses state another account can reach.
-3. Next engineering: class 2 above, in order: #438 residual (on
-   recurrence), #292, lifecycle re-qualification, governance preparation,
-   then Tier C harness work that can be built without running it on a live
-   desktop.
-4. Never mark Core MVP complete; classes 3–5 are open.
+1. Merged: #499 (Tier A), #500 (Tier B), #501 (network sink), #502
+   (SG-000115 prep). In review: #504 (#503 fix), #505 (#292), #506 (stop
+   proposal). Each merges only at an exact head with every required check
+   green and an independent review.
+2. Local runs on Windows need a private temp folder. Point
+   `ORCEL_BM02_STATE_PARENT` (Tier A) or `TEMP`/`TMP` at one; orceld
+   refuses state another account can reach. Linux checks run in WSL2
+   Ubuntu with a Linux-side `CARGO_TARGET_DIR` and `LD_LIBRARY_PATH` unset.
+3. Next engineering, in order:
+   - Tier C C1 harness (taskpack fetch and verify, reset, launch
+     descriptors, the evaluator, audit capture, reports) on hosted runner
+     VMs, then C2 scripted-plan qualification;
+   - the remaining SG-000115 authority-neutral pieces (Unix managed-policy
+     reads, supervision primitives, profile hold) as unexposed and tested
+     code;
+   - SG-000122 and SG-000124 preparation packets;
+   - #288 WPF memory baseline;
+   - #438 when it recurs.
+4. Never mark Core MVP complete; classes 3 to 5 stay open.
