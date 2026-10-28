@@ -1725,7 +1725,8 @@ impl Drop for HttpsFixture {
                 shown.join("\n")
             );
             // A HIT with no DONE means the fixture never finished its
-            // response; a DONE means the stall was in the engine's load.
+            // response; a DONE means the stall came after the fixture
+            // finished writing it (delivery or the engine's load).
             let events = self
                 .events
                 .lock()
