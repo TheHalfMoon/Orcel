@@ -55,30 +55,37 @@ function WaitFor([scriptblock]$probe, [int]$timeoutMs) {
 }
 function Mb([double]$bytes) { [math]::Round($bytes / 1MB, 1) }
 
-# .NET Framework's own performance counters, by process instance name.
-function ClrCounter([System.Diagnostics.Process]$process, [string]$category, [string]$counter) {
+# .NET Framework's own performance counters. The process's instance name is
+# found once through ".NET CLR Memory", the only category with a
+# "Process ID" counter, and reused for the other categories.
+function ClrInstance([System.Diagnostics.Process]$process) {
     try {
         $instance = $process.ProcessName
-        $names = (New-Object System.Diagnostics.PerformanceCounterCategory $category).GetInstanceNames()
-        foreach ($name in $names) {
+        foreach ($name in (New-Object System.Diagnostics.PerformanceCounterCategory ".NET CLR Memory").GetInstanceNames()) {
             if ($name -ne $instance -and -not $name.StartsWith("$instance#")) { continue }
-            $idCounter = New-Object System.Diagnostics.PerformanceCounter($category, "Process ID", $name, $true)
-            if ([int]$idCounter.RawValue -ne $process.Id) { continue }
-            return (New-Object System.Diagnostics.PerformanceCounter($category, $counter, $name, $true)).NextValue()
+            $idCounter = New-Object System.Diagnostics.PerformanceCounter(".NET CLR Memory", "Process ID", $name, $true)
+            if ([int]$idCounter.RawValue -eq $process.Id) { return $name }
         }
     } catch { }
     return $null
 }
+function ClrCounter([string]$instance, [string]$category, [string]$counter) {
+    if ($null -eq $instance) { return $null }
+    try { return (New-Object System.Diagnostics.PerformanceCounter($category, $counter, $instance, $true)).NextValue() } catch { return $null }
+}
+function Show($value) { if ($null -eq $value -or "$value" -eq "") { "n/a" } else { $value } }
 function Sample([System.Diagnostics.Process]$process) {
     $process.Refresh()
     $modules = @($process.Modules)
     $managed = @($modules | Where-Object { $_.FileName -match '\\assembly\\|\\Microsoft\.NET\\|\.ni\.dll$' })
-    $heap = ClrCounter $process ".NET CLR Memory" "# Bytes in all Heaps"
+    # The GC heap counter reads empty until the process's first collection.
+    $instance = ClrInstance $process
+    $heap = ClrCounter $instance ".NET CLR Memory" "# Bytes in all Heaps"
     [ordered]@{
         working_set_mb    = Mb $process.WorkingSet64
         private_mb        = Mb $process.PrivateMemorySize64
         gc_heap_mb        = $(if ($null -ne $heap) { Mb $heap } else { $null })
-        clr_assemblies    = ClrCounter $process ".NET CLR Loading" "Current Assemblies"
+        clr_assemblies    = ClrCounter $instance ".NET CLR Loading" "Current Assemblies"
         native_modules    = $modules.Count
         managed_images    = $managed.Count
         handles           = $process.HandleCount
@@ -95,7 +102,11 @@ function Start-App([string]$name) {
     $clock = [Diagnostics.Stopwatch]::StartNew()
     $process = [System.Diagnostics.Process]::Start($info)
     $window = WaitFor { ById $uiaRoot $apps[$name].window } 30000
-    if ($null -eq $window) { $process.Kill(); throw "$name window did not appear" }
+    if ($null -eq $window) {
+        $process.Kill()
+        Remove-Item -Recurse -Force $empty -ErrorAction SilentlyContinue
+        throw "$name window did not appear"
+    }
     return @{ process = $process; window = $window; startup_ms = $clock.ElapsedMilliseconds; empty = $empty }
 }
 function Stop-App($run) {
@@ -109,8 +120,10 @@ function Names([System.Diagnostics.Process]$process) {
 }
 
 # WPF's documented per-user switch for software rendering, set only for this
-# measurement and always restored.
+# measurement and always restored. While it is set, every WPF app this user
+# starts renders in software: one more reason this runs on CI only.
 $avalon = "HKCU:\Software\Microsoft\Avalon.Graphics"
+$avalonExisted = Test-Path $avalon
 function Set-SoftwareRendering([bool]$on) {
     if (-not (Test-Path $avalon)) { New-Item -Path $avalon -Force | Out-Null }
     if ($on) { Set-ItemProperty -Path $avalon -Name DisableHWAcceleration -Value 1 -Type DWord }
@@ -138,12 +151,13 @@ try {
                 $entry = [ordered]@{ app = $name; mode = $mode; launch = $i; kind = $(if ($i -eq 0) { "cold" } else { "warm" }); startup_ms = $run.startup_ms; idle = $sample }
                 $report.launches += $entry
                 Write-Output ("WPF-MEM {0} {1} {2}#{3} startup={4}ms ws={5}MB private={6}MB gc={7}MB assemblies={8} modules={9}" -f `
-                        $name, $mode, $entry.kind, $i, $run.startup_ms, $sample.working_set_mb, $sample.private_mb, $sample.gc_heap_mb, $sample.clr_assemblies, $sample.native_modules)
+                        $name, $mode, $entry.kind, $i, $run.startup_ms, $sample.working_set_mb, $sample.private_mb, (Show $sample.gc_heap_mb), (Show $sample.clr_assemblies), $sample.native_modules)
             }
         }
     }
 } finally {
     Set-SoftwareRendering $false
+    if (-not $avalonExisted) { Remove-Item -Path $avalon -Force -ErrorAction SilentlyContinue }
 }
 
 # Repeated runtime queries in one Orcel window (hardware rendering).
@@ -166,10 +180,11 @@ try {
     $report.queries = $points
     foreach ($point in $points) {
         Write-Output ("WPF-MEM orcel queries after={0} ws={1}MB private={2}MB gc={3}MB handles={4} threads={5}" -f `
-                $point.after, $point.memory.working_set_mb, $point.memory.private_mb, $point.memory.gc_heap_mb, $point.memory.handles, $point.memory.threads)
+                $point.after, $point.memory.working_set_mb, $point.memory.private_mb, (Show $point.memory.gc_heap_mb), $point.memory.handles, $point.memory.threads)
     }
 } finally { Stop-App $run }
 
 $extra = @($report.assemblies["orcel"] | Where-Object { $report.assemblies["baseline"] -notcontains $_ })
 Write-Output ("WPF-MEM assemblies only in orcel ({0}): {1}" -f $extra.Count, ($extra -join ", "))
 if ($OutPath) { $report | ConvertTo-Json -Depth 6 | Set-Content -Path $OutPath -Encoding UTF8 }
+Remove-Item -Recurse -Force $BuildDirectory -ErrorAction SilentlyContinue

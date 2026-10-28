@@ -72,6 +72,9 @@ jobs:
       # assemblies, hardware and software rendering, repeated queries.
       - name: WPF preview memory profile (report only)
         if: runner.os == 'Windows'
+        # Report only: a UI Automation hiccup on the hosted runner must not
+        # fail the job.
+        continue-on-error: true
         shell: pwsh
         run: |
           apps/orcel-desktop-preview/tests/memory.ps1 -OutPath "$env:RUNNER_TEMP/wpf-memory.json"
