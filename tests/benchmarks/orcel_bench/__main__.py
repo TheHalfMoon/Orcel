@@ -24,7 +24,7 @@ from pathlib import Path
 from .orcel_runner import PLANNER as ORCEL_PLANNER
 from .orcel_runner import run_orcel
 from .runner import report, run_oracle
-from .taskpack import TaskpackError, fetch
+from .taskpack import TaskpackError, fetch, load_lock
 
 HERE = Path(__file__).resolve().parent.parent
 
@@ -63,15 +63,19 @@ def main(argv: list[str]) -> int:
     )
     orcel.add_argument("tasks", nargs="*", type=Path)
     tierc = sub.add_parser("tierc-noop", help="Tier C C1: the no-op baseline over a verified taskpack")
-    tierc.add_argument("--pack", required=True, type=Path, help="a taskpack fetched and verified by fetch-taskpack")
+    tierc.add_argument("--pack", required=True, type=Path, help="a taskpack fetched by fetch-taskpack (verified again before it runs)")
     tierc.add_argument("--commit", required=True, help="the Orcel commit under test (40 hex)")
     tierc.add_argument("--out", required=True, type=Path, help="where to write the report")
     args = parser.parse_args(argv)
     if args.command == "tierc-noop":
         from .tierc import PLANNER as TIERC_PLANNER
-        from .tierc import run_noop
+        from .tierc import TierCError, run_noop
 
-        rows = run_noop(args.pack.resolve())
+        try:
+            rows = run_noop(args.pack.resolve(), load_lock("cua-driver-bench"))
+        except TierCError as error:
+            print(f"orcel_bench: {error}", file=sys.stderr)
+            return 1
         args.out.write_text(json.dumps(report(args.commit, rows, TIERC_PLANNER), indent=2) + "\n", encoding="utf-8")
         failed = [row["case"] for row in rows if row["status"] != "pass"]
         print(f"orcel_bench: {len(rows) - len(failed)}/{len(rows)} Tier C no-op baselines rejected -> {args.out}")

@@ -4,8 +4,9 @@ pinned cua-driver-bench GUI tasks, before any GUI runs.
 Orcel-owned. For each task of a verified taskpack and the platform
 descriptor of this OS (`platform/launch.<os>.json`), an episode:
 
-1. a fresh workspace, artifacts folder and result path in a private temp
-   folder;
+1. a fresh copy of the verified task folder, a workspace, an artifacts
+   folder and a result path, all in a private temp folder (the pack itself
+   is never run from, so nothing a task writes can reach it);
 2. the task's own reset `setup`, then its reset `verify` (both must exit 0);
 3. no plan (this is the no-op baseline: nothing drives the apps yet);
 4. the task's own evaluator, exactly as the descriptor's `evaluate` command
@@ -16,14 +17,22 @@ The case passes only when reset works and the evaluator rejects the
 untouched workspace (`passed` false, score below 1): that proves the reset
 and scoring pipeline is wired correctly and that a no-op is never scored as
 a solution. It says nothing about GUI success. Commands are the task's own,
-run with this interpreter (`-E -s`) and a scrubbed
-environment; reports carry fixed codes and the score only, never task text
-or evaluator detail.
+run with this interpreter (`-E -s -B`: no PYTHON* variables, no user
+site-packages, no bytecode written) and a scrubbed environment. The pack is
+verified against its lock file by file at the start of every run. Reports
+carry fixed codes and latency only, never the score, task text or
+evaluator detail.
+
+Trust basis: the task code is third-party (pinned by commit and verified
+blob by blob, FD-04) and runs with the account's own file access; there is
+no sandbox beyond the scrubbed environment and private folders. Real-pack
+runs belong on CI or disposable VMs, as the Tier C plan says.
 """
 
 from __future__ import annotations
 
 import json
+import math
 import os
 import platform
 import shutil
@@ -85,10 +94,11 @@ def expand(template: list[str], values: dict[str, str]) -> list[str]:
     for part in template:
         if part == "${python}":
             # Not -I: the task's scripts import their sibling modules from
-            # the script's own folder, which -I drops. -E -s still ignore
-            # PYTHON* variables and user site-packages; the folder itself is
-            # verified file by file before anything runs.
-            argv.extend([sys.executable, "-E", "-s"])
+            # the script's own folder, which -I drops. -E -s ignore PYTHON*
+            # variables and user site-packages, and -B writes no bytecode
+            # (-E would otherwise ignore PYTHONDONTWRITEBYTECODE). The folder
+            # is the episode's own copy of the verified task.
+            argv.extend([sys.executable, "-E", "-s", "-B"])
         elif part.startswith("${") and part.endswith("}"):
             name = part[2:-1]
             if name not in values:
@@ -142,15 +152,19 @@ def _run(argv: list[str], task_dir: Path, env: dict[str, str]) -> Optional[int]:
     return done.returncode
 
 
-def run_noop_episode(task_dir: Path, os_name: str) -> Episode:
+def run_noop_episode(verified_task: Path, os_name: str) -> Episode:
     started = time.perf_counter()
 
     def done(status: str, observed: str, score: Optional[float] = None) -> Episode:
         return Episode(status, observed, time.perf_counter() - started, score)
 
-    semantics = load_descriptor(task_dir, os_name)["semantics"]
+    semantics = load_descriptor(verified_task, os_name)["semantics"]
     root = Path(tempfile.mkdtemp(prefix="orcel-tierc-"))
     try:
+        # The episode runs from its own copy: the verified pack is never
+        # written to, whatever the task's code does.
+        task_dir = root / "task"
+        shutil.copytree(verified_task, task_dir, symlinks=False)
         workspace, artifacts, scratch = root / "workspace", root / "artifacts", root / "scratch"
         for folder in (workspace, artifacts, scratch):
             folder.mkdir()
@@ -179,7 +193,12 @@ def run_noop_episode(task_dir: Path, os_name: str) -> Episode:
         except (OSError, json.JSONDecodeError):
             return done("error", "evaluator-no-result")
         passed, score = outcome.get("passed"), outcome.get("score")
-        if not isinstance(passed, bool) or not isinstance(score, (int, float)):
+        if (
+            not isinstance(passed, bool)
+            or isinstance(score, bool)
+            or not isinstance(score, (int, float))
+            or not math.isfinite(score)
+        ):
             return done("error", "evaluator-bad-result")
         if passed or score >= 1:
             # A no-op scored as a solution: the pipeline cannot be trusted.
@@ -189,8 +208,17 @@ def run_noop_episode(task_dir: Path, os_name: str) -> Episode:
         shutil.rmtree(root, ignore_errors=True)
 
 
-def run_noop(pack: Path, os_name: Optional[str] = None) -> list[dict[str, Any]]:
-    """One report row per task of the verified taskpack at `pack`."""
+def run_noop(pack: Path, lock: Optional[dict[str, Any]], os_name: Optional[str] = None) -> list[dict[str, Any]]:
+    """One report row per task of the taskpack at `pack`, which is verified
+    against `lock` file by file first. Only the harness's own tests pass
+    `lock=None`, for stand-in packs that have no lock."""
+    if lock is not None:
+        from .taskpack import TaskpackError, verify
+
+        try:
+            verify(lock, pack)
+        except TaskpackError as error:
+            raise TierCError(f"the taskpack does not verify: {error}") from error
     os_name = os_name or platform_name()
     tasks = sorted(path for path in (pack / "tasks" / "shared").iterdir() if path.is_dir())
     if not tasks:

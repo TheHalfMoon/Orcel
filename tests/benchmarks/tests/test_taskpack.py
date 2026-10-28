@@ -148,7 +148,9 @@ class PinnedTaskpack(unittest.TestCase):
         # harness with this OS's descriptor; a no-op must never score.
         from orcel_bench.tierc import run_noop
 
-        rows = run_noop(self.pack)
+        rows = run_noop(self.pack, LOCK)
+        # Running the tasks left the verified pack untouched.
+        verify(LOCK, self.pack)
         self.assertEqual(len(rows), 3)
         for row in rows:
             print(f"TIERC-EVIDENCE {row['case']} {row['status']} {row['observed']} {row['latency_ms']['p50']}ms", file=sys.stderr)
