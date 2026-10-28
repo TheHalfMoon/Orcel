@@ -23,6 +23,8 @@ if ($env:GITHUB_ACTIONS -ne "true" -and -not $AllowLocal) {
 }
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 
+# Only a build folder this run creates is removed at the end.
+$ownBuildDirectory = -not (Test-Path $BuildDirectory)
 $root = Split-Path -Parent $PSScriptRoot
 & (Join-Path $root "build.ps1") -OutputDirectory $BuildDirectory | Out-Null
 $framework = Join-Path $env:WINDIR "Microsoft.NET\Framework64\v4.0.30319"
@@ -187,4 +189,4 @@ try {
 $extra = @($report.assemblies["orcel"] | Where-Object { $report.assemblies["baseline"] -notcontains $_ })
 Write-Output ("WPF-MEM assemblies only in orcel ({0}): {1}" -f $extra.Count, ($extra -join ", "))
 if ($OutPath) { $report | ConvertTo-Json -Depth 6 | Set-Content -Path $OutPath -Encoding UTF8 }
-Remove-Item -Recurse -Force $BuildDirectory -ErrorAction SilentlyContinue
+if ($ownBuildDirectory) { Remove-Item -Recurse -Force $BuildDirectory -ErrorAction SilentlyContinue }
