@@ -27,6 +27,7 @@ mod proto;
 mod remote_leases;
 mod robots;
 mod runtime_pin;
+mod sink;
 mod supervise;
 mod transfers;
 mod uia;
