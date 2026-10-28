@@ -207,14 +207,32 @@ pub fn discover_engine(search: &SearchConfig) -> Result<Engine, HostError> {
     if search.system {
         candidates.extend(platform_candidates());
     }
+    first_verified(candidates, verify_candidate)
+}
+
+/// The first candidate that verifies. A candidate refused as unavailable is
+/// skipped; if none verifies and one ran out of time being verified, that
+/// is the answer (#503: a timeout is never reported as "no engine").
+fn first_verified(
+    candidates: Vec<PathBuf>,
+    verify: impl Fn(&Path) -> Result<Engine, HostError>,
+) -> Result<Engine, HostError> {
+    let mut timed_out = false;
     for path in candidates {
-        match verify_candidate(&path) {
+        match verify(&path) {
             Ok(engine) => return Ok(engine),
+            Err(HostError::Unavailable(UnavailableReason::VerificationTimedOut)) => {
+                timed_out = true;
+            }
             Err(HostError::Unavailable(_)) => continue,
             Err(other) => return Err(other),
         }
     }
-    Err(HostError::Unavailable(UnavailableReason::NoEngine))
+    Err(HostError::Unavailable(if timed_out {
+        UnavailableReason::VerificationTimedOut
+    } else {
+        UnavailableReason::NoEngine
+    }))
 }
 
 fn candidate_executables(root: &Path) -> Vec<PathBuf> {
@@ -1176,6 +1194,48 @@ mod tests {
             ))
         ));
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_verification_timeout_is_not_reported_as_no_engine() {
+        // #503: discovery reports why it found nothing usable.
+        let unavailable = |reason| Err(HostError::Unavailable(reason));
+        let reason_of = |result: Result<Engine, HostError>| match result {
+            Err(HostError::Unavailable(reason)) => Some(reason),
+            _ => None,
+        };
+        let paths = || vec![PathBuf::from("a"), PathBuf::from("b")];
+        // Nothing usable at all: no engine.
+        assert_eq!(
+            reason_of(first_verified(paths(), |_| unavailable(
+                UnavailableReason::UnsupportedEngine
+            ))),
+            Some(UnavailableReason::NoEngine)
+        );
+        // One candidate timed out and none verified: the timeout, whatever
+        // the order.
+        for timed_out in ["a", "b"] {
+            assert_eq!(
+                reason_of(first_verified(paths(), |path| {
+                    if path == Path::new(timed_out) {
+                        unavailable(UnavailableReason::VerificationTimedOut)
+                    } else {
+                        unavailable(UnavailableReason::UnsupportedEngine)
+                    }
+                })),
+                Some(UnavailableReason::VerificationTimedOut)
+            );
+        }
+        // A later candidate that verifies still wins over an earlier timeout.
+        let found = first_verified(paths(), |path| {
+            if path == Path::new("a") {
+                unavailable(UnavailableReason::VerificationTimedOut)
+            } else {
+                Ok(Engine::for_tests(path.to_path_buf(), EngineKind::Chromium))
+            }
+        })
+        .expect("the verified candidate");
+        assert_eq!(found.path, PathBuf::from("b"));
     }
 
     #[test]
