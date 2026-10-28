@@ -18,6 +18,10 @@ pub enum UnavailableReason {
     LaunchFailed,
     /// The host channel carried malformed or unexpected frames.
     ProtocolViolation,
+    /// #503: the engine's publisher verification (a package-database check
+    /// on Linux) did not finish within its deadline. The engine is not
+    /// trusted and not launched; this is not a verdict that it is untrusted.
+    VerificationTimedOut,
     /// The worker runtime is missing, too old, or refused to start (it
     /// requires Node.js 22.14+ run with exactly --disable-sigusr1).
     UnsupportedRuntime,
@@ -56,6 +60,9 @@ impl fmt::Display for UnavailableReason {
         match self {
             Self::NoEngine => write!(f, "no supported browser engine is installed"),
             Self::UnsupportedEngine => write!(f, "browser engine is unsupported or untrusted"),
+            Self::VerificationTimedOut => {
+                write!(f, "browser engine verification did not finish in time")
+            }
             Self::LaunchFailed => write!(f, "browser host launch failed"),
             Self::ProtocolViolation => write!(f, "browser host protocol violation"),
             Self::UnsupportedRuntime => {
@@ -145,6 +152,7 @@ mod tests {
             UnavailableReason::UnsupportedEngine,
             UnavailableReason::LaunchFailed,
             UnavailableReason::ProtocolViolation,
+            UnavailableReason::VerificationTimedOut,
         ] {
             let text = HostError::Unavailable(reason).to_string();
             assert!(text.starts_with("browser unavailable: "));

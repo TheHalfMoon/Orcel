@@ -11,8 +11,9 @@ use crate::error::{HostError, UnavailableReason};
 #[cfg(all(not(windows), not(target_os = "macos")))]
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 #[cfg(all(not(windows), not(target_os = "macos")))]
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 #[cfg(target_os = "macos")]
 #[path = "discovery_macos.rs"]
@@ -206,14 +207,32 @@ pub fn discover_engine(search: &SearchConfig) -> Result<Engine, HostError> {
     if search.system {
         candidates.extend(platform_candidates());
     }
+    first_verified(candidates, verify_candidate)
+}
+
+/// The first candidate that verifies. A candidate refused as unavailable is
+/// skipped; if none verifies and one ran out of time being verified, that
+/// is the answer (#503: a timeout is never reported as "no engine").
+fn first_verified(
+    candidates: Vec<PathBuf>,
+    verify: impl Fn(&Path) -> Result<Engine, HostError>,
+) -> Result<Engine, HostError> {
+    let mut timed_out = false;
     for path in candidates {
-        match verify_candidate(&path) {
+        match verify(&path) {
             Ok(engine) => return Ok(engine),
+            Err(HostError::Unavailable(UnavailableReason::VerificationTimedOut)) => {
+                timed_out = true;
+            }
             Err(HostError::Unavailable(_)) => continue,
             Err(other) => return Err(other),
         }
     }
-    Err(HostError::Unavailable(UnavailableReason::NoEngine))
+    Err(HostError::Unavailable(if timed_out {
+        UnavailableReason::VerificationTimedOut
+    } else {
+        UnavailableReason::NoEngine
+    }))
 }
 
 fn candidate_executables(root: &Path) -> Vec<PathBuf> {
@@ -594,41 +613,115 @@ fn verify_publisher(path: &Path) -> Result<bool, HostError> {
     let Some(code_dir) = real.parent().map(|dir| dir.to_string_lossy().into_owned()) else {
         return Ok(false);
     };
-    if let Some((true, out)) = run_package_tool("dpkg-query", &["-S", &real_text]) {
-        let Some(package) = dpkg_owner(&out, &real_text) else {
-            return Ok(false);
-        };
-        if vendor_package(&package).is_none() {
-            return Ok(false);
-        }
-        // `dpkg --verify` exits 0 even when it reports changes; nonzero is
-        // a real error (refused).
-        return match run_package_tool("dpkg", &["--verify", &package]) {
-            Some((true, out)) if verify_report_clean(&out, &code_dir) => Ok(true),
-            _ => Err(HostError::Unavailable(UnavailableReason::UnsupportedEngine)),
-        };
-    }
-    if let Some((true, out)) =
-        run_package_tool("rpm", &["-qf", "--queryformat", "%{NAME}\\n", &real_text])
-    {
-        let package = out.trim();
-        if out.lines().count() != 1 || vendor_package(package).is_none() {
-            return Ok(false);
-        }
-        // `rpm -V` exits nonzero whenever it reports any change, conffiles
-        // included, so its output decides; a nonzero exit with nothing
-        // reported is a real error (refused).
-        return match run_package_tool("rpm", &["-V", package]) {
-            Some((true, out)) if out.trim().is_empty() => Ok(true),
-            Some((false, out))
-                if !out.trim().is_empty() && verify_report_clean(&out, &code_dir) =>
-            {
-                Ok(true)
+    // #503: an ownership query that runs out of time is reported as such,
+    // never as "not owned" (which would quietly mean unverified).
+    match run_package_tool("dpkg-query", &["-S", &real_text], QUERY_DEADLINE) {
+        PackageRun::Finished {
+            success: true,
+            output,
+        } => {
+            let Some(package) = dpkg_owner(&output, &real_text) else {
+                return Ok(false);
+            };
+            if vendor_package(&package).is_none() {
+                return Ok(false);
             }
-            _ => Err(HostError::Unavailable(UnavailableReason::UnsupportedEngine)),
-        };
+            return dpkg_verdict(
+                run_package_tool("dpkg", &["--verify", &package], VERIFY_DEADLINE),
+                &code_dir,
+            );
+        }
+        PackageRun::TimedOut => return Err(verification_timed_out()),
+        PackageRun::Finished { .. } | PackageRun::Unavailable => {}
     }
-    Ok(false)
+    match run_package_tool(
+        "rpm",
+        &["-qf", "--queryformat", "%{NAME}\\n", &real_text],
+        QUERY_DEADLINE,
+    ) {
+        PackageRun::Finished {
+            success: true,
+            output,
+        } => {
+            let package = output.trim();
+            if output.lines().count() != 1 || vendor_package(package).is_none() {
+                return Ok(false);
+            }
+            rpm_verdict(
+                run_package_tool("rpm", &["-V", package], VERIFY_DEADLINE),
+                &code_dir,
+            )
+        }
+        PackageRun::TimedOut => Err(verification_timed_out()),
+        PackageRun::Finished { .. } | PackageRun::Unavailable => Ok(false),
+    }
+}
+
+/// #503: how long a package ownership query (`dpkg-query -S`, `rpm -qf`)
+/// may take. It reads only the package database's file lists.
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+const QUERY_DEADLINE: Duration = Duration::from_secs(15);
+/// #503: how long a full package verification (`dpkg --verify`, `rpm -V`)
+/// may take. It hashes every installed file of the package (hundreds of MB
+/// for Chrome or Edge). Measured on a local NVMe disk for a 292 MB,
+/// 1519-file package: 0.7 s warm, 1.3-1.9 s with a cold page cache, 2.2-2.5
+/// s cold under heavy CPU and I/O load; on a hosted CI runner's network disk
+/// under parallel tests it once ran past 15 s. The check itself is never
+/// shortened or skipped to fit a deadline.
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+const VERIFY_DEADLINE: Duration = Duration::from_secs(120);
+
+/// One package tool run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+enum PackageRun {
+    /// It exited; `success` is its exit status, `output` its stdout.
+    Finished { success: bool, output: String },
+    /// It ran past its deadline and was killed.
+    TimedOut,
+    /// It is not installed, could not start, or printed more than the
+    /// output bound.
+    Unavailable,
+}
+
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+fn verification_timed_out() -> HostError {
+    HostError::Unavailable(UnavailableReason::VerificationTimedOut)
+}
+
+/// The verdict of `dpkg --verify` for a vendor package. It exits 0 even
+/// when it reports changes, so its report decides; a nonzero exit is a real
+/// error. Anything but a clean report is refused as an untrusted engine; a
+/// timeout is reported as a timeout.
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+fn dpkg_verdict(run: PackageRun, code_dir: &str) -> Result<bool, HostError> {
+    match run {
+        PackageRun::Finished {
+            success: true,
+            output,
+        } if verify_report_clean(&output, code_dir) => Ok(true),
+        PackageRun::TimedOut => Err(verification_timed_out()),
+        _ => Err(HostError::Unavailable(UnavailableReason::UnsupportedEngine)),
+    }
+}
+
+/// The verdict of `rpm -V` for a vendor package. It exits nonzero whenever
+/// it reports any change, conffiles included, so its output decides; a
+/// nonzero exit with nothing reported is a real error (refused).
+#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+fn rpm_verdict(run: PackageRun, code_dir: &str) -> Result<bool, HostError> {
+    match run {
+        PackageRun::Finished {
+            success: true,
+            output,
+        } if output.trim().is_empty() => Ok(true),
+        PackageRun::Finished {
+            success: false,
+            output,
+        } if !output.trim().is_empty() && verify_report_clean(&output, code_dir) => Ok(true),
+        PackageRun::TimedOut => Err(verification_timed_out()),
+        _ => Err(HostError::Unavailable(UnavailableReason::UnsupportedEngine)),
+    }
 }
 
 /// XP-14 (Linux): the vendor packages whose files may be a verified engine.
@@ -684,53 +777,93 @@ fn verify_report_clean(output: &str, code_dir: &str) -> bool {
         })
 }
 
-/// Run a package-database query with the scrubbed probe environment and a
-/// bounded wait; `None` when the tool is absent, hangs or prints too much.
+/// Run a package-database tool with the scrubbed probe environment and a
+/// bounded wait: `TimedOut` past `deadline` (the child is killed),
+/// `Unavailable` when it is absent or prints too much.
 /// Stdout is drained on its own thread (so a large answer never blocks the
 /// tool), at most 1 MiB is kept, and the child is always reaped.
 #[cfg(all(not(windows), not(target_os = "macos")))]
-fn run_package_tool(program: &str, args: &[&str]) -> Option<(bool, String)> {
+fn run_package_tool(program: &str, args: &[&str], deadline: Duration) -> PackageRun {
     use std::io::Read;
+    use std::os::unix::process::CommandExt;
     const MAX_OUTPUT: u64 = 1 << 20;
-    let mut child = std::process::Command::new(program)
+    // Its own process group, so a deadline kills everything it started: a
+    // helper still holding stdout would otherwise keep the wait open past
+    // the deadline (#503).
+    let Ok(mut child) = std::process::Command::new(program)
         .args(args)
         .env_clear()
         .envs(probe_env())
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
+        .process_group(0)
         .spawn()
-        .ok()?;
-    let stdout = child.stdout.take()?;
-    let reader = std::thread::spawn(move || {
+    else {
+        return PackageRun::Unavailable;
+    };
+    let Some(stdout) = child.stdout.take() else {
+        kill_tool_group(&mut child);
+        return PackageRun::Unavailable;
+    };
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
         let mut kept = Vec::new();
         let mut limited = stdout.take(MAX_OUTPUT + 1);
         let _ = limited.read_to_end(&mut kept);
         // Keep draining past the cap so the tool can finish.
         let _ = std::io::copy(&mut limited.into_inner(), &mut std::io::sink());
-        kept
+        let _ = sender.send(kept);
     });
-    let deadline = Instant::now() + Duration::from_secs(15);
+    let deadline = Instant::now() + deadline;
     let status = loop {
         match child.try_wait() {
-            Ok(Some(status)) => break Some(status),
+            Ok(Some(status)) => break status,
             Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                break None;
+            Ok(None) => {
+                kill_tool_group(&mut child);
+                return PackageRun::TimedOut;
+            }
+            Err(_) => {
+                kill_tool_group(&mut child);
+                return PackageRun::Unavailable;
             }
         }
     };
-    let kept = reader.join().ok()?;
-    let status = status?;
+    // The tool exited; its output must also end by the deadline (a helper
+    // it left behind may hold the pipe). The leader is reaped, so its group
+    // id is no longer ours to signal: the reader thread is left to end with
+    // the pipe.
+    let wait = deadline
+        .saturating_duration_since(Instant::now())
+        .max(Duration::from_millis(500));
+    let Ok(kept) = receiver.recv_timeout(wait) else {
+        return PackageRun::TimedOut;
+    };
     if kept.len() as u64 > MAX_OUTPUT {
-        return None;
+        return PackageRun::Unavailable;
     }
-    Some((
-        status.success(),
-        String::from_utf8_lossy(&kept).into_owned(),
-    ))
+    PackageRun::Finished {
+        success: status.success(),
+        output: String::from_utf8_lossy(&kept).into_owned(),
+    }
+}
+
+/// Kill a package tool and everything in its process group, then reap it.
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn kill_tool_group(child: &mut std::process::Child) {
+    extern "C" {
+        fn kill(pid: i32, signal: i32) -> i32;
+    }
+    const SIGKILL: i32 = 9;
+    if let Ok(pgid) = i32::try_from(child.id()) {
+        // SAFETY: kill takes two integers. A negative pid addresses the
+        // process group whose leader is our own child, still unreaped here,
+        // so the group id cannot belong to anyone else.
+        let _ = unsafe { kill(-pgid, SIGKILL) };
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 #[cfg(windows)]
@@ -823,6 +956,109 @@ mod tests {
         ));
         // A line naming no absolute path is not understood.
         assert!(!verify_report_clean("error: something\n", dir));
+        verdicts_keep_a_timeout_apart_from_an_untrusted_engine(dir);
+    }
+
+    /// #503: a verification that ran out of time is `VerificationTimedOut`,
+    /// never `UnsupportedEngine` (untrusted) and never `Ok(false)`
+    /// (unverified); a clean report verifies and a dirty one is refused.
+    fn verdicts_keep_a_timeout_apart_from_an_untrusted_engine(dir: &str) {
+        fn reason(verdict: Result<bool, HostError>) -> Option<UnavailableReason> {
+            match verdict {
+                Err(HostError::Unavailable(reason)) => Some(reason),
+                _ => None,
+            }
+        }
+        let finished = |success: bool, output: &str| PackageRun::Finished {
+            success,
+            output: output.into(),
+        };
+        let changed = "??5??????   /opt/google/chrome/chrome\n";
+        // dpkg --verify
+        assert!(matches!(dpkg_verdict(finished(true, ""), dir), Ok(true)));
+        assert_eq!(
+            reason(dpkg_verdict(PackageRun::TimedOut, dir)),
+            Some(UnavailableReason::VerificationTimedOut)
+        );
+        for refused in [
+            finished(true, changed),
+            finished(false, ""),
+            PackageRun::Unavailable,
+        ] {
+            assert_eq!(
+                reason(dpkg_verdict(refused, dir)),
+                Some(UnavailableReason::UnsupportedEngine)
+            );
+        }
+        // rpm -V
+        assert!(matches!(rpm_verdict(finished(true, ""), dir), Ok(true)));
+        assert!(matches!(
+            rpm_verdict(finished(false, "S.5....T.  c /etc/x.conf\n"), dir),
+            Ok(true)
+        ));
+        assert_eq!(
+            reason(rpm_verdict(PackageRun::TimedOut, dir)),
+            Some(UnavailableReason::VerificationTimedOut)
+        );
+        for refused in [
+            finished(false, changed),
+            finished(false, ""),
+            PackageRun::Unavailable,
+        ] {
+            assert_eq!(
+                reason(rpm_verdict(refused, dir)),
+                Some(UnavailableReason::UnsupportedEngine)
+            );
+        }
+        // The two deadlines stay distinct, and verification gets the longer.
+        assert!(VERIFY_DEADLINE > QUERY_DEADLINE);
+    }
+
+    /// #503: the tool runner itself kills a tool that runs past its deadline
+    /// and says so, and tells an absent tool apart from a slow one.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn package_tools_that_run_too_long_are_reported_as_timed_out() {
+        let started = Instant::now();
+        assert_eq!(
+            run_package_tool("sh", &["-c", "sleep 30"], Duration::from_millis(300)),
+            PackageRun::TimedOut
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "the slow tool was not killed"
+        );
+        // A tool that exits but leaves a helper holding stdout: the output
+        // wait ends at the deadline too.
+        let started = Instant::now();
+        assert_eq!(
+            run_package_tool(
+                "sh",
+                &["-c", "setsid sleep 30 & exit 0"],
+                Duration::from_millis(300)
+            ),
+            PackageRun::TimedOut
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "a helper holding the output kept the wait open"
+        );
+        assert_eq!(
+            run_package_tool("orcel-no-such-package-tool", &[], QUERY_DEADLINE),
+            PackageRun::Unavailable
+        );
+        assert_eq!(
+            run_package_tool("sh", &["-c", "echo ok"], QUERY_DEADLINE),
+            PackageRun::Finished {
+                success: true,
+                output: "ok\n".into()
+            }
+        );
+        // More than the 1 MiB output bound is refused, not truncated.
+        assert_eq!(
+            run_package_tool("sh", &["-c", "head -c 2000000 /dev/zero"], QUERY_DEADLINE),
+            PackageRun::Unavailable
+        );
     }
 
     /// On a Linux machine with Chrome installed from Google's package (the
@@ -833,8 +1069,9 @@ mod tests {
     fn xp14_linux_the_vendor_package_verifies_and_a_copy_does_not() {
         let installed = Path::new("/opt/google/chrome/chrome");
         let owned = matches!(
-            run_package_tool("dpkg-query", &["-S", "/opt/google/chrome/chrome"]),
-            Some((true, out)) if dpkg_owner(&out, "/opt/google/chrome/chrome").as_deref() == Some("google-chrome-stable")
+            run_package_tool("dpkg-query", &["-S", "/opt/google/chrome/chrome"], QUERY_DEADLINE),
+            PackageRun::Finished { success: true, output }
+                if dpkg_owner(&output, "/opt/google/chrome/chrome").as_deref() == Some("google-chrome-stable")
         );
         if !installed.is_file() || !owned {
             assert!(
@@ -843,7 +1080,17 @@ mod tests {
             );
             return;
         }
-        let verify = run_package_tool("dpkg", &["--verify", "google-chrome-stable"]);
+        let started = Instant::now();
+        let verify = run_package_tool(
+            "dpkg",
+            &["--verify", "google-chrome-stable"],
+            VERIFY_DEADLINE,
+        );
+        // #503: how long the full verification took on this runner.
+        eprintln!(
+            "XP14-EVIDENCE dpkg --verify google-chrome-stable took {:?}",
+            started.elapsed()
+        );
         let verdict = verify_publisher(installed);
         assert!(
             matches!(verdict, Ok(true)),
@@ -947,6 +1194,48 @@ mod tests {
             ))
         ));
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_verification_timeout_is_not_reported_as_no_engine() {
+        // #503: discovery reports why it found nothing usable.
+        let unavailable = |reason| Err(HostError::Unavailable(reason));
+        let reason_of = |result: Result<Engine, HostError>| match result {
+            Err(HostError::Unavailable(reason)) => Some(reason),
+            _ => None,
+        };
+        let paths = || vec![PathBuf::from("a"), PathBuf::from("b")];
+        // Nothing usable at all: no engine.
+        assert_eq!(
+            reason_of(first_verified(paths(), |_| unavailable(
+                UnavailableReason::UnsupportedEngine
+            ))),
+            Some(UnavailableReason::NoEngine)
+        );
+        // One candidate timed out and none verified: the timeout, whatever
+        // the order.
+        for timed_out in ["a", "b"] {
+            assert_eq!(
+                reason_of(first_verified(paths(), |path| {
+                    if path == Path::new(timed_out) {
+                        unavailable(UnavailableReason::VerificationTimedOut)
+                    } else {
+                        unavailable(UnavailableReason::UnsupportedEngine)
+                    }
+                })),
+                Some(UnavailableReason::VerificationTimedOut)
+            );
+        }
+        // A later candidate that verifies still wins over an earlier timeout.
+        let found = first_verified(paths(), |path| {
+            if path == Path::new("a") {
+                unavailable(UnavailableReason::VerificationTimedOut)
+            } else {
+                Ok(Engine::for_tests(path.to_path_buf(), EngineKind::Chromium))
+            }
+        })
+        .expect("the verified candidate");
+        assert_eq!(found.path, PathBuf::from("b"));
     }
 
     #[test]
