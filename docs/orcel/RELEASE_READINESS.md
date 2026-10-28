@@ -30,7 +30,7 @@ checkpoint at the end says where engineering stands.
 | #438 residual: navigation `read: TimedOut` on CI | Waiting for a recurrence; #494's diagnostics capture it |
 | #292 flaky SG-000013 contained PowerShell test on windows-latest | Root cause not yet found |
 | #288 WPF idle memory | Needs a measurement baseline, then a budget |
-| Install / start / uninstall lifecycle re-qualification on current main | Release qualification job covers the package; a fresh lifecycle run is due |
+| macOS install / start / uninstall lifecycle | No macOS package yet: macOS packaging (XP-16) waits for FD-05; Windows and Linux lifecycle are in class 1 |
 | #503 Linux package verification: separate 120 s verify deadline, typed `VerificationTimedOut`, process-group kill | #504, in review |
 | #292 contained PowerShell cold start: explicit test-only allowance and diagnostics; production limits unchanged | #505, in review |
 | F4 slice 5 stop: implementation-ready proposal (no surface) | #506, in review |

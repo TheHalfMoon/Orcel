@@ -119,5 +119,8 @@ logs print fixed codes only).
 
    **Consent.** Approvals in C1 and C2 come from the real broker with
    scripted SOFT consent, labelled in the report as in Tier B. Real human
-   consent and OS permission grants are never scripted or pre-granted. A
-   runner where a prompt would appear refuses the step.
+   consent is never scripted. On hosted macOS the runner image's own
+   pre-configured Accessibility and Screen Recording grants are used, as
+   XP-08 records. Orcel never scripts, forges or pre-grants an OS
+   permission, and never runs on a person's machine. A runner where a
+   prompt would still appear refuses the step.
