@@ -14,6 +14,8 @@ use std::path::Path;
 use std::path::PathBuf;
 
 mod app_api;
+#[cfg(test)]
+mod bm02_tier_b_tests;
 mod browser;
 mod clipboard;
 mod contained_tier;
