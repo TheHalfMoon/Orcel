@@ -52,11 +52,28 @@ logs print fixed codes only).
 
 ## Slices
 
-1. **Tier A (this slice):** the orceld client, the Orcel runner and CLI, a
+1. **Tier A (#499):** the orceld client, the Orcel runner and CLI, a
    20-variant read-only Orcel task set, and a cross-OS CI test that runs the
    real binary on ubuntu, windows and macos and checks the report.
-2. **Tier B:** an orceld test-build benchmark driver for the mutating tasks
-   (`hello-file`, `report-rename`, report journeys) on the real broker with
-   scripted consent.
+2. **Tier B:** `crates/orceld/src/bm02_tier_b_tests.rs`, 21 mutating
+   variants (hello-file, overwrite, report-rename, mkdir, edit-config,
+   remove-needs-presence, denied, stale-target, escape-refused) through
+   orceld's own request entry (`handle_envelope`: profile gate, policy,
+   dispatch, audit) and the real approval broker over its own ledger. Two
+   things differ from the shipped orceld, and the report's planner version
+   names both (`orcel-fs-mutation-planner` `1-scripted-consent-unjournaled`):
+   the SOFT consent is scripted, and the SG-000120 mutation journal is not
+   started in a unit-test build, so no journal records are written (the
+   journal has its own tests). Each episode checks the whole workspace
+   against the expected tree, every prompt's exact action and target, the
+   refusal the plan ended on, one audit record per call and nothing changed
+   outside the workspace. 12 variants are solved with approval and 9 are
+   expected refusals (denied, stale target, path escape, removal without
+   presence); the evidence prints the two counts separately. `fs.remove` is
+   STRONG: with the `NoPresenceVerifier` stub the broker refuses it, which
+   shows the fail-closed rule, not how Windows Hello, Touch ID or polkit
+   behave; a solved removal is a founder acceptance test. The Rust CI job's
+   `BM-02 evidence` step prints both tiers' per-case lines on every OS and
+   schema-checks both reports.
 3. **Tier C:** the cua-driver-bench GUI tasks in an isolated VM per OS, when
    one is available; until then recorded as blocked.
