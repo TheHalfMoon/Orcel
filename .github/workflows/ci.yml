@@ -50,6 +50,20 @@ jobs:
           # merge commit, not the checked-out head).
           ORCEL_BM02_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: cargo test --workspace
+      # BM-02 evidence on this OS: both tiers again with their per-case lines
+      # in the log (the Test step captures them when they pass), and both
+      # reports checked against orcel-benchmark-report/1.
+      - name: BM-02 evidence
+        shell: bash
+        env:
+          ORCEL_BM02_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/bm02"
+          mkdir -p "$out"
+          ORCEL_BM02_REPORT="$out/tier-a.report.json" cargo test -p orceld --test bm02_orcel_benchmark -- --nocapture 2>&1 | grep -E "BM02-|BM02 skipped|test result"
+          ORCEL_BM02B_REPORT="$out/tier-b.report.json" cargo test -p orceld --bin orceld bm02_tier_b -- --nocapture 2>&1 | grep -E "BM02B-|test result"
+          node scripts/check-benchmark-report.mjs "$out"
       # XP-08 (follow-up from the #348 judge): the Rust adapter's /2
       # negotiation test against the freshly built Go host, not a script. The
       # native-host job does the same with orcel-native-host on macOS and

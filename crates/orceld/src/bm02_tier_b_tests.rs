@@ -715,11 +715,23 @@ fn bm02_tier_b_mutating_tasks_are_solved_through_orceld_with_scripted_consent() 
         } else {
             "x86_64"
         };
+        // GitHub's runner image name (e.g. win22, ubuntu24, macos15) where
+        // there is one; the report never guesses a version.
+        let os_version = std::env::var("ImageOS")
+            .ok()
+            .filter(|v| {
+                !v.is_empty()
+                    && v.len() <= 64
+                    && v.bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"._+-".contains(&b))
+                    && v.as_bytes()[0].is_ascii_alphanumeric()
+            })
+            .unwrap_or_else(|| "unrecorded".into());
         let report = json!({
             "schema": "orcel-benchmark-report/1",
             "orcel_commit": commit,
             "suite": "journeys",
-            "machine": {"os": os, "os_version": "unrecorded", "arch": arch},
+            "machine": {"os": os, "os_version": os_version, "arch": arch},
             "planner": {
                 "kind": "deterministic",
                 "name": "orcel-fs-mutation-planner",

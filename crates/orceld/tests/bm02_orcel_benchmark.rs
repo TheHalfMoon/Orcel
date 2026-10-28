@@ -147,5 +147,9 @@ fn bm02_orcel_task_set_is_solved_through_the_real_orceld() {
         left, 0,
         "episode workspaces or orceld state were left behind"
     );
+    // CI keeps the report for the schema check and the job log.
+    if let Some(keep) = std::env::var_os("ORCEL_BM02_REPORT") {
+        std::fs::copy(&report, keep).expect("keep the report");
+    }
     let _ = std::fs::remove_dir_all(&base);
 }

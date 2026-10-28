@@ -17,7 +17,7 @@ checkpoint at the end says where engineering stands.
 | Browser lifetime fixes: Edge teardown race (#483 → #497), cold-start launch timeout (#438 LaunchFailed → #495) | #495, #497 |
 | XP-14 no-authority half: macOS discovery and code-signature checks, Linux package verification | #487, #488 |
 | BM-02 runner, report guard, pinned taskpack | #482, #484, #486 |
-| BM-02 Tier A: 20 read-only tasks through the real `orceld` binary on Windows, macOS and Linux CI | #499 |
+| BM-02 Tier A: 20 read-only tasks through the real `orceld` binary on Windows, macOS and Linux CI | #499 → `a4ee1f8` |
 | BM-02 Tier B: 21 mutating tasks through orceld's request entry and real broker (scripted SOFT consent, labelled) | this PR |
 
 ## 2. Engineering that can still be completed without the founder
