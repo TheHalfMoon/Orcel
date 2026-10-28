@@ -117,14 +117,17 @@ def _left_running(root: Path) -> list[int]:
     """Process ids whose executable or command line is under `root`."""
     if os.name != "nt":
         return []
+    # The folder goes in through the environment, never pasted into the
+    # script, so no character in it can change the query.
     script = (
-        "Get-CimInstance Win32_Process | Where-Object { "
-        f"($_.ExecutablePath -and $_.ExecutablePath.StartsWith('{root}', 'OrdinalIgnoreCase')) -or "
-        f"($_.CommandLine -and $_.CommandLine.IndexOf('{root}', [StringComparison]::OrdinalIgnoreCase) -ge 0) }} "
+        "$root = $env:ORCEL_TIERC_ROOT; Get-CimInstance Win32_Process | Where-Object { "
+        "($_.ExecutablePath -and $_.ExecutablePath.StartsWith($root, 'OrdinalIgnoreCase')) -or "
+        "($_.CommandLine -and $_.CommandLine.IndexOf($root, [StringComparison]::OrdinalIgnoreCase) -ge 0) } "
         "| Where-Object { $_.ProcessId -ne $PID } | ForEach-Object { $_.ProcessId }"
     )
     done = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-                          capture_output=True, text=True, timeout=60, check=False)
+                          capture_output=True, text=True, timeout=60, check=False,
+                          env=dict(os.environ, ORCEL_TIERC_ROOT=str(root)))
     return [int(line) for line in done.stdout.split() if line.strip().isdigit()]
 
 
