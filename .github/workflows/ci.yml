@@ -62,6 +62,8 @@ jobs:
           out="$RUNNER_TEMP/bm02"
           mkdir -p "$out"
           ORCEL_BM02_REPORT="$out/tier-a.report.json" cargo test -p orceld --test bm02_orcel_benchmark -- --nocapture 2>&1 | grep -E "BM02-|BM02 skipped|test result"
+          ORCEL_BM02_OS_VERSION=$(cd tests/benchmarks && python -c "from orcel_bench.runner import machine; print(machine()['os_version'])")
+          export ORCEL_BM02_OS_VERSION
           ORCEL_BM02B_REPORT="$out/tier-b.report.json" cargo test -p orceld --bin orceld bm02_tier_b -- --nocapture 2>&1 | grep -E "BM02B-|test result"
           node scripts/check-benchmark-report.mjs "$out"
       # XP-08 (follow-up from the #348 judge): the Rust adapter's /2

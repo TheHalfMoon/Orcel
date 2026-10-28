@@ -1,10 +1,21 @@
 //! BM-02 Tier B (tests/benchmarks/ORCEL_EXECUTION_PLAN.md): mutating
 //! benchmark tasks through orceld's own request entry (`handle_envelope`:
 //! profile gate, policy, dispatch, audit) and the real approval broker over
-//! its own ledger (nonce, expiry, single use). Only the SOFT consent, the
-//! person answering the system dialog, is scripted; the report says so in
-//! its planner version (`scripted-consent`). The shipped orceld has no
-//! scripted consent: `orcel-approval/test-support` is a dev-dependency.
+//! its own ledger (nonce, expiry, single use). Two things differ from the
+//! shipped orceld, and the report's planner version names both
+//! (`1-scripted-consent-unjournaled`):
+//! - the SOFT consent, the person answering the system dialog, is scripted
+//!   (the shipped orceld has none: `orcel-approval/test-support` is a
+//!   dev-dependency);
+//! - the SG-000120 mutation journal is not started in a unit-test build
+//!   (`mutation_journal::global()` is `Sink::None` there), so these
+//!   episodes write no journal records; the journal has its own tests
+//!   (`mutation_journal_tests.rs`, `mutation_journal_crash_tests.rs`).
+//!
+//! Presence for STRONG operations comes from `NoPresenceVerifier`, the
+//! stub that reports presence unavailable: the removal variants show that
+//! the broker refuses a STRONG operation without presence, not how Windows
+//! Hello, Touch ID or polkit behave.
 //!
 //! Each episode: a fresh workspace built by the variant's setup; a
 //! deterministic plan that observes and acts only through orceld; then an
@@ -239,9 +250,10 @@ impl Agent<'_> {
 struct Variant {
     case: &'static str,
     setup: fn(&Path),
-    /// The scripted answers to the prompts, in order; an unscripted prompt
-    /// is denied and fails the episode.
-    consent: &'static [ApprovalDecision],
+    /// The prompts the task must show, in order (action, workspace-relative
+    /// target), each with its scripted answer; an unscripted prompt is
+    /// denied and fails the episode.
+    consent: &'static [(ApprovalDecision, &'static str, &'static str)],
     plan: fn(&mut Agent) -> Result<(), String>,
     /// The refusal the plan must end on (orceld's own code), if any.
     refusal: Option<&'static str>,
@@ -269,7 +281,7 @@ fn variants() -> Vec<Variant> {
         Variant {
             case: "orcel-write/hello-file/greeting",
             setup: nothing,
-            consent: &[Approved],
+            consent: &[(Approved, "create UTF-8 file", "hello.txt")],
             plan: |a| a.write("hello.txt", "Hello from Orcel\n"),
             refusal: None,
             expect: |t| file(t, "hello.txt", "Hello from Orcel\n"),
@@ -278,7 +290,7 @@ fn variants() -> Vec<Variant> {
         Variant {
             case: "orcel-write/hello-file/notes",
             setup: nothing,
-            consent: &[Approved],
+            consent: &[(Approved, "create UTF-8 file", "notes.md")],
             plan: |a| a.write("notes.md", "# Notes\n\n- first\n"),
             refusal: None,
             expect: |t| file(t, "notes.md", "# Notes\n\n- first\n"),
@@ -287,7 +299,7 @@ fn variants() -> Vec<Variant> {
         Variant {
             case: "orcel-write/hello-file/nested",
             setup: |r| std::fs::create_dir_all(r.join("docs")).unwrap(),
-            consent: &[Approved],
+            consent: &[(Approved, "create UTF-8 file", "docs/readme.txt")],
             plan: |a| a.write("docs/readme.txt", "docs\n"),
             refusal: None,
             expect: |t| file(t, "docs/readme.txt", "docs\n"),
@@ -297,7 +309,7 @@ fn variants() -> Vec<Variant> {
         Variant {
             case: "orcel-write/overwrite/small",
             setup: |r| put(r, "todo.txt", "old\n"),
-            consent: &[Approved],
+            consent: &[(Approved, "overwrite UTF-8 file", "todo.txt")],
             plan: |a| a.write("todo.txt", "new\n"),
             refusal: None,
             expect: |t| file(t, "todo.txt", "new\n"),
@@ -306,7 +318,7 @@ fn variants() -> Vec<Variant> {
         Variant {
             case: "orcel-write/overwrite/multiline",
             setup: |r| put(r, "log/summary.txt", "a\nb\n"),
-            consent: &[Approved],
+            consent: &[(Approved, "overwrite UTF-8 file", "log/summary.txt")],
             plan: |a| a.write("log/summary.txt", "a\nb\nc\n"),
             refusal: None,
             expect: |t| file(t, "log/summary.txt", "a\nb\nc\n"),
@@ -316,7 +328,7 @@ fn variants() -> Vec<Variant> {
         Variant {
             case: "orcel-write/report-rename/draft-to-final",
             setup: reports,
-            consent: &[Approved],
+            consent: &[(Approved, "move or rename", "reports/q3-draft.md")],
             plan: |a| {
                 let draft = a
                     .names("reports")?
@@ -345,7 +357,7 @@ fn variants() -> Vec<Variant> {
                 reports(r);
                 std::fs::create_dir_all(r.join("archive")).unwrap();
             },
-            consent: &[Approved],
+            consent: &[(Approved, "move or rename", "reports/q2-final.md")],
             plan: |a| {
                 let finals: Vec<String> = a
                     .names("reports")?
@@ -375,7 +387,10 @@ fn variants() -> Vec<Variant> {
                 put(r, "reports/a-draft.md", "A\n");
                 put(r, "reports/b-draft.md", "B\n");
             },
-            consent: &[Approved, Approved],
+            consent: &[
+                (Approved, "move or rename", "reports/a-draft.md"),
+                (Approved, "move or rename", "reports/b-draft.md"),
+            ],
             plan: |a| {
                 let drafts: Vec<String> = a
                     .names("reports")?
@@ -405,7 +420,7 @@ fn variants() -> Vec<Variant> {
         Variant {
             case: "orcel-write/mkdir/single",
             setup: nothing,
-            consent: &[Approved],
+            consent: &[(Approved, "create directory", "out")],
             plan: |a| a.call("fs.mkdir", "mkdir", "out", json!({})).map(drop),
             refusal: None,
             expect: |t| {
@@ -416,7 +431,7 @@ fn variants() -> Vec<Variant> {
         Variant {
             case: "orcel-write/mkdir/parents",
             setup: nothing,
-            consent: &[Approved],
+            consent: &[(Approved, "create directory", "out/2026/q3")],
             plan: |a| {
                 a.call(
                     "fs.mkdir",
@@ -438,7 +453,7 @@ fn variants() -> Vec<Variant> {
         Variant {
             case: "orcel-write/edit-config/port",
             setup: |r| put(r, "config/app.ini", CONFIG),
-            consent: &[Approved],
+            consent: &[(Approved, "edit file", "config/app.ini")],
             plan: |a| a.edit("config/app.ini", "port = 8417", "port = 9000"),
             refusal: None,
             expect: |t| {
@@ -453,7 +468,7 @@ fn variants() -> Vec<Variant> {
         Variant {
             case: "orcel-write/edit-config/mode",
             setup: |r| put(r, "config/app.ini", CONFIG),
-            consent: &[Approved],
+            consent: &[(Approved, "edit file", "config/app.ini")],
             plan: |a| a.edit("config/app.ini", "mode = offline", "mode = online"),
             refusal: None,
             expect: |t| {
@@ -497,7 +512,7 @@ fn variants() -> Vec<Variant> {
         Variant {
             case: "orcel-write/denied/write",
             setup: nothing,
-            consent: &[Denied],
+            consent: &[(Denied, "create UTF-8 file", "hello.txt")],
             plan: |a| a.write("hello.txt", "Hello\n"),
             refusal: Some("APPROVAL_DENIED"),
             expect: unchanged,
@@ -506,7 +521,7 @@ fn variants() -> Vec<Variant> {
         Variant {
             case: "orcel-write/denied/move",
             setup: reports,
-            consent: &[Denied],
+            consent: &[(Denied, "move or rename", "reports/q3-draft.md")],
             plan: |a| {
                 a.call(
                     "fs.move",
@@ -523,7 +538,7 @@ fn variants() -> Vec<Variant> {
         Variant {
             case: "orcel-write/denied/edit",
             setup: |r| put(r, "config/app.ini", CONFIG),
-            consent: &[Denied],
+            consent: &[(Denied, "edit file", "config/app.ini")],
             plan: |a| a.edit("config/app.ini", "port = 8417", "port = 9000"),
             refusal: Some("APPROVAL_DENIED"),
             expect: unchanged,
@@ -594,7 +609,11 @@ fn episode(variant: &Variant) -> Episode {
     (variant.setup)(&bench.root);
     let before = tree(&bench.root);
     let script = Arc::new(Mutex::new(
-        variant.consent.iter().copied().collect::<VecDeque<_>>(),
+        variant
+            .consent
+            .iter()
+            .map(|(decision, _, _)| *decision)
+            .collect::<VecDeque<_>>(),
     ));
     let shown: Arc<Mutex<Vec<ApprovalPrompt>>> = Arc::new(Mutex::new(Vec::new()));
     let unscripted = Arc::new(AtomicUsize::new(0));
@@ -635,10 +654,14 @@ fn episode(variant: &Variant) -> Episode {
         || prompts.len() != variant.consent.len()
     {
         "prompts-wrong"
-    } else if prompts.iter().any(|p| {
-        p.workspace_id != "default" || p.target.starts_with('/') || p.target.contains("..")
-    }) {
-        "prompt-target-wrong"
+    } else if prompts
+        .iter()
+        .zip(variant.consent)
+        .any(|(p, (_, action, target))| {
+            p.workspace_id != "default" || p.action != *action || p.target != *target
+        })
+    {
+        "prompt-wrong"
     } else if calls == 0 || bench.audit_records() < calls {
         "unaudited"
     } else if !bench.outside().iter().all(|name| {
@@ -698,6 +721,14 @@ fn bm02_tier_b_mutating_tasks_are_solved_through_orceld_with_scripted_consent() 
             "tokens_out": 0,
         }));
     }
+    let count = |what: &str| rows.iter().filter(|r| r["observed"] == what).count();
+    eprintln!(
+        "BM02B-SUMMARY variants={} solved={} refused-as-expected={} failed={}",
+        rows.len(),
+        count("solved"),
+        count("refused-as-expected"),
+        failed.len()
+    );
     if let Some(path) = std::env::var_os("ORCEL_BM02B_REPORT") {
         let commit = std::env::var("ORCEL_BM02_COMMIT")
             .or_else(|_| std::env::var("GITHUB_SHA"))
@@ -715,9 +746,9 @@ fn bm02_tier_b_mutating_tasks_are_solved_through_orceld_with_scripted_consent() 
         } else {
             "x86_64"
         };
-        // GitHub's runner image name (e.g. win22, ubuntu24, macos15) where
-        // there is one; the report never guesses a version.
-        let os_version = std::env::var("ImageOS")
+        // The same OS version Tier A's report records (CI passes the
+        // benchmark runner's own value); never guessed.
+        let os_version = std::env::var("ORCEL_BM02_OS_VERSION")
             .ok()
             .filter(|v| {
                 !v.is_empty()
@@ -735,7 +766,7 @@ fn bm02_tier_b_mutating_tasks_are_solved_through_orceld_with_scripted_consent() 
             "planner": {
                 "kind": "deterministic",
                 "name": "orcel-fs-mutation-planner",
-                "version": "1-scripted-consent"
+                "version": "1-scripted-consent-unjournaled"
             },
             "rows": rows,
         });

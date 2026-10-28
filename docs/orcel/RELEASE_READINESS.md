@@ -18,12 +18,12 @@ checkpoint at the end says where engineering stands.
 | XP-14 no-authority half: macOS discovery and code-signature checks, Linux package verification | #487, #488 |
 | BM-02 runner, report guard, pinned taskpack | #482, #484, #486 |
 | BM-02 Tier A: 20 read-only tasks through the real `orceld` binary on Windows, macOS and Linux CI | #499 → `a4ee1f8` |
-| BM-02 Tier B: 21 mutating tasks through orceld's request entry and real broker (scripted SOFT consent, labelled) | this PR |
 
 ## 2. Engineering that can still be completed without the founder
 
 | Item | Note |
 |---|---|
+| BM-02 Tier B: 21 mutating tasks (12 solved, 9 expected refusals) through orceld's request entry and real broker; scripted SOFT consent and no mutation journal, both labelled | #500, in review; moves to class 1 once merged on exact-head CI |
 | #438 residual: navigation `read: TimedOut` on CI | Waiting for a recurrence; #494's diagnostics capture it |
 | #292 flaky SG-000013 contained PowerShell test on windows-latest | Root cause not yet found |
 | #288 WPF idle memory | Needs a measurement baseline, then a budget |
@@ -37,7 +37,7 @@ checkpoint at the end says where engineering stands.
 | Item | Why an agent cannot do it |
 |---|---|
 | F4 slice 4: one supported client transcript with an approved commit | A person must answer orceld's local approval prompt; an agent or test answering it through the real binaries would be manufactured consent |
-| BM-02 solved removals (`fs.remove`) and other STRONG operations | Need platform user presence (Windows Hello, Touch ID, polkit); Tier B records the fail-closed refusal only |
+| BM-02 solved removals (`fs.remove`) and other STRONG operations | Need platform user presence (Windows Hello, Touch ID, polkit); Tier B shows only that the broker refuses them when presence is unavailable (a stub verifier) |
 | XP-20 | Needs a disposable Windows session, not the founder's live desktop |
 | macOS direct-capture consent; XP-07/XP-12 delivered capture and input | The founder grants consent on the Mac; nothing may forge or pre-grant it |
 | Real GNOME/KDE XP-10 approval checks | A person at the desktop prompt |
@@ -66,9 +66,9 @@ checkpoint at the end says where engineering stands.
 
 If a session ends, resume from here:
 
-1. Merge order: #499 (Tier A) is merged before this PR (Tier B); both run in
-   `cargo test --workspace` on all three OSes and print `BM02-EVIDENCE` /
-   `BM02B-EVIDENCE` lines in the Rust job logs.
+1. #499 (Tier A) is merged; #500 (Tier B) follows it. Both run in
+   `cargo test --workspace` on all three OSes, and the Rust job's `BM-02
+   evidence` step prints `BM02-EVIDENCE` / `BM02B-EVIDENCE` lines.
 2. Local runs on Windows need a private temp folder:
    `ORCEL_BM02_STATE_PARENT` (Tier A) or `TEMP`/`TMP` pointing at one;
    orceld refuses state another account can reach.

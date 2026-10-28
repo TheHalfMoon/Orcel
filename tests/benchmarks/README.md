@@ -49,7 +49,7 @@ Not yet done:
 - the GUI taskpack in an isolated environment (Tier C), which needs an isolated VM per OS;
 - solved STRONG operations (removal), which need platform user presence and so the founder.
 
-Tier B (mutating tasks, scripted SOFT consent on the real broker) lives in `crates/orceld/src/bm02_tier_b_tests.rs`. The Rust CI job's `BM-02 evidence` step prints both tiers' per-case results on ubuntu, windows and macos and checks both reports.
+Tier B (mutating tasks on the real broker, with scripted SOFT consent and without the mutation journal, both named in its report) lives in `crates/orceld/src/bm02_tier_b_tests.rs`. The Rust CI job's `BM-02 evidence` step prints both tiers' per-case results on ubuntu, windows and macos and checks both reports.
 
 ## Run
 
