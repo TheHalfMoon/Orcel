@@ -143,6 +143,17 @@ class PinnedTaskpack(unittest.TestCase):
                 if "skipped" in line:
                     print(f"{task.name}: {line.strip()}", file=sys.stderr)
 
+    def test_tier_c_noop_baseline_rejects_every_untouched_task(self) -> None:
+        # BM-02 Tier C, C1: each task's own reset and evaluator, run by the
+        # harness with this OS's descriptor; a no-op must never score.
+        from orcel_bench.tierc import run_noop
+
+        rows = run_noop(self.pack)
+        self.assertEqual(len(rows), 3)
+        for row in rows:
+            print(f"TIERC-EVIDENCE {row['case']} {row['status']} {row['observed']} {row['latency_ms']['p50']}ms", file=sys.stderr)
+            self.assertEqual((row["status"], row["observed"]), ("pass", "noop-rejected"), row["case"])
+
     def test_each_app_store_suite_passes(self) -> None:
         node = shutil.which("node")
         if node is None:

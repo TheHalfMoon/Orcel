@@ -4,6 +4,7 @@ Usage (from tests/benchmarks):
 
     python3 -m orcel_bench oracle --commit <40-hex> --out <file.report.json> [--repeat N] [TASK_DIR ...]
     python3 -m orcel_bench fetch-taskpack <name> --into <new dir> [--from <git URL or local clone>]
+    python3 -m orcel_bench tierc-noop --pack <verified taskpack> --commit <40-hex> --out <file.report.json>
     python3 -m orcel_bench orcel --orceld <orceld binary> --commit <40-hex> --out <file.report.json> [--trace <file.jsonl>] [--repeat N] [--temp-root DIR] [TASK_DIR ...]
 
 `orcel` solves the Orcel tasks under orcel-tasks/<group>/ through the real
@@ -61,7 +62,20 @@ def main(argv: list[str]) -> int:
         "orceld refuses state any other account can reach, so it must be private",
     )
     orcel.add_argument("tasks", nargs="*", type=Path)
+    tierc = sub.add_parser("tierc-noop", help="Tier C C1: the no-op baseline over a verified taskpack")
+    tierc.add_argument("--pack", required=True, type=Path, help="a taskpack fetched and verified by fetch-taskpack")
+    tierc.add_argument("--commit", required=True, help="the Orcel commit under test (40 hex)")
+    tierc.add_argument("--out", required=True, type=Path, help="where to write the report")
     args = parser.parse_args(argv)
+    if args.command == "tierc-noop":
+        from .tierc import PLANNER as TIERC_PLANNER
+        from .tierc import run_noop
+
+        rows = run_noop(args.pack.resolve())
+        args.out.write_text(json.dumps(report(args.commit, rows, TIERC_PLANNER), indent=2) + "\n", encoding="utf-8")
+        failed = [row["case"] for row in rows if row["status"] != "pass"]
+        print(f"orcel_bench: {len(rows) - len(failed)}/{len(rows)} Tier C no-op baselines rejected -> {args.out}")
+        return 1 if failed else 0
     if args.command == "orcel":
         if args.temp_root is not None:
             import tempfile
