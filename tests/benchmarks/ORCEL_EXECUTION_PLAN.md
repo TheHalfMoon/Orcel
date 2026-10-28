@@ -105,6 +105,14 @@ logs print fixed codes only).
      - Tear down: the app's process tree is gone and the workspace is
        removed.
      - Report rows use `orcel-benchmark-report/1`.
+   - **Done so far.** C1's no-op baseline (#509): reset and evaluator on
+     every OS. C2a (`orcel_bench/tierc_gui.py`, `tierc-observe`): on the
+     Rust job's Windows runner, cdb-s02's three Electron surfaces (mail,
+     chat, calendar) launched from the task's own descriptor, each window
+     found and observed only through the real orceld's read-only UIA shapes,
+     the evaluator still rejecting the untouched workspace, and every process
+     tree stopped with the windows confirmed gone through orceld. Nothing is
+     clicked or typed and no approval is involved.
    - **C2, scripted-plan qualification.** A deterministic per-task plan
      written for these three tasks drives C1 end to end, to prove the
      harness, interfaces, approvals, reset and evaluation. Its report is

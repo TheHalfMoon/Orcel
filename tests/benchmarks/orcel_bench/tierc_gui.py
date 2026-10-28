@@ -164,6 +164,7 @@ def run_observe_episode(pack: Path, lock: Optional[dict[str, Any]], task: str, o
         with Orceld(orceld, workspace) as orcel:
             for app in apps:
                 started = time.perf_counter()
+                calls_before = len(orcel.calls)
                 observed = "observed"
                 status = "pass"
                 launch_env = {k: v for k, v in app_env.items() if k not in set(app.get("unset_env", []))}
@@ -202,7 +203,8 @@ def run_observe_episode(pack: Path, lock: Optional[dict[str, Any]], task: str, o
                     "status": status,
                     "observed": observed,
                     "latency_ms": {"p50": millis, "p95": millis},
-                    "steps": len(orcel.calls),
+                    # This app's own Orcel calls.
+                    "steps": len(orcel.calls) - calls_before,
                     "model_calls": 0,
                     "tokens_in": 0,
                     "tokens_out": 0,
