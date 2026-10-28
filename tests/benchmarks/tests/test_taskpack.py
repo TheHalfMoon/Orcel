@@ -51,7 +51,9 @@ class PinnedTaskpack(unittest.TestCase):
 
     def run_python(self, task: Path, *args: str) -> subprocess.CompletedProcess[str]:
         env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
-        return subprocess.run([sys.executable, "-I", *args], cwd=task, capture_output=True, text=True, check=False, env=env)
+        # -B: -I ignores PYTHONDONTWRITEBYTECODE, and bytecode written into the
+        # verified pack would make it fail verification (and could run later).
+        return subprocess.run([sys.executable, "-I", "-B", *args], cwd=task, capture_output=True, text=True, check=False, env=env)
 
     def test_the_lock_pins_the_licensed_donor_commit(self) -> None:
         donor = LOCK["donor"]
