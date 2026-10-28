@@ -10,17 +10,24 @@
 //! that is not on the admitted pin list goes nowhere and no other local
 //! process can be the proxy.
 //!
+//! Contract for launch (SG-000115): the sink must outlive the engine and
+//! its whole process group. Once stopped, its port is free, and another
+//! local process could bind it and become a running engine's proxy.
+//!
 //! This module adds no authority: launch on macOS and Linux stays refused
 //! until SG-000115 is activated, and Windows keeps its no-route proxy.
 
 #![cfg_attr(not(test), allow(dead_code))]
 
 use std::io;
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener, TcpStream};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Duration;
+
+/// How often the accept loop checks for stop when no connection waits.
+const POLL: Duration = Duration::from_millis(20);
 
 /// A listener on an ephemeral loopback port that accepts and immediately
 /// closes every connection. Stopped when dropped.
@@ -45,25 +52,29 @@ impl NetworkSink {
         }
         let stop = Arc::new(AtomicBool::new(false));
         let accepted = Arc::new(AtomicU64::new(0));
+        // Non-blocking accept polled against `stop`: stopping never depends
+        // on a wake-up connection that might fail (no descriptors, a full
+        // backlog, a loopback filter).
+        listener.set_nonblocking(true)?;
         let thread = {
             let (stop, accepted) = (Arc::clone(&stop), Arc::clone(&accepted));
             std::thread::Builder::new()
                 .name("orcel-network-sink".into())
                 .spawn(move || {
-                    for stream in listener.incoming() {
-                        if stop.load(Ordering::SeqCst) {
-                            break;
-                        }
-                        match stream {
-                            Ok(stream) => {
+                    while !stop.load(Ordering::SeqCst) {
+                        match listener.accept() {
+                            Ok((stream, _)) => {
                                 accepted.fetch_add(1, Ordering::SeqCst);
                                 // Never read, never answer: close at once.
                                 let _ = stream.shutdown(std::net::Shutdown::Both);
                                 drop(stream);
                             }
+                            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                                std::thread::sleep(POLL);
+                            }
                             // A failed accept (no descriptors, a reset
                             // before accept) must not spin the thread.
-                            Err(_) => std::thread::sleep(Duration::from_millis(50)),
+                            Err(_) => std::thread::sleep(POLL * 5),
                         }
                     }
                 })?
@@ -94,9 +105,9 @@ impl NetworkSink {
 
 impl Drop for NetworkSink {
     fn drop(&mut self) {
+        // The thread checks `stop` at least every `5 * POLL`, then drops the
+        // listener and ends: the join is bounded.
         self.stop.store(true, Ordering::SeqCst);
-        // Wake the blocked accept; the thread sees `stop` and ends.
-        let _ = TcpStream::connect_timeout(&self.address, Duration::from_secs(2));
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
@@ -107,6 +118,7 @@ impl Drop for NetworkSink {
 mod tests {
     use super::*;
     use std::io::{Read, Write};
+    use std::net::TcpStream;
 
     #[test]
     fn the_sink_is_an_ephemeral_loopback_port() {
@@ -166,18 +178,22 @@ mod tests {
     }
 
     #[test]
-    fn a_stopped_sink_releases_its_port() {
+    fn stopping_is_prompt_and_counts_nothing_more() {
         let sink = NetworkSink::start().expect("sink");
-        let port = sink.port();
+        let accepted = Arc::clone(&sink.accepted);
+        let started = std::time::Instant::now();
         drop(sink);
-        // Nothing listens there any more: a connection is refused rather
-        // than reaching a stale sink (or anything else holding the port
-        // open on the host's behalf).
-        let refused = TcpStream::connect_timeout(
-            &SocketAddr::from((Ipv4Addr::LOCALHOST, port)),
-            Duration::from_secs(2),
+        // No wake-up connection is needed: the poll sees `stop`.
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "stop took {:?}",
+            started.elapsed()
         );
-        assert!(refused.is_err(), "port {port} still accepts after stop");
+        assert_eq!(
+            accepted.load(Ordering::SeqCst),
+            0,
+            "stopping made no connection"
+        );
     }
 
     #[test]
