@@ -32,40 +32,72 @@ Proposed:
   finish or fail on its own") and from every final state other than
   `Stopped`, which answers idempotently.
 
-### The race this must close
+### The races this must close
 
-`commit` clones the task in `open_task`, shows the approval prompt (which
-can take minutes), then sets `Committing` **unconditionally** in
-`tasks.update(.., "approval", "approved", ..)`. A stop that lands while the
-prompt is open would be overwritten, and the approved report would be
-written. The fix:
+Every request copies the task in `open_task`, does its work without the
+registry lock, and then changes the state in `tasks.update(..)`
+**unconditionally**. A stop that lands in that window would be overwritten.
+These are the writers of `task.state` that can run while a task is
+stoppable:
 
-1. A conditional transition, `TaskRegistry::transition(task_id, from:
-   &[TaskState], to, kind, outcome) -> Result<(), TaskState>`. Under the
-   registry lock it applies the change only if the current state is in
-   `from`; otherwise it returns the state it found. The step is recorded
-   and `task.updated` published only when the change applies.
-2. Commit's move after approval becomes `transition(id, &[Proposed,
-   ApprovalDenied], Committing, ..)`. If it finds `Stopped`, commit writes
-   nothing. The approval token is already consumed (single use) and stays
-   spent, the journal intent is settled `stopped_before_commit`, and the
-   caller gets `TARGET_STALE` "the task was stopped".
-3. A denial's move to `ApprovalDenied` uses the same transition, so a
-   denial never overwrites `Stopped`.
-4. Stop itself is `transition(id, &[Observed, Proposed, ApprovalDenied],
+| Writer | Window | Effect if a stop lands in it |
+|---|---|---|
+| `preview` → `Proposed` | after `open_task` and `check_current` | stop erased; a later commit is allowed |
+| `commit` → `Committing` after approval | the approval prompt, which can take minutes | stop erased; the approved report is written |
+| `commit` → `ApprovalDenied` on denial | the approval prompt | stop erased |
+| `blocked()` → `Stale` (preview and commit) | `check_current` | stop erased from state and history (still final, so no authority gain) |
+
+Writers that run only from `Committing` (the reopen path,
+`destination_exists`, `Failed`, `Verified`) are unaffected, because stop is
+refused in `Committing`.
+
+The fix is one primitive and four uses:
+
+1. `TaskRegistry::transition(task_id, from: &[TaskState], to, kind,
+   outcome) -> Transition`, which runs under one registry lock acquisition.
+   It applies the change, records the step and publishes `task.updated`
+   only if the task exists and its current state is in `from`. Otherwise
+   it returns `Transition::Refused(found)`, or `Transition::Missing` if the
+   task is gone.
+2. Preview: `transition(id, &[Observed, Proposed, ApprovalDenied],
+   Proposed, ..)`, carrying the new proposal in the same change.
+3. Commit after approval: `transition(id, &[Proposed, ApprovalDenied],
+   Committing, ..)`. **Any** other outcome means write nothing:
+   - a found `Stopped`;
+   - a found `Committing` or `Verified` (a concurrent commit of the same
+     task won);
+   - `Missing` (the task was evicted while the prompt was open; `insert()`
+     evicts finished tasks).
+
+   In each case the approval token stays spent, because it is single use.
+   The journal intent is closed as `abandoned` (the effect never started,
+   as `ReportJournal::abandoned` records today). The caller gets
+   `TARGET_STALE` "the task was stopped" or "the task changed during
+   approval".
+4. Commit on denial: `transition(id, &[Proposed, ApprovalDenied],
+   ApprovalDenied, ..)`, so a denial never overwrites `Stopped`.
+5. `blocked()` stale branch: `transition(id, &[Observed, Proposed,
+   ApprovalDenied], Stale, ..)`, so a stop is never rewritten as `Stale`.
+6. Stop itself: `transition(id, &[Observed, Proposed, ApprovalDenied],
    Stopped, "stop", "stopped")`.
 
-Because the check and the change happen under one lock acquisition, there
-is no window between "not stopped" and "committing".
+The check and the change happen under one lock acquisition, so no window
+remains between "still stoppable" and the state change.
 
 ### Journal (SG-000120)
 
-- Stop writes a settled journal line `stopped` for the task, so a resume
-  summary after a crash reports it as stopped, never as pending.
-- A pending commit intent that finds `Stopped` settles as
-  `stopped_before_commit`. Resume classification gains that outcome as
-  "nothing written".
-- The fsync policy is unchanged: stop is durable before it is answered.
+- A commit that finds the task stopped, changed or gone after approval
+  closes its intent as `abandoned` (outcome `stopped` or `task_changed`).
+  Resume classification already treats an abandoned commit as "not run",
+  so it needs no new outcome.
+- Task state reaches the journal only through the best-effort
+  `snapshot()`, and the proposal adds no per-task stop line. Durability is
+  not needed for safety: on restart `restored_task` turns every task that
+  is not final (or `ApprovalDenied`) into `Failed`, so a stop lost in a
+  crash still cannot lead to a commit.
+- If "resume reports `stopped`" is wanted, the snapshot carries
+  `stopped`. An older binary reads an unknown state as `Failed` through
+  the `from_str` fallback, which is also final.
 
 ## 3. Surfaces: the choice is the founder's
 
@@ -88,11 +120,13 @@ chosen.
 |---|---|---|
 | Stop used to gain authority | Stop only removes the ability to commit; it never mints approvals, writes or deletes | By construction; tests assert nothing is written after a stop |
 | Stop raced against an approval | Closed by the conditional transition (section 2) | The test "approval granted after stop writes nothing" |
+| Stop raced against preview or a stale check | Both writers become conditional transitions | Tests 9 and 13 |
+| Two concurrent commits of one task | Both can pass `open_task` and prompt; only one transition to `Committing` succeeds | Test 10: at most one write |
 | Same-user process stops a task (surface A under option 2) | Denial of progress, not an authority gain; the same user can already kill orceld | Residual risk the founder accepts under option 2; option 1 narrows it to signed clients |
 | Cross-workspace or cross-run stop | `open_task`-style lookup by id **and** workspace **and** run seed | Refused `TARGET_STALE`, as for preview and commit |
 | Replay or spoofed stop | Idempotent and final; replay changes nothing | No nonce needed; the audit records every attempt |
 | Stop during `Committing` | The write is in flight; interrupting it could leave a partial file | Refused; create-only writes plus the independent checker cover the outcome |
-| Stop lost in a crash | Not durable before it is answered | Journal line before the answer (section 2) |
+| Stop lost in a crash | Not durable before it is answered | Safe without durability: restart turns every non-final task into `Failed` (section 2) |
 | Information leak through stop errors | Errors name states, not contents | Same error vocabulary as `open_task` |
 | UI spoofing (a fake Stop that does nothing) | The Control Room shows the state from `task.updated`, not its own optimistic state | The timeline reflects the kernel only |
 
@@ -102,7 +136,7 @@ chosen.
    `preview` and `commit` are then refused; nothing is written.
 2. Stop during an open approval prompt, then the scripted SOFT answer
    `Approved`: nothing is written, the token is spent (a second consume
-   fails), and the journal intent settles `stopped_before_commit`.
+   fails), and the journal intent is `abandoned` (outcome `stopped`).
 3. A denial after a stop leaves `Stopped`.
 4. Stop during `Committing` is refused, and the commit completes or fails
    as before.
@@ -113,6 +147,17 @@ chosen.
 8. Property test: random interleavings of stop, preview, commit, approve
    and deny never end with a written report for a task whose stop
    succeeded.
+9. A stop between preview's `open_task` and its state change: the task
+   stays `Stopped`, and a later commit is refused.
+10. Two concurrent commits of one task, one prompt approved and one
+    refused: at most one write, and the loser's intent is `abandoned`.
+11. The task is evicted while its commit prompt is open; approval then
+    writes nothing and the intent is `abandoned`.
+12. A stop while `check_current` runs after approval is refused, because
+    the task is already `Committing`.
+13. A stale check after a stop leaves `Stopped`.
+14. A stop of an evicted task answers `TARGET_STALE`. This is acceptable:
+    it is final and nothing is left to stop.
 
 ## 6. Acceptance (kernel slice)
 
