@@ -13,7 +13,7 @@
 param(
     [string]$BuildDirectory = (Join-Path $env:TEMP "OrcelDesktopMemoryBuild"),
     [int]$Launches = 4,
-    [int]$Queries = 40,
+    [int]$Queries = 250,
     [string]$OutPath = "",
     [switch]$AllowLocal
 )
@@ -159,7 +159,7 @@ try {
         $box.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($command)
         $send.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
         Start-Sleep -Milliseconds 400
-        if ($q % 10 -eq 0) { $points += [ordered]@{ after = $q; memory = (Sample $run.process) } }
+        if ($q % 50 -eq 0 -or $q -eq 10) { $points += [ordered]@{ after = $q; memory = (Sample $run.process) } }
     }
     Start-Sleep -Seconds 10
     $points += [ordered]@{ after = "idle-10s"; memory = (Sample $run.process) }
