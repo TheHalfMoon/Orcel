@@ -66,7 +66,27 @@ def main(argv: list[str]) -> int:
     tierc.add_argument("--pack", required=True, type=Path, help="a taskpack fetched by fetch-taskpack (verified again before it runs)")
     tierc.add_argument("--commit", required=True, help="the Orcel commit under test (40 hex)")
     tierc.add_argument("--out", required=True, type=Path, help="where to write the report")
+    observe = sub.add_parser("tierc-observe", help="Tier C C2a: launch a task's apps and observe them through orceld (CI only)")
+    observe.add_argument("--pack", required=True, type=Path)
+    observe.add_argument("--orceld", required=True, type=Path)
+    observe.add_argument("--task", required=True)
+    observe.add_argument("--commit", required=True)
+    observe.add_argument("--out", required=True, type=Path)
     args = parser.parse_args(argv)
+    if args.command == "tierc-observe":
+        from .tierc import TierCError
+        from .tierc_gui import PLANNER as OBSERVE_PLANNER
+        from .tierc_gui import run_observe_episode
+
+        try:
+            rows = run_observe_episode(args.pack.resolve(), load_lock("cua-driver-bench"), args.task, args.orceld.resolve())
+        except TierCError as error:
+            print(f"orcel_bench: {error}", file=sys.stderr)
+            return 1
+        args.out.write_text(json.dumps(report(args.commit, rows, OBSERVE_PLANNER), indent=2) + "\n", encoding="utf-8")
+        for row in rows:
+            print(f"TIERC-GUI-EVIDENCE {row['case']} {row['status']} {row['observed']} steps={row['steps']} {row['latency_ms']['p50']}ms")
+        return 0 if all(row["status"] == "pass" for row in rows) else 1
     if args.command == "tierc-noop":
         from .tierc import PLANNER as TIERC_PLANNER
         from .tierc import TierCError, run_noop

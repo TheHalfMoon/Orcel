@@ -66,6 +66,26 @@ jobs:
           export ORCEL_BM02_OS_VERSION
           ORCEL_BM02B_REPORT="$out/tier-b.report.json" cargo test -p orceld --bin orceld bm02_tier_b -- --nocapture 2>&1 | grep -E "BM02B-|test result"
           node scripts/check-benchmark-report.mjs "$out"
+      # BM-02 Tier C C2a: the pinned GUI task's own Electron apps launched on
+      # this disposable runner and observed only through this job's orceld
+      # (read-only UIA shapes: nothing is clicked or typed, no approval is
+      # asked). The task app needs Node 22+.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: runner.os == 'Windows'
+        with:
+          node-version: "24.19.0"
+      - name: BM-02 Tier C C2a (launch and observe through orceld)
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          ORCEL_BM02_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          pack="$RUNNER_TEMP/tierc-pack"
+          (cd tests/benchmarks && python -m orcel_bench fetch-taskpack cua-driver-bench --into "$pack")
+          (cd tests/benchmarks && python -m orcel_bench tierc-observe --pack "$pack" --orceld "$GITHUB_WORKSPACE/target/debug/orceld.exe" \
+            --task cdb-s02 --commit "$ORCEL_BM02_COMMIT" --out "$RUNNER_TEMP/tierc-observe.report.json")
+          node scripts/check-benchmark-report.mjs "$RUNNER_TEMP/tierc-observe.report.json"
       # XP-08 (follow-up from the #348 judge): the Rust adapter's /2
       # negotiation test against the freshly built Go host, not a script. The
       # native-host job does the same with orcel-native-host on macOS and
