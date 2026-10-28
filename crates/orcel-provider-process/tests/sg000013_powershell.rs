@@ -147,16 +147,28 @@ fn windows_private_powershell_success_is_bounded_and_quiescent() {
     let started = std::time::Instant::now();
     let result = execute_contained(plan, &profile("Success"));
     let elapsed = started.elapsed();
-    // Always in the log, so a slow start is visible even when it passes.
+    // Always in the log, with an uncontained start measured right after,
+    // so a slow start is visible (and comparable) even when it passes.
+    let uncontained = uncontained_start_millis();
     eprintln!(
-        "SG013-EVIDENCE contained PowerShell success took {} ms",
-        elapsed.as_millis()
+        "SG013-EVIDENCE contained PowerShell success took {} ms; uncontained start {:?} ms",
+        elapsed.as_millis(),
+        uncontained
     );
+    // Past the production limit: a real user would have hit the timeout
+    // (#292's open product question), so it is marked distinctly.
+    if elapsed > ExecutionLimits::default().timeout {
+        eprintln!(
+            "SG013-SLOW contained PowerShell took {} ms, over the production {} s limit",
+            elapsed.as_millis(),
+            ExecutionLimits::default().timeout.as_secs()
+        );
+    }
     let result = result.unwrap_or_else(|failure| {
         panic!(
-            "contained PowerShell: {failure:?} after {} ms; uncontained start now: {:?} ms; {} CPUs",
+            "contained PowerShell: {failure:?} after {} ms; uncontained start: {:?} ms; {} CPUs",
             elapsed.as_millis(),
-            uncontained_start_millis(),
+            uncontained,
             std::thread::available_parallelism().map_or(0, usize::from)
         )
     });
