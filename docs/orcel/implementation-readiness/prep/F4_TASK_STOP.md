@@ -51,7 +51,7 @@ Writers that run only from `Committing` (the reopen path,
 `destination_exists`, `Failed`, `Verified`) are unaffected, because stop is
 refused in `Committing`.
 
-The fix is one primitive and four uses:
+The fix is one primitive and five uses:
 
 1. `TaskRegistry::transition(task_id, from: &[TaskState], to, kind,
    outcome) -> Transition`, which runs under one registry lock acquisition.
@@ -62,12 +62,17 @@ The fix is one primitive and four uses:
 2. Preview: `transition(id, &[Observed, Proposed, ApprovalDenied],
    Proposed, ..)`, carrying the new proposal in the same change.
 3. Commit after approval: `transition(id, &[Proposed, ApprovalDenied],
-   Committing, ..)`. **Any** other outcome means write nothing:
+   Committing, ..)`, applied only if the task's current proposal is still
+   the one this approval was bound to. **Any** other outcome means write
+   nothing:
    - a found `Stopped`;
    - a found `Committing` or `Verified` (a concurrent commit of the same
      task won);
    - `Missing` (the task was evicted while the prompt was open; `insert()`
      evicts finished tasks).
+   - a different current proposal (a preview replaced it while the prompt
+     was open), which keeps the task record consistent with what is
+     written.
 
    In each case the approval token stays spent, because it is single use.
    The journal intent is closed as `abandoned` (the effect never started,
