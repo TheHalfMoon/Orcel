@@ -2,8 +2,9 @@
 
 **Status: PREPARATION ONLY.** This proposes a governed change to a closed
 grain's shape. It adds no argument, shape, tool or bound, and changes no
-spec state. Shipping it needs its own governed step (a successor spec or a
-recorded amendment to SG-000063's shape), review, and exact-head CI.
+spec state. Shipping it needs its own governed step covering SG-000027 (which
+owns the tree-observe shape) and SG-000063 (its MCP exposure), through a
+successor spec or recorded amendments, with review and exact-head CI.
 
 ## Evidence
 
@@ -16,8 +17,9 @@ with `uia.tree observe`:
 ```
 
 `orcel-provider-uia` caps a tree at `MAX_TREE_DEPTH = 8` and
-`MAX_TREE_NODES = 256`. The window frame and panes use the first eight
-levels, so Chromium's web `Document` arrives exactly at the cap and none of
+`MAX_TREE_NODES = 256` (depths 0 to 8 are kept). The window frame and panes
+use the levels above it, so Chromium's web `Document` arrives at the last
+level allowed and none of
 its content (form fields, buttons, text) is ever observed. Every
 Chromium- or Electron-rendered control is therefore unobservable and so
 untargetable for `uia.element set_value` / `invoke`, although those shapes
@@ -25,6 +27,10 @@ already admit `Edit`, `Document`, `ComboBox` and `Button` controls.
 
 ## What binds the change
 
+- **SG-000027** owns the shape: `validate_tree_observe_arguments` in
+  `orcel-policy/src/sg000027.rs` allows exactly `window_id`,
+  `expected_window_generation`, `max_depth` and `max_nodes`. Adding
+  arguments changes that allow-list.
 - **SG-000063 A1** (CLOSED): "Window listing and bounded tree observation
   are live on real Windows, bounded, redacted, and exclude protected
   surfaces and other sessions."
@@ -43,6 +49,9 @@ An optional root for `uia.tree observe`:
 | `root_element_id` | A server-allocated element id from a prior observation of the same window |
 | `expected_tree_generation` | The tree generation that id belongs to (stale ids fail closed, as for actions) |
 
+The existing optional `max_depth` and `max_nodes` still apply and still
+clamp to the same caps.
+
 - The returned subtree is bounded **per call exactly as today**: depth 8
   below the root, 256 nodes, the response byte bound.
 - The same redaction (passwords and secret-like values) and the same
@@ -52,6 +61,27 @@ An optional root for `uia.tree observe`:
   `TARGET_STALE`.
 - No new identifier kind: the caller can name only an element orceld
   itself allocated.
+
+### Native host change
+
+The caps are applied at the source: `computer_host.rs` `read_tree` sends the
+native host an `observe_window` request for the window handle with
+`MAX_TREE_NODES` and `MAX_TREE_DEPTH`. A subtree needs a new host request
+(or field) and adapter method that reads below a given element, found by
+its runtime id inside that same live window, with the same node and depth
+bounds. A runtime id that does not resolve inside that window fails closed.
+This touches the native host protocol and needs its own tests.
+
+### Element ids after a subtree call (the rule)
+
+Every tree observation today bumps the window's tree generation and
+replaces the window's whole element set (`remove_window_elements`), and an
+action requires the element's tree generation to equal the window's. A
+subtree call follows the same rule: it starts a new generation and replaces
+the window's elements, so the root and every element from the previous
+call become stale. A plan can act only on elements from its latest
+observation. This is safe (no action on an outdated element) and is
+tested.
 
 ### Why not raise the caps
 
@@ -65,7 +95,7 @@ caller-requested step over an element already seen.
 
 | Risk | Treatment |
 |---|---|
-| Unbounded traversal by repeated calls | Each call is bounded; repeated calls are already possible on any window. The registry's element and window caps still apply |
+| Unbounded traversal or registry growth from repeated calls | Each call is bounded, and each observation replaces the window's elements, so the registry holds at most 256 elements per window and at most `MAX_WINDOWS = 64` windows |
 | Naming arbitrary UI by id | Only ids orceld allocated for this window and tree generation; foreign or stale ids fail closed |
 | Reaching protected surfaces through a subtree | The same protected-surface exclusion runs on the subtree root's window; a protected window yields no root |
 | Secret values in deeper controls | The same redaction: `IsPassword`, secret-like names, value bounds |
@@ -77,6 +107,10 @@ caller-requested step over an element already seen.
   buttons, within depth 8 and 256 nodes.
 - A stale `expected_tree_generation`, a foreign window's element, and a
   malformed id are refused, and nothing is observed.
+- After a subtree call, an action on an element from the previous call is
+  refused as stale.
+- The native host refuses a runtime id that does not resolve inside the
+  given live window.
 - A password field inside the subtree is redacted.
 - A protected window cannot supply a root.
 - The existing SG-000063 live tests pass unchanged.
@@ -85,7 +119,8 @@ caller-requested step over an element already seen.
 
 ## Decision needed
 
-Whether to open the governed change at all, and in which grain (a
-successor to SG-000063, or a recorded amendment). This is a governance step,
+Whether to open the governed change at all, and how: a successor covering
+SG-000027's shape, the native host request and SG-000063's MCP contract, or
+recorded amendments to those grains. This is a governance step,
 not an authority grant to an agent: observation stays read-only, and every
 action keeps its fresh per-action approval.
