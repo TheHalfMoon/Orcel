@@ -66,6 +66,19 @@ jobs:
           export ORCEL_BM02_OS_VERSION
           ORCEL_BM02B_REPORT="$out/tier-b.report.json" cargo test -p orceld --bin orceld bm02_tier_b -- --nocapture 2>&1 | grep -E "BM02B-|test result"
           node scripts/check-benchmark-report.mjs "$out"
+      # #288: the WPF preview's memory profile against a minimal WPF window
+      # built the same way, on this disposable runner (report only, no
+      # budget): startup, idle working set, private bytes, GC heap, loaded
+      # assemblies, hardware and software rendering, repeated queries.
+      - name: WPF preview memory profile (report only)
+        if: runner.os == 'Windows'
+        # Report only: a UI Automation hiccup on the hosted runner must not
+        # fail the job.
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          apps/orcel-desktop-preview/tests/memory.ps1 -OutPath "$env:RUNNER_TEMP/wpf-memory.json"
+          Get-Content "$env:RUNNER_TEMP/wpf-memory.json"
       # XP-08 (follow-up from the #348 judge): the Rust adapter's /2
       # negotiation test against the freshly built Go host, not a script. The
       # native-host job does the same with orcel-native-host on macOS and

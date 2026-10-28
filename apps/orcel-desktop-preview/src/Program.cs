@@ -787,6 +787,11 @@ namespace Orcel.DesktopPreview
         private readonly ScrollViewer conversation = new ScrollViewer();
         private bool refreshing;
         private int messages;
+        // #288: each message keeps its own visuals (text layout, bubble,
+        // automation peer) for the life of the window; measured on CI, the
+        // native footprint grew by about 0.2 MB per query and was never
+        // released. The transcript keeps the most recent messages only.
+        internal const int MaxTranscriptMessages = 200;
 
         internal MainWindow()
         {
@@ -983,7 +988,16 @@ namespace Orcel.DesktopPreview
             bubble.MaxWidth = 560;
             item.Children.Add(bubble);
             transcript.Children.Add(item);
+            while (transcript.Children.Count > MaxTranscriptMessages) transcript.Children.RemoveAt(0);
             conversation.ScrollToEnd();
+        }
+
+        /// #288: the transcript stays bounded however long the window is used.
+        internal static bool TranscriptStaysBounded()
+        {
+            MainWindow window = new MainWindow();
+            for (int i = 0; i < MaxTranscriptMessages + 50; i++) window.AddMessage(i % 2 == 0, "message " + i);
+            return window.transcript.Children.Count == MaxTranscriptMessages;
         }
 
         private void Send()
@@ -1216,7 +1230,14 @@ namespace Orcel.DesktopPreview
         private static int Main(string[] args)
         {
             if (args.Length == 1 && args[0] == "--self-test") return SelfTest();
-            if (args.Length == 1 && args[0] == "--ui-self-test") { MainWindow window = new MainWindow(); if (window.Content == null) return 2; Console.WriteLine("Orcel WPF layout construction: PASS"); return 0; }
+            if (args.Length == 1 && args[0] == "--ui-self-test")
+            {
+                MainWindow window = new MainWindow();
+                if (window.Content == null) return 2;
+                if (!MainWindow.TranscriptStaysBounded()) { Console.WriteLine("Orcel transcript bound: FAIL"); return 3; }
+                Console.WriteLine("Orcel WPF layout construction and transcript bound: PASS");
+                return 0;
+            }
             System.Windows.Application app = new System.Windows.Application();
             // A bug must never take the window down silently; report and continue.
             bool reported = false;

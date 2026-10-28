@@ -32,7 +32,22 @@ Run these in a regular, non-elevated Windows PowerShell session from the reposit
 
 `e2e.ps1` is a native Windows end-to-end test driven through Windows UI Automation (no third-party framework). It launches the real executable with an isolated `LOCALAPPDATA` (an empty temporary folder by default, or `-RuntimeRoot` for a real test install), checks the runtime panel and initial keyboard focus, sends `status`, a shell-like string (must be refused and the app must start no child process afterwards), and with `-RuntimeRoot` also `doctor` and `version`; it checks accessible names and keyboard focusability, measures startup and memory, and closes the window. The user's real install is never queried.
 
-Measured on Windows 11 build 26300 (Intel UHD Graphics, 120 DPI, 1536×960), single runs: executable 43,008 bytes; window in 443–810 ms; live runtime status in 512–858 ms; `doctor` against a real install about 8 s. Memory is **higher than expected for this UI**: about 149 MB working set / 145 MB private idle, about 228 MB / 211 MB after runtime queries. This is an open performance item, not a qualified result.
+Measured on Windows 11 build 26300 (Intel UHD Graphics, 120 DPI, 1536×960), single runs: executable 43,008 bytes; window in 443–810 ms; live runtime status in 512–858 ms; `doctor` against a real install about 8 s. Memory there: about 149 MB working set / 145 MB private idle, about 228 MB / 211 MB after runtime queries.
+
+**Memory against a minimal WPF window (#288).** `tests/memory.ps1` builds a minimal WPF window the same way (`tests/baseline/MinimalWindow.cs`) and profiles both on the same machine. The Rust CI job runs it on its Windows runner and prints `WPF-MEM` lines; it is report only, with no budget, and it refuses to run outside CI unless `-AllowLocal` is given, so it never opens windows on a person's desktop. Measured on a hosted `windows-latest` runner (no GPU), runs 40770847310 (before) and 40770985711 (after):
+
+Idle and startup rows are from the after run (startup is single-run and varies 30–60% between runs):
+
+| | Orcel | Minimal WPF | Orcel above baseline |
+|---|---|---|---|
+| Idle working set, hardware rendering | 64.1–65.3 MB | 55.4–55.8 MB | about 9 MB |
+| Idle private bytes, hardware rendering | 44.7–45.7 MB | 39.7–40.1 MB | about 5 MB |
+| Idle working set, software rendering | 53.6–53.7 MB | 46.7–46.9 MB | about 7 MB |
+| Warm startup to window | 163–224 ms | 128–136 ms | |
+
+At idle the preview loads one assembly the baseline does not (`PresentationFramework-SystemXml`), so the footprint at idle is mostly WPF itself. That `System.Web.Extensions` and WinForms load only when a query or the folder dialog needs them is from reading the code (assemblies are listed at idle only). The larger figures on the 120 DPI Intel UHD machine above are likely from its graphics stack; a runner without a GPU cannot reproduce them.
+
+Across 250 alternating `status`/`tasks` queries, the working set rose without bound before the fix (88.0 MB after 100 queries, 96.3 MB after 250, with nothing released after idling), because every message kept its visuals for the life of the window. The transcript now keeps the most recent 200 messages (each query adds two or three, so the cap applies from about query 70), and the working set is flat at 88.4–89.9 MB from query 100 to 250. Private bytes still rose about 4–6 MB over the same span (65.3 to 71.3 MB, 69.4 MB after idling; +9.6 MB before the fix); one 250-query run cannot rule out slower residual growth. The first 50 queries add about 20 MB in both runs; threads rising from 19 to 28 is the one measured contributor, and the rest is likely one-time first-use cost (JIT, the query code, text caches).
 
 All generated binaries go to the user's TEMP directory. A signed installer and installed-size qualification have not been performed.
 
