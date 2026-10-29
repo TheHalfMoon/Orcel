@@ -9,26 +9,36 @@
 //! Tests use scratch directories and fixture processes (`python3`) only;
 //! they never start a browser.
 //!
-//! - **Removal through the hold:** `sweep_held_profile` deletes a profile only
-//!   through its hold. It first verifies the path still names the held
-//!   directory, then deletes the contents relative to the held descriptor
-//!   (`openat` with `O_NOFOLLOW | O_DIRECTORY`, then `unlinkat`). A
-//!   symbolic link is removed as a link and never followed, so nothing
-//!   outside the profile is touched. Depth and entry counts are bounded,
-//!   and exceeding them fails closed, leaving the rest in place.
-//! - **Lock last:** the lock file is removed last, while still held, so a
-//!   concurrent opener that raced the unlink fails A3's name check. A live
-//!   lock of another holder is never unlinked: `recover_stale_profile` only
-//!   removes a profile whose lock it could take.
+//! - **Removal through the hold:** `sweep_held_profile` deletes a profile
+//!   only through its hold. It first verifies the path still names the held
+//!   directory and the lock name still names the held lock, then deletes the
+//!   contents relative to the held descriptor (`openat` with `O_NOFOLLOW |
+//!   O_DIRECTORY`, then `unlinkat`).
+//!   - A symbolic link is removed as a link and never followed, so nothing
+//!     outside the profile is touched.
+//!   - A subdirectory on another device (a mount point), or one that is not
+//!     the entry that was listed, refuses: the sweep never crosses a mount.
+//!   - Depth, entry counts and listing sizes are bounded. Exceeding them
+//!     fails closed and leaves the rest in place.
+//! - **Lock last:** the lock file is unlinked last, while still held, and
+//!   only after the hold re-checks that the lock name still names the file
+//!   it locked. Another holder's live lock is therefore never unlinked.
 //! - **Crash recovery:** a holder that crashed released its `flock` with
-//!   its process. `recover_stale_profile` treats a profile it can hold as stale
-//!   and removes it, and leaves one another live holder has (`Busy`).
+//!   its process. `recover_stale_profile` treats a profile it can hold as
+//!   stale and removes it, and leaves one that another live holder has
+//!   (`Busy`).
 //!
 //! Open for activation (not decided here):
+//! - **An orphaned engine:** recovery can't yet tell whether an engine
+//!   process is still using the profile. The lock is `O_CLOEXEC`, so an
+//!   engine never holds it; if the host crashes while Chrome or Edge keeps
+//!   running, recovery would call the profile stale and delete it under the
+//!   browser. Activation must first establish that no engine process uses
+//!   the profile (the A2 process tree, or the engine's own `SingletonLock`).
 //! - **Final directory removal:** the profile directory itself is removed
 //!   by path (`rmdir`) after a fresh `verify`, which is a point-in-time
 //!   check. A swap between the two leaves at most an empty directory
-//!   removed or the call failing closed.
+//!   removed, or the call failing closed.
 //! - **Engine coordination:** whether a sweep must also wait for the
 //!   engine's processes to exit (A2) before deleting, and what to do with
 //!   files the engine recreates mid-sweep.
@@ -52,12 +62,26 @@ pub(crate) enum CleanupError {
     Profile(ProfileError),
     /// Deeper than `MAX_DEPTH` or more than `MAX_ENTRIES`.
     Bound,
+    /// A subdirectory on another device, or not the entry that was listed.
+    Crossing,
     /// A system call failed.
     Platform(i32),
 }
 
 fn errno() -> i32 {
     std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+}
+
+#[cfg(target_os = "linux")]
+fn clear_errno() {
+    // SAFETY: the thread-local errno location is always valid.
+    unsafe { *libc::__errno_location() = 0 };
+}
+
+#[cfg(target_os = "macos")]
+fn clear_errno() {
+    // SAFETY: the thread-local errno location is always valid.
+    unsafe { *libc::__error() = 0 };
 }
 
 /// What `recover_stale_profile` did.
@@ -74,12 +98,23 @@ pub(crate) enum Recovery {
 /// Remove a held profile and its contents, then the directory itself.
 pub(crate) fn sweep_held_profile(hold: ProfileHold, path: &Path) -> Result<(), CleanupError> {
     hold.verify(path).map_err(CleanupError::Profile)?;
+    hold.verify_lock().map_err(CleanupError::Profile)?;
+    let root = fstat_raw(hold.root_fd())?;
     let mut budget = MAX_ENTRIES;
-    clear_dir(hold.root_fd(), 0, &mut budget, Some(LOCK_NAME))?;
-    // The lock last, while still held: a racing opener fails A3's name check.
+    clear_dir(
+        hold.root_fd(),
+        device_of(&root),
+        0,
+        &mut budget,
+        Some(LOCK_NAME),
+    )?;
+    // The lock last, while still held, and only while its name still names
+    // the file this hold locked: another holder's live lock is never
+    // unlinked.
+    hold.verify_lock().map_err(CleanupError::Profile)?;
     let lock = CString::new(LOCK_NAME).map_err(|_| CleanupError::Platform(0))?;
     // SAFETY: relative to the held root; removes the name, not a target.
-    if unsafe { libc::unlinkat(hold.root_fd(), lock.as_ptr(), 0) } != 0 && errno() != libc::ENOENT {
+    if unsafe { libc::unlinkat(hold.root_fd(), lock.as_ptr(), 0) } != 0 {
         return Err(CleanupError::Platform(errno()));
     }
     hold.verify(path).map_err(CleanupError::Profile)?;
@@ -94,7 +129,8 @@ pub(crate) fn sweep_held_profile(hold: ProfileHold, path: &Path) -> Result<(), C
 }
 
 /// Recover after a crash: a profile no live holder has is removed; one in
-/// use is left alone.
+/// use is left alone. It cannot yet tell whether an orphaned engine still
+/// uses the profile (see the module's open items).
 pub(crate) fn recover_stale_profile(path: &Path) -> Result<Recovery, CleanupError> {
     match ProfileHold::open(path) {
         Ok(hold) => sweep_held_profile(hold, path).map(|()| Recovery::Removed),
@@ -104,10 +140,40 @@ pub(crate) fn recover_stale_profile(path: &Path) -> Result<Recovery, CleanupErro
     }
 }
 
-/// Delete everything in the directory `dir` (a descriptor), never following
-/// a link, bounded. `keep` names one top-level entry to leave.
+/// `st_dev` is `u64` on Linux and `i32` on macOS.
+#[allow(clippy::unnecessary_cast)]
+fn fstat_raw(fd: i32) -> Result<libc::stat, CleanupError> {
+    // SAFETY: stat is plain data; zeroed is a valid value.
+    let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+    // SAFETY: `fd` is an open descriptor and `stat` a valid out-pointer.
+    if unsafe { libc::fstat(fd, &mut stat) } != 0 {
+        return Err(CleanupError::Platform(errno()));
+    }
+    Ok(stat)
+}
+
+/// The device of a stat (`u64` on Linux, `i32` on macOS).
+#[allow(clippy::unnecessary_cast)]
+fn device_of(stat: &libc::stat) -> u64 {
+    stat.st_dev as u64
+}
+
+/// One listed entry: its name, whether it is a real directory, and its
+/// device and inode as listed.
+struct Entry {
+    name: CString,
+    is_dir: bool,
+    dev: u64,
+    ino: u64,
+}
+
+/// Delete everything in the directory `dir` (a descriptor on device
+/// `device`), never following a link and never crossing a mount, bounded.
+/// `keep` names one top-level entry to leave.
+#[allow(clippy::unnecessary_cast)]
 fn clear_dir(
     dir: i32,
+    device: u64,
     depth: usize,
     budget: &mut usize,
     keep: Option<&str>,
@@ -115,20 +181,26 @@ fn clear_dir(
     if depth > MAX_DEPTH {
         return Err(CleanupError::Bound);
     }
-    for (name, is_dir) in list(dir)? {
-        if keep.is_some_and(|keep| name.as_bytes() == keep.as_bytes()) {
+    // A listing never holds more than the remaining budget allows (plus
+    // the kept name), so memory is bounded by the budget too.
+    let cap = budget.saturating_add(1 + usize::from(keep.is_some()));
+    for entry in list(dir, cap)? {
+        if keep.is_some_and(|keep| entry.name.as_bytes() == keep.as_bytes()) {
             continue;
         }
         if *budget == 0 {
             return Err(CleanupError::Bound);
         }
         *budget -= 1;
-        if is_dir {
+        if entry.is_dir {
+            if entry.dev != device {
+                return Err(CleanupError::Crossing);
+            }
             // SAFETY: relative to `dir`; a directory only, never a link.
             let raw = unsafe {
                 libc::openat(
                     dir,
-                    name.as_ptr(),
+                    entry.name.as_ptr(),
                     libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
                 )
             };
@@ -137,16 +209,21 @@ fn clear_dir(
             }
             // SAFETY: `raw` is a descriptor this call just opened and owns.
             let child = unsafe { OwnedFd::from_raw_fd(raw) };
-            clear_dir(child.as_raw_fd(), depth + 1, budget, None)?;
+            // The opened directory is the listed one, on the same device.
+            let opened = fstat_raw(child.as_raw_fd())?;
+            if opened.st_dev as u64 != device || opened.st_ino as u64 != entry.ino {
+                return Err(CleanupError::Crossing);
+            }
+            clear_dir(child.as_raw_fd(), device, depth + 1, budget, None)?;
             drop(child);
             // SAFETY: relative to `dir`; removes the now empty directory.
-            if unsafe { libc::unlinkat(dir, name.as_ptr(), libc::AT_REMOVEDIR) } != 0 {
+            if unsafe { libc::unlinkat(dir, entry.name.as_ptr(), libc::AT_REMOVEDIR) } != 0 {
                 return Err(CleanupError::Platform(errno()));
             }
         } else {
             // A file, a link (removed as a link) or anything else.
             // SAFETY: relative to `dir`; never follows a link.
-            if unsafe { libc::unlinkat(dir, name.as_ptr(), 0) } != 0 {
+            if unsafe { libc::unlinkat(dir, entry.name.as_ptr(), 0) } != 0 {
                 return Err(CleanupError::Platform(errno()));
             }
         }
@@ -154,9 +231,10 @@ fn clear_dir(
     Ok(())
 }
 
-/// The entries of `dir` (not `.` or `..`): name, and whether it is a real
-/// directory (`fstatat` with `AT_SYMLINK_NOFOLLOW`, so a link is not).
-fn list(dir: i32) -> Result<Vec<(CString, bool)>, CleanupError> {
+/// The entries of `dir` (not `.` or `..`), at most `cap` of them, each with
+/// `fstatat(AT_SYMLINK_NOFOLLOW)`, so a link is never a directory.
+#[allow(clippy::unnecessary_cast)]
+fn list(dir: i32, cap: usize) -> Result<Vec<Entry>, CleanupError> {
     // A second descriptor for reading: fdopendir takes ownership of it.
     // SAFETY: duplicates an open descriptor.
     let copy = unsafe { libc::fcntl(dir, libc::F_DUPFD_CLOEXEC, 0) };
@@ -167,46 +245,63 @@ fn list(dir: i32) -> Result<Vec<(CString, bool)>, CleanupError> {
     // owns it and closedir closes it.
     let stream = unsafe { libc::fdopendir(copy) };
     if stream.is_null() {
+        // Read errno before close can overwrite it.
+        let error = errno();
         // SAFETY: fdopendir failed, so `copy` is still ours to close.
         unsafe { libc::close(copy) };
-        return Err(CleanupError::Platform(errno()));
+        return Err(CleanupError::Platform(error));
     }
     // SAFETY: rewinds the stream to the start of the directory.
     unsafe { libc::rewinddir(stream) };
     let mut names = Vec::new();
-    loop {
+    let outcome = loop {
+        clear_errno();
         // SAFETY: a valid stream; the entry stays valid until the next call.
         let entry = unsafe { libc::readdir(stream) };
         if entry.is_null() {
-            break;
+            // NULL is the end only when errno is still zero.
+            let error = errno();
+            break if error == 0 {
+                Ok(())
+            } else {
+                Err(CleanupError::Platform(error))
+            };
         }
-        // SAFETY: d_name is a NUL-terminated name inside the entry.
-        let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) }.to_owned();
+        // SAFETY: d_name is a NUL-terminated name inside the entry; the
+        // pointer is taken without a reference to the whole array, which
+        // may run past the entry's record.
+        let name =
+            unsafe { CStr::from_ptr(std::ptr::addr_of!((*entry).d_name).cast::<libc::c_char>()) }
+                .to_owned();
         if name.as_bytes() == b"." || name.as_bytes() == b".." {
             continue;
         }
-        if names.len() >= MAX_ENTRIES {
-            // SAFETY: closes the stream and its descriptor once.
-            unsafe { libc::closedir(stream) };
-            return Err(CleanupError::Bound);
+        if names.len() >= cap {
+            break Err(CleanupError::Bound);
         }
         names.push(name);
-    }
+    };
     // SAFETY: closes the stream and its descriptor once.
     unsafe { libc::closedir(stream) };
+    outcome?;
     let mut entries = Vec::with_capacity(names.len());
     for name in names {
         // SAFETY: stat is plain data; zeroed is a valid value.
         let mut stat: libc::stat = unsafe { std::mem::zeroed() };
         // SAFETY: relative to `dir`; never follows a link.
         if unsafe { libc::fstatat(dir, name.as_ptr(), &mut stat, libc::AT_SYMLINK_NOFOLLOW) } != 0 {
-            if errno() == libc::ENOENT {
+            let error = errno();
+            if error == libc::ENOENT {
                 continue;
             }
-            return Err(CleanupError::Platform(errno()));
+            return Err(CleanupError::Platform(error));
         }
-        let is_dir = (stat.st_mode & libc::S_IFMT) == libc::S_IFDIR;
-        entries.push((name, is_dir));
+        entries.push(Entry {
+            name,
+            is_dir: (stat.st_mode & libc::S_IFMT) == libc::S_IFDIR,
+            dev: stat.st_dev as u64,
+            ino: stat.st_ino as u64,
+        });
     }
     Ok(entries)
 }
@@ -277,17 +372,77 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
-    #[test]
-    fn a_profile_deeper_than_the_bound_fails_closed() {
-        let (root, dir) = profile("deep");
-        let mut deep = dir.clone();
-        for level in 0..=MAX_DEPTH + 1 {
+    fn chain(dir: &Path, levels: usize) -> PathBuf {
+        let mut deep = dir.to_path_buf();
+        for level in 0..levels {
             deep = deep.join(format!("d{level}"));
         }
         std::fs::create_dir_all(&deep).unwrap();
+        deep
+    }
+
+    #[test]
+    fn a_profile_at_the_depth_bound_is_removed() {
+        let (root, dir) = profile("depth-ok");
+        // MAX_DEPTH nested directories: the deepest is cleared by the call at
+        // depth MAX_DEPTH, the last one allowed.
+        chain(&dir, MAX_DEPTH);
+        let hold = ProfileHold::open(&dir).unwrap();
+        sweep_held_profile(hold, &dir).unwrap();
+        assert!(!dir.exists());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_profile_deeper_than_the_bound_fails_closed() {
+        let (root, dir) = profile("deep");
+        // One level more than the bound.
+        let deepest = chain(&dir, MAX_DEPTH + 1);
         let hold = ProfileHold::open(&dir).unwrap();
         assert_eq!(sweep_held_profile(hold, &dir), Err(CleanupError::Bound));
-        assert!(dir.exists(), "the rest is left in place");
+        assert!(
+            dir.join("d0").exists() && deepest.exists(),
+            "the chain is left in place"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn the_entry_budget_fails_closed() {
+        let (root, dir) = profile("budget");
+        for index in 0..5 {
+            std::fs::write(dir.join(format!("f{index}")), "x").unwrap();
+        }
+        let hold = ProfileHold::open(&dir).unwrap();
+        let device = device_of(&fstat_raw(hold.root_fd()).unwrap());
+        let mut budget = 3;
+        assert_eq!(
+            clear_dir(hold.root_fd(), device, 0, &mut budget, Some(LOCK_NAME)),
+            Err(CleanupError::Bound)
+        );
+        drop(hold);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// A renamed lock and a second holder: the sweep refuses, and the
+    /// second holder's live lock and files survive.
+    #[test]
+    fn another_holders_live_lock_is_never_unlinked() {
+        let (root, dir) = profile("lock-swap");
+        populate(&dir);
+        let first = ProfileHold::open(&dir).unwrap();
+        std::fs::rename(dir.join(LOCK_NAME), dir.join("moved.lock")).unwrap();
+        let second = ProfileHold::open(&dir).unwrap();
+        assert_eq!(
+            sweep_held_profile(first, &dir),
+            Err(CleanupError::Profile(ProfileError::Swapped))
+        );
+        assert!(
+            dir.join(LOCK_NAME).exists(),
+            "the second holder's lock survives"
+        );
+        assert!(dir.join("Local State").exists(), "nothing was deleted");
+        drop(second);
         std::fs::remove_dir_all(&root).ok();
     }
 
@@ -315,22 +470,33 @@ mod tests {
     fn recovery_leaves_a_live_profile_and_removes_a_crashed_one() {
         let (root, dir) = profile("crash");
         populate(&dir);
-        drop(ProfileHold::open(&dir).unwrap()); // creates the lock file
-                                                // A fixture process holds the profile's lock, then is killed.
+        // Creates the lock file.
+        drop(ProfileHold::open(&dir).unwrap());
+        // A fixture process holds the profile's lock, then is killed.
         let script = "import fcntl,os,sys,time\n\
                       fd = os.open(sys.argv[1], os.O_RDWR)\n\
                       fcntl.flock(fd, fcntl.LOCK_EX)\n\
                       print('locked', flush=True)\n\
                       time.sleep(60)\n";
-        let mut holder = Command::new("python3")
-            .arg("-c")
-            .arg(script)
-            .arg(dir.join(LOCK_NAME))
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap();
+        /// Kills the fixture holder even when the test fails first.
+        struct Holder(std::process::Child);
+        impl Drop for Holder {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let mut holder = Holder(
+            Command::new("python3")
+                .arg("-c")
+                .arg(script)
+                .arg(dir.join(LOCK_NAME))
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        );
         let mut line = String::new();
-        BufReader::new(holder.stdout.take().unwrap())
+        BufReader::new(holder.0.stdout.take().unwrap())
             .read_line(&mut line)
             .unwrap();
         assert_eq!(line.trim(), "locked");
@@ -338,8 +504,8 @@ mod tests {
         assert_eq!(recover_stale_profile(&dir), Ok(Recovery::InUse));
         assert!(dir.join("Local State").exists());
         // Crashed: its lock died with it, so the profile is stale and removed.
-        holder.kill().unwrap();
-        holder.wait().unwrap();
+        holder.0.kill().unwrap();
+        holder.0.wait().unwrap();
         assert_eq!(recover_stale_profile(&dir), Ok(Recovery::Removed));
         assert!(!dir.exists());
         assert_eq!(recover_stale_profile(&dir), Ok(Recovery::Absent));
