@@ -34,6 +34,11 @@ Implementations:
 
 Request fields are the `/1` fields (`hwnd`, `expected_pid`, `expected_start_generation`, `expected_window_nonce`, `max_nodes`, `max_depth`, `element_runtime_id`, `semantic_action`, `window_action`, `value`, `x`, `y`, `to_x`, `to_y`, `button`, `click_count`, `scroll_x`, `scroll_y`, `text`, `key`, `expected_last_input_tick`) plus `window`.
 
+`element_runtime_id` names a `semantic_action` target or, on `observe_window`, a subtree root (SG-000128 slice 1b), and nothing else. Any other operation that carries it gets `invalid_request`, and the id is at most 512 bytes.
+- **Windows computer host:** it finds the root inside the same bound window with a bounded search: 4096 nodes, depth 64, raw view, content elements only. It then returns the tree below that root with the unchanged `max_nodes` / `max_depth` caps (256 nodes, depth 8 below the root). A root that does not resolve there is `target_stale`, and nothing is observed. The `semantic_action` lookup uses the same bounded search, so an element that orceld issued from a subtree read can be acted on under the action's unchanged approval.
+- **Client check:** the adapter accepts a subtree reply only if its single root element is the requested runtime id. A host that ignored the field and answered with the whole window is refused.
+- **macOS and Linux native host:** it does not serve subtrees and refuses `observe_window` with `element_runtime_id` (`capability_denied`). The adapter never sends one to it.
+
 Under `/2` the host refuses an unknown field with `invalid_request`. Under `/1` it keeps ignoring unknown fields, as it always did. In particular, a `/1` frame that carries `window` has that field ignored, whatever its JSON type: the `/1` request shape has no `window` field, and only the strict `/2` path decodes it.
 
 ### 2.2 Response frame

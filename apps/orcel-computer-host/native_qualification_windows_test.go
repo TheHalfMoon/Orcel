@@ -222,6 +222,48 @@ func TestSG000094NativeObservationCaptureQualification(t *testing.T) {
 		t.Fatalf("UIA depth=%d bound=%d", depth, observe.MaxDepth)
 	}
 
+	// SG-000128: a subtree read below an element of the same window starts
+	// at exactly that element, keeps the caps, and a root that does not
+	// resolve inside the window fails closed and observes nothing.
+	scopedRead := func(runtimeID string) hostResponse {
+		scoped := boundHostRequest(5, "observe_window", fact)
+		scoped.MaxNodes = 64
+		scoped.MaxDepth = 4
+		scoped.ElementRuntimeID = runtimeID
+		return nativeObserveWindow(scoped)
+	}
+	rootID := observed.Elements[0].RuntimeID
+	if rootID == "" {
+		t.Fatal("the helper window's root element has no runtime id")
+	}
+	whole := scopedRead(rootID)
+	if !whole.OK || len(whole.Elements) != 1 || whole.Elements[0].RuntimeID != rootID {
+		t.Fatalf("a subtree read at the window's root did not start there: %+v", whole.Error)
+	}
+	for _, child := range observed.Elements[0].Children {
+		if child.RuntimeID == "" {
+			continue
+		}
+		subtree := scopedRead(child.RuntimeID)
+		if subtree.OK {
+			if len(subtree.Elements) != 1 || subtree.Elements[0].RuntimeID != child.RuntimeID {
+				t.Fatalf("a subtree read did not start at the requested element %q", child.RuntimeID)
+			}
+			count, depth := elementTreeStats(subtree.Elements, 0)
+			if count > 64 || depth > 4 {
+				t.Fatalf("a subtree exceeded its caps: nodes=%d depth=%d", count, depth)
+			}
+		} else if subtree.Error == nil || subtree.Error.Code != "target_stale" || len(subtree.Elements) != 0 {
+			t.Fatalf("a non-content child did not fail closed: %+v", subtree)
+		}
+	}
+	missing := boundHostRequest(6, "observe_window", fact)
+	missing.ElementRuntimeID = "999999.1.2.3"
+	notFound := nativeObserveWindow(missing)
+	if notFound.OK || notFound.Error == nil || notFound.Error.Code != "target_stale" || len(notFound.Elements) != 0 {
+		t.Fatalf("an unresolved subtree root did not fail closed: %+v", notFound)
+	}
+
 	captureReq := boundHostRequest(2, "capture_window", fact)
 	first := nativeCaptureWindow(captureReq)
 	if !first.OK {
