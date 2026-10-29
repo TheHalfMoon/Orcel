@@ -31,6 +31,9 @@ mod sink;
 mod supervise;
 mod transfers;
 mod uia;
+// SG-000115 slice 1, inert until activation: compiled into test builds only.
+#[cfg(test)]
+mod unix_policy;
 // The worker session that uses the probe machinery exists only on Windows.
 #[cfg_attr(not(windows), allow(dead_code))]
 mod verify;
