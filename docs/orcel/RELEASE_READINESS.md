@@ -48,6 +48,7 @@ checkpoint at the end says where engineering stands.
 | BM-02 Tier C beyond C2b (C3 agent runs) | Blocked: needs a planner model (class 4) |
 | CI flakes under watch | #438 (navigation), #508 (UIA bind), #512 (real git fetch), #516 (Go helper start), #524 (macOS jobs cancelled before a runner is assigned) |
 | Governance preparation for SG-000115, SG-000122, SG-000124, SG-000127 closeout | Specs, tests, dependency and security analysis only; activation is a founder decision |
+| SG-000115 inert pre-activation engineering (founder decision 2026-10-29) | Category A in `prep/SG-000115.md`. Unexposed, crate-private, and pinned by tests to leave macOS/Linux launch refused; activation, wiring and S-07 stay with the founder |
 | Documentation consistency (frontier, roadmap, benchmark plan) | Ongoing with each merge |
 
 ## 3. Acceptance tests that need the founder present
