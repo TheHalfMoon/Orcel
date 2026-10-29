@@ -55,11 +55,11 @@ windows-sys = { version = "0.52", features = [
   "Win32_UI_Shell",
 ] }
 
-# #483: the native tests' cleanup diagnostics ask Restart Manager who holds
-# a profile's files (test builds only).
 # SG-000115 slice A2: Unix test builds only (inert until activation).
 [target.'cfg(unix)'.dev-dependencies]
 libc = "0.2"
 
+# #483: the native tests' cleanup diagnostics ask Restart Manager who holds
+# a profile's files (test builds only).
 [target.'cfg(windows)'.dev-dependencies]
 windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_System_RestartManager"] }

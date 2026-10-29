@@ -25,6 +25,16 @@
 //! Linux, `PR_SET_CHILD_SUBREAPER` closes that gap only when the
 //! supervisor process sets it, which activation must decide and qualify;
 //! this slice does not set it on the shared test process.
+//!
+//! Also open for activation (not solved here):
+//! - **Forks after the scan.** The sweep is one snapshot, so a member outside
+//!   the group can fork between the scan and the kills, and its new child is
+//!   never pinned. Activation needs stop-then-rescan (`SIGSTOP`, rescan until
+//!   stable, `SIGKILL`) or a kill-and-rescan loop.
+//! - **Check-to-kill window.** The start-time check and the kill are two
+//!   calls; on Linux a pidfd closes the window; on macOS it stays a residual.
+//! - **Family bound.** `MAX_FAMILY` must be qualified against a real Chrome
+//!   or Edge tree; exceeding it fails closed.
 
 use std::collections::BTreeMap;
 use std::os::unix::process::CommandExt;
@@ -68,19 +78,51 @@ pub(crate) enum FamilyError {
 pub(crate) struct Supervised {
     child: Child,
     root: Pinned,
+    /// While armed, dropping kills the family: a failing test never leaves
+    /// fixture processes behind. Disarmed once the root is reaped, because
+    /// its pgid may then belong to someone else.
+    armed: bool,
+}
+
+impl Drop for Supervised {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        if let Ok(table) = process_table() {
+            for member in family_of(self.root, &table).0 {
+                kill_pinned(member);
+            }
+        }
+        // SAFETY: the root is unreaped while armed, so this pgid is ours.
+        unsafe { libc::killpg(self.root.pid, libc::SIGKILL) };
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
 }
 
 impl Supervised {
     /// Spawn `command` as the leader of a new process group.
     pub(crate) fn spawn(mut command: Command) -> std::io::Result<Self> {
         command.process_group(0);
-        let child = command.spawn()?;
-        let pid =
-            i32::try_from(child.id()).map_err(|_| std::io::Error::other("pid out of range"))?;
-        let start = start_time(pid).ok_or_else(|| std::io::Error::other("no start time"))?;
+        let mut child = command.spawn()?;
+        let start = i32::try_from(child.id())
+            .ok()
+            .and_then(|pid| match start_time(pid) {
+                Ok(Some(start)) => Some((pid, start)),
+                _ => None,
+            });
+        let Some((pid, start)) = start else {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(std::io::Error::other(
+                "the fixture's identity cannot be pinned",
+            ));
+        };
         Ok(Self {
             child,
             root: Pinned { pid, start },
+            armed: true,
         })
     }
 
@@ -92,23 +134,33 @@ impl Supervised {
     /// each pinned by its start time.
     pub(crate) fn family(&self) -> Result<Vec<Pinned>, FamilyError> {
         let table = process_table()?;
-        family_of(self.root, &table)
+        match family_of(self.root, &table) {
+            (_, Some(error)) => Err(error),
+            (members, None) => Ok(members),
+        }
     }
 
     /// Kill the group and every pinned member, reap the root, and confirm
     /// that every member is gone before `deadline`. Returns the members
     /// still alive (empty on success).
     pub(crate) fn sweep(mut self, deadline: Duration) -> Result<Vec<Pinned>, FamilyError> {
-        let family = self.family();
-        // Signal the group first, whatever the enumeration said.
-        // SAFETY: killpg with a pid this process spawned as a group leader.
+        let (family, error) = match process_table() {
+            Ok(table) => family_of(self.root, &table),
+            Err(error) => (Vec::new(), Some(error)),
+        };
+        // Kill the group and every member found, even when the scan or the
+        // family bound failed: a partial set is still killed.
+        // SAFETY: the root is unreaped here, so this pgid is ours.
         unsafe { libc::killpg(self.root.pid, libc::SIGKILL) };
-        let family = family?;
         for member in &family {
             kill_pinned(*member);
         }
         let _ = self.child.kill();
         let _ = self.child.wait();
+        self.armed = false;
+        if let Some(error) = error {
+            return Err(error);
+        }
         let started = Instant::now();
         loop {
             let alive: Vec<Pinned> = family
@@ -126,24 +178,26 @@ impl Supervised {
 
 /// Signal a member only while its start time still matches (no reused pid).
 fn kill_pinned(member: Pinned) {
-    if start_time(member.pid) == Some(member.start) {
+    if start_time(member.pid) == Ok(Some(member.start)) {
         // SAFETY: plain signal to a pid whose identity was just re-checked.
         unsafe { libc::kill(member.pid, libc::SIGKILL) };
     }
 }
 
 /// Alive means the same process (pid and start time) still exists and is
-/// not a zombie awaiting its reaper.
+/// not a zombie awaiting its reaper. A process that cannot be read counts
+/// as alive: its exit cannot be confirmed.
 pub(crate) fn is_alive(member: Pinned) -> bool {
     match row_of(member.pid) {
-        Some((row, zombie)) => row.pinned.start == member.start && !zombie,
-        None => false,
+        Ok(Some((row, dead))) => row.pinned.start == member.start && !dead,
+        Ok(None) => false,
+        Err(_) => true,
     }
 }
 
 /// The family of `root` within `table`: its process group plus every
 /// descendant by parent links, bounded.
-fn family_of(root: Pinned, table: &[Row]) -> Result<Vec<Pinned>, FamilyError> {
+fn family_of(root: Pinned, table: &[Row]) -> (Vec<Pinned>, Option<FamilyError>) {
     let mut children: BTreeMap<i32, Vec<Row>> = BTreeMap::new();
     for row in table {
         children.entry(row.ppid).or_default().push(*row);
@@ -163,14 +217,20 @@ fn family_of(root: Pinned, table: &[Row]) -> Result<Vec<Pinned>, FamilyError> {
                 queue.push(child.pinned.pid);
             }
             if family.len() > MAX_FAMILY {
-                return Err(FamilyError::FamilyBound);
+                return (
+                    family.into_values().collect(),
+                    Some(FamilyError::FamilyBound),
+                );
             }
         }
     }
     if family.len() > MAX_FAMILY {
-        return Err(FamilyError::FamilyBound);
+        return (
+            family.into_values().collect(),
+            Some(FamilyError::FamilyBound),
+        );
     }
-    Ok(family.into_values().collect())
+    (family.into_values().collect(), None)
 }
 
 #[cfg(target_os = "linux")]
@@ -188,20 +248,31 @@ mod table {
         let ppid = fields.get(1)?.parse().ok()?;
         let pgid = fields.get(2)?.parse().ok()?;
         let start = fields.get(19)?.parse().ok()?;
-        Some((ppid, pgid, start, *state == "Z"))
+        Some((ppid, pgid, start, *state == "Z" || *state == "X"))
     }
 
-    pub(super) fn row_of(pid: i32) -> Option<(Row, bool)> {
-        let text = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-        let (ppid, pgid, start, zombie) = parse_stat(&text)?;
-        Some((
+    /// `Ok(None)` only when the process is gone (ENOENT, ESRCH); any other
+    /// failure fails closed.
+    pub(super) fn row_of(pid: i32) -> Result<Option<(Row, bool)>, FamilyError> {
+        let text = match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+            Ok(text) => text,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::NotFound
+                    || error.raw_os_error() == Some(libc::ESRCH) =>
+            {
+                return Ok(None)
+            }
+            Err(_) => return Err(FamilyError::Unreadable),
+        };
+        let (ppid, pgid, start, dead) = parse_stat(&text).ok_or(FamilyError::Unreadable)?;
+        Ok(Some((
             Row {
                 pinned: Pinned { pid, start },
                 ppid,
                 pgid,
             },
-            zombie,
-        ))
+            dead,
+        )))
     }
 
     pub(super) fn process_table() -> Result<Vec<Row>, FamilyError> {
@@ -222,8 +293,8 @@ mod table {
                 continue;
             };
             // A process that exited between the listing and the read is
-            // simply gone; skip it.
-            if let Some((row, _)) = row_of(pid) {
+            // gone; any other read failure fails closed.
+            if let Some((row, _)) = row_of(pid)? {
                 rows.push(row);
             }
         }
@@ -235,7 +306,9 @@ mod table {
 mod table {
     use super::{FamilyError, Pinned, Row, MAX_SCAN};
 
-    pub(super) fn row_of(pid: i32) -> Option<(Row, bool)> {
+    /// `Ok(None)` only when the process is gone (ESRCH); any other failure
+    /// fails closed.
+    pub(super) fn row_of(pid: i32) -> Result<Option<(Row, bool)>, FamilyError> {
         // SAFETY: proc_bsdinfo is plain data; zeroed is a valid value.
         let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
         let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
@@ -250,7 +323,12 @@ mod table {
             )
         };
         if read != size {
-            return None;
+            let errno = std::io::Error::last_os_error().raw_os_error();
+            return if errno == Some(libc::ESRCH) {
+                Ok(None)
+            } else {
+                Err(FamilyError::Unreadable)
+            };
         }
         let start = info
             .pbi_start_tvsec
@@ -258,14 +336,14 @@ mod table {
             .wrapping_add(info.pbi_start_tvusec);
         // SZOMB is 5 in <sys/proc.h>.
         let zombie = info.pbi_status == 5;
-        Some((
+        Ok(Some((
             Row {
                 pinned: Pinned { pid, start },
                 ppid: info.pbi_ppid as i32,
                 pgid: info.pbi_pgid as i32,
             },
             zombie,
-        ))
+        )))
     }
 
     pub(super) fn process_table() -> Result<Vec<Row>, FamilyError> {
@@ -280,19 +358,21 @@ mod table {
         if count >= MAX_SCAN {
             return Err(FamilyError::ScanBound);
         }
-        Ok(pids[..count]
-            .iter()
-            .filter(|pid| **pid > 0)
-            .filter_map(|pid| row_of(*pid).map(|(row, _)| row))
-            .collect())
+        let mut rows = Vec::new();
+        for pid in pids[..count].iter().filter(|pid| **pid > 0) {
+            if let Some((row, _)) = row_of(*pid)? {
+                rows.push(row);
+            }
+        }
+        Ok(rows)
     }
 }
 
 use table::{process_table, row_of};
 
-/// The start time of a live process, if it exists.
-fn start_time(pid: i32) -> Option<u64> {
-    row_of(pid).map(|(row, _)| row.pinned.start)
+/// The start time of a process, `Ok(None)` when it is gone.
+fn start_time(pid: i32) -> Result<Option<u64>, FamilyError> {
+    Ok(row_of(pid)?.map(|(row, _)| row.pinned.start))
 }
 
 #[cfg(test)]
@@ -307,22 +387,30 @@ mod tests {
         command
     }
 
-    /// Wait until the family has at least `count` members, bounded.
-    fn family_with(supervised: &Supervised, count: usize) -> Vec<Pinned> {
+    /// Wait until the family satisfies `ready`, bounded by `DEADLINE`.
+    fn family_until(supervised: &Supervised, ready: impl Fn(&[Pinned]) -> bool) -> Vec<Pinned> {
         let started = Instant::now();
         loop {
             let family = supervised.family().unwrap();
-            if family.len() >= count || started.elapsed() > DEADLINE {
+            if ready(&family) || started.elapsed() > DEADLINE {
                 return family;
             }
             std::thread::sleep(Duration::from_millis(50));
         }
     }
 
+    fn outside_group(family: &[Pinned], group: i32) -> Vec<Pinned> {
+        family
+            .iter()
+            .copied()
+            .filter(|member| matches!(row_of(member.pid), Ok(Some((row, _))) if row.pgid != group))
+            .collect()
+    }
+
     #[test]
     fn the_family_is_the_group_and_the_sweep_confirms_every_exit() {
         let supervised = Supervised::spawn(sh("sleep 60 & sleep 60 & wait")).unwrap();
-        let family = family_with(&supervised, 3);
+        let family = family_until(&supervised, |family| family.len() >= 3);
         assert!(family.len() >= 3, "{family:?}");
         assert!(family.contains(&supervised.root()));
         let left = supervised.sweep(DEADLINE).unwrap();
@@ -339,12 +427,11 @@ mod tests {
         let script = "python3 -c 'import os,time; os.setsid(); time.sleep(60)' & wait";
         let supervised = Supervised::spawn(sh(script)).unwrap();
         let root = supervised.root();
-        let family = family_with(&supervised, 2);
-        let escaped: Vec<Pinned> = family
-            .iter()
-            .copied()
-            .filter(|member| row_of(member.pid).is_some_and(|(row, _)| row.pgid != root.pid))
-            .collect();
+        // Wait for the helper to have called setsid, not merely to exist.
+        let family = family_until(&supervised, |family| {
+            !outside_group(family, root.pid).is_empty()
+        });
+        let escaped = outside_group(&family, root.pid);
         assert!(
             !escaped.is_empty(),
             "the setsid helper is in the family: {family:?}"
@@ -353,6 +440,23 @@ mod tests {
         assert!(left.is_empty(), "{left:?}");
         for member in escaped {
             assert!(!is_alive(member), "the escaped helper is gone: {member:?}");
+        }
+    }
+
+    /// A test that fails before its sweep leaves no fixture behind: the
+    /// armed guard kills the family on drop.
+    #[test]
+    fn dropping_an_armed_fixture_kills_its_family() {
+        let supervised = Supervised::spawn(sh("sleep 60 & sleep 60 & wait")).unwrap();
+        let family = family_until(&supervised, |family| family.len() >= 3);
+        assert!(family.len() >= 3, "{family:?}");
+        drop(supervised);
+        let started = Instant::now();
+        while family.iter().any(|member| is_alive(*member)) && started.elapsed() < DEADLINE {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        for member in family {
+            assert!(!is_alive(member), "{member:?}");
         }
     }
 
@@ -374,7 +478,10 @@ mod tests {
                 pgid: 100,
             });
         }
-        assert_eq!(family_of(root, &table), Err(FamilyError::FamilyBound));
+        let (members, error) = family_of(root, &table);
+        assert_eq!(error, Some(FamilyError::FamilyBound));
+        // The partial set is still returned, so the sweep can kill it.
+        assert!(members.len() > MAX_FAMILY, "{}", members.len());
     }
 
     #[test]
@@ -395,13 +502,13 @@ mod tests {
                 pgid: 7,
             },
         ];
-        assert_eq!(family_of(root, &table), Ok(Vec::new()));
+        assert_eq!(family_of(root, &table), (Vec::new(), None));
     }
 
     #[test]
     fn a_pinned_identity_with_another_start_time_is_not_alive() {
         let me = std::process::id() as i32;
-        let start = start_time(me).unwrap();
+        let start = start_time(me).unwrap().unwrap();
         assert!(is_alive(Pinned { pid: me, start }));
         assert!(!is_alive(Pinned {
             pid: me,
@@ -455,10 +562,10 @@ mod tests {
             .split_once("[target.'cfg(unix)'.dev-dependencies]\n")
             .expect("libc is a Unix dev-dependency");
         assert!(unix_dev.trim_start().starts_with("libc = "));
-        assert!(!manifest
-            .split("[target.'cfg(unix)'.dev-dependencies]")
-            .next()
-            .unwrap()
-            .contains("libc"));
+        assert_eq!(
+            manifest.matches("libc").count(),
+            1,
+            "libc is declared once, as a Unix dev-dependency"
+        );
     }
 }
