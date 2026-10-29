@@ -150,7 +150,7 @@ export default function Home() {
                 <h3>Act, then record</h3>
                 <p>Qualified local providers perform only the permitted operation.</p>
                 <div className="capability-row">
-                  <span>Files</span><span>Git</span><span>Browser</span><span>Desktop</span>
+                  <span>Files</span><span>Git</span><span>Approvals</span><span>Audit</span>
                 </div>
               </article>
             </div>
@@ -202,7 +202,7 @@ export default function Home() {
           <div className="security-grid">
             <article><span className="icon-box"><Shield /></span><h3>Approvals stay local</h3><p>Approval flows are decided on the computer that owns the authority.</p></article>
             <article><span className="icon-box"><Lock /></span><h3>No silent elevation</h3><p>Agent input cannot mint trust, approval, leases, or privileged authority.</p></article>
-            <article><span className="icon-box"><Layers /></span><h3>Bounded capabilities</h3><p>Files, Git, browser, desktop, and registered tools stay behind explicit contracts.</p></article>
+            <article><span className="icon-box"><Layers /></span><h3>Bounded capabilities</h3><p>Workspace files, bounded Git actions, and approved local tools stay behind explicit contracts. Browser and desktop UI actuation are not exposed over MCP.</p></article>
             <article><span className="icon-box"><Eye /></span><h3>Auditable actions</h3><p>Security decisions and qualified execution paths produce inspectable evidence.</p></article>
           </div>
         </section>
@@ -244,10 +244,10 @@ export default function Home() {
           <h2>A more capable agent.<br />On your computer.</h2>
           <p>Open source, local-first, and built around explicit authority.</p>
           <div className="hero-actions final-actions">
-            <a className="button button-primary" href={releases}>View verified releases <Arrow /></a>
+            <a className="button button-primary" href={releases}>Browse release archive <Arrow /></a>
             <a className="button button-secondary" href={github}>Browse the source</a>
           </div>
-          <p className="release-note">Published artifacts stay on the canonical GitHub Releases surface. Verify checksums and provenance before install.</p>
+          <p className="release-note">The published v0.1.0 is a pre-rename archival build, not a qualified Orcel installer. For Orcel installations, use only qualified Orcel-branded assets and verify their checksums and provenance.</p>
         </section>
       </div>
 
