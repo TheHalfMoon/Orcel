@@ -249,8 +249,10 @@ fn family_of(root: Pinned, table: &[Row]) -> (Vec<Pinned>, Option<FamilyError>) 
         .filter(|row| row.pinned.pid > 0)
         .collect();
     let table = table.as_slice();
+    // An invalid root fails closed: `killpg(0, ...)` would signal the
+    // caller's own group, so no family is built for it.
     if root.pid <= 0 {
-        return (Vec::new(), None);
+        return (Vec::new(), Some(FamilyError::Unreadable));
     }
     let mut children: BTreeMap<i32, Vec<Row>> = BTreeMap::new();
     for row in table {
@@ -577,12 +579,16 @@ mod tests {
         ];
         assert_eq!(family_of(root, &table), (vec![root], None));
         let invalid = Pinned { pid: 0, start: 1 };
-        assert_eq!(family_of(invalid, &table), (Vec::new(), None));
+        assert_eq!(
+            family_of(invalid, &table),
+            (Vec::new(), Some(FamilyError::Unreadable))
+        );
     }
 
     /// From #528: the root's exit alone proves nothing about descendants;
-    /// a child that left the group is still a member after its parent is
-    /// gone from the table, as long as the group's leader row is present.
+    /// the walk reaches a member that left the group while its parent
+    /// lives. (An orphan whose parent is gone has ppid 1 and is outside the
+    /// walk: the open macOS residual, not covered here.)
     #[test]
     fn a_descendant_outside_the_group_stays_a_member() {
         let root = Pinned { pid: 100, start: 1 };
