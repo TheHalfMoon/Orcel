@@ -1,4 +1,4 @@
-//! SG-000115 slice 1, inert pre-activation engineering (category A1 in
+//! SG-000115 slice A1, inert pre-activation engineering (category A1 in
 //! `docs/orcel/implementation-readiness/prep/SG-000115.md`): the macOS and
 //! Linux managed-policy inspection that the browser launch precondition will
 //! use once SG-000115 is activated.
@@ -11,10 +11,31 @@
 //! (category B). A source scan in the tests below pins that only this module
 //! names its entry points.
 //!
-//! Every location is inspected read-only, below an explicit root (`/` once
-//! activation wires it in; a scratch directory in tests). Anything present, populated,
-//! unexpected or unreadable fails closed, as the Windows registry check
-//! does: managed policy outranks the confinement flags.
+//! Everything is inspected read-only, below an explicit root (`/` once
+//! activation wires it in; a scratch directory in tests), and fails closed:
+//!
+//! - Linux: each engine family's `policies` root may hold nothing but empty
+//!   `managed` and `recommended` directories. Any other entry (a policy
+//!   file, Chrome Browser Cloud Management's `enrollment`, a link, a file in
+//!   a directory's place) refuses, as the Windows check refuses the whole
+//!   policy key.
+//! - macOS: a target-domain property list directly in `Library/Managed
+//!   Preferences` (machine) or in any subdirectory of it (per user) refuses.
+//!   Every subdirectory is inspected, so no caller-supplied user name can
+//!   steer the check past another account's domain. A link where a
+//!   subdirectory or a target plist could be also refuses.
+//! - Anything that cannot be read, or more entries than the bound, refuses.
+//!
+//! The walk checks each component separately, so it is not atomic against
+//! a concurrently swapped directory. Activation needs its own
+//! descriptor-relative, race-resistant qualification before any wiring.
+//!
+//! Open for the activation spec (not decided here): macOS non-forced
+//! preferences (`/Library/Preferences`, `~/Library/Preferences`), which
+//! Chrome can apply as recommended policy; per-channel domains (beta, dev,
+//! canary) if discovery ever admits those channels; and whether to re-check
+//! policy at teardown (policy written by root after the check is the same
+//! trust boundary as on Windows).
 
 use std::path::{Path, PathBuf};
 
@@ -29,29 +50,21 @@ pub(crate) enum UnixPlatform {
     MacOs,
 }
 
-/// How a policy location is read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LocationKind {
-    /// A Chromium policy directory: any entry in it is a policy.
-    Directory,
-    /// A managed-preferences property list: its presence is a policy.
-    File,
-}
+/// At most this many entries are read from one directory; more fails
+/// closed, so a hostile directory cannot make the check unbounded.
+const MAX_ENTRIES: usize = 4096;
 
-/// One place a managed browser policy can live, relative to the root.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct PolicyLocation {
-    pub(crate) relative: PathBuf,
-    pub(crate) kind: LocationKind,
-}
-
-/// Linux policy directories per engine family. Chrome builds on some
-/// distributions also read Chromium's directory; refusing on it only fails
-/// safe. Both `managed` and `recommended` are refused, as on Windows.
+/// Linux policy roots per engine family. Chrome builds on some
+/// distributions read Chromium's roots too (Debian's `chromium`, Ubuntu's
+/// `chromium-browser`); refusing on them only fails safe.
 fn linux_roots(kind: EngineKind) -> &'static [&'static str] {
     match kind {
         EngineKind::Edge => &["etc/opt/edge/policies"],
-        EngineKind::Chromium => &["etc/opt/chrome/policies", "etc/chromium/policies"],
+        EngineKind::Chromium => &[
+            "etc/opt/chrome/policies",
+            "etc/chromium/policies",
+            "etc/chromium-browser/policies",
+        ],
     }
 }
 
@@ -63,157 +76,171 @@ fn macos_domains(kind: EngineKind) -> &'static [&'static str] {
     }
 }
 
-/// A user name usable as one path component under Managed Preferences.
-fn valid_user(user: &str) -> bool {
-    !user.is_empty()
-        && user.len() <= 255
-        && user != "."
-        && user != ".."
-        && !user.contains(['/', '\\', '\0'])
-}
-
-/// Every location to inspect. On macOS the per-user domain needs the user
-/// the engine would run as; without a usable name the check cannot be
-/// established and fails closed (`Err`).
-pub(crate) fn policy_locations(
-    platform: UnixPlatform,
-    kind: EngineKind,
-    user: Option<&str>,
-) -> Result<Vec<PolicyLocation>, HostError> {
-    match platform {
-        UnixPlatform::Linux => Ok(linux_roots(kind)
-            .iter()
-            .flat_map(|root| {
-                ["managed", "recommended"]
-                    .into_iter()
-                    .map(move |leaf| PolicyLocation {
-                        relative: Path::new(root).join(leaf),
-                        kind: LocationKind::Directory,
-                    })
-            })
-            .collect()),
-        UnixPlatform::MacOs => {
-            let user = user.filter(|user| valid_user(user)).ok_or_else(|| {
-                HostError::Platform(
-                    "managed browser policy cannot be read: no usable user for the per-user domain; launch refused"
-                        .into(),
-                )
-            })?;
-            let base = Path::new("Library").join("Managed Preferences");
-            Ok(macos_domains(kind)
-                .iter()
-                .flat_map(|domain| {
-                    let file = format!("{domain}.plist");
-                    [base.join(&file), base.join(user).join(&file)]
-                })
-                .map(|relative| PolicyLocation {
-                    relative,
-                    kind: LocationKind::File,
-                })
-                .collect())
+/// The entries of a directory, bounded; `Err` carries the fail-closed state.
+fn bounded_entries(dir: &Path) -> Result<Vec<std::fs::DirEntry>, PolicyKeyState> {
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir(dir).map_err(|_| PolicyKeyState::Unreadable)? {
+        if entries.len() == MAX_ENTRIES {
+            return Err(PolicyKeyState::Unreadable);
         }
+        entries.push(entry.map_err(|_| PolicyKeyState::Unreadable)?);
     }
+    Ok(entries)
 }
 
-/// A deliberately conservative, read-only, test-only walk. Reject symbolic
-/// links and unexpected files at *every* ancestor below the trusted root,
-/// not only at the final policy location. A dangling parent symlink must
-/// never masquerade as an absent policy. Checking separately is NOT atomic
-/// against a concurrently swapped directory; activation requires its own
-/// descriptor-relative and race-resistant qualification before any wiring.
-fn check_policy_ancestors(root: &Path, relative: &Path) -> Result<(), PolicyKeyState> {
-    use std::path::Component;
-
+/// The metadata of `root/relative`, walking one component at a time
+/// without following a link at the location itself. `Ok(None)` only when a
+/// component is missing below a chain of real directories; a file or link
+/// standing in for an intermediate directory refuses (`Populated`), and any
+/// other error fails closed (`Unreadable`). The walk is explicit so the
+/// answer does not depend on how a platform reports a blocked path.
+fn locate(root: &Path, relative: &str) -> Result<Option<std::fs::Metadata>, PolicyKeyState> {
+    // The inspection root itself must be a real directory (not a link).
     match std::fs::symlink_metadata(root) {
-        Ok(metadata) if metadata.is_dir() => {}
+        Ok(metadata) if metadata.file_type().is_dir() => {}
         Ok(_) => return Err(PolicyKeyState::Populated),
         Err(_) => return Err(PolicyKeyState::Unreadable),
     }
-
-    let components = relative.components().collect::<Vec<_>>();
-    if components.is_empty()
-        || components
-            .iter()
-            .any(|component| !matches!(component, Component::Normal(_)))
-    {
+    let components: Vec<&str> = relative.split('/').collect();
+    // Only plain names: never `.`, `..`, an empty or a rooted component.
+    if components.iter().any(|component| {
+        component.is_empty() || *component == "." || *component == ".." || component.contains('\\')
+    }) {
         return Err(PolicyKeyState::Unreadable);
     }
-
-    let mut current = root.to_path_buf();
-    for component in &components[..components.len() - 1] {
-        current.push(component.as_os_str());
-        match std::fs::symlink_metadata(&current) {
-            Ok(metadata) if metadata.is_dir() => {}
-            Ok(_) => return Err(PolicyKeyState::Populated),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Err(PolicyKeyState::Absent);
-            }
+    let mut path = root.to_path_buf();
+    for (index, component) in components.iter().enumerate() {
+        path.push(component);
+        let metadata = match std::fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(_) => return Err(PolicyKeyState::Unreadable),
+        };
+        if index + 1 == components.len() {
+            return Ok(Some(metadata));
+        }
+        if !metadata.file_type().is_dir() {
+            return Err(PolicyKeyState::Populated);
         }
     }
-    Ok(())
+    Ok(None)
 }
 
-/// The state of one location below `root`. An ancestor symlink, including
-/// one pointing to a nonexistent target, cannot be mistaken for absence.
-pub(crate) fn location_state(root: &Path, location: &PolicyLocation) -> PolicyKeyState {
-    if let Err(state) = check_policy_ancestors(root, &location.relative) {
-        return state;
-    }
-    let path = root.join(&location.relative);
-    let metadata = match std::fs::symlink_metadata(&path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return PolicyKeyState::Absent
-        }
-        Err(_) => return PolicyKeyState::Unreadable,
+/// One Linux `policies` root: only empty `managed` / `recommended`
+/// directories may be present.
+fn linux_root_state(base: &Path, relative: &str) -> PolicyKeyState {
+    let metadata = match locate(base, relative) {
+        Ok(None) => return PolicyKeyState::Absent,
+        Ok(Some(metadata)) => metadata,
+        Err(state) => return state,
     };
-    match location.kind {
-        // A property list, or anything else standing in its place.
-        LocationKind::File => PolicyKeyState::Populated,
-        LocationKind::Directory => {
-            if !metadata.is_dir() {
-                // A link or a file where the engine expects a directory.
-                return PolicyKeyState::Populated;
+    if !metadata.file_type().is_dir() {
+        return PolicyKeyState::Populated;
+    }
+    let entries = match bounded_entries(&base.join(relative)) {
+        Ok(entries) => entries,
+        Err(state) => return state,
+    };
+    for entry in entries {
+        let name = entry.file_name();
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(_) => return PolicyKeyState::Unreadable,
+        };
+        if !(name == "managed" || name == "recommended") || !file_type.is_dir() {
+            return PolicyKeyState::Populated;
+        }
+        match bounded_entries(&entry.path()) {
+            Ok(inner) if inner.is_empty() => {}
+            Ok(_) => return PolicyKeyState::Populated,
+            Err(state) => return state,
+        }
+    }
+    PolicyKeyState::Empty
+}
+
+/// One directory of managed preferences (`top` is `Library/Managed
+/// Preferences` itself): is a target-domain plist, or a link standing in
+/// for one or for a per-user directory, present?
+fn macos_dir_state(dir: &Path, targets: &[String], top: bool) -> PolicyKeyState {
+    let entries = match bounded_entries(dir) {
+        Ok(entries) => entries,
+        Err(state) => return state,
+    };
+    for entry in entries {
+        let name = entry.file_name();
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(_) => return PolicyKeyState::Unreadable,
+        };
+        if targets.iter().any(|target| name == target.as_str()) {
+            return PolicyKeyState::Populated;
+        }
+        if top && file_type.is_symlink() && !name.to_string_lossy().ends_with(".plist") {
+            // A link where a per-user directory could be: refuse rather
+            // than follow it anywhere.
+            return PolicyKeyState::Populated;
+        }
+        if top && file_type.is_dir() {
+            match macos_dir_state(&entry.path(), targets, false) {
+                PolicyKeyState::Absent | PolicyKeyState::Empty => {}
+                decisive => return decisive,
             }
-            match std::fs::read_dir(&path) {
-                Ok(mut entries) => match entries.next() {
-                    None => PolicyKeyState::Empty,
-                    Some(Ok(_)) => PolicyKeyState::Populated,
-                    Some(Err(_)) => PolicyKeyState::Unreadable,
-                },
-                Err(_) => PolicyKeyState::Unreadable,
+        }
+    }
+    PolicyKeyState::Empty
+}
+
+/// The managed-policy state of one engine family below `root`.
+pub(crate) fn unix_policy_state(
+    platform: UnixPlatform,
+    kind: EngineKind,
+    root: &Path,
+) -> PolicyKeyState {
+    match platform {
+        UnixPlatform::Linux => {
+            let mut state = PolicyKeyState::Absent;
+            for relative in linux_roots(kind) {
+                match linux_root_state(root, relative) {
+                    PolicyKeyState::Absent => {}
+                    PolicyKeyState::Empty => state = PolicyKeyState::Empty,
+                    decisive => return decisive,
+                }
+            }
+            state
+        }
+        UnixPlatform::MacOs => {
+            let base = root.join("Library").join("Managed Preferences");
+            let targets: Vec<String> = macos_domains(kind)
+                .iter()
+                .map(|domain| format!("{domain}.plist"))
+                .collect();
+            match locate(root, "Library/Managed Preferences") {
+                Ok(None) => PolicyKeyState::Absent,
+                Ok(Some(metadata)) if !metadata.file_type().is_dir() => PolicyKeyState::Populated,
+                Ok(Some(_)) => macos_dir_state(&base, &targets, true),
+                Err(state) => state,
             }
         }
     }
 }
 
 /// The Unix launch precondition, for use after activation: refuse when any
-/// managed policy location is present or populated, or cannot be read.
+/// managed policy is present or populated, or cannot be read.
 pub(crate) fn assert_no_unix_managed_policy(
     platform: UnixPlatform,
     kind: EngineKind,
     root: &Path,
-    user: Option<&str>,
 ) -> Result<(), HostError> {
-    for location in policy_locations(platform, kind, user)? {
-        match location_state(root, &location) {
-            PolicyKeyState::Absent | PolicyKeyState::Empty => {}
-            PolicyKeyState::Populated => {
-                return Err(HostError::Invalid(format!(
-                    "managed browser policy is present ({}); launch refused",
-                    location.relative.display()
-                )))
-            }
-            PolicyKeyState::Unreadable => {
-                return Err(HostError::Platform(format!(
-                    "managed browser policy cannot be read ({}); launch refused",
-                    location.relative.display()
-                )))
-            }
-        }
+    match unix_policy_state(platform, kind, root) {
+        PolicyKeyState::Absent | PolicyKeyState::Empty => Ok(()),
+        PolicyKeyState::Populated => Err(HostError::Invalid(format!(
+            "managed browser policy is present ({platform:?}, {kind:?}); launch refused"
+        ))),
+        PolicyKeyState::Unreadable => Err(HostError::Platform(format!(
+            "managed browser policy cannot be read ({platform:?}, {kind:?}); launch refused"
+        ))),
     }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -233,193 +260,254 @@ mod tests {
         root
     }
 
-    const KINDS: [EngineKind; 2] = [EngineKind::Edge, EngineKind::Chromium];
-
-    #[test]
-    fn linux_locations_cover_managed_and_recommended_per_family() {
-        let names = |kind| {
-            policy_locations(UnixPlatform::Linux, kind, None)
-                .unwrap()
-                .into_iter()
-                .map(|location| {
-                    assert_eq!(location.kind, LocationKind::Directory);
-                    location.relative.to_string_lossy().replace('\\', "/")
-                })
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(
-            names(EngineKind::Edge),
-            [
-                "etc/opt/edge/policies/managed",
-                "etc/opt/edge/policies/recommended"
-            ]
-        );
-        assert_eq!(
-            names(EngineKind::Chromium),
-            [
-                "etc/opt/chrome/policies/managed",
-                "etc/opt/chrome/policies/recommended",
-                "etc/chromium/policies/managed",
-                "etc/chromium/policies/recommended"
-            ]
-        );
+    fn write(root: &Path, relative: &str) {
+        let path = root.join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "x").unwrap();
     }
 
-    #[test]
-    fn macos_locations_cover_the_machine_and_user_domains() {
-        let names = policy_locations(UnixPlatform::MacOs, EngineKind::Chromium, Some("ana"))
-            .unwrap()
-            .into_iter()
-            .map(|location| location.relative.to_string_lossy().replace('\\', "/"))
-            .collect::<Vec<_>>();
-        assert_eq!(
-            names,
-            [
-                "Library/Managed Preferences/com.google.Chrome.plist",
-                "Library/Managed Preferences/ana/com.google.Chrome.plist",
-                "Library/Managed Preferences/org.chromium.Chromium.plist",
-                "Library/Managed Preferences/ana/org.chromium.Chromium.plist"
-            ]
-        );
+    fn check(platform: UnixPlatform, kind: EngineKind, root: &Path) -> Result<(), HostError> {
+        assert_no_unix_managed_policy(platform, kind, root)
     }
 
-    #[test]
-    fn a_clean_root_and_empty_directories_pass() {
-        let root = scratch("clean");
-        for kind in KINDS {
-            assert!(assert_no_unix_managed_policy(UnixPlatform::Linux, kind, &root, None).is_ok());
-            assert!(
-                assert_no_unix_managed_policy(UnixPlatform::MacOs, kind, &root, Some("ana"))
-                    .is_ok()
-            );
+    fn other(kind: EngineKind) -> EngineKind {
+        match kind {
+            EngineKind::Edge => EngineKind::Chromium,
+            EngineKind::Chromium => EngineKind::Edge,
         }
-        std::fs::create_dir_all(root.join("etc/opt/chrome/policies/managed")).unwrap();
-        assert!(assert_no_unix_managed_policy(
-            UnixPlatform::Linux,
-            EngineKind::Chromium,
+    }
+
+    const KINDS: [EngineKind; 2] = [EngineKind::Edge, EngineKind::Chromium];
+    const PLATFORMS: [UnixPlatform; 2] = [UnixPlatform::Linux, UnixPlatform::MacOs];
+
+    #[test]
+    fn a_clean_root_and_empty_policy_directories_pass() {
+        let root = scratch("clean");
+        for platform in PLATFORMS {
+            for kind in KINDS {
+                assert!(
+                    check(platform, kind, &root).is_ok(),
+                    "{platform:?} {kind:?}"
+                );
+            }
+        }
+        for dir in [
+            "etc/opt/chrome/policies/managed",
+            "etc/opt/chrome/policies/recommended",
+            "etc/chromium-browser/policies/managed",
+            "Library/Managed Preferences/ana",
+        ] {
+            std::fs::create_dir_all(root.join(dir)).unwrap();
+        }
+        // Other domains' managed preferences are not this engine's policy.
+        write(&root, "Library/Managed Preferences/com.apple.Safari.plist");
+        write(
             &root,
-            None
-        )
-        .is_ok());
+            "Library/Managed Preferences/ana/com.apple.dock.plist",
+        );
+        assert!(check(UnixPlatform::Linux, EngineKind::Chromium, &root).is_ok());
+        for kind in KINDS {
+            assert!(check(UnixPlatform::MacOs, kind, &root).is_ok());
+        }
         std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
-    fn any_linux_policy_entry_refuses_launch() {
-        for dir in [
-            "etc/opt/chrome/policies/managed",
-            "etc/opt/chrome/policies/recommended",
-            "etc/chromium/policies/managed",
-            "etc/chromium/policies/recommended",
+    fn any_linux_policy_content_refuses_launch() {
+        for (kind, relative) in [
+            (
+                EngineKind::Chromium,
+                "etc/opt/chrome/policies/managed/p.json",
+            ),
+            (
+                EngineKind::Chromium,
+                "etc/opt/chrome/policies/recommended/p.json",
+            ),
+            (EngineKind::Chromium, "etc/chromium/policies/managed/p.txt"),
+            (
+                EngineKind::Chromium,
+                "etc/chromium-browser/policies/recommended/p.json",
+            ),
+            // Cloud management enrollment, and any other name in the root.
+            (
+                EngineKind::Chromium,
+                "etc/opt/chrome/policies/enrollment/CloudManagementEnrollmentToken",
+            ),
+            (EngineKind::Chromium, "etc/opt/chrome/policies/other"),
+            (EngineKind::Edge, "etc/opt/edge/policies/managed/p.json"),
+            (EngineKind::Edge, "etc/opt/edge/policies/recommended/p.json"),
+            // A file where `managed` should be a directory.
+            (EngineKind::Edge, "etc/opt/edge/policies/managed"),
         ] {
             let root = scratch("linux");
-            std::fs::create_dir_all(root.join(dir)).unwrap();
-            // Any entry counts, not only *.json: refusing extra names fails safe.
-            std::fs::write(root.join(dir).join("policy.txt"), "{}").unwrap();
-            let error = assert_no_unix_managed_policy(
-                UnixPlatform::Linux,
-                EngineKind::Chromium,
-                &root,
-                None,
-            )
-            .unwrap_err();
-            assert!(matches!(error, HostError::Invalid(_)), "{dir}: {error:?}");
-            // Edge reads its own directories only.
-            assert!(assert_no_unix_managed_policy(
-                UnixPlatform::Linux,
-                EngineKind::Edge,
-                &root,
-                None
-            )
-            .is_ok());
+            write(&root, relative);
+            assert!(
+                matches!(
+                    check(UnixPlatform::Linux, kind, &root),
+                    Err(HostError::Invalid(_))
+                ),
+                "{relative}"
+            );
+            assert!(
+                check(UnixPlatform::Linux, other(kind), &root).is_ok(),
+                "{relative} is not another family's policy"
+            );
             std::fs::remove_dir_all(&root).ok();
         }
     }
 
     #[test]
-    fn a_file_where_a_policy_directory_belongs_refuses_launch() {
-        let root = scratch("file");
-        std::fs::create_dir_all(root.join("etc/opt/edge/policies")).unwrap();
-        std::fs::write(root.join("etc/opt/edge/policies/managed"), "x").unwrap();
+    fn a_file_where_a_policy_root_or_its_parent_belongs_fails_closed() {
+        let root = scratch("file-root");
+        write(&root, "etc/opt/edge/policies");
         assert!(matches!(
-            assert_no_unix_managed_policy(UnixPlatform::Linux, EngineKind::Edge, &root, None),
+            check(UnixPlatform::Linux, EngineKind::Edge, &root),
+            Err(HostError::Invalid(_))
+        ));
+        std::fs::remove_dir_all(&root).ok();
+
+        // A file standing in for an intermediate directory (`etc/opt`).
+        let root = scratch("file-parent");
+        write(&root, "etc/opt");
+        assert!(matches!(
+            check(UnixPlatform::Linux, EngineKind::Edge, &root),
             Err(HostError::Invalid(_))
         ));
         std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
-    fn any_macos_managed_preference_refuses_launch() {
-        for relative in [
-            "Library/Managed Preferences/com.microsoft.Edge.plist",
-            "Library/Managed Preferences/ana/com.microsoft.Edge.plist",
+    fn any_macos_managed_preference_for_the_domain_refuses_launch() {
+        for (kind, relative) in [
+            (
+                EngineKind::Edge,
+                "Library/Managed Preferences/com.microsoft.Edge.plist",
+            ),
+            (
+                EngineKind::Edge,
+                "Library/Managed Preferences/ana/com.microsoft.Edge.plist",
+            ),
+            (
+                EngineKind::Chromium,
+                "Library/Managed Preferences/com.google.Chrome.plist",
+            ),
+            (
+                EngineKind::Chromium,
+                "Library/Managed Preferences/bo/com.google.Chrome.plist",
+            ),
+            (
+                EngineKind::Chromium,
+                "Library/Managed Preferences/org.chromium.Chromium.plist",
+            ),
+            (
+                EngineKind::Chromium,
+                "Library/Managed Preferences/bo/org.chromium.Chromium.plist",
+            ),
         ] {
             let root = scratch("macos");
-            let path = root.join(relative);
-            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(&path, "<plist/>").unwrap();
-            assert!(matches!(
-                assert_no_unix_managed_policy(
-                    UnixPlatform::MacOs,
-                    EngineKind::Edge,
-                    &root,
-                    Some("ana")
+            std::fs::create_dir_all(root.join("Library/Managed Preferences/ana")).unwrap();
+            write(&root, relative);
+            assert!(
+                matches!(
+                    check(UnixPlatform::MacOs, kind, &root),
+                    Err(HostError::Invalid(_))
                 ),
-                Err(HostError::Invalid(_))
-            ));
-            // Edge's domain is not Chrome's policy.
-            assert!(assert_no_unix_managed_policy(
-                UnixPlatform::MacOs,
-                EngineKind::Chromium,
-                &root,
-                Some("ana")
-            )
-            .is_ok());
+                "{relative}"
+            );
+            assert!(
+                check(UnixPlatform::MacOs, other(kind), &root).is_ok(),
+                "{relative} is not another family's policy"
+            );
             std::fs::remove_dir_all(&root).ok();
         }
     }
 
     #[test]
-    fn macos_without_a_usable_user_fails_closed() {
-        let root = scratch("user");
-        for user in [
-            None,
-            Some(""),
-            Some("."),
-            Some(".."),
-            Some("a/b"),
-            Some("a\\b"),
-            Some("a\0b"),
-        ] {
-            assert!(
-                matches!(
-                    assert_no_unix_managed_policy(
-                        UnixPlatform::MacOs,
-                        EngineKind::Edge,
-                        &root,
-                        user
-                    ),
-                    Err(HostError::Platform(_))
-                ),
-                "{user:?}"
-            );
+    fn a_file_where_managed_preferences_belongs_refuses_launch() {
+        let root = scratch("macos-file");
+        write(&root, "Library/Managed Preferences");
+        assert!(matches!(
+            check(UnixPlatform::MacOs, EngineKind::Edge, &root),
+            Err(HostError::Invalid(_))
+        ));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn an_oversized_directory_fails_closed() {
+        let root = scratch("bound");
+        let dir = root.join("Library/Managed Preferences");
+        std::fs::create_dir_all(&dir).unwrap();
+        for index in 0..=MAX_ENTRIES {
+            std::fs::write(dir.join(format!("com.example.{index}.plist")), "").unwrap();
         }
+        assert!(matches!(
+            check(UnixPlatform::MacOs, EngineKind::Edge, &root),
+            Err(HostError::Platform(_))
+        ));
         std::fs::remove_dir_all(&root).ok();
     }
 
     #[cfg(unix)]
     #[test]
-    fn a_symbolic_link_at_a_policy_location_refuses_launch() {
-        let root = scratch("link");
-        let target = root.join("elsewhere");
-        std::fs::create_dir_all(&target).unwrap();
-        std::fs::create_dir_all(root.join("etc/opt/edge/policies")).unwrap();
-        std::os::unix::fs::symlink(&target, root.join("etc/opt/edge/policies/managed")).unwrap();
-        assert!(matches!(
-            assert_no_unix_managed_policy(UnixPlatform::Linux, EngineKind::Edge, &root, None),
-            Err(HostError::Invalid(_))
-        ));
-        std::fs::remove_dir_all(&root).ok();
+    fn symbolic_links_at_policy_locations_refuse_launch() {
+        use std::os::unix::fs::symlink;
+        for (platform, link) in [
+            (UnixPlatform::Linux, "etc/opt/edge/policies/managed"),
+            (UnixPlatform::Linux, "etc/opt/edge/policies"),
+            (UnixPlatform::MacOs, "Library/Managed Preferences/ana"),
+            (
+                UnixPlatform::MacOs,
+                "Library/Managed Preferences/com.microsoft.Edge.plist",
+            ),
+        ] {
+            for dangling in [false, true] {
+                let root = scratch("link");
+                let target = root.join("elsewhere");
+                if !dangling {
+                    std::fs::create_dir_all(&target).unwrap();
+                }
+                let path = root.join(link);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                symlink(&target, &path).unwrap();
+                assert!(
+                    check(platform, EngineKind::Edge, &root).is_err(),
+                    "{link} dangling={dangling}"
+                );
+                std::fs::remove_dir_all(&root).ok();
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_policy_directories_fail_closed() {
+        use std::os::unix::fs::PermissionsExt;
+        for (platform, dir) in [
+            (UnixPlatform::Linux, "etc/opt/edge/policies/managed"),
+            (UnixPlatform::Linux, "etc/opt/edge/policies"),
+            (UnixPlatform::MacOs, "Library/Managed Preferences/ana"),
+        ] {
+            let root = scratch("unreadable");
+            let path = root.join(dir);
+            std::fs::create_dir_all(&path).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+            if std::fs::read_dir(&path).is_ok() {
+                // Running with privileges that ignore 0o000: the case proves
+                // nothing here, so say so instead of passing silently.
+                eprintln!("skipped {dir}: privileges ignore 0o000");
+            } else {
+                assert!(
+                    matches!(
+                        check(platform, EngineKind::Edge, &root),
+                        Err(HostError::Platform(_))
+                    ),
+                    "{dir}"
+                );
+            }
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+            std::fs::remove_dir_all(&root).ok();
+        }
     }
 
     #[cfg(unix)]
@@ -428,11 +516,11 @@ mod tests {
         let root = scratch("dangling-ancestor");
         let parent = root.join("etc/opt/edge");
         std::fs::create_dir_all(&parent).unwrap();
-        // The original final-only symlink_metadata check returned NotFound
-        // here, incorrectly interpreting this redirect as absent policy.
+        // A final-only symlink_metadata check returned NotFound here,
+        // reading the redirect as absent policy.
         std::os::unix::fs::symlink(root.join("missing"), parent.join("policies")).unwrap();
         assert!(matches!(
-            assert_no_unix_managed_policy(UnixPlatform::Linux, EngineKind::Edge, &root, None),
+            check(UnixPlatform::Linux, EngineKind::Edge, &root),
             Err(HostError::Invalid(_))
         ));
         std::fs::remove_dir_all(&root).unwrap();
@@ -440,14 +528,13 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn a_symlink_to_an_empty_directory_in_a_policy_ancestor_fails_closed() {
+    fn a_symlinked_ancestor_of_a_policy_root_fails_closed() {
         let root = scratch("existing-ancestor");
-        let base = root.join("Library/Managed Preferences");
-        std::fs::create_dir_all(&base).unwrap();
-        std::fs::create_dir_all(root.join("empty")).unwrap();
-        std::os::unix::fs::symlink(root.join("empty"), base.join("ana")).unwrap();
+        std::fs::create_dir_all(root.join("elsewhere/opt")).unwrap();
+        std::fs::create_dir_all(root.join("etc")).unwrap();
+        std::os::unix::fs::symlink(root.join("elsewhere/opt"), root.join("etc/opt")).unwrap();
         assert!(matches!(
-            assert_no_unix_managed_policy(UnixPlatform::MacOs, EngineKind::Edge, &root, Some("ana")),
+            check(UnixPlatform::Linux, EngineKind::Edge, &root),
             Err(HostError::Invalid(_))
         ));
         std::fs::remove_dir_all(&root).unwrap();
@@ -460,32 +547,14 @@ mod tests {
         let holder = scratch("root-holder");
         let link = holder.join("linked-root");
         std::os::unix::fs::symlink(&actual, &link).unwrap();
-        assert!(matches!(
-            assert_no_unix_managed_policy(UnixPlatform::Linux, EngineKind::Edge, &link, None),
-            Err(HostError::Invalid(_))
-        ));
-        std::fs::remove_dir_all(&holder).unwrap();
-        std::fs::remove_dir_all(&actual).unwrap();
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn an_unreadable_policy_directory_fails_closed() {
-        use std::os::unix::fs::PermissionsExt;
-        let root = scratch("unreadable");
-        let dir = root.join("etc/opt/edge/policies/managed");
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).unwrap();
-        // Root can read a 0o000 directory; the check is meaningful only
-        // when the permission bites.
-        if std::fs::read_dir(&dir).is_err() {
+        for platform in PLATFORMS {
             assert!(matches!(
-                assert_no_unix_managed_policy(UnixPlatform::Linux, EngineKind::Edge, &root, None),
-                Err(HostError::Platform(_))
+                check(platform, EngineKind::Edge, &link),
+                Err(HostError::Invalid(_))
             ));
         }
-        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
-        std::fs::remove_dir_all(&root).ok();
+        std::fs::remove_dir_all(&holder).unwrap();
+        std::fs::remove_dir_all(&actual).unwrap();
     }
 
     /// Pre-activation boundary: off Windows the production launch
@@ -513,44 +582,86 @@ mod tests {
         }
     }
 
-    /// Pre-activation boundary: no file outside this module names the Unix
-    /// reader, and the non-Windows registry stub is unchanged.
+    fn rust_sources(dir: &Path, out: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                rust_sources(&path, out);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                out.push(path);
+            }
+        }
+    }
+
+    fn normalized(path: &Path) -> String {
+        std::fs::read_to_string(path).unwrap().replace("\r\n", "\n")
+    }
+
+    /// Pre-activation boundary: the module is declared exactly once, private
+    /// and test-only; no other source names it; the non-Windows registry
+    /// stub still answers `Unreadable` and nothing else.
     #[test]
     fn the_unix_reader_is_unreachable_from_production() {
-        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut files = Vec::new();
+        rust_sources(&crate_dir.join("src"), &mut files);
+        rust_sources(&crate_dir.join("tests"), &mut files);
+        assert!(files.len() > 10, "the scan found the crate's sources");
         let mut named = Vec::new();
-        for entry in std::fs::read_dir(&src).unwrap() {
-            let path = entry.unwrap().path();
-            let name = path.file_name().unwrap().to_string_lossy().into_owned();
-            if !name.ends_with(".rs") || name == "unix_policy.rs" {
+        for path in &files {
+            let name = path.file_name().unwrap_or_default();
+            if name == "unix_policy.rs" || name == "lib.rs" {
                 continue;
             }
-            let text = std::fs::read_to_string(&path).unwrap();
+            let text = normalized(path);
             for needle in [
+                "unix_policy",
                 "assert_no_unix_managed_policy",
-                "unix_policy::",
+                "unix_policy_state",
                 "UnixPlatform",
-                "policy_locations(",
             ] {
                 if text.contains(needle) {
-                    named.push(format!("{name}: {needle}"));
+                    named.push(format!("{}: {needle}", path.display()));
                 }
             }
         }
         assert!(named.is_empty(), "{named:?}");
-        let lib = std::fs::read_to_string(src.join("lib.rs")).unwrap();
-        assert!(
-            lib.contains(
-                "#[cfg(test)]
-mod unix_policy;"
-            ) && !lib.contains("pub mod unix_policy")
+
+        let lib = normalized(&crate_dir.join("src/lib.rs"));
+        let lines: Vec<&str> = lib.lines().collect();
+        let mentions: Vec<usize> = lines
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| line.contains("unix_policy"))
+            .map(|(index, _)| index)
+            .collect();
+        let code: Vec<usize> = mentions
+            .iter()
+            .copied()
+            .filter(|index| !lines[*index].trim_start().starts_with("//"))
+            .collect();
+        assert_eq!(code.len(), 1, "lib.rs names the module once: {mentions:?}");
+        assert_eq!(lines[code[0]], "mod unix_policy;");
+        assert_eq!(lines[code[0] - 1], "#[cfg(test)]");
+
+        let confinement = normalized(&crate_dir.join("src/confinement.rs"));
+        let (_, after) = confinement
+            .split_once("#[cfg(not(windows))]\nmod registry {")
+            .expect("the non-Windows registry stub exists");
+        let (stub, _) = after.split_once("\n}\n").expect("the stub module ends");
+        let body: Vec<&str> = stub
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with("//"))
+            .collect();
+        assert_eq!(
+            body,
+            [
+                "use super::{PolicyHive, PolicyKeyState};",
+                "pub(super) fn key_state(_hive: PolicyHive, _subkey: &str) -> PolicyKeyState {",
+                "PolicyKeyState::Unreadable",
+                "}"
+            ]
         );
-        let confinement = std::fs::read_to_string(src.join("confinement.rs")).unwrap();
-        let stub = confinement
-            .split("#[cfg(not(windows))]\nmod registry {")
-            .nth(1)
-            .unwrap();
-        assert!(stub.contains("PolicyKeyState::Unreadable"));
-        assert!(!stub.contains("unix_policy"));
     }
 }
