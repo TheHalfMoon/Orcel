@@ -18,6 +18,9 @@ rules from the master plan (section C):
 - **Step budget.** At most `max_steps` dispatched calls, counted across a
   resume.
 - **Resume invariant.**
+  - Every journal entry returns as history, so a planner continues after the
+    calls already made.
+  - A completed mutation is never dispatched again.
   - A dispatched call without a recorded answer becomes `OUTCOME_UNKNOWN`,
     surfaced once.
   - A mutation then needs a successful read-only observation first.
@@ -87,6 +90,7 @@ class Agent:
     _tools: dict[str, ToolSpec] = field(default_factory=dict)
     _refused: set[tuple[str, str]] = field(default_factory=set)
     _unknown: set[tuple[str, str]] = field(default_factory=set)
+    _completed: set[tuple[str, str]] = field(default_factory=set)
     _must_reobserve: bool = False
     _denied: bool = False
     _prepared: bool = False
@@ -105,27 +109,36 @@ class Agent:
         self._prepared = True
         self._tools = {tool.name: tool for tool in self.edge.list_tools() if tool.name in self.allowlist}
         self.events.emit("run.started", tools=sorted(self._tools))
+        # Every journal entry comes back as history (names, digests and
+        # codes; results are never kept), so a planner resumes after the
+        # calls already made instead of proposing them again.
         for entry in self.journal.entries():
             key = (entry.tool, entry.arguments_sha256)
+            mutating = self.is_mutating(entry.tool)
             self._dispatched += 1
-            if self.is_mutating(entry.tool):
+            if mutating:
                 self.approval_requests += 1
-            if entry.answered and not entry.ok:
-                if entry.error_code == OUTCOME_UNKNOWN:
-                    self._unknown.add(key)
+            unknown = not entry.answered or entry.error_code == OUTCOME_UNKNOWN
+            if unknown:
+                self._unknown.add(key)
+                # Re-observation is owed until a later read-only call
+                # succeeds, across any number of resumes.
+                self._must_reobserve = True
+            elif entry.ok:
+                if mutating:
+                    self._completed.add(key)
                 else:
-                    self._refused.add(key)
+                    self._must_reobserve = False
+            else:
+                self._refused.add(key)
                 if entry.error_code in APPROVAL_DENIED:
                     self._denied = True
-            elif not entry.answered:
-                self._unknown.add(key)
-        for entry in self.journal.unanswered():
-            step = Step(ToolCall(entry.tool, {}), ok=False, error_code=OUTCOME_UNKNOWN,
-                        arguments_sha256=entry.arguments_sha256)
-            self.steps.append(step)
-            self.journal.resolve_unknown(entry.seq)
-            self._must_reobserve = True
-            self.events.emit("step.outcome_unknown", step_id=f"resume-{entry.seq}", tool=entry.tool)
+            self.steps.append(Step(ToolCall(entry.tool, {}), ok=entry.ok and not unknown,
+                                   error_code=OUTCOME_UNKNOWN if unknown else entry.error_code,
+                                   arguments_sha256=entry.arguments_sha256))
+            if not entry.answered and not entry.surfaced:
+                self.journal.resolve_unknown(entry.seq)
+                self.events.emit("step.outcome_unknown", step_id=f"resume-{entry.seq}", tool=entry.tool)
         return list(self._tools.values())
 
     def dispatch(self, call: ToolCall) -> Step:
@@ -147,6 +160,8 @@ class Agent:
         mutating = self.is_mutating(call.tool)
         if mutating and key in self._unknown:
             raise AgentStop("unknown-outcome-replay")
+        if mutating and key in self._completed:
+            raise AgentStop("completed-mutation-replay")
         if mutating and self._must_reobserve:
             raise AgentStop("reobserve-before-mutation")
         if self._dispatched >= self.max_steps:
@@ -174,7 +189,9 @@ class Agent:
         self.steps.append(step)
         self.events.emit("step.finished", step_id=step_id, tool=call.tool, ok=outcome.ok, code=outcome.error_code)
         if outcome.ok:
-            if not mutating:
+            if mutating:
+                self._completed.add(key)
+            else:
                 self._must_reobserve = False
             return step
         self._refused.add(key)

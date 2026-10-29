@@ -191,19 +191,34 @@ class Edge:
         self.close()
 
 
+#: The MCP SDK's own plain-text rejections, made before anything reaches
+#: orceld: certainly refused. Any other plain-text error (an orceld timeout
+#: or exit inside the edge) may follow a call orceld ran, so it is a
+#: protocol failure and takes the unknown-outcome path.
+_SDK_REJECTIONS = ("Input validation error", "Invalid arguments", "MCP error -32602", "Tool ")
+
+
 def parse_tool_result(result: Any) -> ToolOutcome:
     """The edge's projection (`apps/orcel-mcp/src/result.ts`): one text item
     holding `{result, evidence}` on success, `{error: {code, message}}` with
-    `isError` on refusal. An `isError` result in any other form (the MCP SDK's
-    plain-text schema rejection) is a typed refusal, `INVALID_REQUEST`. A
-    success in any other form is a protocol failure."""
+    `isError` on refusal. A plain-text `isError` from the MCP SDK's own
+    validation is a typed refusal (`INVALID_REQUEST`). Anything else is a
+    protocol failure."""
     is_error = isinstance(result, dict) and result.get("isError") is True
     try:
         text = result["content"][0]["text"]
         body = json.loads(text)
     except (KeyError, IndexError, TypeError, ValueError) as error:
+        text_value = None
         if is_error:
-            return ToolOutcome(ok=False, error_code="INVALID_REQUEST", error_message="the edge refused the call")
+            try:
+                text_value = str(result["content"][0]["text"])
+            except (KeyError, IndexError, TypeError):
+                text_value = None
+        if text_value is not None and text_value.startswith(_SDK_REJECTIONS) and (
+            not text_value.startswith("Tool ") or "not found" in text_value
+        ):
+            return ToolOutcome(ok=False, error_code="INVALID_REQUEST", error_message="the edge rejected the arguments")
         raise EdgeError("the edge returned an unexpected tool result") from error
     if is_error:
         error = body.get("error") if isinstance(body, dict) else None

@@ -7,6 +7,7 @@ from __future__ import annotations
 import ast
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -19,7 +20,7 @@ from typing import Any, Optional
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from orcel_agent.agent import READ_ONLY_TOOLS, Agent  # noqa: E402
+from orcel_agent.agent import READ_ONLY_TOOLS, Agent, AgentStop  # noqa: E402
 from orcel_agent.edge import MAX_FRAME_BYTES, Edge, EdgeError, ToolOutcome, ToolSpec, parse_tool_result  # noqa: E402
 from orcel_agent.events import EventLog  # noqa: E402
 from orcel_agent.journal import OUTCOME_UNKNOWN, DispatchJournal  # noqa: E402
@@ -153,7 +154,8 @@ class ResumeInvariant(Scratch):
         self.assertEqual([name for name, _ in edge.called], ["fs_read"])
         again = self.agent(FakeEdge(["fs_read"]), allowlist=BOTH)
         again.prepare()
-        self.assertEqual(again.steps, [], "surfaced once, not on every start")
+        surfaced = [e for e in again.events.events if e["kind"] == "step.outcome_unknown"]
+        self.assertEqual(surfaced, [], "surfaced once, not on every start")
 
     def test_a_different_mutation_needs_a_fresh_observation(self) -> None:
         self.crash_during("fs_write", "a.md")
@@ -170,7 +172,10 @@ class ResumeInvariant(Scratch):
         first = self.agent(FakeEdge(["fs_read"], {"fs_read": ToolOutcome(ok=False, error_code="PATH_ESCAPE")}))
         first.run("goal", ScriptedPlanner([ToolCall("fs_read", {"path": "../x"})]))
         resumed = self.agent(FakeEdge(["fs_read"]))
-        self.assertEqual(resumed.run("goal", ScriptedPlanner([ToolCall("fs_read", {"path": "../x"})])).outcome, "repeat-refused")
+        resumed.prepare()
+        with self.assertRaises(AgentStop) as stopped:
+            resumed.dispatch(ToolCall("fs_read", {"path": "../x"}))
+        self.assertEqual(stopped.exception.outcome, "repeat-refused")
 
         run = "3" * 32
         approved = self.agent(FakeEdge(["fs_write"]), run, allowlist=frozenset({"fs_write"}))
@@ -188,6 +193,39 @@ class ResumeInvariant(Scratch):
         outcome = self.agent(edge, run, allowlist=frozenset({"fs_write"})).run(
             "goal", ScriptedPlanner([ToolCall("fs_write", {"path": "b"})])).outcome
         self.assertEqual((outcome, edge.called), ("approval-denied", []), "never re-asks after a resume")
+
+    def test_completed_mutations_are_history_and_never_replayed(self) -> None:
+        # [read x, write A, write C]: the process dies during write C.
+        edge = FakeEdge(["fs_read", "fs_write"])
+        first = self.agent(edge, allowlist=BOTH)
+        first.prepare()
+        first.dispatch(ToolCall("fs_read", {"path": "x"}))
+        first.dispatch(ToolCall("fs_write", {"path": "A"}))
+        first.journal.dispatched("fs_write", {"path": "C"})
+        edge = FakeEdge(["fs_read", "fs_write"])
+        resumed = self.agent(edge, allowlist=BOTH)
+        resumed.prepare()
+        self.assertEqual([(s.call.tool, s.ok, s.error_code) for s in resumed.steps],
+                         [("fs_read", True, None), ("fs_write", True, None), ("fs_write", False, OUTCOME_UNKNOWN)])
+        plan = ScriptedPlanner([ToolCall("fs_read", {"path": "x"}), ToolCall("fs_write", {"path": "A"}),
+                                ToolCall("fs_write", {"path": "C"})])
+        # The script resumes after its two completed calls and reaches the
+        # unknown write, which is refused; write A is never sent again.
+        self.assertEqual(resumed.run("goal", plan).outcome, "unknown-outcome-replay")
+        self.assertEqual(edge.called, [])
+        with self.assertRaises(AgentStop) as stopped:
+            resumed.dispatch(ToolCall("fs_write", {"path": "A"}))
+        self.assertEqual(stopped.exception.outcome, "completed-mutation-replay")
+
+    def test_reobservation_is_owed_across_a_second_resume(self) -> None:
+        self.crash_during("fs_write", "a.md")
+        once = self.agent(FakeEdge(["fs_read", "fs_write"]), allowlist=BOTH)
+        once.prepare()  # surfaced; then the process dies again
+        twice = self.agent(FakeEdge(["fs_read", "fs_write"]), allowlist=BOTH)
+        twice.prepare()
+        with self.assertRaises(AgentStop) as stopped:
+            twice.dispatch(ToolCall("fs_write", {"path": "b.md"}))
+        self.assertEqual(stopped.exception.outcome, "reobserve-before-mutation")
 
     def test_a_torn_final_line_is_repaired(self) -> None:
         store = open_store(self.root, RUN)
@@ -272,11 +310,20 @@ class PrivateStore(Scratch):
             for path in (self.root, store.directory):
                 self.assertEqual(stat.S_IMODE(path.stat().st_mode) & 0o077, 0, path)
             return
-        # Windows: the run directory inherits its root's ACL; no broad
-        # principal may reach it (a protected DACL of its own is for the grain).
-        listing = subprocess.run(["icacls", str(store.directory)], capture_output=True, text=True, check=True).stdout
-        for broad in ("Everyone", "BUILTIN\\Users", "Authenticated Users", "NT AUTHORITY\\Authenticated Users"):
-            self.assertNotIn(broad + ":", listing, listing)
+        # Windows: the run directory inherits its root's ACL. Every allow
+        # entry must name this user, SYSTEM or Administrators, compared by
+        # SID (locale-proof); a protected DACL of its own is for the grain.
+        user_sid = subprocess.run(["whoami", "/user", "/fo", "csv", "/nh"], capture_output=True, text=True,
+                                  check=True).stdout.strip().split(",")[-1].strip('"')
+        saved = Path(self._dir.name) / "acl.txt"
+        subprocess.run(["icacls", str(store.directory), "/save", str(saved), "/q"], capture_output=True, check=True)
+        sddl = saved.read_bytes().decode("utf-16")
+        allowed = {user_sid, "SY", "BA", "OW", "CO", "S-1-5-18", "S-1-5-32-544", "S-1-3-0", "S-1-3-4"}
+        aces = re.findall(r"\((A|D);[^;]*;[^;]*;[^;]*;[^;]*;([^)]*)\)", sddl)
+        self.assertTrue(aces, sddl)
+        for kind, sid in aces:
+            if kind == "A":
+                self.assertIn(sid, allowed, sddl)
 
     def test_the_size_cap_fails_closed(self) -> None:
         store = open_store(self.root, RUN, max_bytes=200)
@@ -348,8 +395,13 @@ class StdioEdge(unittest.TestCase):
                 edge.call_tool("fs_read", {"path": "big"})
 
     def test_results_in_other_forms(self) -> None:
-        plain = parse_tool_result({"isError": True, "content": [{"type": "text", "text": "Input validation error: path"}]})
-        self.assertEqual((plain.ok, plain.error_code), (False, "INVALID_REQUEST"))
+        for text in ("Input validation error: path", "MCP error -32602: Input validation error", "Tool fs_nope not found"):
+            plain = parse_tool_result({"isError": True, "content": [{"type": "text", "text": text}]})
+            self.assertEqual((plain.ok, plain.error_code), (False, "INVALID_REQUEST"), text)
+        # The edge's own failures may follow a call orceld ran: unknown, not refused.
+        for text in ("orceld request timed out after 30000ms", "orceld exited while requests were pending (code=1)"):
+            with self.assertRaises(EdgeError):
+                parse_tool_result({"isError": True, "content": [{"type": "text", "text": text}]})
         with self.assertRaises(EdgeError):
             parse_tool_result({"content": []})
         with self.assertRaises(EdgeError):
@@ -400,8 +452,14 @@ class SourceBoundary(unittest.TestCase):
                 names: list[str] = []
                 if isinstance(node, ast.Import):
                     names = [alias.name.split(".")[0] for alias in node.names]
+                    for alias in node.names:
+                        # `import subprocess as sp` would hide calls from the scan.
+                        if alias.name in ("os", "subprocess"):
+                            self.assertIsNone(alias.asname, f"{path.name}: aliased {alias.name}")
                 elif isinstance(node, ast.ImportFrom) and node.level == 0:
                     names = [(node.module or "").split(".")[0]]
+                    # `from os import system` would hide calls from the scan.
+                    self.assertNotIn(names[0], ("os", "subprocess"), f"{path.name}: from {names[0]} import")
                 for name in names:
                     self.assertIn(name, self.ALLOWED_IMPORTS, f"{path.name}: import {name}")
 
@@ -416,6 +474,10 @@ class SourceBoundary(unittest.TestCase):
                     if func.id == "open":
                         self.fail(f"{path.name}: builtin open")
                     self.assertNotIn(func.id, self.FORBIDDEN_CALLS, f"{path.name}: {func.id}()")
+                    if func.id == "Popen":
+                        subprocess_calls.append(f"{path.name}:Popen(bare)")
+                    if func.id == "getattr" and node.args and isinstance(node.args[0], ast.Name):
+                        self.assertNotIn(node.args[0].id, ("os", "subprocess"), f"{path.name}: getattr on {node.args[0].id}")
                 if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
                     owner, attr = func.value.id, func.attr
                     if owner == "os":
