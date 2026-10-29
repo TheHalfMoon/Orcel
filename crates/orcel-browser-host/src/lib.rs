@@ -34,6 +34,9 @@ mod uia;
 // SG-000115 slice 1, inert until activation: compiled into test builds only.
 #[cfg(test)]
 mod unix_policy;
+// SG-000115 A2 fixture-only descendant accounting; no OS processes or launch.
+#[cfg(test)]
+mod unix_descendants;
 // The worker session that uses the probe machinery exists only on Windows.
 #[cfg_attr(not(windows), allow(dead_code))]
 mod verify;
