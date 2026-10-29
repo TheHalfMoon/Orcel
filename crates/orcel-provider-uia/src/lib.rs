@@ -82,6 +82,11 @@ pub const INVOKE_POLICY_REVISION: &str = "sg-000028-v1";
 pub const MAX_WINDOWS: usize = 64;
 pub const MAX_TREE_DEPTH: usize = 8;
 pub const MAX_TREE_NODES: usize = 256;
+/// SG-000128: scoped observations of one window between budget resets. The
+/// budget resets only when the window itself changes (a new window
+/// generation) or an approved action succeeds on it; listing an unchanged
+/// window does not reset it.
+pub const MAX_SCOPED_OBSERVATIONS: u32 = 8;
 pub const MAX_STRING_CHARS: usize = 256;
 pub const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 
@@ -914,6 +919,18 @@ pub trait UiaAdapter {
     fn list_processes(&self) -> Result<Vec<NativeProcess>, UiaError>;
     fn list_windows(&self, pid: u32) -> Result<Vec<NativeWindow>, UiaError>;
     fn read_tree(&self, hwnd: u64) -> Result<Vec<NativeElement>, UiaError>;
+    /// SG-000128: read the bounded subtree below the element with UIA
+    /// runtime identity `runtime_id` inside the live window `hwnd`, under the
+    /// same bounds as `read_tree`. The registry has already validated the
+    /// root; the adapter must find it inside that window only and fail closed
+    /// (`TargetStale`) when it no longer resolves there. The default fails
+    /// closed as unavailable.
+    fn read_subtree(&self, _hwnd: u64, _runtime_id: &str) -> Result<Vec<NativeElement>, UiaError> {
+        Err(UiaError::new(
+            FailureCode::ProviderUnavailable,
+            "scoped subtree observation is unavailable in this adapter",
+        ))
+    }
     /// Perform one structured InvokePattern actuation against the live
     /// element identified by window handle and UIA runtime identity. The
     /// registry revalidates every binding before calling this method, so
@@ -1137,6 +1154,11 @@ impl UiaAdapter for NativeAdapter {
             "live desktop tree enumeration is available only on Windows",
         ))
     }
+
+    #[cfg(windows)]
+    fn read_subtree(&self, hwnd: u64, runtime_id: &str) -> Result<Vec<NativeElement>, UiaError> {
+        native_desktop::read_subtree(hwnd, runtime_id)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1308,6 +1330,8 @@ pub struct UiaRegistry {
     processes: HashMap<String, ProcessRecord>,
     windows: HashMap<String, WindowRecord>,
     elements: HashMap<String, ElementRecord>,
+    /// SG-000128: scoped observations per window since its budget reset.
+    scoped_reads: HashMap<String, u32>,
     frames: HashMap<String, FrameRecord>,
     proposals: HashMap<String, ProposalRecord>,
     coordinates: HashMap<String, CoordinateRecord>,
@@ -1697,11 +1721,13 @@ impl UiaRegistry {
                     policy_revision: policy_revision.to_owned(),
                 };
                 self.remove_window_elements(&window_id);
+                self.scoped_reads.remove(&window_id);
                 self.windows.insert(window_id, record.clone());
                 record
             }
             None => {
                 self.tree_counter += 1;
+                self.scoped_reads.remove(&window_id);
                 let record = WindowRecord {
                     window_id: window_id.clone(),
                     process_id: process_id.to_owned(),
@@ -1796,6 +1822,116 @@ impl UiaRegistry {
         workspace_id: &str,
         policy_revision: &str,
     ) -> Result<Value, UiaError> {
+        self.observe_tree_from(
+            adapter,
+            window_id,
+            expected_window_generation,
+            None,
+            max_depth,
+            max_nodes,
+            workspace_id,
+            policy_revision,
+        )
+    }
+
+    /// SG-000128: the bounded subtree below `root_element_id`, an element this
+    /// registry issued for the same window at its current tree generation
+    /// `expected_tree_generation`. The root is validated before anything is
+    /// read or replaced; the response has exactly `observe_tree`'s bounds,
+    /// redaction and protected-surface rules, and starts a new tree
+    /// generation. At most `MAX_SCOPED_OBSERVATIONS` scoped calls per window
+    /// between budget resets.
+    #[allow(clippy::too_many_arguments)]
+    pub fn observe_subtree(
+        &mut self,
+        adapter: &impl UiaAdapter,
+        window_id: &str,
+        expected_window_generation: u64,
+        root_element_id: &str,
+        expected_tree_generation: u64,
+        max_depth: Option<u64>,
+        max_nodes: Option<u64>,
+        workspace_id: &str,
+        policy_revision: &str,
+    ) -> Result<Value, UiaError> {
+        self.observe_tree_from(
+            adapter,
+            window_id,
+            expected_window_generation,
+            Some((root_element_id, expected_tree_generation)),
+            max_depth,
+            max_nodes,
+            workspace_id,
+            policy_revision,
+        )
+    }
+
+    /// The root a scoped call may read below: validated against this
+    /// registry only (nothing is read). Returns its runtime identity.
+    fn scoped_root(
+        &self,
+        window_id: &str,
+        root_element_id: &str,
+        expected_tree_generation: u64,
+    ) -> Result<String, UiaError> {
+        if !is_well_formed_element_id(root_element_id) {
+            return Err(UiaError::new(
+                FailureCode::InvalidRequest,
+                "uia subtree root_element_id is malformed",
+            ));
+        }
+        if self.scoped_reads.get(window_id).copied().unwrap_or(0) >= MAX_SCOPED_OBSERVATIONS {
+            return Err(UiaError::new(
+                FailureCode::CapabilityDenied,
+                "the scoped observation budget of this window is spent; it resets when the window changes or an approved action succeeds on it",
+            ));
+        }
+        let current = self
+            .windows
+            .get(window_id)
+            .map(|window| window.tree_generation)
+            .ok_or_else(|| {
+                UiaError::new(FailureCode::TargetStale, "uia window identity is unknown")
+            })?;
+        let root = self.elements.get(root_element_id).ok_or_else(|| {
+            UiaError::new(
+                FailureCode::TargetStale,
+                "uia subtree root is unknown; observe the window again",
+            )
+        })?;
+        if root.window_id != window_id {
+            return Err(UiaError::new(
+                FailureCode::TargetStale,
+                "uia subtree root belongs to another window",
+            ));
+        }
+        if root.tree_generation != expected_tree_generation || expected_tree_generation != current {
+            return Err(UiaError::new(
+                FailureCode::TargetStale,
+                "uia subtree root is from an earlier tree generation; observe the window again",
+            ));
+        }
+        if root.runtime_id.is_empty() || root.runtime_id.starts_with("unidentified.") {
+            return Err(UiaError::new(
+                FailureCode::TargetStale,
+                "uia subtree root has no stable identity",
+            ));
+        }
+        Ok(root.runtime_id.clone())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn observe_tree_from(
+        &mut self,
+        adapter: &impl UiaAdapter,
+        window_id: &str,
+        expected_window_generation: u64,
+        root: Option<(&str, u64)>,
+        max_depth: Option<u64>,
+        max_nodes: Option<u64>,
+        workspace_id: &str,
+        policy_revision: &str,
+    ) -> Result<Value, UiaError> {
         if !is_well_formed_window_id(window_id) {
             return Err(UiaError::new(
                 FailureCode::InvalidRequest,
@@ -1856,12 +1992,34 @@ impl UiaRegistry {
                 "uia window identity no longer matches a live window; list windows again",
             ));
         }
-        let natives = adapter.read_tree(record.hwnd).map_err(|error| {
-            UiaError::new(
-                FailureCode::ProviderUnavailable,
-                format!("uia tree enumeration is unavailable: {}", error.message),
-            )
-        })?;
+        // SG-000128: a scoped root is validated (and the budget checked)
+        // before anything is read, bumped or replaced.
+        let natives = match root {
+            None => adapter.read_tree(record.hwnd).map_err(|error| {
+                UiaError::new(
+                    FailureCode::ProviderUnavailable,
+                    format!("uia tree enumeration is unavailable: {}", error.message),
+                )
+            })?,
+            Some((root_element_id, expected_tree_generation)) => {
+                let runtime_id =
+                    self.scoped_root(window_id, root_element_id, expected_tree_generation)?;
+                let natives = adapter
+                    .read_subtree(record.hwnd, &runtime_id)
+                    .map_err(|error| {
+                        let code = match error.code {
+                            FailureCode::TargetStale | FailureCode::CapabilityDenied => error.code,
+                            _ => FailureCode::ProviderUnavailable,
+                        };
+                        UiaError::new(
+                            code,
+                            format!("uia subtree observation failed: {}", error.message),
+                        )
+                    })?;
+                *self.scoped_reads.entry(window_id.to_owned()).or_insert(0) += 1;
+                natives
+            }
+        };
         self.tree_counter += 1;
         let tree_generation = self.tree_counter;
         if let Some(stored) = self.windows.get_mut(window_id) {
@@ -1906,6 +2064,7 @@ impl UiaRegistry {
             "window_id": record.window_id,
             "window_generation": record.window_generation,
             "tree_generation": tree_generation,
+            "root_element_id": root.map(|(id, _)| id),
             "nodes": rendered,
             "node_count": rendered.len(),
             "truncated": truncated,
@@ -2123,6 +2282,7 @@ impl UiaRegistry {
             stored.tree_generation = new_tree_generation;
         }
         self.remove_window_elements(&binding.window_id);
+        self.scoped_reads.remove(&binding.window_id);
         let result = json!({
             "schema": INVOKE_SCHEMA,
             "action": "invoke",
@@ -2207,6 +2367,7 @@ impl UiaRegistry {
             stored.tree_generation = new_tree_generation;
         }
         self.remove_window_elements(&binding.window_id);
+        self.scoped_reads.remove(&binding.window_id);
         let result = json!({
             "schema": VALUE_SCHEMA,
             "action": "set_value",
@@ -2296,6 +2457,7 @@ impl UiaRegistry {
             stored.tree_generation = new_tree_generation;
         }
         self.remove_window_elements(&binding.window_id);
+        self.scoped_reads.remove(&binding.window_id);
         let result = json!({
             "schema": SELECT_SCHEMA,
             "action": "select",
@@ -2536,6 +2698,7 @@ impl UiaRegistry {
             stored.tree_generation = new_tree_generation;
         }
         self.remove_window_elements(&binding.window_id);
+        self.scoped_reads.remove(&binding.window_id);
         let result = json!({
             "schema": TOGGLE_SCHEMA,
             "action": "toggle",
@@ -2785,6 +2948,7 @@ impl UiaRegistry {
             stored.tree_generation = new_tree_generation;
         }
         self.remove_window_elements(&binding.window_id);
+        self.scoped_reads.remove(&binding.window_id);
         let result = json!({
             "schema": SCROLL_SCHEMA,
             "action": "scroll",
@@ -4989,3 +5153,5 @@ mod sg000036_tests;
 mod sg000037_tests;
 #[cfg(test)]
 mod sg000063_tests;
+#[cfg(test)]
+mod sg000128_tests;

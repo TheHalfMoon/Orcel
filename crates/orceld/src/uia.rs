@@ -677,6 +677,60 @@ fn full_user_window_action_with_approval(
     )
 }
 
+/// SG-000128: one tree observation, scoped or not, through either adapter.
+trait ObserveAdapter {
+    #[allow(clippy::too_many_arguments)]
+    fn observe(
+        &self,
+        registry: &mut UiaRegistry,
+        window_id: &str,
+        expected_window_generation: u64,
+        root: Option<(&str, u64)>,
+        max_depth: Option<u64>,
+        max_nodes: Option<u64>,
+        workspace_id: &str,
+    ) -> Result<Value, ProviderError>;
+}
+
+struct HostObserver<'a, A: orcel_provider_uia::UiaAdapter>(&'a A);
+
+impl<A: orcel_provider_uia::UiaAdapter> ObserveAdapter for HostObserver<'_, A> {
+    fn observe(
+        &self,
+        registry: &mut UiaRegistry,
+        window_id: &str,
+        expected_window_generation: u64,
+        root: Option<(&str, u64)>,
+        max_depth: Option<u64>,
+        max_nodes: Option<u64>,
+        workspace_id: &str,
+    ) -> Result<Value, ProviderError> {
+        match root {
+            None => registry.observe_tree(
+                self.0,
+                window_id,
+                expected_window_generation,
+                max_depth,
+                max_nodes,
+                workspace_id,
+                POLICY_REVISION,
+            ),
+            Some((root_element_id, expected_tree_generation)) => registry.observe_subtree(
+                self.0,
+                window_id,
+                expected_window_generation,
+                root_element_id,
+                expected_tree_generation,
+                max_depth,
+                max_nodes,
+                workspace_id,
+                POLICY_REVISION,
+            ),
+        }
+        .map_err(|error| ProviderError::new(error.code, error.message))
+    }
+}
+
 /// Dispatch the SG-000036 UIA shapes. Returns `Ok(None)` for non-UIA shapes
 /// so the caller falls through to the browser, trust, Git, and legacy
 /// dispatchers.
@@ -772,35 +826,42 @@ pub fn dispatch_uia(
             let expected = required_u64(request, "expected_window_generation")?;
             let max_depth = optional_u64(request, "max_depth")?;
             let max_nodes = optional_u64(request, "max_nodes")?;
+            // SG-000128: an optional scoped root (policy admits both or neither).
+            let root =
+                match (
+                    request
+                        .arguments
+                        .get("root_element_id")
+                        .and_then(Value::as_str),
+                    optional_u64(request, "expected_tree_generation")?,
+                ) {
+                    (None, None) => None,
+                    (Some(id), Some(generation)) => Some((id.to_owned(), generation)),
+                    _ => return Err(ProviderError::new(
+                        FailureCode::InvalidRequest,
+                        "uia.tree observe root_element_id and expected_tree_generation go together",
+                    )),
+                };
             let mut guard = locked_registry()?;
+            let observe = |guard: &mut UiaRegistry,
+                           adapter: &dyn ObserveAdapter|
+             -> Result<Value, ProviderError> {
+                adapter.observe(
+                    guard,
+                    &window_id,
+                    expected,
+                    root.as_ref().map(|(id, g)| (id.as_str(), *g)),
+                    max_depth,
+                    max_nodes,
+                    &workspace.id,
+                )
+            };
             if computer_host_selected() {
                 let adapter = computer_host()?;
-                guard
-                    .observe_tree(
-                        adapter,
-                        &window_id,
-                        expected,
-                        max_depth,
-                        max_nodes,
-                        &workspace.id,
-                        POLICY_REVISION,
-                    )
-                    .map(Some)
-                    .map_err(|error| ProviderError::new(error.code, error.message))
+                observe(&mut guard, &HostObserver(adapter)).map(Some)
             } else {
                 let adapter = NativeAdapter::new();
-                guard
-                    .observe_tree(
-                        &adapter,
-                        &window_id,
-                        expected,
-                        max_depth,
-                        max_nodes,
-                        &workspace.id,
-                        POLICY_REVISION,
-                    )
-                    .map(Some)
-                    .map_err(|error| ProviderError::new(error.code, error.message))
+                observe(&mut guard, &HostObserver(&adapter)).map(Some)
             }
         }
         ("uia.element", "observe") => {

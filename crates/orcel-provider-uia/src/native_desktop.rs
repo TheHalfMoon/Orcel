@@ -287,6 +287,15 @@ impl Drop for ComScope {
 /// caller's session. The adapter reads at most one level and one node past
 /// the registry bounds so the registry can report truncation honestly.
 pub(crate) fn read_tree(raw: u64) -> Result<Vec<NativeElement>, UiaError> {
+    let hwnd = observable_window(raw)?;
+    let _com = ComScope::enter();
+    read_tree_with_com(hwnd)
+}
+
+/// The same checks for every observation: an interactive station, and a
+/// visible window of another process in the caller's session whose owner
+/// is identifiable.
+fn observable_window(raw: u64) -> Result<HWND, UiaError> {
     require_interactive_station()?;
     let session = own_session()?;
     let hwnd = hwnd_from(raw);
@@ -311,8 +320,76 @@ pub(crate) fn read_tree(raw: u64) -> Result<Vec<NativeElement>, UiaError> {
             "the window owner is excluded or its identity is unreadable",
         ));
     }
+    Ok(hwnd)
+}
+
+/// SG-000128: the bounded subtree below the element whose runtime identity is
+/// `runtime_id`, found only inside the live window `raw` by a bounded search
+/// of its control view. A root that no longer resolves there fails closed.
+pub(crate) fn read_subtree(raw: u64, runtime_id: &str) -> Result<Vec<NativeElement>, UiaError> {
+    let hwnd = observable_window(raw)?;
     let _com = ComScope::enter();
-    read_tree_with_com(hwnd)
+    let automation: IUIAutomation =
+        unsafe { CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER) }
+            .map_err(|_| unavailable("UI Automation is unavailable in this session"))?;
+    if let Ok(bounded) = automation.cast::<IUIAutomation2>() {
+        unsafe {
+            let _ = bounded.SetConnectionTimeout(UIA_CONNECTION_TIMEOUT_MS);
+            let _ = bounded.SetTransactionTimeout(UIA_TRANSACTION_TIMEOUT_MS);
+        }
+    }
+    let window = unsafe { automation.ElementFromHandle(hwnd) }
+        .map_err(|_| unavailable("UI Automation could not bind the window"))?;
+    let walker = unsafe { automation.ControlViewWalker() }
+        .map_err(|_| unavailable("the UI Automation control view is unavailable"))?;
+    let root = find_by_runtime_id(&walker, &window, runtime_id).ok_or_else(|| {
+        UiaError::new(
+            FailureCode::TargetStale,
+            "the subtree root no longer resolves inside the window",
+        )
+    })?;
+    let mut budget = MAX_TREE_NODES + 1;
+    let mut fallback = 0u64;
+    Ok(vec![read_element(
+        &walker,
+        &root,
+        0,
+        &mut budget,
+        &mut fallback,
+    )])
+}
+
+/// How many control-view elements a root search may visit, and how deep.
+const ROOT_SEARCH_NODES: usize = 4096;
+const ROOT_SEARCH_DEPTH: usize = 64;
+
+/// Depth-first search of the window's control view for `runtime_id`,
+/// bounded in nodes and depth; never outside the window.
+fn find_by_runtime_id(
+    walker: &IUIAutomationTreeWalker,
+    window: &IUIAutomationElement,
+    target: &str,
+) -> Option<IUIAutomationElement> {
+    let mut stack: Vec<(IUIAutomationElement, usize)> = vec![(window.clone(), 0)];
+    let mut visited = 0usize;
+    while let Some((element, depth)) = stack.pop() {
+        visited += 1;
+        if visited > ROOT_SEARCH_NODES {
+            return None;
+        }
+        if runtime_id(&element).as_deref() == Some(target) {
+            return Some(element);
+        }
+        if depth >= ROOT_SEARCH_DEPTH {
+            continue;
+        }
+        let mut child = unsafe { walker.GetFirstChildElement(&element) }.ok();
+        while let Some(current) = child {
+            child = unsafe { walker.GetNextSiblingElement(&current) }.ok();
+            stack.push((current, depth + 1));
+        }
+    }
+    None
 }
 
 fn read_tree_with_com(hwnd: HWND) -> Result<Vec<NativeElement>, UiaError> {

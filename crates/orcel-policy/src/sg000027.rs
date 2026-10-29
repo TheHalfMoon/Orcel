@@ -246,6 +246,9 @@ impl PolicyEngine {
                         "expected_window_generation",
                         "max_depth",
                         "max_nodes",
+                        // SG-000128: an optional scoped root, both or neither.
+                        "root_element_id",
+                        "expected_tree_generation",
                     ]
                 }
                 "uia.element" => {
@@ -337,6 +340,40 @@ fn validate_tree_observe_arguments(
             )
         })?;
     }
+    // SG-000128: a scoped root is an element id orceld issued, with the tree
+    // generation it belongs to; both or neither.
+    match (
+        arguments.get("root_element_id"),
+        arguments.get("expected_tree_generation"),
+    ) {
+        (None, None) => {}
+        (Some(root), Some(generation)) => {
+            let root = root.as_str().ok_or_else(|| {
+                policy_error(
+                    FailureCode::InvalidRequest,
+                    format!("{shape} requires arguments.root_element_id as a string"),
+                )
+            })?;
+            if !orcel_provider_uia::is_well_formed_element_id(root) {
+                return Err(policy_error(
+                    FailureCode::InvalidRequest,
+                    format!("{shape} root_element_id is malformed"),
+                ));
+            }
+            generation.as_u64().ok_or_else(|| {
+                policy_error(
+                    FailureCode::InvalidRequest,
+                    format!("{shape} requires arguments.expected_tree_generation as an unsigned integer"),
+                )
+            })?;
+        }
+        _ => {
+            return Err(policy_error(
+                FailureCode::InvalidRequest,
+                format!("{shape} root_element_id and expected_tree_generation go together"),
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -385,5 +422,51 @@ fn policy_error(code: FailureCode, message: impl Into<String>) -> PolicyError {
     PolicyError {
         code,
         message: message.into(),
+    }
+}
+
+#[cfg(test)]
+mod sg000128_tree_argument_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn check(arguments: Value) -> Result<(), PolicyError> {
+        validate_tree_observe_arguments("uia.tree/observe", arguments.as_object().expect("object"))
+    }
+
+    fn window_id() -> String {
+        format!("{}{}", orcel_provider_uia::WINDOW_ID_PREFIX, "a".repeat(16))
+    }
+
+    fn element_id() -> String {
+        format!(
+            "{}{}",
+            orcel_provider_uia::ELEMENT_ID_PREFIX,
+            "b".repeat(16)
+        )
+    }
+
+    #[test]
+    fn the_unscoped_shape_is_unchanged() {
+        assert!(check(json!({"window_id": window_id(), "expected_window_generation": 3})).is_ok());
+        assert!(check(json!({"window_id": window_id(), "expected_window_generation": 3, "max_depth": 4, "max_nodes": 9})).is_ok());
+    }
+
+    #[test]
+    fn a_scoped_root_needs_both_arguments_well_formed() {
+        assert!(check(
+            json!({"window_id": window_id(), "expected_window_generation": 3,
+            "root_element_id": element_id(), "expected_tree_generation": 5})
+        )
+        .is_ok());
+        for broken in [
+            json!({"window_id": window_id(), "expected_window_generation": 3, "root_element_id": element_id()}),
+            json!({"window_id": window_id(), "expected_window_generation": 3, "expected_tree_generation": 5}),
+            json!({"window_id": window_id(), "expected_window_generation": 3, "root_element_id": "not an id", "expected_tree_generation": 5}),
+            json!({"window_id": window_id(), "expected_window_generation": 3, "root_element_id": 7, "expected_tree_generation": 5}),
+            json!({"window_id": window_id(), "expected_window_generation": 3, "root_element_id": element_id(), "expected_tree_generation": "5"}),
+        ] {
+            assert_eq!(check(broken).unwrap_err().code, FailureCode::InvalidRequest);
+        }
     }
 }
