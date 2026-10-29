@@ -26,7 +26,7 @@ checkpoint at the end says where engineering stands.
 | BM-02 Tier C C1 no-op baseline: reset and evaluator on every OS | #509 → `44aa182` |
 | SG-000122 and SG-000124 preparation packets (no activation) | #510 → `89b08d3` |
 | #438 fixture response diagnostics (test-only) | #511 → `6e44ec1` |
-| #288 WPF memory: profiled against a minimal WPF window on CI; transcript bounded (working set flat over 250 queries) | #513 → `f9a69d8` |
+| #288 WPF memory: profiled against a minimal WPF window on CI; transcript bounded (working set flat over 250 queries; private bytes still rose 4–6 MB, see the preview README) | #513 → `f9a69d8` |
 | BM-02 Tier C C2a: a pinned GUI task's Electron apps launched on a CI runner, observed through the real orceld, cleaned up | #514 → `d9a899a` |
 | #515 scoped UIA subtree observation: preparation packet (no shape change) | #517 → `2b4062d` |
 | SG-000115 preparation packet (no activation) | #502 → `89066a6` |
@@ -81,8 +81,9 @@ checkpoint at the end says where engineering stands.
 If a session ends, resume from here:
 
 1. Everything listed in class 1 is merged on exact-head green CI with an
-   independent review; main is green through `2b4062d`. No PR from this
-   work is open. `grain/bm-02-tier-c-c2b` holds C2b (unmerged, blocked by
+   independent review; main CI is green through `d9a899a` (`44aa182` and
+   `89b08d3` after a rerun of a known flake), and `2b4062d` (docs only) was
+   still in CI when this was written. No other PR from this work is open. `grain/bm-02-tier-c-c2b` holds C2b (unmerged, blocked by
    #515).
 2. Local runs on Windows need a private temp folder (`TEMP`/`TMP`, or
    `ORCEL_BM02_STATE_PARENT` for Tier A); orceld refuses state another
