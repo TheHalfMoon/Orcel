@@ -340,7 +340,13 @@ def run_act_episode(pack: Path, lock: Optional[dict[str, Any]], plan_path: Path,
             raise TierCError("the plan's app or window title is not in the task's descriptor")
         with Orceld(orceld, episode.workspace) as orcel:
             episode.launch(app)
-            if _find_window(orcel, plan["window_title"]) is None:
+            # The title changes while the page loads; act only once it has
+            # held across two listings a few seconds apart.
+            found = _find_window(orcel, plan["window_title"])
+            if found is not None:
+                time.sleep(3.0)
+                found = _find_window(orcel, plan["window_title"])
+            if found is None:
                 episode.teardown(orcel, [plan["window_title"]])
                 return [_row(f"tierc-act/{plan['task']}/{plan['app']}/{episode.os_name}", "fail", "window-not-found", started, 0)]
             state = episode.root / "act-state"

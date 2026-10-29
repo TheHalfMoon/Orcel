@@ -94,14 +94,22 @@ fn find(
     name: &str,
     types: &[&str],
 ) -> Result<(Value, u64), String> {
-    let listing = kernel.call(broker, "uia.window", "list", json!({}))?;
-    let window = listing["windows"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .find(|w| w["title"] == title)
-        .cloned()
-        .ok_or("WINDOW_NOT_FOUND")?;
+    // The app's title changes while its page loads (its configured title,
+    // then the page's <title>, then the app sets it back): wait for it.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let window = loop {
+        let listing = kernel.call(broker, "uia.window", "list", json!({}))?;
+        let windows = listing["windows"].as_array().cloned().unwrap_or_default();
+        if let Some(found) = windows.iter().find(|w| w["title"] == title) {
+            break found.clone();
+        }
+        if Instant::now() >= deadline {
+            let titles: Vec<&str> = windows.iter().filter_map(|w| w["title"].as_str()).collect();
+            eprintln!("TIERC-ACT-DIAG window {title:?} not listed; listed titles {titles:?}");
+            return Err("WINDOW_NOT_FOUND".into());
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    };
     let tree = kernel.call(
         broker,
         "uia.tree",
