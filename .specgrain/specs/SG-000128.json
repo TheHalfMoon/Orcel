@@ -59,6 +59,11 @@
       "question": "Raise the global caps instead",
       "status": "REJECTED",
       "decision": "A larger global depth or node cap would enlarge every observation for every caller and widen SG-000063 A1's bound; a scoped root keeps every response within today's bound."
+    },
+    {
+      "question": "Known limitations (slice 1)",
+      "status": "RECORDED",
+      "decision": "A plan whose action is refused or fails cannot scope-read that window again until the window changes (fail closed). Budgets, element ids and window ids live in orceld's per-process registry, so an orceld restart resets them together with every identity (a restarted orceld has issued no roots). The Windows root search is bounded (4096 control-view nodes, depth 64): a root beyond it is refused as not found. If a final response exceeds the byte bound, the generation has already advanced and, for a scoped call, one budget slot is spent (fail closed, the existing response-bound pattern). Evidence split, recorded by the implementer: slice 1 proves the registry, policy and orceld refusal paths deterministically; orceld's scoped success path and the Windows native adapter (read_subtree, find_by_runtime_id) are evidenced live by slice 3 (BM-02 Tier C C2b on a disposable Windows CI runner); the computer host refuses scoped reads (ProviderUnavailable) until slice 1b adds its protocol request and tests."
     }
   ],
   "invariants": [
@@ -70,8 +75,8 @@
     "The registry stays bounded: at most MAX_TREE_NODES elements per window and MAX_WINDOWS windows.",
     "Redaction (password and secret-like values), protected-surface and other-session exclusions apply to every subtree.",
     "No caller-supplied HWND, PID, runtime id, native handle, selector, XPath or coordinate is accepted.",
-    "Observation never needs or creates approval; every action keeps its fresh per-action SOFT approval.",
-    "Cumulative exposure is bounded by consent or real change: at most MAX_SCOPED_OBSERVATIONS (8) scoped observations per window between budget resets, and the budget resets only when the window's generation changes (the window itself changed) or an approved action (fresh per-action SOFT approval) succeeds on that window. Listing an unchanged window does not reset it. Reading further than eight scoped responses into one unchanged window therefore needs a person's approval for an action in between; unapproved, unchanged traversal stops at nine bounded responses (9 x 256 nodes)."
+    "Observation itself never asks for or creates approval; every action keeps its fresh per-action SOFT approval. The scoped budget is renewed only as a side effect of a real window change or a successful approved action; no new approval class exists.",
+    "Cumulative exposure is bounded by consent or a real window change: at most MAX_SCOPED_OBSERVATIONS (8) scoped observations per window between budget resets, and the budget resets only when the window's identity changes (process instance, nonce or class) or an approved action (fresh per-action SOFT approval) succeeds on that window. Listing an unchanged window and a title-only change (a web page's document.title, a ticking counter) do not reset it. Reading further than eight scoped responses into one window therefore needs a person's approval for an action in between or a real window change; unapproved traversal of an unchanged window stops at nine bounded responses (9 x 256 nodes)."
   ],
   "acceptance": [
     "Policy tests: root_element_id and expected_tree_generation are accepted only together, are well formed, and every UIA_WIDENING_FIELDS field is still refused.",
