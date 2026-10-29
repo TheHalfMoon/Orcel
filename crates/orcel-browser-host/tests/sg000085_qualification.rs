@@ -1224,13 +1224,31 @@ fn no_shell_script_or_remote_process_surface_exists() {
     // worker_launch_tests.rs and discovery_macos_tests.rs compile only under
     // cfg(test) and spawn test fixtures (XP-14: `cp -c` clones and
     // `codesign` for the tamper tests).
+    // SG-000115 category A (recorded rule change, prep/SG-000115.md): the
+    // inert Unix fixture spawners A2 (unix_supervise.rs) and A5
+    // (unix_cleanup.rs), admitted only while lib.rs declares them under
+    // #[cfg(all(test, unix))].
+    let lib = sources
+        .iter()
+        .find(|(file, _)| file == "lib.rs")
+        .map(|(_, text)| text.replace("\r\n", "\n"))
+        .expect("lib.rs is a crate source");
+    // Exactly one declaration, private, directly under the Unix test cfg:
+    // a second declaration (another cfg, or `pub mod`) defeats the guard.
+    let unix_test_only = |module: &str| {
+        lib.matches(&format!("mod {module};")).count() == 1
+            && !lib.contains(&format!("pub mod {module}"))
+            && lib.contains(&format!("#[cfg(all(test, unix))]\nmod {module};\n"))
+    };
     for (file, text) in &sources {
         if text.contains("Command::new") {
             assert!(
                 file == "supervise.rs"
                     || file == "discovery.rs"
                     || file == "worker_launch_tests.rs"
-                    || file == "discovery_macos_tests.rs",
+                    || file == "discovery_macos_tests.rs"
+                    || (file == "unix_supervise.rs" && unix_test_only("unix_supervise"))
+                    || (file == "unix_cleanup.rs" && unix_test_only("unix_cleanup")),
                 "unexpected process spawn in {file}"
             );
         }
