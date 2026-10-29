@@ -70,12 +70,16 @@
     "The registry stays bounded: at most MAX_TREE_NODES elements per window and MAX_WINDOWS windows.",
     "Redaction (password and secret-like values), protected-surface and other-session exclusions apply to every subtree.",
     "No caller-supplied HWND, PID, runtime id, native handle, selector, XPath or coordinate is accepted.",
-    "Observation never needs or creates approval; every action keeps its fresh per-action SOFT approval."
+    "Observation never needs or creates approval; every action keeps its fresh per-action SOFT approval.",
+    "Cumulative exposure is bounded: at most MAX_SCOPED_OBSERVATIONS (8) scoped observations per window per window generation, so at most nine bounded responses (9 x 256 nodes) are read from one window between listings; a further scoped call fails closed until the window is listed again."
   ],
   "acceptance": [
     "Policy tests: root_element_id and expected_tree_generation are accepted only together, are well formed, and every UIA_WIDENING_FIELDS field is still refused.",
-    "Provider tests: a stale generation, an element of another window, a malformed id, an unknown id and a root whose window was re-created fail closed and observe nothing; the root is validated before the element set is replaced; a scoped call starts a new generation and an action on an element from the previous call is refused as stale.",
+    "Provider tests: a stale generation, an element of another window, a malformed id, an unknown id, a root whose window was re-created, a root in a protected surface (or one that became protected) and a root that is gone or denied by UI Automation when read all fail closed and observe nothing; the root is validated before the element set is replaced; a scoped call starts a new generation and an action on an element from the previous call is refused as stale.",
     "Bounds tests: a scoped subtree never exceeds depth 8 below its root, 256 nodes or the byte bound, and a password field inside it is redacted.",
+    "Cumulative-exposure tests: the ninth scoped observation of one window within a window generation fails closed and observes nothing, and listing the window again resets the budget; the slice 1 security judge records an explicit cumulative-exposure analysis.",
+    "orceld tests: the scoped call through handle_envelope (profile gate, policy, dispatch, audit) observes below an issued root, every refusal is audited, and the unscoped call is unchanged.",
+    "Host protocol tests: the computer host request (or field) for a scoped read encodes exactly, is refused by a host that does not support it, and a runtime id that does not resolve inside the window fails closed.",
     "Native tests on Windows: the host reads below a runtime id inside the same live window, refuses one that does not resolve there, and the live SG-000063 observation tests still pass.",
     "MCP tests (slice 2): desktop_window_tree accepts the two optional arguments, the contract, discovery, documentation and remote-scope tables agree, and remote, tunnel and public profiles are unchanged.",
     "Qualification (slice 3): BM-02 Tier C C2b on a disposable Windows CI runner completes its labelled scripted plan through the scoped subtree and the existing approval-gated actions, with recorded broker decisions, evaluator scores and no window or process left behind.",
@@ -84,7 +88,7 @@
   "review": {
     "jev_semantic_review": true,
     "alibaba_open_code_review": "delegation mode per standing founder decision (2026-10-10) with manual review of excluded files",
-    "security_review": "fresh-context security judge on every slice and on closeout; d1-local advisory only",
+    "security_review": "fresh-context security judge on every slice and on closeout, with an explicit cumulative-exposure analysis on slice 1; d1-local advisory only",
     "exact_head_ci": true,
     "native_windows": true,
     "cross_platform_ci": "Windows, macOS and Linux legs"
