@@ -22,7 +22,8 @@
 //!     fails closed and leaves the rest in place.
 //! - **Lock last:** the lock file is unlinked last, while still held, and
 //!   only after the hold re-checks that the lock name still names the file
-//!   it locked. Another holder's live lock is therefore never unlinked.
+//!   it locked, so a lock swapped in by another holder is refused, not
+//!   unlinked (see the open items for the remaining same-user window).
 //! - **Crash recovery:** a holder that crashed released its `flock` with
 //!   its process. `recover_stale_profile` treats a profile it can hold as
 //!   stale and removes it, and leaves one that another live holder has
@@ -35,6 +36,11 @@
 //!   running, recovery would call the profile stale and delete it under the
 //!   browser. Activation must first establish that no engine process uses
 //!   the profile (the A2 process tree, or the engine's own `SingletonLock`).
+//! - **Same-user window:** between `verify_lock` and the unlink, or while
+//!   the contents are cleared, a process of the same user could rename the
+//!   lock and let a second holder in; that holder's lock or files could then
+//!   be removed. It needs a same-user adversary; activation must close it
+//!   (for example a per-profile directory lock held for the whole sweep).
 //! - **Final directory removal:** the profile directory itself is removed
 //!   by path (`rmdir`) after a fresh `verify`, which is a point-in-time
 //!   check. A swap between the two leaves at most an empty directory
@@ -50,7 +56,8 @@ use std::path::Path;
 
 use crate::unix_profile::{ProfileError, ProfileHold, LOCK_NAME};
 
-/// At most this many levels below the profile root are removed.
+/// At most this many levels of nested directories below the profile root
+/// are cleared (the files inside the deepest one are removed too).
 pub(crate) const MAX_DEPTH: usize = 64;
 /// At most this many entries are removed in one sweep.
 pub(crate) const MAX_ENTRIES: usize = 100_000;
@@ -83,6 +90,9 @@ fn clear_errno() {
     // SAFETY: the thread-local errno location is always valid.
     unsafe { *libc::__error() = 0 };
 }
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+compile_error!("the inert Unix cleanup supports Linux and macOS only");
 
 /// What `recover_stale_profile` did.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -181,17 +191,18 @@ fn clear_dir(
     if depth > MAX_DEPTH {
         return Err(CleanupError::Bound);
     }
-    // A listing never holds more than the remaining budget allows (plus
-    // the kept name), so memory is bounded by the budget too.
+    // The budget is charged when a level is listed, so the listings held
+    // at once across all levels never exceed MAX_ENTRIES names in total.
     let cap = budget.saturating_add(1 + usize::from(keep.is_some()));
-    for entry in list(dir, cap)? {
-        if keep.is_some_and(|keep| entry.name.as_bytes() == keep.as_bytes()) {
-            continue;
-        }
-        if *budget == 0 {
-            return Err(CleanupError::Bound);
-        }
-        *budget -= 1;
+    let entries: Vec<Entry> = list(dir, cap)?
+        .into_iter()
+        .filter(|entry| !keep.is_some_and(|keep| entry.name.as_bytes() == keep.as_bytes()))
+        .collect();
+    if entries.len() > *budget {
+        return Err(CleanupError::Bound);
+    }
+    *budget -= entries.len();
+    for entry in entries {
         if entry.is_dir {
             if entry.dev != device {
                 return Err(CleanupError::Crossing);
@@ -415,11 +426,18 @@ mod tests {
         }
         let hold = ProfileHold::open(&dir).unwrap();
         let device = device_of(&fstat_raw(hold.root_fd()).unwrap());
-        let mut budget = 3;
+        // One entry over the budget: refused before anything is removed.
+        let mut budget = 4;
         assert_eq!(
             clear_dir(hold.root_fd(), device, 0, &mut budget, Some(LOCK_NAME)),
             Err(CleanupError::Bound)
         );
+        assert!(dir.join("f0").exists() && dir.join("f4").exists());
+        // Exactly the budget: everything but the lock is removed.
+        let mut budget = 5;
+        clear_dir(hold.root_fd(), device, 0, &mut budget, Some(LOCK_NAME)).unwrap();
+        assert_eq!(budget, 0);
+        assert!(!dir.join("f0").exists() && dir.join(LOCK_NAME).exists());
         drop(hold);
         std::fs::remove_dir_all(&root).ok();
     }

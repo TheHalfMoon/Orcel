@@ -500,10 +500,6 @@ mod tests {
         assert_eq!(lines[code[0]], "mod unix_profile;");
         assert_eq!(lines[code[0] - 1], "#[cfg(all(test, unix))]");
         // The exempted sibling (A5) is itself test-only.
-        assert!(lib.contains(
-            "#[cfg(all(test, unix))]
-mod unix_cleanup;
-"
-        ));
+        assert!(lib.contains("#[cfg(all(test, unix))]\nmod unix_cleanup;\n"));
     }
 }
