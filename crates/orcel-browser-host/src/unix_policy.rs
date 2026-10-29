@@ -173,12 +173,21 @@ fn macos_dir_state(dir: &Path, targets: &[String], top: bool) -> PolicyKeyState 
             Ok(file_type) => file_type,
             Err(_) => return PolicyKeyState::Unreadable,
         };
-        if targets.iter().any(|target| name == target.as_str()) {
+        // macOS volumes are case-insensitive by default, so a plist named in
+        // any case applies to the domain; a name that is not UTF-8 cannot be
+        // compared and refuses.
+        let Some(name) = name.to_str() else {
+            return PolicyKeyState::Populated;
+        };
+        if targets
+            .iter()
+            .any(|target| name.eq_ignore_ascii_case(target))
+        {
             return PolicyKeyState::Populated;
         }
-        if top && file_type.is_symlink() && !name.to_string_lossy().ends_with(".plist") {
-            // A link where a per-user directory could be: refuse rather
-            // than follow it anywhere.
+        if file_type.is_symlink() && (top || name.to_ascii_lowercase().ends_with(".plist")) {
+            // A link where a per-user directory or a plist could be: refuse
+            // rather than follow it anywhere.
             return PolicyKeyState::Populated;
         }
         if top && file_type.is_dir() {
@@ -423,6 +432,26 @@ mod tests {
     }
 
     #[test]
+    fn a_managed_preference_named_in_another_case_refuses_launch() {
+        for relative in [
+            "Library/Managed Preferences/com.google.chrome.plist",
+            "Library/Managed Preferences/ana/COM.GOOGLE.CHROME.PLIST",
+        ] {
+            let root = scratch("macos-case");
+            std::fs::create_dir_all(root.join("Library/Managed Preferences/ana")).unwrap();
+            write(&root, relative);
+            assert!(
+                matches!(
+                    check(UnixPlatform::MacOs, EngineKind::Chromium, &root),
+                    Err(HostError::Invalid(_))
+                ),
+                "{relative}"
+            );
+            std::fs::remove_dir_all(&root).ok();
+        }
+    }
+
+    #[test]
     fn a_file_where_managed_preferences_belongs_refuses_launch() {
         let root = scratch("macos-file");
         write(&root, "Library/Managed Preferences");
@@ -459,6 +488,13 @@ mod tests {
             (
                 UnixPlatform::MacOs,
                 "Library/Managed Preferences/com.microsoft.Edge.plist",
+            ),
+            // Any link at the top level, even one named like a plist.
+            (UnixPlatform::MacOs, "Library/Managed Preferences/x.plist"),
+            // A link named like a plist inside a user directory.
+            (
+                UnixPlatform::MacOs,
+                "Library/Managed Preferences/ana/x.plist",
             ),
         ] {
             for dangling in [false, true] {
@@ -609,8 +645,9 @@ mod tests {
         assert!(files.len() > 10, "the scan found the crate's sources");
         let mut named = Vec::new();
         for path in &files {
-            let name = path.file_name().unwrap_or_default();
-            if name == "unix_policy.rs" || name == "lib.rs" {
+            if *path == crate_dir.join("src").join("unix_policy.rs")
+                || *path == crate_dir.join("src").join("lib.rs")
+            {
                 continue;
             }
             let text = normalized(path);
