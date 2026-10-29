@@ -30,7 +30,23 @@
 //! - **Ancestors:** whether the profile's ancestors must also be owned by
 //!   this user or root and not writable by others (the parent of the
 //!   profile is the state root, owned elsewhere).
-//! - **Leftovers:** the Unix leftover sweep is slice A5.
+//! - **Last component only:** `O_NOFOLLOW` (and `symlink_metadata` in
+//!   `verify`) refuse a link at the last path component only; links in
+//!   the middle of the path are followed. Activation needs a walk from a
+//!   trusted state root (`openat` per component), `openat2`
+//!   (`RESOLVE_NO_SYMLINKS`) on Linux or `O_NOFOLLOW_ANY` on macOS.
+//! - **macOS ACLs:** extended ACL entries are separate from the mode bits
+//!   on macOS, so exactly 0700 / 0600 does not exclude another user there
+//!   (on Linux the mode's group bits carry the ACL mask). Activation must
+//!   refuse any allow entry (`acl_get_fd_np`).
+//! - **Point in time:** `verify` checks one moment; the engine re-resolves
+//!   the `--user-data-dir` path itself. Activation must decide how the
+//!   engine receives the profile and whether to re-verify after it exits.
+//! - **`flock`:** advisory (it binds Orcel's own holders only); on NFS it
+//!   may become an `fcntl` lock or fail (`ENOTSUP`, which refuses); a child
+//!   that forks without exec keeps it (`O_CLOEXEC` covers exec).
+//! - **Leftovers:** the Unix leftover sweep is slice A5, and it must never
+//!   unlink a live lock file.
 
 use std::ffi::CString;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
@@ -95,6 +111,48 @@ fn identity(stat: &libc::stat) -> (u64, u64) {
     (stat.st_dev as u64, stat.st_ino as u64)
 }
 
+/// Open the lock file relative to the held root, never following a link
+/// and never blocking on a FIFO: create it exclusively (and set 0600
+/// explicitly, whatever the umask), or open the existing one.
+fn open_lock(root: &OwnedFd, name: &CString) -> Result<OwnedFd, ProfileError> {
+    let flags = libc::O_RDWR | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK;
+    // SAFETY: relative to the held root descriptor; exclusive creation.
+    let raw = unsafe {
+        libc::openat(
+            root.as_raw_fd(),
+            name.as_ptr(),
+            flags | libc::O_CREAT | libc::O_EXCL,
+            0o600 as libc::c_uint,
+        )
+    };
+    if raw >= 0 {
+        // SAFETY: `raw` is a descriptor this call just opened and owns.
+        let lock = unsafe { OwnedFd::from_raw_fd(raw) };
+        // SAFETY: an open descriptor this call created.
+        if unsafe { libc::fchmod(lock.as_raw_fd(), 0o600) } != 0 {
+            return Err(ProfileError::Platform(errno()));
+        }
+        return Ok(lock);
+    }
+    if errno() != libc::EEXIST {
+        return Err(lock_open_error(errno()));
+    }
+    // SAFETY: relative to the held root descriptor; no creation.
+    let raw = unsafe { libc::openat(root.as_raw_fd(), name.as_ptr(), flags) };
+    if raw < 0 {
+        return Err(lock_open_error(errno()));
+    }
+    // SAFETY: `raw` is a descriptor this call just opened and owns.
+    Ok(unsafe { OwnedFd::from_raw_fd(raw) })
+}
+
+fn lock_open_error(errno: i32) -> ProfileError {
+    match errno {
+        libc::ELOOP | libc::EISDIR => ProfileError::NotPlain,
+        other => ProfileError::Platform(other),
+    }
+}
+
 impl ProfileHold {
     /// Hold the profile at `path`: refuse a link, a non-directory, another
     /// owner, a mode other than 0700, an unsafe lock file, or a profile
@@ -128,26 +186,14 @@ impl ProfileHold {
         }
 
         let lock_name = CString::new(LOCK_NAME).map_err(|_| ProfileError::NotPlain)?;
-        // SAFETY: relative to the held root descriptor; never follows a
-        // link; created 0600 when absent.
-        let raw = unsafe {
-            libc::openat(
-                root.as_raw_fd(),
-                lock_name.as_ptr(),
-                libc::O_RDWR | libc::O_CREAT | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-                0o600 as libc::c_uint,
-            )
-        };
-        if raw < 0 {
-            return Err(match errno() {
-                libc::ELOOP | libc::EISDIR => ProfileError::NotPlain,
-                other => ProfileError::Platform(other),
-            });
-        }
-        // SAFETY: `raw` is a descriptor this call just opened and owns.
-        let lock = unsafe { OwnedFd::from_raw_fd(raw) };
+        let lock = open_lock(&root, &lock_name)?;
         let lock_stat = fstat(&lock)?;
         if (lock_stat.st_mode & libc::S_IFMT) != libc::S_IFREG {
+            return Err(ProfileError::NotPlain);
+        }
+        // One name only: a hard link to another file of this user (a key,
+        // say) is not a lock file.
+        if lock_stat.st_nlink != 1 {
             return Err(ProfileError::NotPlain);
         }
         if !owned_with_mode(&lock_stat, 0o600) {
@@ -156,9 +202,27 @@ impl ProfileHold {
         // SAFETY: an open descriptor; non-blocking exclusive lock.
         if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
             return Err(match errno() {
-                libc::EWOULDBLOCK => ProfileError::Busy,
+                busy if busy == libc::EWOULDBLOCK || busy == libc::EAGAIN => ProfileError::Busy,
                 other => ProfileError::Platform(other),
             });
+        }
+        // The name still names the locked file: if it was unlinked and
+        // recreated between the open and the lock, two holders could lock
+        // different files.
+        // SAFETY: stat is plain data; zeroed is a valid value.
+        let mut named: libc::stat = unsafe { std::mem::zeroed() };
+        // SAFETY: relative to the held root; never follows a link.
+        if unsafe {
+            libc::fstatat(
+                root.as_raw_fd(),
+                lock_name.as_ptr(),
+                &mut named,
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        } != 0
+            || identity(&named) != identity(&lock_stat)
+        {
+            return Err(ProfileError::Swapped);
         }
         Ok(Self {
             identity: identity(&root_stat),
@@ -181,9 +245,10 @@ impl ProfileHold {
         if !metadata.file_type().is_dir() || (metadata.dev(), metadata.ino()) != self.identity {
             return Err(ProfileError::Swapped);
         }
-        // The held descriptor still names the same directory.
-        if identity(&fstat(&self.root)?) != self.identity {
-            return Err(ProfileError::Swapped);
+        // The held directory is still this user's, mode 0700 (a later
+        // chmod is caught here).
+        if !owned_with_mode(&fstat(&self.root)?, 0o700) {
+            return Err(ProfileError::Permissions);
         }
         Ok(())
     }
@@ -235,7 +300,7 @@ mod tests {
 
     #[test]
     fn a_profile_with_a_wider_mode_is_refused() {
-        for mode in [0o755, 0o750, 0o701, 0o1700, 0o500] {
+        for mode in [0o755, 0o750, 0o701, 0o1700, 0o2700, 0o4700, 0o500] {
             let (root, dir) = profile("mode");
             std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(mode)).unwrap();
             assert_eq!(
@@ -280,6 +345,26 @@ mod tests {
         assert_eq!(ProfileHold::open(&dir).unwrap_err(), ProfileError::NotPlain);
         std::fs::remove_dir_all(&root).ok();
 
+        // A dangling link at the lock name.
+        let (root, dir) = profile("lock-dangling");
+        std::os::unix::fs::symlink(root.join("missing"), dir.join(LOCK_NAME)).unwrap();
+        assert_eq!(ProfileHold::open(&dir).unwrap_err(), ProfileError::NotPlain);
+        assert!(
+            !root.join("missing").exists(),
+            "the link was never followed"
+        );
+        std::fs::remove_dir_all(&root).ok();
+
+        // A hard link to another file of this user at the lock name.
+        let (root, dir) = profile("lock-hardlink");
+        let key = root.join("key");
+        std::fs::write(&key, "secret").unwrap();
+        std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::hard_link(&key, dir.join(LOCK_NAME)).unwrap();
+        assert_eq!(ProfileHold::open(&dir).unwrap_err(), ProfileError::NotPlain);
+        assert_eq!(std::fs::read_to_string(&key).unwrap(), "secret");
+        std::fs::remove_dir_all(&root).ok();
+
         // A directory at the lock name.
         let (root, dir) = profile("lock-dir");
         std::fs::create_dir(dir.join(LOCK_NAME)).unwrap();
@@ -295,6 +380,16 @@ mod tests {
             ProfileHold::open(&dir).unwrap_err(),
             ProfileError::Permissions
         );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_later_chmod_is_caught_by_verify() {
+        let (root, dir) = profile("chmod");
+        let hold = ProfileHold::open(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(hold.verify(&dir).unwrap_err(), ProfileError::Permissions);
+        drop(hold);
         std::fs::remove_dir_all(&root).ok();
     }
 
