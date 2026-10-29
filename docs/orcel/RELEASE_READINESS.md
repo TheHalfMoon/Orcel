@@ -30,6 +30,11 @@ checkpoint at the end says where engineering stands.
 | BM-02 Tier C C2a: a pinned GUI task's Electron apps launched on a CI runner, observed through the real orceld, cleaned up | #514 → `d9a899a` |
 | #515 scoped UIA subtree observation: preparation packet (no shape change) | #517 → `2b4062d` |
 | SG-000115 preparation packet (no activation) | #502 → `89066a6` |
+| SG-000128 (#515, founder decision 2026-10-29) activation | #519 → `aec4c3b` |
+| SG-000128 slice 1: scoped `uia.tree/observe` (`root_element_id` + `expected_tree_generation`) in orcel-policy, the provider registry (root validated before replacement, per-window budget of 8) and orceld | #520 → `540657e` |
+| SG-000128 slice 3a / BM-02 Tier C C2b on CI: every cdb-s02 blocker-form element reached through the scoped read on the real app; the first action refused by the DesktopInput gate; nothing written against the evaluator's baseline; labelled scripted plan | #521 → `a58d336` |
+| SG-000128 slice 1b: the Windows computer host's scoped read and its bounded action lookup (4096 nodes, depth 64); the native host refuses a subtree root | #522 → `3e5ed71` |
+| SG-000128 slice 2: optional subtree root on the local-only `desktop_window_tree` MCP tool | #523 → `c99b8d8` |
 | Lifecycle on main `89066a6`: Windows release qualification (install, run, update, recover, uninstall, local report client, 400 MB budget) and Linux deb/rpm/tarball install, systemd units, tamper detection and uninstall | main CI 40672122647 |
 
 ## 2. Engineering that can still be completed without the founder
@@ -39,8 +44,9 @@ checkpoint at the end says where engineering stands.
 | #438 residual: navigation `read: TimedOut` on CI | Waiting for a recurrence; #494's diagnostics capture it |
 | #292 flaky SG-000013 contained PowerShell test on windows-latest | Root cause not yet found |
 | macOS install / start / uninstall lifecycle | No macOS package yet: macOS packaging (XP-16) waits for FD-05; Windows and Linux lifecycle are in class 1 |
-| BM-02 Tier C C2b: a scripted plan acting through orceld's approval-gated UIA shapes (scripted consent, labelled) | Written on `grain/bm-02-tier-c-c2b`; blocked by #515 (orceld's UIA tree cap ends at Electron's web Document); C3 agent runs are blocked (class 4) |
-| CI flakes under watch | #438 (navigation), #508 (UIA bind), #512 (real git fetch), #516 (Go helper start) |
+| SG-000128 closeout | After slice 3b (class 3) is accepted or the founder records otherwise; the closeout judge checks that slice 1's deferred items are evidenced |
+| BM-02 Tier C beyond C2b (C3 agent runs) | Blocked: needs a planner model (class 4) |
+| CI flakes under watch | #438 (navigation), #508 (UIA bind), #512 (real git fetch), #516 (Go helper start), #524 (macOS jobs cancelled before a runner is assigned) |
 | Governance preparation for SG-000115, SG-000122, SG-000124, SG-000127 closeout | Specs, tests, dependency and security analysis only; activation is a founder decision |
 | Documentation consistency (frontier, roadmap, benchmark plan) | Ongoing with each merge |
 
@@ -53,6 +59,7 @@ checkpoint at the end says where engineering stands.
 | XP-20 | Needs a disposable Windows session, not the founder's live desktop |
 | macOS direct-capture consent; XP-07/XP-12 delivered capture and input | The founder grants consent on the Mac; nothing may forge or pre-grant it |
 | Real GNOME/KDE XP-10 approval checks | A person at the desktop prompt |
+| SG-000128 slice 3b: the cdb-s02 scripted plan acting (set_value, invoke) through the scoped read on a disposable Windows machine | UIA actions need a Full User lease, issued only after a STRONG platform-presence approval (Windows Hello); granting it from a test would be manufactured consent. Never on the founder's live desktop |
 
 ## 4. Founder decisions
 
@@ -64,7 +71,6 @@ checkpoint at the end says where engineering stands.
 | FD-03 (gates CR-03), FD-05, FD-08 | As recorded in the frontier |
 | Activation of SG-000115 (XP-14 launch, network sink, supervision on macOS/Linux) and the other prepared grains | Activation grants authority; only the founder activates |
 | Release and publication | Not authorized; no release is created |
-| Opening the #515 governed change (SG-000027 shape, native host request, SG-000063 MCP contract) | Packet: `prep/UIA_SUBTREE_OBSERVATION.md` |
 | A planner model for BM-02 Tier C agent runs | Paid inference is excluded by the zero-cost rule; the local d1 model is an advisory classifier, not a planner |
 
 ## 5. External hardware or credentials
@@ -80,21 +86,25 @@ checkpoint at the end says where engineering stands.
 
 If a session ends, resume from here:
 
-1. Everything listed in class 1 is merged on exact-head green CI with an
-   independent review; main CI is green through `d9a899a` (`44aa182` and
-   `89b08d3` after a rerun of a known flake), and `2b4062d` (docs only) was
-   still in CI when this was written. No other PR from this work is open. `grain/bm-02-tier-c-c2b` holds C2b (unmerged, blocked by
-   #515).
+1. Everything in class 1 is merged on exact-head green CI with an independent
+   review. Main CI is green through `3e5ed71` (after a rerun of #524), and
+   `c99b8d8` was still in CI when this was written. No other PR from this work
+   is open.
 2. Local runs on Windows need a private temp folder (`TEMP`/`TMP`, or
    `ORCEL_BM02_STATE_PARENT` for Tier A); orceld refuses state another
    account can reach. GUI work (`tests/memory.ps1`, `tierc-observe`,
-   `tierc-act`) runs on CI runners only and refuses elsewhere. WSL2 on the
-   development PC stopped starting processes (an I/O error inside the
-   distro); it was not restarted, because that would also stop Docker
+   `tierc-act`) runs on CI runners only and refuses elsewhere. Locally, run
+   only filtered `orcel-provider-uia` tests: its unfiltered library suite
+   includes a live SG-000063 test that enumerates the desktop's windows.
+   WSL2 on the development PC stopped starting processes (an I/O error inside
+   the distro); it was not restarted, because that would also stop Docker
    Desktop.
 3. Next engineering, in order:
    - the remaining SG-000115 authority-neutral pieces (Unix managed-policy
      reads, supervision primitives, profile hold) as unexposed, tested code;
-   - CI flakes when they recur with diagnostics (#438, #508, #512, #516);
-   - C2b once the #515 governed change exists.
+   - CI flakes when they recur with diagnostics (#438, #508, #512, #516, #524);
+   - optional hardening noted by the #522 judge: the Go host could check that
+     the element it acts on belongs to the bound process (pre-existing, its
+     own grain);
+   - SG-000128 closeout once slice 3b is accepted.
 4. Never mark Core MVP complete; classes 3 to 5 stay open.
