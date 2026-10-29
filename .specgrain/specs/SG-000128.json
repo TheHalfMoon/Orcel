@@ -69,6 +69,11 @@
       "question": "Acceptance change: split slice 3 qualification into 3a (CI) and 3b (founder-present)",
       "status": "RECORDED (before implementation of 3a; independent review required)",
       "decision": "Run 40876732505 showed the scoped read reaching the form on the real application and the first set_value refused: \"DesktopInput requires an active Orcel runtime session binding\". DesktopInput needs a Full User lease, which only orcel-lifecycle's grant_full_user issues after a STRONG platform-presence approval. A CI runner has no person to give it, and granting the lease from a test (full_control_store::grant_local) would manufacture consent, which the founder directives forbid. Slice 3 is therefore split: 3a proves on CI everything that does not need a person (every target reached through the scoped read, the gate refusing the action, nothing written); 3b keeps the original end-to-end criterion unchanged and moves it to a founder-present run on a disposable machine. No gate, rule or bound is relaxed; the original slice 3 criterion is kept whole as 3b, and SG-000128 cannot close until 3b is accepted or the founder records a different decision."
+    },
+    {
+      "question": "Rule change: one more documented ignored test",
+      "status": "RECORDED (before implementation)",
+      "decision": "The release-blocker sweep (crates/orcel-lifecycle/tests/release_blocker_sweep.rs, only_the_documented_ignored_tests_exist) admits #[ignore] only at listed files with a listed reason. It now also admits crates/orceld/src/bm02_tier_c_act_tests.rs with the reason \"run by the BM-02 Tier C harness (tierc-act) on a CI runner with the apps launched\": a Windows test-build-only test (cfg(all(test, windows))) that the non-required Tier C GUI CI job runs for slice 3a and that slice 3b runs founder-present. It follows the existing per-file pattern; no other file or reason is admitted, and no other rule changes."
     }
   ],
   "invariants": [

@@ -446,6 +446,12 @@ fn only_the_documented_ignored_tests_exist() {
                         || relative == "crates/orceld/src/live_dispatch.rs")
                         && line.contains(
                             "requires the built browser worker and Edge; run by npm run browser-launcher:native",
+                        ))
+                    // SG-000128 slice 3: the Windows-only Tier C act test,
+                    // run by the BM-02 Tier C GUI CI job.
+                    || (relative == "crates/orceld/src/bm02_tier_c_act_tests.rs"
+                        && line.contains(
+                            "run by the BM-02 Tier C harness (tierc-act) on a CI runner with the apps launched",
                         ));
                 if !documented {
                     hits.push(format!("{}:{}: {}", relative, index + 1, line.trim()));
