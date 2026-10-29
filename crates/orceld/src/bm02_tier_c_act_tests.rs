@@ -77,6 +77,15 @@ impl Kernel {
             "code": code,
             "ms": (started.elapsed().as_secs_f64() * 1000.0 * 1000.0).round() / 1000.0,
         }));
+        if !response.ok {
+            // CI log only, never the report: which check refused, and why.
+            if let Some(error) = response.error.as_ref() {
+                eprintln!(
+                    "TIERC-ACT-DIAG {capability}/{operation} refused {:?}: {}",
+                    error.code, error.message
+                );
+            }
+        }
         if response.ok {
             Ok(response.result.unwrap_or(Value::Null))
         } else {
