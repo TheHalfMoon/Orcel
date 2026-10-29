@@ -137,6 +137,7 @@ def run_orcel_episode(
     timeout: float = PHASE_TIMEOUT_S,
     orceld_args: tuple[str, ...] = (),
     call_timeout: Optional[float] = None,
+    client_factory: Optional[Callable[[Path], Any]] = None,
 ) -> OrcelEpisode:
     session = FileSession()
     started = time.perf_counter()
@@ -156,7 +157,9 @@ def run_orcel_episode(
         except Exception:  # noqa: BLE001
             return done("error", "setup-error")
         before = _tree(session.root)
-        orcel = Orceld(orceld, session.root, args=orceld_args)
+        # The direct orceld client, or another with its interface (the Orcel
+        # Agent through the MCP edge, agent_client.py).
+        orcel = Orceld(orceld, session.root, args=orceld_args) if client_factory is None else client_factory(session.root)
         if call_timeout is not None:
             orcel.timeout = call_timeout
         try:
@@ -214,6 +217,7 @@ def run_orcel(
     trace: Optional[Path] = None,
     orceld_args: tuple[str, ...] = (),
     call_timeout: Optional[float] = None,
+    client_factory: Optional[Callable[[Path], Any]] = None,
 ) -> list[dict[str, Any]]:
     """One report row per task variant, solved through orceld; `trace`
     receives one JSON line per episode."""
@@ -240,7 +244,8 @@ def run_orcel(
                 raise TaskLoadError(f"duplicate case id {case}")
             seen.add(case)
             episodes = [
-                run_orcel_episode(module, task, orceld, timeout, orceld_args, call_timeout) for _ in range(repeat)
+                run_orcel_episode(module, task, orceld, timeout, orceld_args, call_timeout, client_factory)
+                for _ in range(repeat)
             ]
             for number, episode in enumerate(episodes):
                 traces.append(

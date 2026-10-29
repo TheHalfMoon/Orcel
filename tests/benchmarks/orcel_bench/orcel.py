@@ -61,6 +61,29 @@ class Call:
     millis: float
 
 
+def orceld_env(workspace: Path, state: Path, scratch: Path) -> dict[str, str]:
+    """orceld's environment for one episode: the workspace, its audit file,
+    and per-OS private state and scratch, never the user's own. Shared by the
+    direct client and the agent client (agent_client.py)."""
+    env = {key: value for key, value in os.environ.items() if key in ("PATH", "SYSTEMROOT", "SystemRoot", "WINDIR")}
+    env.update(
+        {
+            "ORCEL_WORKSPACE_ROOT": str(workspace),
+            "ORCEL_WORKSPACE_ID": "default",
+            "ORCEL_APP_API": "off",
+            "ORCEL_AUDIT_PATH": str(state / "audit" / "audit.jsonl"),
+            "LOCALAPPDATA": str(state),
+            "XDG_STATE_HOME": str(state),
+            "HOME": str(state),
+            "USERPROFILE": str(state),
+            "TEMP": str(scratch),
+            "TMP": str(scratch),
+            "TMPDIR": str(scratch),
+        }
+    )
+    return env
+
+
 @dataclass
 class Orceld:
     """A running orceld on `workspace`; use as a context manager."""
@@ -84,23 +107,7 @@ class Orceld:
         self._state = Path(tempfile.mkdtemp(prefix="orcel-bench-state-"))
         scratch = self._state / "tmp"
         scratch.mkdir()
-        env = {key: value for key, value in os.environ.items() if key in ("PATH", "SYSTEMROOT", "SystemRoot", "WINDIR")}
-        env.update(
-            {
-                "ORCEL_WORKSPACE_ROOT": str(self.workspace),
-                "ORCEL_WORKSPACE_ID": "default",
-                "ORCEL_APP_API": "off",
-                "ORCEL_AUDIT_PATH": str(self._state / "audit" / "audit.jsonl"),
-                # Per-OS private state and scratch, never the user's own.
-                "LOCALAPPDATA": str(self._state),
-                "XDG_STATE_HOME": str(self._state),
-                "HOME": str(self._state),
-                "USERPROFILE": str(self._state),
-                "TEMP": str(scratch),
-                "TMP": str(scratch),
-                "TMPDIR": str(scratch),
-            }
-        )
+        env = orceld_env(self.workspace, self._state, scratch)
         # orceld's stderr is kept so a crash can say why (first line only,
         # in the trace, never in a report).
         self._stderr = (self._state / "orceld-stderr.log").open("wb")
