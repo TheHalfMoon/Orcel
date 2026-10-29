@@ -33,6 +33,12 @@
 //!   stable, `SIGKILL`) or a kill-and-rescan loop.
 //! - **Check-to-kill window.** The start-time check and the kill are two
 //!   calls; on Linux a pidfd closes the window; on macOS it stays a residual.
+//! - **Other users.** On macOS the table scan skips processes this user may
+//!   not inspect (EPERM). A descendant that changed user (setuid) is
+//!   therefore outside the walk; a kill would be refused for it anyway.
+//! - **SIGCHLD.** The root's pgid stays reserved until `sweep` reaps it,
+//!   unless something in the same process sets `SIGCHLD` to `SIG_IGN`
+//!   (automatic reaping); nothing in this crate does.
 //! - **Family bound.** `MAX_FAMILY` must be qualified against a real Chrome
 //!   or Edge tree; exceeding it fails closed.
 
@@ -307,8 +313,16 @@ mod table {
     use super::{FamilyError, Pinned, Row, MAX_SCAN};
 
     /// `Ok(None)` only when the process is gone (ESRCH); any other failure
-    /// fails closed.
+    /// fails closed. Used for pinned members (alive checks and kills).
     pub(super) fn row_of(pid: i32) -> Result<Option<(Row, bool)>, FamilyError> {
+        read(pid, false)
+    }
+
+    /// One row. During the table scan (`scanning`), a process this user
+    /// may not inspect (EPERM, for example a root-owned daemon) is skipped:
+    /// it cannot be the fixture's descendant unless it changed user, which
+    /// stays an open item. A pinned member is always read fail-closed.
+    fn read(pid: i32, scanning: bool) -> Result<Option<(Row, bool)>, FamilyError> {
         // SAFETY: proc_bsdinfo is plain data; zeroed is a valid value.
         let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
         let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
@@ -324,7 +338,7 @@ mod table {
         };
         if read != size {
             let errno = std::io::Error::last_os_error().raw_os_error();
-            return if errno == Some(libc::ESRCH) {
+            return if errno == Some(libc::ESRCH) || (scanning && errno == Some(libc::EPERM)) {
                 Ok(None)
             } else {
                 Err(FamilyError::Unreadable)
@@ -360,7 +374,7 @@ mod table {
         }
         let mut rows = Vec::new();
         for pid in pids[..count].iter().filter(|pid| **pid > 0) {
-            if let Some((row, _)) = row_of(*pid)? {
+            if let Some((row, _)) = read(*pid, true)? {
                 rows.push(row);
             }
         }
