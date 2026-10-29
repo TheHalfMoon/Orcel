@@ -221,9 +221,7 @@ mod tests {
         assert!(!lib.contains("pub mod unix_descendants"));
         for entry in std::fs::read_dir(&dir).unwrap() {
             let file = entry.unwrap().path();
-            if !file.is_file()
-                || file.file_name().is_some_and(|n| n == "unix_descendants.rs")
-            {
+            if !file.is_file() || file.file_name().is_some_and(|n| n == "unix_descendants.rs") {
                 continue;
             }
             let text = std::fs::read_to_string(file).unwrap();
