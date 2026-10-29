@@ -165,7 +165,6 @@ mod tests {
         assert!(
             assert_unix_worker_argv_exact(&production, &profile(), &destinations(), &sink).is_err()
         );
-        // Added, removed, reordered or re-valued elements: refused.
         // Built for another profile or another destination set: refused.
         let other_profile =
             build_unix_worker_argv(Path::new("/var/orcel/other"), &destinations(), &sink).unwrap();
@@ -186,6 +185,7 @@ mod tests {
             &sink
         )
         .is_err());
+        // Added, removed, reordered or re-valued elements: refused.
         let mut added = exact.clone();
         added.insert(1, "--proxy-bypass-list=*".into());
         let mut removed = exact.clone();
@@ -249,6 +249,11 @@ mod tests {
         let elsewhere = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         elsewhere.set_nonblocking(true).unwrap();
         let wildcard = TcpListener::bind(("0.0.0.0", proxy.port())).ok();
+        if wildcard.is_none() {
+            // Linux (and usually Windows) refuse this bind; the hijack case
+            // has teeth on BSD stacks such as macOS.
+            eprintln!("note: the wildcard bind on the sink's port was refused; that case is not exercised here");
+        }
         if let Some(wildcard) = &wildcard {
             wildcard.set_nonblocking(true).unwrap();
         }
