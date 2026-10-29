@@ -115,9 +115,51 @@ pub(crate) fn policy_locations(
     }
 }
 
-/// The state of one location below `root`, read without following a
-/// symbolic link at the location itself (a link is refused as present).
+/// A deliberately conservative, read-only, test-only walk. Reject symbolic
+/// links and unexpected files at *every* ancestor below the trusted root,
+/// not only at the final policy location. A dangling parent symlink must
+/// never masquerade as an absent policy. Checking separately is NOT atomic
+/// against a concurrently swapped directory; activation requires its own
+/// descriptor-relative and race-resistant qualification before any wiring.
+fn check_policy_ancestors(root: &Path, relative: &Path) -> Result<(), PolicyKeyState> {
+    use std::path::Component;
+
+    match std::fs::symlink_metadata(root) {
+        Ok(metadata) if metadata.is_dir() => {}
+        Ok(_) => return Err(PolicyKeyState::Populated),
+        Err(_) => return Err(PolicyKeyState::Unreadable),
+    }
+
+    let components = relative.components().collect::<Vec<_>>();
+    if components.is_empty()
+        || components
+            .iter()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(PolicyKeyState::Unreadable);
+    }
+
+    let mut current = root.to_path_buf();
+    for component in &components[..components.len() - 1] {
+        current.push(component.as_os_str());
+        match std::fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => return Err(PolicyKeyState::Populated),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(PolicyKeyState::Absent);
+            }
+            Err(_) => return Err(PolicyKeyState::Unreadable),
+        }
+    }
+    Ok(())
+}
+
+/// The state of one location below `root`. An ancestor symlink, including
+/// one pointing to a nonexistent target, cannot be mistaken for absence.
 pub(crate) fn location_state(root: &Path, location: &PolicyLocation) -> PolicyKeyState {
+    if let Err(state) = check_policy_ancestors(root, &location.relative) {
+        return state;
+    }
     let path = root.join(&location.relative);
     let metadata = match std::fs::symlink_metadata(&path) {
         Ok(metadata) => metadata,
@@ -378,6 +420,52 @@ mod tests {
             Err(HostError::Invalid(_))
         ));
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_dangling_symlink_in_the_policy_ancestor_fails_closed() {
+        let root = scratch("dangling-ancestor");
+        let parent = root.join("etc/opt/edge");
+        std::fs::create_dir_all(&parent).unwrap();
+        // The original final-only symlink_metadata check returned NotFound
+        // here, incorrectly interpreting this redirect as absent policy.
+        std::os::unix::fs::symlink(root.join("missing"), parent.join("policies")).unwrap();
+        assert!(matches!(
+            assert_no_unix_managed_policy(UnixPlatform::Linux, EngineKind::Edge, &root, None),
+            Err(HostError::Invalid(_))
+        ));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_to_an_empty_directory_in_a_policy_ancestor_fails_closed() {
+        let root = scratch("existing-ancestor");
+        let base = root.join("Library/Managed Preferences");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::create_dir_all(root.join("empty")).unwrap();
+        std::os::unix::fs::symlink(root.join("empty"), base.join("ana")).unwrap();
+        assert!(matches!(
+            assert_no_unix_managed_policy(UnixPlatform::MacOs, EngineKind::Edge, &root, Some("ana")),
+            Err(HostError::Invalid(_))
+        ));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_policy_inspection_root_fails_closed() {
+        let actual = scratch("real-root");
+        let holder = scratch("root-holder");
+        let link = holder.join("linked-root");
+        std::os::unix::fs::symlink(&actual, &link).unwrap();
+        assert!(matches!(
+            assert_no_unix_managed_policy(UnixPlatform::Linux, EngineKind::Edge, &link, None),
+            Err(HostError::Invalid(_))
+        ));
+        std::fs::remove_dir_all(&holder).unwrap();
+        std::fs::remove_dir_all(&actual).unwrap();
     }
 
     #[cfg(unix)]
