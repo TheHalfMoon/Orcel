@@ -35,7 +35,8 @@
 //!   calls; on Linux a pidfd closes the window; on macOS it stays a residual.
 //! - **Other users.** On macOS the table scan skips processes this user may
 //!   not inspect (EPERM). A descendant that changed user (setuid) is
-//!   therefore outside the walk; a kill would be refused for it anyway.
+//!   therefore outside the parent-link walk; it is killed only through the
+//!   group signal, if it stayed in the group.
 //! - **SIGCHLD.** The root's pgid stays reserved until `sweep` reaps it,
 //!   unless something in the same process sets `SIGCHLD` to `SIG_IGN`
 //!   (automatic reaping); nothing in this crate does.
@@ -336,6 +337,10 @@ mod table {
                 size,
             )
         };
+        if read > 0 && read != size {
+            // A short read sets no errno: never consult a stale one.
+            return Err(FamilyError::Unreadable);
+        }
         if read != size {
             let errno = std::io::Error::last_os_error().raw_os_error();
             return if errno == Some(libc::ESRCH) || (scanning && errno == Some(libc::EPERM)) {
