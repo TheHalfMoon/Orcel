@@ -34,8 +34,11 @@ const (
 // Semantic lookup must bound both recursion and raw sibling enumeration.
 // Unlike the read-only tree helper, it cannot precollect unbounded children
 // before applying the node ceiling to an adversarial accessibility provider.
+// SG-000128: callers search to maxRootSearchDepth with maxRootSearchNodes, so
+// an element orceld issued from a scoped read (below a web Document, past the
+// tree's depth cap) is found; nothing found here widens what is returned.
 func findElementByRuntimeID(root uiaElement, walker unsafe.Pointer, key string, depth int, remaining *int) (uiaElement, bool) {
-	if depth > maxTreeDepth || *remaining <= 0 || !root.valid() {
+	if depth > maxRootSearchDepth || *remaining <= 0 || !root.valid() {
 		return uiaElement{}, false
 	}
 	*remaining = *remaining - 1
@@ -43,7 +46,7 @@ func findElementByRuntimeID(root uiaElement, walker unsafe.Pointer, key string, 
 		_, _, _ = vtableCall(root.ptr, 1) // AddRef for the returned owner.
 		return root, true
 	}
-	if depth == maxTreeDepth || *remaining == 0 {
+	if depth == maxRootSearchDepth || *remaining == 0 {
 		return uiaElement{}, false
 	}
 
@@ -219,7 +222,7 @@ func nativeSemanticAction(req hostRequest) hostResponse {
 		}
 		defer oleRelease(walker)
 
-		remaining := maxTreeNodes
+		remaining := maxRootSearchNodes
 		element, found := findElementByRuntimeID(root, walker, req.ElementRuntimeID, 0, &remaining)
 		if !found {
 			operationErr = errors.New("exact UIA runtime id is stale or no longer present")

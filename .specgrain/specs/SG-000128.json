@@ -74,6 +74,21 @@
       "question": "Rule change: one more documented ignored test",
       "status": "RECORDED (before implementation)",
       "decision": "The release-blocker sweep (crates/orcel-lifecycle/tests/release_blocker_sweep.rs, only_the_documented_ignored_tests_exist) admits #[ignore] only at listed files with a listed reason. It now also admits crates/orceld/src/bm02_tier_c_act_tests.rs with the reason \"run by the BM-02 Tier C harness (tierc-act) on a CI runner with the apps launched\": a Windows test-build-only test (cfg(all(test, windows))) that the non-required Tier C GUI CI job runs for slice 3a and that slice 3b runs founder-present. It follows the existing per-file pattern; no other file or reason is admitted, and no other rule changes."
+    },
+    {
+      "question": "Slice 1b: the computer host's scoped read (protocol shape)",
+      "status": "RECORDED (before implementation)",
+      "decision": "The host operation set is unchanged (no new operation; docs/p20/sg000095_desktop_input_import.json and SG-000094's base set stay as they are). observe_window accepts the existing element_runtime_id field (at most 512 bytes) as the subtree root: the Windows computer host finds that element inside the same bound live window within the bounded root search, then observes below it with the unchanged max_nodes / max_depth caps (256 nodes, depth 8 below the root); a runtime id that does not resolve there fails closed and observes nothing. The client fails closed unless the returned tree's root element is exactly the requested runtime id, so a host that ignored the field (returning the window's own tree) is refused, not trusted. The macOS / Linux native host does not serve subtrees and refuses observe_window with element_runtime_id (capability_denied) before native work."
+    },
+    {
+      "question": "Slice 1b: the computer host's semantic-action lookup reaches issued elements below depth 8",
+      "status": "RECORDED (before implementation; independent review required)",
+      "decision": "Every UIA action goes through the computer host, whose semantic_action lookup searched only the first 256 content nodes to depth 8. Elements that orceld issued from a scoped read (for example the form fields below a Chromium or Electron Document, the purpose of SG-000128 per the #517 design) therefore could never be acted on: the lookup refused them as stale. The lookup now uses the same bounded search as the scoped root (4096 nodes, depth 64, raw view, content elements only, sibling enumeration counted against the node bound). This changes no actuation shape, eligible control type, protected surface, approval class or response bound: the host still acts only on the one exact runtime id orceld sends, which the registry issued for that window at its current tree generation, under a fresh per-action SOFT approval and, on the desktop, the Full User lease. It only lets that already-authorized lookup find an element that exists deeper in the same window. An issued element beyond that same bounded search (for example below a root found near the search's depth or node limit) is still refused as stale: the lookup fails closed, it never widens."
+    },
+    {
+      "question": "Rule change: SG-000095's pinned semantic-lookup ceilings",
+      "status": "RECORDED (before implementation)",
+      "decision": "apps/orcel-mcp/src/sg000095-desktop-ci.test.ts pinned the Go semantic lookup to the observation path's ceilings (depth > maxTreeDepth, remaining := maxTreeNodes) so resolution over a hostile provider tree stays finite. The test now pins the slice 1b root-search ceilings in their place (depth > maxRootSearchDepth, remaining := maxRootSearchNodes) together with their values in protocol.go (maxRootSearchNodes = 4096, maxRootSearchDepth = 64) and the unchanged observation caps (maxTreeNodes = 256, maxTreeDepth = 8). The intent of the SG-000095 rule, a finite and bounded traversal with sibling enumeration counted, is kept; every other SG-000095 assertion is unchanged. No other rule changes."
     }
   ],
   "invariants": [

@@ -13,6 +13,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"runtime"
 	"strings"
@@ -785,7 +786,11 @@ func observeUIAElement(
 	return node
 }
 
-func observeWindowUIA(hwnd uint64, maxNodes, maxDepth int) ([]elementFact, error) {
+// observeWindowUIA reads the bound window's tree, or (SG-000128) the
+// subtree below rootRuntimeID inside that same window. The root is found by
+// the bounded runtime-id search; the returned tree keeps the node and depth
+// caps, counted from its root. A root that does not resolve fails closed.
+func observeWindowUIA(hwnd uint64, maxNodes, maxDepth int, rootRuntimeID string) ([]elementFact, error) {
 	if maxNodes <= 0 || maxNodes > maxTreeNodes { maxNodes = maxTreeNodes }
 	if maxDepth <= 0 || maxDepth > maxTreeDepth { maxDepth = maxTreeDepth }
 	var result []elementFact
@@ -803,8 +808,19 @@ func observeWindowUIA(hwnd uint64, maxNodes, maxDepth int) ([]elementFact, error
 			return
 		}
 		defer oleRelease(walker)
+		start := root
+		if rootRuntimeID != "" {
+			searched := maxRootSearchNodes
+			found, ok := findElementByRuntimeID(root, walker, rootRuntimeID, 0, &searched)
+			if !ok {
+				operationErr = errors.New("subtree root is stale or gone: not found inside the window within the search bounds")
+				return
+			}
+			defer found.release()
+			start = found
+		}
 		remaining := maxNodes
-		result = []elementFact{observeUIAElement(root, walker, 0, maxDepth, &remaining)}
+		result = []elementFact{observeUIAElement(start, walker, 0, maxDepth, &remaining)}
 	})
 	if err != nil { return nil, err }
 	if operationErr != nil { return nil, operationErr }

@@ -52,6 +52,42 @@ func TestProtocolRejectsUnknownAndMalformedRequests(t *testing.T) {
 	}
 }
 
+// SG-000128: observe_window takes an element runtime id as a subtree root;
+// no other non-semantic operation takes one, and the id stays bounded.
+func TestElementRuntimeIDIsAcceptedOnlyAsATargetOrSubtreeRoot(t *testing.T) {
+	pid := uint32(10)
+	start := uint64(20)
+	nonce := uint64(30)
+	bound := func(op string, runtimeID string) hostRequest {
+		return hostRequest{
+			Protocol:                protocolGeneration,
+			Op:                      op,
+			HWND:                    1,
+			ExpectedPID:             &pid,
+			ExpectedStartGeneration: &start,
+			ExpectedWindowNonce:     &nonce,
+			ElementRuntimeID:        runtimeID,
+		}
+	}
+	if err := validateRequest(bound("observe_window", "42.1.7")); err != nil {
+		t.Fatalf("subtree root rejected: %+v", err)
+	}
+	if err := validateRequest(bound("observe_window", strings.Repeat("1", maxRuntimeIDBytes+1))); err == nil || err.Code != "invalid_request" {
+		t.Fatalf("oversized subtree root accepted: %+v", err)
+	}
+	if err := validateRequest(bound("capture_window", "42.1.7")); err == nil || err.Code != "invalid_request" {
+		t.Fatalf("runtime id on capture_window accepted: %+v", err)
+	}
+	semantic := bound("semantic_action", strings.Repeat("1", maxRuntimeIDBytes+1))
+	semantic.SemanticAction = "invoke"
+	if err := validateRequest(semantic); err == nil || err.Code != "invalid_request" {
+		t.Fatalf("oversized semantic target accepted: %+v", err)
+	}
+	if maxRootSearchNodes != 4096 || maxRootSearchDepth != 64 || maxTreeNodes != 256 || maxTreeDepth != 8 {
+		t.Fatal("search bounds or tree caps changed")
+	}
+}
+
 func TestResponseSchemaContainsNoSecretOrAuthorityFields(t *testing.T) {
 	raw, err := json.Marshal(success(1))
 	if err != nil {

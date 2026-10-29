@@ -669,6 +669,19 @@ fn validate(request: &Request, platform: HostPlatform) -> Result<(), Refusal> {
     }
     if request.op == "semantic_action" {
         validate_semantic(request)?;
+    } else if request.element_runtime_id.is_some() {
+        // SG-000128: only the Windows computer host reads a subtree below an
+        // element; this host refuses a subtree root rather than ignoring it
+        // and answering with the whole window.
+        return Err(refuse(
+            id,
+            if request.op == "observe_window" {
+                code::CAPABILITY_DENIED
+            } else {
+                code::INVALID_REQUEST
+            },
+            "an element runtime id names only a semantic action's target on this host; subtree observation is not served",
+        ));
     }
     Ok(())
 }
@@ -968,6 +981,16 @@ mod tests {
         assert_eq!(refusal_code(legacy), "invalid_request");
         let unknown_ref_field = r#"{"id":1,"protocol":"orcel-computer-host/2","op":"observe_window","window":{"kind":"x11","id":9,"expected_pid":1,"expected_start_generation":2,"expected_window_nonce":3,"title":"x"}}"#;
         assert_eq!(refusal_code(unknown_ref_field), "invalid_request");
+    }
+
+    #[test]
+    fn sg000128_a_subtree_root_is_refused_not_ignored() {
+        let scoped = r#"{"id":1,"protocol":"orcel-computer-host/2","op":"observe_window","window":{"kind":"x11","id":9,"expected_pid":1,"expected_start_generation":2,"expected_window_nonce":3},"element_runtime_id":"1:4"}"#;
+        assert_eq!(refusal_code(scoped), "capability_denied");
+        let capture = r#"{"id":1,"protocol":"orcel-computer-host/2","op":"capture_window","window":{"kind":"x11","id":9,"expected_pid":1,"expected_start_generation":2,"expected_window_nonce":3},"element_runtime_id":"1:4"}"#;
+        assert_eq!(refusal_code(capture), "invalid_request");
+        let whole = r#"{"id":1,"protocol":"orcel-computer-host/2","op":"observe_window","window":{"kind":"x11","id":9,"expected_pid":1,"expected_start_generation":2,"expected_window_nonce":3}}"#;
+        assert!(decode(whole).is_ok());
     }
 
     #[test]
