@@ -80,10 +80,25 @@ test("typed desktop schemas fail closed on stale-looking ids and widened bounds"
     { window_id: "hwnd:1234", window_generation: 3 },
     { window_id: "uia-win-0123456789abcdef", window_generation: -1 },
     { window_id: "uia-win-0123456789abcdef", window_generation: 3, max_depth: 9 },
-    { window_id: "uia-win-0123456789abcdef", window_generation: 3, max_nodes: 257 }
+    { window_id: "uia-win-0123456789abcdef", window_generation: 3, max_nodes: 257 },
+    // SG-000128: a subtree root is an issued element id with its tree
+    // generation, both or neither; nothing else names a root.
+    { window_id: "uia-win-0123456789abcdef", window_generation: 3, root_element_id: "uia-el-0123456789abcdef" },
+    { window_id: "uia-win-0123456789abcdef", window_generation: 3, tree_generation: 4 },
+    { window_id: "uia-win-0123456789abcdef", window_generation: 3, root_element_id: "hwnd:1234", tree_generation: 4 },
+    { window_id: "uia-win-0123456789abcdef", window_generation: 3, root_element_id: "uia-el-0123456789abcdef", tree_generation: -1 }
   ]) {
     assert.equal(tree.safeParse(bad).success, false, JSON.stringify(bad));
   }
+  const scoped = tree.safeParse({
+    window_id: "uia-win-0123456789abcdef",
+    window_generation: 3,
+    root_element_id: "uia-el-0123456789abcdef",
+    tree_generation: 4
+  });
+  assert.equal(scoped.success, true);
+  assert.equal(scoped.data?.max_depth, 8);
+  assert.equal(scoped.data?.max_nodes, 256);
 
   const capture = desktopWindowCaptureSchema("w");
   assert.equal(
