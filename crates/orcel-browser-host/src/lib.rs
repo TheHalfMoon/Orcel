@@ -40,6 +40,9 @@ mod unix_supervise;
 // SG-000115 slice A3 (unix_profile), inert until activation: Unix test builds only.
 #[cfg(all(test, unix))]
 mod unix_profile;
+// SG-000115 slice A4 (unix_confinement), inert until activation: test builds only.
+#[cfg(test)]
+mod unix_confinement;
 // The worker session that uses the probe machinery exists only on Windows.
 #[cfg_attr(not(windows), allow(dead_code))]
 mod verify;
