@@ -109,18 +109,27 @@ fn a_half_scoped_or_malformed_root_is_refused_by_policy_and_audited() {
             json!({"window_id": window_id(), "expected_window_generation": 1, "root_element_id": "nope", "expected_tree_generation": 2}),
             malformed.clone(),
         ),
-        // A caller-supplied native handle is a widening field: denied
-        // outright, scoped or not.
-        (
-            json!({"window_id": window_id(), "expected_window_generation": 1, "root_element_id": element_id(), "expected_tree_generation": 2, "hwnd": 1}),
-            FailureCode::CapabilityDenied,
-        ),
     ] {
         let before = bench.audit_lines();
         let response = bench.call(arguments);
         assert!(!response.ok);
         assert_eq!(response.error.unwrap().code, expected);
         assert_eq!(bench.audit_lines(), before + 1, "the refusal is audited");
+    }
+    // Caller-supplied native identifiers and selectors are widening fields:
+    // denied outright, scoped or not, and audited.
+    for field in ["hwnd", "pid", "runtime_id", "selector", "xpath"] {
+        let mut arguments = json!({"window_id": window_id(), "expected_window_generation": 1,
+            "root_element_id": element_id(), "expected_tree_generation": 2});
+        arguments[field] = json!(1);
+        let before = bench.audit_lines();
+        let response = bench.call(arguments);
+        assert_eq!(
+            response.error.unwrap().code,
+            FailureCode::CapabilityDenied,
+            "{field}"
+        );
+        assert_eq!(bench.audit_lines(), before + 1);
     }
 }
 

@@ -83,9 +83,9 @@ pub const MAX_WINDOWS: usize = 64;
 pub const MAX_TREE_DEPTH: usize = 8;
 pub const MAX_TREE_NODES: usize = 256;
 /// SG-000128: scoped observations of one window between budget resets. The
-/// budget resets only when the window itself changes (a new window
-/// generation) or an approved action succeeds on it; listing an unchanged
-/// window does not reset it.
+/// budget resets only when the window itself changes (its process instance,
+/// nonce or class) or an approved action succeeds on it; listing an
+/// unchanged window, or a title-only change, does not reset it.
 pub const MAX_SCOPED_OBSERVATIONS: u32 = 8;
 pub const MAX_STRING_CHARS: usize = 256;
 pub const MAX_RESPONSE_BYTES: usize = 64 * 1024;
@@ -1705,7 +1705,15 @@ impl UiaRegistry {
             {
                 existing.clone()
             }
-            Some(_) => {
+            Some(existing) => {
+                // SG-000128: the scoped budget resets only when the window
+                // itself changed (process instance, nonce or class). A
+                // title-only change (a web page's document.title, a ticking
+                // counter) keeps it, so it cannot renew the budget without
+                // consent.
+                let identity_changed = existing.process_id != process_id
+                    || existing.window_nonce != native.window_nonce
+                    || existing.class != truncate_owned(&native.class, MAX_STRING_CHARS).0;
                 self.tree_counter += 1;
                 let record = WindowRecord {
                     window_id: window_id.clone(),
@@ -1721,7 +1729,9 @@ impl UiaRegistry {
                     policy_revision: policy_revision.to_owned(),
                 };
                 self.remove_window_elements(&window_id);
-                self.scoped_reads.remove(&window_id);
+                if identity_changed {
+                    self.scoped_reads.remove(&window_id);
+                }
                 self.windows.insert(window_id, record.clone());
                 record
             }

@@ -345,7 +345,7 @@ pub(crate) fn read_subtree(raw: u64, runtime_id: &str) -> Result<Vec<NativeEleme
     let root = find_by_runtime_id(&walker, &window, runtime_id).ok_or_else(|| {
         UiaError::new(
             FailureCode::TargetStale,
-            "the subtree root no longer resolves inside the window",
+            "the subtree root was not found inside the window within the search bounds (gone, moved, or deeper than the bounded search)",
         )
     })?;
     let mut budget = MAX_TREE_NODES + 1;
@@ -385,6 +385,10 @@ fn find_by_runtime_id(
         }
         let mut child = unsafe { walker.GetFirstChildElement(&element) }.ok();
         while let Some(current) = child {
+            // Never queue past the search bound (a very wide node).
+            if visited + stack.len() >= ROOT_SEARCH_NODES {
+                break;
+            }
             child = unsafe { walker.GetNextSiblingElement(&current) }.ok();
             stack.push((current, depth + 1));
         }

@@ -44,6 +44,7 @@ struct State {
     windows: Vec<NativeWindow>,
     tree: Vec<NativeElement>,
     subtree_fails: Option<FailureCode>,
+    invoke_fails: bool,
     subtree_reads: Vec<String>,
 }
 
@@ -94,6 +95,12 @@ impl UiaAdapter for Fake {
             .ok_or_else(|| UiaError::new(FailureCode::TargetStale, "gone"))
     }
     fn invoke_element(&self, _hwnd: u64, _runtime_id: &str) -> Result<(), UiaError> {
+        if self.state.borrow().invoke_fails {
+            return Err(UiaError::new(
+                FailureCode::ProviderUnavailable,
+                "fake invoke failure",
+            ));
+        }
         Ok(())
     }
 }
@@ -399,14 +406,51 @@ fn the_cumulative_budget_holds_until_a_real_change_or_an_approved_action() {
         .expect("invoke");
     full = tree(&mut s);
     use_one(&mut s, &full).expect("budget reset by the approved action");
-    // A changed window (new generation) resets it as well.
+    // A failed action does not reset it.
     for _ in 1..MAX_SCOPED_OBSERVATIONS {
         full = tree(&mut s);
         use_one(&mut s, &full).unwrap();
     }
     full = tree(&mut s);
-    assert!(use_one(&mut s, &full).is_err());
-    s.fake.state.borrow_mut().windows = vec![window(100, "Signal Quay Chat (2)", 1)];
+    assert!(use_one(&mut s, &full).is_err(), "spent again");
+    s.fake.state.borrow_mut().invoke_fails = true;
+    full = tree(&mut s);
+    let button = node(&full, "Record blocker")["element_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let tree_generation = full["tree_generation"].as_u64().unwrap();
+    assert!(s
+        .registry
+        .invoke_element(
+            &s.fake,
+            &button,
+            tree_generation,
+            "Button",
+            WORKSPACE,
+            POLICY
+        )
+        .is_err());
+    s.fake.state.borrow_mut().invoke_fails = false;
+    full = tree(&mut s);
+    assert_eq!(
+        use_one(&mut s, &full).unwrap_err().code,
+        FailureCode::CapabilityDenied,
+        "a failed action keeps it spent"
+    );
+    // A title-only change (a web page's title) does not reset it either.
+    s.fake.state.borrow_mut().windows = vec![window(100, "Signal Quay Chat - 3 unread", 1)];
+    let list = s.registry.list_windows(&s.fake, WORKSPACE, POLICY).unwrap();
+    s.window_generation = list["windows"][0]["window_generation"].as_u64().unwrap();
+    full = tree(&mut s);
+    assert_eq!(
+        use_one(&mut s, &full).unwrap_err().code,
+        FailureCode::CapabilityDenied,
+        "a title change keeps it spent"
+    );
+    // A changed window identity (a new nonce: the window itself changed)
+    // resets it.
+    s.fake.state.borrow_mut().windows = vec![window(100, "Signal Quay Chat - 3 unread", 2)];
     let list = s.registry.list_windows(&s.fake, WORKSPACE, POLICY).unwrap();
     s.window_generation = list["windows"][0]["window_generation"].as_u64().unwrap();
     full = tree(&mut s);
