@@ -7,8 +7,8 @@
 //! `lib.rs`); `libc` is a Unix dev-dependency only. No release build
 //! contains it and no production path calls it: `supervise.rs`'s Unix
 //! platform module is unchanged, and macOS/Linux launch stays refused.
-//! Tests spawn only fixture processes (`sh`, `sleep`, `python3`), never a
-//! browser.
+//! Tests spawn only fixture processes (`python3`, `sleep`), never a
+//! browser and never a shell.
 //!
 //! The shape:
 //! - The child starts in a new process group.
@@ -449,11 +449,23 @@ mod tests {
 
     const DEADLINE: Duration = Duration::from_secs(10);
 
-    fn sh(script: &str) -> Command {
-        let mut command = Command::new("/bin/sh");
-        command.arg("-c").arg(script);
+    /// A `python3` fixture (no shell: SG-000085 bans shell tokens in this
+    /// crate's sources, tests included).
+    fn python(code: &str) -> Command {
+        let mut command = Command::new("python3");
+        command.arg("-c").arg(code);
         command
     }
+
+    /// The root and two `sleep` children, all in the root's group.
+    const TWO_SLEEPERS: &str = "import subprocess; \
+        ps = [subprocess.Popen(['sleep', '60']) for _ in range(2)]; \
+        [p.wait() for p in ps]";
+
+    /// A child that leaves the group (setsid) and sleeps; the root waits.
+    const ESCAPER: &str = "import subprocess, sys; \
+        code = 'import os, time; os.setsid(); time.sleep(60)'; \
+        subprocess.Popen([sys.executable, '-c', code]).wait()";
 
     /// Wait until the family satisfies `ready`, bounded by `DEADLINE`.
     fn family_until(supervised: &Supervised, ready: impl Fn(&[Pinned]) -> bool) -> Vec<Pinned> {
@@ -477,7 +489,7 @@ mod tests {
 
     #[test]
     fn the_family_is_the_group_and_the_sweep_confirms_every_exit() {
-        let supervised = Supervised::spawn(sh("sleep 60 & sleep 60 & wait")).unwrap();
+        let supervised = Supervised::spawn(python(TWO_SLEEPERS)).unwrap();
         let family = family_until(&supervised, |family| family.len() >= 3);
         assert!(family.len() >= 3, "{family:?}");
         assert!(family.contains(&supervised.root()));
@@ -495,8 +507,7 @@ mod tests {
     /// still found by the parent-link walk and swept.
     #[test]
     fn a_descendant_that_leaves_the_group_is_still_swept() {
-        let script = "python3 -c 'import os,time; os.setsid(); time.sleep(60)' & wait";
-        let supervised = Supervised::spawn(sh(script)).unwrap();
+        let supervised = Supervised::spawn(python(ESCAPER)).unwrap();
         let root = supervised.root();
         // Wait for the helper to have called setsid, not merely to exist.
         let family = family_until(&supervised, |family| {
@@ -521,7 +532,7 @@ mod tests {
     /// armed guard kills the family on drop.
     #[test]
     fn dropping_an_armed_fixture_kills_its_family() {
-        let supervised = Supervised::spawn(sh("sleep 60 & sleep 60 & wait")).unwrap();
+        let supervised = Supervised::spawn(python(TWO_SLEEPERS)).unwrap();
         let family = family_until(&supervised, |family| family.len() >= 3);
         assert!(family.len() >= 3, "{family:?}");
         drop(supervised);
