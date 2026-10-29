@@ -331,10 +331,13 @@ def load_plan(path: Path) -> dict[str, Any]:
 def _problems(check: Any) -> set[str]:
     if not isinstance(check, dict):
         return {"(missing)"}
+    found: set[str] = set()
     listed = check.get("problems")
     if isinstance(listed, list):
-        return {str(item) for item in listed}
-    return set() if check.get("passed") is True else {str(check.get("reason", "(failed)"))}
+        found = {str(item) for item in listed}
+    if check.get("passed") is not True:
+        found |= {"(not passed)", str(check.get("reason", "(failed)"))}
+    return found
 
 
 def judge_act(plan: dict[str, Any], acted: dict[str, Any], baseline: Optional[dict[str, Any]],
@@ -348,7 +351,11 @@ def judge_act(plan: dict[str, Any], acted: dict[str, Any], baseline: Optional[di
         return "error", "evaluator-failed"
     checks = outcome.get("detail", {}).get("checks", {})
     before = baseline.get("detail", {}).get("checks", {})
-    # A written check that already passes before any action proves nothing.
+    # A baseline without every written check cannot show that nothing was
+    # written; a written check that already passes before any action proves
+    # nothing.
+    if not before or any(not isinstance(before.get(name), dict) for name in plan["written_checks"]):
+        return "error", "baseline-incomplete"
     if any(isinstance(before.get(name), dict) and before[name].get("passed") is True for name in plan["written_checks"]):
         return "error", "baseline-already-written"
 
@@ -380,7 +387,8 @@ def judge_act(plan: dict[str, Any], acted: dict[str, Any], baseline: Optional[di
     # Nothing outside the targets got worse: no check gained a problem the
     # untouched state did not have (a composite check such as cdb-s02's
     # "preservation" also needs other apps' work, so it may fail in both).
-    if any(not _problems(checks.get(name)) <= _problems(before.get(name)) for name in before if name not in plan["targets"]):
+    if any(not _problems(checks.get(name)) <= _problems(before.get(name))
+           for name in set(before) | set(checks) if name not in plan["targets"]):
         return "fail", "regressed-against-baseline"
     if acted.get("audit_records", 0) < len(calls):
         return "fail", "unaudited"

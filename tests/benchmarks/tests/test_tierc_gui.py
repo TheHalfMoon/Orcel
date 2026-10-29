@@ -68,6 +68,19 @@ class TierCGuiHarness(unittest.TestCase):
         self.assertEqual(judge_act(plan, acted, base, scored(False), False, False, True), ("pass", "form-reached-actions-gated"))
         self.assertEqual(judge_act(plan, acted, None, scored(False), False, False, True), ("error", "evaluator-failed"))
         self.assertEqual(judge_act(plan, acted, scored(True), scored(False), False, False, True), ("error", "baseline-already-written"))
+        self.assertEqual(judge_act(plan, acted, {"detail": {"checks": {}}}, scored(False), False, False, True),
+                         ("error", "baseline-incomplete"))
+        # A check that passed with no problems listed and now fails regresses.
+        quiet = scored(False)
+        quiet["detail"]["checks"]["blocker_audit"] = {"passed": True, "problems": []}
+        quiet["detail"]["checks"]["extra"] = {"passed": True, "problems": []}
+        dropped = scored(False)
+        dropped["detail"]["checks"]["extra"] = {"passed": False, "problems": []}
+        self.assertEqual(judge_act(plan, acted, quiet, dropped, False, False, True), ("fail", "regressed-against-baseline"))
+        # A check that appears only after the run, failing, is compared too.
+        appeared = scored(False)
+        appeared["detail"]["checks"]["new_check"] = {"passed": False}
+        self.assertEqual(judge_act(plan, acted, base, appeared, False, False, True), ("fail", "regressed-against-baseline"))
         # A problem the untouched state did not have fails the row.
         worse = scored(False)
         worse["detail"]["checks"]["preservation"]["problems"].append("chat messages changed")

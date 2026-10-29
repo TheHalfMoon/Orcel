@@ -48,6 +48,7 @@ impl Kernel {
         arguments: Value,
     ) -> Result<Value, String> {
         let started = Instant::now();
+        let scoped = arguments.get("root_element_id").is_some();
         let response = handle_envelope(
             &self.policy,
             &self.audit,
@@ -75,6 +76,7 @@ impl Kernel {
             .and_then(|v| v.as_str().map(str::to_owned));
         self.calls.push(json!({
             "shape": format!("{capability}/{operation}"),
+            "scoped": scoped,
             "ok": response.ok,
             "code": code,
             "ms": (started.elapsed().as_secs_f64() * 1000.0 * 1000.0).round() / 1000.0,
@@ -95,6 +97,15 @@ impl Kernel {
             Err(code.unwrap_or_else(|| "UNKNOWN".into()))
         }
     }
+}
+
+/// Successful scoped observations so far.
+fn scoped_reads(kernel: &Kernel) -> usize {
+    kernel
+        .calls
+        .iter()
+        .filter(|c| c["scoped"] == true && c["ok"] == true)
+        .count()
 }
 
 /// The window, then a fresh tree; the node named `name` with an eligible
@@ -259,46 +270,61 @@ fn bm02_tier_c_scripted_plan_acts_through_orceld() {
                 Step::SetValue { name, .. } => (name, &["Edit", "Document"]),
                 Step::Invoke { name } => (name, &["Button"]),
             };
+            let scoped_before = scoped_reads(&kernel);
             if let Err(code) = find(&mut kernel, &broker, &plan.window_title, name, types) {
                 outcome = format!("reach-failed-{}", code.to_ascii_lowercase());
                 break;
             }
+            // Each element must be reached through exactly one successful
+            // scoped read (the slice 3a evidence), not the unscoped tree.
+            if scoped_reads(&kernel) != scoped_before + 1 {
+                outcome = "reach-not-scoped".to_owned();
+                break;
+            }
         }
         if outcome == "reached-and-gated" {
-            let attempted = match plan.steps.first() {
-                Some(Step::SetValue { name, value }) => find(
-                    &mut kernel,
-                    &broker,
-                    &plan.window_title,
-                    name,
-                    &["Edit", "Document"],
-                )
-                .and_then(|(node, generation)| {
-                    kernel.call(
+            outcome = match plan.steps.first() {
+                Some(Step::SetValue { name, value }) => {
+                    match find(
+                        &mut kernel,
                         &broker,
-                        "uia.element",
-                        "set_value",
-                        json!({
-                            "element_id": node["element_id"],
-                            "expected_tree_generation": generation,
-                            "expected_control_type": node["control_type"],
-                            "value": value,
-                        }),
-                    )
-                }),
-                _ => Err("PLAN_DOES_NOT_START_WITH_SET_VALUE".into()),
-            };
-            outcome = match attempted {
-                // The refusal must be the Full User gate itself, not some
-                // other denial that happens to share the code.
-                Err(code)
-                    if code == "CAPABILITY_DENIED"
-                        && kernel.last_refusal.contains("DesktopInput") =>
-                {
-                    "reached-and-gated".to_owned()
+                        &plan.window_title,
+                        name,
+                        &["Edit", "Document"],
+                    ) {
+                        Err(code) => format!("reach-failed-{}", code.to_ascii_lowercase()),
+                        Ok((node, generation)) => {
+                            kernel.last_refusal.clear();
+                            let attempted = kernel.call(
+                                &broker,
+                                "uia.element",
+                                "set_value",
+                                json!({
+                                    "element_id": node["element_id"],
+                                    "expected_tree_generation": generation,
+                                    "expected_control_type": node["control_type"],
+                                    "value": value,
+                                }),
+                            );
+                            match attempted {
+                                // The set_value call itself must be refused by
+                                // the DesktopInput gate (check_current_desktop_input),
+                                // not some other denial that shares the code.
+                                Err(code)
+                                    if code == "CAPABILITY_DENIED"
+                                        && kernel.last_refusal.contains("DesktopInput") =>
+                                {
+                                    "reached-and-gated".to_owned()
+                                }
+                                Err(code) => {
+                                    format!("gate-unexpected-{}", code.to_ascii_lowercase())
+                                }
+                                Ok(_) => "gate-missing-action-ran".to_owned(),
+                            }
+                        }
+                    }
                 }
-                Err(code) => format!("gate-unexpected-{}", code.to_ascii_lowercase()),
-                Ok(_) => "gate-missing-action-ran".to_owned(),
+                _ => "plan-does-not-start-with-set-value".to_owned(),
             };
         }
     }
