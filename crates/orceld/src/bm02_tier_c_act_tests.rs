@@ -112,15 +112,48 @@ fn find(
             "max_nodes": 2000,
         }),
     )?;
-    let generation = tree["tree_generation"]
+    let mut generation = tree["tree_generation"]
         .as_u64()
         .ok_or("NO_TREE_GENERATION")?;
-    let node = tree["nodes"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .find(|n| n["name"] == name && types.iter().any(|t| n["control_type"] == *t))
-        .cloned();
+    let pick = |tree: &Value| {
+        tree["nodes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|n| n["name"] == name && types.iter().any(|t| n["control_type"] == *t))
+            .cloned()
+    };
+    let mut node = pick(&tree);
+    let mut tree = tree;
+    // SG-000128: a web page's controls sit below its Document, past the
+    // window tree's depth cap. One scoped observation below the Document
+    // orceld issued (same window, current tree generation) reaches them.
+    if node.is_none() {
+        if let Some(document) = tree["nodes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|n| n["control_type"] == "Document")
+            .cloned()
+        {
+            let scoped = kernel.call(
+                broker,
+                "uia.tree",
+                "observe",
+                json!({
+                    "window_id": window["window_id"],
+                    "expected_window_generation": window["window_generation"],
+                    "root_element_id": document["element_id"],
+                    "expected_tree_generation": generation,
+                }),
+            )?;
+            generation = scoped["tree_generation"]
+                .as_u64()
+                .ok_or("NO_TREE_GENERATION")?;
+            node = pick(&scoped);
+            tree = scoped;
+        }
+    }
     let Some(node) = node else {
         // Diagnostics for the CI log only (never the report): what the
         // bounded tree did contain.
