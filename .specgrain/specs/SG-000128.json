@@ -59,6 +59,11 @@
       "question": "Raise the global caps instead",
       "status": "REJECTED",
       "decision": "A larger global depth or node cap would enlarge every observation for every caller and widen SG-000063 A1's bound; a scoped root keeps every response within today's bound."
+    },
+    {
+      "question": "Known limitations (slice 1)",
+      "status": "RECORDED",
+      "decision": "A plan whose action is refused or fails cannot scope-read that window again until the window changes (fail closed). Budgets, element ids and window ids live in orceld's per-process registry, so an orceld restart resets them together with every identity (a restarted orceld has issued no roots). Slice 1 implements the in-process Windows adapter; the computer host refuses scoped reads (ProviderUnavailable) until slice 1b adds its protocol request."
     }
   ],
   "invariants": [
@@ -70,7 +75,7 @@
     "The registry stays bounded: at most MAX_TREE_NODES elements per window and MAX_WINDOWS windows.",
     "Redaction (password and secret-like values), protected-surface and other-session exclusions apply to every subtree.",
     "No caller-supplied HWND, PID, runtime id, native handle, selector, XPath or coordinate is accepted.",
-    "Observation never needs or creates approval; every action keeps its fresh per-action SOFT approval.",
+    "Observation itself never asks for or creates approval; every action keeps its fresh per-action SOFT approval. The scoped budget is renewed only as a side effect of a real window change or a successful approved action; no new approval class exists.",
     "Cumulative exposure is bounded by consent or real change: at most MAX_SCOPED_OBSERVATIONS (8) scoped observations per window between budget resets, and the budget resets only when the window's generation changes (the window itself changed) or an approved action (fresh per-action SOFT approval) succeeds on that window. Listing an unchanged window does not reset it. Reading further than eight scoped responses into one unchanged window therefore needs a person's approval for an action in between; unapproved, unchanged traversal stops at nine bounded responses (9 x 256 nodes)."
   ],
   "acceptance": [
