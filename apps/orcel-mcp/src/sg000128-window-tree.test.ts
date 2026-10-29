@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { KernelClient } from "./kernel.js";
-import { TOOL_CONTRACT } from "./tool_contract.js";
+import { REMOTE_PROVIDER_PROFILES, SURFACE_PROFILES, TOOL_CONTRACT } from "./tool_contract.js";
 import { allowedToolsFor, buildOrcelServer, localTransportContext, tunnelTransportContext } from "./server.js";
 
 /**
@@ -94,7 +94,13 @@ test("sg128 desktop_window_tree forwards an optional subtree root and nothing el
 
   await transport.request(3, "tools/call", { name: "desktop_window_tree", arguments: WINDOW });
   await transport.request(4, "tools/call", { name: "desktop_window_tree", arguments: { ...WINDOW, ...ROOT } });
-  let id = 5;
+  // Kernel field names and native identities sent by a caller are never
+  // forwarded: only the named arguments build the kernel payload.
+  await transport.request(5, "tools/call", {
+    name: "desktop_window_tree",
+    arguments: { ...WINDOW, ...ROOT, runtime_id: "42.1", hwnd: 1312, selector: "//Edit", expected_tree_generation: 9 }
+  });
+  let id = 6;
   for (const half of [{ root_element_id: ROOT.root_element_id }, { tree_generation: ROOT.tree_generation }]) {
     const called = await transport.request(id++, "tools/call", { name: "desktop_window_tree", arguments: { ...WINDOW, ...half } });
     const refused =
@@ -103,6 +109,10 @@ test("sg128 desktop_window_tree forwards an optional subtree root and nothing el
   }
   await server.close();
 
+  // The injected call forwarded exactly the clean scoped payload.
+  assert.equal(calls.length, 3);
+  const injected = calls.pop();
+  assert.deepEqual(injected?.arguments, calls[1]?.arguments);
   assert.deepEqual(
     calls.map((call) => [call.capability, call.operation, call.arguments]),
     [
@@ -131,4 +141,8 @@ test("sg128 desktop_window_tree stays local-only, read-only and bounded as befor
   assert.equal(entry.effect, "desktop_observe");
   assert.equal(entry.outputBound, "depth 8 and at most 256 elements within 64 KiB");
   assert.equal(allowedToolsFor(tunnelTransportContext("openai")).has("desktop_window_tree"), false);
+  // Every remote provider maps to a profile that omits the tool.
+  for (const [provider, profile] of Object.entries(REMOTE_PROVIDER_PROFILES)) {
+    assert.equal(SURFACE_PROFILES[profile].includes("desktop_window_tree"), false, provider);
+  }
 });

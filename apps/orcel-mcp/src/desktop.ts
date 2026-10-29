@@ -222,7 +222,7 @@ export function registerDesktopTools(
     "desktop_window_tree",
     {
       description:
-        "Read the bounded UI Automation control tree (depth at most 8, at most 256 elements) of one listed window, bound to its window_generation. Optionally read below one element of that window's latest tree instead (root_element_id with its tree_generation), with the same bounds; a few such reads per window until it changes or an approved action succeeds. Password values are never read. Read-only; no Full User grant is required.",
+        "Read the bounded UI Automation control tree (depth at most 8, at most 256 elements) of one listed window, bound to its window_generation. Optionally read below one element of that window's latest tree instead (root_element_id with its tree_generation), with the same bounds; at most 8 such reads per window until the window itself is replaced or an approved action on it succeeds. Password values are never read. Read-only; no Full User grant is required.",
       inputSchema: desktopWindowTreeSchema(defaultWorkspace)
     },
     async ({ workspace_id, window_id, window_generation, max_depth, max_nodes, root_element_id, tree_generation }) =>
