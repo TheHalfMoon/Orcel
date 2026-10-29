@@ -156,6 +156,12 @@ fn lock_open_error(errno: i32) -> ProfileError {
 }
 
 impl ProfileHold {
+    /// The held root descriptor, for operations relative to it (the A5
+    /// sweep, itself test-only).
+    pub(crate) fn root_fd(&self) -> i32 {
+        self.root.as_raw_fd()
+    }
+
     /// Hold the profile at `path`: refuse a link, a non-directory, another
     /// owner, a mode other than 0700, an unsafe lock file, or a profile
     /// another hold already has.
@@ -438,7 +444,10 @@ mod tests {
         assert!(files.len() > 10, "the scan found the crate's sources");
         let mut named = Vec::new();
         for path in &files {
+            // unix_cleanup.rs (slice A5) is a sibling test-only module that
+            // builds on the hold; its own scan pins its test-only declaration.
             if *path == crate_dir.join("src").join("unix_profile.rs")
+                || *path == crate_dir.join("src").join("unix_cleanup.rs")
                 || *path == crate_dir.join("src").join("lib.rs")
             {
                 continue;
