@@ -317,9 +317,14 @@ def load_plan(path: Path) -> dict[str, Any]:
     plan = json.loads(path.read_text(encoding="utf-8"))
     if not str(plan.get("label", "")).startswith("scripted-plan"):
         raise TierCError("a Tier C plan must be labelled scripted-plan")
-    for key in ("task", "app", "window_title", "targets", "must_stay_passed", "steps"):
+    for key in ("task", "app", "window_title", "targets", "written_checks", "must_stay_passed", "steps"):
         if key not in plan:
             raise TierCError(f"the plan has no {key}")
+    # The checks that pass only once the plan has written (a consistency
+    # check such as an empty audit chain passes on the untouched state too).
+    written = plan["written_checks"]
+    if not isinstance(written, list) or not written or any(name not in plan["targets"] for name in written):
+        raise TierCError("written_checks must be a non-empty subset of targets")
     return plan
 
 
@@ -341,12 +346,16 @@ def judge_act(plan: dict[str, Any], acted: dict[str, Any], outcome: Optional[dic
     if reach_only:
         # Slice 3a: every target reached through the scoped read and the
         # first action refused for want of a person-granted Full User lease.
-        # Each target check must be present and not passed (nothing written,
-        # not merely absent), and the preserved checks must still pass.
+        # Each written check must be present and not passed (nothing written,
+        # not merely absent); every other target (a consistency check such
+        # as the audit chain matching the store) and the preserved checks
+        # must still pass.
         if any(not isinstance(checks.get(name), dict) for name in plan["targets"]):
             return "fail", "target-check-missing"
-        if any(passed(name) for name in plan["targets"]):
+        if any(passed(name) for name in plan["written_checks"]):
             return "fail", "gated-action-wrote"
+        if any(not passed(name) for name in plan["targets"] if name not in plan["written_checks"]):
+            return "fail", "consistency-check-broken"
         observed = "form-reached-actions-gated"
     else:
         if any(not passed(name) for name in plan["targets"]):

@@ -46,17 +46,19 @@ class TierCGuiHarness(unittest.TestCase):
         with tempfile.TemporaryDirectory() as scratch:
             path = Path(scratch) / "plan.json"
             plan = json.loads(shipped.read_text(encoding="utf-8"))
-            for broken in ({**plan, "label": "agent"}, {k: v for k, v in plan.items() if k != "targets"}):
+            for broken in ({**plan, "label": "agent"}, {k: v for k, v in plan.items() if k != "targets"},
+                           {**plan, "written_checks": []}, {**plan, "written_checks": ["mail_preserved"]}):
                 path.write_text(json.dumps(broken), encoding="utf-8")
                 with self.assertRaises(TierCError):
                     load_plan(path)
 
     def test_the_reach_row_requires_the_gate_and_nothing_written(self) -> None:
-        plan = {"targets": ["blocker_recorded"], "must_stay_passed": ["mail_preserved"]}
+        plan = {"targets": ["blocker_recorded", "blocker_audit"], "written_checks": ["blocker_recorded"],
+                "must_stay_passed": ["mail_preserved"]}
         acted = {"outcome": "reached-and-gated", "calls": [{}, {}], "audit_records": 2}
 
         def scored(target: object) -> dict:
-            checks = {"mail_preserved": {"passed": True}}
+            checks = {"mail_preserved": {"passed": True}, "blocker_audit": {"passed": True}}
             if target is not None:
                 checks["blocker_recorded"] = {"passed": target}
             return {"detail": {"checks": checks}}
@@ -69,13 +71,16 @@ class TierCGuiHarness(unittest.TestCase):
         self.assertEqual(judge_act(plan, dict(acted, audit_records=1), scored(False), False, False, True), ("fail", "unaudited"))
         self.assertEqual(judge_act(plan, acted, scored(False), True, False, True), ("fail", "window-left-after-teardown"))
         self.assertEqual(judge_act(plan, acted, scored(False), False, True, True), ("fail", "process-left-after-teardown"))
+        inconsistent = scored(False)
+        inconsistent["detail"]["checks"]["blocker_audit"]["passed"] = False
+        self.assertEqual(judge_act(plan, acted, inconsistent, False, False, True), ("fail", "consistency-check-broken"))
         broken = scored(False)
         broken["detail"]["checks"]["mail_preserved"]["passed"] = False
         self.assertEqual(judge_act(plan, acted, broken, False, False, True), ("fail", "preserved-check-broken"))
         # A reach result never passes as a completed act run, nor the reverse.
         self.assertEqual(judge_act(plan, acted, scored(True), False, False, False)[0], "fail")
         done = dict(acted, outcome="completed")
-        self.assertEqual(judge_act(plan, done, scored(True), False, False, False), ("pass", "scripted-checks-2-of-2"))
+        self.assertEqual(judge_act(plan, done, scored(True), False, False, False), ("pass", "scripted-checks-3-of-3"))
         self.assertEqual(judge_act(plan, done, scored(False), False, False, True)[0], "fail")
 
     def test_it_refuses_to_run_outside_ci(self) -> None:

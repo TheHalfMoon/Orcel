@@ -4,6 +4,7 @@
   "app": "chat",
   "window_title": "Signal Quay Chat",
   "targets": ["blocker_recorded", "blocker_audit"],
+  "written_checks": ["blocker_recorded"],
   "must_stay_passed": ["mail_preserved", "preservation"],
   "steps": [
     {"set_value": {"name": "Conflict ID", "value": "LHP-C17"}},
