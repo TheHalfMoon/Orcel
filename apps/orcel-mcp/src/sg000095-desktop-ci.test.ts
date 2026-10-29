@@ -77,6 +77,8 @@ test("SG-000095 native mutation source stays private, bounded, and excludes dono
   assert.match(bounds, /maxTreeDepth = 8\b/);
   assert.match(bounds, /maxRootSearchNodes = 4096\b/);
   assert.match(bounds, /maxRootSearchDepth = 64\b/);
+  // The scoped-read caller uses the same bounded root search.
+  assert.match(readFileSync(join(hostDir, "native_uia_windows.go"), "utf8"), /searched := maxRootSearchNodes/);
   assert.match(semantic, /walkerSlotGetNextSiblingElement/);
   assert.match(semantic, /findElementByRuntimeID\(uiaElement\{current\}, walker, key, depth\+1, remaining\)/);
   assert.doesNotMatch(semantic, /walkerChildren\(walker, root\)/);
