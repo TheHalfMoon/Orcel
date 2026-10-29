@@ -35,6 +35,8 @@ struct Kernel {
     audit: AuditLogger,
     workspaces: remote_lease::WorkspaceSet,
     calls: Vec<Value>,
+    /// The last refusal's message (test-internal; never in the report).
+    last_refusal: String,
 }
 
 impl Kernel {
@@ -84,6 +86,7 @@ impl Kernel {
                     "TIERC-ACT-DIAG {capability}/{operation} refused {:?}: {}",
                     error.code, error.message
                 );
+                self.last_refusal = error.message.clone();
             }
         }
         if response.ok {
@@ -226,6 +229,7 @@ fn bm02_tier_c_scripted_plan_acts_through_orceld() {
         audit: AuditLogger::new(state.join("audit.jsonl")).expect("audit"),
         workspaces: remote_lease::WorkspaceSet::from_pairs(&[("default".into(), root)]),
         calls: Vec::new(),
+        last_refusal: String::new(),
     };
     // The real broker over its own ledger; only the SOFT answer is scripted:
     // every prompt this plan causes is approved and recorded.
@@ -243,7 +247,62 @@ fn bm02_tier_c_scripted_plan_acts_through_orceld() {
     );
 
     let mut outcome = "completed".to_owned();
-    for step in &plan.steps {
+    // SG-000128 slice 3a ("reach"): every target element is reached through
+    // the scoped read, then the first action must be refused because
+    // DesktopInput needs a person-granted Full User lease (STRONG presence),
+    // which a CI runner does not have and this test never manufactures.
+    let reach_only = std::env::var("ORCEL_TIERC_ACT_MODE").as_deref() == Ok("reach");
+    if reach_only {
+        outcome = "reached-and-gated".to_owned();
+        for step in &plan.steps {
+            let (name, types): (&str, &[&str]) = match step {
+                Step::SetValue { name, .. } => (name, &["Edit", "Document"]),
+                Step::Invoke { name } => (name, &["Button"]),
+            };
+            if let Err(code) = find(&mut kernel, &broker, &plan.window_title, name, types) {
+                outcome = format!("reach-failed-{}", code.to_ascii_lowercase());
+                break;
+            }
+        }
+        if outcome == "reached-and-gated" {
+            let attempted = match plan.steps.first() {
+                Some(Step::SetValue { name, value }) => find(
+                    &mut kernel,
+                    &broker,
+                    &plan.window_title,
+                    name,
+                    &["Edit", "Document"],
+                )
+                .and_then(|(node, generation)| {
+                    kernel.call(
+                        &broker,
+                        "uia.element",
+                        "set_value",
+                        json!({
+                            "element_id": node["element_id"],
+                            "expected_tree_generation": generation,
+                            "expected_control_type": node["control_type"],
+                            "value": value,
+                        }),
+                    )
+                }),
+                _ => Err("PLAN_DOES_NOT_START_WITH_SET_VALUE".into()),
+            };
+            outcome = match attempted {
+                // The refusal must be the Full User gate itself, not some
+                // other denial that happens to share the code.
+                Err(code)
+                    if code == "CAPABILITY_DENIED"
+                        && kernel.last_refusal.contains("DesktopInput") =>
+                {
+                    "reached-and-gated".to_owned()
+                }
+                Err(code) => format!("gate-unexpected-{}", code.to_ascii_lowercase()),
+                Ok(_) => "gate-missing-action-ran".to_owned(),
+            };
+        }
+    }
+    for step in plan.steps.iter().filter(|_| !reach_only) {
         let done = match step {
             Step::SetValue { name, value } => find(
                 &mut kernel,

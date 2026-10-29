@@ -323,7 +323,8 @@ def load_plan(path: Path) -> dict[str, Any]:
     return plan
 
 
-def run_act_episode(pack: Path, lock: Optional[dict[str, Any]], plan_path: Path, orceld: Path, act_test: Path) -> list[dict[str, Any]]:
+def run_act_episode(pack: Path, lock: Optional[dict[str, Any]], plan_path: Path, orceld: Path, act_test: Path,
+                    reach_only: bool = False) -> list[dict[str, Any]]:
     """C2b: one report row for a scripted plan acting through orceld's
     approval-gated UIA shapes in its test build (scripted SOFT consent).
 
@@ -358,6 +359,7 @@ def run_act_episode(pack: Path, lock: Optional[dict[str, Any]], plan_path: Path,
                 "ORCEL_TIERC_ACT_WORKSPACE": str(episode.workspace),
                 "ORCEL_TIERC_ACT_RESULT": str(result_path),
                 "ORCEL_TIERC_ACT_STATE": str(state),
+                "ORCEL_TIERC_ACT_MODE": "reach" if reach_only else "act",
             })
             done = subprocess.run(
                 [str(act_test), "--ignored", "--exact", "bm02_tier_c_act_tests::bm02_tier_c_scripted_plan_acts_through_orceld", "--nocapture"],
@@ -375,6 +377,22 @@ def run_act_episode(pack: Path, lock: Optional[dict[str, Any]], plan_path: Path,
         if acted is None:
             return [_row(case, "error", "act-run-failed", started, 0)]
         calls = acted.get("calls", [])
+        if reach_only:
+            # Slice 3a: every target reached through the scoped read, the
+            # first action refused for want of a person-granted Full User
+            # lease, and nothing written (no targeted check passes).
+            if acted.get("outcome") != "reached-and-gated":
+                return [_row(case, "fail", str(acted.get("outcome"))[:64], started, len(calls))]
+            if outcome is None:
+                return [_row(case, "error", "evaluator-failed", started, len(calls))]
+            checks = outcome.get("detail", {}).get("checks", {})
+            if any(isinstance(checks.get(name), dict) and checks[name].get("passed") is True for name in plan["targets"]):
+                return [_row(case, "fail", "gated-action-wrote", started, len(calls))]
+            if acted.get("audit_records", 0) < len(calls):
+                return [_row(case, "fail", "unaudited", started, len(calls))]
+            if remaining or leftover:
+                return [_row(case, "fail", "left-after-teardown", started, len(calls))]
+            return [_row(case, "pass", "form-reached-actions-gated", started, len(calls))]
         if acted.get("outcome") != "completed":
             return [_row(case, "fail", str(acted.get("outcome"))[:64], started, len(calls))]
         if outcome is None:

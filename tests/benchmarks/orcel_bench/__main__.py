@@ -79,6 +79,8 @@ def main(argv: list[str]) -> int:
     act.add_argument("--plan", required=True, type=Path)
     act.add_argument("--commit", required=True)
     act.add_argument("--out", required=True, type=Path)
+    act.add_argument("--reach-only", action="store_true",
+                     help="SG-000128 slice 3a: reach every target, expect the first action gated by Full User (CI)")
     args = parser.parse_args(argv)
     if args.command == "tierc-act":
         from .tierc import TierCError
@@ -86,11 +88,12 @@ def main(argv: list[str]) -> int:
 
         try:
             rows = run_act_episode(args.pack.resolve(), load_lock("cua-driver-bench"), args.plan.resolve(),
-                                   args.orceld.resolve(), args.act_test.resolve())
+                                   args.orceld.resolve(), args.act_test.resolve(), args.reach_only)
         except TierCError as error:
             print(f"orcel_bench: {error}", file=sys.stderr)
             return 1
-        planner = {"kind": "deterministic", "name": "tierc-scripted-plan", "version": "1-scripted-consent"}
+        planner = {"kind": "deterministic", "name": "tierc-scripted-plan",
+                   "version": "1-reach-only" if args.reach_only else "1-scripted-consent"}
         args.out.write_text(json.dumps(report(args.commit, rows, planner), indent=2) + "\n", encoding="utf-8")
         for row in rows:
             print(f"TIERC-ACT-EVIDENCE {row['case']} {row['status']} {row['observed']} steps={row['steps']} {row['latency_ms']['p50']}ms")

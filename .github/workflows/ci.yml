@@ -942,7 +942,7 @@ jobs:
             | python -c "import json,sys; print([m['executable'] for m in map(json.loads, sys.stdin) if m.get('reason')=='compiler-artifact' and m.get('executable') and m['target']['name']=='orceld' and m['profile']['test']][-1])")
           pack="$RUNNER_TEMP/tierc-pack"
           (cd tests/benchmarks && python -m orcel_bench tierc-act --pack "$pack" --orceld "$GITHUB_WORKSPACE/target/debug/orceld.exe" \
-            --act-test "$act_test" --plan orcel-tasks/tierc/cdb-s02-blocker.plan.json \
+            --act-test "$act_test" --plan orcel-tasks/tierc/cdb-s02-blocker.plan.json --reach-only \
             --commit "$ORCEL_BM02_COMMIT" --out "$RUNNER_TEMP/tierc-act.report.json")
           node scripts/check-benchmark-report.mjs "$RUNNER_TEMP/tierc-act.report.json"
 
