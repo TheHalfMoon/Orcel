@@ -24,7 +24,8 @@
 //!   dropping the hold releases the lock.
 //! - **Swap detection:** `verify` checks that the path still names the
 //!   same directory (device and inode) as the held descriptor, so a profile
-//!   swapped out from under the hold is detected.
+//!   swapped out from under the hold is detected, and re-checks the held
+//!   directory's owner and 0700 mode, so a later chmod is caught.
 //!
 //! Open for activation (not decided here):
 //! - **Ancestors:** whether the profile's ancestors must also be owned by
@@ -61,14 +62,15 @@ pub(crate) const LOCK_NAME: &str = "orcel-profile.lock";
 pub(crate) enum ProfileError {
     /// The path does not exist.
     Missing,
-    /// A link, or not a directory, at the root; or a link or a non-regular
-    /// file at the lock.
+    /// A link, or not a directory, at the root; or a link, a non-regular
+    /// file or a file with more than one name (a hard link) at the lock.
     NotPlain,
     /// Another owner, or a mode other than 0700 (root) / 0600 (lock).
     Permissions,
     /// Another hold has the lock.
     Busy,
-    /// Swapped: the path no longer names the held directory.
+    /// Swapped: the path no longer names the held directory, or the lock
+    /// name no longer names the locked file.
     Swapped,
     /// Any other failure (fails closed).
     Platform(i32),
@@ -231,8 +233,9 @@ impl ProfileHold {
         })
     }
 
-    /// The path still names the held directory: same device and inode, and
-    /// still not a link.
+    /// The path still names the held directory (same device and inode, and
+    /// still not a link), and the held directory is still this user's with
+    /// mode 0700.
     pub(crate) fn verify(&self, path: &Path) -> Result<(), ProfileError> {
         let metadata = match std::fs::symlink_metadata(path) {
             Ok(metadata) => metadata,
@@ -303,6 +306,9 @@ mod tests {
         for mode in [0o755, 0o750, 0o701, 0o1700, 0o2700, 0o4700, 0o500] {
             let (root, dir) = profile("mode");
             std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(mode)).unwrap();
+            // The bit really stuck, so a refusal is not a silently cleared bit.
+            let applied = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o7777;
+            assert_eq!(applied, mode, "{mode:o} applied as {applied:o}");
             assert_eq!(
                 ProfileHold::open(&dir).unwrap_err(),
                 ProfileError::Permissions,
