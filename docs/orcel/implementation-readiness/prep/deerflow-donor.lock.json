@@ -14,7 +14,7 @@
       "Copyright (c) 2025-2026 DeerFlow Authors"
     ]
   },
-  "status": "CANDIDATES (audit pin; nothing is imported by this lock)",
+  "status": "CANDIDATES, REPRESENTATIVE (audit pin; nothing is imported by this lock). Each import milestone extends this lock with its full copy closure and tests before importing.",
   "files": [
     {
       "group": "agent-assembly",
@@ -170,5 +170,6 @@
       "sha256": "ba8eb399915b032abd287bf479bc8f77f7d4cf8ac4a210abb22bc114da4dc10f",
       "lines": 328
     }
-  ]
+  ],
+  "closure_method": "Python ast import closure counting every import (including function-local and TYPE_CHECKING), excluding parent-package __init__ files"
 }
