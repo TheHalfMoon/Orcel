@@ -1233,8 +1233,13 @@ fn no_shell_script_or_remote_process_surface_exists() {
         .find(|(file, _)| file == "lib.rs")
         .map(|(_, text)| text.replace("\r\n", "\n"))
         .expect("lib.rs is a crate source");
-    let unix_test_only =
-        |module: &str| lib.contains(&format!("#[cfg(all(test, unix))]\nmod {module};\n"));
+    // Exactly one declaration, private, directly under the Unix test cfg:
+    // a second declaration (another cfg, or `pub mod`) defeats the guard.
+    let unix_test_only = |module: &str| {
+        lib.matches(&format!("mod {module};")).count() == 1
+            && !lib.contains(&format!("pub mod {module}"))
+            && lib.contains(&format!("#[cfg(all(test, unix))]\nmod {module};\n"))
+    };
     for (file, text) in &sources {
         if text.contains("Command::new") {
             assert!(
