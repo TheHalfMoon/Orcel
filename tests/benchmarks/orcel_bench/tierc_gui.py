@@ -328,16 +328,29 @@ def load_plan(path: Path) -> dict[str, Any]:
     return plan
 
 
-def judge_act(plan: dict[str, Any], acted: dict[str, Any], outcome: Optional[dict[str, Any]],
-              remaining: bool, leftover: bool, reach_only: bool) -> tuple[str, str]:
+def _problems(check: Any) -> set[str]:
+    if not isinstance(check, dict):
+        return {"(missing)"}
+    listed = check.get("problems")
+    if isinstance(listed, list):
+        return {str(item) for item in listed}
+    return set() if check.get("passed") is True else {str(check.get("reason", "(failed)"))}
+
+
+def judge_act(plan: dict[str, Any], acted: dict[str, Any], baseline: Optional[dict[str, Any]],
+              outcome: Optional[dict[str, Any]], remaining: bool, leftover: bool, reach_only: bool) -> tuple[str, str]:
     """The row status and observed code for one act episode (pure; tested)."""
     calls = acted.get("calls", [])
     expected = "reached-and-gated" if reach_only else "completed"
     if acted.get("outcome") != expected:
         return "fail", str(acted.get("outcome"))[:64]
-    if outcome is None:
+    if outcome is None or baseline is None:
         return "error", "evaluator-failed"
     checks = outcome.get("detail", {}).get("checks", {})
+    before = baseline.get("detail", {}).get("checks", {})
+    # A written check that already passes before any action proves nothing.
+    if any(isinstance(before.get(name), dict) and before[name].get("passed") is True for name in plan["written_checks"]):
+        return "error", "baseline-already-written"
 
     def passed(name: str) -> bool:
         check = checks.get(name)
@@ -364,6 +377,11 @@ def judge_act(plan: dict[str, Any], acted: dict[str, Any], outcome: Optional[dic
         observed = f"scripted-checks-{count}-of-{len(checks)}"
     if any(not passed(name) for name in plan["must_stay_passed"]):
         return "fail", "preserved-check-broken"
+    # Nothing outside the targets got worse: no check gained a problem the
+    # untouched state did not have (a composite check such as cdb-s02's
+    # "preservation" also needs other apps' work, so it may fail in both).
+    if any(not _problems(checks.get(name)) <= _problems(before.get(name)) for name in before if name not in plan["targets"]):
+        return "fail", "regressed-against-baseline"
     if acted.get("audit_records", 0) < len(calls):
         return "fail", "unaudited"
     if remaining:
@@ -378,10 +396,12 @@ def run_act_episode(pack: Path, lock: Optional[dict[str, Any]], plan_path: Path,
     """C2b: one report row for a scripted plan acting through orceld's
     approval-gated UIA shapes in its test build (scripted SOFT consent).
 
-    The row passes when every targeted evaluator check passes, every
-    must-stay-passed check still passes, each call orceld answered was
-    audited, and teardown leaves no window or process behind. The observed
-    code records how many of the evaluator's checks pass (counts only)."""
+    The task's evaluator scores the untouched workspace first (the
+    baseline). The row passes when every targeted evaluator check passes,
+    every must-stay-passed check passes, no other check gained a problem
+    against the baseline, each call orceld answered was audited, and
+    teardown leaves no window or process behind. The observed code records
+    how many of the evaluator's checks pass (counts only)."""
     plan = load_plan(plan_path)
     episode = Episode(pack, lock, plan["task"], "tierc-act")
     started = time.perf_counter()
@@ -400,6 +420,8 @@ def run_act_episode(pack: Path, lock: Optional[dict[str, Any]], plan_path: Path,
             if found is None:
                 episode.teardown(orcel, [plan["window_title"]])
                 return [_row(f"tierc-act/{plan['task']}/{plan['app']}/{episode.os_name}", "fail", "window-not-found", started, 0)]
+            # The untouched state, scored before any action.
+            baseline = episode.evaluate()
             state = episode.root / "act-state"
             state.mkdir()
             result_path = episode.root / "act-result.json"
@@ -427,7 +449,7 @@ def run_act_episode(pack: Path, lock: Optional[dict[str, Any]], plan_path: Path,
         if acted is None:
             return [_row(case, "error", "act-run-failed", started, 0)]
         calls = acted.get("calls", [])
-        status, observed = judge_act(plan, acted, outcome, bool(remaining), bool(leftover), reach_only)
+        status, observed = judge_act(plan, acted, baseline, outcome, bool(remaining), bool(leftover), reach_only)
         return [_row(case, status, observed, started, len(calls))]
     finally:
         episode.close()

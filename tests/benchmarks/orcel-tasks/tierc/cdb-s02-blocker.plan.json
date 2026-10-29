@@ -5,7 +5,7 @@
   "window_title": "Signal Quay Chat",
   "targets": ["blocker_recorded", "blocker_audit"],
   "written_checks": ["blocker_recorded"],
-  "must_stay_passed": ["mail_preserved", "preservation"],
+  "must_stay_passed": ["mail_preserved"],
   "steps": [
     {"set_value": {"name": "Conflict ID", "value": "LHP-C17"}},
     {"set_value": {"name": "Affected session", "value": "LHP-DUNE"}},
