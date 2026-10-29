@@ -323,6 +323,47 @@ def load_plan(path: Path) -> dict[str, Any]:
     return plan
 
 
+def judge_act(plan: dict[str, Any], acted: dict[str, Any], outcome: Optional[dict[str, Any]],
+              remaining: bool, leftover: bool, reach_only: bool) -> tuple[str, str]:
+    """The row status and observed code for one act episode (pure; tested)."""
+    calls = acted.get("calls", [])
+    expected = "reached-and-gated" if reach_only else "completed"
+    if acted.get("outcome") != expected:
+        return "fail", str(acted.get("outcome"))[:64]
+    if outcome is None:
+        return "error", "evaluator-failed"
+    checks = outcome.get("detail", {}).get("checks", {})
+
+    def passed(name: str) -> bool:
+        check = checks.get(name)
+        return isinstance(check, dict) and check.get("passed") is True
+
+    if reach_only:
+        # Slice 3a: every target reached through the scoped read and the
+        # first action refused for want of a person-granted Full User lease.
+        # Each target check must be present and not passed (nothing written,
+        # not merely absent), and the preserved checks must still pass.
+        if any(not isinstance(checks.get(name), dict) for name in plan["targets"]):
+            return "fail", "target-check-missing"
+        if any(passed(name) for name in plan["targets"]):
+            return "fail", "gated-action-wrote"
+        observed = "form-reached-actions-gated"
+    else:
+        if any(not passed(name) for name in plan["targets"]):
+            return "fail", "target-check-not-passed"
+        count = sum(1 for name in checks if passed(name))
+        observed = f"scripted-checks-{count}-of-{len(checks)}"
+    if any(not passed(name) for name in plan["must_stay_passed"]):
+        return "fail", "preserved-check-broken"
+    if acted.get("audit_records", 0) < len(calls):
+        return "fail", "unaudited"
+    if remaining:
+        return "fail", "window-left-after-teardown"
+    if leftover:
+        return "fail", "process-left-after-teardown"
+    return "pass", observed
+
+
 def run_act_episode(pack: Path, lock: Optional[dict[str, Any]], plan_path: Path, orceld: Path, act_test: Path,
                     reach_only: bool = False) -> list[dict[str, Any]]:
     """C2b: one report row for a scripted plan acting through orceld's
@@ -377,39 +418,7 @@ def run_act_episode(pack: Path, lock: Optional[dict[str, Any]], plan_path: Path,
         if acted is None:
             return [_row(case, "error", "act-run-failed", started, 0)]
         calls = acted.get("calls", [])
-        if reach_only:
-            # Slice 3a: every target reached through the scoped read, the
-            # first action refused for want of a person-granted Full User
-            # lease, and nothing written (no targeted check passes).
-            if acted.get("outcome") != "reached-and-gated":
-                return [_row(case, "fail", str(acted.get("outcome"))[:64], started, len(calls))]
-            if outcome is None:
-                return [_row(case, "error", "evaluator-failed", started, len(calls))]
-            checks = outcome.get("detail", {}).get("checks", {})
-            if any(isinstance(checks.get(name), dict) and checks[name].get("passed") is True for name in plan["targets"]):
-                return [_row(case, "fail", "gated-action-wrote", started, len(calls))]
-            if acted.get("audit_records", 0) < len(calls):
-                return [_row(case, "fail", "unaudited", started, len(calls))]
-            if remaining or leftover:
-                return [_row(case, "fail", "left-after-teardown", started, len(calls))]
-            return [_row(case, "pass", "form-reached-actions-gated", started, len(calls))]
-        if acted.get("outcome") != "completed":
-            return [_row(case, "fail", str(acted.get("outcome"))[:64], started, len(calls))]
-        if outcome is None:
-            return [_row(case, "error", "evaluator-failed", started, len(calls))]
-        checks = outcome.get("detail", {}).get("checks", {})
-        passed = sorted(name for name, check in checks.items() if isinstance(check, dict) and check.get("passed") is True)
-        observed = f"scripted-checks-{len(passed)}-of-{len(checks)}"
-        if any(name not in passed for name in plan["targets"]):
-            return [_row(case, "fail", "target-check-not-passed", started, len(calls))]
-        if any(name not in passed for name in plan["must_stay_passed"]):
-            return [_row(case, "fail", "preserved-check-broken", started, len(calls))]
-        if acted.get("audit_records", 0) < len(calls):
-            return [_row(case, "fail", "unaudited", started, len(calls))]
-        if remaining:
-            return [_row(case, "fail", "window-left-after-teardown", started, len(calls))]
-        if leftover:
-            return [_row(case, "fail", "process-left-after-teardown", started, len(calls))]
-        return [_row(case, "pass", observed, started, len(calls))]
+        status, observed = judge_act(plan, acted, outcome, bool(remaining), bool(leftover), reach_only)
+        return [_row(case, status, observed, started, len(calls))]
     finally:
         episode.close()
