@@ -21,16 +21,25 @@ decisions and roadmap:
   `system_status`) are offered to a planner or dispatched. The edge cannot
   serve the `core` profile to a local client, so this list lives in the
   agent.
-- **Refusal is final.** A call orceld refused is never proposed again.
-- **Approval budget.** At most 3 approval requests per run. The run stops at
-  the first denial and never re-asks.
-- **Step budget.**
-- **Resume invariant.** A call dispatched but not recorded before a crash is
-  surfaced once as `OUTCOME_UNKNOWN`. A mutation then needs a fresh
-  observation first, and nothing is re-dispatched from agent state.
+- **Fail-closed classes.** Every tool outside the read-only set is treated
+  as mutating and approval-bearing.
+- **Refusal is final.** A call orceld refused is never dispatched again,
+  even after a resume.
+- **Approval budget.** orceld never answers "approval required"; its broker
+  prompts the person. So approval-bearing calls are counted *before*
+  dispatch: at most 3 per run. The run stops at the first denial and never
+  re-asks, even after a resume.
+- **Step budget.** Counted across a resume.
+- **Resume invariant.** A call dispatched but not recorded (a crash, or a
+  broken edge mid-call) is surfaced once as `OUTCOME_UNKNOWN`. That exact
+  mutation is never dispatched again, and any other mutation needs a fresh
+  observation first.
 - **Private store.**
-  - A per-run directory: owner-only, size-capped, expiring after 24 h,
-    deleted on completion.
+  - A per-run directory, size-capped and expiring 24 h after its last write.
+  - Deleted when the run ends; a crash keeps it for resume.
+  - Owner-only: mode 0700 on Unix. On Windows it inherits its root's ACL;
+    the tests check that no broad principal can reach it, and a protected
+    DACL of its own is recorded for the owning grain.
   - It holds tool names, argument digests and error codes only, never
     results or file content.
 
@@ -54,4 +63,5 @@ cd tests/benchmarks && python -B -m orcel_bench agent --orceld <orceld> --edge .
 ```
 
 Rows are labelled `deterministic` / `orcel-agent-scripted`. They are the
-tasks' scripted plans dispatched through the agent's rules, not a model.
+tasks' scripted plans, not a model. Only the agent's dispatch rules are
+exercised there; its planner loop is covered by the unit tests.

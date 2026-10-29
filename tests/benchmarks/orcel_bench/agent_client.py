@@ -8,8 +8,9 @@ journal) and then through the real MCP edge (`apps/orcel-mcp`), which
 forwards to a test orceld on the episode's workspace.
 
 Rows are labelled `deterministic` / `orcel-agent-scripted` (M1): the plans are
-the task's scripted plans, not a model. The agent's private run store is
-deleted when the episode ends.
+the task's scripted plans, not a model, and only the agent's dispatch rules
+are exercised here (its planner loop is covered by the agent's unit tests).
+The agent's private run store is deleted when the episode ends.
 """
 
 from __future__ import annotations
@@ -18,7 +19,6 @@ import shutil
 import sys
 import tempfile
 import time
-import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
@@ -34,7 +34,7 @@ from orcel_agent.edge import Edge, EdgeError  # noqa: E402
 from orcel_agent.events import EventLog  # noqa: E402
 from orcel_agent.journal import DispatchJournal  # noqa: E402
 from orcel_agent.planner import ToolCall  # noqa: E402
-from orcel_agent.store import open_store  # noqa: E402
+from orcel_agent.store import new_run_id, open_store  # noqa: E402
 
 #: The task's own deterministic plans, dispatched through the Orcel Agent.
 PLANNER = {"kind": "deterministic", "name": "orcel-agent-scripted", "version": "m1"}
@@ -60,25 +60,40 @@ class AgentOrcel:
     _state: Optional[Path] = None
     _edge: Optional[Edge] = None
     _agent: Optional[Agent] = None
-    _store_root: Optional[Path] = None
+    timeout_s: float = 60.0
+
+    @property
+    def timeout(self) -> float:
+        return self.timeout_s
+
+    @timeout.setter
+    def timeout(self, value: float) -> None:
+        # The runner's per-call deadline (`call_timeout`) reaches the edge.
+        self.timeout_s = value
+        if self._edge is not None:
+            self._edge.timeout_s = value
 
     def __enter__(self) -> "AgentOrcel":
         self._state = Path(tempfile.mkdtemp(prefix="orcel-agent-state-"))
-        scratch = self._state / "tmp"
-        scratch.mkdir()
-        env = orceld_env(self.workspace, self._state, scratch)
-        env["ORCEL_DAEMON"] = str(self.orceld)
-        self._edge = Edge([self.node, str(self.edge_js)], env)
         try:
-            self._edge.start()
-        except EdgeError as error:
-            self._cleanup()
-            raise OrcelError("orcel-crash", f"the edge did not start: {error}") from error
-        self._store_root = self._state / "agent"
-        store = open_store(self._store_root, uuid.uuid4().hex)
-        journal = DispatchJournal(store.journal_path, store.check_capacity)
-        self._agent = Agent(self._edge, journal, EventLog(store.run_id))
-        self._agent.prepare()
+            scratch = self._state / "tmp"
+            scratch.mkdir()
+            env = orceld_env(self.workspace, self._state, scratch)
+            env["ORCEL_DAEMON"] = str(self.orceld)
+            self._edge = Edge([self.node, str(self.edge_js)], env, timeout_s=self.timeout_s)
+            try:
+                self._edge.start()
+            except EdgeError as error:
+                raise OrcelError("orcel-crash", f"the edge did not start: {error}") from error
+            store = open_store(self._state / "agent", new_run_id())
+            journal = DispatchJournal(store.journal_path, store.check_capacity)
+            # The episode's whole state directory (with this store) is
+            # removed in __exit__, so the agent keeps its store until then.
+            self._agent = Agent(self._edge, journal, EventLog(store.run_id), store=store, keep_store=True)
+            self._agent.prepare()
+        except BaseException:
+            self.__exit__(None, None, None)
+            raise
         return self
 
     def call(self, capability: str, operation: str, target: Optional[str],
@@ -107,6 +122,7 @@ class AgentOrcel:
         try:
             if self._edge is not None:
                 self._edge.close()
+                self._edge = None
         finally:
             audit = None if self._state is None else self._state / "audit" / "audit.jsonl"
             if audit is not None and audit.is_file():

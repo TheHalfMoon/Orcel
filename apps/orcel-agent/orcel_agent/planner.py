@@ -43,6 +43,9 @@ class Step:
     ok: bool
     result: Any = None
     error_code: Optional[str] = None
+    #: The call's argument digest: lets an `OUTCOME_UNKNOWN` step (whose
+    #: arguments are not kept) be matched to the call it stands for.
+    arguments_sha256: Optional[str] = None
 
 
 class Planner(Protocol):
@@ -60,8 +63,10 @@ class ScriptedPlanner:
         self._answer = answer
 
     def propose(self, goal: str, steps: Sequence[Step], tools: Sequence[ToolSpec]) -> Proposal:
-        # Only the steps this run dispatched count: an `OUTCOME_UNKNOWN`
-        # step surfaced on resume is history, not a step of this script.
+        # Only the steps that reached orceld with an answer count: an
+        # `OUTCOME_UNKNOWN` step surfaced on resume is history. Replaying the
+        # script then proposes that unknown call again, which the agent
+        # refuses (it never re-dispatches an unknown mutation).
         done = sum(1 for step in steps if step.error_code != OUTCOME_UNKNOWN)
         if done < len(self._calls):
             return self._calls[done]

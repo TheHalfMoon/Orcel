@@ -13,11 +13,20 @@ import json
 import queue
 import subprocess
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any, Optional, Sequence
 
 PROTOCOL_VERSION = "2025-06-18"
 CLIENT_INFO = {"name": "orcel-agent", "version": "0.1.0"}
+#: Largest single frame accepted from the edge (as the benchmark client).
+MAX_FRAME_BYTES = 8 << 20
+#: orceld's broker may wait this long for a person (the edge's approval
+#: timeout is 10 minutes); calls that can prompt use a longer deadline so the
+#: agent never gives up while orceld may still act.
+APPROVAL_CALL_TIMEOUT_S = 11 * 60.0
+
+_TOO_LARGE = b"\x00too-large"
 
 
 class EdgeError(Exception):
@@ -68,56 +77,94 @@ class Edge:
         except OSError as error:
             raise EdgeError(f"the edge did not start: {error}") from error
         threading.Thread(target=self._read, daemon=True).start()
-        self._request(
-            "initialize",
-            {"protocolVersion": PROTOCOL_VERSION, "capabilities": {}, "clientInfo": CLIENT_INFO},
-        )
-        self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        try:
+            self._request(
+                "initialize",
+                {"protocolVersion": PROTOCOL_VERSION, "capabilities": {}, "clientInfo": CLIENT_INFO},
+                self.timeout_s,
+            )
+            self._send({"jsonrpc": "2.0", "method": "notifications/initialized"}, self.timeout_s)
+        except BaseException:
+            self.close()
+            raise
 
     def _read(self) -> None:
         process = self._process
         assert process is not None and process.stdout is not None
-        for line in process.stdout:
-            self._lines.put(line)
+        stdout = process.stdout
+        try:
+            while True:
+                line = stdout.readline(MAX_FRAME_BYTES + 1)
+                if not line:
+                    break
+                if len(line) > MAX_FRAME_BYTES:
+                    self._lines.put(_TOO_LARGE)  # never buffer the rest
+                    break
+                self._lines.put(line)
+        except (OSError, ValueError):
+            pass
         self._lines.put(None)
 
-    def _send(self, message: dict[str, Any]) -> None:
+    def _send(self, message: dict[str, Any], timeout_s: float) -> None:
         process = self._process
         if process is None or process.stdin is None:
             raise EdgeError("the edge is not running")
-        try:
-            process.stdin.write(json.dumps(message, separators=(",", ":")).encode("utf-8") + b"\n")
-            process.stdin.flush()
-        except OSError as error:
-            raise EdgeError(f"the edge closed its input: {error}") from error
+        data = json.dumps(message, separators=(",", ":")).encode("utf-8") + b"\n"
+        failure: list[BaseException] = []
 
-    def _request(self, method: str, params: dict[str, Any]) -> Any:
+        def write() -> None:
+            try:
+                process.stdin.write(data)  # type: ignore[union-attr]
+                process.stdin.flush()  # type: ignore[union-attr]
+            except (OSError, ValueError) as error:
+                failure.append(error)
+
+        writer = threading.Thread(target=write, daemon=True)
+        writer.start()
+        writer.join(timeout_s)
+        if writer.is_alive():
+            raise EdgeError("the edge stopped reading its input")
+        if failure:
+            raise EdgeError(f"the edge closed its input: {failure[0]}")
+
+    def _request(self, method: str, params: dict[str, Any], timeout_s: float) -> Any:
         self._next_id += 1
         request_id = self._next_id
-        self._send({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params})
+        deadline = time.monotonic() + timeout_s
+        self._send({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}, timeout_s)
         while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise EdgeError(f"the edge did not answer {method} in time")
             try:
-                line = self._lines.get(timeout=self.timeout_s)
+                line = self._lines.get(timeout=remaining)
             except queue.Empty as error:
                 raise EdgeError(f"the edge did not answer {method} in time") from error
             if line is None:
                 raise EdgeError("the edge exited")
+            if line == _TOO_LARGE:
+                raise EdgeError("the edge sent a frame over the size limit")
             try:
                 message = json.loads(line)
             except ValueError:
                 continue  # not a protocol frame
-            if message.get("id") != request_id:
-                continue  # a notification or a server request: ignored
-            if "error" in message:
-                raise EdgeError(f"{method} failed: {message['error'].get('message', 'protocol error')}")
+            # A response has our id and no method; anything else (a
+            # notification, a server request reusing an id) is not ours.
+            if not isinstance(message, dict) or "method" in message or message.get("id") != request_id:
+                continue
+            error = message.get("error")
+            if error is not None:
+                text = error.get("message", "protocol error") if isinstance(error, dict) else "protocol error"
+                raise EdgeError(f"{method} failed: {text}")
             return message.get("result")
 
     def list_tools(self) -> list[ToolSpec]:
-        result = self._request("tools/list", {})
-        return [ToolSpec(t["name"], t.get("inputSchema", {})) for t in result.get("tools", [])]
+        result = self._request("tools/list", {}, self.timeout_s)
+        tools = result.get("tools", []) if isinstance(result, dict) else []
+        return [ToolSpec(t["name"], t.get("inputSchema", {})) for t in tools if isinstance(t, dict) and "name" in t]
 
-    def call_tool(self, name: str, arguments: dict[str, Any]) -> ToolOutcome:
-        result = self._request("tools/call", {"name": name, "arguments": arguments})
+    def call_tool(self, name: str, arguments: dict[str, Any], timeout_s: Optional[float] = None) -> ToolOutcome:
+        result = self._request("tools/call", {"name": name, "arguments": arguments}, timeout_s or self.timeout_s)
         return parse_tool_result(result)
 
     def close(self) -> None:
@@ -129,9 +176,12 @@ class Edge:
             if process.stdin is not None:
                 process.stdin.close()
             process.wait(timeout=10)
-        except (OSError, subprocess.TimeoutExpired):
+        except (OSError, ValueError, subprocess.TimeoutExpired):
             process.kill()
             process.wait()
+        finally:
+            if process.stdout is not None:
+                process.stdout.close()
 
     def __enter__(self) -> "Edge":
         self.start()
@@ -144,17 +194,22 @@ class Edge:
 def parse_tool_result(result: Any) -> ToolOutcome:
     """The edge's projection (`apps/orcel-mcp/src/result.ts`): one text item
     holding `{result, evidence}` on success, `{error: {code, message}}` with
-    `isError` on refusal. Anything else is a protocol failure."""
+    `isError` on refusal. An `isError` result in any other form (the MCP SDK's
+    plain-text schema rejection) is a typed refusal, `INVALID_REQUEST`. A
+    success in any other form is a protocol failure."""
+    is_error = isinstance(result, dict) and result.get("isError") is True
     try:
         text = result["content"][0]["text"]
         body = json.loads(text)
     except (KeyError, IndexError, TypeError, ValueError) as error:
+        if is_error:
+            return ToolOutcome(ok=False, error_code="INVALID_REQUEST", error_message="the edge refused the call")
         raise EdgeError("the edge returned an unexpected tool result") from error
-    if result.get("isError"):
-        error = body.get("error") or {}
-        return ToolOutcome(
-            ok=False,
-            error_code=str(error.get("code", "INTERNAL_ERROR")),
-            error_message=str(error.get("message", "")),
-        )
+    if is_error:
+        error = body.get("error") if isinstance(body, dict) else None
+        if not isinstance(error, dict):
+            return ToolOutcome(ok=False, error_code="INVALID_REQUEST", error_message="the edge refused the call")
+        return ToolOutcome(ok=False, error_code=str(error.get("code", "INTERNAL_ERROR")), error_message=str(error.get("message", "")))
+    if not isinstance(body, dict):
+        raise EdgeError("the edge returned an unexpected tool result")
     return ToolOutcome(ok=True, result=body.get("result"), evidence=body.get("evidence"))
