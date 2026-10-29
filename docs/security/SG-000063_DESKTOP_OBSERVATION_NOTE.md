@@ -16,7 +16,7 @@ Code: `crates/orcel-provider-uia/src/native_desktop.rs`,
 | Tool | Shape | Approval | Bounds |
 | --- | --- | --- | --- |
 | `desktop_window_list` | `uia.window/list` | none (read) | 64 windows, 256 chars per string, 64 KiB response |
-| `desktop_window_tree` | `uia.tree/observe` | none (read) | depth 8, 256 nodes, 256 chars per string, 64 KiB response; bound to `window_id` and `window_generation` |
+| `desktop_window_tree` | `uia.tree/observe` | none (read) | depth 8, 256 nodes, 256 chars per string, 64 KiB response; bound to `window_id` and `window_generation`; SG-000128: optional `root_element_id` with its `tree_generation` (an element issued for that window in its latest tree, both or neither) reads below that element with the same bounds, at most 8 such reads per window until the window changes or an approved action succeeds |
 
 Both reuse the existing SG-000027 kernel shapes, policy authorization, and
 registry. No kernel shape, policy rule, or approval class is added.
