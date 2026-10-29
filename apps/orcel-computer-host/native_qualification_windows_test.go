@@ -240,6 +240,7 @@ func TestSG000094NativeObservationCaptureQualification(t *testing.T) {
 	if !whole.OK || len(whole.Elements) != 1 || whole.Elements[0].RuntimeID != rootID {
 		t.Fatalf("a subtree read at the window's root did not start there: %+v", whole.Error)
 	}
+	childRead := false
 	for _, child := range observed.Elements[0].Children {
 		if child.RuntimeID == "" {
 			continue
@@ -253,9 +254,15 @@ func TestSG000094NativeObservationCaptureQualification(t *testing.T) {
 			if count > 64 || depth > 4 {
 				t.Fatalf("a subtree exceeded its caps: nodes=%d depth=%d", count, depth)
 			}
+			childRead = true
 		} else if subtree.Error == nil || subtree.Error.Code != "target_stale" || len(subtree.Elements) != 0 {
-			t.Fatalf("a non-content child did not fail closed: %+v", subtree)
+			t.Fatalf("a child whose root did not resolve did not fail closed: %+v", subtree)
 		}
+	}
+	// The helper form's controls (its "SG94 Button") are content children,
+	// so at least one child-rooted read must traverse below the window root.
+	if !childRead {
+		t.Fatal("no child-rooted subtree read succeeded")
 	}
 	missing := boundHostRequest(6, "observe_window", fact)
 	missing.ElementRuntimeID = "999999.1.2.3"

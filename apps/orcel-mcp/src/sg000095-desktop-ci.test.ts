@@ -64,12 +64,19 @@ test("SG-000095 native mutation source stays private, bounded, and excludes dono
   assert.match(source, /semantic/i);
   assert.match(source, /window_close/);
 
-  // Semantic UIA resolution may touch hostile provider trees; enforce the
-  // same finite traversal ceilings as the observation path before dispatch.
+  // Semantic UIA resolution may touch hostile provider trees; enforce
+  // finite traversal ceilings before dispatch. SG-000128 slice 1b (recorded
+  // rule change): the lookup uses the bounded root search, so an element
+  // orceld issued from a scoped read is found; the observation caps stay.
   const semantic = readFileSync(join(hostDir, "native_actions_windows.go"), "utf8");
-  assert.match(semantic, /depth > maxTreeDepth/);
+  assert.match(semantic, /depth > maxRootSearchDepth/);
   assert.match(semantic, /\*remaining <= 0/);
-  assert.match(semantic, /remaining := maxTreeNodes/);
+  assert.match(semantic, /remaining := maxRootSearchNodes/);
+  const bounds = readFileSync(join(hostDir, "protocol.go"), "utf8");
+  assert.match(bounds, /maxTreeNodes = 256\b/);
+  assert.match(bounds, /maxTreeDepth = 8\b/);
+  assert.match(bounds, /maxRootSearchNodes = 4096\b/);
+  assert.match(bounds, /maxRootSearchDepth = 64\b/);
   assert.match(semantic, /walkerSlotGetNextSiblingElement/);
   assert.match(semantic, /findElementByRuntimeID\(uiaElement\{current\}, walker, key, depth\+1, remaining\)/);
   assert.doesNotMatch(semantic, /walkerChildren\(walker, root\)/);
