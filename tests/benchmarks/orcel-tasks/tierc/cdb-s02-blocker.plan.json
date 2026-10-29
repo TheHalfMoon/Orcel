@@ -1,0 +1,17 @@
+{
+  "label": "scripted-plan: encodes the task's known answer; not an agent result",
+  "task": "cdb-s02",
+  "app": "chat",
+  "window_title": "Signal Quay Chat",
+  "targets": ["blocker_recorded", "blocker_audit"],
+  "written_checks": ["blocker_recorded"],
+  "must_stay_passed": ["mail_preserved"],
+  "steps": [
+    {"set_value": {"name": "Conflict ID", "value": "LHP-C17"}},
+    {"set_value": {"name": "Affected session", "value": "LHP-DUNE"}},
+    {"set_value": {"name": "Conflicting event", "value": "CAL-HOLD-31"}},
+    {"set_value": {"name": "Escalation", "value": "program-lead"}},
+    {"set_value": {"name": "Reason", "value": "The Sable maintenance window overlaps the requested Dune session."}},
+    {"invoke": {"name": "Record blocker"}}
+  ]
+}

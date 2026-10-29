@@ -13,7 +13,7 @@ BENCH = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BENCH))
 
 from orcel_bench.tierc import TierCError  # noqa: E402
-from orcel_bench.tierc_gui import _fill, electron_apps, run_observe_episode  # noqa: E402
+from orcel_bench.tierc_gui import _fill, electron_apps, judge_act, load_plan, run_observe_episode  # noqa: E402
 
 VALUES = {"bundle": "/b", "workspace": "/w"}
 
@@ -36,6 +36,73 @@ class TierCGuiHarness(unittest.TestCase):
         self.assertEqual([app["id"] for app in electron_apps(descriptor)], ["mail"])
         with self.assertRaises(TierCError):
             electron_apps({"apps": [{"id": "bad", "kind": "electron", "command": ["x"], "window": {}}]})
+
+    def test_a_plan_must_be_labelled_scripted_and_complete(self) -> None:
+        import json
+        import tempfile
+
+        shipped = BENCH / "orcel-tasks" / "tierc" / "cdb-s02-blocker.plan.json"
+        self.assertTrue(load_plan(shipped)["label"].startswith("scripted-plan"))
+        with tempfile.TemporaryDirectory() as scratch:
+            path = Path(scratch) / "plan.json"
+            plan = json.loads(shipped.read_text(encoding="utf-8"))
+            for broken in ({**plan, "label": "agent"}, {k: v for k, v in plan.items() if k != "targets"},
+                           {**plan, "written_checks": []}, {**plan, "written_checks": ["mail_preserved"]}):
+                path.write_text(json.dumps(broken), encoding="utf-8")
+                with self.assertRaises(TierCError):
+                    load_plan(path)
+
+    def test_the_reach_row_requires_the_gate_and_nothing_written(self) -> None:
+        plan = {"targets": ["blocker_recorded", "blocker_audit"], "written_checks": ["blocker_recorded"],
+                "must_stay_passed": ["mail_preserved"]}
+        acted = {"outcome": "reached-and-gated", "calls": [{}, {}], "audit_records": 2}
+
+        def scored(target: object) -> dict:
+            checks = {"mail_preserved": {"passed": True}, "blocker_audit": {"passed": True},
+                      "preservation": {"passed": False, "problems": ["calendar not replanned"]}}
+            if target is not None:
+                checks["blocker_recorded"] = {"passed": target}
+            return {"detail": {"checks": checks}}
+
+        base = scored(False)
+        self.assertEqual(judge_act(plan, acted, base, scored(False), False, False, True), ("pass", "form-reached-actions-gated"))
+        self.assertEqual(judge_act(plan, acted, None, scored(False), False, False, True), ("error", "evaluator-failed"))
+        self.assertEqual(judge_act(plan, acted, scored(True), scored(False), False, False, True), ("error", "baseline-already-written"))
+        self.assertEqual(judge_act(plan, acted, {"detail": {"checks": {}}}, scored(False), False, False, True),
+                         ("error", "baseline-incomplete"))
+        # A check that passed with no problems listed and now fails regresses.
+        quiet = scored(False)
+        quiet["detail"]["checks"]["blocker_audit"] = {"passed": True, "problems": []}
+        quiet["detail"]["checks"]["extra"] = {"passed": True, "problems": []}
+        dropped = scored(False)
+        dropped["detail"]["checks"]["extra"] = {"passed": False, "problems": []}
+        self.assertEqual(judge_act(plan, acted, quiet, dropped, False, False, True), ("fail", "regressed-against-baseline"))
+        # A check that appears only after the run, failing, is compared too.
+        appeared = scored(False)
+        appeared["detail"]["checks"]["new_check"] = {"passed": False}
+        self.assertEqual(judge_act(plan, acted, base, appeared, False, False, True), ("fail", "regressed-against-baseline"))
+        # A problem the untouched state did not have fails the row.
+        worse = scored(False)
+        worse["detail"]["checks"]["preservation"]["problems"].append("chat messages changed")
+        self.assertEqual(judge_act(plan, acted, base, worse, False, False, True), ("fail", "regressed-against-baseline"))
+        self.assertEqual(judge_act(plan, acted, base, scored(True), False, False, True), ("fail", "gated-action-wrote"))
+        self.assertEqual(judge_act(plan, acted, base, scored(None), False, False, True), ("fail", "target-check-missing"))
+        self.assertEqual(judge_act(plan, acted, base, None, False, False, True), ("error", "evaluator-failed"))
+        self.assertEqual(judge_act(plan, dict(acted, outcome="gate-missing-action-ran"), base, scored(False), False, False, True)[0], "fail")
+        self.assertEqual(judge_act(plan, dict(acted, audit_records=1), base, scored(False), False, False, True), ("fail", "unaudited"))
+        self.assertEqual(judge_act(plan, acted, base, scored(False), True, False, True), ("fail", "window-left-after-teardown"))
+        self.assertEqual(judge_act(plan, acted, base, scored(False), False, True, True), ("fail", "process-left-after-teardown"))
+        inconsistent = scored(False)
+        inconsistent["detail"]["checks"]["blocker_audit"]["passed"] = False
+        self.assertEqual(judge_act(plan, acted, base, inconsistent, False, False, True), ("fail", "consistency-check-broken"))
+        broken = scored(False)
+        broken["detail"]["checks"]["mail_preserved"]["passed"] = False
+        self.assertEqual(judge_act(plan, acted, base, broken, False, False, True), ("fail", "preserved-check-broken"))
+        # A reach result never passes as a completed act run, nor the reverse.
+        self.assertEqual(judge_act(plan, acted, base, scored(True), False, False, False)[0], "fail")
+        done = dict(acted, outcome="completed")
+        self.assertEqual(judge_act(plan, done, base, scored(True), False, False, False), ("pass", "scripted-checks-3-of-4"))
+        self.assertEqual(judge_act(plan, done, base, scored(False), False, False, True)[0], "fail")
 
     def test_it_refuses_to_run_outside_ci(self) -> None:
         saved = {key: os.environ.pop(key, None) for key in ("GITHUB_ACTIONS", "ORCEL_TIERC_ALLOW_LOCAL")}

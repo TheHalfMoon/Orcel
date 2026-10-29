@@ -928,6 +928,26 @@ jobs:
           (cd tests/benchmarks && python -m orcel_bench tierc-observe --pack "$pack" --orceld "$GITHUB_WORKSPACE/target/debug/orceld.exe" \
             --task cdb-s02 --commit "$ORCEL_BM02_COMMIT" --out "$RUNNER_TEMP/tierc-observe.report.json")
           node scripts/check-benchmark-report.mjs "$RUNNER_TEMP/tierc-observe.report.json"
+      # BM-02 Tier C C2b slice 3a (SG-000128): a deterministic scripted plan
+      # (it encodes the task's known answer) reaches every element of the chat
+      # app's blocker form through orceld's scoped subtree read in its test
+      # build; the first action must be refused by the DesktopInput gate, and
+      # nothing is written. Labelled scripted-plan / reach-only in the report;
+      # not agent performance. Acting (slice 3b) needs a founder-present Full
+      # User grant and never runs here.
+      - name: BM-02 Tier C C2b slice 3a (scripted plan reaches the form; DesktopInput gate holds)
+        shell: bash
+        env:
+          ORCEL_BM02_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          act_test=$(cargo test --locked -p orceld --bin orceld --no-run --message-format=json \
+            | python -c "import json,sys; print([m['executable'] for m in map(json.loads, sys.stdin) if m.get('reason')=='compiler-artifact' and m.get('executable') and m['target']['name']=='orceld' and m['profile']['test']][-1])")
+          pack="$RUNNER_TEMP/tierc-pack"
+          (cd tests/benchmarks && python -m orcel_bench tierc-act --pack "$pack" --orceld "$GITHUB_WORKSPACE/target/debug/orceld.exe" \
+            --act-test "$act_test" --plan orcel-tasks/tierc/cdb-s02-blocker.plan.json --reach-only \
+            --commit "$ORCEL_BM02_COMMIT" --out "$RUNNER_TEMP/tierc-act.report.json")
+          node scripts/check-benchmark-report.mjs "$RUNNER_TEMP/tierc-act.report.json"
 
   node:
     name: Node / ${{ matrix.os }}
