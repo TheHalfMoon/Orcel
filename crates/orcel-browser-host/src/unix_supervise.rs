@@ -51,9 +51,9 @@ use std::time::{Duration, Instant};
 /// At most this many processes are scanned per enumeration; more fails
 /// closed (the sweep still kills the group).
 pub(crate) const MAX_SCAN: usize = 65_536;
-/// At most this many members in one supervised family, the Unix
-/// counterpart of the Windows job's active-process limit.
-pub(crate) const MAX_FAMILY: usize = 32;
+/// At most this many members in one supervised family: the Windows job's
+/// active-process limit, shared rather than duplicated.
+pub(crate) const MAX_FAMILY: usize = crate::supervise::JOB_ACTIVE_PROCESS_LIMIT as usize;
 
 /// A process identity that survives pid reuse: the pid and its start time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -79,6 +79,40 @@ pub(crate) enum FamilyError {
     ScanBound,
     /// More family members than the family bound.
     FamilyBound,
+}
+
+/// How much of the family a sweep can vouch for. Adapted from #528's
+/// descendant-accounting model: observing every scanned member exit is not
+/// proof that no descendant escaped the scan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Coverage {
+    /// The scan is one snapshot, so forks after it and (on macOS) orphans
+    /// reparented before it are unaccounted for. Every sweep in this slice
+    /// reports this.
+    Incomplete,
+    /// Reserved for activation: an independently qualified mechanism
+    /// (stop-then-rescan, a Linux subreaper, macOS descendant tracking)
+    /// proved that the family seen was the whole family. Never produced
+    /// here.
+    #[cfg_attr(not(test), allow(dead_code))]
+    VerifiedComplete,
+}
+
+/// The result of a sweep: the scanned members still alive, and what the
+/// sweep can vouch for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SweepOutcome {
+    pub(crate) left: Vec<Pinned>,
+    pub(crate) coverage: Coverage,
+}
+
+impl SweepOutcome {
+    /// True only when every scanned member exited and coverage is verified
+    /// complete. With `Incomplete` coverage this is never true, however
+    /// clean the scan looked.
+    pub(crate) fn all_exited(&self) -> bool {
+        self.left.is_empty() && self.coverage == Coverage::VerifiedComplete
+    }
 }
 
 /// A supervised fixture: the child in its own process group.
@@ -148,9 +182,9 @@ impl Supervised {
     }
 
     /// Kill the group and every pinned member, reap the root, and confirm
-    /// that every member is gone before `deadline`. Returns the members
-    /// still alive (empty on success).
-    pub(crate) fn sweep(mut self, deadline: Duration) -> Result<Vec<Pinned>, FamilyError> {
+    /// that every scanned member is gone before `deadline`. The outcome
+    /// lists the members still alive, with `Incomplete` coverage.
+    pub(crate) fn sweep(mut self, deadline: Duration) -> Result<SweepOutcome, FamilyError> {
         let (family, error) = match process_table() {
             Ok(table) => family_of(self.root, &table),
             Err(error) => (Vec::new(), Some(error)),
@@ -176,7 +210,10 @@ impl Supervised {
                 .filter(|member| is_alive(*member))
                 .collect();
             if alive.is_empty() || started.elapsed() >= deadline {
-                return Ok(alive);
+                return Ok(SweepOutcome {
+                    left: alive,
+                    coverage: Coverage::Incomplete,
+                });
             }
             std::thread::sleep(Duration::from_millis(20));
         }
@@ -205,6 +242,16 @@ pub(crate) fn is_alive(member: Pinned) -> bool {
 /// The family of `root` within `table`: its process group plus every
 /// descendant by parent links, bounded.
 fn family_of(root: Pinned, table: &[Row]) -> (Vec<Pinned>, Option<FamilyError>) {
+    // A non-positive pid is never a real identity: such rows are ignored.
+    let table: Vec<Row> = table
+        .iter()
+        .copied()
+        .filter(|row| row.pinned.pid > 0)
+        .collect();
+    let table = table.as_slice();
+    if root.pid <= 0 {
+        return (Vec::new(), None);
+    }
     let mut children: BTreeMap<i32, Vec<Row>> = BTreeMap::new();
     for row in table {
         children.entry(row.ppid).or_default().push(*row);
@@ -432,8 +479,11 @@ mod tests {
         let family = family_until(&supervised, |family| family.len() >= 3);
         assert!(family.len() >= 3, "{family:?}");
         assert!(family.contains(&supervised.root()));
-        let left = supervised.sweep(DEADLINE).unwrap();
-        assert!(left.is_empty(), "{left:?}");
+        let outcome = supervised.sweep(DEADLINE).unwrap();
+        assert!(outcome.left.is_empty(), "{outcome:?}");
+        // Every scanned member exited, yet the sweep never claims more.
+        assert_eq!(outcome.coverage, Coverage::Incomplete);
+        assert!(!outcome.all_exited());
         for member in family {
             assert!(!is_alive(member), "{member:?}");
         }
@@ -455,8 +505,11 @@ mod tests {
             !escaped.is_empty(),
             "the setsid helper is in the family: {family:?}"
         );
-        let left = supervised.sweep(DEADLINE).unwrap();
-        assert!(left.is_empty(), "{left:?}");
+        let outcome = supervised.sweep(DEADLINE).unwrap();
+        assert!(outcome.left.is_empty(), "{outcome:?}");
+        // Every scanned member exited, yet the sweep never claims more.
+        assert_eq!(outcome.coverage, Coverage::Incomplete);
+        assert!(!outcome.all_exited());
         for member in escaped {
             assert!(!is_alive(member), "the escaped helper is gone: {member:?}");
         }
@@ -477,6 +530,94 @@ mod tests {
         for member in family {
             assert!(!is_alive(member), "{member:?}");
         }
+    }
+
+    /// From #528: no coverage proof, no success, even when every observed
+    /// member exited; and a leftover member defeats even verified coverage.
+    #[test]
+    fn success_needs_verified_coverage_and_no_survivor() {
+        let gone = SweepOutcome {
+            left: Vec::new(),
+            coverage: Coverage::Incomplete,
+        };
+        assert!(!gone.all_exited());
+        let verified = SweepOutcome {
+            left: Vec::new(),
+            coverage: Coverage::VerifiedComplete,
+        };
+        assert!(verified.all_exited());
+        let survivor = SweepOutcome {
+            left: vec![Pinned { pid: 7, start: 1 }],
+            coverage: Coverage::VerifiedComplete,
+        };
+        assert!(!survivor.all_exited());
+    }
+
+    /// From #528: zero or negative identities are never family members,
+    /// and an invalid root has no family.
+    #[test]
+    fn invalid_identities_are_never_members() {
+        let root = Pinned { pid: 100, start: 1 };
+        let table = vec![
+            Row {
+                pinned: root,
+                ppid: 1,
+                pgid: 100,
+            },
+            Row {
+                pinned: Pinned { pid: 0, start: 1 },
+                ppid: 100,
+                pgid: 100,
+            },
+            Row {
+                pinned: Pinned { pid: -1, start: 1 },
+                ppid: 100,
+                pgid: 100,
+            },
+        ];
+        assert_eq!(family_of(root, &table), (vec![root], None));
+        let invalid = Pinned { pid: 0, start: 1 };
+        assert_eq!(family_of(invalid, &table), (Vec::new(), None));
+    }
+
+    /// From #528: the root's exit alone proves nothing about descendants;
+    /// a child that left the group is still a member after its parent is
+    /// gone from the table, as long as the group's leader row is present.
+    #[test]
+    fn a_descendant_outside_the_group_stays_a_member() {
+        let root = Pinned { pid: 100, start: 1 };
+        let table = vec![
+            Row {
+                pinned: root,
+                ppid: 1,
+                pgid: 100,
+            },
+            Row {
+                pinned: Pinned { pid: 101, start: 2 },
+                ppid: 100,
+                pgid: 100,
+            },
+            // Left the group with setsid, still a child of 101.
+            Row {
+                pinned: Pinned { pid: 102, start: 3 },
+                ppid: 101,
+                pgid: 102,
+            },
+        ];
+        let (members, error) = family_of(root, &table);
+        assert_eq!(error, None);
+        assert!(
+            members.contains(&Pinned { pid: 102, start: 3 }),
+            "{members:?}"
+        );
+    }
+
+    #[test]
+    fn the_family_bound_is_the_job_limit() {
+        assert_eq!(
+            MAX_FAMILY,
+            crate::supervise::JOB_ACTIVE_PROCESS_LIMIT as usize
+        );
     }
 
     #[test]
