@@ -37,10 +37,14 @@ pub(crate) fn build_unix_worker_argv(
     destinations: &[AdmittedDestination],
     sink: &NetworkSink,
 ) -> Result<Vec<String>, HostError> {
+    // Defence in depth: `NetworkSink::start` always binds 127.0.0.1:0, so
+    // this refusal is unreachable today. It keeps the IPv4 literal (never
+    // `localhost`, which could resolve to ::1 where a rogue may bind) and
+    // never the no-route port 9.
     let proxy = sink.proxy_url();
-    if !proxy.starts_with("http://127.0.0.1:") || sink.port() == 0 {
+    if !proxy.starts_with("http://127.0.0.1:") || sink.port() == 0 || sink.port() == 9 {
         return Err(HostError::Invalid(
-            "the sink is not on an ephemeral loopback port".into(),
+            "the sink is not an IPv4 loopback listener on a port other than 0 or 9".into(),
         ));
     }
     let mut argv = build_worker_argv(profile_dir, destinations)?;
@@ -102,6 +106,26 @@ mod tests {
         PathBuf::from("/var/orcel/profile")
     }
 
+    /// The proxy address the built argv hands the engine.
+    fn proxy_of(argv: &[String]) -> std::net::SocketAddr {
+        let proxies: Vec<&String> = argv
+            .iter()
+            .filter(|arg| arg.starts_with("--proxy-server="))
+            .collect();
+        assert_eq!(proxies.len(), 1, "{argv:?}");
+        proxies[0]
+            .trim_start_matches("--proxy-server=http://")
+            .parse()
+            .expect("the proxy is an IPv4 socket address")
+    }
+
+    fn wait_for(sink: &NetworkSink, count: u64) {
+        let started = Instant::now();
+        while sink.accepted() < count && started.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
     #[test]
     fn the_unix_argv_differs_from_production_only_in_the_proxy() {
         let sink = NetworkSink::start().unwrap();
@@ -142,6 +166,26 @@ mod tests {
             assert_unix_worker_argv_exact(&production, &profile(), &destinations(), &sink).is_err()
         );
         // Added, removed, reordered or re-valued elements: refused.
+        // Built for another profile or another destination set: refused.
+        let other_profile =
+            build_unix_worker_argv(Path::new("/var/orcel/other"), &destinations(), &sink).unwrap();
+        assert!(
+            assert_unix_worker_argv_exact(&other_profile, &profile(), &destinations(), &sink)
+                .is_err()
+        );
+        let pin = IpAddr::V4(Ipv4Addr::new(93, 184, 215, 15));
+        let more = vec![
+            destinations().remove(0),
+            AdmittedDestination::admit("https://docs.example.org/", &FakeDns(pin)).unwrap(),
+        ];
+        let other_destinations = build_unix_worker_argv(&profile(), &more, &sink).unwrap();
+        assert!(assert_unix_worker_argv_exact(
+            &other_destinations,
+            &profile(),
+            &destinations(),
+            &sink
+        )
+        .is_err());
         let mut added = exact.clone();
         added.insert(1, "--proxy-bypass-list=*".into());
         let mut removed = exact.clone();
@@ -162,12 +206,14 @@ mod tests {
         }
     }
 
-    /// A fixture client sends a proxy request through the sink: nothing
-    /// comes back, the connection is closed, and the sink counts it.
+    /// A fixture client sends a proxy request to the argv's proxy: the
+    /// sink closes the connection without a byte (a timeout would fail the
+    /// test, not pass it) and counts it.
     #[test]
-    fn a_request_through_the_sink_goes_nowhere_and_is_counted() {
+    fn a_request_to_the_argv_proxy_goes_nowhere_and_is_counted() {
         let sink = NetworkSink::start().unwrap();
-        let mut client = TcpStream::connect(("127.0.0.1", sink.port())).unwrap();
+        let argv = build_unix_worker_argv(&profile(), &destinations(), &sink).unwrap();
+        let mut client = TcpStream::connect(proxy_of(&argv)).unwrap();
         client
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
@@ -175,37 +221,56 @@ mod tests {
         let _ =
             client.write_all(b"CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n");
         let mut answer = Vec::new();
-        let read = client.read_to_end(&mut answer);
-        assert!(
-            answer.is_empty(),
-            "the sink answered: {answer:?} ({read:?})"
-        );
-        let started = Instant::now();
-        while sink.accepted() == 0 && started.elapsed() < Duration::from_secs(5) {
-            std::thread::sleep(Duration::from_millis(20));
+        match client.read_to_end(&mut answer) {
+            Ok(_) => {}
+            Err(error) => assert!(
+                matches!(
+                    error.kind(),
+                    std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted
+                ),
+                "the sink did not close the connection: {error:?}"
+            ),
         }
+        assert!(answer.is_empty(), "the sink answered: {answer:?}");
+        wait_for(&sink, 1);
         assert_eq!(sink.accepted(), 1);
     }
 
-    /// A rogue local listener receives nothing that went to the sink, and
-    /// cannot take the sink's port while the sink lives (the sink must
-    /// outlive the engine).
+    /// While the sink lives, traffic to the argv's proxy reaches only the
+    /// sink: a rogue on another port receives nothing, and a rogue that
+    /// manages a wildcard bind on the sink's port (BSD stacks may allow
+    /// one beside the sink's specific bind) receives nothing either. The
+    /// exact address cannot be re-bound.
     #[test]
-    fn a_rogue_listener_receives_nothing_and_cannot_take_the_sink_port() {
+    fn while_the_sink_lives_its_proxy_traffic_reaches_only_the_sink() {
         let sink = NetworkSink::start().unwrap();
-        let rogue = TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        rogue.set_nonblocking(true).unwrap();
-        for _ in 0..3 {
-            let _ = TcpStream::connect(("127.0.0.1", sink.port()));
+        let argv = build_unix_worker_argv(&profile(), &destinations(), &sink).unwrap();
+        let proxy = proxy_of(&argv);
+        let elsewhere = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        elsewhere.set_nonblocking(true).unwrap();
+        let wildcard = TcpListener::bind(("0.0.0.0", proxy.port())).ok();
+        if let Some(wildcard) = &wildcard {
+            wildcard.set_nonblocking(true).unwrap();
         }
-        std::thread::sleep(Duration::from_millis(200));
+        for _ in 0..3 {
+            TcpStream::connect(proxy).unwrap();
+        }
+        wait_for(&sink, 3);
+        assert_eq!(sink.accepted(), 3, "every connection reached the sink");
+        let nothing = |listener: &TcpListener| matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock);
         assert!(
-            rogue.accept().is_err(),
-            "the rogue listener received a connection"
+            nothing(&elsewhere),
+            "a rogue on another port received a connection"
         );
+        if let Some(wildcard) = &wildcard {
+            assert!(
+                nothing(wildcard),
+                "a wildcard rogue on the sink's port received a connection"
+            );
+        }
         assert!(
-            TcpListener::bind(("127.0.0.1", sink.port())).is_err(),
-            "another process could bind the live sink's port"
+            TcpListener::bind(proxy).is_err(),
+            "the sink's exact address could be re-bound while it lives"
         );
     }
 
@@ -236,7 +301,7 @@ mod tests {
             {
                 continue;
             }
-            let text = std::fs::read_to_string(path).unwrap_or_default();
+            let text = std::fs::read_to_string(path).unwrap();
             for needle in [
                 "unix_confinement",
                 "build_unix_worker_argv",
