@@ -185,6 +185,11 @@ fn macos_dir_state(dir: &Path, targets: &[String], top: bool) -> PolicyKeyState 
         {
             return PolicyKeyState::Populated;
         }
+        // APFS folds case beyond ASCII (for example U+017F to `s`), so a
+        // non-ASCII plist name could still reach a target domain: refuse it.
+        if !name.is_ascii() && name.to_lowercase().ends_with(".plist") {
+            return PolicyKeyState::Populated;
+        }
         if file_type.is_symlink() && (top || name.to_ascii_lowercase().ends_with(".plist")) {
             // A link where a per-user directory or a plist could be: refuse
             // rather than follow it anywhere.
@@ -436,6 +441,8 @@ mod tests {
         for relative in [
             "Library/Managed Preferences/com.google.chrome.plist",
             "Library/Managed Preferences/ana/COM.GOOGLE.CHROME.PLIST",
+            // A non-ASCII lookalike (U+017F for `s`) that APFS may fold.
+            "Library/Managed Preferences/com.microſoft.Edge.plist",
         ] {
             let root = scratch("macos-case");
             std::fs::create_dir_all(root.join("Library/Managed Preferences/ana")).unwrap();
@@ -444,7 +451,14 @@ mod tests {
                 matches!(
                     check(UnixPlatform::MacOs, EngineKind::Chromium, &root),
                     Err(HostError::Invalid(_))
-                ),
+                ) || relative.contains("Edge"),
+                "{relative}"
+            );
+            assert!(
+                matches!(
+                    check(UnixPlatform::MacOs, EngineKind::Edge, &root),
+                    Err(HostError::Invalid(_))
+                ) || !relative.contains("Edge"),
                 "{relative}"
             );
             std::fs::remove_dir_all(&root).ok();
