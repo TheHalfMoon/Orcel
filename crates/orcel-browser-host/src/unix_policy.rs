@@ -185,9 +185,10 @@ fn macos_dir_state(dir: &Path, targets: &[String], top: bool) -> PolicyKeyState 
         {
             return PolicyKeyState::Populated;
         }
-        // APFS folds case beyond ASCII (for example U+017F to `s`), so a
-        // non-ASCII plist name could still reach a target domain: refuse it.
-        if !name.is_ascii() && name.to_lowercase().ends_with(".plist") {
+        // APFS folds case beyond ASCII (for example U+017F to `s`), so any
+        // non-ASCII name (in the domain or the suffix) could still reach a
+        // target domain: refuse every one.
+        if !name.is_ascii() {
             return PolicyKeyState::Populated;
         }
         if file_type.is_symlink() && (top || name.to_ascii_lowercase().ends_with(".plist")) {
@@ -443,6 +444,7 @@ mod tests {
             "Library/Managed Preferences/ana/COM.GOOGLE.CHROME.PLIST",
             // A non-ASCII lookalike (U+017F for `s`) that APFS may fold.
             "Library/Managed Preferences/com.microſoft.Edge.plist",
+            "Library/Managed Preferences/ana/com.microsoft.Edge.pliſt",
         ] {
             let root = scratch("macos-case");
             std::fs::create_dir_all(root.join("Library/Managed Preferences/ana")).unwrap();
