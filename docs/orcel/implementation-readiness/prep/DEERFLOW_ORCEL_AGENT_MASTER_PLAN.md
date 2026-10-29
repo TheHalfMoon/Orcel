@@ -1,10 +1,11 @@
 # DeerFlow 2.0 and the Orcel Agent: source audit, transplant matrix and master plan
 
-**Status: PLAN, revision 2 (no capability activated, no code imported).**
+**Status: PLAN, revision 3 (no capability activated, no code imported).**
 This document records the founder-directed investigation of ByteDance
 DeerFlow 2.0, made under the directive "DEERFLOW 2.0 FULL COPY-FIRST
-RESEARCH, ARCHITECTURE AND ENGINEERING AUTHORIZATION" (2026-10-30; this PR,
-#533, is its durable record). It also records the resulting architecture
+RESEARCH, ARCHITECTURE AND ENGINEERING AUTHORIZATION" (2026-10-30). This PR,
+#533, is that directive's durable record, and it is what M1 proceeds under
+without a grain, as #526 was for SG-000115's pre-activation work. It also records the resulting architecture
 decision. It grants no authority and changes no SpecGrain state.
 
 - **Donor pin:** `bytedance/deer-flow` at
@@ -234,12 +235,21 @@ dependency), REIMPLEMENT (take the design, not the code), or REJECT.
   - A model's "finish" is a claim, never a receipt: completion is judged from
     orceld results and task checkers.
 - **Tool surface and leases (fixes the unattended-autonomy risk).**
-  - Until a grain qualifies more, the agent connects with the **`core`
-    profile only**.
-  - It refuses to start when a FullControl, Admin or RemoteFullControl lease
-    is active for its session. Under a Full User lease routine operations
-    need no fresh approval (P20 §4.2), so an injected instruction could act
-    unattended.
+  - **Tool allowlist.** The edge cannot serve `core` to a local stdio
+    client: it always serves `desktop_structured` (`server.ts:47-70`), and
+    `localProfileFromConfig` refuses any other value (`tool_contract.ts`).
+    So "core only" is an **allowlist enforced inside the agent**:
+    - It checks every tool the edge lists against its allowlist and never
+      calls anything else.
+    - M1's allowlist is stricter than `core`: the read-only tools only.
+    - Making the edge itself serve `core` locally is an edge change for the
+      grain.
+  - **Lease precondition.** Under a Full User lease, routine operations need
+    no fresh approval (P20 §4.2), so an injected instruction could act
+    unattended. No MCP tool reports lease state today (`system.status`
+    returns none). Until a read-only lease-state signal exists (an addition
+    for the grain), the agent runs only against a test orceld or in Safe
+    mode, and the agent's README and the grain state this precondition.
   - **A per-run approval-request budget** (default 3). The run stops after
     the first denial. It never re-asks the same operation.
 - **Resume invariant (fixes P20 §17 replay risk).**
@@ -265,6 +275,10 @@ dependency), REIMPLEMENT (take the design, not the code), or REJECT.
   - No raw screenshots and no secret-like values. orceld already redacts
     passwords.
   - Memory (M6) is opt-in, with its own retention control.
+  - **M1 already creates this store** (the resume journal), so M1 tests
+    these rules: an owner-only directory, a size cap, a TTL, and deletion on
+    completion. The grain reviews the store as M1 built it and as later
+    milestones extend it.
 - **Transport.**
   - The agent spawns exactly one child, the edge (`node
     apps/orcel-mcp/dist/index.js` in tests; the installed `orcel mcp stdio`
@@ -307,7 +321,7 @@ dependency), REIMPLEMENT (take the design, not the code), or REJECT.
 | Milestone | Scope | Gate | Acceptance | Rollback |
 |---|---|---|---|---|
 | M0 | This plan, the donor lock, an independent review | — | Reviewed and merged | Revert (docs) |
-| M1 | `apps/orcel-agent`, standard library only, **no donor code, no new dependencies**: `edge.py` (an MCP stdio client spawning the built edge), `planner.py` (the `Planner` protocol plus a scripted planner), `agent.py` (the loop, a step budget, refusal-is-final, the approval-request budget, `core` profile only, the resume invariant with `outcome_unknown`), `events.py` (AgentKit-shaped events) | None beyond this plan: no import, no authority | (1) the BM-02 Tier A tasks (fs read, list, stat, read_range, find; all exposed by the edge, `fs_mutation.ts:91,101`) are solved through the real edge and a test orceld on Windows, macOS and Linux CI, every call audited. (2) The kill-between-dispatch-and-record test yields `outcome_unknown` and a re-observation. (3) A source scan: one allowlisted spawn (the edge), no shell, no other subprocess or socket, no writes outside the agent's state dir. (4) Not packaged and not referenced by orceld | Remove the app |
+| M1 | `apps/orcel-agent`, standard library only, **no donor code, no new dependencies**: `edge.py` (an MCP stdio client spawning the built edge), `planner.py` (the `Planner` protocol plus a scripted planner), `agent.py` (the loop, a step budget, refusal-is-final, the approval-request budget, `core` profile only, the resume invariant with `outcome_unknown`), `events.py` (AgentKit-shaped events) | None beyond this plan: no import, no authority | (1) the BM-02 Tier A tasks (fs read, list, stat, read_range, find; all exposed by the edge, `fs_mutation.ts:91,101`) are solved through the real edge and a test orceld on Windows, macOS and Linux CI, every call audited. (2) The kill-between-dispatch-and-record test yields `outcome_unknown` and a re-observation. (3) A source scan: one allowlisted spawn (the edge), no shell, no other subprocess or socket, no writes outside the agent's state dir. (4) The tool allowlist: never a call outside it. (5) The state dir: owner-only, size-capped, TTL, deleted on completion. (6) Not packaged and not referenced by orceld | Remove the app |
 | M2 | A pinned dependency set (`langchain`, `langgraph`, `mcp`, `langchain-mcp-adapters`) with a hash-locked resolve, a transitive license table and supply-chain audit; the LangChain planner adapter; COPY loop detection with Orcel tool names | **The owning grain is activated** (section G) | Scripted-model parity with M1; ported loop-detection tests; egress-denied tests; LangSmith off | Revert the dependencies |
 | M3 | Todos and compaction (built-ins plus DeerFlow deltas), output budget, errors, clarification, LangGraph SQLite checkpoints | M2 | Ported tests; long-task tests; resume invariant kept | Revert |
 | M4 | Local-model evaluation on CI (a pinned open-weight model on a disposable runner, llama.cpp, labelled "autonomous, local model") | M3 plus founder decision 2 (model and license) | The section F report | Drop the job |
@@ -428,3 +442,6 @@ or dependencies (M2 and on) waits for the owning grain.
 | 12 | The lock does not pin what is copied | The lock is marked representative; per-milestone closures and tests are added |
 | 13 | Loop detection uses DeerFlow tool names | Row 2: mapping and ported tests |
 | 14 | Stale snapshot | Section H refreshed; refreshed again at merge |
+| R2-A | The edge cannot serve `core` locally | Section C: an allowlist inside the agent, tested in M1; an edge-served `core` belongs to the grain |
+| R2-B | Lease refusal has no lease signal | Section C: a precondition (a test orceld or Safe mode only) until a read-only lease signal exists under the grain |
+| R2-C | Privacy rules timed after M1 creates the store | Section C: they are M1 acceptance tests |
