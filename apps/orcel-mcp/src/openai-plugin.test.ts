@@ -199,7 +199,7 @@ test("authorization metadata advertises only what the relay implements", () => {
   assert.equal(metadata.authorization_response_iss_parameter_supported, true);
 });
 
-test("at most one grain is active (or the founder-sequenced SG-000096/SG-000127 pair) and no later grain is activated ahead of it", () => {
+test("at most one grain is active (or the founder-sequenced SG-000096/SG-000127 pair, with SG-000128 by founder decision) and no later grain is activated ahead of it", () => {
   const dir = join(repo, ".specgrain", "specs");
   const specs = readdirSync(dir).filter((name) => /^SG-\d{6}\.json$/.test(name)).sort();
   const active = specs.filter((name) => (JSON.parse(readFileSync(join(dir, name), "utf8")) as { state: string }).state !== "CLOSED");
@@ -207,7 +207,25 @@ test("at most one grain is active (or the founder-sequenced SG-000096/SG-000127 
   // founder sequencing of 2026-10-25, issue #455) ran beside SG-000096 and
   // are closed. The only lawful open set is SG-000096 with SG-000127
   // (ORCEL-F4, founder sequencing: mandate #435, tracked under #446).
-  // Update this pin when either closes.
+  // SG-000128 (ORCEL-UIA, scoped UIA subtree observation) runs beside them
+  // by founder decision of 2026-10-29 (issue #515), which CURRENT.md records.
+  // Update this pin when any of them closes.
+  if (active.length === 3) {
+    assert.deepEqual(active, ["SG-000096.json", "SG-000127.json", "SG-000128.json"], `parallel active grains: ${active.join(", ")}`);
+    const current = readFileSync(join(repo, "docs", "canonical", "CURRENT.md"), "utf8");
+    assert.ok(current.includes("SG-000127 runs with SG-000096 as the open pair by founder sequencing of 2026-10-22 (issue #446)"), "SG-000127 requires its recorded founder sequencing");
+    assert.ok(current.includes("SG-000128 runs beside SG-000096 and SG-000127 as an additional active grain by founder decision of 2026-10-29"), "SG-000128 requires its recorded founder decision");
+    for (const closed of ["SG-000108.json", "SG-000120.json", "SG-000126.json"]) {
+      const spec = JSON.parse(readFileSync(join(dir, closed), "utf8")) as { state: string };
+      assert.equal(spec.state, "CLOSED", `the open set follows the closed ${closed}`);
+    }
+    assert.deepEqual(
+      specs.filter((name) => name > "SG-000096.json"),
+      ["SG-000108.json", "SG-000120.json", "SG-000126.json", "SG-000127.json", "SG-000128.json"],
+      "no other grain beyond SG-000096 exists"
+    );
+    return;
+  }
   if (active.length === 2) {
     assert.deepEqual(active, ["SG-000096.json", "SG-000127.json"], `parallel active grains: ${active.join(", ")}`);
     const current = readFileSync(join(repo, "docs", "canonical", "CURRENT.md"), "utf8");

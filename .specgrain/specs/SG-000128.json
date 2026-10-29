@@ -1,0 +1,98 @@
+{
+  "id": "SG-000128",
+  "title": "Scoped UIA subtree observation (bounded observation below an Orcel-issued element)",
+  "program": "ORCEL-UIA",
+  "state": "GRAIN",
+  "risk": "medium",
+  "created": "2026-10-29",
+  "base": "c3c7c41c62bd158c6cc9384c0434634328e12810",
+  "dependencies": [
+    "SG-000027",
+    "SG-000063",
+    "SG-000094"
+  ],
+  "planning_issue": 515,
+  "objective": "Make the controls of Chromium- and Electron-rendered windows observable, and so targetable by the existing approval-gated UIA actions, without widening any per-call bound. Today uia.tree observe stops at depth 8, which ends exactly at Chromium's web Document (BM-02 Tier C evidence, run 40784710382: 11 nodes, deepest 8, truncated, only the Document actionable). SG-000128 adds an optional scoped root: uia.tree observe may name an element orceld itself issued for the same window in its current tree generation, and returns the bounded subtree below it under exactly today's caps, redaction and protected-surface rules. Preparation packet: docs/orcel/implementation-readiness/prep/UIA_SUBTREE_OBSERVATION.md (PR #517).",
+  "scope": {
+    "include": [
+      "Activate the SG-000128 contract only. Every slice below needs its own exact-head qualified implementation PR with a fresh-context security judge.",
+      "Slice 1, kernel and provider: orcel-policy (SG-000027) admits two optional uia.tree observe arguments, root_element_id and expected_tree_generation, both or neither; orcel-provider-uia resolves and validates the root (an element id it issued, of the same window, at the window's current tree generation, still bound to the same live window) before the window's element set is replaced, then observes below it with the existing depth, node and byte caps, redaction and protected-surface rules; the Windows native adapter and the computer host read below an element found by its runtime id inside the same live window, with the same bounds, and fail closed otherwise.",
+      "Slice 2, MCP: the local-only desktop_window_tree tool (SG-000063) gains the same two optional arguments; its contract, discovery, documentation and remote-scope tables change together; remote, tunnel and public profiles are unchanged.",
+      "Slice 3, qualification: BM-02 Tier C C2b on a disposable Windows CI runner reaches the cdb-s02 blocker form through a scoped subtree and its labelled scripted plan acts through the existing approval-gated set_value and invoke shapes with recorded broker decisions, evaluator scores and complete cleanup."
+    ],
+    "exclude": [
+      "Any raise of MAX_TREE_DEPTH, MAX_TREE_NODES or the response byte bound.",
+      "Caller-supplied HWNDs, PIDs, runtime ids, native element handles, selectors, XPath or coordinates; UIA_WIDENING_FIELDS stays as it is.",
+      "Unrestricted traversal, standing enumeration or any observation that is not one bounded call over an Orcel-issued element.",
+      "New approval authority: every action keeps its fresh per-action SOFT approval; observation stays read-only.",
+      "Any change to actuation shapes, eligible control types, protected surfaces, other-session exclusion or the remote, tunnel and public profiles.",
+      "macOS and Linux native observation changes (outside this grain)."
+    ]
+  },
+  "authority_delta": {
+    "activation": "None. This packet authorizes implementing and proving SG-000128; it adds no argument, shape, tool, dependency, listener or authority.",
+    "observation": "Proposed only (slice 1): read-only bounded observation below an Orcel-issued element of the same window and current tree generation, under unchanged per-call caps, redaction and protected-surface rules.",
+    "mcp": "Proposed only (slice 2): two optional arguments on the existing local-only desktop_window_tree tool; no new tool; remote, tunnel and public profiles unchanged.",
+    "approval": "Unchanged rules: no observation needs approval and every action on an observed element keeps its fresh per-action SOFT approval with exact digest binding, single use and expiry.",
+    "native_host": "Proposed only (slice 1): one bounded host request (or field) reading below a runtime id inside the same live window; fails closed when the id does not resolve there.",
+    "network": "None.",
+    "process": "None.",
+    "privileged": "None. SG-000096 Full User shell remains unarmed."
+  },
+  "decisions": [
+    {
+      "question": "Open the governed change",
+      "status": "DECIDED (founder, 2026-10-29)",
+      "decision": "Founder decision of 2026-10-29, relayed by the implementing session and recorded on issue #515: \"Approved: Open the governed change for Issue #515. I authorize the formal SpecGrain activation process and implementation of narrowly scoped UIA subtree observation, subject to all required governance, security reviews, and qualification gates. This authorization is limited to the scoped UIA capability described in PR #517. It does not authorize general UIA access, arbitrary element selectors, unrestricted tree traversal, or new approval authority.\""
+    },
+    {
+      "question": "Sequencing",
+      "status": "DECIDED (founder, 2026-10-29)",
+      "decision": "SG-000128 runs as an additional active grain beside SG-000096 and SG-000127; the canonical open-grain test records it."
+    },
+    {
+      "question": "Rule change: the lawful open-grain set",
+      "status": "RECORDED (before implementation)",
+      "decision": "The canonical open-grain rule (apps/orcel-mcp/src/openai-plugin.test.ts and p20-architecture.test.ts) allowed only SG-000096 with SG-000127. It now also allows SG-000096, SG-000127 and SG-000128 together, only while CURRENT.md records SG-000128's founder decision, the parallel grains SG-000108, SG-000120 and SG-000126 stay closed, and no other grain beyond SG-000096 exists. This follows the SG-000120 precedent (issue #455). No other rule changes."
+    },
+    {
+      "question": "Raise the global caps instead",
+      "status": "REJECTED",
+      "decision": "A larger global depth or node cap would enlarge every observation for every caller and widen SG-000063 A1's bound; a scoped root keeps every response within today's bound."
+    }
+  ],
+  "invariants": [
+    "orceld remains the sole local authority; the MCP edge and clients only forward requests.",
+    "Every uia.tree observe response, scoped or not, stays within MAX_TREE_DEPTH (8 below its root), MAX_TREE_NODES (256) and the response byte bound.",
+    "A scoped root must be an element id orceld issued for the same window at that window's current tree generation and still bound to the same live window; anything else fails closed and observes nothing.",
+    "The root is resolved and validated before the window's element set is replaced.",
+    "Each observation, scoped or not, starts a new tree generation and replaces the window's elements: elements from an earlier observation are stale for actions.",
+    "The registry stays bounded: at most MAX_TREE_NODES elements per window and MAX_WINDOWS windows.",
+    "Redaction (password and secret-like values), protected-surface and other-session exclusions apply to every subtree.",
+    "No caller-supplied HWND, PID, runtime id, native handle, selector, XPath or coordinate is accepted.",
+    "Observation never needs or creates approval; every action keeps its fresh per-action SOFT approval."
+  ],
+  "acceptance": [
+    "Policy tests: root_element_id and expected_tree_generation are accepted only together, are well formed, and every UIA_WIDENING_FIELDS field is still refused.",
+    "Provider tests: a stale generation, an element of another window, a malformed id, an unknown id and a root whose window was re-created fail closed and observe nothing; the root is validated before the element set is replaced; a scoped call starts a new generation and an action on an element from the previous call is refused as stale.",
+    "Bounds tests: a scoped subtree never exceeds depth 8 below its root, 256 nodes or the byte bound, and a password field inside it is redacted.",
+    "Native tests on Windows: the host reads below a runtime id inside the same live window, refuses one that does not resolve there, and the live SG-000063 observation tests still pass.",
+    "MCP tests (slice 2): desktop_window_tree accepts the two optional arguments, the contract, discovery, documentation and remote-scope tables agree, and remote, tunnel and public profiles are unchanged.",
+    "Qualification (slice 3): BM-02 Tier C C2b on a disposable Windows CI runner completes its labelled scripted plan through the scoped subtree and the existing approval-gated actions, with recorded broker decisions, evaluator scores and no window or process left behind.",
+    "Exact-head CI (Windows, macOS and Linux legs), Review Gates (Jev Semantic Review, Alibaba OpenCodeReview delegation) and a fresh-context security judge pass on each slice."
+  ],
+  "review": {
+    "jev_semantic_review": true,
+    "alibaba_open_code_review": "delegation mode per standing founder decision (2026-10-10) with manual review of excluded files",
+    "security_review": "fresh-context security judge on every slice and on closeout; d1-local advisory only",
+    "exact_head_ci": true,
+    "native_windows": true,
+    "cross_platform_ci": "Windows, macOS and Linux legs"
+  },
+  "successor_requirements": {
+    "macos_linux": "Scoped subtree observation in the macOS and Linux native hosts is outside SG-000128.",
+    "agent_runs": "BM-02 Tier C agent runs (C3) still need a planner model decision."
+  },
+  "activation_note": "No argument, shape, tool, dependency or authority change in this activation packet. Separate implementation PRs must qualify their exact heads; activation CI alone proves nothing about subtree observation.",
+  "done_when": "On Windows, uia.tree observe with a scoped root returns the bounded subtree below an Orcel-issued element under unchanged caps, redaction and protected-surface rules, every invalid root fails closed, desktop_window_tree exposes it locally with agreeing contract tables, and BM-02 Tier C C2b completes its labelled scripted plan through it on a disposable CI runner."
+}
