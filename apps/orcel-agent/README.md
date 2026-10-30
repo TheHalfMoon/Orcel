@@ -1,4 +1,4 @@
-# Orcel Agent (M1; SG-000129 M2 in progress)
+# Orcel Agent (M1 and M2; SG-000129 M3 in progress)
 
 A planner package that is an **MCP client of the Orcel edge only**. It proposes
 calls, and orceld authorizes, executes, audits and verifies them. Design,
@@ -16,6 +16,19 @@ decisions and roadmap:
   - wheels only;
   - a license table and an advisory audit;
   - tracing forced off.
+
+## Bounded tool-output previews (SG-000129 M3 slice 4a1)
+
+`orcel_agent/output_budget.py` adapts DeerFlow's bounded output-sampling
+approach into a model-facing, memory-only preview. Oversized successful tool
+results are summarized by structural counts and a deterministic head/tail
+sample under a hard 16,000-character limit, including the metadata. No
+external file, output-reference tool or new storage path is created. The
+original in-process step is unchanged; refusals, resumed calls and
+`OUTCOME_UNKNOWN` keep their existing messages. The preview is untrusted
+data, never an execution receipt. Provenance and the MIT notice are under
+`third_party/`. This is only the output-budget part of M3; error handling,
+todos, compaction and durable checkpoints remain separate slices.
 
 ## Loop detection (SG-000129 slice 3)
 

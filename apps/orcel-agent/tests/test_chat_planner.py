@@ -233,6 +233,23 @@ class ChatPlanner(unittest.TestCase):
         self.assertEqual(self.agent(FakeEdge([])).allowlist, READ_ONLY_TOOLS)
         self.assertEqual(self.agent(FakeEdge([]), allowlist=frozenset({"fs_read"})).allowlist, frozenset({"fs_read"}))
 
+    def test_large_result_reaches_the_model_as_bounded_untrusted_preview(self) -> None:
+        # The original result stays on Step; only the model's tool message
+        # is budgeted. Nothing is externalized or turned into a fake receipt.
+        marker = "SECRET_MIDDLE_DO_NOT_SURFACE"
+        payload = {"text": "BEGIN" + "A" * 16000 + marker + "B" * 16000 + "END"}
+        step = Step(ToolCall("fs_read", {"path": "a"}), ok=True, result=payload)
+        model = scripted(AIMessage(content="done"))
+        ChatModelPlanner(model).propose("g", [step], FakeEdge(["fs_read"]).list_tools())
+        message = next(m for m in model.seen[0] if isinstance(m, ToolMessage))
+        preview = str(message.content)
+        self.assertLessEqual(len(preview), 16_000)
+        self.assertIn("BEGIN", preview)
+        self.assertIn("END", preview)
+        self.assertIn("Untrusted data", preview)
+        self.assertNotIn(marker, preview)
+        self.assertIn(marker, step.result["text"])
+
     def test_an_unknown_outcome_is_shown_as_unknown(self) -> None:
         steps = [Step(ToolCall("fs_read", {}), ok=False, error_code=OUTCOME_UNKNOWN)]
         model = scripted(AIMessage(content="ok"))

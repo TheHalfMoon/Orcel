@@ -124,6 +124,11 @@
       "question": "Evaluation labels",
       "status": "RECORDED",
       "decision": "Every SG-000129 benchmark row is labelled deterministic-scripted (a fake chat model replaying a plan or the tasks' scripted plans). No row is presented as autonomous model performance; that needs M4's model decision."
+    },
+    {
+      "question": "M3 slice 4a1: memory-only output preview budget",
+      "status": "RECORDED (SG-000129 slice 4a1, before merge)",
+      "decision": "Replaces the model-facing slice 2 16000-character prefix truncation with a bounded 16000-character head/tail preview and metadata-only JSON shape summary, adapted from the pinned DeerFlow tool output budget/synopsis. The full Step.result is unchanged in process; only the conversation ToolMessage is previewed. No output is externalized, no new disk path or network is opened, and no new tool, permission, approval or runtime dependency is added. The preview is untrusted text, not a receipt. Failure, OUTCOME_UNKNOWN and resumed results retain their existing deterministic notices unchanged. Slice 4a1 does not claim to implement the remaining M3 4a error middleware, 4b todos or 4c compaction."
     }
   ],
   "invariants": [
