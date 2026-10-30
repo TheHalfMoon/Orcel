@@ -2,25 +2,25 @@ aiosqlite==0.22.1 \
     --hash=sha256:043e0bd78d32888c0a9ca90fc788b38796843360c855a7262a532813133a0650 \
     --hash=sha256:21c002eb13823fad740196c5a2e9d8e62f6243bd9e7e4a1f87fb5e44ecb4fceb
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   langgraph-checkpoint-sqlite
 annotated-types==0.7.0 \
     --hash=sha256:1f02e8b43a8fbbc3f3e0d4f0f4bfc8131bcb4eebe8849b8e5c773f3a1c582a53 \
     --hash=sha256:aff07c09a53a08bc8cfccb9c85b05f1aa9a2a6f23728d790723543408344ce89
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   pydantic
 anyio==4.14.2 \
     --hash=sha256:9f505dda5ac9f0c8309b5e8bd445a8c2bf7246f3ce950121e45ea15bc41d1494 \
     --hash=sha256:cfa139f3ed1a23ee8f88a145ddb5ac7605b8bbfd8592baacd7ce3d8bb4313c7f
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   httpx
 certifi==2026.10.19 \
     --hash=sha256:035c1e85572b141bf1c3a3eff0e33a8eb74917522f2559075ff8d2fea780a1ae \
     --hash=sha256:42d35340cc5b9ba78e818ddbff0c5b1c2b779de448a340fd1b989f5fa8670e1b
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   httpcore
     #   httpx
     #   requests
@@ -155,32 +155,32 @@ charset-normalizer==3.4.7 \
     --hash=sha256:fbccdc05410c9ee21bbf16a35f4c1d16123dcdeb8a1d38f33654fa21d0234f79 \
     --hash=sha256:fea24543955a6a729c45a73fe90e08c743f0b3334bbf3201e6c4bc1b0c7fa464
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   requests
 h11==0.16.0 \
     --hash=sha256:4e35b956cf45792e4caa5885e69fba00bdbc6ffafbfa020300e549b208ee5ff1 \
     --hash=sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   httpcore
 httpcore==1.0.9 \
     --hash=sha256:2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55 \
     --hash=sha256:6e34463af53fd2ab5d807f399a9b45ea31c3dfa2276f15a2c3f00afff6e176e8
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   httpx
 httpx==0.28.1 \
     --hash=sha256:75e98c5f16b0f35b567856f597f06ff2270a374470a5c2392242528e3e3e42fc \
     --hash=sha256:d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   langgraph-sdk
     #   langsmith
 idna==3.15 \
     --hash=sha256:048adeaf8c2d788c40fee287673ccaa74c24ffd8dcf09ffa555a2fbb59f10ac8 \
     --hash=sha256:ca962446ea538f7092a95e057da437618e886f4d349216d2b1e294abfdb65fdc
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   anyio
     #   httpx
     #   requests
@@ -188,25 +188,25 @@ jsonpatch==1.33 \
     --hash=sha256:0ae28c0cd062bbd8b8ecc26d7d164fbbea9652a1a3693f3b956c1eae5145dade \
     --hash=sha256:9fcd4009c41e6d12348b4a0ff2563ba56a2923a7dfee731d004e212e1ee5030c
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   langchain-core
 jsonpointer==3.1.1 \
     --hash=sha256:0b801c7db33a904024f6004d526dcc53bbb8a4a0f4e32bfd10beadf60adf1900 \
     --hash=sha256:8ff8b95779d071ba472cf5bc913028df06031797532f08a7d5b602d8b2a488ca
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   jsonpatch
 langchain==1.3.14 \
     --hash=sha256:1b6696c72ba3bbbce54d745e0180742c9f6ece8bbc59ed5a46c3e20b9a435929 \
     --hash=sha256:4d10dbe91005952cddd56d0dc77aa108964da6bae90ab20063653957e901f782
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   -r requirements.in
 langchain-core==1.4.9 \
     --hash=sha256:28e3909e2a10cc81504952d795ac0a9e014c0018121ef89d48dd396fa09ec624 \
     --hash=sha256:f8078901145bed0466755277500a5a22822a7b628808c4c0a28d4fc88895fcf2
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   -r requirements.in
     #   langchain
     #   langgraph
@@ -217,21 +217,21 @@ langchain-protocol==0.0.18 \
     --hash=sha256:70b53a86fbf9cedc863555effe44da192ab02d556ddbf2cf95b8873adcf41b5a \
     --hash=sha256:ec3e11782f1ed0c9db38e5a9ed01b0e7a0d3fba406faa8aef6594b73c56a63e6
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   langchain-core
     #   langgraph-sdk
 langgraph==1.2.9 \
     --hash=sha256:385f87bc1802c35af7e0aa479278ecba8582d103515eb48256cb2ddcd42d0bd4 \
     --hash=sha256:c2d98ad94333937922ba04148641c1da2bfe45b5b8e55d7b6dcb0bb2df809e76
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   -r requirements.in
     #   langchain
 langgraph-checkpoint==4.3.0 \
     --hash=sha256:bedfafe2f997ded60e4fa593e79f56f436a6e45586392dc382aa810d0c751c64 \
     --hash=sha256:c75965d84cc2c1d549163e910a15bcb577758001b141619d05297c463280b018
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   -r requirements.in
     #   langgraph
     #   langgraph-checkpoint-sqlite
@@ -240,13 +240,13 @@ langgraph-checkpoint-sqlite==3.1.2 \
     --hash=sha256:249640b84efd4872585a9ce596a63c2593e543f748341791591aeaf4c878329c \
     --hash=sha256:4e3f376fa6f192d6ad2a1a4643b039986f1593552ef870e9e45281575de6fbf2
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   -r requirements.in
 langgraph-prebuilt==1.1.0 \
     --hash=sha256:3c579cf6eed2d17f9c157c2d0fcaddcd8688524e7022d3b22b37a3bf4589d528 \
     --hash=sha256:51e311747d755b751d5c6b39b0c1446124d3a7643d2515017e6714b323508fc9
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   -r requirements.in
     #   langgraph
 langgraph-sdk==0.4.6 \
@@ -259,7 +259,7 @@ langsmith==0.8.18 \
     --hash=sha256:32dde9c0e67e053e0fb738921fc8ced768af7b8fa83d7a0e3fd63597cf8776dd \
     --hash=sha256:3940183349993faef48e6c7d08e4822ee9cefd906b362d0e3c2d650314d2f282
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   langchain-core
 orjson==3.11.8 \
     --hash=sha256:0022bb50f90da04b009ce32c512dc1885910daa7cb10b7b0cba4505b16db82a8 \
@@ -337,7 +337,7 @@ orjson==3.11.8 \
     --hash=sha256:fe0b8c83e0f36247fc9431ce5425a5d95f9b3a689133d494831bdbd6f0bceb13 \
     --hash=sha256:ff51f9d657d1afb6f410cb435792ce4e1fe427aab23d2fcd727a2876e21d4cb6
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   langgraph-sdk
     #   langsmith
 ormsgpack==1.12.2 \
@@ -391,20 +391,20 @@ ormsgpack==1.12.2 \
     --hash=sha256:f3601f19afdbea273ed70b06495e5794606a8b690a568d6c996a90d7255e51c1 \
     --hash=sha256:fcd55e5f6ba0dbce624942adf9f152062135f991a0126064889f68eb850de0dd
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   langgraph-checkpoint
 packaging==26.2 \
     --hash=sha256:5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e \
     --hash=sha256:ff452ff5a3e828ce110190feff1178bb1f2ea2281fa2075aadb987c2fb221661
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   langchain-core
     #   langsmith
 pydantic==2.13.3 \
     --hash=sha256:6db14ac8dfc9a1e57f87ea2c0de670c251240f43cb0c30a5130e9720dc612927 \
     --hash=sha256:af09e9d1d09f4e7fe37145c1f577e1d61ceb9a41924bf0094a36506285d0a84d
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   -r requirements.in
     #   langchain
     #   langchain-core
@@ -532,7 +532,7 @@ pydantic-core==2.46.3 \
     --hash=sha256:ff5e7783bcc5476e1db448bf268f11cb257b1c276d3e89f00b5727be86dd0127 \
     --hash=sha256:ffe0883b56cfc05798bf994164d2b2ff03efe2d22022a2bb080f3b626176dd56
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   pydantic
 pyyaml==6.0.3 \
     --hash=sha256:00c4bdeba853cc34e7dd471f16b4114f4162dc03e6b7afcc2128711f0eca823c \
@@ -609,20 +609,20 @@ pyyaml==6.0.3 \
     --hash=sha256:fa160448684b4e94d80416c0fa4aac48967a969efe22931448d853ada8baf926 \
     --hash=sha256:fc09d0aa354569bc501d4e787133afc08552722d3ab34836a80547331bb5d4a0
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   langchain-core
 requests==2.33.1 \
     --hash=sha256:18817f8c57c6263968bc123d237e3b8b08ac046f5456bd1e307ee8f4250d3517 \
     --hash=sha256:4e6d1ef462f3626a1f0a0a9c42dd93c63bad33f9f1c1937509b8c5c8718ab56a
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   langsmith
     #   requests-toolbelt
 requests-toolbelt==1.0.0 \
     --hash=sha256:7681a0a3d047012b5bdc0ee37d7f8f07ebe76ab08caeccfc3921ce23c88d5bc6 \
     --hash=sha256:cccfdd665f0a24fcf4726e690f65639d272bb0637b9b92dfd91a5568ccf6bd06
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   langsmith
 sqlite-vec==0.1.9 \
     --hash=sha256:1515727990b49e79bcaf75fdee2ffc7d461f8b66905013231251f1c8938e7786 \
@@ -631,19 +631,19 @@ sqlite-vec==0.1.9 \
     --hash=sha256:4a28dc12fa4b53d7b1dced22da2488fade444e96b5d16fd2d698cd670675cf32 \
     --hash=sha256:4e921e592f24a5f9a18f590b6ddd530eb637e2d474e3b1972f9bbeb773aa3cb9
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   langgraph-checkpoint-sqlite
 tenacity==9.1.4 \
     --hash=sha256:6095a360c919085f28c6527de529e76a06ad89b23659fa881ae0649b867a9d55 \
     --hash=sha256:adb31d4c263f2bd041081ab33b498309a57c77f9acf2db65aadf0898179cf93a
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   langchain-core
 typing-extensions==4.15.0 \
     --hash=sha256:0cea48d173cc12fa28ecabc3b837ea3cf6f38c6d1136f85cbaaf598984861466 \
     --hash=sha256:f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   anyio
     #   langchain-core
     #   langchain-protocol
@@ -654,13 +654,13 @@ typing-inspection==0.4.2 \
     --hash=sha256:4ed1cacbdc298c220f1bd249ed5287caa16f34d44ef4e9c3d0cbad5b521545e7 \
     --hash=sha256:ba561c48a67c5958007083d386c3295464928b01faa735ab8547c5692e87f464
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   pydantic
 urllib3==2.8.0 \
     --hash=sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3 \
     --hash=sha256:63bf2ead4c879426ebf22ef2a781eeb4aa3b4ae798a0435506f8687fd5bb9b63
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   requests
 uuid-utils==0.19.0 \
     --hash=sha256:0cff166cf6348e9a705740e6575ce7bc727554a71a6add60b9ceceaaf169002a \
@@ -717,7 +717,7 @@ uuid-utils==0.19.0 \
     --hash=sha256:f629f2a4f95e46d99ee673536ab9706899696cdc6686e93314ea756d3b394ce4 \
     --hash=sha256:fd3bcc556e249bb70b1c7fd78e659a1ebfb5572e7ff2091d096aecbac62edb1c
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   langchain-core
     #   langsmith
 websockets==16.0 \
@@ -783,7 +783,7 @@ websockets==16.0 \
     --hash=sha256:f4a32d1bd841d4bcbffdcb3d2ce50c09c3909fbead375ab28d0181af89fd04da \
     --hash=sha256:fd3cb4adb94a2a6e2b7c0d8d05cb94e6f1c81a0cf9dc2694fb65c7e8d94c42e4
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   langgraph-sdk
     #   langsmith
 xxhash==3.7.0 \
@@ -975,7 +975,7 @@ xxhash==3.7.0 \
     --hash=sha256:fe32736295ea38e43e7d9424053c8c47c9f64fecfc7c895fb3da9b30b131c9ee \
     --hash=sha256:fe820f104473d1516ecd628993690bc1f79b0e699f32711d42a5a70b3d0f8170
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   langgraph
     #   langsmith
 zstandard==0.25.0 \
@@ -1079,5 +1079,5 @@ zstandard==0.25.0 \
     --hash=sha256:fd7a5004eb1980d3cefe26b2685bcb0b17989901a70a1040d1ac86f1d898c551 \
     --hash=sha256:ffef5a74088f1e09947aecf91011136665152e0b4b359c42be3373897fb39b01
     # via
-    #   -c C:/Users/Shehr/AppData/Local/Temp/claude/C--Users-Shehr-Orcel-fable-readiness-20261018/515723e8-6f41-4572-bb5f-3904e5e0d8a2/scratchpad/donor-constraints-moved.txt
+    #   -c constraints-donor-pin.txt
     #   langsmith

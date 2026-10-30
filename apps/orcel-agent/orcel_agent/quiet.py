@@ -12,6 +12,7 @@ guard: they deny connections and name lookups at the interpreter.
 from __future__ import annotations
 
 import os
+import sys
 
 #: Every variable in these namespaces is removed: endpoints, keys, projects,
 #: profiles, sampling and the tracing switches themselves.
@@ -32,8 +33,16 @@ TRACING_OFF = {
 }
 
 
+class TracingAlreadyImported(RuntimeError):
+    """langsmith was imported first; it caches its environment, so switching
+    tracing off now would have no effect."""
+
+
 def silence_tracing() -> None:
-    """Remove every tracing variable, then set the off switches."""
+    """Remove every tracing variable, then set the off switches. Refuses if
+    langsmith is already imported, since it would keep its cached settings."""
+    if "langsmith" in sys.modules:
+        raise TracingAlreadyImported("import orcel_agent before anything that imports langsmith")
     for name in list(os.environ):
         if name.upper().startswith(CLEARED_PREFIXES):
             del os.environ[name]

@@ -436,21 +436,33 @@ class SourceBoundary(unittest.TestCase):
 
     ALLOWED_IMPORTS = {
         "__future__", "dataclasses", "hashlib", "json", "os", "pathlib", "queue", "re", "shutil", "stat",
-        "subprocess", "threading", "time", "typing", "uuid",
-    }
+        "subprocess", "sys", "threading", "time", "typing", "uuid",
+    }  # sys: SG-000129 slice 1, quiet.py checks sys.modules
     # SG-000129: never imported by the agent, whatever a later slice admits
     # to ALLOWED_IMPORTS; this list is only ever extended. A module matches
     # its name or any submodule.
     DENIED_MODULES = (
         "mcp", "langchain_mcp_adapters", "langchain_community", "langchain_openai", "langchain_anthropic",
         "langchain_ollama", "langchain_google_genai", "langchain_aws", "openai", "anthropic", "ollama",
-        "tiktoken", "transformers", "huggingface_hub", "langgraph.store", "sqlite_vec", "socket", "ssl",
-        "urllib", "http", "httpx", "httpcore", "requests", "aiohttp", "websockets", "asyncio.subprocess",
-        "multiprocessing", "importlib",
+        "tiktoken", "transformers", "huggingface_hub", "langgraph.store", "sqlite_vec", "socket", "_socket",
+        "ssl", "_ssl", "socketserver", "smtplib", "ftplib", "poplib", "imaplib", "telnetlib", "xmlrpc",
+        "webbrowser", "urllib", "http", "httpx", "httpcore", "requests", "aiohttp", "websockets",
+        "asyncio.subprocess", "multiprocessing", "importlib",
     )
     # ctypes stays outside ALLOWED_IMPORTS; SG-000129 slice 5 may admit it in
     # one named Windows-ACL module only, so it is not on the denylist.
-    DENIED_NAMES = {"ClientSession", "stdio_client", "enable_load_extension", "load_extension"}
+    DENIED_NAMES = {
+        "ClientSession", "stdio_client", "enable_load_extension", "load_extension", "create_connection",
+        "create_server", "start_server", "create_datagram_endpoint", "open_unix_connection", "start_unix_server",
+    }
+    # The never-narrowed floor, as SG-000129's recorded decision "Rule
+    # change: the agent source scan grows by named imports only" names it.
+    # Narrowing either list needs a new recorded decision, not an edit here.
+    BASELINE_MODULES = (
+        "mcp", "langchain_mcp_adapters", "langchain_community", "langchain_openai", "langchain_anthropic",
+        "langchain_ollama", "socket", "urllib", "http",
+    )
+    BASELINE_NAMES = ("ClientSession", "stdio_client", "enable_load_extension")
     FORBIDDEN_CALLS = {"__import__", "eval", "exec", "compile", "open"}
     FORBIDDEN_OS = {"system", "popen", "fork", "forkpty", "posix_spawn", "posix_spawnp", "startfile", "kill"}
 
@@ -476,6 +488,15 @@ class SourceBoundary(unittest.TestCase):
                 for name in names:
                     self.assertIn(name, self.ALLOWED_IMPORTS, f"{path.name}: import {name}")
 
+    def test_the_denylist_is_never_narrowed_below_the_recorded_floor(self) -> None:
+        spec = json.loads((ROOT.parents[1] / ".specgrain" / "specs" / "SG-000129.json").read_text(encoding="utf-8"))
+        decision = next(d["decision"] for d in spec["decisions"]
+                        if d["question"] == "Rule change: the agent source scan grows by named imports only")
+        for item in self.BASELINE_MODULES + self.BASELINE_NAMES:
+            self.assertIn(item, decision, f"{item} is not in the recorded decision")
+        self.assertLessEqual(set(self.BASELINE_MODULES), set(self.DENIED_MODULES))
+        self.assertLessEqual(set(self.BASELINE_NAMES), self.DENIED_NAMES)
+
     def test_denied_modules_and_names_never_appear(self) -> None:
         for path in self.modules():
             for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
@@ -494,6 +515,13 @@ class SourceBoundary(unittest.TestCase):
                     self.assertNotIn(node.attr, self.DENIED_NAMES, f"{path.name}: .{node.attr}")
                 if isinstance(node, ast.alias):
                     self.assertNotIn(node.name.split(".")[-1], self.DENIED_NAMES, f"{path.name}: {node.name}")
+                # getattr(x, "enable_load_extension") and importlib-free
+                # string lookups: a denied name or module in any string.
+                if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                    for word in re.findall(r"[A-Za-z_][A-Za-z0-9_.]*", node.value):
+                        self.assertNotIn(word, self.DENIED_NAMES, f"{path.name}: string {word!r}")
+                        self.assertFalse(any(word == m or word.startswith(m + ".") for m in self.DENIED_MODULES
+                                             if "_" in m or "." in m), f"{path.name}: string {word!r}")
 
     def test_no_execution_network_or_dynamic_code(self) -> None:
         subprocess_calls: list[str] = []

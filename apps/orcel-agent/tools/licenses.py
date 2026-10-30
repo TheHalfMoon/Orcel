@@ -36,29 +36,32 @@ EXCEPTIONS = {
     "orjson": "MPL-2.0 AND (Apache-2.0 OR MIT)",
 }
 
-#: Reviewed readings of distributions whose metadata has no SPDX expression.
-#: Each was checked against the license file its wheel ships (BSD clause
-#: counts included); langchain-core, langsmith, pyyaml and sqlite-vec ship
-#: none, so those follow their License field and classifiers.
+#: Reviewed readings of distributions whose metadata has no SPDX
+#: License-Expression, keyed on the exact version and raw License field they
+#: were reviewed at: a new version, or a changed License field, has no reading
+#: and fails until it is reviewed again. Each was checked against the license
+#: file its wheel ships (BSD clause counts included); langchain-core, langsmith
+#: and sqlite-vec ship none, so those follow their License field and
+#: classifiers.
 OVERRIDES = {
-    "aiosqlite": "MIT",
-    "annotated-types": "MIT",
-    "certifi": "MPL-2.0",
-    "charset-normalizer": "MIT",
-    "h11": "MIT",
-    "httpx": "BSD-3-Clause",
-    "jsonpatch": "BSD-3-Clause",
-    "jsonpointer": "BSD-3-Clause",
-    "langchain": "MIT",
-    "langchain-core": "MIT",
-    "langchain-protocol": "MIT",
-    "langsmith": "MIT",
-    "pyyaml": "MIT",
-    "requests": "Apache-2.0",
-    "requests-toolbelt": "Apache-2.0",
-    "sqlite-vec": "MIT OR Apache-2.0",
-    "tenacity": "Apache-2.0",
-    "xxhash": "BSD-2-Clause",
+    ("aiosqlite", "0.22.1", ""): "MIT",
+    ("annotated-types", "0.7.0", ""): "MIT",
+    ("certifi", "2026.10.19", "MPL-2.0"): "MPL-2.0",
+    ("charset-normalizer", "3.4.7", "MIT"): "MIT",
+    ("h11", "0.16.0", "MIT"): "MIT",
+    ("httpx", "0.28.1", "BSD-3-Clause"): "BSD-3-Clause",
+    ("jsonpatch", "1.33", "Modified BSD License"): "BSD-3-Clause",
+    ("jsonpointer", "3.1.1", "Modified BSD License"): "BSD-3-Clause",
+    ("langchain", "1.3.14", "MIT"): "MIT",
+    ("langchain-core", "1.4.9", "MIT"): "MIT",
+    ("langchain-protocol", "0.0.18", "MIT"): "MIT",
+    ("langsmith", "0.8.18", "MIT"): "MIT",
+    ("pyyaml", "6.0.3", "MIT"): "MIT",
+    ("requests", "2.33.1", "Apache-2.0"): "Apache-2.0",
+    ("requests-toolbelt", "1.0.0", "Apache 2.0"): "Apache-2.0",
+    ("sqlite-vec", "0.1.9", "MIT License, Apache License, Version 2.0"): "MIT OR Apache-2.0",
+    ("tenacity", "9.1.4", "Apache 2.0"): "Apache-2.0",
+    ("xxhash", "3.7.0", "BSD"): "BSD-2-Clause",
 }
 
 #: Installer tooling present in any fresh environment, not part of the lock.
@@ -86,7 +89,11 @@ def installed() -> dict[str, tuple[str, str]]:
         name = normalize(dist.metadata["Name"])
         if name in TOOLING:
             continue
-        expression = (dist.metadata.get("License-Expression") or "").strip() or OVERRIDES.get(name, "")
+        raw = (dist.metadata.get("License") or "").strip().splitlines()[:1]
+        raw = raw[0] if raw else ""
+        expression = (dist.metadata.get("License-Expression") or "").strip()
+        if not expression:
+            expression = OVERRIDES.get((name, dist.version, raw), "")
         found[name] = (dist.version, expression)
     return found
 

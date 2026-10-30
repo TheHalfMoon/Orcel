@@ -15,11 +15,17 @@ they were made and every deliberate version move.
   ```bash
   uv pip compile requirements.in --universal --python-version 3.12 \
     --generate-hashes --only-binary :all: --no-header \
-    -c <constraints from the pin's uv.lock> -o requirements.lock
+    -c constraints-donor-pin.txt -o requirements.lock
   ```
 
   It has no platform markers, so the same 37 distributions install on
   Windows, macOS and Linux.
+- `constraints-donor-pin.txt` is that constraints file, committed for the
+  lock's closure, so the lock regenerates from the repository alone.
+- **Hashes.** A universal lock lists the hash of every published wheel of
+  each pinned version, including wheels for other Python versions. pip on
+  3.12 can select only a cp312, abi3 or py3 wheel, and that wheel's hash
+  must match. Every hash the donor lock records is present.
 - Install exactly as CI does:
 
   ```bash
