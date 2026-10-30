@@ -50,7 +50,8 @@
       "path": "backend/packages/harness/deerflow/agents/middlewares/todo_middleware.py",
       "git_blob": "e5208a704da376b7f81a70ee5c7d8279735d60c3",
       "sha256": "9ad52127fdf59780428aa1096ecea72a6db7555dfd76342eb222c4df80917b80",
-      "lines": 452
+      "lines": 452,
+      "imported_by": "SG-000129 M3 slice 4b: ADAPT (orcel_agent/todos.py)"
     },
     {
       "group": "context-compaction",
@@ -103,7 +104,8 @@
       "path": "backend/packages/harness/deerflow/agents/middlewares/clarification_middleware.py",
       "git_blob": "712aae7ea54cb695e8501f4446d95beb0fe433cb",
       "sha256": "2650ebedbff0ac5535838a608ba811ac14b29b66587d5f876c54517c2d3dee36",
-      "lines": 579
+      "lines": 579,
+      "referenced_by": "SG-000129 M3 slice 4b: design reference only; no code copied"
     },
     {
       "group": "subagents",

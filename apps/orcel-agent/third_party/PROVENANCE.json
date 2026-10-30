@@ -29,6 +29,20 @@
         "Per-tool frequency defaults scaled to the agent's 32-step budget: warn 12, stop 20 (DeerFlow 30, 50, which could never fire within it). Identical-call defaults unchanged (3, 5, window 20).",
         "The hard-stop answer appends the stop message to the reply's text (DeerFlow's _append_text, reduced to the plain-text answer a Finish carries); the stop reason travels in Finish.stop_reason and RunResult.stop_reason instead of consume_stop_reason()."
       ]
+    },
+    {
+      "source": "backend/packages/harness/deerflow/agents/middlewares/todo_middleware.py",
+      "source_blob": "e5208a704da376b7f81a70ee5c7d8279735d60c3",
+      "destination": "orcel_agent/todos.py",
+      "decision": "ADAPT",
+      "modifications": [
+        "Copied unchanged in logic: _format_todos, _has_tool_call_intent_or_error and the cap of two completion reminders.",
+        "Adapted: DeerFlow skips the reminder on a model_length_termination flag set by another middleware; Orcel reads finish_reason == 'length' on the reply directly.",
+        "Adapted: the context-loss reminder becomes a replayed write_todos call and result (the tool channel, never the person's voice), labelled as the model's own notes written from untrusted data that authorize nothing.",
+        "Adapted: the completion reminder (named todo_completion_reminder, as in DeerFlow) keeps its role but is labelled untrusted and no longer says the items 'must' be finished; a finish with open todos after the reminders carries stop_reason todos_incomplete.",
+        "Not used: the TodoListMiddleware subclass, LangGraph hooks, run/thread scoping, reminder queues and locks, and DeerFlow's deerflow_error_fallback exit; ChatModelPlanner handles write_todos internally (never dispatched) within at most 4 model turns per proposal, rewriting the model's call ids.",
+        "LangChain's write_todos description, system prompt and Todo TypedDict are copied verbatim (not imported) from the langchain 1.3.14 wheel, MIT; see third_party/langchain/. Orcel bounds added: at most 20 items of at most 300 characters, no Unicode control, format or separator characters and no angle brackets or look-alikes."
+      ]
     }
   ]
 }

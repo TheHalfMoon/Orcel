@@ -117,7 +117,8 @@ class ChatPlanner(unittest.TestCase):
         self.assertEqual(edge.called, [("fs_list", {"path": "."}), ("fs_read", {"path": "a.txt"})])
         # Only allowlisted tools the edge lists are offered: fs_write is not.
         offered = {tool["function"]["name"] for tool in model.bound[0]}
-        self.assertEqual(offered, {"fs_read", "fs_list"})
+        # The edge's allowlisted tools plus the two planner-internal ones (4b).
+        self.assertEqual(offered, {"fs_read", "fs_list", "write_todos", "ask_clarification"})
         self.assertEqual(model.bound[0][0]["function"]["parameters"], SCHEMA)
 
     def test_the_model_never_runs_with_tracing_on(self) -> None:
@@ -152,7 +153,7 @@ class ChatPlanner(unittest.TestCase):
         self.agent(edge).run("summarise a", ChatModelPlanner(model))
         second = model.seen[1]
         self.assertIsInstance(second[0], SystemMessage)
-        self.assertEqual(second[0].content, SYSTEM_PROMPT)
+        self.assertTrue(str(second[0].content).startswith(SYSTEM_PROMPT))
         carriers = [m for m in second if injected in str(m.content)]
         self.assertEqual(len(carriers), 1)
         self.assertIsInstance(carriers[0], ToolMessage)
