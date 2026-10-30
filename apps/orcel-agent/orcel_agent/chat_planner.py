@@ -53,14 +53,15 @@ from .todos import (
     ASK_CLARIFICATION,
     INTERNAL_TOOLS,
     MAX_COMPLETION_REMINDERS,
-    TODO_REMINDER_MESSAGE_NAME,
+    TODO_COMPLETION_REMINDER_NAME,
     TODO_SYSTEM_PROMPT,
     WRITE_TODOS,
     PlanningState,
-    _format_completion_reminder,
     _has_tool_call_intent_or_error,
+    _length_truncated,
+    completion_reminder,
     internal_tool_schemas,
-    todo_reminder,
+    todo_state_text,
     validate_question,
     validate_todos,
 )
@@ -220,7 +221,13 @@ class ChatModelPlanner:
         if self._planning:
             messages[0] = SystemMessage(SYSTEM_PROMPT + "\n\n" + TODO_SYSTEM_PROMPT)
             if self._plan.todos:
-                messages.append(HumanMessage(todo_reminder(self._plan.todos), name=TODO_REMINDER_MESSAGE_NAME))
+                # Replayed in the tool channel: a write_todos call and its
+                # result, never a message in the person's voice.
+                messages.append(AIMessage(content="", tool_calls=[{
+                    "name": WRITE_TODOS, "args": {"todos": list(self._plan.todos)}, "id": "todo-state",
+                    "type": "tool_call"}]))
+                messages.append(ToolMessage(content=todo_state_text(self._plan.todos), tool_call_id="todo-state",
+                                            name=WRITE_TODOS, status="success"))
         warnings = self._loops.drain_warnings() if self._loops is not None else []
         if warnings:
             # After every tool message, so call/result pairing stays intact.
@@ -238,15 +245,22 @@ class ChatModelPlanner:
                 return MalformedProposal("the model produced an unparsable tool call")
             calls = list(reply.tool_calls or [])
             if not calls:
-                if (self._planning and self._plan.incomplete() and not _has_tool_call_intent_or_error(reply)
+                last_turn = turn == MAX_INTERNAL_TURNS - 1
+                if (self._planning and self._plan.incomplete() and not last_turn
+                        and not _has_tool_call_intent_or_error(reply) and not _length_truncated(reply)
                         and self._plan.completion_reminders < MAX_COMPLETION_REMINDERS):
                     # DeerFlow's premature-exit guard: remind, then ask again.
                     self._plan.completion_reminders += 1
-                    messages = messages + [reply, HumanMessage(_format_completion_reminder(self._plan.todos),
-                                                               name=TODO_REMINDER_MESSAGE_NAME)]
+                    messages = messages + [reply, HumanMessage(completion_reminder(self._plan.todos),
+                                                               name=TODO_COMPLETION_REMINDER_NAME)]
                     continue
                 self._finished = True
-                return Finish(reply.content if isinstance(reply.content, str) else None)
+                answer = reply.content if isinstance(reply.content, str) else None
+                if self._planning and self._plan.incomplete():
+                    # A finish with open todos is not a clean finish.
+                    self.stop_reason = "todos_incomplete"
+                    return Finish(answer, stop_reason="todos_incomplete")
+                return Finish(answer)
             if len(calls) != 1:
                 return MalformedProposal(f"the model proposed {len(calls)} calls; one per step")
             call = calls[0]
@@ -255,10 +269,13 @@ class ChatModelPlanner:
             if self._planning and call["name"] == WRITE_TODOS:
                 if not isinstance(call.get("id"), str) or not call.get("id"):
                     return MalformedProposal("a write_todos call without an id")
+                if turn == MAX_INTERNAL_TURNS - 1:
+                    break
                 todos = validate_todos(call["args"])
                 if todos is None:
                     result = "write_todos refused: the list is invalid (at most 20 items, each a non-empty content " \
-                             "of at most 300 characters and a status of pending, in_progress or completed)."
+                             "of at most 300 characters without control characters or angle brackets, and a status " \
+                             "of pending, in_progress or completed)."
                     status = "error"
                 else:
                     self._plan.todos = todos
@@ -267,8 +284,13 @@ class ChatModelPlanner:
                     if self._events is not None:
                         self._events.emit("plan.todos", items=len(todos),
                                           completed=sum(1 for t in todos if t["status"] == "completed"))
-                messages = messages + [reply, ToolMessage(content=result, tool_call_id=call["id"], name=WRITE_TODOS,
-                                                          status=status)]
+                # The model's id is replaced, so it can never collide with a
+                # conversation id or repeat across internal turns.
+                internal_id = f"todo-{turn}"
+                echoed = AIMessage(content=reply.content, tool_calls=[{
+                    "name": WRITE_TODOS, "args": dict(call["args"]), "id": internal_id, "type": "tool_call"}])
+                messages = messages + [echoed, ToolMessage(content=result, tool_call_id=internal_id, name=WRITE_TODOS,
+                                                           status=status)]
                 continue
             if self._planning and call["name"] == ASK_CLARIFICATION:
                 question = validate_question(call["args"])
