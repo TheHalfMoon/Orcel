@@ -223,11 +223,14 @@ class Agent:
         try:
             outcome = self.edge.call_tool(call.tool, call.arguments,
                                           APPROVAL_CALL_TIMEOUT_S if mutating else None)
-        except EdgeError as error:
-            # The call may or may not have reached orceld: unknown.
+        except Exception as error:  # noqa: BLE001 - any failure here leaves the outcome unknown
+            # The call may or may not have reached orceld: unknown. SG-000129
+            # slice 4a2: any exception, not only EdgeError, and the unknown
+            # step is kept in the run's steps so the caller sees it.
             self.journal.recorded(seq, False, OUTCOME_UNKNOWN)
             self._unknown.add(key)
             self._must_reobserve = True
+            self.steps.append(Step(call, False, None, OUTCOME_UNKNOWN, key[1]))
             self.events.emit("step.outcome_unknown", step_id=step_id, tool=call.tool)
             raise AgentStop("edge-failure") from error
         self.journal.recorded(seq, outcome.ok, outcome.error_code)
@@ -252,7 +255,14 @@ class Agent:
             if self._denied:
                 raise AgentStop("approval-denied")
             while True:
-                proposal = planner.propose(goal, list(self.steps), tools)
+                try:
+                    proposal = planner.propose(goal, list(self.steps), tools)
+                except AgentStop:
+                    raise
+                except Exception as error:  # noqa: BLE001 - a planner failure stops the run cleanly
+                    # SG-000129 slice 4a2: a model or planner exception stops
+                    # the run instead of crashing it. Nothing was dispatched.
+                    raise AgentStop("planner-error") from error
                 if isinstance(proposal, Finish):
                     self.events.emit("run.finished", claimed=True, stop_reason=proposal.stop_reason)
                     result = RunResult("finished", proposal.answer, list(self.steps), self.approval_requests,

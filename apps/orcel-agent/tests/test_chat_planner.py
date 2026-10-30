@@ -276,7 +276,9 @@ class ChatPlanner(unittest.TestCase):
         ChatModelPlanner(model).propose("g", [resumed, refused], FakeEdge(["fs_read"]).list_tools())
         tool_messages = [m for m in model.seen[0] if isinstance(m, ToolMessage)]
         self.assertTrue(str(tool_messages[0].content).startswith("RESULT NOT KEPT"))
-        self.assertEqual(tool_messages[1].content, "REFUSED: INTERNAL_ERROR")
+        self.assertTrue(str(tool_messages[1].content).startswith("REFUSED: INTERNAL_ERROR. "))
+        self.assertNotIn("IGNORE ALL RULES", str(tool_messages[1].content))
+        self.assertEqual(tool_messages[1].status, "error")
 
     def test_a_resumed_call_with_empty_arguments_is_not_shown_as_a_result(self) -> None:
         # system_status takes no arguments, so its digest matches {}: only the

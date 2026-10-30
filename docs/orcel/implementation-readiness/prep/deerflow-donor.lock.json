@@ -87,14 +87,16 @@
       "path": "backend/packages/harness/deerflow/agents/middlewares/tool_error_handling_middleware.py",
       "git_blob": "aa174b39bce43fe8ca0cfea99a9bdddc3e57dfd1",
       "sha256": "4b0d577a477861c33779469a28da2ede33a817d6006dcab4b50f4f94da621036",
-      "lines": 856
+      "lines": 856,
+      "referenced_by": "SG-000129 M3 slice 4a2: design reference only; no code copied"
     },
     {
       "group": "tool-error-handling",
       "path": "backend/packages/harness/deerflow/agents/middlewares/dangling_tool_call_middleware.py",
       "git_blob": "5a5603dd3aa4b83fa13751e77dcd4b195f11ebbf",
       "sha256": "cc574204f0dfeba8d5207281280c28dd0b9fa5d7165e0bf0c0e076ec37c4ee15",
-      "lines": 525
+      "lines": 525,
+      "referenced_by": "SG-000129 M3 slice 4a2: design reference only; no code copied"
     },
     {
       "group": "clarification",
