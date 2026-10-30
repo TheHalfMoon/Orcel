@@ -19,6 +19,15 @@ Tracing: on top of `quiet.py`, each model call runs with both tracing signals
 off: langsmith's context (`tracing_context`) and LangChain's own tracer
 variable (`tracing_v2_callback_var`, which takes priority over it). A model
 that carries callbacks of its own is refused.
+
+Loop detection (SG-000129 slice 3, adapted from DeerFlow) is on by default:
+every proposed call is tracked. Queued warnings reach the next model call as
+one static Orcel message (named "loop_warning") after the tool messages, and
+are restored if that call fails; a hard stop turns the reply into a finish
+whose `stop_reason` is "loop_capped", which the agent reports in its
+`RunResult`. Each decision is emitted to the agent's event log when one is
+given. A planner serves one run at a time: a new goal, or any proposal after a
+finish, resets its loop history.
 """
 
 from __future__ import annotations
@@ -26,7 +35,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any, Optional, Sequence
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
@@ -35,7 +44,9 @@ from langsmith.run_helpers import tracing_context
 
 from .agent import READ_ONLY_TOOLS
 from .edge import ToolSpec
+from .events import EventLog
 from .journal import OUTCOME_UNKNOWN
+from .loop_detection import LoopDetector
 from .planner import Finish, Proposal, Step, ToolCall
 
 #: Static Orcel text: the only instructions the model receives.
@@ -97,15 +108,35 @@ def conversation(goal: str, steps: Sequence[Step]) -> list[BaseMessage]:
     return messages
 
 
+def _append_text(content: Any, text: str) -> str:
+    """The reply's text with the stop message appended (DeerFlow's
+    _append_text, reduced to the plain-text answer a Finish carries)."""
+    if isinstance(content, str):
+        parts = [content]
+    elif isinstance(content, list):
+        parts = [block if isinstance(block, str) else str(block.get("text", "")) if isinstance(block, dict) else ""
+                 for block in content]
+    else:
+        parts = []
+    return "\n\n".join([part for part in parts if part] + [text])
+
+
 class ChatModelPlanner:
     """Proposes through a LangChain chat model that supports tool calling."""
 
     label = "langchain-chat-model"
 
-    def __init__(self, model: BaseChatModel) -> None:
+    def __init__(self, model: BaseChatModel, loop_detector: Optional[LoopDetector] = None,
+                 events: Optional[EventLog] = None, *, detect_loops: bool = True) -> None:
         if getattr(model, "callbacks", None):
             raise ValueError("a model with its own callbacks could trace or forward the conversation")
         self._model = model
+        self._loops = loop_detector if loop_detector is not None else (LoopDetector() if detect_loops else None)
+        self._events = events
+        self._goal: Optional[str] = None
+        self._finished = False
+        #: Why the planner finished on its own, if it did ("loop_capped").
+        self.stop_reason: Optional[str] = None
 
     def propose(self, goal: str, steps: Sequence[Step], tools: Sequence[ToolSpec]) -> Proposal | MalformedProposal:
         wider = sorted(tool.name for tool in tools if tool.name not in READ_ONLY_TOOLS)
@@ -116,10 +147,27 @@ class ChatModelPlanner:
         bound = self._model.bind_tools(tool_schemas(tools))
         if (getattr(bound, "config", None) or {}).get("callbacks"):
             return MalformedProposal("the bound model carries callbacks of its own")
+        if self._goal != goal or self._finished:
+            # A new run (a new goal, or anything after a finish): its loop
+            # history and stop reason start fresh.
+            self._goal = goal
+            self._finished = False
+            self.stop_reason = None
+            if self._loops is not None:
+                self._loops.reset()
+        messages = conversation(goal, steps)
+        warnings = self._loops.drain_warnings() if self._loops is not None else []
+        if warnings:
+            # After every tool message, so call/result pairing stays intact.
+            messages.append(HumanMessage(LoopDetector.format_warning_message(warnings), name="loop_warning"))
         token = tracing_v2_callback_var.set(None)
         try:
             with tracing_context(enabled=False):
-                reply = bound.invoke(conversation(goal, steps), config={"callbacks": []})
+                reply = bound.invoke(messages, config={"callbacks": []})
+        except Exception:
+            if self._loops is not None:
+                self._loops.restore_warnings(warnings)
+            raise
         finally:
             tracing_v2_callback_var.reset(token)
         if not isinstance(reply, AIMessage):
@@ -128,6 +176,7 @@ class ChatModelPlanner:
             return MalformedProposal("the model produced an unparsable tool call")
         calls = list(reply.tool_calls or [])
         if not calls:
+            self._finished = True
             return Finish(reply.content if isinstance(reply.content, str) else None)
         if len(calls) != 1:
             return MalformedProposal(f"the model proposed {len(calls)} calls; one per step")
@@ -136,4 +185,14 @@ class ChatModelPlanner:
             return MalformedProposal("the model's tool call has no name or arguments")
         if call["name"] not in READ_ONLY_TOOLS:
             return MalformedProposal(f"proposed {call['name']}, which is not read-only")
+        if self._loops is not None:
+            decision = self._loops.track([{"name": call["name"], "args": dict(call["args"])}])
+            if decision is not None and self._events is not None:
+                self._events.emit(f"loop.{decision.action}", layer=decision.detection_layer,
+                                  tools=list(decision.tool_names), count=decision.count, threshold=decision.threshold)
+            if decision is not None and decision.hard_stop:
+                # DeerFlow strips the tool call so the run ends with an answer.
+                self.stop_reason = "loop_capped"
+                self._finished = True
+                return Finish(_append_text(reply.content, decision.message), stop_reason="loop_capped")
         return ToolCall(call["name"], dict(call["args"]))

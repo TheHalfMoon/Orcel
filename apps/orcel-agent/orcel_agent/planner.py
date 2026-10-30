@@ -29,6 +29,8 @@ class Finish:
     task's checker decides success."""
 
     answer: Any = None
+    #: Why the planner stopped on its own, if it did (e.g. "loop_capped").
+    stop_reason: Optional[str] = None
 
 
 Proposal = Union[ToolCall, Finish]

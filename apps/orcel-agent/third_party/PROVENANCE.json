@@ -13,5 +13,22 @@
     ]
   },
   "note": "Every file under orcel_agent/ copied or adapted from DeerFlow is listed here with its source path, source blob, destination, decision (COPY or ADAPT) and modifications, and names its DeerFlow path and the pin in a header. Slice 1 imports no donor code.",
-  "files": []
+  "files": [
+    {
+      "source": "backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py",
+      "source_blob": "3cdf40ea178b80f0bfde7d5f2233463dc2faa0ad",
+      "destination": "orcel_agent/loop_detection.py",
+      "decision": "ADAPT",
+      "modifications": [
+        "Copied unchanged in logic: argument normalisation, the read-range window, the per-tool call key, the order-independent call-set hash, both detection layers (identical call sets; windowed per-tool frequency with decay and re-arming), warn-once, the decision record, and the warning queue (deduplicated, newest four kept, merged deduplicated into one 'loop_warning' message, restored when a model call fails).",
+        "Tool names mapped to the Orcel edge: read_file -> fs_read / fs_read_range (max_lines, defaulting to the edge's 200, becomes the end line; workspace_id joins the read key); write_file / str_replace -> fs_write / fs_edit; bash / ls / glob / grep -> fs_list / fs_find / fs_search (no description argument on the Orcel fs tools, so the narration rule is kept only for faithfulness).",
+        "One detector per agent run: LangGraph runtime, thread/run scoping, LRU eviction, fallback run ids and the lock removed.",
+        "AgentMiddleware hooks replaced by ChatModelPlanner calling track() and drain_warnings(); a hard stop becomes a Finish with stop_reason loop_capped.",
+        "Wrap-up text no longer asks the agent to write files (the agent is read-only).",
+        "Decisions go to the agent's EventLog instead of DeerFlow's audit context and run-event catalogue; logging removed.",
+        "Per-tool frequency defaults scaled to the agent's 32-step budget: warn 12, stop 20 (DeerFlow 30, 50, which could never fire within it). Identical-call defaults unchanged (3, 5, window 20).",
+        "The hard-stop answer appends the stop message to the reply's text (DeerFlow's _append_text, reduced to the plain-text answer a Finish carries); the stop reason travels in Finish.stop_reason and RunResult.stop_reason instead of consume_stop_reason()."
+      ]
+    }
+  ]
 }

@@ -101,6 +101,9 @@ class RunResult:
     answer: Any = None
     steps: list[Step] = field(default_factory=list)
     approval_requests: int = 0
+    #: Set when the planner stopped on its own (e.g. "loop_capped"): a
+    #: capped run is not a clean finish.
+    stop_reason: Optional[str] = None
 
 
 class AgentStop(Exception):
@@ -251,8 +254,9 @@ class Agent:
             while True:
                 proposal = planner.propose(goal, list(self.steps), tools)
                 if isinstance(proposal, Finish):
-                    self.events.emit("run.finished", claimed=True)
-                    result = RunResult("finished", proposal.answer, list(self.steps), self.approval_requests)
+                    self.events.emit("run.finished", claimed=True, stop_reason=proposal.stop_reason)
+                    result = RunResult("finished", proposal.answer, list(self.steps), self.approval_requests,
+                                       proposal.stop_reason)
                     break
                 if not isinstance(proposal, ToolCall):
                     raise AgentStop("proposal-malformed")

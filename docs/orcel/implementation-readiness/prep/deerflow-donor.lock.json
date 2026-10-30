@@ -42,7 +42,8 @@
       "path": "backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py",
       "git_blob": "3cdf40ea178b80f0bfde7d5f2233463dc2faa0ad",
       "sha256": "3fded8035bad8a0bdd74bb11a319bed659dd91a02f6bed22ad8738cd1a6fb555",
-      "lines": 1000
+      "lines": 1000,
+      "imported_by": "SG-000129 slice 3 (ADAPT: apps/orcel-agent/orcel_agent/loop_detection.py)"
     },
     {
       "group": "planning-todo",
@@ -169,6 +170,14 @@
       "git_blob": "1d66a453cfb2047c3e7da9da99e2a8d04458a6f1",
       "sha256": "ba8eb399915b032abd287bf479bc8f77f7d4cf8ac4a210abb22bc114da4dc10f",
       "lines": 328
+    },
+    {
+      "group": "loop-detection",
+      "path": "backend/tests/test_loop_detection_middleware.py",
+      "git_blob": "d1e174eb4ed7b862b5462fd6f7ecb674017723c9",
+      "sha256": "8da699fd8c25b382dbf55a2285fa6e00af6ef6dea5bb7cc9852fdfb7ff1f2707",
+      "lines": 2492,
+      "imported_by": "SG-000129 slice 3 (ported: rewritten against LoopDetector, apps/orcel-agent/tests/test_loop_detection.py)"
     }
   ],
   "closure_method": "Python ast import closure counting every import (including function-local and TYPE_CHECKING), excluding parent-package __init__ files"
