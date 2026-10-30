@@ -49,6 +49,10 @@ from .store import RunStore, StoreError
 CHECKPOINT_FILE = "planner.sqlite"
 SCHEMA_VERSION = 1
 _KEY = "planner"
+_CREATE = "CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+#: The only schema accepted, exactly as SQLite records it.
+_SCHEMA = {("table", "state", "CREATE TABLE state (key TEXT PRIMARY KEY, value TEXT NOT NULL)"),
+           ("index", "sqlite_autoindex_state_1", None)}
 #: Lifted by slice 5b, when the store gets its protected Windows DACL.
 _WINDOWS_ACL_READY = False
 
@@ -93,11 +97,10 @@ class PlannerCheckpoint:
             others = self._store.used_bytes() - self._files_bytes()
             pages = max((self._store.max_bytes - others) // (2 * page), 2)
             connection.execute(f"PRAGMA max_page_count={int(pages)}")
-            schema = connection.execute("SELECT type, name FROM sqlite_master").fetchall()
-            if any(row != ("table", "state") and not (row[0] == "index" and str(row[1]).startswith("sqlite_autoindex_state"))
-                   for row in schema):
+            schema = set(connection.execute("SELECT type, name, sql FROM sqlite_master").fetchall())
+            if schema not in (set(), _SCHEMA):
                 raise StoreError("the planner checkpoint holds an unexpected schema")
-            connection.execute("CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            connection.execute(_CREATE)
         except sqlite3.Error as error:
             connection.close()
             raise StoreError(f"the planner checkpoint is unusable: {type(error).__name__}") from error

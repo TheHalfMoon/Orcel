@@ -296,15 +296,16 @@ class LoopDetector:
         if not isinstance(data, dict) or set(data) != {"history", "warned", "tool_names", "freq_warned"}:
             raise ValueError("loop snapshot: expected exactly its four fields")
         history, names = strings(data.get("history")), strings(data.get("tool_names"))
-        warned, freq_warned = strings(data.get("warned")), strings(data.get("freq_warned"))
+        for key in ("warned", "freq_warned"):
+            strings(data.get(key))
         if len(history) > self.window_size or len(names) > self._tool_freq_window:
             raise ValueError("loop snapshot: larger than its windows")
         self._history = history
-        self._warned = set(warned) & set(history)
         self._tool_name_history = deque(names)
         self._tool_name_counter = Counter(names)
-        self._tool_freq_warned = set(freq_warned)
-        self._pending = []
+        # Warnings re-arm: one queued but not yet shown when the state was
+        # saved is not lost (a repeated warning is harmless).
+        self._warned, self._tool_freq_warned, self._pending = set(), set(), []
 
     def reset(self) -> None:
         """Forget every run's history (a new run starts fresh)."""
