@@ -1,0 +1,175 @@
+{
+  "schema": "orcel-donor-lock/1",
+  "donor": {
+    "repository": "bytedance/deer-flow",
+    "url": "https://github.com/bytedance/deer-flow.git",
+    "commit": "81e1ab8dcc86574cfac0ecdfe3636b775a08c567",
+    "tree": "3c6a87b59a884eae4cc84c14663b6176114d2865",
+    "license": "MIT",
+    "license_file": "LICENSE",
+    "license_git_blob": "9dc98a4a6b9b549447a4fc314e4cf50529c184c7",
+    "license_sha256": "b23dff4d4bac8d17b6efaaa7e88c2b730149c4dda45699ce676b719cfdffe7e1",
+    "copyright": [
+      "Copyright (c) 2025 Bytedance Ltd. and/or its affiliates",
+      "Copyright (c) 2025-2026 DeerFlow Authors"
+    ]
+  },
+  "status": "CANDIDATES, REPRESENTATIVE (audit pin; nothing is imported by this lock). Each import milestone extends this lock with its full copy closure and tests before importing.",
+  "files": [
+    {
+      "group": "agent-assembly",
+      "path": "backend/packages/harness/deerflow/agents/factory.py",
+      "git_blob": "6a5e80bd742c39b784084ee1ac8fc2305ef6289e",
+      "sha256": "b7c2d6a4502771cfd66204177d3259459c98830c76b553f4d26a659ff7f2cebc",
+      "lines": 547
+    },
+    {
+      "group": "agent-assembly",
+      "path": "backend/packages/harness/deerflow/agents/features.py",
+      "git_blob": "6a79e5303ef48cf81cec11756f62f88b032def07",
+      "sha256": "bd5fb10cd8f68e0b22248e6570f59b26e42ae728da6aca0e9c47d592fa725b79",
+      "lines": 70
+    },
+    {
+      "group": "agent-assembly",
+      "path": "backend/packages/harness/deerflow/agents/thread_state.py",
+      "git_blob": "a75e837a7e003c3181d683bc0942c79af28c3c39",
+      "sha256": "2adb816b22200f472dea71d41ea14935cb92784ee08e78c1f4b34aa89f915a32",
+      "lines": 571
+    },
+    {
+      "group": "loop-detection",
+      "path": "backend/packages/harness/deerflow/agents/middlewares/loop_detection_middleware.py",
+      "git_blob": "3cdf40ea178b80f0bfde7d5f2233463dc2faa0ad",
+      "sha256": "3fded8035bad8a0bdd74bb11a319bed659dd91a02f6bed22ad8738cd1a6fb555",
+      "lines": 1000
+    },
+    {
+      "group": "planning-todo",
+      "path": "backend/packages/harness/deerflow/agents/middlewares/todo_middleware.py",
+      "git_blob": "e5208a704da376b7f81a70ee5c7d8279735d60c3",
+      "sha256": "9ad52127fdf59780428aa1096ecea72a6db7555dfd76342eb222c4df80917b80",
+      "lines": 452
+    },
+    {
+      "group": "context-compaction",
+      "path": "backend/packages/harness/deerflow/agents/middlewares/summarization_middleware.py",
+      "git_blob": "13a3f6279c74e9cffd7edf7a57bf71bb17ebc052",
+      "sha256": "b9ca8c0bdcff365c74c046d28b1c0c613ce86cc4db8319ef22445d0b85e4f137",
+      "lines": 1302
+    },
+    {
+      "group": "context-compaction",
+      "path": "backend/packages/harness/deerflow/agents/middlewares/durable_context_middleware.py",
+      "git_blob": "2723c481ccc65d50acc507e3cd9f197b0510e986",
+      "sha256": "b0a03d38d45db840dfd3b3275c7093e4e4c6edadcf80ee2d7f3df4cfcf159e67",
+      "lines": 465
+    },
+    {
+      "group": "tool-output-budget",
+      "path": "backend/packages/harness/deerflow/agents/middlewares/tool_output_budget_middleware.py",
+      "git_blob": "493dd93e7de9f68eab0565ac2159e3fff7b4efda",
+      "sha256": "d9dc08c5a6ed2421b1df19fd643fbd25790fc27eb0438c00a2b95f0584cb7d64",
+      "lines": 1281
+    },
+    {
+      "group": "tool-output-budget",
+      "path": "backend/packages/harness/deerflow/agents/middlewares/tool_output_synopsis.py",
+      "git_blob": "61464ca85fc4e497b992a7a823a27f8ab4ba7dd5",
+      "sha256": "3fc7471de4aa2bb532919537fd1b23f86ce6b2b172560a5ba412bdede325f6b3",
+      "lines": 651
+    },
+    {
+      "group": "tool-error-handling",
+      "path": "backend/packages/harness/deerflow/agents/middlewares/tool_error_handling_middleware.py",
+      "git_blob": "aa174b39bce43fe8ca0cfea99a9bdddc3e57dfd1",
+      "sha256": "4b0d577a477861c33779469a28da2ede33a817d6006dcab4b50f4f94da621036",
+      "lines": 856
+    },
+    {
+      "group": "tool-error-handling",
+      "path": "backend/packages/harness/deerflow/agents/middlewares/dangling_tool_call_middleware.py",
+      "git_blob": "5a5603dd3aa4b83fa13751e77dcd4b195f11ebbf",
+      "sha256": "cc574204f0dfeba8d5207281280c28dd0b9fa5d7165e0bf0c0e076ec37c4ee15",
+      "lines": 525
+    },
+    {
+      "group": "clarification",
+      "path": "backend/packages/harness/deerflow/agents/middlewares/clarification_middleware.py",
+      "git_blob": "712aae7ea54cb695e8501f4446d95beb0fe433cb",
+      "sha256": "2650ebedbff0ac5535838a608ba811ac14b29b66587d5f876c54517c2d3dee36",
+      "lines": 579
+    },
+    {
+      "group": "subagents",
+      "path": "backend/packages/harness/deerflow/subagents/executor.py",
+      "git_blob": "7a69792e4989031ec05d47045856cdea04458b51",
+      "sha256": "e90f68a547637f8da4690234d95587f7c75c4c61d06a94987cec5c9c6ebec6d4",
+      "lines": 2500
+    },
+    {
+      "group": "subagents",
+      "path": "backend/packages/harness/deerflow/agents/middlewares/subagent_limit_middleware.py",
+      "git_blob": "5e852fdcc3a98dd9dfb5090beb7f1284f9d265fd",
+      "sha256": "04f1faab2bc4210919464c73246f8afb169e9ef44e9f2bfd4205d9a057acd73e",
+      "lines": 181
+    },
+    {
+      "group": "subagents",
+      "path": "backend/packages/harness/deerflow/agents/middlewares/receipt_verification.py",
+      "git_blob": "c28bd48f40d135dbeb47c9dc456941520c47c86f",
+      "sha256": "94d9fa10f44654df359f309a41c0ad560930244c4019977bcfbca8608be98181",
+      "lines": 172
+    },
+    {
+      "group": "memory",
+      "path": "backend/packages/harness/deerflow/agents/memory/__init__.py",
+      "git_blob": "cb85c5d5b7baf02237bab1c93eb28fb08461ea57",
+      "sha256": "0fd4318940e881b9f4961979a7442382b0b89fe3fbdd43d1c1f0fb3ff01a29b6",
+      "lines": 35
+    },
+    {
+      "group": "skills",
+      "path": "backend/packages/harness/deerflow/skills/parser.py",
+      "git_blob": "2205d3966798fc1ccccebb067cd8bb713038e661",
+      "sha256": "100537c6a1f43083aa74c003686644ce21e450a2c5a0c42647befe7f3b376daa",
+      "lines": 298
+    },
+    {
+      "group": "skills",
+      "path": "backend/packages/harness/deerflow/skills/frontmatter.py",
+      "git_blob": "b4ff2b86e4d86a273dfa820b3684a44ed3ada13d",
+      "sha256": "bf8fdd9e6f31caef2ff837cd0ebcb703dd8911266ffbe171049b840f4bf3db5d",
+      "lines": 77
+    },
+    {
+      "group": "skills",
+      "path": "backend/packages/harness/deerflow/skills/validation.py",
+      "git_blob": "6ec241fbfdebf1f64b400111c6ab874034be3085",
+      "sha256": "d6ea2ff4341db6ab7f15a13f3b9f67dff995698f770d1a754d9a63da923ce847",
+      "lines": 101
+    },
+    {
+      "group": "skills",
+      "path": "backend/packages/harness/deerflow/skills/security_static_scanner.py",
+      "git_blob": "3a3c520bfa79d7968a708fa028b17069235ba94b",
+      "sha256": "2369447e6a0c1cedc396819877242e307a452b755de06ad63876f386b10e4f84",
+      "lines": 25
+    },
+    {
+      "group": "model-factory",
+      "path": "backend/packages/harness/deerflow/models/factory.py",
+      "git_blob": "4c9f48940c7674601c618ee8ce8c0939aef01cec",
+      "sha256": "4d100bfa0c689005a193f886efe1d2b0353c04638a593f27362091ad773c9db0",
+      "lines": 731
+    },
+    {
+      "group": "model-factory",
+      "path": "backend/packages/harness/deerflow/models/vllm_provider.py",
+      "git_blob": "1d66a453cfb2047c3e7da9da99e2a8d04458a6f1",
+      "sha256": "ba8eb399915b032abd287bf479bc8f77f7d4cf8ac4a210abb22bc114da4dc10f",
+      "lines": 328
+    }
+  ],
+  "closure_method": "Python ast import closure counting every import (including function-local and TYPE_CHECKING), excluding parent-package __init__ files"
+}
