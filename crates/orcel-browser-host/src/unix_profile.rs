@@ -82,6 +82,7 @@ pub(crate) struct ProfileHold {
     root: OwnedFd,
     _lock: OwnedFd,
     identity: (u64, u64),
+    lock_identity: (u64, u64),
 }
 
 fn errno() -> i32 {
@@ -156,6 +157,34 @@ fn lock_open_error(errno: i32) -> ProfileError {
 }
 
 impl ProfileHold {
+    /// The lock name still names the file this hold locked (another
+    /// holder's lock after a rename is not ours).
+    pub(crate) fn verify_lock(&self) -> Result<(), ProfileError> {
+        let name = CString::new(LOCK_NAME).map_err(|_| ProfileError::NotPlain)?;
+        // SAFETY: stat is plain data; zeroed is a valid value.
+        let mut named: libc::stat = unsafe { std::mem::zeroed() };
+        // SAFETY: relative to the held root; never follows a link.
+        if unsafe {
+            libc::fstatat(
+                self.root.as_raw_fd(),
+                name.as_ptr(),
+                &mut named,
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        } != 0
+            || identity(&named) != self.lock_identity
+        {
+            return Err(ProfileError::Swapped);
+        }
+        Ok(())
+    }
+
+    /// The held root descriptor, for operations relative to it (the A5
+    /// sweep, itself test-only).
+    pub(crate) fn root_fd(&self) -> i32 {
+        self.root.as_raw_fd()
+    }
+
     /// Hold the profile at `path`: refuse a link, a non-directory, another
     /// owner, a mode other than 0700, an unsafe lock file, or a profile
     /// another hold already has.
@@ -228,6 +257,7 @@ impl ProfileHold {
         }
         Ok(Self {
             identity: identity(&root_stat),
+            lock_identity: identity(&lock_stat),
             root,
             _lock: lock,
         })
@@ -438,7 +468,10 @@ mod tests {
         assert!(files.len() > 10, "the scan found the crate's sources");
         let mut named = Vec::new();
         for path in &files {
+            // unix_cleanup.rs (slice A5) is a sibling test-only module that
+            // builds on the hold; its own scan pins its test-only declaration.
             if *path == crate_dir.join("src").join("unix_profile.rs")
+                || *path == crate_dir.join("src").join("unix_cleanup.rs")
                 || *path == crate_dir.join("src").join("lib.rs")
             {
                 continue;
@@ -466,5 +499,7 @@ mod tests {
         assert_eq!(code.len(), 1, "lib.rs declares the module once");
         assert_eq!(lines[code[0]], "mod unix_profile;");
         assert_eq!(lines[code[0] - 1], "#[cfg(all(test, unix))]");
+        // The exempted sibling (A5) is itself test-only.
+        assert!(lib.contains("#[cfg(all(test, unix))]\nmod unix_cleanup;\n"));
     }
 }
