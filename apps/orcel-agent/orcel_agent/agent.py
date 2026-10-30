@@ -119,6 +119,10 @@ class Agent:
     allowlist: frozenset[str] = READ_ONLY_TOOLS
     max_steps: int = 32
     max_approval_requests: int = 3
+    #: SG-000129: set by `entry.chat_agent`. The gate then refuses any
+    #: allowlist or call outside READ_ONLY_TOOLS, in prepare() and in every
+    #: dispatch, whatever else was changed on the agent afterwards.
+    read_only_only: bool = False
     steps: list[Step] = field(default_factory=list)
     approval_requests: int = 0
     _dispatched: int = 0
@@ -141,6 +145,8 @@ class Agent:
         off as `OUTCOME_UNKNOWN`. Runs once per agent."""
         if self._prepared:
             return list(self._tools.values())
+        if self.read_only_only and not set(self.allowlist) <= READ_ONLY_TOOLS:
+            raise AgentStop("allowlist-too-wide")
         self._prepared = True
         self._tools = {tool.name: tool for tool in self.edge.list_tools() if tool.name in self.allowlist}
         self.events.emit("run.started", tools=sorted(self._tools))
@@ -180,6 +186,8 @@ class Agent:
         """Forward one proposed call, under every client-side rule."""
         if not self._prepared:
             raise AgentStop("not-prepared")
+        if self.read_only_only and (self.is_mutating(call.tool) or not set(self.allowlist) <= READ_ONLY_TOOLS):
+            raise AgentStop("proposal-outside-allowlist")
         if self._denied:
             raise AgentStop("approval-denied")
         if call.tool not in self._tools:

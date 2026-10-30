@@ -163,8 +163,10 @@ class Edge:
     def list_tools(self) -> list[ToolSpec]:
         result = self._request("tools/list", {}, self.timeout_s)
         tools = result.get("tools", []) if isinstance(result, dict) else []
+        # A tool without an object schema is dropped (fail closed): the gate
+        # could not check its arguments.
         return [ToolSpec(t["name"], t.get("inputSchema", {}), str(t.get("description") or "")[:2000])
-                for t in tools if isinstance(t, dict) and "name" in t]
+                for t in tools if isinstance(t, dict) and "name" in t and isinstance(t.get("inputSchema", {}), dict)]
 
     def call_tool(self, name: str, arguments: dict[str, Any], timeout_s: Optional[float] = None) -> ToolOutcome:
         result = self._request("tools/call", {"name": name, "arguments": arguments}, timeout_s or self.timeout_s)

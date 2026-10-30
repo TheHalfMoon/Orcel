@@ -15,8 +15,9 @@ The agent's private run store is deleted when the episode ends.
 SG-000129 slice 2 adds `planner="chat"`: each planned call is first emitted as
 a LangChain tool call by a scripted in-process chat model and must come back
 unchanged through the Orcel Agent's `ChatModelPlanner` (the conversation, the
-edge's converted schemas, the model call and the reply parsing) before the
-gate dispatches it. Built with `chat_agent`, so the allowlist is read-only.
+model call and the reply parsing), with the model bound to the edge's own
+schema for that tool, and the planner's proposal is what the gate
+dispatches. Built with `chat_agent`, so the allowlist is read-only.
 Rows are labelled `deterministic` / `orcel-agent-langchain-scripted`: still
 the task's scripted plans, not a model. Needs the agent's locked environment.
 """
@@ -62,9 +63,13 @@ def _chat_planner() -> Any:
     from orcel_agent.chat_planner import ChatModelPlanner
 
     class ScriptedReplies(GenericFakeChatModel):
-        """Replays the next scripted reply; binding tools changes nothing."""
+        """Replays the next scripted reply and records the tools it was bound
+        (a real model would choose among them; this one does not)."""
+
+        bound: list = []
 
         def bind_tools(self, tools: Any, **kwargs: Any) -> "ScriptedReplies":
+            self.bound = list(tools)
             return self
 
     return ChatModelPlanner, ScriptedReplies
@@ -149,9 +154,17 @@ class AgentOrcel:
 
             planner_class, replies = _chat_planner()
             reply = AIMessage(content="", tool_calls=[{"name": tool, "args": tool_arguments, "id": "bm02", "type": "tool_call"}])
-            proposal = planner_class(replies(messages=iter([reply]))).propose(GOAL, list(self._agent.steps), self._tools)
+            model = replies(messages=iter([reply]))
+            proposal = planner_class(model).propose(GOAL, list(self._agent.steps), self._tools)
+            # The model was offered the edge's own schema for this tool, and
+            # its reply parsed back to exactly the planned call.
+            offered = {entry["function"]["name"]: entry["function"]["parameters"] for entry in model.bound}
+            schema = next((spec.input_schema for spec in self._tools if spec.name == tool), None)
+            if schema is None or offered.get(tool) != schema:
+                raise OrcelError("plan-error", f"{tool} was not offered with the edge's schema")
             if proposal != intended:
                 raise OrcelError("plan-error", f"the chat planner proposed {proposal!r}, not {intended!r}")
+            intended = proposal
         try:
             step = self._agent.dispatch(intended)
         except AgentStop as stop:

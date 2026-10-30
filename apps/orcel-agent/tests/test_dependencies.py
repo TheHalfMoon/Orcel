@@ -22,7 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from orcel_agent.quiet import CLEARED_PREFIXES, TRACING_OFF, silence_tracing  # noqa: E402
+from orcel_agent.quiet import CLEARED_PREFIXES, TRACING_OFF  # noqa: E402
 
 DEPS = os.environ.get("ORCEL_AGENT_DEPS") == "1"
 needs_deps = unittest.skipUnless(DEPS, "the locked dependency environment (ORCEL_AGENT_DEPS=1)")
@@ -167,7 +167,6 @@ class TracingSwitches(unittest.TestCase):
                 self.assertEqual(TRACING_OFF.get(name), value, name)
         for name, value in TRACING_OFF.items():
             self.assertEqual(after[name], value, name)
-        self.assertTrue(callable(silence_tracing))
 
 
 @needs_deps

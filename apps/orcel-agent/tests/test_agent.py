@@ -441,7 +441,7 @@ class SourceBoundary(unittest.TestCase):
     # SG-000129: third-party imports are admitted by name, each in one named
     # module only (the recorded decision on the source scan).
     MODULE_IMPORTS = {
-        "chat_planner.py": {"langchain_core", "langsmith"},  # slice 2
+        "chat_planner.py": {"langchain_core", "langsmith"},  # slice 2, path inside orcel_agent/
     }
     # SG-000129: never imported by the agent, whatever a later slice admits
     # to ALLOWED_IMPORTS; this list is only ever extended. A module matches
@@ -487,7 +487,8 @@ class SourceBoundary(unittest.TestCase):
                     # `from os import system` would hide calls from the scan.
                     self.assertNotIn(names[0], ("os", "subprocess"), f"{path.name}: from {names[0]} import")
                 for name in names:
-                    allowed = self.ALLOWED_IMPORTS | self.MODULE_IMPORTS.get(path.name, set())
+                    inside = path.relative_to(ROOT / "orcel_agent").as_posix()
+                    allowed = self.ALLOWED_IMPORTS | self.MODULE_IMPORTS.get(inside, set())
                     self.assertIn(name, allowed, f"{path.name}: import {name}")
 
     def test_the_denylist_is_never_narrowed_below_the_recorded_floor(self) -> None:
