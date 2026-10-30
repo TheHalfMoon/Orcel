@@ -17,6 +17,19 @@ decisions and roadmap:
   - a license table and an advisory audit;
   - tracing forced off.
 
+## Context compaction (SG-000129 M3 slice 4c)
+
+Once the tool results pass 60,000 characters, all but the 6 most recent steps
+are compacted.
+
+- **Successes.** The call stays, and the result becomes a fixed notice.
+- **Refusals and unknown outcomes.** They keep their exact text.
+- **Summary.** The dropped successes are summarized by the same model, using
+  LangChain's summary prompt copied verbatim, with no tools bound. The summary
+  is capped at 4,000 characters and labelled untrusted. It sits on the last
+  compacted result.
+- **Bounded size.** The conversation stays bounded. Nothing is stored or sent.
+
 ## Todos and clarification (SG-000129 M3 slice 4b)
 
 `write_todos` and `ask_clarification` are planner-internal tools. They are

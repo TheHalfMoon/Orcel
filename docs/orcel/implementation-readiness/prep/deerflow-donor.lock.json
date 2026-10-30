@@ -58,14 +58,16 @@
       "path": "backend/packages/harness/deerflow/agents/middlewares/summarization_middleware.py",
       "git_blob": "13a3f6279c74e9cffd7edf7a57bf71bb17ebc052",
       "sha256": "b9ca8c0bdcff365c74c046d28b1c0c613ce86cc4db8319ef22445d0b85e4f137",
-      "lines": 1302
+      "lines": 1302,
+      "referenced_by": "SG-000129 M3 slice 4c: design reference only; no code copied"
     },
     {
       "group": "context-compaction",
       "path": "backend/packages/harness/deerflow/agents/middlewares/durable_context_middleware.py",
       "git_blob": "2723c481ccc65d50acc507e3cd9f197b0510e986",
       "sha256": "b0a03d38d45db840dfd3b3275c7093e4e4c6edadcf80ee2d7f3df4cfcf159e67",
-      "lines": 465
+      "lines": 465,
+      "referenced_by": "SG-000129 M3 slice 4c: design reference only; no code copied"
     },
     {
       "group": "tool-output-budget",
