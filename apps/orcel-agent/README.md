@@ -28,7 +28,9 @@ tool-output budget is the design reference, and no code is copied.
   included. It counts code points, not model tokens. The conversation as a
   whole is bounded by compaction, in slice 4c.
 - **Forgery.** Orcel's own preview lines start with a marker that tool output
-  cannot forge.
+  cannot reproduce exactly: any copy of it is quoted. Look-alike markers are
+  not caught, and the preview stays untrusted data. A real value containing
+  the marker reaches the model quoted.
 - **No storage.** Nothing is written or sent, and the in-process step keeps
   the full result.
 - **Unchanged messages.** Refusals, resumed calls and `OUTCOME_UNKNOWN` keep

@@ -62,6 +62,16 @@ class OutputBudget(unittest.TestCase):
         self.assertEqual(preview.count(MARKER), 2)
         self.assertLessEqual(len(preview), 1_000)
 
+    def test_quoting_that_crosses_the_limit_still_gets_a_hint(self) -> None:
+        # Fits before quoting, not after: the hint and length describe the
+        # quoted text actually previewed.
+        content = json.dumps({"t": MARKER * 30 + "x" * 30}, ensure_ascii=False)
+        self.assertLessEqual(len(content), 300)
+        preview = preview_tool_output(content, max_chars=300)
+        self.assertLessEqual(len(preview), 300)
+        self.assertIn("JSON object with 1 top-level keys", preview)
+        self.assertIn(f"preview_source_chars={len(content.replace(MARKER, QUOTED_MARKER))}", preview)
+
     def test_lone_surrogates_do_not_crash(self) -> None:
         # A JSON "\\ud800" escape decodes to a lone surrogate (for example an
         # unpaired UTF-16 file name on Windows).

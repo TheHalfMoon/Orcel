@@ -15,7 +15,11 @@ never a receipt.
 
 Forgery: every marker Orcel synthesizes starts with MARKER. Any occurrence of
 MARKER inside a tool's output, small or large, is replaced with QUOTED_MARKER
-first, so a tool result cannot forge an Orcel header or omission line.
+first, so a tool result cannot reproduce Orcel's exact marker. Look-alikes
+(other brackets, homoglyphs, zero-width characters) are not caught; the
+preview stays untrusted data either way. Side effect: a real value containing
+MARKER reaches the model quoted, so a model copying it back would name a
+different value (harmless for a read-only planner; orceld refuses or misses).
 """
 
 from __future__ import annotations
@@ -61,11 +65,11 @@ def preview_tool_output(content: str, *, max_chars: int = DEFAULT_RESULT_BUDGET)
         raise TypeError("content must be text")
     if isinstance(max_chars, bool) or not isinstance(max_chars, int) or max_chars < _MIN_BUDGET:
         raise ValueError("max_chars must be an integer >= 256")
-    source_chars = len(content)
-    hint = _shape_hint(content) if source_chars > max_chars else ""
     content = _neutralize(content)
     if len(content) <= max_chars:
         return content
+    source_chars = len(content)
+    hint = _shape_hint(content)
 
     header = (
         f"{MARKER} bounded tool-output preview: {hint}; preview_source_chars={source_chars}. "
