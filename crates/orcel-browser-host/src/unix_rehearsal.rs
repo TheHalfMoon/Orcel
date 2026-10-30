@@ -669,7 +669,8 @@ mod tests {
 
     /// Pre-activation boundary: only lib.rs (the test-only declaration) and
     /// the A1 to A5 modules (whose scans admit this module) name it, and
-    /// each of those is itself declared test-only.
+    /// each of those is itself declared test-only. The SG-000085 test may
+    /// also name it, but only in comments and its one fixture-spawn guard.
     #[test]
     fn the_rehearsal_is_unreachable_from_production() {
         let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
