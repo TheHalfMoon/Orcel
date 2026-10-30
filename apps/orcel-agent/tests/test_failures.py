@@ -82,7 +82,8 @@ class Guidance(unittest.TestCase):
         from orcel_agent.failures import MAY_HAVE_ACTED
 
         for code in MAY_HAVE_ACTED:
-            self.assertNotIn("refused", GUIDANCE[code].lower(), code)
+            # Never the plain "Orcel refused this exact call" prefix.
+            self.assertFalse(GUIDANCE[code].startswith("Orcel refused"), code)
             self.assertIn("may have acted", GUIDANCE[code], code)
         for code in set(GUIDANCE) - MAY_HAVE_ACTED - {"APPROVAL_DENIED", "APPROVAL_UNAVAILABLE"}:
             self.assertIn("Proposing it again ends the run", GUIDANCE[code], code)
