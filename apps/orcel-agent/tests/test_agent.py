@@ -443,6 +443,7 @@ class SourceBoundary(unittest.TestCase):
     MODULE_IMPORTS = {
         "chat_planner.py": {"langchain_core", "langsmith"},  # slice 2, path inside orcel_agent/
         "loop_detection.py": {"collections"},  # slice 3 (standard library)
+        "checkpoint.py": {"sqlite3"},  # slice 5 (standard library)
         "todos.py": {"langchain_core", "unicodedata"},  # slice 4b (LangChain's todo text is copied, not imported)
     }
     # SG-000129: never imported by the agent, whatever a later slice admits

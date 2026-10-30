@@ -208,5 +208,22 @@ class Compactor:
             self.summary = preview_tool_output(summary, max_chars=SUMMARY_MAX_CHARS)
         self.covered = end
 
+    def snapshot(self) -> dict:
+        return {"summary": self.summary, "covered": self.covered, "failures": self.failures}
+
+    def restore(self, data: Any) -> None:
+        """Load a snapshot; ValueError if it is not one. The summary is
+        re-bounded and re-neutralized on the way in."""
+        if not isinstance(data, dict):
+            raise ValueError("compaction snapshot: expected an object")
+        summary, covered, failures = data.get("summary"), data.get("covered"), data.get("failures")
+        for value in (covered, failures):
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise ValueError("compaction snapshot: bad counts")
+        if summary is not None and not isinstance(summary, str):
+            raise ValueError("compaction snapshot: bad summary")
+        self.summary = None if summary is None else preview_tool_output(summary, max_chars=SUMMARY_MAX_CHARS)
+        self.covered, self.failures = covered, failures
+
     def reset(self) -> None:
         self.summary, self.covered, self.failures = None, 0, 0
