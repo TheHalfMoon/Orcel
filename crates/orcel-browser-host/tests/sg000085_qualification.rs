@@ -1227,7 +1227,8 @@ fn no_shell_script_or_remote_process_surface_exists() {
     // SG-000115 category A (recorded rule change, prep/SG-000115.md): the
     // inert Unix fixture spawners A2 (unix_supervise.rs) and A5
     // (unix_cleanup.rs), admitted only while lib.rs declares them under
-    // #[cfg(all(test, unix))].
+    // #[cfg(all(test, unix))]. A6 (unix_rehearsal.rs) spawns only through
+    // A2's `python_fixture`, pinned below under the same guard.
     let lib = sources
         .iter()
         .find(|(file, _)| file == "lib.rs")
@@ -1250,6 +1251,16 @@ fn no_shell_script_or_remote_process_surface_exists() {
                     || (file == "unix_supervise.rs" && unix_test_only("unix_supervise"))
                     || (file == "unix_cleanup.rs" && unix_test_only("unix_cleanup")),
                 "unexpected process spawn in {file}"
+            );
+        }
+        // A6 (unix_rehearsal.rs) spawns its fake engine through A2's fixture
+        // constructor, which evaluates a fixed Python string: that
+        // indirection is pinned to the same two test-only modules.
+        if text.contains("python_fixture(") {
+            assert!(
+                (file == "unix_supervise.rs" && unix_test_only("unix_supervise"))
+                    || (file == "unix_rehearsal.rs" && unix_test_only("unix_rehearsal")),
+                "unexpected fixture-script spawn in {file}"
             );
         }
         if text.contains("use_personal") {

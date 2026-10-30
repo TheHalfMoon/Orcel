@@ -42,6 +42,9 @@
 //!   (automatic reaping); nothing in this crate does.
 //! - **Family bound.** `MAX_FAMILY` must be qualified against a real Chrome
 //!   or Edge tree; exceeding it fails closed.
+//! - **Fixture constructor.** `python_fixture` evaluates a fixed Python
+//!   string; it is `#[cfg(test)]` on its own and must never reach a
+//!   production build.
 
 use std::collections::BTreeMap;
 use std::os::unix::process::CommandExt;
@@ -223,7 +226,9 @@ impl Supervised {
 /// A `python3` fixture running `code` (no shell: SG-000085 bans shell tokens
 /// in this crate's sources, tests included). The single fixture constructor
 /// for this module's tests and the A6 rehearsal (`unix_rehearsal.rs`), so
-/// that module needs no spawn of its own.
+/// that module needs no spawn of its own. Explicitly `cfg(test)`, so it
+/// stays test-only if activation ever lifts this module's cfg.
+#[cfg(test)]
 pub(crate) fn python_fixture(code: &str) -> Command {
     let mut command = Command::new("python3");
     command.arg("-c").arg(code);

@@ -13,21 +13,30 @@
 //! The rehearsal pins the order activation will need:
 //! - **Start:** managed policy (A1) → crash recovery of leftovers (A5) → a
 //!   fresh 0700 profile and its hold (A3) → the sink → the exact Unix argv
-//!   (A4) → the supervised engine (A2). A refusal at any stage leaves every
-//!   later stage unstarted.
+//!   (A4) → the supervised engine (A2). Each stage runs only after the
+//!   previous one succeeded. The tests exercise the policy and in-use
+//!   refusals; a later refusal (create, hold, sink, argv, spawn) leaves the
+//!   created profile for the next start's recovery.
 //! - **Teardown:** sweep the engine's family (A2) → stop the sink → remove
-//!   the profile through its hold (A5). The sink and the hold are kept, not
-//!   released, while any scanned member is still alive (the #501 contract:
-//!   a stopped sink frees its port).
+//!   the profile through its hold (A5). Teardown stops the sink and removes
+//!   the profile only when the sweep vouches for the whole family
+//!   (`all_exited()`: nothing left and `Coverage::VerifiedComplete`). Every
+//!   other outcome keeps both: the sink keeps its port and the profile stays
+//!   held (the #501 contract: a stopped sink frees its port, and slice 1
+//!   stops it only once every engine process is confirmed gone).
 //!
 //! What this rehearsal shows, and does not:
-//! - Every sweep reports `Coverage::Incomplete`, and the rehearsal never
-//!   claims more. One test pins why: a helper that leaves the group and is
-//!   orphaned escapes the sweep (the open macOS/Linux item recorded in A2;
-//!   category C, not accepted).
-//! - Teardown removes the profile once the scanned family is gone, even with
-//!   `Incomplete` coverage. Whether activation must wait for verified
-//!   coverage first is open (A5's "orphaned engine" item).
+//! - A2 never produces `VerifiedComplete` (it is reserved for an
+//!   activation-qualified mechanism), so every real teardown here is kept.
+//!   The tests then release the scratch resources themselves, with that
+//!   acceptance written in the test (`accept_unverified`); the rehearsal
+//!   code has no such step, and activation must not gain one without
+//!   verified coverage.
+//! - One test pins why coverage is never claimed: a helper that leaves the
+//!   group and is orphaned escapes the sweep (the open macOS/Linux item
+//!   recorded in A2; category C, not accepted), and the sink is still
+//!   running when the sweep returns. The `Incomplete` assertions elsewhere
+//!   restate A2's contract; that test is the evidence.
 //! - Nothing here is evidence about a real Chrome or Edge (category B).
 
 use std::io;
@@ -166,8 +175,13 @@ struct Released {
 #[allow(dead_code)]
 #[derive(Debug)]
 enum Kept {
+    /// The family could not be established.
     Family(FamilyError),
+    /// Scanned members are still alive.
     Survivors(SweepOutcome),
+    /// Every scanned member exited, but the sweep cannot vouch for the whole
+    /// family (`Coverage::Incomplete`).
+    Unverified(SweepOutcome),
 }
 
 /// What a refused release still holds: the sink keeps its port and the
@@ -260,22 +274,36 @@ fn teardown(running: Running) -> Result<Released, TeardownError> {
     }
 }
 
-/// Stop the sink only after every scanned member exited, then remove the
-/// profile through its hold. Survivors keep both.
+/// Release only when the sweep vouches for the whole family; otherwise keep
+/// the sink and the held profile.
 fn release(
     outcome: SweepOutcome,
     sink: NetworkSink,
     hold: ProfileHold,
     profile: PathBuf,
 ) -> Result<Released, TeardownError> {
-    if !outcome.left.is_empty() {
-        return Err(TeardownError::Kept(Box::new(Holding {
-            why: Kept::Survivors(outcome),
-            sink,
-            hold,
-            profile,
-        })));
-    }
+    let why = if !outcome.left.is_empty() {
+        Kept::Survivors(outcome)
+    } else if !outcome.all_exited() {
+        Kept::Unverified(outcome)
+    } else {
+        return free(outcome, sink, hold, profile);
+    };
+    Err(TeardownError::Kept(Box::new(Holding {
+        why,
+        sink,
+        hold,
+        profile,
+    })))
+}
+
+/// Stop the sink, then remove the profile through its hold.
+fn free(
+    outcome: SweepOutcome,
+    sink: NetworkSink,
+    hold: ProfileHold,
+    profile: PathBuf,
+) -> Result<Released, TeardownError> {
     let accepted = sink.accepted();
     drop(sink);
     sweep_held_profile(hold, &profile).map_err(TeardownError::Cleanup)?;
@@ -351,17 +379,46 @@ mod tests {
     }
 
     fn refused(result: Result<Running, Refused>) -> Refused {
-        match result {
-            Ok(_) => panic!("the start was expected to refuse"),
-            Err(refused) => refused,
-        }
+        result.err().expect("the start was expected to refuse")
     }
 
-    fn released(result: Result<Released, TeardownError>) -> Released {
-        match result {
-            Ok(released) => released,
-            Err(error) => panic!("teardown kept or failed: {error:?}"),
+    /// The holding a teardown kept, and why.
+    fn kept(result: Result<Released, TeardownError>) -> (Kept, NetworkSink, ProfileHold, PathBuf) {
+        let holding = match result {
+            Err(TeardownError::Kept(holding)) => Some(holding),
+            _ => None,
         }
+        .expect("teardown keeps the sink and the profile");
+        let Holding {
+            why,
+            sink,
+            hold,
+            profile,
+        } = *holding;
+        (why, sink, hold, profile)
+    }
+
+    /// Teardown kept everything because coverage is unverified, with no
+    /// scanned survivor. The test, not the rehearsal, accepts that residual
+    /// to clean up its scratch resources; the rehearsal has no such step.
+    fn accept_unverified(result: Result<Released, TeardownError>) -> Released {
+        let (why, sink, hold, profile) = kept(result);
+        let outcome = match why {
+            Kept::Unverified(outcome) => Some(outcome),
+            _ => None,
+        }
+        .expect("kept only because coverage is unverified");
+        assert!(outcome.left.is_empty(), "{outcome:?}");
+        assert_eq!(outcome.coverage, Coverage::Incomplete);
+        assert!(still_sinks(&sink), "the kept sink still owns its port");
+        free(outcome, sink, hold, profile).expect("the scratch is released")
+    }
+
+    /// The sink still accepts (and closes) connections on its port.
+    fn still_sinks(sink: &NetworkSink) -> bool {
+        let before = sink.accepted();
+        std::net::TcpStream::connect(("127.0.0.1", sink.port())).is_ok()
+            && until(|| sink.accepted() > before)
     }
 
     fn signal_crash(scratch: &Scratch) {
@@ -378,11 +435,6 @@ mod tests {
             .unwrap()
     }
 
-    fn exists(pid: i32) -> bool {
-        // SAFETY: signal 0 only checks that the pid exists.
-        unsafe { libc::kill(pid, 0) == 0 }
-    }
-
     #[test]
     fn a_rehearsal_runs_every_slice_in_order_and_leaves_nothing() {
         let scratch = Scratch::new("full");
@@ -394,7 +446,7 @@ mod tests {
         let family = running.engine.family().unwrap();
         assert!(family.len() >= 3, "the engine and two helpers: {family:?}");
 
-        let released = released(teardown(running));
+        let released = accept_unverified(teardown(running));
         assert!(released.accepted >= 1, "{released:?}");
         assert!(released.outcome.left.is_empty(), "{released:?}");
         // Every scanned member exited, yet the rehearsal never claims more.
@@ -423,7 +475,7 @@ mod tests {
             family.iter().any(|member| member.pid == leaver),
             "the parent-link walk finds the helper outside the group: {family:?}"
         );
-        let released = released(teardown(running));
+        let released = accept_unverified(teardown(running));
         assert!(released.outcome.left.is_empty(), "{released:?}");
         for member in family {
             assert!(!is_alive(member), "{member:?}");
@@ -441,7 +493,7 @@ mod tests {
         let root = running.engine.root();
         signal_crash(&scratch);
         assert!(until(|| !is_alive(root)), "the engine crashed");
-        let released = released(teardown(running));
+        let released = accept_unverified(teardown(running));
         assert!(released.outcome.left.is_empty(), "{released:?}");
         for member in family {
             assert!(!is_alive(member), "{member:?}");
@@ -452,25 +504,41 @@ mod tests {
     /// The residual the sweep cannot close (A2's open item, category C): a
     /// helper that left the group and was orphaned before the scan is
     /// outside the parent-link walk. The sweep reports nothing left, yet the
-    /// helper runs on; coverage stays `Incomplete`, so nothing claims the
-    /// family exited.
+    /// helper runs on; teardown therefore keeps the sink and the profile
+    /// (coverage unverified), and nothing claims the family exited.
     #[test]
-    fn an_orphan_outside_the_group_escapes_and_coverage_stays_incomplete() {
+    fn an_orphan_outside_the_group_escapes_and_teardown_keeps_the_sink() {
         let scratch = Scratch::new("orphan");
         let running = scratch.start(Mode::Orphan).unwrap();
         wait_ready(&running);
-        let orphan = left_pid(&scratch);
+        let leaver = left_pid(&scratch);
+        // Pinned while it is still the engine's child: its start time guards
+        // the later checks against pid reuse, and a zombie counts as gone.
+        let orphan = running
+            .engine
+            .family()
+            .unwrap()
+            .into_iter()
+            .find(|member| member.pid == leaver)
+            .expect("the leaving helper is in the family before the crash");
         let root = running.engine.root();
         signal_crash(&scratch);
         assert!(until(|| !is_alive(root)), "the engine crashed");
-        let released = released(teardown(running));
-        assert!(released.outcome.left.is_empty(), "{released:?}");
-        assert_eq!(released.outcome.coverage, Coverage::Incomplete);
-        assert!(!released.outcome.all_exited());
-        assert!(exists(orphan), "the orphan escaped the sweep");
+        let (why, sink, hold, profile) = kept(teardown(running));
+        let outcome = match why {
+            Kept::Unverified(outcome) => Some(outcome),
+            _ => None,
+        }
+        .expect("kept because coverage is unverified");
+        assert!(outcome.left.is_empty(), "the orphan was never scanned");
+        assert!(!outcome.all_exited());
+        assert!(is_alive(orphan), "the orphan escaped the sweep");
+        assert!(still_sinks(&sink), "the sink outlives the escaped helper");
+        assert!(profile.exists(), "the profile stays held");
         // The fixture orphan lives eight seconds; wait it out rather than
-        // signal a pid that is no longer ours to vouch for.
-        assert!(until(|| !exists(orphan)), "the orphan exited");
+        // signal a process the sweep no longer vouches for.
+        assert!(until(|| !is_alive(orphan)), "the orphan exited");
+        free(outcome, sink, hold, profile).expect("the scratch is released");
     }
 
     #[test]
@@ -511,7 +579,7 @@ mod tests {
             scratch.profile().join("Default/Preferences").exists(),
             "the first run's profile is untouched"
         );
-        released(teardown(first));
+        accept_unverified(teardown(first));
         assert!(!scratch.profile().exists());
     }
 
@@ -536,50 +604,65 @@ mod tests {
             "the next start removed the stale profile before its own"
         );
         wait_ready(&next);
-        released(teardown(next));
+        accept_unverified(teardown(next));
         assert!(!scratch.profile().exists());
     }
 
-    #[test]
-    fn survivors_keep_the_sink_and_the_profile() {
-        let scratch = Scratch::new("survivors");
+    fn held_profile(scratch: &Scratch) -> (ProfileHold, PathBuf) {
         let profile = scratch.profile();
         std::fs::DirBuilder::new()
             .mode(0o700)
             .create(&profile)
             .unwrap();
         std::fs::set_permissions(&profile, std::fs::Permissions::from_mode(0o700)).unwrap();
-        let hold = ProfileHold::open(&profile).unwrap();
+        (ProfileHold::open(&profile).unwrap(), profile)
+    }
+
+    #[test]
+    fn survivors_and_unverified_coverage_keep_the_sink_and_the_profile() {
+        let survivor = Pinned {
+            pid: i32::MAX,
+            start: 1,
+        };
+        for (left, label) in [(vec![survivor], "survivors"), (Vec::new(), "unverified")] {
+            let scratch = Scratch::new(label);
+            let (hold, profile) = held_profile(&scratch);
+            let sink = NetworkSink::start().unwrap();
+            let outcome = SweepOutcome {
+                left,
+                coverage: Coverage::Incomplete,
+            };
+            let (why, sink, hold, profile) = kept(release(outcome, sink, hold, profile));
+            match label {
+                "survivors" => assert!(matches!(why, Kept::Survivors(_)), "{why:?}"),
+                _ => assert!(matches!(why, Kept::Unverified(_)), "{why:?}"),
+            }
+            assert!(still_sinks(&sink), "{label}: the sink still owns its port");
+            assert!(profile.exists());
+            assert_eq!(ProfileHold::open(&profile).unwrap_err(), ProfileError::Busy);
+            drop(hold);
+            drop(sink);
+            assert_eq!(recover_stale_profile(&profile), Ok(Recovery::Removed));
+        }
+    }
+
+    /// The one releasing path: verified coverage (which only an
+    /// activation-qualified mechanism may produce) with nothing left.
+    #[test]
+    fn only_verified_coverage_releases_the_sink_and_the_profile() {
+        let scratch = Scratch::new("verified");
+        let (hold, profile) = held_profile(&scratch);
         let sink = NetworkSink::start().unwrap();
         let outcome = SweepOutcome {
-            left: vec![Pinned {
-                pid: i32::MAX,
-                start: 1,
-            }],
-            coverage: Coverage::Incomplete,
+            left: Vec::new(),
+            coverage: Coverage::VerifiedComplete,
         };
-        let Err(TeardownError::Kept(holding)) = release(outcome, sink, hold, profile) else {
-            panic!("survivors must keep the sink and the profile");
-        };
-        let Holding {
-            why: Kept::Survivors(_),
-            sink,
-            hold,
-            profile,
-        } = *holding
-        else {
-            panic!("kept for survivors");
-        };
-        // The sink still owns its port and still closes connections.
-        let before = sink.accepted();
-        drop(std::net::TcpStream::connect(("127.0.0.1", sink.port())).unwrap());
-        assert!(until(|| sink.accepted() > before), "the sink still runs");
-        // The profile is still there and still held.
-        assert!(profile.exists());
-        assert_eq!(ProfileHold::open(&profile).unwrap_err(), ProfileError::Busy);
-        drop(hold);
-        drop(sink);
-        assert_eq!(recover_stale_profile(&profile), Ok(Recovery::Removed));
+        let released = release(outcome, sink, hold, profile.clone()).expect("released");
+        assert!(released.outcome.all_exited());
+        assert!(
+            !profile.exists(),
+            "the profile was removed through its hold"
+        );
     }
 
     /// Pre-activation boundary: only lib.rs (the test-only declaration) and
