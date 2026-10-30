@@ -1,6 +1,10 @@
 # DeerFlow 2.0 and the Orcel Agent: source audit, transplant matrix and master plan
 
 **Status: PLAN, revision 3 (no capability activated, no code imported).**
+**Update, 2026-10-30:** M1 merged (#534). The owning grain's activation
+packet is `SG-000129.md` (spec `.specgrain/specs/SG-000129.json`, issue
+#536). It covers M2 and M3, and replaces row 13: no MCP library is admitted
+and the M1 stdlib client stays the only edge session (packet section 5).
 This document records the founder-directed investigation of ByteDance
 DeerFlow 2.0, made under the directive "DEERFLOW 2.0 FULL COPY-FIRST
 RESEARCH, ARCHITECTURE AND ENGINEERING AUTHORIZATION" (2026-10-30). This PR,
@@ -381,9 +385,9 @@ or dependencies (M2 and on) waits for the owning grain.
     store, and the `core`-only, no-lease, approval-budget rules.
   - **Authority delta:** none in orceld, hosts, approvals or leases. New: a
     first-party client, a dependency set and an agent data store.
-  - **Activation is a founder decision.** The packet is to be prepared as
-    `prep/SG-ORCEL-AGENT.md` with category A/B conditions, on the SG-000115
-    pattern.
+  - **Activation is a founder decision.** The packet is
+    `prep/SG-000129.md` (founder decision of 2026-10-30, issue #536), on the
+    SG-000128 activation pattern.
   - Until it is activated: only M0–M1 proceed. Dependency admission (M2),
     model download and CI inference (M4) are category B.
 - **Canonical clarification,** reviewed with the grain. The donor matrix's

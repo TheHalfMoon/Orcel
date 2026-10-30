@@ -193,8 +193,10 @@ test("SG-000094 and SG-000095 are closed and SG-000096 is the only active P20 gr
   // them by founder sequencing (issue #455) and is closed. SG-000127
   // (ORCEL-F4) follows them by founder sequencing (issue #446). SG-000128
   // (ORCEL-UIA, scoped UIA subtree observation) runs beside them by founder
-  // decision (issue #515); no other grain may be open.
-  assert.deepEqual(open.sort(), ["SG-000096", "SG-000127", "SG-000128"]);
+  // decision (issue #515). SG-000129 (ORCEL-AGENT, the Orcel Agent planner
+  // client) runs beside them by founder decision (issue #536); no other grain
+  // may be open.
+  assert.deepEqual(open.sort(), ["SG-000096", "SG-000127", "SG-000128", "SG-000129"]);
   const sg120 = readJson<{
     program: string;
     state: string;
@@ -300,6 +302,43 @@ test("SG-000094 and SG-000095 are closed and SG-000096 is the only active P20 gr
     assert.ok(sg128.authority_delta[key].startsWith("Proposed only"), key);
   }
   assert.ok(sg128.authority_delta.approval.startsWith("Unchanged rules"));
+  const sg129 = readJson<{
+    program: string;
+    state: string;
+    base: string;
+    planning_issue: number;
+    dependencies: string[];
+    authority_delta: {
+      activation: string;
+      orceld: string;
+      mcp: string;
+      approval: string;
+      dependencies: string;
+      donor_code: string;
+      agent_state: string;
+      network: string;
+      process: string;
+      privileged: string;
+    };
+  }>(".specgrain/specs/SG-000129.json");
+  assert.equal(sg129.program, "ORCEL-AGENT");
+  assert.equal(sg129.state, "GRAIN");
+  assert.equal(sg129.planning_issue, 536);
+  assert.equal(sg129.base, "1dba94658dd5e2a0be86b9b9f89b7a157e07368e");
+  assert.deepEqual(sg129.dependencies, ["SG-000092", "SG-000120"]);
+  // The agent is a client: nothing in orceld, the edge, approvals, the
+  // network or processes changes, and an added key must not go unnoticed.
+  assert.deepEqual(
+    Object.keys(sg129.authority_delta).sort(),
+    ["activation", "agent_state", "approval", "dependencies", "donor_code", "mcp", "network", "orceld", "privileged", "process"]
+  );
+  for (const key of ["activation", "orceld", "mcp", "network", "process", "privileged"] as const) {
+    assert.ok(sg129.authority_delta[key].startsWith("None."), key);
+  }
+  for (const key of ["dependencies", "donor_code", "agent_state"] as const) {
+    assert.ok(sg129.authority_delta[key].startsWith("Proposed only"), key);
+  }
+  assert.ok(sg129.authority_delta.approval.startsWith("Unchanged rules"));
   const sg126 = readJson<{
     program: string;
     state: string;

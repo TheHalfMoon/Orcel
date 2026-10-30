@@ -1,0 +1,150 @@
+{
+  "id": "SG-000129",
+  "title": "Orcel Agent: Core-integration planner (DeerFlow-derived MCP client), milestones M2 and M3",
+  "program": "ORCEL-AGENT",
+  "state": "GRAIN",
+  "risk": "medium",
+  "created": "2026-10-30",
+  "base": "1dba94658dd5e2a0be86b9b9f89b7a157e07368e",
+  "dependencies": [
+    "SG-000092",
+    "SG-000120"
+  ],
+  "planning_issue": 536,
+  "objective": "Turn the M1 Orcel Agent (apps/orcel-agent: a standard-library MCP client of the Orcel edge with a scripted planner) into a planner that can drive a LangChain chat model, using copied and adapted DeerFlow 2.0 middlewares (loop detection, todos, compaction, tool-output budget, error and dangling-call recovery, clarification) and LangGraph checkpoints, while it stays an unprivileged client: every tool comes from the Orcel edge and every call is authorized, executed and audited by orceld. M2 and M3 of the adopted plan (docs/orcel/implementation-readiness/prep/DEERFLOW_ORCEL_AGENT_MASTER_PLAN.md). Activation packet: docs/orcel/implementation-readiness/prep/SG-000129.md.",
+  "scope": {
+    "include": [
+      "Activate the SG-000129 contract only. Every slice below needs its own exact-head qualified implementation PR with a fresh-context security judge.",
+      "Slice 1 (M2, dependency admission): a hash-locked Python dependency set for apps/orcel-agent only (langchain, langchain-core, langgraph, langgraph-checkpoint, langgraph-checkpoint-sqlite and their transitive closure), installed wheels-only with --require-hashes into an isolated environment; a transitive license table; a hash-pinned advisory audit; LangSmith, OpenTelemetry and every other tracer forced off before any LangChain import; no tiktoken, no provider SDK, no SQLite loadable extension; an egress-denied test; the MIT notice at apps/orcel-agent/third_party/deer-flow/LICENSE and a provenance ledger. mcp and langchain-mcp-adapters are not admitted in slice 1.",
+      "Slice 2 (M2, planner adapter and orchestration): a LangChain chat-model Planner adapter behind the M1 Planner protocol, and MCP tool-call orchestration whose every dispatch goes through the M1 gate and its stdlib edge session (allowlist, approval budget, refusal-is-final, step budget, resume invariant). The agent's entry point refuses any allowlist that is not a subset of the M1 read-only set. Tests use only LangChain's in-process fake chat models (labelled scripted); scripted parity with M1 on BM-02 Tier A.",
+      "Slice 3 (M2, loop detection): COPY DeerFlow's loop-detection middleware closure with Orcel tool names and port its tests.",
+      "Slice 4 (M3, context middlewares): todos and task decomposition (LangChain's TodoListMiddleware plus DeerFlow's delta), summarization (the LangChain built-in plus DeerFlow's hooks), the tool-output budget and synopsis (in memory, or only in the private store), tool-error handling and dangling-call repair mapped to the resume invariant, and clarification (a question is never consent).",
+      "Slice 5 (M3, persistent planning): LangGraph SQLite checkpoints for plan and message state inside the private per-run store, under the M1 store rules as widened by the recorded store decision, plus an explicit owner-only protected DACL on Windows; kill-and-resume tests.",
+      "Slice 6 (evaluation): BM-02 Tier A and the synthetic middleware tasks (loop trap, long context, oversized output, injected instructions, kill and resume) through the agent against M1, reporting success, refusals, latency, peak memory, context growth, recovery and security failures; every row labelled deterministic-scripted."
+    ],
+    "exclude": [
+      "Any change to orceld, its policy, approval broker, leases, journal, hosts or providers; any new MCP tool, argument, profile or edge behaviour.",
+      "DeerFlow sandboxes (local, AIO, E2B, OpenSandbox, Boxlite, Kubernetes), bash, file, browser and computer-control tools, and any other path that executes, reads or writes outside the Orcel edge.",
+      "DeerFlow's gateway, auth, channels, scheduler, persistence, frontend and telemetry; any listener or network client other than the stdio pipe to the edge.",
+      "Mutating or approval-bearing tools in the agent allowlist: it stays the M1 read-only set until a read-only lease-state signal exists under a separately decided change.",
+      "Model inference with real weights, model or tokenizer downloads, and hosted model providers (M4, founder decision 2).",
+      "Runtime skill installation, memory and subagents (M6), packaging, exposure, Control Room integration and release (M7).",
+      "Running the agent against an orceld that may hold a Full User or Admin lease; tests use a test orceld only."
+    ]
+  },
+  "authority_delta": {
+    "activation": "None. Activating SG-000129 lets its slices be implemented and proven under the founder decision; the activation itself adds no dependency, donor code, tool, listener or authority.",
+    "orceld": "None. orceld, its policy, approval broker, leases, journal, hosts and providers are unchanged; the agent is one more MCP client.",
+    "mcp": "None. No MCP tool, argument, profile or edge behaviour changes; the agent keeps its M1 read-only allowlist.",
+    "approval": "Unchanged rules: every approval is asked by orceld's broker of the person; the agent never sees, mints, caches or relays an approval or lease, keeps its per-run approval budget, and stops at the first denial.",
+    "dependencies": "Proposed only (slice 1): a hash-locked, wheels-only Python dependency set for apps/orcel-agent only (LangChain and LangGraph; mcp and langchain-mcp-adapters are not admitted unless slice 2 records a need), with a license table and a pinned advisory audit; nothing in orceld, the edge or any shipped artifact depends on it.",
+    "donor_code": "Proposed only (slices 2 to 5): copied or adapted MIT-licensed DeerFlow 2.0 middleware code under apps/orcel-agent, with provenance headers, the verbatim license and a ledger; no execution, sandbox, tool or network code.",
+    "agent_state": "Proposed only (slice 5): plan and message checkpoints (which contain tool results, so file and UIA text) inside the private per-run store, a recorded widening of M1's journal-only content rule; owner-only, size-capped including SQLite sidecars, expiring, deleted on completion.",
+    "network": "None. No socket or listener; LangSmith and every tracer stay off and an egress-denied test enforces it.",
+    "process": "None. The agent still spawns exactly one child, the built edge.",
+    "privileged": "None. SG-000096 Full User shell remains unarmed."
+  },
+  "decisions": [
+    {
+      "question": "Open the governed change",
+      "status": "DECIDED (founder, 2026-10-30)",
+      "decision": "Founder decision of 2026-10-30, given in the implementing session's chat and recorded verbatim on issue #536. Authorization: \"I reaffirm my founder authorization to copy, adapt, refactor, and rebrand appropriately licensed DeerFlow 2.0 code for Orcel. You are authorized to initiate the formal SpecGrain activation process for: Orcel Agent — Core-integration planner (DeerFlow-derived MCP client). Use the adopted architecture in: docs/orcel/implementation-readiness/prep/DEERFLOW_ORCEL_AGENT_MASTER_PLAN.md. Prepare the complete activation specification, security analysis, dependency admission, acceptance tests, and independent review. Do not treat this instruction alone as a completed SpecGrain activation. Activate the grain only after satisfying the repository's formal governance and decision requirements.\" Implementation: \"Prioritize M2 and M3 once their governance requirements are satisfied.\" and \"Once the required governance gates are satisfied, begin the first executable M2 implementation immediately.\" The items to \"Implement or transplant\" are listed as: \"LangChain-compatible planner adapter\", \"DeerFlow loop detection\", \"MCP tool-call orchestration\", \"Todo and task-decomposition middleware\", \"Context compaction and summarization\", \"Tool-output budgeting\", \"Error handling and dangling-call recovery\", \"Persistent planning and checkpoints\". Boundaries: \"The agent is an unprivileged MCP client.\" \"orceld remains the sole execution and approval authority.\" \"Do not import DeerFlow's unrestricted host-shell tools, alternative computer-control paths, cloud sandbox backends, or other privileged mechanisms that could bypass Orcel's broker.\" \"Keep the agent unexposed and unshipped during this phase.\" \"No runtime skill installation, unexpected network egress, approval bypass, or Full User lease assumptions.\" \"No model inference or downloads without separately satisfying the model-selection and licensing gates.\" Process: \"Continue without routine confirmation requests.\""
+    },
+    {
+      "question": "Sequencing",
+      "status": "DECIDED (founder, 2026-10-30)",
+      "decision": "SG-000129 runs as an additional active grain beside SG-000096, SG-000127 and SG-000128. It touches only apps/orcel-agent, tests/benchmarks and the agent's CI job, which none of them touch."
+    },
+    {
+      "question": "Rule change: the lawful open-grain set",
+      "status": "RECORDED (before implementation)",
+      "decision": "The canonical open-grain rule (apps/orcel-mcp/src/openai-plugin.test.ts and p20-architecture.test.ts) allowed SG-000096, SG-000127 and SG-000128 together. It now also allows SG-000096, SG-000127, SG-000128 and SG-000129 together, only while CURRENT.md records SG-000129's founder decision, the parallel grains SG-000108, SG-000120 and SG-000126 stay closed, and no other grain beyond SG-000096 exists. This follows the SG-000128 precedent (issue #515). The other rule changes are recorded separately below (the private store and the source scan)."
+    },
+    {
+      "question": "Dependency versions",
+      "status": "RECORDED (slice 1 qualifies the exact lock)",
+      "decision": "Start from the versions the DeerFlow pin 81e1ab8 resolves in its backend/uv.lock (langchain 1.3.14, langchain-core 1.4.9, langgraph 1.2.9, langgraph-checkpoint 4.3.0, langgraph-checkpoint-sqlite 3.1.2, langgraph-prebuilt 1.1.0, pydantic 2.13.3; the pin also resolves mcp 1.30.0 and langchain-mcp-adapters 0.2.2, which are not admitted in slice 1), because the copied middlewares subclass those LangChain built-ins and were tested against them. A version moves only to fix a recorded advisory or a test failure, and every move is recorded in the lock's notes. Every admitted package must be under an OSI-approved permissive license (MIT, BSD, Apache-2.0, PSF, ISC) or be recorded and reviewed in the license table before admission."
+    },
+    {
+      "question": "Use DeerFlow's agent factory or a thin loop",
+      "status": "DECIDED (adopted plan, alternative 3)",
+      "decision": "A thin loop on LangChain's create_agent with the copied self-contained middlewares; DeerFlow's agents/factory.py (a 101k-line import closure with sandbox defaulting to true) is not imported."
+    },
+    {
+      "question": "Who holds the MCP session",
+      "status": "RECORDED (before implementation)",
+      "decision": "Only the M1 gate's stdlib client holds the edge session. LangChain tools handed to the model are thin proposals that call the gate. No mcp or langchain-mcp-adapters session, client or tool may exist in the agent; slice 2 converts the edge's tool schemas itself. The extended source scan and its denylist pin this."
+    },
+    {
+      "question": "Rule change: what the agent's private store may hold",
+      "status": "RECORDED (before implementation of slice 5)",
+      "decision": "M1's store holds only the dispatch journal: tool names, argument digests and error codes, never tool results or file content (orcel_agent/store.py). Slice 5 widens this: LangGraph checkpoints hold plan and message state, which includes tool results and so file and UIA text. The widening is allowed only with: the checkpoint database and every SQLite sidecar (-wal, -shm, -journal) inside the run directory and counted against the size cap, where the cap counts the database pages, the WAL and any rollback journal together: PRAGMA max_page_count bounds the database, journal_size_limit and a WAL checkpoint bound the WAL and journal, and a capacity check of the real file sizes runs before each checkpoint is saved, so filling past the cap fails closed; temp_store=MEMORY so SQLite never writes temporary files elsewhere; no loadable extensions; secure_delete on; the run directory deleted when the run ends; and a crash-kept directory expiring under the existing 24-hour TTL, which is recorded as the accepted window for plaintext context on disk after a crash. orceld's redaction of secrets is unchanged and still applies before anything reaches the agent."
+    },
+    {
+      "question": "Rule change: the agent source scan grows by named imports only",
+      "status": "RECORDED (before implementation)",
+      "decision": "The M1 scan (apps/orcel-agent/tests/test_agent.py, SourceBoundary) admits standard-library imports only, forbids open() outside journal.py and allows one spawn (the edge). Slices extend it only by name: slice 2 adds langchain_core and langchain (agents, middleware, chat-model and message modules); slice 3 nothing beyond copied files; slice 4 the LangChain middleware modules; slice 5 langgraph, langgraph.checkpoint.sqlite and sqlite3 in one named store module, and ctypes in one named Windows-ACL module that may call only named advapi32 and kernel32 functions (security-descriptor, ACL and CreateDirectoryW calls), pinned by name in the scan. A denylist is added and never narrowed: mcp.client, mcp.server, langchain_mcp_adapters.client and .sessions, ClientSession, stdio_client, langchain_community, any provider SDK (langchain_openai, langchain_anthropic, langchain_ollama and similar), subprocess outside edge.py, socket, urllib, http.client and enable_load_extension. Every addition is made in the slice that needs it and noted in its review."
+    },
+    {
+      "question": "Dependency admission corrections",
+      "status": "RECORDED (slice 1 qualifies the exact lock)",
+      "decision": "mcp and langchain-mcp-adapters are not admitted in slice 1: the M1 stdlib client keeps the edge session, and langchain-mcp-adapters cannot convert tools without opening its own session, so slice 2 converts the edge's tool schemas itself unless it records a need and a review. Licenses expected outside the permissive allowlist are recorded now for review in slice 1, not admitted by default: certifi (MPL-2.0, used unmodified, file-level copyleft). A package with a native SQLite loadable extension (for example sqlite-vec) is excluded or, if a dependency requires it, never loaded (enable_load_extension stays off). The advisory auditor (pip-audit) is itself installed from a hash-pinned lock."
+    },
+    {
+      "question": "Egress denial",
+      "status": "RECORDED (slice 1)",
+      "decision": "The tracer variables are set to off in the agent's entry point before any LangChain or LangGraph import: LANGSMITH_TRACING, LANGCHAIN_TRACING_V2, LANGCHAIN_TRACING, LANGSMITH_ENDPOINT and LANGCHAIN_ENDPOINT cleared, LANGSMITH_API_KEY and LANGCHAIN_API_KEY cleared, OTEL_SDK_DISABLED=true and OTEL_TRACES_EXPORTER=none. Tests install a sys.addaudithook before any import that refuses socket.connect, socket.getaddrinfo and socket.gethostbyname, and the Linux CI leg also runs the agent's tests in a network namespace without a route (sudo unshare -n, available on hosted runners, dropping back to the runner's own user and groups inside the namespace with setpriv so the owner-only store tests are not run as root, and asserting the tests did not run as root); the leg fails if that cannot run."
+    },
+    {
+      "question": "Lease precondition in tests",
+      "status": "RECORDED (slices 2 and 6)",
+      "decision": "Every run through a real orceld starts it from a fresh, empty test state root and asserts before the run that no Full User or Admin lease exists there (the lease store is empty)."
+    },
+    {
+      "question": "Scope mapping: task decomposition",
+      "status": "RECORDED",
+      "decision": "The directive's \"Todo and task-decomposition middleware\" is slice 4's todos item: LangChain's TodoListMiddleware is the decomposition mechanism DeerFlow extends. Subagent delegation (DeerFlow's subagents/executor.py) stays M6."
+    },
+    {
+      "question": "Evaluation labels",
+      "status": "RECORDED",
+      "decision": "Every SG-000129 benchmark row is labelled deterministic-scripted (a fake chat model replaying a plan or the tasks' scripted plans). No row is presented as autonomous model performance; that needs M4's model decision."
+    }
+  ],
+  "invariants": [
+    "orceld remains the sole execution and approval authority; the agent only proposes calls over MCP stdio to the Orcel edge.",
+    "The agent spawns exactly one child process, the built edge, and opens no socket or listener.",
+    "Every dispatch passes the M1 gate: the read-only allowlist, the step budget, the per-run approval budget (default 3, stop at the first denial), refusal-is-final and the resume invariant.",
+    "A mutating call dispatched but not recorded is surfaced as OUTCOME_UNKNOWN and is never re-dispatched from agent state; a read-only one may be repeated only as a re-observation, and the planner must re-observe before proposing any mutation.",
+    "Tool results, file and page text, summaries, todos and checkpoints are untrusted data; the system prompt is static Orcel text.",
+    "A model's finish is a claim, not a receipt; completion is judged from orceld results and task checkers.",
+    "Agent state lives only in the private per-run store: owner-only, size-capped, expiring, deleted when the run ends.",
+    "No DeerFlow sandbox, shell, file, browser, computer-control, gateway, telemetry or skill-install code is imported.",
+    "Every copied or adapted file names its DeerFlow path and the pin, and the verbatim MIT license ships beside it.",
+    "No model weights, tokenizer files or other runtime downloads; tests run with egress denied."
+  ],
+  "acceptance": [
+    "Slice 1: the lock installs with pip --require-hashes --only-binary :all: --no-deps on Windows, macOS and Linux with Python 3.12; the license table covers every installed distribution and admits only the allowlist or a recorded, reviewed exception; the hash-pinned advisory audit reports no unaddressed advisory; importing the agent and its dependencies under the audit hook makes no connect or name lookup; LangSmith and OpenTelemetry tracing stay off when the environment asks for them; no tiktoken, provider SDK, mcp or langchain-mcp-adapters is installed; the provenance ledger and the verbatim MIT text (checked by hash) are complete.",
+    "Slice 2: the LangChain adapter, driven by an in-process fake chat model, solves BM-02 Tier A through the real edge and a fresh test orceld (no lease) on all three OSes with the same calls, refusals and audit records as M1; the gate refuses before dispatch an invented tool, a tool outside the allowlist, schema-invalid arguments, an extra approval-bearing call and a call after a denial; the entry point refuses an allowlist that is not a subset of the M1 read-only set; the extended source scan and its denylist pass, and the only edge session is the M1 client's.",
+    "Slice 3: the ported loop-detection tests pass with Orcel tool names; a loop trap stops at the hard limit and the decision is recorded.",
+    "Slice 4: ported todo, summarization, output-budget, error and dangling-call tests pass; a summary or todo containing an instruction cannot add a tool or widen an argument; an oversized result is budgeted in memory or in the private store only; a dangling call after compaction is still OUTCOME_UNKNOWN.",
+    "Slice 5: resuming from a checkpoint drops any pending tool-call writes (LangGraph does not re-run them); killing the agent between dispatch and recording, with a test-only mutating tool on a fake edge (as M1's tests do), then resuming yields OUTCOME_UNKNOWN and no re-dispatch of that call, and with the real edge a re-observation before any further proposal; the checkpoint database and every SQLite sidecar stay inside the run directory and the size cap, and filling past the cap fails closed, temp_store is MEMORY, no extension loads, and the directory expires and is deleted on completion; the directory is owner-only from creation: mode 0700 on Unix, and on Windows created with a protected (inheritance-off) owner-only DACL through CreateDirectoryW with a security descriptor, tested for protection and for no broad principal.",
+    "Slice 6: a report comparing M2/M3 with M1 on BM-02 Tier A and the synthetic tasks, run against a fresh test orceld with no lease (asserted), with success, Orcel calls and refusals, approval requests, p50 and p95 step and task time, peak RSS, context size over time, loop and compaction events, resume outcomes and any security failure; every row labelled deterministic-scripted.",
+    "Every slice: the agent source scan, the egress-denied test and the M1 tests still pass; the agent is not packaged and not referenced by orceld.",
+    "Exact-head CI (Windows, macOS and Linux legs), Review Gates where they run, and a fresh-context security judge pass on each slice; d1-local is advisory only."
+  ],
+  "review": {
+    "jev_semantic_review": true,
+    "alibaba_open_code_review": "delegation mode per standing founder decision (2026-10-10) with manual review of excluded files, where functional",
+    "security_review": "fresh-context security judge on the activation, every slice and closeout, with an explicit supply-chain review on slice 1; d1-local advisory only",
+    "exact_head_ci": true,
+    "cross_platform_ci": "Windows, macOS and Linux legs"
+  },
+  "successor_requirements": {
+    "m4": "Local-model evaluation needs founder decision 2 (model, license, how users obtain it).",
+    "mutating_tools": "A mutating allowlist needs a read-only lease-state signal, a separately decided edge change.",
+    "m6_m7": "Subagents, memory and skills (M6), packaging and Control Room integration (M7) are outside SG-000129."
+  },
+  "activation_note": "No dependency, donor code, tool or authority change in this activation packet. Separate implementation PRs must qualify their exact heads; activation CI alone proves nothing about the agent.",
+  "done_when": "The Orcel Agent runs BM-02 Tier A and the synthetic middleware tasks through a LangChain planner adapter with the copied DeerFlow middlewares and SQLite checkpoints on Windows, macOS and Linux CI, with every call authorized and audited by orceld, the resume invariant held across a kill, no egress, a hash-locked license-reviewed dependency set, and a labelled comparison with M1."
+}
