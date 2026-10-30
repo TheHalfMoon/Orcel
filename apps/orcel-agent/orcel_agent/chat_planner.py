@@ -35,7 +35,7 @@ from langsmith.run_helpers import tracing_context
 
 from .agent import READ_ONLY_TOOLS
 from .edge import ToolSpec
-from .journal import OUTCOME_UNKNOWN, digest
+from .journal import OUTCOME_UNKNOWN
 from .planner import Finish, Proposal, Step, ToolCall
 
 #: Static Orcel text: the only instructions the model receives.
@@ -71,19 +71,13 @@ def tool_schemas(tools: Sequence[ToolSpec]) -> list[dict[str, Any]]:
     ]
 
 
-def _resumed(step: Step) -> bool:
-    """A step rebuilt from the journal after a resume: its arguments and
-    result were never kept, only their digest."""
-    return step.arguments_sha256 is not None and digest(step.call.arguments) != step.arguments_sha256
-
-
 def _result_text(step: Step) -> str:
     if step.error_code == OUTCOME_UNKNOWN:
         return f"{OUTCOME_UNKNOWN}: this call may or may not have happened. Observe again before relying on it."
     if not step.ok:
         code = step.error_code if step.error_code and _ERROR_CODE.match(step.error_code) else "INTERNAL_ERROR"
         return f"REFUSED: {code}"
-    if _resumed(step):
+    if step.resumed:
         return "RESULT NOT KEPT: this call completed before a resume; its arguments and result are unknown. Observe again."
     text = json.dumps(step.result, ensure_ascii=False, sort_keys=True, default=str)
     if len(text) > MAX_RESULT_CHARS:
@@ -96,7 +90,7 @@ def conversation(goal: str, steps: Sequence[Step]) -> list[BaseMessage]:
     messages: list[BaseMessage] = [SystemMessage(SYSTEM_PROMPT), HumanMessage(goal)]
     for index, step in enumerate(steps, start=1):
         call_id = f"call-{index}"
-        arguments = {} if _resumed(step) else dict(step.call.arguments)
+        arguments = {} if step.resumed else dict(step.call.arguments)
         messages.append(AIMessage(content="", tool_calls=[
             {"name": step.call.tool, "args": arguments, "id": call_id, "type": "tool_call"}]))
         messages.append(ToolMessage(content=_result_text(step), tool_call_id=call_id, name=step.call.tool))
@@ -117,7 +111,11 @@ class ChatModelPlanner:
         wider = sorted(tool.name for tool in tools if tool.name not in READ_ONLY_TOOLS)
         if wider:
             return MalformedProposal(f"offered tools outside the read-only set: {wider}")
+        if getattr(self._model, "callbacks", None):
+            return MalformedProposal("the model carries callbacks of its own")
         bound = self._model.bind_tools(tool_schemas(tools))
+        if (getattr(bound, "config", None) or {}).get("callbacks"):
+            return MalformedProposal("the bound model carries callbacks of its own")
         token = tracing_v2_callback_var.set(None)
         try:
             with tracing_context(enabled=False):

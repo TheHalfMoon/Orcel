@@ -119,10 +119,11 @@ class Agent:
     allowlist: frozenset[str] = READ_ONLY_TOOLS
     max_steps: int = 32
     max_approval_requests: int = 3
-    #: SG-000129: set by `entry.chat_agent`. The gate then refuses any
-    #: allowlist or call outside READ_ONLY_TOOLS, in prepare() and in every
-    #: dispatch, whatever else was changed on the agent afterwards.
-    read_only_only: bool = False
+    #: SG-000129, private: set only by `entry.chat_agent`. The gate then
+    #: refuses any allowlist or call outside READ_ONLY_TOOLS, in prepare()
+    #: and in every dispatch. (Defence in depth: ChatModelPlanner refuses
+    #: non-read-only tools on its own.)
+    _read_only_only: bool = False
     steps: list[Step] = field(default_factory=list)
     approval_requests: int = 0
     _dispatched: int = 0
@@ -145,7 +146,7 @@ class Agent:
         off as `OUTCOME_UNKNOWN`. Runs once per agent."""
         if self._prepared:
             return list(self._tools.values())
-        if self.read_only_only and not set(self.allowlist) <= READ_ONLY_TOOLS:
+        if self._read_only_only and not set(self.allowlist) <= READ_ONLY_TOOLS:
             raise AgentStop("allowlist-too-wide")
         self._prepared = True
         self._tools = {tool.name: tool for tool in self.edge.list_tools() if tool.name in self.allowlist}
@@ -176,7 +177,7 @@ class Agent:
                     self._denied = True
             self.steps.append(Step(ToolCall(entry.tool, {}), ok=entry.ok and not unknown,
                                    error_code=OUTCOME_UNKNOWN if unknown else entry.error_code,
-                                   arguments_sha256=entry.arguments_sha256))
+                                   arguments_sha256=entry.arguments_sha256, resumed=True))
             if not entry.answered and not entry.surfaced:
                 self.journal.resolve_unknown(entry.seq)
                 self.events.emit("step.outcome_unknown", step_id=f"resume-{entry.seq}", tool=entry.tool)
@@ -186,7 +187,7 @@ class Agent:
         """Forward one proposed call, under every client-side rule."""
         if not self._prepared:
             raise AgentStop("not-prepared")
-        if self.read_only_only and (self.is_mutating(call.tool) or not set(self.allowlist) <= READ_ONLY_TOOLS):
+        if self._read_only_only and (self.is_mutating(call.tool) or not set(self.allowlist) <= READ_ONLY_TOOLS):
             raise AgentStop("proposal-outside-allowlist")
         if self._denied:
             raise AgentStop("approval-denied")

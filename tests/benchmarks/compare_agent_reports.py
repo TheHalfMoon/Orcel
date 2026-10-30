@@ -18,6 +18,9 @@ IGNORED = {"latency_ms"}
 def rows(path: str) -> tuple[dict, dict]:
     with open(path, encoding="utf-8") as handle:
         report = json.load(handle)
+    cases = [row["case"] for row in report["rows"]]
+    if len(cases) != len(set(cases)):
+        raise SystemExit(f"parity: duplicate cases in {path}")
     return report["planner"], {row["case"]: {k: v for k, v in row.items() if k not in IGNORED} for row in report["rows"]}
 
 
