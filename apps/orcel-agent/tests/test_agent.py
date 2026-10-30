@@ -436,8 +436,29 @@ class SourceBoundary(unittest.TestCase):
 
     ALLOWED_IMPORTS = {
         "__future__", "dataclasses", "hashlib", "json", "os", "pathlib", "queue", "re", "shutil", "stat",
-        "subprocess", "threading", "time", "typing", "uuid",
+        "subprocess", "sys", "threading", "time", "typing", "uuid",
+    }  # sys: SG-000129 slice 1, quiet.py checks sys.modules
+    # SG-000129: never imported by the agent, whatever a later slice admits
+    # to ALLOWED_IMPORTS; this list is only ever extended. A module matches
+    # its name or any submodule.
+    DENIED_MODULES = (
+        "mcp", "langchain_mcp_adapters", "langchain_community", "langchain_openai", "langchain_anthropic",
+        "langchain_ollama", "langchain_google_genai", "langchain_aws", "openai", "anthropic", "ollama",
+        "tiktoken", "transformers", "huggingface_hub", "langgraph.store", "sqlite_vec", "socket", "_socket",
+        "ssl", "_ssl", "socketserver", "smtplib", "ftplib", "poplib", "imaplib", "telnetlib", "xmlrpc",
+        "webbrowser", "urllib", "http", "httpx", "httpcore", "requests", "aiohttp", "websockets",
+        "asyncio.subprocess", "multiprocessing", "importlib",
+    )
+    # ctypes stays outside ALLOWED_IMPORTS; SG-000129 slice 5 may admit it in
+    # one named Windows-ACL module only, so it is not on the denylist.
+    DENIED_NAMES = {
+        "ClientSession", "stdio_client", "enable_load_extension", "load_extension", "create_connection",
+        "create_server", "start_server", "create_datagram_endpoint", "open_unix_connection", "start_unix_server",
     }
+    # The never-narrowed floor is read from SG-000129's recorded decision
+    # "Rule change: the agent source scan grows by named imports only"
+    # itself, so narrowing the lists here fails until a new decision is
+    # recorded. "subprocess outside edge.py" is enforced by the spawn test.
     FORBIDDEN_CALLS = {"__import__", "eval", "exec", "compile", "open"}
     FORBIDDEN_OS = {"system", "popen", "fork", "forkpty", "posix_spawn", "posix_spawnp", "startfile", "kill"}
 
@@ -462,6 +483,46 @@ class SourceBoundary(unittest.TestCase):
                     self.assertNotIn(names[0], ("os", "subprocess"), f"{path.name}: from {names[0]} import")
                 for name in names:
                     self.assertIn(name, self.ALLOWED_IMPORTS, f"{path.name}: import {name}")
+
+    def test_the_denylist_is_never_narrowed_below_the_recorded_floor(self) -> None:
+        spec = json.loads((ROOT.parents[1] / ".specgrain" / "specs" / "SG-000129.json").read_text(encoding="utf-8"))
+        decision = next(d["decision"] for d in spec["decisions"]
+                        if d["question"] == "Rule change: the agent source scan grows by named imports only")
+        floor = decision.split("A denylist is added and never narrowed:", 1)[1].split(". Every addition", 1)[0]
+        words = set(re.findall(r"(?<![.\w])[A-Za-z_][A-Za-z0-9_.]*", floor))
+        prose = {"and", "any", "provider", "SDK", "similar", "subprocess", "outside", "edge.py"}
+        items = sorted(words - prose)
+        self.assertGreaterEqual(len(items), 12, items)
+        for item in items:
+            denied = item in self.DENIED_NAMES or any(
+                item == module or item.startswith(module + ".") for module in self.DENIED_MODULES)
+            self.assertTrue(denied, f"{item}: in the recorded floor but not denied")
+
+    def test_denied_modules_and_names_never_appear(self) -> None:
+        for path in self.modules():
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                modules: list[str] = []
+                if isinstance(node, ast.Import):
+                    modules = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom) and node.level == 0:
+                    modules = [node.module or ""]
+                    modules += [f"{node.module}.{alias.name}" for alias in node.names]
+                for module in modules:
+                    for denied in self.DENIED_MODULES:
+                        self.assertFalse(module == denied or module.startswith(denied + "."), f"{path.name}: {module}")
+                if isinstance(node, ast.Name):
+                    self.assertNotIn(node.id, self.DENIED_NAMES, f"{path.name}: {node.id}")
+                if isinstance(node, ast.Attribute):
+                    self.assertNotIn(node.attr, self.DENIED_NAMES, f"{path.name}: .{node.attr}")
+                if isinstance(node, ast.alias):
+                    self.assertNotIn(node.name.split(".")[-1], self.DENIED_NAMES, f"{path.name}: {node.name}")
+                # getattr(x, "enable_load_extension") and importlib-free
+                # string lookups: a denied name or module in any string.
+                if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                    for word in re.findall(r"[A-Za-z_][A-Za-z0-9_.]*", node.value):
+                        self.assertNotIn(word, self.DENIED_NAMES, f"{path.name}: string {word!r}")
+                        self.assertFalse(any(word == m or word.startswith(m + ".") for m in self.DENIED_MODULES
+                                             if "_" in m or "." in m), f"{path.name}: string {word!r}")
 
     def test_no_execution_network_or_dynamic_code(self) -> None:
         subprocess_calls: list[str] = []

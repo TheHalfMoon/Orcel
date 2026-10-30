@@ -1,0 +1,17 @@
+{
+  "schema": "orcel-agent-provenance/1",
+  "grain": "SG-000129",
+  "donor": {
+    "repository": "bytedance/deer-flow",
+    "commit": "81e1ab8dcc86574cfac0ecdfe3636b775a08c567",
+    "license": "MIT",
+    "license_file": "third_party/deer-flow/LICENSE",
+    "license_sha256": "b23dff4d4bac8d17b6efaaa7e88c2b730149c4dda45699ce676b719cfdffe7e1",
+    "copyright": [
+      "Copyright (c) 2025 Bytedance Ltd. and/or its affiliates",
+      "Copyright (c) 2025-2026 DeerFlow Authors"
+    ]
+  },
+  "note": "Every file under orcel_agent/ copied or adapted from DeerFlow is listed here with its source path, source blob, destination, decision (COPY or ADAPT) and modifications, and names its DeerFlow path and the pin in a header. Slice 1 imports no donor code.",
+  "files": []
+}
