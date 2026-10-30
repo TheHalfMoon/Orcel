@@ -107,12 +107,17 @@ def ensure_paired(messages: list[BaseMessage]) -> list[BaseMessage]:
     call with no result gets a synthetic OUTCOME_UNKNOWN result right after its
     message (never a made-up success); a result whose call is gone is dropped.
     `conversation()` builds pairs by construction, so today this changes
-    nothing; compaction (slice 4c) relies on it.
+    nothing; compaction (slice 4c) relies on it. A tool call without a string
+    id is refused (ValueError). `invalid_tool_calls` are not calls here:
+    `propose` refuses a reply carrying them before any tracking.
     """
-    calls = {tc.get("id") for m in messages if isinstance(m, AIMessage) for tc in (m.tool_calls or [])}
+    calls = [tc for m in messages if isinstance(m, AIMessage) for tc in (m.tool_calls or [])]
+    if any(not isinstance(tc.get("id"), str) or not tc.get("id") for tc in calls):
+        raise ValueError("a tool call without an id cannot be paired")
+    ids = {tc["id"] for tc in calls}
     results: dict[str, ToolMessage] = {}
     for m in messages:
-        if isinstance(m, ToolMessage) and m.tool_call_id in calls and m.tool_call_id not in results:
+        if isinstance(m, ToolMessage) and m.tool_call_id in ids and m.tool_call_id not in results:
             results[m.tool_call_id] = m
     paired: list[BaseMessage] = []
     for m in messages:
@@ -121,9 +126,11 @@ def ensure_paired(messages: list[BaseMessage]) -> list[BaseMessage]:
         paired.append(m)
         if isinstance(m, AIMessage):
             for tc in m.tool_calls or []:
-                result = results.get(tc.get("id"))
+                # Each result answers one call: a later call reusing an id
+                # never inherits it (it gets the synthetic unknown result).
+                result = results.pop(tc["id"], None)
                 paired.append(result if result is not None else ToolMessage(
-                    content=failure_text(OUTCOME_UNKNOWN), tool_call_id=str(tc.get("id")),
+                    content=failure_text(OUTCOME_UNKNOWN), tool_call_id=tc["id"],
                     name=str(tc.get("name") or "unknown"), status="error"))
     return paired
 

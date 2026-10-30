@@ -8,7 +8,8 @@ INTERNAL_ERROR.
 
 The guidance never widens anything. A refusal stays final for that exact call
 (the gate enforces it); the text only steers the model toward observing
-again, choosing a different read, or finishing.
+again, choosing a different read, or finishing. Codes returned after the
+operation may already have run (MAY_HAVE_ACTED) say so instead of "refused".
 
 Design reference, no code copied: DeerFlow's tool-error handling turns a
 failed tool into an error-status tool message with a recovery hint.
@@ -22,7 +23,16 @@ from .journal import OUTCOME_UNKNOWN
 
 _CODE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 
-_FINAL = "Orcel refused this exact call, and it will not be retried. "
+_FINAL = "Orcel refused this exact call. Proposing it again ends the run. "
+_AFTER = ("This call failed after it may have acted: do not assume its effects either way. "
+          "Proposing it again ends the run. ")
+
+#: Codes orceld returns after the operation may already have run. The gate
+#: treats them like an unknown outcome for a mutation (never replayed, and a
+#: fresh observation is owed), not only as a refusal.
+MAY_HAVE_ACTED: frozenset[str] = frozenset(
+    {"POSTCONDITION_FAILED", "PROCESS_TIMEOUT", "PROCESS_TERMINATION_UNVERIFIED", "OUTPUT_LIMIT"}
+)
 
 #: orceld's FailureCode values -> static guidance. Keep in step with the enum.
 GUIDANCE: dict[str, str] = {
@@ -36,10 +46,10 @@ GUIDANCE: dict[str, str] = {
     "APPROVAL_UNAVAILABLE": "No approval could be obtained. The run stops; do not ask again.",
     "TARGET_STALE": _FINAL + "What you acted on has changed. Observe again before relying on it.",
     "PROVIDER_UNAVAILABLE": _FINAL + "This capability is not available on this device. Choose another approach or finish.",
-    "PROCESS_TIMEOUT": _FINAL + "The operation timed out. Do not assume it did or did not take effect.",
-    "PROCESS_TERMINATION_UNVERIFIED": _FINAL + "Orcel could not verify that the operation stopped. Do not assume its effects.",
-    "OUTPUT_LIMIT": _FINAL + "The result was too large. Ask for a smaller range or fewer results.",
-    "POSTCONDITION_FAILED": _FINAL + "Orcel could not verify the expected result. Observe again before relying on it.",
+    "PROCESS_TIMEOUT": _AFTER + "The operation timed out. Observe again before relying on anything it touched.",
+    "PROCESS_TERMINATION_UNVERIFIED": _AFTER + "Orcel could not verify that the operation stopped. Observe again.",
+    "OUTPUT_LIMIT": _AFTER + "Too much data, in the result or in the request. Ask for a smaller range or fewer results, or send less.",
+    "POSTCONDITION_FAILED": _AFTER + "Orcel could not verify the expected result. Observe again before relying on it.",
     "INTERNAL_ERROR": _FINAL + "Orcel failed internally. Choose another approach or finish.",
     "REMOTE_SESSION_INACTIVE": _FINAL + "There is no active remote session for this call.",
 }
