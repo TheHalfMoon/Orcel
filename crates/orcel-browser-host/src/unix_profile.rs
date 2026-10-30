@@ -472,6 +472,7 @@ mod tests {
             // builds on the hold; its own scan pins its test-only declaration.
             if *path == crate_dir.join("src").join("unix_profile.rs")
                 || *path == crate_dir.join("src").join("unix_cleanup.rs")
+                || *path == crate_dir.join("src").join("unix_rehearsal.rs")
                 || *path == crate_dir.join("src").join("lib.rs")
             {
                 continue;
@@ -501,5 +502,11 @@ mod tests {
         assert_eq!(lines[code[0] - 1], "#[cfg(all(test, unix))]");
         // The exempted sibling (A5) is itself test-only.
         assert!(lib.contains("#[cfg(all(test, unix))]\nmod unix_cleanup;\n"));
+        // A6's rehearsal (recorded rule change, prep/SG-000115.md) composes
+        // this module; it is admitted only while declared once, private,
+        // under the Unix test cfg.
+        assert_eq!(lib.matches("mod unix_rehearsal;").count(), 1);
+        assert!(!lib.contains("pub mod unix_rehearsal"));
+        assert!(lib.contains("#[cfg(all(test, unix))]\nmod unix_rehearsal;\n"));
     }
 }

@@ -46,6 +46,9 @@ mod unix_confinement;
 // SG-000115 slice A5 (unix_cleanup), inert until activation: Unix test builds only.
 #[cfg(all(test, unix))]
 mod unix_cleanup;
+// SG-000115 slice A6 (the integration rehearsal), inert until activation: Unix test builds only.
+#[cfg(all(test, unix))]
+mod unix_rehearsal;
 // The worker session that uses the probe machinery exists only on Windows.
 #[cfg_attr(not(windows), allow(dead_code))]
 mod verify;
