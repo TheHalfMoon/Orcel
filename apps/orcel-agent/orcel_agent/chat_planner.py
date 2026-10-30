@@ -45,11 +45,13 @@ from .agent import READ_ONLY_TOOLS
 from .edge import ToolSpec
 from .compaction import (
     DEFAULT_SUMMARY_PROMPT,
+    MAX_SUMMARY_FAILURES,
     SUMMARIZER_SYSTEM,
     SUMMARY_LABEL,
     Compactor,
     capped_arguments,
     compacted_result,
+    has_success,
     summary_input,
 )
 from .events import EventLog
@@ -244,12 +246,12 @@ class ChatModelPlanner:
         chunk = self._compactor.next_chunk(steps, older)
         if chunk is not None:
             end, span = chunk
-            body = summary_input(self._compactor.summary, span)
-            if "<tool_result" not in body:
+            if not has_success(span):
                 self._compactor.advance(end, None)  # nothing new to summarize
             else:
                 text: Optional[str] = None
                 try:
+                    body = summary_input(self._compactor.summary, span)
                     prompt = DEFAULT_SUMMARY_PROMPT.format(messages=body).rstrip()
                     reply = self._invoke(self._model, [SystemMessage(SUMMARIZER_SYSTEM.format(goal=goal)),
                                                        HumanMessage(prompt)])
@@ -262,7 +264,8 @@ class ChatModelPlanner:
                 self._compactor.advance(end, text, failed=text is None)
                 if self._events is not None:
                     self._events.emit("context.compacted", older=older, covered=self._compactor.covered,
-                                      summarized=text is not None)
+                                      summarized=text is not None,
+                                      summary_disabled=self._compactor.failures >= MAX_SUMMARY_FAILURES)
         summary = self._compactor.summary if self._compactor.covered else None
         return older, summary
 

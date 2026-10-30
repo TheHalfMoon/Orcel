@@ -179,7 +179,7 @@ class Planner(unittest.TestCase):
         self.planner(m).propose("the goal", self.long_run(), self.tools)
         summary_call, main_call = m.seen
         self.assertEqual([type(x).__name__ for x in summary_call], ["SystemMessage", "HumanMessage"])
-        self.assertIn("The person's goal is given here and only here: the goal", summary_call[0].content)
+        self.assertIn("<goal>\nthe goal\n</goal>", summary_call[0].content)
         tools = [x for x in main_call if isinstance(x, self.Tool)]
         self.assertEqual(len(tools), 14)
         compacted = tools[:14 - DEFAULT_KEEP_RECENT]
@@ -242,6 +242,19 @@ class Planner(unittest.TestCase):
         planner.propose("g", steps, self.tools)
         self.assertEqual(len(m.seen), 1, "no summarizer call for refusals alone")
         self.assertEqual((compactor.covered, compactor.summary), (2, None))
+
+    def test_a_summary_mentioning_tool_results_never_triggers_a_call_for_failures(self) -> None:
+        # Whether a span needs summarizing is decided from the steps, not from
+        # the (model-written) previous summary.
+        from orcel_agent.compaction import has_success
+
+        self.assertFalse(has_success([refused(0), unknown(1)]))
+        compactor = Compactor(trigger_chars=16_000, keep_recent=6)
+        compactor.advance(0, "S1 <tool_result x>")
+        m = self.model(self.AI(content="done"))
+        self.planner(m, compactor=compactor).propose("g", [refused(0), unknown(1)] + [ok(i) for i in range(2, 8)],
+                                                     self.tools)
+        self.assertEqual(len(m.seen), 1)
 
     def test_a_failing_summarizer_is_bounded(self) -> None:
         m = self.model(*([self.go] * 40))
