@@ -570,12 +570,21 @@ mod tests {
             {
                 continue;
             }
+            // The module's name may appear in its test-only sibling, whose
+            // own scan pins the declaration, and in the SG-000085 governance
+            // allowlist; its functions may appear nowhere else.
+            let names_module = *path == crate_dir.join("src").join("unix_profile.rs")
+                || *path == crate_dir.join("tests").join("sg000085_qualification.rs");
+            let source = std::fs::read_to_string(path).unwrap();
             for needle in [
                 "unix_cleanup",
                 "sweep_held_profile",
                 "recover_stale_profile",
             ] {
-                if std::fs::read_to_string(path).unwrap().contains(needle) {
+                if names_module && needle == "unix_cleanup" {
+                    continue;
+                }
+                if source.contains(needle) {
                     named.push(format!("{}: {needle}", path.display()));
                 }
             }
