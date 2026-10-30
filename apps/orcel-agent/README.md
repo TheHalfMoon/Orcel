@@ -27,12 +27,19 @@ the loop history, the compaction summary and the stop reason.
   using the standard library's `sqlite3` and JSON only, never pickle.
 - **SQLite rules:**
   - a rollback journal in the same directory;
-  - `temp_store=MEMORY` and `secure_delete`;
+  - `temp_store=MEMORY`;
+  - `secure_delete`, which zeroes freed pages inside the database only;
+  - `trusted_schema=OFF`, with the schema checked;
+  - no symlinks;
   - the size cap enforced inside SQLite and checked before each save;
   - `0600` on Unix.
+- **Windows.** The checkpoint refuses to open until the store has its
+  protected DACL (slice 5b).
 - **Authority.** The dispatch journal is still the authority on dispatched
   calls, so a checkpoint can never cause a re-dispatch.
 - **Failure.** A tampered checkpoint stops the run, and the store is kept.
+  `PlannerCheckpoint.discard()` forgets the planner's memory; the journal
+  stays.
 
 ## Context compaction (SG-000129 M3 slice 4c)
 

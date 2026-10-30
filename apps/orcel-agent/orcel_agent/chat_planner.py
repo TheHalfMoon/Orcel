@@ -287,18 +287,27 @@ class ChatModelPlanner:
         """Load the planner's memory; StoreError if it is not valid."""
         from .store import StoreError
 
+        import copy
+
+        # Validated into copies first, so a bad checkpoint changes nothing.
         try:
             goal, finished, stop_reason = data.get("goal"), data.get("finished"), data.get("stop_reason")
             if (goal is not None and not isinstance(goal, str)) or not isinstance(finished, bool) \
                     or stop_reason not in (None, "loop_capped", "needs_clarification", "todos_incomplete"):
                 raise ValueError("planner snapshot: bad header")
-            self._plan.restore(data.get("plan"))
-            if self._loops is not None and data.get("loops") is not None:
-                self._loops.restore(data["loops"])
-            if self._compactor is not None and data.get("compaction") is not None:
-                self._compactor.restore(data["compaction"])
+            plan = copy.deepcopy(self._plan)
+            plan.restore(data.get("plan"))
+            loops = copy.deepcopy(self._loops)
+            if loops is not None and data.get("loops") is not None:
+                loops.restore(data["loops"])
+            compactor = copy.deepcopy(self._compactor)
+            if compactor is not None and data.get("compaction") is not None:
+                compactor.restore(data["compaction"])
         except ValueError as error:
             raise StoreError(f"the planner checkpoint is invalid: {error}") from error
+        self._plan, self._loops, self._compactor = plan, loops, compactor
+        # A restored finished run, or a different goal, starts fresh at the
+        # next proposal (the journal still decides what was dispatched).
         self._goal, self._finished, self.stop_reason = goal, finished, stop_reason
 
     def propose(self, goal: str, steps: Sequence[Step], tools: Sequence[ToolSpec]) -> Proposal | MalformedProposal:
