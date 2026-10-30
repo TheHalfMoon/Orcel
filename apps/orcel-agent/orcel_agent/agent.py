@@ -29,7 +29,8 @@ rules from the master plan (section C):
   stops the run.
 - **Finish is a claim.** It is never treated as proof of success.
 - **Store.** The run's store is deleted when the run ends, unless
-  `keep_store` is set. A crash keeps it for resume.
+  `keep_store` is set. A crash keeps it for resume, and so do the
+  resumable stops `edge-failure` and `planner-error` (SG-000129 4a2).
 """
 
 from __future__ import annotations
@@ -254,7 +255,8 @@ class Agent:
         if mutating and outcome.error_code in MAY_HAVE_ACTED:
             # SG-000129 slice 4a2: the operation may have run; like an
             # unknown outcome, it is never replayed and a fresh observation
-            # is owed before any other mutation.
+            # is owed before any other mutation. (_refused already stops the
+            # same call; _unknown is kept as deliberate extra protection.)
             self._unknown.add(key)
             self._must_reobserve = True
         if outcome.error_code in APPROVAL_DENIED:

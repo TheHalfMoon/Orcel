@@ -48,7 +48,9 @@ GUIDANCE: dict[str, str] = {
     "PROVIDER_UNAVAILABLE": _FINAL + "This capability is not available on this device. Choose another approach or finish.",
     "PROCESS_TIMEOUT": _AFTER + "The operation timed out. Observe again before relying on anything it touched.",
     "PROCESS_TERMINATION_UNVERIFIED": _AFTER + "Orcel could not verify that the operation stopped. Observe again.",
-    "OUTPUT_LIMIT": _AFTER + "Too much data, in the result or in the request. Ask for a smaller range or fewer results, or send less.",
+    "OUTPUT_LIMIT": ("This call failed for size; it may have acted (or was refused before running). Do not assume "
+                     "its effects either way. Proposing it again ends the run. Too much data, in the result or in the "
+                     "request. Ask for a smaller range or fewer results, or send less."),
     "POSTCONDITION_FAILED": _AFTER + "Orcel could not verify the expected result. Observe again before relying on it.",
     "INTERNAL_ERROR": _FINAL + "Orcel failed internally. Choose another approach or finish.",
     "REMOTE_SESSION_INACTIVE": _FINAL + "There is no active remote session for this call.",

@@ -130,6 +130,9 @@ class GateFailures(Scratch):
         agent.prepare()
         agent.dispatch(ToolCall("fs_write", {"path": "x"}))
         from orcel_agent.agent import AgentStop
+        from orcel_agent.journal import digest
+
+        self.assertIn(("fs_write", digest({"path": "x"})), agent._unknown)
 
         with self.assertRaises(AgentStop) as stop:
             agent.dispatch(ToolCall("fs_write", {"path": "y"}))
