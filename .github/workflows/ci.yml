@@ -1117,6 +1117,22 @@ jobs:
             --edge "$GITHUB_WORKSPACE/apps/orcel-mcp/dist/index.js" \
             --commit "$ORCEL_BM02_COMMIT" --out "$RUNNER_TEMP/agent-tier-a.report.json")
           node scripts/check-benchmark-report.mjs "$RUNNER_TEMP/agent-tier-a.report.json"
+      # SG-000129 slice 2: the same plans, each call first emitted by a
+      # scripted in-process chat model and parsed back by the LangChain
+      # planner adapter before the gate dispatches it (labelled
+      # orcel-agent-langchain-scripted; not a model).
+      - name: BM-02 Tier A through the LangChain planner adapter (scripted chat model)
+        shell: bash
+        env:
+          ORCEL_BM02_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          orceld="$GITHUB_WORKSPACE/target/debug/orceld"
+          if [ "$RUNNER_OS" = "Windows" ]; then orceld="$orceld.exe"; fi
+          (cd tests/benchmarks && "$AGENT_PY" -B -m orcel_bench agent --planner chat --orceld "$orceld" \
+            --edge "$GITHUB_WORKSPACE/apps/orcel-mcp/dist/index.js" \
+            --commit "$ORCEL_BM02_COMMIT" --out "$RUNNER_TEMP/agent-chat-tier-a.report.json")
+          node scripts/check-benchmark-report.mjs "$RUNNER_TEMP/agent-chat-tier-a.report.json"
 
   release-qualification:
     name: Release qualification / windows-latest

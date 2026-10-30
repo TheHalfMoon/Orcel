@@ -11,6 +11,14 @@ Rows are labelled `deterministic` / `orcel-agent-scripted` (M1): the plans are
 the task's scripted plans, not a model, and only the agent's dispatch rules
 are exercised here (its planner loop is covered by the agent's unit tests).
 The agent's private run store is deleted when the episode ends.
+
+SG-000129 slice 2 adds `planner="chat"`: each planned call is first emitted as
+a LangChain tool call by a scripted in-process chat model and must come back
+unchanged through the Orcel Agent's `ChatModelPlanner` (the conversation, the
+edge's converted schemas, the model call and the reply parsing) before the
+gate dispatches it. Built with `chat_agent`, so the allowlist is read-only.
+Rows are labelled `deterministic` / `orcel-agent-langchain-scripted`: still
+the task's scripted plans, not a model. Needs the agent's locked environment.
 """
 
 from __future__ import annotations
@@ -38,6 +46,28 @@ from orcel_agent.store import new_run_id, open_store  # noqa: E402
 
 #: The task's own deterministic plans, dispatched through the Orcel Agent.
 PLANNER = {"kind": "deterministic", "name": "orcel-agent-scripted", "version": "m1"}
+CHAT_PLANNER = {"kind": "deterministic", "name": "orcel-agent-langchain-scripted", "version": "sg-000129-slice2"}
+
+#: The goal the chat planner is shown; the plan itself is the task's.
+GOAL = "Solve the BM-02 Tier A task with read-only Orcel tools."
+
+
+def _chat_planner() -> Any:
+    """The LangChain path, imported only in chat mode (the M1 job's Python
+    has no LangChain). orcel_agent is imported first: it switches tracing off
+    before LangChain loads."""
+    import orcel_agent  # noqa: F401
+    from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
+
+    from orcel_agent.chat_planner import ChatModelPlanner
+
+    class ScriptedReplies(GenericFakeChatModel):
+        """Replays the next scripted reply; binding tools changes nothing."""
+
+        def bind_tools(self, tools: Any, **kwargs: Any) -> "ScriptedReplies":
+            return self
+
+    return ChatModelPlanner, ScriptedReplies
 
 #: The kernel shapes Tier A plans use, and the edge tool that forwards each.
 SHAPES: dict[tuple[str, str], str] = {
@@ -60,7 +90,9 @@ class AgentOrcel:
     _state: Optional[Path] = None
     _edge: Optional[Edge] = None
     _agent: Optional[Agent] = None
+    _tools: list = field(default_factory=list)
     timeout_s: float = 60.0
+    planner: str = "scripted"
 
     @property
     def timeout(self) -> float:
@@ -89,8 +121,13 @@ class AgentOrcel:
             journal = DispatchJournal(store.journal_path, store.check_capacity)
             # The episode's whole state directory (with this store) is
             # removed in __exit__, so the agent keeps its store until then.
-            self._agent = Agent(self._edge, journal, EventLog(store.run_id), store=store, keep_store=True)
-            self._agent.prepare()
+            if self.planner == "chat":
+                from orcel_agent.entry import chat_agent
+
+                self._agent = chat_agent(self._edge, journal, EventLog(store.run_id), store=store, keep_store=True)
+            else:
+                self._agent = Agent(self._edge, journal, EventLog(store.run_id), store=store, keep_store=True)
+            self._tools = self._agent.prepare()
         except BaseException:
             self.__exit__(None, None, None)
             raise
@@ -106,8 +143,17 @@ class AgentOrcel:
         tool_arguments: dict[str, Any] = dict(arguments or {})
         if target is not None:
             tool_arguments["path"] = target
+        intended = ToolCall(tool, tool_arguments)
+        if self.planner == "chat":
+            from langchain_core.messages import AIMessage
+
+            planner_class, replies = _chat_planner()
+            reply = AIMessage(content="", tool_calls=[{"name": tool, "args": tool_arguments, "id": "bm02", "type": "tool_call"}])
+            proposal = planner_class(replies(messages=iter([reply]))).propose(GOAL, list(self._agent.steps), self._tools)
+            if proposal != intended:
+                raise OrcelError("plan-error", f"the chat planner proposed {proposal!r}, not {intended!r}")
         try:
-            step = self._agent.dispatch(ToolCall(tool, tool_arguments))
+            step = self._agent.dispatch(intended)
         except AgentStop as stop:
             raise OrcelError("agent-stop", stop.outcome) from stop
         except EdgeError as error:

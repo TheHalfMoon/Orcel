@@ -51,6 +51,41 @@ READ_ONLY_TOOLS: frozenset[str] = frozenset(
 
 APPROVAL_DENIED = {"APPROVAL_DENIED", "APPROVAL_UNAVAILABLE"}
 
+_JSON_TYPES: dict[str, tuple[type, ...]] = {
+    "string": (str,), "integer": (int,), "number": (int, float), "boolean": (bool,),
+    "array": (list,), "object": (dict,), "null": (type(None),),
+}
+
+
+def arguments_match(schema: dict[str, Any], arguments: dict[str, Any]) -> bool:
+    """SG-000129 slice 2: a proposal's arguments against the tool's own input
+    schema, before dispatch. Required names are present; a name the schema
+    does not declare is refused when the schema closes its properties; and a
+    declared JSON type must match (a boolean is never an integer). orceld
+    validates again; this only keeps a model's malformed call off the wire."""
+    if any(name not in arguments for name in schema.get("required", [])):
+        return False
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        return True
+    for name, value in arguments.items():
+        declared = properties.get(name)
+        if declared is None:
+            if schema.get("additionalProperties") is False:
+                return False
+            continue
+        kinds = declared.get("type") if isinstance(declared, dict) else None
+        if kinds is None:
+            continue
+        allowed: tuple[type, ...] = ()
+        for kind in [kinds] if isinstance(kinds, str) else list(kinds):
+            allowed += _JSON_TYPES.get(kind, ())
+        if not allowed or not isinstance(value, allowed):
+            return False
+        if isinstance(value, bool) and bool not in allowed:
+            return False
+    return True
+
 
 class ToolSource(Protocol):
     def list_tools(self) -> list[ToolSpec]:
@@ -151,8 +186,7 @@ class Agent:
             raise AgentStop("proposal-outside-allowlist")
         if not isinstance(call.arguments, dict):
             raise AgentStop("proposal-malformed")
-        required = self._tools[call.tool].input_schema.get("required", [])
-        if any(name not in call.arguments for name in required):
+        if not arguments_match(self._tools[call.tool].input_schema, call.arguments):
             raise AgentStop("proposal-malformed")
         key = (call.tool, digest(call.arguments))
         if key in self._refused:

@@ -67,6 +67,8 @@ def main(argv: list[str]) -> int:
     agent.add_argument("--orceld", required=True, type=Path, help="the orceld binary under test")
     agent.add_argument("--edge", required=True, type=Path, help="the built MCP edge (apps/orcel-mcp/dist/index.js)")
     agent.add_argument("--node", default="node", help="the Node.js executable that runs the edge")
+    agent.add_argument("--planner", choices=("scripted", "chat"), default="scripted",
+                       help="chat: route each planned call through the LangChain chat-model planner (SG-000129)")
     agent.add_argument("--commit", required=True, help="the Orcel commit under test (40 hex)")
     agent.add_argument("--out", required=True, type=Path, help="where to write the report")
     agent.add_argument("tasks", nargs="*", type=Path)
@@ -134,13 +136,15 @@ def main(argv: list[str]) -> int:
         print(f"orcel_bench: {len(rows) - len(failed)}/{len(rows)} Tier C no-op baselines rejected -> {args.out}")
         return 1 if failed else 0
     if args.command == "agent":
+        from .agent_client import CHAT_PLANNER, AgentOrcel
         from .agent_client import PLANNER as AGENT_PLANNER
-        from .agent_client import AgentOrcel
 
         orceld, edge = args.orceld.resolve(), args.edge.resolve()
         tasks = [path.resolve() for path in args.tasks] or all_orcel_tasks()
-        rows = run_orcel(tasks, orceld, client_factory=lambda root: AgentOrcel(orceld, edge, root, node=args.node))
-        args.out.write_text(json.dumps(report(args.commit, rows, AGENT_PLANNER), indent=2) + "\n", encoding="utf-8")
+        rows = run_orcel(tasks, orceld, client_factory=lambda root: AgentOrcel(orceld, edge, root, node=args.node,
+                                                                                planner=args.planner))
+        label = CHAT_PLANNER if args.planner == "chat" else AGENT_PLANNER
+        args.out.write_text(json.dumps(report(args.commit, rows, label), indent=2) + "\n", encoding="utf-8")
         failed = [row["case"] for row in rows if row["status"] != "pass"]
         print(f"orcel_bench: {len(rows) - len(failed)}/{len(rows)} variants solved through the Orcel Agent and the MCP edge -> {args.out}")
         for case in failed:

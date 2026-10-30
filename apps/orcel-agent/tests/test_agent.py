@@ -438,6 +438,11 @@ class SourceBoundary(unittest.TestCase):
         "__future__", "dataclasses", "hashlib", "json", "os", "pathlib", "queue", "re", "shutil", "stat",
         "subprocess", "sys", "threading", "time", "typing", "uuid",
     }  # sys: SG-000129 slice 1, quiet.py checks sys.modules
+    # SG-000129: third-party imports are admitted by name, each in one named
+    # module only (the recorded decision on the source scan).
+    MODULE_IMPORTS = {
+        "chat_planner.py": {"langchain_core", "langsmith"},  # slice 2
+    }
     # SG-000129: never imported by the agent, whatever a later slice admits
     # to ALLOWED_IMPORTS; this list is only ever extended. A module matches
     # its name or any submodule.
@@ -482,7 +487,8 @@ class SourceBoundary(unittest.TestCase):
                     # `from os import system` would hide calls from the scan.
                     self.assertNotIn(names[0], ("os", "subprocess"), f"{path.name}: from {names[0]} import")
                 for name in names:
-                    self.assertIn(name, self.ALLOWED_IMPORTS, f"{path.name}: import {name}")
+                    allowed = self.ALLOWED_IMPORTS | self.MODULE_IMPORTS.get(path.name, set())
+                    self.assertIn(name, allowed, f"{path.name}: import {name}")
 
     def test_the_denylist_is_never_narrowed_below_the_recorded_floor(self) -> None:
         spec = json.loads((ROOT.parents[1] / ".specgrain" / "specs" / "SG-000129.json").read_text(encoding="utf-8"))

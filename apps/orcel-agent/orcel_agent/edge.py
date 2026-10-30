@@ -37,6 +37,8 @@ class EdgeError(Exception):
 class ToolSpec:
     name: str
     input_schema: dict[str, Any]
+    #: The edge's own description (SG-000129 slice 2: a chat model needs it).
+    description: str = ""
 
 
 @dataclass(frozen=True)
@@ -161,7 +163,8 @@ class Edge:
     def list_tools(self) -> list[ToolSpec]:
         result = self._request("tools/list", {}, self.timeout_s)
         tools = result.get("tools", []) if isinstance(result, dict) else []
-        return [ToolSpec(t["name"], t.get("inputSchema", {})) for t in tools if isinstance(t, dict) and "name" in t]
+        return [ToolSpec(t["name"], t.get("inputSchema", {}), str(t.get("description") or "")[:2000])
+                for t in tools if isinstance(t, dict) and "name" in t]
 
     def call_tool(self, name: str, arguments: dict[str, Any], timeout_s: Optional[float] = None) -> ToolOutcome:
         result = self._request("tools/call", {"name": name, "arguments": arguments}, timeout_s or self.timeout_s)

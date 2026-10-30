@@ -1,4 +1,4 @@
-# Orcel Agent (M1, SG-000129 in progress)
+# Orcel Agent (M1; SG-000129 M2 in progress)
 
 A planner package that is an **MCP client of the Orcel edge only**. It proposes
 calls, and orceld authorizes, executes, audits and verifies them. Design,
@@ -16,6 +16,36 @@ decisions and roadmap:
   - wheels only;
   - a license table and an advisory audit;
   - tracing forced off.
+
+## LangChain planner adapter (SG-000129 slice 2)
+
+`orcel_agent/chat_planner.py` puts a LangChain chat model behind the M1
+`Planner` protocol. Its conversation has four parts:
+- a static Orcel system prompt;
+- the goal;
+- the edge's tool schemas, converted here (no MCP library);
+- each step, as a tool call and its result as a tool message, which is
+  untrusted data.
+
+**What a reply becomes:**
+- exactly one tool call becomes a proposal;
+- no tool call becomes a finish claim;
+- anything else becomes malformed, and the run stops.
+
+**Every proposal still passes the M1 gate:**
+- the allowlist;
+- the tool's schema, including JSON types and closed properties;
+- the approval and step budgets;
+- refusal-is-final;
+- the resume invariant.
+
+Build agents for a chat model with `orcel_agent.entry.chat_agent`. It refuses
+any allowlist wider than the read-only set. The model runs with LangSmith
+tracing disabled for each call.
+
+The tests use a scripted in-process chat model (no inference). BM-02 Tier A
+runs through the adapter as `orcel_bench agent --planner chat`, labelled
+`orcel-agent-langchain-scripted`.
 
 ## Dependencies (SG-000129 slice 1)
 

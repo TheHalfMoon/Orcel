@@ -149,22 +149,25 @@ def run_probe(mode: str) -> dict:
 
 class TracingSwitches(unittest.TestCase):
     def test_every_tracing_variable_is_cleared_and_the_switches_are_off(self) -> None:
-        saved = dict(os.environ)
-        try:
-            os.environ.update({
-                "LANGSMITH_TRACING": "true", "LANGCHAIN_TRACING_V2": "true", "LANGSMITH_API_KEY": "lsv2-test",
-                "langsmith_endpoint": "http://example.invalid", "LANGCHAIN_PROJECT": "p",
-                "OTEL_EXPORTER_OTLP_ENDPOINT": "http://example.invalid", "OTEL_SDK_DISABLED": "false",
-            })
-            silence_tracing()
-            for name, value in os.environ.items():
-                if name.upper().startswith(CLEARED_PREFIXES):
-                    self.assertEqual(TRACING_OFF.get(name), value, name)
-            for name, value in TRACING_OFF.items():
-                self.assertEqual(os.environ[name], value, name)
-        finally:
-            os.environ.clear()
-            os.environ.update(saved)
+        # In a fresh interpreter: this suite may already have imported
+        # langsmith, after which silence_tracing() rightly refuses to run.
+        env = dict(os.environ)
+        env.update({
+            "LANGSMITH_TRACING": "true", "LANGCHAIN_TRACING_V2": "true", "LANGSMITH_API_KEY": "lsv2-test",
+            "langsmith_endpoint": "http://example.invalid", "LANGCHAIN_PROJECT": "p",
+            "OTEL_EXPORTER_OTLP_ENDPOINT": "http://example.invalid", "OTEL_SDK_DISABLED": "false",
+        })
+        run = subprocess.run([sys.executable, "-I", "-c", "import json, os, sys; sys.path.insert(0, sys.argv[1]); "
+                              "import orcel_agent; print(json.dumps(dict(os.environ)))", str(ROOT)],
+                             capture_output=True, text=True, timeout=60, env=env)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        after = json.loads(run.stdout)
+        for name, value in after.items():
+            if name.upper().startswith(CLEARED_PREFIXES):
+                self.assertEqual(TRACING_OFF.get(name), value, name)
+        for name, value in TRACING_OFF.items():
+            self.assertEqual(after[name], value, name)
+        self.assertTrue(callable(silence_tracing))
 
 
 @needs_deps
