@@ -1,4 +1,4 @@
-# Orcel Agent (M1)
+# Orcel Agent (M1, SG-000129 in progress)
 
 A planner package that is an **MCP client of the Orcel edge only**. It proposes
 calls, and orceld authorizes, executes, audits and verifies them. Design,
@@ -9,8 +9,32 @@ decisions and roadmap:
 - Python 3.12, standard library only: no donor code and no third-party
   dependency.
 - **Not packaged** and not referenced by orceld.
-- Later milestones import DeerFlow-derived middlewares under an owning grain
-  that is not yet activated.
+- M2 and M3 run under SpecGrain SG-000129 (`prep/SG-000129.md`). Slice 1
+  admits a hash-locked dependency set, which the agent's code does not import
+  yet:
+  - LangChain 1.3 and LangGraph 1.2, at the DeerFlow pin's versions;
+  - wheels only;
+  - a license table and an advisory audit;
+  - tracing forced off.
+
+## Dependencies (SG-000129 slice 1)
+
+```bash
+python -m venv .venv
+.venv/bin/python -m pip install --require-hashes --only-binary :all: --no-deps -r requirements.lock
+ORCEL_AGENT_DEPS=1 .venv/bin/python -I -B -m unittest discover -s tests -v
+.venv/bin/python -I tools/licenses.py --check
+```
+
+- **Lock records.** `requirements-notes.md` records how the lock is made and
+  every version move.
+- **Licenses.** `THIRD_PARTY_LICENSES.md` is the generated license table.
+- **DeerFlow provenance.** `third_party/deer-flow/LICENSE` is DeerFlow's MIT
+  notice, and `third_party/PROVENANCE.json` is the ledger for copied code
+  (empty until slice 3).
+- **Egress test.** It runs a scripted LangGraph graph with an SQLite
+  checkpoint while Python's audit hooks refuse connections, name lookups,
+  binds and SQLite extension loads.
 
 ## Rules the agent enforces (client side; orceld remains the authority)
 

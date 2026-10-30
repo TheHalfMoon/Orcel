@@ -438,6 +438,19 @@ class SourceBoundary(unittest.TestCase):
         "__future__", "dataclasses", "hashlib", "json", "os", "pathlib", "queue", "re", "shutil", "stat",
         "subprocess", "threading", "time", "typing", "uuid",
     }
+    # SG-000129: never imported by the agent, whatever a later slice admits
+    # to ALLOWED_IMPORTS; this list is only ever extended. A module matches
+    # its name or any submodule.
+    DENIED_MODULES = (
+        "mcp", "langchain_mcp_adapters", "langchain_community", "langchain_openai", "langchain_anthropic",
+        "langchain_ollama", "langchain_google_genai", "langchain_aws", "openai", "anthropic", "ollama",
+        "tiktoken", "transformers", "huggingface_hub", "langgraph.store", "sqlite_vec", "socket", "ssl",
+        "urllib", "http", "httpx", "httpcore", "requests", "aiohttp", "websockets", "asyncio.subprocess",
+        "multiprocessing", "importlib",
+    )
+    # ctypes stays outside ALLOWED_IMPORTS; SG-000129 slice 5 may admit it in
+    # one named Windows-ACL module only, so it is not on the denylist.
+    DENIED_NAMES = {"ClientSession", "stdio_client", "enable_load_extension", "load_extension"}
     FORBIDDEN_CALLS = {"__import__", "eval", "exec", "compile", "open"}
     FORBIDDEN_OS = {"system", "popen", "fork", "forkpty", "posix_spawn", "posix_spawnp", "startfile", "kill"}
 
@@ -462,6 +475,25 @@ class SourceBoundary(unittest.TestCase):
                     self.assertNotIn(names[0], ("os", "subprocess"), f"{path.name}: from {names[0]} import")
                 for name in names:
                     self.assertIn(name, self.ALLOWED_IMPORTS, f"{path.name}: import {name}")
+
+    def test_denied_modules_and_names_never_appear(self) -> None:
+        for path in self.modules():
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                modules: list[str] = []
+                if isinstance(node, ast.Import):
+                    modules = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom) and node.level == 0:
+                    modules = [node.module or ""]
+                    modules += [f"{node.module}.{alias.name}" for alias in node.names]
+                for module in modules:
+                    for denied in self.DENIED_MODULES:
+                        self.assertFalse(module == denied or module.startswith(denied + "."), f"{path.name}: {module}")
+                if isinstance(node, ast.Name):
+                    self.assertNotIn(node.id, self.DENIED_NAMES, f"{path.name}: {node.id}")
+                if isinstance(node, ast.Attribute):
+                    self.assertNotIn(node.attr, self.DENIED_NAMES, f"{path.name}: .{node.attr}")
+                if isinstance(node, ast.alias):
+                    self.assertNotIn(node.name.split(".")[-1], self.DENIED_NAMES, f"{path.name}: {node.name}")
 
     def test_no_execution_network_or_dynamic_code(self) -> None:
         subprocess_calls: list[str] = []

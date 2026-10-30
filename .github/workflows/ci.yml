@@ -1034,7 +1034,8 @@ jobs:
         run: npm run web:build
 
   # Orcel Agent M1 (docs/orcel/implementation-readiness/prep/
-  # DEERFLOW_ORCEL_AGENT_MASTER_PLAN.md): the agent's unit tests, then
+  # DEERFLOW_ORCEL_AGENT_MASTER_PLAN.md) and SG-000129 (prep/SG-000129.md):
+  # the agent's unit tests, its locked dependencies and their checks, then
   # BM-02 Tier A through the agent, the built MCP edge and a test orceld on
   # each OS. Rows are the tasks' deterministic plans (labelled
   # orcel-agent-scripted), not a model. The agent is not packaged; this job
@@ -1062,6 +1063,41 @@ jobs:
       - name: Agent unit tests
         shell: bash
         run: (cd apps/orcel-agent && python -I -B -m unittest discover -s tests -v)
+      # SG-000129 slice 1: the admitted dependency set, hash-locked and wheels
+      # only, in its own environment; the auditor in another. Nothing in
+      # orceld, the edge or any shipped artifact uses either.
+      - name: Install the agent's locked dependencies (hashes, wheels only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/agent-env"
+          python -m venv "$RUNNER_TEMP/audit-env"
+          if [ "$RUNNER_OS" = "Windows" ]; then bin=Scripts; else bin=bin; fi
+          echo "AGENT_PY=$RUNNER_TEMP/agent-env/$bin/python" >> "$GITHUB_ENV"
+          echo "AUDIT_BIN=$RUNNER_TEMP/audit-env/$bin" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/agent-env/$bin/python" -m pip install --require-hashes --only-binary :all: --no-deps -r apps/orcel-agent/requirements.lock
+          "$RUNNER_TEMP/audit-env/$bin/python" -m pip install --require-hashes --only-binary :all: --no-deps -r apps/orcel-agent/audit/requirements.lock
+      - name: Advisory audit of the agent's lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$AUDIT_BIN/pip-audit" -r apps/orcel-agent/requirements.lock --require-hashes --disable-pip --progress-spinner off
+      - name: Agent tests in the locked environment (licenses, egress, tracing)
+        shell: bash
+        env:
+          ORCEL_AGENT_DEPS: "1"
+        run: (cd apps/orcel-agent && "$AGENT_PY" -I -B -m unittest discover -s tests -v)
+      - name: Agent tests in a network namespace without a route (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd apps/orcel-agent
+          # Root only creates the namespace; setpriv drops back to the runner
+          # before any test runs, and the tests assert they are not root.
+          sudo unshare -n setpriv --reuid="$(id -u)" --regid="$(id -g)" --init-groups -- \
+            env -i PATH="$PATH" HOME="$HOME" ORCEL_AGENT_DEPS=1 ORCEL_AGENT_NETNS=1 \
+            "$AGENT_PY" -I -B -m unittest discover -s tests -v
       - name: Build orceld and the MCP edge
         shell: bash
         run: |

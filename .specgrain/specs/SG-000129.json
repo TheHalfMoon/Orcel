@@ -106,6 +106,11 @@
       "decision": "The directive's \"Todo and task-decomposition middleware\" is slice 4's todos item: LangChain's TodoListMiddleware is the decomposition mechanism DeerFlow extends. Subagent delegation (DeerFlow's subagents/executor.py) stays M6."
     },
     {
+      "question": "Slice 1 findings (recorded with slice 1, before merge)",
+      "status": "RECORDED (slice 1; independent review required)",
+      "decision": "Resolving the lock on the pin's versions found: (1) orjson 3.11.8 is \"MPL-2.0 AND (Apache-2.0 OR MIT)\" (it vendors MPL-2.0 files); it is admitted as a second recorded license exception beside certifi (MPL-2.0), both used unmodified, and tools/licenses.py admits each only with exactly that expression. (2) The advisory audit reported GHSA-3fx2-cqw9-xr3c (CVE-2026-118667) in langgraph-sdk 0.4.4, the pin's version; it is moved to the fixed 0.4.6, inside langgraph 1.2.9's range (>=0.4.2,<0.5.0), and recorded in apps/orcel-agent/requirements-notes.md; the agent never uses the SDK's HTTP client. (3) langgraph-checkpoint-sqlite requires sqlite-vec 0.1.9, a native SQLite extension that only langgraph.store.sqlite loads; the agent never imports langgraph.store (on the denylist) and the egress test refuses the sqlite3 enable_load_extension and load_extension audit events. (4) urllib3 binds a throwaway socket to loopback port 0 at import to detect IPv6 (urllib3/util/connection.py, _has_ipv6), catching any failure. The egress hook refuses it like every other bind, so urllib3 assumes no IPv6; the test tolerates exactly that refused attempt (event, address, file and function all matched) and fails on any other. No listener or connection results. (5) ctypes is not on the never-narrowed denylist, because slice 5 may admit it in one named Windows-ACL module; it stays outside the import allowlist until then. No other rule changes."
+    },
+    {
       "question": "Evaluation labels",
       "status": "RECORDED",
       "decision": "Every SG-000129 benchmark row is labelled deterministic-scripted (a fake chat model replaying a plan or the tasks' scripted plans). No row is presented as autonomous model performance; that needs M4's model decision."
