@@ -17,6 +17,21 @@ decisions and roadmap:
   - a license table and an advisory audit;
   - tracing forced off.
 
+## Failures and unknown outcomes (SG-000129 M3 slice 4a2)
+
+- **Refusals.** A refused or failed call reaches the model as an
+  error-status tool message carrying orceld's typed code and static Orcel
+  guidance (`orcel_agent/failures.py`). The error message never reaches it.
+- **Unexpected edge errors.** Any exception from the edge mid-call leaves the
+  outcome unknown. It is journalled as `OUTCOME_UNKNOWN`, kept in the run's
+  steps, and the run stops. An unknown mutation is never replayed.
+- **Model errors.** An exception from the model stops the run as
+  `planner-error`, with nothing dispatched.
+- **Pairing.** `ensure_paired` keeps every tool call paired with its result.
+  A call with no result gets a synthetic `OUTCOME_UNKNOWN` result.
+- **Provenance.** DeerFlow's error-handling and dangling-call middlewares are
+  the design reference; no code is copied.
+
 ## Bounded tool-output previews (SG-000129 M3 slice 4a1)
 
 `orcel_agent/output_budget.py` is an Orcel reimplementation. DeerFlow's

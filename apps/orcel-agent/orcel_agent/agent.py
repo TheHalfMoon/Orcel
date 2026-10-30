@@ -29,7 +29,8 @@ rules from the master plan (section C):
   stops the run.
 - **Finish is a claim.** It is never treated as proof of success.
 - **Store.** The run's store is deleted when the run ends, unless
-  `keep_store` is set. A crash keeps it for resume.
+  `keep_store` is set. A crash keeps it for resume, and so do the
+  resumable stops `edge-failure` and `planner-error` (SG-000129 4a2).
 """
 
 from __future__ import annotations
@@ -39,6 +40,7 @@ from typing import Any, Optional, Protocol
 
 from .edge import APPROVAL_CALL_TIMEOUT_S, EdgeError, ToolOutcome, ToolSpec
 from .events import EventLog
+from .failures import MAY_HAVE_ACTED
 from .journal import OUTCOME_UNKNOWN, DispatchJournal, digest
 from .planner import Finish, Planner, Step, ToolCall
 from .store import RunStore
@@ -50,6 +52,9 @@ READ_ONLY_TOOLS: frozenset[str] = frozenset(
 )
 
 APPROVAL_DENIED = {"APPROVAL_DENIED", "APPROVAL_UNAVAILABLE"}
+
+#: Stops after which the run can be resumed, so its store is kept.
+RESUMABLE_STOPS = frozenset({"edge-failure", "planner-error"})
 
 _JSON_TYPES: dict[str, tuple[type, ...]] = {
     "string": (str,), "integer": (int,), "number": (int, float), "boolean": (bool,),
@@ -178,6 +183,9 @@ class Agent:
                 self._refused.add(key)
                 if entry.error_code in APPROVAL_DENIED:
                     self._denied = True
+                if mutating and entry.error_code in MAY_HAVE_ACTED:
+                    self._unknown.add(key)
+                    self._must_reobserve = True
             self.steps.append(Step(ToolCall(entry.tool, {}), ok=entry.ok and not unknown,
                                    error_code=OUTCOME_UNKNOWN if unknown else entry.error_code,
                                    arguments_sha256=entry.arguments_sha256, resumed=True))
@@ -223,12 +231,15 @@ class Agent:
         try:
             outcome = self.edge.call_tool(call.tool, call.arguments,
                                           APPROVAL_CALL_TIMEOUT_S if mutating else None)
-        except EdgeError as error:
-            # The call may or may not have reached orceld: unknown.
+        except Exception as error:  # noqa: BLE001 - any failure here leaves the outcome unknown
+            # The call may or may not have reached orceld: unknown. SG-000129
+            # slice 4a2: any exception, not only EdgeError, and the unknown
+            # step is kept in the run's steps so the caller sees it.
             self.journal.recorded(seq, False, OUTCOME_UNKNOWN)
             self._unknown.add(key)
             self._must_reobserve = True
-            self.events.emit("step.outcome_unknown", step_id=step_id, tool=call.tool)
+            self.steps.append(Step(call, False, None, OUTCOME_UNKNOWN, key[1]))
+            self.events.emit("step.outcome_unknown", step_id=step_id, tool=call.tool, error=type(error).__name__)
             raise AgentStop("edge-failure") from error
         self.journal.recorded(seq, outcome.ok, outcome.error_code)
         step = Step(call, outcome.ok, outcome.result, outcome.error_code, key[1])
@@ -241,6 +252,13 @@ class Agent:
                 self._must_reobserve = False
             return step
         self._refused.add(key)
+        if mutating and outcome.error_code in MAY_HAVE_ACTED:
+            # SG-000129 slice 4a2: the operation may have run; like an
+            # unknown outcome, it is never replayed and a fresh observation
+            # is owed before any other mutation. (_refused already stops the
+            # same call; _unknown is kept as deliberate extra protection.)
+            self._unknown.add(key)
+            self._must_reobserve = True
         if outcome.error_code in APPROVAL_DENIED:
             self._denied = True
             raise AgentStop("approval-denied")
@@ -252,7 +270,15 @@ class Agent:
             if self._denied:
                 raise AgentStop("approval-denied")
             while True:
-                proposal = planner.propose(goal, list(self.steps), tools)
+                try:
+                    proposal = planner.propose(goal, list(self.steps), tools)
+                except AgentStop:
+                    raise
+                except Exception as error:  # noqa: BLE001 - a planner failure stops the run cleanly
+                    # SG-000129 slice 4a2: a model or planner exception stops
+                    # the run instead of crashing it. Nothing was dispatched.
+                    self.events.emit("planner.error", error=type(error).__name__)
+                    raise AgentStop("planner-error") from error
                 if isinstance(proposal, Finish):
                     self.events.emit("run.finished", claimed=True, stop_reason=proposal.stop_reason)
                     result = RunResult("finished", proposal.answer, list(self.steps), self.approval_requests,
@@ -265,7 +291,9 @@ class Agent:
             self.events.emit("run.stopped", reason=stop.outcome)
             result = RunResult(stop.outcome, None, list(self.steps), self.approval_requests)
         # Reached only when the run ended (a crash propagates and keeps the
-        # store for resume).
-        if self.store is not None and not self.keep_store:
+        # store for resume). SG-000129 slice 4a2: an edge failure or a planner
+        # error is resumable like a crash (the journal holds the unknown
+        # outcome that resume must not replay), so the store is kept.
+        if self.store is not None and not self.keep_store and result.outcome not in RESUMABLE_STOPS:
             self.store.delete()
         return result
