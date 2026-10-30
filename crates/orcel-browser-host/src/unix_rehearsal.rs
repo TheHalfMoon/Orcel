@@ -695,9 +695,13 @@ mod tests {
             ("unix_confinement", "#[cfg(test)]"),
             ("unix_cleanup", "#[cfg(all(test, unix))]"),
         ];
+        // The SG-000085 qualification test names the module only to pin that
+        // A6's fixture spawn stays test-only; its mentions are checked below.
+        let qualification = crate_dir.join("tests").join("sg000085_qualification.rs");
         let admitted = |path: &Path| {
             *path == crate_dir.join("src").join("lib.rs")
                 || *path == crate_dir.join("src").join("unix_rehearsal.rs")
+                || *path == qualification
                 || siblings
                     .iter()
                     .any(|(module, _)| *path == crate_dir.join("src").join(format!("{module}.rs")))
@@ -713,6 +717,20 @@ mod tests {
             .map(|path| path.display().to_string())
             .collect();
         assert!(named.is_empty(), "{named:?}");
+        let guard = r#"|| (file == "unix_rehearsal.rs" && unix_test_only("unix_rehearsal")),"#;
+        let pins = std::fs::read_to_string(&qualification).unwrap();
+        let mentions: Vec<&str> = pins
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.contains("unix_rehearsal"))
+            .collect();
+        assert!(mentions.contains(&guard), "{mentions:?}");
+        assert!(
+            mentions
+                .iter()
+                .all(|line| line.starts_with("//") || *line == guard),
+            "{mentions:?}"
+        );
         let lib = std::fs::read_to_string(crate_dir.join("src/lib.rs"))
             .unwrap()
             .replace("\r\n", "\n");
