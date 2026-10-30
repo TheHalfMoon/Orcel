@@ -455,14 +455,10 @@ class SourceBoundary(unittest.TestCase):
         "ClientSession", "stdio_client", "enable_load_extension", "load_extension", "create_connection",
         "create_server", "start_server", "create_datagram_endpoint", "open_unix_connection", "start_unix_server",
     }
-    # The never-narrowed floor, as SG-000129's recorded decision "Rule
-    # change: the agent source scan grows by named imports only" names it.
-    # Narrowing either list needs a new recorded decision, not an edit here.
-    BASELINE_MODULES = (
-        "mcp", "langchain_mcp_adapters", "langchain_community", "langchain_openai", "langchain_anthropic",
-        "langchain_ollama", "socket", "urllib", "http",
-    )
-    BASELINE_NAMES = ("ClientSession", "stdio_client", "enable_load_extension")
+    # The never-narrowed floor is read from SG-000129's recorded decision
+    # "Rule change: the agent source scan grows by named imports only"
+    # itself, so narrowing the lists here fails until a new decision is
+    # recorded. "subprocess outside edge.py" is enforced by the spawn test.
     FORBIDDEN_CALLS = {"__import__", "eval", "exec", "compile", "open"}
     FORBIDDEN_OS = {"system", "popen", "fork", "forkpty", "posix_spawn", "posix_spawnp", "startfile", "kill"}
 
@@ -492,10 +488,15 @@ class SourceBoundary(unittest.TestCase):
         spec = json.loads((ROOT.parents[1] / ".specgrain" / "specs" / "SG-000129.json").read_text(encoding="utf-8"))
         decision = next(d["decision"] for d in spec["decisions"]
                         if d["question"] == "Rule change: the agent source scan grows by named imports only")
-        for item in self.BASELINE_MODULES + self.BASELINE_NAMES:
-            self.assertIn(item, decision, f"{item} is not in the recorded decision")
-        self.assertLessEqual(set(self.BASELINE_MODULES), set(self.DENIED_MODULES))
-        self.assertLessEqual(set(self.BASELINE_NAMES), self.DENIED_NAMES)
+        floor = decision.split("A denylist is added and never narrowed:", 1)[1].split(". Every addition", 1)[0]
+        words = set(re.findall(r"(?<![.\w])[A-Za-z_][A-Za-z0-9_.]*", floor))
+        prose = {"and", "any", "provider", "SDK", "similar", "subprocess", "outside", "edge.py"}
+        items = sorted(words - prose)
+        self.assertGreaterEqual(len(items), 12, items)
+        for item in items:
+            denied = item in self.DENIED_NAMES or any(
+                item == module or item.startswith(module + ".") for module in self.DENIED_MODULES)
+            self.assertTrue(denied, f"{item}: in the recorded floor but not denied")
 
     def test_denied_modules_and_names_never_appear(self) -> None:
         for path in self.modules():

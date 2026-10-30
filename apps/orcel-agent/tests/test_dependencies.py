@@ -220,8 +220,11 @@ class Egress(unittest.TestCase):
         # must see it. If this stops failing over, the egress test is blind.
         report = run_probe("control")
         self.assertTrue(report.get("tracing"), report)
-        self.assertTrue([a for a in report["attempts"] if not urllib3_ipv6_probe(a)],
-                        "tracing was on but no egress attempt was recorded")
+        # langsmith's sender reaches its endpoint through urllib3, whose
+        # create_connection resolves the host first: that lookup must be seen.
+        outbound = [a for a in report["attempts"] if a["event"] in ("socket.getaddrinfo", "socket.connect")
+                    and a["file"].endswith("/urllib3/util/connection.py") and a["function"] == "create_connection"]
+        self.assertTrue(outbound, f"tracing was on but no outbound attempt was recorded: {report['attempts']}")
 
     def test_importing_and_running_a_scripted_graph_makes_no_connection(self) -> None:
         report = run_probe("agent")

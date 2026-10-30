@@ -14,6 +14,7 @@ Standard library only. It reads metadata; it never imports the packages.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import sys
 from importlib.metadata import distributions
@@ -89,8 +90,11 @@ def installed() -> dict[str, tuple[str, str]]:
         name = normalize(dist.metadata["Name"])
         if name in TOOLING:
             continue
-        raw = (dist.metadata.get("License") or "").strip().splitlines()[:1]
-        raw = raw[0] if raw else ""
+        raw = (dist.metadata.get("License") or "").strip()
+        if len(raw) > 80 or len(raw.splitlines()) > 1:
+            # A long or multi-line field is keyed by its digest, so a change
+            # anywhere in it voids the reading.
+            raw = "sha256:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()
         expression = (dist.metadata.get("License-Expression") or "").strip()
         if not expression:
             expression = OVERRIDES.get((name, dist.version, raw), "")
