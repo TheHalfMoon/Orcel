@@ -17,6 +17,23 @@ decisions and roadmap:
   - a license table and an advisory audit;
   - tracing forced off.
 
+## Loop detection (SG-000129 slice 3)
+
+`orcel_agent/loop_detection.py` is adapted from DeerFlow's loop-detection
+middleware. The detection core is unchanged in logic and uses Orcel tool
+names; the ledger is in `third_party/PROVENANCE.json`.
+
+Give `ChatModelPlanner` a `LoopDetector`, and it then:
+- tracks every proposed call;
+- appends a warning to the next model call, after the tool messages;
+- turns a hard stop into a finish (`stop_reason` "loop_capped"), so the
+  looping call is never dispatched;
+- emits each decision to the event log.
+
+The thresholds are DeerFlow's:
+- a warning at 3 identical calls, and a stop at 5, within a window of 20;
+- a per-tool warning at 30 calls, and a stop at 50.
+
 ## LangChain planner adapter (SG-000129 slice 2)
 
 `orcel_agent/chat_planner.py` puts a LangChain chat model behind the M1

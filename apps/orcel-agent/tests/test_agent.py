@@ -442,6 +442,7 @@ class SourceBoundary(unittest.TestCase):
     # module only (the recorded decision on the source scan).
     MODULE_IMPORTS = {
         "chat_planner.py": {"langchain_core", "langsmith"},  # slice 2, path inside orcel_agent/
+        "loop_detection.py": {"collections"},  # slice 3 (standard library)
     }
     # SG-000129: never imported by the agent, whatever a later slice admits
     # to ALLOWED_IMPORTS; this list is only ever extended. A module matches

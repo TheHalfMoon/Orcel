@@ -19,6 +19,12 @@ Tracing: on top of `quiet.py`, each model call runs with both tracing signals
 off: langsmith's context (`tracing_context`) and LangChain's own tracer
 variable (`tracing_v2_callback_var`, which takes priority over it). A model
 that carries callbacks of its own is refused.
+
+Loop detection (SG-000129 slice 3, adapted from DeerFlow): with a
+`LoopDetector`, every proposed call is tracked. A warning is appended to the
+next model call as one static Orcel message after the tool messages; a hard
+stop turns the reply into a finish (`stop_reason` "loop_capped"). Each
+decision is emitted to the agent's event log when one is given.
 """
 
 from __future__ import annotations
@@ -26,7 +32,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any, Optional, Sequence
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
@@ -35,7 +41,9 @@ from langsmith.run_helpers import tracing_context
 
 from .agent import READ_ONLY_TOOLS
 from .edge import ToolSpec
+from .events import EventLog
 from .journal import OUTCOME_UNKNOWN
+from .loop_detection import LoopDetector
 from .planner import Finish, Proposal, Step, ToolCall
 
 #: Static Orcel text: the only instructions the model receives.
@@ -102,10 +110,15 @@ class ChatModelPlanner:
 
     label = "langchain-chat-model"
 
-    def __init__(self, model: BaseChatModel) -> None:
+    def __init__(self, model: BaseChatModel, loop_detector: Optional[LoopDetector] = None,
+                 events: Optional[EventLog] = None) -> None:
         if getattr(model, "callbacks", None):
             raise ValueError("a model with its own callbacks could trace or forward the conversation")
         self._model = model
+        self._loops = loop_detector
+        self._events = events
+        #: Why the planner finished on its own, if it did ("loop_capped").
+        self.stop_reason: Optional[str] = None
 
     def propose(self, goal: str, steps: Sequence[Step], tools: Sequence[ToolSpec]) -> Proposal | MalformedProposal:
         wider = sorted(tool.name for tool in tools if tool.name not in READ_ONLY_TOOLS)
@@ -116,10 +129,16 @@ class ChatModelPlanner:
         bound = self._model.bind_tools(tool_schemas(tools))
         if (getattr(bound, "config", None) or {}).get("callbacks"):
             return MalformedProposal("the bound model carries callbacks of its own")
+        messages = conversation(goal, steps)
+        if self._loops is not None:
+            warnings = self._loops.drain_warnings()
+            if warnings:
+                # After every tool message, so call/result pairing stays intact.
+                messages.append(HumanMessage("\n\n".join(warnings)))
         token = tracing_v2_callback_var.set(None)
         try:
             with tracing_context(enabled=False):
-                reply = bound.invoke(conversation(goal, steps), config={"callbacks": []})
+                reply = bound.invoke(messages, config={"callbacks": []})
         finally:
             tracing_v2_callback_var.reset(token)
         if not isinstance(reply, AIMessage):
@@ -136,4 +155,14 @@ class ChatModelPlanner:
             return MalformedProposal("the model's tool call has no name or arguments")
         if call["name"] not in READ_ONLY_TOOLS:
             return MalformedProposal(f"proposed {call['name']}, which is not read-only")
+        if self._loops is not None:
+            decision = self._loops.track([{"name": call["name"], "args": dict(call["args"])}])
+            if decision is not None and self._events is not None:
+                self._events.emit(f"loop.{decision.action}", layer=decision.detection_layer,
+                                  tools=list(decision.tool_names), count=decision.count, threshold=decision.threshold)
+            if decision is not None and decision.hard_stop:
+                # DeerFlow strips the tool call so the run ends with an answer.
+                self.stop_reason = "loop_capped"
+                text = reply.content if isinstance(reply.content, str) else ""
+                return Finish((text + "\n\n" + decision.message).strip())
         return ToolCall(call["name"], dict(call["args"]))

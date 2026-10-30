@@ -5,6 +5,8 @@
 packet is `SG-000129.md` (spec `.specgrain/specs/SG-000129.json`, issue
 #536). It covers M2 and M3, and replaces row 13: no MCP library is admitted
 and the M1 stdlib client stays the only edge session (packet section 5).
+Slice 3 also replaces row 1: the M1 loop stays the only dispatcher, because
+`create_agent` executes tools itself (spec decision on slice 3).
 This document records the founder-directed investigation of ByteDance
 DeerFlow 2.0, made under the directive "DEERFLOW 2.0 FULL COPY-FIRST
 RESEARCH, ARCHITECTURE AND ENGINEERING AUTHORIZATION" (2026-10-30). This PR,
