@@ -1,4 +1,4 @@
-# Orcel Agent (M1; SG-000129 M2 in progress)
+# Orcel Agent (M1 and M2; SG-000129 M3 in progress)
 
 A planner package that is an **MCP client of the Orcel edge only**. It proposes
 calls, and orceld authorizes, executes, audits and verifies them. Design,
@@ -16,6 +16,26 @@ decisions and roadmap:
   - wheels only;
   - a license table and an advisory audit;
   - tracing forced off.
+
+## Bounded tool-output previews (SG-000129 M3 slice 4a1)
+
+`orcel_agent/output_budget.py` is an Orcel reimplementation. DeerFlow's
+tool-output budget is the design reference, and no code is copied.
+
+- **Oversized results.** A successful result over the limit is shown to the
+  model as counts plus a deterministic head and tail.
+- **The limit.** 16,000 Unicode code points per tool message, metadata
+  included. It counts code points, not model tokens. The conversation as a
+  whole is bounded by compaction, in slice 4c.
+- **Forgery.** Orcel's own preview lines start with a marker that tool output
+  cannot reproduce exactly: any copy of it is quoted. Look-alike markers are
+  not caught, and the preview stays untrusted data. A real value containing
+  the marker reaches the model quoted.
+- **No storage.** Nothing is written or sent, and the in-process step keeps
+  the full result.
+- **Unchanged messages.** Refusals, resumed calls and `OUTCOME_UNKNOWN` keep
+  their existing messages.
+- **Untrusted.** The preview is data, never an execution receipt.
 
 ## Loop detection (SG-000129 slice 3)
 
