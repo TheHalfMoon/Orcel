@@ -29,19 +29,6 @@
         "Per-tool frequency defaults scaled to the agent's 32-step budget: warn 12, stop 20 (DeerFlow 30, 50, which could never fire within it). Identical-call defaults unchanged (3, 5, window 20).",
         "The hard-stop answer appends the stop message to the reply's text (DeerFlow's _append_text, reduced to the plain-text answer a Finish carries); the stop reason travels in Finish.stop_reason and RunResult.stop_reason instead of consume_stop_reason()."
       ]
-    },
-    {
-      "source": "backend/packages/harness/deerflow/agents/middlewares/tool_output_synopsis.py",
-      "source_blob": "61464ca85fc4e497b992a7a823a27f8ab4ba7dd5",
-      "destination": "orcel_agent/output_budget.py",
-      "decision": "ADAPT",
-      "modifications": [
-        "Uses DeerFlow's deterministic head/tail tool-output sampling design and model-side budgeting, without importing its LangGraph middleware, tool dispatcher, storage or sandbox.",
-        "Builds a local bounded JSON structural hint (counts only) with no file reference and no externalized output; no data or tool result is written to disk.",
-        "The original output remains with the in-process Step, while only the model-bound ToolMessage gets a strict 16000-character preview (including metadata).",
-        "Rejects invalid caller budgets, always marks an oversized preview as untrusted and not an execution receipt, and uses a SHA-256 prefix for stable diagnostics.",
-        "Secondary reference: backend/packages/harness/deerflow/agents/middlewares/tool_output_budget_middleware.py (source blob 493dd93e7de9f68eab0565ac2159e3fff7b4efda)."
-      ]
     }
   ]
 }

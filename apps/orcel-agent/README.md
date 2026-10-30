@@ -19,16 +19,21 @@ decisions and roadmap:
 
 ## Bounded tool-output previews (SG-000129 M3 slice 4a1)
 
-`orcel_agent/output_budget.py` adapts DeerFlow's bounded output-sampling
-approach into a model-facing, memory-only preview. Oversized successful tool
-results are summarized by structural counts and a deterministic head/tail
-sample under a hard 16,000-character limit, including the metadata. No
-external file, output-reference tool or new storage path is created. The
-original in-process step is unchanged; refusals, resumed calls and
-`OUTCOME_UNKNOWN` keep their existing messages. The preview is untrusted
-data, never an execution receipt. Provenance and the MIT notice are under
-`third_party/`. This is only the output-budget part of M3; error handling,
-todos, compaction and durable checkpoints remain separate slices.
+`orcel_agent/output_budget.py` is an Orcel reimplementation. DeerFlow's
+tool-output budget is the design reference, and no code is copied.
+
+- **Oversized results.** A successful result over the limit is shown to the
+  model as counts plus a deterministic head and tail.
+- **The limit.** 16,000 Unicode code points per tool message, metadata
+  included. It counts code points, not model tokens. The conversation as a
+  whole is bounded by compaction, in slice 4c.
+- **Forgery.** Orcel's own preview lines start with a marker that tool output
+  cannot forge.
+- **No storage.** Nothing is written or sent, and the in-process step keeps
+  the full result.
+- **Unchanged messages.** Refusals, resumed calls and `OUTCOME_UNKNOWN` keep
+  their existing messages.
+- **Untrusted.** The preview is data, never an execution receipt.
 
 ## Loop detection (SG-000129 slice 3)
 

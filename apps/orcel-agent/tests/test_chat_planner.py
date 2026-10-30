@@ -250,6 +250,16 @@ class ChatPlanner(unittest.TestCase):
         self.assertNotIn(marker, preview)
         self.assertIn(marker, step.result["text"])
 
+    def test_a_large_result_with_a_lone_surrogate_reaches_the_model(self) -> None:
+        import json as _json
+
+        payload = _json.loads('{"name": "' + "x" * 20_000 + '\ud800"}')
+        step = Step(ToolCall("fs_read", {"path": "a"}), ok=True, result=payload)
+        model = scripted(AIMessage(content="done"))
+        ChatModelPlanner(model).propose("g", [step], FakeEdge(["fs_read"]).list_tools())
+        message = next(m for m in model.seen[0] if isinstance(m, ToolMessage))
+        self.assertLessEqual(len(str(message.content)), 16_000)
+
     def test_an_unknown_outcome_is_shown_as_unknown(self) -> None:
         steps = [Step(ToolCall("fs_read", {}), ok=False, error_code=OUTCOME_UNKNOWN)]
         model = scripted(AIMessage(content="ok"))

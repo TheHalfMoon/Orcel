@@ -72,7 +72,7 @@
       "git_blob": "493dd93e7de9f68eab0565ac2159e3fff7b4efda",
       "sha256": "d9dc08c5a6ed2421b1df19fd643fbd25790fc27eb0438c00a2b95f0584cb7d64",
       "lines": 1281,
-      "imported_by": "SG-000129 M3 slice 4a1: adapted bounded output preview"
+      "imported_by": "SG-000129 M3 slice 4a1: design reference only (head/tail sampling); no code copied"
     },
     {
       "group": "tool-output-budget",
@@ -80,7 +80,7 @@
       "git_blob": "61464ca85fc4e497b992a7a823a27f8ab4ba7dd5",
       "sha256": "3fc7471de4aa2bb532919537fd1b23f86ce6b2b172560a5ba412bdede325f6b3",
       "lines": 651,
-      "imported_by": "SG-000129 M3 slice 4a1: adapted bounded output preview"
+      "imported_by": "SG-000129 M3 slice 4a1: design reference only (head/tail sampling); no code copied"
     },
     {
       "group": "tool-error-handling",
