@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import shutil
 import sys
+from collections import deque
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -96,6 +97,9 @@ class AgentOrcel:
     _edge: Optional[Edge] = None
     _agent: Optional[Agent] = None
     _tools: list = field(default_factory=list)
+    _replies: Any = None
+    _model: Any = None
+    _planner: Any = None
     timeout_s: float = 60.0
     planner: str = "scripted"
 
@@ -133,6 +137,13 @@ class AgentOrcel:
             else:
                 self._agent = Agent(self._edge, journal, EventLog(store.run_id), store=store, keep_store=True)
             self._tools = self._agent.prepare()
+            if self.planner == "chat":
+                # One planner (with its default loop detector) per episode; its
+                # scripted model is fed one reply per planned call.
+                planner_class, replies = _chat_planner()
+                self._replies = deque()
+                self._model = replies(messages=self._feed())
+                self._planner = planner_class(self._model, events=self._agent.events)
         except BaseException:
             self.__exit__(None, None, None)
             raise
@@ -152,10 +163,10 @@ class AgentOrcel:
         if self.planner == "chat":
             from langchain_core.messages import AIMessage
 
-            planner_class, replies = _chat_planner()
             reply = AIMessage(content="", tool_calls=[{"name": tool, "args": tool_arguments, "id": "bm02", "type": "tool_call"}])
-            model = replies(messages=iter([reply]))
-            proposal = planner_class(model).propose(GOAL, list(self._agent.steps), self._tools)
+            self._replies.append(reply)
+            model = self._model
+            proposal = self._planner.propose(GOAL, list(self._agent.steps), self._tools)
             # The model was offered the edge's own schema for this tool, and
             # its reply parsed back to exactly the planned call.
             offered = {entry["function"]["name"]: entry["function"]["parameters"] for entry in model.bound}
@@ -176,6 +187,10 @@ class AgentOrcel:
         if not step.ok:
             raise OrcelRefused(step.error_code or "INTERNAL_ERROR", "")
         return step.result
+
+    def _feed(self) -> Any:
+        while self._replies:
+            yield self._replies.popleft()
 
     def __exit__(self, *_exc: object) -> None:
         try:

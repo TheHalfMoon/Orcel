@@ -4,10 +4,15 @@ backend/tests/test_loop_detection_middleware.py at commit
 
 Each test names the DeerFlow test it ports. They are rewritten against
 `LoopDetector.track` (one detector per run) instead of the LangGraph
-middleware hooks, with Orcel tool names. DeerFlow tests of run/thread
-scoping, LRU eviction, fallback run ids, threading, run events, config
-loading and graph integration have no counterpart here: the adapted detector
-has none of that machinery.
+middleware hooks, with Orcel tool names. Not ported, with the reason:
+- run/thread scoping, LRU eviction, fallback run ids, threading, before/after
+  agent hooks, run events, config loading and graph integration: the adapted
+  detector has one scope per run and none of that machinery;
+- TestWarningLetsAgentSaveResultsFirst: the wrap-up text was rewritten for a
+  read-only agent (no file saving to protect);
+- the multi-call cases of TestHardStopWithListContent: the planner refuses a
+  reply with more than one call before tracking (slice 2), so the list-content
+  rule is ported for the single-call finish only.
 
 The detector is standard library only; the planner integration tests at the
 end need the locked environment (ORCEL_AGENT_DEPS=1).
@@ -128,7 +133,18 @@ class ReadRangeKey(unittest.TestCase):
                          _hash_tool_calls([read(start_line=1, max_lines=40)]))
 
     def test_unparsable_count_reads_as_open_ended(self):
-        self.assertEqual(_hash_tool_calls([read(start_line=5, max_lines="oops")]), _hash_tool_calls([read(start_line=5)]))
+        # Orcel: an omitted count is the edge's default (200), so an unusable
+        # one is open-ended and distinct from it, but stable.
+        self.assertEqual(_hash_tool_calls([read(start_line=5, max_lines="oops")]),
+                         _hash_tool_calls([read(start_line=5, max_lines="nope")]))
+        self.assertNotEqual(_hash_tool_calls([read(start_line=5, max_lines="oops")]), _hash_tool_calls([read(start_line=5)]))
+
+    def test_omitted_count_is_the_edge_default(self):
+        self.assertEqual(_hash_tool_calls([read(start_line=1)]), _hash_tool_calls([read(start_line=1, max_lines=200)]))
+
+    def test_the_same_path_in_two_workspaces_stays_distinct(self):
+        self.assertNotEqual(_hash_tool_calls([read(workspace_id="a", start_line=1, max_lines=40)]),
+                            _hash_tool_calls([read(workspace_id="b", start_line=1, max_lines=40)]))
 
     def test_different_paths_stay_distinct(self):
         self.assertNotEqual(_hash_tool_calls([read("/w/a.py", start_line=1, max_lines=40)]),
@@ -231,11 +247,35 @@ class IdenticalCallSets(unittest.TestCase):
         detector.track([listing("/a")])
         self.assertEqual(detector.track([listing("/a")]).action, "warn", "a new burst warns again")
 
-    def test_pending_warnings_are_capped(self):
-        detector = LoopDetector(warn_threshold=1, hard_limit=100, window_size=50)
-        for index in range(MAX_PENDING_WARNINGS + 3):
-            detector.track([listing(f"/{index}")])
-        self.assertEqual(len(detector.drain_warnings()), MAX_PENDING_WARNINGS)
+    def test_pending_warning_list_is_capped_and_deduped(self):
+        # Ports test_pending_warning_list_is_capped_and_deduped.
+        detector = LoopDetector()
+        for index in range(MAX_PENDING_WARNINGS + 4):
+            detector.queue_warning(f"warning-{index}")
+        detector.queue_warning(f"warning-{MAX_PENDING_WARNINGS + 3}")
+        self.assertEqual(detector.drain_warnings(),
+                         [f"warning-{index}" for index in range(4, MAX_PENDING_WARNINGS + 4)])
+
+    def test_multiple_pending_warnings_are_merged_into_one_message(self):
+        # Ports test_multiple_pending_warnings_are_merged_into_one_message.
+        self.assertEqual(LoopDetector.format_warning_message(["first warning", "second warning", "first warning"]),
+                         "first warning\n\nsecond warning")
+
+    def test_restored_warnings_go_back_to_the_front(self):
+        # Ports the _restore_pending_warnings rule (a failed model call).
+        detector = LoopDetector()
+        detector.queue_warning("later")
+        detector.restore_warnings(["earlier", "later"])
+        self.assertEqual(detector.drain_warnings(), ["earlier", "later"])
+
+    def test_reset_clears_state(self):
+        # Ports test_reset_clears_state.
+        detector = LoopDetector(warn_threshold=2, hard_limit=3)
+        detector.track([listing()])
+        detector.track([listing()])
+        detector.reset()
+        self.assertEqual(detector.drain_warnings(), [])
+        self.assertIsNone(detector.track([listing()]))
 
 
 class ToolFrequency(unittest.TestCase):
@@ -322,6 +362,77 @@ class ToolFrequency(unittest.TestCase):
         self.assertTrue(decision.hard_stop)
         self.assertEqual(decision.detection_layer, "tool_frequency")
 
+    def test_one_tools_warning_cannot_mask_another_tools_hard_stop(self):
+        # Ports test_one_tools_warning_cannot_mask_another_tools_hard_stop (both orders).
+        for hard_stop_first in (False, True):
+            detector = LoopDetector(tool_freq_warn=2, tool_freq_hard_limit=3)
+            detector.track([listing("/0")])
+            detector.track([read("/0"), listing("/1")])
+            calls = [read("/1"), listing("/2")]
+            if hard_stop_first:
+                calls.reverse()
+            decision = detector.track(calls)
+            self.assertTrue(decision.hard_stop, hard_stop_first)
+            self.assertEqual(decision.tool_names, ("fs_list",))
+            self.assertEqual(decision.count, 3)
+            self.assertNotIn("fs_read_range", detector._tool_freq_warned)
+
+    def test_warning_batch_counts_all_calls_and_only_marks_selected_warning(self):
+        # Ports test_warning_batch_counts_all_calls_and_only_marks_selected_warning.
+        detector = LoopDetector(tool_freq_warn=2, tool_freq_hard_limit=10)
+        first = detector.track([read(f"/{i}") for i in range(3)] + [listing(f"/{i}") for i in range(2)])
+        self.assertEqual((first.action, first.tool_names), ("warn", ("fs_read_range",)))
+        self.assertEqual(list(detector._tool_name_history), ["fs_read_range"] * 3 + ["fs_list"] * 2)
+        self.assertEqual(dict(detector._tool_name_counter), {"fs_read_range": 3, "fs_list": 2})
+        self.assertEqual(detector._tool_freq_warned, {"fs_read_range"})
+        second = detector.track([listing("/2")])
+        self.assertEqual((second.action, second.tool_names, second.count), ("warn", ("fs_list",), 3))
+
+    def test_hash_warning_preserves_frequency_accounting_and_pending_warning(self):
+        # Ports test_hash_warning_preserves_frequency_accounting_and_pending_warning.
+        detector = LoopDetector(warn_threshold=2, hard_limit=10, tool_freq_warn=2, tool_freq_hard_limit=5)
+        self.assertIsNone(detector.track([read("/0")]))
+        hash_warning = detector.track([read("/0")])
+        self.assertEqual(hash_warning.detection_layer, "identical_call_set")
+        self.assertEqual(detector._tool_name_counter["fs_read_range"], 2)
+        self.assertFalse(detector._tool_freq_warned)
+        freq_warning = detector.track([read("/1")])
+        self.assertEqual((freq_warning.detection_layer, freq_warning.count), ("tool_frequency", 3))
+
+    def test_warning_that_decays_within_batch_can_warn_on_next_burst(self):
+        # Ports test_warning_that_decays_within_batch_can_warn_on_next_burst.
+        def named(name, index):
+            return {"name": name, "args": {"value": index}}
+
+        detector = LoopDetector(window_size=4, tool_freq_warn=2, tool_freq_hard_limit=3)
+        first = detector.track([named(n, i) for i, n in enumerate(["a", "b", "a", "c", "d"])])
+        self.assertEqual(first.tool_names, ("a",))
+        self.assertEqual(detector._tool_name_counter["a"], 1)
+        self.assertNotIn("a", detector._tool_freq_warned)
+        second = detector.track([named("a", 5)])
+        self.assertEqual((second.action, second.tool_names), ("warn", ("a",)))
+
+    def test_cross_tool_eviction_rearms_at_evicted_tools_override_threshold(self):
+        # Ports test_cross_tool_eviction_rearms_at_evicted_tools_override_threshold.
+        detector = LoopDetector(window_size=3, tool_freq_warn=2, tool_freq_hard_limit=5,
+                                tool_freq_overrides={"fs_list": (3, 4)})
+        first = detector.track([listing(f"/{i}") for i in range(3)])
+        self.assertEqual(first.tool_names, ("fs_list",))
+        self.assertEqual(detector._tool_freq_warned, {"fs_list"})
+        second = detector.track([read(f"/{i}") for i in range(3)])
+        self.assertEqual(second.tool_names, ("fs_read_range",))
+        self.assertEqual(detector._tool_name_counter["fs_list"], 2)
+        self.assertNotIn("fs_list", detector._tool_freq_warned)
+        third = detector.track([listing(f"/{i}") for i in range(3, 6)])
+        self.assertEqual((third.tool_names, third.count), (("fs_list",), 3))
+
+    def test_default_frequency_layer_can_fire_within_the_step_budget(self):
+        # Orcel: the per-tool defaults are scaled so layer 2 is reachable in 32 steps.
+        detector = LoopDetector()
+        decisions = [detector.track([read(f"/{i}")]) for i in range(20)]
+        self.assertEqual(decisions[11].action, "warn")
+        self.assertTrue(decisions[19].hard_stop)
+
     def test_other_tool_eviction_rearms_frequency_warning(self):
         detector = self.detector(window_size=4, tool_freq_warn=3, tool_freq_hard_limit=4)
         for index in range(3):
@@ -393,16 +504,81 @@ class PlannerIntegration(unittest.TestCase):
             planner = ChatModelPlanner(model, LoopDetector(warn_threshold=3, hard_limit=5), events)
             result = agent.run("list /w until done", planner)
         self.assertEqual(result.outcome, "finished")
+        self.assertEqual(result.stop_reason, "loop_capped", "a capped run is not a clean finish")
         self.assertEqual(planner.stop_reason, "loop_capped")
         self.assertIn("[FORCED STOP]", result.answer)
         self.assertEqual(len(edge.called), 4, "the fifth identical call is never dispatched")
         kinds = [event["kind"] for event in events.events]
         self.assertEqual([k for k in kinds if k.startswith("loop.")], ["loop.warn", "loop.hard_stop"])
+        finished = [event for event in events.events if event["kind"] == "run.finished"]
+        self.assertEqual(finished[0]["data"]["stop_reason"], "loop_capped")
         # The warning reached the model after the tool messages, as a static Orcel message.
         fourth = model.seen[3]
         self.assertIsInstance(fourth[-1], self.HumanMessage)
+        self.assertEqual(fourth[-1].name, "loop_warning")
         self.assertTrue(str(fourth[-1].content).startswith("[LOOP DETECTED]"))
         self.assertIsInstance(fourth[-2], self.ToolMessage)
+
+
+    def planner_with(self, *replies, **kwargs):
+        from orcel_agent.chat_planner import ChatModelPlanner
+
+        model = self.Scripted(messages=iter(list(replies)))
+        model.seen = []
+        return ChatModelPlanner(model, **kwargs), model
+
+    def tools(self):
+        from orcel_agent.edge import ToolSpec
+
+        return [ToolSpec("fs_list", {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]})]
+
+    def test_detection_is_on_by_default_and_a_new_goal_resets_it(self):
+        from orcel_agent.planner import Finish
+
+        planner, _ = self.planner_with(*([self.call("/w")] * 6))
+        outcomes = [planner.propose("goal one", [], self.tools()) for _ in range(5)]
+        self.assertIsInstance(outcomes[-1], Finish)
+        self.assertEqual(outcomes[-1].stop_reason, "loop_capped")
+        self.assertNotIsInstance(planner.propose("goal two", [], self.tools()), Finish)
+        self.assertIsNone(planner.stop_reason)
+
+    def test_detection_can_be_disabled_explicitly(self):
+        from orcel_agent.planner import Finish
+
+        planner, _ = self.planner_with(*([self.call("/w")] * 6), detect_loops=False)
+        outcomes = [planner.propose("g", [], self.tools()) for _ in range(6)]
+        self.assertFalse(any(isinstance(outcome, Finish) for outcome in outcomes))
+
+    def test_warn_only_does_not_stamp_a_stop_reason(self):
+        # Ports test_warn_only_does_not_stamp_stop_reason.
+        from orcel_agent.loop_detection import LoopDetector
+
+        planner, _ = self.planner_with(*([self.call("/w")] * 3), loop_detector=LoopDetector(warn_threshold=3, hard_limit=5))
+        for _ in range(3):
+            planner.propose("g", [], self.tools())
+        self.assertIsNone(planner.stop_reason)
+
+    def test_hard_stop_with_list_content_keeps_the_text(self):
+        # Ports TestHardStopWithListContent for the single-call reply.
+        from orcel_agent.loop_detection import LoopDetector
+
+        reply = self.AIMessage(content=[{"type": "text", "text": "partial"}],
+                               tool_calls=[{"name": "fs_list", "args": {"path": "/w"}, "id": "c", "type": "tool_call"}])
+        planner, _ = self.planner_with(reply, reply, loop_detector=LoopDetector(warn_threshold=5, hard_limit=2))
+        planner.propose("g", [], self.tools())
+        finish = planner.propose("g", [], self.tools())
+        self.assertTrue(finish.answer.startswith("partial\n\n[FORCED STOP]"))
+
+    def test_a_failed_model_call_restores_the_warning(self):
+        from orcel_agent.loop_detection import LoopDetector
+
+        detector = LoopDetector()
+        planner, _ = self.planner_with(self.call("/w"), loop_detector=detector)  # one reply, then the model fails
+        planner.propose("g", [], self.tools())
+        detector.queue_warning("[LOOP DETECTED] wrap up")
+        with self.assertRaises(Exception):
+            planner.propose("g", [], self.tools())
+        self.assertEqual(detector.drain_warnings(), ["[LOOP DETECTED] wrap up"])
 
 
 if __name__ == "__main__":

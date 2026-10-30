@@ -23,16 +23,19 @@ decisions and roadmap:
 middleware. The detection core is unchanged in logic and uses Orcel tool
 names; the ledger is in `third_party/PROVENANCE.json`.
 
-Give `ChatModelPlanner` a `LoopDetector`, and it then:
+Loop detection is on by default (`detect_loops=False` turns it off). The
+planner then:
 - tracks every proposed call;
 - appends a warning to the next model call, after the tool messages;
-- turns a hard stop into a finish (`stop_reason` "loop_capped"), so the
-  looping call is never dispatched;
+- turns a hard stop into a finish (`stop_reason` "loop_capped", carried into
+  `RunResult`), so the looping call is never dispatched;
 - emits each decision to the event log.
 
-The thresholds are DeerFlow's:
-- a warning at 3 identical calls, and a stop at 5, within a window of 20;
-- a per-tool warning at 30 calls, and a stop at 50.
+The thresholds:
+- identical calls: a warning at 3 and a stop at 5, within a window of 20
+  (DeerFlow's);
+- per tool: a warning at 12 calls and a stop at 20, scaled to the 32-step
+  budget (DeerFlow's 30 and 50 could never fire within it).
 
 ## LangChain planner adapter (SG-000129 slice 2)
 

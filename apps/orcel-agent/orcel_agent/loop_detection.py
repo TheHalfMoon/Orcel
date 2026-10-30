@@ -11,13 +11,21 @@ Copied unchanged in logic: argument normalisation, the read-range window, the
 per-tool call key, the order-independent call-set hash, the two detection
 layers (identical call sets in a sliding window; per-tool frequency in a
 window sized to the largest hard limit, with decay and re-arming), the
-warn-once rule and the decision record.
+warn-once rule, the decision record, and the warning queue (deduplicated,
+newest four kept, merged deduplicated into one message, restored to the front
+when a model call fails).
 
 Changed for Orcel:
 - DeerFlow's tool names map to the Orcel edge's: `read_file` to `fs_read` and
-  `fs_read_range` (whose `max_lines` becomes the window's end line);
+  `fs_read_range` (whose `max_lines`, defaulting to the edge's 200, becomes
+  the window's end line; `workspace_id` joins the read key);
   `write_file`/`str_replace` to `fs_write`/`fs_edit`; the narration-stripped
-  `bash`/`ls`/`glob`/`grep` to `fs_list`/`fs_find`/`fs_search`.
+  `bash`/`ls`/`glob`/`grep` to `fs_list`/`fs_find`/`fs_search`. The Orcel fs
+  tools take no `description` argument (closed schemas refuse one), so the
+  narration rule is kept only for faithfulness.
+- The per-tool frequency defaults are scaled to the agent's 32-step budget
+  (warn at 12, stop at 20); DeerFlow's 30 and 50 could never fire within it.
+  The identical-call defaults (3, 5, window 20) are DeerFlow's.
 - One detector serves one agent run, so the LangGraph runtime, thread/run
   scoping, LRU eviction, fallback run ids and the lock are dropped.
 - The AgentMiddleware hooks are replaced: `ChatModelPlanner` calls `track()`
@@ -36,13 +44,16 @@ from collections import Counter, deque
 from dataclasses import dataclass, field
 from typing import Literal, Optional
 
-# Defaults (DeerFlow's)
+# Defaults: DeerFlow's identical-call thresholds; per-tool frequency scaled
+# to the agent's 32-step budget (DeerFlow: 30 and 50).
 DEFAULT_WARN_THRESHOLD = 3  # warn after 3 identical calls
 DEFAULT_HARD_LIMIT = 5  # force-stop after 5 identical calls
 DEFAULT_WINDOW_SIZE = 20  # track the last N tool calls
-DEFAULT_TOOL_FREQ_WARN = 30  # warn after 30 calls to the same tool
-DEFAULT_TOOL_FREQ_HARD_LIMIT = 50  # force-stop after 50 calls to the same tool
+DEFAULT_TOOL_FREQ_WARN = 12  # warn after 12 calls to the same tool
+DEFAULT_TOOL_FREQ_HARD_LIMIT = 20  # force-stop after 20 calls to the same tool
 MAX_PENDING_WARNINGS = 4
+#: The edge's default for fs_read_range's max_lines (apps/orcel-mcp/src/fs_mutation.ts).
+EDGE_DEFAULT_MAX_LINES = 200
 # Stands in for an omitted end line in a read's key: the read runs to the last
 # line, which is not the same window as any numbered bound.
 _OPEN_ENDED_READ = "end"
@@ -95,11 +106,13 @@ def _coerce_line_number(value: object) -> Optional[int]:
 
 def _orcel_read_bounds(name: str, args: dict) -> dict:
     """Orcel's reads in DeerFlow's terms: `fs_read` reads the whole file;
-    `fs_read_range` reads `max_lines` lines from `start_line`."""
+    `fs_read_range` reads `max_lines` lines (the edge's default when omitted)
+    from `start_line`. An unusable count keeps the window open-ended."""
     if name == "fs_read":
         return {"start_line": None, "end_line": None}
     start = _coerce_line_number(args.get("start_line"))
-    count = _coerce_line_number(args.get("max_lines"))
+    raw_count = args.get("max_lines", EDGE_DEFAULT_MAX_LINES)
+    count = _coerce_line_number(raw_count)
     end = None if count is None else (start or 1) + count - 1
     return {"start_line": start, "end_line": end}
 
@@ -128,8 +141,9 @@ def _stable_tool_key(name: str, args: dict, fallback_key: Optional[str]) -> str:
     """Derive a stable key from the args that change what a call does."""
     if name in _READ_TOOLS and fallback_key is None:
         path = args.get("path") or ""
+        workspace = args.get("workspace_id") or ""
         start_line, end_line = _normalized_read_range(_orcel_read_bounds(name, args))
-        return f"{path}:{start_line}-{end_line if end_line is not None else _OPEN_ENDED_READ}"
+        return f"{workspace}|{path}:{start_line}-{end_line if end_line is not None else _OPEN_ENDED_READ}"
 
     # Content-changing tools are content-sensitive: the same path may be
     # updated with different payloads, so the full args are hashed.
@@ -237,14 +251,39 @@ class LoopDetector:
         decision = self._track(tool_calls)
         if decision is not None:
             self.decisions.append(decision)
-            if not decision.hard_stop and len(self._pending) < MAX_PENDING_WARNINGS:
-                self._pending.append(decision.message)
+            if not decision.hard_stop:
+                self.queue_warning(decision.message)
         return decision
+
+    def queue_warning(self, warning: str) -> None:
+        """Queue one warning: deduplicated, the newest MAX_PENDING_WARNINGS kept."""
+        if warning not in self._pending:
+            self._pending.append(warning)
+        if len(self._pending) > MAX_PENDING_WARNINGS:
+            del self._pending[: len(self._pending) - MAX_PENDING_WARNINGS]
 
     def drain_warnings(self) -> list[str]:
         """Warnings queued for the next model call (then cleared)."""
         pending, self._pending = self._pending, []
         return pending
+
+    def restore_warnings(self, warnings: list[str]) -> None:
+        """Requeue warnings taken for a model call that failed, at the front."""
+        if not warnings:
+            return
+        self._pending[:0] = [warning for warning in warnings if warning not in self._pending]
+        del self._pending[MAX_PENDING_WARNINGS:]
+
+    @staticmethod
+    def format_warning_message(warnings: list[str]) -> str:
+        """Merge pending warnings into one prompt message."""
+        return "\n\n".join(dict.fromkeys(warnings))
+
+    def reset(self) -> None:
+        """Forget every run's history (a new run starts fresh)."""
+        fresh = LoopDetector(self.warn_threshold, self.hard_limit, self.window_size, self.tool_freq_warn,
+                             self.tool_freq_hard_limit, dict(self.tool_freq_overrides))
+        self.__dict__.update(fresh.__dict__)
 
     def _track(self, tool_calls: list[dict]) -> Optional[LoopDecision]:
         call_hash = _hash_tool_calls(tool_calls)

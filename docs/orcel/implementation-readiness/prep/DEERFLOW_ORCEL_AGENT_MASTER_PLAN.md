@@ -6,7 +6,9 @@ packet is `SG-000129.md` (spec `.specgrain/specs/SG-000129.json`, issue
 #536). It covers M2 and M3, and replaces row 13: no MCP library is admitted
 and the M1 stdlib client stays the only edge session (packet section 5).
 Slice 3 also replaces row 1: the M1 loop stays the only dispatcher, because
-`create_agent` executes tools itself (spec decision on slice 3).
+a `create_agent` loop would own the step budget, refusal-is-final, the stop at
+a denial and the resume invariant (spec decision on slice 3). Rows 3 and 4
+therefore become ADAPT through the planner rather than plain REUSE.
 This document records the founder-directed investigation of ByteDance
 DeerFlow 2.0, made under the directive "DEERFLOW 2.0 FULL COPY-FIRST
 RESEARCH, ARCHITECTURE AND ENGINEERING AUTHORIZATION" (2026-10-30). This PR,
@@ -183,7 +185,7 @@ dependency), REIMPLEMENT (take the design, not the code), or REJECT.
 
 | # | Capability | DeerFlow source (pin 81e1ab8) | Orcel counterpart today | Decision | Destination | Dependencies | Security notes | Complexity | Testing | Expected benefit |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 1 | Agent loop | `agents/factory.py`, `features.py`, `thread_state.py` | No loop in Orcel; planners are external clients or F7; SG-000104 plans a model loop behind `ComputerActionProposal` | REIMPLEMENT a thin loop on LangChain's `create_agent` with the copied middlewares, rather than decoupling the 101k-line factory | `apps/orcel-agent/orcel_agent/loop/` | `langchain`, `langgraph` (MIT) | Tools come only from the edge; `sandbox` never set | Medium | Fake-model unit tests; BM-02 through the agent | A local planner for Core and BM-02 Tier C3 |
+| 1 | Agent loop | `agents/factory.py`, `features.py`, `thread_state.py` | No loop in Orcel; planners are external clients or F7; SG-000104 plans a model loop behind `ComputerActionProposal` | **Superseded by SG-000129 slice 3:** the M1 loop stays the only dispatcher and the copied middlewares run through the planner. (Was: REIMPLEMENT a thin loop on LangChain's `create_agent`, rather than decoupling the 101k-line factory) | `apps/orcel-agent/orcel_agent/loop/` | `langchain`, `langgraph` (MIT) | Tools come only from the edge; `sandbox` never set | Medium | Fake-model unit tests; BM-02 through the agent | A local planner for Core and BM-02 Tier C3 |
 | 2 | Loop detection | `loop_detection_middleware.py` and its closure (8 modules) | None | COPY, then map DeerFlow tool names to Orcel's (`fs_read`, `fs_write`, `fs_edit`, `fs_list`, `fs_find`, `fs_search`, `process_spawn`, UIA tools) | `orcel_agent/middleware/loop_detection.py` | As row 1 | Decisions are logged | Low–Medium | Port `test_loop_detection_middleware.py` (2,492 lines) with Orcel names | Stops runaway loops |
 | 3 | Todos | `todo_middleware.py` | Deterministic BM-02 planners | REUSE LangChain `TodoListMiddleware` + COPY DeerFlow's delta (context-loss reminder, premature-exit guard) | `orcel_agent/middleware/todos.py` | As row 1 | None | Low | Ported delta tests | Decomposition that survives compaction |
 | 4 | Compaction | `summarization_middleware.py`, `durable_context_middleware.py` | None (orceld's SG-000120 resume summary is task-level, not model context) | REUSE LangChain `SummarizationMiddleware` + ADAPT DeerFlow's hooks and durable projection | `orcel_agent/middleware/compaction.py` | As row 1 | Summaries are untrusted data | Medium | Fake-model token tests | Long tasks on small contexts |
@@ -306,8 +308,9 @@ dependency), REIMPLEMENT (take the design, not the code), or REJECT.
 2. **Transplant the whole platform.** Rejected: it duplicates orceld, Control
    Room and the relay, and adds network surfaces.
 3. **Decouple DeerFlow's factory (the plan's revision 1).** Replaced by a
-   thin loop on LangChain's `create_agent` plus copied self-contained
-   middlewares.
+   thin loop plus copied self-contained middlewares. SG-000129 slice 3 then
+   kept the M1 loop rather than LangChain's `create_agent`, which would own
+   the loop's safety rules.
    - The factory closes over 101k lines.
    - The valuable behaviour sits in middlewares, most of them self-contained
      or thin subclasses of LangChain built-ins.
@@ -318,8 +321,9 @@ dependency), REIMPLEMENT (take the design, not the code), or REJECT.
 6. **Put the loop in orceld.** Rejected by `REJECT_FOR_CORE` and the adopted
    runtime model.
 7. **Chosen:** a deployment-neutral planner package, Core-integration first,
-   with a thin loop, copied self-contained DeerFlow middlewares, LangChain
-   built-ins for todos and summarization, a provider-neutral `Planner`
+   with the M1 loop as the only dispatcher, copied self-contained DeerFlow
+   middlewares run through the planner, LangChain built-ins for todos and
+   summarization adapted the same way, a provider-neutral `Planner`
    protocol, and the Orcel edge as its only tool source.
 
 ## E. Implementation roadmap

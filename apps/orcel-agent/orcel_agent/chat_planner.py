@@ -20,11 +20,13 @@ off: langsmith's context (`tracing_context`) and LangChain's own tracer
 variable (`tracing_v2_callback_var`, which takes priority over it). A model
 that carries callbacks of its own is refused.
 
-Loop detection (SG-000129 slice 3, adapted from DeerFlow): with a
-`LoopDetector`, every proposed call is tracked. A warning is appended to the
-next model call as one static Orcel message after the tool messages; a hard
-stop turns the reply into a finish (`stop_reason` "loop_capped"). Each
-decision is emitted to the agent's event log when one is given.
+Loop detection (SG-000129 slice 3, adapted from DeerFlow) is on by default:
+every proposed call is tracked. Queued warnings reach the next model call as
+one static Orcel message (named "loop_warning") after the tool messages, and
+are restored if that call fails; a hard stop turns the reply into a finish
+whose `stop_reason` is "loop_capped", which the agent reports in its
+`RunResult`. Each decision is emitted to the agent's event log when one is
+given. A planner serves one run: a new goal resets its loop history.
 """
 
 from __future__ import annotations
@@ -105,18 +107,32 @@ def conversation(goal: str, steps: Sequence[Step]) -> list[BaseMessage]:
     return messages
 
 
+def _append_text(content: Any, text: str) -> str:
+    """The reply's text with the stop message appended (DeerFlow's
+    _append_text, reduced to the plain-text answer a Finish carries)."""
+    if isinstance(content, str):
+        parts = [content]
+    elif isinstance(content, list):
+        parts = [block if isinstance(block, str) else str(block.get("text", "")) if isinstance(block, dict) else ""
+                 for block in content]
+    else:
+        parts = []
+    return "\n\n".join([part for part in parts if part] + [text])
+
+
 class ChatModelPlanner:
     """Proposes through a LangChain chat model that supports tool calling."""
 
     label = "langchain-chat-model"
 
     def __init__(self, model: BaseChatModel, loop_detector: Optional[LoopDetector] = None,
-                 events: Optional[EventLog] = None) -> None:
+                 events: Optional[EventLog] = None, *, detect_loops: bool = True) -> None:
         if getattr(model, "callbacks", None):
             raise ValueError("a model with its own callbacks could trace or forward the conversation")
         self._model = model
-        self._loops = loop_detector
+        self._loops = loop_detector if loop_detector is not None else (LoopDetector() if detect_loops else None)
         self._events = events
+        self._goal: Optional[str] = None
         #: Why the planner finished on its own, if it did ("loop_capped").
         self.stop_reason: Optional[str] = None
 
@@ -129,16 +145,25 @@ class ChatModelPlanner:
         bound = self._model.bind_tools(tool_schemas(tools))
         if (getattr(bound, "config", None) or {}).get("callbacks"):
             return MalformedProposal("the bound model carries callbacks of its own")
+        if self._goal != goal:
+            # A new run: its loop history starts fresh.
+            self._goal = goal
+            self.stop_reason = None
+            if self._loops is not None:
+                self._loops.reset()
         messages = conversation(goal, steps)
-        if self._loops is not None:
-            warnings = self._loops.drain_warnings()
-            if warnings:
-                # After every tool message, so call/result pairing stays intact.
-                messages.append(HumanMessage("\n\n".join(warnings)))
+        warnings = self._loops.drain_warnings() if self._loops is not None else []
+        if warnings:
+            # After every tool message, so call/result pairing stays intact.
+            messages.append(HumanMessage(LoopDetector.format_warning_message(warnings), name="loop_warning"))
         token = tracing_v2_callback_var.set(None)
         try:
             with tracing_context(enabled=False):
                 reply = bound.invoke(messages, config={"callbacks": []})
+        except Exception:
+            if self._loops is not None:
+                self._loops.restore_warnings(warnings)
+            raise
         finally:
             tracing_v2_callback_var.reset(token)
         if not isinstance(reply, AIMessage):
@@ -163,6 +188,5 @@ class ChatModelPlanner:
             if decision is not None and decision.hard_stop:
                 # DeerFlow strips the tool call so the run ends with an answer.
                 self.stop_reason = "loop_capped"
-                text = reply.content if isinstance(reply.content, str) else ""
-                return Finish((text + "\n\n" + decision.message).strip())
+                return Finish(_append_text(reply.content, decision.message), stop_reason="loop_capped")
         return ToolCall(call["name"], dict(call["args"]))
