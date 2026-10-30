@@ -45,6 +45,7 @@ from .agent import READ_ONLY_TOOLS
 from .edge import ToolSpec
 from .compaction import (
     DEFAULT_SUMMARY_PROMPT,
+    SUMMARIZER_SYSTEM,
     SUMMARY_LABEL,
     Compactor,
     capped_arguments,
@@ -52,7 +53,7 @@ from .compaction import (
     summary_input,
 )
 from .events import EventLog
-from .failures import failure_text
+from .failures import failure_text, non_success_text
 from .journal import OUTCOME_UNKNOWN
 from .loop_detection import LoopDetector
 from .output_budget import preview_tool_output
@@ -105,17 +106,17 @@ def tool_schemas(tools: Sequence[ToolSpec]) -> list[dict[str, Any]]:
 
 
 def _result_text(step: Step) -> str:
-    if step.error_code == OUTCOME_UNKNOWN or not step.ok:
-        # Slice 4a2: the typed code and static Orcel guidance, never the
-        # (untrusted) error message.
-        return failure_text(step.error_code)
-    if step.resumed:
-        return "RESULT NOT KEPT: this call completed before a resume; its arguments and result are unknown. Observe again."
+    # Slice 4a2: the typed code and static Orcel guidance, never the
+    # (untrusted) error message; slice 4c: the same text after compaction.
+    other = non_success_text(step.ok, step.error_code, step.resumed)
+    if other is not None:
+        return other
     text = json.dumps(step.result, ensure_ascii=False, sort_keys=True, default=str)
     return preview_tool_output(text)
 
 
-def conversation(goal: str, steps: Sequence[Step], older: int = 0, summary: Optional[str] = None) -> list[BaseMessage]:
+def conversation(goal: str, steps: Sequence[Step], older: int = 0, summary: Optional[str] = None,
+                 summary_covers: Optional[int] = None) -> list[BaseMessage]:
     """The goal and every step so far, each call paired with its result.
 
     SG-000129 slice 4c: the first `older` steps are compacted (capped
@@ -123,6 +124,8 @@ def conversation(goal: str, steps: Sequence[Step], older: int = 0, summary: Opti
     text kept), and `summary`, if any, rides on the last compacted result.
     """
     messages: list[BaseMessage] = [SystemMessage(SYSTEM_PROMPT), HumanMessage(goal)]
+    if summary_covers is None:
+        summary_covers = older
     for index, step in enumerate(steps, start=1):
         call_id = f"call-{index}"
         compact = index <= older
@@ -133,7 +136,7 @@ def conversation(goal: str, steps: Sequence[Step], older: int = 0, summary: Opti
             {"name": step.call.tool, "args": arguments, "id": call_id, "type": "tool_call"}]))
         status = "success" if step.ok and step.error_code != OUTCOME_UNKNOWN else "error"
         content = compacted_result(step) if compact else _result_text(step)
-        if compact and index == older and summary:
+        if compact and index == min(older, summary_covers) and summary:
             content = f"{content}\n\n{SUMMARY_LABEL}\n{summary}"
         messages.append(ToolMessage(content=content, tool_call_id=call_id, name=step.call.tool, status=status))
     return ensure_paired(messages)
@@ -227,29 +230,40 @@ class ChatModelPlanner:
         finally:
             tracing_v2_callback_var.reset(token)
 
-    def _compact(self, steps: list[Step]) -> tuple[int, Optional[str]]:
-        """How many leading steps to compact, and the summary for them. The
-        summary is written by the same model with no tools bound and tracing
-        off; if that fails, compaction keeps the step records alone."""
+    def _compact(self, goal: str, steps: list[Step]) -> tuple[int, Optional[str]]:
+        """How many leading steps to compact, and the summary for those it
+        covers. At most one summarizer call per proposal, over at most
+        SUMMARY_CHUNK_STEPS dropped successes; none when a span has no
+        successes; none after MAX_SUMMARY_FAILURES failures. The summarizer
+        is the same model with no tools bound and tracing off, framed by an
+        Orcel system message that gives it the goal and calls the results
+        untrusted data."""
         if self._compactor is None:
             return 0, None
         older = self._compactor.older(steps)
-        if self._compactor.needs_summary(older):
-            text: Optional[str] = None
-            try:
-                prompt = DEFAULT_SUMMARY_PROMPT.format(
-                    messages=summary_input(self._compactor.summary, steps[self._compactor.covered:older])).rstrip()
-                reply = self._invoke(self._model, [HumanMessage(prompt)])
-                candidate = reply.content if isinstance(reply, AIMessage) else None
-                if isinstance(candidate, list):
-                    candidate = _text_of(candidate)
-                text = candidate.strip() if isinstance(candidate, str) and candidate.strip() else None
-            except Exception:  # noqa: BLE001 - a failed summary falls back to the step records
-                text = None
-            self._compactor.record(older, text)
-            if self._events is not None:
-                self._events.emit("context.compacted", older=older, summarized=text is not None)
-        summary = self._compactor.summary if self._compactor.covered and self._compactor.covered <= older else None
+        chunk = self._compactor.next_chunk(steps, older)
+        if chunk is not None:
+            end, span = chunk
+            body = summary_input(self._compactor.summary, span)
+            if "<tool_result" not in body:
+                self._compactor.advance(end, None)  # nothing new to summarize
+            else:
+                text: Optional[str] = None
+                try:
+                    prompt = DEFAULT_SUMMARY_PROMPT.format(messages=body).rstrip()
+                    reply = self._invoke(self._model, [SystemMessage(SUMMARIZER_SYSTEM.format(goal=goal)),
+                                                       HumanMessage(prompt)])
+                    if isinstance(reply, AIMessage) and not reply.tool_calls and \
+                            not getattr(reply, "invalid_tool_calls", None):
+                        candidate = reply.content if isinstance(reply.content, str) else _text_of(reply.content)
+                        text = candidate.strip() or None
+                except Exception:  # noqa: BLE001 - a failed summary falls back to the step records
+                    text = None
+                self._compactor.advance(end, text, failed=text is None)
+                if self._events is not None:
+                    self._events.emit("context.compacted", older=older, covered=self._compactor.covered,
+                                      summarized=text is not None)
+        summary = self._compactor.summary if self._compactor.covered else None
         return older, summary
 
     def propose(self, goal: str, steps: Sequence[Step], tools: Sequence[ToolSpec]) -> Proposal | MalformedProposal:
@@ -275,8 +289,9 @@ class ChatModelPlanner:
                 self._compactor.reset()
             if self._loops is not None:
                 self._loops.reset()
-        older, summary = self._compact(list(steps))
-        messages = conversation(goal, steps, older, summary)
+        older, summary = self._compact(goal, list(steps))
+        covers = self._compactor.covered if self._compactor is not None else 0
+        messages = conversation(goal, steps, older, summary, covers)
         if self._planning:
             messages[0] = SystemMessage(SYSTEM_PROMPT + "\n\n" + TODO_SYSTEM_PROMPT)
             if self._plan.todos:
