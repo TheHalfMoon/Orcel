@@ -297,7 +297,9 @@ fn release(
     })))
 }
 
-/// Stop the sink, then remove the profile through its hold.
+/// Stop the sink, then remove the profile through its hold. The release
+/// step: reached from `release` only on verified coverage (the tests call it
+/// directly, after accepting an unverified residual in test code).
 fn free(
     outcome: SweepOutcome,
     sink: NetworkSink,
@@ -385,8 +387,8 @@ mod tests {
     /// The holding a teardown kept, and why.
     fn kept(result: Result<Released, TeardownError>) -> (Kept, NetworkSink, ProfileHold, PathBuf) {
         let holding = match result {
-            Err(TeardownError::Kept(holding)) => Some(holding),
-            _ => None,
+            Err(TeardownError::Kept(holding)) => Ok(holding),
+            other => Err(format!("{other:?}")),
         }
         .expect("teardown keeps the sink and the profile");
         let Holding {
@@ -404,8 +406,8 @@ mod tests {
     fn accept_unverified(result: Result<Released, TeardownError>) -> Released {
         let (why, sink, hold, profile) = kept(result);
         let outcome = match why {
-            Kept::Unverified(outcome) => Some(outcome),
-            _ => None,
+            Kept::Unverified(outcome) => Ok(outcome),
+            other => Err(format!("{other:?}")),
         }
         .expect("kept only because coverage is unverified");
         assert!(outcome.left.is_empty(), "{outcome:?}");
@@ -526,8 +528,8 @@ mod tests {
         assert!(until(|| !is_alive(root)), "the engine crashed");
         let (why, sink, hold, profile) = kept(teardown(running));
         let outcome = match why {
-            Kept::Unverified(outcome) => Some(outcome),
-            _ => None,
+            Kept::Unverified(outcome) => Ok(outcome),
+            other => Err(format!("{other:?}")),
         }
         .expect("kept because coverage is unverified");
         assert!(outcome.left.is_empty(), "the orphan was never scanned");
