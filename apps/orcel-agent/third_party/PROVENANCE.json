@@ -36,11 +36,12 @@
       "destination": "orcel_agent/todos.py",
       "decision": "ADAPT",
       "modifications": [
-        "Copied unchanged in logic: _format_todos, _has_tool_call_intent_or_error, the cap of two completion reminders, and the skip of a length-truncated reply (DeerFlow's model_length_termination exit).",
+        "Copied unchanged in logic: _format_todos, _has_tool_call_intent_or_error and the cap of two completion reminders.",
+        "Adapted: DeerFlow skips the reminder on a model_length_termination flag set by another middleware; Orcel reads finish_reason == 'length' on the reply directly.",
         "Adapted: the context-loss reminder becomes a replayed write_todos call and result (the tool channel, never the person's voice), labelled as the model's own notes written from untrusted data that authorize nothing.",
         "Adapted: the completion reminder (named todo_completion_reminder, as in DeerFlow) keeps its role but is labelled untrusted and no longer says the items 'must' be finished; a finish with open todos after the reminders carries stop_reason todos_incomplete.",
         "Not used: the TodoListMiddleware subclass, LangGraph hooks, run/thread scoping, reminder queues and locks, and DeerFlow's deerflow_error_fallback exit; ChatModelPlanner handles write_todos internally (never dispatched) within at most 4 model turns per proposal, rewriting the model's call ids.",
-        "LangChain's write_todos description, system prompt and Todo TypedDict are copied verbatim (not imported) from the langchain 1.3.14 wheel, MIT; see third_party/langchain/. Orcel bounds added: at most 20 items of at most 300 characters, no control characters or angle brackets."
+        "LangChain's write_todos description, system prompt and Todo TypedDict are copied verbatim (not imported) from the langchain 1.3.14 wheel, MIT; see third_party/langchain/. Orcel bounds added: at most 20 items of at most 300 characters, no Unicode control, format or separator characters and no angle brackets or look-alikes."
       ]
     }
   ]

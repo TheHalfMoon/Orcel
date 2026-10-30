@@ -155,6 +155,15 @@ def ensure_paired(messages: list[BaseMessage]) -> list[BaseMessage]:
     return paired
 
 
+def _text_of(content: Any) -> str:
+    """The text blocks of a reply's list-shaped content."""
+    if not isinstance(content, list):
+        return ""
+    parts = [block if isinstance(block, str) else str(block.get("text", "")) if isinstance(block, dict) else ""
+             for block in content]
+    return "\n\n".join(part for part in parts if part)
+
+
 def _append_text(content: Any, text: str) -> str:
     """The reply's text with the stop message appended (DeerFlow's
     _append_text, reduced to the plain-text answer a Finish carries)."""
@@ -255,7 +264,7 @@ class ChatModelPlanner:
                                                                name=TODO_COMPLETION_REMINDER_NAME)]
                     continue
                 self._finished = True
-                answer = reply.content if isinstance(reply.content, str) else None
+                answer = reply.content if isinstance(reply.content, str) else (_text_of(reply.content) or None)
                 if self._planning and self._plan.incomplete():
                     # A finish with open todos is not a clean finish.
                     self.stop_reason = "todos_incomplete"
@@ -287,8 +296,10 @@ class ChatModelPlanner:
                 # The model's id is replaced, so it can never collide with a
                 # conversation id or repeat across internal turns.
                 internal_id = f"todo-{turn}"
+                # A refused list is not echoed back (only that it was refused).
+                echoed_args = dict(call["args"]) if todos is not None else {"todos": "refused"}
                 echoed = AIMessage(content=reply.content, tool_calls=[{
-                    "name": WRITE_TODOS, "args": dict(call["args"]), "id": internal_id, "type": "tool_call"}])
+                    "name": WRITE_TODOS, "args": echoed_args, "id": internal_id, "type": "tool_call"}])
                 messages = messages + [echoed, ToolMessage(content=result, tool_call_id=internal_id, name=WRITE_TODOS,
                                                            status=status)]
                 continue

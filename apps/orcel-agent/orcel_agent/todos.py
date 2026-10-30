@@ -33,6 +33,7 @@ Provenance:
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Any, Literal, Optional, TypedDict
 
@@ -150,9 +151,21 @@ MAX_TODO_CHARS = 300
 MAX_QUESTION_CHARS = 1_000
 STATUSES = ("pending", "in_progress", "completed")
 TODO_COMPLETION_REMINDER_NAME = "todo_completion_reminder"
-#: Control characters and angle brackets: a todo cannot carry markup that
+#: Angle brackets and their look-alikes: a todo cannot carry markup that
 #: could break out of its untrusted label.
-_FORBIDDEN_IN_TODO = re.compile(r"[\x00-\x1f\x7f<>]")
+_ANGLES = frozenset("<>\uff1c\uff1e\u2039\u203a\u2329\u232a\u27e8\u27e9\u3008\u3009")
+#: Unicode control, format (including bidi overrides) and line/paragraph
+#: separator categories.
+_FORBIDDEN_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp"})
+
+
+def _unsafe(text: str, allow_newline: bool = False) -> bool:
+    for ch in text:
+        if allow_newline and ch == "\n":
+            continue
+        if ch in _ANGLES or unicodedata.category(ch) in _FORBIDDEN_CATEGORIES:
+            return True
+    return False
 #: DeerFlow's cap: after this many completion reminders, the run may finish.
 MAX_COMPLETION_REMINDERS = 2
 
@@ -198,7 +211,7 @@ def validate_todos(arguments: Any) -> Optional[list[Todo]]:
         content, status = item["content"], item["status"]
         if not isinstance(content, str) or not content.strip() or len(content) > MAX_TODO_CHARS:
             return None
-        if _FORBIDDEN_IN_TODO.search(content):
+        if _unsafe(content):
             return None
         if status not in STATUSES:
             return None
@@ -212,7 +225,7 @@ def validate_question(arguments: Any) -> Optional[str]:
     question = arguments["question"]
     if not isinstance(question, str) or not question.strip() or len(question) > MAX_QUESTION_CHARS:
         return None
-    if _FORBIDDEN_IN_TODO.sub("", question.replace("\n", "")) != question.replace("\n", ""):
+    if _unsafe(question, allow_newline=True):
         return None
     return question
 
