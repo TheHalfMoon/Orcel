@@ -26,7 +26,8 @@ one static Orcel message (named "loop_warning") after the tool messages, and
 are restored if that call fails; a hard stop turns the reply into a finish
 whose `stop_reason` is "loop_capped", which the agent reports in its
 `RunResult`. Each decision is emitted to the agent's event log when one is
-given. A planner serves one run: a new goal resets its loop history.
+given. A planner serves one run at a time: a new goal, or any proposal after a
+finish, resets its loop history.
 """
 
 from __future__ import annotations
@@ -133,6 +134,7 @@ class ChatModelPlanner:
         self._loops = loop_detector if loop_detector is not None else (LoopDetector() if detect_loops else None)
         self._events = events
         self._goal: Optional[str] = None
+        self._finished = False
         #: Why the planner finished on its own, if it did ("loop_capped").
         self.stop_reason: Optional[str] = None
 
@@ -145,9 +147,11 @@ class ChatModelPlanner:
         bound = self._model.bind_tools(tool_schemas(tools))
         if (getattr(bound, "config", None) or {}).get("callbacks"):
             return MalformedProposal("the bound model carries callbacks of its own")
-        if self._goal != goal:
-            # A new run: its loop history starts fresh.
+        if self._goal != goal or self._finished:
+            # A new run (a new goal, or anything after a finish): its loop
+            # history and stop reason start fresh.
             self._goal = goal
+            self._finished = False
             self.stop_reason = None
             if self._loops is not None:
                 self._loops.reset()
@@ -172,6 +176,7 @@ class ChatModelPlanner:
             return MalformedProposal("the model produced an unparsable tool call")
         calls = list(reply.tool_calls or [])
         if not calls:
+            self._finished = True
             return Finish(reply.content if isinstance(reply.content, str) else None)
         if len(calls) != 1:
             return MalformedProposal(f"the model proposed {len(calls)} calls; one per step")
@@ -188,5 +193,6 @@ class ChatModelPlanner:
             if decision is not None and decision.hard_stop:
                 # DeerFlow strips the tool call so the run ends with an answer.
                 self.stop_reason = "loop_capped"
+                self._finished = True
                 return Finish(_append_text(reply.content, decision.message), stop_reason="loop_capped")
         return ToolCall(call["name"], dict(call["args"]))

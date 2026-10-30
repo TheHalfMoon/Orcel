@@ -542,6 +542,15 @@ class PlannerIntegration(unittest.TestCase):
         self.assertNotIsInstance(planner.propose("goal two", [], self.tools()), Finish)
         self.assertIsNone(planner.stop_reason)
 
+    def test_a_run_after_a_finish_starts_fresh_even_with_the_same_goal(self):
+        from orcel_agent.planner import Finish
+
+        planner, _ = self.planner_with(*([self.call("/w")] * 6))
+        outcomes = [planner.propose("same goal", [], self.tools()) for _ in range(5)]
+        self.assertEqual(outcomes[-1].stop_reason, "loop_capped")
+        self.assertNotIsInstance(planner.propose("same goal", [], self.tools()), Finish)
+        self.assertIsNone(planner.stop_reason)
+
     def test_detection_can_be_disabled_explicitly(self):
         from orcel_agent.planner import Finish
 
