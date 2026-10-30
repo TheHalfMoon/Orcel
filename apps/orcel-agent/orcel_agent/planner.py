@@ -46,6 +46,9 @@ class Step:
     #: The call's argument digest: lets an `OUTCOME_UNKNOWN` step (whose
     #: arguments are not kept) be matched to the call it stands for.
     arguments_sha256: Optional[str] = None
+    #: Rebuilt from the journal after a resume: arguments and result were
+    #: never kept (SG-000129 slice 2).
+    resumed: bool = False
 
 
 class Planner(Protocol):

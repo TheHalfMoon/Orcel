@@ -51,6 +51,41 @@ READ_ONLY_TOOLS: frozenset[str] = frozenset(
 
 APPROVAL_DENIED = {"APPROVAL_DENIED", "APPROVAL_UNAVAILABLE"}
 
+_JSON_TYPES: dict[str, tuple[type, ...]] = {
+    "string": (str,), "integer": (int,), "number": (int, float), "boolean": (bool,),
+    "array": (list,), "object": (dict,), "null": (type(None),),
+}
+
+
+def arguments_match(schema: dict[str, Any], arguments: dict[str, Any]) -> bool:
+    """SG-000129 slice 2: a proposal's arguments against the tool's own input
+    schema, before dispatch. Required names are present; a name the schema
+    does not declare is refused when the schema closes its properties; and a
+    declared JSON type must match (a boolean is never an integer). orceld
+    validates again; this only keeps a model's malformed call off the wire."""
+    if any(name not in arguments for name in schema.get("required", [])):
+        return False
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        return True
+    for name, value in arguments.items():
+        declared = properties.get(name)
+        if declared is None:
+            if schema.get("additionalProperties") is False:
+                return False
+            continue
+        kinds = declared.get("type") if isinstance(declared, dict) else None
+        if kinds is None:
+            continue
+        allowed: tuple[type, ...] = ()
+        for kind in [kinds] if isinstance(kinds, str) else list(kinds):
+            allowed += _JSON_TYPES.get(kind, ())
+        if not allowed or not isinstance(value, allowed):
+            return False
+        if isinstance(value, bool) and bool not in allowed:
+            return False
+    return True
+
 
 class ToolSource(Protocol):
     def list_tools(self) -> list[ToolSpec]:
@@ -84,6 +119,11 @@ class Agent:
     allowlist: frozenset[str] = READ_ONLY_TOOLS
     max_steps: int = 32
     max_approval_requests: int = 3
+    #: SG-000129, private: set only by `entry.chat_agent`. The gate then
+    #: refuses any allowlist or call outside READ_ONLY_TOOLS, in prepare()
+    #: and in every dispatch. (Defence in depth: ChatModelPlanner refuses
+    #: non-read-only tools on its own.)
+    _read_only_only: bool = False
     steps: list[Step] = field(default_factory=list)
     approval_requests: int = 0
     _dispatched: int = 0
@@ -106,6 +146,8 @@ class Agent:
         off as `OUTCOME_UNKNOWN`. Runs once per agent."""
         if self._prepared:
             return list(self._tools.values())
+        if self._read_only_only and not set(self.allowlist) <= READ_ONLY_TOOLS:
+            raise AgentStop("allowlist-too-wide")
         self._prepared = True
         self._tools = {tool.name: tool for tool in self.edge.list_tools() if tool.name in self.allowlist}
         self.events.emit("run.started", tools=sorted(self._tools))
@@ -135,7 +177,7 @@ class Agent:
                     self._denied = True
             self.steps.append(Step(ToolCall(entry.tool, {}), ok=entry.ok and not unknown,
                                    error_code=OUTCOME_UNKNOWN if unknown else entry.error_code,
-                                   arguments_sha256=entry.arguments_sha256))
+                                   arguments_sha256=entry.arguments_sha256, resumed=True))
             if not entry.answered and not entry.surfaced:
                 self.journal.resolve_unknown(entry.seq)
                 self.events.emit("step.outcome_unknown", step_id=f"resume-{entry.seq}", tool=entry.tool)
@@ -145,14 +187,15 @@ class Agent:
         """Forward one proposed call, under every client-side rule."""
         if not self._prepared:
             raise AgentStop("not-prepared")
+        if self._read_only_only and (self.is_mutating(call.tool) or not set(self.allowlist) <= READ_ONLY_TOOLS):
+            raise AgentStop("proposal-outside-allowlist")
         if self._denied:
             raise AgentStop("approval-denied")
         if call.tool not in self._tools:
             raise AgentStop("proposal-outside-allowlist")
         if not isinstance(call.arguments, dict):
             raise AgentStop("proposal-malformed")
-        required = self._tools[call.tool].input_schema.get("required", [])
-        if any(name not in call.arguments for name in required):
+        if not arguments_match(self._tools[call.tool].input_schema, call.arguments):
             raise AgentStop("proposal-malformed")
         key = (call.tool, digest(call.arguments))
         if key in self._refused:
