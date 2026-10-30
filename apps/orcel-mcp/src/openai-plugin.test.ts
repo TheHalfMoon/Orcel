@@ -229,6 +229,8 @@ test("at most one grain is active (or the founder-sequenced SG-000096/SG-000127 
     );
     return;
   }
+  // The branches below are earlier lawful states, kept as the precedent; while
+  // SG-000129.json exists they cannot pass (their "no other grain" pins fail).
   if (active.length === 3) {
     assert.deepEqual(active, ["SG-000096.json", "SG-000127.json", "SG-000128.json"], `parallel active grains: ${active.join(", ")}`);
     const current = readFileSync(join(repo, "docs", "canonical", "CURRENT.md"), "utf8");

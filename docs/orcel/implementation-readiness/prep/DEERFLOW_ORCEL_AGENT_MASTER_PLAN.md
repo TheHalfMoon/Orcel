@@ -3,8 +3,8 @@
 **Status: PLAN, revision 3 (no capability activated, no code imported).**
 **Update, 2026-10-30:** M1 merged (#534). The owning grain's activation
 packet is `SG-000129.md` (spec `.specgrain/specs/SG-000129.json`, issue
-#536). It covers M2 and M3, and narrows row 13: the M1 client stays the only
-edge session (packet section 5).
+#536). It covers M2 and M3, and replaces row 13: no MCP library is admitted
+and the M1 stdlib client stays the only edge session (packet section 5).
 This document records the founder-directed investigation of ByteDance
 DeerFlow 2.0, made under the directive "DEERFLOW 2.0 FULL COPY-FIRST
 RESEARCH, ARCHITECTURE AND ENGINEERING AUTHORIZATION" (2026-10-30). This PR,
