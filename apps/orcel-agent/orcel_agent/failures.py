@@ -62,6 +62,19 @@ UNKNOWN_OUTCOME_TEXT = (
 )
 
 
+RESUMED_TEXT = "RESULT NOT KEPT: this call completed before a resume; its arguments and result are unknown. Observe again."
+
+
+def non_success_text(ok: bool, error_code: object, resumed: bool) -> str | None:
+    """The model-facing text for any step that is not a plain success (the
+    same text whether or not the step is later compacted), else None."""
+    if error_code == OUTCOME_UNKNOWN or not ok:
+        return failure_text(error_code)
+    if resumed:
+        return RESUMED_TEXT
+    return None
+
+
 def failure_code(code: object) -> str:
     """A code the model may see: a known FailureCode, OUTCOME_UNKNOWN, or
     INTERNAL_ERROR for anything else."""
