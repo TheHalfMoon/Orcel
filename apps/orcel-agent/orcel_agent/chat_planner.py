@@ -49,6 +49,25 @@ from .journal import OUTCOME_UNKNOWN
 from .loop_detection import LoopDetector
 from .output_budget import preview_tool_output
 from .planner import Finish, Proposal, Step, ToolCall
+from .todos import (
+    ASK_CLARIFICATION,
+    INTERNAL_TOOLS,
+    MAX_COMPLETION_REMINDERS,
+    TODO_REMINDER_MESSAGE_NAME,
+    TODO_SYSTEM_PROMPT,
+    WRITE_TODOS,
+    PlanningState,
+    _format_completion_reminder,
+    _has_tool_call_intent_or_error,
+    internal_tool_schemas,
+    todo_reminder,
+    validate_question,
+    validate_todos,
+)
+
+#: Model calls one proposal may make (todo updates and completion reminders
+#: happen inside a proposal, without dispatching anything).
+MAX_INTERNAL_TURNS = 4
 
 #: Static Orcel text: the only instructions the model receives.
 SYSTEM_PROMPT = (
@@ -154,72 +173,123 @@ class ChatModelPlanner:
     label = "langchain-chat-model"
 
     def __init__(self, model: BaseChatModel, loop_detector: Optional[LoopDetector] = None,
-                 events: Optional[EventLog] = None, *, detect_loops: bool = True) -> None:
+                 events: Optional[EventLog] = None, *, detect_loops: bool = True, planning: bool = True) -> None:
         if getattr(model, "callbacks", None):
             raise ValueError("a model with its own callbacks could trace or forward the conversation")
         self._model = model
         self._loops = loop_detector if loop_detector is not None else (LoopDetector() if detect_loops else None)
         self._events = events
         self._goal: Optional[str] = None
+        #: SG-000129 slice 4b: todos and clarification, planner-internal.
+        self._planning = planning
+        self._plan = PlanningState()
         self._finished = False
         #: Why the planner finished on its own, if it did ("loop_capped").
         self.stop_reason: Optional[str] = None
+
+    def _invoke(self, bound: Any, messages: list[BaseMessage]) -> Any:
+        token = tracing_v2_callback_var.set(None)
+        try:
+            with tracing_context(enabled=False):
+                return bound.invoke(messages, config={"callbacks": []})
+        finally:
+            tracing_v2_callback_var.reset(token)
 
     def propose(self, goal: str, steps: Sequence[Step], tools: Sequence[ToolSpec]) -> Proposal | MalformedProposal:
         wider = sorted(tool.name for tool in tools if tool.name not in READ_ONLY_TOOLS)
         if wider:
             return MalformedProposal(f"offered tools outside the read-only set: {wider}")
+        if any(tool.name in INTERNAL_TOOLS for tool in tools):
+            return MalformedProposal("an edge tool shadows a planner-internal tool name")
         if getattr(self._model, "callbacks", None):
             return MalformedProposal("the model carries callbacks of its own")
-        bound = self._model.bind_tools(tool_schemas(tools))
+        schemas = tool_schemas(tools) + (internal_tool_schemas() if self._planning else [])
+        bound = self._model.bind_tools(schemas)
         if (getattr(bound, "config", None) or {}).get("callbacks"):
             return MalformedProposal("the bound model carries callbacks of its own")
         if self._goal != goal or self._finished:
             # A new run (a new goal, or anything after a finish): its loop
-            # history and stop reason start fresh.
+            # history, plan and stop reason start fresh.
             self._goal = goal
             self._finished = False
             self.stop_reason = None
+            self._plan.reset()
             if self._loops is not None:
                 self._loops.reset()
         messages = conversation(goal, steps)
+        if self._planning:
+            messages[0] = SystemMessage(SYSTEM_PROMPT + "\n\n" + TODO_SYSTEM_PROMPT)
+            if self._plan.todos:
+                messages.append(HumanMessage(todo_reminder(self._plan.todos), name=TODO_REMINDER_MESSAGE_NAME))
         warnings = self._loops.drain_warnings() if self._loops is not None else []
         if warnings:
             # After every tool message, so call/result pairing stays intact.
             messages.append(HumanMessage(LoopDetector.format_warning_message(warnings), name="loop_warning"))
-        token = tracing_v2_callback_var.set(None)
-        try:
-            with tracing_context(enabled=False):
-                reply = bound.invoke(messages, config={"callbacks": []})
-        except Exception:
-            if self._loops is not None:
-                self._loops.restore_warnings(warnings)
-            raise
-        finally:
-            tracing_v2_callback_var.reset(token)
-        if not isinstance(reply, AIMessage):
-            return MalformedProposal("the model did not reply with a message")
-        if getattr(reply, "invalid_tool_calls", None):
-            return MalformedProposal("the model produced an unparsable tool call")
-        calls = list(reply.tool_calls or [])
-        if not calls:
-            self._finished = True
-            return Finish(reply.content if isinstance(reply.content, str) else None)
-        if len(calls) != 1:
-            return MalformedProposal(f"the model proposed {len(calls)} calls; one per step")
-        call = calls[0]
-        if not isinstance(call.get("name"), str) or not isinstance(call.get("args"), dict):
-            return MalformedProposal("the model's tool call has no name or arguments")
-        if call["name"] not in READ_ONLY_TOOLS:
-            return MalformedProposal(f"proposed {call['name']}, which is not read-only")
-        if self._loops is not None:
-            decision = self._loops.track([{"name": call["name"], "args": dict(call["args"])}])
-            if decision is not None and self._events is not None:
-                self._events.emit(f"loop.{decision.action}", layer=decision.detection_layer,
-                                  tools=list(decision.tool_names), count=decision.count, threshold=decision.threshold)
-            if decision is not None and decision.hard_stop:
-                # DeerFlow strips the tool call so the run ends with an answer.
-                self.stop_reason = "loop_capped"
+        for turn in range(MAX_INTERNAL_TURNS):
+            try:
+                reply = self._invoke(bound, messages)
+            except Exception:
+                if turn == 0 and self._loops is not None:
+                    self._loops.restore_warnings(warnings)
+                raise
+            if not isinstance(reply, AIMessage):
+                return MalformedProposal("the model did not reply with a message")
+            if getattr(reply, "invalid_tool_calls", None):
+                return MalformedProposal("the model produced an unparsable tool call")
+            calls = list(reply.tool_calls or [])
+            if not calls:
+                if (self._planning and self._plan.incomplete() and not _has_tool_call_intent_or_error(reply)
+                        and self._plan.completion_reminders < MAX_COMPLETION_REMINDERS):
+                    # DeerFlow's premature-exit guard: remind, then ask again.
+                    self._plan.completion_reminders += 1
+                    messages = messages + [reply, HumanMessage(_format_completion_reminder(self._plan.todos),
+                                                               name=TODO_REMINDER_MESSAGE_NAME)]
+                    continue
                 self._finished = True
-                return Finish(_append_text(reply.content, decision.message), stop_reason="loop_capped")
-        return ToolCall(call["name"], dict(call["args"]))
+                return Finish(reply.content if isinstance(reply.content, str) else None)
+            if len(calls) != 1:
+                return MalformedProposal(f"the model proposed {len(calls)} calls; one per step")
+            call = calls[0]
+            if not isinstance(call.get("name"), str) or not isinstance(call.get("args"), dict):
+                return MalformedProposal("the model's tool call has no name or arguments")
+            if self._planning and call["name"] == WRITE_TODOS:
+                if not isinstance(call.get("id"), str) or not call.get("id"):
+                    return MalformedProposal("a write_todos call without an id")
+                todos = validate_todos(call["args"])
+                if todos is None:
+                    result = "write_todos refused: the list is invalid (at most 20 items, each a non-empty content " \
+                             "of at most 300 characters and a status of pending, in_progress or completed)."
+                    status = "error"
+                else:
+                    self._plan.todos = todos
+                    result = "Updated todo list."
+                    status = "success"
+                    if self._events is not None:
+                        self._events.emit("plan.todos", items=len(todos),
+                                          completed=sum(1 for t in todos if t["status"] == "completed"))
+                messages = messages + [reply, ToolMessage(content=result, tool_call_id=call["id"], name=WRITE_TODOS,
+                                                          status=status)]
+                continue
+            if self._planning and call["name"] == ASK_CLARIFICATION:
+                question = validate_question(call["args"])
+                if question is None:
+                    return MalformedProposal("an invalid clarification question")
+                # A question ends the run; it is never consent to act.
+                self.stop_reason = "needs_clarification"
+                self._finished = True
+                return Finish(question, stop_reason="needs_clarification")
+            if call["name"] not in READ_ONLY_TOOLS:
+                return MalformedProposal(f"proposed {call['name']}, which is not read-only")
+            if self._loops is not None:
+                decision = self._loops.track([{"name": call["name"], "args": dict(call["args"])}])
+                if decision is not None and self._events is not None:
+                    self._events.emit(f"loop.{decision.action}", layer=decision.detection_layer,
+                                      tools=list(decision.tool_names), count=decision.count,
+                                      threshold=decision.threshold)
+                if decision is not None and decision.hard_stop:
+                    # DeerFlow strips the tool call so the run ends with an answer.
+                    self.stop_reason = "loop_capped"
+                    self._finished = True
+                    return Finish(_append_text(reply.content, decision.message), stop_reason="loop_capped")
+            return ToolCall(call["name"], dict(call["args"]))
+        return MalformedProposal(f"{MAX_INTERNAL_TURNS} planning turns without a tool call or an answer")

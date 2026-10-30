@@ -17,6 +17,23 @@ decisions and roadmap:
   - a license table and an advisory audit;
   - tracing forced off.
 
+## Todos and clarification (SG-000129 M3 slice 4b)
+
+`write_todos` and `ask_clarification` are planner-internal tools. They are
+never sent to the edge or journalled.
+
+- **Todos.** They are bounded (20 items, 300 characters each). Each later
+  step shows the list to the model as its own untrusted notes, which
+  authorize nothing.
+- **Finishing early.** Finishing with open todos gets DeerFlow's completion
+  reminder, at most twice per run.
+- **Clarification.** A clarification question ends the run with
+  `stop_reason` "needs_clarification". It is never consent.
+- **Bound.** A proposal makes at most 4 model calls.
+- **Provenance.** LangChain's `write_todos` prompt is reused, and parts of
+  DeerFlow's todo middleware are copied. Details are in `orcel_agent/todos.py`
+  and `third_party/PROVENANCE.json`.
+
 ## Failures and unknown outcomes (SG-000129 M3 slice 4a2)
 
 - **Refusals.** A refused or failed call reaches the model as an

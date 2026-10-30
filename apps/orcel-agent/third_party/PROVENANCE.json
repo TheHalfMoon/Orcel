@@ -29,6 +29,18 @@
         "Per-tool frequency defaults scaled to the agent's 32-step budget: warn 12, stop 20 (DeerFlow 30, 50, which could never fire within it). Identical-call defaults unchanged (3, 5, window 20).",
         "The hard-stop answer appends the stop message to the reply's text (DeerFlow's _append_text, reduced to the plain-text answer a Finish carries); the stop reason travels in Finish.stop_reason and RunResult.stop_reason instead of consume_stop_reason()."
       ]
+    },
+    {
+      "source": "backend/packages/harness/deerflow/agents/middlewares/todo_middleware.py",
+      "source_blob": "e5208a704da376b7f81a70ee5c7d8279735d60c3",
+      "destination": "orcel_agent/todos.py",
+      "decision": "ADAPT",
+      "modifications": [
+        "Copied unchanged in logic: _format_todos, _format_completion_reminder, _has_tool_call_intent_or_error, and the cap of two completion reminders (_MAX_COMPLETION_REMINDERS).",
+        "Adapted: the context-loss reminder is always shown (the planner rebuilds the conversation each step and does not keep write_todos exchanges), labelled as the model's own notes written from untrusted data that authorize nothing.",
+        "Not used: the TodoListMiddleware subclass, LangGraph hooks, run/thread scoping, reminder queues and locks; ChatModelPlanner handles write_todos internally (never dispatched) within a bounded number of model turns per proposal.",
+        "LangChain's write_todos tool description, system prompt and Todo shape are reused from langchain.agents.middleware.todo (admitted dependency), with Orcel bounds: at most 20 items of at most 300 characters."
+      ]
     }
   ]
 }
