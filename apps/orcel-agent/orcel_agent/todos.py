@@ -296,6 +296,21 @@ class PlanningState:
     def incomplete(self) -> bool:
         return any(todo.get("status") != "completed" for todo in self.todos)
 
+    def snapshot(self) -> dict:
+        return {"todos": list(self.todos), "completion_reminders": self.completion_reminders}
+
+    def restore(self, data: Any) -> None:
+        """Load a snapshot; ValueError if it is not one. Todos are validated
+        again, exactly as a write_todos call is."""
+        if not isinstance(data, dict):
+            raise ValueError("plan snapshot: expected an object")
+        todos = validate_todos({"todos": data.get("todos")})
+        reminders = data.get("completion_reminders")
+        if todos is None or not isinstance(reminders, int) or isinstance(reminders, bool) \
+                or not 0 <= reminders <= MAX_COMPLETION_REMINDERS:
+            raise ValueError("plan snapshot: bad todos or reminder count")
+        self.todos, self.completion_reminders = todos, reminders
+
     def reset(self) -> None:
         self.todos = []
         self.completion_reminders = 0

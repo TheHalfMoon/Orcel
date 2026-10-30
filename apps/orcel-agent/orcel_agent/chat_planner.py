@@ -54,6 +54,7 @@ from .compaction import (
     has_success,
     summary_input,
 )
+from .checkpoint import PlannerCheckpoint
 from .events import EventLog
 from .failures import failure_text, non_success_text
 from .journal import OUTCOME_UNKNOWN
@@ -208,7 +209,8 @@ class ChatModelPlanner:
 
     def __init__(self, model: BaseChatModel, loop_detector: Optional[LoopDetector] = None,
                  events: Optional[EventLog] = None, *, detect_loops: bool = True, planning: bool = True,
-                 compactor: Optional[Compactor] = None, compaction: bool = True) -> None:
+                 compactor: Optional[Compactor] = None, compaction: bool = True,
+                 checkpoint: Optional[PlannerCheckpoint] = None) -> None:
         if getattr(model, "callbacks", None):
             raise ValueError("a model with its own callbacks could trace or forward the conversation")
         self._model = model
@@ -220,6 +222,9 @@ class ChatModelPlanner:
         self._plan = PlanningState()
         #: SG-000129 slice 4c: bounded context, failures kept verbatim.
         self._compactor = compactor if compactor is not None else (Compactor() if compaction else None)
+        #: SG-000129 slice 5: the planner's memory survives a restart.
+        self._checkpoint = checkpoint
+        self._restored = False
         self._finished = False
         #: Why the planner finished on its own, if it did ("loop_capped").
         self.stop_reason: Optional[str] = None
@@ -269,7 +274,56 @@ class ChatModelPlanner:
         summary = self._compactor.summary if self._compactor.covered else None
         return older, summary
 
+    def state(self) -> dict[str, Any]:
+        """The planner's memory, as JSON data."""
+        return {
+            "goal": self._goal, "finished": self._finished, "stop_reason": self.stop_reason,
+            "plan": self._plan.snapshot(),
+            "loops": self._loops.snapshot() if self._loops is not None else None,
+            "compaction": self._compactor.snapshot() if self._compactor is not None else None,
+        }
+
+    def restore(self, data: dict[str, Any]) -> None:
+        """Load the planner's memory; StoreError if it is not valid."""
+        from .store import StoreError
+
+        import copy
+
+        # Validated into copies first, so a bad checkpoint changes nothing.
+        try:
+            goal, finished, stop_reason = data.get("goal"), data.get("finished"), data.get("stop_reason")
+            if (goal is not None and not isinstance(goal, str)) or not isinstance(finished, bool) \
+                    or stop_reason not in (None, "loop_capped", "needs_clarification", "todos_incomplete"):
+                raise ValueError("planner snapshot: bad header")
+            plan = copy.deepcopy(self._plan)
+            plan.restore(data.get("plan"))
+            loops = copy.deepcopy(self._loops)
+            if loops is not None and data.get("loops") is not None:
+                loops.restore(data["loops"])
+            compactor = copy.deepcopy(self._compactor)
+            if compactor is not None and data.get("compaction") is not None:
+                compactor.restore(data["compaction"])
+        except ValueError as error:
+            raise StoreError(f"the planner checkpoint is invalid: {error}") from error
+        self._plan, self._loops, self._compactor = plan, loops, compactor
+        # A restored finished run, or a different goal, starts fresh at the
+        # next proposal (the journal still decides what was dispatched).
+        self._goal, self._finished, self.stop_reason = goal, finished, stop_reason
+
     def propose(self, goal: str, steps: Sequence[Step], tools: Sequence[ToolSpec]) -> Proposal | MalformedProposal:
+        """One proposal; with a checkpoint, the planner's memory is restored
+        once before the first and saved after every proposal."""
+        if self._checkpoint is not None and not self._restored:
+            saved = self._checkpoint.load()
+            if saved is not None:
+                self.restore(saved)
+            self._restored = True
+        result = self._propose(goal, steps, tools)
+        if self._checkpoint is not None:
+            self._checkpoint.save(self.state())
+        return result
+
+    def _propose(self, goal: str, steps: Sequence[Step], tools: Sequence[ToolSpec]) -> Proposal | MalformedProposal:
         wider = sorted(tool.name for tool in tools if tool.name not in READ_ONLY_TOOLS)
         if wider:
             return MalformedProposal(f"offered tools outside the read-only set: {wider}")

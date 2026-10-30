@@ -11,8 +11,10 @@ One directory per run under a private root:
 - **Deleted on completion** by the agent (`Agent.run`), unless kept for
   resume.
 
-It holds only the dispatch journal: tool names, argument digests and error
-codes, never tool results, file contents or screenshots.
+It holds the dispatch journal (tool names, argument digests and error codes)
+and, from SG-000129 slice 5, the planner checkpoint (planner.sqlite: todos,
+loop history and a compaction summary derived from tool results). Never raw
+results, file contents or screenshots.
 """
 
 from __future__ import annotations

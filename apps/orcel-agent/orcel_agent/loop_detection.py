@@ -42,7 +42,7 @@ import hashlib
 import json
 from collections import Counter, deque
 from dataclasses import dataclass, field
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 # Defaults: DeerFlow's identical-call thresholds; per-tool frequency scaled
 # to the agent's 32-step budget (DeerFlow: 30 and 50).
@@ -278,6 +278,34 @@ class LoopDetector:
     def format_warning_message(warnings: list[str]) -> str:
         """Merge pending warnings into one prompt message."""
         return "\n\n".join(dict.fromkeys(warnings))
+
+    def snapshot(self) -> dict:
+        """The detection state, as JSON data (SG-000129 slice 5)."""
+        # Not saved: queued warnings (they would come back in the person's
+        # voice) and the per-tool counter (rebuilt from the tool names).
+        return {"history": list(self._history), "warned": sorted(self._warned),
+                "tool_names": list(self._tool_name_history), "freq_warned": sorted(self._tool_freq_warned)}
+
+    def restore(self, data: Any) -> None:
+        """Load a snapshot; ValueError if it is not one."""
+        def strings(value: Any) -> list:
+            if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+                raise ValueError("loop snapshot: expected a list of strings")
+            return value
+
+        if not isinstance(data, dict) or set(data) != {"history", "warned", "tool_names", "freq_warned"}:
+            raise ValueError("loop snapshot: expected exactly its four fields")
+        history, names = strings(data.get("history")), strings(data.get("tool_names"))
+        for key in ("warned", "freq_warned"):
+            strings(data.get(key))
+        if len(history) > self.window_size or len(names) > self._tool_freq_window:
+            raise ValueError("loop snapshot: larger than its windows")
+        self._history = history
+        self._tool_name_history = deque(names)
+        self._tool_name_counter = Counter(names)
+        # Warnings re-arm: one queued but not yet shown when the state was
+        # saved is not lost (a repeated warning is harmless).
+        self._warned, self._tool_freq_warned, self._pending = set(), set(), []
 
     def reset(self) -> None:
         """Forget every run's history (a new run starts fresh)."""

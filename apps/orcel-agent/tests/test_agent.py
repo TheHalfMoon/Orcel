@@ -441,8 +441,9 @@ class SourceBoundary(unittest.TestCase):
     # SG-000129: third-party imports are admitted by name, each in one named
     # module only (the recorded decision on the source scan).
     MODULE_IMPORTS = {
-        "chat_planner.py": {"langchain_core", "langsmith"},  # slice 2, path inside orcel_agent/
+        "chat_planner.py": {"langchain_core", "langsmith", "copy"},  # slice 2; copy: slice 5 atomic restore
         "loop_detection.py": {"collections"},  # slice 3 (standard library)
+        "checkpoint.py": {"sqlite3"},  # slice 5 (standard library)
         "todos.py": {"langchain_core", "unicodedata"},  # slice 4b (LangChain's todo text is copied, not imported)
     }
     # SG-000129: never imported by the agent, whatever a later slice admits
