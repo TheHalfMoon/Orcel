@@ -662,6 +662,7 @@ mod tests {
         let mut named = Vec::new();
         for path in &files {
             if *path == crate_dir.join("src").join("unix_policy.rs")
+                || *path == crate_dir.join("src").join("unix_rehearsal.rs")
                 || *path == crate_dir.join("src").join("lib.rs")
             {
                 continue;
@@ -696,6 +697,12 @@ mod tests {
         assert_eq!(code.len(), 1, "lib.rs names the module once: {mentions:?}");
         assert_eq!(lines[code[0]], "mod unix_policy;");
         assert_eq!(lines[code[0] - 1], "#[cfg(test)]");
+        // A6's rehearsal (recorded rule change, prep/SG-000115.md) composes
+        // this module; it is admitted only while declared once, private,
+        // under the Unix test cfg.
+        assert_eq!(lib.matches("mod unix_rehearsal;").count(), 1);
+        assert!(!lib.contains("pub mod unix_rehearsal"));
+        assert!(lib.contains("#[cfg(all(test, unix))]\nmod unix_rehearsal;\n"));
 
         let confinement = normalized(&crate_dir.join("src/confinement.rs"));
         let (_, after) = confinement

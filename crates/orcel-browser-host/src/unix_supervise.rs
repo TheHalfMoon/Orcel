@@ -42,6 +42,9 @@
 //!   (automatic reaping); nothing in this crate does.
 //! - **Family bound.** `MAX_FAMILY` must be qualified against a real Chrome
 //!   or Edge tree; exceeding it fails closed.
+//! - **Fixture constructor.** `python_fixture` evaluates a fixed Python
+//!   string; it is `#[cfg(test)]` on its own and must never reach a
+//!   production build.
 
 use std::collections::BTreeMap;
 use std::os::unix::process::CommandExt;
@@ -218,6 +221,18 @@ impl Supervised {
             std::thread::sleep(Duration::from_millis(20));
         }
     }
+}
+
+/// A `python3` fixture running `code` (no shell: SG-000085 bans shell tokens
+/// in this crate's sources, tests included). The single fixture constructor
+/// for this module's tests and the A6 rehearsal (`unix_rehearsal.rs`), so
+/// that module needs no spawn of its own. Explicitly `cfg(test)`, so it
+/// stays test-only if activation ever lifts this module's cfg.
+#[cfg(test)]
+pub(crate) fn python_fixture(code: &str) -> Command {
+    let mut command = Command::new("python3");
+    command.arg("-c").arg(code);
+    command
 }
 
 /// Signal a member only while its start time still matches (no reused pid).
@@ -449,12 +464,8 @@ mod tests {
 
     const DEADLINE: Duration = Duration::from_secs(10);
 
-    /// A `python3` fixture (no shell: SG-000085 bans shell tokens in this
-    /// crate's sources, tests included).
     fn python(code: &str) -> Command {
-        let mut command = Command::new("python3");
-        command.arg("-c").arg(code);
-        command
+        python_fixture(code)
     }
 
     /// The root and two `sleep` children, all in the root's group.
@@ -714,7 +725,10 @@ mod tests {
         let mut named = Vec::new();
         for entry in std::fs::read_dir(&src).unwrap() {
             let path = entry.unwrap().path();
-            if path == src.join("unix_supervise.rs") || path == src.join("lib.rs") {
+            if path == src.join("unix_supervise.rs")
+                || path == src.join("unix_rehearsal.rs")
+                || path == src.join("lib.rs")
+            {
                 continue;
             }
             let text = std::fs::read_to_string(&path).unwrap_or_default();
@@ -727,6 +741,12 @@ mod tests {
             .unwrap()
             .replace("\r\n", "\n");
         assert!(lib.contains("#[cfg(all(test, unix))]\nmod unix_supervise;\n"));
+        // A6's rehearsal (recorded rule change, prep/SG-000115.md) composes
+        // this module; it is admitted only while declared once, private,
+        // under the Unix test cfg.
+        assert_eq!(lib.matches("mod unix_rehearsal;").count(), 1);
+        assert!(!lib.contains("pub mod unix_rehearsal"));
+        assert!(lib.contains("#[cfg(all(test, unix))]\nmod unix_rehearsal;\n"));
         assert_eq!(
             lib.matches("unix_supervise").count(),
             2,
