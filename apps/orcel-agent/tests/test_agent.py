@@ -320,8 +320,9 @@ class PrivateStore(Scratch):
         allowed = {user_sid, "SY", "BA", "S-1-5-18", "S-1-5-32-544"}
         # SDDL names the built-in Administrator and Guest by alias (a CI
         # runner may be the built-in Administrator).
-        aliases = {"-500": "LA", "-501": "LG"}
-        user_forms = {user_sid} | {alias for rid, alias in aliases.items() if user_sid.endswith(rid)}
+        aliases = {"500": "LA", "501": "LG"}
+        user_forms = {user_sid} | ({aliases[user_sid.rsplit("-", 1)[1]]}
+                                   if user_sid.rsplit("-", 1)[1] in aliases else set())
         allowed |= user_forms
         for path, inherited in ((self.root, False), (store.directory, False), (store.journal_path, True)):
             saved = Path(self._dir.name) / "acl.txt"

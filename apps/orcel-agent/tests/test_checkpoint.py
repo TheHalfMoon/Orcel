@@ -103,7 +103,8 @@ class Checkpoint(Scratch):
             sddl = saved.read_bytes().decode("utf-16")
             aces = re.findall(r"\(([^;()]*);([^;()]*);[^;()]*;[^;()]*;[^;()]*;([^;()]*)\)", sddl)
             self.assertTrue(aces, sddl)
-            forms = {user} | ({"LA"} if user.endswith("-500") else set()) | ({"LG"} if user.endswith("-501") else set())
+            rid = user.rsplit("-", 1)[1]
+            forms = {user} | ({"LA"} if rid == "500" else set()) | ({"LG"} if rid == "501" else set())
             for kind, _flags, sid in aces:
                 self.assertEqual(kind, "A", sddl)
                 self.assertIn(sid, forms | {"SY", "BA", "S-1-5-18", "S-1-5-32-544"}, sddl)
