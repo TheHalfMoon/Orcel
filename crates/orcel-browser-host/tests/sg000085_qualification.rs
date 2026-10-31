@@ -1241,6 +1241,15 @@ fn no_shell_script_or_remote_process_surface_exists() {
             && !lib.contains(&format!("pub mod {module}"))
             && lib.contains(&format!("#[cfg(all(test, unix))]\nmod {module};\n"))
     };
+    let discovery = sources
+        .iter()
+        .find(|(file, _)| file == "discovery.rs")
+        .map(|(_, text)| text.replace("\r\n", "\n"))
+        .expect("discovery.rs is a crate source");
+    let linux_tests_only = discovery.matches("mod linux_tests;").count() == 1
+        && discovery.contains(
+            "#[cfg(all(test, not(windows), not(target_os = \"macos\")))]\n#[path = \"discovery_linux_tests.rs\"]\nmod linux_tests;\n",
+        );
     for (file, text) in &sources {
         if text.contains("Command::new") {
             assert!(
@@ -1248,6 +1257,10 @@ fn no_shell_script_or_remote_process_surface_exists() {
                     || file == "discovery.rs"
                     || file == "worker_launch_tests.rs"
                     || file == "discovery_macos_tests.rs"
+                    // SG-000115 S-07 (recorded rule change, prep/SG-000115.md):
+                    // the Linux verifier's dpkg fixture tests, admitted only
+                    // while discovery.rs declares them under the test cfg.
+                    || (file == "discovery_linux_tests.rs" && linux_tests_only)
                     || (file == "unix_supervise.rs" && unix_test_only("unix_supervise"))
                     || (file == "unix_cleanup.rs" && unix_test_only("unix_cleanup")),
                 "unexpected process spawn in {file}"

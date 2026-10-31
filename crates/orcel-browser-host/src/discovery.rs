@@ -599,11 +599,12 @@ fn verify_publisher(path: &Path) -> Result<bool, HostError> {
 /// only file digests (md5 for dpkg) and is only as trustworthy as the root
 /// account that wrote it (recorded in the SG-000074 note).
 ///
-/// SG-000115 S-07 hardening: before the package database is asked anything,
-/// the engine, every directory above it and everything in its install
-/// directory must be owned by root and writable by no one else
-/// (`install_tree_trusted`). The package check is a moment in time; a file
-/// or directory another account can write could be swapped after it.
+/// SG-000115 S-07 hardening: the engine, every directory above it and
+/// everything in its install directory must also be owned by root and
+/// writable by no one else (`install_tree_trusted`). The package check is a
+/// moment in time; a file or directory another account can write could be
+/// swapped after it. The tree check can only turn a pass into "unverified":
+/// a refusal stays a refusal.
 #[cfg(all(not(windows), not(target_os = "macos")))]
 fn verify_publisher(path: &Path) -> Result<bool, HostError> {
     verify_publisher_in(path, &PackageDb::production())
@@ -645,9 +646,10 @@ fn verify_publisher_in(path: &Path, db: &PackageDb) -> Result<bool, HostError> {
     let Some(code_path) = real.parent() else {
         return Ok(false);
     };
-    if !install_tree_trusted(&real, code_path, db) {
-        return Ok(false);
-    }
+    // Computed first, applied last: it can only turn a verified engine into
+    // an unverified one. A vendor package whose files fail the package check
+    // is still refused (`UnsupportedEngine`), exactly as before.
+    let tree_ok = install_tree_trusted(&real, code_path, db);
     // The paths as the package database records them.
     let (real_text, code_dir) = match &db.root {
         None => (
@@ -702,7 +704,8 @@ fn verify_publisher_in(path: &Path, db: &PackageDb) -> Result<bool, HostError> {
             return dpkg_verdict(
                 run_package_tool("dpkg", &verify, VERIFY_DEADLINE),
                 &code_dir,
-            );
+            )
+            .map(|verified| verified && tree_ok);
         }
         PackageRun::TimedOut => return Err(verification_timed_out()),
         PackageRun::Finished { .. } | PackageRun::Unavailable => {}
@@ -729,6 +732,7 @@ fn verify_publisher_in(path: &Path, db: &PackageDb) -> Result<bool, HostError> {
                 run_package_tool("rpm", &["-V", package], VERIFY_DEADLINE),
                 &code_dir,
             )
+            .map(|verified| verified && tree_ok)
         }
         PackageRun::TimedOut => Err(verification_timed_out()),
         PackageRun::Finished { .. } | PackageRun::Unavailable => Ok(false),
@@ -787,13 +791,10 @@ fn install_tree_trusted(engine: &Path, code_dir: &Path, db: &PackageDb) -> bool 
                 return false;
             };
             if meta.file_type().is_symlink() {
-                // The link itself must be ours, and what it names must be
-                // inside the install directory (and so walked too).
-                let inside = path
-                    .canonicalize()
-                    .map(|target| target.starts_with(code_dir))
-                    .unwrap_or(false);
-                if meta.uid() != db.owner || !inside {
+                // The link itself must be ours, and every hop of its chain
+                // must stay inside the install directory (each target is
+                // then walked too).
+                if meta.uid() != db.owner || !link_stays_inside(&path, code_dir) {
                     return false;
                 }
                 continue;
@@ -807,6 +808,41 @@ fn install_tree_trusted(engine: &Path, code_dir: &Path, db: &PackageDb) -> bool 
         }
     }
     true
+}
+
+/// Whether every hop of the link chain starting at `link` stays inside
+/// `code_dir`: each target must be relative and made only of plain names
+/// (no `/` root, no `..`), and the chain must end within a few hops at an
+/// existing entry. A chain through any outside path could be re-pointed
+/// after the check.
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn link_stays_inside(link: &Path, code_dir: &Path) -> bool {
+    use std::path::Component;
+    let mut current = link.to_path_buf();
+    for _ in 0..8 {
+        let Ok(target) = std::fs::read_link(&current) else {
+            return false;
+        };
+        if !target
+            .components()
+            .all(|part| matches!(part, Component::Normal(_)))
+        {
+            return false;
+        }
+        let Some(dir) = current.parent() else {
+            return false;
+        };
+        current = dir.join(target);
+        if !current.starts_with(code_dir) {
+            return false;
+        }
+        match std::fs::symlink_metadata(&current) {
+            Ok(meta) if meta.file_type().is_symlink() => continue,
+            Ok(_) => return true,
+            Err(_) => return false,
+        }
+    }
+    false
 }
 
 /// #503: how long a package ownership query (`dpkg-query -S`, `rpm -qf`)
@@ -1023,239 +1059,15 @@ fn app_paths_executable(name: &str) -> Option<PathBuf> {
     windows::app_paths_executable(name)
 }
 
+/// SG-000115 S-07: the Linux verifier against a real dpkg (fixture
+/// packages; test builds only).
+#[cfg(all(test, not(windows), not(target_os = "macos")))]
+#[path = "discovery_linux_tests.rs"]
+mod linux_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// SG-000115 S-07: a vendor package built and installed by an
-    /// unprivileged dpkg into a private root (`--force-not-root --root`), so
-    /// the real `dpkg-query -S` and `dpkg --verify` path is exercised end to
-    /// end. Skipped where dpkg is not installed.
-    #[cfg(all(not(windows), not(target_os = "macos")))]
-    mod s07 {
-        use super::*;
-        use std::os::unix::fs::{MetadataExt, PermissionsExt};
-        use std::process::Command;
-
-        struct Fixture {
-            dir: PathBuf,
-            root: PathBuf,
-        }
-
-        impl Drop for Fixture {
-            fn drop(&mut self) {
-                // Writable again, so a test that removed write bits can be
-                // cleaned up.
-                let _ = Command::new("chmod")
-                    .args(["-R", "u+w"])
-                    .arg(&self.dir)
-                    .status();
-                let _ = std::fs::remove_dir_all(&self.dir);
-            }
-        }
-
-        fn tool(program: &str) -> bool {
-            Command::new(program)
-                .arg("--version")
-                .output()
-                .map(|out| out.status.success())
-                .unwrap_or(false)
-        }
-
-        /// `google-chrome-stable` with an engine and a library under
-        /// /opt/google/chrome, installed into a private root. `None` where
-        /// dpkg is absent.
-        fn installed(name: &str) -> Option<Fixture> {
-            if !tool("dpkg") || !tool("dpkg-deb") {
-                eprintln!("dpkg is not installed: the S-07 fixture tests are skipped");
-                return None;
-            }
-            let dir = std::env::temp_dir().join(format!("orcel-s07-{}-{name}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&dir);
-            let pkg = dir.join("pkg");
-            let root = dir.join("root");
-            std::fs::create_dir_all(pkg.join("DEBIAN")).unwrap();
-            std::fs::create_dir_all(pkg.join("opt/google/chrome")).unwrap();
-            for sub in ["var/lib/dpkg/info", "var/lib/dpkg/updates"] {
-                std::fs::create_dir_all(root.join(sub)).unwrap();
-            }
-            std::fs::write(root.join("var/lib/dpkg/status"), "").unwrap();
-            std::fs::write(
-                pkg.join("DEBIAN/control"),
-                "Package: google-chrome-stable\nVersion: 1.0\nArchitecture: all\n\
-                 Maintainer: fixture <fixture@example.invalid>\nDescription: S-07 fixture\n",
-            )
-            .unwrap();
-            std::fs::write(pkg.join("opt/google/chrome/chrome"), "fixture engine\n").unwrap();
-            std::fs::write(
-                pkg.join("opt/google/chrome/libfixture.so"),
-                "fixture library\n",
-            )
-            .unwrap();
-            let deb = dir.join("fixture.deb");
-            let built = Command::new("dpkg-deb")
-                .args(["--build", "--root-owner-group"])
-                .arg(&pkg)
-                .arg(&deb)
-                .output()
-                .unwrap();
-            assert!(built.status.success(), "{built:?}");
-            let installed = Command::new("dpkg")
-                .args(["--force-not-root", "--log=/dev/null"])
-                .arg(format!("--root={}", root.display()))
-                .arg("-i")
-                .arg(&deb)
-                .output()
-                .unwrap();
-            assert!(installed.status.success(), "{installed:?}");
-            Some(Fixture { dir, root })
-        }
-
-        fn db(fixture: &Fixture) -> PackageDb {
-            PackageDb {
-                root: Some(fixture.root.clone()),
-                owner: std::fs::metadata(&fixture.root).unwrap().uid(),
-            }
-        }
-
-        fn engine(fixture: &Fixture) -> PathBuf {
-            fixture
-                .root
-                .join("opt/google/chrome/chrome")
-                .canonicalize()
-                .unwrap()
-        }
-
-        #[test]
-        fn s07_an_intact_vendor_package_is_verified() {
-            let Some(fixture) = installed("intact") else {
-                return;
-            };
-            let verdict = verify_publisher_in(&engine(&fixture), &db(&fixture));
-            assert!(matches!(verdict, Ok(true)), "{verdict:?}");
-        }
-
-        #[test]
-        fn s07_a_tampered_engine_or_library_is_refused() {
-            for file in ["chrome", "libfixture.so"] {
-                let Some(fixture) = installed(&format!("tampered-{file}")) else {
-                    return;
-                };
-                let target = fixture.root.join("opt/google/chrome").join(file);
-                let mut bytes = std::fs::read(&target).unwrap();
-                bytes[0] ^= 1;
-                std::fs::write(&target, bytes).unwrap();
-                let verdict = verify_publisher_in(&engine(&fixture), &db(&fixture));
-                assert!(
-                    matches!(
-                        verdict,
-                        Err(HostError::Unavailable(UnavailableReason::UnsupportedEngine))
-                    ),
-                    "{file}: {verdict:?}"
-                );
-            }
-        }
-
-        #[test]
-        fn s07_an_unowned_engine_is_not_verified() {
-            let Some(fixture) = installed("unowned") else {
-                return;
-            };
-            // A file no package owns, beside the vendor's engine.
-            let stray = fixture.root.join("opt/google/chrome/chromium");
-            std::fs::write(&stray, "not packaged\n").unwrap();
-            let stray = stray.canonicalize().unwrap();
-            let verdict = verify_publisher_in(&stray, &db(&fixture));
-            assert!(matches!(verdict, Ok(false)), "{verdict:?}");
-        }
-
-        #[test]
-        fn s07_an_engine_owned_by_another_account_is_not_verified() {
-            let Some(fixture) = installed("owner") else {
-                return;
-            };
-            let mut other = db(&fixture);
-            other.owner = other.owner.wrapping_add(1);
-            let verdict = verify_publisher_in(&engine(&fixture), &other);
-            assert!(matches!(verdict, Ok(false)), "{verdict:?}");
-        }
-
-        /// The package check passes (dpkg compares digests only), yet a file
-        /// or directory another account can write is refused.
-        #[test]
-        fn s07_writable_files_or_directories_are_not_verified() {
-            for (relative, mode) in [
-                ("opt/google/chrome/chrome", 0o664),
-                ("opt/google/chrome/libfixture.so", 0o646),
-                ("opt/google/chrome", 0o775),
-                ("opt/google", 0o757),
-                ("opt", 0o777),
-            ] {
-                let Some(fixture) = installed(&format!("writable-{}", relative.replace('/', "-")))
-                else {
-                    return;
-                };
-                let target = fixture.root.join(relative);
-                std::fs::set_permissions(&target, std::fs::Permissions::from_mode(mode)).unwrap();
-                let verdict = verify_publisher_in(&engine(&fixture), &db(&fixture));
-                assert!(
-                    matches!(verdict, Ok(false)),
-                    "{relative} at {mode:o}: {verdict:?}"
-                );
-            }
-        }
-
-        #[test]
-        fn s07_a_link_out_of_the_install_directory_is_not_verified() {
-            let Some(fixture) = installed("link") else {
-                return;
-            };
-            let outside = fixture.dir.join("outside.so");
-            std::fs::write(&outside, "elsewhere\n").unwrap();
-            std::os::unix::fs::symlink(
-                &outside,
-                fixture.root.join("opt/google/chrome/libextra.so"),
-            )
-            .unwrap();
-            let verdict = verify_publisher_in(&engine(&fixture), &db(&fixture));
-            assert!(matches!(verdict, Ok(false)), "{verdict:?}");
-            // A link that stays inside is allowed.
-            std::fs::remove_file(fixture.root.join("opt/google/chrome/libextra.so")).unwrap();
-            std::os::unix::fs::symlink(
-                "libfixture.so",
-                fixture.root.join("opt/google/chrome/libalias.so"),
-            )
-            .unwrap();
-            let verdict = verify_publisher_in(&engine(&fixture), &db(&fixture));
-            assert!(matches!(verdict, Ok(true)), "{verdict:?}");
-        }
-
-        #[test]
-        fn s07_a_linked_engine_path_is_not_verified() {
-            let Some(fixture) = installed("linked-engine") else {
-                return;
-            };
-            let link = fixture.dir.join("chrome");
-            std::os::unix::fs::symlink(engine(&fixture), &link).unwrap();
-            let verdict = verify_publisher_in(&link, &db(&fixture));
-            assert!(matches!(verdict, Ok(false)), "{verdict:?}");
-        }
-
-        /// Evidence on hosts with the real vendor package (CI's Ubuntu image
-        /// ships Chrome): its install tree meets the ownership rule.
-        #[test]
-        fn s07_the_installed_chrome_tree_is_root_owned_where_present() {
-            let chrome = Path::new("/opt/google/chrome/chrome");
-            if !chrome.is_file() {
-                eprintln!("no /opt/google/chrome/chrome here: skipped");
-                return;
-            }
-            assert!(
-                install_tree_trusted(chrome, chrome.parent().unwrap(), &PackageDb::production()),
-                "the vendor install tree is root-owned and not group or other writable"
-            );
-        }
-    }
 
     #[test]
     fn xp14_linux_package_answers_are_read_strictly() {
