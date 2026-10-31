@@ -1161,6 +1161,8 @@ jobs:
               "$RUNNER_TEMP/agent-tier-a.report.json" "$RUNNER_TEMP/agent-$mode-tier-a.report.json"
           done
           mkdir -p "$RUNNER_TEMP/agent-eval"
+          cp "$RUNNER_TEMP/agent-tier-a.report.json" "$RUNNER_TEMP/agent-m2-tier-a.report.json" \
+            "$RUNNER_TEMP/agent-m3-tier-a.report.json" "$RUNNER_TEMP/agent-eval/"
           (cd tests/benchmarks && "$AGENT_PY" -B -m orcel_bench agent-eval --orceld "$orceld" --edge "$edge" \
             --commit "$ORCEL_BM02_COMMIT" --out "$RUNNER_TEMP/agent-eval/agent-eval.${{ runner.os }}.json" \
             --tier-a "$RUNNER_TEMP/agent-tier-a.report.json" "$RUNNER_TEMP/agent-m2-tier-a.report.json" \

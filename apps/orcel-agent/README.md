@@ -20,13 +20,14 @@ decisions and roadmap:
 ## Evaluation (SG-000129 M3 slice 6)
 
 `python -m orcel_bench agent-eval` (`tests/benchmarks/orcel_bench/agent_eval.py`)
-runs five synthetic tasks through M1, M2 and M3 against the real edge and a
+runs six synthetic tasks through M1, M2 and M3 against the real edge and a
 fresh test orceld, with no lease (asserted):
 
 - loop trap;
 - long context;
 - oversized output;
 - injected instructions;
+- a refused read;
 - kill and resume.
 
 BM-02 Tier A also runs through `--planner m2` and `--planner m3`, in parity
