@@ -598,8 +598,42 @@ fn verify_publisher(path: &Path) -> Result<bool, HostError> {
 /// Authenticode or a macOS code signature, because the database records
 /// only file digests (md5 for dpkg) and is only as trustworthy as the root
 /// account that wrote it (recorded in the SG-000074 note).
+///
+/// SG-000115 S-07 hardening: the engine, every directory above it and
+/// everything in its install directory must also be owned by root and
+/// writable by no one else (`install_tree_trusted`). The package check is a
+/// moment in time; a file or directory another account can write could be
+/// swapped after it. The tree check can only turn a pass into "unverified":
+/// a refusal stays a refusal.
 #[cfg(all(not(windows), not(target_os = "macos")))]
 fn verify_publisher(path: &Path) -> Result<bool, HostError> {
+    verify_publisher_in(path, &PackageDb::production())
+}
+
+/// Where the Linux verification looks: the system's package database and
+/// root ownership in production; a private dpkg root (`--root`) and the
+/// test account in the fixture tests.
+#[cfg(all(not(windows), not(target_os = "macos")))]
+struct PackageDb {
+    /// `None` in production. In tests, a private dpkg root: paths are
+    /// queried relative to it, and the ownership walk stops at it.
+    root: Option<PathBuf>,
+    /// The account that must own the install tree: root (0) in production.
+    owner: u32,
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
+impl PackageDb {
+    fn production() -> Self {
+        Self {
+            root: None,
+            owner: 0,
+        }
+    }
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn verify_publisher_in(path: &Path, db: &PackageDb) -> Result<bool, HostError> {
     let Ok(real) = path.canonicalize() else {
         return Ok(false);
     };
@@ -608,14 +642,50 @@ fn verify_publisher(path: &Path) -> Result<bool, HostError> {
     if real != path {
         return Ok(false);
     }
-    let real_text = real.to_string_lossy().into_owned();
     // The engine's own install directory: what it runs is there.
-    let Some(code_dir) = real.parent().map(|dir| dir.to_string_lossy().into_owned()) else {
+    let Some(code_path) = real.parent() else {
         return Ok(false);
     };
+    // Computed first, applied last: it can only turn a verified engine into
+    // an unverified one. A vendor package whose files fail the package check
+    // is still refused (`UnsupportedEngine`), exactly as before.
+    let tree_ok = install_tree_trusted(&real, code_path, db);
+    // The paths as the package database records them.
+    let (real_text, code_dir) = match &db.root {
+        None => (
+            real.to_string_lossy().into_owned(),
+            code_path.to_string_lossy().into_owned(),
+        ),
+        Some(root) => {
+            let Ok(root) = root.canonicalize() else {
+                return Ok(false);
+            };
+            let (Ok(file), Ok(dir)) = (real.strip_prefix(&root), code_path.strip_prefix(&root))
+            else {
+                return Ok(false);
+            };
+            (
+                format!("/{}", file.to_string_lossy()),
+                format!("/{}", dir.to_string_lossy()),
+            )
+        }
+    };
+    let root_flag = db
+        .root
+        .as_ref()
+        .map(|root| format!("--root={}", root.display()));
+    let admin_flag = db
+        .root
+        .as_ref()
+        .map(|root| format!("--admindir={}", root.join("var/lib/dpkg").display()));
+    let query: Vec<&str> = admin_flag
+        .iter()
+        .map(String::as_str)
+        .chain(["-S", real_text.as_str()])
+        .collect();
     // #503: an ownership query that runs out of time is reported as such,
     // never as "not owned" (which would quietly mean unverified).
-    match run_package_tool("dpkg-query", &["-S", &real_text], QUERY_DEADLINE) {
+    match run_package_tool("dpkg-query", &query, QUERY_DEADLINE) {
         PackageRun::Finished {
             success: true,
             output,
@@ -626,13 +696,24 @@ fn verify_publisher(path: &Path) -> Result<bool, HostError> {
             if vendor_package(&package).is_none() {
                 return Ok(false);
             }
+            let verify: Vec<&str> = root_flag
+                .iter()
+                .map(String::as_str)
+                .chain(["--verify", package.as_str()])
+                .collect();
             return dpkg_verdict(
-                run_package_tool("dpkg", &["--verify", &package], VERIFY_DEADLINE),
+                run_package_tool("dpkg", &verify, VERIFY_DEADLINE),
                 &code_dir,
-            );
+            )
+            .map(|verified| verified && tree_ok);
         }
         PackageRun::TimedOut => return Err(verification_timed_out()),
         PackageRun::Finished { .. } | PackageRun::Unavailable => {}
+    }
+    // The fixture tests use a private dpkg root only; rpm is never asked
+    // about one.
+    if db.root.is_some() {
+        return Ok(false);
     }
     match run_package_tool(
         "rpm",
@@ -651,10 +732,141 @@ fn verify_publisher(path: &Path) -> Result<bool, HostError> {
                 run_package_tool("rpm", &["-V", package], VERIFY_DEADLINE),
                 &code_dir,
             )
+            .map(|verified| verified && tree_ok)
         }
         PackageRun::TimedOut => Err(verification_timed_out()),
         PackageRun::Finished { .. } | PackageRun::Unavailable => Ok(false),
     }
+}
+
+/// At most this many entries are walked in an install directory; more
+/// fails closed (Chrome's has about 1,500).
+#[cfg(all(not(windows), not(target_os = "macos")))]
+const MAX_INSTALL_ENTRIES: usize = 20_000;
+
+/// SG-000115 S-07: whether the engine can only have been placed, and can
+/// only be changed, by `db.owner` (root in production).
+/// - The engine and every directory above it, up to `/` (or the fixture
+///   root), are owned by `db.owner`, are not links, and are writable by
+///   neither group nor others.
+/// - Every entry in the install directory, walked without following links
+///   and bounded, is owned by `db.owner` and writable by neither group nor
+///   others; a link there must stay inside the install directory.
+///
+/// Any failure to read fails closed.
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn install_tree_trusted(engine: &Path, code_dir: &Path, db: &PackageDb) -> bool {
+    install_tree_problem(engine, code_dir, db).is_none()
+}
+
+/// The first reason the install tree is not trusted (the path and what is
+/// wrong with it), or `None`. Kept separate so tests and CI can say which
+/// entry failed.
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn install_tree_problem(engine: &Path, code_dir: &Path, db: &PackageDb) -> Option<String> {
+    use std::os::unix::fs::MetadataExt;
+    let describe = |path: &Path, meta: &std::fs::Metadata| {
+        format!(
+            "{}: uid {} mode {:o}{}",
+            path.display(),
+            meta.uid(),
+            meta.mode() & 0o7777,
+            if meta.file_type().is_symlink() {
+                " (link)"
+            } else {
+                ""
+            }
+        )
+    };
+    let safe = |meta: &std::fs::Metadata| meta.uid() == db.owner && meta.mode() & 0o022 == 0;
+    let stop = db.root.as_ref().and_then(|root| root.canonicalize().ok());
+    let mut current = Some(engine);
+    while let Some(path) = current {
+        if stop.as_deref() == Some(path) {
+            break;
+        }
+        let Ok(meta) = std::fs::symlink_metadata(path) else {
+            return Some(format!("{}: unreadable", path.display()));
+        };
+        if meta.file_type().is_symlink() || !safe(&meta) {
+            return Some(format!("ancestor {}", describe(path, &meta)));
+        }
+        current = path.parent();
+    }
+    let mut stack = vec![code_dir.to_path_buf()];
+    let mut walked = 0usize;
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return Some(format!("{}: unreadable directory", dir.display()));
+        };
+        for entry in entries {
+            walked += 1;
+            if walked > MAX_INSTALL_ENTRIES {
+                return Some(format!("more than {MAX_INSTALL_ENTRIES} entries"));
+            }
+            let Ok(entry) = entry else {
+                return Some(format!("{}: unreadable entry", dir.display()));
+            };
+            let path = entry.path();
+            let Ok(meta) = std::fs::symlink_metadata(&path) else {
+                return Some(format!("{}: unreadable", path.display()));
+            };
+            if meta.file_type().is_symlink() {
+                // The link itself must be ours, and every hop of its chain
+                // must stay inside the install directory (each target is
+                // then walked too).
+                if meta.uid() != db.owner || !link_stays_inside(&path, code_dir) {
+                    let target = std::fs::read_link(&path)
+                        .map(|t| t.display().to_string())
+                        .unwrap_or_default();
+                    return Some(format!("{} -> {target}", describe(&path, &meta)));
+                }
+                continue;
+            }
+            if !safe(&meta) {
+                return Some(describe(&path, &meta));
+            }
+            if meta.is_dir() {
+                stack.push(path);
+            }
+        }
+    }
+    None
+}
+
+/// Whether every hop of the link chain starting at `link` stays inside
+/// `code_dir`: each target must be relative and made only of plain names
+/// (no `/` root, no `..`), and the chain must end within a few hops at an
+/// existing entry. A chain through any outside path could be re-pointed
+/// after the check.
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn link_stays_inside(link: &Path, code_dir: &Path) -> bool {
+    use std::path::Component;
+    let mut current = link.to_path_buf();
+    for _ in 0..8 {
+        let Ok(target) = std::fs::read_link(&current) else {
+            return false;
+        };
+        if !target
+            .components()
+            .all(|part| matches!(part, Component::Normal(_)))
+        {
+            return false;
+        }
+        let Some(dir) = current.parent() else {
+            return false;
+        };
+        current = dir.join(target);
+        if !current.starts_with(code_dir) {
+            return false;
+        }
+        match std::fs::symlink_metadata(&current) {
+            Ok(meta) if meta.file_type().is_symlink() => continue,
+            Ok(_) => return true,
+            Err(_) => return false,
+        }
+    }
+    false
 }
 
 /// #503: how long a package ownership query (`dpkg-query -S`, `rpm -qf`)
@@ -870,6 +1082,12 @@ fn kill_tool_group(child: &mut std::process::Child) {
 fn app_paths_executable(name: &str) -> Option<PathBuf> {
     windows::app_paths_executable(name)
 }
+
+/// SG-000115 S-07: the Linux verifier against a real dpkg (fixture
+/// packages; test builds only).
+#[cfg(all(test, not(windows), not(target_os = "macos")))]
+#[path = "discovery_linux_tests.rs"]
+mod linux_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1094,7 +1312,12 @@ mod tests {
         let verdict = verify_publisher(installed);
         assert!(
             matches!(verdict, Ok(true)),
-            "{verdict:?}; dpkg --verify google-chrome-stable: {verify:?}"
+            "{verdict:?}; dpkg --verify google-chrome-stable: {verify:?}; install tree: {:?}",
+            install_tree_problem(
+                installed,
+                Path::new("/opt/google/chrome"),
+                &PackageDb::production()
+            )
         );
         let copy_dir =
             std::env::temp_dir().join(format!("orcel-xp14-linux-{}", std::process::id()));
