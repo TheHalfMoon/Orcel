@@ -318,6 +318,11 @@ class PrivateStore(Scratch):
                                   check=True).stdout.strip().split(",")[-1].strip('"')
         store.journal_path.write_text("{}\n", encoding="utf-8")
         allowed = {user_sid, "SY", "BA", "S-1-5-18", "S-1-5-32-544"}
+        # SDDL names the built-in Administrator and Guest by alias (a CI
+        # runner may be the built-in Administrator).
+        aliases = {"-500": "LA", "-501": "LG"}
+        user_forms = {user_sid} | {alias for rid, alias in aliases.items() if user_sid.endswith(rid)}
+        allowed |= user_forms
         for path, inherited in ((self.root, False), (store.directory, False), (store.journal_path, True)):
             saved = Path(self._dir.name) / "acl.txt"
             saved.unlink(missing_ok=True)
@@ -329,9 +334,12 @@ class PrivateStore(Scratch):
             self.assertTrue(aces, sddl)
             for kind, flags, sid in aces:
                 self.assertEqual(kind, "A", sddl)
-                self.assertEqual("ID" in flags, inherited, f"{path}: {sddl}")
+                if not inherited:
+                    self.assertNotIn("ID", flags, f"{path}: nothing inherited: {sddl}")
+                # A file's entries may be inherited (ID) or written out
+                # explicitly by its creator; either way only these principals.
                 self.assertIn(sid, allowed, sddl)
-            self.assertIn(user_sid, {sid for _, _, sid in aces}, path)
+            self.assertTrue(user_forms & {sid for _, _, sid in aces}, f"{path}: {sddl}")
 
     @unittest.skipUnless(os.name == "nt", "Windows only")
     def test_an_existing_directory_that_is_not_private_is_refused(self) -> None:

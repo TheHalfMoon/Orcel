@@ -89,9 +89,10 @@ class Checkpoint(Scratch):
         if os.name != "nt":
             self.assertEqual(stat.S_IMODE(checkpoint.path.stat().st_mode), 0o600)
         else:
-            # The database inherits the store's protected DACL: only the
-            # user, SYSTEM and Administrators, inherited allow entries. Read
-            # with icacls, independently of winacl.py.
+            # The database gets the store's protected DACL: allow entries for
+            # the user, SYSTEM and Administrators only (inherited, or written
+            # out explicitly by SQLite's file creation, as on a CI runner).
+            # Read with icacls, independently of winacl.py.
             import subprocess
 
             user = subprocess.run(["whoami", "/user", "/fo", "csv", "/nh"], capture_output=True, text=True,
@@ -102,10 +103,10 @@ class Checkpoint(Scratch):
             sddl = saved.read_bytes().decode("utf-16")
             aces = re.findall(r"\(([^;()]*);([^;()]*);[^;()]*;[^;()]*;[^;()]*;([^;()]*)\)", sddl)
             self.assertTrue(aces, sddl)
-            for kind, flags, sid in aces:
+            forms = {user} | ({"LA"} if user.endswith("-500") else set()) | ({"LG"} if user.endswith("-501") else set())
+            for kind, _flags, sid in aces:
                 self.assertEqual(kind, "A", sddl)
-                self.assertIn("ID", flags, sddl)
-                self.assertIn(sid, {user, "SY", "BA", "S-1-5-18", "S-1-5-32-544"}, sddl)
+                self.assertIn(sid, forms | {"SY", "BA", "S-1-5-18", "S-1-5-32-544"}, sddl)
 
     def test_the_size_cap_fails_closed(self) -> None:
         store = open_store(self.root, RUN, max_bytes=40_000)
