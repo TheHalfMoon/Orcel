@@ -50,6 +50,23 @@ jobs:
           # merge commit, not the checked-out head).
           ORCEL_BM02_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: cargo test --workspace
+      # SG-000115 A2b (inert, test-only): the macOS lineage sweep cases run
+      # alone, one thread (in the shared Test step they return at once).
+      # Their unattributable-orphan rule is system-wide, so an orphan from
+      # another test running at the same time would be a false positive. The
+      # step fails unless exactly those two tests ran and passed.
+      - name: SG-000115 A2b macOS lineage sweep (alone)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          ORCEL_SG115_LINEAGE_ALONE: "1"
+        run: |
+          set -euo pipefail
+          status=0
+          out=$(cargo test -p orcel-browser-host --lib unix_supervise::tests::macos_lineage_ -- --test-threads=1 --nocapture 2>&1) || status=$?
+          printf '%s\n' "$out"
+          [ "$status" -eq 0 ]
+          grep -q "test result: ok. 2 passed" <<<"$out"
       # BM-02 evidence on this OS: both tiers again with their per-case lines
       # in the log (the Test step captures them when they pass), and both
       # reports checked against orcel-benchmark-report/1.
