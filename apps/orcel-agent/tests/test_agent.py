@@ -626,6 +626,46 @@ class SourceBoundary(unittest.TestCase):
                                  f"winacl.py: {node.id}")
             if isinstance(node, ast.ImportFrom) and node.module == "ctypes":
                 self.assertEqual([a.name for a in node.names], ["wintypes"])
+                self.assertIsNone(node.names[0].asname)
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.split(".")[0] == "ctypes":
+                        self.assertEqual((alias.name, alias.asname), ("ctypes", None), "winacl.py: import ctypes only")
+            if isinstance(node, ast.Attribute):
+                self.assertNotEqual(node.attr, "ctypes", "winacl.py: wintypes.ctypes")
+                if isinstance(node.value, ast.Name) and node.value.id == "wintypes":
+                    self.assertIn(node.attr, {"BOOL", "DWORD", "HANDLE", "LPCWSTR", "LPVOID", "ULONG"},
+                                  f"winacl.py: wintypes.{node.attr}")
+                if node.attr in ("restype", "argtypes") and isinstance(node.ctx, ast.Store):
+                    self.assertTrue(any(ast.unparse(n) == "function.restype, function.argtypes = _PROTOTYPES[name]"
+                                        for n in ast.walk(inner[0]) if isinstance(n, ast.Assign)
+                                        and any(t is node for e in n.targets for t in ast.walk(e))),
+                                    "winacl.py: a prototype set outside the pinned loop")
+            if isinstance(node, ast.Name):
+                self.assertNotEqual(node.id, "type", "winacl.py: type()")
+        # Every call is from an exact list, so any new call (a loader, a raw
+        # memory helper, a lookup) fails here until this list is changed in a
+        # reviewed edit. It is a lint against drift by the repository's own
+        # authors, not a sandbox. Native functions are called only as
+        # api["<a name in FUNCTIONS>"].
+        native = {name for names in self.WINACL_FUNCTIONS.values() for name in names}
+        calls = {
+            "FUNCTIONS.items", "OSError", "PRIVATE_SDDL.format", "_SECURITY.fullmatch", "_SecurityAttributes", "_fail",
+            "_functions", "_take_string", "ctypes.FormatError", "ctypes.FormatError(code).strip",
+            "ctypes.FormatError(status).strip", "ctypes.POINTER", "ctypes.WinDLL", "ctypes.byref", "ctypes.c_void_p",
+            "ctypes.c_void_p * (needed.value // pointer_size + 1)", "ctypes.get_last_error", "ctypes.sizeof",
+            "ctypes.wstring_at", "entry.split", "frozenset", "getattr", "len", "match.groups", "os.path.abspath",
+            "owner.startswith", "re.compile", "re.findall", "seen.add", "set", "wintypes.DWORD", "wintypes.HANDLE",
+        }
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if isinstance(node.func, ast.Subscript):
+                self.assertEqual(ast.unparse(node.func.value), "api", ast.unparse(node))
+                key = node.func.slice
+                self.assertTrue(isinstance(key, ast.Constant) and key.value in native, ast.unparse(node))
+            else:
+                self.assertIn(ast.unparse(node.func), calls, f"winacl.py: a call to {ast.unparse(node.func)}")
         # No other module touches ctypes.
         for other in self.modules():
             if other.name != "winacl.py":
