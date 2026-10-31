@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import stat
 import sys
@@ -20,7 +21,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from orcel_agent.agent import Agent  # noqa: E402
-import orcel_agent.checkpoint as checkpoint_module  # noqa: E402
 from orcel_agent.checkpoint import CHECKPOINT_FILE, PlannerCheckpoint  # noqa: E402
 from orcel_agent.edge import ToolOutcome, ToolSpec  # noqa: E402
 from orcel_agent.events import EventLog  # noqa: E402
@@ -54,29 +54,12 @@ class Edge:
 
 
 class Scratch(unittest.TestCase):
-    """Exercises the checkpoint's logic on every OS. On Windows the checkpoint
-    refuses to open until slice 5b gives the store its protected DACL; these
-    tests lift that refusal explicitly (WindowsRefusal pins it)."""
-
     def setUp(self) -> None:
         self._dir = tempfile.TemporaryDirectory()
         self.root = Path(self._dir.name) / "agent"
-        self._ready = checkpoint_module._WINDOWS_ACL_READY
-        checkpoint_module._WINDOWS_ACL_READY = True
 
     def tearDown(self) -> None:
-        checkpoint_module._WINDOWS_ACL_READY = self._ready
         self._dir.cleanup()
-
-
-class WindowsRefusal(unittest.TestCase):
-    @unittest.skipUnless(os.name == "nt", "Windows only")
-    def test_the_checkpoint_refuses_to_open_on_windows_until_5b(self) -> None:
-        with tempfile.TemporaryDirectory() as scratch:
-            store = open_store(Path(scratch) / "agent", RUN)
-            self.assertFalse(checkpoint_module._WINDOWS_ACL_READY)
-            with self.assertRaises(StoreError):
-                PlannerCheckpoint(store)
 
 
 class Checkpoint(Scratch):
@@ -105,6 +88,26 @@ class Checkpoint(Scratch):
         self.assertFalse((store.directory / (CHECKPOINT_FILE + "-wal")).exists())
         if os.name != "nt":
             self.assertEqual(stat.S_IMODE(checkpoint.path.stat().st_mode), 0o600)
+        else:
+            # The database gets the store's protected DACL: allow entries for
+            # the user, SYSTEM and Administrators only (inherited, or written
+            # out explicitly by SQLite's file creation, as on a CI runner).
+            # Read with icacls, independently of winacl.py.
+            import subprocess
+
+            user = subprocess.run(["whoami", "/user", "/fo", "csv", "/nh"], capture_output=True, text=True,
+                                  check=True).stdout.strip().split(",")[-1].strip('"')
+            saved = Path(self._dir.name) / "acl.txt"
+            subprocess.run(["icacls", str(checkpoint.path), "/save", str(saved), "/q"], capture_output=True,
+                           check=True)
+            sddl = saved.read_bytes().decode("utf-16")
+            aces = re.findall(r"\(([^;()]*);([^;()]*);[^;()]*;[^;()]*;[^;()]*;([^;()]*)\)", sddl)
+            self.assertTrue(aces, sddl)
+            rid = user.rsplit("-", 1)[1]
+            forms = {user} | ({"LA"} if rid == "500" else set()) | ({"LG"} if rid == "501" else set())
+            for kind, _flags, sid in aces:
+                self.assertEqual(kind, "A", sddl)
+                self.assertIn(sid, forms | {"SY", "BA", "S-1-5-18", "S-1-5-32-544"}, sddl)
 
     def test_the_size_cap_fails_closed(self) -> None:
         store = open_store(self.root, RUN, max_bytes=40_000)

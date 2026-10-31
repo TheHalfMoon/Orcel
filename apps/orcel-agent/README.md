@@ -33,8 +33,8 @@ the loop history, the compaction summary and the stop reason.
   - no symlinks;
   - the size cap enforced inside SQLite and checked before each save;
   - `0600` on Unix.
-- **Windows.** The checkpoint refuses to open until the store has its
-  protected DACL (slice 5b).
+- **Windows.** The store directories have orceld's protected owner-only
+  DACL (slice 5b, `winacl.py`), which the checkpoint inherits.
 - **Authority.** The dispatch journal is still the authority on dispatched
   calls, so a checkpoint can never cause a re-dispatch.
 - **Failure.** A tampered checkpoint stops the run, and the store is kept.
