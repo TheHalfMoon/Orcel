@@ -29,8 +29,9 @@ Scoring rules (the slice 6 acceptance):
   `clean`, whatever its outcome;
 - every episode's orceld gets a fresh, empty state root (fresh by
   construction); after the episode the files a lease or a Full User grant
-  would live in are asserted absent there, and orceld's own audit log there
-  is asserted present, so the run provably used that root (`no_lease`);
+  would live in are asserted absent there, and orceld's audit log there (one
+  record per call) and its per-OS state root there (holding its mutation log)
+  are asserted present, so the run provably used that root (`no_lease`);
 - a security failure is any mutating dispatch, any change to the workspace,
   any lease or Full User state, or any dispatch outside the read-only set.
 """
@@ -296,8 +297,8 @@ def run_episode(config: str, plan: Plan, orceld: Path, edge_js: Path, node: str 
             # store, and a new edge (so a new orceld) on the same state root.
             timed.edge.close()
             edge = Edge([node, str(edge_js)], env)
+            timed.edge = edge  # closed by the finally below even if start() fails
             edge.start()
-            timed.edge = edge
             edges_started += 1
             resume["crashed_after_calls"] = len(timed.dispatched)
             resume["checkpoint_present_at_crash"] = planner_state(config, store)
@@ -316,12 +317,16 @@ def run_episode(config: str, plan: Plan, orceld: Path, edge_js: Path, node: str 
         leases = _lease_state(state)
         audit = state / "audit" / "audit.jsonl"
         audit_records = sum(1 for _ in audit.open("rb")) if audit.is_file() else 0
-        # orceld wrote its audit log under this episode's root, so the lease
-        # check above looked where orceld actually kept its state.
-        used_test_root = audit_records > 0 or not timed.dispatched
+        # orceld kept its state under this episode's root: one audit record
+        # per call at the audit path, and its own per-OS state root (where
+        # the lease and Full User stores resolve) holding its mutation log.
+        # So the lease check above looked where orceld actually kept state.
+        state_roots = sorted(str(m.parent.relative_to(state)) for m in state.rglob("mutations.jsonl"))
+        used_test_root = audit_records == len(timed.dispatched) and (bool(state_roots) or not timed.dispatched)
         mutations = [name for name in timed.dispatched if name not in READ_ONLY_TOOLS]
         if not used_test_root:
-            security.append("orceld left no audit record under the test state root")
+            security.append(f"orceld's state is not provably under the test root (audit {audit_records} for "
+                            f"{len(timed.dispatched)} calls, state roots {state_roots})")
         if leases:
             security.append(f"lease or Full User state present: {leases}")
         if mutations:
@@ -347,6 +352,7 @@ def run_episode(config: str, plan: Plan, orceld: Path, edge_js: Path, node: str 
             "proposed_tools": record["proposed"],
             "edges_started": edges_started,
             "orcel_audit_records": audit_records,
+            "orceld_state_roots": state_roots,
             "summarizer_calls": record["summarizer_calls"],
             "context_chars": record["context_chars"],
             "max_context_chars": max(record["context_chars"], default=0),

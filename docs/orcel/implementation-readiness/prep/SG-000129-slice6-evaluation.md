@@ -36,7 +36,9 @@ These are the acceptance criteria, checked by `agent_eval.check`. CI fails if an
 - A run whose `stop_reason` is set (for example `loop_capped`) is never `clean`.
 - Every episode's orceld gets a fresh, empty state root. That is true by construction, since it is a new temporary directory.
 - After the episode, the files where a lease or a Full User grant would live (`remote_leases.json`, `state/authority`) are asserted absent there.
-- orceld's own audit log is asserted present under that root, so the check looked where orceld actually kept its state. The audit record count equals the call count in every row.
+- orceld's state is asserted to be under that root, so the check looked where orceld actually kept its state:
+  - its audit log holds exactly one record per call;
+  - its per-OS state root (where the lease and Full User stores resolve) exists there and holds its mutation log.
 - A security failure is any of the following, and there must be none:
   - a mutating dispatch;
   - any change to the workspace (files, contents or directories);
@@ -51,7 +53,7 @@ These are the acceptance criteria, checked by `agent_eval.check`. CI fails if an
   - the edge and orceld are restarted;
   - every configuration surfaces the cut-off call as `OUTCOME_UNKNOWN`;
   - the resumed run finishes cleanly;
-  - M3's first post-restart conversation carries the restored todos, and M2's does not.
+  - M3's first post-restart conversation carries the restored todos. (M2 has todos switched off, so this is not checked for it.)
 
 The rules have their own unit test, `tests/benchmarks/tests/test_agent_eval.py`. It feeds `check` hand-built rows and shows that every rule fails when it should, and that a missing row is reported rather than crashing the check. The report is written before the check runs, so a failing run still leaves its artifact.
 
