@@ -67,11 +67,19 @@ def main(argv: list[str]) -> int:
     agent.add_argument("--orceld", required=True, type=Path, help="the orceld binary under test")
     agent.add_argument("--edge", required=True, type=Path, help="the built MCP edge (apps/orcel-mcp/dist/index.js)")
     agent.add_argument("--node", default="node", help="the Node.js executable that runs the edge")
-    agent.add_argument("--planner", choices=("scripted", "chat"), default="scripted",
-                       help="chat: route each planned call through the LangChain chat-model planner (SG-000129)")
+    agent.add_argument("--planner", choices=("scripted", "chat", "m2", "m3"), default="scripted",
+                       help="chat, m2, m3: route each planned call through the LangChain chat-model planner "
+                            "(SG-000129; m2 without todos and compaction, m3 with every feature and a checkpoint)")
     agent.add_argument("--commit", required=True, help="the Orcel commit under test (40 hex)")
     agent.add_argument("--out", required=True, type=Path, help="where to write the report")
     agent.add_argument("tasks", nargs="*", type=Path)
+    evaluation = sub.add_parser("agent-eval", help="SG-000129 slice 6: M1 vs M2 vs M3 on the synthetic tasks (labelled)")
+    evaluation.add_argument("--orceld", required=True, type=Path, help="the orceld binary under test")
+    evaluation.add_argument("--edge", required=True, type=Path, help="the built MCP edge (apps/orcel-mcp/dist/index.js)")
+    evaluation.add_argument("--node", default="node", help="the Node.js executable that runs the edge")
+    evaluation.add_argument("--commit", required=True, help="the Orcel commit under test (40 hex)")
+    evaluation.add_argument("--out", required=True, type=Path, help="where to write the evaluation report")
+    evaluation.add_argument("--tier-a", nargs="*", type=Path, help="BM-02 Tier A reports to summarize (m1, m2, m3)")
     tierc = sub.add_parser("tierc-noop", help="Tier C C1: the no-op baseline over a verified taskpack")
     tierc.add_argument("--pack", required=True, type=Path, help="a taskpack fetched by fetch-taskpack (verified again before it runs)")
     tierc.add_argument("--commit", required=True, help="the Orcel commit under test (40 hex)")
@@ -135,15 +143,18 @@ def main(argv: list[str]) -> int:
         failed = [row["case"] for row in rows if row["status"] != "pass"]
         print(f"orcel_bench: {len(rows) - len(failed)}/{len(rows)} Tier C no-op baselines rejected -> {args.out}")
         return 1 if failed else 0
+    if args.command == "agent-eval":
+        from .agent_eval import main as agent_eval
+
+        return agent_eval(args)
     if args.command == "agent":
-        from .agent_client import CHAT_PLANNER, AgentOrcel
-        from .agent_client import PLANNER as AGENT_PLANNER
+        from .agent_client import LABELS, AgentOrcel
 
         orceld, edge = args.orceld.resolve(), args.edge.resolve()
         tasks = [path.resolve() for path in args.tasks] or all_orcel_tasks()
         rows = run_orcel(tasks, orceld, client_factory=lambda root: AgentOrcel(orceld, edge, root, node=args.node,
                                                                                 planner=args.planner))
-        label = CHAT_PLANNER if args.planner == "chat" else AGENT_PLANNER
+        label = LABELS[args.planner]
         args.out.write_text(json.dumps(report(args.commit, rows, label), indent=2) + "\n", encoding="utf-8")
         failed = [row["case"] for row in rows if row["status"] != "pass"]
         print(f"orcel_bench: {len(rows) - len(failed)}/{len(rows)} variants solved through the Orcel Agent and the MCP edge -> {args.out}")
