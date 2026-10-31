@@ -1,10 +1,11 @@
 """The agent's private state store (master plan, section C: privacy).
 
 One directory per run under a private root:
-- **Owner-only.** Mode 0700 on Unix, checked after creation. On Windows the
-  directory inherits its root's ACL. The tests assert that no broad principal
-  (Everyone, Users, Authenticated Users) can reach it. Setting a protected
-  DACL of its own, as orceld does, is recorded for the owning grain.
+- **Owner-only.** Mode 0700 on Unix, checked after creation. On Windows
+  (SG-000129 slice 5b) the root and each run directory are created with
+  orceld's protected DACL (SYSTEM, Administrators and the user; nothing
+  inherited; winacl.py), and read back and checked; an existing directory
+  that is not private, or is a link or junction, fails closed.
 - **Size-capped.** Writes beyond `max_bytes` fail closed.
 - **Expiring.** A run whose newest file is older than `ttl_s` is removed
   when a store opens.
@@ -65,12 +66,32 @@ class RunStore:
 
 
 def _private_dir(path: Path) -> None:
+    if os.name == "nt":
+        _private_dir_windows(path)
+        return
     path.mkdir(parents=True, exist_ok=True)
-    if os.name != "nt":
-        os.chmod(path, 0o700)
-        mode = stat.S_IMODE(path.stat().st_mode)
-        if mode & 0o077:
-            raise StoreError(f"the agent store is not private (mode {mode:o})")
+    os.chmod(path, 0o700)
+    mode = stat.S_IMODE(path.stat().st_mode)
+    if mode & 0o077:
+        raise StoreError(f"the agent store is not private (mode {mode:o})")
+
+
+def _private_dir_windows(path: Path) -> None:
+    """Create `path` with orceld's protected owner-only DACL (slice 5b), or
+    refuse an existing one that is not private, a link, or a junction."""
+    from . import winacl
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        user = winacl.current_user_sid()
+        winacl.create_private_dir(path, user)
+        if os.lstat(path).st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT or not path.is_dir():
+            raise StoreError("the agent store is a link, a junction or not a directory")
+        problem = winacl.private_problem(winacl.security_of(path), user)
+    except OSError as error:
+        raise StoreError(f"the agent store cannot be made private: {error}") from error
+    if problem is not None:
+        raise StoreError(f"the agent store is not private: {problem}")
 
 
 def _last_activity(run: Path) -> float:

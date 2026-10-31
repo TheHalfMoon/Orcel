@@ -20,10 +20,9 @@ hold"):
   is OFF, and a database holding anything but the one `state` table fails
   closed.
 - **No symlinks:** a symlinked database or journal fails closed.
-- **Owner-only:** the directory is the store's (0700 on Unix); the files are
-  0600 on Unix. **On Windows the checkpoint refuses to open** until the store
-  has its protected owner-only DACL (slice 5b): the store would otherwise hold
-  model context under its root's inherited ACL.
+- **Owner-only:** the directory is the store's (0700 on Unix; on Windows a
+  protected owner-only DACL, slice 5b, that the files inherit); the files are
+  0600 on Unix.
 - **Deleted with the run, expiring after a crash** (store.py).
 
 JSON only: a checkpoint is data, so reading one back cannot construct
@@ -53,16 +52,12 @@ _CREATE = "CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NO
 #: The only schema accepted, exactly as SQLite records it.
 _SCHEMA = {("table", "state", "CREATE TABLE state (key TEXT PRIMARY KEY, value TEXT NOT NULL)"),
            ("index", "sqlite_autoindex_state_1", None)}
-#: Lifted by slice 5b, when the store gets its protected Windows DACL.
-_WINDOWS_ACL_READY = False
 
 
 class PlannerCheckpoint:
     """Save and load one run's planner state."""
 
     def __init__(self, store: RunStore) -> None:
-        if os.name == "nt" and not _WINDOWS_ACL_READY:
-            raise StoreError("the planner checkpoint needs the store's protected Windows DACL (SG-000129 slice 5b)")
         self._store = store
 
     @property

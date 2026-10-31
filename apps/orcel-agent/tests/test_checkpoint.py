@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import stat
 import sys
@@ -20,7 +21,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from orcel_agent.agent import Agent  # noqa: E402
-import orcel_agent.checkpoint as checkpoint_module  # noqa: E402
 from orcel_agent.checkpoint import CHECKPOINT_FILE, PlannerCheckpoint  # noqa: E402
 from orcel_agent.edge import ToolOutcome, ToolSpec  # noqa: E402
 from orcel_agent.events import EventLog  # noqa: E402
@@ -54,29 +54,12 @@ class Edge:
 
 
 class Scratch(unittest.TestCase):
-    """Exercises the checkpoint's logic on every OS. On Windows the checkpoint
-    refuses to open until slice 5b gives the store its protected DACL; these
-    tests lift that refusal explicitly (WindowsRefusal pins it)."""
-
     def setUp(self) -> None:
         self._dir = tempfile.TemporaryDirectory()
         self.root = Path(self._dir.name) / "agent"
-        self._ready = checkpoint_module._WINDOWS_ACL_READY
-        checkpoint_module._WINDOWS_ACL_READY = True
 
     def tearDown(self) -> None:
-        checkpoint_module._WINDOWS_ACL_READY = self._ready
         self._dir.cleanup()
-
-
-class WindowsRefusal(unittest.TestCase):
-    @unittest.skipUnless(os.name == "nt", "Windows only")
-    def test_the_checkpoint_refuses_to_open_on_windows_until_5b(self) -> None:
-        with tempfile.TemporaryDirectory() as scratch:
-            store = open_store(Path(scratch) / "agent", RUN)
-            self.assertFalse(checkpoint_module._WINDOWS_ACL_READY)
-            with self.assertRaises(StoreError):
-                PlannerCheckpoint(store)
 
 
 class Checkpoint(Scratch):
@@ -105,6 +88,17 @@ class Checkpoint(Scratch):
         self.assertFalse((store.directory / (CHECKPOINT_FILE + "-wal")).exists())
         if os.name != "nt":
             self.assertEqual(stat.S_IMODE(checkpoint.path.stat().st_mode), 0o600)
+        else:
+            from orcel_agent import winacl
+
+            # The database inherits the store's protected DACL: only the
+            # user, SYSTEM and Administrators hold entries.
+            user = winacl.current_user_sid()
+            for path in (checkpoint.path, store.journal_path):
+                if path.exists():
+                    sddl = winacl.security_of(path)
+                    sids = {e.split(";")[5] for e in re.findall(r"\(([^()]*)\)", sddl.split("D:", 1)[1])}
+                    self.assertTrue(sids and sids <= winacl.TRUSTED | {user}, sddl)
 
     def test_the_size_cap_fails_closed(self) -> None:
         store = open_store(self.root, RUN, max_bytes=40_000)
