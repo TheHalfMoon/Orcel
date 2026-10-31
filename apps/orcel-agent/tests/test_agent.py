@@ -316,24 +316,28 @@ class PrivateStore(Scratch):
         # (locale-proof). Read with icacls, independently of winacl.py.
         user_sid = subprocess.run(["whoami", "/user", "/fo", "csv", "/nh"], capture_output=True, text=True,
                                   check=True).stdout.strip().split(",")[-1].strip('"')
-        saved = Path(self._dir.name) / "acl.txt"
-        subprocess.run(["icacls", str(store.directory), "/save", str(saved), "/q"], capture_output=True, check=True)
-        sddl = saved.read_bytes().decode("utf-16")
-        self.assertIn("D:P", sddl, "a protected DACL")
+        store.journal_path.write_text("{}\n", encoding="utf-8")
         allowed = {user_sid, "SY", "BA", "S-1-5-18", "S-1-5-32-544"}
-        aces = re.findall(r"\(([^;()]*);([^;()]*);[^;()]*;[^;()]*;[^;()]*;([^;()]*)\)", sddl)
-        self.assertTrue(aces, sddl)
-        for kind, flags, sid in aces:
-            self.assertEqual(kind, "A", sddl)
-            self.assertNotIn("ID", flags, "nothing inherited")
-            self.assertIn(sid, allowed, sddl)
-        self.assertIn(user_sid, {sid for _, _, sid in aces})
+        for path, inherited in ((self.root, False), (store.directory, False), (store.journal_path, True)):
+            saved = Path(self._dir.name) / "acl.txt"
+            saved.unlink(missing_ok=True)
+            subprocess.run(["icacls", str(path), "/save", str(saved), "/q"], capture_output=True, check=True)
+            sddl = saved.read_bytes().decode("utf-16")
+            if not inherited:
+                self.assertIn("D:P", sddl, f"{path}: a protected DACL")
+            aces = re.findall(r"\(([^;()]*);([^;()]*);[^;()]*;[^;()]*;[^;()]*;([^;()]*)\)", sddl)
+            self.assertTrue(aces, sddl)
+            for kind, flags, sid in aces:
+                self.assertEqual(kind, "A", sddl)
+                self.assertEqual("ID" in flags, inherited, f"{path}: {sddl}")
+                self.assertIn(sid, allowed, sddl)
+            self.assertIn(user_sid, {sid for _, _, sid in aces}, path)
 
     @unittest.skipUnless(os.name == "nt", "Windows only")
     def test_an_existing_directory_that_is_not_private_is_refused(self) -> None:
         # Made the ordinary way, the root inherits the temp directory's ACL.
         self.root.mkdir(parents=True)
-        with self.assertRaises(StoreError):
+        with self.assertRaisesRegex(StoreError, r"not private \(the DACL is not protected\); remove it"):
             open_store(self.root, RUN)
         # A junction to a private directory is refused too.
         import _winapi
@@ -342,7 +346,7 @@ class PrivateStore(Scratch):
         open_store(target, RUN)
         junction = Path(self._dir.name) / "junction"
         _winapi.CreateJunction(str(target), str(junction))
-        with self.assertRaises(StoreError):
+        with self.assertRaisesRegex(StoreError, "a link, a junction"):
             open_store(junction, RUN)
 
     @unittest.skipUnless(os.name == "nt", "Windows only")
@@ -353,6 +357,10 @@ class PrivateStore(Scratch):
         good = f"O:{me}D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;{me})"
         self.assertIsNone(private_problem(good, me))
         self.assertIsNone(private_problem(good.replace("D:P", "D:PAI"), me))
+        # An account SDDL prints as an alias (here the built-in Administrator).
+        aliased = "O:LAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;LA)"
+        self.assertIsNotNone(private_problem(aliased, me))
+        self.assertIsNone(private_problem(aliased, me, "LA"))
         for bad in (
             good.replace("D:P", "D:AI"),  # not protected
             good.replace(f"O:{me}", "O:S-1-5-21-9-9-9-1002"),  # someone else's
@@ -568,10 +576,67 @@ class SourceBoundary(unittest.TestCase):
                 # Only the loop over FUNCTIONS looks a native function up.
                 self.assertEqual(ast.unparse(node), "getattr(dll, name)")
         self.assertEqual(len(win_dll), 1, "one WinDLL call, over FUNCTIONS' libraries")
+        # The one WinDLL call loads FUNCTIONS' libraries and nothing else, and
+        # the one getattr looks up FUNCTIONS' names: both inside the loops
+        # over FUNCTIONS, whose loop variables are never reassigned.
+        loops = [node for node in ast.walk(tree) if isinstance(node, ast.For)
+                 and ast.unparse(node.iter) == "FUNCTIONS.items()"]
+        self.assertEqual(len(loops), 1)
+        self.assertEqual(ast.unparse(loops[0].target), "(library, names)")
+        inner = [node for node in loops[0].body if isinstance(node, ast.For)]
+        self.assertEqual([(ast.unparse(n.target), ast.unparse(n.iter)) for n in inner], [("name", "names")])
+        self.assertTrue(any(isinstance(n, ast.Call) and ast.unparse(n) == "ctypes.WinDLL(library, use_last_error=True)"
+                            for n in ast.walk(loops[0])))
+        self.assertTrue(any(isinstance(n, ast.Call) and ast.unparse(n) == "getattr(dll, name)"
+                            for n in ast.walk(inner[0])))
+        pinned = {"dll = ctypes.WinDLL(library, use_last_error=True)", "function = getattr(dll, name)",
+                  "FUNCTIONS = " + ast.unparse(table)}
+        loop_targets = [ast.unparse(loops[0].target), ast.unparse(inner[0].target)]
+        for node in ast.walk(tree):
+            targets = []
+            if isinstance(node, ast.Assign):
+                targets = node.targets
+            elif isinstance(node, (ast.AugAssign, ast.AnnAssign, ast.NamedExpr, ast.For, ast.comprehension)):
+                targets = [node.target]
+            for target in targets:
+                # Rebinding a name (setting an attribute on it is not).
+                parts = target.elts if isinstance(target, (ast.Tuple, ast.List)) else [target]
+                names = {part.id for part in parts if isinstance(part, ast.Name)}
+                if names & {"FUNCTIONS", "library", "names", "name", "dll", "function"}:
+                    text = ast.unparse(target) if isinstance(node, (ast.For, ast.comprehension)) else ast.unparse(node)
+                    self.assertIn(text, pinned | set(loop_targets), f"winacl.py: {text}")
+                    if text in loop_targets:
+                        loop_targets.remove(text)
+        # ctypes is used through a named set of attributes only: no private
+        # names, no raw memory, no other loader, no attribute on a library.
+        ctypes_allowed = {"Structure", "POINTER", "c_void_p", "c_int", "byref", "sizeof", "wstring_at",
+                          "get_last_error", "FormatError", "WinDLL"}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute):
+                self.assertFalse(node.attr.startswith("_"), f"winacl.py: .{node.attr}")
+                self.assertNotIn(node.attr, {"from_address", "from_buffer", "from_buffer_copy", "in_dll",
+                                             "string_at", "addressof", "cast", "pointer", "resize"},
+                                 f"winacl.py: .{node.attr}")
+                if isinstance(node.value, ast.Name) and node.value.id == "ctypes":
+                    self.assertIn(node.attr, ctypes_allowed, f"winacl.py: ctypes.{node.attr}")
+                if isinstance(node.value, ast.Name) and node.value.id == "dll":
+                    self.fail(f"winacl.py: dll.{node.attr}")
+            if isinstance(node, ast.Name):
+                self.assertNotIn(node.id, {"vars", "globals", "locals", "eval", "exec", "__builtins__"},
+                                 f"winacl.py: {node.id}")
+            if isinstance(node, ast.ImportFrom) and node.module == "ctypes":
+                self.assertEqual([a.name for a in node.names], ["wintypes"])
         # No other module touches ctypes.
         for other in self.modules():
             if other.name != "winacl.py":
                 self.assertNotIn("ctypes", other.read_text(encoding="utf-8"), other.name)
+
+    @unittest.skipUnless(os.name == "nt", "Windows only")
+    def test_winacl_loads_exactly_its_named_functions_at_run_time(self) -> None:
+        from orcel_agent import winacl
+
+        loaded = winacl._functions()
+        self.assertEqual(set(loaded), {name for names in self.WINACL_FUNCTIONS.values() for name in names})
 
     def test_the_denylist_is_never_narrowed_below_the_recorded_floor(self) -> None:
         spec = json.loads((ROOT.parents[1] / ".specgrain" / "specs" / "SG-000129.json").read_text(encoding="utf-8"))

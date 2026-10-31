@@ -86,12 +86,13 @@ def _private_dir_windows(path: Path) -> None:
         user = winacl.current_user_sid()
         winacl.create_private_dir(path, user)
         if os.lstat(path).st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT or not path.is_dir():
-            raise StoreError("the agent store is a link, a junction or not a directory")
-        problem = winacl.private_problem(winacl.security_of(path), user)
-    except OSError as error:
-        raise StoreError(f"the agent store cannot be made private: {error}") from error
+            raise StoreError(f"the agent store {path} is a link, a junction or not a directory")
+        problem = winacl.private_problem(winacl.security_of(path), user, winacl.sddl_form(user))
+    except (OSError, ValueError) as error:  # ValueError: a path holding NUL
+        raise StoreError(f"the agent store {path} cannot be made private: {error}") from error
     if problem is not None:
-        raise StoreError(f"the agent store is not private: {problem}")
+        # A directory made before slice 5b inherits its parent's ACL.
+        raise StoreError(f"the agent store {path} is not private ({problem}); remove it to start a new store")
 
 
 def _last_activity(run: Path) -> float:

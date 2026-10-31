@@ -110,10 +110,14 @@ def current_user_sid() -> str:
         if not api["GetTokenInformation"](token, _TOKEN_USER, None, 0, ctypes.byref(needed)) \
                 and ctypes.get_last_error() != _ERROR_INSUFFICIENT_BUFFER:
             raise _fail("GetTokenInformation")
-        buffer = ctypes.create_string_buffer(needed.value)
+        pointer_size = ctypes.sizeof(ctypes.c_void_p)
+        if needed.value < 2 * pointer_size:  # TOKEN_USER: a SID pointer and its attributes
+            raise OSError(0, "GetTokenInformation returned a short TOKEN_USER")
+        # Pointer-aligned, as TOKEN_USER is.
+        buffer = (ctypes.c_void_p * (needed.value // pointer_size + 1))()
         if not api["GetTokenInformation"](token, _TOKEN_USER, buffer, needed, ctypes.byref(needed)):
             raise _fail("GetTokenInformation")
-        sid = ctypes.cast(buffer, ctypes.POINTER(ctypes.c_void_p))[0]  # TOKEN_USER.User.Sid
+        sid = buffer[0]  # TOKEN_USER.User.Sid
         text = ctypes.c_void_p()
         if not api["ConvertSidToStringSidW"](sid, ctypes.byref(text)):
             raise _fail("ConvertSidToStringSidW")
@@ -162,19 +166,42 @@ def security_of(path: Path) -> str:
         api["LocalFree"](descriptor)
 
 
+def sddl_form(sid: str) -> str:
+    """How SDDL text names `sid`: some accounts print as an alias (the
+    built-in Administrator as LA, LocalService as LS, SYSTEM as SY)."""
+    api = _functions()
+    descriptor = ctypes.c_void_p()
+    if not api["ConvertStringSecurityDescriptorToSecurityDescriptorW"](
+            f"O:{sid}", _SDDL_REVISION_1, ctypes.byref(descriptor), None):
+        raise _fail("ConvertStringSecurityDescriptorToSecurityDescriptorW")
+    try:
+        text = ctypes.c_void_p()
+        if not api["ConvertSecurityDescriptorToStringSecurityDescriptorW"](
+                descriptor, _SDDL_REVISION_1, _OWNER_SECURITY_INFORMATION, ctypes.byref(text), None):
+            raise _fail("ConvertSecurityDescriptorToStringSecurityDescriptorW")
+        owner = _take_string(api, text)
+    finally:
+        api["LocalFree"](descriptor)
+    if not owner.startswith("O:"):
+        raise OSError(0, f"unexpected owner text {owner!r}")
+    return owner[2:]
+
+
 _SECURITY = re.compile(r"O:([A-Za-z0-9-]+)D:([A-Z]*)((?:\([^()]*\))*)")
 
 
-def private_problem(sddl: str, user: str) -> Optional[str]:
+def private_problem(sddl: str, user: str, alias: Optional[str] = None) -> Optional[str]:
     """Why a directory's security (SDDL) is not private, or None when it is:
     owned by the user or a trusted principal, a protected DACL (nothing
     inherited), and only allow entries for the user and trusted principals,
-    with the user among them."""
+    with the user among them. `alias` is the user's SDDL form when it is
+    not the SID itself (sddl_form)."""
     match = _SECURITY.fullmatch(sddl)
     if match is None:
         return f"unrecognized security descriptor {sddl!r}"
     owner, flags, aces = match.groups()
-    allowed = TRUSTED | {user}
+    me = {user} | ({alias} if alias else set())
+    allowed = TRUSTED | me
     if owner not in allowed:
         return f"owned by {owner}"
     if "P" not in flags:
@@ -193,6 +220,6 @@ def private_problem(sddl: str, user: str) -> Optional[str]:
         if sid not in allowed:
             return f"access for {sid}"
         seen.add(sid)
-    if user not in seen:
+    if not me & seen:
         return "no entry for the user"
     return None

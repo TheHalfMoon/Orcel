@@ -89,16 +89,23 @@ class Checkpoint(Scratch):
         if os.name != "nt":
             self.assertEqual(stat.S_IMODE(checkpoint.path.stat().st_mode), 0o600)
         else:
-            from orcel_agent import winacl
-
             # The database inherits the store's protected DACL: only the
-            # user, SYSTEM and Administrators hold entries.
-            user = winacl.current_user_sid()
-            for path in (checkpoint.path, store.journal_path):
-                if path.exists():
-                    sddl = winacl.security_of(path)
-                    sids = {e.split(";")[5] for e in re.findall(r"\(([^()]*)\)", sddl.split("D:", 1)[1])}
-                    self.assertTrue(sids and sids <= winacl.TRUSTED | {user}, sddl)
+            # user, SYSTEM and Administrators, inherited allow entries. Read
+            # with icacls, independently of winacl.py.
+            import subprocess
+
+            user = subprocess.run(["whoami", "/user", "/fo", "csv", "/nh"], capture_output=True, text=True,
+                                  check=True).stdout.strip().split(",")[-1].strip('"')
+            saved = Path(self._dir.name) / "acl.txt"
+            subprocess.run(["icacls", str(checkpoint.path), "/save", str(saved), "/q"], capture_output=True,
+                           check=True)
+            sddl = saved.read_bytes().decode("utf-16")
+            aces = re.findall(r"\(([^;()]*);([^;()]*);[^;()]*;[^;()]*;[^;()]*;([^;()]*)\)", sddl)
+            self.assertTrue(aces, sddl)
+            for kind, flags, sid in aces:
+                self.assertEqual(kind, "A", sddl)
+                self.assertIn("ID", flags, sddl)
+                self.assertIn(sid, {user, "SY", "BA", "S-1-5-18", "S-1-5-32-544"}, sddl)
 
     def test_the_size_cap_fails_closed(self) -> None:
         store = open_store(self.root, RUN, max_bytes=40_000)
