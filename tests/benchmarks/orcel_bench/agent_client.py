@@ -20,6 +20,11 @@ schema for that tool, and the planner's proposal is what the gate
 dispatches. Built with `chat_agent`, so the allowlist is read-only.
 Rows are labelled `deterministic` / `orcel-agent-langchain-scripted`: still
 the task's scripted plans, not a model. Needs the agent's locked environment.
+
+SG-000129 slice 6 adds `planner="m2"` (the same path with M3's todos and
+compaction switched off) and `planner="m3"` (every M3 feature, with the
+planner checkpoint in the run's private store), labelled
+`orcel-agent-m2-scripted` and `orcel-agent-m3-scripted`.
 """
 
 from __future__ import annotations
@@ -49,6 +54,9 @@ from orcel_agent.store import new_run_id, open_store  # noqa: E402
 #: The task's own deterministic plans, dispatched through the Orcel Agent.
 PLANNER = {"kind": "deterministic", "name": "orcel-agent-scripted", "version": "m1"}
 CHAT_PLANNER = {"kind": "deterministic", "name": "orcel-agent-langchain-scripted", "version": "sg-000129-slice2"}
+M2_PLANNER = {"kind": "deterministic", "name": "orcel-agent-m2-scripted", "version": "sg-000129-slice6"}
+M3_PLANNER = {"kind": "deterministic", "name": "orcel-agent-m3-scripted", "version": "sg-000129-slice6"}
+LABELS = {"scripted": PLANNER, "chat": CHAT_PLANNER, "m2": M2_PLANNER, "m3": M3_PLANNER}
 
 #: The goal the chat planner is shown; the plan itself is the task's.
 GOAL = "Solve the BM-02 Tier A task with read-only Orcel tools."
@@ -130,20 +138,29 @@ class AgentOrcel:
             journal = DispatchJournal(store.journal_path, store.check_capacity)
             # The episode's whole state directory (with this store) is
             # removed in __exit__, so the agent keeps its store until then.
-            if self.planner == "chat":
+            if self.planner not in LABELS:
+                raise OrcelError("plan-error", f"unknown planner mode {self.planner}")
+            if self.planner != "scripted":
                 from orcel_agent.entry import chat_agent
 
                 self._agent = chat_agent(self._edge, journal, EventLog(store.run_id), store=store, keep_store=True)
             else:
                 self._agent = Agent(self._edge, journal, EventLog(store.run_id), store=store, keep_store=True)
             self._tools = self._agent.prepare()
-            if self.planner == "chat":
+            if self.planner != "scripted":
                 # One planner (with its default loop detector) per episode; its
                 # scripted model is fed one reply per planned call.
                 planner_class, replies = _chat_planner()
                 self._replies = deque()
                 self._model = replies(messages=self._feed())
-                self._planner = planner_class(self._model, events=self._agent.events)
+                options: dict[str, Any] = {}
+                if self.planner == "m2":
+                    options = {"planning": False, "compaction": False}
+                elif self.planner == "m3":
+                    from orcel_agent.checkpoint import PlannerCheckpoint
+
+                    options = {"checkpoint": PlannerCheckpoint(store)}
+                self._planner = planner_class(self._model, events=self._agent.events, **options)
         except BaseException:
             self.__exit__(None, None, None)
             raise
@@ -160,7 +177,7 @@ class AgentOrcel:
         if target is not None:
             tool_arguments["path"] = target
         intended = ToolCall(tool, tool_arguments)
-        if self.planner == "chat":
+        if self.planner != "scripted":
             from langchain_core.messages import AIMessage
 
             reply = AIMessage(content="", tool_calls=[{"name": tool, "args": tool_arguments, "id": "bm02", "type": "tool_call"}])
