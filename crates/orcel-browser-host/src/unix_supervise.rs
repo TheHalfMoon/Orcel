@@ -45,13 +45,17 @@
 //!   re-stops every known member (`SIGSTOP`) each round until one scan
 //!   shows them all stopped, kills them, and confirms with a fresh,
 //!   re-attributed scan, repeating until that scan accounts for everything.
-//!   Any same-user process whose creating parent was born after the root
+//!   Any process (of any user) whose creating parent was born after the root
 //!   and is neither a known member nor alive cannot be attributed: it might
 //!   be an escaped descendant whose intermediate parent exited unseen, so
 //!   coverage is `Incomplete`. That rule turns an escape into a detected,
 //!   fail-closed result; it can also flag an unrelated orphan of a process
 //!   started after the root (a false positive, which only keeps resources
 //!   held). What launchd or any older process creates is never flagged.
+//!   Recorded limit (not accepted): a scan lists pids and then reads them,
+//!   so a process that forks and exits faster than a scan, generation after
+//!   generation, is not proven to be read; every unattributable process any
+//!   scan reads still fails closed.
 //!
 //! Still open for activation:
 //! - **Check-to-kill window.** The identity check and the kill are two
@@ -375,14 +379,12 @@ impl Supervised {
         };
         let lineage::Stopped {
             mut known,
-            uid,
             root_unique,
         } = tracker.stop();
         // Every process this sweep ever stopped, so an error path can kill
         // them instead of leaving them stopped.
         let mut signalled: BTreeMap<u64, Node> = BTreeMap::new();
-        let outcome =
-            self.freeze_kill_confirm(&mut known, uid, root_unique, deadline, &mut signalled);
+        let outcome = self.freeze_kill_confirm(&mut known, root_unique, deadline, &mut signalled);
         if outcome.is_err() {
             for node in signalled.values() {
                 lineage::signal(*node, libc::SIGKILL);
@@ -408,26 +410,34 @@ impl Supervised {
     /// 1. **Freeze.** Every known living member is sent `SIGSTOP` on every
     ///    round (a member not yet stopped may `SIGCONT` another), until one
     ///    scan shows every known living member stopped (`SSTOP`). Stopped
-    ///    processes neither fork nor signal, so that scan is a consistent
-    ///    picture, and a fork already inside the kernel when `SIGSTOP` was
-    ///    sent shows up in it as a new member.
-    /// 2. **Kill** every member in that scan.
+    ///    processes neither fork nor signal.
+    /// 2. **Kill** every member in that scan, then wait until each one has
+    ///    exited: a process cannot finish exiting while a fork it started is
+    ///    still in progress, so any child it made exists before step 3 lists.
     /// 3. **Confirm** with a fresh scan, attributed again: verified only
-    ///    when no known member is alive and nothing is unattributable.
+    ///    when no known member is alive and no scan of this sweep ever found
+    ///    an unattributable process.
+    ///
+    /// Not closed (recorded, not accepted): each scan lists pids, then reads
+    /// them one by one, so a process that forks and exits faster than a scan
+    /// can keep each generation unread.
     #[cfg(target_os = "macos")]
     fn freeze_kill_confirm(
         &mut self,
         known: &mut BTreeSet<u64>,
-        uid: u32,
         root_unique: u64,
         deadline: Duration,
         signalled: &mut BTreeMap<u64, Node>,
     ) -> Result<SweepOutcome, FamilyError> {
         let started = Instant::now();
+        // Every unattributable process any scan of this sweep found.
+        let mut unattributable: BTreeMap<u64, Node> = BTreeMap::new();
         loop {
             let members = loop {
                 let nodes = lineage::nodes()?;
-                let _ = attribute(&nodes, known, root_unique, uid);
+                for node in attribute(&nodes, known, root_unique) {
+                    unattributable.insert(node.unique, node);
+                }
                 let members: Vec<Node> = nodes
                     .into_iter()
                     .filter(|n| known.contains(&n.unique) && !n.zombie)
@@ -450,8 +460,13 @@ impl Supervised {
                 lineage::signal(*node, libc::SIGKILL);
             }
             self.reap_root();
+            while !members.iter().all(|n| lineage::exited(*n)) && started.elapsed() < deadline {
+                std::thread::sleep(Duration::from_millis(1));
+            }
             let nodes = lineage::nodes()?;
-            let unattributable = attribute(&nodes, known, root_unique, uid);
+            for node in attribute(&nodes, known, root_unique) {
+                unattributable.insert(node.unique, node);
+            }
             let alive: Vec<Pinned> = nodes
                 .iter()
                 .filter(|n| known.contains(&n.unique) && !n.zombie)
@@ -463,9 +478,11 @@ impl Supervised {
                     coverage: Coverage::VerifiedComplete,
                 });
             }
-            if started.elapsed() >= deadline {
+            // Something unattributable was seen: never verified. Once every
+            // known member is gone there is nothing left to kill.
+            if (alive.is_empty() && !unattributable.is_empty()) || started.elapsed() >= deadline {
                 let mut left = alive;
-                left.extend(unattributable.iter().map(|n| n.pinned));
+                left.extend(unattributable.values().map(|n| n.pinned));
                 return Ok(SweepOutcome {
                     left,
                     coverage: Coverage::Incomplete,
@@ -504,7 +521,6 @@ fn descendants_of(ancestor: i32, table: &[Row]) -> Vec<Pinned> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Node {
     pub(crate) pinned: Pinned,
-    pub(crate) uid: u32,
     pub(crate) unique: u64,
     pub(crate) parent_unique: u64,
     pub(crate) zombie: bool,
@@ -512,27 +528,18 @@ pub(crate) struct Node {
     pub(crate) stopped: bool,
 }
 
-/// The uid of a process whose unique ids are readable but whose BSD info is
-/// not (another user's): never equal to this user's.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-pub(crate) const OTHER_USER: u32 = u32::MAX;
-
 /// Grow `known` (unique ids) to its closure over `nodes` through parent
-/// unique ids, and return the processes that cannot be attributed: same
-/// user, not known, whose creating parent was born after the root (a
-/// descendant's creating parent is the root or another descendant, and
-/// unique ids only grow) and is neither known nor alive. Such a process may
-/// be an escaped descendant whose intermediate parent exited unseen, so it
-/// defeats verified coverage. Anything launchd or another older process
-/// creates is never flagged. (A zombie is dead: its children were
-/// reparented when it exited.)
+/// unique ids, and return the processes that cannot be attributed: not
+/// known, whose creating parent was born after the root (a descendant's
+/// creating parent is the root or another descendant, and unique ids only
+/// grow) and is neither known nor alive. Such a process may be an escaped
+/// descendant whose intermediate parent exited unseen, so it defeats
+/// verified coverage, whatever its user (a setuid step must not hide a
+/// descendant). Anything launchd or another older process creates is never
+/// flagged. (A zombie is dead: its children were reparented when it
+/// exited.)
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-pub(crate) fn attribute(
-    nodes: &[Node],
-    known: &mut BTreeSet<u64>,
-    root_unique: u64,
-    uid: u32,
-) -> Vec<Node> {
+pub(crate) fn attribute(nodes: &[Node], known: &mut BTreeSet<u64>, root_unique: u64) -> Vec<Node> {
     loop {
         let before = known.len();
         for node in nodes {
@@ -554,7 +561,6 @@ pub(crate) fn attribute(
         .copied()
         .filter(|n| {
             !n.zombie
-                && n.uid == uid
                 && n.parent_unique > root_unique
                 && !known.contains(&n.unique)
                 && !known.contains(&n.parent_unique)
@@ -630,7 +636,7 @@ pub(crate) mod reaper {
 
 #[cfg(target_os = "macos")]
 pub(crate) mod lineage {
-    use super::{attribute, FamilyError, Node, Pinned, MAX_SCAN, OTHER_USER};
+    use super::{attribute, FamilyError, Node, Pinned, MAX_SCAN};
     use std::collections::BTreeSet;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
@@ -715,10 +721,11 @@ pub(crate) mod lineage {
 
     /// Every process whose unique ids can be read, as lineage nodes.
     /// Another user's process whose BSD info cannot be read (EPERM) is kept
-    /// with `OTHER_USER`: it still counts as a living parent, and if it is a
-    /// known member (a descendant that changed user) it can be neither
-    /// stopped nor killed, so the sweep ends `Incomplete`. One whose unique
-    /// ids cannot be read either is skipped (the open "another user" item).
+    /// too: it counts as a living parent, it is flagged like any other when
+    /// unattributable, and as a known member (a descendant that changed
+    /// user) it can be neither stopped nor killed, so the sweep ends
+    /// `Incomplete`. One whose unique ids cannot be read either is skipped
+    /// (the open "another user" item).
     pub(crate) fn nodes() -> Result<Vec<Node>, FamilyError> {
         let mut pids = vec![0i32; MAX_SCAN];
         let bytes = (pids.len() * std::mem::size_of::<i32>()) as libc::c_int;
@@ -747,7 +754,6 @@ pub(crate) mod lineage {
                             .wrapping_mul(1_000_000)
                             .wrapping_add(info.pbi_start_tvusec),
                     },
-                    uid: info.pbi_uid,
                     unique,
                     parent_unique,
                     // SZOMB is 5 and SSTOP is 4 in <sys/proc.h>.
@@ -757,7 +763,6 @@ pub(crate) mod lineage {
                 Ok(None) => continue,
                 Err(libc::EPERM) => Node {
                     pinned: Pinned { pid, start: 0 },
-                    uid: OTHER_USER,
                     unique,
                     parent_unique,
                     zombie: false,
@@ -768,6 +773,17 @@ pub(crate) mod lineage {
             nodes.push(node);
         }
         Ok(nodes)
+    }
+
+    /// Whether a node has finished exiting: its pid is gone, carries another
+    /// unique id, or is a zombie. Unknown counts as not exited.
+    pub(crate) fn exited(node: Node) -> bool {
+        match unique_ids(node.pinned.pid) {
+            Ok(None) => true,
+            Ok(Some((unique, _))) if unique != node.unique => true,
+            Ok(Some(_)) => matches!(bsd(node.pinned.pid), Ok(Some(info)) if info.pbi_status == 5),
+            Err(_) => false,
+        }
     }
 
     /// Signal a node only while its pid still carries the same unique id
@@ -782,7 +798,6 @@ pub(crate) mod lineage {
     /// What the tracker learned, handed to the sweep.
     pub(crate) struct Stopped {
         pub(crate) known: BTreeSet<u64>,
-        pub(crate) uid: u32,
         pub(crate) root_unique: u64,
     }
 
@@ -792,7 +807,6 @@ pub(crate) mod lineage {
         known: Arc<Mutex<BTreeSet<u64>>>,
         stop: Arc<AtomicBool>,
         thread: Option<JoinHandle<()>>,
-        uid: u32,
         root_unique: u64,
     }
 
@@ -802,11 +816,6 @@ pub(crate) mod lineage {
                 .ok()
                 .flatten()
                 .ok_or(FamilyError::Unreadable)?;
-            let uid = bsd(root.pid)
-                .ok()
-                .flatten()
-                .ok_or(FamilyError::Unreadable)?
-                .pbi_uid;
             let known = Arc::new(Mutex::new(BTreeSet::from([root_unique])));
             let stop = Arc::new(AtomicBool::new(false));
             let thread = {
@@ -815,7 +824,7 @@ pub(crate) mod lineage {
                     while !stop.load(Ordering::Relaxed) {
                         if let Ok(nodes) = nodes() {
                             if let Ok(mut known) = known.lock() {
-                                let _ = attribute(&nodes, &mut known, root_unique, uid);
+                                let _ = attribute(&nodes, &mut known, root_unique);
                             }
                         }
                         std::thread::sleep(Duration::from_millis(1));
@@ -826,7 +835,6 @@ pub(crate) mod lineage {
                 known,
                 stop,
                 thread: Some(thread),
-                uid,
                 root_unique,
             })
         }
@@ -836,7 +844,6 @@ pub(crate) mod lineage {
             let known = self.known.lock().map(|k| k.clone()).unwrap_or_default();
             Stopped {
                 known,
-                uid: self.uid,
                 root_unique: self.root_unique,
             }
         }
@@ -1685,6 +1692,10 @@ mod tests {
         if !lineage_alone() {
             return;
         }
+        println!(
+            "SG115-EVIDENCE launchd unique ids readable by this user: {}",
+            lineage::ids_of(1).is_some()
+        );
         for (case, body, expected) in CASES {
             if case == "double_fork_fast" {
                 continue;
@@ -1744,7 +1755,6 @@ mod tests {
     fn node(pid: i32, unique: u64, parent_unique: u64) -> Node {
         Node {
             pinned: Pinned { pid, start: unique },
-            uid: 501,
             unique,
             parent_unique,
             zombie: false,
@@ -1758,7 +1768,7 @@ mod tests {
         // orphan 102 (u12, reparented to launchd: ppid 1, parent unique 11).
         let mut known = BTreeSet::from([10, 11]);
         let nodes = [node(1, 1, 0), node(100, 10, 5), node(102, 12, 11)];
-        let unattributable = attribute(&nodes, &mut known, 10, 501);
+        let unattributable = attribute(&nodes, &mut known, 10);
         assert!(known.contains(&12), "{known:?}");
         assert!(unattributable.is_empty(), "{unattributable:?}");
     }
@@ -1768,19 +1778,16 @@ mod tests {
         // The intermediate (u11) exited before it was ever recorded.
         let mut known = BTreeSet::from([10]);
         let nodes = [node(1, 1, 0), node(100, 10, 5), node(102, 12, 11)];
-        let unattributable = attribute(&nodes, &mut known, 10, 501);
+        let unattributable = attribute(&nodes, &mut known, 10);
         assert_eq!(unattributable, vec![node(102, 12, 11)]);
     }
 
     #[test]
     fn the_attribution_rule_leaves_out_what_cannot_be_ours() {
         let mut known = BTreeSet::from([10]);
-        let mut other_user = node(103, 13, 77);
-        other_user.uid = 0;
-        let mut zombie_parent_child = node(105, 15, 14);
+        let zombie_parent_child = node(105, 15, 14);
         let mut zombie = node(104, 14, 3);
         zombie.zombie = true;
-        zombie_parent_child.uid = 501;
         let nodes = [
             node(1, 1, 0),
             node(100, 10, 5),
@@ -1792,14 +1799,30 @@ mod tests {
             node(108, 18, 5),
             // Its parent (u1, launchd) is alive: not an orphan of ours.
             node(106, 16, 1),
-            other_user,
             zombie,
             zombie_parent_child,
         ];
-        let unattributable = attribute(&nodes, &mut known, 10, 501);
-        // Only the child of a dead (zombie) unknown parent is flagged; the
-        // other user's process is the recorded open item, not flagged.
+        let unattributable = attribute(&nodes, &mut known, 10);
+        // Only the child of a dead (zombie) unknown parent born after the
+        // root is flagged.
         assert_eq!(unattributable, vec![zombie_parent_child]);
+    }
+
+    /// A setuid step must not hide a descendant: whatever its user, an
+    /// unknown process whose creating parent was born after the root and is
+    /// dead is flagged, and its own child is then not hidden behind it.
+    #[test]
+    fn another_users_orphan_of_a_young_dead_parent_is_flagged() {
+        let mut known = BTreeSet::from([10]);
+        // A1 (u11) exited unseen; A2 (u12) ran a setuid program; A3 (u13) is
+        // A2's child, back under this user.
+        let nodes = [node(100, 10, 5), node(102, 12, 11), node(103, 13, 12)];
+        let unattributable = attribute(&nodes, &mut known, 10);
+        assert_eq!(
+            unattributable,
+            vec![node(102, 12, 11)],
+            "the setuid step is flagged"
+        );
     }
 
     /// Pre-activation boundary: only lib.rs (the test-only declaration)

@@ -66,7 +66,7 @@ jobs:
           out=$(cargo test -p orcel-browser-host --lib unix_supervise::tests::macos_lineage_ -- --test-threads=1 --nocapture 2>&1) || status=$?
           printf '%s\n' "$out"
           [ "$status" -eq 0 ]
-          printf '%s\n' "$out" | grep -q "test result: ok. 2 passed"
+          grep -q "test result: ok. 2 passed" <<<"$out"
       # BM-02 evidence on this OS: both tiers again with their per-case lines
       # in the log (the Test step captures them when they pass), and both
       # reports checked against orcel-benchmark-report/1.
