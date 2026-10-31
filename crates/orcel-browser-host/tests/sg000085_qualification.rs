@@ -1227,8 +1227,10 @@ fn no_shell_script_or_remote_process_surface_exists() {
     // SG-000115 category A (recorded rule change, prep/SG-000115.md): the
     // inert Unix fixture spawners A2 (unix_supervise.rs) and A5
     // (unix_cleanup.rs), admitted only while lib.rs declares them under
-    // #[cfg(all(test, unix))]. A6 (unix_rehearsal.rs) spawns only through
-    // A2's `python_fixture`, pinned below under the same guard.
+    // #[cfg(all(test, unix))]. A2 also re-executes the test binary itself as
+    // a dedicated supervisor (A2b, recorded the same way). A6
+    // (unix_rehearsal.rs) spawns only through A2's `python_fixture`, pinned
+    // below under the same guard.
     let lib = sources
         .iter()
         .find(|(file, _)| file == "lib.rs")
