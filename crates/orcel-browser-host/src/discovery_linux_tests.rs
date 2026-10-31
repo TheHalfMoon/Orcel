@@ -243,8 +243,9 @@ fn s07_the_installed_chrome_tree_is_root_owned_where_present() {
         return;
     }
     assert!(
-        install_tree_trusted(chrome, chrome.parent().unwrap(), &PackageDb::production()),
-        "the vendor install tree is root-owned and not group or other writable"
+        install_tree_problem(chrome, chrome.parent().unwrap(), &PackageDb::production()).is_none(),
+        "the vendor install tree is root-owned and not group or other writable: {:?}",
+        install_tree_problem(chrome, chrome.parent().unwrap(), &PackageDb::production())
     );
 }
 
