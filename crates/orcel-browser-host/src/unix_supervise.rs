@@ -19,24 +19,49 @@
 //! - The sweep kills the group and every pinned member, then confirms each
 //!   one exited before the deadline.
 //!
-//! Open, not accepted (category C): a helper that leaves the group and is
-//! orphaned (its parent exits) before a scan reparents to init on macOS,
-//! which has no subreaper, and is then outside the parent-link walk. On
-//! Linux, `PR_SET_CHILD_SUBREAPER` closes that gap only when the
-//! supervisor process sets it, which activation must decide and qualify;
-//! this slice does not set it on the shared test process.
+//! `sweep` is that snapshot sweep and always reports `Incomplete` coverage.
 //!
-//! Also open for activation (not solved here):
-//! - **Forks after the scan.** The sweep is one snapshot, so a member outside
-//!   the group can fork between the scan and the kills, and its new child is
-//!   never pinned. Activation needs stop-then-rescan (`SIGSTOP`, rescan until
-//!   stable, `SIGKILL`) or a kill-and-rescan loop.
-//! - **Check-to-kill window.** The start-time check and the kill are two
-//!   calls; on Linux a pidfd closes the window; on macOS it stays a residual.
-//! - **Other users.** On macOS the table scan skips processes this user may
-//!   not inspect (EPERM). A descendant that changed user (setuid) is
-//!   therefore outside the parent-link walk; it is killed only through the
-//!   group signal, if it stayed in the group.
+//! **Verified termination (A2b, `verified_sweep`).** The only path that can
+//! report `VerifiedComplete`:
+//! - **Linux, a dedicated supervisor process that is a subreaper**
+//!   (`PR_SET_CHILD_SUBREAPER`, set before the fixture starts). Every
+//!   orphaned descendant, including one that called `setsid` or `setpgid`
+//!   and whose parent exited, is reparented to the supervisor (or to a
+//!   subreaper that is itself a descendant). The sweep kills every
+//!   descendant it finds, reaps, and repeats until `waitpid(-1)` reports
+//!   `ECHILD`: a process with no children has no descendants, so that is
+//!   the proof. Forks after a scan are caught by the next round. A
+//!   descendant it cannot kill (another user's, after a setuid exec) keeps
+//!   it from reaching `ECHILD`, so the deadline returns `Incomplete`.
+//!   Precondition: the supervisor's only children are the supervised
+//!   family (a dedicated process; the tests re-execute this test binary for
+//!   it, never the shared test process).
+//! - **macOS, parent unique-id lineage.** macOS has no subreaper, and
+//!   kqueue `NOTE_TRACK` is unsupported (pinned by a test). Each process
+//!   carries a 64-bit unique id that is never reused and the unique id of
+//!   the parent that created it, which is kept when the process is
+//!   reparented (pinned by a test). A tracker records the family's unique
+//!   ids while it runs; the sweep closes the set over parent unique ids,
+//!   stops every member (`SIGSTOP`, so nothing forks) until no new member
+//!   appears, kills them, and confirms each exit. Any same-user process
+//!   born after the root whose parent is neither a known member nor alive
+//!   cannot be attributed: it might be an escaped descendant whose
+//!   intermediate parent exited unseen, so coverage is `Incomplete`. That
+//!   rule turns an escape into a detected, fail-closed result; it can also
+//!   flag an unrelated orphan (a false positive, which only keeps
+//!   resources held).
+//!
+//! Still open for activation:
+//! - **Check-to-kill window.** The identity check and the kill are two
+//!   calls; on Linux a pidfd closes the window; on macOS (unique id checked
+//!   just before the signal) it stays a narrow residual.
+//! - **Another user on macOS.** A descendant that changed user (setuid
+//!   exec) cannot be read, so the lineage neither follows nor flags it; it
+//!   is killed only through the group signal, if it stayed in the group.
+//!   Not accepted: activation must refuse an engine that can reach a setuid
+//!   executable, or close this differently.
+//! - **Work started through another process** (a daemon asked to spawn on
+//!   the engine's behalf) is not a descendant on either OS.
 //! - **SIGCHLD.** The root's pgid stays reserved until `sweep` reaps it,
 //!   unless something in the same process sets `SIGCHLD` to `SIG_IGN`
 //!   (automatic reaping); nothing in this crate does.
@@ -46,7 +71,7 @@
 //!   string; it is `#[cfg(test)]` on its own and must never reach a
 //!   production build.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command};
 use std::time::{Duration, Instant};
@@ -93,11 +118,9 @@ pub(crate) enum Coverage {
     /// reparented before it are unaccounted for. Every sweep in this slice
     /// reports this.
     Incomplete,
-    /// Reserved for activation: an independently qualified mechanism
-    /// (stop-then-rescan, a Linux subreaper, macOS descendant tracking)
-    /// proved that the family seen was the whole family. Never produced
-    /// here.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Produced only by `verified_sweep`: a Linux subreaper supervisor
+    /// reached `ECHILD`, or the macOS lineage accounted for every process
+    /// that could be a descendant and confirmed each member's exit.
     VerifiedComplete,
 }
 
@@ -126,6 +149,10 @@ pub(crate) struct Supervised {
     /// fixture processes behind. Disarmed once the root is reaped, because
     /// its pgid may then belong to someone else.
     armed: bool,
+    /// macOS: the lineage tracker started with the fixture
+    /// (`spawn_verifiable`); `verified_sweep` needs it.
+    #[cfg(target_os = "macos")]
+    lineage: Option<lineage::Tracker>,
 }
 
 impl Drop for Supervised {
@@ -167,7 +194,26 @@ impl Supervised {
             child,
             root: Pinned { pid, start },
             armed: true,
+            #[cfg(target_os = "macos")]
+            lineage: None,
         })
+    }
+
+    /// Spawn for `verified_sweep`. On macOS this also starts the lineage
+    /// tracker. On Linux the caller must already be a subreaper
+    /// (`reaper::become_subreaper`) with no other children; if it is not,
+    /// `verified_sweep` falls back to the snapshot sweep (`Incomplete`).
+    pub(crate) fn spawn_verifiable(command: Command) -> std::io::Result<Self> {
+        #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+        let mut supervised = Self::spawn(command)?;
+        #[cfg(target_os = "macos")]
+        {
+            supervised.lineage = Some(
+                lineage::Tracker::start(supervised.root)
+                    .map_err(|_| std::io::Error::other("the lineage tracker cannot start"))?,
+            );
+        }
+        Ok(supervised)
     }
 
     pub(crate) fn root(&self) -> Pinned {
@@ -219,6 +265,479 @@ impl Supervised {
                 });
             }
             std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+}
+
+impl Supervised {
+    /// The verified sweep (A2b, see the module comment). Falls back to the
+    /// snapshot sweep, and so to `Incomplete`, whenever its precondition
+    /// does not hold: not a subreaper (Linux), no lineage tracker (macOS).
+    pub(crate) fn verified_sweep(self, deadline: Duration) -> Result<SweepOutcome, FamilyError> {
+        #[cfg(target_os = "linux")]
+        {
+            self.verified_sweep_linux(deadline)
+        }
+        #[cfg(target_os = "macos")]
+        {
+            self.verified_sweep_macos(deadline)
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            self.sweep(deadline)
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn verified_sweep_linux(mut self, deadline: Duration) -> Result<SweepOutcome, FamilyError> {
+        if !reaper::is_subreaper() {
+            return self.sweep(deadline);
+        }
+        let me = std::process::id() as i32;
+        // From here this sweep reaps (waitpid(-1)), so the drop guard must
+        // never signal the root's pgid after it is reaped.
+        self.armed = false;
+        // SAFETY: the root is unreaped here (only this sweep reaps), so the
+        // pgid is ours.
+        unsafe { libc::killpg(self.root.pid, libc::SIGKILL) };
+        let started = Instant::now();
+        loop {
+            let table = process_table()?;
+            let members = descendants_of(me, &table);
+            for member in &members {
+                kill_pinned(*member);
+            }
+            if members.len() > MAX_FAMILY {
+                return Err(FamilyError::FamilyBound);
+            }
+            if reaper::reap_all()? {
+                // No child at all: with this process a subreaper, no
+                // descendant is left anywhere.
+                let _ = self.child.wait();
+                return Ok(SweepOutcome {
+                    left: Vec::new(),
+                    coverage: Coverage::VerifiedComplete,
+                });
+            }
+            if started.elapsed() >= deadline {
+                let left = members.into_iter().filter(|m| is_alive(*m)).collect();
+                return Ok(SweepOutcome {
+                    left,
+                    coverage: Coverage::Incomplete,
+                });
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn verified_sweep_macos(mut self, deadline: Duration) -> Result<SweepOutcome, FamilyError> {
+        let Some(tracker) = self.lineage.take() else {
+            return self.sweep(deadline);
+        };
+        let lineage::Stopped {
+            mut known,
+            uid,
+            root_unique,
+        } = tracker.stop();
+        let started = Instant::now();
+        let mut frozen: BTreeSet<u64> = BTreeSet::new();
+        loop {
+            // Freeze: stop every known member until a scan finds no new one,
+            // so nothing forks between the last scan and the kills.
+            let mut nodes;
+            let mut unattributable;
+            loop {
+                nodes = lineage::nodes()?;
+                unattributable = attribute(&nodes, &mut known, root_unique, uid);
+                let fresh: Vec<Node> = nodes
+                    .iter()
+                    .copied()
+                    .filter(|n| known.contains(&n.unique) && !n.zombie && frozen.insert(n.unique))
+                    .collect();
+                for node in &fresh {
+                    lineage::signal(*node, libc::SIGSTOP);
+                }
+                if frozen.len() > MAX_FAMILY {
+                    for node in nodes.iter().filter(|n| known.contains(&n.unique)) {
+                        lineage::signal(*node, libc::SIGKILL);
+                    }
+                    return Err(FamilyError::FamilyBound);
+                }
+                if fresh.is_empty() {
+                    break;
+                }
+            }
+            for node in nodes
+                .iter()
+                .filter(|n| known.contains(&n.unique) && !n.zombie)
+            {
+                lineage::signal(*node, libc::SIGKILL);
+            }
+            if self.armed {
+                // SAFETY: the root is unreaped while armed, so this pgid is ours.
+                unsafe { libc::killpg(self.root.pid, libc::SIGKILL) };
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+                self.armed = false;
+            }
+            let alive: Vec<Pinned> = lineage::nodes()?
+                .into_iter()
+                .filter(|n| known.contains(&n.unique) && !n.zombie)
+                .map(|n| n.pinned)
+                .collect();
+            if alive.is_empty() && unattributable.is_empty() {
+                return Ok(SweepOutcome {
+                    left: Vec::new(),
+                    coverage: Coverage::VerifiedComplete,
+                });
+            }
+            if started.elapsed() >= deadline {
+                let mut left = alive;
+                left.extend(unattributable.iter().map(|n| n.pinned));
+                return Ok(SweepOutcome {
+                    left,
+                    coverage: Coverage::Incomplete,
+                });
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+}
+
+/// Every descendant of `ancestor` in `table` by parent links (excluding
+/// `ancestor` itself).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn descendants_of(ancestor: i32, table: &[Row]) -> Vec<Pinned> {
+    let mut children: BTreeMap<i32, Vec<Row>> = BTreeMap::new();
+    for row in table.iter().filter(|row| row.pinned.pid > 0) {
+        children.entry(row.ppid).or_default().push(*row);
+    }
+    let mut found: BTreeMap<i32, Pinned> = BTreeMap::new();
+    let mut queue = vec![ancestor];
+    while let Some(pid) = queue.pop() {
+        for child in children.get(&pid).into_iter().flatten() {
+            if child.pinned.pid != ancestor
+                && found.insert(child.pinned.pid, child.pinned).is_none()
+            {
+                queue.push(child.pinned.pid);
+            }
+        }
+    }
+    found.into_values().collect()
+}
+
+/// One process as the macOS lineage sees it: identity, user, its unique id
+/// and its creating parent's unique id. Built synthetically by the tests on
+/// every Unix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Node {
+    pub(crate) pinned: Pinned,
+    pub(crate) uid: u32,
+    pub(crate) unique: u64,
+    pub(crate) parent_unique: u64,
+    pub(crate) zombie: bool,
+}
+
+/// Grow `known` (unique ids) to its closure over `nodes` through parent
+/// unique ids, and return the processes that cannot be attributed: same
+/// user, born after the root (unique ids only grow), not known, and whose
+/// creating parent is neither known nor alive. Such a process may be an
+/// escaped descendant whose intermediate parent exited unseen, so it
+/// defeats verified coverage. (A zombie is dead: its children were
+/// reparented when it exited.)
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn attribute(
+    nodes: &[Node],
+    known: &mut BTreeSet<u64>,
+    root_unique: u64,
+    uid: u32,
+) -> Vec<Node> {
+    loop {
+        let before = known.len();
+        for node in nodes {
+            if known.contains(&node.parent_unique) {
+                known.insert(node.unique);
+            }
+        }
+        if known.len() == before {
+            break;
+        }
+    }
+    let living: BTreeSet<u64> = nodes
+        .iter()
+        .filter(|n| !n.zombie)
+        .map(|n| n.unique)
+        .collect();
+    nodes
+        .iter()
+        .copied()
+        .filter(|n| {
+            !n.zombie
+                && n.uid == uid
+                && n.unique > root_unique
+                && !known.contains(&n.unique)
+                && !known.contains(&n.parent_unique)
+                && !living.contains(&n.parent_unique)
+        })
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) mod reaper {
+    use super::FamilyError;
+
+    /// Make this process a subreaper. Only a dedicated supervisor process
+    /// may call this (the tests re-execute the test binary for it).
+    pub(crate) fn become_subreaper() -> std::io::Result<()> {
+        // SAFETY: prctl with an integer argument; no memory is passed.
+        let status = unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1 as libc::c_ulong) };
+        if status == 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    }
+
+    pub(crate) fn is_subreaper() -> bool {
+        let mut value: libc::c_int = 0;
+        // SAFETY: PR_GET_CHILD_SUBREAPER writes one int to the pointer.
+        let status =
+            unsafe { libc::prctl(libc::PR_GET_CHILD_SUBREAPER, &mut value as *mut libc::c_int) };
+        status == 0 && value == 1
+    }
+
+    /// Reap every exited child without blocking. `Ok(true)` when this
+    /// process has no child left at all (`ECHILD`).
+    pub(crate) fn reap_all() -> Result<bool, FamilyError> {
+        loop {
+            let mut status: libc::c_int = 0;
+            // SAFETY: waitpid with a valid status pointer.
+            let reaped = unsafe { libc::waitpid(-1, &mut status, libc::WNOHANG) };
+            if reaped > 0 {
+                continue;
+            }
+            if reaped == 0 {
+                return Ok(false);
+            }
+            match std::io::Error::last_os_error().raw_os_error() {
+                Some(libc::ECHILD) => return Ok(true),
+                Some(libc::EINTR) => continue,
+                _ => return Err(FamilyError::Unreadable),
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) mod lineage {
+    use super::{attribute, FamilyError, Node, Pinned, MAX_SCAN};
+    use std::collections::BTreeSet;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::thread::JoinHandle;
+    use std::time::Duration;
+
+    /// `PROC_PIDUNIQIDENTIFIERINFO` in `<sys/proc_info.h>`.
+    const PROC_PIDUNIQIDENTIFIERINFO: libc::c_int = 17;
+
+    /// `struct proc_uniqidentifierinfo` in `<sys/proc_info.h>`.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct UniqueIdentifierInfo {
+        uuid: [u8; 16],
+        unique: u64,
+        parent_unique: u64,
+        id_version: i32,
+        reserved2: u32,
+        reserved3: u64,
+        reserved4: u64,
+    }
+
+    /// `Ok(None)` when the process is gone; `Err` (EPERM included) when it
+    /// cannot be read.
+    fn unique_ids(pid: i32) -> Result<Option<(u64, u64)>, i32> {
+        // SAFETY: plain data; zeroed is a valid value.
+        let mut info: UniqueIdentifierInfo = unsafe { std::mem::zeroed() };
+        let size = std::mem::size_of::<UniqueIdentifierInfo>() as libc::c_int;
+        // SAFETY: the buffer is exactly one UniqueIdentifierInfo of `size` bytes.
+        let read = unsafe {
+            libc::proc_pidinfo(
+                pid,
+                PROC_PIDUNIQIDENTIFIERINFO,
+                0,
+                (&mut info as *mut UniqueIdentifierInfo).cast(),
+                size,
+            )
+        };
+        if read == size {
+            return Ok(Some((info.unique, info.parent_unique)));
+        }
+        if read > 0 {
+            return Err(0);
+        }
+        match std::io::Error::last_os_error().raw_os_error() {
+            Some(libc::ESRCH) => Ok(None),
+            other => Err(other.unwrap_or(0)),
+        }
+    }
+
+    /// The unique id and parent unique id of `pid`, for the tests.
+    #[cfg(test)]
+    pub(crate) fn ids_of(pid: i32) -> Option<(u64, u64)> {
+        unique_ids(pid).ok().flatten()
+    }
+
+    fn bsd(pid: i32) -> Result<Option<libc::proc_bsdinfo>, i32> {
+        // SAFETY: plain data; zeroed is a valid value.
+        let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+        let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+        // SAFETY: the buffer is exactly one proc_bsdinfo of `size` bytes.
+        let read = unsafe {
+            libc::proc_pidinfo(
+                pid,
+                libc::PROC_PIDTBSDINFO,
+                0,
+                (&mut info as *mut libc::proc_bsdinfo).cast(),
+                size,
+            )
+        };
+        if read == size {
+            return Ok(Some(info));
+        }
+        if read > 0 {
+            return Err(0);
+        }
+        match std::io::Error::last_os_error().raw_os_error() {
+            Some(libc::ESRCH) => Ok(None),
+            other => Err(other.unwrap_or(0)),
+        }
+    }
+
+    /// Every process this user may read, as lineage nodes. Another user's
+    /// process (EPERM) is skipped: the open "another user" item.
+    pub(crate) fn nodes() -> Result<Vec<Node>, FamilyError> {
+        let mut pids = vec![0i32; MAX_SCAN];
+        let bytes = (pids.len() * std::mem::size_of::<i32>()) as libc::c_int;
+        // SAFETY: the buffer holds MAX_SCAN pids of `bytes` bytes.
+        let count = unsafe { libc::proc_listallpids(pids.as_mut_ptr().cast(), bytes) };
+        if count <= 0 {
+            return Err(FamilyError::Unreadable);
+        }
+        let count = count as usize;
+        if count >= MAX_SCAN {
+            return Err(FamilyError::ScanBound);
+        }
+        let mut nodes = Vec::new();
+        for pid in pids[..count].iter().copied().filter(|pid| *pid > 0) {
+            let info = match bsd(pid) {
+                Ok(Some(info)) => info,
+                Ok(None) | Err(libc::EPERM) => continue,
+                Err(_) => return Err(FamilyError::Unreadable),
+            };
+            let (unique, parent_unique) = match unique_ids(pid) {
+                Ok(Some(ids)) => ids,
+                Ok(None) | Err(libc::EPERM) => continue,
+                Err(_) => return Err(FamilyError::Unreadable),
+            };
+            let start = info
+                .pbi_start_tvsec
+                .wrapping_mul(1_000_000)
+                .wrapping_add(info.pbi_start_tvusec);
+            nodes.push(Node {
+                pinned: Pinned { pid, start },
+                uid: info.pbi_uid,
+                unique,
+                parent_unique,
+                // SZOMB is 5 in <sys/proc.h>.
+                zombie: info.pbi_status == 5,
+            });
+        }
+        Ok(nodes)
+    }
+
+    /// Signal a node only while its pid still carries the same unique id
+    /// (unique ids are never reused).
+    pub(crate) fn signal(node: Node, signal: libc::c_int) {
+        if matches!(unique_ids(node.pinned.pid), Ok(Some((unique, _))) if unique == node.unique) {
+            // SAFETY: plain signal to a pid whose unique id was just re-checked.
+            unsafe { libc::kill(node.pinned.pid, signal) };
+        }
+    }
+
+    /// What the tracker learned, handed to the sweep.
+    pub(crate) struct Stopped {
+        pub(crate) known: BTreeSet<u64>,
+        pub(crate) uid: u32,
+        pub(crate) root_unique: u64,
+    }
+
+    /// Records the family's unique ids while it runs, so an intermediate
+    /// parent that exits later is still known.
+    pub(crate) struct Tracker {
+        known: Arc<Mutex<BTreeSet<u64>>>,
+        stop: Arc<AtomicBool>,
+        thread: Option<JoinHandle<()>>,
+        uid: u32,
+        root_unique: u64,
+    }
+
+    impl Tracker {
+        pub(crate) fn start(root: Pinned) -> Result<Self, FamilyError> {
+            let (root_unique, _) = unique_ids(root.pid)
+                .ok()
+                .flatten()
+                .ok_or(FamilyError::Unreadable)?;
+            let uid = bsd(root.pid)
+                .ok()
+                .flatten()
+                .ok_or(FamilyError::Unreadable)?
+                .pbi_uid;
+            let known = Arc::new(Mutex::new(BTreeSet::from([root_unique])));
+            let stop = Arc::new(AtomicBool::new(false));
+            let thread = {
+                let (known, stop) = (Arc::clone(&known), Arc::clone(&stop));
+                std::thread::spawn(move || {
+                    while !stop.load(Ordering::Relaxed) {
+                        if let Ok(nodes) = nodes() {
+                            if let Ok(mut known) = known.lock() {
+                                let _ = attribute(&nodes, &mut known, root_unique, uid);
+                            }
+                        }
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                })
+            };
+            Ok(Self {
+                known,
+                stop,
+                thread: Some(thread),
+                uid,
+                root_unique,
+            })
+        }
+
+        pub(crate) fn stop(mut self) -> Stopped {
+            self.halt();
+            let known = self.known.lock().map(|k| k.clone()).unwrap_or_default();
+            Stopped {
+                known,
+                uid: self.uid,
+                root_unique: self.root_unique,
+            }
+        }
+
+        fn halt(&mut self) {
+            self.stop.store(true, Ordering::Relaxed);
+            if let Some(thread) = self.thread.take() {
+                let _ = thread.join();
+            }
+        }
+    }
+
+    impl Drop for Tracker {
+        fn drop(&mut self) {
+            self.halt();
         }
     }
 }
@@ -714,6 +1233,410 @@ mod tests {
             Some((7, 42, 9, true))
         );
         assert_eq!(table::parse_stat("garbage"), None);
+    }
+
+    // ---- A2b: verified termination ------------------------------------
+
+    /// Escape shapes. Every fixture process appends its pid to the file named
+    /// by `ORCEL_SG115_PIDS`, so a test can check independently of the sweep
+    /// whether any of them survived.
+    const NOTE: &str = "import os, sys, time\n\
+        def note():\n    \
+            with open(os.environ['ORCEL_SG115_PIDS'], 'a') as f: f.write(str(os.getpid()) + chr(10))\n";
+
+    /// A child calls setsid (leaves the group and the session).
+    const SETSID: &str = "note()\n\
+        if os.fork() == 0:\n    os.setsid(); note(); time.sleep(60)\n\
+        time.sleep(60)\n";
+    /// A child calls setpgid (leaves the group only).
+    const SETPGID: &str = "note()\n\
+        if os.fork() == 0:\n    os.setpgid(0, 0); note(); time.sleep(60)\n\
+        time.sleep(60)\n";
+    /// Double fork: the grandchild calls setsid; the intermediate lingers
+    /// 0.5 s, then exits, orphaning it.
+    const DOUBLE_FORK_LINGER: &str = "note()\n\
+        if os.fork() == 0:\n    note()\n    \
+            if os.fork() == 0:\n        os.setsid(); note(); time.sleep(60)\n    \
+            time.sleep(0.5); os._exit(0)\n\
+        time.sleep(60)\n";
+    /// Double fork with an intermediate that exits at once.
+    const DOUBLE_FORK_FAST: &str = "note()\n\
+        if os.fork() == 0:\n    \
+            if os.fork() == 0:\n        os.setsid(); note(); time.sleep(60)\n    \
+            os._exit(0)\n\
+        time.sleep(60)\n";
+    /// Keeps forking setsid children while the sweep runs.
+    const FORK_STORM: &str = "note()\n\
+        for _ in range(60):\n    \
+            if os.fork() == 0:\n        os.setsid(); note(); time.sleep(60)\n    \
+            time.sleep(0.02)\n\
+        time.sleep(60)\n";
+
+    const CASES: [(&str, &str, usize); 5] = [
+        ("setsid", SETSID, 2),
+        ("setpgid", SETPGID, 2),
+        ("double_fork_linger", DOUBLE_FORK_LINGER, 3),
+        ("double_fork_fast", DOUBLE_FORK_FAST, 2),
+        ("fork_storm", FORK_STORM, 10),
+    ];
+
+    fn escape_fixture(body: &str, pids: &std::path::Path) -> Command {
+        let mut command = python(&format!("{NOTE}{body}"));
+        command.env("ORCEL_SG115_PIDS", pids);
+        command
+    }
+
+    fn noted(pids: &std::path::Path) -> Vec<i32> {
+        std::fs::read_to_string(pids)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| line.trim().parse().ok())
+            .collect()
+    }
+
+    fn wait_noted(pids: &std::path::Path, at_least: usize) -> Vec<i32> {
+        let started = Instant::now();
+        loop {
+            let found = noted(pids);
+            if found.len() >= at_least || started.elapsed() > DEADLINE {
+                return found;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// Fixture processes still running (not zombies), checked by pid alone,
+    /// independently of the sweep's own accounting; then killed, so a
+    /// failing test leaves nothing behind.
+    fn survivors(pids: &[i32]) -> Vec<i32> {
+        let alive: Vec<i32> = pids
+            .iter()
+            .copied()
+            .filter(|pid| matches!(row_of(*pid), Ok(Some((_, false)))))
+            .collect();
+        for pid in &alive {
+            // SAFETY: plain signal; test cleanup of this test's fixtures.
+            unsafe { libc::kill(*pid, libc::SIGKILL) };
+        }
+        alive
+    }
+
+    fn scratch_file(name: &str) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("orcel-sg115-a2b-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("pids")
+    }
+
+    /// The sweep never claims verified coverage while any descendant lives:
+    /// the property the verified sweep exists for.
+    #[test]
+    fn verified_coverage_never_coexists_with_a_survivor_by_construction() {
+        let outcome = SweepOutcome {
+            left: vec![Pinned { pid: 9, start: 1 }],
+            coverage: Coverage::VerifiedComplete,
+        };
+        assert!(!outcome.all_exited());
+    }
+
+    // -- Linux: the subreaper supervisor ---------------------------------
+
+    #[cfg(target_os = "linux")]
+    const SUPERVISOR_CASE: &str = "ORCEL_SG115_SUPERVISOR_CASE";
+    #[cfg(target_os = "linux")]
+    const SUPERVISOR_SUBREAPER: &str = "ORCEL_SG115_SUPERVISOR_SUBREAPER";
+
+    /// Runs only inside a re-executed test binary (`run_supervisor`), never
+    /// in the shared test process: it makes its process a subreaper.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn supervisor_entry() {
+        let Ok(case) = std::env::var(SUPERVISOR_CASE) else {
+            return;
+        };
+        let subreaper = std::env::var(SUPERVISOR_SUBREAPER).as_deref() == Ok("1");
+        if subreaper {
+            reaper::become_subreaper().unwrap();
+            assert!(reaper::is_subreaper());
+        }
+        // The precondition: this process has no child before the fixture.
+        assert!(
+            reaper::reap_all().unwrap(),
+            "the supervisor starts childless"
+        );
+        let (_, body, expected) = CASES.iter().find(|(name, _, _)| *name == case).unwrap();
+        let pids = scratch_file(&case);
+        let supervised = Supervised::spawn_verifiable(escape_fixture(body, &pids)).unwrap();
+        let seen = wait_noted(&pids, *expected);
+        // Let the fast intermediate exit, so its grandchild is an orphan.
+        std::thread::sleep(Duration::from_millis(300));
+        let outcome = supervised.verified_sweep(DEADLINE).unwrap();
+        let all = noted(&pids);
+        let left = survivors(&all);
+        println!(
+            "SG115-RESULT case={case} coverage={:?} left={} noted={} seen_before_sweep={} survivors={}",
+            outcome.coverage,
+            outcome.left.len(),
+            all.len(),
+            seen.len(),
+            left.len()
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    fn run_supervisor(case: &str, subreaper: bool) -> String {
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "unix_supervise::tests::supervisor_entry",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(SUPERVISOR_CASE, case)
+            .env(SUPERVISOR_SUBREAPER, if subreaper { "1" } else { "0" })
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        assert!(
+            output.status.success(),
+            "{case}: {stdout}{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        // The harness prints "test ... " on the same line first.
+        stdout
+            .lines()
+            .find_map(|line| line.find("SG115-RESULT ").map(|at| line[at..].to_string()))
+            .unwrap_or_else(|| panic!("{case}: no result in {stdout}"))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn field<'a>(result: &'a str, name: &str) -> &'a str {
+        result
+            .split_whitespace()
+            .find_map(|part| part.strip_prefix(&format!("{name}=")))
+            .unwrap_or_else(|| panic!("no {name} in {result}"))
+    }
+
+    /// Every escape shape, including an orphan whose parent exited at once
+    /// and a family that keeps forking during the sweep, ends verified and
+    /// with no fixture process left, checked independently by pid.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_subreaper_supervisor_verifies_every_escape_shape() {
+        for (case, _, expected) in CASES {
+            let result = run_supervisor(case, true);
+            assert_eq!(field(&result, "coverage"), "VerifiedComplete", "{result}");
+            assert_eq!(field(&result, "survivors"), "0", "{result}");
+            assert!(
+                field(&result, "noted").parse::<usize>().unwrap() >= expected,
+                "{result}"
+            );
+        }
+    }
+
+    /// Without the subreaper the same sweep never verifies, and the orphan
+    /// really does escape the snapshot walk: the gap the subreaper closes.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn without_a_subreaper_an_orphan_escapes_and_nothing_is_verified() {
+        let result = run_supervisor("double_fork_fast", false);
+        assert_eq!(field(&result, "coverage"), "Incomplete", "{result}");
+        assert_ne!(
+            field(&result, "survivors"),
+            "0",
+            "the escape is real: {result}"
+        );
+    }
+
+    // -- macOS: parent unique-id lineage ---------------------------------
+
+    /// The claim the lineage rests on: a process's creating-parent unique id
+    /// is kept when it is reparented after its parent exits.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_parent_unique_id_survives_reparenting() {
+        let pids = scratch_file("reparent");
+        // The intermediate notes itself, forks a setsid grandchild, and
+        // exits after 1 s; the root waits.
+        let supervised = Supervised::spawn(escape_fixture(DOUBLE_FORK_LINGER, &pids)).unwrap();
+        let noted_pids = wait_noted(&pids, 3);
+        assert_eq!(noted_pids.len(), 3, "{noted_pids:?}");
+        let (intermediate, grandchild) = (noted_pids[1], noted_pids[2]);
+        let (intermediate_unique, _) =
+            lineage::ids_of(intermediate).expect("the intermediate is alive");
+        let started = Instant::now();
+        while matches!(row_of(grandchild), Ok(Some((row, _))) if row.ppid != 1)
+            && started.elapsed() < DEADLINE
+        {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let (row, _) = row_of(grandchild)
+            .unwrap()
+            .expect("the grandchild is alive");
+        assert_eq!(row.ppid, 1, "reparented to launchd");
+        let (_, parent_unique) = lineage::ids_of(grandchild).unwrap();
+        assert_eq!(
+            parent_unique, intermediate_unique,
+            "the creating parent's unique id is kept"
+        );
+        drop(supervised);
+        survivors(&noted(&pids));
+    }
+
+    /// Evidence for the packet's open question: kqueue `NOTE_TRACK` is not
+    /// supported, so macOS descendant tracking cannot rely on it.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn kqueue_note_track_is_unsupported() {
+        const NOTE_TRACK: u32 = 0x0000_0001;
+        let mut supervised = Supervised::spawn(python("import time; time.sleep(30)")).unwrap();
+        // SAFETY: kqueue has no arguments; the descriptor is closed below.
+        let queue = unsafe { libc::kqueue() };
+        assert!(queue >= 0);
+        let change = libc::kevent {
+            ident: supervised.root().pid as libc::uintptr_t,
+            filter: libc::EVFILT_PROC,
+            flags: libc::EV_ADD | libc::EV_RECEIPT,
+            fflags: libc::NOTE_EXIT | NOTE_TRACK,
+            data: 0,
+            udata: std::ptr::null_mut(),
+        };
+        // SAFETY: plain data; zeroed is a valid value.
+        let mut event: libc::kevent = unsafe { std::mem::zeroed() };
+        // SAFETY: one change and room for one receipt.
+        let count = unsafe { libc::kevent(queue, &change, 1, &mut event, 1, std::ptr::null()) };
+        // SAFETY: the descriptor came from kqueue above.
+        unsafe { libc::close(queue) };
+        let refused = if count < 0 {
+            std::io::Error::last_os_error().raw_os_error() == Some(libc::ENOTSUP)
+        } else {
+            count == 1
+                && event.flags & libc::EV_ERROR != 0
+                && event.data == libc::ENOTSUP as libc::intptr_t
+        };
+        let _ = supervised.child.kill();
+        drop(supervised);
+        assert!(
+            refused,
+            "NOTE_TRACK answered count={count} flags={:#x} data={}",
+            event.flags, event.data
+        );
+    }
+
+    /// The lineage cases. Ignored in the shared suite: the unattributable
+    /// rule is system-wide, so another test's orphan would be a false
+    /// positive. CI runs them alone (`--ignored`, one thread).
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "system-wide rule: run alone, see the CI step"]
+    fn macos_lineage_verifies_attributable_escapes() {
+        for (case, body, expected) in CASES {
+            if case == "double_fork_fast" {
+                continue;
+            }
+            let pids = scratch_file(case);
+            let supervised = Supervised::spawn_verifiable(escape_fixture(body, &pids)).unwrap();
+            wait_noted(&pids, expected);
+            std::thread::sleep(Duration::from_millis(800));
+            let outcome = supervised.verified_sweep(DEADLINE).unwrap();
+            let left = survivors(&noted(&pids));
+            assert_eq!(
+                outcome.coverage,
+                Coverage::VerifiedComplete,
+                "{case}: {outcome:?}"
+            );
+            assert!(left.is_empty(), "{case}: survivors {left:?}");
+        }
+    }
+
+    /// An orphan whose parent exited at once may not be attributable; then
+    /// it must never hide behind verified coverage.
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "system-wide rule: run alone, see the CI step"]
+    fn macos_a_fast_orphan_is_never_hidden() {
+        let (mut verified, mut detected) = (0, 0);
+        for round in 0..5 {
+            let pids = scratch_file(&format!("fast-{round}"));
+            let supervised =
+                Supervised::spawn_verifiable(escape_fixture(DOUBLE_FORK_FAST, &pids)).unwrap();
+            wait_noted(&pids, 2);
+            std::thread::sleep(Duration::from_millis(300));
+            let outcome = supervised.verified_sweep(Duration::from_secs(2)).unwrap();
+            let left = survivors(&noted(&pids));
+            if !left.is_empty() {
+                assert_eq!(
+                    outcome.coverage,
+                    Coverage::Incomplete,
+                    "a survivor behind verified coverage: {left:?}"
+                );
+                detected += 1;
+            } else if outcome.coverage == Coverage::VerifiedComplete {
+                verified += 1;
+            }
+        }
+        println!(
+            "SG115-RESULT fast orphan rounds: verified={verified} detected_incomplete={detected}"
+        );
+    }
+
+    // -- The attribution rule, on synthetic tables (every Unix) ------------
+
+    fn node(pid: i32, unique: u64, parent_unique: u64) -> Node {
+        Node {
+            pinned: Pinned { pid, start: unique },
+            uid: 501,
+            unique,
+            parent_unique,
+            zombie: false,
+        }
+    }
+
+    #[test]
+    fn the_lineage_follows_parent_unique_ids_through_an_orphan() {
+        // root 100 (u10) -> intermediate (u11, exited, but recorded) ->
+        // orphan 102 (u12, reparented to launchd: ppid 1, parent unique 11).
+        let mut known = BTreeSet::from([10, 11]);
+        let nodes = [node(1, 1, 0), node(100, 10, 5), node(102, 12, 11)];
+        let unattributable = attribute(&nodes, &mut known, 10, 501);
+        assert!(known.contains(&12), "{known:?}");
+        assert!(unattributable.is_empty(), "{unattributable:?}");
+    }
+
+    #[test]
+    fn an_orphan_of_an_unseen_parent_is_unattributable() {
+        // The intermediate (u11) exited before it was ever recorded.
+        let mut known = BTreeSet::from([10]);
+        let nodes = [node(1, 1, 0), node(100, 10, 5), node(102, 12, 11)];
+        let unattributable = attribute(&nodes, &mut known, 10, 501);
+        assert_eq!(unattributable, vec![node(102, 12, 11)]);
+    }
+
+    #[test]
+    fn the_attribution_rule_leaves_out_what_cannot_be_ours() {
+        let mut known = BTreeSet::from([10]);
+        let mut other_user = node(103, 13, 77);
+        other_user.uid = 0;
+        let mut zombie_parent_child = node(105, 15, 14);
+        let mut zombie = node(104, 14, 3);
+        zombie.zombie = true;
+        zombie_parent_child.uid = 501;
+        let nodes = [
+            node(1, 1, 0),
+            node(100, 10, 5),
+            // Born before the root: not a descendant.
+            node(50, 4, 99),
+            // Its parent (u1, launchd) is alive: not an orphan of ours.
+            node(106, 16, 1),
+            other_user,
+            zombie,
+            zombie_parent_child,
+        ];
+        let unattributable = attribute(&nodes, &mut known, 10, 501);
+        // Only the child of a dead (zombie) unknown parent is flagged; the
+        // other user's process is the recorded open item, not flagged.
+        assert_eq!(unattributable, vec![zombie_parent_child]);
     }
 
     /// Pre-activation boundary: only lib.rs (the test-only declaration)
