@@ -756,7 +756,28 @@ const MAX_INSTALL_ENTRIES: usize = 20_000;
 /// Any failure to read fails closed.
 #[cfg(all(not(windows), not(target_os = "macos")))]
 fn install_tree_trusted(engine: &Path, code_dir: &Path, db: &PackageDb) -> bool {
+    install_tree_problem(engine, code_dir, db).is_none()
+}
+
+/// The first reason the install tree is not trusted (the path and what is
+/// wrong with it), or `None`. Kept separate so tests and CI can say which
+/// entry failed.
+#[cfg(all(not(windows), not(target_os = "macos")))]
+fn install_tree_problem(engine: &Path, code_dir: &Path, db: &PackageDb) -> Option<String> {
     use std::os::unix::fs::MetadataExt;
+    let describe = |path: &Path, meta: &std::fs::Metadata| {
+        format!(
+            "{}: uid {} mode {:o}{}",
+            path.display(),
+            meta.uid(),
+            meta.mode() & 0o7777,
+            if meta.file_type().is_symlink() {
+                " (link)"
+            } else {
+                ""
+            }
+        )
+    };
     let safe = |meta: &std::fs::Metadata| meta.uid() == db.owner && meta.mode() & 0o022 == 0;
     let stop = db.root.as_ref().and_then(|root| root.canonicalize().ok());
     let mut current = Some(engine);
@@ -765,10 +786,10 @@ fn install_tree_trusted(engine: &Path, code_dir: &Path, db: &PackageDb) -> bool 
             break;
         }
         let Ok(meta) = std::fs::symlink_metadata(path) else {
-            return false;
+            return Some(format!("{}: unreadable", path.display()));
         };
         if meta.file_type().is_symlink() || !safe(&meta) {
-            return false;
+            return Some(format!("ancestor {}", describe(path, &meta)));
         }
         current = path.parent();
     }
@@ -776,38 +797,41 @@ fn install_tree_trusted(engine: &Path, code_dir: &Path, db: &PackageDb) -> bool 
     let mut walked = 0usize;
     while let Some(dir) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
-            return false;
+            return Some(format!("{}: unreadable directory", dir.display()));
         };
         for entry in entries {
             walked += 1;
             if walked > MAX_INSTALL_ENTRIES {
-                return false;
+                return Some(format!("more than {MAX_INSTALL_ENTRIES} entries"));
             }
             let Ok(entry) = entry else {
-                return false;
+                return Some(format!("{}: unreadable entry", dir.display()));
             };
             let path = entry.path();
             let Ok(meta) = std::fs::symlink_metadata(&path) else {
-                return false;
+                return Some(format!("{}: unreadable", path.display()));
             };
             if meta.file_type().is_symlink() {
                 // The link itself must be ours, and every hop of its chain
                 // must stay inside the install directory (each target is
                 // then walked too).
                 if meta.uid() != db.owner || !link_stays_inside(&path, code_dir) {
-                    return false;
+                    let target = std::fs::read_link(&path)
+                        .map(|t| t.display().to_string())
+                        .unwrap_or_default();
+                    return Some(format!("{} -> {target}", describe(&path, &meta)));
                 }
                 continue;
             }
             if !safe(&meta) {
-                return false;
+                return Some(describe(&path, &meta));
             }
             if meta.is_dir() {
                 stack.push(path);
             }
         }
     }
-    true
+    None
 }
 
 /// Whether every hop of the link chain starting at `link` stays inside
@@ -1288,7 +1312,12 @@ mod tests {
         let verdict = verify_publisher(installed);
         assert!(
             matches!(verdict, Ok(true)),
-            "{verdict:?}; dpkg --verify google-chrome-stable: {verify:?}"
+            "{verdict:?}; dpkg --verify google-chrome-stable: {verify:?}; install tree: {:?}",
+            install_tree_problem(
+                installed,
+                Path::new("/opt/google/chrome"),
+                &PackageDb::production()
+            )
         );
         let copy_dir =
             std::env::temp_dir().join(format!("orcel-xp14-linux-{}", std::process::id()));
