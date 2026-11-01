@@ -131,13 +131,12 @@ pub(crate) fn sweep_held_profile(hold: ProfileHold, path: &Path) -> Result<(), C
     if unsafe { libc::unlinkat(hold.root_fd(), lock.as_ptr(), 0) } != 0 {
         return Err(CleanupError::Platform(errno()));
     }
-    hold.verify(path).map_err(CleanupError::Profile)?;
-    let c_path =
-        CString::new(path.as_os_str().as_bytes()).map_err(|_| CleanupError::Platform(0))?;
-    // SAFETY: a NUL-terminated path; rmdir removes only an empty directory.
-    if unsafe { libc::rmdir(c_path.as_ptr()) } != 0 {
-        return Err(CleanupError::Platform(errno()));
-    }
+    // B5: held-parent unlinkat for an open_beneath hold, never a path
+    // reconstructed through potentially swapped ancestor components.
+    hold.remove_directory(path).map_err(|error| match error {
+        ProfileError::Platform(code) => CleanupError::Platform(code),
+        other => CleanupError::Profile(other),
+    })?;
     drop(hold);
     Ok(())
 }
@@ -149,6 +148,25 @@ pub(crate) fn recover_stale_profile(path: &Path) -> Result<Recovery, CleanupErro
     match ProfileHold::open(path) {
         Ok(hold) if engine_may_be_alive(&hold, path) => Ok(Recovery::EngineMayBeAlive),
         Ok(hold) => sweep_held_profile(hold, path).map(|()| Recovery::Removed),
+        Err(ProfileError::Busy) => Ok(Recovery::InUse),
+        Err(ProfileError::Missing) => Ok(Recovery::Absent),
+        Err(error) => Err(CleanupError::Profile(error)),
+    }
+}
+
+/// B5 inert anchored recovery: the trusted state root and EVERY
+/// component of a relative profile path must be held with O_NOFOLLOW,
+/// and the final directory is removed through its held parent descriptor.
+/// Untrusted absolute, dot, or parent components refuse before deletion.
+/// No production path calls this while SG-000115 is unactivated.
+pub(crate) fn recover_stale_profile_beneath(
+    state_root: &Path,
+    relative: &Path,
+) -> Result<Recovery, CleanupError> {
+    let path = state_root.join(relative);
+    match ProfileHold::open_beneath(state_root, relative) {
+        Ok(hold) if engine_may_be_alive(&hold, &path) => Ok(Recovery::EngineMayBeAlive),
+        Ok(hold) => sweep_held_profile(hold, &path).map(|()| Recovery::Removed),
         Err(ProfileError::Busy) => Ok(Recovery::InUse),
         Err(ProfileError::Missing) => Ok(Recovery::Absent),
         Err(error) => Err(CleanupError::Profile(error)),
