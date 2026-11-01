@@ -57,8 +57,10 @@
 //!   pid is "torn", and the confirm scan is repeated until none is. A pid
 //!   reused within one scan is torn too (B1): the scan marks the wall clock
 //!   before listing, and a listed pid whose process started at or after the
-//!   mark is a newer process under a listed pid. Recorded residual (not
-//!   accepted): a backward clock step during a scan.
+//!   mark is a newer process under a listed pid; the node is still kept.
+//!   Recorded residuals (not accepted): a backward clock step during a
+//!   scan can hide a reuse, and after one, processes whose start lies in
+//!   the future tear every scan, so the sweep fails closed (`Incomplete`).
 //!
 //! Still open for activation:
 //! - **Check-to-kill window.** The identity check and the kill are two
@@ -526,8 +528,9 @@ impl Supervised {
 /// Whether a process read under a listed pid started at or after the
 /// scan's clock mark (taken just before the listing), in microseconds since
 /// the epoch: then it is not the process that was listed, whose pid was
-/// reused, so the scan is torn (B1). One born between the mark and the
-/// listing is counted too, which only costs a retry.
+/// reused, so the scan is torn (B1). The node itself is kept. One born
+/// between the mark and the listing is counted too, which only costs a
+/// retry.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn born_after_listing(start_us: u64, mark_us: u64) -> bool {
     start_us >= mark_us
@@ -853,9 +856,10 @@ pub(crate) mod lineage {
                 },
                 Err(_) => return Err(FamilyError::Unreadable),
             };
+            // Kept, not dropped: it is a real process, attributed by its real
+            // ids, frozen and killed like any member. Only the scan is torn.
             if node.pinned.start != 0 && born_after_listing(node.pinned.start, mark) {
                 torn += 1;
-                continue;
             }
             nodes.push(node);
         }
@@ -1876,9 +1880,10 @@ mod tests {
         assert!(detected >= 1, "no round produced a survivor to detect");
     }
 
-    /// B1's premise: `pbi_start` is the wall clock `clock_mark` reads, so a
-    /// process started after a mark is born after it, and the test process
-    /// (started before) is not.
+    /// B1's premise, checked for consistency: a process started after a mark
+    /// has a `pbi_start` at or after it, and the test process (started
+    /// before) does not, consistent with `pbi_start` and `clock_mark` reading
+    /// the same clock.
     #[cfg(target_os = "macos")]
     #[test]
     fn a_process_started_after_the_clock_mark_is_born_after_it() {
