@@ -229,8 +229,16 @@ fn this_host() -> Option<String> {
 #[cfg(target_os = "linux")]
 fn named_by_a_running_engine(path: &Path) -> bool {
     use std::os::unix::ffi::OsStrExt;
-    let mut wanted = b"--user-data-dir=".to_vec();
-    wanted.extend_from_slice(path.as_os_str().as_bytes());
+    // The path as given and as resolved: a trailing slash or a linked
+    // spelling still names the same profile.
+    let mut spellings = vec![path.as_os_str().as_bytes().to_vec()];
+    if let Ok(real) = path.canonicalize() {
+        spellings.push(real.as_os_str().as_bytes().to_vec());
+    }
+    let wanted: Vec<Vec<u8>> = spellings
+        .into_iter()
+        .map(|spelling| [b"--user-data-dir=".as_slice(), spelling.as_slice()].concat())
+        .collect();
     let Ok(entries) = std::fs::read_dir("/proc") else {
         // The process table cannot be read: assume an engine may be alive.
         return true;
@@ -240,14 +248,26 @@ fn named_by_a_running_engine(path: &Path) -> bool {
         if name.to_str().is_none_or(|n| n.parse::<u32>().is_err()) {
             return false;
         }
-        std::fs::read(entry.path().join("cmdline"))
-            .map(|cmdline| {
-                cmdline
-                    .split(|byte| *byte == 0)
-                    .any(|arg| arg == wanted.as_slice())
-            })
-            .unwrap_or(false)
+        match std::fs::read(entry.path().join("cmdline")) {
+            Ok(cmdline) => cmdline_names(&cmdline, &wanted),
+            // Exited between the listing and the read: not alive.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+            // Unreadable (for example `hidepid=`): it may be an engine.
+            Err(_) => true,
+        }
     })
+}
+
+/// Whether a `/proc/<pid>/cmdline` names one of `wanted` as an argument.
+/// Arguments are NUL-separated, but Chromium on Linux rewrites its process
+/// title (`setproctitle`) into one space-joined string, so a
+/// space-separated token counts too.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn cmdline_names(cmdline: &[u8], wanted: &[Vec<u8>]) -> bool {
+    cmdline
+        .split(|byte| *byte == 0)
+        .flat_map(|arg| arg.split(|byte| *byte == b' '))
+        .any(|token| wanted.iter().any(|w| token == w.as_slice()))
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -648,8 +668,6 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
-    /// Pre-activation boundary: only lib.rs (the test-only declaration)
-    /// names this module.
     fn singleton(dir: &Path, target: &str) {
         std::os::unix::fs::symlink(target, dir.join(SINGLETON_LOCK)).unwrap();
     }
@@ -738,6 +756,29 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
+    /// Chromium's rewritten process title is one space-joined string: the
+    /// flag still counts there, and only as a whole token.
+    #[test]
+    fn the_command_line_match_handles_a_rewritten_process_title() {
+        let wanted = vec![b"--user-data-dir=/p/profile".to_vec()];
+        assert!(cmdline_names(
+            b"chrome\0--user-data-dir=/p/profile\0",
+            &wanted
+        ));
+        assert!(cmdline_names(
+            b"/opt/google/chrome/chrome --user-data-dir=/p/profile --flag\0",
+            &wanted
+        ));
+        assert!(!cmdline_names(
+            b"chrome --user-data-dir=/p/profile2\0",
+            &wanted
+        ));
+        assert!(!cmdline_names(b"chrome --user-data-dir=/p\0", &wanted));
+        assert!(!cmdline_names(b"", &wanted));
+    }
+
+    /// Pre-activation boundary: only lib.rs (the test-only declaration)
+    /// names this module.
     #[test]
     fn the_unix_cleanup_is_unreachable_from_production() {
         let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));

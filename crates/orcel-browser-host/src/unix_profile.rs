@@ -119,11 +119,19 @@ fn expected_owner() -> libc::uid_t {
 }
 
 /// Tests only: require `uid` as the owner on this thread while `run` runs.
+/// The previous value is restored by a guard, so a panic inside `run` never
+/// leaves the override set.
+#[cfg(test)]
 pub(crate) fn with_expected_owner<T>(uid: libc::uid_t, run: impl FnOnce() -> T) -> T {
-    EXPECTED_OWNER.with(|owner| owner.set(Some(uid)));
-    let result = run();
-    EXPECTED_OWNER.with(|owner| owner.set(None));
-    result
+    struct Restore(Option<libc::uid_t>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let previous = self.0;
+            EXPECTED_OWNER.with(|owner| owner.set(previous));
+        }
+    }
+    let _restore = Restore(EXPECTED_OWNER.with(|owner| owner.replace(Some(uid))));
+    run()
 }
 
 /// Owned by the expected user with exactly `mode` permission bits.
@@ -530,8 +538,6 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
-    /// Pre-activation boundary: only lib.rs (the test-only declaration)
-    /// names this module; production profile handling is unchanged.
     /// A3b: another account's profile is refused, whatever its mode.
     #[test]
     fn another_accounts_profile_is_refused() {
@@ -640,6 +646,8 @@ mod tests {
         }
     }
 
+    /// Pre-activation boundary: only lib.rs (the test-only declaration)
+    /// names this module; production profile handling is unchanged.
     #[test]
     fn the_unix_profile_hold_is_unreachable_from_production() {
         let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
