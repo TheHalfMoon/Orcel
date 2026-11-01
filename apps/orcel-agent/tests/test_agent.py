@@ -461,7 +461,7 @@ class PrivateStore(Scratch):
         link = Path(self._dir.name) / "link"
         subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], check=True, capture_output=True)
         try:
-            with self.assertRaisesRegex(StoreError, "junction, link or mount point lies on its path"):
+            with self.assertRaisesRegex(StoreError, "possible mapped or subst drive, junction, link or mount point"):
                 open_store(link / "agent", RUN)
         finally:
             os.rmdir(link)
