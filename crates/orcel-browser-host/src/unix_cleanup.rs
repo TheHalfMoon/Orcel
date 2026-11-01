@@ -934,6 +934,11 @@ mod tests {
         };
         let engine: i32 = engine.parse().unwrap();
         let refused = matches!(owner_of(engine), Owner::Unknown);
+        // The listing still works, so a kept profile comes from the refused
+        // owner (B3), not from a failed listing.
+        // SAFETY: a null buffer asks only for the count.
+        let listed = unsafe { libc::proc_listallpids(std::ptr::null_mut(), 0) } > 0;
+        assert!(listed, "the sandbox also hid the process listing");
         let named = named_by_a_running_engine(Path::new(&profile));
         println!("B3-RESULT refused={refused} named={named}");
         assert!(refused, "the sandbox did not refuse the engine's BSD info");
