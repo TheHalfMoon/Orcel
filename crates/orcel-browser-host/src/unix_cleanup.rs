@@ -953,12 +953,23 @@ mod tests {
     fn a_host_denied_process_info_keeps_its_engines_profile() {
         let (root, dir) = profile("sandboxed");
         populate(&dir);
-        let mut engine = Command::new("python3")
-            .arg("-c")
-            .arg("import time; time.sleep(30)")
-            .arg(format!("--user-data-dir={}", dir.display()))
-            .spawn()
-            .unwrap();
+        // Killed and reaped however the test ends, so a failed assertion
+        // leaves no engine behind.
+        struct Engine(std::process::Child);
+        impl Drop for Engine {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let engine = Engine(
+            Command::new("python3")
+                .arg("-c")
+                .arg("import time; time.sleep(30)")
+                .arg(format!("--user-data-dir={}", dir.display()))
+                .spawn()
+                .unwrap(),
+        );
         let started = std::time::Instant::now();
         while !named_by_a_running_engine(&dir)
             && started.elapsed() < std::time::Duration::from_secs(10)
@@ -975,11 +986,10 @@ mod tests {
                 "--test-threads=1",
             ])
             .env(B3_PROFILE, &dir)
-            .env(B3_ENGINE, engine.id().to_string())
+            .env(B3_ENGINE, engine.0.id().to_string())
             .output()
             .unwrap();
-        let _ = engine.kill();
-        let _ = engine.wait();
+        drop(engine);
         let stdout = String::from_utf8_lossy(&output.stdout);
         println!("{stdout}");
         assert!(
