@@ -333,14 +333,17 @@ async fn pauses_between_steps_but_not_after_the_last() {
     let harness = Harness::new();
     let started = std::time::Instant::now();
     harness
-        .run(json!({"delay_ms": 120, "steps": [
+        .run(json!({"delay_ms": 500, "steps": [
             {"tool": "click", "args": {"pid": 42}},
             {"tool": "click", "args": {"pid": 42}},
         ]}))
         .await;
     let elapsed = started.elapsed();
-    assert!(elapsed >= Duration::from_millis(120), "{elapsed:?}");
-    assert!(elapsed < Duration::from_millis(240), "{elapsed:?}");
+    // One pause between the two steps, none after the last: at least one
+    // delay and less than two. Orcel P-13 (#540): 500 ms instead of 120 ms,
+    // so scheduler jitter on a shared runner stays far below the margin.
+    assert!(elapsed >= Duration::from_millis(500), "{elapsed:?}");
+    assert!(elapsed < Duration::from_millis(1000), "{elapsed:?}");
 }
 
 #[tokio::test]

@@ -77,18 +77,18 @@
           "patched_blob_sha": "52ffea4157698c68007d02c262cffad4469bc051",
           "upstream_blocker_lines": []
         },
-  {
+        {
           "path": "src/input/skylight.rs",
           "upstream_blob_sha": "70e87b39bd5c13bd1d7f0bec46a571c0404dc260",
           "patched_blob_sha": "7b408797f793e9d05bfbe921dc643a235f9ea4da",
           "upstream_blocker_lines": [
-        "3b52c48a52d6b73dc92b3ba88279decc1dede3f2954cc701ae3b96b0d22456d0",
-        "efd34582d53091692c3ca8f05c6e5a81141fa8f20f9af3744581f8446d6a80ea",
-        "efd34582d53091692c3ca8f05c6e5a81141fa8f20f9af3744581f8446d6a80ea",
-        "efd34582d53091692c3ca8f05c6e5a81141fa8f20f9af3744581f8446d6a80ea",
-        "efd34582d53091692c3ca8f05c6e5a81141fa8f20f9af3744581f8446d6a80ea",
-        "efd34582d53091692c3ca8f05c6e5a81141fa8f20f9af3744581f8446d6a80ea"
-      ]
+            "3b52c48a52d6b73dc92b3ba88279decc1dede3f2954cc701ae3b96b0d22456d0",
+            "efd34582d53091692c3ca8f05c6e5a81141fa8f20f9af3744581f8446d6a80ea",
+            "efd34582d53091692c3ca8f05c6e5a81141fa8f20f9af3744581f8446d6a80ea",
+            "efd34582d53091692c3ca8f05c6e5a81141fa8f20f9af3744581f8446d6a80ea",
+            "efd34582d53091692c3ca8f05c6e5a81141fa8f20f9af3744581f8446d6a80ea",
+            "efd34582d53091692c3ca8f05c6e5a81141fa8f20f9af3744581f8446d6a80ea"
+          ]
         }
       ]
     },
@@ -251,6 +251,12 @@
           "path": "src/tool.rs",
           "upstream_blob_sha": "677392578aa04a1870b6d71e370eb1d0aee0b6e1",
           "patched_blob_sha": "950c98863b5473531c7a85e25a81c25f4d83e1c2",
+          "upstream_blocker_lines": []
+        },
+        {
+          "path": "src/batch_tools/tests.rs",
+          "upstream_blob_sha": "9783adc48b05c92acb4ba78a8cb965152a21d958",
+          "patched_blob_sha": "9e8bb293ad9a7644331ed7def16f6f955593a2e1",
           "upstream_blocker_lines": []
         }
       ]
