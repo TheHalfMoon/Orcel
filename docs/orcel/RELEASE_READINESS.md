@@ -48,7 +48,8 @@ checkpoint at the end says where engineering stands.
 | #438 residual: navigation `read: TimedOut` on CI | Waiting for a recurrence; #494's diagnostics capture it |
 | SG-000129 slice 5c: Windows agent store held by handle, orceld's ancestor rule, no junction on the path, claim-before-delete expiry | PR #554 (judge round 2, exact-head CI) |
 | #540 flaky vendored batch-pause test | PR #555: patch P-13 in the vendored patch queue (needs independent review, exact-head CI) |
-| SG-000115 Priority B (inert): retained-.deb signature chain for S-07, PID-namespace or cgroup containment feasibility, macOS pid-reuse cross-check within a scan, profile delete through the held walk, macOS ACLs on profiles | Engineering solutions to shrink the class 4 residuals; none activates SG-000115 |
+| SG-000115 B1 (inert): a pid reused within one macOS scan counts as torn (clock mark) | PR #557 (security review, exact-head CI incl. macOS) |
+| SG-000115 Priority B (inert): retained-.deb signature chain for S-07, PID-namespace or cgroup containment feasibility, profile delete through the held walk, macOS ACLs on profiles | Engineering solutions to shrink the class 4 residuals; none activates SG-000115 |
 | #292 flaky SG-000013 contained PowerShell test on windows-latest | Root cause not yet found |
 | macOS install / start / uninstall lifecycle | No macOS package yet: macOS packaging (XP-16) waits for FD-05; Windows and Linux lifecycle are in class 1 |
 | SG-000128 closeout | After slice 3b (class 3) is accepted or the founder records otherwise; the closeout judge checks that slice 1's deferred items are evidenced |
@@ -81,7 +82,7 @@ checkpoint at the end says where engineering stands.
 | Release and publication | Not authorized; no release is created |
 | A planner model for BM-02 Tier C agent runs | Paid inference is excluded by the zero-cost rule; the local d1 model is an advisory classifier, not a planner |
 | M4 model selection and licensing | Candidates and the benchmark plan are in `prep/M4-local-model-candidates.md`; nothing is downloaded or run before this gate |
-| SG-000115 residuals (recorded, **not accepted**; engineering continues on each) | (a) macOS: a pid reused within one descendant scan; (b) descendants of another user that cannot be read; (c) false positives of the unattributable rule; (d) the network sink's port after an orceld crash; (e) S-07 binds ownership and modes, not a signature (stock GitHub Ubuntu has `/opt/google` at 0777, so Chrome there is unverified); (f) engines in another PID namespace; (g) profile paths with spaces and `hidepid` on `/proc` |
+| SG-000115 residuals (recorded, **not accepted**; engineering continues on each) | (a) macOS: a pid reused within one descendant scan (narrowed by B1, #557, to a backward clock step during a scan); (b) descendants of another user that cannot be read; (c) false positives of the unattributable rule; (d) the network sink's port after an orceld crash; (e) S-07 binds ownership and modes, not a signature (stock GitHub Ubuntu has `/opt/google` at 0777, so Chrome there is unverified); (f) engines in another PID namespace; (g) profile paths with spaces and `hidepid` on `/proc` |
 | Real platform presence (Windows Hello, Touch ID, polkit), macOS permissions | Never simulated or pre-granted |
 | Paid infrastructure, deployment | Excluded by the zero-cost rule |
 
@@ -109,9 +110,11 @@ checkpoint at the end says where engineering stands.
 
 If a session ends, resume from here (2026-11-01, main `c7b64f1`):
 
-1. Open PRs from this work: #554 (slice 5c, head `9cc7857`) and #555 (#540,
-   head `4d16776`), both drafts until reviewed; mark ready, then merge with
-   `--match-head-commit` on a green exact-head run. #342 and #328 belong to
+1. Open PRs from this work: #554 (slice 5c, head `feae43a`), #555 (#540,
+   head `4d16776`, independently approved), #556 (this handoff) and #557
+   (SG-000115 B1, macOS pid reuse within a scan, draft). Drafts are marked
+   ready once reviewed, then merged with `--match-head-commit` on a green
+   exact-head run. #342 and #328 belong to
    other work: do not touch them.
 2. Local runs on Windows need a private temp folder (`TEMP`/`TMP` outside
    AppData, or `ORCEL_BM02_STATE_PARENT` for Tier A): this host's AppData
