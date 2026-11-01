@@ -286,11 +286,11 @@ const PROCARGS_MAX: usize = 1 << 20;
 
 /// macOS (B2): a process of this user whose arguments, read with
 /// `sysctl KERN_PROCARGS2`, name this profile as `--user-data-dir=<path>`.
-/// A process of this user whose arguments cannot be read or parsed counts
-/// as an engine that may be alive, and so does a listing that fails or
-/// reaches its bound. A process that is gone or a zombie does not. Another
-/// user's process cannot be read without privilege and is not seen (open
-/// item).
+/// A process of this user whose arguments cannot be read or parsed, or
+/// whose owner cannot be read, counts as an engine that may be alive, and so
+/// does a listing that fails or reaches its bound. A process that is gone
+/// or a zombie does not. Another user's process (root's included) cannot be
+/// read without privilege and is not seen (open item).
 #[cfg(target_os = "macos")]
 fn named_by_a_running_engine(path: &Path) -> bool {
     let wanted = wanted_arguments(path);
@@ -308,6 +308,7 @@ fn named_by_a_running_engine(path: &Path) -> bool {
         .filter(|pid| *pid > 0)
         .any(|pid| match owner_of(pid) {
             Owner::Gone | Owner::Other => false,
+            Owner::Unknown => true,
             Owner::Me => match procargs(pid, &mut buffer) {
                 Ok(Some(raw)) => match argv_of(raw) {
                     Some(argv) => cmdline_names(argv, &wanted),
@@ -323,9 +324,13 @@ fn named_by_a_running_engine(path: &Path) -> bool {
 enum Owner {
     /// Exited, or a zombie.
     Gone,
-    /// Another user's (or unreadable for that reason).
+    /// Another user's: its BSD info is refused (`EPERM`), or names
+    /// another uid.
     Other,
     Me,
+    /// Its owner cannot be read for any other reason (or the read came
+    /// back short): it may be an engine of this user.
+    Unknown,
 }
 
 #[cfg(target_os = "macos")]
@@ -343,10 +348,14 @@ fn owner_of(pid: i32) -> Owner {
             size,
         )
     };
-    if read != size {
+    if read > 0 && read != size {
+        return Owner::Unknown;
+    }
+    if read <= 0 {
         return match errno() {
             libc::ESRCH => Owner::Gone,
-            _ => Owner::Other,
+            libc::EPERM => Owner::Other,
+            _ => Owner::Unknown,
         };
     }
     // SZOMB is 5 in <sys/proc.h>.
@@ -390,7 +399,9 @@ fn procargs(pid: i32, buffer: &mut [u8]) -> Result<Option<&[u8]>, i32> {
 /// The argument strings of a `KERN_PROCARGS2` buffer, NUL-separated: it
 /// holds `argc` (a native-endian `i32`), the executable path, NUL padding,
 /// then `argc` NUL-terminated arguments (then the environment, ignored).
-/// `None` when the layout does not hold.
+/// `None` when the layout does not hold. An empty first argument would be
+/// read as padding, shifting one environment string into the arguments;
+/// that can only add a match (keep), never hide one.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn argv_of(raw: &[u8]) -> Option<&[u8]> {
     let (count, rest) = raw.split_first_chunk::<4>()?;
