@@ -585,6 +585,20 @@ above (every flag combination), and the live AT-SPI re-read test in
 `src/cua_adapter/atspi_reread_tests.rs`, which toggles a GTK3 check button under Xvfb and
 re-reads it through AT-SPI after each step.
 
+## P-13: a batch pause test with headroom for shared runners (#540)
+
+Upstream's `pauses_between_steps_but_not_after_the_last` ran a two-step batch
+with `delay_ms: 120` and required it to finish in under 240 ms: one pause
+between the steps and none after the last. On a shared hosted macOS runner it
+once took 247.7 ms (main CI run 41095764687), from scheduler jitter, not from a
+second pause. The patch raises the delay to 500 ms and the bound to 1000 ms.
+The test still requires at least one delay and less than two, so a pause after
+the last step still fails it, and the margin over one pause grows from 120 ms
+to 500 ms.
+
+- `cua-driver-core/src/batch_tools/tests.rs`: the delay and the two bounds in
+  that one test. Test-only; no production line changes.
+
 ## Patched file index
 
 Every vendored file that differs from upstream, as recorded in the
@@ -620,6 +634,7 @@ to be named here.
 - `cua-driver-core/src/recording_tools.rs` (upstream blob `1c3d8a4a7bc0`)
 - `cua-driver-core/src/server.rs` (upstream blob `7c85f09756a8`)
 - `cua-driver-core/src/tool.rs` (upstream blob `677392578aa0`)
+- `cua-driver-core/src/batch_tools/tests.rs` (upstream blob `9783adc48b05`)
 - `cursor-overlay/Cargo.toml` (upstream blob `0b55e9e2b1b9`)
 - `cursor-overlay/src/render_state.rs` (upstream blob `482d1867a06b`)
 - `cursor-overlay/src/session_badge.rs` (upstream blob `f66e866ad1c1`)
