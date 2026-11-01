@@ -745,7 +745,8 @@ mod tests {
         std::fs::create_dir(&attacker).unwrap();
         let attacker_profile = attacker.join("profile");
         std::fs::create_dir(&attacker_profile).unwrap();
-        std::fs::set_permissions(&attacker_profile, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::set_permissions(&attacker_profile, std::fs::Permissions::from_mode(0o700))
+            .unwrap();
         std::fs::write(attacker_profile.join("keep"), "untouched").unwrap();
         std::os::unix::fs::symlink(&attacker, root.join("middle")).unwrap();
         assert_eq!(
