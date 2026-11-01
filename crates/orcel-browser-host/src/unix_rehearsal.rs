@@ -927,10 +927,13 @@ mod tests {
                 }
             }
         }
+        // Pinned before the crash, so the checks below name the same
+        // processes, never a later holder of their pids.
+        let leader = crate::unix_supervise::pin_pid(engine);
         let _orphans = Orphans(
-            [helper, engine]
+            [crate::unix_supervise::pin_pid(helper), leader]
                 .into_iter()
-                .filter_map(crate::unix_supervise::pin_pid)
+                .flatten()
                 .collect(),
         );
         // The host crashes.
@@ -947,7 +950,7 @@ mod tests {
         };
         // The engine's in-group helpers die with its group, while the engine
         // (the group leader) is still pinned as alive.
-        if let Some(leader) = crate::unix_supervise::pin_pid(engine) {
+        if let Some(leader) = leader {
             if crate::unix_supervise::is_alive(leader) {
                 // SAFETY: the pinned leader is alive, so this group is the
                 // fixture's own.
