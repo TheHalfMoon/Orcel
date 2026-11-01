@@ -231,10 +231,13 @@ fn s07_a_linked_engine_path_is_not_verified() {
     assert!(matches!(verdict, Ok(false)), "{verdict:?}");
 }
 
-/// Evidence on hosts with the real vendor package (CI's Ubuntu image
-/// ships Chrome): its install tree meets the ownership rule.
+/// Evidence on hosts with the real vendor package (CI's Ubuntu image ships
+/// Chrome): the verifier's verdict follows the install tree as it is on
+/// disk. The hosted image leaves it world-writable, so there the tree is
+/// reported and the engine stays unverified; a host with the vendor's own
+/// modes verifies it. Nothing on the runner is changed.
 #[test]
-fn s07_the_installed_chrome_tree_is_root_owned_where_present() {
+fn s07_the_installed_chrome_verdict_follows_its_install_tree() {
     let chrome = Path::new("/opt/google/chrome/chrome");
     if !chrome.is_file() {
         // CI's Ubuntu image ships Chrome: never a silent skip there.
@@ -242,10 +245,12 @@ fn s07_the_installed_chrome_tree_is_root_owned_where_present() {
         eprintln!("no /opt/google/chrome/chrome here: skipped");
         return;
     }
+    let tree = install_tree_problem(chrome, chrome.parent().unwrap(), &PackageDb::production());
+    eprintln!("SG115-EVIDENCE real Chrome install tree: {tree:?}");
+    let verdict = verify_publisher(chrome);
     assert!(
-        install_tree_problem(chrome, chrome.parent().unwrap(), &PackageDb::production()).is_none(),
-        "the vendor install tree is root-owned and not group or other writable: {:?}",
-        install_tree_problem(chrome, chrome.parent().unwrap(), &PackageDb::production())
+        matches!(verdict, Ok(verified) if verified == tree.is_none()),
+        "{verdict:?}; install tree: {tree:?}"
     );
 }
 

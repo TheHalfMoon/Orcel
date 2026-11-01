@@ -617,6 +617,7 @@ fn verify_publisher(path: &Path) -> Result<bool, HostError> {
 struct PackageDb {
     /// `None` in production. In tests, a private dpkg root: paths are
     /// queried relative to it, and the ownership walk stops at it.
+    #[cfg(test)]
     root: Option<PathBuf>,
     /// The account that must own the install tree: root (0) in production.
     owner: u32,
@@ -624,8 +625,22 @@ struct PackageDb {
 
 #[cfg(all(not(windows), not(target_os = "macos")))]
 impl PackageDb {
+    /// The fixture tests' private dpkg root; always `None` outside tests,
+    /// where the field does not exist.
+    fn test_root(&self) -> Option<&PathBuf> {
+        #[cfg(test)]
+        {
+            self.root.as_ref()
+        }
+        #[cfg(not(test))]
+        {
+            None
+        }
+    }
+
     fn production() -> Self {
         Self {
+            #[cfg(test)]
             root: None,
             owner: 0,
         }
@@ -651,7 +666,7 @@ fn verify_publisher_in(path: &Path, db: &PackageDb) -> Result<bool, HostError> {
     // is still refused (`UnsupportedEngine`), exactly as before.
     let tree_ok = install_tree_trusted(&real, code_path, db);
     // The paths as the package database records them.
-    let (real_text, code_dir) = match &db.root {
+    let (real_text, code_dir) = match db.test_root() {
         None => (
             real.to_string_lossy().into_owned(),
             code_path.to_string_lossy().into_owned(),
@@ -671,12 +686,10 @@ fn verify_publisher_in(path: &Path, db: &PackageDb) -> Result<bool, HostError> {
         }
     };
     let root_flag = db
-        .root
-        .as_ref()
+        .test_root()
         .map(|root| format!("--root={}", root.display()));
     let admin_flag = db
-        .root
-        .as_ref()
+        .test_root()
         .map(|root| format!("--admindir={}", root.join("var/lib/dpkg").display()));
     let query: Vec<&str> = admin_flag
         .iter()
@@ -712,7 +725,7 @@ fn verify_publisher_in(path: &Path, db: &PackageDb) -> Result<bool, HostError> {
     }
     // The fixture tests use a private dpkg root only; rpm is never asked
     // about one.
-    if db.root.is_some() {
+    if db.test_root().is_some() {
         return Ok(false);
     }
     match run_package_tool(
@@ -779,7 +792,7 @@ fn install_tree_problem(engine: &Path, code_dir: &Path, db: &PackageDb) -> Optio
         )
     };
     let safe = |meta: &std::fs::Metadata| meta.uid() == db.owner && meta.mode() & 0o022 == 0;
-    let stop = db.root.as_ref().and_then(|root| root.canonicalize().ok());
+    let stop = db.test_root().and_then(|root| root.canonicalize().ok());
     let mut current = Some(engine);
     while let Some(path) = current {
         if stop.as_deref() == Some(path) {
@@ -1310,14 +1323,24 @@ mod tests {
             started.elapsed()
         );
         let verdict = verify_publisher(installed);
+        // SG-000115 S-07: the package check must pass on its own (only
+        // changes outside the install directory), and the verdict must then
+        // follow the install tree. The hosted image leaves the tree
+        // world-writable (prep/SG-000115.md), so there it is unverified,
+        // never refused and never verified.
+        let tree = install_tree_problem(
+            installed,
+            Path::new("/opt/google/chrome"),
+            &PackageDb::production(),
+        );
+        eprintln!("SG115-EVIDENCE real Chrome install tree: {tree:?}");
         assert!(
-            matches!(verdict, Ok(true)),
-            "{verdict:?}; dpkg --verify google-chrome-stable: {verify:?}; install tree: {:?}",
-            install_tree_problem(
-                installed,
-                Path::new("/opt/google/chrome"),
-                &PackageDb::production()
-            )
+            matches!(&verify, PackageRun::Finished { success: true, output } if verify_report_clean(output, "/opt/google/chrome")),
+            "dpkg --verify google-chrome-stable: {verify:?}"
+        );
+        assert!(
+            matches!(verdict, Ok(verified) if verified == tree.is_none()),
+            "{verdict:?}; install tree: {tree:?}"
         );
         let copy_dir =
             std::env::temp_dir().join(format!("orcel-xp14-linux-{}", std::process::id()));
