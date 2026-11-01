@@ -33,11 +33,11 @@
 //! - **An orphaned engine (A3b, partly closed):** the Orcel lock is
 //!   `O_CLOEXEC`, so an engine never holds it. Recovery now keeps the
 //!   profile (`EngineMayBeAlive`) when the engine's own `SingletonLock`
-//!   names a live pid on this host, another host, or cannot be read, and on
-//!   Linux when any readable process carries `--user-data-dir=<profile>`.
-//!   Still open: an engine that has not yet written `SingletonLock` on
-//!   macOS (no command-line scan there), and another user's process, whose
-//!   command line Linux hides.
+//!   names a live pid on this host, another host, or cannot be read, and
+//!   when any readable process carries `--user-data-dir=<profile>` (Linux:
+//!   `/proc/<pid>/cmdline`; macOS since B2: this user's processes through
+//!   `sysctl KERN_PROCARGS2`). Still open: another user's process, whose
+//!   arguments macOS (and Linux under `hidepid`) hides.
 //! - **Same-user window:** between `verify_lock` and the unlink, or while
 //!   the contents are cleared, a process of the same user could rename the
 //!   lock and let a second holder in; that holder's lock or files could then
@@ -224,21 +224,25 @@ fn this_host() -> Option<String> {
     String::from_utf8(buffer[..end].to_vec()).ok()
 }
 
-/// Linux: a readable process whose command line names this profile as
-/// `--user-data-dir=<path>`. (macOS has no such scan here: open item.)
-#[cfg(target_os = "linux")]
-fn named_by_a_running_engine(path: &Path) -> bool {
-    use std::os::unix::ffi::OsStrExt;
-    // The path as given and as resolved: a trailing slash or a linked
-    // spelling still names the same profile.
+/// The `--user-data-dir=` arguments that name this profile: the path as
+/// given and as resolved, so a trailing slash or a linked spelling still
+/// names the same profile.
+fn wanted_arguments(path: &Path) -> Vec<Vec<u8>> {
     let mut spellings = vec![path.as_os_str().as_bytes().to_vec()];
     if let Ok(real) = path.canonicalize() {
         spellings.push(real.as_os_str().as_bytes().to_vec());
     }
-    let wanted: Vec<Vec<u8>> = spellings
+    spellings
         .into_iter()
         .map(|spelling| [b"--user-data-dir=".as_slice(), spelling.as_slice()].concat())
-        .collect();
+        .collect()
+}
+
+/// Linux: a readable process whose command line names this profile as
+/// `--user-data-dir=<path>`.
+#[cfg(target_os = "linux")]
+fn named_by_a_running_engine(path: &Path) -> bool {
+    let wanted = wanted_arguments(path);
     let Ok(entries) = std::fs::read_dir("/proc") else {
         // The process table cannot be read: assume an engine may be alive.
         return true;
@@ -259,20 +263,145 @@ fn named_by_a_running_engine(path: &Path) -> bool {
 }
 
 /// Whether a `/proc/<pid>/cmdline` names one of `wanted` as an argument.
-/// Arguments are NUL-separated, but Chromium on Linux rewrites its process
-/// title (`setproctitle`) into one space-joined string, so a
-/// space-separated token counts too.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+/// Arguments are NUL-separated, and a whole argument counts; Chromium on
+/// Linux rewrites its process title (`setproctitle`) into one space-joined
+/// string, so a space-separated token counts too.
 fn cmdline_names(cmdline: &[u8], wanted: &[Vec<u8>]) -> bool {
-    cmdline
-        .split(|byte| *byte == 0)
-        .flat_map(|arg| arg.split(|byte| *byte == b' '))
-        .any(|token| wanted.iter().any(|w| token == w.as_slice()))
+    let named = |token: &[u8]| wanted.iter().any(|w| token == w.as_slice());
+    // A whole argument (B2: a profile path with a space matches here), or
+    // a space-separated token of a rewritten title.
+    cmdline.split(|byte| *byte == 0).any(named)
+        || cmdline
+            .split(|byte| *byte == 0)
+            .flat_map(|arg| arg.split(|byte| *byte == b' '))
+            .any(named)
 }
 
-#[cfg(not(target_os = "linux"))]
-fn named_by_a_running_engine(_path: &Path) -> bool {
-    false
+/// At most this many pids are listed on macOS; more keeps the profile.
+#[cfg(target_os = "macos")]
+const MAX_PIDS: usize = 65_536;
+/// Room for one process's `KERN_PROCARGS2` (macOS `ARG_MAX`, 1 MiB).
+#[cfg(target_os = "macos")]
+const PROCARGS_MAX: usize = 1 << 20;
+
+/// macOS (B2): a process of this user whose arguments, read with
+/// `sysctl KERN_PROCARGS2`, name this profile as `--user-data-dir=<path>`.
+/// A process of this user whose arguments cannot be read or parsed counts
+/// as an engine that may be alive, and so does a listing that fails or
+/// reaches its bound. A process that is gone or a zombie does not. Another
+/// user's process cannot be read without privilege and is not seen (open
+/// item).
+#[cfg(target_os = "macos")]
+fn named_by_a_running_engine(path: &Path) -> bool {
+    let wanted = wanted_arguments(path);
+    let mut pids = vec![0i32; MAX_PIDS];
+    let bytes = (pids.len() * std::mem::size_of::<i32>()) as libc::c_int;
+    // SAFETY: the buffer holds MAX_PIDS pids of `bytes` bytes.
+    let count = unsafe { libc::proc_listallpids(pids.as_mut_ptr().cast(), bytes) };
+    if count <= 0 || count as usize >= MAX_PIDS {
+        return true;
+    }
+    let mut buffer = vec![0u8; PROCARGS_MAX];
+    pids[..count as usize]
+        .iter()
+        .copied()
+        .filter(|pid| *pid > 0)
+        .any(|pid| match owner_of(pid) {
+            Owner::Gone | Owner::Other => false,
+            Owner::Me => match procargs(pid, &mut buffer) {
+                Ok(Some(raw)) => match argv_of(raw) {
+                    Some(argv) => cmdline_names(argv, &wanted),
+                    None => true,
+                },
+                Ok(None) => false,
+                Err(_) => true,
+            },
+        })
+}
+
+#[cfg(target_os = "macos")]
+enum Owner {
+    /// Exited, or a zombie.
+    Gone,
+    /// Another user's (or unreadable for that reason).
+    Other,
+    Me,
+}
+
+#[cfg(target_os = "macos")]
+fn owner_of(pid: i32) -> Owner {
+    // SAFETY: plain data; zeroed is a valid value.
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    // SAFETY: the buffer is exactly one proc_bsdinfo of `size` bytes.
+    let read = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            (&mut info as *mut libc::proc_bsdinfo).cast(),
+            size,
+        )
+    };
+    if read != size {
+        return match errno() {
+            libc::ESRCH => Owner::Gone,
+            _ => Owner::Other,
+        };
+    }
+    // SZOMB is 5 in <sys/proc.h>.
+    if info.pbi_status == 5 {
+        return Owner::Gone;
+    }
+    // SAFETY: no arguments; cannot fail.
+    if info.pbi_uid == unsafe { libc::geteuid() } {
+        Owner::Me
+    } else {
+        Owner::Other
+    }
+}
+
+/// The raw `KERN_PROCARGS2` of `pid`; `Ok(None)` when it has exited.
+#[cfg(target_os = "macos")]
+fn procargs(pid: i32, buffer: &mut [u8]) -> Result<Option<&[u8]>, i32> {
+    let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid];
+    let mut size = buffer.len();
+    // SAFETY: a three-element name and a buffer of `size` bytes; nothing is
+    // written to the kernel.
+    let status = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            3,
+            buffer.as_mut_ptr().cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if status != 0 {
+        return match errno() {
+            libc::ESRCH => Ok(None),
+            other => Err(other),
+        };
+    }
+    Ok(Some(&buffer[..size.min(buffer.len())]))
+}
+
+/// The argument strings of a `KERN_PROCARGS2` buffer, NUL-separated: it
+/// holds `argc` (a native-endian `i32`), the executable path, NUL padding,
+/// then `argc` NUL-terminated arguments (then the environment, ignored).
+/// `None` when the layout does not hold.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn argv_of(raw: &[u8]) -> Option<&[u8]> {
+    let (count, rest) = raw.split_first_chunk::<4>()?;
+    let argc = usize::try_from(i32::from_ne_bytes(*count)).ok()?;
+    let path_end = rest.iter().position(|byte| *byte == 0)?;
+    let start = path_end + rest[path_end..].iter().position(|byte| *byte != 0)?;
+    let mut end = start;
+    for _ in 0..argc {
+        end += rest[end..].iter().position(|byte| *byte == 0)? + 1;
+    }
+    Some(&rest[start..end])
 }
 
 /// `st_dev` is `u64` on Linux and `i32` on macOS.
@@ -729,9 +858,8 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
-    /// A3b (Linux): an engine started with this profile, before it wrote any
-    /// lock, still keeps it.
-    #[cfg(target_os = "linux")]
+    /// A3b (Linux) and B2 (macOS): an engine started with this profile,
+    /// before it wrote any lock, still keeps it.
     #[test]
     fn recovery_keeps_a_profile_named_by_a_running_process() {
         let (root, dir) = profile("cmdline");
@@ -756,6 +884,31 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
+    /// B2: the `KERN_PROCARGS2` layout, on synthetic buffers.
+    #[test]
+    fn the_procargs_layout_yields_exactly_the_arguments() {
+        fn buffer(argc: i32, body: &[u8]) -> Vec<u8> {
+            [argc.to_ne_bytes().as_slice(), body].concat()
+        }
+        let raw = buffer(
+            2,
+            b"/usr/bin/python3\0\0\0\0python3\0--user-data-dir=/p/a b\0HOME=/x\0",
+        );
+        assert_eq!(
+            argv_of(&raw),
+            Some(b"python3\0--user-data-dir=/p/a b\0".as_slice())
+        );
+        let wanted = vec![b"--user-data-dir=/p/a b".to_vec()];
+        assert!(cmdline_names(argv_of(&raw).unwrap(), &wanted));
+        // Truncated before the last argument ends, a negative argc, no
+        // executable path, or too short for argc: no layout.
+        assert_eq!(argv_of(&buffer(3, b"/bin/x\0\0x\0y\0")), None);
+        assert_eq!(argv_of(&buffer(-1, b"/bin/x\0\0x\0")), None);
+        assert_eq!(argv_of(&buffer(1, b"/bin/x")), None);
+        assert_eq!(argv_of(b"\x01\0"), None);
+        assert_eq!(argv_of(&buffer(0, b"/bin/x\0\0")), None);
+    }
+
     /// Chromium's rewritten process title is one space-joined string: the
     /// flag still counts there, and only as a whole token.
     #[test]
@@ -775,6 +928,11 @@ mod tests {
         ));
         assert!(!cmdline_names(b"chrome --user-data-dir=/p\0", &wanted));
         assert!(!cmdline_names(b"", &wanted));
+        // B2: a whole argument with a space matches; a rewritten title with
+        // that path cannot (recorded).
+        let spaced = vec![b"--user-data-dir=/p/a b".to_vec()];
+        assert!(cmdline_names(b"chrome\0--user-data-dir=/p/a b\0", &spaced));
+        assert!(!cmdline_names(b"chrome --user-data-dir=/p/a b\0", &spaced));
     }
 
     /// Pre-activation boundary: only lib.rs (the test-only declaration)
