@@ -909,6 +909,33 @@ pub(crate) mod lineage {
     }
 }
 
+/// The only tests `spawn_test` may run: the dedicated supervisor entries
+/// (recorded in prep/SG-000115.md).
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) const SUPERVISOR_ENTRIES: [&str; 2] = [
+    "unix_supervise::tests::supervisor_entry",
+    "unix_rehearsal::tests::sink_supervisor_entry",
+];
+
+/// Tests only (Linux): run one of `SUPERVISOR_ENTRIES` in a fresh process
+/// of this test binary (`--exact <test>`), with `env`, its stdout piped. The
+/// A6 rehearsal uses it for its dedicated subreaper supervisor, so that
+/// module needs no spawn of its own. Any other test name is refused.
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) fn spawn_test(test: &str, env: &[(&str, String)]) -> std::io::Result<Child> {
+    if !SUPERVISOR_ENTRIES.contains(&test) {
+        return Err(std::io::Error::other("not a supervisor entry"));
+    }
+    let mut command = Command::new(std::env::current_exe()?);
+    command
+        .args(["--exact", test, "--nocapture", "--test-threads=1"])
+        .stdout(std::process::Stdio::piped());
+    for (name, value) in env {
+        command.env(name, value);
+    }
+    command.spawn()
+}
+
 /// A `python3` fixture running `code` (no shell: SG-000085 bans shell tokens
 /// in this crate's sources, tests included). The single fixture constructor
 /// for this module's tests and the A6 rehearsal (`unix_rehearsal.rs`), so
@@ -921,8 +948,18 @@ pub(crate) fn python_fixture(code: &str) -> Command {
     command
 }
 
+/// Tests only (Linux, the rehearsal's crash test): pin a pid to its current
+/// start time, `None` if it is gone.
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) fn pin_pid(pid: i32) -> Option<Pinned> {
+    match start_time(pid) {
+        Ok(Some(start)) => Some(Pinned { pid, start }),
+        _ => None,
+    }
+}
+
 /// Signal a member only while its start time still matches (no reused pid).
-fn kill_pinned(member: Pinned) {
+pub(crate) fn kill_pinned(member: Pinned) {
     if start_time(member.pid) == Ok(Some(member.start)) {
         // SAFETY: plain signal to a pid whose identity was just re-checked.
         unsafe { libc::kill(member.pid, libc::SIGKILL) };

@@ -98,6 +98,20 @@ except OSError:
     pass
 sleeper = 'import time; time.sleep(60)'
 helpers = [subprocess.Popen([sys.executable, '-c', sleeper]) for _ in range(2)]
+if mode == 'chatty':
+    chatty = ('import os, socket, sys, time\n'
+              'os.setsid()\n'
+              'open(sys.argv[1] + ".tmp", "w").write(str(os.getpid()))\n'
+              'os.rename(sys.argv[1] + ".tmp", sys.argv[1])\n'
+              'end = time.time() + 30\n'
+              'while time.time() < end:\n'
+              '    try:\n'
+              '        socket.create_connection((sys.argv[2], int(sys.argv[3])), timeout=1).close()\n'
+              '    except OSError:\n'
+              '        pass\n'
+              '    time.sleep(0.05)\n')
+    subprocess.Popen([sys.executable, '-c', chatty, os.path.join(side, 'left.pid'), host, port])
+    wait_for(os.path.join(side, 'left.pid'))
 if mode in ('escape', 'orphan'):
     leaver = ('import os, sys, time; os.setsid(); '
               'open(sys.argv[1] + ".tmp", "w").write(str(os.getpid())); '
@@ -126,6 +140,10 @@ enum Mode {
     /// Adds a short-lived helper that leaves the group, then exits
     /// abruptly once `crash-now` appears, orphaning that helper.
     Orphan,
+    /// Adds a helper that leaves the group and keeps connecting to the
+    /// proxy port for 30 s (an untracked helper still using the endpoint).
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    Chatty,
 }
 
 impl Mode {
@@ -135,6 +153,7 @@ impl Mode {
             Mode::Escape => "escape",
             Mode::Crash => "crash",
             Mode::Orphan => "orphan",
+            Mode::Chatty => "chatty",
         }
     }
 }
@@ -158,6 +177,8 @@ enum Refused {
 /// profile.
 struct Running {
     engine: Supervised,
+    /// Spawned for `verified_sweep` (A2b): teardown then uses it.
+    verifiable: bool,
     sink: NetworkSink,
     hold: ProfileHold,
     profile: PathBuf,
@@ -221,6 +242,28 @@ fn destinations() -> Vec<AdmittedDestination> {
 /// `side` is a scratch directory outside the profile for the fixture's
 /// signal files.
 fn start(policy_root: &Path, profile: &Path, mode: Mode, side: &Path) -> Result<Running, Refused> {
+    start_with(policy_root, profile, mode, side, false)
+}
+
+/// `start`, with the engine spawned for the verified sweep (A2b): on Linux
+/// only a dedicated subreaper supervisor process gets verified coverage.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn start_verifiable(
+    policy_root: &Path,
+    profile: &Path,
+    mode: Mode,
+    side: &Path,
+) -> Result<Running, Refused> {
+    start_with(policy_root, profile, mode, side, true)
+}
+
+fn start_with(
+    policy_root: &Path,
+    profile: &Path,
+    mode: Mode,
+    side: &Path,
+    verifiable: bool,
+) -> Result<Running, Refused> {
     assert_no_unix_managed_policy(PLATFORM, EngineKind::Chromium, policy_root)
         .map_err(Refused::Policy)?;
     match recover_stale_profile(profile) {
@@ -246,9 +289,15 @@ fn start(policy_root: &Path, profile: &Path, mode: Mode, side: &Path) -> Result<
         .args(&argv)
         .env("ORCEL_REHEARSAL_MODE", mode.name())
         .env("ORCEL_REHEARSAL_SIDE", side);
-    let engine = Supervised::spawn(command).map_err(Refused::Spawn)?;
+    let engine = if verifiable {
+        Supervised::spawn_verifiable(command)
+    } else {
+        Supervised::spawn(command)
+    }
+    .map_err(Refused::Spawn)?;
     Ok(Running {
         engine,
+        verifiable,
         sink,
         hold,
         profile: profile.to_path_buf(),
@@ -259,11 +308,17 @@ fn start(policy_root: &Path, profile: &Path, mode: Mode, side: &Path) -> Result<
 fn teardown(running: Running) -> Result<Released, TeardownError> {
     let Running {
         engine,
+        verifiable,
         sink,
         hold,
         profile,
     } = running;
-    match engine.sweep(DEADLINE) {
+    let swept = if verifiable {
+        engine.verified_sweep(DEADLINE)
+    } else {
+        engine.sweep(DEADLINE)
+    };
+    match swept {
         Ok(outcome) => release(outcome, sink, hold, profile),
         Err(error) => Err(TeardownError::Kept(Box::new(Holding {
             why: Kept::Family(error),
@@ -664,6 +719,252 @@ mod tests {
         assert!(
             !profile.exists(),
             "the profile was removed through its hold"
+        );
+    }
+
+    // ---- A6b: the sink's lifetime (risk 4) ---------------------------
+
+    /// Another process tries to bind `127.0.0.1:<port>` with
+    /// `SO_REUSEADDR`, as a local attacker would; prints BOUND or REFUSED.
+    const TAKE_PORT: &str = "import socket, sys\n\
+        s = socket.socket()\n\
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\n\
+        try:\n    s.bind(('127.0.0.1', int(sys.argv[1]))); s.listen(1); print('BOUND')\n\
+        except OSError as error:\n    print('REFUSED', error.errno)\n";
+
+    fn another_process_takes(port: u16) -> String {
+        let output = python_fixture(TAKE_PORT)
+            .arg(port.to_string())
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    /// While teardown keeps the sink (coverage unverified), no other process
+    /// can take its port, so nothing a surviving helper sends can reach one.
+    #[test]
+    fn a_kept_sink_holds_its_port_against_another_process() {
+        let scratch = Scratch::new("kept-port");
+        let running = scratch.start(Mode::Escape).unwrap();
+        wait_ready(&running);
+        let (why, sink, hold, profile) = kept(teardown(running));
+        let port = sink.port();
+        let taken = another_process_takes(port);
+        assert!(taken.starts_with("REFUSED"), "{taken}");
+        assert!(still_sinks(&sink), "the kept sink still owns its port");
+        let outcome = match why {
+            Kept::Unverified(outcome) => outcome,
+            other => panic_free_fail(&format!("{other:?}")),
+        };
+        free(outcome, sink, hold, profile).unwrap();
+        // The release step frees the port at once: another process can take
+        // it. Hence release only on verified coverage.
+        assert_eq!(another_process_takes(port), "BOUND");
+    }
+
+    /// A failing assertion without the panic macro (release gate).
+    fn panic_free_fail(message: &str) -> SweepOutcome {
+        assert!(message.is_empty(), "{message}");
+        unreachable_outcome()
+    }
+
+    fn unreachable_outcome() -> SweepOutcome {
+        SweepOutcome {
+            left: Vec::new(),
+            coverage: Coverage::Incomplete,
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    const SINK_CASE: &str = "ORCEL_SG115_SINK_CASE";
+    #[cfg(target_os = "linux")]
+    const SINK_SCRATCH: &str = "ORCEL_SG115_SINK_SCRATCH";
+
+    /// Runs only in a re-executed test binary (`spawn_test`): a dedicated
+    /// subreaper supervisor that owns the sink and the engine.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn sink_supervisor_entry() {
+        use crate::unix_supervise::reaper;
+        let Ok(case) = std::env::var(SINK_CASE) else {
+            return;
+        };
+        let root = PathBuf::from(std::env::var(SINK_SCRATCH).unwrap());
+        reaper::become_subreaper().unwrap();
+        assert!(reaper::childless());
+        std::fs::create_dir_all(root.join("policy")).unwrap();
+        std::fs::create_dir_all(root.join("side")).unwrap();
+        let (policy, profile, side) =
+            (root.join("policy"), root.join("profile"), root.join("side"));
+        match case.as_str() {
+            "verified" | "verified-orphan" => {
+                let mode = if case == "verified" {
+                    Mode::Escape
+                } else {
+                    Mode::Orphan
+                };
+                let running = start_verifiable(&policy, &profile, mode, &side).unwrap();
+                wait_ready(&running);
+                if case == "verified-orphan" {
+                    std::fs::write(side.join("crash-now"), "").unwrap();
+                    std::thread::sleep(Duration::from_millis(300));
+                }
+                let port = running.sink.port();
+                let released = teardown(running).is_ok();
+                println!(
+                    "SG115-SINK case={case} released={released} profile_gone={} port={port}",
+                    !profile.exists()
+                );
+            }
+            "crash-host" => {
+                let running = start_verifiable(&policy, &profile, Mode::Chatty, &side).unwrap();
+                wait_ready(&running);
+                let left = std::fs::read_to_string(side.join("left.pid")).unwrap();
+                println!(
+                    "SG115-SINK port={} engine={} helper={}",
+                    running.sink.port(),
+                    running.engine.root().pid,
+                    left.trim()
+                );
+                // The host "crashes" here: the test kills this process.
+                std::thread::sleep(Duration::from_secs(60));
+            }
+            _ => {}
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn sink_scratch(label: &str) -> PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("orcel-sg115-sink-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    /// Under a dedicated subreaper supervisor, teardown gets verified
+    /// coverage and really releases the sink and the profile, also when a
+    /// helper left the group or was orphaned; the port is then free.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn under_a_subreaper_supervisor_teardown_releases_on_verified_coverage() {
+        for case in ["verified", "verified-orphan"] {
+            let root = sink_scratch(case);
+            let child = crate::unix_supervise::spawn_test(
+                "unix_rehearsal::tests::sink_supervisor_entry",
+                &[
+                    (SINK_CASE, case.to_string()),
+                    (SINK_SCRATCH, root.display().to_string()),
+                ],
+            )
+            .unwrap();
+            let output = child.wait_with_output().unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+            assert!(output.status.success(), "{stdout}");
+            let line = stdout
+                .lines()
+                .find_map(|line| line.find("SG115-SINK ").map(|at| line[at..].to_string()))
+                .unwrap_or_default();
+            assert!(line.contains("released=true"), "{case}: {stdout}");
+            assert!(line.contains("profile_gone=true"), "{case}: {line}");
+            let port: u16 = line
+                .split_whitespace()
+                .find_map(|part| part.strip_prefix("port="))
+                .and_then(|port| port.parse().ok())
+                .unwrap_or_default();
+            assert_eq!(
+                another_process_takes(port),
+                "BOUND",
+                "{case}: the released port is free"
+            );
+            std::fs::remove_dir_all(&root).ok();
+        }
+    }
+
+    /// The recorded residual (risk 4, not accepted): if the host process
+    /// that owns the sink is killed, its port is freed at once while an
+    /// orphaned helper keeps using it, so another local process that binds
+    /// the port receives the helper's connections. Pinned so a mitigation
+    /// is visible when it lands: this test then fails, and must be inverted
+    /// (the mitigation's evidence), never deleted.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_crashed_host_frees_the_port_while_an_orphaned_helper_still_uses_it() {
+        use std::io::{BufRead, BufReader};
+        let root = sink_scratch("crash-host");
+        let mut child = crate::unix_supervise::spawn_test(
+            "unix_rehearsal::tests::sink_supervisor_entry",
+            &[
+                (SINK_CASE, "crash-host".to_string()),
+                (SINK_SCRATCH, root.display().to_string()),
+            ],
+        )
+        .unwrap();
+        let stdout = child.stdout.take().unwrap();
+        let mut line = String::new();
+        for next in BufReader::new(stdout).lines() {
+            let next = next.unwrap();
+            if let Some(at) = next.find("SG115-SINK ") {
+                line = next[at..].to_string();
+                break;
+            }
+        }
+        let field = |name: &str| -> i32 {
+            line.split_whitespace()
+                .find_map(|part| part.strip_prefix(&format!("{name}=")))
+                .and_then(|value| value.parse().ok())
+                .unwrap_or_default()
+        };
+        let (port, engine, helper) = (field("port"), field("engine"), field("helper"));
+        assert!(port > 0 && engine > 0 && helper > 0, "{line}");
+        /// Kills the orphans whatever happens next: identities pinned by
+        /// start time, so a reused pid is never signalled.
+        struct Orphans(Vec<crate::unix_supervise::Pinned>);
+        impl Drop for Orphans {
+            fn drop(&mut self) {
+                for member in &self.0 {
+                    crate::unix_supervise::kill_pinned(*member);
+                }
+            }
+        }
+        // Pinned before the crash, so the checks below name the same
+        // processes, never a later holder of their pids.
+        let leader = crate::unix_supervise::pin_pid(engine);
+        let _orphans = Orphans(
+            [crate::unix_supervise::pin_pid(helper), leader]
+                .into_iter()
+                .flatten()
+                .collect(),
+        );
+        // The host crashes.
+        child.kill().unwrap();
+        child.wait().unwrap();
+        // Another local process takes the freed port (std sets SO_REUSEADDR).
+        let attacker = std::net::TcpListener::bind(("127.0.0.1", port as u16));
+        let received = match &attacker {
+            Ok(listener) => {
+                listener.set_nonblocking(true).unwrap();
+                until(|| listener.accept().is_ok())
+            }
+            Err(_) => false,
+        };
+        // The engine's in-group helpers die with its group, while the engine
+        // (the group leader) is still pinned as alive.
+        if let Some(leader) = leader {
+            if crate::unix_supervise::is_alive(leader) {
+                // SAFETY: the pinned leader is alive, so this group is the
+                // fixture's own.
+                unsafe { libc::killpg(engine, libc::SIGKILL) };
+            }
+        }
+        std::fs::remove_dir_all(&root).ok();
+        assert!(
+            attacker.is_ok(),
+            "the crashed host's port is free for another process"
+        );
+        assert!(
+            received,
+            "the orphaned helper's traffic reaches whoever took the port"
         );
     }
 
