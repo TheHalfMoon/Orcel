@@ -222,6 +222,10 @@ class AgentOrcel:
             self._cleanup()
 
     def _cleanup(self) -> None:
+        # The agent's store holds its directories open on Windows (SG-000129
+        # slice 5c): release them before the episode's state is removed.
+        if self._agent is not None and self._agent.store is not None:
+            self._agent.store.close()
         if self._state is not None:
             shutil.rmtree(self._state, ignore_errors=True)
             self._state = None

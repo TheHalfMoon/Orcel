@@ -407,9 +407,83 @@ class PrivateStore(Scratch):
         busy = open_store(self.root, "b" * 32)
         busy.journal_path.write_text("{}\n", encoding="utf-8")
         os.utime(busy.directory, (0, 0))  # an old directory, a fresh journal
-        open_store(self.root, "c" * 32, ttl_s=3600)
+        # Runs left by an earlier process: nothing holds them any more.
+        old.close()
+        busy.close()
+        open_store(self.root, "c" * 32, ttl_s=3600).close()
         self.assertFalse(old.directory.exists(), "an expired run is removed")
         self.assertTrue(busy.directory.exists(), "a run with a fresh journal is kept")
+
+    @unittest.skipUnless(os.name == "nt", "Windows only")
+    def test_a_held_store_is_never_expired_and_its_tree_cannot_be_swapped(self) -> None:
+        # Slice 5c: while a store is in use its directories are held open, so
+        # another opener's expiry cannot remove it, and neither the run
+        # directory nor the root can be renamed away and replaced.
+        held = open_store(self.root, "d" * 32)
+        held.journal_path.write_text("{}\n", encoding="utf-8")
+        os.utime(held.journal_path, (0, 0))
+        os.utime(held.directory, (0, 0))
+        open_store(self.root, "e" * 32, ttl_s=1).close()
+        self.assertTrue(held.directory.exists(), "a held run is not expired")
+        for path in (held.directory, self.root):
+            with self.assertRaises(OSError, msg=str(path)):
+                os.rename(path, str(path) + "-swapped")
+        self.assertTrue(held.journal_path.exists(), "nothing inside it was deleted either")
+        held.close()
+        os.rename(self.root, str(self.root) + "-moved")
+        os.rename(str(self.root) + "-moved", self.root)
+
+    @unittest.skipUnless(os.name == "nt", "Windows only")
+    def test_a_store_under_an_unsafe_ancestor_is_refused(self) -> None:
+        # Slice 5c: a directory above the store that lets Everyone delete or
+        # rename entries is refused, though the store itself would be
+        # private. (The grant is on this test's own scratch directory.)
+        unsafe = Path(self._dir.name) / "unsafe"
+        unsafe.mkdir()
+        subprocess.run(["icacls", str(unsafe), "/grant", "*S-1-1-0:(OI)(CI)F"], check=True, capture_output=True)
+        with self.assertRaisesRegex(StoreError, "ancestor"):
+            open_store(unsafe / "agent", RUN)
+        # Read-only access for Everyone is fine.
+        readable = Path(self._dir.name) / "readable"
+        readable.mkdir()
+        subprocess.run(["icacls", str(readable), "/grant", "*S-1-1-0:(OI)(CI)RX"], check=True, capture_output=True)
+        open_store(readable / "agent", RUN).close()
+
+    @unittest.skipUnless(os.name == "nt", "Windows only")
+    def test_the_ancestor_rule_is_orcelds(self) -> None:
+        from orcel_agent.winacl import ancestor_problem, rights_mask
+
+        me = "S-1-5-21-1-2-3-1001"
+        base = f"O:{me}D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;{me})"
+        # Adding entries is allowed (C:\'s Authenticated Users), reading too.
+        for fine in (base, base + "(A;CI;LC;;;AU)(A;CIIO;DC;;;AU)", base + "(A;OICI;0x1200a9;;;BU)",
+                     base + "(A;OICI;FR;;;WD)", base + "(D;OICI;FA;;;WD)", base + "(A;OICIIO;GA;;;CO)",
+                     base + "(A;;FA;;;OW)",
+                     "O:S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464D:PAI(A;;FA;;;SY)",
+                     "O:SYD:PAI(A;;FA;;;SY)"):
+            self.assertIsNone(ancestor_problem(fine, me), fine)
+        for bad in (
+            base + "(A;OICI;FA;;;WD)",  # Everyone: full control
+            base + "(A;OICI;0x1301bf;;;AU)",  # Modify includes DELETE
+            base + "(A;OICI;SD;;;BU)",  # DELETE
+            base + "(A;OICI;0x40;;;BU)",  # FILE_DELETE_CHILD
+            base + "(A;OICI;WD;;;BU)",  # WRITE_DAC
+            base + "(A;OICI;WO;;;BU)",  # WRITE_OWNER
+            base + "(A;OICI;GA;;;BU)",  # GENERIC_ALL
+            # The app-container entry orceld refuses on this kind of host.
+            base + "(A;OICI;0xd0040;;;S-1-15-3-1)",
+            base + "(OA;;FA;;;BU)",  # an entry type that cannot be judged
+            base + "(A;;ZZ;;;BU)",  # rights that cannot be parsed
+            f"O:S-1-5-21-9-9-9-1002D:PAI(A;;FA;;;SY)",  # another account's
+            f"O:{me}D:NO_ACCESS_CONTROL",  # a NULL DACL
+            "garbage",
+        ):
+            self.assertIsNotNone(ancestor_problem(bad, me), bad)
+        # "CIOI" holds no inherit-only token, even though it spells "IO".
+        self.assertIsNotNone(ancestor_problem(base + "(A;CIOI;FA;;;WD)", me))
+        self.assertEqual(rights_mask("FA"), 0x1F01FF)
+        self.assertEqual(rights_mask("LCDC"), 0x6)
+        self.assertIsNone(rights_mask("F"))
 
 
 FAKE_SERVER = r'''
@@ -512,8 +586,9 @@ class SourceBoundary(unittest.TestCase):
     WINACL_FUNCTIONS = {
         "advapi32": ("OpenProcessToken", "GetTokenInformation", "ConvertSidToStringSidW",
                      "ConvertStringSecurityDescriptorToSecurityDescriptorW", "GetNamedSecurityInfoW",
-                     "ConvertSecurityDescriptorToStringSecurityDescriptorW"),
-        "kernel32": ("GetCurrentProcess", "CloseHandle", "CreateDirectoryW", "LocalFree"),
+                     "ConvertSecurityDescriptorToStringSecurityDescriptorW", "GetSecurityInfo"),
+        "kernel32": ("GetCurrentProcess", "CloseHandle", "CreateDirectoryW", "LocalFree", "CreateFileW",
+                     "GetFileInformationByHandle"),
     }
     # SG-000129: never imported by the agent, whatever a later slice admits
     # to ALLOWED_IMPORTS; this list is only ever extended. A module matches
@@ -643,7 +718,7 @@ class SourceBoundary(unittest.TestCase):
             if isinstance(node, ast.Attribute):
                 self.assertNotEqual(node.attr, "ctypes", "winacl.py: wintypes.ctypes")
                 if isinstance(node.value, ast.Name) and node.value.id == "wintypes":
-                    self.assertIn(node.attr, {"BOOL", "DWORD", "HANDLE", "LPCWSTR", "LPVOID", "ULONG"},
+                    self.assertIn(node.attr, {"BOOL", "DWORD", "HANDLE", "LPCWSTR", "LPVOID", "ULONG", "FILETIME"},
                                   f"winacl.py: wintypes.{node.attr}")
                 if node.attr in ("restype", "argtypes") and isinstance(node.ctx, ast.Store):
                     self.assertTrue(any(ast.unparse(n) == "function.restype, function.argtypes = _PROTOTYPES[name]"
@@ -665,6 +740,9 @@ class SourceBoundary(unittest.TestCase):
             "ctypes.c_void_p * (needed.value // pointer_size + 1)", "ctypes.get_last_error", "ctypes.sizeof",
             "ctypes.wstring_at", "entry.split", "frozenset", "getattr", "len", "match.groups", "os.path.abspath",
             "owner.startswith", "re.compile", "re.findall", "seen.add", "set", "wintypes.DWORD", "wintypes.HANDLE",
+            # Slice 5c: the held directory and the ancestor judge.
+            "_FileInformation", "_RIGHTS.get", "bool", "int", "range", "rights.lower", "rights.lower().startswith",
+            "rights_mask", "self.close",
         }
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):

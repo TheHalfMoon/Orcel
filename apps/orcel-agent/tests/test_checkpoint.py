@@ -180,6 +180,7 @@ class Checkpoint(Scratch):
         try:
             os.symlink(target, store.directory / CHECKPOINT_FILE)
         except (OSError, NotImplementedError):
+            store.close()  # its Windows directory hold, before the scratch is removed
             self.skipTest("symlinks need privileges here")
         with self.assertRaises(StoreError):
             PlannerCheckpoint(store).load()

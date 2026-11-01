@@ -296,4 +296,9 @@ class Agent:
         # outcome that resume must not replay), so the store is kept.
         if self.store is not None and not self.keep_store and result.outcome not in RESUMABLE_STOPS:
             self.store.delete()
+        elif self.store is not None:
+            # Kept for resume or for the caller: the run no longer uses it, so
+            # its Windows directory hold (slice 5c) is released. A resumed run
+            # opens the store, and checks it, again.
+            self.store.close()
         return result
