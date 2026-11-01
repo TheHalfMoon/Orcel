@@ -1,0 +1,35 @@
+# SG-000115 B5: test-only inert profile recovery. Never activates browser launch.
+name: SG115 B5 held-parent inert recovery
+on:
+  push:
+    branches:
+      - grain/sg115-b5-held-parent-anchored-recovery
+  pull_request:
+    branches:
+      - main
+permissions:
+  contents: read
+jobs:
+  b5-unix-tests:
+    name: B5 inert / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: '1.97.1'
+          components: rustfmt, clippy
+      - name: Inert test-build profile walk, no launch
+        run: |
+          cargo fmt --all -- --check
+          cargo test --locked -p orcel-browser-host --lib unix_cleanup::tests::b5_ -- --test-threads=1 --nocapture
+          cargo test --locked -p orcel-browser-host --lib unix_profile::tests::a_link_in_the_middle_of_the_path_is_refused_by_the_walk -- --test-threads=1
+      - name: Authority still refused
+        run: echo "SG000115_INERT_PROFILE_HOLD_ONLY_NO_ACTIVATION_NO_RELEASE"
