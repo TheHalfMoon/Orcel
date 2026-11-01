@@ -289,8 +289,9 @@ const PROCARGS_MAX: usize = 1 << 20;
 /// A process of this user whose arguments cannot be read or parsed, or
 /// whose owner cannot be read, counts as an engine that may be alive, and so
 /// does a listing that fails or reaches its bound. A process that is gone
-/// or a zombie does not. Another user's process (root's included) cannot be
-/// read without privilege and is not seen (open item).
+/// or a zombie does not, and neither does one whose BSD info names another
+/// uid: another user's arguments (root's included) cannot be read without
+/// privilege, so such an engine is not seen (open item, B4).
 #[cfg(target_os = "macos")]
 fn named_by_a_running_engine(path: &Path) -> bool {
     let wanted = wanted_arguments(path);
@@ -324,12 +325,17 @@ fn named_by_a_running_engine(path: &Path) -> bool {
 enum Owner {
     /// Exited, or a zombie.
     Gone,
-    /// Another user's: its BSD info is refused (`EPERM`), or names
-    /// another uid.
+    /// Another user's: its BSD info names another uid. Only a uid the
+    /// kernel reported makes a process another user's (B3), never a
+    /// refusal.
     Other,
     Me,
-    /// Its owner cannot be read for any other reason (or the read came
-    /// back short): it may be an engine of this user.
+    /// Its owner cannot be read (refused, `EPERM` included, or a short
+    /// read): it may be an engine of this user, so it keeps the profile.
+    /// An unprivileged, unsandboxed host reads every process's BSD info
+    /// (pinned by a test), so this costs nothing there; a sandboxed host
+    /// denied process info keeps profiles instead of deleting under its
+    /// own engine.
     Unknown,
 }
 
@@ -354,7 +360,6 @@ fn owner_of(pid: i32) -> Owner {
     if read <= 0 {
         return match errno() {
             libc::ESRCH => Owner::Gone,
-            libc::EPERM => Owner::Other,
             _ => Owner::Unknown,
         };
     }
@@ -892,6 +897,92 @@ mod tests {
         let _ = engine.kill();
         let _ = engine.wait();
         assert_eq!(recover_stale_profile(&dir), Ok(Recovery::Removed));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// B3's premise, on the host that runs it: an unprivileged, unsandboxed
+    /// process reads another user's BSD info (launchd's, root's), so
+    /// another user is told by uid, and a refusal can safely mean "keep".
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn another_users_process_is_identified_by_uid_not_by_a_refusal() {
+        assert!(
+            matches!(owner_of(1), Owner::Other),
+            "launchd's owner is read"
+        );
+        assert!(matches!(owner_of(std::process::id() as i32), Owner::Me));
+    }
+
+    /// B3: the sandboxed run's profile (`sandbox-exec` denies
+    /// `process-info-pidinfo`, so the host's own engine's BSD info is
+    /// refused with `EPERM`).
+    #[cfg(target_os = "macos")]
+    const B3_SANDBOX: &str = "(version 1)(allow default)(deny process-info-pidinfo)";
+    #[cfg(target_os = "macos")]
+    const B3_PROFILE: &str = "ORCEL_B3_PROFILE";
+    #[cfg(target_os = "macos")]
+    const B3_ENGINE: &str = "ORCEL_B3_ENGINE";
+
+    /// Runs only inside B3's sandboxed re-run (the variables are unset in
+    /// the shared suite, where it returns at once).
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn b3_sandboxed_entry() {
+        let (Ok(profile), Ok(engine)) = (std::env::var(B3_PROFILE), std::env::var(B3_ENGINE))
+        else {
+            return;
+        };
+        let engine: i32 = engine.parse().unwrap();
+        let refused = matches!(owner_of(engine), Owner::Unknown);
+        let named = named_by_a_running_engine(Path::new(&profile));
+        println!("B3-RESULT refused={refused} named={named}");
+        assert!(refused, "the sandbox did not refuse the engine's BSD info");
+        assert!(named, "a refused owner must keep the profile");
+    }
+
+    /// B3: a host denied process info (a sandbox) must not mistake its own
+    /// running engine for another user's and let recovery delete its
+    /// profile. Before B3 a refusal meant "another user", so this failed.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_host_denied_process_info_keeps_its_engines_profile() {
+        let (root, dir) = profile("sandboxed");
+        populate(&dir);
+        let mut engine = Command::new("python3")
+            .arg("-c")
+            .arg("import time; time.sleep(30)")
+            .arg(format!("--user-data-dir={}", dir.display()))
+            .spawn()
+            .unwrap();
+        let started = std::time::Instant::now();
+        while !named_by_a_running_engine(&dir)
+            && started.elapsed() < std::time::Duration::from_secs(10)
+        {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let output = Command::new("/usr/bin/sandbox-exec")
+            .args(["-p", B3_SANDBOX])
+            .arg(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "unix_cleanup::tests::b3_sandboxed_entry",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(B3_PROFILE, &dir)
+            .env(B3_ENGINE, engine.id().to_string())
+            .output()
+            .unwrap();
+        let _ = engine.kill();
+        let _ = engine.wait();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        println!("{stdout}");
+        assert!(
+            stdout.contains("B3-RESULT refused=true named=true"),
+            "{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.status.success());
         std::fs::remove_dir_all(&root).ok();
     }
 
