@@ -53,7 +53,11 @@ the loop history, the compaction summary and the stop reason.
   - the size cap enforced inside SQLite and checked before each save;
   - `0600` on Unix.
 - **Windows.** The store directories have orceld's protected owner-only
-  DACL (slice 5b, `winacl.py`), which the checkpoint inherits.
+  DACL (slice 5b, `winacl.py`), which the checkpoint inherits. Since slice
+  5c they are checked by handle and held open while a run uses them, so
+  they and the directories above them cannot be swapped. Every directory
+  above the root must follow orceld's ancestor rule. Expiry claims a run by
+  renaming it first, so a store in use is never half-deleted.
 - **Authority.** The dispatch journal is still the authority on dispatched
   calls, so a checkpoint can never cause a re-dispatch.
 - **Failure.** A tampered checkpoint stops the run, and the store is kept.

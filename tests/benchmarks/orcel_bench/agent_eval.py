@@ -274,6 +274,7 @@ def run_episode(config: str, plan: Plan, orceld: Path, edge_js: Path, node: str 
     row: dict[str, Any] = {"task": plan.name, "config": config, "label": LABEL["kind"], "planner": CONFIGS[config]}
     record = _new_record()
     security: list[str] = []
+    store = None
     try:
         plan.setup(workspace)
         before = _tree_digest(workspace)
@@ -281,7 +282,8 @@ def run_episode(config: str, plan: Plan, orceld: Path, edge_js: Path, node: str 
         scratch.mkdir()
         env = orceld_env(workspace, state, scratch)
         env["ORCEL_DAEMON"] = str(orceld)
-        store = open_store(state / "agent", new_run_id())
+        run_id = new_run_id()
+        store = open_store(state / "agent", run_id)
         tracemalloc.start()
         started = time.perf_counter()
         edge = Edge([node, str(edge_js)], env)
@@ -301,6 +303,9 @@ def run_episode(config: str, plan: Plan, orceld: Path, edge_js: Path, node: str 
             edge.start()
             edges_started += 1
             resume["crashed_after_calls"] = len(timed.dispatched)
+            # The new process opens the store, and checks it, again.
+            store.close()
+            store = open_store(state / "agent", run_id)
             resume["checkpoint_present_at_crash"] = planner_state(config, store)
             record["phase"] = "resumed"
             result, _ = _run(config, plan, timed, store, events, record)
@@ -365,6 +370,9 @@ def run_episode(config: str, plan: Plan, orceld: Path, edge_js: Path, node: str 
     finally:
         if tracemalloc.is_tracing():
             tracemalloc.stop()
+        if store is not None:
+            # Release its Windows directory hold (SG-000129 slice 5c).
+            store.close()
         shutil.rmtree(state, ignore_errors=True)
         shutil.rmtree(workspace, ignore_errors=True)
     return row
