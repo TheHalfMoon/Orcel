@@ -909,6 +909,22 @@ pub(crate) mod lineage {
     }
 }
 
+/// Tests only (Linux): run one test of this test binary in a fresh process
+/// (`--exact <test>`), with `env`, its stdout piped. The A6 rehearsal uses it
+/// for its dedicated subreaper supervisor, so that module needs no spawn of
+/// its own.
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) fn spawn_test(test: &str, env: &[(&str, String)]) -> std::io::Result<Child> {
+    let mut command = Command::new(std::env::current_exe()?);
+    command
+        .args(["--exact", test, "--nocapture", "--test-threads=1"])
+        .stdout(std::process::Stdio::piped());
+    for (name, value) in env {
+        command.env(name, value);
+    }
+    command.spawn()
+}
+
 /// A `python3` fixture running `code` (no shell: SG-000085 bans shell tokens
 /// in this crate's sources, tests included). The single fixture constructor
 /// for this module's tests and the A6 rehearsal (`unix_rehearsal.rs`), so
