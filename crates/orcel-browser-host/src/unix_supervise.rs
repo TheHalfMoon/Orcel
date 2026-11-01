@@ -948,8 +948,9 @@ pub(crate) fn python_fixture(code: &str) -> Command {
     command
 }
 
-/// Tests only: pin a pid to its current start time, `None` if it is gone.
-#[cfg(test)]
+/// Tests only (Linux, the rehearsal's crash test): pin a pid to its current
+/// start time, `None` if it is gone.
+#[cfg(all(test, target_os = "linux"))]
 pub(crate) fn pin_pid(pid: i32) -> Option<Pinned> {
     match start_time(pid) {
         Ok(Some(start)) => Some(Pinned { pid, start }),
