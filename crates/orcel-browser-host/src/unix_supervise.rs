@@ -54,9 +54,13 @@
 //!   held). What launchd or any older process creates is never flagged.
 //!   A scan lists pids and then reads them, so a process could fork after
 //!   the listing and exit before its read, hiding its child: such a listed
-//!   pid is "torn", and the confirm scan is repeated until none is.
-//!   Recorded limit (not accepted): a pid reused by a new process within
-//!   one scan is not seen as torn.
+//!   pid is "torn", and the confirm scan is repeated until none is. A pid
+//!   reused within one scan is torn too (B1): the scan marks the wall clock
+//!   before listing, and a listed pid whose process started at or after the
+//!   mark is a newer process under a listed pid; the node is still kept.
+//!   Recorded residuals (not accepted): a backward clock step during a
+//!   scan can hide a reuse, and after one, processes whose start lies in
+//!   the future tear every scan, so the sweep fails closed (`Incomplete`).
 //!
 //! Still open for activation:
 //! - **Check-to-kill window.** The identity check and the kill are two
@@ -421,9 +425,8 @@ impl Supervised {
     ///    confirm scan is untorn, no known member is alive, and no scan of
     ///    this sweep ever found an unattributable process.
     ///
-    /// Not closed (recorded, not accepted): a pid reused within one scan
-    /// (listed, exited, taken by a new process before its read) is not seen
-    /// as torn.
+    /// A pid reused within one scan (listed, exited, taken by a new process
+    /// before its read) is torn as well ([`born_after_listing`]).
     #[cfg(target_os = "macos")]
     fn freeze_kill_confirm(
         &mut self,
@@ -520,6 +523,27 @@ impl Supervised {
             std::thread::sleep(Duration::from_millis(5));
         }
     }
+}
+
+/// Whether a process read under a listed pid started at or after the
+/// scan's clock mark (taken just before the listing), in microseconds since
+/// the epoch: then it is not the process that was listed, whose pid was
+/// reused, so the scan is torn (B1). The node itself is kept. One born
+/// between the mark and the listing is counted too, which only costs a
+/// retry.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn born_after_listing(start_us: u64, mark_us: u64) -> bool {
+    start_us >= mark_us
+}
+
+/// The wall clock in microseconds since the epoch, the clock `pbi_start`
+/// uses.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn clock_mark() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_micros() as u64)
+        .unwrap_or(0)
 }
 
 /// Every descendant of `ancestor` in `table` by parent links (excluding
@@ -665,7 +689,7 @@ pub(crate) mod reaper {
 
 #[cfg(target_os = "macos")]
 pub(crate) mod lineage {
-    use super::{attribute, FamilyError, Node, Pinned, MAX_SCAN};
+    use super::{attribute, born_after_listing, clock_mark, FamilyError, Node, Pinned, MAX_SCAN};
     use std::collections::BTreeSet;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
@@ -716,6 +740,17 @@ pub(crate) mod lineage {
         }
     }
 
+    /// The start time `pid`'s BSD info reports (microseconds), for the tests.
+    #[cfg(test)]
+    pub(crate) fn start_of(pid: i32) -> Option<u64> {
+        let info = bsd(pid).ok().flatten()?;
+        Some(
+            info.pbi_start_tvsec
+                .wrapping_mul(1_000_000)
+                .wrapping_add(info.pbi_start_tvusec),
+        )
+    }
+
     /// The unique id and parent unique id of `pid`, for the tests.
     #[cfg(test)]
     pub(crate) fn ids_of(pid: i32) -> Option<(u64, u64)> {
@@ -763,9 +798,12 @@ pub(crate) mod lineage {
     /// they were read ("torn"). A torn pid may have been a process that
     /// forked after the listing and exited before its read, so its child
     /// is in neither the list nor the nodes: a scan with any torn pid
-    /// cannot confirm anything.
+    /// cannot confirm anything. So is a listed pid now carrying a process
+    /// born after the listing (B1): the listed one exited and its pid was
+    /// reused.
     pub(crate) fn scan() -> Result<(Vec<Node>, usize), FamilyError> {
         let mut pids = vec![0i32; MAX_SCAN];
+        let mark = clock_mark();
         let bytes = (pids.len() * std::mem::size_of::<i32>()) as libc::c_int;
         // SAFETY: the buffer holds MAX_SCAN pids of `bytes` bytes.
         let count = unsafe { libc::proc_listallpids(pids.as_mut_ptr().cast(), bytes) };
@@ -807,6 +845,8 @@ pub(crate) mod lineage {
                     torn += 1;
                     continue;
                 }
+                // No start time can be read: not checked against the mark
+                // (the open "another user" item).
                 Err(libc::EPERM) => Node {
                     pinned: Pinned { pid, start: 0 },
                     unique,
@@ -816,6 +856,11 @@ pub(crate) mod lineage {
                 },
                 Err(_) => return Err(FamilyError::Unreadable),
             };
+            // Kept, not dropped: it is a real process, attributed by its real
+            // ids, frozen and killed like any member. Only the scan is torn.
+            if node.pinned.start != 0 && born_after_listing(node.pinned.start, mark) {
+                torn += 1;
+            }
             nodes.push(node);
         }
         Ok((nodes, torn))
@@ -1835,7 +1880,44 @@ mod tests {
         assert!(detected >= 1, "no round produced a survivor to detect");
     }
 
+    /// B1's premise, checked for consistency: a process started after a mark
+    /// has a `pbi_start` at or after it, and the test process (started
+    /// before) does not, consistent with `pbi_start` and `clock_mark` reading
+    /// the same clock.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_process_started_after_the_clock_mark_is_born_after_it() {
+        let mark = clock_mark();
+        std::thread::sleep(Duration::from_millis(20));
+        let mut supervised = Supervised::spawn(python("import time; time.sleep(30)")).unwrap();
+        let start = lineage::start_of(supervised.root().pid).expect("the child is alive");
+        let own = lineage::start_of(std::process::id() as i32).expect("this process is alive");
+        let _ = supervised.child.kill();
+        drop(supervised);
+        assert!(born_after_listing(start, mark), "start {start} mark {mark}");
+        assert!(
+            !born_after_listing(own, mark),
+            "own start {own} mark {mark}"
+        );
+        // Same clock: the child started within a minute of the mark.
+        assert!(start - mark < 60_000_000, "start {start} mark {mark}");
+    }
+
     // -- The attribution rule, on synthetic tables (every Unix) ------------
+
+    #[test]
+    fn a_read_born_after_the_listing_marks_the_scan_torn() {
+        // B1: listed at mark 1_000; a read whose process started at or after
+        // it is a reused pid (torn); one started before it is the listed one.
+        assert!(born_after_listing(1_000, 1_000));
+        assert!(born_after_listing(1_001, 1_000));
+        assert!(!born_after_listing(999, 1_000));
+        let now = clock_mark();
+        assert!(
+            now > 1_600_000_000_000_000,
+            "microseconds since the epoch: {now}"
+        );
+    }
 
     fn node(pid: i32, unique: u64, parent_unique: u64) -> Node {
         Node {
