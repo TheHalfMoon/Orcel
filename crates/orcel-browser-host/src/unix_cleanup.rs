@@ -30,12 +30,14 @@
 //!   (`Busy`).
 //!
 //! Open for activation (not decided here):
-//! - **An orphaned engine:** recovery can't yet tell whether an engine
-//!   process is still using the profile. The lock is `O_CLOEXEC`, so an
-//!   engine never holds it; if the host crashes while Chrome or Edge keeps
-//!   running, recovery would call the profile stale and delete it under the
-//!   browser. Activation must first establish that no engine process uses
-//!   the profile (the A2 process tree, or the engine's own `SingletonLock`).
+//! - **An orphaned engine (A3b, partly closed):** the Orcel lock is
+//!   `O_CLOEXEC`, so an engine never holds it. Recovery now keeps the
+//!   profile (`EngineMayBeAlive`) when the engine's own `SingletonLock`
+//!   names a live pid on this host, another host, or cannot be read, and on
+//!   Linux when any readable process carries `--user-data-dir=<profile>`.
+//!   Still open: an engine that has not yet written `SingletonLock` on
+//!   macOS (no command-line scan there), and another user's process, whose
+//!   command line Linux hides.
 //! - **Same-user window:** between `verify_lock` and the unlink, or while
 //!   the contents are cleared, a process of the same user could rename the
 //!   lock and let a second holder in; that holder's lock or files could then
@@ -103,6 +105,8 @@ pub(crate) enum Recovery {
     InUse,
     /// A stale profile (its holder gone): removed.
     Removed,
+    /// No Orcel holder, but an engine may still be using it: left in place.
+    EngineMayBeAlive,
 }
 
 /// Remove a held profile and its contents, then the directory itself.
@@ -138,16 +142,117 @@ pub(crate) fn sweep_held_profile(hold: ProfileHold, path: &Path) -> Result<(), C
     Ok(())
 }
 
-/// Recover after a crash: a profile no live holder has is removed; one in
-/// use is left alone. It cannot yet tell whether an orphaned engine still
-/// uses the profile (see the module's open items).
+/// Recover after a crash: a profile no live holder has is removed, unless
+/// an engine may still be using it (A3b, `engine_may_be_alive`); one in use
+/// is left alone.
 pub(crate) fn recover_stale_profile(path: &Path) -> Result<Recovery, CleanupError> {
     match ProfileHold::open(path) {
+        Ok(hold) if engine_may_be_alive(&hold, path) => Ok(Recovery::EngineMayBeAlive),
         Ok(hold) => sweep_held_profile(hold, path).map(|()| Recovery::Removed),
         Err(ProfileError::Busy) => Ok(Recovery::InUse),
         Err(ProfileError::Missing) => Ok(Recovery::Absent),
         Err(error) => Err(CleanupError::Profile(error)),
     }
+}
+
+/// The engine's own profile lock: a link named `SingletonLock` whose
+/// target is `<hostname>-<pid>` (Chromium's `ProcessSingleton`).
+pub(crate) const SINGLETON_LOCK: &str = "SingletonLock";
+
+/// A3b: whether an engine may still be using the profile after its host
+/// crashed (the Orcel lock is `O_CLOEXEC`, so an engine never holds it).
+/// True, and the profile kept, when any of these holds:
+/// - `SingletonLock` exists but is not a link, or its target cannot be
+///   read or parsed;
+/// - it names another host (its pid cannot be checked here);
+/// - it names this host and a pid that is alive (`kill(pid, 0)` succeeds,
+///   or fails with `EPERM`: another user's process is alive too);
+/// - on Linux, any readable process's command line carries this profile as
+///   `--user-data-dir=<path>`.
+///
+/// A dead pid on this host, and no such process, lets recovery remove the
+/// profile. A reused pid can only keep a profile (fail safe).
+pub(crate) fn engine_may_be_alive(hold: &ProfileHold, path: &Path) -> bool {
+    singleton_lock_alive(hold) || named_by_a_running_engine(path)
+}
+
+fn singleton_lock_alive(hold: &ProfileHold) -> bool {
+    let Ok(name) = CString::new(SINGLETON_LOCK) else {
+        return true;
+    };
+    let mut buffer = [0u8; 512];
+    // SAFETY: relative to the held root; reads at most `buffer.len()` bytes.
+    let read = unsafe {
+        libc::readlinkat(
+            hold.root_fd(),
+            name.as_ptr(),
+            buffer.as_mut_ptr().cast(),
+            buffer.len(),
+        )
+    };
+    if read < 0 {
+        // No lock at all: nothing names a live engine here.
+        return errno() != libc::ENOENT;
+    }
+    let read = read as usize;
+    if read >= buffer.len() {
+        return true;
+    }
+    let Ok(target) = std::str::from_utf8(&buffer[..read]) else {
+        return true;
+    };
+    let Some((host, pid)) = target.rsplit_once('-') else {
+        return true;
+    };
+    let Ok(pid) = pid.parse::<libc::pid_t>() else {
+        return true;
+    };
+    if pid <= 0 || this_host().as_deref() != Some(host) {
+        return true;
+    }
+    // SAFETY: signal 0 only checks that the process exists.
+    unsafe { libc::kill(pid, 0) == 0 || errno() == libc::EPERM }
+}
+
+fn this_host() -> Option<String> {
+    let mut buffer = [0u8; 256];
+    // SAFETY: gethostname writes at most `buffer.len()` bytes.
+    if unsafe { libc::gethostname(buffer.as_mut_ptr().cast(), buffer.len()) } != 0 {
+        return None;
+    }
+    let end = buffer.iter().position(|byte| *byte == 0)?;
+    String::from_utf8(buffer[..end].to_vec()).ok()
+}
+
+/// Linux: a readable process whose command line names this profile as
+/// `--user-data-dir=<path>`. (macOS has no such scan here: open item.)
+#[cfg(target_os = "linux")]
+fn named_by_a_running_engine(path: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let mut wanted = b"--user-data-dir=".to_vec();
+    wanted.extend_from_slice(path.as_os_str().as_bytes());
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        // The process table cannot be read: assume an engine may be alive.
+        return true;
+    };
+    entries.flatten().any(|entry| {
+        let name = entry.file_name();
+        if name.to_str().is_none_or(|n| n.parse::<u32>().is_err()) {
+            return false;
+        }
+        std::fs::read(entry.path().join("cmdline"))
+            .map(|cmdline| {
+                cmdline
+                    .split(|byte| *byte == 0)
+                    .any(|arg| arg == wanted.as_slice())
+            })
+            .unwrap_or(false)
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn named_by_a_running_engine(_path: &Path) -> bool {
+    false
 }
 
 /// `st_dev` is `u64` on Linux and `i32` on macOS.
@@ -545,6 +650,94 @@ mod tests {
 
     /// Pre-activation boundary: only lib.rs (the test-only declaration)
     /// names this module.
+    fn singleton(dir: &Path, target: &str) {
+        std::os::unix::fs::symlink(target, dir.join(SINGLETON_LOCK)).unwrap();
+    }
+
+    /// A3b: after a host crash, an engine that still runs keeps its profile.
+    #[test]
+    fn recovery_keeps_a_profile_whose_engine_still_runs() {
+        let host = this_host().expect("a host name");
+        let mut sleeper = Command::new("python3")
+            .arg("-c")
+            .arg("import time; time.sleep(30)")
+            .spawn()
+            .unwrap();
+        let live = sleeper.id();
+        let cases = [
+            (format!("{host}-{live}"), Recovery::EngineMayBeAlive),
+            (format!("another-host-{live}"), Recovery::EngineMayBeAlive),
+            ("not a lock target".to_string(), Recovery::EngineMayBeAlive),
+        ];
+        for (index, (target, expected)) in cases.iter().enumerate() {
+            let (root, dir) = profile(&format!("singleton-{index}"));
+            populate(&dir);
+            singleton(&dir, target);
+            assert_eq!(
+                recover_stale_profile(&dir).as_ref(),
+                Ok(expected),
+                "{target}"
+            );
+            assert!(dir.join("Local State").exists(), "{target}: kept");
+            std::fs::remove_dir_all(&root).ok();
+        }
+        // A SingletonLock that is a regular file is not understood: kept.
+        let (root, dir) = profile("singleton-file");
+        populate(&dir);
+        std::fs::write(dir.join(SINGLETON_LOCK), "x").unwrap();
+        assert_eq!(recover_stale_profile(&dir), Ok(Recovery::EngineMayBeAlive));
+        std::fs::remove_dir_all(&root).ok();
+        let _ = sleeper.kill();
+        let _ = sleeper.wait();
+    }
+
+    /// A3b: the engine's lock names a pid that has exited: the profile is
+    /// stale and removed.
+    #[test]
+    fn recovery_removes_a_profile_whose_engine_is_gone() {
+        let host = this_host().expect("a host name");
+        let mut gone = Command::new("python3")
+            .arg("-c")
+            .arg("pass")
+            .spawn()
+            .unwrap();
+        let pid = gone.id();
+        gone.wait().unwrap();
+        let (root, dir) = profile("singleton-dead");
+        populate(&dir);
+        singleton(&dir, &format!("{host}-{pid}"));
+        assert_eq!(recover_stale_profile(&dir), Ok(Recovery::Removed));
+        assert!(!dir.exists());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// A3b (Linux): an engine started with this profile, before it wrote any
+    /// lock, still keeps it.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn recovery_keeps_a_profile_named_by_a_running_process() {
+        let (root, dir) = profile("cmdline");
+        populate(&dir);
+        let mut engine = Command::new("python3")
+            .arg("-c")
+            .arg("import time; time.sleep(30)")
+            .arg(format!("--user-data-dir={}", dir.display()))
+            .spawn()
+            .unwrap();
+        let started = std::time::Instant::now();
+        while !named_by_a_running_engine(&dir)
+            && started.elapsed() < std::time::Duration::from_secs(10)
+        {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert_eq!(recover_stale_profile(&dir), Ok(Recovery::EngineMayBeAlive));
+        assert!(dir.join("Local State").exists());
+        let _ = engine.kill();
+        let _ = engine.wait();
+        assert_eq!(recover_stale_profile(&dir), Ok(Recovery::Removed));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
     #[test]
     fn the_unix_cleanup_is_unreachable_from_production() {
         let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));

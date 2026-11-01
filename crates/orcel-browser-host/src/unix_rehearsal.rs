@@ -225,7 +225,7 @@ fn start(policy_root: &Path, profile: &Path, mode: Mode, side: &Path) -> Result<
         .map_err(Refused::Policy)?;
     match recover_stale_profile(profile) {
         Ok(Recovery::Absent | Recovery::Removed) => {}
-        Ok(Recovery::InUse) => return Err(Refused::InUse),
+        Ok(Recovery::InUse | Recovery::EngineMayBeAlive) => return Err(Refused::InUse),
         Err(error) => return Err(Refused::Recovery(error)),
     }
     std::fs::DirBuilder::new()
