@@ -52,10 +52,11 @@
 //!   fail-closed result; it can also flag an unrelated orphan of a process
 //!   started after the root (a false positive, which only keeps resources
 //!   held). What launchd or any older process creates is never flagged.
-//!   Recorded limit (not accepted): a scan lists pids and then reads them,
-//!   so a process that forks and exits faster than a scan, generation after
-//!   generation, is not proven to be read; every unattributable process any
-//!   scan reads still fails closed.
+//!   A scan lists pids and then reads them, so a process could fork after
+//!   the listing and exit before its read, hiding its child: such a listed
+//!   pid is "torn", and the confirm scan is repeated until none is.
+//!   Recorded limit (not accepted): a pid reused by a new process within
+//!   one scan is not seen as torn.
 //!
 //! Still open for activation:
 //! - **Check-to-kill window.** The identity check and the kill are two
@@ -414,13 +415,15 @@ impl Supervised {
     /// 2. **Kill** every member in that scan, then wait until each one has
     ///    exited: a process cannot finish exiting while a fork it started is
     ///    still in progress, so any child it made exists before step 3 lists.
-    /// 3. **Confirm** with a fresh scan, attributed again: verified only
-    ///    when no known member is alive and no scan of this sweep ever found
-    ///    an unattributable process.
+    /// 3. **Confirm** with a fresh scan, rescanned until no listed pid is
+    ///    gone at its read ("torn"), attributed again. Verified only when
+    ///    the freeze converged, every killed member was seen to exit, the
+    ///    confirm scan is untorn, no known member is alive, and no scan of
+    ///    this sweep ever found an unattributable process.
     ///
-    /// Not closed (recorded, not accepted): each scan lists pids, then reads
-    /// them one by one, so a process that forks and exits faster than a scan
-    /// can keep each generation unread.
+    /// Not closed (recorded, not accepted): a pid reused within one scan
+    /// (listed, exited, taken by a new process before its read) is not seen
+    /// as torn.
     #[cfg(target_os = "macos")]
     fn freeze_kill_confirm(
         &mut self,
@@ -433,7 +436,7 @@ impl Supervised {
         // Every unattributable process any scan of this sweep found.
         let mut unattributable: BTreeMap<u64, Node> = BTreeMap::new();
         loop {
-            let members = loop {
+            let (members, converged) = loop {
                 let nodes = lineage::nodes()?;
                 for node in attribute(&nodes, known, root_unique) {
                     unattributable.insert(node.unique, node);
@@ -443,11 +446,20 @@ impl Supervised {
                     .filter(|n| known.contains(&n.unique) && !n.zombie)
                     .collect();
                 if members.len() > MAX_FAMILY {
+                    // Kill this scan's members too, not only those already
+                    // signalled: none is left running past the error.
+                    for node in &members {
+                        signalled.insert(node.unique, *node);
+                        lineage::signal(*node, libc::SIGKILL);
+                    }
                     return Err(FamilyError::FamilyBound);
                 }
                 let running: Vec<Node> = members.iter().copied().filter(|n| !n.stopped).collect();
-                if running.is_empty() || started.elapsed() >= deadline {
-                    break members;
+                if running.is_empty() {
+                    break (members, true);
+                }
+                if started.elapsed() >= deadline {
+                    break (members, false);
                 }
                 for node in running {
                     signalled.insert(node.unique, node);
@@ -463,7 +475,21 @@ impl Supervised {
             while !members.iter().all(|n| lineage::exited(*n)) && started.elapsed() < deadline {
                 std::thread::sleep(Duration::from_millis(1));
             }
-            let nodes = lineage::nodes()?;
+            let all_exited = members.iter().all(|n| lineage::exited(*n));
+            // The confirm scan: rescanned until no pid is torn, so a process
+            // that forked after a listing and exited before its read cannot
+            // hide its child (it would be torn, and the next scan reads the
+            // child).
+            let (nodes, torn) = loop {
+                let (nodes, torn) = lineage::scan()?;
+                if torn == 0 || started.elapsed() >= deadline {
+                    break (nodes, torn);
+                }
+                for node in attribute(&nodes, known, root_unique) {
+                    unattributable.insert(node.unique, node);
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            };
             for node in attribute(&nodes, known, root_unique) {
                 unattributable.insert(node.unique, node);
             }
@@ -472,7 +498,10 @@ impl Supervised {
                 .filter(|n| known.contains(&n.unique) && !n.zombie)
                 .map(|n| n.pinned)
                 .collect();
-            if alive.is_empty() && unattributable.is_empty() {
+            // Verified only on a converged freeze, every killed member seen to
+            // exit, and an untorn confirm scan that accounts for everything.
+            if converged && all_exited && torn == 0 && alive.is_empty() && unattributable.is_empty()
+            {
                 return Ok(SweepOutcome {
                     left: Vec::new(),
                     coverage: Coverage::VerifiedComplete,
@@ -727,6 +756,15 @@ pub(crate) mod lineage {
     /// `Incomplete`. One whose unique ids cannot be read either is skipped
     /// (the open "another user" item).
     pub(crate) fn nodes() -> Result<Vec<Node>, FamilyError> {
+        scan().map(|(nodes, _)| nodes)
+    }
+
+    /// One scan and how many pids it listed that were gone by the time
+    /// they were read ("torn"). A torn pid may have been a process that
+    /// forked after the listing and exited before its read, so its child
+    /// is in neither the list nor the nodes: a scan with any torn pid
+    /// cannot confirm anything.
+    pub(crate) fn scan() -> Result<(Vec<Node>, usize), FamilyError> {
         let mut pids = vec![0i32; MAX_SCAN];
         let bytes = (pids.len() * std::mem::size_of::<i32>()) as libc::c_int;
         // SAFETY: the buffer holds MAX_SCAN pids of `bytes` bytes.
@@ -739,10 +777,15 @@ pub(crate) mod lineage {
             return Err(FamilyError::ScanBound);
         }
         let mut nodes = Vec::new();
+        let mut torn = 0usize;
         for pid in pids[..count].iter().copied().filter(|pid| *pid > 0) {
             let (unique, parent_unique) = match unique_ids(pid) {
                 Ok(Some(ids)) => ids,
-                Ok(None) | Err(libc::EPERM) => continue,
+                Ok(None) => {
+                    torn += 1;
+                    continue;
+                }
+                Err(libc::EPERM) => continue,
                 Err(_) => return Err(FamilyError::Unreadable),
             };
             let node = match bsd(pid) {
@@ -760,7 +803,10 @@ pub(crate) mod lineage {
                     zombie: info.pbi_status == 5,
                     stopped: info.pbi_status == 4,
                 },
-                Ok(None) => continue,
+                Ok(None) => {
+                    torn += 1;
+                    continue;
+                }
                 Err(libc::EPERM) => Node {
                     pinned: Pinned { pid, start: 0 },
                     unique,
@@ -772,7 +818,7 @@ pub(crate) mod lineage {
             };
             nodes.push(node);
         }
-        Ok(nodes)
+        Ok((nodes, torn))
     }
 
     /// Whether a node has finished exiting: its pid is gone, carries another
@@ -1748,6 +1794,8 @@ mod tests {
         println!(
             "SG115-RESULT fast orphan rounds: verified={verified} detected_incomplete={detected}"
         );
+        // The escape must actually have been exercised at least once.
+        assert!(detected >= 1, "no round produced a survivor to detect");
     }
 
     // -- The attribution rule, on synthetic tables (every Unix) ------------

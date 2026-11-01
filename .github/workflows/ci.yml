@@ -67,6 +67,8 @@ jobs:
           printf '%s\n' "$out"
           [ "$status" -eq 0 ]
           grep -q "test result: ok. 2 passed" <<<"$out"
+          grep -q "SG115-RESULT fast orphan rounds" <<<"$out"
+          grep -q "SG115-EVIDENCE launchd unique ids readable" <<<"$out"
       # BM-02 evidence on this OS: both tiers again with their per-case lines
       # in the log (the Test step captures them when they pass), and both
       # reports checked against orcel-benchmark-report/1.
