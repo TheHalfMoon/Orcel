@@ -39,6 +39,8 @@ checkpoint at the end says where engineering stands.
 | SG-000115 risk work (inert): A2b verified termination (Linux subreaper proven by ECHILD; macOS unique-id lineage, freeze, kill, confirm); S-07 Linux install tree root-owned with real-dpkg tamper tests; A3b profile walk refuses links anywhere and keeps a live engine's profile; A6b kept sink port held, verified release, crash residual pinned. Residuals are recorded, not accepted (class 4) | #549 → `9407cc9`, #550 → `ade0f2c`, #551 → `25083f1`, #552 → `9695da4` |
 | Orcel Agent (SG-000129, authority-neutral planner client of the edge; orceld stays the sole authority): M0 audit and plan, M1 stdlib client, activation, slice 1 locked dependencies, 2 LangChain adapter, 3 loop detection, 4a1/4a2/4b/4c previews, failures, todos, compaction, 5a SQLite checkpoint, 5b Windows owner-only DACL, 6 labelled deterministic-scripted evaluation (not model performance) | #533, #534, #537, #538, #539, #541 to #548 |
 | M4 local model candidates and benchmark plan (research only; nothing downloaded or run) | #553 → `c7b64f1` |
+| SG-000129 slice 5c: Windows agent store held by handle, orceld's ancestor rule, no junction or link on the path (8.3 short names expanded), a closed store refuses writes, claim-before-delete expiry. Notes from its judge, not yet recorded in the spec: stores on mapped or `subst` drives are refused (fail-closed, but the message names a junction); the rename-blocking claim is measured on NTFS only | #554 → `e462652` |
+| #540 flaky vendored batch-pause test: patch P-13 in the vendored patch queue | #555 → `f8f0c8f` |
 | Lifecycle on main `89066a6`: Windows release qualification (install, run, update, recover, uninstall, local report client, 400 MB budget) and Linux deb/rpm/tarball install, systemd units, tamper detection and uninstall | main CI 40672122647 |
 
 ## 2. Engineering that can still be completed without the founder
@@ -46,15 +48,13 @@ checkpoint at the end says where engineering stands.
 | Item | Note |
 |---|---|
 | #438 residual: navigation `read: TimedOut` on CI | Waiting for a recurrence; #494's diagnostics capture it |
-| SG-000129 slice 5c: Windows agent store held by handle, orceld's ancestor rule, no junction on the path, claim-before-delete expiry | PR #554 (judge round 2, exact-head CI) |
-| #540 flaky vendored batch-pause test | PR #555: patch P-13 in the vendored patch queue (independently approved; exact-head CI) |
 | SG-000115 B1 (inert): a pid reused within one macOS scan counts as torn (clock mark) | PR #557 (security review, exact-head CI incl. macOS) |
 | SG-000115 Priority B (inert): retained-.deb signature chain for S-07, PID-namespace or cgroup containment feasibility, profile delete through the held walk, macOS ACLs on profiles | Engineering solutions to shrink the class 4 residuals; none activates SG-000115 |
 | #292 flaky SG-000013 contained PowerShell test on windows-latest | Root cause not yet found |
 | macOS install / start / uninstall lifecycle | No macOS package yet: macOS packaging (XP-16) waits for FD-05; Windows and Linux lifecycle are in class 1 |
 | SG-000128 closeout | After slice 3b (class 3) is accepted or the founder records otherwise; the closeout judge checks that slice 1's deferred items are evidenced |
 | BM-02 Tier C beyond C2b (C3 agent runs) | Blocked: needs a planner model (class 4) |
-| CI flakes under watch | #438 (navigation), #508 (UIA bind), #512 (real git fetch), #516 (Go helper start), #524 (macOS jobs cancelled before a runner is assigned) |
+| CI flakes under watch | #438 (navigation), #508 (UIA bind), #512 (real git fetch), #516 (Go helper start), #524 (macOS jobs cancelled before a runner is assigned), #558 (orceld app API re-bind on macOS) |
 | Governance preparation for SG-000115, SG-000122, SG-000124, SG-000127 closeout | Specs, tests, dependency and security analysis only; activation is a founder decision |
 | SG-000115 inert pre-activation engineering (founder decision 2026-10-29, #526) | Category A in `prep/SG-000115.md`: test-only or never-default builds, no production caller, pinned by tests to leave macOS/Linux launch refused. A slice that cannot meet the conditions stays a Draft PR. Activation, wiring, S-07 and the macOS descendant escape stay with the founder |
 | Documentation consistency (frontier, roadmap, benchmark plan) | Ongoing with each merge |
@@ -108,14 +108,14 @@ checkpoint at the end says where engineering stands.
 
 ## Restart checkpoint
 
-If a session ends, resume from here (2026-11-01, main `c7b64f1`):
+If a session ends, resume from here (2026-11-01, main `f8f0c8f`):
 
-1. Open PRs from this work: #554 (slice 5c, head `feae43a`), #555 (#540,
-   head `4d16776`, independently approved), #556 (this handoff) and #557
-   (SG-000115 B1, macOS pid reuse within a scan, draft). Drafts are marked
-   ready once reviewed, then merged with `--match-head-commit` on a green
-   exact-head run. #342 and #328 belong to
-   other work: do not touch them.
+1. Open PRs from this work: #556 (this handoff, approved) and #557
+   (SG-000115 B1, macOS pid reuse within a scan, approved pending macOS
+   CI; draft). Branch protection needs each up to date with main, so they
+   merge one at a time: rebase, exact-head green run, then
+   `--match-head-commit`. #342 and #328 belong to other work: do not touch
+   them.
 2. Local runs on Windows need a private temp folder (`TEMP`/`TMP` outside
    AppData, or `ORCEL_BM02_STATE_PARENT` for Tier A): this host's AppData
    grants an app-container SID delete rights, so orceld and the agent store
@@ -126,12 +126,12 @@ If a session ends, resume from here (2026-11-01, main `c7b64f1`):
 3. Vendored cua-driver changes go through the patch queue: a P-xx entry in
    `PATCHES.md`, a `patched_files` entry in `docs/orcel/cua_driver_provenance.json`,
    then `node scripts/check-vendored-cua.mjs` on a commit.
-4. Next engineering, in order: merge #554, #555 and #556, then #557 after its review; the class 2 SG-000115
+4. Next engineering, in order: merge #556, then #557; the class 2 SG-000115
    Priority B items; #438 when it recurs; Windows checkpoint hardening
    follow-ups; then the next roadmap items (F4 slices that need no founder,
    BR items behind governance, cross-platform).
 5. Known CI flakes: macOS toolchain install conflict (rerun failed jobs),
-   #438, #508, #512, #516, #524.
+   #438, #508, #512, #516, #524, #558 (orceld app API re-bind on macOS).
 6. Do not repeat: XP-06/XP-11 Mac hardware tests (#425); the SG-000115 A1 to
    A6b slices; the M4 research (#553).
 7. Never mark Core MVP complete; classes 3 to 5 stay open.
