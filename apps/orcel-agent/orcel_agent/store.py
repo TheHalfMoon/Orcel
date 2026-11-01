@@ -132,9 +132,11 @@ def _private_dir_windows(path: Path) -> Any:
             raise StoreError(f"the agent store {path} is a link, a junction or not a directory")
         # Every directory on the way must be a real one: through a junction,
         # a link or a mount point the lexical parents checked below would not
-        # be the directories the store really sits in.
+        # be the directories the store really sits in. 8.3 short names (a
+        # runner's TEMP) are expanded first; that follows no link.
         final = held.final_path()
-        if os.path.normcase(os.path.normpath(final)) != os.path.normcase(os.path.normpath(os.path.abspath(path))):
+        lexical = winacl.long_path(os.path.abspath(path))
+        if os.path.normcase(os.path.normpath(final)) != os.path.normcase(os.path.normpath(lexical)):
             raise StoreError(f"the agent store {path} resolves to {final}: a junction, link or mount point "
                              "lies on its path")
         problem = winacl.private_problem(held.security(), user, winacl.sddl_form(user))

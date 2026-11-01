@@ -31,7 +31,7 @@ FUNCTIONS = {
     ),
     "kernel32": (
         "GetCurrentProcess", "CloseHandle", "CreateDirectoryW", "LocalFree", "CreateFileW",
-        "GetFileInformationByHandle", "GetFinalPathNameByHandleW",
+        "GetFileInformationByHandle", "GetFinalPathNameByHandleW", "GetLongPathNameW",
     ),
 }
 
@@ -96,6 +96,7 @@ _PROTOTYPES = {
     "GetFileInformationByHandle": (wintypes.BOOL, [wintypes.HANDLE, ctypes.POINTER(_FileInformation)]),
     "GetFinalPathNameByHandleW": (wintypes.DWORD, [wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD,
                                                    wintypes.DWORD]),
+    "GetLongPathNameW": (wintypes.DWORD, [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]),
     "GetSecurityInfo": (wintypes.DWORD, [wintypes.HANDLE, ctypes.c_int, wintypes.DWORD, _OUT, _OUT, _OUT, _OUT,
                                          _OUT]),
 }
@@ -194,6 +195,18 @@ def security_of(path: Path) -> str:
         return _take_string(api, text)
     finally:
         api["LocalFree"](descriptor)
+
+
+def long_path(path: str) -> str:
+    """`path` with every 8.3 short name expanded (`GetLongPathNameW`). It
+    expands names only: a junction or link on the path is not followed, so
+    it stays visible when compared with a handle's final path."""
+    api = _functions()
+    buffer = ctypes.create_unicode_buffer(32768)
+    length = api["GetLongPathNameW"](path, buffer, len(buffer))
+    if length == 0 or length >= len(buffer):
+        raise _fail("GetLongPathNameW")
+    return buffer.value
 
 
 def sddl_form(sid: str) -> str:

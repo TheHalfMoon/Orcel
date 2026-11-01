@@ -467,6 +467,21 @@ class PrivateStore(Scratch):
             os.rmdir(link)
 
     @unittest.skipUnless(os.name == "nt", "Windows only")
+    def test_a_store_under_a_short_name_is_accepted(self) -> None:
+        # Round 2: a path spelled with 8.3 short names (GitHub's Windows
+        # runners set TEMP that way) is the same directory, not a junction.
+        long_dir = Path(self._dir.name) / "a long directory name"
+        long_dir.mkdir()
+        import ctypes
+
+        buffer = ctypes.create_unicode_buffer(32768)
+        self.assertGreater(ctypes.windll.kernel32.GetShortPathNameW(str(long_dir), buffer, len(buffer)), 0)
+        short = buffer.value
+        if os.path.normcase(short) == os.path.normcase(str(long_dir)):
+            self.skipTest("8.3 names are not generated on this volume")
+        open_store(Path(short) / "agent", RUN).close()
+
+    @unittest.skipUnless(os.name == "nt", "Windows only")
     def test_a_closed_store_refuses_writes(self) -> None:
         # Round 1: once closed (unheld), a store refuses its journal path and
         # its capacity check, so nothing writes to it; opening it again works.
@@ -617,7 +632,7 @@ class SourceBoundary(unittest.TestCase):
                      "ConvertStringSecurityDescriptorToSecurityDescriptorW", "GetNamedSecurityInfoW",
                      "ConvertSecurityDescriptorToStringSecurityDescriptorW", "GetSecurityInfo"),
         "kernel32": ("GetCurrentProcess", "CloseHandle", "CreateDirectoryW", "LocalFree", "CreateFileW",
-                     "GetFileInformationByHandle", "GetFinalPathNameByHandleW"),
+                     "GetFileInformationByHandle", "GetFinalPathNameByHandleW", "GetLongPathNameW"),
     }
     # SG-000129: never imported by the agent, whatever a later slice admits
     # to ALLOWED_IMPORTS; this list is only ever extended. A module matches
