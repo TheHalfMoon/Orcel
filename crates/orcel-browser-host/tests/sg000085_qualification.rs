@@ -1274,9 +1274,18 @@ fn no_shell_script_or_remote_process_surface_exists() {
             );
         }
         // A6 (unix_rehearsal.rs) spawns its fake engine through A2's fixture
-        // constructor, which evaluates a fixed Python string: that
-        // indirection is pinned to the same two test-only modules. A6's own
-        // reachability scan matches the unix_rehearsal line below exactly.
+        // constructor, which evaluates a fixed Python string, and (A6b) its
+        // dedicated supervisor through A2's `spawn_test`, which re-runs only
+        // a fixed list of supervisor entries: both indirections are pinned to
+        // the same two test-only modules. A6's own reachability scan matches
+        // the unix_rehearsal line below exactly.
+        if text.contains("spawn_test(") {
+            assert!(
+                (file == "unix_supervise.rs" && unix_test_only("unix_supervise"))
+                    || (file == "unix_rehearsal.rs" && unix_test_only("unix_rehearsal")),
+                "unexpected test-binary spawn in {file}"
+            );
+        }
         if text.contains("python_fixture(") {
             assert!(
                 (file == "unix_supervise.rs" && unix_test_only("unix_supervise"))

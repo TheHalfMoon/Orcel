@@ -885,7 +885,8 @@ mod tests {
     /// that owns the sink is killed, its port is freed at once while an
     /// orphaned helper keeps using it, so another local process that binds
     /// the port receives the helper's connections. Pinned so a mitigation
-    /// is visible when it lands.
+    /// is visible when it lands: this test then fails, and must be inverted
+    /// (the mitigation's evidence), never deleted.
     #[cfg(target_os = "linux")]
     #[test]
     fn a_crashed_host_frees_the_port_while_an_orphaned_helper_still_uses_it() {
@@ -916,6 +917,22 @@ mod tests {
         };
         let (port, engine, helper) = (field("port"), field("engine"), field("helper"));
         assert!(port > 0 && engine > 0 && helper > 0, "{line}");
+        /// Kills the orphans whatever happens next: identities pinned by
+        /// start time, so a reused pid is never signalled.
+        struct Orphans(Vec<crate::unix_supervise::Pinned>);
+        impl Drop for Orphans {
+            fn drop(&mut self) {
+                for member in &self.0 {
+                    crate::unix_supervise::kill_pinned(*member);
+                }
+            }
+        }
+        let _orphans = Orphans(
+            [helper, engine]
+                .into_iter()
+                .filter_map(crate::unix_supervise::pin_pid)
+                .collect(),
+        );
         // The host crashes.
         child.kill().unwrap();
         child.wait().unwrap();
@@ -928,11 +945,14 @@ mod tests {
             }
             Err(_) => false,
         };
-        // Clean up the orphans before asserting.
-        // SAFETY: plain signals to this test's own fixture processes.
-        unsafe {
-            libc::kill(helper, libc::SIGKILL);
-            libc::killpg(engine, libc::SIGKILL);
+        // The engine's in-group helpers die with its group, while the engine
+        // (the group leader) is still pinned as alive.
+        if let Some(leader) = crate::unix_supervise::pin_pid(engine) {
+            if crate::unix_supervise::is_alive(leader) {
+                // SAFETY: the pinned leader is alive, so this group is the
+                // fixture's own.
+                unsafe { libc::killpg(engine, libc::SIGKILL) };
+            }
         }
         std::fs::remove_dir_all(&root).ok();
         assert!(
