@@ -47,7 +47,7 @@ checkpoint at the end says where engineering stands.
 |---|---|
 | #438 residual: navigation `read: TimedOut` on CI | Waiting for a recurrence; #494's diagnostics capture it |
 | SG-000129 slice 5c: Windows agent store held by handle, orceld's ancestor rule, no junction on the path, claim-before-delete expiry | PR #554 (judge round 2, exact-head CI) |
-| #540 flaky vendored batch-pause test | PR #555: patch P-13 in the vendored patch queue (needs independent review, exact-head CI) |
+| #540 flaky vendored batch-pause test | PR #555: patch P-13 in the vendored patch queue (independently approved; exact-head CI) |
 | SG-000115 B1 (inert): a pid reused within one macOS scan counts as torn (clock mark) | PR #557 (security review, exact-head CI incl. macOS) |
 | SG-000115 Priority B (inert): retained-.deb signature chain for S-07, PID-namespace or cgroup containment feasibility, profile delete through the held walk, macOS ACLs on profiles | Engineering solutions to shrink the class 4 residuals; none activates SG-000115 |
 | #292 flaky SG-000013 contained PowerShell test on windows-latest | Root cause not yet found |
@@ -82,7 +82,7 @@ checkpoint at the end says where engineering stands.
 | Release and publication | Not authorized; no release is created |
 | A planner model for BM-02 Tier C agent runs | Paid inference is excluded by the zero-cost rule; the local d1 model is an advisory classifier, not a planner |
 | M4 model selection and licensing | Candidates and the benchmark plan are in `prep/M4-local-model-candidates.md`; nothing is downloaded or run before this gate |
-| SG-000115 residuals (recorded, **not accepted**; engineering continues on each) | (a) macOS: a pid reused within one descendant scan (narrowed by B1, #557, to a backward clock step during a scan); (b) descendants of another user that cannot be read; (c) false positives of the unattributable rule; (d) the network sink's port after an orceld crash; (e) S-07 binds ownership and modes, not a signature (stock GitHub Ubuntu has `/opt/google` at 0777, so Chrome there is unverified); (f) engines in another PID namespace; (g) profile paths with spaces and `hidepid` on `/proc` |
+| SG-000115 residuals (recorded, **not accepted**; engineering continues on each) | (a) macOS: a pid reused within one descendant scan (B1, #557, an open draft, would narrow it to a backward clock step during a scan); (b) descendants of another user that cannot be read; (c) false positives of the unattributable rule; (d) the network sink's port after an orceld crash; (e) S-07 binds ownership and modes, not a signature (stock GitHub Ubuntu has `/opt/google` at 0777, so Chrome there is unverified); (f) engines in another PID namespace; (g) profile paths with spaces and `hidepid` on `/proc` |
 | Real platform presence (Windows Hello, Touch ID, polkit), macOS permissions | Never simulated or pre-granted |
 | Paid infrastructure, deployment | Excluded by the zero-cost rule |
 
@@ -126,7 +126,7 @@ If a session ends, resume from here (2026-11-01, main `c7b64f1`):
 3. Vendored cua-driver changes go through the patch queue: a P-xx entry in
    `PATCHES.md`, a `patched_files` entry in `docs/orcel/cua_driver_provenance.json`,
    then `node scripts/check-vendored-cua.mjs` on a commit.
-4. Next engineering, in order: merge #554 and #555; the class 2 SG-000115
+4. Next engineering, in order: merge #554, #555 and #556, then #557 after its review; the class 2 SG-000115
    Priority B items; #438 when it recurs; Windows checkpoint hardening
    follow-ups; then the next roadmap items (F4 slices that need no founder,
    BR items behind governance, cross-platform).
