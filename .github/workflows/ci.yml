@@ -44,6 +44,20 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+      # SG-000115 S-07 (prep/SG-000115.md, "Linux S-07"): the hosted Ubuntu
+      # image leaves Chrome's engine world-writable (/opt/google/chrome/chrome
+      # was mode 0777 in run 41194327979). The verifier rightly refuses that
+      # state, which dpkg --verify does not check. Remove only the group and
+      # other write bits the image added, and print every entry changed, so
+      # the real-tree tests see the vendor package's own permissions.
+      - name: SG-000115 S-07 remove the runner image's group and other write bits from Chrome
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -d /opt/google/chrome ]; then
+            sudo find /opt/google/chrome -xdev ! -type l -perm /022 -print -exec chmod go-w {} +
+          fi
       - name: Test
         env:
           # The commit this job built (on a pull request, GITHUB_SHA is the

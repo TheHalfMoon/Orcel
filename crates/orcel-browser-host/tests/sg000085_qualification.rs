@@ -1248,7 +1248,12 @@ fn no_shell_script_or_remote_process_surface_exists() {
         .find(|(file, _)| file == "discovery.rs")
         .map(|(_, text)| text.replace("\r\n", "\n"))
         .expect("discovery.rs is a crate source");
-    let linux_tests_only = discovery.matches("mod linux_tests;").count() == 1
+    // ...and no other source may declare it through a #[path] of its own.
+    let named_elsewhere = sources
+        .iter()
+        .any(|(file, text)| file != "discovery.rs" && text.contains("discovery_linux_tests.rs"));
+    let linux_tests_only = !named_elsewhere
+        && discovery.matches("mod linux_tests;").count() == 1
         && discovery.contains(
             "#[cfg(all(test, not(windows), not(target_os = \"macos\")))]\n#[path = \"discovery_linux_tests.rs\"]\nmod linux_tests;\n",
         );
