@@ -31,11 +31,14 @@
 //! - **Ancestors:** whether the profile's ancestors must also be owned by
 //!   this user or root and not writable by others (the parent of the
 //!   profile is the state root, owned elsewhere).
-//! - **Last component only:** `O_NOFOLLOW` (and `symlink_metadata` in
-//!   `verify`) refuse a link at the last path component only; links in
-//!   the middle of the path are followed. Activation needs a walk from a
-//!   trusted state root (`openat` per component), `openat2`
-//!   (`RESOLVE_NO_SYMLINKS`) on Linux or `O_NOFOLLOW_ANY` on macOS.
+//! - **Last component only (`open`):** `O_NOFOLLOW` (and
+//!   `symlink_metadata` in `verify`) refuse a link at the last path
+//!   component only. **A3b:** `open_beneath` walks from a trusted state
+//!   root, `openat` per component with `O_NOFOLLOW | O_DIRECTORY`, refuses
+//!   a link, `..` or `.` anywhere below it, and requires every directory in
+//!   between to be this user's and writable by no one else. Activation must
+//!   use it (or `openat2` / `O_NOFOLLOW_ANY`). `verify` still re-checks the
+//!   path by name.
 //! - **macOS ACLs:** extended ACL entries are separate from the mode bits
 //!   on macOS, so exactly 0700 / 0600 does not exclude another user there
 //!   (on Linux the mode's group bits carry the ACL mask). Activation must
@@ -99,13 +102,81 @@ fn fstat(fd: &OwnedFd) -> Result<libc::stat, ProfileError> {
     Ok(stat)
 }
 
-/// Owned by this user with exactly `mode` permission bits. (`st_mode` is
-/// `u32` on Linux and `u16` on macOS, so the cast is needed on one of them.)
+thread_local! {
+    /// The account a profile must belong to: this user, unless a test sets
+    /// another (to check that another account's profile is refused). This
+    /// module is compiled into test builds only.
+    static EXPECTED_OWNER: std::cell::Cell<Option<libc::uid_t>> = const { std::cell::Cell::new(None) };
+}
+
+/// The account a profile and its ancestors below the state root must
+/// belong to.
+fn expected_owner() -> libc::uid_t {
+    // SAFETY: geteuid has no preconditions.
+    EXPECTED_OWNER
+        .with(|owner| owner.get())
+        .unwrap_or_else(|| unsafe { libc::geteuid() })
+}
+
+/// Tests only: require `uid` as the owner on this thread while `run` runs.
+/// The previous value is restored by a guard, so a panic inside `run` never
+/// leaves the override set.
+#[cfg(test)]
+pub(crate) fn with_expected_owner<T>(uid: libc::uid_t, run: impl FnOnce() -> T) -> T {
+    struct Restore(Option<libc::uid_t>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let previous = self.0;
+            EXPECTED_OWNER.with(|owner| owner.set(previous));
+        }
+    }
+    let _restore = Restore(EXPECTED_OWNER.with(|owner| owner.replace(Some(uid))));
+    run()
+}
+
+/// Owned by the expected user with exactly `mode` permission bits.
+/// (`st_mode` is `u32` on Linux and `u16` on macOS, so the cast is needed
+/// on one of them.)
 #[allow(clippy::unnecessary_cast)]
 fn owned_with_mode(stat: &libc::stat, mode: u32) -> bool {
-    // SAFETY: geteuid has no preconditions.
-    let me = unsafe { libc::geteuid() };
-    stat.st_uid == me && (stat.st_mode as u32) & 0o7777 == mode
+    stat.st_uid == expected_owner() && (stat.st_mode as u32) & 0o7777 == mode
+}
+
+/// A directory above the profile: owned by the expected user and writable
+/// by neither group nor others, so no other account can swap what is below.
+#[allow(clippy::unnecessary_cast)]
+fn private_ancestor(fd: &OwnedFd) -> Result<(), ProfileError> {
+    let stat = fstat(fd)?;
+    if (stat.st_mode & libc::S_IFMT) != libc::S_IFDIR {
+        return Err(ProfileError::NotPlain);
+    }
+    if stat.st_uid != expected_owner() || (stat.st_mode as u32) & 0o022 != 0 {
+        return Err(ProfileError::Permissions);
+    }
+    Ok(())
+}
+
+/// Open a directory with `O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC`, at `path`
+/// or (with `at`) relative to an open directory.
+fn open_directory(at: Option<&OwnedFd>, name: &CString) -> Result<OwnedFd, ProfileError> {
+    let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+    // SAFETY: a NUL-terminated name; relative to an open descriptor when
+    // `at` is given. Never follows a link at the opened component.
+    let raw = unsafe {
+        match at {
+            Some(dir) => libc::openat(dir.as_raw_fd(), name.as_ptr(), flags),
+            None => libc::open(name.as_ptr(), flags),
+        }
+    };
+    if raw < 0 {
+        return Err(match errno() {
+            libc::ENOENT => ProfileError::Missing,
+            libc::ELOOP | libc::ENOTDIR => ProfileError::NotPlain,
+            other => ProfileError::Platform(other),
+        });
+    }
+    // SAFETY: `raw` is a descriptor this call just opened and owns.
+    Ok(unsafe { OwnedFd::from_raw_fd(raw) })
 }
 
 /// Device and inode. (`st_dev` is `u64` on Linux and `i32` on macOS.)
@@ -191,23 +262,44 @@ impl ProfileHold {
     pub(crate) fn open(path: &Path) -> Result<Self, ProfileError> {
         let c_path =
             CString::new(path.as_os_str().as_bytes()).map_err(|_| ProfileError::NotPlain)?;
-        // SAFETY: a NUL-terminated path; the flags request a directory,
-        // never follow a link at the last component, and close on exec.
-        let raw = unsafe {
-            libc::open(
-                c_path.as_ptr(),
-                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-            )
-        };
-        if raw < 0 {
-            return Err(match errno() {
-                libc::ENOENT => ProfileError::Missing,
-                libc::ELOOP | libc::ENOTDIR => ProfileError::NotPlain,
-                other => ProfileError::Platform(other),
-            });
+        Self::hold(open_directory(None, &c_path)?)
+    }
+
+    /// Hold the profile at `state_root/relative`, opening every component
+    /// below the state root relative to the one before it with
+    /// `O_NOFOLLOW | O_DIRECTORY`. A link at any component below the state
+    /// root refuses (not only at the last one, as `open` does), and so does
+    /// `..`, `.` or an absolute part. The state root and every directory
+    /// between it and the profile must belong to this user and be writable
+    /// by neither group nor others. The state root's own path is opened
+    /// with `O_NOFOLLOW` for its last component only: it is the trusted
+    /// starting point.
+    pub(crate) fn open_beneath(state_root: &Path, relative: &Path) -> Result<Self, ProfileError> {
+        use std::path::Component;
+        let c_root =
+            CString::new(state_root.as_os_str().as_bytes()).map_err(|_| ProfileError::NotPlain)?;
+        let mut dir = open_directory(None, &c_root)?;
+        private_ancestor(&dir)?;
+        let parts: Vec<Component<'_>> = relative.components().collect();
+        if parts.is_empty() {
+            return Err(ProfileError::NotPlain);
         }
-        // SAFETY: `raw` is a descriptor this call just opened and owns.
-        let root = unsafe { OwnedFd::from_raw_fd(raw) };
+        for (index, part) in parts.iter().enumerate() {
+            let Component::Normal(name) = part else {
+                return Err(ProfileError::NotPlain);
+            };
+            let name = CString::new(name.as_bytes()).map_err(|_| ProfileError::NotPlain)?;
+            let next = open_directory(Some(&dir), &name)?;
+            if index + 1 < parts.len() {
+                private_ancestor(&next)?;
+            }
+            dir = next;
+        }
+        Self::hold(dir)
+    }
+
+    /// The checks shared by `open` and `open_beneath`, on the opened root.
+    fn hold(root: OwnedFd) -> Result<Self, ProfileError> {
         let root_stat = fstat(&root)?;
         if (root_stat.st_mode & libc::S_IFMT) != libc::S_IFDIR {
             return Err(ProfileError::NotPlain);
@@ -444,6 +536,114 @@ mod tests {
         assert_eq!(hold.verify(&dir).unwrap_err(), ProfileError::Swapped);
         drop(hold);
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// A3b: another account's profile is refused, whatever its mode.
+    #[test]
+    fn another_accounts_profile_is_refused() {
+        let (root, dir) = profile("owner");
+        // SAFETY: geteuid has no preconditions.
+        let other = unsafe { libc::geteuid() }.wrapping_add(1);
+        assert_eq!(
+            with_expected_owner(other, || ProfileHold::open(&dir).map(|_| ())),
+            Err(ProfileError::Permissions)
+        );
+        // Through the walk too, at the first directory it checks.
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(
+            with_expected_owner(other, || ProfileHold::open_beneath(
+                &root,
+                Path::new("profile")
+            )
+            .map(|_| ())),
+            Err(ProfileError::Permissions)
+        );
+        assert!(
+            ProfileHold::open(&dir).is_ok(),
+            "the override ends with the call"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// A state root with an intermediate directory and the profile below it.
+    fn nested(label: &str) -> (PathBuf, PathBuf) {
+        let root = scratch(label);
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let middle = root.join("middle");
+        std::fs::create_dir(&middle).unwrap();
+        std::fs::set_permissions(&middle, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let dir = middle.join("profile");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        (root, dir)
+    }
+
+    #[test]
+    fn a_profile_beneath_a_private_state_root_is_held() {
+        let (root, _) = nested("beneath");
+        let hold = ProfileHold::open_beneath(&root, Path::new("middle/profile")).unwrap();
+        hold.verify_lock().unwrap();
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// A3b: a link swapped in at a middle component refuses. `open`
+    /// follows it (only its last component is checked); the walk does not.
+    #[test]
+    fn a_link_in_the_middle_of_the_path_is_refused_by_the_walk() {
+        let (root, _) = nested("middle-link");
+        let elsewhere = root.join("elsewhere");
+        std::fs::rename(root.join("middle"), &elsewhere).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, root.join("middle")).unwrap();
+        assert!(
+            ProfileHold::open(&root.join("middle/profile")).is_ok(),
+            "the last-component check alone follows the middle link"
+        );
+        assert_eq!(
+            ProfileHold::open_beneath(&root, Path::new("middle/profile")).map(|_| ()),
+            Err(ProfileError::NotPlain)
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn the_walk_refuses_parent_dot_and_absolute_parts() {
+        let (root, _) = nested("parts");
+        for relative in [
+            "../profile",
+            "middle/../middle/profile",
+            "./middle/profile",
+            "/middle/profile",
+            "",
+        ] {
+            assert_eq!(
+                ProfileHold::open_beneath(&root, Path::new(relative)).map(|_| ()),
+                Err(ProfileError::NotPlain),
+                "{relative:?}"
+            );
+        }
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// A3b: a directory between the state root and the profile that another
+    /// account could write refuses, as does such a state root.
+    #[test]
+    fn a_writable_ancestor_is_refused_by_the_walk() {
+        for (target, mode) in [("middle", 0o770), ("middle", 0o707), ("", 0o777)] {
+            let (root, _) = nested(&format!("ancestor-{mode:o}"));
+            let path = if target.is_empty() {
+                root.clone()
+            } else {
+                root.join(target)
+            };
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+            assert_eq!(
+                ProfileHold::open_beneath(&root, Path::new("middle/profile")).map(|_| ()),
+                Err(ProfileError::Permissions),
+                "{target:?} at {mode:o}"
+            );
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+            std::fs::remove_dir_all(&root).ok();
+        }
     }
 
     /// Pre-activation boundary: only lib.rs (the test-only declaration)
