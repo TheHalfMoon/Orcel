@@ -450,6 +450,35 @@ class PrivateStore(Scratch):
         open_store(readable / "agent", RUN).close()
 
     @unittest.skipUnless(os.name == "nt", "Windows only")
+    def test_a_store_reached_through_a_junction_is_refused(self) -> None:
+        # Round 1: the lexical parents checked by the ancestor rule must be
+        # the directories the store really sits in. Behind a junction they are
+        # not: here the real target grants Everyone full control, while the
+        # junction's own parent is the safe scratch directory.
+        target = Path(self._dir.name) / "target"
+        target.mkdir()
+        subprocess.run(["icacls", str(target), "/grant", "*S-1-1-0:(OI)(CI)F"], check=True, capture_output=True)
+        link = Path(self._dir.name) / "link"
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], check=True, capture_output=True)
+        try:
+            with self.assertRaisesRegex(StoreError, "junction, link or mount point lies on its path"):
+                open_store(link / "agent", RUN)
+        finally:
+            os.rmdir(link)
+
+    @unittest.skipUnless(os.name == "nt", "Windows only")
+    def test_a_closed_store_refuses_writes(self) -> None:
+        # Round 1: once closed (unheld), a store refuses its journal path and
+        # its capacity check, so nothing writes to it; opening it again works.
+        store = open_store(self.root, RUN)
+        store.close()
+        with self.assertRaisesRegex(StoreError, "closed"):
+            store.journal_path
+        with self.assertRaisesRegex(StoreError, "closed"):
+            store.check_capacity(1)
+        open_store(self.root, RUN).close()
+
+    @unittest.skipUnless(os.name == "nt", "Windows only")
     def test_the_ancestor_rule_is_orcelds(self) -> None:
         from orcel_agent.winacl import ancestor_problem, rights_mask
 
@@ -588,7 +617,7 @@ class SourceBoundary(unittest.TestCase):
                      "ConvertStringSecurityDescriptorToSecurityDescriptorW", "GetNamedSecurityInfoW",
                      "ConvertSecurityDescriptorToStringSecurityDescriptorW", "GetSecurityInfo"),
         "kernel32": ("GetCurrentProcess", "CloseHandle", "CreateDirectoryW", "LocalFree", "CreateFileW",
-                     "GetFileInformationByHandle"),
+                     "GetFileInformationByHandle", "GetFinalPathNameByHandleW"),
     }
     # SG-000129: never imported by the agent, whatever a later slice admits
     # to ALLOWED_IMPORTS; this list is only ever extended. A module matches
@@ -694,6 +723,7 @@ class SourceBoundary(unittest.TestCase):
         # ctypes is used through a named set of attributes only: no private
         # names, no raw memory, no other loader, no attribute on a library.
         ctypes_allowed = {"Structure", "POINTER", "c_void_p", "c_int", "byref", "sizeof", "wstring_at",
+                          "create_unicode_buffer",
                           "get_last_error", "FormatError", "WinDLL"}
         for node in ast.walk(tree):
             if isinstance(node, ast.Attribute):
@@ -718,7 +748,7 @@ class SourceBoundary(unittest.TestCase):
             if isinstance(node, ast.Attribute):
                 self.assertNotEqual(node.attr, "ctypes", "winacl.py: wintypes.ctypes")
                 if isinstance(node.value, ast.Name) and node.value.id == "wintypes":
-                    self.assertIn(node.attr, {"BOOL", "DWORD", "HANDLE", "LPCWSTR", "LPVOID", "ULONG", "FILETIME"},
+                    self.assertIn(node.attr, {"BOOL", "DWORD", "HANDLE", "LPCWSTR", "LPVOID", "ULONG", "FILETIME", "LPWSTR"},
                                   f"winacl.py: wintypes.{node.attr}")
                 if node.attr in ("restype", "argtypes") and isinstance(node.ctx, ast.Store):
                     self.assertTrue(any(ast.unparse(n) == "function.restype, function.argtypes = _PROTOTYPES[name]"
@@ -742,7 +772,7 @@ class SourceBoundary(unittest.TestCase):
             "owner.startswith", "re.compile", "re.findall", "seen.add", "set", "wintypes.DWORD", "wintypes.HANDLE",
             # Slice 5c: the held directory and the ancestor judge.
             "_FileInformation", "_RIGHTS.get", "bool", "int", "range", "rights.lower", "rights.lower().startswith",
-            "rights_mask", "self.close",
+            "rights_mask", "self.close", "ctypes.create_unicode_buffer", "text.startswith",
         }
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):

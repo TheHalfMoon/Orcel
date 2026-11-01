@@ -56,6 +56,15 @@ class RunStore:
     #: store's lifetime, so neither they nor any directory above them can be
     #: renamed or replaced after they were checked.
     _held: list[Any] = field(default_factory=list, repr=False, compare=False)
+    #: Closed: a run no longer uses it. Its journal path and its capacity
+    #: check (which every journal append and checkpoint save goes through)
+    #: then refuse, so nothing writes to an unheld, unchecked store; a
+    #: resumed run opens it again. Its directory path stays readable.
+    _closed: bool = field(default=False, repr=False, compare=False)
+
+    def _open(self) -> None:
+        if self._closed:
+            raise StoreError("the agent store was closed; open it again (open_store) to resume")
 
     @property
     def directory(self) -> Path:
@@ -63,9 +72,11 @@ class RunStore:
 
     @property
     def journal_path(self) -> Path:
+        self._open()
         return self.directory / "dispatch.jsonl"
 
     def used_bytes(self) -> int:
+        self._open()
         if not self.directory.is_dir():
             return 0
         return sum(path.stat().st_size for path in self.directory.iterdir() if path.is_file())
@@ -75,13 +86,14 @@ class RunStore:
             raise StoreError("the agent store reached its size cap")
 
     def close(self) -> None:
-        """Release the held directories (Windows)."""
+        """Release the held directories (Windows) and refuse further use."""
         while self._held:
             self._held.pop().close()
+        self._closed = True
 
     def delete(self) -> None:
         self.close()
-        shutil.rmtree(self.directory, ignore_errors=True)
+        shutil.rmtree(self.root / self.run_id, ignore_errors=True)
 
 
 def _private_dir(path: Path) -> Any:
@@ -118,6 +130,13 @@ def _private_dir_windows(path: Path) -> Any:
     try:
         if not held.plain_directory():
             raise StoreError(f"the agent store {path} is a link, a junction or not a directory")
+        # Every directory on the way must be a real one: through a junction,
+        # a link or a mount point the lexical parents checked below would not
+        # be the directories the store really sits in.
+        final = held.final_path()
+        if os.path.normcase(os.path.normpath(final)) != os.path.normcase(os.path.normpath(os.path.abspath(path))):
+            raise StoreError(f"the agent store {path} resolves to {final}: a junction, link or mount point "
+                             "lies on its path")
         problem = winacl.private_problem(held.security(), user, winacl.sddl_form(user))
     except StoreError:
         held.close()
@@ -158,6 +177,31 @@ def _last_activity(run: Path) -> float:
     return max(times)
 
 
+def _expire(root: Path, run_id: str, ttl_s: float, current: float) -> None:
+    """Remove runs whose newest file is older than `ttl_s`, by claim first."""
+    for entry in root.iterdir():
+        if entry.is_symlink() or not entry.is_dir():
+            continue
+        # A claim an earlier expiry could not finish removing.
+        if entry.name.endswith(_EXPIRED) and _RUN_ID.fullmatch(entry.name[: -len(_EXPIRED)]):
+            shutil.rmtree(entry, ignore_errors=True)
+            continue
+        if entry.name == run_id or not _RUN_ID.fullmatch(entry.name):
+            continue
+        if current - _last_activity(entry) > ttl_s:
+            # Claim the run by renaming it before anything is deleted. On
+            # Windows (NTFS) a run still in use is held open (slice 5c) and
+            # cannot be renamed, so it is skipped whole, never half-deleted.
+            # On Unix nothing holds a run, so expiry relies on its newest
+            # file's age alone, as before.
+            claimed = entry.with_name(entry.name + _EXPIRED)
+            try:
+                os.rename(entry, claimed)
+            except OSError:
+                continue
+            shutil.rmtree(claimed, ignore_errors=True)
+
+
 def new_run_id() -> str:
     return uuid.uuid4().hex
 
@@ -170,32 +214,14 @@ def open_store(root: Path, run_id: str | None = None, *, ttl_s: float = DEFAULT_
     if not _RUN_ID.fullmatch(run_id):
         raise StoreError("a run id is 32 lowercase hex characters")
     held_root = _private_dir(root)
-    if held_root is not None:
-        try:
+    try:
+        if held_root is not None:
             _check_ancestors_windows(root)
-        except StoreError:
+        _expire(root, run_id, ttl_s, time.time() if now is None else now)
+    except BaseException:
+        if held_root is not None:
             held_root.close()
-            raise
-    current = time.time() if now is None else now
-    for entry in root.iterdir():
-        if entry.is_symlink() or not entry.is_dir():
-            continue
-        # A claim an earlier expiry could not finish removing.
-        if entry.name.endswith(_EXPIRED) and _RUN_ID.fullmatch(entry.name[: -len(_EXPIRED)]):
-            shutil.rmtree(entry, ignore_errors=True)
-            continue
-        if entry.name == run_id or not _RUN_ID.fullmatch(entry.name):
-            continue
-        if current - _last_activity(entry) > ttl_s:
-            # Claim the run by renaming it before anything is deleted. A run
-            # still in use is held open (Windows, slice 5c) and cannot be
-            # renamed, so it is skipped whole, never half-deleted.
-            claimed = entry.with_name(entry.name + _EXPIRED)
-            try:
-                os.rename(entry, claimed)
-            except OSError:
-                continue
-            shutil.rmtree(claimed, ignore_errors=True)
+        raise
     store = RunStore(root, run_id, max_bytes)
     if held_root is not None:
         store._held.append(held_root)

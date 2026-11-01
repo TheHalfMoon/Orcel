@@ -289,14 +289,14 @@ class PlannerRestore(Scratch):
         self.assertNotIn(MARKER, planner._compactor.summary or "")
 
     def test_an_invalid_checkpoint_stops_the_run_and_keeps_the_store(self) -> None:
-        store = open_store(self.root, RUN)
-        checkpoint = PlannerCheckpoint(store)
         for bad in ({"goal": 5}, {"goal": "g", "finished": False, "stop_reason": None,
                                   "plan": {"todos": [{"content": "<x>", "status": "pending"}],
                                            "completion_reminders": 0}},
                     {"goal": "g", "finished": False, "stop_reason": "approved",
                      "plan": {"todos": [], "completion_reminders": 0}}):
-            checkpoint.save(bad)
+            # Each case is a new process: the kept store is opened again.
+            store = open_store(self.root, RUN)
+            PlannerCheckpoint(store).save(bad)
             planner = self.Planner(self.model(*([self.AI(content="done")] * 5)), checkpoint=PlannerCheckpoint(store))
             events = EventLog(RUN)
             result = self.agent(Edge(), store, events).run("g", planner)

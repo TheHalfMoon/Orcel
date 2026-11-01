@@ -108,6 +108,7 @@ class AgentOrcel:
     _replies: Any = None
     _model: Any = None
     _planner: Any = None
+    _store: Any = None
     timeout_s: float = 60.0
     planner: str = "scripted"
 
@@ -135,6 +136,7 @@ class AgentOrcel:
             except EdgeError as error:
                 raise OrcelError("orcel-crash", f"the edge did not start: {error}") from error
             store = open_store(self._state / "agent", new_run_id())
+            self._store = store
             journal = DispatchJournal(store.journal_path, store.check_capacity)
             # The episode's whole state directory (with this store) is
             # removed in __exit__, so the agent keeps its store until then.
@@ -224,8 +226,9 @@ class AgentOrcel:
     def _cleanup(self) -> None:
         # The agent's store holds its directories open on Windows (SG-000129
         # slice 5c): release them before the episode's state is removed.
-        if self._agent is not None and self._agent.store is not None:
-            self._agent.store.close()
+        if self._store is not None:
+            self._store.close()
+            self._store = None
         if self._state is not None:
             shutil.rmtree(self._state, ignore_errors=True)
             self._state = None

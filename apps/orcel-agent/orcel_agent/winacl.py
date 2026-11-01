@@ -31,7 +31,7 @@ FUNCTIONS = {
     ),
     "kernel32": (
         "GetCurrentProcess", "CloseHandle", "CreateDirectoryW", "LocalFree", "CreateFileW",
-        "GetFileInformationByHandle",
+        "GetFileInformationByHandle", "GetFinalPathNameByHandleW",
     ),
 }
 
@@ -94,6 +94,8 @@ _PROTOTYPES = {
     "CreateFileW": (wintypes.HANDLE, [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
                                       wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]),
     "GetFileInformationByHandle": (wintypes.BOOL, [wintypes.HANDLE, ctypes.POINTER(_FileInformation)]),
+    "GetFinalPathNameByHandleW": (wintypes.DWORD, [wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD,
+                                                   wintypes.DWORD]),
     "GetSecurityInfo": (wintypes.DWORD, [wintypes.HANDLE, ctypes.c_int, wintypes.DWORD, _OUT, _OUT, _OUT, _OUT,
                                          _OUT]),
 }
@@ -220,12 +222,28 @@ class HeldDirectory:
     renamed or deleted, and neither can any directory above it."""
 
     def __init__(self, path: Path) -> None:
+        self.handle: Optional[int] = None
         api = _functions()
         handle = api["CreateFileW"](os.path.abspath(path), _DIRECTORY_ACCESS, _SHARE_READ_WRITE, None,
                                     _OPEN_EXISTING, _DIRECTORY_FLAGS, None)
         if handle is None or handle == _INVALID_HANDLE:
             raise _fail("CreateFileW")
-        self.handle: Optional[int] = handle
+        self.handle = handle
+
+    def final_path(self) -> str:
+        """The held directory's path with every link, junction and mount
+        point resolved (`GetFinalPathNameByHandleW`), without the `\\\\?\\`
+        prefix."""
+        api = _functions()
+        buffer = ctypes.create_unicode_buffer(32768)
+        length = api["GetFinalPathNameByHandleW"](self.handle, buffer, len(buffer), 0)
+        if length == 0 or length >= len(buffer):
+            raise _fail("GetFinalPathNameByHandleW")
+        text = buffer.value
+        for prefix in ("\\\\?\\UNC\\", "\\\\?\\"):
+            if text.startswith(prefix):
+                return ("\\\\" if "UNC" in prefix else "") + text[len(prefix):]
+        return text
 
     def plain_directory(self) -> bool:
         """A directory, and not a reparse point (a junction or a link), as
@@ -383,7 +401,9 @@ def ancestor_problem(sddl: str, user: str, alias: Optional[str] = None) -> Optio
             return f"has an unrecognized entry ({entry})"
         kind, ace_flags, rights, sid = fields[0], fields[1], fields[2], fields[5]
         tokens = {ace_flags[i:i + 2] for i in range(0, len(ace_flags), 2)}
-        if "IO" in tokens or kind == "D":
+        # Deny entries of every kind only take access away (orceld treats the
+        # object and callback deny types as deny too).
+        if "IO" in tokens or kind in ("D", "OD", "XD"):
             continue
         if kind != "A":
             return f"has an access entry of type {kind} that cannot be judged"
