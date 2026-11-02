@@ -1024,7 +1024,7 @@ mod tests {
             "    ok = libc.mount(None, b'/', None, 16384 | 262144, None) == 0",
             "    ok = ok and libc.mount(b'proc', b'/proc', b'proc', 0, None) == 0",
             "    if not ok:",
-            "        print('SG115-PIDNS refused', ctypes.get_errno(), flush=True)",
+            "        print('SG115-PIDNS proc-refused', ctypes.get_errno(), flush=True)",
             "        os._exit(0)",
             "    os.execv(sys.argv[1], sys.argv[1:])",
             "print('SG115-PIDNS host=' + str(child), flush=True)",
@@ -1042,8 +1042,20 @@ mod tests {
             .env(SINK_CASE, "pidns-host")
             .env(SINK_SCRATCH, root.display().to_string())
             .stdout(std::process::Stdio::piped());
-        let mut child = shim.spawn().unwrap();
-        let stdout = child.stdout.take().unwrap();
+        /// Kills the shim and, once known, the host (pid 1 of the namespace,
+        /// so its whole family) however the test ends.
+        struct Shim(std::process::Child, Option<crate::unix_supervise::Pinned>);
+        impl Drop for Shim {
+            fn drop(&mut self) {
+                if let Some(host) = self.1 {
+                    crate::unix_supervise::kill_pinned(host);
+                }
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let mut shim = Shim(shim.spawn().unwrap(), None);
+        let stdout = shim.0.stdout.take().unwrap();
         let mut line = String::new();
         let mut host = 0i32;
         for next in BufReader::new(stdout).lines() {
@@ -1052,21 +1064,33 @@ mod tests {
                 host = value.trim().parse().unwrap_or_default();
                 continue;
             }
-            if let Some(at) = next.find("SG115-PIDNS refused") {
-                // Only the errors a refused namespace gives count as the
-                // host's refusal; anything else fails the test.
+            // The host refused the namespace, or (inside a container with a
+            // masked /proc) the /proc mount: evidence about the host, never a
+            // pass. Only the errors a refusal gives count; anything else
+            // fails the test.
+            let refusal = ["SG115-PIDNS refused", "SG115-PIDNS proc-refused"]
+                .into_iter()
+                .find_map(|tag| next.find(tag).map(|at| (tag, at)));
+            if let Some((tag, at)) = refusal {
                 let errno: i32 = next[at..]
                     .split_whitespace()
                     .last()
                     .and_then(|value| value.parse().ok())
                     .unwrap_or_default();
-                let _ = child.wait();
+                drop(shim);
                 std::fs::remove_dir_all(&root).ok();
                 assert!(
                     [libc::EPERM, libc::EACCES, libc::ENOSPC, libc::EINVAL].contains(&errno),
                     "{next}"
                 );
-                println!("SG115-EVIDENCE B8 unprivileged PID namespace refused: errno {errno}");
+                let what = if tag.ends_with("proc-refused") {
+                    "its /proc mount"
+                } else {
+                    "an unprivileged PID namespace"
+                };
+                println!(
+                    "SG115-EVIDENCE B8 unprivileged PID namespace refused: {what}, errno {errno}"
+                );
                 return;
             }
             if let Some(at) = next.find("SG115-SINK ") {
@@ -1102,12 +1126,21 @@ mod tests {
                 })
                 .unwrap_or_default()
         };
+        // The engine and its orphaned helper both run before the crash.
+        let before = members();
         assert!(
-            !members().is_empty(),
-            "the engine family runs before the crash"
+            before.len() >= 2,
+            "the engine and its helper run: {before:?}"
         );
-        // The host crashes.
-        if let Some(pinned) = crate::unix_supervise::pin_pid(host) {
+        // The host crashes: it must still be running, so it is the kill
+        // that ends the family, not an earlier exit.
+        let pinned = crate::unix_supervise::pin_pid(host);
+        assert!(
+            pinned.is_some(),
+            "the host is still running before the crash"
+        );
+        shim.1 = pinned;
+        if let Some(pinned) = pinned {
             crate::unix_supervise::kill_pinned(pinned);
         }
         let gone = until(|| members().is_empty());
@@ -1129,8 +1162,7 @@ mod tests {
             }
             Err(_) => false,
         };
-        let _ = child.kill();
-        let _ = child.wait();
+        drop(shim);
         let left = members();
         std::fs::remove_dir_all(&root).ok();
         println!("SG115-EVIDENCE B8 PID namespace: family gone={gone}, port traffic after crash={received}");

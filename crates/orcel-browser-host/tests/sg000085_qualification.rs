@@ -1234,9 +1234,10 @@ fn no_shell_script_or_remote_process_surface_exists() {
     // start one fixture in a new unprivileged user and PID namespace
     // (`unshare` in `pre_exec`, Linux, B6b, recorded the same way). A6's
     // B8 test runs its sink host as the init of a user, PID and mount
-    // namespace: A2's `python_fixture` shim unshares, forks and execs this
-    // test binary on the `sink_supervisor_entry` test (recorded the same
-    // way). A6
+    // namespace: A2's `python_fixture` shim unshares, forks, mounts a
+    // private `/` and a fresh `/proc` inside the new namespaces (through
+    // `ctypes`), and execs this test binary on the `sink_supervisor_entry`
+    // test (recorded the same way). A6
     // (unix_rehearsal.rs) spawns only through A2's `python_fixture`, pinned
     // below under the same guard.
     let lib = sources
