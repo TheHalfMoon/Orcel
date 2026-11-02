@@ -41,6 +41,7 @@ checkpoint at the end says where engineering stands.
 | M4 local model candidates and benchmark plan (research only; nothing downloaded or run) | #553 → `c7b64f1` |
 | SG-000129 slice 5c: Windows agent store held by handle, orceld's ancestor rule, no junction or link on the path (8.3 short names expanded), a closed store refuses writes, claim-before-delete expiry. Notes from its judge, not yet recorded in the spec: stores on mapped or `subst` drives are refused (fail-closed, but the message names a junction); the rename-blocking claim is measured on NTFS only | #554 → `e462652` |
 | #540 flaky vendored batch-pause test: patch P-13 in the vendored patch queue | #555 → `f8f0c8f` |
+| Agent store path aliases: a requested path whose held final path differs (mapped or `subst` drive, junction, link, mount point) is refused with a message naming all possible causes, not only a junction; a CI-only test maps a `subst` drive and shows the refusal | #562 → `19d55bd` |
 | SG-000115 B1 (inert): a pid reused within one macOS scan counts as torn (clock mark); the node is kept, so freeze and kill coverage is unchanged. On hosted macOS CI the clock test passed and the lineage cases still verify every attributable escape, with the fast orphan detected in 5 of 5 rounds | #557 → `32c5087` (main CI 41327036226) |
 | SG-000115 B2 (inert): macOS same-user browser process-argument scan detects `--user-data-dir` before `SingletonLock`, including paths with spaces as whole arguments; on macOS CI the profile was retained until the running process exited, then removed. Other-user/root processes and sandboxed-host `permission denied` remain unaccepted residuals. | #560 → `878c84d` (main CI 41356507864 passed) |
 | Lifecycle on main `89066a6`: Windows release qualification (install, run, update, recover, uninstall, local report client, 400 MB budget) and Linux deb/rpm/tarball install, systemd units, tamper detection and uninstall | main CI 40672122647 |
@@ -50,7 +51,6 @@ checkpoint at the end says where engineering stands.
 | Item | Note |
 |---|---|
 | #438 residual: navigation `read: TimedOut` on CI | Waiting for a recurrence; #494's diagnostics capture it |
-| Agent store on mapped or `subst` drives | Refused (fail-closed) since slice 5c, but the message names a junction; give it its own message, or record it in the spec |
 | SG-000115 Priority B (inert): retained-.deb signature chain for S-07, PID-namespace or cgroup containment feasibility, profile delete through the held walk, macOS ACLs on profiles; close the B2 sandboxed-host ownership ambiguity | Engineering solutions to shrink the class 4 residuals; none activates SG-000115 |
 | #292 flaky SG-000013 contained PowerShell test on windows-latest | Root cause not yet found |
 | macOS install / start / uninstall lifecycle | No macOS package yet: macOS packaging (XP-16) waits for FD-05; Windows and Linux lifecycle are in class 1 |
@@ -110,14 +110,16 @@ checkpoint at the end says where engineering stands.
 
 ## Restart checkpoint
 
-If a session ends, resume from here (2026-11-02, main `878c84d`, main CI
-41356507864 green for SG-000115 B2):
+If a session ends, resume from here (2026-11-02, main `19d55bd`; main CI
+41356507864 green for SG-000115 B2 at `878c84d`):
 
-1. #560 (B2) is merged and verified on main; no Orcel engineering PR was
-   open at this checkpoint (apart from this separate handoff draft). Branch
-   protection needs each PR up to date with main, so PRs merge one at a
-   time: rebase, exact-head green run, then `--match-head-commit`. #342 and
-   #328 belong to other work: do not touch them.
+1. Merged since the last checkpoint: #560 (B2) and #562 (agent-store path
+   alias message). Open from this work: this handoff (#561) and #563
+   (SG-000115 B3, a refused macOS process owner keeps the profile; security
+   review approved, macOS CI pending; draft). Branch protection needs each
+   PR up to date with main, so PRs merge one at a time: rebase, exact-head
+   green run, then `--match-head-commit`. #342 and #328 belong to other
+   work: do not touch them.
 2. Local runs on Windows need a private temp folder (`TEMP`/`TMP` outside
    AppData, or `ORCEL_BM02_STATE_PARENT` for Tier A): this host's AppData
    grants an app-container SID delete rights, so orceld and the agent store
