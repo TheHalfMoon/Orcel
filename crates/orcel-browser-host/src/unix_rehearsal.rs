@@ -90,11 +90,23 @@ if os.environ.get('ORCEL_REHEARSAL_PIDNS') == '1':
     except OSError as error:
         print('SG115-PIDNS-ENGINE refused', error.errno, flush=True)
         os._exit(4)
+    # The outer process holds the write end and never writes: end-of-file
+    # on the read end means it is gone.
+    alive_r, alive_w = os.pipe()
     child = os.fork()
     if child != 0:
+        os.close(alive_r)
         _, status = os.waitpid(child, 0)
         os._exit(os.waitstatus_to_exitcode(status) & 0xff)
-    die_with_parent()
+    os.close(alive_w)
+    # As pid 1 the init cannot see its parent (getppid() is 0), so the
+    # parent check is the pipe: set the death signal first, then exit if the
+    # outer process already died before it was set.
+    import select
+    if libc.prctl(1, 9, 0, 0, 0) != 0:
+        os._exit(1)
+    if select.select([alive_r], [], [], 0)[0]:
+        os._exit(1)
 args = sys.argv[1:]
 def flag(name):
     values = [arg.split('=', 1)[1] for arg in args if arg.startswith(name + '=')]
