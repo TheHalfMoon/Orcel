@@ -1590,6 +1590,68 @@ mod tests {
         dir.join("pids")
     }
 
+    /// B6b (investigation, Linux): containment by PID namespace, option (a)
+    /// of the crash residual. Every fixture process notes its host pid
+    /// (through the host's `/proc/self`, since `getpid` answers inside the
+    /// namespace). The fixture enters a new user and PID namespace
+    /// (`unshare`, unprivileged), its first child is the namespace's init,
+    /// and that init's child leaves the session (`setsid`). Killing the init
+    /// must take the whole family with it: no orphaned helper is left to use
+    /// a freed sink port. Where the host refuses unprivileged user
+    /// namespaces, the refusal is recorded as evidence instead.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_pid_namespace_init_takes_its_whole_family_with_it() {
+        const BODY: &str = "import os, time\n\
+            def note():\n    \
+                with open(os.environ['ORCEL_SG115_PIDS'], 'a') as f: f.write(os.readlink('/proc/self') + chr(10))\n\
+            note()\n\
+            if os.fork() == 0:\n    \
+                note()\n    \
+                if os.fork() == 0:\n        os.setsid(); note(); time.sleep(60)\n    \
+                time.sleep(60)\n\
+            time.sleep(60)\n";
+        let pids = scratch_file("pidns");
+        let mut command = python(BODY);
+        command.env("ORCEL_SG115_PIDS", &pids);
+        // SAFETY: only an async-signal-safe system call runs between fork
+        // and exec.
+        unsafe {
+            command.pre_exec(|| {
+                if libc::unshare(libc::CLONE_NEWUSER | libc::CLONE_NEWPID) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let mut outer = match command.spawn() {
+            Ok(child) => child,
+            Err(error) => {
+                println!("SG115-EVIDENCE unprivileged PID namespace refused: {error}");
+                let _ = std::fs::remove_dir_all(pids.parent().unwrap());
+                return;
+            }
+        };
+        let noted_pids = wait_noted(&pids, 3);
+        let mut pinned = BTreeMap::new();
+        pin(&noted_pids, &mut pinned);
+        assert_eq!(noted_pids.len(), 3, "{noted_pids:?}");
+        let (init, helper) = (pinned[&noted_pids[1]], pinned[&noted_pids[2]]);
+        assert!(is_alive(helper), "the helper runs before the init dies");
+        kill_pinned(init);
+        let started = Instant::now();
+        while is_alive(helper) && started.elapsed() < DEADLINE {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let taken = !is_alive(helper);
+        println!("SG115-RESULT PID namespace: the init's death took its setsid helper: {taken}");
+        let _ = outer.kill();
+        let _ = outer.wait();
+        let left = survivors(&pids, &mut pinned);
+        assert!(taken, "the helper outlived the namespace init");
+        assert!(left.is_empty(), "survivors {left:?}");
+    }
+
     /// The sweep never claims verified coverage while any descendant lives:
     /// the property the verified sweep exists for.
     #[test]
