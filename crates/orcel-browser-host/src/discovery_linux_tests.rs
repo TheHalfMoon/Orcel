@@ -42,6 +42,13 @@ fn tool(program: &str) -> bool {
 /// /opt/google/chrome, installed into a private root. `None` where
 /// dpkg is absent.
 fn installed(name: &str) -> Option<Fixture> {
+    installed_with(name, false)
+}
+
+/// As `installed`; with `extras`, the package also carries a relative
+/// symlink (`libalias.so -> libfixture.so`) and a subdirectory with a file
+/// (`locales/en.pak`), for B7's link and directory checks.
+fn installed_with(name: &str, extras: bool) -> Option<Fixture> {
     if !tool("dpkg") || !tool("dpkg-deb") {
         // Never a silent skip on CI, where the Ubuntu image has dpkg.
         assert!(std::env::var_os("CI").is_none(), "dpkg is missing on CI");
@@ -86,6 +93,19 @@ fn installed(name: &str) -> Option<Fixture> {
         pkg.join("opt/google/chrome/libfixture.so"),
     ] {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
+    if extras {
+        std::os::unix::fs::symlink("libfixture.so", pkg.join("opt/google/chrome/libalias.so"))
+            .unwrap();
+        let locales = pkg.join("opt/google/chrome/locales");
+        std::fs::create_dir(&locales).unwrap();
+        std::fs::set_permissions(&locales, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::write(locales.join("en.pak"), "fixture locale\n").unwrap();
+        std::fs::set_permissions(
+            locales.join("en.pak"),
+            std::fs::Permissions::from_mode(0o644),
+        )
+        .unwrap();
     }
     let deb = dir.join("fixture.deb");
     let built = Command::new("dpkg-deb")
@@ -379,22 +399,44 @@ fn signed_release(inputs: &ChainInputs<'_>, scratch: &Path) -> Result<String, Ch
     if !run.status.success() {
         return Err(ChainError::Signature);
     }
-    // `[GNUPG:] VALIDSIG <subkey fpr> ... <primary fpr>`: the last field is
-    // the primary key's fingerprint.
-    let status = String::from_utf8_lossy(&run.stdout);
-    let pinned = status
-        .lines()
-        .filter_map(|line| line.strip_prefix("[GNUPG:] VALIDSIG "))
-        .filter_map(|rest| rest.split_whitespace().last())
-        .any(|primary| {
-            inputs
-                .fingerprints
-                .contains(&primary.to_ascii_uppercase().as_str())
-        });
-    if !pinned {
+    if !signature_status_accepted(&String::from_utf8_lossy(&run.stdout), inputs.fingerprints) {
         return Err(ChainError::Signature);
     }
     std::fs::read_to_string(&out).map_err(|e| ChainError::Tool(e.to_string()))
+}
+
+/// Step 1's status rule, on `gpgv --status-fd` output: exactly one
+/// signature (`NEWSIG`), good (`GOODSIG`) and valid (`VALIDSIG`), whose
+/// primary key fingerprint (`VALIDSIG`'s last field) is pinned; and none of
+/// the statuses `gpgv` can report beside an exit status of 0 for an
+/// expired or revoked key, an expired signature, a bad one, or a missing
+/// key.
+fn signature_status_accepted(status: &str, fingerprints: &[&str]) -> bool {
+    const REFUSED: [&str; 6] = [
+        "EXPKEYSIG",
+        "EXPSIG",
+        "REVKEYSIG",
+        "BADSIG",
+        "ERRSIG",
+        "NO_PUBKEY",
+    ];
+    let codes: Vec<&str> = status
+        .lines()
+        .filter_map(|line| line.strip_prefix("[GNUPG:] "))
+        .filter_map(|rest| rest.split_whitespace().next())
+        .collect();
+    if codes.iter().any(|code| REFUSED.contains(code)) {
+        return false;
+    }
+    let count = |wanted: &str| codes.iter().filter(|code| **code == wanted).count();
+    if count("NEWSIG") > 1 || count("GOODSIG") != 1 || count("VALIDSIG") != 1 {
+        return false;
+    }
+    status
+        .lines()
+        .filter_map(|line| line.strip_prefix("[GNUPG:] VALIDSIG "))
+        .filter_map(|rest| rest.split_whitespace().last())
+        .all(|primary| fingerprints.contains(&primary.to_ascii_uppercase().as_str()))
 }
 
 /// Step 2: the SHA-256 and size the signed release lists for `name`.
@@ -432,20 +474,30 @@ fn package_digest(packages: &str, package: &str, version: &str) -> Option<String
     })
 }
 
-/// One entry of a package's data, as `dpkg-deb --fsys-tarfile` lists it.
+/// One entry of a package's data, as `dpkg-deb --fsys-tarfile` lists it,
+/// with its permission bits.
 #[derive(Debug)]
 enum Entry {
-    File(String),
-    Directory,
-    Link,
+    File {
+        digest: String,
+        mode: u32,
+    },
+    Directory {
+        mode: u32,
+    },
+    /// A symbolic link and its target.
+    Symlink(String),
+    /// A hard link to another entry of the package.
+    HardLink(String),
 }
 
 /// At most this many entries are read from a package's data.
 const MAX_PACKAGE_ENTRIES: usize = 100_000;
 
 /// The entries of a ustar/GNU tar stream: path (without a leading `./`) to
-/// kind, with a regular file's SHA-256. `None` when the stream does not
-/// parse or exceeds the bound.
+/// kind, with a regular file's SHA-256 and mode, a directory's mode, and a
+/// link's target. `None` when the stream does not parse, exceeds the bound,
+/// or names an absolute path or one with a `..` part.
 fn tar_entries(tar: &[u8]) -> Option<BTreeMap<String, Entry>> {
     let mut entries = BTreeMap::new();
     let mut offset = 0usize;
@@ -493,17 +545,29 @@ fn tar_entries(tar: &[u8]) -> Option<BTreeMap<String, Entry>> {
                 }
             }
         };
+        if name.starts_with('/') {
+            return None;
+        }
         let path = name
             .trim_start_matches("./")
             .trim_end_matches('/')
             .to_owned();
-        if path.is_empty() || path.split('/').any(|part| part == "..") {
+        if path.split('/').any(|part| part == "..") {
+            return None;
+        }
+        if path.is_empty() || path == "." {
             continue;
         }
+        let mode = u32::from_str_radix(text(100..108)?.trim(), 8).ok()? & 0o7777;
+        let target = text(157..257)?;
         let entry = match kind {
-            b'0' | 0 => Entry::File(sha256_hex(body)),
-            b'5' => Entry::Directory,
-            b'1' | b'2' => Entry::Link,
+            b'0' | 0 => Entry::File {
+                digest: sha256_hex(body),
+                mode,
+            },
+            b'5' => Entry::Directory { mode },
+            b'2' => Entry::Symlink(target),
+            b'1' => Entry::HardLink(target.trim_start_matches("./").to_owned()),
             _ => return None,
         };
         entries.insert(path, entry);
@@ -528,18 +592,36 @@ fn installed_matches(inputs: &ChainInputs<'_>) -> Result<(), ChainError> {
     }
     let entries = tar_entries(&tar.stdout)
         .ok_or_else(|| ChainError::Tool("unreadable package data".into()))?;
+    // A file: a regular file (not a link) with the same SHA-256 and mode. A
+    // directory: a real directory with the same mode. A symlink: a symlink
+    // with the same target. A hard link: a regular file with its target's
+    // content. Owners are not compared (an unprivileged fixture install
+    // cannot set them; the S-07 tree check covers root ownership).
+    let file_matches = |installed: &Path, digest: &str, mode: Option<u32>| {
+        std::fs::symlink_metadata(installed)
+            .map(|meta| {
+                meta.file_type().is_file() && mode.is_none_or(|mode| meta.mode() & 0o7777 == mode)
+            })
+            .unwrap_or(false)
+            && std::fs::read(installed)
+                .map(|bytes| sha256_hex(&bytes) == digest)
+                .unwrap_or(false)
+    };
     for (path, entry) in &entries {
-        let Entry::File(digest) = entry else {
-            continue;
-        };
         let installed = inputs.root.join(path);
-        let regular = std::fs::symlink_metadata(&installed)
-            .map(|meta| meta.file_type().is_file())
-            .unwrap_or(false);
-        let matches = regular
-            && std::fs::read(&installed)
-                .map(|bytes| sha256_hex(&bytes) == *digest)
-                .unwrap_or(false);
+        let matches = match entry {
+            Entry::File { digest, mode } => file_matches(&installed, digest, Some(*mode)),
+            Entry::Directory { mode } => std::fs::symlink_metadata(&installed)
+                .map(|meta| meta.file_type().is_dir() && meta.mode() & 0o7777 == *mode)
+                .unwrap_or(false),
+            Entry::Symlink(target) => std::fs::read_link(&installed)
+                .map(|found| found == Path::new(target))
+                .unwrap_or(false),
+            Entry::HardLink(target) => match entries.get(target) {
+                Some(Entry::File { digest, .. }) => file_matches(&installed, digest, None),
+                _ => false,
+            },
+        };
         if !matches {
             return Err(ChainError::Installed(path.clone()));
         }
@@ -562,6 +644,8 @@ fn installed_matches(inputs: &ChainInputs<'_>) -> Result<(), ChainError> {
             if !entries.contains_key(&child) {
                 return Err(ChainError::Installed(child));
             }
+            // Only a real directory is descended into (a link is never
+            // followed; its target was checked above).
             if item.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
                 stack.push(child);
             }
@@ -589,9 +673,10 @@ fn retained_package_chain(inputs: &ChainInputs<'_>, scratch: &Path) -> Result<()
     installed_matches(inputs)
 }
 
-/// The primary fingerprint of Google's Linux package signing key, pinned
-/// for the real-host evidence below. Pinning it for activation is a founder
-/// decision (prep/SG-000115.md, "B7").
+/// The primary fingerprint of Google's Linux package signing key, used only
+/// by the evidence and refusal tests below. Written from memory and not yet
+/// checked against a key file; shipping and pinning vendor keys for
+/// activation is a founder decision (prep/SG-000115.md, "B7").
 const GOOGLE_LINUX_SIGNING_KEY: &str = "EB4C1BFD4F042F6DDDCCEC917721F63BD38B4796";
 
 /// A throwaway signing key, a signed release and a `Packages` index for an
@@ -801,6 +886,229 @@ fn b7_every_broken_link_leaves_the_engine_unverified() {
     std::fs::write(&repo.deb, &deb).unwrap();
     // Restored, the chain holds again.
     assert_eq!(chain(&fixture, &repo, &[&fpr], "1.0"), Ok(()));
+}
+
+/// B7: the signature status rule. Only one good, valid signature from a
+/// pinned key passes; an expired or revoked key, an expired or bad
+/// signature, a missing key, or a second signature refuses.
+#[test]
+fn b7_only_one_good_signature_from_a_pinned_key_is_accepted() {
+    let pinned = ["AAAA"];
+    let good = "[GNUPG:] NEWSIG\n[GNUPG:] GOODSIG 1 k\n[GNUPG:] VALIDSIG 1 2026-01-01 0 4 0 22 8 00 AAAA\n";
+    assert!(signature_status_accepted(good, &pinned));
+    assert!(
+        !signature_status_accepted(good, &["BBBB"]),
+        "an unpinned key"
+    );
+    for refused in [
+        "EXPKEYSIG 1 k",
+        "EXPSIG 1 k",
+        "REVKEYSIG 1 k",
+        "BADSIG 1 k",
+        "ERRSIG 1",
+        "NO_PUBKEY 1",
+    ] {
+        let status = format!("{good}[GNUPG:] {refused}\n");
+        assert!(!signature_status_accepted(&status, &pinned), "{refused}");
+    }
+    let second = format!(
+        "{good}[GNUPG:] NEWSIG\n[GNUPG:] GOODSIG 2 k\n[GNUPG:] VALIDSIG 2 2026-01-01 0 4 0 22 8 00 AAAA\n"
+    );
+    assert!(
+        !signature_status_accepted(&second, &pinned),
+        "a second signature"
+    );
+    assert!(!signature_status_accepted("", &pinned), "no signature");
+}
+
+/// B7: a real expired fixture key, and a release signed by a second key
+/// beside the pinned one, are refused by the whole chain.
+#[test]
+fn b7_an_expired_key_or_a_second_signer_is_refused() {
+    let Some(fixture) = installed("b7-keys") else {
+        return;
+    };
+    let Some(repo) = signed_repo(&fixture) else {
+        return;
+    };
+    let home = repo.scratch.join("gnupg");
+    let release = repo.scratch.join("Release");
+    // A second key, used beside the pinned one.
+    let made = gpg(
+        &home,
+        &[
+            "--quick-gen-key",
+            "Second <s@example.invalid>",
+            "ed25519",
+            "sign",
+            "1d",
+        ],
+    );
+    assert!(made.status.success(), "{made:?}");
+    let listed = gpg(&home, &["--with-colons", "--list-keys"]);
+    let fingerprints: Vec<String> = String::from_utf8_lossy(&listed.stdout)
+        .lines()
+        .filter_map(|line| line.strip_prefix("fpr:"))
+        .filter_map(|rest| rest.split(':').find(|field| field.len() == 40))
+        .map(str::to_owned)
+        .collect();
+    let second = fingerprints
+        .iter()
+        .find(|fpr| **fpr != repo.fingerprint)
+        .unwrap()
+        .clone();
+    let exported = gpg(
+        &home,
+        &[
+            "--yes",
+            "--output",
+            repo.keyring.to_str().unwrap(),
+            "--export",
+        ],
+    );
+    assert!(exported.status.success(), "{exported:?}");
+    let both = gpg(
+        &home,
+        &[
+            "--yes",
+            "--local-user",
+            &repo.fingerprint,
+            "--local-user",
+            &second,
+            "--output",
+            repo.in_release.to_str().unwrap(),
+            "--clearsign",
+            release.to_str().unwrap(),
+        ],
+    );
+    assert!(both.status.success(), "{both:?}");
+    assert_eq!(
+        chain(&fixture, &repo, &[&repo.fingerprint], "1.0"),
+        Err(ChainError::Signature),
+        "a second signer rides along"
+    );
+    // A key that expired before the check: made and used at a past time.
+    let old_home = repo.scratch.join("gnupg-old");
+    std::fs::create_dir_all(&old_home).unwrap();
+    std::fs::set_permissions(&old_home, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let past = ["--faked-system-time", "20200101T000000"];
+    let made = gpg(
+        &old_home,
+        &[
+            past[0],
+            past[1],
+            "--quick-gen-key",
+            "Expired <e@example.invalid>",
+            "ed25519",
+            "sign",
+            "1d",
+        ],
+    );
+    assert!(made.status.success(), "{made:?}");
+    let listed = gpg(
+        &old_home,
+        &[past[0], past[1], "--with-colons", "--list-keys"],
+    );
+    let expired = String::from_utf8_lossy(&listed.stdout)
+        .lines()
+        .find_map(|line| line.strip_prefix("fpr:"))
+        .and_then(|rest| rest.split(':').find(|field| field.len() == 40))
+        .unwrap()
+        .to_owned();
+    let exported = gpg(
+        &old_home,
+        &[
+            "--yes",
+            "--output",
+            repo.keyring.to_str().unwrap(),
+            "--export",
+        ],
+    );
+    assert!(exported.status.success(), "{exported:?}");
+    let signed = gpg(
+        &old_home,
+        &[
+            past[0],
+            past[1],
+            "--yes",
+            "--output",
+            repo.in_release.to_str().unwrap(),
+            "--clearsign",
+            release.to_str().unwrap(),
+        ],
+    );
+    assert!(signed.status.success(), "{signed:?}");
+    assert_eq!(
+        chain(&fixture, &repo, &[&expired], "1.0"),
+        Err(ChainError::Signature),
+        "an expired key"
+    );
+}
+
+/// B7: links, directories and modes are part of the package and checked.
+#[test]
+fn b7_links_directories_and_modes_must_match_the_package() {
+    let Some(fixture) = installed_with("b7-tree", true) else {
+        return;
+    };
+    let Some(repo) = signed_repo(&fixture) else {
+        return;
+    };
+    let fpr = repo.fingerprint.clone();
+    assert_eq!(chain(&fixture, &repo, &[&fpr], "1.0"), Ok(()));
+    let dir = fixture.root.join("opt/google/chrome");
+    // A packaged symlink retargeted.
+    std::fs::remove_file(dir.join("libalias.so")).unwrap();
+    std::os::unix::fs::symlink("chrome", dir.join("libalias.so")).unwrap();
+    assert_eq!(
+        chain(&fixture, &repo, &[&fpr], "1.0"),
+        Err(ChainError::Installed(
+            "opt/google/chrome/libalias.so".into()
+        ))
+    );
+    std::fs::remove_file(dir.join("libalias.so")).unwrap();
+    std::os::unix::fs::symlink("libfixture.so", dir.join("libalias.so")).unwrap();
+    // A packaged directory swapped for a link to a copy elsewhere.
+    let elsewhere = fixture.dir.join("elsewhere");
+    std::fs::rename(dir.join("locales"), &elsewhere).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, dir.join("locales")).unwrap();
+    assert_eq!(
+        chain(&fixture, &repo, &[&fpr], "1.0"),
+        Err(ChainError::Installed("opt/google/chrome/locales".into()))
+    );
+    std::fs::remove_file(dir.join("locales")).unwrap();
+    std::fs::rename(&elsewhere, dir.join("locales")).unwrap();
+    // A file's mode widened.
+    std::fs::set_permissions(dir.join("chrome"), std::fs::Permissions::from_mode(0o666)).unwrap();
+    assert_eq!(
+        chain(&fixture, &repo, &[&fpr], "1.0"),
+        Err(ChainError::Installed("opt/google/chrome/chrome".into()))
+    );
+    std::fs::set_permissions(dir.join("chrome"), std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert_eq!(chain(&fixture, &repo, &[&fpr], "1.0"), Ok(()));
+}
+
+/// B7: a package naming an absolute path or a `..` part is not read.
+#[test]
+fn b7_a_package_path_outside_the_root_refuses_the_whole_package() {
+    fn header(name: &str, kind: u8) -> Vec<u8> {
+        let mut block = vec![0u8; 512];
+        block[..name.len()].copy_from_slice(name.as_bytes());
+        block[100..107].copy_from_slice(b"0000644");
+        block[124..135].copy_from_slice(b"00000000000");
+        block[156] = kind;
+        block
+    }
+    let end = vec![0u8; 1024];
+    let fine = [header("./opt/x", b'5'), end.clone()].concat();
+    assert!(tar_entries(&fine).is_some());
+    for bad in ["/etc/passwd", "./opt/../../etc/x", "../x"] {
+        let tar = [header(bad, b'0'), end.clone()].concat();
+        assert!(tar_entries(&tar).is_none(), "{bad}");
+    }
+    // A pax header (an entry type this parser does not know) refuses too.
+    let pax = [header("./PaxHeaders/x", b'x'), end].concat();
+    assert!(tar_entries(&pax).is_none());
 }
 
 /// B7 on the host: which links of a real Chrome chain are on disk. Evidence
