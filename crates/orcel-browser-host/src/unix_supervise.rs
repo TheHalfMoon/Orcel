@@ -1626,11 +1626,21 @@ mod tests {
         }
         let mut outer = match command.spawn() {
             Ok(child) => child,
-            Err(error) => {
+            // Only the errors `unshare` gives for a refused namespace count
+            // as the host's refusal (recorded as evidence, never as a
+            // pass of the containment claim); any other spawn failure (no
+            // python3, out of memory) fails the test.
+            Err(error)
+                if matches!(
+                    error.raw_os_error(),
+                    Some(libc::EPERM | libc::EACCES | libc::ENOSPC | libc::EINVAL)
+                ) =>
+            {
                 println!("SG115-EVIDENCE unprivileged PID namespace refused: {error}");
                 let _ = std::fs::remove_dir_all(pids.parent().unwrap());
                 return;
             }
+            Err(error) => panic!("the fixture did not start: {error}"),
         };
         let noted_pids = wait_noted(&pids, 3);
         let mut pinned = BTreeMap::new();

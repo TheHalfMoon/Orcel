@@ -1230,7 +1230,9 @@ fn no_shell_script_or_remote_process_surface_exists() {
     // #[cfg(all(test, unix))]. A2 also re-executes the test binary itself as
     // a dedicated supervisor (A2b, recorded the same way), and A5 re-runs
     // one test of the test binary under macOS `/usr/bin/sandbox-exec` with
-    // process info denied (B3, recorded the same way). A6
+    // process info denied (B3, recorded the same way). A2's tests also
+    // start one fixture in a new unprivileged user and PID namespace
+    // (`unshare` in `pre_exec`, Linux, B6b, recorded the same way). A6
     // (unix_rehearsal.rs) spawns only through A2's `python_fixture`, pinned
     // below under the same guard.
     let lib = sources
