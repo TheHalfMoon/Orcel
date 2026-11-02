@@ -92,8 +92,7 @@ jobs:
           set -euo pipefail
           status=0
           out=$(cargo test -p orcel-browser-host --lib -- --exact --nocapture unix_supervise::tests::a_pid_namespace_init_takes_its_whole_family_with_it 2>&1) || status=$?
-          printf '%s
-' "$out"
+          printf '%s\n' "$out"
           [ "$status" -eq 0 ]
           grep -qE "SG115-RESULT PID namespace|SG115-EVIDENCE unprivileged PID namespace refused" <<<"$out"
       # BM-02 evidence on this OS: both tiers again with their per-case lines
