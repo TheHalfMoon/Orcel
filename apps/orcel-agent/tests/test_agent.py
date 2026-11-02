@@ -461,10 +461,32 @@ class PrivateStore(Scratch):
         link = Path(self._dir.name) / "link"
         subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], check=True, capture_output=True)
         try:
-            with self.assertRaisesRegex(StoreError, "junction, link or mount point lies on its path"):
+            with self.assertRaisesRegex(StoreError, "possible mapped or subst drive, junction, link or mount point"):
                 open_store(link / "agent", RUN)
         finally:
             os.rmdir(link)
+
+    @unittest.skipUnless(os.name == "nt", "Windows only")
+    def test_a_store_on_a_subst_drive_is_refused(self) -> None:
+        # A subst (or mapped) drive resolves to another final path, so the
+        # store is refused, and the message does not call it a junction.
+        # CI only: a subst drive letter is visible to the whole logon session.
+        if os.environ.get("CI") != "true":
+            self.skipTest("maps a drive letter; runs on CI runners only")
+        import string
+
+        used = {f"{d}:" for d in string.ascii_uppercase if os.path.exists(f"{d}:\\")}
+        letter = next((f"{d}:" for d in reversed(string.ascii_uppercase[12:]) if f"{d}:" not in used), None)
+        if letter is None:
+            self.skipTest("no free drive letter")
+        target = Path(self._dir.name) / "subst-target"
+        target.mkdir()
+        subprocess.run(["subst", letter, str(target)], check=True, capture_output=True)
+        try:
+            with self.assertRaisesRegex(StoreError, "possible mapped or subst drive"):
+                open_store(Path(letter + "\\") / "agent", RUN)
+        finally:
+            subprocess.run(["subst", letter, "/d"], capture_output=True)
 
     @unittest.skipUnless(os.name == "nt", "Windows only")
     def test_a_store_under_a_short_name_is_accepted(self) -> None:

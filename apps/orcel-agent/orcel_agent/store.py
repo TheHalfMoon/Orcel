@@ -137,8 +137,13 @@ def _private_dir_windows(path: Path) -> Any:
         final = held.final_path()
         lexical = winacl.long_path(os.path.abspath(path))
         if os.path.normcase(os.path.normpath(final)) != os.path.normcase(os.path.normpath(lexical)):
-            raise StoreError(f"the agent store {path} resolves to {final}: a junction, link or mount point "
-                             "lies on its path")
+            # This comparison detects an alias but cannot classify its cause:
+            # a mapped/subst drive also differs from its underlying path.
+            # Keep refusing; never label every mismatch as a junction.
+            raise StoreError(
+                f"the agent store {path} resolves to {final}: requested and held paths differ "
+                "(possible mapped or subst drive, junction, link or mount point); refusing"
+            )
         problem = winacl.private_problem(held.security(), user, winacl.sddl_form(user))
     except StoreError:
         held.close()
