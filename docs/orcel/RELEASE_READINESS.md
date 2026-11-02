@@ -119,13 +119,14 @@ checkpoint at the end says where engineering stands.
 
 ## Restart checkpoint
 
-If a session ends, resume from here (2026-11-02, main `09b0e1e`; main CI
-41419986769 green at `717ed16`):
+If a session ends, resume from here (2026-11-02, main `09b0e1e`, main CI
+41437216979 green after a rerun of the #438 Windows flake):
 
 1. Merged since the last checkpoint: #571 (handoff), #572 (B5b), #574
    (P-14, fixing flake #573), #578 (RUSTSEC-2026-0429 under the doc parser's
-   extraction-only rule) and #577 (fixing flake #575). No PR from this work
-   is open apart from this handoff. Branch
+   extraction-only rule) and #577 (fixing flake #575). Open from this work:
+   this handoff and #579 (SG-000115 B3b: a process the kernel reports gone
+   or zombie no longer keeps a profile; approved, CI pending). Branch
    protection needs each PR up to date with main, so PRs merge one at a
    time: rebase, exact-head green run, then `--match-head-commit`. #342 and
    #328 belong to other work: do not touch them.
