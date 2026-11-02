@@ -325,6 +325,9 @@ const SZOMB: u8 = 5;
 const KP_STAT: usize = 36;
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const KP_PID: usize = 40;
+/// `sizeof(struct kinfo_proc)` on 64-bit macOS.
+#[cfg(target_os = "macos")]
+const KINFO_PROC_SIZE: usize = 648;
 
 /// The (pid, `p_stat`) of each `kinfo_proc` record in `raw`, each `entry`
 /// bytes long; `None` unless the records divide `raw` exactly, fit the
@@ -385,7 +388,10 @@ fn record_size(me: i32) -> Option<usize> {
         Some(&mut buffer),
     )
     .ok()?;
-    if !(KP_PID + 4..=buffer.len()).contains(&size) {
+    // Exactly one record of the known size (`libc` has no Apple
+    // `kinfo_proc`, so the size is pinned here): any other layout keeps
+    // the profile.
+    if size != KINFO_PROC_SIZE {
         return None;
     }
     let pid = i32::from_ne_bytes(buffer[KP_PID..KP_PID + 4].try_into().ok()?);
