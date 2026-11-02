@@ -285,8 +285,21 @@ fn named_by_a_running_engine(path: &Path) -> bool {
             Ok(cmdline) => cmdline_names(&cmdline, &wanted),
             // Exited between the listing and the read: not alive.
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
-            // Unreadable (for example `hidepid=`): it may be an engine.
-            Err(_) => true,
+            // Caught while exiting (`ESRCH`), or gone by now: not alive (the
+            // Linux side of B3b, surfaced by B8b's concurrent crashes).
+            Err(error) if error.raw_os_error() == Some(libc::ESRCH) || !entry.path().exists() => {
+                false
+            }
+            // Unreadable (for example `hidepid=`) and still there: it may be
+            // an engine. Diagnostic: shows the cause in a CI log whenever an
+            // unreadable process keeps a profile.
+            Err(error) => {
+                eprintln!(
+                    "SG115-DIAG kept: {} cmdline unreadable ({error}), still there",
+                    entry.path().display()
+                );
+                true
+            }
         }
     })
 }
