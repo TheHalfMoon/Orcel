@@ -46,6 +46,7 @@ checkpoint at the end says where engineering stands.
 | SG-000115 B2 (inert): macOS same-user browser process-argument scan detects `--user-data-dir` before `SingletonLock`, including paths with spaces as whole arguments; on macOS CI the profile was retained until the running process exited, then removed. Other-user/root processes and sandboxed-host `permission denied` remain unaccepted residuals. | #560 → `878c84d` (main CI 41356507864 passed) |
 | SG-000115 B3 (inert): macOS ownership comes from the kernel's own list of this user's processes (`sysctl KERN_PROC_UID`, record layout checked at run time, record size read and pinned at 648 bytes), never from a refusal; any failure keeps the profile. A first design ("a refusal keeps") was disproved by macOS CI, which showed every other user's process info refused, and was not used. On hosted macOS CI the list is served without privilege, and under `sandbox-exec` with process info denied the engine's profile is still kept | #563 → `7be4b3b` (main CI green) |
 | SG-000115 B5 (inert): profile recovery through the symlink-resistant walk (`recover_stale_profile_beneath`); the final directory is removed with `unlinkat` relative to its held, private parent. A profile moved behind a link under its old name is refused (a test that fails without the held parent); opened by another session, reviewed, its duplicate workflow removed | #564 → `ce50d6a` |
+| SG-000115 B4 (inert): on macOS, while root runs a browser engine (a living root process named like Google Chrome, Microsoft Edge or Chromium, from the kernel's unprivileged list of root's processes; the name field's offset checked at run time against this process's own record), every profile is kept, since by its 0700 mode only the owner and root can use one. Rests on no ACL granting another user access (A3's open item). On macOS CI root's list was served without privilege and blocked nothing; a real root engine was not started (needs privilege) | #566 → `83c25a6` (main CI 41383593998) |
 | Lifecycle on main `89066a6`: Windows release qualification (install, run, update, recover, uninstall, local report client, 400 MB budget) and Linux deb/rpm/tarball install, systemd units, tamper detection and uninstall | main CI 40672122647 |
 
 ## 2. Engineering that can still be completed without the founder
@@ -86,7 +87,7 @@ checkpoint at the end says where engineering stands.
 | Release and publication | Not authorized; no release is created |
 | A planner model for BM-02 Tier C agent runs | Paid inference is excluded by the zero-cost rule; the local d1 model is an advisory classifier, not a planner |
 | M4 model selection and licensing | Candidates and the benchmark plan are in `prep/M4-local-model-candidates.md`; nothing is downloaded or run before this gate |
-| SG-000115 residuals (recorded, **not accepted**; engineering continues on each) | (a) macOS: a pid reused within one descendant scan (narrowed by B1, #557, to a backward wall-clock step: during a scan it can hide a reuse; afterwards it tears every scan, so the sweep fails closed); (b) descendants of another user that cannot be read, including root-run engines (on macOS another user's engine is not seen by recovery; the sandboxed-host `permission denied` ambiguity was closed by B3, #563); (c) false positives of the unattributable rule; (d) the network sink's port after an orceld crash; (e) S-07 binds ownership and modes, not a signature (stock GitHub Ubuntu has `/opt/google` at 0777, so Chrome there is unverified); (f) engines in another PID namespace; (g) profile paths with spaces (whole-argument matching now covers macOS always, and Linux only where the title is not rewritten), and `hidepid` on `/proc` |
+| SG-000115 residuals (recorded, **not accepted**; engineering continues on each) | (a) macOS: a pid reused within one descendant scan (narrowed by B1, #557, to a backward wall-clock step: during a scan it can hide a reuse; afterwards it tears every scan, so the sweep fails closed); (b) descendants of another user that cannot be read, including root-run engines (on macOS recovery since B4, #566, keeps every profile while root runs an engine by a recognised name; a root engine under another name, and any user an uninspected ACL admits, are not seen; the sandboxed-host `permission denied` ambiguity was closed by B3, #563); (c) false positives of the unattributable rule; (d) the network sink's port after an orceld crash; (e) S-07 binds ownership and modes, not a signature (stock GitHub Ubuntu has `/opt/google` at 0777, so Chrome there is unverified); (f) engines in another PID namespace; (g) profile paths with spaces (whole-argument matching now covers macOS always, and Linux only where the title is not rewritten), and `hidepid` on `/proc` |
 | Real platform presence (Windows Hello, Touch ID, polkit), macOS permissions | Never simulated or pre-granted |
 | Paid infrastructure, deployment | Excluded by the zero-cost rule |
 
@@ -112,11 +113,11 @@ checkpoint at the end says where engineering stands.
 
 ## Restart checkpoint
 
-If a session ends, resume from here (2026-11-02, main `ce50d6a`; main CI
-green at `7be4b3b`, after B3):
+If a session ends, resume from here (2026-11-02, main `83c25a6`, main CI
+41383593998 green):
 
-1. Merged since the last checkpoint: #561 (B2 handoff), #563 (B3) and #564
-   (B5). No PR from this work is open apart from this handoff. Branch
+1. Merged since the last checkpoint: #565 (handoff) and #566 (B4). No PR
+   from this work is open apart from this handoff. Branch
    protection needs each PR up to date with main, so PRs merge one at a
    time: rebase, exact-head green run, then `--match-head-commit`. #342 and
    #328 belong to other work: do not touch them.
@@ -136,5 +137,5 @@ green at `7be4b3b`, after B3):
 5. Known CI flakes: macOS toolchain install conflict (rerun failed jobs),
    #438, #508, #512, #516, #524, #558 (orceld app API re-bind on macOS).
 6. Do not repeat: XP-06/XP-11 Mac hardware tests (#425); the SG-000115 A1 to
-   A6b, B1, B2, B3 and B5 slices; the M4 research (#553).
+   A6b, B1 to B5 slices; the M4 research (#553).
 7. Never mark Core MVP complete; classes 3 to 5 stay open.
