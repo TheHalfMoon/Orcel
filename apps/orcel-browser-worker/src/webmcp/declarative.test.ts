@@ -348,15 +348,25 @@ test("a capture that never settles fails on time, even if detaching hangs too", 
   const never = new Promise<never>(() => {});
   let detaches = 0;
   const hung = { capture: () => never, detach: () => (detaches++, never) };
-  const started = Date.now();
+  // Ordered, not timed (#575): a sentinel timer set before the capture and
+  // due half way through the detach grace period must not fire before the
+  // timed-out capture rejects. Expired timers run in order, with microtasks
+  // between them, so a slow runner cannot reorder them; a timed-out capture
+  // that waited for the hanging detach would let the sentinel fire first.
+  let late = false;
+  const sentinel = setTimeout(() => (late = true), 100 + DETACH_WAIT_MS / 2);
   await assert.rejects(captureWithin(hung, 100), /timed out/);
-  assert.ok(Date.now() - started < 300, `took ${Date.now() - started} ms`);
+  clearTimeout(sentinel);
+  assert.equal(late, false, "the timed-out capture waited for the hanging detach");
   assert.equal(detaches, 1, "the session was not released");
-  // A capture that finishes waits at most briefly for a hanging detach.
+  // A capture that finishes waits at most the grace period for a hanging
+  // detach: it settles before a sentinel due at twice that period.
   const quick = { capture: async () => ({ documents: [], strings: [] }), detach: () => never };
-  const begun = Date.now();
+  let overdue = false;
+  const limit = setTimeout(() => (overdue = true), DETACH_WAIT_MS * 2);
   assert.deepEqual(await captureWithin(quick, 1_000), { documents: [], strings: [] });
-  assert.ok(Date.now() - begun < DETACH_WAIT_MS + 150, `took ${Date.now() - begun} ms`);
+  clearTimeout(limit);
+  assert.equal(overdue, false, "the finished capture waited past the grace period");
 });
 
 test("a tool is self-contained only when position and ownership agree", () => {
