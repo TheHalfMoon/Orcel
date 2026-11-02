@@ -374,6 +374,24 @@ fn sysctl_read(mib: &mut [libc::c_int], buffer: Option<&mut [u8]>) -> Result<usi
     Ok(size)
 }
 
+/// B3: the size of one `kinfo_proc` record, from a real read of this
+/// process's own record (a size query alone reports spare room, so it is
+/// not used); the record must carry this process's pid at `KP_PID`.
+#[cfg(target_os = "macos")]
+fn record_size(me: i32) -> Option<usize> {
+    let mut buffer = vec![0u8; 4096];
+    let size = sysctl_read(
+        &mut [libc::CTL_KERN, libc::KERN_PROC, libc::KERN_PROC_PID, me],
+        Some(&mut buffer),
+    )
+    .ok()?;
+    if !(KP_PID + 4..=buffer.len()).contains(&size) {
+        return None;
+    }
+    let pid = i32::from_ne_bytes(buffer[KP_PID..KP_PID + 4].try_into().ok()?);
+    (pid == me).then_some(size)
+}
+
 /// B3: this user's processes as the kernel lists them for this effective
 /// uid (`KERN_PROC_UID`), with their `p_stat`. `None` when the list cannot
 /// be read or does not check out.
@@ -381,12 +399,7 @@ fn sysctl_read(mib: &mut [libc::c_int], buffer: Option<&mut [u8]>) -> Result<usi
 fn my_processes() -> Option<Vec<(i32, u8)>> {
     // SAFETY: no arguments; cannot fail.
     let me = unsafe { libc::getpid() };
-    // One record's size: the kernel's answer for this process alone.
-    let entry = sysctl_read(
-        &mut [libc::CTL_KERN, libc::KERN_PROC, libc::KERN_PROC_PID, me],
-        None,
-    )
-    .ok()?;
+    let entry = record_size(me)?;
     // SAFETY: no arguments; cannot fail.
     let uid = unsafe { libc::geteuid() } as libc::c_int;
     let mut mib = [libc::CTL_KERN, libc::KERN_PROC, libc::KERN_PROC_UID, uid];
@@ -947,6 +960,9 @@ mod tests {
         let _ = child.kill();
         let _ = child.wait();
         let mine = mine.expect("this user's process list is served");
+        // `sizeof(struct kinfo_proc)` on 64-bit macOS: the record size is
+        // read, not a size query's padded answer.
+        assert_eq!(record_size(std::process::id() as i32), Some(648));
         let pids: Vec<i32> = mine.iter().map(|(pid, _)| *pid).collect();
         assert!(pids.contains(&(std::process::id() as i32)));
         assert!(pids.contains(&(child.id() as i32)));
