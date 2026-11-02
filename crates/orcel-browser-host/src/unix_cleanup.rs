@@ -277,102 +277,134 @@ fn cmdline_names(cmdline: &[u8], wanted: &[Vec<u8>]) -> bool {
             .any(named)
 }
 
-/// At most this many pids are listed on macOS; more keeps the profile.
+/// At most this many of this user's processes are listed on macOS; more
+/// keeps the profile.
 #[cfg(target_os = "macos")]
 const MAX_PIDS: usize = 65_536;
 /// Room for one process's `KERN_PROCARGS2` (macOS `ARG_MAX`, 1 MiB).
 #[cfg(target_os = "macos")]
 const PROCARGS_MAX: usize = 1 << 20;
 
-/// macOS (B2): a process of this user whose arguments, read with
+/// macOS (B2, B3): a process of this user whose arguments, read with
 /// `sysctl KERN_PROCARGS2`, name this profile as `--user-data-dir=<path>`.
-/// A process of this user whose arguments cannot be read or parsed, or
-/// whose owner cannot be read, counts as an engine that may be alive, and so
-/// does a listing that fails or reaches its bound. A process that is gone
-/// or a zombie does not, and neither does one whose BSD info names another
-/// uid: another user's arguments (root's included) cannot be read without
-/// privilege, so such an engine is not seen (open item, B4).
+///
+/// B3: this user's processes are the ones the kernel lists for this
+/// effective uid (`sysctl KERN_PROC_UID`, which an unprivileged process is
+/// served, as `ps` is). A process outside that list is another user's by the
+/// kernel's own report, never inferred from a refusal. A list that cannot be
+/// read, or does not check out, keeps the profile; so does a process of this
+/// user whose arguments cannot be read or parsed. A process that has exited,
+/// or a zombie, does not. Another user's arguments (root's included) cannot
+/// be read without privilege, so such an engine is not seen (open item, B4).
 #[cfg(target_os = "macos")]
 fn named_by_a_running_engine(path: &Path) -> bool {
     let wanted = wanted_arguments(path);
-    let mut pids = vec![0i32; MAX_PIDS];
-    let bytes = (pids.len() * std::mem::size_of::<i32>()) as libc::c_int;
-    // SAFETY: the buffer holds MAX_PIDS pids of `bytes` bytes.
-    let count = unsafe { libc::proc_listallpids(pids.as_mut_ptr().cast(), bytes) };
-    if count <= 0 || count as usize >= MAX_PIDS {
+    let Some(mine) = my_processes() else {
         return true;
-    }
+    };
     let mut buffer = vec![0u8; PROCARGS_MAX];
-    pids[..count as usize]
-        .iter()
-        .copied()
-        .filter(|pid| *pid > 0)
-        .any(|pid| match owner_of(pid) {
-            Owner::Gone | Owner::Other => false,
-            Owner::Unknown => true,
-            Owner::Me => match procargs(pid, &mut buffer) {
-                Ok(Some(raw)) => match argv_of(raw) {
-                    Some(argv) => cmdline_names(argv, &wanted),
-                    None => true,
-                },
-                Ok(None) => false,
-                Err(_) => true,
+    mine.iter()
+        .filter(|(pid, stat)| *pid > 0 && *stat != SZOMB)
+        .any(|(pid, _)| match procargs(*pid, &mut buffer) {
+            Ok(Some(raw)) => match argv_of(raw) {
+                Some(argv) => cmdline_names(argv, &wanted),
+                None => true,
             },
+            Ok(None) => false,
+            Err(_) => true,
         })
 }
 
-#[cfg(target_os = "macos")]
-enum Owner {
-    /// Exited, or a zombie.
-    Gone,
-    /// Another user's: its BSD info names another uid. Only a uid the
-    /// kernel reported makes a process another user's (B3), never a
-    /// refusal.
-    Other,
-    Me,
-    /// Its owner cannot be read (refused, `EPERM` included, or a short
-    /// read): it may be an engine of this user, so it keeps the profile.
-    /// An unprivileged, unsandboxed host reads every process's BSD info
-    /// (pinned by a test), so this costs nothing there; a sandboxed host
-    /// denied process info keeps profiles instead of deleting under its
-    /// own engine.
-    Unknown,
+/// `SZOMB` in `<sys/proc.h>`.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+const SZOMB: u8 = 5;
+/// Offsets in `struct kinfo_proc` (it starts with `struct extern_proc`) on
+/// 64-bit macOS: `p_stat` (a `char`) and `p_pid` (an `int`). The layout is
+/// checked at run time: the list must name this process as running.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+const KP_STAT: usize = 36;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+const KP_PID: usize = 40;
+
+/// The (pid, `p_stat`) of each `kinfo_proc` record in `raw`, each `entry`
+/// bytes long; `None` unless the records divide `raw` exactly, fit the
+/// bound, and include `me` as a process that is not a zombie (the layout
+/// check).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn kinfo_records(raw: &[u8], entry: usize, me: i32, bound: usize) -> Option<Vec<(i32, u8)>> {
+    if entry < KP_PID + 4 || raw.is_empty() || raw.len() % entry != 0 || raw.len() / entry > bound {
+        return None;
+    }
+    let records: Vec<(i32, u8)> = raw
+        .chunks_exact(entry)
+        .map(|record| {
+            let pid = i32::from_ne_bytes(record[KP_PID..KP_PID + 4].try_into().unwrap());
+            (pid, record[KP_STAT])
+        })
+        .collect();
+    records
+        .iter()
+        .any(|(pid, stat)| *pid == me && *stat != SZOMB)
+        .then_some(records)
 }
 
+/// A `sysctl` read of `mib` into `buffer` (`None` for a size query); the
+/// byte count, or the errno.
 #[cfg(target_os = "macos")]
-fn owner_of(pid: i32) -> Owner {
-    // SAFETY: plain data; zeroed is a valid value.
-    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
-    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
-    // SAFETY: the buffer is exactly one proc_bsdinfo of `size` bytes.
-    let read = unsafe {
-        libc::proc_pidinfo(
-            pid,
-            libc::PROC_PIDTBSDINFO,
+fn sysctl_read(mib: &mut [libc::c_int], buffer: Option<&mut [u8]>) -> Result<usize, i32> {
+    let (pointer, mut size) = match buffer {
+        Some(buffer) => (buffer.as_mut_ptr().cast(), buffer.len()),
+        None => (std::ptr::null_mut(), 0),
+    };
+    // SAFETY: `mib` holds `mib.len()` names; the buffer, when given, holds
+    // `size` bytes; nothing is written to the kernel.
+    let status = unsafe {
+        libc::sysctl(
+            mib.as_mut_ptr(),
+            mib.len() as libc::c_uint,
+            pointer,
+            &mut size,
+            std::ptr::null_mut(),
             0,
-            (&mut info as *mut libc::proc_bsdinfo).cast(),
-            size,
         )
     };
-    if read > 0 && read != size {
-        return Owner::Unknown;
+    if status != 0 {
+        return Err(errno());
     }
-    if read <= 0 {
-        return match errno() {
-            libc::ESRCH => Owner::Gone,
-            _ => Owner::Unknown,
-        };
-    }
-    // SZOMB is 5 in <sys/proc.h>.
-    if info.pbi_status == 5 {
-        return Owner::Gone;
-    }
+    Ok(size)
+}
+
+/// B3: this user's processes as the kernel lists them for this effective
+/// uid (`KERN_PROC_UID`), with their `p_stat`. `None` when the list cannot
+/// be read or does not check out.
+#[cfg(target_os = "macos")]
+fn my_processes() -> Option<Vec<(i32, u8)>> {
     // SAFETY: no arguments; cannot fail.
-    if info.pbi_uid == unsafe { libc::geteuid() } {
-        Owner::Me
-    } else {
-        Owner::Other
+    let me = unsafe { libc::getpid() };
+    // One record's size: the kernel's answer for this process alone.
+    let entry = sysctl_read(
+        &mut [libc::CTL_KERN, libc::KERN_PROC, libc::KERN_PROC_PID, me],
+        None,
+    )
+    .ok()?;
+    // SAFETY: no arguments; cannot fail.
+    let uid = unsafe { libc::geteuid() } as libc::c_int;
+    let mut mib = [libc::CTL_KERN, libc::KERN_PROC, libc::KERN_PROC_UID, uid];
+    // The list can grow between the size query and the read: retry.
+    for _ in 0..4 {
+        let needed = sysctl_read(&mut mib, None).ok()?;
+        let room = needed + needed / 4 + entry * 16;
+        if room > entry * MAX_PIDS {
+            return None;
+        }
+        let mut buffer = vec![0u8; room];
+        match sysctl_read(&mut mib, Some(&mut buffer)) {
+            Ok(size) => return kinfo_records(&buffer[..size], entry, me, MAX_PIDS),
+            Err(libc::ENOMEM) => continue,
+            Err(_) => return None,
+        }
     }
+    None
 }
 
 /// The raw `KERN_PROCARGS2` of `pid`; `Ok(None)` when it has exited.
@@ -900,17 +932,55 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
-    /// B3's premise, on the host that runs it: an unprivileged, unsandboxed
-    /// process reads another user's BSD info (launchd's, root's), so
-    /// another user is told by uid, and a refusal can safely mean "keep".
+    /// B3's premise, on the host that runs it: the kernel serves an
+    /// unprivileged process the list of its user's processes, and that list
+    /// names this process and a child of it, and not launchd (root's).
     #[cfg(target_os = "macos")]
     #[test]
-    fn another_users_process_is_identified_by_uid_not_by_a_refusal() {
-        assert!(
-            matches!(owner_of(1), Owner::Other),
-            "launchd's owner is read"
+    fn the_kernel_lists_this_users_processes_without_privilege() {
+        let mut child = Command::new("python3")
+            .arg("-c")
+            .arg("import time; time.sleep(30)")
+            .spawn()
+            .unwrap();
+        let mine = my_processes();
+        let _ = child.kill();
+        let _ = child.wait();
+        let mine = mine.expect("this user's process list is served");
+        let pids: Vec<i32> = mine.iter().map(|(pid, _)| *pid).collect();
+        assert!(pids.contains(&(std::process::id() as i32)));
+        assert!(pids.contains(&(child.id() as i32)));
+        assert!(!pids.contains(&1), "launchd is root's");
+    }
+
+    /// B3: the `kinfo_proc` list parser, on synthetic records.
+    #[test]
+    fn the_process_list_layout_is_checked() {
+        fn record(pid: i32, stat: u8, entry: usize) -> Vec<u8> {
+            let mut bytes = vec![0u8; entry];
+            bytes[KP_STAT] = stat;
+            bytes[KP_PID..KP_PID + 4].copy_from_slice(&pid.to_ne_bytes());
+            bytes
+        }
+        let entry = 64;
+        let raw = [
+            record(7, 2, entry),
+            record(9, SZOMB, entry),
+            record(11, 2, entry),
+        ]
+        .concat();
+        assert_eq!(
+            kinfo_records(&raw, entry, 11, 10),
+            Some(vec![(7, 2), (9, SZOMB), (11, 2)])
         );
-        assert!(matches!(owner_of(std::process::id() as i32), Owner::Me));
+        // This process must be listed, and not as a zombie.
+        assert_eq!(kinfo_records(&raw, entry, 12, 10), None);
+        assert_eq!(kinfo_records(&raw, entry, 9, 10), None);
+        // A torn length, an empty list, a too-short record, or the bound.
+        assert_eq!(kinfo_records(&raw[..raw.len() - 1], entry, 11, 10), None);
+        assert_eq!(kinfo_records(&[], entry, 11, 10), None);
+        assert_eq!(kinfo_records(&raw, 8, 11, 100), None);
+        assert_eq!(kinfo_records(&raw, entry, 11, 2), None);
     }
 
     /// B3: the sandboxed run's profile (`sandbox-exec` denies
@@ -923,6 +993,25 @@ mod tests {
     #[cfg(target_os = "macos")]
     const B3_ENGINE: &str = "ORCEL_B3_ENGINE";
 
+    /// Whether `pid`'s BSD info is refused (the B2 owner read).
+    #[cfg(target_os = "macos")]
+    fn bsd_info_refused(pid: i32) -> bool {
+        // SAFETY: plain data; zeroed is a valid value.
+        let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+        let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+        // SAFETY: the buffer is exactly one proc_bsdinfo of `size` bytes.
+        let read = unsafe {
+            libc::proc_pidinfo(
+                pid,
+                libc::PROC_PIDTBSDINFO,
+                0,
+                (&mut info as *mut libc::proc_bsdinfo).cast(),
+                size,
+            )
+        };
+        read <= 0 && errno() == libc::EPERM
+    }
+
     /// Runs only inside B3's sandboxed re-run (the variables are unset in
     /// the shared suite, where it returns at once).
     #[cfg(target_os = "macos")]
@@ -933,21 +1022,20 @@ mod tests {
             return;
         };
         let engine: i32 = engine.parse().unwrap();
-        let refused = matches!(owner_of(engine), Owner::Unknown);
-        // The listing still works, so a kept profile comes from the refused
-        // owner (B3), not from a failed listing.
-        // SAFETY: a null buffer asks only for the count.
-        let listed = unsafe { libc::proc_listallpids(std::ptr::null_mut(), 0) } > 0;
-        assert!(listed, "the sandbox also hid the process listing");
+        // B2's owner read is refused here, so B2 skipped the engine.
+        let refused = bsd_info_refused(engine);
+        // B3's list is still served and names the engine.
+        let listed = my_processes().is_some_and(|mine| mine.iter().any(|(pid, _)| *pid == engine));
         let named = named_by_a_running_engine(Path::new(&profile));
-        println!("B3-RESULT refused={refused} named={named}");
+        println!("B3-RESULT refused={refused} listed={listed} named={named}");
         assert!(refused, "the sandbox did not refuse the engine's BSD info");
-        assert!(named, "a refused owner must keep the profile");
+        assert!(listed, "the sandbox also hid this user's process list");
+        assert!(named, "the engine must keep its profile");
     }
 
     /// B3: a host denied process info (a sandbox) must not mistake its own
     /// running engine for another user's and let recovery delete its
-    /// profile. Before B3 a refusal meant "another user", so this failed.
+    /// profile. Under B2 the refusal meant "another user", so this failed.
     #[cfg(target_os = "macos")]
     #[test]
     fn a_host_denied_process_info_keeps_its_engines_profile() {
@@ -993,7 +1081,7 @@ mod tests {
         let stdout = String::from_utf8_lossy(&output.stdout);
         println!("{stdout}");
         assert!(
-            stdout.contains("B3-RESULT refused=true named=true"),
+            stdout.contains("B3-RESULT refused=true listed=true named=true"),
             "{stdout}\n{}",
             String::from_utf8_lossy(&output.stderr)
         );
