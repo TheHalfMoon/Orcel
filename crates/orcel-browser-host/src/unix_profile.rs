@@ -415,8 +415,8 @@ impl ProfileHold {
             // SAFETY: final-component directory unlink relative to held parent.
             unsafe { libc::unlinkat(parent.as_raw_fd(), name.as_ptr(), libc::AT_REMOVEDIR) }
         } else {
-            let name = CString::new(path.as_os_str().as_bytes())
-                .map_err(|_| ProfileError::NotPlain)?;
+            let name =
+                CString::new(path.as_os_str().as_bytes()).map_err(|_| ProfileError::NotPlain)?;
             // SAFETY: legacy test-only whole-path directory unlink.
             unsafe { libc::rmdir(name.as_ptr()) }
         };
