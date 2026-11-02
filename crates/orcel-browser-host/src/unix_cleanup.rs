@@ -350,7 +350,15 @@ fn named_by_a_running_engine(path: &Path) -> bool {
             // B3b: a process caught exiting can fail its arguments read with
             // something other than ESRCH. Only one the kernel still lists as
             // living keeps the profile; any doubt keeps it too.
-            Err(_) => still_living(*pid),
+            Err(error) => {
+                let living = still_living(*pid);
+                if living {
+                    // Diagnostic: shows the cause in a CI log whenever an
+                    // unreadable process keeps a profile.
+                    eprintln!("SG115-DIAG kept: pid {pid} arguments errno {error}, still living");
+                }
+                living
+            }
         })
 }
 
