@@ -317,10 +317,17 @@ const PROCARGS_MAX: usize = 1 << 20;
 /// kernel's own report, never inferred from a refusal. A list that cannot be
 /// read, or does not check out, keeps the profile; so does a process of this
 /// user whose arguments cannot be read or parsed. A process that has exited,
-/// or a zombie, does not. Another user's arguments (root's included) cannot
-/// be read without privilege, so such an engine is not seen (open item, B4).
+/// or a zombie, does not.
+///
+/// B4: another user's arguments cannot be read without privilege. A 0700
+/// profile can be used only by its owner or root, so the other engine that
+/// matters is root's: while any root process's name is a browser engine's
+/// (`root_engine_running`), every profile is kept.
 #[cfg(target_os = "macos")]
 fn named_by_a_running_engine(path: &Path) -> bool {
+    if root_engine_running() {
+        return true;
+    }
     let wanted = wanted_arguments(path);
     let Some(mine) = my_processes() else {
         return true;
@@ -348,6 +355,51 @@ const SZOMB: u8 = 5;
 const KP_STAT: usize = 36;
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const KP_PID: usize = 40;
+/// B4: `p_comm` (`char[MAXCOMLEN + 1]`, the executable's name, cut to 16
+/// bytes) in `struct extern_proc` on 64-bit macOS. Checked at run time
+/// against this process's own record and executable name.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+const KP_COMM: usize = 243;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+const MAXCOMLEN: usize = 16;
+/// B4: the executable names of the engines XP-14 discovers
+/// (`discovery_macos.rs`), and Chromium's. A process name that starts with
+/// one of them is an engine (the 16-byte name cuts helpers' longer names).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+const ENGINE_NAMES: [&[u8]; 3] = [b"Google Chrome", b"Microsoft Edge", b"Chromium"];
+
+/// B4: the process name in one `kinfo_proc` record (up to its NUL, at most
+/// `MAXCOMLEN` bytes); `None` when the record is too short.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn comm_of(record: &[u8]) -> Option<&[u8]> {
+    let field = record.get(KP_COMM..KP_COMM + MAXCOMLEN + 1)?;
+    let end = field
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(MAXCOMLEN);
+    Some(&field[..end.min(MAXCOMLEN)])
+}
+
+/// B4: whether a process name is a browser engine's.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn engine_name(comm: &[u8]) -> bool {
+    ENGINE_NAMES.iter().any(|name| comm.starts_with(name))
+}
+
+/// B4: whether any record in `raw` (records of `entry` bytes, at most
+/// `bound`) is a living engine; `None` when the records do not divide `raw`
+/// exactly or exceed the bound.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn any_engine(raw: &[u8], entry: usize, bound: usize) -> Option<bool> {
+    if entry < KP_COMM + MAXCOMLEN + 1 || raw.len() % entry != 0 || raw.len() / entry > bound {
+        return None;
+    }
+    Some(
+        raw.chunks_exact(entry)
+            .any(|record| record[KP_STAT] != SZOMB && comm_of(record).is_some_and(engine_name)),
+    )
+}
+
 /// `sizeof(struct kinfo_proc)` on 64-bit macOS.
 #[cfg(target_os = "macos")]
 const KINFO_PROC_SIZE: usize = 648;
@@ -418,7 +470,58 @@ fn record_size(me: i32) -> Option<usize> {
         return None;
     }
     let pid = i32::from_ne_bytes(buffer[KP_PID..KP_PID + 4].try_into().ok()?);
-    (pid == me).then_some(size)
+    // B4: the name field is where it should be: this record names this
+    // process's executable (cut to 16 bytes, as the kernel does).
+    let exe = std::env::current_exe().ok()?;
+    let name = exe.file_name()?.as_bytes();
+    let expected = &name[..name.len().min(MAXCOMLEN)];
+    (pid == me && comm_of(&buffer[..size]) == Some(expected)).then_some(size)
+}
+
+/// The raw `KERN_PROC_UID` list for `uid`, read in full (retried while it
+/// grows), bounded by `MAX_PIDS` records of `entry` bytes.
+#[cfg(target_os = "macos")]
+fn processes_of(uid: libc::uid_t, entry: usize) -> Option<Vec<u8>> {
+    let mut mib = [
+        libc::CTL_KERN,
+        libc::KERN_PROC,
+        libc::KERN_PROC_UID,
+        uid as libc::c_int,
+    ];
+    for _ in 0..4 {
+        let needed = sysctl_read(&mut mib, None).ok()?;
+        let room = needed + needed / 4 + entry * 16;
+        if room > entry * MAX_PIDS {
+            return None;
+        }
+        let mut buffer = vec![0u8; room];
+        match sysctl_read(&mut mib, Some(&mut buffer)) {
+            Ok(size) => {
+                buffer.truncate(size);
+                return Some(buffer);
+            }
+            Err(libc::ENOMEM) => continue,
+            Err(_) => return None,
+        }
+    }
+    None
+}
+
+/// B4: whether root runs a browser engine, from the kernel's list of root's
+/// processes (served without privilege, as for `ps -U root`). True, so every
+/// profile is kept, when one does, and when the list or the layout check
+/// fails.
+#[cfg(target_os = "macos")]
+fn root_engine_running() -> bool {
+    // SAFETY: no arguments; cannot fail.
+    let me = unsafe { libc::getpid() };
+    let Some(entry) = record_size(me) else {
+        return true;
+    };
+    match processes_of(0, entry) {
+        Some(raw) => any_engine(&raw, entry, MAX_PIDS).unwrap_or(true),
+        None => true,
+    }
 }
 
 /// B3: this user's processes as the kernel lists them for this effective
@@ -430,23 +533,8 @@ fn my_processes() -> Option<Vec<(i32, u8)>> {
     let me = unsafe { libc::getpid() };
     let entry = record_size(me)?;
     // SAFETY: no arguments; cannot fail.
-    let uid = unsafe { libc::geteuid() } as libc::c_int;
-    let mut mib = [libc::CTL_KERN, libc::KERN_PROC, libc::KERN_PROC_UID, uid];
-    // The list can grow between the size query and the read: retry.
-    for _ in 0..4 {
-        let needed = sysctl_read(&mut mib, None).ok()?;
-        let room = needed + needed / 4 + entry * 16;
-        if room > entry * MAX_PIDS {
-            return None;
-        }
-        let mut buffer = vec![0u8; room];
-        match sysctl_read(&mut mib, Some(&mut buffer)) {
-            Ok(size) => return kinfo_records(&buffer[..size], entry, me, MAX_PIDS),
-            Err(libc::ENOMEM) => continue,
-            Err(_) => return None,
-        }
-    }
-    None
+    let raw = processes_of(unsafe { libc::geteuid() }, entry)?;
+    kinfo_records(&raw, entry, me, MAX_PIDS)
 }
 
 /// The raw `KERN_PROCARGS2` of `pid`; `Ok(None)` when it has exited.
@@ -1115,6 +1203,64 @@ mod tests {
         assert!(pids.contains(&(std::process::id() as i32)));
         assert!(pids.contains(&(child.id() as i32)));
         assert!(!pids.contains(&1), "launchd is root's");
+    }
+
+    /// B4's premise, on the host that runs it: root's process list is served
+    /// without privilege and names launchd; no root engine runs on the
+    /// runner, so recovery is not blocked by B4 there.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn root_processes_are_listed_by_name_without_privilege() {
+        let me = std::process::id() as i32;
+        let entry = record_size(me).expect("this process's name field checks out");
+        let raw = processes_of(0, entry).expect("root's process list is served");
+        let names: Vec<&[u8]> = raw.chunks_exact(entry).filter_map(comm_of).collect();
+        assert!(names.contains(&b"launchd".as_slice()), "launchd is listed");
+        assert_eq!(any_engine(&raw, entry, MAX_PIDS), Some(false));
+        assert!(!root_engine_running());
+    }
+
+    /// B4: engine names and the name field, on synthetic records.
+    #[test]
+    fn a_root_engine_is_recognised_by_its_process_name() {
+        for name in [
+            b"Google Chrome".as_slice(),
+            b"Google Chrome He",
+            b"Microsoft Edge",
+            b"Microsoft Edge H",
+            b"Chromium",
+            b"Chromium Helper",
+        ] {
+            assert!(engine_name(name), "{}", String::from_utf8_lossy(name));
+        }
+        for name in [b"launchd".as_slice(), b"Chrome", b"Google", b"", b"Safari"] {
+            assert!(!engine_name(name), "{}", String::from_utf8_lossy(name));
+        }
+        fn record(stat: u8, comm: &[u8], entry: usize) -> Vec<u8> {
+            let mut bytes = vec![0u8; entry];
+            bytes[KP_STAT] = stat;
+            bytes[KP_COMM..KP_COMM + comm.len()].copy_from_slice(comm);
+            bytes
+        }
+        let entry = 320;
+        let quiet = [record(2, b"launchd", entry), record(2, b"syslogd", entry)].concat();
+        assert_eq!(any_engine(&quiet, entry, 10), Some(false));
+        let engine = [quiet.clone(), record(2, b"Google Chrome He", entry)].concat();
+        assert_eq!(any_engine(&engine, entry, 10), Some(true));
+        // A zombie engine is dead; a torn or over-bound list is not used.
+        let zombie = [quiet.clone(), record(SZOMB, b"Chromium", entry)].concat();
+        assert_eq!(any_engine(&zombie, entry, 10), Some(false));
+        assert_eq!(any_engine(&engine[..engine.len() - 1], entry, 10), None);
+        assert_eq!(any_engine(&engine, entry, 2), None);
+        assert_eq!(any_engine(&engine, 64, 10), None);
+        // The name stops at its NUL and never runs past 16 bytes.
+        assert_eq!(
+            comm_of(&record(2, b"launchd", entry)),
+            Some(b"launchd".as_slice())
+        );
+        let mut full = record(2, b"0123456789abcdef", entry);
+        full[KP_COMM + MAXCOMLEN] = b'X';
+        assert_eq!(comm_of(&full), Some(b"0123456789abcdef".as_slice()));
     }
 
     /// B3: the `kinfo_proc` list parser, on synthetic records.
