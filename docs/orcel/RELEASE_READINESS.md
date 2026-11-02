@@ -48,6 +48,7 @@ checkpoint at the end says where engineering stands.
 | SG-000115 B5 (inert): profile recovery through the symlink-resistant walk (`recover_stale_profile_beneath`); the final directory is removed with `unlinkat` relative to its held, private parent. A profile moved behind a link under its old name is refused (a test that fails without the held parent); opened by another session, reviewed, its duplicate workflow removed | #564 → `ce50d6a` |
 | SG-000115 B4 (inert): on macOS, while root runs a browser engine (a living root process named like Google Chrome, Microsoft Edge or Chromium, from the kernel's unprivileged list of root's processes; the name field's offset checked at run time against this process's own record), every profile is kept, since by its 0700 mode only the owner and root can use one. Rests on no ACL granting another user access (A3's open item). On macOS CI root's list was served without privilege and blocked nothing; a real root engine was not started (needs privilege) | #566 → `83c25a6` (main CI 41383593998) |
 | SG-000115 B6a (inert): on macOS the profile hold walks each extended ACL's entries with the ACL library (profile, lock, state root, every walked directory) and refuses any entry that is not a deny entry; deny-only ACLs (macOS's own on home folders) are accepted, an unreadable ACL refuses, and `verify` repeats it. Closes A3's ACL item, which B4 rests on. On macOS CI real allow ACLs on the profile, its lock, an ancestor, inherited from a parent, or added after the hold were refused, and a deny-only ACL accepted; a first design that parsed ACL text was replaced in review (flags could hide an allow entry) | #568 → `542ff8d` (main CI 41391234618) |
+| SG-000115 B6b (investigation, test only): PID-namespace containment for the sink crash residual, option (a). An unprivileged user and PID namespace whose init is killed takes its `setsid` helper with it; on the hosted Ubuntu runner (CI run 41399210347) and locally on WSL2 the helper was taken. A CI step prints the outcome on every Linux run. Evidence only: nothing is wired, the rehearsal runs without a namespace, and the crash-residual test is unchanged; a host with AppArmor's user-namespace restriction would refuse | #570 → `8ef2422` (main CI 41404809356) |
 | Lifecycle on main `89066a6`: Windows release qualification (install, run, update, recover, uninstall, local report client, 400 MB budget) and Linux deb/rpm/tarball install, systemd units, tamper detection and uninstall | main CI 40672122647 |
 
 ## 2. Engineering that can still be completed without the founder
@@ -55,7 +56,7 @@ checkpoint at the end says where engineering stands.
 | Item | Note |
 |---|---|
 | #438 residual: navigation `read: TimedOut` on CI | Waiting for a recurrence; #494's diagnostics capture it |
-| SG-000115 Priority B (inert): retained-.deb signature chain for S-07, PID-namespace or cgroup containment feasibility; move A6 and `recover_stale_profile` onto the walk (B5 added it beside them) | Engineering solutions to shrink the class 4 residuals; none activates SG-000115 |
+| SG-000115 Priority B (inert): retained-.deb signature chain for S-07; wiring PID-namespace containment into the rehearsal (B6b showed it works on the hosted runner) or a cgroup alternative where namespaces are refused; move A6 and `recover_stale_profile` onto the walk (B5 added it beside them) | Engineering solutions to shrink the class 4 residuals; none activates SG-000115 |
 | #292 flaky SG-000013 contained PowerShell test on windows-latest | Root cause not yet found |
 | macOS install / start / uninstall lifecycle | No macOS package yet: macOS packaging (XP-16) waits for FD-05; Windows and Linux lifecycle are in class 1 |
 | SG-000128 closeout | After slice 3b (class 3) is accepted or the founder records otherwise; the closeout judge checks that slice 1's deferred items are evidenced |
@@ -88,7 +89,7 @@ checkpoint at the end says where engineering stands.
 | Release and publication | Not authorized; no release is created |
 | A planner model for BM-02 Tier C agent runs | Paid inference is excluded by the zero-cost rule; the local d1 model is an advisory classifier, not a planner |
 | M4 model selection and licensing | Candidates and the benchmark plan are in `prep/M4-local-model-candidates.md`; nothing is downloaded or run before this gate |
-| SG-000115 residuals (recorded, **not accepted**; engineering continues on each) | (a) macOS: a pid reused within one descendant scan (narrowed by B1, #557, to a backward wall-clock step: during a scan it can hide a reuse; afterwards it tears every scan, so the sweep fails closed); (b) descendants of another user that cannot be read, including root-run engines (on macOS recovery since B4, #566, keeps every profile while root runs an engine by a recognised name; a root engine under another name is not seen; since B6a, #568, a macOS profile with any non-deny ACL entry is refused at hold and at `verify` (an ACL added between those checks is not seen until the next one); the sandboxed-host `permission denied` ambiguity was closed by B3, #563); (c) false positives of the unattributable rule; (d) the network sink's port after an orceld crash; (e) S-07 binds ownership and modes, not a signature (stock GitHub Ubuntu has `/opt/google` at 0777, so Chrome there is unverified); (f) engines in another PID namespace; (g) profile paths with spaces (whole-argument matching now covers macOS always, and Linux only where the title is not rewritten), and `hidepid` on `/proc` |
+| SG-000115 residuals (recorded, **not accepted**; engineering continues on each) | (a) macOS: a pid reused within one descendant scan (narrowed by B1, #557, to a backward wall-clock step: during a scan it can hide a reuse; afterwards it tears every scan, so the sweep fails closed); (b) descendants of another user that cannot be read, including root-run engines (on macOS recovery since B4, #566, keeps every profile while root runs an engine by a recognised name; a root engine under another name is not seen; since B6a, #568, a macOS profile with any non-deny ACL entry is refused at hold and at `verify` (an ACL added between those checks is not seen until the next one); the sandboxed-host `permission denied` ambiguity was closed by B3, #563); (c) false positives of the unattributable rule; (d) the network sink's port after an orceld crash (B6b, #570, shows PID-namespace containment would remove the orphaned helper on hosts that allow unprivileged user namespaces; not wired); (e) S-07 binds ownership and modes, not a signature (stock GitHub Ubuntu has `/opt/google` at 0777, so Chrome there is unverified); (f) engines in another PID namespace; (g) profile paths with spaces (whole-argument matching now covers macOS always, and Linux only where the title is not rewritten), and `hidepid` on `/proc` |
 | Real platform presence (Windows Hello, Touch ID, polkit), macOS permissions | Never simulated or pre-granted |
 | Paid infrastructure, deployment | Excluded by the zero-cost rule |
 
@@ -114,10 +115,10 @@ checkpoint at the end says where engineering stands.
 
 ## Restart checkpoint
 
-If a session ends, resume from here (2026-11-02, main `542ff8d`, main CI
-41391234618 green):
+If a session ends, resume from here (2026-11-02, main `8ef2422`, main CI
+41404809356 green):
 
-1. Merged since the last checkpoint: #567 (handoff) and #568 (B6a). No PR
+1. Merged since the last checkpoint: #569 (handoff) and #570 (B6b). No PR
    from this work is open apart from this handoff. Branch
    protection needs each PR up to date with main, so PRs merge one at a
    time: rebase, exact-head green run, then `--match-head-commit`. #342 and
@@ -138,5 +139,5 @@ If a session ends, resume from here (2026-11-02, main `542ff8d`, main CI
 5. Known CI flakes: macOS toolchain install conflict (rerun failed jobs),
    #438, #508, #512, #516, #524, #558 (orceld app API re-bind on macOS).
 6. Do not repeat: XP-06/XP-11 Mac hardware tests (#425); the SG-000115 A1 to
-   A6b, B1 to B5 and B6a slices; the M4 research (#553).
+   A6b, B1 to B5, B6a and B6b slices; the M4 research (#553).
 7. Never mark Core MVP complete; classes 3 to 5 stay open.
