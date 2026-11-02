@@ -42,6 +42,8 @@ checkpoint at the end says where engineering stands.
 | SG-000129 slice 5c: Windows agent store held by handle, orceld's ancestor rule, no junction or link on the path (8.3 short names expanded), a closed store refuses writes, claim-before-delete expiry. Notes from its judge, not yet recorded in the spec: stores on mapped or `subst` drives are refused (fail-closed, but the message names a junction); the rename-blocking claim is measured on NTFS only | #554 → `e462652` |
 | #540 flaky vendored batch-pause test: patch P-13 in the vendored patch queue | #555 → `f8f0c8f` |
 | #573 flaky vendored session idle-expiry test (1 ms idle TTL): patch P-14 gives the idle case 200 ms of headroom, assertions unchanged, test only | #574 → `717ed16` |
+| #575 flaky browser-worker capture timing test on Windows: wall-clock bounds replaced by sentinel-timer ordering, regression still caught (mutation checked), test only | #577 → `09b0e1e` |
+| RUSTSEC-2026-0429 (zip 8.6.0 `ZipArchive::extract` abort) recorded under the doc parser's extraction-only audit rule: zip 9 is blocked because anydoc (every release to 0.2.4) requires zip ^8.6; neither the parser nor anydoc 0.2.2 calls `extract` (rechecked), and the parser has no writable root. Drop with the other zip ignores when anydoc accepts zip 9 (the parser's own `=8.6.0` pin moves with it) | #578 → `05caf96` |
 | Agent store path aliases: a requested path whose held final path differs (mapped or `subst` drive, junction, link, mount point) is refused with a message naming all possible causes, not only a junction; a CI-only test maps a `subst` drive and shows the refusal | #562 → `19d55bd` |
 | SG-000115 B1 (inert): a pid reused within one macOS scan counts as torn (clock mark); the node is kept, so freeze and kill coverage is unchanged. On hosted macOS CI the clock test passed and the lineage cases still verify every attributable escape, with the fast orphan detected in 5 of 5 rounds | #557 → `32c5087` (main CI 41327036226) |
 | SG-000115 B2 (inert): macOS same-user browser process-argument scan detects `--user-data-dir` before `SingletonLock`, including paths with spaces as whole arguments; on macOS CI the profile was retained until the running process exited, then removed. Other-user/root processes and sandboxed-host `permission denied` remain unaccepted residuals. | #560 → `878c84d` (main CI 41356507864 passed) |
@@ -63,7 +65,7 @@ checkpoint at the end says where engineering stands.
 | macOS install / start / uninstall lifecycle | No macOS package yet: macOS packaging (XP-16) waits for FD-05; Windows and Linux lifecycle are in class 1 |
 | SG-000128 closeout | After slice 3b (class 3) is accepted or the founder records otherwise; the closeout judge checks that slice 1's deferred items are evidenced |
 | BM-02 Tier C beyond C2b (C3 agent runs) | Blocked: needs a planner model (class 4) |
-| CI flakes under watch | #438 (navigation), #508 (UIA bind), #512 (real git fetch), #516 (Go helper start), #524 (macOS jobs cancelled before a runner is assigned), #558 (orceld app API re-bind on macOS), #575 (browser-worker capture timing on Windows) |
+| CI flakes under watch | #438 (navigation), #508 (UIA bind), #512 (real git fetch), #516 (Go helper start), #524 (macOS jobs cancelled before a runner is assigned), #558 (orceld app API re-bind on macOS) |
 | Governance preparation for SG-000115, SG-000122, SG-000124, SG-000127 closeout | Specs, tests, dependency and security analysis only; activation is a founder decision |
 | SG-000115 inert pre-activation engineering (founder decision 2026-10-29, #526) | Category A in `prep/SG-000115.md`: test-only or never-default builds, no production caller, pinned by tests to leave macOS/Linux launch refused. A slice that cannot meet the conditions stays a Draft PR. Activation, wiring, S-07 and the macOS descendant escape stay with the founder |
 | Documentation consistency (frontier, roadmap, benchmark plan) | Ongoing with each merge |
@@ -117,12 +119,13 @@ checkpoint at the end says where engineering stands.
 
 ## Restart checkpoint
 
-If a session ends, resume from here (2026-11-02, main `717ed16`, main CI
-41419986769 green):
+If a session ends, resume from here (2026-11-02, main `09b0e1e`; main CI
+41419986769 green at `717ed16`):
 
-1. Merged since the last checkpoint: #571 (handoff), #572 (B5b) and #574
-   (P-14, fixing flake #573). No PR from this work is open apart from this
-   handoff. Branch
+1. Merged since the last checkpoint: #571 (handoff), #572 (B5b), #574
+   (P-14, fixing flake #573), #578 (RUSTSEC-2026-0429 under the doc parser's
+   extraction-only rule) and #577 (fixing flake #575). No PR from this work
+   is open apart from this handoff. Branch
    protection needs each PR up to date with main, so PRs merge one at a
    time: rebase, exact-head green run, then `--match-head-commit`. #342 and
    #328 belong to other work: do not touch them.
@@ -140,8 +143,7 @@ If a session ends, resume from here (2026-11-02, main `717ed16`, main CI
    follow-ups; then the next roadmap items (F4 slices that need no founder,
    BR items behind governance, cross-platform).
 5. Known CI flakes: macOS toolchain install conflict (rerun failed jobs),
-   #438, #508, #512, #516, #524, #558 (orceld app API re-bind on macOS),
-   #575 (browser-worker capture timing on Windows; main run 41409886157).
+   #438, #508, #512, #516, #524, #558 (orceld app API re-bind on macOS).
 6. Do not repeat: XP-06/XP-11 Mac hardware tests (#425); the SG-000115 A1 to
    A6b, B1 to B5, B5b, B6a and B6b slices; P-13 and P-14; the M4 research (#553).
 7. Never mark Core MVP complete; classes 3 to 5 stay open.
