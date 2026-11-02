@@ -92,10 +92,11 @@ jobs:
         run: |
           set -euo pipefail
           status=0
-          out=$(cargo test -p orcel-browser-host --lib -- --exact --nocapture unix_supervise::tests::a_pid_namespace_init_takes_its_whole_family_with_it 2>&1) || status=$?
+          out=$(cargo test -p orcel-browser-host --lib -- --exact --nocapture --test-threads=1 unix_supervise::tests::a_pid_namespace_init_takes_its_whole_family_with_it unix_rehearsal::tests::a_pid_namespace_takes_a_crashed_hosts_family_with_it 2>&1) || status=$?
           printf '%s\n' "$out"
           [ "$status" -eq 0 ]
           grep -qE "SG115-RESULT PID namespace|SG115-EVIDENCE unprivileged PID namespace refused" <<<"$out"
+          grep -qE "SG115-EVIDENCE B8 PID namespace|SG115-EVIDENCE B8 unprivileged PID namespace refused" <<<"$out"
       # BM-02 evidence on this OS: both tiers again with their per-case lines
       # in the log (the Test step captures them when they pass), and both
       # reports checked against orcel-benchmark-report/1.

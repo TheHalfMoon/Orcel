@@ -1232,7 +1232,11 @@ fn no_shell_script_or_remote_process_surface_exists() {
     // one test of the test binary under macOS `/usr/bin/sandbox-exec` with
     // process info denied (B3, recorded the same way). A2's tests also
     // start one fixture in a new unprivileged user and PID namespace
-    // (`unshare` in `pre_exec`, Linux, B6b, recorded the same way). A6
+    // (`unshare` in `pre_exec`, Linux, B6b, recorded the same way). A6's
+    // B8 test runs its sink host as the init of a user, PID and mount
+    // namespace: A2's `python_fixture` shim unshares, forks and execs this
+    // test binary on the `sink_supervisor_entry` test (recorded the same
+    // way). A6
     // (unix_rehearsal.rs) spawns only through A2's `python_fixture`, pinned
     // below under the same guard.
     let lib = sources

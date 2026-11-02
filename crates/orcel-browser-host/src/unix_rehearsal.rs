@@ -824,6 +824,19 @@ mod tests {
                     !profile.exists()
                 );
             }
+            // B8: the same host, run as the init of a PID namespace by the
+            // test's shim; it reports its pid as the host sees it.
+            "pidns-host" => {
+                let running = start_verifiable(&policy, &profile, Mode::Chatty, &side).unwrap();
+                wait_ready(&running);
+                println!(
+                    "SG115-SINK port={} inside={}",
+                    running.sink.port(),
+                    std::process::id()
+                );
+                // The host "crashes" here: the test kills this process.
+                std::thread::sleep(Duration::from_secs(60));
+            }
             "crash-host" => {
                 let running = start_verifiable(&policy, &profile, Mode::Chatty, &side).unwrap();
                 wait_ready(&running);
@@ -974,6 +987,159 @@ mod tests {
             received,
             "the orphaned helper's traffic reaches whoever took the port"
         );
+    }
+
+    /// B8 (Linux): the crash residual's mitigation, option (a). The same host
+    /// as the crash test above runs as the init of a new user and PID
+    /// namespace (a Python shim unshares, maps this user's uid and gid onto
+    /// themselves, forks, and the child execs the host as pid 1). When the
+    /// host is killed, the kernel kills every process in its namespace, the
+    /// engine and its orphaned helper included, so another process that
+    /// takes the freed port receives nothing. Where the host refuses an
+    /// unprivileged user namespace, the refusal is recorded as evidence,
+    /// never as a pass.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_pid_namespace_takes_a_crashed_hosts_family_with_it() {
+        use std::io::{BufRead, BufReader};
+        // The child is pid 1 of the new PID namespace; it gets a mount
+        // namespace with its own /proc, so the supervisor's /proc reads name
+        // its namespace's processes. The parent stays outside and reports
+        // the host's pid as the outer system sees it.
+        const SHIM: [&str; 22] = [
+            "import ctypes, os, sys",
+            "try:",
+            "    uid, gid = os.getuid(), os.getgid()",
+            "    os.unshare(os.CLONE_NEWUSER | os.CLONE_NEWPID | os.CLONE_NEWNS)",
+            "    open('/proc/self/setgroups', 'w').write('deny')",
+            "    open('/proc/self/uid_map', 'w').write(f'{uid} {uid} 1')",
+            "    open('/proc/self/gid_map', 'w').write(f'{gid} {gid} 1')",
+            "except OSError as error:",
+            "    print('SG115-PIDNS refused', error.errno, flush=True)",
+            "    sys.exit(0)",
+            "child = os.fork()",
+            "if child == 0:",
+            "    libc = ctypes.CDLL(None, use_errno=True)",
+            "    # MS_REC | MS_PRIVATE, then a fresh /proc for this namespace.",
+            "    ok = libc.mount(None, b'/', None, 16384 | 262144, None) == 0",
+            "    ok = ok and libc.mount(b'proc', b'/proc', b'proc', 0, None) == 0",
+            "    if not ok:",
+            "        print('SG115-PIDNS refused', ctypes.get_errno(), flush=True)",
+            "        os._exit(0)",
+            "    os.execv(sys.argv[1], sys.argv[1:])",
+            "print('SG115-PIDNS host=' + str(child), flush=True)",
+            "os.waitpid(child, 0)",
+        ];
+        let root = sink_scratch("pidns-host");
+        let mut shim = crate::unix_supervise::python_fixture(&SHIM.join("\n"));
+        shim.arg(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "unix_rehearsal::tests::sink_supervisor_entry",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(SINK_CASE, "pidns-host")
+            .env(SINK_SCRATCH, root.display().to_string())
+            .stdout(std::process::Stdio::piped());
+        let mut child = shim.spawn().unwrap();
+        let stdout = child.stdout.take().unwrap();
+        let mut line = String::new();
+        let mut host = 0i32;
+        for next in BufReader::new(stdout).lines() {
+            let next = next.unwrap();
+            if let Some(value) = next.strip_prefix("SG115-PIDNS host=") {
+                host = value.trim().parse().unwrap_or_default();
+                continue;
+            }
+            if let Some(at) = next.find("SG115-PIDNS refused") {
+                // Only the errors a refused namespace gives count as the
+                // host's refusal; anything else fails the test.
+                let errno: i32 = next[at..]
+                    .split_whitespace()
+                    .last()
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or_default();
+                let _ = child.wait();
+                std::fs::remove_dir_all(&root).ok();
+                assert!(
+                    [libc::EPERM, libc::EACCES, libc::ENOSPC, libc::EINVAL].contains(&errno),
+                    "{next}"
+                );
+                println!("SG115-EVIDENCE B8 unprivileged PID namespace refused: errno {errno}");
+                return;
+            }
+            if let Some(at) = next.find("SG115-SINK ") {
+                line = next[at..].to_string();
+                break;
+            }
+        }
+        let field = |name: &str| -> i32 {
+            line.split_whitespace()
+                .find_map(|part| part.strip_prefix(&format!("{name}=")))
+                .and_then(|value| value.parse().ok())
+                .unwrap_or_default()
+        };
+        let (port, inside) = (field("port"), field("inside"));
+        assert!(port > 0 && host > 0, "{line}");
+        assert_eq!(inside, 1, "the host is the namespace's init: {line}");
+        // The fixture's processes, found by the scratch root in their
+        // command lines (the engine's profile argument; the helper is its
+        // fork), as the host sees them.
+        let marker = root.display().to_string();
+        let members = || -> Vec<i32> {
+            std::fs::read_dir("/proc")
+                .map(|dir| {
+                    dir.flatten()
+                        .filter_map(|entry| entry.file_name().to_str()?.parse::<i32>().ok())
+                        .filter(|pid| *pid != host)
+                        .filter(|pid| {
+                            std::fs::read(format!("/proc/{pid}/cmdline"))
+                                .map(|cmd| String::from_utf8_lossy(&cmd).contains(&marker))
+                                .unwrap_or(false)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        assert!(
+            !members().is_empty(),
+            "the engine family runs before the crash"
+        );
+        // The host crashes.
+        if let Some(pinned) = crate::unix_supervise::pin_pid(host) {
+            crate::unix_supervise::kill_pinned(pinned);
+        }
+        let gone = until(|| members().is_empty());
+        // Another local process takes the freed port; nothing may arrive.
+        let attacker = std::net::TcpListener::bind(("127.0.0.1", port as u16));
+        let received = match &attacker {
+            Ok(listener) => {
+                listener.set_nonblocking(true).unwrap();
+                let started = Instant::now();
+                let mut got = false;
+                while started.elapsed() < Duration::from_secs(2) {
+                    if listener.accept().is_ok() {
+                        got = true;
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                got
+            }
+            Err(_) => false,
+        };
+        let _ = child.kill();
+        let _ = child.wait();
+        let left = members();
+        std::fs::remove_dir_all(&root).ok();
+        println!("SG115-EVIDENCE B8 PID namespace: family gone={gone}, port traffic after crash={received}");
+        assert!(
+            gone,
+            "the engine family outlived the namespace's init: {left:?}"
+        );
+        assert!(attacker.is_ok(), "the crashed host's port is free");
+        assert!(!received, "no helper reaches whoever took the port");
     }
 
     /// Pre-activation boundary: only lib.rs (the test-only declaration) and
