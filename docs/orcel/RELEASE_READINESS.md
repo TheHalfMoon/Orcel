@@ -84,7 +84,7 @@ checkpoint at the end says where engineering stands.
 | Release and publication | Not authorized; no release is created |
 | A planner model for BM-02 Tier C agent runs | Paid inference is excluded by the zero-cost rule; the local d1 model is an advisory classifier, not a planner |
 | M4 model selection and licensing | Candidates and the benchmark plan are in `prep/M4-local-model-candidates.md`; nothing is downloaded or run before this gate |
-| SG-000115 residuals (recorded, **not accepted**; engineering continues on each) | (a) macOS: a pid reused within one descendant scan (narrowed by B1, #557, to a backward wall-clock step: during a scan it can hide a reuse; afterwards it tears every scan, so the sweep fails closed); (b) descendants of another user that cannot be read, including root-run engines; B2 still skips macOS processes on `permission denied`, which is ambiguous for a future sandboxed host; (c) false positives of the unattributable rule; (d) the network sink's port after an orceld crash; (e) S-07 binds ownership and modes, not a signature (stock GitHub Ubuntu has `/opt/google` at 0777, so Chrome there is unverified); (f) engines in another PID namespace; (g) profile paths with spaces (whole-argument matching now covers macOS and Linux only where the title is not rewritten), and `hidepid` on `/proc` |
+| SG-000115 residuals (recorded, **not accepted**; engineering continues on each) | (a) macOS: a pid reused within one descendant scan (narrowed by B1, #557, to a backward wall-clock step: during a scan it can hide a reuse; afterwards it tears every scan, so the sweep fails closed); (b) descendants of another user that cannot be read, including root-run engines; B2 still skips macOS processes on `permission denied`, which is ambiguous for a future sandboxed host; (c) false positives of the unattributable rule; (d) the network sink's port after an orceld crash; (e) S-07 binds ownership and modes, not a signature (stock GitHub Ubuntu has `/opt/google` at 0777, so Chrome there is unverified); (f) engines in another PID namespace; (g) profile paths with spaces (whole-argument matching now covers macOS always, and Linux only where the title is not rewritten), and `hidepid` on `/proc` |
 | Real platform presence (Windows Hello, Touch ID, polkit), macOS permissions | Never simulated or pre-granted |
 | Paid infrastructure, deployment | Excluded by the zero-cost rule |
 
@@ -114,9 +114,11 @@ If a session ends, resume from here (2026-11-02, main `19d55bd`; main CI
 41356507864 green for SG-000115 B2 at `878c84d`):
 
 1. Merged since the last checkpoint: #560 (B2) and #562 (agent-store path
-   alias message). Open from this work: this handoff (#561) and #563
+   alias message). Open from this work: this handoff (#561), #563
    (SG-000115 B3, a refused macOS process owner keeps the profile; security
-   review approved, macOS CI pending; draft). Branch protection needs each
+   review approved, macOS CI pending; draft) and #564 (SG-000115 B5,
+   held-ancestor anchored profile recovery, opened by another session; under
+   independent review; draft). Branch protection needs each
    PR up to date with main, so PRs merge one at a time: rebase, exact-head
    green run, then `--match-head-commit`. #342 and #328 belong to other
    work: do not touch them.
