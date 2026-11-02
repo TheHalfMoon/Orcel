@@ -344,11 +344,38 @@ fn named_by_a_running_engine(path: &Path) -> bool {
         .any(|(pid, _)| match procargs(*pid, &mut buffer) {
             Ok(Some(raw)) => match argv_of(raw) {
                 Some(argv) => cmdline_names(argv, &wanted),
-                None => true,
+                None => still_living(*pid),
             },
             Ok(None) => false,
-            Err(_) => true,
+            // B3b: a process caught exiting can fail its arguments read with
+            // something other than ESRCH. Only one the kernel still lists as
+            // living keeps the profile; any doubt keeps it too.
+            Err(_) => still_living(*pid),
         })
+}
+
+/// B3b: whether `pid` is still a living process by its own kernel record
+/// (`KERN_PROC_PID`): false only when the kernel says it is gone (an empty
+/// record or `ESRCH`) or a zombie; any other answer, or a record that does
+/// not check out, counts as living (fail safe). A pid reused by another
+/// living process also counts as living, which only keeps a profile.
+#[cfg(target_os = "macos")]
+fn still_living(pid: i32) -> bool {
+    let mut buffer = vec![0u8; 4096];
+    match sysctl_read(
+        &mut [libc::CTL_KERN, libc::KERN_PROC, libc::KERN_PROC_PID, pid],
+        Some(&mut buffer),
+    ) {
+        Ok(0) => false,
+        Ok(size) if size == KINFO_PROC_SIZE => {
+            let listed =
+                i32::from_ne_bytes(buffer[KP_PID..KP_PID + 4].try_into().unwrap_or([0; 4]));
+            listed != pid || buffer[KP_STAT] != SZOMB
+        }
+        Ok(_) => true,
+        Err(libc::ESRCH) => false,
+        Err(_) => true,
+    }
 }
 
 /// `SZOMB` in `<sys/proc.h>`.
@@ -1222,6 +1249,33 @@ mod tests {
         assert!(pids.contains(&(std::process::id() as i32)));
         assert!(pids.contains(&(child.id() as i32)));
         assert!(!pids.contains(&1), "launchd is root's");
+    }
+
+    /// B3b: a process that has exited (reaped, or a zombie) is not living;
+    /// this process and a running child are.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn only_a_process_the_kernel_lists_as_living_counts() {
+        assert!(still_living(std::process::id() as i32));
+        let mut running = Command::new("python3")
+            .arg("-c")
+            .arg("import time; time.sleep(30)")
+            .spawn()
+            .unwrap();
+        let pid = running.id() as i32;
+        assert!(still_living(pid), "a running child is living");
+        let _ = running.kill();
+        // Not yet reaped: a zombie, which is not living.
+        let started = std::time::Instant::now();
+        while still_living(pid) && started.elapsed() < std::time::Duration::from_secs(10) {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(
+            !still_living(pid),
+            "a killed, unreaped child (a zombie) is not living"
+        );
+        let _ = running.wait();
+        assert!(!still_living(pid), "a reaped child is gone");
     }
 
     /// B4's premise, on the host that runs it: root's process list is served
