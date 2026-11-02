@@ -18,8 +18,9 @@ ignore = [
   # - RUSTSEC-2026-0369: `extract` applies permissions through links;
   # - RUSTSEC-2026-0429 (added 2026-11-02, the same rule applied): `extract`
   #   aborts the process on a symlink entry with a large declared size.
-  # Reachability, checked module by module on 2026-11-02 against anydoc
-  # 0.2.2's published source (the pinned version):
+  # Reachability, checked on 2026-11-02 against anydoc 0.2.2's published
+  # source (the pinned version): every source file was searched for
+  # `zip::`, `ZipArchive` and `extract`, and the hits were read:
   # - anydoc builds exactly one `ZipArchive`, in `Package::open`
   #   (src/package/archive.rs), and reads entries only with `by_name`, under
   #   a per-entry and whole-archive decompression cap. Every format module
