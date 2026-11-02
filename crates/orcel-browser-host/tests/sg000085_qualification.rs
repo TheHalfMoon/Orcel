@@ -1270,7 +1270,9 @@ fn no_shell_script_or_remote_process_surface_exists() {
                     || file == "discovery_macos_tests.rs"
                     // SG-000115 S-07 (recorded rule change, prep/SG-000115.md):
                     // the Linux verifier's dpkg fixture tests, admitted only
-                    // while discovery.rs declares them under the test cfg.
+                    // while discovery.rs declares them under the test cfg;
+                    // since B7 they also run gpg (a throwaway fixture key)
+                    // and gpgv (the signature check), recorded the same way.
                     || (file == "discovery_linux_tests.rs" && linux_tests_only)
                     || (file == "unix_supervise.rs" && unix_test_only("unix_supervise"))
                     || (file == "unix_cleanup.rs" && unix_test_only("unix_cleanup")),
