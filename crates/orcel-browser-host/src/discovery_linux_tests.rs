@@ -1038,6 +1038,23 @@ fn b7_an_expired_key_or_a_second_signer_is_refused() {
         ],
     );
     assert!(signed.status.success(), "{signed:?}");
+    // Which rule refuses it: gpgv's own exit status, shown in the log.
+    let direct = Command::new("gpgv")
+        .arg("--homedir")
+        .arg(&old_home)
+        .args(["--status-fd", "1", "--keyring"])
+        .arg(&repo.keyring)
+        .arg(&repo.in_release)
+        .output()
+        .unwrap();
+    println!(
+        "SG115-EVIDENCE B7 expired key: gpgv exit {:?}, status {:?}",
+        direct.status.code(),
+        String::from_utf8_lossy(&direct.stdout)
+            .lines()
+            .filter(|line| line.contains("SIG"))
+            .collect::<Vec<_>>()
+    );
     assert_eq!(
         chain(&fixture, &repo, &[&expired], "1.0"),
         Err(ChainError::Signature),
