@@ -53,7 +53,7 @@ checkpoint at the end says where engineering stands.
 | Item | Note |
 |---|---|
 | #438 residual: navigation `read: TimedOut` on CI | Waiting for a recurrence; #494's diagnostics capture it |
-| SG-000115 Priority B (inert): retained-.deb signature chain for S-07, PID-namespace or cgroup containment feasibility, profile delete through the held walk, macOS ACLs on profiles; move A6 and `recover_stale_profile` onto the walk (B5 added it beside them) | Engineering solutions to shrink the class 4 residuals; none activates SG-000115 |
+| SG-000115 Priority B (inert): retained-.deb signature chain for S-07, PID-namespace or cgroup containment feasibility, macOS ACLs on profiles; move A6 and `recover_stale_profile` onto the walk (B5 added it beside them) | Engineering solutions to shrink the class 4 residuals; none activates SG-000115 |
 | #292 flaky SG-000013 contained PowerShell test on windows-latest | Root cause not yet found |
 | macOS install / start / uninstall lifecycle | No macOS package yet: macOS packaging (XP-16) waits for FD-05; Windows and Linux lifecycle are in class 1 |
 | SG-000128 closeout | After slice 3b (class 3) is accepted or the founder records otherwise; the closeout judge checks that slice 1's deferred items are evidenced |
