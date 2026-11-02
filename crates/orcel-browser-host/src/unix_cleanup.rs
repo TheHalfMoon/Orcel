@@ -154,9 +154,14 @@ pub(crate) fn sweep_held_profile(hold: ProfileHold, path: &Path) -> Result<(), C
 /// (`recover_stale_profile_beneath`), so the parent must be a private
 /// directory and the final removal is relative to the held parent.
 pub(crate) fn recover_stale_profile(path: &Path) -> Result<Recovery, CleanupError> {
+    // A bare relative name has the empty path as its parent, which the walk
+    // cannot open: refuse it rather than report the profile absent.
     let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
         return Err(CleanupError::Profile(ProfileError::NotPlain));
     };
+    if parent.as_os_str().is_empty() {
+        return Err(CleanupError::Profile(ProfileError::NotPlain));
+    }
     recover_stale_profile_beneath(parent, Path::new(name))
 }
 
@@ -871,6 +876,19 @@ mod tests {
         );
         assert!(original.join("profile/Local State").exists());
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// B5b: a path without a usable parent is refused, never reported as
+    /// absent: a bare relative name (parent ""), the root, a `..` ending.
+    #[test]
+    fn b5b_recovery_refuses_a_path_without_a_usable_parent() {
+        for path in ["profile", "/", "a/.."] {
+            assert_eq!(
+                recover_stale_profile(Path::new(path)),
+                Err(CleanupError::Profile(ProfileError::NotPlain)),
+                "{path}"
+            );
+        }
     }
 
     /// B5, the case only the held parent catches: the profile is moved to

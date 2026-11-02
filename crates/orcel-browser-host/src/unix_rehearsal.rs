@@ -284,6 +284,9 @@ fn start_with(
     let (Some(parent), Some(name)) = (profile.parent(), profile.file_name()) else {
         return Err(Refused::Hold(ProfileError::NotPlain));
     };
+    if parent.as_os_str().is_empty() {
+        return Err(Refused::Hold(ProfileError::NotPlain));
+    }
     let hold = ProfileHold::open_beneath(parent, Path::new(name)).map_err(Refused::Hold)?;
     let sink = NetworkSink::start().map_err(Refused::Sink)?;
     let destinations = destinations();
