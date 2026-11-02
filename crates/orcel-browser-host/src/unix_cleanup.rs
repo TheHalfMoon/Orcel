@@ -43,10 +43,15 @@
 //!   lock and let a second holder in; that holder's lock or files could then
 //!   be removed. It needs a same-user adversary; activation must close it
 //!   (for example a per-profile directory lock held for the whole sweep).
-//! - **Final directory removal:** the profile directory itself is removed
-//!   by path (`rmdir`) after a fresh `verify`, which is a point-in-time
-//!   check. A swap between the two leaves at most an empty directory
-//!   removed, or the call failing closed.
+//! - **Final directory removal:** for a hold from `open_beneath` (B5,
+//!   `recover_stale_profile_beneath`), the profile directory is removed
+//!   with `unlinkat(AT_REMOVEDIR)` relative to its held, private parent,
+//!   after checking that the name there still names the held directory; a
+//!   swapped ancestor is never re-resolved. A hold from the path-based
+//!   `open` (still used by `recover_stale_profile` and A6) removes it by
+//!   path (`rmdir`) after a fresh `verify`, a point-in-time check: a swap
+//!   between the two leaves at most an empty directory removed, or the call
+//!   failing closed.
 //! - **Engine coordination:** whether a sweep must also wait for the
 //!   engine's processes to exit (A2) before deleting, and what to do with
 //!   files the engine recreates mid-sweep.
@@ -692,7 +697,7 @@ mod tests {
         std::fs::write(dir.join("Local State"), "{}").unwrap();
     }
 
-    // B5 tests precede the held-parent recovery implementation.
+    // B5: anchored recovery beneath a held state root.
     fn nested_profile(label: &str) -> (PathBuf, PathBuf) {
         let root = scratch(label);
         let middle = root.join("middle");
