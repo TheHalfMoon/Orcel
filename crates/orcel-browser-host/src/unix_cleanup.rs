@@ -1336,10 +1336,19 @@ mod tests {
         let refused = bsd_info_refused(engine);
         // B3's list is still served and names the engine.
         let listed = my_processes().is_some_and(|mine| mine.iter().any(|(pid, _)| *pid == engine));
+        // B4's root check keeps every profile when it fails: it must not be
+        // what keeps this one, or the engine was never matched.
+        let root_engine = root_engine_running();
         let named = named_by_a_running_engine(Path::new(&profile));
-        println!("B3-RESULT refused={refused} listed={listed} named={named}");
+        println!(
+            "B3-RESULT refused={refused} listed={listed} root_engine={root_engine} named={named}"
+        );
         assert!(refused, "the sandbox did not refuse the engine's BSD info");
         assert!(listed, "the sandbox also hid this user's process list");
+        assert!(
+            !root_engine,
+            "the root check, not the engine, kept the profile"
+        );
         assert!(named, "the engine must keep its profile");
     }
 
@@ -1391,7 +1400,7 @@ mod tests {
         let stdout = String::from_utf8_lossy(&output.stdout);
         println!("{stdout}");
         assert!(
-            stdout.contains("B3-RESULT refused=true listed=true named=true"),
+            stdout.contains("B3-RESULT refused=true listed=true root_engine=false named=true"),
             "{stdout}\n{}",
             String::from_utf8_lossy(&output.stderr)
         );
