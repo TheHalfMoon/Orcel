@@ -39,10 +39,13 @@
 //!   between to be this user's and writable by no one else. Activation must
 //!   use it (or `openat2` / `O_NOFOLLOW_ANY`). `verify` still re-checks the
 //!   path by name.
-//! - **macOS ACLs:** extended ACL entries are separate from the mode bits
-//!   on macOS, so exactly 0700 / 0600 does not exclude another user there
-//!   (on Linux the mode's group bits carry the ACL mask). Activation must
-//!   refuse any allow entry (`acl_get_fd_np`).
+//! - **macOS ACLs (B6a):** extended ACL entries are separate from the mode
+//!   bits on macOS, so exactly 0700 / 0600 does not exclude another user
+//!   there (on Linux the mode's group bits carry the ACL mask). The hold
+//!   reads each directory's and the lock's extended ACL through its
+//!   descriptor (`acl_get_fd_np`) and refuses any `allow` entry; deny-only
+//!   ACLs (macOS puts "everyone deny delete" on home folders) are accepted.
+//!   An ACL that cannot be read or rendered refuses.
 //! - **Point in time:** `verify` checks one moment; the engine re-resolves
 //!   the `--user-data-dir` path itself. Activation must decide how the
 //!   engine receives the profile and whether to re-verify after it exits.
@@ -147,6 +150,7 @@ fn owned_with_mode(stat: &libc::stat, mode: u32) -> bool {
 
 /// A directory above the profile: owned by the expected user and writable
 /// by neither group nor others, so no other account can swap what is below.
+/// On macOS no extended ACL entry may allow anything either (B6a).
 #[allow(clippy::unnecessary_cast)]
 fn private_ancestor(fd: &OwnedFd) -> Result<(), ProfileError> {
     let stat = fstat(fd)?;
@@ -156,6 +160,73 @@ fn private_ancestor(fd: &OwnedFd) -> Result<(), ProfileError> {
     if stat.st_uid != expected_owner() || (stat.st_mode as u32) & 0o022 != 0 {
         return Err(ProfileError::Permissions);
     }
+    no_allow_acl(fd)
+}
+
+/// B6a: whether an `acl_to_text` rendering holds an `allow` entry. Each
+/// entry line is `tag:uuid:name:id:allow|deny:permissions`; the header
+/// (`!#acl 1`) and blank lines are skipped, and only the whole field
+/// `allow` counts (not a name that contains it).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn acl_text_allows(text: &str) -> bool {
+    text.lines()
+        .filter(|line| !line.starts_with("!#") && !line.trim().is_empty())
+        .any(|line| line.split(':').any(|field| field == "allow"))
+}
+
+#[cfg(target_os = "macos")]
+mod acl {
+    /// `ACL_TYPE_EXTENDED` in `<sys/acl.h>`.
+    pub(super) const ACL_TYPE_EXTENDED: libc::c_int = 0x0000_0100;
+    extern "C" {
+        pub(super) fn acl_get_fd_np(fd: libc::c_int, kind: libc::c_int) -> *mut libc::c_void;
+        pub(super) fn acl_to_text(
+            acl: *mut libc::c_void,
+            length: *mut libc::ssize_t,
+        ) -> *mut libc::c_char;
+        pub(super) fn acl_free(object: *mut libc::c_void) -> libc::c_int;
+    }
+}
+
+/// B6a (macOS): refuse an open file or directory whose extended ACL has any
+/// `allow` entry; none at all (`ENOENT`) or deny-only is fine. An ACL that
+/// cannot be read or rendered refuses.
+#[cfg(target_os = "macos")]
+fn no_allow_acl(fd: &OwnedFd) -> Result<(), ProfileError> {
+    // SAFETY: a live descriptor; the returned ACL is freed below.
+    let acl = unsafe { acl::acl_get_fd_np(fd.as_raw_fd(), acl::ACL_TYPE_EXTENDED) };
+    if acl.is_null() {
+        return match errno() {
+            libc::ENOENT => Ok(()),
+            other => Err(ProfileError::Platform(other)),
+        };
+    }
+    // SAFETY: `acl` came from acl_get_fd_np; the text is freed below.
+    let text = unsafe { acl::acl_to_text(acl, std::ptr::null_mut()) };
+    let allows = if text.is_null() {
+        None
+    } else {
+        // SAFETY: acl_to_text returns a NUL-terminated string it allocated.
+        let rendered = unsafe { std::ffi::CStr::from_ptr(text) };
+        Some(acl_text_allows(&rendered.to_string_lossy()))
+    };
+    // SAFETY: both objects were allocated by the ACL library above.
+    unsafe {
+        if !text.is_null() {
+            acl::acl_free(text.cast());
+        }
+        acl::acl_free(acl);
+    }
+    match allows {
+        Some(false) => Ok(()),
+        _ => Err(ProfileError::Permissions),
+    }
+}
+
+/// Linux: POSIX ACL entries are bounded by the mask the mode's group bits
+/// carry, which the mode checks already constrain.
+#[cfg(not(target_os = "macos"))]
+fn no_allow_acl(_fd: &OwnedFd) -> Result<(), ProfileError> {
     Ok(())
 }
 
@@ -313,6 +384,7 @@ impl ProfileHold {
         if !owned_with_mode(&root_stat, 0o700) {
             return Err(ProfileError::Permissions);
         }
+        no_allow_acl(&root)?;
 
         let lock_name = CString::new(LOCK_NAME).map_err(|_| ProfileError::NotPlain)?;
         let lock = open_lock(&root, &lock_name)?;
@@ -328,6 +400,7 @@ impl ProfileHold {
         if !owned_with_mode(&lock_stat, 0o600) {
             return Err(ProfileError::Permissions);
         }
+        no_allow_acl(&lock)?;
         // SAFETY: an open descriptor; non-blocking exclusive lock.
         if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
             return Err(match errno() {
@@ -403,7 +476,8 @@ impl ProfileHold {
         if !owned_with_mode(&fstat(&self.root)?, 0o700) {
             return Err(ProfileError::Permissions);
         }
-        Ok(())
+        // B6a: an allow ACL added later is caught here too.
+        no_allow_acl(&self.root)
     }
 
     /// B5: remove only the exact held directory entry. With open_beneath,
@@ -625,6 +699,95 @@ mod tests {
         std::fs::create_dir(&dir).unwrap();
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
         (root, dir)
+    }
+
+    /// B6a: the ACL text rule, on renderings in `acl_to_text`'s format.
+    #[test]
+    fn only_an_allow_entry_in_an_acl_refuses() {
+        let header = "!#acl 1\n";
+        let deny = "group:ABCDEFAB-CDEF-ABCD-EFAB-CDEF0000000C:everyone:12:deny:delete\n";
+        let allow = "user:FFFFEEEE-DDDD-CCCC-BBBB-AAAA000001F5:other:501:allow:read,write\n";
+        assert!(!acl_text_allows(header));
+        assert!(!acl_text_allows(&format!("{header}{deny}")));
+        assert!(acl_text_allows(&format!("{header}{allow}")));
+        assert!(acl_text_allows(&format!("{header}{deny}{allow}")));
+        // A name containing "allow" is not the allow field.
+        assert!(!acl_text_allows(&format!(
+            "{header}user:FFFFEEEE-DDDD-CCCC-BBBB-AAAA000001F6:allowance:502:deny:read\n"
+        )));
+    }
+
+    /// B6a (macOS): set a real extended ACL on a descriptor.
+    #[cfg(target_os = "macos")]
+    fn set_acl(path: &Path, text: &str) {
+        extern "C" {
+            fn acl_from_text(text: *const libc::c_char) -> *mut libc::c_void;
+            fn acl_set_fd_np(
+                fd: libc::c_int,
+                acl: *mut libc::c_void,
+                kind: libc::c_int,
+            ) -> libc::c_int;
+            fn acl_free(object: *mut libc::c_void) -> libc::c_int;
+        }
+        let file = std::fs::File::open(path).unwrap();
+        let text = CString::new(text).unwrap();
+        // SAFETY: a NUL-terminated rendering; the ACL is freed below.
+        let acl = unsafe { acl_from_text(text.as_ptr()) };
+        assert!(!acl.is_null(), "the ACL text parses");
+        // SAFETY: an open descriptor and the ACL parsed above.
+        let status = unsafe { acl_set_fd_np(file.as_raw_fd(), acl, 0x0000_0100) };
+        // SAFETY: the ACL came from acl_from_text.
+        unsafe { acl_free(acl) };
+        assert_eq!(status, 0, "the ACL is set");
+    }
+
+    #[cfg(target_os = "macos")]
+    const EVERYONE_READ: &str =
+        "!#acl 1\ngroup:ABCDEFAB-CDEF-ABCD-EFAB-CDEF0000000C:everyone:12:allow:read\n";
+    #[cfg(target_os = "macos")]
+    const EVERYONE_DENY_DELETE: &str =
+        "!#acl 1\ngroup:ABCDEFAB-CDEF-ABCD-EFAB-CDEF0000000C:everyone:12:deny:delete\n";
+
+    /// B6a (macOS): an allow entry on the profile, on its lock, on an
+    /// ancestor, or added after the hold, refuses; a deny-only ACL does not.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_macos_allow_acl_anywhere_on_the_path_refuses() {
+        let (root, dir) = profile("acl-root");
+        set_acl(&dir, EVERYONE_READ);
+        assert_eq!(
+            ProfileHold::open(&dir).unwrap_err(),
+            ProfileError::Permissions
+        );
+        std::fs::remove_dir_all(&root).ok();
+
+        let (root, dir) = profile("acl-deny");
+        set_acl(&dir, EVERYONE_DENY_DELETE);
+        ProfileHold::open(&dir).expect("a deny-only ACL is accepted");
+        std::fs::remove_dir_all(&root).ok();
+
+        let (root, dir) = profile("acl-lock");
+        drop(ProfileHold::open(&dir).unwrap());
+        set_acl(&dir.join(LOCK_NAME), EVERYONE_READ);
+        assert_eq!(
+            ProfileHold::open(&dir).unwrap_err(),
+            ProfileError::Permissions
+        );
+        std::fs::remove_dir_all(&root).ok();
+
+        let (root, _) = nested("acl-ancestor");
+        set_acl(&root.join("middle"), EVERYONE_READ);
+        assert_eq!(
+            ProfileHold::open_beneath(&root, Path::new("middle/profile")).unwrap_err(),
+            ProfileError::Permissions
+        );
+        std::fs::remove_dir_all(&root).ok();
+
+        let (root, dir) = profile("acl-later");
+        let hold = ProfileHold::open(&dir).unwrap();
+        set_acl(&dir, EVERYONE_READ);
+        assert_eq!(hold.verify(&dir), Err(ProfileError::Permissions));
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
