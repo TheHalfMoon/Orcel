@@ -1006,16 +1006,20 @@ mod tests {
         // namespace with its own /proc, so the supervisor's /proc reads name
         // its namespace's processes. The parent stays outside and reports
         // the host's pid as the outer system sees it.
-        const SHIM: [&str; 22] = [
+        const SHIM: [&str; 26] = [
             "import ctypes, os, sys",
+            "uid, gid = os.getuid(), os.getgid()",
+            "step = 'unshare'",
             "try:",
-            "    uid, gid = os.getuid(), os.getgid()",
             "    os.unshare(os.CLONE_NEWUSER | os.CLONE_NEWPID | os.CLONE_NEWNS)",
+            "    step = 'setgroups'",
             "    open('/proc/self/setgroups', 'w').write('deny')",
+            "    step = 'uid_map'",
             "    open('/proc/self/uid_map', 'w').write(f'{uid} {uid} 1')",
+            "    step = 'gid_map'",
             "    open('/proc/self/gid_map', 'w').write(f'{gid} {gid} 1')",
             "except OSError as error:",
-            "    print('SG115-PIDNS refused', error.errno, flush=True)",
+            "    print('SG115-PIDNS refused at', step, error.errno, flush=True)",
             "    sys.exit(0)",
             "child = os.fork()",
             "if child == 0:",
@@ -1084,9 +1088,11 @@ mod tests {
                     "{next}"
                 );
                 let what = if tag.ends_with("proc-refused") {
-                    "its /proc mount"
+                    "its /proc mount".to_string()
                 } else {
-                    "an unprivileged PID namespace"
+                    // `refused at <step> <errno>`: the step that failed.
+                    let step = next[at..].split_whitespace().nth(3).unwrap_or("?");
+                    format!("an unprivileged PID namespace (at {step})")
                 };
                 println!(
                     "SG115-EVIDENCE B8 unprivileged PID namespace refused: {what}, errno {errno}"
