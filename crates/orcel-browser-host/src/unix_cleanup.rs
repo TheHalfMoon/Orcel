@@ -149,14 +149,15 @@ pub(crate) fn sweep_held_profile(hold: ProfileHold, path: &Path) -> Result<(), C
 /// Recover after a crash: a profile no live holder has is removed, unless
 /// an engine may still be using it (A3b, `engine_may_be_alive`); one in use
 /// is left alone.
+///
+/// B5b: it runs through the held walk, anchored at the profile's parent
+/// (`recover_stale_profile_beneath`), so the parent must be a private
+/// directory and the final removal is relative to the held parent.
 pub(crate) fn recover_stale_profile(path: &Path) -> Result<Recovery, CleanupError> {
-    match ProfileHold::open(path) {
-        Ok(hold) if engine_may_be_alive(&hold, path) => Ok(Recovery::EngineMayBeAlive),
-        Ok(hold) => sweep_held_profile(hold, path).map(|()| Recovery::Removed),
-        Err(ProfileError::Busy) => Ok(Recovery::InUse),
-        Err(ProfileError::Missing) => Ok(Recovery::Absent),
-        Err(error) => Err(CleanupError::Profile(error)),
-    }
+    let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+        return Err(CleanupError::Profile(ProfileError::NotPlain));
+    };
+    recover_stale_profile_beneath(parent, Path::new(name))
 }
 
 /// B5 inert anchored recovery: the trusted state root and EVERY

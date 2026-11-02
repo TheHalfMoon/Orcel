@@ -279,7 +279,12 @@ fn start_with(
     // the hold re-checks it on the descriptor.
     std::fs::set_permissions(profile, std::fs::Permissions::from_mode(0o700))
         .map_err(Refused::Create)?;
-    let hold = ProfileHold::open(profile).map_err(Refused::Hold)?;
+    // B5b: held through the walk from the profile's (private) parent, so
+    // teardown removes it relative to the held parent.
+    let (Some(parent), Some(name)) = (profile.parent(), profile.file_name()) else {
+        return Err(Refused::Hold(ProfileError::NotPlain));
+    };
+    let hold = ProfileHold::open_beneath(parent, Path::new(name)).map_err(Refused::Hold)?;
     let sink = NetworkSink::start().map_err(Refused::Sink)?;
     let destinations = destinations();
     let argv = build_unix_worker_argv(profile, &destinations, &sink).map_err(Refused::Argv)?;
