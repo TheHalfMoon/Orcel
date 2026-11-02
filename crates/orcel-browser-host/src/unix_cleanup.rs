@@ -784,6 +784,38 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
+    /// B5, the case only the held parent catches: the profile is moved to
+    /// another directory and a link puts it back under its old name, so the
+    /// path still names the held directory (the by-name check passes), but
+    /// the held parent no longer holds it. Without B5 the sweep removed it
+    /// through the re-resolved path.
+    #[test]
+    fn b5_a_profile_moved_behind_a_link_is_refused_by_the_held_parent() {
+        let (root, profile) = nested_profile("b5-moved");
+        populate(&profile);
+        let hold = ProfileHold::open_beneath(&root, Path::new("middle/profile")).unwrap();
+        let old = root.join("old");
+        std::fs::rename(root.join("middle"), &old).unwrap();
+        let new = root.join("new");
+        std::fs::create_dir(&new).unwrap();
+        std::fs::rename(old.join("profile"), new.join("profile")).unwrap();
+        std::os::unix::fs::symlink(&new, root.join("middle")).unwrap();
+        // The path still names the held directory.
+        use std::os::unix::fs::MetadataExt;
+        let named = std::fs::metadata(&profile).unwrap();
+        let held = std::fs::metadata(new.join("profile")).unwrap();
+        assert_eq!((named.dev(), named.ino()), (held.dev(), held.ino()));
+        assert_eq!(
+            sweep_held_profile(hold, &profile),
+            Err(CleanupError::Profile(ProfileError::Swapped))
+        );
+        assert!(
+            new.join("profile/Local State").is_file(),
+            "nothing was removed"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
     #[test]
     fn a_held_profile_is_removed_entirely() {
         let (root, dir) = profile("remove");

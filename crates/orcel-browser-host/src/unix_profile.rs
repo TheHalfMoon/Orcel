@@ -381,7 +381,8 @@ impl ProfileHold {
             // Root name must STILL designate the exact opened directory
             // relative to the held ancestor, never a symlink or replacement.
             private_ancestor(parent)?;
-            // SAFETY: fstatat does not follow the final component.
+            // SAFETY: a live descriptor this hold owns, a NUL-terminated
+            // name it owns, and a stat buffer of the right type.
             let mut named: libc::stat = unsafe { std::mem::zeroed() };
             if unsafe {
                 libc::fstatat(
