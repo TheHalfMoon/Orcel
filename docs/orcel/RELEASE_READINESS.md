@@ -53,6 +53,7 @@ checkpoint at the end says where engineering stands.
 | SG-000115 B6a (inert): on macOS the profile hold walks each extended ACL's entries with the ACL library (profile, lock, state root, every walked directory) and refuses any entry that is not a deny entry; deny-only ACLs (macOS's own on home folders) are accepted, an unreadable ACL refuses, and `verify` repeats it. Closes A3's ACL item, which B4 rests on. On macOS CI real allow ACLs on the profile, its lock, an ancestor, inherited from a parent, or added after the hold were refused, and a deny-only ACL accepted; a first design that parsed ACL text was replaced in review (flags could hide an allow entry) | #568 → `542ff8d` (main CI 41391234618) |
 | SG-000115 B6b (investigation, test only): PID-namespace containment for the sink crash residual, option (a). An unprivileged user and PID namespace whose init is killed takes its `setsid` helper with it; on the hosted Ubuntu runner (CI run 41399210347) and locally on WSL2 the helper was taken. A CI step prints the outcome on every Linux run. Evidence only: nothing is wired, the rehearsal runs without a namespace, and the crash-residual test is unchanged; a host with AppArmor's user-namespace restriction would refuse | #570 → `8ef2422` (main CI 41404809356) |
 | SG-000115 B5b (inert): `recover_stale_profile` and the A6 rehearsal now run through the held walk anchored at the profile's parent, so recovery, the hold and teardown's final removal are all symlink-resistant and relative to the held parent. The parent must be private; a path without a usable parent (a bare name, the root, a `..` ending) is refused, never reported absent. Cost: a profile directly under `/tmp` or a symlinked parent is left in place | #572 → `ffa3d87` |
+| SG-000115 B3b (inert): after a failed or unparseable arguments read, macOS recovery re-reads the process's own kernel record and keeps the profile only if it is still listed and not a zombie (or the record cannot be read); a process the kernel reports gone no longer keeps it. Found when a rehearsal run kept a profile no engine used (likely a fixture caught exiting; not proven). A `SG115-DIAG kept` line now shows the cause of any recurrence | #579 → `7cccf4b` |
 | Lifecycle on main `89066a6`: Windows release qualification (install, run, update, recover, uninstall, local report client, 400 MB budget) and Linux deb/rpm/tarball install, systemd units, tamper detection and uninstall | main CI 40672122647 |
 
 ## 2. Engineering that can still be completed without the founder
@@ -119,14 +120,14 @@ checkpoint at the end says where engineering stands.
 
 ## Restart checkpoint
 
-If a session ends, resume from here (2026-11-02, main `09b0e1e`, main CI
-41437216979 green after a rerun of the #438 Windows flake):
+If a session ends, resume from here (2026-11-02, main `7cccf4b`; main CI
+41437216979 green at `09b0e1e` after a rerun of the #438 Windows flake):
 
 1. Merged since the last checkpoint: #571 (handoff), #572 (B5b), #574
    (P-14, fixing flake #573), #578 (RUSTSEC-2026-0429 under the doc parser's
-   extraction-only rule) and #577 (fixing flake #575). Open from this work:
-   this handoff and #579 (SG-000115 B3b: a process the kernel reports gone
-   or zombie no longer keeps a profile; approved, CI pending). Branch
+   extraction-only rule), #577 (fixing flake #575) and #579 (SG-000115
+   B3b: a process the kernel reports gone or zombie no longer keeps a
+   profile). No PR from this work is open apart from this handoff. Branch
    protection needs each PR up to date with main, so PRs merge one at a
    time: rebase, exact-head green run, then `--match-head-commit`. #342 and
    #328 belong to other work: do not touch them.
