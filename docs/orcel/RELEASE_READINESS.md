@@ -44,6 +44,8 @@ checkpoint at the end says where engineering stands.
 | Agent store path aliases: a requested path whose held final path differs (mapped or `subst` drive, junction, link, mount point) is refused with a message naming all possible causes, not only a junction; a CI-only test maps a `subst` drive and shows the refusal | #562 → `19d55bd` |
 | SG-000115 B1 (inert): a pid reused within one macOS scan counts as torn (clock mark); the node is kept, so freeze and kill coverage is unchanged. On hosted macOS CI the clock test passed and the lineage cases still verify every attributable escape, with the fast orphan detected in 5 of 5 rounds | #557 → `32c5087` (main CI 41327036226) |
 | SG-000115 B2 (inert): macOS same-user browser process-argument scan detects `--user-data-dir` before `SingletonLock`, including paths with spaces as whole arguments; on macOS CI the profile was retained until the running process exited, then removed. Other-user/root processes and sandboxed-host `permission denied` remain unaccepted residuals. | #560 → `878c84d` (main CI 41356507864 passed) |
+| SG-000115 B3 (inert): macOS ownership comes from the kernel's own list of this user's processes (`sysctl KERN_PROC_UID`, record layout checked at run time, record size read and pinned at 648 bytes), never from a refusal; any failure keeps the profile. A first design ("a refusal keeps") was disproved by macOS CI, which showed every other user's process info refused, and was not used. On hosted macOS CI the list is served without privilege, and under `sandbox-exec` with process info denied the engine's profile is still kept | #563 → `7be4b3b` (main CI green) |
+| SG-000115 B5 (inert): profile recovery through the symlink-resistant walk (`recover_stale_profile_beneath`); the final directory is removed with `unlinkat` relative to its held, private parent. A profile moved behind a link under its old name is refused (a test that fails without the held parent); opened by another session, reviewed, its duplicate workflow removed | #564 → `ce50d6a` |
 | Lifecycle on main `89066a6`: Windows release qualification (install, run, update, recover, uninstall, local report client, 400 MB budget) and Linux deb/rpm/tarball install, systemd units, tamper detection and uninstall | main CI 40672122647 |
 
 ## 2. Engineering that can still be completed without the founder
@@ -51,7 +53,7 @@ checkpoint at the end says where engineering stands.
 | Item | Note |
 |---|---|
 | #438 residual: navigation `read: TimedOut` on CI | Waiting for a recurrence; #494's diagnostics capture it |
-| SG-000115 Priority B (inert): retained-.deb signature chain for S-07, PID-namespace or cgroup containment feasibility, profile delete through the held walk, macOS ACLs on profiles; close the B2 sandboxed-host ownership ambiguity | Engineering solutions to shrink the class 4 residuals; none activates SG-000115 |
+| SG-000115 Priority B (inert): retained-.deb signature chain for S-07, PID-namespace or cgroup containment feasibility, macOS ACLs on profiles; move A6 and `recover_stale_profile` onto the walk (B5 added it beside them) | Engineering solutions to shrink the class 4 residuals; none activates SG-000115 |
 | #292 flaky SG-000013 contained PowerShell test on windows-latest | Root cause not yet found |
 | macOS install / start / uninstall lifecycle | No macOS package yet: macOS packaging (XP-16) waits for FD-05; Windows and Linux lifecycle are in class 1 |
 | SG-000128 closeout | After slice 3b (class 3) is accepted or the founder records otherwise; the closeout judge checks that slice 1's deferred items are evidenced |
@@ -84,7 +86,7 @@ checkpoint at the end says where engineering stands.
 | Release and publication | Not authorized; no release is created |
 | A planner model for BM-02 Tier C agent runs | Paid inference is excluded by the zero-cost rule; the local d1 model is an advisory classifier, not a planner |
 | M4 model selection and licensing | Candidates and the benchmark plan are in `prep/M4-local-model-candidates.md`; nothing is downloaded or run before this gate |
-| SG-000115 residuals (recorded, **not accepted**; engineering continues on each) | (a) macOS: a pid reused within one descendant scan (narrowed by B1, #557, to a backward wall-clock step: during a scan it can hide a reuse; afterwards it tears every scan, so the sweep fails closed); (b) descendants of another user that cannot be read, including root-run engines; B2 still skips macOS processes on `permission denied`, which is ambiguous for a future sandboxed host; (c) false positives of the unattributable rule; (d) the network sink's port after an orceld crash; (e) S-07 binds ownership and modes, not a signature (stock GitHub Ubuntu has `/opt/google` at 0777, so Chrome there is unverified); (f) engines in another PID namespace; (g) profile paths with spaces (whole-argument matching now covers macOS always, and Linux only where the title is not rewritten), and `hidepid` on `/proc` |
+| SG-000115 residuals (recorded, **not accepted**; engineering continues on each) | (a) macOS: a pid reused within one descendant scan (narrowed by B1, #557, to a backward wall-clock step: during a scan it can hide a reuse; afterwards it tears every scan, so the sweep fails closed); (b) descendants of another user that cannot be read, including root-run engines (on macOS another user's engine is not seen by recovery; the sandboxed-host `permission denied` ambiguity was closed by B3, #563); (c) false positives of the unattributable rule; (d) the network sink's port after an orceld crash; (e) S-07 binds ownership and modes, not a signature (stock GitHub Ubuntu has `/opt/google` at 0777, so Chrome there is unverified); (f) engines in another PID namespace; (g) profile paths with spaces (whole-argument matching now covers macOS always, and Linux only where the title is not rewritten), and `hidepid` on `/proc` |
 | Real platform presence (Windows Hello, Touch ID, polkit), macOS permissions | Never simulated or pre-granted |
 | Paid infrastructure, deployment | Excluded by the zero-cost rule |
 
@@ -110,18 +112,14 @@ checkpoint at the end says where engineering stands.
 
 ## Restart checkpoint
 
-If a session ends, resume from here (2026-11-02, main `19d55bd`; main CI
-41356507864 green for SG-000115 B2 at `878c84d`):
+If a session ends, resume from here (2026-11-02, main `ce50d6a`; main CI
+green at `7be4b3b`, after B3):
 
-1. Merged since the last checkpoint: #560 (B2) and #562 (agent-store path
-   alias message). Open from this work: this handoff (#561), #563
-   (SG-000115 B3, a refused macOS process owner keeps the profile; security
-   review approved, macOS CI pending; draft) and #564 (SG-000115 B5,
-   held-ancestor anchored profile recovery, opened by another session; under
-   independent review; draft). Branch protection needs each
-   PR up to date with main, so PRs merge one at a time: rebase, exact-head
-   green run, then `--match-head-commit`. #342 and #328 belong to other
-   work: do not touch them.
+1. Merged since the last checkpoint: #561 (B2 handoff), #563 (B3) and #564
+   (B5). No PR from this work is open apart from this handoff. Branch
+   protection needs each PR up to date with main, so PRs merge one at a
+   time: rebase, exact-head green run, then `--match-head-commit`. #342 and
+   #328 belong to other work: do not touch them.
 2. Local runs on Windows need a private temp folder (`TEMP`/`TMP` outside
    AppData, or `ORCEL_BM02_STATE_PARENT` for Tier A): this host's AppData
    grants an app-container SID delete rights, so orceld and the agent store
@@ -138,5 +136,5 @@ If a session ends, resume from here (2026-11-02, main `19d55bd`; main CI
 5. Known CI flakes: macOS toolchain install conflict (rerun failed jobs),
    #438, #508, #512, #516, #524, #558 (orceld app API re-bind on macOS).
 6. Do not repeat: XP-06/XP-11 Mac hardware tests (#425); the SG-000115 A1 to
-   A6b, B1 and B2 slices; the M4 research (#553).
+   A6b, B1, B2, B3 and B5 slices; the M4 research (#553).
 7. Never mark Core MVP complete; classes 3 to 5 stay open.
