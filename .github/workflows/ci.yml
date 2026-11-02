@@ -82,6 +82,20 @@ jobs:
           printf '%s\n' "$out"
           [ "$status" -eq 0 ]
           grep -q "SG115-EVIDENCE real Chrome install tree" <<<"$out"
+      # SG-000115 B6b: PID-namespace containment on this runner, shown
+      # either way: the containment result, or the host's refusal of an
+      # unprivileged user namespace (evidence about the host, not a pass).
+      - name: SG-000115 B6b PID namespace evidence (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          out=$(cargo test -p orcel-browser-host --lib -- --exact --nocapture unix_supervise::tests::a_pid_namespace_init_takes_its_whole_family_with_it 2>&1) || status=$?
+          printf '%s
+' "$out"
+          [ "$status" -eq 0 ]
+          grep -qE "SG115-RESULT PID namespace|SG115-EVIDENCE unprivileged PID namespace refused" <<<"$out"
       # BM-02 evidence on this OS: both tiers again with their per-case lines
       # in the log (the Test step captures them when they pass), and both
       # reports checked against orcel-benchmark-report/1.
