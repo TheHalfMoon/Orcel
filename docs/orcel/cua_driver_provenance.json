@@ -258,6 +258,12 @@
           "upstream_blob_sha": "9783adc48b05c92acb4ba78a8cb965152a21d958",
           "patched_blob_sha": "9e8bb293ad9a7644331ed7def16f6f955593a2e1",
           "upstream_blocker_lines": []
+        },
+        {
+          "path": "src/session_authorization.rs",
+          "upstream_blob_sha": "febdade5df0318507d79b19651d5996dc26535ba",
+          "patched_blob_sha": "bb6bab8c921df2096c017a954f44a5b23f6599d7",
+          "upstream_blocker_lines": []
         }
       ]
     },

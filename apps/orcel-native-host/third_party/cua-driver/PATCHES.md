@@ -599,6 +599,21 @@ to 500 ms.
 - `cua-driver-core/src/batch_tools/tests.rs`: the delay and the two bounds in
   that one test. Test-only; no production line changes.
 
+## P-14: idle-expiry test headroom for shared runners (#573)
+
+Upstream's `absolute_and_idle_expiry_are_terminal` bound a delegated session
+with a 1 ms idle TTL and then resolved it at once, expecting it still live.
+On a shared hosted macOS runner more than 1 ms once passed between the bind and
+the resolve, so the resolve already saw `Expired` (PR #572's run 41410350600).
+The patch gives the idle case a 200 ms idle TTL (and a 5 s absolute TTL) and
+sleeps 300 ms before checking that the context has expired and refuses
+dispatch. The assertions are unchanged, so idle expiry is still shown to be
+terminal; the absolute-expiry case, which only grows more certain with time,
+is untouched.
+
+- `cua-driver-core/src/session_authorization.rs`: the idle TTLs and the sleep
+  in that one test. Test-only; no production line changes.
+
 ## Patched file index
 
 Every vendored file that differs from upstream, as recorded in the
@@ -635,6 +650,7 @@ to be named here.
 - `cua-driver-core/src/server.rs` (upstream blob `7c85f09756a8`)
 - `cua-driver-core/src/tool.rs` (upstream blob `677392578aa0`)
 - `cua-driver-core/src/batch_tools/tests.rs` (upstream blob `9783adc48b05`)
+- `cua-driver-core/src/session_authorization.rs` (upstream blob `febdade5df03`)
 - `cursor-overlay/Cargo.toml` (upstream blob `0b55e9e2b1b9`)
 - `cursor-overlay/src/render_state.rs` (upstream blob `482d1867a06b`)
 - `cursor-overlay/src/session_badge.rs` (upstream blob `f66e866ad1c1`)
