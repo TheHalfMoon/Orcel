@@ -86,6 +86,9 @@ pub(crate) struct ProfileHold {
     _lock: OwnedFd,
     identity: (u64, u64),
     lock_identity: (u64, u64),
+    /// B5: a held, private parent and the profile's single child name.
+    /// Only open_beneath supplies this; ordinary open keeps legacy behavior.
+    parent: Option<(OwnedFd, CString)>,
 }
 
 fn errno() -> i32 {
@@ -262,7 +265,7 @@ impl ProfileHold {
     pub(crate) fn open(path: &Path) -> Result<Self, ProfileError> {
         let c_path =
             CString::new(path.as_os_str().as_bytes()).map_err(|_| ProfileError::NotPlain)?;
-        Self::hold(open_directory(None, &c_path)?)
+        Self::hold(open_directory(None, &c_path)?, None)
     }
 
     /// Hold the profile at `state_root/relative`, opening every component
@@ -290,16 +293,19 @@ impl ProfileHold {
             };
             let name = CString::new(name.as_bytes()).map_err(|_| ProfileError::NotPlain)?;
             let next = open_directory(Some(&dir), &name)?;
-            if index + 1 < parts.len() {
-                private_ancestor(&next)?;
+            if index + 1 == parts.len() {
+                // Keep the parent descriptor alive until the final unlinkat:
+                // never re-resolve an attacker-swapped intermediate path.
+                return Self::hold(next, Some((dir, name)));
             }
+            private_ancestor(&next)?;
             dir = next;
         }
-        Self::hold(dir)
+        Err(ProfileError::NotPlain)
     }
 
     /// The checks shared by `open` and `open_beneath`, on the opened root.
-    fn hold(root: OwnedFd) -> Result<Self, ProfileError> {
+    fn hold(root: OwnedFd, parent: Option<(OwnedFd, CString)>) -> Result<Self, ProfileError> {
         let root_stat = fstat(&root)?;
         if (root_stat.st_mode & libc::S_IFMT) != libc::S_IFDIR {
             return Err(ProfileError::NotPlain);
@@ -352,6 +358,7 @@ impl ProfileHold {
             lock_identity: identity(&lock_stat),
             root,
             _lock: lock,
+            parent,
         })
     }
 
@@ -370,10 +377,52 @@ impl ProfileHold {
         if !metadata.file_type().is_dir() || (metadata.dev(), metadata.ino()) != self.identity {
             return Err(ProfileError::Swapped);
         }
+        if let Some((parent, name)) = &self.parent {
+            // Root name must STILL designate the exact opened directory
+            // relative to the held ancestor, never a symlink or replacement.
+            private_ancestor(parent)?;
+            // SAFETY: a live descriptor this hold owns, a NUL-terminated
+            // name it owns, and a stat buffer of the right type.
+            let mut named: libc::stat = unsafe { std::mem::zeroed() };
+            if unsafe {
+                libc::fstatat(
+                    parent.as_raw_fd(),
+                    name.as_ptr(),
+                    &mut named,
+                    libc::AT_SYMLINK_NOFOLLOW,
+                )
+            } != 0
+                || (named.st_mode & libc::S_IFMT) != libc::S_IFDIR
+                || identity(&named) != self.identity
+            {
+                return Err(ProfileError::Swapped);
+            }
+        }
         // The held directory is still this user's, mode 0700 (a later
         // chmod is caught here).
         if !owned_with_mode(&fstat(&self.root)?, 0o700) {
             return Err(ProfileError::Permissions);
+        }
+        Ok(())
+    }
+
+    /// B5: remove only the exact held directory entry. With open_beneath,
+    /// unlinkat is relative to the *held parent*, never an untrusted
+    /// re-resolved intermediate path. The legacy direct-open path retains
+    /// its old behavior only for test callers and is not activated.
+    pub(crate) fn remove_directory(&self, path: &Path) -> Result<(), ProfileError> {
+        self.verify(path)?;
+        let removed = if let Some((parent, name)) = &self.parent {
+            // SAFETY: final-component directory unlink relative to held parent.
+            unsafe { libc::unlinkat(parent.as_raw_fd(), name.as_ptr(), libc::AT_REMOVEDIR) }
+        } else {
+            let name =
+                CString::new(path.as_os_str().as_bytes()).map_err(|_| ProfileError::NotPlain)?;
+            // SAFETY: legacy test-only whole-path directory unlink.
+            unsafe { libc::rmdir(name.as_ptr()) }
+        };
+        if removed != 0 {
+            return Err(ProfileError::Platform(errno()));
         }
         Ok(())
     }

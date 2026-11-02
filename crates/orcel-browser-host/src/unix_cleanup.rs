@@ -43,10 +43,15 @@
 //!   lock and let a second holder in; that holder's lock or files could then
 //!   be removed. It needs a same-user adversary; activation must close it
 //!   (for example a per-profile directory lock held for the whole sweep).
-//! - **Final directory removal:** the profile directory itself is removed
-//!   by path (`rmdir`) after a fresh `verify`, which is a point-in-time
-//!   check. A swap between the two leaves at most an empty directory
-//!   removed, or the call failing closed.
+//! - **Final directory removal:** for a hold from `open_beneath` (B5,
+//!   `recover_stale_profile_beneath`), the profile directory is removed
+//!   with `unlinkat(AT_REMOVEDIR)` relative to its held, private parent,
+//!   after checking that the name there still names the held directory; a
+//!   swapped ancestor is never re-resolved. A hold from the path-based
+//!   `open` (still used by `recover_stale_profile` and A6) removes it by
+//!   path (`rmdir`) after a fresh `verify`, a point-in-time check: a swap
+//!   between the two leaves at most an empty directory removed, or the call
+//!   failing closed.
 //! - **Engine coordination:** whether a sweep must also wait for the
 //!   engine's processes to exit (A2) before deleting, and what to do with
 //!   files the engine recreates mid-sweep.
@@ -131,13 +136,12 @@ pub(crate) fn sweep_held_profile(hold: ProfileHold, path: &Path) -> Result<(), C
     if unsafe { libc::unlinkat(hold.root_fd(), lock.as_ptr(), 0) } != 0 {
         return Err(CleanupError::Platform(errno()));
     }
-    hold.verify(path).map_err(CleanupError::Profile)?;
-    let c_path =
-        CString::new(path.as_os_str().as_bytes()).map_err(|_| CleanupError::Platform(0))?;
-    // SAFETY: a NUL-terminated path; rmdir removes only an empty directory.
-    if unsafe { libc::rmdir(c_path.as_ptr()) } != 0 {
-        return Err(CleanupError::Platform(errno()));
-    }
+    // B5: held-parent unlinkat for an open_beneath hold, never a path
+    // reconstructed through potentially swapped ancestor components.
+    hold.remove_directory(path).map_err(|error| match error {
+        ProfileError::Platform(code) => CleanupError::Platform(code),
+        other => CleanupError::Profile(other),
+    })?;
     drop(hold);
     Ok(())
 }
@@ -149,6 +153,25 @@ pub(crate) fn recover_stale_profile(path: &Path) -> Result<Recovery, CleanupErro
     match ProfileHold::open(path) {
         Ok(hold) if engine_may_be_alive(&hold, path) => Ok(Recovery::EngineMayBeAlive),
         Ok(hold) => sweep_held_profile(hold, path).map(|()| Recovery::Removed),
+        Err(ProfileError::Busy) => Ok(Recovery::InUse),
+        Err(ProfileError::Missing) => Ok(Recovery::Absent),
+        Err(error) => Err(CleanupError::Profile(error)),
+    }
+}
+
+/// B5 inert anchored recovery: the trusted state root and EVERY
+/// component of a relative profile path must be held with O_NOFOLLOW,
+/// and the final directory is removed through its held parent descriptor.
+/// Untrusted absolute, dot, or parent components refuse before deletion.
+/// No production path calls this while SG-000115 is unactivated.
+pub(crate) fn recover_stale_profile_beneath(
+    state_root: &Path,
+    relative: &Path,
+) -> Result<Recovery, CleanupError> {
+    let path = state_root.join(relative);
+    match ProfileHold::open_beneath(state_root, relative) {
+        Ok(hold) if engine_may_be_alive(&hold, &path) => Ok(Recovery::EngineMayBeAlive),
+        Ok(hold) => sweep_held_profile(hold, &path).map(|()| Recovery::Removed),
         Err(ProfileError::Busy) => Ok(Recovery::InUse),
         Err(ProfileError::Missing) => Ok(Recovery::Absent),
         Err(error) => Err(CleanupError::Profile(error)),
@@ -672,6 +695,125 @@ mod tests {
         std::fs::write(dir.join("Default/Preferences"), "{}").unwrap();
         std::fs::write(dir.join("Default/Cache/deep/er/blob"), "x").unwrap();
         std::fs::write(dir.join("Local State"), "{}").unwrap();
+    }
+
+    // B5: anchored recovery beneath a held state root.
+    fn nested_profile(label: &str) -> (PathBuf, PathBuf) {
+        let root = scratch(label);
+        let middle = root.join("middle");
+        std::fs::create_dir(&middle).unwrap();
+        let profile = middle.join("profile");
+        std::fs::create_dir(&profile).unwrap();
+        std::fs::set_permissions(&profile, std::fs::Permissions::from_mode(0o700)).unwrap();
+        (root, profile)
+    }
+
+    #[test]
+    fn b5_recovery_beneath_a_held_state_root_removes_only_stale_profile() {
+        let (root, profile) = nested_profile("b5-stale");
+        populate(&profile);
+        assert_eq!(
+            recover_stale_profile_beneath(&root, Path::new("middle/profile")),
+            Ok(Recovery::Removed)
+        );
+        assert!(!profile.exists());
+        assert!(root.join("middle").is_dir());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn b5_recovery_refuses_parent_symlink_without_following_foreign_data() {
+        let (root, profile) = nested_profile("b5-ancestor-link");
+        populate(&profile);
+        let moved = root.join("moved");
+        std::fs::rename(root.join("middle"), &moved).unwrap();
+        std::os::unix::fs::symlink(&moved, root.join("middle")).unwrap();
+        assert_eq!(
+            recover_stale_profile_beneath(&root, Path::new("middle/profile")),
+            Err(CleanupError::Profile(ProfileError::NotPlain))
+        );
+        assert!(moved.join("profile/Local State").is_file());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn b5_recovery_refuses_dot_parent_or_absolute_relative_paths() {
+        let (root, profile) = nested_profile("b5-components");
+        populate(&profile);
+        for value in [
+            "../profile",
+            "middle/../middle/profile",
+            "./middle/profile",
+            "/middle/profile",
+            "",
+        ] {
+            assert_eq!(
+                recover_stale_profile_beneath(&root, Path::new(value)),
+                Err(CleanupError::Profile(ProfileError::NotPlain)),
+                "{value:?}"
+            );
+        }
+        assert!(profile.join("Local State").is_file());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn b5_anchored_sweep_refuses_swapped_intermediate_parent() {
+        let (root, profile) = nested_profile("b5-parent-swap");
+        populate(&profile);
+        let hold = ProfileHold::open_beneath(&root, Path::new("middle/profile")).unwrap();
+        let original = root.join("original-middle");
+        std::fs::rename(root.join("middle"), &original).unwrap();
+        let attacker = root.join("attacker");
+        std::fs::create_dir(&attacker).unwrap();
+        let attacker_profile = attacker.join("profile");
+        std::fs::create_dir(&attacker_profile).unwrap();
+        std::fs::set_permissions(&attacker_profile, std::fs::Permissions::from_mode(0o700))
+            .unwrap();
+        std::fs::write(attacker_profile.join("keep"), "untouched").unwrap();
+        std::os::unix::fs::symlink(&attacker, root.join("middle")).unwrap();
+        assert_eq!(
+            sweep_held_profile(hold, &profile),
+            Err(CleanupError::Profile(ProfileError::Swapped))
+        );
+        assert_eq!(
+            std::fs::read_to_string(attacker_profile.join("keep")).unwrap(),
+            "untouched"
+        );
+        assert!(original.join("profile/Local State").exists());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// B5, the case only the held parent catches: the profile is moved to
+    /// another directory and a link puts it back under its old name, so the
+    /// path still names the held directory (the by-name check passes), but
+    /// the held parent no longer holds it. Without B5 the sweep removed it
+    /// through the re-resolved path.
+    #[test]
+    fn b5_a_profile_moved_behind_a_link_is_refused_by_the_held_parent() {
+        let (root, profile) = nested_profile("b5-moved");
+        populate(&profile);
+        let hold = ProfileHold::open_beneath(&root, Path::new("middle/profile")).unwrap();
+        let old = root.join("old");
+        std::fs::rename(root.join("middle"), &old).unwrap();
+        let new = root.join("new");
+        std::fs::create_dir(&new).unwrap();
+        std::fs::rename(old.join("profile"), new.join("profile")).unwrap();
+        std::os::unix::fs::symlink(&new, root.join("middle")).unwrap();
+        // The path still names the held directory.
+        use std::os::unix::fs::MetadataExt;
+        let named = std::fs::metadata(&profile).unwrap();
+        let held = std::fs::metadata(new.join("profile")).unwrap();
+        assert_eq!((named.dev(), named.ino()), (held.dev(), held.ino()));
+        assert_eq!(
+            sweep_held_profile(hold, &profile),
+            Err(CleanupError::Profile(ProfileError::Swapped))
+        );
+        assert!(
+            new.join("profile/Local State").is_file(),
+            "nothing was removed"
+        );
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
