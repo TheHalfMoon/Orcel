@@ -197,8 +197,14 @@ from orcel_agent.journal import DispatchJournal
 from orcel_agent.store import open_store
 
 class Scripted(GenericFakeChatModel):
+    seen: list = []
+
     def bind_tools(self, tools, **kwargs):
         return self
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        self.seen.append(list(messages))
+        return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
 
 def reply(item, index):
     if item[0] == "todos":
@@ -214,13 +220,19 @@ store = open_store(Path(sys.argv[2]), sys.argv[3])
 edge = Edge([sys.executable, "-c", SERVER, sys.argv[4], sys.argv[5]], {}, timeout_s=90)
 edge.start()
 replies = [reply(item, i) for i, item in enumerate(json.loads(sys.argv[6]))]
-planner = ChatModelPlanner(Scripted(messages=iter(replies)), checkpoint=PlannerCheckpoint(store))
+model = Scripted(messages=iter(replies))
+model.seen = []
+planner = ChatModelPlanner(model, checkpoint=PlannerCheckpoint(store))
 agent = chat_agent(edge, DispatchJournal(store.journal_path, store.check_capacity), EventLog("child"),
                    store=store, allowlist=frozenset({"fs_list"}), keep_store=True)
 result = agent.run("goal", planner)
 Path(sys.argv[7]).write_text(json.dumps({
     "outcome": result.outcome,
     "todos": planner._plan.todos,
+    # What the model was shown on its first call: restored todos are
+    # replayed to it as a write_todos tool message.
+    "first_call_todos": [str(m.content) for m in (model.seen[0] if model.seen else [])
+                         if getattr(m, "name", None) == "write_todos"],
     "steps": [[s.call.tool, s.error_code, s.resumed] for s in result.steps],
     "checkpoint_kept": PlannerCheckpoint(store).load() is not None,
 }), encoding="utf-8")
@@ -237,14 +249,20 @@ class ChatRestart(Harness):
         self.kill_when_blocked(first, "fs_list:/b")
         result = Path(self._dir.name) / "resumed.json"
         second = self.child(CHAT_CHILD, json.dumps({}),
-                            json.dumps([["call", "fs_list", "/c"], ["done"]]), str(result))
+                            json.dumps([["call", "fs_list", "/c"],
+                                        ["todos", [["list /a and /b", "completed"]]], ["done"]]), str(result))
         self.assertEqual(second.wait(timeout=120), 0, "the resumed process finished")
         resumed: dict[str, Any] = json.loads(result.read_text(encoding="utf-8"))
         # The planner state written before the kill was restored by a new
         # process, through the checkpoint file the kill left behind.
-        self.assertEqual(resumed["todos"], [{"content": "list /a and /b", "status": "in_progress"}])
+        replayed = resumed["first_call_todos"]
+        self.assertEqual(len(replayed), 1, resumed)
+        self.assertIn("list /a and /b", replayed[0])
+        self.assertIn("in_progress", replayed[0])
+        self.assertEqual(resumed["todos"], [{"content": "list /a and /b", "status": "completed"}])
         self.assertEqual(resumed["steps"][:2], [["fs_list", None, True], ["fs_list", "OUTCOME_UNKNOWN", True]])
         self.assertEqual(resumed["outcome"], "finished")
+        self.assertTrue(resumed["checkpoint_kept"], "keep_store keeps the checkpoint for inspection")
         self.assertEqual(self.calls(), ["fs_list:/a ok", "fs_list:/b block", "fs_list:/c ok"])
 
 
