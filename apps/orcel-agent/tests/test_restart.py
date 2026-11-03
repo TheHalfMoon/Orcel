@@ -234,7 +234,8 @@ Path(sys.argv[7]).write_text(json.dumps({
     "first_call_todos": [str(m.content) for m in (model.seen[0] if model.seen else [])
                          if getattr(m, "name", None) == "write_todos"],
     "steps": [[s.call.tool, s.error_code, s.resumed] for s in result.steps],
-    "checkpoint_kept": PlannerCheckpoint(store).load() is not None,
+    # The run closed its store; a new opener reads what it kept.
+    "checkpoint_kept": PlannerCheckpoint(open_store(Path(sys.argv[2]), sys.argv[3])).load() is not None,
 }), encoding="utf-8")
 '''.replace("SERVER", repr(SERVER))
 
