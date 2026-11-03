@@ -2035,6 +2035,44 @@ fn cr398_a_shared_runtime_directory_falls_back_to_the_state_root() {
     let _ = std::fs::remove_dir_all(&private);
 }
 
+/// Binds `path` the way orceld's start loop does: `InUse` is retried (#558).
+/// A lock released by this test can stay held for a moment by a process
+/// another test forked and has not yet exec'd (flock follows the open file
+/// description into the child until `O_CLOEXEC` closes it at exec). orceld
+/// retries every `REBIND_INTERVAL`; the test retries for at most 2 s and
+/// names the lock's holders when it had to.
+#[cfg(unix)]
+fn bind_as_orceld_does(path: &std::path::Path) -> (std::os::unix::net::UnixListener, unix::Bound) {
+    let started = std::time::Instant::now();
+    let mut attempts = 0;
+    loop {
+        attempts += 1;
+        match unix::bind(path) {
+            Ok(bound) => {
+                if attempts > 1 {
+                    eprintln!("#558: bound after {attempts} attempts");
+                }
+                return bound;
+            }
+            Err(StartError::InUse(reason)) if started.elapsed() < Duration::from_secs(2) => {
+                if attempts == 1 {
+                    let holders = std::process::Command::new("lsof")
+                        .arg(unix::lock_path(path))
+                        .output()
+                        .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
+                        .unwrap_or_else(|error| format!("lsof unavailable: {error}"));
+                    eprintln!(
+                        "#558: {reason}; holders:
+{holders}"
+                    );
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(error) => panic!("bind test socket after {attempts} attempts: {error:?}"),
+        }
+    }
+}
+
 /// Runs [`unix::serve_watched`] on a fresh binding with a short check
 /// interval; returns the binding's slot and the receiver of its result.
 #[cfg(unix)]
@@ -2044,7 +2082,7 @@ fn watched_server(
     Arc<Mutex<Option<unix::Bound>>>,
     std::sync::mpsc::Receiver<String>,
 ) {
-    let (listener, bound) = unix::bind(path).expect("bind test socket");
+    let (listener, bound) = bind_as_orceld_does(path);
     let slot = Arc::new(Mutex::new(Some(bound)));
     let shared = shared_with(test_limits());
     let (done, finished) = std::sync::mpsc::channel();
@@ -2067,7 +2105,8 @@ fn watched_server(
 
 /// #398 item 1: a socket or lock file removed under a running orceld (a
 /// runtime directory clean-up) ends the watched serve loop with the reason,
-/// and the endpoint can be bound again at once.
+/// and the endpoint can be bound again, as orceld's start loop binds it
+/// (an `InUse` retried, #558).
 #[cfg(unix)]
 #[test]
 fn cr398_a_removed_socket_or_lock_file_is_noticed_and_bound_again() {
@@ -2092,7 +2131,7 @@ fn cr398_a_removed_socket_or_lock_file_is_noticed_and_bound_again() {
         assert!(reason.contains(expected), "{reason}");
         // What orceld's start loop does next: release, then bind again.
         drop(slot.lock().unwrap().take());
-        let (listener, bound) = unix::bind(&path).expect("bound again");
+        let (listener, bound) = bind_as_orceld_does(&path);
         drop(std::os::unix::net::UnixStream::connect(&path).expect("connect"));
         drop((listener, bound));
         assert!(!path.exists());
