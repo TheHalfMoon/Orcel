@@ -149,20 +149,22 @@ fn windows_private_powershell_success_is_bounded_and_quiescent() {
     let elapsed = started.elapsed();
     // Always in the log, with an uncontained start measured right after,
     // so a slow start is visible (and comparable) even when it passes.
+    // Written to stderr directly: libtest captures `eprintln!` of a passing
+    // test, so the evidence never reached the CI log (#292).
     let uncontained = uncontained_start_millis();
-    eprintln!(
+    evidence(&format!(
         "SG013-EVIDENCE contained PowerShell success took {} ms; uncontained start {:?} ms",
         elapsed.as_millis(),
         uncontained
-    );
+    ));
     // Past the production limit: a real user would have hit the timeout
     // (#292's open product question), so it is marked distinctly.
     if elapsed > ExecutionLimits::default().timeout {
-        eprintln!(
+        evidence(&format!(
             "SG013-SLOW contained PowerShell took {} ms, over the production {} s limit",
             elapsed.as_millis(),
             ExecutionLimits::default().timeout.as_secs()
-        );
+        ));
     }
     let result = result.unwrap_or_else(|failure| {
         panic!(
@@ -246,4 +248,10 @@ fn windows_private_powershell_stderr_limit_is_verified_and_typed() {
         Err(PrivateExecutionFailure::OutputLimit(OutputStream::Stderr))
     );
     let _ = std::fs::remove_dir_all(root);
+}
+
+/// One evidence line on the process's real stderr, past libtest's capture.
+fn evidence(line: &str) {
+    use std::io::Write;
+    let _ = writeln!(std::io::stderr().lock(), "{line}");
 }
