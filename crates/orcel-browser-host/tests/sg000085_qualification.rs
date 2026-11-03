@@ -1241,7 +1241,10 @@ fn no_shell_script_or_remote_process_surface_exists() {
     // test (recorded the same way). Since B8b the fake engine itself (a
     // fixed script run through `python_fixture`) can, under a test-only
     // environment switch, set parent-death signals and unshare a user and
-    // PID namespace with no maps (recorded the same way). A6
+    // PID namespace with no maps (recorded the same way). Since B9a A2's
+    // tests also start a fixture with a parent-death signal and a
+    // `getppid` check in `pre_exec`, from a dedicated test thread
+    // (recorded the same way). A6
     // (unix_rehearsal.rs) spawns only through A2's `python_fixture`, pinned
     // below under the same guard.
     let lib = sources

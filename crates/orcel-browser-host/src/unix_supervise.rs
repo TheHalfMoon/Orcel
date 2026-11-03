@@ -1660,6 +1660,121 @@ mod tests {
         assert!(left.is_empty(), "survivors {left:?}");
     }
 
+    /// B9a: one thread that spawns every engine and lives as long as the
+    /// host. Callers hand it a prepared command and get the child back.
+    #[cfg(target_os = "linux")]
+    struct LifetimeSpawner {
+        requests:
+            std::sync::mpsc::Sender<(Command, std::sync::mpsc::Sender<std::io::Result<Child>>)>,
+    }
+
+    #[cfg(target_os = "linux")]
+    impl LifetimeSpawner {
+        fn start() -> Self {
+            let (requests, incoming) = std::sync::mpsc::channel::<(
+                Command,
+                std::sync::mpsc::Sender<std::io::Result<Child>>,
+            )>();
+            std::thread::Builder::new()
+                .name("engine-spawner".to_owned())
+                .spawn(move || {
+                    for (mut command, reply) in incoming {
+                        let _ = reply.send(command.spawn());
+                    }
+                })
+                .expect("the spawner thread starts");
+            Self { requests }
+        }
+
+        fn spawn(&self, command: Command) -> std::io::Result<Child> {
+            let (reply, answer) = std::sync::mpsc::channel();
+            self.requests
+                .send((command, reply))
+                .map_err(|_| std::io::Error::other("the spawner thread is gone"))?;
+            answer
+                .recv()
+                .map_err(|_| std::io::Error::other("the spawner thread is gone"))?
+        }
+    }
+
+    /// B9a: a fixture that dies with its spawning thread: a parent-death
+    /// signal set in `pre_exec`, then a check that the parent is still the
+    /// host (it could have died between the fork and the `prctl`).
+    #[cfg(target_os = "linux")]
+    fn tied_to_its_spawner() -> Command {
+        let mut command = python("import time; time.sleep(60)");
+        let host = libc::pid_t::try_from(std::process::id()).expect("a pid fits pid_t");
+        // SAFETY: only async-signal-safe system calls (prctl, getppid,
+        // _exit) run between fork and exec, on a value captured by copy.
+        unsafe {
+            command.pre_exec(move || {
+                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if libc::getppid() != host {
+                    libc::_exit(1);
+                }
+                Ok(())
+            });
+        }
+        command
+    }
+
+    /// B9a: Linux sends a parent-death signal when the *thread* that forked
+    /// the child exits, not only the process. A child spawned straight from
+    /// a short-lived thread dies when that thread ends; one spawned through
+    /// the lifetime spawner, at the request of another short-lived thread,
+    /// outlives its requester. Host death is B8b's evidence.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_parent_death_signal_follows_the_spawning_thread() {
+        use std::os::unix::process::ExitStatusExt;
+        let mut direct = std::thread::spawn(|| tied_to_its_spawner().spawn())
+            .join()
+            .expect("the spawning thread did not panic")
+            .expect("the fixture did not start");
+        let started = Instant::now();
+        let mut status = None;
+        while status.is_none() && started.elapsed() < DEADLINE {
+            status = direct
+                .try_wait()
+                .expect("the direct child can be waited on");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let direct_killed = status.and_then(|status| status.signal()) == Some(libc::SIGKILL);
+        // Already reaped when it was killed; otherwise end it here.
+        let _ = direct.kill();
+        let _ = direct.wait();
+
+        let spawner = LifetimeSpawner::start();
+        let mut through = std::thread::scope(|scope| {
+            scope
+                .spawn(|| spawner.spawn(tied_to_its_spawner()))
+                .join()
+                .expect("the requesting thread did not panic")
+        })
+        .expect("the fixture did not start");
+        // The requester has ended; give a misdirected signal time to land.
+        std::thread::sleep(Duration::from_millis(500));
+        let spawner_child_alive = through
+            .try_wait()
+            .expect("the spawner's child can be waited on")
+            .is_none();
+        let _ = through.kill();
+        let _ = through.wait();
+        println!(
+            "SG115-EVIDENCE B9a spawning-thread exit killed the direct child={direct_killed}, spawner child alive={spawner_child_alive}"
+        );
+        assert!(
+            direct_killed,
+            "the direct child outlived its spawning thread: {status:?}"
+        );
+        assert!(
+            spawner_child_alive,
+            "the spawner's child died with its requester"
+        );
+    }
+
     /// The sweep never claims verified coverage while any descendant lives:
     /// the property the verified sweep exists for.
     #[test]
