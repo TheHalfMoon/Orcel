@@ -66,7 +66,7 @@ Sources are linked so each row can be checked. When a decision is made, record i
 
 | Item | Status | Removal condition |
 |---|---|---|
-| RUSTSEC-2026-0367, 0368, 0369 and 0429 (zip, via anydoc) in the doc parser | Kept for now on the founder's instruction (#580). **Not permanent risk acceptance.** Reachability is analysed module by module in `apps/orcel-doc-parser/.cargo/audit.toml`. | Remove when anydoc accepts zip 9 or later (the fixed version), qualified. If found reachable, stop relying on them and remediate. |
+| RUSTSEC-2026-0367, 0368, 0369 and 0429 (zip, via anydoc) in the doc parser | 0429 is kept for now on the founder's instruction (#580); 0367 to 0369 were ignored earlier because the parser never extracts entries. **Not permanent risk acceptance.** Reachability is analysed module by module in `apps/orcel-doc-parser/.cargo/audit.toml`. | Remove when anydoc accepts zip 9 or later (the fixed version), qualified. If found reachable, stop relying on them and remediate. |
 
 ## Not founder decisions
 
