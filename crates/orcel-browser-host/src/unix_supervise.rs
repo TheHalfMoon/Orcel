@@ -1846,6 +1846,17 @@ mod tests {
             assert!(control_survived, "the control helper died with its host");
             return;
         }
+        // Stops the unit however the test ends, a panic included.
+        struct StopUnit(String);
+        impl Drop for StopUnit {
+            fn drop(&mut self) {
+                let _ = Command::new("systemctl")
+                    .args(["--user", "stop"])
+                    .arg(&self.0)
+                    .output();
+            }
+        }
+        let _stop = StopUnit(unit.clone());
         let mut pinned = BTreeMap::new();
         let noted_pids = wait_noted(&pids, 2);
         pin(&noted_pids, &mut pinned);
@@ -1861,10 +1872,6 @@ mod tests {
         println!(
             "SG115-EVIDENCE B9b user service: helper gone={gone}, control helper survived={control_survived}"
         );
-        let _ = Command::new("systemctl")
-            .args(["--user", "stop"])
-            .arg(&unit)
-            .output();
         let left = survivors(&pids, &mut pinned);
         assert!(
             control_survived,
