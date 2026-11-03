@@ -1244,6 +1244,9 @@ fn no_shell_script_or_remote_process_surface_exists() {
     // PID namespace with no maps (recorded the same way). Since B9a A2's
     // tests also start a fixture with a parent-death signal and a
     // `getppid` check in `pre_exec`, from a dedicated test thread
+    // (recorded the same way). Since B9b they also start a fixture as a
+    // transient systemd user service (`systemd-run --user`, fixed
+    // arguments, no shell) and stop it with `systemctl --user stop`
     // (recorded the same way). A6
     // (unix_rehearsal.rs) spawns only through A2's `python_fixture`, pinned
     // below under the same guard.
