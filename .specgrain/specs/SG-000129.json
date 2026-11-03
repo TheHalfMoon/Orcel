@@ -2,7 +2,7 @@
   "id": "SG-000129",
   "title": "Orcel Agent: Core-integration planner (DeerFlow-derived MCP client), milestones M2 and M3",
   "program": "ORCEL-AGENT",
-  "state": "GRAIN",
+  "state": "CLOSED",
   "risk": "medium",
   "created": "2026-10-30",
   "base": "1dba94658dd5e2a0be86b9b9f89b7a157e07368e",
@@ -201,5 +201,40 @@
     "m6_m7": "Subagents, memory and skills (M6), packaging and Control Room integration (M7) are outside SG-000129."
   },
   "activation_note": "No dependency, donor code, tool or authority change in this activation packet. Separate implementation PRs must qualify their exact heads; activation CI alone proves nothing about the agent.",
-  "done_when": "The Orcel Agent runs BM-02 Tier A and the synthetic middleware tasks through a LangChain planner adapter with the copied DeerFlow middlewares and SQLite checkpoints on Windows, macOS and Linux CI, with every call authorized and audited by orceld, the resume invariant held across a kill, no egress, a hash-locked license-reviewed dependency set, and a labelled comparison with M1."
+  "done_when": "The Orcel Agent runs BM-02 Tier A and the synthetic middleware tasks through a LangChain planner adapter with the copied DeerFlow middlewares and SQLite checkpoints on Windows, macOS and Linux CI, with every call authorized and audited by orceld, the resume invariant held across a kill, no egress, a hash-locked license-reviewed dependency set, and a labelled comparison with M1.",
+  "closed_at": "2026-11-03",
+  "implementation_base": "c7b64f19ccbecdd5b7f0ebf885cf2b4c6e6dc3fa",
+  "implementation_pr": 554,
+  "qualified_head": "feae43ade2687acd3b5a5c42aaab83ce25736d4c",
+  "qualified_tree": "b7893dff1d371ac5c44ef971aaa5536e7242b57c",
+  "implementation_merge": "e462652f74686d7d8bafe912a67337294840ff96",
+  "pre_merge_ci": "41311670189",
+  "pre_merge_review_gates": "41311667982",
+  "post_merge_ci": "41315947937",
+  "canonical_evidence": {
+    "slices": "#533 M0 DeerFlow 2.0 audit and master plan, docs only (merge 6ab28ac47d23); #534 M1 stdlib MCP client of the Orcel edge, BM-02 Tier A through the agent (merge f12b68406167); #537 activation (merge d2fc4e4c1720); #538 slice 1 hash-locked, license-reviewed dependencies, tracing off, egress denied (merge 6d336a664f90); #539 slice 2 LangChain chat-model planner adapter behind the M1 gate (merge 9e6378aaaaf7); #541 slice 3 DeerFlow loop detection adapted, the M1 loop the only dispatcher (merge 1a902decd97a); #542 M3 4a1 bounded tool-output previews (merge c9bdac32c536); #543 M3 4a2 typed failure guidance, unknown outcomes kept and never replayed (merge 4749832c7b75); #544 M3 4b planner-internal todos, completion reminders, clarification (merge 9db0c68e540f); #545 M3 4c bounded context compaction (merge 666dc8e297c3); #546 M3 5a durable planner state in a private SQLite checkpoint (merge c3fe7ed0893b); #547 M3 5b protected owner-only Windows DACL for the agent store (merge 055ce3e29b3f); #548 slice 6 labelled evaluation, M1 vs M2 vs M3, deterministic-scripted (merge 75e99785aab9); #554 M3 5c Windows store held by handle, orceld's ancestor rule, no junction on the path, claim-before-delete expiry (merge e462652f7468); #562 follow-up: path-alias refusal message names every cause (mapped or subst drive, junction, link, mount point) (merge 19d55bd6c514)",
+    "runs": "Exact-head CI / Review Gates / post-merge main CI per PR: #537 aa553bb 41062859408 / 41062855987 / 41066762673; #538 2261d01 41077144945 / 41077140483 / 41081603361; #539 9180631 41090504570 / 41090500476 / 41095764687; #541 2183795 41106166209 / 41106161253 / 41109818892; #542 0d37bb3 41119817737 / 41119815207 / 41122945821; #543 510e520 41125437036 / 41125433184 / 41129088733; #544 72a3610 41132400454 / 41132398527 / 41138006076; #545 82c478d 41140036618 / 41140034439 / 41143227757; #546 65c76c2 41145064848 / 41145062249 / 41147169076; #547 8f9e909 41151787330 / 41151785289 / 41153512487; #548 6eb6ac2 41156469102 / 41156466024 / 41158545889; #554 feae43a 41311670189 / 41311667982 / 41315947937; #562 48458c8 41362236584 / 41362235203 / 41365994133 (M0 #533 and M1 #534 predate the activation: 40980572573 / 40984009466 and 40984029986 / 40986665883). Every listed run concluded success on its configured Windows, macOS and Linux legs (#537's post-merge run 41066762673 on attempt 2).",
+    "acceptance_matrix": "posted on #536 at closeout",
+    "open_follow_ups": [
+      "M4 local-model evaluation needs founder decision 2 (model, license, how users obtain it); candidates and the benchmark plan are in prep/M4-local-model-candidates.md (#553).",
+      "A mutating allowlist needs a read-only lease-state signal, a separately decided edge change.",
+      "Unix agent store: check the root's ancestors (orceld's Role::Ancestor) and check by handle instead of by name, recorded in 5b decision (9) and closed on Windows only by #554.",
+      "Subagents, memory and skills (M6), packaging and Control Room integration (M7) are later grains."
+    ],
+    "known_residuals": [
+      "The evaluation is deterministic-scripted: scripted plans and a scripted policy model, never a model; nothing here measures model performance (M4 needs its own selection and licensing decision).",
+      "Precondition kept: no read-only lease signal exists, so the agent must run only against a test orceld or one in Safe mode (no Full User or Admin lease).",
+      "Agent store, Unix: nothing holds a run, so expiry relies on the newest file's age alone; a closed store's checkpoint stays readable by name (it cannot be written).",
+      "Agent store, Windows: the rename-blocking hold is measured on NTFS only; stores on mapped or subst drives, or through any junction, link or mount point, are refused (fail closed, #562).",
+      "Checkpoint saves cost about 7.8 ms each on Windows (measured, recorded only).",
+      "Compaction and output previews: Orcel's preview marker cannot be reproduced exactly by tool output, but look-alike markers are not caught; summaries are labelled untrusted and authorize nothing.",
+      "No egress is enforced by Python audit hooks, with the Linux leg's network namespace as well: network calls from native code that bypass Python's socket module are not seen by the hooks; the Linux namespace blocks but does not detect them, and on Windows and macOS only the hooks apply (slice 1 decision (8)).",
+      "The orcel-agent CI job is not a required status check; the exact-head gate is kept by merging only when every check at the exact head, the agent job included, has passed (slice 1 decision (12)).",
+      "The SQLite checkpoint is stdlib sqlite3 holding JSON; langgraph-checkpoint-sqlite and sqlite-vec are in the lock but never used (sqlite-vec never loaded).",
+      "A checkpoint left by a crash can keep planner context in plaintext until the 24-hour expiry; secure_delete zeroes freed pages inside the database only, not the unlinked rollback journal or files the store later deletes (5a decision (3)).",
+      "Resume across a kill: a real OS process kill is tested on the M1 dispatch path (test_agent.py, a fake edge); the M2/M3 checkpoint path and the slice 6 kill_resume rows simulate the kill in process (a BaseException after the call). The invariant rests on the single M1 dispatcher and its journal, shared by every configuration.",
+      "Evaluation metrics: peak RSS is not reported on Windows; the 4a1 preview limit counts Unicode code points, not model tokens.",
+      "The doc parser's zip advisories are unrelated to this grain and tracked separately."
+    ]
+  }
 }

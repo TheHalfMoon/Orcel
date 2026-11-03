@@ -194,9 +194,9 @@ test("SG-000094 and SG-000095 are closed and SG-000096 is the only active P20 gr
   // (ORCEL-F4) follows them by founder sequencing (issue #446). SG-000128
   // (ORCEL-UIA, scoped UIA subtree observation) runs beside them by founder
   // decision (issue #515). SG-000129 (ORCEL-AGENT, the Orcel Agent planner
-  // client) runs beside them by founder decision (issue #536); no other grain
-  // may be open.
-  assert.deepEqual(open.sort(), ["SG-000096", "SG-000127", "SG-000128", "SG-000129"]);
+  // client) ran beside them by founder decision (issue #536) and is closed;
+  // no other grain may be open.
+  assert.deepEqual(open.sort(), ["SG-000096", "SG-000127", "SG-000128"]);
   const sg120 = readJson<{
     program: string;
     state: string;
@@ -322,7 +322,7 @@ test("SG-000094 and SG-000095 are closed and SG-000096 is the only active P20 gr
     };
   }>(".specgrain/specs/SG-000129.json");
   assert.equal(sg129.program, "ORCEL-AGENT");
-  assert.equal(sg129.state, "GRAIN");
+  assert.equal(sg129.state, "CLOSED");
   assert.equal(sg129.planning_issue, 536);
   assert.equal(sg129.base, "1dba94658dd5e2a0be86b9b9f89b7a157e07368e");
   assert.deepEqual(sg129.dependencies, ["SG-000092", "SG-000120"]);
