@@ -35,7 +35,7 @@ jobs:
       - name: Install
         run: npm ci --ignore-scripts
       - name: Build the worker
-        run: npm --prefix apps/orcel-browser-worker run build
+        run: npm ci --prefix apps/orcel-browser-worker --ignore-scripts && npm --prefix apps/orcel-browser-worker run build
       - name: Build the native tests
         shell: bash
         run: cargo test -p orcel-browser-host --lib --no-run
