@@ -485,6 +485,13 @@ trailer << /Root 1 0 R >>
   if (SITE[path]) return response.end(SITE[path]);
   response.end(pages[path] ?? `<!doctype html><title>${host}${path}</title><p>fixture</p>`);
 });
+// #438: connection-level events, so a navigation that never produced a
+// request can be told apart: no CONN (the engine never reached this
+// listener), CONN without TLSOK (the handshake failed or stalled), or TLSOK
+// with no HIT (no request after the handshake).
+server.on("connection", () => process.stdout.write("CONN\n"));
+server.on("secureConnection", () => process.stdout.write("TLSOK\n"));
+server.on("tlsClientError", (error) => process.stdout.write(`TLSERR ${error.code ?? "unknown"}\n`));
 server.listen({ port: 443, host: "127.0.0.1" }, () => process.stdout.write(`READY ${spki}\n`));
 process.stdin.resume();
 process.stdin.on("end", () => process.exit(0));
