@@ -8,16 +8,18 @@ Sources are linked so each row can be checked. When a decision is made, record i
 
 | ID | Smallest decision | Blocks | Meanwhile | Source |
 |---|---|---|---|---|
-| SG-000115 | Activate the macOS/Linux browser launch, sink and supervision grain. If yes, accept or reject each open class 4 residual (below). | Any wired macOS/Linux browser launch path | Inert, test-only risk work (A1–A6b, B1–B9b) keeps narrowing residuals. **NOT ACTIVATED.** | `docs/orcel/implementation-readiness/prep/SG-000115.md` |
+| SG-000115 | Activate the macOS/Linux browser launch, sink and supervision grain. If yes, accept or reject each open class 4 residual (below). | Any wired macOS/Linux browser launch path | Inert, test-only risk work (A1–A6b and B1–B9a merged; B9b pending in #604) keeps narrowing residuals. **NOT ACTIVATED.** | `docs/orcel/implementation-readiness/prep/SG-000115.md` |
 | SG-000122 | Activate governed exposure of the browser agent actions (form actions, waits, uploads, dialogs, the verifier) through orceld/MCP. | Those actions reaching any agent | Host and worker only, unexposed. **NOT ACTIVATED.** | `prep/SG-000122.md` |
 | SG-000124 | Activate the optional sandbox runtimes (SX-01 to SX-05). | Those runtimes | Preparation only. **NOT ACTIVATED.** | `prep/SG-000124.md` |
+| SG-000125 (SX-06) | Decide whether to expose the sandbox to agents. This is its own decision, separate from SG-000124. | Sandbox exposure | Nothing exposed. | `prep/SG-000124.md`, `EXECUTION_FRONTIER.md` |
+| SG-000128 slice 3b and closeout | Provide a disposable Windows machine, and grant a STRONG-presence Full User lease there for the cdb-s02 scripted plan to act. Or record the closeout otherwise. | The SG-000128 closeout | Slices 1, 1b, 2 and 3a merged; the action is refused by the DesktopInput gate on CI. | `RELEASE_READINESS.md` (classes 3 and 4) |
 | SG-000096 T04/T05 | How to proceed with governed shell dispatch, after the implementing session was stopped by an automated safety classifier: a human implementer, a narrower design, or deferral. | Full User shell (stays unarmed) | T02/T03 merged and unexposed. | #266, #267 |
 
 ## SG-000115 class 4 residuals (decided at activation)
 
 | Residual | Smallest decision | Current mitigation (inert) |
 |---|---|---|
-| (d) a network sink's port after an orceld crash | Accept B8b (engine-only user/PID namespace) as the Linux design and, where namespaces are refused, B9b (systemd user unit). Or reject both. | B8b contains the family on the hosted runner (#586). B9b contains it with a user manager (#604). A same-user process can leave a cgroup or ask systemd for a new unit. |
+| (d) a network sink's port after an orceld crash | Accept B8b (engine-only user/PID namespace) as the Linux design and, where namespaces are refused, B9b (systemd user unit). Or reject both. | B8b contains the family on the hosted runner (#586). B9b, pending in #604 (not merged), would contain it with a user manager. A same-user process can leave a cgroup or ask systemd for a new unit. |
 | (e) S-07 signing keys | Which vendor keys Orcel ships and pins (Google Linux signing key; others), and how they are updated. | B7 verifies the chain where the signed index and package are on disk (#581). The pinned fingerprint is recorded from memory and unverified. |
 | A root engine under an unrecognised name (part of (b)) | Accept, or require an allowlist beyond Chrome, Edge and Chromium. | B4 checks root engines by name (#566). |
 | The other recorded residuals: (a) macOS pid reuse within one scan; (c) false positives of the unattributable rule; (f) engines in another PID namespace; (g) profile paths with spaces | Accept each, or require more work before activation. | The full text of each, with its mitigation, is the "SG-000115 residuals" row in `RELEASE_READINESS.md`. |
@@ -44,7 +46,7 @@ Sources are linked so each row can be checked. When a decision is made, record i
 | Item | Smallest decision | Blocks | Source |
 |---|---|---|---|
 | M4 local model (SG-000129 decision 2) | Which model, under which license, and how users obtain it. Candidates and a benchmark plan are prepared. | Any real model run; every agent result so far is **deterministic-scripted**, not model performance | `prep/M4-local-model-candidates.md` (#553) |
-| Read-only lease signal | Approve the edge change that exposes a read-only lease-state signal. | Any mutating allowlist for the agent | SG-000129 spec, open follow-ups |
+| Read-only lease signal | A separately decided edge change exposing a read-only lease-state signal, through governance. The spec does not name the founder as its decider. | Any mutating allowlist for the agent | SG-000129 spec, open follow-ups |
 | Hosted inference | A budget, if hosted inference is wanted at all. | BM-02 Tier C beyond C2b (C3 agent runs) | `EXECUTION_FRONTIER.md` |
 
 ## Release, legal and external
@@ -57,12 +59,14 @@ Sources are linked so each row can be checked. When a decision is made, record i
 | macOS direct-capture consent | The founder grants it interactively on the Mac. It cannot be requested noninteractively or spoofed. | XP-07/XP-12 |
 | GNOME/KDE approval sessions | Interactive approval/refusal sessions on real desktops. | XP-10 |
 | Multi-device | Second and third Windows machines. | `EXECUTION_FRONTIER.md` |
+| STRONG operations (BM-02 solved removals, `fs.remove` and others) | Real platform presence (Windows Hello, Touch ID or polkit) for a qualification run. It is never simulated. | `RELEASE_READINESS.md` |
+| XP-20 and BM-02 Tier C GUI tasks | An isolated VM or disposable Windows session, not the founder's live desktop. | same |
 
 ## Accepted exceptions (not risk acceptance)
 
 | Item | Status | Removal condition |
 |---|---|---|
-| RUSTSEC-2026-0429 (zip, via anydoc) in the doc parser | Kept for now on the founder's instruction. **Not permanent risk acceptance.** Reachability is analysed module by module. | Remove when a compatible, qualified upgrade exists. If found reachable, stop relying on it and remediate. |
+| RUSTSEC-2026-0367, 0368, 0369 and 0429 (zip, via anydoc) in the doc parser | Kept for now on the founder's instruction (#580). **Not permanent risk acceptance.** Reachability is analysed module by module in `apps/orcel-doc-parser/.cargo/audit.toml`. | Remove when anydoc accepts zip 9 or later (the fixed version), qualified. If found reachable, stop relying on them and remediate. |
 
 ## Not founder decisions
 
