@@ -470,7 +470,8 @@ class PrivateStore(Scratch):
         (base / "a").mkdir()
         (base / "a" / "l1").symlink_to(unsafe / "c")
         (unsafe / "c" / "d" / "l2").symlink_to(elsewhere)
-        with self.assertRaisesRegex(StoreError, f"ancestor {re.escape(str(unsafe))} .*writable"):
+        # Named as it really is (macOS: /var is /private/var).
+        with self.assertRaisesRegex(StoreError, f"ancestor {re.escape(os.path.realpath(unsafe))} .*writable"):
             open_store(base / "a" / "l1" / "d" / "l2" / "agent", RUN)
         self.assertEqual(list(elsewhere.iterdir()), [], "nothing was made")
 
