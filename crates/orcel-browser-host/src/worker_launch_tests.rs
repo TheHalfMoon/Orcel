@@ -1684,7 +1684,12 @@ impl HttpsFixture {
                 } else if let Some(hit) = line.strip_prefix("HIT ") {
                     log.lock().expect("hits").push(hit.to_owned());
                     outcomes.lock().expect("events").push(line);
-                } else if line.starts_with("DONE ") || line.starts_with("ABORT ") {
+                } else if line.starts_with("DONE ")
+                    || line.starts_with("ABORT ")
+                    || line == "CONN"
+                    || line == "TLSOK"
+                    || line.starts_with("TLSERR ")
+                {
                     outcomes.lock().expect("events").push(line);
                 }
             }
@@ -1732,12 +1737,37 @@ impl Drop for HttpsFixture {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .clone();
-            let shown = &events[events.len().saturating_sub(50)..];
+            let shown = &events[events.len().saturating_sub(200)..];
             eprintln!(
                 "SG108-DIAG fixture response outcomes at failure (last {}):\n{}",
                 shown.len(),
                 shown.join("\n")
             );
+            // #438: whether the engine reached this listener at all, and who
+            // else holds the fixture's port (another listener on 127.0.0.1:443
+            // would take the engine's connections).
+            let count = |name: &str| events.iter().filter(|line| line.starts_with(name)).count();
+            eprintln!(
+                "SG108-DIAG fixture connections at failure: accepted {}, TLS done {}, TLS errors {}",
+                count("CONN"),
+                count("TLSOK"),
+                count("TLSERR")
+            );
+            if let Ok(out) = std::process::Command::new("netstat")
+                .args(["-ano", "-p", "TCP"])
+                .output()
+            {
+                let listeners: Vec<String> = String::from_utf8_lossy(&out.stdout)
+                    .lines()
+                    .filter(|line| line.contains(":443 ") && line.contains("LISTENING"))
+                    .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
+                    .collect();
+                eprintln!(
+                    "SG108-DIAG listeners on port 443 at failure (fixture pid {}):\n{}",
+                    self.child.id(),
+                    listeners.join("\n")
+                );
+            }
         }
         let _ = self.child.kill();
         let _ = self.child.wait();
