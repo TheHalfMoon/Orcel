@@ -1775,6 +1775,105 @@ mod tests {
         );
     }
 
+    /// B9b: the fake host and a `setsid` helper; each notes its pid.
+    #[cfg(target_os = "linux")]
+    const FAMILY: &str = "import os, sys, time\n\
+        def note():\n    \
+            with open(sys.argv[1], 'a') as f: f.write(str(os.getpid()) + chr(10))\n\
+        note()\n\
+        if os.fork() == 0:\n    \
+            os.setsid(); note(); time.sleep(60); os._exit(0)\n\
+        time.sleep(60)\n";
+
+    /// B9b (investigation, Linux): containment by a systemd **user**
+    /// service's control group, for hosts that refuse user namespaces
+    /// entirely. The fake host runs as the unit's main process
+    /// (`KillMode=control-group`, `KillSignal=SIGKILL`); when it is killed,
+    /// systemd kills what is left in the unit's cgroup, the `setsid` helper
+    /// included. A control runs the same family without the unit and shows
+    /// the helper outliving the host. Where no user manager answers, the
+    /// refusal is recorded as evidence instead.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_user_service_cgroup_takes_a_crashed_hosts_family_with_it() {
+        let mut pinned = BTreeMap::new();
+        // Control: the same family, no unit. The helper survives the host.
+        let control_pids = scratch_file("b9b-control");
+        let mut control = python(FAMILY);
+        control.arg(&control_pids);
+        let mut host = control.spawn().expect("the control fixture did not start");
+        let noted_pids = wait_noted(&control_pids, 2);
+        pin(&noted_pids, &mut pinned);
+        assert_eq!(noted_pids.len(), 2, "{noted_pids:?}");
+        let control_helper = pinned[&noted_pids[1]];
+        let _ = host.kill();
+        let _ = host.wait();
+        std::thread::sleep(Duration::from_millis(500));
+        let control_survived = is_alive(control_helper);
+        let left = survivors(&control_pids, &mut pinned);
+        assert!(left.iter().all(|m| m.pid == control_helper.pid), "{left:?}");
+
+        // The unit.
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0);
+        let unit = format!("orcel-sg115-b9b-{}-{nanos}", std::process::id());
+        let pids = scratch_file("b9b-unit");
+        let started = Command::new("systemd-run")
+            .args([
+                "--user",
+                "--quiet",
+                "--collect",
+                "--service-type=exec",
+                "--property=KillMode=control-group",
+                "--property=KillSignal=SIGKILL",
+            ])
+            .arg(format!("--unit={unit}"))
+            .args(["python3", "-c", FAMILY])
+            .arg(&pids)
+            .output();
+        let refused = match &started {
+            Err(error) => Some(error.to_string()),
+            Ok(output) if !output.status.success() => {
+                Some(String::from_utf8_lossy(&output.stderr).trim().to_owned())
+            }
+            Ok(_) => None,
+        };
+        if let Some(reason) = refused {
+            println!("SG115-EVIDENCE B9b user service refused: {reason}");
+            let _ = std::fs::remove_dir_all(pids.parent().unwrap());
+            assert!(control_survived, "the control helper died with its host");
+            return;
+        }
+        let mut pinned = BTreeMap::new();
+        let noted_pids = wait_noted(&pids, 2);
+        pin(&noted_pids, &mut pinned);
+        assert_eq!(noted_pids.len(), 2, "{noted_pids:?}");
+        let (unit_host, helper) = (pinned[&noted_pids[0]], pinned[&noted_pids[1]]);
+        assert!(is_alive(helper), "the helper runs before the host dies");
+        kill_pinned(unit_host);
+        let started = Instant::now();
+        while is_alive(helper) && started.elapsed() < DEADLINE {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let gone = !is_alive(helper);
+        println!(
+            "SG115-EVIDENCE B9b user service: helper gone={gone}, control helper survived={control_survived}"
+        );
+        let _ = Command::new("systemctl")
+            .args(["--user", "stop"])
+            .arg(&unit)
+            .output();
+        let left = survivors(&pids, &mut pinned);
+        assert!(
+            control_survived,
+            "the control helper died with its host: the result would be vacuous"
+        );
+        assert!(gone, "the helper outlived the unit's host");
+        assert!(left.is_empty(), "survivors {left:?}");
+    }
+
     /// The sweep never claims verified coverage while any descendant lives:
     /// the property the verified sweep exists for.
     #[test]
