@@ -86,6 +86,14 @@ const PARENT_DEATH_SENTINEL: &str = concat!(
 /// How often the supervisor samples the child's footprint.
 const MEMORY_SAMPLE_INTERVAL: Duration = Duration::from_millis(250);
 
+/// How long a failed sample of a live process is retried, and how often (#583).
+/// `proc_pidinfo` can fail while the process is between `exec`s (the
+/// supervisor shell execs `sandbox-exec`, which execs the child). The worst
+/// unobserved window is one interval plus this budget; a sample that still
+/// fails afterwards fails closed exactly as before.
+const SAMPLE_RETRY_BUDGET: Duration = Duration::from_millis(100);
+const SAMPLE_RETRY_STEP: Duration = Duration::from_millis(5);
+
 /// Immutable system directories the dynamic loader and Objective-C runtime
 /// read. None of them expose user data.
 const SYSTEM_READ_TREES: &[&str] = &[
@@ -305,7 +313,7 @@ pub(crate) async fn spawn_with_tools(
             None,
         ));
     };
-    if resident_bytes(sample_pid).is_none() {
+    if let Err(failure) = sample_live(sample_pid).await {
         // SAFETY: kill has no memory preconditions. `sample_pid` is the just-spawned shell, the
         // leader of its own new process group, so -pid addresses only the contained tree.
         unsafe {
@@ -313,7 +321,7 @@ pub(crate) async fn spawn_with_tools(
         }
         return Err(containment_error(
             "failed to install the contained process memory sampler",
-            None,
+            Some(failure.detail()),
         ));
     }
     let memory_watch = watch_memory(sample_pid, limits.max_memory_bytes, group.memory_flag());
@@ -369,7 +377,7 @@ fn watch_memory(
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(MEMORY_SAMPLE_INTERVAL).await;
-            let Some(resident) = resident_bytes(pid) else {
+            let Ok(resident) = sample_live(pid).await else {
                 // ESRCH proves the child is gone. Any other sampling failure
                 // leaves the ceiling unobservable, so kill the group rather
                 // than silently continuing without enforcement.
@@ -436,6 +444,61 @@ extern "C" {
         buffer: *mut libc::c_void,
         buffersize: libc::c_int,
     ) -> libc::c_int;
+}
+
+/// Why a sample of a live process could not be taken within the retry budget.
+#[derive(Debug)]
+struct SampleFailure {
+    attempts: u32,
+    errno: Option<i32>,
+    alive: bool,
+}
+
+impl SampleFailure {
+    fn detail(&self) -> String {
+        let errno = self
+            .errno
+            .map_or_else(|| "unavailable".to_owned(), |code| code.to_string());
+        format!(
+            "proc_pidinfo failed {} time(s), last os error {errno}, process {}",
+            self.attempts,
+            if self.alive { "alive" } else { "gone" }
+        )
+    }
+}
+
+/// Sample `pid`, retrying a failure for at most [`SAMPLE_RETRY_BUDGET`] while
+/// the process is still alive. A process that is gone is not retried.
+async fn sample_live(pid: libc::c_int) -> Result<u64, SampleFailure> {
+    let started = tokio::time::Instant::now();
+    let mut attempts = 0;
+    loop {
+        attempts += 1;
+        let (resident, errno) = sample_once(pid);
+        if let Some(resident) = resident {
+            return Ok(resident);
+        }
+        // SAFETY: kill with signal 0 only checks that `pid` exists; it has no memory
+        // preconditions.
+        let alive = unsafe { libc::kill(pid, 0) } == 0;
+        if !alive || started.elapsed() >= SAMPLE_RETRY_BUDGET {
+            return Err(SampleFailure {
+                attempts,
+                errno,
+                alive,
+            });
+        }
+        tokio::time::sleep(SAMPLE_RETRY_STEP).await;
+    }
+}
+
+fn sample_once(pid: libc::c_int) -> (Option<u64>, Option<i32>) {
+    let resident = resident_bytes(pid);
+    let errno = resident
+        .is_none()
+        .then(|| std::io::Error::last_os_error().raw_os_error())
+        .flatten();
+    (resident, errno)
 }
 
 fn resident_bytes(pid: libc::c_int) -> Option<u64> {

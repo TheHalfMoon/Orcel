@@ -152,6 +152,11 @@ while the file's other name is outside every root.
   without write or delete sharing, but does not yet check the install
   directory's DACL.
 - macOS: `sandbox-exec` is deprecated by Apple (S-25).
+- macOS: the memory ceiling is sampled every 250 ms. A failed sample of a
+  process that is still alive is retried for up to 100 ms (#583: the sample
+  can fail while the process is between `exec`s), so the worst unobserved
+  window is about 350 ms. A sample that still fails refuses the launch, or
+  kills the running tree.
 
 ## Provenance
 
