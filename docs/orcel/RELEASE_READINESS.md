@@ -39,7 +39,8 @@ checkpoint at the end says where engineering stands.
 | SG-000115 risk work (inert): A2b verified termination (Linux subreaper proven by ECHILD; macOS unique-id lineage, freeze, kill, confirm); S-07 Linux install tree root-owned with real-dpkg tamper tests; A3b profile walk refuses links anywhere and keeps a live engine's profile; A6b kept sink port held, verified release, crash residual pinned. Residuals are recorded, not accepted (class 4) | #549 → `9407cc9`, #550 → `ade0f2c`, #551 → `25083f1`, #552 → `9695da4` |
 | Orcel Agent (SG-000129, authority-neutral planner client of the edge; orceld stays the sole authority): M0 audit and plan, M1 stdlib client, activation, slice 1 locked dependencies, 2 LangChain adapter, 3 loop detection, 4a1/4a2/4b/4c previews, failures, todos, compaction, 5a SQLite checkpoint, 5b Windows owner-only DACL, 6 labelled deterministic-scripted evaluation (not model performance) | #533, #534, #537, #538, #539, #541 to #548 |
 | M4 local model candidates and benchmark plan (research only; nothing downloaded or run) | #553 → `c7b64f1` |
-| SG-000129 slice 5c: Windows agent store held by handle, orceld's ancestor rule, no junction or link on the path (8.3 short names expanded), a closed store refuses writes, claim-before-delete expiry. Notes from its judge, not yet recorded in the spec: stores on mapped or `subst` drives are refused (fail-closed, but the message names a junction); the rename-blocking claim is measured on NTFS only | #554 → `e462652` |
+| SG-000129 slice 5c: Windows agent store held by handle, orceld's ancestor rule, no junction or link on the path (8.3 short names expanded), a closed store refuses writes, claim-before-delete expiry. Its judge's notes are now recorded in the spec: stores on mapped or `subst` drives are refused (fail-closed; the message names every cause since #562); the rename-blocking claim is measured on NTFS only | #554 → `e462652` |
+| SG-000129 governance closeout PR (the canonical closeout is on implementation PR #554): spec CLOSED with canonical evidence, ledger record, open-grain tests and CURRENT.md; the closeout judge's round-1 residuals recorded (no-egress hooks miss native calls, the real kill tested on M1 only, the crashed-run checkpoint readable until expiry, the agent CI job not required) and an open follow-up for the Unix store's ancestor and by-handle checks | #589 → `b42b552` |
 | #540 flaky vendored batch-pause test: patch P-13 in the vendored patch queue | #555 → `f8f0c8f` |
 | #573 flaky vendored session idle-expiry test (1 ms idle TTL): patch P-14 gives the idle case 200 ms of headroom, assertions unchanged, test only | #574 → `717ed16` |
 | #575 flaky browser-worker capture timing test on Windows: wall-clock bounds replaced by sentinel-timer ordering, regression still caught (mutation checked), test only | #577 → `09b0e1e` |
@@ -72,7 +73,7 @@ checkpoint at the end says where engineering stands.
 | macOS install / start / uninstall lifecycle | No macOS package yet: macOS packaging (XP-16) waits for FD-05; Windows and Linux lifecycle are in class 1 |
 | SG-000128 closeout | After slice 3b (class 3) is accepted or the founder records otherwise; the closeout judge checks that slice 1's deferred items are evidenced |
 | BM-02 Tier C beyond C2b (C3 agent runs) | Blocked: needs a planner model (class 4) |
-| CI flakes under watch | #438 (navigation), #508 (UIA bind), #512 (real git fetch), #516 (Go helper start), #524 (macOS jobs cancelled before a runner is assigned), #558 (orceld app API re-bind on macOS), #584 (three Windows download tests time out with the fixture never contacted; intermittent, #438 class; seen on main after runner image 20261030) |
+| CI flakes under watch | #438 (navigation), #508 (UIA bind), #512 (real git fetch), #516 (Go helper start), #524 (macOS jobs cancelled before a runner is assigned), #558 (orceld app API re-bind on macOS), #583 (macOS contained-tier memory sampler, fix in #591), #584 (three Windows download tests time out with the fixture never contacted; intermittent, #438 class; seen on main after runner image 20261030) |
 | Governance preparation for SG-000115, SG-000122, SG-000124, SG-000127 closeout | Specs, tests, dependency and security analysis only; activation is a founder decision |
 | SG-000115 inert pre-activation engineering (founder decision 2026-10-29, #526) | Category A in `prep/SG-000115.md`: test-only or never-default builds, no production caller, pinned by tests to leave macOS/Linux launch refused. A slice that cannot meet the conditions stays a Draft PR. Activation, wiring, S-07 and the macOS descendant escape stay with the founder |
 | Documentation consistency (frontier, roadmap, benchmark plan) | Ongoing with each merge |
@@ -100,7 +101,7 @@ checkpoint at the end says where engineering stands.
 | Release and publication | Not authorized; no release is created |
 | A planner model for BM-02 Tier C agent runs | Paid inference is excluded by the zero-cost rule; the local d1 model is an advisory classifier, not a planner |
 | M4 model selection and licensing | Candidates and the benchmark plan are in `prep/M4-local-model-candidates.md`; nothing is downloaded or run before this gate |
-| SG-000115 residuals (recorded, **not accepted**; engineering continues on each) | (a) macOS: a pid reused within one descendant scan (narrowed by B1, #557, to a backward wall-clock step: during a scan it can hide a reuse; afterwards it tears every scan, so the sweep fails closed); (b) descendants of another user that cannot be read, including root-run engines (on macOS recovery since B4, #566, keeps every profile while root runs an engine by a recognised name; a root engine under another name is not seen; since B6a, #568, a macOS profile with any non-deny ACL entry is refused at hold and at `verify` (an ACL added between those checks is not seen until the next one); the sandboxed-host `permission denied` ambiguity was closed by B3, #563); (c) false positives of the unattributable rule; (d) the network sink's port after an orceld crash (B8b, #586, removes the orphaned helper and the port traffic with an engine-only namespace that needs no uid maps, shown on the hosted Ubuntu runner; not wired into any launch path, and hosts that refuse unprivileged user namespaces entirely still have no mitigation; not wired); (e) S-07 binds ownership and modes; B7, #581, adds a signature chain that verifies only where the signed index and the retained package are still on disk (stock GitHub Ubuntu has neither, and `/opt/google` at 0777, so Chrome there is unverified); (f) engines in another PID namespace; (g) profile paths with spaces (whole-argument matching now covers macOS always, and Linux only where the title is not rewritten), and `hidepid` on `/proc` |
+| SG-000115 residuals (recorded, **not accepted**; engineering continues on each) | (a) macOS: a pid reused within one descendant scan (narrowed by B1, #557, to a backward wall-clock step: during a scan it can hide a reuse; afterwards it tears every scan, so the sweep fails closed); (b) descendants of another user that cannot be read, including root-run engines (on macOS recovery since B4, #566, keeps every profile while root runs an engine by a recognised name; a root engine under another name is not seen; since B6a, #568, a macOS profile with any non-deny ACL entry is refused at hold and at `verify` (an ACL added between those checks is not seen until the next one); the sandboxed-host `permission denied` ambiguity was closed by B3, #563); (c) false positives of the unattributable rule; (d) the network sink's port after an orceld crash (B8b, #586, removes the orphaned helper and the port traffic with an engine-only namespace that needs no uid maps, shown on the hosted Ubuntu runner; not wired into any launch path, and hosts that refuse unprivileged user namespaces entirely still have no mitigation); (e) S-07 binds ownership and modes; B7, #581, adds a signature chain that verifies only where the signed index and the retained package are still on disk (stock GitHub Ubuntu has neither, and `/opt/google` at 0777, so Chrome there is unverified); (f) engines in another PID namespace; (g) profile paths with spaces (whole-argument matching now covers macOS always, and Linux only where the title is not rewritten), and `hidepid` on `/proc` |
 | Real platform presence (Windows Hello, Touch ID, polkit), macOS permissions | Never simulated or pre-granted |
 | Paid infrastructure, deployment | Excluded by the zero-cost rule |
 
@@ -126,13 +127,14 @@ checkpoint at the end says where engineering stands.
 
 ## Restart checkpoint
 
-If a session ends, resume from here (2026-11-03, main `017be67`; main CI
-41553882525 green at `dee9050`):
+If a session ends, resume from here (2026-11-03, main `b42b552`; main CI
+41565917679 green at `b42b552`):
 
-1. Merged since the last checkpoint: #585 (handoff), #586 (SG-000115 B8b,
-   the engine's own namespace, contained on the hosted runner) and #587
-   (#438 connection diagnostics). No PR from this work is open apart from
-   this handoff. Branch
+1. Merged since the last checkpoint: #588 (handoff) and #589 (SG-000129
+   canonical closeout; the open set is SG-000096, SG-000127 and
+   SG-000128). Open from this work besides this handoff: #591, a retry
+   of a failed macOS memory sample while the process lives (flake #583;
+   the rule change is recorded on #583). Branch
    protection needs each PR up to date with main, so PRs merge one at a
    time: rebase, exact-head green run, then `--match-head-commit`. #342 and
    #328 belong to other work: do not touch them.
@@ -150,7 +152,7 @@ If a session ends, resume from here (2026-11-03, main `017be67`; main CI
    follow-ups; then the next roadmap items (F4 slices that need no founder,
    BR items behind governance, cross-platform).
 5. Known CI flakes: macOS toolchain install conflict (rerun failed jobs),
-   #438, #508, #512, #516, #524, #558 (orceld app API re-bind on macOS).
+   #438, #508, #512, #516, #524, #558 (orceld app API re-bind on macOS), #583 (macOS memory sampler, #591).
 6. Do not repeat: XP-06/XP-11 Mac hardware tests (#425); the SG-000115 A1 to
    A6b, B1 to B5, B5b, B6a, B6b, B7, B8 and B8b slices; P-13 and P-14; the M4 research (#553).
 7. Never mark Core MVP complete; classes 3 to 5 stay open.
