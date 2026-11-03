@@ -25,6 +25,7 @@ import { splitWindowsCommandLine } from "./cmdline.js";
 import { installRoutes } from "./routes.js";
 import { originOf, type RouteQuery } from "./routing.js";
 import { denyServiceWorkerScripts } from "./service-workers.js";
+import { clickAndLoad } from "./actions/click-load.js";
 import { encodeFrame, FrameDecoder, launchRefusal, type HostFrame, type WorkerFrame } from "./protocol.js";
 
 const EDGE_CANDIDATES = [
@@ -336,6 +337,34 @@ nativeTest("killing the worker takes the engine down with its pipe", async (t) =
   // The host's kill-on-close Job Object (slice 2b-ii) is the guarantee;
   // this proves the engine also exits on its own when the pipe closes.
   assert.ok(engineExited(profile), "engine survived the worker");
+});
+
+// #438 (run 41709022637): an approved activation whose page answers after
+// the 5 s click budget still succeeds. The click itself is quick; before the
+// fix Playwright waited for the navigation to commit inside the click's own
+// budget and the activation was reported "failed" although the fixture had
+// served the target.
+nativeTest("an activation whose navigation commits after the click budget still opens the page", async (t) => {
+  const served: string[] = [];
+  const fixture = createHttpServer((request, response) => {
+    served.push(request.url ?? "");
+    response.setHeader("content-type", "text/html");
+    if (request.url === "/slow") {
+      setTimeout(() => response.end("<title>slow</title><p>slow</p>"), 7_000);
+      return;
+    }
+    response.end('<a href="/slow">the slow page</a>');
+  });
+  await listen(t, fixture, FIXTURE_PORT, "127.0.0.1");
+  const profile = profileFor(t, "native-slow-commit");
+  const context = await launchDirect(t, profile, confinedArgv(profile, FIXTURE));
+  const page = await context.newPage();
+  await page.goto("http://fixture.test/", { timeout: EVENT_DEADLINE_MS, waitUntil: "load" });
+  const started = Date.now();
+  const opened = await clickAndLoad(page, page.locator("a"));
+  assert.deepEqual(opened, { url: "http://fixture.test/slow", status: 200 });
+  assert.ok(Date.now() - started >= 6_000, "the target really answered after the click budget");
+  assert.deepEqual(served.filter((path) => path !== "/favicon.ico"), ["/", "/slow"]);
 });
 
 nativeTest("resolver pinning and the no-route proxy confine traffic without any policy route", async (t) => {
