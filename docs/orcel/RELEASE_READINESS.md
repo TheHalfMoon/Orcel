@@ -59,6 +59,8 @@ checkpoint at the end says where engineering stands.
 | SG-000115 B8 (inert): the A6 rehearsal's sink host as pid 1 of a user, PID and mount namespace; killing it takes the engine and its orphaned helper, and the freed port then receives nothing (local WSL2 run). On the hosted Ubuntu runner the namespace is created but the `setgroups` write is refused (consistent with Ubuntu 24.04's AppArmor restriction), so this form (uid maps and a `/proc` remount) is unavailable there; the refusal is recorded as evidence, never a pass | #582 → `c4547d1` |
 | SG-000115 B8b (inert): the engine family alone runs in its own user and PID namespace (no uid maps, no `/proc` remount), its init chained to the host by parent-death signals and a pipe check; when the host is killed the whole family dies and the freed port receives nothing, **on the hosted Ubuntu runner too** (CI run 41542568945), where B8's maps were refused. Also the Linux side of B3b: a `cmdline` read failing with `ESRCH`, or for a pid already gone, no longer keeps a profile (1 uncaptured failure in about 40 local runs remains, with a diagnostic) | #586 → `dee9050` (main CI 41553882525) |
 | #438 / #584 diagnostics: the HTTPS fixture reports each connection, TLS handshake and TLS error, and a failing native test prints their counts and every port-443 listener (the fixture uses a fixed `127.0.0.1:443`) | #587 → `017be67` |
+| CI flake fixes: #583 a failed macOS memory sample of a live contained process is retried for up to 100 ms (rule change recorded; still fails closed) #591 → `bfa0fb7`; #558 the app API re-bind test retries `InUse` as orceld's start loop does and names the lock's holders #592 → `dabaded`; #292 the SG013 cold-start evidence now reaches the CI log (libtest had captured it) #593 → `03cdb2b`. #583 and #558 stay open as watch items | #591 to #593 |
+| SG-000115 B9a (inert): Linux fires a parent-death signal when the spawning *thread* exits; measured (a child spawned from a short-lived thread is killed with it) and designed around (one lifetime spawner thread; its child outlives the requesting thread), on the hosted Ubuntu runner too (PR CI run 41585992656). Residuals: the spawner must be held and never panic for the host's lifetime, and the signal ties only the direct engine process | #594 → `5e14fc3` |
 | Doc parser zip advisory reachability, completed: anydoc 0.2.2 searched in full; one `ZipArchive`, read only by name under caps; no `extract` anywhere | #580 → `e272277` |
 | Lifecycle on main `89066a6`: Windows release qualification (install, run, update, recover, uninstall, local report client, 400 MB budget) and Linux deb/rpm/tarball install, systemd units, tamper detection and uninstall | main CI 40672122647 |
 
@@ -67,7 +69,7 @@ checkpoint at the end says where engineering stands.
 | Item | Note |
 |---|---|
 | #438 residual: navigation `read: TimedOut` on CI | Waiting for a recurrence; #494's diagnostics capture it |
-| SG-000115 Priority B (inert): a cgroup alternative where user namespaces are refused entirely; a production design for B8b's per-thread parent-death signal (the engine must be spawned from a thread that lives as long as the host); S-07 key shipping and pinning (a founder decision) | Engineering solutions to shrink the class 4 residuals; none activates SG-000115 |
+| SG-000115 Priority B (inert): a cgroup alternative where user namespaces are refused entirely; wiring B9a's lifetime spawner into a launch path (activation work); S-07 key shipping and pinning (a founder decision) | Engineering solutions to shrink the class 4 residuals; none activates SG-000115 |
 | Doc parser zip advisories (RUSTSEC-2026-0367/0368/0369/0429, extraction only) | Recorded exceptions, not accepted risk (founder direction 2026-11-02): reachability checked module by module in `apps/orcel-doc-parser/.cargo/audit.toml`. Remove when anydoc accepts zip >= 9 (anydoc 0.2.4 is the latest and still requires ^8.6); remediate at once if any becomes reachable |
 | #292 flaky SG-000013 contained PowerShell test on windows-latest | Root cause not yet found |
 | macOS install / start / uninstall lifecycle | No macOS package yet: macOS packaging (XP-16) waits for FD-05; Windows and Linux lifecycle are in class 1 |
@@ -127,14 +129,13 @@ checkpoint at the end says where engineering stands.
 
 ## Restart checkpoint
 
-If a session ends, resume from here (2026-11-03, main `b42b552`; main CI
-41565917679 green at `b42b552`):
+If a session ends, resume from here (2026-11-03, main `5e14fc3`; main CI
+41589571865 green at `5e14fc3`):
 
-1. Merged since the last checkpoint: #588 (handoff) and #589 (SG-000129
-   canonical closeout; the open set is SG-000096, SG-000127 and
-   SG-000128). Open from this work besides this handoff: #591, a retry
-   of a failed macOS memory sample while the process lives (flake #583;
-   the rule change is recorded on #583). Branch
+1. Merged since the last checkpoint: #590 (handoff), #591 (#583 sampler
+   retry), #592 (#558 re-bind retry), #593 (#292 evidence visible) and
+   #594 (SG-000115 B9a). No PR from this work is open apart from this
+   handoff. Branch
    protection needs each PR up to date with main, so PRs merge one at a
    time: rebase, exact-head green run, then `--match-head-commit`. #342 and
    #328 belong to other work: do not touch them.
@@ -154,5 +155,5 @@ If a session ends, resume from here (2026-11-03, main `b42b552`; main CI
 5. Known CI flakes: macOS toolchain install conflict (rerun failed jobs),
    #438, #508, #512, #516, #524, #558 (orceld app API re-bind on macOS), #583 (macOS memory sampler, #591).
 6. Do not repeat: XP-06/XP-11 Mac hardware tests (#425); the SG-000115 A1 to
-   A6b, B1 to B5, B5b, B6a, B6b, B7, B8 and B8b slices; P-13 and P-14; the M4 research (#553).
+   A6b, B1 to B5, B5b, B6a, B6b, B7, B8, B8b and B9a slices; P-13 and P-14; the M4 research (#553).
 7. Never mark Core MVP complete; classes 3 to 5 stay open.
