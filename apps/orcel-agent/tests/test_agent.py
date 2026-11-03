@@ -500,6 +500,37 @@ class PrivateStore(Scratch):
         open_store(loose, RUN).close()
         self.assertEqual(stat.S_IMODE(loose.stat().st_mode), 0o700)
 
+    @unittest.skipUnless(sys.platform == "darwin", "macOS only")
+    def test_a_macos_acl_grant_on_the_store_or_an_ancestor_is_refused(self) -> None:
+        # #601: orceld's rule. chmod +a entries are invisible to the mode bits.
+        def acl(path: Path, entry: str) -> None:
+            subprocess.run(["chmod", "+a", entry, str(path)], check=True, capture_output=True)
+
+        def clear(path: Path) -> None:
+            subprocess.run(["chmod", "-N", str(path)], check=True, capture_output=True)
+
+        base = Path(self._dir.name)
+        store_root = base / "granted"
+        open_store(store_root, RUN).close()
+        acl(store_root, "everyone allow list")
+        with self.assertRaisesRegex(StoreError, "ACL entry that grants access"):
+            open_store(store_root, RUN)
+        clear(store_root)
+        open_store(store_root, RUN).close()
+        # An ancestor: a write-granting allow entry is refused, a read one is
+        # not, and a deny entry is ignored.
+        parent = base / "parent"
+        parent.mkdir(mode=0o700)
+        acl(parent, "everyone allow add_file")
+        with self.assertRaisesRegex(StoreError, "ancestor .*grants write_data/add_file"):
+            open_store(parent / "agent", RUN)
+        self.assertEqual(list(parent.iterdir()), [], "nothing was made beneath it")
+        clear(parent)
+        acl(parent, "everyone allow list,search")
+        acl(parent, "everyone deny delete_child")
+        open_store(parent / "agent", RUN).close()
+        clear(parent)  # the deny entry binds the owner too: lift it before cleanup
+
     @unittest.skipUnless(os.name == "nt", "Windows only")
     def test_a_held_store_is_never_expired_and_its_tree_cannot_be_swapped(self) -> None:
         # Slice 5c: while a store is in use its directories are held open, so
@@ -733,6 +764,7 @@ class SourceBoundary(unittest.TestCase):
         "checkpoint.py": {"sqlite3"},  # slice 5 (standard library)
         "todos.py": {"langchain_core", "unicodedata"},  # slice 4b (LangChain's todo text is copied, not imported)
         "winacl.py": {"ctypes"},  # slice 5b: the Windows store DACL, native surface pinned below
+        "macacl.py": {"ctypes"},  # #601: macOS extended ACLs on the store, native surface pinned below
     }
     #: winacl.py's whole native surface (slice 5b).
     WINACL_FUNCTIONS = {
@@ -789,6 +821,51 @@ class SourceBoundary(unittest.TestCase):
                     inside = path.relative_to(ROOT / "orcel_agent").as_posix()
                     allowed = self.ALLOWED_IMPORTS | self.MODULE_IMPORTS.get(inside, set())
                     self.assertIn(name, allowed, f"{path.name}: import {name}")
+
+    #: macacl.py's whole native surface (#601).
+    MACACL_LIBRARY = "/usr/lib/libSystem.B.dylib"
+    MACACL_FUNCTIONS = ("acl_get_fd_np", "acl_get_link_np", "acl_get_entry", "acl_get_tag_type",
+                        "acl_get_permset", "acl_get_perm_np", "acl_free")
+
+    def test_macacl_loads_only_its_named_functions(self) -> None:
+        tree = ast.parse((ROOT / "orcel_agent" / "macacl.py").read_text(encoding="utf-8"))
+        assigned = {t.id: node.value for node in ast.walk(tree) if isinstance(node, ast.Assign)
+                    for t in node.targets if isinstance(t, ast.Name)}
+        self.assertEqual(ast.literal_eval(assigned["LIBRARY"]), self.MACACL_LIBRARY)
+        self.assertEqual(ast.literal_eval(assigned["FUNCTIONS"]), self.MACACL_FUNCTIONS)
+        loaders = {"cdll", "windll", "oledll", "OleDLL", "PyDLL", "pydll", "pythonapi", "LibraryLoader",
+                   "LoadLibrary", "dlopen", "find_library", "memmove", "memset", "CFUNCTYPE", "WINFUNCTYPE", "WinDLL"}
+        calls = [ast.unparse(n) for n in ast.walk(tree) if isinstance(n, ast.Call)]
+        self.assertEqual([c for c in calls if "CDLL" in c], ["ctypes.CDLL(LIBRARY, use_errno=True)"])
+        self.assertEqual([c for c in calls if c.startswith("getattr(")], ["getattr(dll, name)"])
+        loop = [n for n in ast.walk(tree) if isinstance(n, ast.For) and ast.unparse(n.iter) == "FUNCTIONS"]
+        self.assertEqual(len(loop), 1, "the one lookup loop runs over FUNCTIONS")
+        self.assertTrue(any(ast.unparse(n) == "getattr(dll, name)" for n in ast.walk(loop[0])))
+        ctypes_allowed = {"c_void_p", "c_int", "c_char_p", "POINTER", "byref", "get_errno", "CDLL"}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute):
+                self.assertNotIn(node.attr, loaders, f"macacl.py: .{node.attr}")
+                self.assertFalse(node.attr.startswith("_"), f"macacl.py: .{node.attr}")
+                if isinstance(node.value, ast.Name) and node.value.id == "ctypes":
+                    self.assertIn(node.attr, ctypes_allowed, f"macacl.py: ctypes.{node.attr}")
+                if isinstance(node.value, ast.Name) and node.value.id == "dll":
+                    self.fail(f"macacl.py: dll.{node.attr}")
+            if isinstance(node, ast.Name):
+                self.assertNotIn(node.id, loaders | {"vars", "globals", "locals", "eval", "exec", "__builtins__"},
+                                 f"macacl.py: {node.id}")
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                names = [a.name for a in node.names]
+                self.assertNotEqual(getattr(node, "module", None), "ctypes", "macacl.py: from ctypes import")
+                if "ctypes" in names:
+                    self.assertEqual([(a.name, a.asname) for a in node.names], [("ctypes", None)])
+            if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for target in targets:
+                    if isinstance(target, ast.Name) and target.id in ("LIBRARY", "FUNCTIONS", "dll", "name"):
+                        self.assertIn(ast.unparse(node), {
+                            "LIBRARY = " + repr(self.MACACL_LIBRARY),
+                            "FUNCTIONS = " + ast.unparse(assigned["FUNCTIONS"]),
+                            "dll = ctypes.CDLL(LIBRARY, use_errno=True)"}, f"macacl.py: {ast.unparse(node)}")
 
     def test_winacl_loads_only_its_named_functions(self) -> None:
         path = ROOT / "orcel_agent" / "winacl.py"
@@ -906,9 +983,10 @@ class SourceBoundary(unittest.TestCase):
                 self.assertTrue(isinstance(key, ast.Constant) and key.value in native, ast.unparse(node))
             else:
                 self.assertIn(ast.unparse(node.func), calls, f"winacl.py: a call to {ast.unparse(node.func)}")
-        # No other module touches ctypes.
+        # No other module touches ctypes (macacl.py, #601, is pinned by its
+        # own test).
         for other in self.modules():
-            if other.name != "winacl.py":
+            if other.name not in ("winacl.py", "macacl.py"):
                 self.assertNotIn("ctypes", other.read_text(encoding="utf-8"), other.name)
 
     @unittest.skipUnless(os.name == "nt", "Windows only")

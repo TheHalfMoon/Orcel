@@ -22,8 +22,9 @@ One directory per run under a private root:
   descriptor, which must name the same inode as the path, and held for the
   store's lifetime. Unlike a Windows handle a descriptor does not block a
   rename: the ancestor rule is what leaves only the user or root able to
-  rename them. macOS extended ACLs are not read, on the ancestors or on the
-  store's own directories (residual; orceld refuses them).
+  rename them. On macOS (#601) extended ACLs are read too, as orceld reads
+  them: any `allow` entry on the store's own directories, or a
+  write-granting one on an ancestor, is refused (macacl.py).
 - **Size-capped.** Writes beyond `max_bytes` fail closed.
 - **Expiring.** A run whose newest file is older than `ttl_s` is removed
   when a store opens.
@@ -42,6 +43,7 @@ import os
 import re
 import shutil
 import stat
+import sys
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -162,6 +164,13 @@ def _check_ancestors_unix(path: Path) -> None:
         if name not in checked:
             checked.add(name)
             problem = _ancestor_problem(info, uid)
+            if problem is None and sys.platform == "darwin":
+                from . import macacl
+
+                try:
+                    problem = macacl.problem(path=name, any_allow=False)
+                except OSError as error:  # the ACL library cannot be loaded
+                    raise StoreError(f"the agent store's ancestor {name} ACL cannot be checked: {error}") from error
             if problem is not None:
                 raise StoreError(f"the agent store's ancestor {name} {problem}")
         return info
@@ -235,6 +244,15 @@ def _private_dir_unix(path: Path, parent: _HeldUnixDirectory | None = None) -> _
         mode = stat.S_IMODE(os.fstat(fd).st_mode)
         if mode & 0o077:
             raise StoreError(f"the agent store is not private (mode {mode:o})")
+        if sys.platform == "darwin":
+            from . import macacl
+
+            try:
+                problem = macacl.problem(fd=fd, any_allow=True)
+            except OSError as error:  # the ACL library cannot be loaded
+                raise StoreError(f"the agent store {path} ACL cannot be checked: {error}") from error
+            if problem is not None:
+                raise StoreError(f"the agent store {path} {problem}; remove the entry or the store")
         named = os.stat(name, follow_symlinks=False, **where)
         if (named.st_dev, named.st_ino) != (info.st_dev, info.st_ino):
             raise StoreError(f"the agent store {path} was replaced while it was checked")
