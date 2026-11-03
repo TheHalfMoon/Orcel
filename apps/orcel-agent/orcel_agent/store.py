@@ -167,7 +167,10 @@ def _check_ancestors_unix(path: Path) -> None:
             if problem is None and sys.platform == "darwin":
                 from . import macacl
 
-                problem = macacl.problem(path=name, any_allow=False)
+                try:
+                    problem = macacl.problem(path=name, any_allow=False)
+                except OSError as error:  # the ACL library cannot be loaded
+                    raise StoreError(f"the agent store's ancestor {name} ACL cannot be checked: {error}") from error
             if problem is not None:
                 raise StoreError(f"the agent store's ancestor {name} {problem}")
         return info
@@ -244,7 +247,10 @@ def _private_dir_unix(path: Path, parent: _HeldUnixDirectory | None = None) -> _
         if sys.platform == "darwin":
             from . import macacl
 
-            problem = macacl.problem(fd=fd, any_allow=True)
+            try:
+                problem = macacl.problem(fd=fd, any_allow=True)
+            except OSError as error:  # the ACL library cannot be loaded
+                raise StoreError(f"the agent store {path} ACL cannot be checked: {error}") from error
             if problem is not None:
                 raise StoreError(f"the agent store {path} {problem}; remove the entry or the store")
         named = os.stat(name, follow_symlinks=False, **where)
