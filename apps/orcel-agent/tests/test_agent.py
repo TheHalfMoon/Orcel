@@ -456,6 +456,25 @@ class PrivateStore(Scratch):
         self.assertEqual(list(real_root.iterdir()), [], "nothing was made through the link")
 
     @unittest.skipIf(os.name == "nt", "Unix only")
+    def test_a_unix_store_checks_where_every_link_on_its_path_resolves(self) -> None:
+        # #596, review round 1: orceld checks the resolved chain of every
+        # link on the path, not only of the whole path. Here the first link
+        # resolves into an unsafe directory that the whole path's final
+        # resolution (through a second link) never passes through.
+        base = Path(self._dir.name)
+        unsafe = base / "b"
+        (unsafe / "c" / "d").mkdir(parents=True)
+        os.chmod(unsafe, 0o777)
+        elsewhere = base / "e"
+        elsewhere.mkdir()
+        (base / "a").mkdir()
+        (base / "a" / "l1").symlink_to(unsafe / "c")
+        (unsafe / "c" / "d" / "l2").symlink_to(elsewhere)
+        with self.assertRaisesRegex(StoreError, f"ancestor {re.escape(str(unsafe))} .*writable"):
+            open_store(base / "a" / "l1" / "d" / "l2" / "agent", RUN)
+        self.assertEqual(list(elsewhere.iterdir()), [], "nothing was made")
+
+    @unittest.skipIf(os.name == "nt", "Unix only")
     def test_a_unix_store_makes_missing_directories_private_and_holds_its_own(self) -> None:
         # #596: missing directories are made 0700 whatever the umask, an
         # existing root is tightened through its descriptor, and the root and
@@ -469,13 +488,11 @@ class PrivateStore(Scratch):
         for path in (deep.parent.parent, deep.parent, deep, store.directory):
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o700, path)
         self.assertEqual(len(store._held), 2)
-        held_fds = [held.fd for held in store._held]
-        for fd in held_fds:
-            os.fstat(fd)
+        held = list(store._held)
+        for directory in held:
+            os.fstat(directory.fd)
         store.close()
-        for fd in held_fds:
-            with self.assertRaises(OSError):
-                os.fstat(fd)
+        self.assertTrue(all(directory.fd is None for directory in held), "released on close")
         loose = Path(self._dir.name) / "loose"
         loose.mkdir()
         os.chmod(loose, 0o755)

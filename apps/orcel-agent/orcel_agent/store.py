@@ -22,7 +22,8 @@ One directory per run under a private root:
   descriptor, which must name the same inode as the path, and held for the
   store's lifetime. Unlike a Windows handle a descriptor does not block a
   rename: the ancestor rule is what leaves only the user or root able to
-  rename them. macOS extended ACLs on the ancestors are not read (residual).
+  rename them. macOS extended ACLs are not read, on the ancestors or on the
+  store's own directories (residual; orceld refuses them).
 - **Size-capped.** Writes beyond `max_bytes` fail closed.
 - **Expiring.** A run whose newest file is older than `ttl_s` is removed
   when a store opens.
@@ -146,26 +147,36 @@ def _ancestor_problem(info: os.stat_result, uid: int) -> str | None:
 
 
 def _check_ancestors_unix(path: Path) -> None:
-    """Refuse a store whose ancestors others could rename or replace: every
-    directory above `path` on its absolute path and, behind any link, on the
-    path it resolves to."""
+    """Refuse a store whose ancestors others could rename or replace
+    (orceld's `ensure_private_dir` walk): every directory above `path`, from
+    `/` down, and, wherever one is a symbolic link, every directory of the
+    path the link resolves to (orceld's `verify_resolved`)."""
     uid = os.geteuid()
-    lexical = Path(os.path.abspath(path))
-    resolved = Path(os.path.realpath(lexical))
-    seen: set[str] = set()
-    for chain in (lexical.parents, resolved.parents):
-        for ancestor in chain:
-            name = str(ancestor)
-            if name in seen:
-                continue
-            seen.add(name)
-            try:
-                info = os.lstat(name)
-            except OSError as error:
-                raise StoreError(f"the agent store's ancestor {name} cannot be checked: {error}") from error
+    checked: set[str] = set()
+
+    def check(name: str) -> os.stat_result:
+        try:
+            info = os.lstat(name)
+        except OSError as error:
+            raise StoreError(f"the agent store's ancestor {name} cannot be checked: {error}") from error
+        if name not in checked:
+            checked.add(name)
             problem = _ancestor_problem(info, uid)
             if problem is not None:
                 raise StoreError(f"the agent store's ancestor {name} {problem}")
+        return info
+
+    lexical = Path(os.path.abspath(path))
+    for ancestor in reversed(lexical.parents):
+        if not os.path.lexists(ancestor):
+            break  # made later, each checked before it is made
+        info = check(str(ancestor))
+        if stat.S_ISLNK(info.st_mode):
+            # A fully resolved path has no link left in it: each of its
+            # directories is checked as it really is.
+            resolved = Path(os.path.realpath(ancestor))
+            for real in [*reversed(resolved.parents), resolved]:
+                check(str(real))
 
 
 def _make_missing_private(path: Path) -> None:
@@ -187,14 +198,32 @@ def _make_missing_private(path: Path) -> None:
             raise StoreError(f"the agent store {directory} cannot be created: {error}") from error
 
 
-def _private_dir_unix(path: Path) -> _HeldUnixDirectory:
+_DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC if os.name != "nt" else 0
+
+
+def _private_dir_unix(path: Path, parent: _HeldUnixDirectory | None = None) -> _HeldUnixDirectory:
     """Open `path` without following a link, check it through the
     descriptor (a directory, the user's own, mode 0700 after `fchmod`, the
-    same inode the path names) and return it held."""
-    _make_missing_private(path)
-    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    same inode the path names) and return it held. The root's ancestors are
+    checked before it is opened or made; a run directory (`parent` given) is
+    made and opened relative to the held root, so it is the checked root's
+    own entry."""
+    if parent is None:
+        _make_missing_private(path)
+        _check_ancestors_unix(path)
+        where: dict[str, Any] = {}
+        name: str | Path = path
+    else:
+        where = {"dir_fd": parent.fd}
+        name = path.name
+        try:
+            os.mkdir(name, 0o700, **where)
+        except FileExistsError:
+            pass
+        except OSError as error:
+            raise StoreError(f"the agent store {path} cannot be created: {error}") from error
     try:
-        fd = os.open(path, flags)
+        fd = os.open(name, _DIRECTORY_FLAGS, **where)
     except OSError as error:
         raise StoreError(f"the agent store {path} cannot be opened as a plain directory: {error}") from error
     held = _HeldUnixDirectory(fd)
@@ -206,7 +235,7 @@ def _private_dir_unix(path: Path) -> _HeldUnixDirectory:
         mode = stat.S_IMODE(os.fstat(fd).st_mode)
         if mode & 0o077:
             raise StoreError(f"the agent store is not private (mode {mode:o})")
-        named = os.lstat(path)
+        named = os.stat(name, follow_symlinks=False, **where)
         if (named.st_dev, named.st_ino) != (info.st_dev, info.st_ino):
             raise StoreError(f"the agent store {path} was replaced while it was checked")
     except StoreError:
@@ -329,12 +358,12 @@ def open_store(root: Path, run_id: str | None = None, *, ttl_s: float = DEFAULT_
     run_id = run_id or new_run_id()
     if not _RUN_ID.fullmatch(run_id):
         raise StoreError("a run id is 32 lowercase hex characters")
+    # Unix: the ancestors are checked inside, before the root is made or
+    # opened (#596).
     held_root = _private_dir(root)
     try:
         if os.name == "nt":
             _check_ancestors_windows(root)
-        else:
-            _check_ancestors_unix(root)
         _expire(root, run_id, ttl_s, time.time() if now is None else now)
     except BaseException:
         held_root.close()
@@ -342,7 +371,10 @@ def open_store(root: Path, run_id: str | None = None, *, ttl_s: float = DEFAULT_
     store = RunStore(root, run_id, max_bytes)
     store._held.append(held_root)
     try:
-        held_run = _private_dir(store.directory)
+        if os.name == "nt":
+            held_run = _private_dir(store.directory)
+        else:
+            held_run = _private_dir_unix(store.directory, held_root)
     except StoreError:
         store.close()
         raise
