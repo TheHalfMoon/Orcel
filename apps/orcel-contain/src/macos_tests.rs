@@ -212,3 +212,22 @@ async fn a_sample_retries_only_while_the_process_is_alive() {
         failure.detail()
     );
 }
+
+/// #583: a process that still answers `kill(pid, 0)` but cannot be sampled
+/// (an unreaped zombie has no task) is retried for the whole budget and then
+/// fails closed.
+#[tokio::test]
+async fn a_live_process_that_cannot_be_sampled_fails_after_the_budget() {
+    let mut child = std::process::Command::new("/usr/bin/true").spawn().unwrap();
+    let zombie = i32::try_from(child.id()).unwrap();
+    // Let it exit without reaping it.
+    std::thread::sleep(Duration::from_millis(200));
+    let started = std::time::Instant::now();
+    let failure = sample_live(zombie).await.unwrap_err();
+    let elapsed = started.elapsed();
+    child.wait().unwrap();
+    assert!(failure.alive, "{}", failure.detail());
+    assert!(failure.attempts > 1, "{}", failure.detail());
+    assert!(elapsed >= SAMPLE_RETRY_BUDGET, "{elapsed:?}");
+    assert!(elapsed < SAMPLE_RETRY_BUDGET * 3, "{elapsed:?}");
+}
