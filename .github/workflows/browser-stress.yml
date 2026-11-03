@@ -1,0 +1,70 @@
+# #438 / #584: repeat the Windows native browser suite to catch the rare
+# navigation and download timeouts with #587's connection diagnostics, instead
+# of waiting for them to recur in ordinary CI. Diagnostic only: it gates
+# nothing and changes no product code. It runs on GitHub-hosted runners (no
+# cost for this public repository), on a push to a `stress/browser-*` branch
+# or by hand.
+name: Browser stress (diagnostic)
+
+on:
+  push:
+    branches: ["stress/browser-*"]
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: "Suite repetitions per job"
+        default: "5"
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: Native browser suite x${{ github.event.inputs.rounds || '5' }} / windows-latest / ${{ matrix.shard }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [a, b, c, d]
+    runs-on: windows-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24.19.0"
+      - name: Install
+        run: npm ci --ignore-scripts
+      - name: Build the worker
+        run: npm --prefix apps/orcel-browser-worker run build
+      - name: Build the native tests
+        shell: bash
+        run: cargo test -p orcel-browser-host --lib --no-run
+      - name: Repeat the native suite
+        shell: bash
+        env:
+          ROUNDS: ${{ github.event.inputs.rounds || '5' }}
+        run: |
+          set -uo pipefail
+          export ORCEL_SG108_NODE="$(node -p process.execPath)"
+          export ORCEL_SG108_WORKER_MAIN="$PWD/apps/orcel-browser-worker/dist/main.js"
+          mkdir -p stress
+          failed=0
+          for round in $(seq 1 "$ROUNDS"); do
+            log="stress/round-$round.log"
+            start=$(date +%s)
+            cargo test -p orcel-browser-host --lib native_tests -- --ignored --test-threads=1 --nocapture >"$log" 2>&1
+            status=$?
+            echo "STRESS round $round status $status in $(( $(date +%s) - start )) s: $(grep -E '^test result' "$log" | tail -1)"
+            if [ "$status" -ne 0 ]; then
+              failed=$((failed + 1))
+              grep -E ' \.\.\. FAILED$|panicked at|SG108-DIAG (navigation|fixture|listeners|hello|host deadline)|^(CONN|TLSOK|TLSERR|HIT|DONE|ABORT)|:443 ' "$log" | head -400
+            fi
+          done
+          echo "STRESS summary: $failed of $ROUNDS rounds failed"
+          echo "failed=$failed" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: browser-stress-${{ matrix.shard }}
+          path: stress/
+          retention-days: 14
