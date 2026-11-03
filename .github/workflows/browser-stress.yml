@@ -1,9 +1,13 @@
-# #438 / #584: repeat the Windows native browser suite to catch the rare
+# #438 / #584: repeat Windows native browser tests to catch the rare
 # navigation and download timeouts with #587's connection diagnostics, instead
 # of waiting for them to recur in ordinary CI. Diagnostic only: it gates
 # nothing and changes no product code. It runs on GitHub-hosted runners (no
 # cost for this public repository), on a push to a `stress/browser-*` branch
 # or by hand.
+#
+# Each job repeats one pair: a test, then the test that failed right after
+# it in CI (libtest runs `--exact` filters in name order, so the pair stays
+# adjacent). Pairs from the analysis on #438 (2026-11-03).
 name: Browser stress (diagnostic)
 
 on:
@@ -12,19 +16,27 @@ on:
   workflow_dispatch:
     inputs:
       rounds:
-        description: "Suite repetitions per job"
-        default: "5"
+        description: "Repetitions per job"
+        default: "15"
 
 permissions:
   contents: read
 
 jobs:
   native:
-    name: Native browser suite x${{ github.event.inputs.rounds || '5' }} / windows-latest / ${{ matrix.shard }}
+    name: Pair ${{ matrix.pair.name }} x${{ github.event.inputs.rounds || '15' }} / windows-latest
     strategy:
       fail-fast: false
       matrix:
-        shard: [a, b, c, d]
+        pair:
+          - name: lan-then-extract
+            tests: "a_page_cannot_reach_the_lan_through_webrtc_fetch_or_sockets a_page_is_extracted_as_untrusted_markdown_in_pieces_without_hidden_text"
+          - name: silent-then-staged
+            tests: "a_silent_worker_times_out_typed_and_is_terminated a_staged_file_never_outlives_a_worker_that_dies_or_hangs a_stalled_cancelled_or_killed_download_is_typed_and_commits_nothing"
+          - name: staged-then-stalled
+            tests: "a_staged_file_never_outlives_a_worker_that_dies_or_hangs a_stalled_cancelled_or_killed_download_is_typed_and_commits_nothing"
+          - name: policy-then-lan
+            tests: "a_managed_policy_refuses_before_anything_starts a_page_cannot_reach_the_lan_through_webrtc_fetch_or_sockets"
     runs-on: windows-latest
     timeout-minutes: 240
     steps:
@@ -39,32 +51,34 @@ jobs:
       - name: Build the native tests
         shell: bash
         run: cargo test -p orcel-browser-host --lib --no-run
-      - name: Repeat the native suite
+      - name: Repeat the pair
         shell: bash
         env:
-          ROUNDS: ${{ github.event.inputs.rounds || '5' }}
+          ROUNDS: ${{ github.event.inputs.rounds || '15' }}
+          TESTS: ${{ matrix.pair.tests }}
         run: |
           set -uo pipefail
           export ORCEL_SG108_NODE="$(node -p process.execPath)"
           export ORCEL_SG108_WORKER_MAIN="$PWD/apps/orcel-browser-worker/dist/main.js"
+          filters=()
+          for name in $TESTS; do filters+=("worker_launch::native_tests::$name"); done
           mkdir -p stress
           failed=0
           for round in $(seq 1 "$ROUNDS"); do
             log="stress/round-$round.log"
             start=$(date +%s)
-            cargo test -p orcel-browser-host --lib native_tests -- --ignored --test-threads=1 --nocapture >"$log" 2>&1
+            cargo test -p orcel-browser-host --lib -- --ignored --exact --test-threads=1 --nocapture "${filters[@]}" >"$log" 2>&1
             status=$?
             echo "STRESS round $round status $status in $(( $(date +%s) - start )) s: $(grep -E '^test result' "$log" | tail -1)"
             if [ "$status" -ne 0 ]; then
               failed=$((failed + 1))
-              grep -E ' \.\.\. FAILED$|panicked at|SG108-DIAG (navigation|fixture|listeners|hello|host deadline)|^(CONN|TLSOK|TLSERR|HIT|DONE|ABORT)|:443 ' "$log" | head -400
+              grep -E ' \.\.\. (ok|FAILED)$|panicked at|SG108-DIAG|^(CONN|TLSOK|TLSERR|HIT|DONE|ABORT)|:443 ' "$log" | head -400
             fi
           done
           echo "STRESS summary: $failed of $ROUNDS rounds failed"
-          echo "failed=$failed" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
-          name: browser-stress-${{ matrix.shard }}
+          name: browser-stress-${{ matrix.pair.name }}
           path: stress/
           retention-days: 14
