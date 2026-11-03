@@ -529,6 +529,7 @@ class PrivateStore(Scratch):
         acl(parent, "everyone allow list,search")
         acl(parent, "everyone deny delete_child")
         open_store(parent / "agent", RUN).close()
+        clear(parent)  # the deny entry binds the owner too: lift it before cleanup
 
     @unittest.skipUnless(os.name == "nt", "Windows only")
     def test_a_held_store_is_never_expired_and_its_tree_cannot_be_swapped(self) -> None:
