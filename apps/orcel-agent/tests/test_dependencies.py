@@ -51,17 +51,19 @@ DENIED_EVENTS = (
 
 #: Linux only, installed first in a probe (before the audit hook, which
 #: refuses ctypes): a seccomp filter that kills the whole process when any
-#: code, native libraries included, asks the kernel for an internet or packet
-#: socket or an io_uring (which can make sockets on its own). The audit hook
-#: refuses Python's own socket calls before they reach the kernel, so only
-#: native code that bypasses the socket module can trip the filter: the
-#: process dies with SIGSYS and the test sees no report. Unix sockets and
-#: everything else stay allowed. Kernel constants: <linux/seccomp.h>,
+#: code, native libraries included, asks the kernel for a socket of any
+#: family but Unix and netlink (neither leaves the host), or for an io_uring
+#: (which can make sockets on its own). Installed with TSYNC, so every thread
+#: of the process is covered. The audit hook refuses Python's own socket
+#: calls before they reach the kernel, so only native code that bypasses the
+#: socket module can trip the filter: the process dies with SIGSYS and the
+#: test sees no report. Kernel constants: <linux/seccomp.h>,
 #: <linux/filter.h>, <linux/audit.h>; syscall numbers for x86_64 and aarch64.
 SECCOMP = r"""
 import ctypes, platform, struct, sys
-_ARCH = {"x86_64": (0xC000003E, 41, 425), "aarch64": (0xC00000B7, 198, 425)}
-_arch, _socket, _io_uring = _ARCH[platform.machine()]
+# arch, socket, io_uring_setup, seccomp
+_ARCH = {"x86_64": (0xC000003E, 41, 425, 317), "aarch64": (0xC00000B7, 198, 425, 277)}
+_arch, _socket, _io_uring, _seccomp = _ARCH[platform.machine()]
 _LD, _JEQ, _JGE, _RET = 0x20, 0x15, 0x35, 0x06
 _ALLOW, _KILL = 0x7FFF0000, 0x80000000
 _program = [
@@ -73,9 +75,9 @@ _program = [
     (_JEQ, 1, 0, _socket),              # 5: socket: check the domain
     (_RET, 0, 0, _ALLOW),               # 6
     (_LD, 0, 0, 16),                    # 7: args[0], the domain (low word)
-    (_JEQ, 3, 0, 2),                    # 8: AF_INET: kill
-    (_JEQ, 2, 0, 10),                   # 9: AF_INET6: kill
-    (_JEQ, 1, 0, 17),                   # 10: AF_PACKET: kill
+    (_JEQ, 2, 0, 1),                    # 8: AF_UNIX: allow
+    (_JEQ, 1, 0, 16),                   # 9: AF_NETLINK: allow
+    (_RET, 0, 0, _KILL),                # 10: every other family: kill
     (_RET, 0, 0, _ALLOW),               # 11
     (_RET, 0, 0, _KILL),                # 12
 ]
@@ -88,7 +90,9 @@ _libc = ctypes.CDLL(None, use_errno=True)
 _libc.prctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong]
 if _libc.prctl(38, 1, None, 0, 0) != 0:    # PR_SET_NO_NEW_PRIVS
     sys.exit("SECCOMP-REFUSED no_new_privs errno %d" % ctypes.get_errno())
-if _libc.prctl(22, 2, ctypes.byref(_prog), 0, 0) != 0:   # PR_SET_SECCOMP, SECCOMP_MODE_FILTER
+_libc.syscall.restype = ctypes.c_long
+# seccomp(SECCOMP_SET_MODE_FILTER, SECCOMP_FILTER_FLAG_TSYNC, &prog)
+if _libc.syscall(ctypes.c_long(_seccomp), ctypes.c_ulong(1), ctypes.c_ulong(1), ctypes.byref(_prog)) != 0:
     sys.exit("SECCOMP-REFUSED filter errno %d" % ctypes.get_errno())
 """
 
@@ -300,7 +304,9 @@ class NativeEgress(unittest.TestCase):
         return subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True, timeout=60)
 
     def test_a_native_internet_socket_kills_the_process(self) -> None:
-        for domain in (int(socket.AF_INET), int(socket.AF_INET6)):
+        # Internet, packet, VSOCK, SMC (TCP-compatible) and XDP: the filter
+        # allows only listed families, so any of them dies.
+        for domain in (int(socket.AF_INET), int(socket.AF_INET6), 17, 40, 43, 44):
             run = self.native(domain)
             self.assertNotIn("SECCOMP-REFUSED", run.stderr, "the kernel refused the filter")
             self.assertEqual(run.returncode, -signal.SIGSYS, (domain, run.returncode, run.stdout, run.stderr))
@@ -310,6 +316,19 @@ class NativeEgress(unittest.TestCase):
         run = self.native(int(socket.AF_UNIX))
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertRegex(run.stdout, r"ALIVE [0-9]+")
+
+    def test_a_thread_started_before_the_filter_is_covered(self) -> None:
+        # TSYNC: a thread already running when the filter is installed is
+        # filtered too.
+        code = ("import ctypes, threading, time\n"
+                "go = threading.Event()\n"
+                "def worker():\n    go.wait(); ctypes.CDLL(None).socket(2, 1, 0); print('ALIVE')\n"
+                "t = threading.Thread(target=worker); t.start()\n"
+                + SECCOMP + "\ngo.set(); t.join(); time.sleep(1)\n")
+        run = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True, timeout=60)
+        self.assertNotIn("SECCOMP-REFUSED", run.stderr)
+        self.assertEqual(run.returncode, -signal.SIGSYS, (run.returncode, run.stdout, run.stderr))
+        self.assertNotIn("ALIVE", run.stdout)
 
     @needs_deps
     def test_the_agent_probe_completes_under_the_filter(self) -> None:
