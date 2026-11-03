@@ -8,7 +8,7 @@ Sources are linked so each row can be checked. When a decision is made, record i
 
 | ID | Smallest decision | Blocks | Meanwhile | Source |
 |---|---|---|---|---|
-| SG-000115 | Activate the macOS/Linux browser launch, sink and supervision grain. If yes, accept or reject each open class 4 residual (below). | Any wired macOS/Linux browser launch path | Inert, test-only risk work (A1–A6b and B1–B9a merged; B9b pending in #604) keeps narrowing residuals. **NOT ACTIVATED.** | `docs/orcel/implementation-readiness/prep/SG-000115.md` |
+| SG-000115 | Activate the macOS/Linux browser launch, sink and supervision grain. If yes, accept or reject each open class 4 residual (below). | Any wired macOS/Linux browser launch path | Inert, test-only risk work (A1–A6b and B1–B9b merged) keeps narrowing residuals. **NOT ACTIVATED.** | `docs/orcel/implementation-readiness/prep/SG-000115.md` |
 | SG-000122 | Activate governed exposure of the browser agent actions (form actions, waits, uploads, dialogs, the verifier) through orceld/MCP. | Those actions reaching any agent | Host and worker only, unexposed. **NOT ACTIVATED.** | `prep/SG-000122.md` |
 | SG-000124 | Activate the optional sandbox runtimes (SX-01 to SX-05). | Those runtimes | Preparation only. **NOT ACTIVATED.** | `prep/SG-000124.md` |
 | SG-000125 (SX-06) | Decide whether to expose the sandbox to agents. This is its own decision, separate from SG-000124. | Sandbox exposure | Nothing exposed. | `prep/SG-000124.md`, `EXECUTION_FRONTIER.md` |
@@ -19,7 +19,7 @@ Sources are linked so each row can be checked. When a decision is made, record i
 
 | Residual | Smallest decision | Current mitigation (inert) |
 |---|---|---|
-| (d) a network sink's port after an orceld crash | Accept B8b (engine-only user/PID namespace) as the Linux design and, where namespaces are refused, B9b (systemd user unit). Or reject both. | B8b contains the family on the hosted runner (#586). B9b, pending in #604 (not merged), would contain it with a user manager. A same-user process can leave a cgroup or ask systemd for a new unit. |
+| (d) a network sink's port after an orceld crash | Accept B8b (engine-only user/PID namespace) as the Linux design and, where namespaces are refused, B9b (systemd user unit). Or reject both. | B8b contains the family on the hosted runner (#586). B9b (#604) contains it with a user manager. A same-user process can leave a cgroup or ask systemd for a new unit. |
 | (e) S-07 signing keys | Which vendor keys Orcel ships and pins (Google Linux signing key; others), and how they are updated. | B7 verifies the chain where the signed index and package are on disk (#581). The pinned fingerprint is recorded from memory and unverified. |
 | A root engine under an unrecognised name (part of (b)) | Accept, or require an allowlist beyond Chrome, Edge and Chromium. | B4 checks root engines by name (#566). |
 | The other recorded residuals: (a) macOS pid reuse within one scan; (c) false positives of the unattributable rule; (f) engines in another PID namespace; (g) profile paths with spaces | Accept each, or require more work before activation. | The full text of each, with its mitigation, is the "SG-000115 residuals" row in `RELEASE_READINESS.md`. |

@@ -63,6 +63,12 @@ checkpoint at the end says where engineering stands.
 | SG-000115 B9a (inert): Linux fires a parent-death signal when the spawning *thread* exits; measured (a child spawned from a short-lived thread is killed with it) and designed around (one lifetime spawner thread; its child outlives the requesting thread), on the hosted Ubuntu runner too (PR CI run 41585992656). Residuals: the spawner must be held and never panic for the host's lifetime, and the signal ties only the direct engine process | #594 → `5e14fc3` |
 | #358 closed: no recurrence of item 5 (`inspection_reports_lock_contention_as_busy`) in the failed CI runs back to 2026-10-30 | — |
 | SG-000129 open follow-up closed on Unix (#596): the agent store follows orceld's ancestor rule (owner user or root, no group/other write unless root-owned sticky, every link's resolved chain checked), makes missing directories 0700, and opens, checks and holds the root and run directories by descriptor (`O_DIRECTORY | O_NOFOLLOW`, the run directory relative to the held root). The source-boundary test lets `store.py` open directories only (recorded rule change). Residuals: macOS extended ACLs are not read; a held descriptor does not block a rename (the ancestor rule does) | #597 → `8003770` |
+| Agent assurance A1: real OS process kills and new-process restarts. A scripted MCP server logs every call, so duplicates are read from the server's side. An unknown write, a refused write and a completed write each reach the server once across the kill. The checkpointed M3 chat planner (scripted model) restores its todos from the checkpoint a kill left behind, on all three OSes | #599 → `aedfe44` |
+| Agent assurance A2 (Linux): a seccomp filter (allowlist: Unix and netlink sockets only; io_uring and foreign ABIs killed; TSYNC) makes any native socket outside the allowlist kill the egress probe. Controls show it fires on the hosted runner's kernel. The locked LangChain/LangGraph probe completes under it, in the plain and network-namespace legs. Windows and macOS still rely on the audit hooks alone | #600 → `8385044` |
+| Agent assurance A3 (macOS, #601): the agent store reads extended ACLs as orceld does. Any allow entry on its own directories, or a write-granting one on an ancestor, is refused. `macacl.py` admits ctypes with a pinned native surface (recorded rule change). Shown on the macOS CI leg | #602 → `5a1fa71` |
+| SG-000115 B9b (inert): where user namespaces are refused entirely, the host runs as a systemd user service (`KillMode=control-group`, `KillSignal=SIGKILL`); killing it kills the `setsid` helper too, while the same family without the unit leaves the helper alive. Shown on the hosted Ubuntu runner with lingering enabled (CI requires the result line). A same-user process can still leave the cgroup or ask systemd for a new unit | #604 → `bed54cb` |
+| #438 class: the worker's resolver-pinning positive controls wait on #374's event deadline instead of a fixed 10 s (run 41659893527). #438 itself: 80 isolated stress repetitions and 60 adjacent-pair repetitions passed, and none in about 55 CI runs since 2026-11-03; no mechanism shown, issue open with diagnostics | #603 → `e653280` |
+| Consolidated founder decision register: every open founder or external gate with the smallest decision that unblocks it (`docs/orcel/FOUNDER_DECISIONS.md`) | this PR |
 | Doc parser zip advisory reachability, completed: anydoc 0.2.2 searched in full; one `ZipArchive`, read only by name under caps; no `extract` anywhere | #580 → `e272277` |
 | Lifecycle on main `89066a6`: Windows release qualification (install, run, update, recover, uninstall, local report client, 400 MB budget) and Linux deb/rpm/tarball install, systemd units, tamper detection and uninstall | main CI 40672122647 |
 
@@ -71,7 +77,7 @@ checkpoint at the end says where engineering stands.
 | Item | Note |
 |---|---|
 | #438 residual: navigation `read: TimedOut` on CI | Waiting for a recurrence; #494's diagnostics capture it |
-| SG-000115 Priority B (inert): a cgroup alternative where user namespaces are refused entirely; wiring B9a's lifetime spawner into a launch path (activation work); S-07 key shipping and pinning (a founder decision) | Engineering solutions to shrink the class 4 residuals; none activates SG-000115 |
+| SG-000115 Priority B (inert): wiring B9a's lifetime spawner and B8b/B9b containment into a launch path (activation work); a cgroup the engine cannot leave (B9b's residual); S-07 key shipping and pinning (a founder decision) | Engineering solutions to shrink the class 4 residuals; none activates SG-000115 |
 | Doc parser zip advisories (RUSTSEC-2026-0367/0368/0369/0429, extraction only) | Recorded exceptions, not accepted risk (founder direction 2026-11-02): reachability checked module by module in `apps/orcel-doc-parser/.cargo/audit.toml`. Remove when anydoc accepts zip >= 9 (anydoc 0.2.4 is the latest and still requires ^8.6); remediate at once if any becomes reachable |
 | #292 flaky SG-000013 contained PowerShell test on windows-latest | Root cause not yet found |
 | macOS install / start / uninstall lifecycle | No macOS package yet: macOS packaging (XP-16) waits for FD-05; Windows and Linux lifecycle are in class 1 |
@@ -105,7 +111,7 @@ checkpoint at the end says where engineering stands.
 | Release and publication | Not authorized; no release is created |
 | A planner model for BM-02 Tier C agent runs | Paid inference is excluded by the zero-cost rule; the local d1 model is an advisory classifier, not a planner |
 | M4 model selection and licensing | Candidates and the benchmark plan are in `prep/M4-local-model-candidates.md`; nothing is downloaded or run before this gate |
-| SG-000115 residuals (recorded, **not accepted**; engineering continues on each) | (a) macOS: a pid reused within one descendant scan (narrowed by B1, #557, to a backward wall-clock step: during a scan it can hide a reuse; afterwards it tears every scan, so the sweep fails closed); (b) descendants of another user that cannot be read, including root-run engines (on macOS recovery since B4, #566, keeps every profile while root runs an engine by a recognised name; a root engine under another name is not seen; since B6a, #568, a macOS profile with any non-deny ACL entry is refused at hold and at `verify` (an ACL added between those checks is not seen until the next one); the sandboxed-host `permission denied` ambiguity was closed by B3, #563); (c) false positives of the unattributable rule; (d) the network sink's port after an orceld crash (B8b, #586, removes the orphaned helper and the port traffic with an engine-only namespace that needs no uid maps, shown on the hosted Ubuntu runner; not wired into any launch path, and hosts that refuse unprivileged user namespaces entirely still have no mitigation); (e) S-07 binds ownership and modes; B7, #581, adds a signature chain that verifies only where the signed index and the retained package are still on disk (stock GitHub Ubuntu has neither, and `/opt/google` at 0777, so Chrome there is unverified); (f) engines in another PID namespace; (g) profile paths with spaces (whole-argument matching now covers macOS always, and Linux only where the title is not rewritten), and `hidepid` on `/proc` |
+| SG-000115 residuals (recorded, **not accepted**; engineering continues on each) | (a) macOS: a pid reused within one descendant scan (narrowed by B1, #557, to a backward wall-clock step: during a scan it can hide a reuse; afterwards it tears every scan, so the sweep fails closed); (b) descendants of another user that cannot be read, including root-run engines (on macOS recovery since B4, #566, keeps every profile while root runs an engine by a recognised name; a root engine under another name is not seen; since B6a, #568, a macOS profile with any non-deny ACL entry is refused at hold and at `verify` (an ACL added between those checks is not seen until the next one); the sandboxed-host `permission denied` ambiguity was closed by B3, #563); (c) false positives of the unattributable rule; (d) the network sink's port after an orceld crash (B8b, #586, removes the orphaned helper and the port traffic with an engine-only namespace that needs no uid maps, shown on the hosted Ubuntu runner; not wired into any launch path, and where unprivileged user namespaces are refused entirely, B9b, #604, contains the family through a systemd user service's cgroup, which a same-user process can still leave); (e) S-07 binds ownership and modes; B7, #581, adds a signature chain that verifies only where the signed index and the retained package are still on disk (stock GitHub Ubuntu has neither, and `/opt/google` at 0777, so Chrome there is unverified); (f) engines in another PID namespace; (g) profile paths with spaces (whole-argument matching now covers macOS always, and Linux only where the title is not rewritten), and `hidepid` on `/proc` |
 | Real platform presence (Windows Hello, Touch ID, polkit), macOS permissions | Never simulated or pre-granted |
 | Paid infrastructure, deployment | Excluded by the zero-cost rule |
 
@@ -131,12 +137,13 @@ checkpoint at the end says where engineering stands.
 
 ## Restart checkpoint
 
-If a session ends, resume from here (2026-11-03, main `8003770`; main CI
-41623520841 green at `8003770`):
+If a session ends, resume from here (2026-11-03, main `e653280`; main CI
+MAINCI green at `e653280`):
 
-1. Merged since the last checkpoint: #595 (handoff) and #597 (#596, the
-   Unix agent store's ancestor and descriptor checks: the SG-000129 open
-   follow-up). No PR from this work is open apart from this handoff. Branch
+1. Merged since the last checkpoint: #598 (handoff), #599 (A1 real kills),
+   #600 (A2 seccomp egress), #602 (A3 macOS ACLs, closes #601), #603 (worker
+   positive-control deadline) and #604 (SG-000115 B9b). No PR from this
+   work is open apart from this handoff and register. Branch
    protection needs each PR up to date with main, so PRs merge one at a
    time: rebase, exact-head green run, then `--match-head-commit`. #342 and
    #328 belong to other work: do not touch them.
@@ -150,11 +157,13 @@ If a session ends, resume from here (2026-11-03, main `8003770`; main CI
 3. Vendored cua-driver changes go through the patch queue: a P-xx entry in
    `PATCHES.md`, a `patched_files` entry in `docs/orcel/cua_driver_provenance.json`,
    then `node scripts/check-vendored-cua.mjs` on a commit.
-4. Next engineering, in order: the class 2 SG-000115 Priority B items; #438 when it recurs; Windows checkpoint hardening
-   follow-ups; then the next roadmap items (F4 slices that need no founder,
-   BR items behind governance, cross-platform).
+4. Next engineering, in order: #438 when it recurs (the stress workflow on
+   `stress/browser-438` reruns it at no cost); the remaining SG-000115 class
+   2 item that needs no activation (a cgroup the engine cannot leave); then
+   the next roadmap items that need no founder (`FOUNDER_DECISIONS.md` lists
+   what does).
 5. Known CI flakes: macOS toolchain install conflict (rerun failed jobs),
    #438, #508, #512, #516, #524, #558 (orceld app API re-bind on macOS), #583 (macOS memory sampler, #591).
 6. Do not repeat: XP-06/XP-11 Mac hardware tests (#425); the SG-000115 A1 to
-   A6b, B1 to B5, B5b, B6a, B6b, B7, B8, B8b and B9a slices; P-13 and P-14; the M4 research (#553).
+   A6b, B1 to B5, B5b, B6a, B6b, B7, B8, B8b, B9a and B9b slices; the agent A1-A3 tests; P-13 and P-14; the M4 research (#553).
 7. Never mark Core MVP complete; classes 3 to 5 stay open.
