@@ -414,6 +414,74 @@ class PrivateStore(Scratch):
         self.assertFalse(old.directory.exists(), "an expired run is removed")
         self.assertTrue(busy.directory.exists(), "a run with a fresh journal is kept")
 
+    @unittest.skipIf(os.name == "nt", "Unix only")
+    def test_a_unix_store_under_an_unsafe_ancestor_is_refused_and_nothing_is_made(self) -> None:
+        # #596: orceld's ancestor rule. A directory others may write to (not
+        # a root-owned sticky one) is refused, and nothing is created in it.
+        unsafe = Path(self._dir.name) / "unsafe"
+        unsafe.mkdir()
+        os.chmod(unsafe, 0o777)
+        with self.assertRaisesRegex(StoreError, "ancestor .*writable by group or others"):
+            open_store(unsafe / "a" / "agent", RUN)
+        self.assertEqual(list(unsafe.iterdir()), [], "nothing was made beneath it")
+        # An existing root below it is refused too.
+        os.chmod(unsafe, 0o700)
+        (unsafe / "agent").mkdir(mode=0o700)
+        os.chmod(unsafe, 0o770)
+        with self.assertRaisesRegex(StoreError, "ancestor"):
+            open_store(unsafe / "agent", RUN)
+        # Read access for others is fine.
+        os.chmod(unsafe, 0o755)
+        open_store(unsafe / "agent", RUN).close()
+
+    @unittest.skipIf(os.name == "nt", "Unix only")
+    def test_a_unix_store_behind_a_link_is_checked_where_it_resolves(self) -> None:
+        # #596: a link among the ancestors is allowed, but the directories it
+        # resolves to face the same rule; the root itself may not be a link.
+        target = Path(self._dir.name) / "target"
+        target.mkdir()
+        os.chmod(target, 0o777)
+        link = Path(self._dir.name) / "link"
+        link.symlink_to(target)
+        with self.assertRaisesRegex(StoreError, "ancestor .*target"):
+            open_store(link / "agent", RUN)
+        os.chmod(target, 0o700)
+        open_store(link / "agent", RUN).close()
+        real_root = Path(self._dir.name) / "real-root"
+        real_root.mkdir(mode=0o700)
+        linked_root = Path(self._dir.name) / "linked-root"
+        linked_root.symlink_to(real_root)
+        with self.assertRaisesRegex(StoreError, "plain directory"):
+            open_store(linked_root, RUN)
+        self.assertEqual(list(real_root.iterdir()), [], "nothing was made through the link")
+
+    @unittest.skipIf(os.name == "nt", "Unix only")
+    def test_a_unix_store_makes_missing_directories_private_and_holds_its_own(self) -> None:
+        # #596: missing directories are made 0700 whatever the umask, an
+        # existing root is tightened through its descriptor, and the root and
+        # run directory are held while the store is open.
+        old_umask = os.umask(0o002)
+        try:
+            deep = Path(self._dir.name) / "x" / "y" / "agent"
+            store = open_store(deep, RUN)
+        finally:
+            os.umask(old_umask)
+        for path in (deep.parent.parent, deep.parent, deep, store.directory):
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o700, path)
+        self.assertEqual(len(store._held), 2)
+        held_fds = [held.fd for held in store._held]
+        for fd in held_fds:
+            os.fstat(fd)
+        store.close()
+        for fd in held_fds:
+            with self.assertRaises(OSError):
+                os.fstat(fd)
+        loose = Path(self._dir.name) / "loose"
+        loose.mkdir()
+        os.chmod(loose, 0o755)
+        open_store(loose, RUN).close()
+        self.assertEqual(stat.S_IMODE(loose.stat().st_mode), 0o700)
+
     @unittest.skipUnless(os.name == "nt", "Windows only")
     def test_a_held_store_is_never_expired_and_its_tree_cannot_be_swapped(self) -> None:
         # Slice 5c: while a store is in use its directories are held open, so
@@ -874,6 +942,7 @@ class SourceBoundary(unittest.TestCase):
 
     def test_no_execution_network_or_dynamic_code(self) -> None:
         subprocess_calls: list[str] = []
+        store_opens = 0
         for path in self.modules():
             for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
                 if not isinstance(node, ast.Call):
@@ -893,12 +962,20 @@ class SourceBoundary(unittest.TestCase):
                         self.assertNotIn(attr, self.FORBIDDEN_OS, f"{path.name}: os.{attr}")
                         self.assertFalse(attr.startswith(("exec", "spawn")), f"{path.name}: os.{attr}")
                         if attr == "open":
-                            self.assertEqual(path.name, "journal.py", "only the journal opens files")
+                            # #596: the store opens its directories (read-only,
+                            # no link followed) to check them by descriptor.
+                            self.assertIn(path.name, ("journal.py", "store.py"),
+                                          "only the journal opens files, and the store its directories")
+                            if path.name == "store.py":
+                                store_opens += 1
                     if owner == "subprocess":
                         subprocess_calls.append(f"{path.name}:{attr}")
                     self.assertNotEqual(owner, "importlib", f"{path.name}: importlib")
                 if isinstance(func, ast.Attribute) and func.attr in ("open", "write_text", "write_bytes"):
-                    self.assertEqual(path.name, "journal.py", f"{path.name}: .{func.attr}()")
+                    store_dir_open = (path.name == "store.py" and func.attr == "open"
+                                      and isinstance(func.value, ast.Name) and func.value.id == "os")
+                    if not store_dir_open:
+                        self.assertEqual(path.name, "journal.py", f"{path.name}: .{func.attr}()")
                 if isinstance(func, ast.Attribute) and func.attr in ("create_subprocess_exec", "create_subprocess_shell", "open_connection"):
                     self.fail(f"{path.name}: {func.attr}")
                 for keyword in node.keywords:
@@ -906,6 +983,12 @@ class SourceBoundary(unittest.TestCase):
                         self.assertTrue(isinstance(keyword.value, ast.Constant) and keyword.value.value is False,
                                         f"{path.name}: shell must be False")
         self.assertEqual(subprocess_calls, ["edge.py:Popen"], "exactly one spawn: the edge")
+        self.assertEqual(store_opens, 1, "store.py opens directories in one place")
+        store_source = (Path(__file__).resolve().parent.parent / "orcel_agent" / "store.py").read_text(encoding="utf-8")
+        for flag in ("O_RDONLY", "O_DIRECTORY", "O_NOFOLLOW"):
+            self.assertIn(f"os.{flag}", store_source, f"store.py: {flag}")
+        for flag in ("O_WRONLY", "O_RDWR", "O_CREAT", "O_TRUNC", "O_APPEND"):
+            self.assertNotIn(flag, store_source, f"store.py: {flag}")
 
 
 if __name__ == "__main__":
