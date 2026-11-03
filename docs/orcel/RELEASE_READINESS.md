@@ -56,6 +56,8 @@ checkpoint at the end says where engineering stands.
 | SG-000115 B3b (inert): after a failed or unparseable arguments read, macOS recovery re-reads the process's own kernel record and keeps the profile only if it is still listed and not a zombie (or the record cannot be read); a process the kernel reports gone no longer keeps it. Found when a rehearsal run kept a profile no engine used (likely a fixture caught exiting; not proven). A `SG115-DIAG kept` line now shows the cause of any recurrence | #579 → `7cccf4b` |
 | SG-000115 B7 (inert): the Linux S-07 retained-package signature chain: `gpgv` verifies `InRelease` (exactly one good signature from a pinned primary key; expired, revoked or bad statuses refuse, measured: gpgv exits 0 with `EXPKEYSIG` and `VALIDSIG` for an expired key), the signed release binds `Packages`, `Packages` binds the retained `.deb`, and every package entry (files by SHA-256 and mode, directories, symlink targets, hard links) must match the installed tree with nothing extra in the install directory. Any missing link leaves the engine unverified. On the hosted Ubuntu runner a real Chrome has the vendor keyring but no signed index and no retained package, so it stays unverified. The pinned Google fingerprint is from memory and used only for evidence | #581 → `25673a7` |
 | SG-000115 B8 (inert): the A6 rehearsal's sink host as pid 1 of a user, PID and mount namespace; killing it takes the engine and its orphaned helper, and the freed port then receives nothing (local WSL2 run). On the hosted Ubuntu runner the namespace is created but the `setgroups` write is refused (consistent with Ubuntu 24.04's AppArmor restriction), so this form (uid maps and a `/proc` remount) is unavailable there; the refusal is recorded as evidence, never a pass | #582 → `c4547d1` |
+| SG-000115 B8b (inert): the engine family alone runs in its own user and PID namespace (no uid maps, no `/proc` remount), its init chained to the host by parent-death signals and a pipe check; when the host is killed the whole family dies and the freed port receives nothing, **on the hosted Ubuntu runner too** (CI run 41542568945), where B8's maps were refused. Also the Linux side of B3b: a `cmdline` read failing with `ESRCH`, or for a pid already gone, no longer keeps a profile (1 uncaptured failure in about 40 local runs remains, with a diagnostic) | #586 → `dee9050` (main CI 41553882525) |
+| #438 / #584 diagnostics: the HTTPS fixture reports each connection, TLS handshake and TLS error, and a failing native test prints their counts and every port-443 listener (the fixture uses a fixed `127.0.0.1:443`) | #587 → `017be67` |
 | Doc parser zip advisory reachability, completed: anydoc 0.2.2 searched in full; one `ZipArchive`, read only by name under caps; no `extract` anywhere | #580 → `e272277` |
 | Lifecycle on main `89066a6`: Windows release qualification (install, run, update, recover, uninstall, local report client, 400 MB budget) and Linux deb/rpm/tarball install, systemd units, tamper detection and uninstall | main CI 40672122647 |
 
@@ -64,7 +66,7 @@ checkpoint at the end says where engineering stands.
 | Item | Note |
 |---|---|
 | #438 residual: navigation `read: TimedOut` on CI | Waiting for a recurrence; #494's diagnostics capture it |
-| SG-000115 Priority B (inert): a B6b-style namespace variant for hosts that refuse the `setgroups` write (no uid maps, no `/proc` remount, the family pinned through the host's `/proc`); a cgroup alternative where namespaces are refused entirely; S-07 key shipping and pinning (a founder decision) | Engineering solutions to shrink the class 4 residuals; none activates SG-000115 |
+| SG-000115 Priority B (inert): a cgroup alternative where user namespaces are refused entirely; a production design for B8b's per-thread parent-death signal (the engine must be spawned from a thread that lives as long as the host); S-07 key shipping and pinning (a founder decision) | Engineering solutions to shrink the class 4 residuals; none activates SG-000115 |
 | Doc parser zip advisories (RUSTSEC-2026-0367/0368/0369/0429, extraction only) | Recorded exceptions, not accepted risk (founder direction 2026-11-02): reachability checked module by module in `apps/orcel-doc-parser/.cargo/audit.toml`. Remove when anydoc accepts zip >= 9 (anydoc 0.2.4 is the latest and still requires ^8.6); remediate at once if any becomes reachable |
 | #292 flaky SG-000013 contained PowerShell test on windows-latest | Root cause not yet found |
 | macOS install / start / uninstall lifecycle | No macOS package yet: macOS packaging (XP-16) waits for FD-05; Windows and Linux lifecycle are in class 1 |
@@ -98,7 +100,7 @@ checkpoint at the end says where engineering stands.
 | Release and publication | Not authorized; no release is created |
 | A planner model for BM-02 Tier C agent runs | Paid inference is excluded by the zero-cost rule; the local d1 model is an advisory classifier, not a planner |
 | M4 model selection and licensing | Candidates and the benchmark plan are in `prep/M4-local-model-candidates.md`; nothing is downloaded or run before this gate |
-| SG-000115 residuals (recorded, **not accepted**; engineering continues on each) | (a) macOS: a pid reused within one descendant scan (narrowed by B1, #557, to a backward wall-clock step: during a scan it can hide a reuse; afterwards it tears every scan, so the sweep fails closed); (b) descendants of another user that cannot be read, including root-run engines (on macOS recovery since B4, #566, keeps every profile while root runs an engine by a recognised name; a root engine under another name is not seen; since B6a, #568, a macOS profile with any non-deny ACL entry is refused at hold and at `verify` (an ACL added between those checks is not seen until the next one); the sandboxed-host `permission denied` ambiguity was closed by B3, #563); (c) false positives of the unattributable rule; (d) the network sink's port after an orceld crash (B6b, #570, and B8, #582, show PID-namespace containment removes the orphaned helper and the port traffic where unprivileged user namespaces and their maps are allowed; on the hosted Ubuntu runner the maps are refused; not wired); (e) S-07 binds ownership and modes; B7, #581, adds a signature chain that verifies only where the signed index and the retained package are still on disk (stock GitHub Ubuntu has neither, and `/opt/google` at 0777, so Chrome there is unverified); (f) engines in another PID namespace; (g) profile paths with spaces (whole-argument matching now covers macOS always, and Linux only where the title is not rewritten), and `hidepid` on `/proc` |
+| SG-000115 residuals (recorded, **not accepted**; engineering continues on each) | (a) macOS: a pid reused within one descendant scan (narrowed by B1, #557, to a backward wall-clock step: during a scan it can hide a reuse; afterwards it tears every scan, so the sweep fails closed); (b) descendants of another user that cannot be read, including root-run engines (on macOS recovery since B4, #566, keeps every profile while root runs an engine by a recognised name; a root engine under another name is not seen; since B6a, #568, a macOS profile with any non-deny ACL entry is refused at hold and at `verify` (an ACL added between those checks is not seen until the next one); the sandboxed-host `permission denied` ambiguity was closed by B3, #563); (c) false positives of the unattributable rule; (d) the network sink's port after an orceld crash (B8b, #586, removes the orphaned helper and the port traffic with an engine-only namespace that needs no uid maps, shown on the hosted Ubuntu runner; not wired into any launch path, and hosts that refuse unprivileged user namespaces entirely still have no mitigation; not wired); (e) S-07 binds ownership and modes; B7, #581, adds a signature chain that verifies only where the signed index and the retained package are still on disk (stock GitHub Ubuntu has neither, and `/opt/google` at 0777, so Chrome there is unverified); (f) engines in another PID namespace; (g) profile paths with spaces (whole-argument matching now covers macOS always, and Linux only where the title is not rewritten), and `hidepid` on `/proc` |
 | Real platform presence (Windows Hello, Touch ID, polkit), macOS permissions | Never simulated or pre-granted |
 | Paid infrastructure, deployment | Excluded by the zero-cost rule |
 
@@ -124,13 +126,13 @@ checkpoint at the end says where engineering stands.
 
 ## Restart checkpoint
 
-If a session ends, resume from here (2026-11-03, main `c4547d1`; main CI
-41512641711 green at `25673a7` after a rerun of flake #584):
+If a session ends, resume from here (2026-11-03, main `017be67`; main CI
+41553882525 green at `dee9050`):
 
-1. Merged since the last checkpoint: #576 (handoff), #580 (zip advisory
-   reachability), #581 (SG-000115 B7, the S-07 signature chain) and #582
-   (SG-000115 B8, PID-namespace containment in the rehearsal). No PR from
-   this work is open apart from this handoff. Branch
+1. Merged since the last checkpoint: #585 (handoff), #586 (SG-000115 B8b,
+   the engine's own namespace, contained on the hosted runner) and #587
+   (#438 connection diagnostics). No PR from this work is open apart from
+   this handoff. Branch
    protection needs each PR up to date with main, so PRs merge one at a
    time: rebase, exact-head green run, then `--match-head-commit`. #342 and
    #328 belong to other work: do not touch them.
@@ -150,5 +152,5 @@ If a session ends, resume from here (2026-11-03, main `c4547d1`; main CI
 5. Known CI flakes: macOS toolchain install conflict (rerun failed jobs),
    #438, #508, #512, #516, #524, #558 (orceld app API re-bind on macOS).
 6. Do not repeat: XP-06/XP-11 Mac hardware tests (#425); the SG-000115 A1 to
-   A6b, B1 to B5, B5b, B6a, B6b, B7 and B8 slices; P-13 and P-14; the M4 research (#553).
+   A6b, B1 to B5, B5b, B6a, B6b, B7, B8 and B8b slices; P-13 and P-14; the M4 research (#553).
 7. Never mark Core MVP complete; classes 3 to 5 stay open.
