@@ -61,6 +61,8 @@ checkpoint at the end says where engineering stands.
 | #438 / #584 diagnostics: the HTTPS fixture reports each connection, TLS handshake and TLS error, and a failing native test prints their counts and every port-443 listener (the fixture uses a fixed `127.0.0.1:443`) | #587 → `017be67` |
 | CI flake fixes: #583 a failed macOS memory sample of a live contained process is retried for up to 100 ms (rule change recorded; still fails closed) #591 → `bfa0fb7`; #558 the app API re-bind test retries `InUse` as orceld's start loop does and names the lock's holders #592 → `dabaded`; #292 the SG013 cold-start evidence now reaches the CI log (libtest had captured it) #593 → `03cdb2b`. #583 and #558 stay open as watch items | #591 to #593 |
 | SG-000115 B9a (inert): Linux fires a parent-death signal when the spawning *thread* exits; measured (a child spawned from a short-lived thread is killed with it) and designed around (one lifetime spawner thread; its child outlives the requesting thread), on the hosted Ubuntu runner too (PR CI run 41585992656). Residuals: the spawner must be held and never panic for the host's lifetime, and the signal ties only the direct engine process | #594 → `5e14fc3` |
+| #358 closed: no recurrence of item 5 (`inspection_reports_lock_contention_as_busy`) in the failed CI runs back to 2026-10-30 | — |
+| SG-000129 open follow-up closed on Unix (#596): the agent store follows orceld's ancestor rule (owner user or root, no group/other write unless root-owned sticky, every link's resolved chain checked), makes missing directories 0700, and opens, checks and holds the root and run directories by descriptor (`O_DIRECTORY | O_NOFOLLOW`, the run directory relative to the held root). The source-boundary test lets `store.py` open directories only (recorded rule change). Residuals: macOS extended ACLs are not read; a held descriptor does not block a rename (the ancestor rule does) | #597 → `8003770` |
 | Doc parser zip advisory reachability, completed: anydoc 0.2.2 searched in full; one `ZipArchive`, read only by name under caps; no `extract` anywhere | #580 → `e272277` |
 | Lifecycle on main `89066a6`: Windows release qualification (install, run, update, recover, uninstall, local report client, 400 MB budget) and Linux deb/rpm/tarball install, systemd units, tamper detection and uninstall | main CI 40672122647 |
 
@@ -129,13 +131,12 @@ checkpoint at the end says where engineering stands.
 
 ## Restart checkpoint
 
-If a session ends, resume from here (2026-11-03, main `5e14fc3`; main CI
-41589571865 green at `5e14fc3`):
+If a session ends, resume from here (2026-11-03, main `8003770`; main CI
+41623520841 green at `8003770`):
 
-1. Merged since the last checkpoint: #590 (handoff), #591 (#583 sampler
-   retry), #592 (#558 re-bind retry), #593 (#292 evidence visible) and
-   #594 (SG-000115 B9a). No PR from this work is open apart from this
-   handoff. Branch
+1. Merged since the last checkpoint: #595 (handoff) and #597 (#596, the
+   Unix agent store's ancestor and descriptor checks: the SG-000129 open
+   follow-up). No PR from this work is open apart from this handoff. Branch
    protection needs each PR up to date with main, so PRs merge one at a
    time: rebase, exact-head green run, then `--match-head-commit`. #342 and
    #328 belong to other work: do not touch them.
