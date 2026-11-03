@@ -1737,7 +1737,7 @@ impl Drop for HttpsFixture {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .clone();
-            let shown = &events[events.len().saturating_sub(50)..];
+            let shown = &events[events.len().saturating_sub(200)..];
             eprintln!(
                 "SG108-DIAG fixture response outcomes at failure (last {}):\n{}",
                 shown.len(),

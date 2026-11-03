@@ -1223,7 +1223,8 @@ fn no_shell_script_or_remote_process_surface_exists() {
     // CreateProcessW in worker_process.rs (no Command::new);
     // worker_launch_tests.rs and discovery_macos_tests.rs compile only under
     // cfg(test) and spawn test fixtures (XP-14: `cp -c` clones and
-    // `codesign` for the tamper tests).
+    // `codesign` for the tamper tests; #438: `netstat -ano -p TCP`, run only
+    // while a failing native test unwinds, to list port-443 listeners).
     // SG-000115 category A (recorded rule change, prep/SG-000115.md): the
     // inert Unix fixture spawners A2 (unix_supervise.rs) and A5
     // (unix_cleanup.rs), admitted only while lib.rs declares them under
