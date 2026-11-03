@@ -7,7 +7,7 @@
 
 import { Console } from "node:console";
 import { existsSync, writeFileSync } from "node:fs";
-import { chromium, type Locator, type Page } from "playwright-core";
+import { chromium, type Page } from "playwright-core";
 import { refusedWorkerVariables, startupRefusal } from "./environment.js";
 import { safeText } from "./extract/clean.js";
 import { ENGINE_LAUNCH_TIMEOUT_MS } from "./timeouts.js";
@@ -24,6 +24,7 @@ import { captureWithin } from "./webmcp/capture.js";
 import { fitBlocks, MAX_RESULT_BLOCKS, structuredData } from "./webmcp/structured.js";
 import { documentModel, type CapturedSnapshot } from "./webmcp/dom-snapshot.js";
 import { approvedElement, isOcclusion } from "./actions/targets.js";
+import { clickAndLoad } from "./actions/click-load.js";
 import { formAction } from "./actions/form.js";
 import { waitForText } from "./actions/wait.js";
 import { uploadFile } from "./actions/upload.js";
@@ -348,53 +349,6 @@ const FILL_BUDGET_MS = 10_000;
 
 /// Click `target` and wait for the main frame's resulting document to load;
 /// returns its URL and status. The host decides every request on the way.
-async function clickAndLoad(page: Page, target: Locator): Promise<{ url: string; status: number }> {
-  let status = 0;
-  const onResponse = (response: import("playwright-core").Response) => {
-    const request = response.request();
-    if (request.isNavigationRequest() && request.frame() === page.mainFrame()) status = response.status();
-  };
-  page.on("response", onResponse);
-  // A click that opens a popup instead of navigating the page is not the
-  // approved activation: it fails at once (the popup is closed) rather than
-  // waiting out the navigation timeout.
-  let onPopup: ((popup: Page) => void) | undefined;
-  const popped = new Promise<never>((_, reject) => {
-    onPopup = (popup) => {
-      void popup.close().catch(() => {});
-      reject(new NavigationError("denied"));
-    };
-    page.on("popup", onPopup);
-  });
-  popped.catch(() => {});
-  try {
-    const navigated = page.waitForEvent("framenavigated", {
-      predicate: (frame) => frame === page.mainFrame(),
-      timeout: 30_000
-    });
-    try {
-      await target.click({ timeout: 5_000 });
-    } catch (error) {
-      navigated.catch(() => {});
-      // BR-04: covered by another element: nothing was clicked.
-      throw new NavigationError(isOcclusion(error) ? "occluded" : "failed");
-    }
-    await Promise.race([navigated, popped]);
-    navigated.catch(() => {});
-    await page.waitForLoadState("load", { timeout: 30_000 });
-  } catch (error) {
-    if (error instanceof NavigationError) throw error;
-    if ((error as Error).name === "TimeoutError") throw new NavigationError("timeout");
-    throw new NavigationError("failed");
-  } finally {
-    page.off("response", onResponse);
-    if (onPopup) page.off("popup", onPopup);
-  }
-  // A refused navigation lands on Chromium's error page.
-  if (page.url().startsWith("chrome-error:")) throw new NavigationError("denied");
-  return { url: page.url(), status };
-}
-
 /// The file name a download would get: the Content-Disposition filename when
 /// present, else the last URL path segment; never a path.
 function suggestedName(url: string, disposition: string): string {
