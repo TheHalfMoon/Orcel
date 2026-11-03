@@ -59,5 +59,7 @@ Alibaba OpenCodeReview runs in **delegation mode** (founder decision, 2026-10-10
 
 ## Known gates outside engineering
 
+The consolidated list, with the smallest decision for each, is `docs/orcel/FOUNDER_DECISIONS.md`.
+
 - Founder: production release decision, signing/distribution, hosted AI infrastructure budget, written model and Firecrawl rights records.
 - External: real hosted inference, second and third Windows machines for multi-device journeys.
