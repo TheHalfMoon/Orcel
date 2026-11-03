@@ -68,6 +68,7 @@ checkpoint at the end says where engineering stands.
 | Agent assurance A3 (macOS, #601): the agent store reads extended ACLs as orceld does. Any allow entry on its own directories, or a write-granting one on an ancestor, is refused. `macacl.py` admits ctypes with a pinned native surface (recorded rule change). Shown on the macOS CI leg | #602 → `5a1fa71` |
 | SG-000115 B9b (inert): where user namespaces are refused entirely, the host runs as a systemd user service (`KillMode=control-group`, `KillSignal=SIGKILL`); killing it kills the `setsid` helper too, while the same family without the unit leaves the helper alive. Shown on the hosted Ubuntu runner with lingering enabled (CI requires the result line). A same-user process can still leave the cgroup or ask systemd for a new unit | #604 → `bed54cb` |
 | #438 class: the worker's resolver-pinning positive controls wait on #374's event deadline instead of a fixed 10 s (seen in PR run 41659893527 and again on main at `5a1fa71`, run 41698027722, before the fix). #438 itself: 80 isolated stress repetitions and 60 adjacent-pair repetitions passed, and none in about 55 CI runs since 2026-11-03; no mechanism shown, issue open with diagnostics | #603 → `e653280` |
+| #438, first mechanism shown: the worker's activation click (and the WebMCP submit) waited, inside its 5 s click budget, for the navigation it started to commit (Playwright's default `noWaitAfter: false`), so a slow commit was reported `failed` after the click had happened (run 41709022637: the fixture served the target, the host got `ActionFailed`). Now `noWaitAfter: true`, as the download click already was; a native test with a target answering after 7 s passes on Windows. The earlier 0-request timeouts remain unexplained | #606 → `5895a3b` |
 | Consolidated founder decision register: every open founder or external gate with the smallest decision that unblocks it (`docs/orcel/FOUNDER_DECISIONS.md`) | this PR |
 | Doc parser zip advisory reachability, completed: anydoc 0.2.2 searched in full; one `ZipArchive`, read only by name under caps; no `extract` anywhere | #580 → `e272277` |
 | Lifecycle on main `89066a6`: Windows release qualification (install, run, update, recover, uninstall, local report client, 400 MB budget) and Linux deb/rpm/tarball install, systemd units, tamper detection and uninstall | main CI 40672122647 |
@@ -137,12 +138,13 @@ checkpoint at the end says where engineering stands.
 
 ## Restart checkpoint
 
-If a session ends, resume from here (2026-11-03, main `e653280`; main CI
-41704703967 green at `e653280`):
+If a session ends, resume from here (2026-11-03, main `5895a3b`; main CI
+41716774654 green at `5895a3b` after a rerun of flake #524):
 
 1. Merged since the last checkpoint: #598 (handoff), #599 (A1 real kills),
    #600 (A2 seccomp egress), #602 (A3 macOS ACLs, closes #601), #603 (worker
-   positive-control deadline) and #604 (SG-000115 B9b). No PR from this
+   positive-control deadline), #604 (SG-000115 B9b) and #606 (#438
+   activation click). No PR from this
    work is open apart from this handoff and register. Branch
    protection needs each PR up to date with main, so PRs merge one at a
    time: rebase, exact-head green run, then `--match-head-commit`. #342 and
