@@ -72,6 +72,41 @@ const READY: &str = "orcel-rehearsal-ready";
 /// file (`crash`, `orphan`).
 const FAKE_ENGINE: &str = r#"
 import os, socket, subprocess, sys, time
+# B8b (tests only, ORCEL_REHEARSAL_PIDNS=1): run as pid 1 of a new user and
+# PID namespace with no uid maps and no /proc remount, chained to the host by
+# parent-death signals: the outer process dies with the host (SIGKILL), the
+# namespace's init dies with the outer process, and the kernel then kills the
+# whole namespace.
+if os.environ.get('ORCEL_REHEARSAL_PIDNS') == '1':
+    import ctypes
+    libc = ctypes.CDLL(None, use_errno=True)
+    def die_with_parent():
+        parent = os.getppid()
+        if libc.prctl(1, 9, 0, 0, 0) != 0 or os.getppid() != parent:
+            os._exit(1)
+    die_with_parent()
+    try:
+        os.unshare(os.CLONE_NEWUSER | os.CLONE_NEWPID)
+    except OSError as error:
+        print('SG115-PIDNS-ENGINE refused', error.errno, flush=True)
+        os._exit(4)
+    # The outer process holds the write end and never writes: end-of-file
+    # on the read end means it is gone.
+    alive_r, alive_w = os.pipe()
+    child = os.fork()
+    if child != 0:
+        os.close(alive_r)
+        _, status = os.waitpid(child, 0)
+        os._exit(os.waitstatus_to_exitcode(status) & 0xff)
+    os.close(alive_w)
+    # As pid 1 the init cannot see its parent (getppid() is 0), so the
+    # parent check is the pipe: set the death signal first, then exit if the
+    # outer process already died before it was set.
+    import select
+    if libc.prctl(1, 9, 0, 0, 0) != 0:
+        os._exit(1)
+    if select.select([alive_r], [], [], 0)[0]:
+        os._exit(1)
 args = sys.argv[1:]
 def flag(name):
     values = [arg.split('=', 1)[1] for arg in args if arg.startswith(name + '=')]
@@ -824,6 +859,20 @@ mod tests {
                     !profile.exists()
                 );
             }
+            // B8b: the same host, outside any namespace, with an engine that
+            // runs as pid 1 of its own namespace (ORCEL_REHEARSAL_PIDNS=1 in
+            // this process's environment, inherited by the engine).
+            "pidns-engine" => {
+                let running = start_verifiable(&policy, &profile, Mode::Chatty, &side).unwrap();
+                wait_ready(&running);
+                println!(
+                    "SG115-SINK port={} host={}",
+                    running.sink.port(),
+                    std::process::id()
+                );
+                // The host "crashes" here: the test kills this process.
+                std::thread::sleep(Duration::from_secs(60));
+            }
             // B8: the same host, run as the init of a PID namespace by the
             // test's shim; it reports its pid as the host sees it.
             "pidns-host" => {
@@ -1175,6 +1224,130 @@ mod tests {
         assert!(
             gone,
             "the engine family outlived the namespace's init: {left:?}"
+        );
+        assert!(attacker.is_ok(), "the crashed host's port is free");
+        assert!(!received, "no helper reaches whoever took the port");
+    }
+
+    /// B8b (Linux): containment for hosts that refuse uid maps (B8's
+    /// refusal on the hosted runner was at the `setgroups` write). The host
+    /// stays outside any namespace; only the engine family runs in a new user
+    /// and PID namespace, with no maps and no /proc remount, its init chained
+    /// to the host by parent-death signals. When the host is killed, the
+    /// engine and its orphaned helper die with it, and the freed port
+    /// receives nothing. A refused namespace is recorded as evidence, never a
+    /// pass.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_engine_namespace_dies_with_its_crashed_host() {
+        use std::io::{BufRead, BufReader};
+        let root = sink_scratch("pidns-engine");
+        let mut host = crate::unix_supervise::spawn_test(
+            "unix_rehearsal::tests::sink_supervisor_entry",
+            &[
+                (SINK_CASE, "pidns-engine".to_string()),
+                (SINK_SCRATCH, root.display().to_string()),
+                ("ORCEL_REHEARSAL_PIDNS", "1".to_string()),
+            ],
+        )
+        .unwrap();
+        /// Kills the host (and so, through the chain, its engine family)
+        /// however the test ends.
+        struct Host(std::process::Child);
+        impl Drop for Host {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let stdout = host.stdout.take().unwrap();
+        let mut host = Host(host);
+        let mut line = String::new();
+        for next in BufReader::new(stdout).lines() {
+            let next = next.unwrap();
+            if let Some(at) = next.find("SG115-PIDNS-ENGINE refused") {
+                let errno: i32 = next[at..]
+                    .split_whitespace()
+                    .last()
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or_default();
+                drop(host);
+                std::fs::remove_dir_all(&root).ok();
+                assert!(
+                    [libc::EPERM, libc::EACCES, libc::ENOSPC, libc::EINVAL].contains(&errno),
+                    "{next}"
+                );
+                println!("SG115-EVIDENCE B8b engine namespace refused: errno {errno}");
+                return;
+            }
+            if let Some(at) = next.find("SG115-SINK ") {
+                line = next[at..].to_string();
+                break;
+            }
+        }
+        let field = |name: &str| -> i32 {
+            line.split_whitespace()
+                .find_map(|part| part.strip_prefix(&format!("{name}=")))
+                .and_then(|value| value.parse().ok())
+                .unwrap_or_default()
+        };
+        let (port, host_pid) = (field("port"), field("host"));
+        assert!(port > 0 && host_pid > 0, "{line}");
+        let marker = root.display().to_string();
+        let members = || -> Vec<i32> {
+            std::fs::read_dir("/proc")
+                .map(|dir| {
+                    dir.flatten()
+                        .filter_map(|entry| entry.file_name().to_str()?.parse::<i32>().ok())
+                        .filter(|pid| *pid != host_pid)
+                        .filter(|pid| {
+                            std::fs::read(format!("/proc/{pid}/cmdline"))
+                                .map(|cmd| String::from_utf8_lossy(&cmd).contains(&marker))
+                                .unwrap_or(false)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        // The outer engine process, the namespace's init (the engine) and its
+        // orphaned helper all run before the crash.
+        let before = members();
+        assert!(before.len() >= 3, "the engine family runs: {before:?}");
+        // The host crashes.
+        let _ = host.0.kill();
+        let _ = host.0.wait();
+        let gone = until(|| members().is_empty());
+        let attacker = std::net::TcpListener::bind(("127.0.0.1", port as u16));
+        let received = match &attacker {
+            Ok(listener) => {
+                listener.set_nonblocking(true).unwrap();
+                let started = Instant::now();
+                let mut got = false;
+                while started.elapsed() < Duration::from_secs(2) {
+                    if listener.accept().is_ok() {
+                        got = true;
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                got
+            }
+            Err(_) => false,
+        };
+        let left = members();
+        for pid in &left {
+            if let Some(pinned) = crate::unix_supervise::pin_pid(*pid) {
+                crate::unix_supervise::kill_pinned(pinned);
+            }
+        }
+        drop(host);
+        std::fs::remove_dir_all(&root).ok();
+        println!(
+            "SG115-EVIDENCE B8b engine namespace: family gone={gone}, port traffic after crash={received}"
+        );
+        assert!(
+            gone,
+            "the engine family outlived its crashed host: {left:?}"
         );
         assert!(attacker.is_ok(), "the crashed host's port is free");
         assert!(!received, "no helper reaches whoever took the port");

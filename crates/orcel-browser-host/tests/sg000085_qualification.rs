@@ -1237,7 +1237,10 @@ fn no_shell_script_or_remote_process_surface_exists() {
     // namespace: A2's `python_fixture` shim unshares, forks, mounts a
     // private `/` and a fresh `/proc` inside the new namespaces (through
     // `ctypes`), and execs this test binary on the `sink_supervisor_entry`
-    // test (recorded the same way). A6
+    // test (recorded the same way). Since B8b the fake engine itself (a
+    // fixed script run through `python_fixture`) can, under a test-only
+    // environment switch, set parent-death signals and unshare a user and
+    // PID namespace with no maps (recorded the same way). A6
     // (unix_rehearsal.rs) spawns only through A2's `python_fixture`, pinned
     // below under the same guard.
     let lib = sources
