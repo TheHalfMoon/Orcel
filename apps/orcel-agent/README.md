@@ -204,6 +204,14 @@ ORCEL_AGENT_DEPS=1 .venv/bin/python -I -B -m unittest discover -s tests -v
 - **Egress test.** It runs a scripted LangGraph graph with an SQLite
   checkpoint while Python's audit hooks refuse connections, name lookups,
   binds and SQLite extension loads.
+- **Native egress (Linux).** The same run again under a seccomp filter that
+  kills the process if any code, native libraries included, asks the kernel
+  for a socket of any family but Unix and netlink, or for an io_uring, in
+  any thread. Controls show the filter fires on the runner's kernel (a
+  native `socket(AF_INET)`, and AF_PACKET, VSOCK, SMC and XDP sockets, die
+  with `SIGSYS`, also from a thread started before the filter) and allows
+  Unix sockets. Windows and macOS have no equivalent
+  here: there only the audit hooks apply.
 
 ## Rules the agent enforces (client side; orceld remains the authority)
 

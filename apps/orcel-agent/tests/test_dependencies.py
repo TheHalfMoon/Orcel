@@ -11,6 +11,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import platform
+import signal
 import socket
 import subprocess
 import sys
@@ -47,15 +49,69 @@ DENIED_EVENTS = (
     "os.startfile", "ctypes.dlopen", "sqlite3.enable_load_extension", "sqlite3.load_extension",
 )
 
+#: Linux only, installed first in a probe (before the audit hook, which
+#: refuses ctypes): a seccomp filter that kills the whole process when any
+#: code, native libraries included, asks the kernel for a socket of any
+#: family but Unix and netlink (neither leaves the host), or for an io_uring
+#: (which can make sockets on its own). Installed with TSYNC, so every thread
+#: of the process is covered. The audit hook refuses Python's own socket
+#: calls before they reach the kernel, so only native code that bypasses the
+#: socket module can trip the filter: the process dies with SIGSYS and the
+#: test sees no report. Kernel constants: <linux/seccomp.h>,
+#: <linux/filter.h>, <linux/audit.h>; syscall numbers for x86_64 and aarch64.
+SECCOMP = r"""
+import ctypes, platform, struct, sys
+# arch, socket, io_uring_setup, seccomp
+_ARCH = {"x86_64": (0xC000003E, 41, 425, 317), "aarch64": (0xC00000B7, 198, 425, 277)}
+_arch, _socket, _io_uring, _seccomp = _ARCH[platform.machine()]
+_LD, _JEQ, _JGE, _RET = 0x20, 0x15, 0x35, 0x06
+_ALLOW, _KILL = 0x7FFF0000, 0x80000000
+_program = [
+    (_LD, 0, 0, 4),                     # 0: arch
+    (_JEQ, 0, 10, _arch),               # 1: another ABI: kill
+    (_LD, 0, 0, 0),                     # 2: syscall number
+    (_JGE, 8, 0, 0x40000000),           # 3: x32 ABI: kill
+    (_JEQ, 7, 0, _io_uring),            # 4: io_uring_setup: kill
+    (_JEQ, 1, 0, _socket),              # 5: socket: check the domain
+    (_RET, 0, 0, _ALLOW),               # 6
+    (_LD, 0, 0, 16),                    # 7: args[0], the domain (low word)
+    (_JEQ, 2, 0, 1),                    # 8: AF_UNIX: allow
+    (_JEQ, 1, 0, 16),                   # 9: AF_NETLINK: allow
+    (_RET, 0, 0, _KILL),                # 10: every other family: kill
+    (_RET, 0, 0, _ALLOW),               # 11
+    (_RET, 0, 0, _KILL),                # 12
+]
+_raw = b"".join(struct.pack("=HBBI", *op) for op in _program)
+_buffer = ctypes.create_string_buffer(_raw)
+class _Prog(ctypes.Structure):
+    _fields_ = [("len", ctypes.c_ushort), ("filter", ctypes.c_void_p)]
+_prog = _Prog(len(_program), ctypes.cast(_buffer, ctypes.c_void_p))
+_libc = ctypes.CDLL(None, use_errno=True)
+_libc.prctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong]
+if _libc.prctl(38, 1, None, 0, 0) != 0:    # PR_SET_NO_NEW_PRIVS
+    sys.exit("SECCOMP-REFUSED no_new_privs errno %d" % ctypes.get_errno())
+_libc.syscall.restype = ctypes.c_long
+# seccomp(SECCOMP_SET_MODE_FILTER, SECCOMP_FILTER_FLAG_TSYNC, &prog)
+if _libc.syscall(ctypes.c_long(_seccomp), ctypes.c_ulong(1), ctypes.c_ulong(1), ctypes.byref(_prog)) != 0:
+    sys.exit("SECCOMP-REFUSED filter errno %d" % ctypes.get_errno())
+"""
+
+#: Where the filter applies: Linux on the two architectures it encodes.
+SECCOMP_HOST = sys.platform == "linux" and platform.machine() in ("x86_64", "aarch64")
+
 # Runs in a fresh interpreter whose environment asks for tracing everywhere.
 # The hook is installed before any import and records every attempt (with the
 # first caller outside the socket module), even one a library swallows. The
 # report is printed by the first atexit handler, so it runs last: after
 # langsmith's own exit-time flush, which is when a tracer would send.
-# argv: denied events, the agent root, the checkpoint file, and the mode
-# ("agent" imports orcel_agent first; "control" does not).
+# argv: denied events, the agent root, the checkpoint file, the mode
+# ("agent" imports orcel_agent first; "control" does not), and "seccomp" to
+# install SECCOMP first.
 PROBE = r"""
-import atexit, json, sys
+import sys
+if sys.argv[5:] == ["seccomp"]:
+    exec(compile(SECCOMP_SOURCE, "<seccomp>", "exec"))
+import atexit, json
 DENIED = set(json.loads(sys.argv[1]))
 attempts = []
 state = {}
@@ -107,7 +163,7 @@ try:
 finally:
     connection.close()
 state["tracing"] = bool(tracing_is_enabled())
-"""
+""".replace("SECCOMP_SOURCE", repr(SECCOMP))
 
 
 def urllib3_ipv6_probe(attempt: dict) -> bool:
@@ -122,7 +178,7 @@ def urllib3_ipv6_probe(attempt: dict) -> bool:
     return attempt["event"] == "socket.bind" and attempt["detail"] in (["::1", 0], ["127.0.0.1", 0])
 
 
-def run_probe(mode: str) -> dict:
+def run_probe(mode: str, seccomp: bool = False) -> dict:
     # This process imported orcel_agent and so silenced its own environment;
     # the child starts from one that asks for tracing in every spelling, so
     # only the child's own import can switch it off.
@@ -135,7 +191,7 @@ def run_probe(mode: str) -> dict:
     with tempfile.TemporaryDirectory() as scratch:
         run = subprocess.run(
             [sys.executable, "-I", "-c", PROBE, json.dumps(DENIED_EVENTS), str(ROOT),
-             str(Path(scratch) / "checkpoints.sqlite"), mode],
+             str(Path(scratch) / "checkpoints.sqlite"), mode, *(["seccomp"] if seccomp else [])],
             capture_output=True, text=True, timeout=180, env=env,
         )
     lines = [line for line in run.stdout.splitlines() if line.startswith("REPORT ")]
@@ -235,6 +291,55 @@ class Egress(unittest.TestCase):
         self.assertEqual(others, [], "a socket, connection, lookup, send, process or native load was attempted")
         self.assertEqual(report["reply"], "scripted reply")
         self.assertFalse(report["tracing"], "tracing stayed on")
+
+
+@unittest.skipUnless(SECCOMP_HOST, "Linux on x86_64 or aarch64 (the seccomp filter)")
+class NativeEgress(unittest.TestCase):
+    """Detection, not only blocking: native code that asks the kernel for an
+    internet socket kills the process. The controls show the filter fires on
+    this kernel, and only for those sockets."""
+
+    def native(self, domain: int) -> subprocess.CompletedProcess:
+        code = SECCOMP + "\nimport ctypes\nfd = ctypes.CDLL(None).socket(%d, 1, 0)\nprint('ALIVE', fd)\n" % domain
+        return subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True, timeout=60)
+
+    def test_a_native_internet_socket_kills_the_process(self) -> None:
+        # Internet, packet, VSOCK, SMC (TCP-compatible) and XDP: the filter
+        # allows only listed families, so any of them dies.
+        for domain in (int(socket.AF_INET), int(socket.AF_INET6), 17, 40, 43, 44):
+            run = self.native(domain)
+            self.assertNotIn("SECCOMP-REFUSED", run.stderr, "the kernel refused the filter")
+            self.assertEqual(run.returncode, -signal.SIGSYS, (domain, run.returncode, run.stdout, run.stderr))
+            self.assertNotIn("ALIVE", run.stdout)
+
+    def test_a_native_unix_socket_is_allowed(self) -> None:
+        run = self.native(int(socket.AF_UNIX))
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertRegex(run.stdout, r"ALIVE [0-9]+")
+
+    def test_a_thread_started_before_the_filter_is_covered(self) -> None:
+        # TSYNC: a thread already running when the filter is installed is
+        # filtered too.
+        code = ("import ctypes, threading, time\n"
+                "go = threading.Event()\n"
+                "def worker():\n    go.wait(); ctypes.CDLL(None).socket(2, 1, 0); print('ALIVE')\n"
+                "t = threading.Thread(target=worker); t.start()\n"
+                + SECCOMP + "\ngo.set(); t.join(); time.sleep(1)\n")
+        run = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True, timeout=60)
+        self.assertNotIn("SECCOMP-REFUSED", run.stderr)
+        self.assertEqual(run.returncode, -signal.SIGSYS, (run.returncode, run.stdout, run.stderr))
+        self.assertNotIn("ALIVE", run.stdout)
+
+    @needs_deps
+    def test_the_agent_probe_completes_under_the_filter(self) -> None:
+        # The same scripted graph as the egress test, with the filter: if any
+        # native code (a C extension, a bundled library) opened an internet
+        # socket, the probe would be killed and print no report.
+        report = run_probe("agent", seccomp=True)
+        self.assertEqual(report["returncode"], 0, report["stderr"])
+        self.assertEqual(report["reply"], "scripted reply")
+        others = [a for a in report["attempts"] if not urllib3_ipv6_probe(a)]
+        self.assertEqual(others, [])
 
 
 @unittest.skipUnless(os.environ.get("ORCEL_AGENT_NETNS") == "1", "the Linux network-namespace leg")
