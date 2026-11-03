@@ -357,10 +357,15 @@ nativeTest("resolver pinning and the no-route proxy confine traffic without any 
   }
   const profile = profileFor(t, "native-net");
   const context = await launchDirect(t, profile, confinedArgv(profile, FIXTURE));
-  const open = async (url: string): Promise<string> => {
+  // A refused destination fails fast (ERR_PROXY_CONNECTION_FAILED), so the
+  // negative probes keep a short budget; a positive control waits for its
+  // commit up to the event deadline, like every other navigation here (#374):
+  // the first load after a cold launch on a loaded runner can outlast 10 s
+  // (#438, run 41659893527), and a commit that never comes still fails.
+  const open = async (url: string, timeout = 10_000): Promise<string> => {
     const page = await context.newPage();
     try {
-      const response = await page.goto(url, { timeout: 10_000, waitUntil: "commit" });
+      const response = await page.goto(url, { timeout, waitUntil: "commit" });
       return `ok ${response?.status() ?? 0}`;
     } catch (error) {
       return `fail ${String((error as Error).message).split("\n")[0]}`;
@@ -368,9 +373,9 @@ nativeTest("resolver pinning and the no-route proxy confine traffic without any 
       await page.close();
     }
   };
-  assert.match(await open("http://fixture.test/admitted"), /^ok 200/);
+  assert.match(await open("http://fixture.test/admitted", EVENT_DEADLINE_MS), /^ok 200/);
   // Another port of the admitted name lands on the pinned port.
-  assert.match(await open("http://fixture.test:8080/other-port"), /^ok 200/);
+  assert.match(await open("http://fixture.test:8080/other-port", EVENT_DEADLINE_MS), /^ok 200/);
   // Every other destination is refused by the no-route proxy (layer 2), and
   // nothing reaches the fixture or a port-9 listener.
   for (const url of [
