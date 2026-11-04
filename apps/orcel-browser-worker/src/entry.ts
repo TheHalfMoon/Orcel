@@ -88,14 +88,14 @@ const playwrightLauncher: Launcher = {
       primary = page;
       await previous.close().catch(() => {});
       traceMark("previous_closed");
-      page.on("request", (request) => {
-        traceMark("request");
-        // #438: when the engine started it, by the engine's clock, as against
-        // when this worker heard about it.
-        const engineStart = request.timing().startTime;
+      page.on("request", () => traceMark("request"));
+      page.on("response", (response) => {
+        traceMark("response");
+        // #438: when the engine started the request, by the engine's clock.
+        // Playwright knows it only once a response exists.
+        const engineStart = response.request().timing().startTime;
         if (engineStart > 0) traceMark("request_engine_start", engineStart);
       });
-      page.on("response", () => traceMark("response"));
       page.on("requestfailed", () => traceMark("request_failed"));
       page.on("domcontentloaded", () => traceMark("domcontentloaded"));
       page.on("load", () => traceMark("load"));

@@ -1768,23 +1768,6 @@ impl Drop for HttpsFixture {
                     listeners.join("\n")
                 );
             }
-            // #438: what else the runner was doing, and how busy it was.
-            if cfg!(windows) {
-                let snapshot = "Get-Counter '\\Processor(_Total)\\% Processor Time','\\PhysicalDisk(_Total)\\% Disk Time' \
-                     -SampleInterval 1 -MaxSamples 2 | ForEach-Object { $_.CounterSamples } | \
-                     ForEach-Object { '{0} {1:n0}' -f $_.Path, $_.CookedValue }; \
-                     Get-Process | Sort-Object CPU -Descending | Select-Object -First 15 | \
-                     ForEach-Object { '{0} pid={1} cpu_s={2:n0} ws_mb={3:n0}' -f $_.Name, $_.Id, $_.CPU, ($_.WorkingSet64 / 1MB) }";
-                if let Ok(out) = std::process::Command::new("powershell")
-                    .args(["-NoProfile", "-NonInteractive", "-Command", snapshot])
-                    .output()
-                {
-                    eprintln!(
-                        "SG108-DIAG runner load at failure:\n{}",
-                        String::from_utf8_lossy(&out.stdout)
-                    );
-                }
-            }
         }
         let _ = self.child.kill();
         let _ = self.child.wait();
