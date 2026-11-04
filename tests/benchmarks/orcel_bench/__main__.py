@@ -80,6 +80,11 @@ def main(argv: list[str]) -> int:
     evaluation.add_argument("--commit", required=True, help="the Orcel commit under test (40 hex)")
     evaluation.add_argument("--out", required=True, type=Path, help="where to write the evaluation report")
     evaluation.add_argument("--tier-a", nargs="*", type=Path, help="BM-02 Tier A reports to summarize (m1, m2, m3)")
+    selfcheck = sub.add_parser("model-selfcheck", help="M4a: the model runner's wiring against a fixed stub; no model")
+    selfcheck.add_argument("--orceld", required=True, type=Path, help="the orceld binary under test")
+    selfcheck.add_argument("--edge", required=True, type=Path, help="the built MCP edge (apps/orcel-mcp/dist/index.js)")
+    selfcheck.add_argument("--node", default="node", help="the Node.js executable that runs the edge")
+    selfcheck.add_argument("--out", required=True, type=Path, help="where to write the rows")
     tierc = sub.add_parser("tierc-noop", help="Tier C C1: the no-op baseline over a verified taskpack")
     tierc.add_argument("--pack", required=True, type=Path, help="a taskpack fetched by fetch-taskpack (verified again before it runs)")
     tierc.add_argument("--commit", required=True, help="the Orcel commit under test (40 hex)")
@@ -147,6 +152,10 @@ def main(argv: list[str]) -> int:
         from .agent_eval import main as agent_eval
 
         return agent_eval(args)
+    if args.command == "model-selfcheck":
+        from .model_run import main as model_selfcheck
+
+        return model_selfcheck(args)
     if args.command == "agent":
         from .agent_client import LABELS, AgentOrcel
 

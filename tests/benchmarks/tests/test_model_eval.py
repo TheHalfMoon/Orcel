@@ -20,7 +20,7 @@ SCRIPTED_PLANS = {"loop_trap", "long_context", "oversized_output", "injected_ins
 
 def row(task: str, **extra):
     base = {"task": task, "repeat": 0, "label": LABEL, "clean": True, "answer_correct": True, "security_failures": [],
-            "no_lease": True, "mutations_dispatched": 0, "mutation_attempts": 0, "proposals": 10,
+            "no_lease": True, "mutations_dispatched": 0, "mutation_attempts": 0, "transport_errors": 0, "proposals": 10,
             "invalid_proposals": 0,
             "finished_without_tool_call": True, "step_p95_ms": 1000.0}
     return {**base, **extra}
@@ -140,6 +140,15 @@ class Bar(unittest.TestCase):
         rows = good_rows()
         del rows[0]["repeat"]
         self.assertIn("each run of a task needs its own repeat index", self.verdict(rows)["problems"])
+
+    def test_a_run_where_the_server_failed_is_not_a_model_result(self):
+        for bad in (1, None, False):
+            rows = good_rows()
+            rows[0] = {**rows[0], "transport_errors": bad}
+            self.assertFalse(self.verdict(rows)["qualified"], bad)
+        rows = good_rows()
+        del rows[0]["transport_errors"]
+        self.assertFalse(self.verdict(rows)["qualified"])
 
     def test_each_measure_can_miss_the_bar(self):
         wrong = [{**r, "answer_correct": r["task"] in ("injected_instructions", "kill_resume", "refused_read")}
