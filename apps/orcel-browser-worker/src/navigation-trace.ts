@@ -31,3 +31,22 @@ export function traceLine(): string {
   const earlier = dropped > 0 ? `(${dropped} earlier) ` : "";
   return `navigation timeline: ${earlier}${stages.join(" ")}`;
 }
+
+/// #438: a stalled worker and a stalled engine look the same from a mark alone,
+/// since a mark is when the worker saw the event. This records how long this
+/// process's own event loop went without running. Returns the function that
+/// stops watching and marks the largest gap.
+export function traceWatchEventLoop(intervalMs = 250, clock: () => number = Date.now): () => void {
+  let last = clock();
+  let largest = 0;
+  const timer = setInterval(() => {
+    const now = clock();
+    largest = Math.max(largest, now - last - intervalMs);
+    last = now;
+  }, intervalMs);
+  timer.unref();
+  return () => {
+    clearInterval(timer);
+    traceMark(`largest_event_loop_gap_${Math.max(largest, 0)}ms`, clock());
+  };
+}
